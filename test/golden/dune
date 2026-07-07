@@ -1,0 +1,6 @@
+(test
+ (name manifest)
+ (modules npz compare manifest)
+ (libraries alcotest yojson)
+ (deps
+  (source_tree %{project_root}/goldens/dtypes)))

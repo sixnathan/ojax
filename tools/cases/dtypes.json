@@ -1,0 +1,74 @@
+[
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "float32", "rng": "rand_default", "weak": true},
+      {"shape": [], "dtype": "int32", "rng": "rand_int", "weak": true}
+    ]
+  },
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "int32", "rng": "rand_int", "weak": true},
+      {"shape": [], "dtype": "int32", "rng": "rand_int", "weak": true}
+    ]
+  },
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "float32", "rng": "rand_default", "weak": true},
+      {"shape": [], "dtype": "int32", "rng": "rand_int", "weak": false}
+    ]
+  },
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "int32", "rng": "rand_int", "weak": true},
+      {"shape": [], "dtype": "float32", "rng": "rand_default", "weak": false}
+    ]
+  },
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "float32", "rng": "rand_default", "weak": false},
+      {"shape": [], "dtype": "int32", "rng": "rand_int", "weak": false}
+    ]
+  },
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "bool", "rng": "rand_bool", "weak": false},
+      {"shape": [], "dtype": "int32", "rng": "rand_int", "weak": false}
+    ]
+  },
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "float32", "rng": "rand_default", "weak": false},
+      {"shape": [], "dtype": "float64", "rng": "rand_default", "weak": false}
+    ]
+  },
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "int64", "rng": "rand_int", "weak": false},
+      {"shape": [], "dtype": "float32", "rng": "rand_default", "weak": false}
+    ]
+  },
+  {
+    "op": "result_type",
+    "primitive": "dtypes.result_type",
+    "args": [
+      {"shape": [], "dtype": "float32", "rng": "rand_default", "weak": true},
+      {"shape": [], "dtype": "complex64", "rng": "rand_default", "weak": false}
+    ]
+  }
+]

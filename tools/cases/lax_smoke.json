@@ -1,0 +1,47 @@
+[
+  {
+    "op": "add",
+    "primitive": "lax.add",
+    "nargs": 2,
+    "dtypes": ["float32"],
+    "shapes": [[3], [2, 3]],
+    "rng": "rand_default",
+    "params": {}
+  },
+  {
+    "op": "add",
+    "primitive": "lax.add",
+    "nargs": 2,
+    "dtypes": ["int32"],
+    "shapes": [[3]],
+    "rng": "rand_int",
+    "params": {}
+  },
+  {
+    "op": "reduce_sum",
+    "primitive": "lax.reduce_sum",
+    "nargs": 1,
+    "dtypes": ["float32"],
+    "shapes": [[2, 3]],
+    "rng": "rand_default",
+    "params": {"axes": [0]}
+  },
+  {
+    "op": "reduce_sum",
+    "primitive": "lax.reduce_sum",
+    "nargs": 1,
+    "dtypes": ["float32"],
+    "shapes": [[2, 3]],
+    "rng": "rand_default",
+    "params": {"axes": [1]}
+  },
+  {
+    "op": "reduce_sum",
+    "primitive": "lax.reduce_sum",
+    "nargs": 1,
+    "dtypes": ["float32"],
+    "shapes": [[4]],
+    "rng": "rand_default",
+    "params": {"axes": [0]}
+  }
+]

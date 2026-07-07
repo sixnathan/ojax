@@ -1,0 +1,577 @@
+# Copyright 2026 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import Mapping, Sequence
+import dataclasses
+import jax.numpy as jnp
+import math
+from typing import Any
+
+import jax
+from jax._src import callback
+from jax._src import core as jax_core
+from jax._src.pallas import core as pallas_core
+from jax._src.pallas.mosaic.interpret import thread_map
+from jax._src.pallas.mosaic.interpret import utils as interpret_utils
+from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
+from jax._src.pallas.mosaic_gpu.interpret import gpu_callbacks
+from jax._src.pallas.mosaic_gpu.interpret import jaxpr_interpret
+from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
+from jax._src.state import types as state_types
+from jax._src.typing import Array
+from jax._src.util import (safe_zip, split_list)
+from jax.experimental.pallas import mosaic_gpu as plgpu
+
+
+def get_races() -> gpu_callbacks.RaceDetectionState:
+  return gpu_callbacks.get_races()
+
+
+def reset_gpu_interpret_mode_state():
+  gpu_callbacks.reset_gpu_interpret_mode_state()
+
+
+def _get_grid_bounds(grid_mapping: pallas_core.GridMapping) -> tuple[int, ...]:
+  if grid_mapping.num_dynamic_grid_bounds > 0:
+    raise NotImplementedError(
+        "Dynamic grid bounds not (yet) supported in GPU interpret mode."
+    )
+  result = []
+  for x in grid_mapping.grid:
+    # We have already tested for the absence of dynamic grid bounds. So all
+    # entries in the grid should be ints.
+    assert isinstance(x, int)
+    result.append(x)
+  return tuple(result)
+
+
+def _get_grid_and_cluster_dims_and_num_threads(
+    grid_mapping: pallas_core.GridMapping, mesh: plgpu.Mesh | None
+) -> tuple[tuple[int, ...], tuple[int, ...], int]:
+  if not mesh:
+    num_threads = 1
+    cluster_dims = ()
+    grid_dims = _get_grid_bounds(grid_mapping)
+  elif isinstance(mesh, plgpu.Mesh):
+    num_threads = int(mesh.num_threads or 1)
+    cluster_dims = tuple(mesh.cluster) if mesh.cluster is not None else ()
+    grid_dims = tuple(mesh.grid)
+  else:
+    raise ValueError(f"Unsupported mesh type: {type(mesh)}")
+
+  reconstructed_grid = grid_dims + cluster_dims + (num_threads,)
+  if math.prod(_get_grid_bounds(grid_mapping)) != math.prod(reconstructed_grid):
+    raise NotImplementedError(
+        f"Invalid grid {grid_mapping.grid} in grid_mapping: expected grid to"
+        f" have the same size as {reconstructed_grid}"
+    )
+
+  return grid_dims, cluster_dims, num_threads
+
+
+def _allocate_buffers_for_inputs(
+    token: jax.Array,
+    device_id: int,
+    invars: Sequence[Any],
+    inputs: Sequence[jax.Array],
+) -> tuple[jax.Array, list[jax.Array]]:
+  """Allocates `GMEM` buffers for the `inputs` of a `pallas_call`."""
+  # TODO(nrink): This code is a simplified version to the corresponding TPU
+  # interpreter code. Eventually, we should merge the two.
+  input_buffer_keys = []
+  for var, value in safe_zip(invars, inputs):
+    assert var.aval.dtype == value.dtype
+    token, req = gpu_callbacks.call_make_allocation_request_array(
+        token=token,
+        device_id=jnp.int32(device_id),
+        # All operands of a `pallas_call`/`core_map` that are arrays (i.e. that
+        # are not sempahores, barriers etc.) are placed in `GMEM`. These arrays
+        # (or slices thereof) may need to be copied into `SMEM` before executing
+        # the kernel.
+        memory_space_id=gpu_callbacks.get_memory_space_idx(
+            mosaic_gpu_core.MemorySpace.GMEM
+        ),
+    )
+    token, key = gpu_callbacks.call_allocate_buffer_for_all_threads(
+        token, jnp.int32(device_id), None, req, value
+    )
+    input_buffer_keys.append(key)
+
+  return token, input_buffer_keys
+
+
+@dataclasses.dataclass(frozen=True)
+class AllocationKeyAndValue:
+  key: jax.Array
+  value: jax.Array
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.value.shape
+
+
+def _allocate_buffers_for_outputs(
+    token,
+    device_id: int,
+    num_threads: int,
+    input_output_aliases: tuple[tuple[int, int], ...],
+    grid_mapping: pallas_core.GridMapping,
+    input_buffer_keys: Sequence[jax.Array],
+    input_vals: Sequence[jax.Array],
+    interpret_params: InterpretGPUParams,
+) -> tuple[jax.Array, list[AllocationKeyAndValue]]:
+  """Allocates `GMEM` buffers for `pallas_call` outputs, respecting aliased inputs."""
+  # TODO(nrink): This code is a simplified version to the corresponding TPU
+  # interpreter code. Eventually, we should merge the two.
+  assert len(input_buffer_keys) == len(input_vals)
+
+  oi_alias_map = {v: k for k, v in input_output_aliases}
+  output_buffer_keys_and_values = []
+
+  block_shapes = [
+      pallas_core._get_block_shape(bm.block_shape)
+      for bm in grid_mapping.block_mappings
+  ]
+  num_inputs = grid_mapping.num_inputs
+
+  num_outputs = grid_mapping.num_outputs
+  output_block_shapes = block_shapes[num_inputs : num_inputs + num_outputs]
+  for output_idx, bm in enumerate(grid_mapping.block_mappings_output):
+    if output_idx in oi_alias_map:
+      aliased_input_idx = oi_alias_map[output_idx]
+      # Reuse the `GMEM` buffer for the aliased `pallas_call`/`core_map` input.
+      output_buffer_keys_and_values.append(
+          AllocationKeyAndValue(
+              key=input_buffer_keys[aliased_input_idx],
+              value=input_vals[aliased_input_idx],
+          )
+      )
+    else:
+      out_val = interpret_utils.get_uninitialized_array(
+          bm.array_aval.shape, bm.array_aval.dtype,
+          interpret_params.uninitialized_memory)
+      padded_val = interpret_utils.pad_to_block_dimension(
+          out_val, output_block_shapes[output_idx],
+          interpret_params.uninitialized_memory)
+      token, req = gpu_callbacks.call_make_allocation_request_array(
+          token=token,
+          device_id=jnp.int32(device_id),
+          # All outputs of a `pallas_call`/`core_map` that are arrays (i.e. that
+          # are not sempahores, barriers etc.) are placed in `GMEM`. Results
+          # from executing the kernel (or slices thereof) may need to be copied
+          # from `SMEM` into the `GMEM` output buffers that are allocated here.
+          memory_space_id=gpu_callbacks.get_memory_space_idx(
+              mosaic_gpu_core.MemorySpace.GMEM
+          ),
+          initial_ref_count=num_threads,
+      )
+      token, key = gpu_callbacks.call_allocate_buffer_for_all_threads(
+          token, jnp.int32(device_id), None, req, padded_val
+      )
+      output_buffer_keys_and_values.append(
+          AllocationKeyAndValue(key=key, value=out_val)
+      )
+
+  return token, output_buffer_keys_and_values
+
+
+def _get_kernel_buffers(
+    token,
+    device_id: int,
+    num_threads: int,
+    grid_mapping: pallas_core.GridMapping,
+    invars: Sequence[Any],
+    arg_transforms: tuple[tuple[state_types.Transform, ...], ...],
+    input_buffer_keys: Sequence[jax.Array],
+    output_buffer_keys: Sequence[jax.Array],
+    interpret_params: InterpretGPUParams,
+) -> tuple[jax.Array, list[jax.Array]]:
+  """Collects buffers to be passed to the kernel from `pallas_call` input/output buffers."""
+  # TODO(nrink): This code is a simplified version to the corresponding TPU
+  # interpreter code. Eventually, we should merge the two.
+  if not arg_transforms:
+    arg_transforms = ((),) * len(invars)
+  kernel_buffer_keys = []
+  for i, (var, transforms) in enumerate(safe_zip(invars, arg_transforms)):
+    output_idx = i - grid_mapping.num_inputs
+    is_input = i < grid_mapping.num_inputs
+    is_output = (output_idx >= 0) and (output_idx < grid_mapping.num_outputs)
+    aval = var.aval
+    # TODO(nrink): Support allocation of semaphores.
+    if gpu_callbacks.is_gmem_memory_space(aval.memory_space):
+      # Use the already-allocated GMEM input or output buffer.
+      #
+      # TODO(jburnim): For kernel args in GMEM, check that block shape equals
+      # the shape of the corresponding `pallas_call` input, and that the
+      # index_map is trivial.
+      assert is_input ^ is_output
+      if is_input:
+        kernel_buffer_keys.append(input_buffer_keys[i])
+      if is_output:
+        kernel_buffer_keys.append(output_buffer_keys[output_idx])
+    else:
+      token, req = gpu_callbacks.call_make_allocation_request_array(
+          token=token,
+          device_id=jnp.int32(device_id),
+          memory_space_id=gpu_callbacks.get_memory_space_idx(aval.memory_space),
+          initial_ref_count=num_threads,
+      )
+      if transforms:
+        # The invar/aval's shape in the jaxpr may be the tiled shape, after
+        # tiling and/or swizzling transforms have been applied.  The
+        # elements of `transforms` -- to undo the swizzling and/or tiling --
+        # are applied any time the variable is used in the jaxpr.
+        #
+        # We want to allocate a buffer with the logical shape, instead of
+        # the tiled shape, so we undo the swizzing and/or tiling here to get
+        # the logical shape.
+        aval = jaxpr_interpret.apply_unswizzle_and_untile(transforms, aval)
+      init_val = jaxpr_interpret.get_uninitialized_array(
+          aval.shape,
+          aval.dtype,
+          aval.memory_space,
+          interpret_params.uninitialized_memory
+      )
+      token, key = gpu_callbacks.call_allocate_buffer_for_all_threads(
+          token, jnp.int32(device_id), None, req, init_val
+      )
+      kernel_buffer_keys.append(key)
+
+  return token, kernel_buffer_keys
+
+
+def _get_outputs(
+    token,
+    device_id: int,
+    output_buffers: Sequence[AllocationKeyAndValue],
+) -> tuple[jax.Array, Sequence[Array]]:
+  """Reads and returns values from the allocated output buffers."""
+  outputs = []
+  for buffer in output_buffers:
+    token, val = gpu_callbacks.call_get(
+        token=token,
+        result_shape_and_dtype=buffer.value,
+        device_id=jnp.int32(device_id),
+        grid_point_coords=None,
+        thread_id=jnp.int32(0),
+        allocation_key_as_array=buffer.key,
+        transforms=(),  # Read the entire buffer.
+    )
+    outputs.append(val)
+
+  return token, outputs
+
+
+def _load_and_store_between_allocation_keys(
+    *,
+    token: jax.Array,
+    device_id: int,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+    share_and_dtype: Any,
+    load_allocation_key: jax.Array,
+    store_allocation_key: jax.Array,
+    transform,
+):
+  token, loaded_value = gpu_callbacks.call_get(
+      token=token,
+      result_shape_and_dtype=share_and_dtype,
+      device_id=jnp.int32(device_id),
+      grid_point_coords=grid_point_coords,
+      thread_id=thread_id,
+      allocation_key_as_array=load_allocation_key,
+      transforms=transform,
+  )
+  token, _ = gpu_callbacks.call_swap(
+      token=token,
+      result_shape_and_dtype=share_and_dtype,
+      device_id=jnp.int32(device_id),
+      grid_point_coords=grid_point_coords,
+      thread_id=thread_id,
+      allocation_key_as_array=store_allocation_key,
+      transforms=transform,
+      val=loaded_value,
+      mask=None,
+  )
+  return token
+
+
+def _copy_from_gmem_buffers(
+    token,
+    device_id: int,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+    avals: Sequence[Any],
+    gmem_buffer_keys: Sequence[jax.Array],
+    target_buffer_keys: Sequence[jax.Array],
+    transforms,
+):
+  for aval, gmem_buffer_key, target_buffer_key in zip(
+      avals, gmem_buffer_keys, target_buffer_keys, strict=True
+  ):
+    if gpu_callbacks.is_gmem_memory_space(aval.memory_space):
+      continue
+    token = _load_and_store_between_allocation_keys(
+        token=token,
+        device_id=device_id,
+        grid_point_coords=grid_point_coords,
+        thread_id=thread_id,
+        share_and_dtype=aval,
+        load_allocation_key=gmem_buffer_key,
+        store_allocation_key=target_buffer_key,
+        transform=transforms,
+    )
+  return token
+
+
+def _copy_to_gmem_buffers(
+    token,
+    device_id: int,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+    avals: Sequence[Any],
+    source_buffer_keys: Sequence[jax.Array],
+    gmem_buffer_keys: Sequence[jax.Array],
+    transforms,
+):
+  for aval, source_buffer_key, gmem_buffer_key in zip(
+      avals, source_buffer_keys, gmem_buffer_keys, strict=True
+  ):
+    if gpu_callbacks.is_gmem_memory_space(aval.memory_space):
+      continue
+    token = _load_and_store_between_allocation_keys(
+        token=token,
+        device_id=device_id,
+        grid_point_coords=grid_point_coords,
+        thread_id=thread_id,
+        share_and_dtype=aval,
+        load_allocation_key=source_buffer_key,
+        store_allocation_key=gmem_buffer_key,
+        transform=transforms,
+    )
+  return token
+
+
+def interpret_pallas_call(
+    *args,
+    jaxpr: jax_core.Jaxpr,
+    debug: bool,
+    input_output_aliases: tuple[tuple[int, int], ...],
+    grid_mapping: pallas_core.GridMapping,
+    mesh: plgpu.Mesh | None,
+    compiler_params: Mapping[str, Any],
+    cost_estimate: pallas_core.CostEstimate,
+    out_avals: tuple[jax_core.AbstractValue, ...],
+    interpret_params: InterpretGPUParams,
+    metadata: Mapping[str, str] | None,
+    kernel_arg_transforms: tuple[tuple[state_types.Transform, ...], ...] = (),
+    **kwargs,
+) -> Sequence[Array]:
+  # TODO(nrink): A more fleshed out implementation of the GPU interpreter may
+  # need to use some of these `del`ed arguments.
+  del debug, cost_estimate, metadata, out_avals, kwargs
+
+  # TODO(nrink): Support non-trivial `BlockSpec`s (i.e. with non-trivial
+  # `index_map`s).
+  assert all(bm.has_trivial_window() for bm in grid_mapping.block_mappings)
+
+  grid_dims, cluster_dims, num_threads = (
+      _get_grid_and_cluster_dims_and_num_threads(grid_mapping, mesh)
+  )
+  num_blocks_per_cluster = math.prod(cluster_dims)
+  device_info = jaxpr_interpret.DeviceInfo()
+
+  interpret_params = dataclasses.replace(
+      interpret_params, num_cores_or_threads=num_threads
+  )
+
+  # We pass our `token` through an ordered IO callback at the start and end of
+  # the interpreted kernel, to ensure that execution of this interpreted kernel
+  # cannot overlap with the interpretation of any other kernel.
+  token = jnp.int32(42)
+  token = callback.io_callback(
+      gpu_callbacks.ordering_barrier,
+      gpu_callbacks.TOKEN_SHAPE_DTYPE,
+      token,
+      ordered=True,
+  )
+
+  token = gpu_callbacks.call_initialize_shared_memory(
+      token=token,
+      num_gpus=jnp.int32(device_info.num_devices),
+      num_threads_per_block=jnp.int32(num_threads),
+      num_blocks_per_cluster=jnp.int32(num_blocks_per_cluster),
+      interpret_params=interpret_params,
+  )
+
+  dynamic_grid_args, scalars, inputs = split_list(
+      args,
+      [grid_mapping.num_dynamic_grid_bounds, grid_mapping.num_index_operands],
+  )
+  if dynamic_grid_args:
+    raise NotImplementedError("Dynamic grid bounds not (yet) supported on GPU")
+  if scalars:
+    raise NotImplementedError("Scalar arguments not (yet) supported on GPU")
+
+  assert grid_mapping.num_index_operands == 0
+
+  token, input_buffer_keys = _allocate_buffers_for_inputs(
+      token,
+      device_info.device_id,
+      jaxpr.invars[: grid_mapping.num_inputs],
+      inputs,
+  )
+
+  token, output_buffers = _allocate_buffers_for_outputs(
+      token,
+      device_info.device_id,
+      num_threads,
+      input_output_aliases,
+      grid_mapping,
+      input_buffer_keys,
+      inputs,
+      interpret_params,
+  )
+
+  token, kernel_buffer_keys = _get_kernel_buffers(
+      token,
+      device_info.device_id,
+      num_threads,
+      grid_mapping,
+      jaxpr.invars,
+      kernel_arg_transforms,
+      input_buffer_keys,
+      [buffer.key for buffer in output_buffers],
+      interpret_params,
+  )
+
+  # TODO(nrink): The two assignments below have been taken from the
+  # corresponding TPU interpreter code. Confirm that they make sense here (i.e.
+  # for GPU kernels).
+  kernel_input_buffer_keys, kernel_output_buffer_keys, _ = split_list(
+      kernel_buffer_keys, [grid_mapping.num_inputs, grid_mapping.num_outputs]
+  )
+  input_vars, output_vars = split_list(
+      jaxpr.invars[grid_mapping.slice_block_ops], [grid_mapping.num_inputs]
+  )
+
+  def _kernel(thread_id, token, grid_point_coords):
+    # Note that the copying from `GMEM` buffers here could introduce races when
+    # multiple threads copy to the same kernel input buffer. For this to happen,
+    # (a) there must be multiple threads and (b) the targeted kernel input
+    # buffer must not be in `GMEM` (since we omit copies from `GMEM` to `GMEM`).
+    # Currently, the ways in which a Pallas GPU kernel can be invoked do not
+    # allow for (a) and (b) to be true at the same time: (a) requires that the
+    # kernel is *not* invoked through a `pallas_call` but (b) can only be caused
+    # if `BlockSpec`s are used when invoking the kernels, which requires that
+    # the kernel be invoked through a `pallas_call`.
+    #
+    # TODO(nrink): Support copying of slices/blocks only, based on the
+    # `BlockSpec`s. (Currently only trivial `BlockSpec`s are supported.)
+    token = _copy_from_gmem_buffers(
+        token=token,
+        device_id=device_info.device_id,
+        grid_point_coords=grid_point_coords,
+        thread_id=thread_id,
+        avals=[var.aval for var in input_vars],
+        gmem_buffer_keys=input_buffer_keys,
+        target_buffer_keys=kernel_input_buffer_keys,
+        transforms=(),
+    )
+
+    jaxpr_interpreter = jaxpr_interpret.JaxprInterpreter(
+        grid_point_coords=grid_point_coords,
+        cluster_dims=cluster_dims,
+        thread_id=thread_id,
+        mesh=mesh,
+        device_info=device_info,
+        compiler_params=compiler_params,
+        interpret_params=interpret_params,
+    )
+    token, _ = jaxpr_interpreter.interpret(jaxpr, token, *kernel_buffer_keys)
+
+    # Note that a comment about potential races that is analogous to the comment
+    # before the call to `_copy_from_gmem_buffers` above applies here too.
+    #
+    # TODO(nrink): Support copying of slices/blocks only, based on the
+    # `BlockSpec`s. (Currently only trivial `BlockSpec`s are supported.)
+    token = _copy_to_gmem_buffers(
+        token=token,
+        device_id=device_info.device_id,
+        grid_point_coords=grid_point_coords,
+        thread_id=thread_id,
+        avals=[var.aval for var in output_vars],
+        source_buffer_keys=kernel_output_buffer_keys,
+        gmem_buffer_keys=[buffer.key for buffer in output_buffers],
+        transforms=(),
+    )
+    return token
+
+  num_grid_loop_iterations = math.prod(grid_dims)
+
+  def _grid_loop_body(loop_idx: int, token):
+    grid_point_coords = interpret_utils.get_indices(
+        grid_dims, loop_idx
+    )
+    token = thread_map.thread_map(
+        _kernel,
+        math.prod(cluster_dims) * num_threads,
+        token,
+        grid_point_coords,
+        use_ordered_callback=True,
+    )
+    return token
+    # TODO(nrink): Determine if any synchronization between the vector clocks is
+    # required at this point, i.e. when a set of concurrent threads is done.
+
+  # Synchronize all clocks before we start launching concurrent threads (in the
+  # body of the `fori_loop` below that loops over the grid points).
+  token = gpu_callbacks.call_update_clocks_for_device_barrier(
+      token, jnp.int32(device_info.device_id)
+  )
+
+  # TODO(nrink): For now we execute the grid by sequentially looping over the
+  # points in the grid. This may need to be refined to be more faithful to the
+  # semantics of grid execution on a real GPU. (The other extreme would be to
+  # execute all grid points fully concurrently, e.g. in individual threads.)
+  token = jax.lax.fori_loop(0, num_grid_loop_iterations, _grid_loop_body, token)
+
+  # Synchronize all clocks after processing all grid points (i.e. blocks; in the
+  # `fori_loop` above). If we do not do this, then reading the output buffers
+  # in `_get_outputs` below may lead to races being detected.
+  token = gpu_callbacks.call_update_clocks_for_device_barrier(
+      token, jnp.int32(device_info.device_id)
+  )
+
+  token, outputs = _get_outputs(token, device_info.device_id, output_buffers)
+
+  # We assert that no barriers remain allocated. This is an internal consistency
+  # check because the interpreter should take care of deallocating all barriers
+  # that it has allocated. It is important that the interpreter deallocates all
+  # barriers because barrier deallocation also checks that the barrier was used
+  # correctly by the kernel/threads. (Specifically, it is checked that if a
+  # thread has observed any completed barrier arrival, it has in fact observed
+  # all completed arrivals).
+  token = gpu_callbacks.call_assert_no_barriers_allocated(token)
+
+  token = gpu_callbacks.call_clean_up_shared_memory(token)
+
+  callback.io_callback(
+      gpu_callbacks.ordering_barrier,
+      gpu_callbacks.TOKEN_SHAPE_DTYPE,
+      token,
+      ordered=True,
+  )
+
+  return outputs

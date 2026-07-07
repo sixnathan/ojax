@@ -1,0 +1,2710 @@
+# Copyright 2018 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+import itertools as it
+import math
+from random import shuffle
+import re
+import gc
+from typing import Union, cast
+import unittest
+from unittest import SkipTest
+
+from absl.testing import absltest
+from absl.testing import parameterized
+import jax
+from jax import (device_put, grad, jit, jvp, linearize, make_jaxpr, pmap, vmap)
+from jax import lax
+from jax import random
+from jax._src import api as src_api
+from jax._src import array
+from jax._src import config
+from jax._src import core
+from jax._src import dtypes
+from jax._src import pmap as pmap_lib
+from jax._src import stages
+from jax._src import test_util as jtu
+from jax._src.internal_test_util import lax_test_util
+from jax._src.lax import parallel
+from jax._src.sharding import IndivisibleError
+from jax._src.util import safe_map, safe_zip
+import jax.numpy as jnp
+import jax.scipy.linalg
+import numpy as np
+
+jtu.request_cpu_devices(8)
+
+
+compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
+
+def all_bdims(*shapes):
+  bdims = (it.chain([cast(Union[int, None], None)], range(len(shape) + 1))
+           for shape in shapes)
+  return (t for t in it.product(*bdims) if not all(e is None for e in t))
+
+def out_bdims(shape):
+  return (d[0] for d in all_bdims(shape) if d[0] is not None)
+
+
+def add_bdim(bdim_size, bdim, shape):
+  shape = list(shape)
+  if bdim is not None:
+    shape.insert(bdim, bdim_size)
+  return tuple(shape)
+
+def slicer(x, bdim):
+  if bdim is None:
+    return lambda _: x
+  else:
+    return lambda i: lax.index_in_dim(x, i, bdim, keepdims=False)
+
+def args_slicer(args, bdims):
+  slicers = safe_map(slicer, args, bdims)
+  return lambda i: [sl(i) for sl in slicers]
+
+ignore_jit_of_pmap_warning = partial(
+  jtu.ignore_warning, message=".*jit-of-pmap.*")
+
+def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
+                                devices=None, sharded_dim_size=None):
+  if input_data is None:
+    input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
+
+  if devices is None:
+    devices = jax.devices()
+
+  if in_axes is None:
+    mesh = jax.sharding.Mesh(np.array(devices), ('batch',))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+  else:
+    mesh = jax.sharding.Mesh(np.array(devices), ('batch',))
+    sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec(*(
+            (None,) * in_axes + ('batch',) +
+            (None,) * (len(input_shape) - in_axes - 1))))
+
+  return array.make_array_from_callback(
+      input_shape, sharding, lambda idx: input_data[idx]), input_data
+
+
+@jtu.pytest_mark_if_available('multiaccelerator')
+@jtu.with_config(jax_legacy_prng_key="allow")
+class PythonPmapTest(jtu.JaxTestCase):
+
+
+  def _getMeshShape(self, device_mesh_shape):
+    device_count = jax.device_count()
+    if any(size == -1 for size in device_mesh_shape):
+      try:
+        return np.arange(device_count).reshape(device_mesh_shape).shape
+      except ValueError as err:
+        msg = "device mesh shape {} not compatible with device count {}"
+        raise SkipTest(msg.format(device_mesh_shape, device_count)) from err
+    else:
+      if device_count % math.prod(device_mesh_shape):
+        msg = "device mesh size {} does not divide available device count {}"
+        raise SkipTest(msg.format(math.prod(device_mesh_shape), device_count))
+      else:
+        return device_mesh_shape
+
+  def testBasic(self):
+    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x - np.sum(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testDefaultDeviceOrdering(self):
+    # Users rely on the fact that the default order of jax.devices() matches
+    # the default order of pmap for single-host jobs.
+    device_order = jax.devices()
+    pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
+    self.assertListEqual(device_order, list(pmap_sharding._device_assignment))
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_device_put_sharded_deprecated(self):
+    # TODO(dsuo): update when we accelerate device_put_sharded/device_put_replicated internally
+    try:
+      _ = jax.device_put_sharded
+      _ = jax.device_put_replicated
+      raise unittest.SkipTest("Skipping because functions are available.")
+    except AttributeError:
+      pass
+
+    with self.assertRaisesRegex(AttributeError, "jax.device_put_sharded is deprecated"):
+      _ = jax.device_put_sharded
+
+    with self.assertRaisesRegex(AttributeError, "jax.device_put_replicated is deprecated"):
+      _ = jax.device_put_replicated
+
+  @jtu.thread_unsafe_test()
+  def testDefaultDeviceOrderingAfterClearBackends(self):
+    # Test that clear_backends() properly drops cached PyDevice objects in pmap
+    # so that pointer-based __eq__ doesn't fail.
+    # Execute pmap first to populate the cache
+    f = pmap(lambda x: x)
+    f(np.arange(jax.device_count()))
+
+    src_api.clear_backends()
+    gc.collect()
+    device_order_after = jax.devices()
+
+    pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
+    self.assertListEqual(
+        device_order_after, list(pmap_sharding._device_assignment)
+    )
+
+  def testLowerCompile(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = f(x)
+    lowered = f.lower(x)
+    compiled = lowered.compile()
+    ans = compiled(x)
+    self.assertAllClose(ans, expected)
+
+    # It's a pair of: (positional args, as a tuple of their structures, kwargs).
+    for obj in [lowered, compiled]:
+      self.assertFalse(obj._no_kwargs)
+      self.assertEqual(obj.in_tree, jax.tree.flatten(((0,), {}))[1])
+      # Compare shape/dtype only; sharding may differ with pmap_shmap_merge.
+      ((aval,), kwargs) = obj.in_avals
+      self.assertEqual(kwargs, {})
+      self.assertEqual(aval.shape, x.shape)
+      self.assertEqual(aval.dtype, x.dtype)
+
+  def testLowerCompileInTreeMismatch(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f_exe = f.lower(x).compile()
+    self.assertRaisesRegex(
+        TypeError,
+        'Function compiled with input pytree does not match the input pytree it'
+        ' was called with',
+        lambda: f_exe([x]))
+
+  def testLowerCompileTrivial(self):
+    f = pmap(lambda x: x, axis_name='i')
+    x = np.arange(jax.device_count(), dtype=np.float32)
+    expected = f(x)
+    f_exe = f.lower(x).compile()
+    ans = f_exe(x)
+    self.assertAllClose(ans, expected)
+
+  def testLowerCompileTrivialInTreeMismatch(self):
+    f = pmap(lambda x: x, axis_name='i')
+    x = np.arange(jax.device_count(), dtype=np.float32)
+    f_exe = f.lower(x).compile()
+    self.assertRaisesRegex(
+        TypeError,
+        'Function compiled with input pytree does not match the input pytree it'
+        ' was called with',
+        lambda: f_exe([x]))
+
+  def testLowerCompileArgTypeMismatch(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=int).reshape(shape)
+    x_f32 = x.astype(jnp.float32)
+    x_i32 = x.astype(jnp.int32)
+    f_exe = f.lower(x_f32).compile()
+    expected_regex = (
+        r'Argument types differ .*'
+        r'The mismatches are:\n'
+        r"Argument 'flat_args\[0\]' compiled with.*float32.*and called with.*int32.*"
+    )
+    self.assertRaisesRegex(
+        TypeError,
+        expected_regex,
+        lambda: f_exe(x_i32))
+
+  def testLowerCompileMultiArg(self):
+    f = pmap(lambda x, y: x - lax.pmean(y, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = y = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = f(x, y)
+    f_exe = f.lower(x, y).compile()
+    ans = f_exe(x, y)
+    self.assertAllClose(ans, expected)
+
+  def testLowerCompileTrivialMultiArg(self):
+    f = pmap(lambda x, y: (x, y), axis_name='i')
+    x = y = np.arange(jax.device_count(), dtype=np.float32)
+    expected = f(x, y)
+    f_exe = f.lower(x, y).compile()
+    ans = f_exe(x, y)
+    self.assertAllClose(ans, expected)
+
+  def testLowerAsText(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x)
+    self.assertIsInstance(f.as_text(), str)
+    self.assertIsInstance(f.as_text(dialect='hlo'), str)
+    self.assertIsInstance(f.as_text(dialect='stablehlo'), str)
+
+  def testLowerCompilerIR(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x)
+    self.assertIsNotNone(f.compiler_ir())
+    self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
+    self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
+
+  def testLowerCompileCompilerIR(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    self.assertIsNotNone(f.runtime_executable())
+
+  def testLowerCompileAsText(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    self.assertIsInstance(f.as_text(), (str, type(None)))
+
+  def testLowerCostAnalysis(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x)
+    f.cost_analysis()  # doesn't raise
+
+  def testLowerCompileCostAnalysis(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    f.cost_analysis()  # doesn't raise
+
+  def testLowerCompileMemoryAnalysis(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    f.memory_analysis()  # doesn't raise
+
+  def testLowerCompileExecutable(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    self.assertIsNotNone(f.runtime_executable())
+
+  def test_jit_lower_compile_with_compiler_options(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+
+    lowered.compile(            # doesn't crash
+        compiler_options={"xla_embed_ir_in_executable": True})
+
+  def test_jit_lower_compile_with_compiler_options_invalid(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+
+    self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'",
+        lambda: lowered.compile(
+            compiler_options={"invalid_key": "invalid_value"}))
+
+    self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, "is not a valid bool value.",
+        lambda: lowered.compile(
+            compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
+
+  def test_pmap_replicated_copy(self):
+    # https://github.com/jax-ml/jax/issues/17690
+    inp = jnp.arange(jax.device_count())
+    x = jax.pmap(lambda x: x, in_axes=0, out_axes=None)(inp)
+    out = jnp.copy(x)
+    self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
+    self.assertArraysEqual(out, inp[0])
+
+  def test_jit_lower_compile_with_compiler_options_multiple(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+
+    l1 = lowered.compile()
+    l2 = lowered.compile(
+        compiler_options={"xla_embed_ir_in_executable": True})
+    l3 = lowered.compile(
+        compiler_options={"xla_embed_ir_in_executable": False})
+
+    # Ideally we could test that these objects are different only in
+    # that they respect the different options. Object identity is a
+    # heuristic proxy for that.
+    self.assertTrue(l1 is not l2)
+    self.assertTrue(l1 is not l3)
+    self.assertTrue(l2 is not l3)
+
+    # We should still error on invalid options after some valid compiles
+    self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'",
+        lambda: lowered.compile(
+            compiler_options={"invalid_key": "invalid_value"}))
+
+  def testLowerShapedArray(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    x_shape = core.ShapedArray(x.shape, x.dtype)
+    ans = f.lower(x_shape).compile()(x)
+    self.assertAllClose(ans, f(x))
+
+  def testLowerHasReplicaAttributes(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    num_devices = jax.device_count()
+    shape = (num_devices, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+    hlo = lowered.as_text("stablehlo")
+    self.assertIn(f'mhlo.num_partitions = {num_devices}', hlo)
+    self.assertIn('mhlo.num_replicas = 1', hlo)
+
+  def testMean(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x - np.broadcast_to(np.mean(x, 0), x.shape)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGather(self):
+    f = pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.array([x] * jax.device_count())
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherBool(self):
+    f = pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    x = (x % 2).astype(np.bool_)
+    expected = np.array([x] * jax.device_count())
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherNegativeAxis(self):
+    f = pmap(lambda x: lax.all_gather(x, 'i', axis=-1), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.array([x.T] * jax.device_count())
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherTiled(self):
+    f = pmap(lambda x: lax.all_gather(x, 'i', tiled=True), axis_name='i')
+
+    device_count = jax.device_count()
+    shape = (device_count, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.array([x] * device_count).reshape(device_count, -1)
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherTiledNegativeAxis(self):
+    f = pmap(lambda x: lax.all_gather(x, 'i', tiled=True, axis=-1),
+                  axis_name='i')
+
+    device_count = jax.device_count()
+    shape = (device_count, 4, 3)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.array([x.transpose(1, 0, 2).reshape(4, -1)] * device_count)
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.named_parameters([
+    ('Gather', lax.all_gather),
+    ('ReduceScatter', lax.psum_scatter)
+  ])
+  def testVmapOf(self, prim):
+    f = pmap(partial(prim, axis_name='i'), axis_name='i')
+
+    device_count = jax.device_count()
+    shape = (4, device_count, device_count)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    self.assertAllClose(vmap(f)(x), jnp.stack([f(xs) for xs in x], axis=0))
+
+  def testReduceScatter(self):
+    f = pmap(lambda x: lax.psum_scatter(x, 'i'), axis_name='i')
+
+    device_count = jax.device_count()
+    shape = (device_count, device_count)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.sum(x, axis=0)
+    ans = f(x)
+    for i, actual in enumerate(ans):
+      self.assertAllClose(actual, expected[i])
+
+  def testReduceScatterTiled(self):
+    f = pmap(lambda x: lax.psum_scatter(x, 'i', tiled=True), axis_name='i')
+
+    device_count = jax.device_count()
+    shape = (device_count, 4 * device_count)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.sum(x, axis=0)
+    ans = f(x)
+    scatter_len = len(expected) // device_count
+    for i, actual in enumerate(ans):
+      self.assertAllClose(actual,
+                          expected[i * scatter_len:(i + 1) * scatter_len])
+
+  def testReduceScatterReplicaGroupsTiled(self):
+    replicas = jax.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest
+    axis_index_groups = [[i for i in range(jax.device_count()) if i % 2 == 0],
+                         [i for i in range(jax.device_count()) if i % 2 != 0]]
+    f = lambda x: lax.psum_scatter(
+        x, 'i', axis_index_groups=axis_index_groups, tiled=True)
+    f = pmap(f, axis_name='i')
+
+    shape = (replicas, 4 * replicas)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    ans = f(x)
+
+    group_1_result = np.sum(x[0::2,:], axis=0)
+    group_2_result = np.sum(x[1::2,:], axis=0)
+    # the result is scattered over (replicas // 2) devices
+    scatter_len = len(group_1_result) * 2 // replicas
+
+    for i, actual in enumerate(ans):
+      expected = group_1_result if i % 2 == 0 else group_2_result
+      self.assertAllClose(
+          actual, expected[i // 2 * scatter_len:(i // 2 + 1) * scatter_len])
+
+  def testTrees(self):
+    ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
+    def protate(x, axis_name):
+      n = lax.axis_size(axis_name)
+      return lax.ppermute(x, axis_name, [(i, (i + 1) % n) for i in range(n)])
+
+    tree_f = lambda f: partial(jax.tree.map, f)
+    jax_f = lambda p: pmap(lambda x: p(x, 'i'), 'i')
+    np_f = lambda p: tree_f(lambda x: np.broadcast_to(p(x, 0), x.shape))
+    np_transpose = tree_f(np.transpose)
+    np_rotate = tree_f(lambda x: np.concatenate([x[-1:], x[:-1]]))
+
+    n = jax.device_count()
+    x = {'a': np.arange(1 * n * n, 2 * n * n).reshape([n, n]),
+         'b': np.arange(2 * n * n, 3 * n * n).reshape([n, n]),
+         'c': np.arange(4 * n * n, 5 * n * n).reshape([n, n])}
+
+    assert_allclose = partial(jax.tree.map,
+                              partial(self.assertAllClose, check_dtypes=False))
+    assert_allclose(jax_f(lax.pmax)(x), np_f(np.max)(x))
+    assert_allclose(jax_f(lax.pmin)(x), np_f(np.min)(x))
+    assert_allclose(jax_f(lax.psum)(x), np_f(np.sum)(x))
+    assert_allclose(jax_f(lax.pmean)(x), np_f(np.mean)(x))
+    assert_allclose(jax_f(ptranspose)(x), np_transpose(x))
+    assert_allclose(jax_f(protate)(x), np_rotate(x))
+
+  def testCollectivesWithTreesOfDifferentDtypes(self):
+    n = len(jax.devices())
+    x = {'a': np.arange(1 * n * n, 2 * n * n, dtype=np.float32).reshape([n, n]),
+         'b': np.arange(2 * n * n, 3 * n * n, dtype=np.int32).reshape([n, n]),
+         'c': np.arange(4 * n * n, 5 * n * n, dtype=np.float32).reshape([n, n]),
+         'd': np.arange(6 * n * n, 7 * n * n, dtype=np.int32).reshape([n, n])}
+    tree_f = lambda f: partial(jax.tree.map, f)
+    jax_f = lambda p: pmap(lambda x: p(x, 'i'), 'i')
+    np_f = lambda p: tree_f(lambda x: np.broadcast_to(p(x, 0), x.shape))
+    assert_allclose = partial(jax.tree.map,
+                              partial(self.assertAllClose, check_dtypes=False))
+    assert_allclose(jax_f(lax.pmax)(x), np_f(np.max)(x))
+    assert_allclose(jax_f(lax.pmin)(x), np_f(np.min)(x))
+    assert_allclose(jax_f(lax.psum)(x), np_f(np.sum)(x))
+    assert_allclose(jax_f(lax.pmean)(x), np_f(np.mean)(x))
+
+  def testComplexPsum(self):
+    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+
+    shape = (jax.device_count(), 4 * 2)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape).view(np.complex64)
+    expected = x - np.sum(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.sample_product(
+    split_axis=list(range(2)),
+    concat_axis=list(range(2)),
+    dtype=lax_test_util.all_dtypes,
+  )
+  def testAllToAll(self, split_axis, concat_axis, dtype):
+    pmap_in_axis = 0
+    shape = (jax.device_count(),) * 3
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis, concat_axis)
+    y = f(x)
+    if pmap_in_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
+
+  def testMismatchedAxisSizes(self):
+    n = jax.device_count()
+    f = pmap(lambda x, y: x + y)
+    with self.assertRaises((IndivisibleError, ValueError)):
+      f(self.rng().randn(n), self.rng().randn(n - 1))
+
+  def testInAxesPyTreePrefixMismatchError(self):
+    x = jnp.array([3.14])
+    f = pmap(lambda x, y: x, in_axes=((0, 0, 0), 0))
+    with self.assertRaisesRegex(ValueError, re.escape("pmap in_axes[0][0]")):
+      f((x, x), x)
+
+  def testInAxesPyTreePrefixMismatchErrorKwargs(self):
+    x = jnp.array([3.14])
+    f = pmap(lambda x, y: x, in_axes=((0, 0), 0))
+    with self.assertRaisesRegex(
+        ValueError, re.escape("each argument passed by keyword is mapped")):
+      f(x=(x, x), y=x)
+
+  def testOutAxesPyTreePrefixMismatchError(self):
+    x = jnp.array([3.14])
+    f = jax.pmap(lambda x, y: ((x, x), x), out_axes=((0, 0, 0), 0))
+    regex = 'pytree structure error: different lengths of tuple at key path.*'
+    with self.assertRaisesRegex(ValueError, regex):
+      f(x, x)
+
+  def testPartiallyMapped(self):
+    f = pmap(lambda x, y: x, in_axes=(None, 0))
+    g = pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
+
+    mesh_shape = (jax.device_count(),)
+    shape = mesh_shape + (4,)
+    x = np.array(3., dtype=np.float32)
+    y = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    f_expected = np.broadcast_to(x, mesh_shape)
+    f_ans = f(x, y)
+    self.assertAllClose(f_ans, f_expected)
+    self.assertIsInstance(f_ans, array.ArrayImpl)
+    self.assertLen(f_ans.sharding.spec, 1)
+    axis = f_ans.sharding.spec[0]
+    self.assertEqual(axis, f_ans.sharding.mesh.axis_names[0])
+
+    g_expected = np.broadcast_to(x - np.sum(y, 0, keepdims=True), shape)
+    g_ans = g(x, y)
+    self.assertAllClose(g_ans, g_expected)
+    self.assertIsInstance(g_ans, array.ArrayImpl)
+    self.assertLen(g_ans.sharding.spec, 1)
+    axis = g_ans.sharding.spec[0]
+    self.assertEqual(axis, g_ans.sharding.mesh.axis_names[0])
+
+  def testJvpAndPartialEval(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return jnp.sin(x)
+
+    def splitjvp(x):
+      _, jvp = linearize(f, x)
+      return jvp(jnp.ones_like(x))
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.cos(x)
+
+    ans = splitjvp(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    make_jaxpr(splitjvp)(x)  # doesn't crash
+
+  def testGradBasic(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return jnp.sin(x)
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = grad(lambda x: jnp.sum(jnp.sin(x)))(x)
+    expected = grad(lambda x: jnp.sum(f(x)))(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGradOfPsum(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.psum(x, axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
+
+  def testGradOfJvp(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return jnp.sin(x)
+
+    def splitjvp(x):
+      _, jvp = linearize(f, x)
+      return jvp(jnp.ones_like(x))
+
+    fun = lambda x: jnp.sum(jvp(jnp.sin, (x,), (jnp.ones_like(x),))[1])
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = grad(lambda x: jnp.sum(splitjvp(x)))(x)
+    expected = grad(fun)(x)
+    self.assertAllClose(ans, expected)
+
+  def testTwoArgsGrad(self):
+    def f(x, y):
+      return lax.psum(5. * jnp.cos(x) * jnp.sin(y), 'i')
+    f = pmap(f, 'i')
+
+    def g(x, y):
+      tot = jnp.sum(5. * jnp.cos(x) * jnp.sin(y))
+      return tot * jnp.ones_like(x)  # broadcast to map like pjit does
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    y = 4 + x
+    ans = grad(lambda x, y: jnp.sum(g(x, y)))(x, y)
+    expected = grad(lambda x, y: jnp.sum(g(x, y)))(x, y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testArrays(self):
+    inner_f = lambda x: 2 * x
+    f = pmap(inner_f, axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    # test that we can pass in and out Arrays
+    y = f(x)
+    self.assertIsInstance(y, jax.Array)
+    self.assertIsInstance(y, array.ArrayImpl)
+    self.assertNotIsInstance(y, np.ndarray)
+    self.assertAllClose(y, 2 * x, check_dtypes=False)
+    z = f(y)
+    self.assertIsInstance(z, array.ArrayImpl)
+    self.assertNotIsInstance(z, np.ndarray)
+    self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
+
+    # test that we can pass in a regular Array
+    y = f(device_put(x))
+    self.assertIsInstance(y, array.ArrayImpl)
+    self.assertAllClose(y, 2 * x, check_dtypes=False)
+
+    # test that we can pass an Array to a regular jit computation
+    z = y + y
+    self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
+
+    # test that we can handle device movement on dispatch
+    bufs = y._arrays[::-1]
+    devices = [list(b.devices())[0] for b in bufs]
+    mesh = jax.sharding.Mesh(devices, 'i')
+    sharding = jax.sharding.NamedSharding(mesh, y.sharding.spec)
+    f = pmap(inner_f, axis_name='i', devices=devices)
+    y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
+    z = f(y)
+    self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
+
+    # test that the repr doesn't crash
+    repr(z)
+
+    # test that we can lexically capture a sda as a constant.
+    g = jit(lambda z: z + y)
+    self.assertAllClose(g(7), y + 7)
+
+  # Tests edge cases in lax._reshape_sharded_device_array
+  @parameterized.named_parameters(
+      {"testcase_name": f"_in={in_shape}_out={out_shape}"
+       .replace(" ", ""),
+       "in_shape": in_shape, "out_shape": out_shape}
+      for in_shape, out_shape in [
+          [(1,1), (1,)], [(1,), (1,1)], [(1,), ()]
+      ])
+  def testArrayReshape(self, in_shape, out_shape):
+    if jax.device_count() < max(in_shape[:1] + out_shape[:1]):
+      raise SkipTest("not enough devices")
+
+    x = np.arange(math.prod(in_shape)).reshape(in_shape)
+    sharded_x = pmap(lambda x: x)(x)
+    self.assertAllClose(sharded_x.reshape(out_shape), x.reshape(out_shape),
+                        check_dtypes=False)
+
+  def testPsumConstantReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest
+    axis_index_groups = np.arange(replicas).reshape(
+      2, replicas // 2).tolist()
+    f = lambda x: x - lax.psum(2., 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected_psum = 2. * replicas // 2
+    expected = x - expected_psum
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("tpu")
+  def testPsumUnevenReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas <= 2:
+      raise SkipTest("Test expected devices greater than 2.")
+    axis_index_groups = [[0,1], np.arange(2,replicas)]
+    f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    def sum_helper(a):
+      return np.broadcast_to(a.sum(0, keepdims=True),
+                              (len(a), x.shape[1]))
+    expected_psum_1 = sum_helper(x[0:2])
+    expected_psum_2 = sum_helper(x[2:])
+    expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected = x - expected_psum
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPsumReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest
+    axis_index_groups = np.arange(replicas).reshape(
+      2, replicas // 2).tolist()
+    f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    def sum_helper(a):
+      return np.broadcast_to(a.sum(0, keepdims=True),
+                              (replicas // 2, x.shape[1]))
+    expected_psum_1 = sum_helper(x[:replicas // 2])
+    expected_psum_2 = sum_helper(x[replicas // 2:])
+    expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected = x - expected_psum
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest("Test expected an even number of devices greater than 1.")
+
+    axis_index_groups = np.arange(replicas, dtype=np.int32)
+    axis_index_groups = axis_index_groups.reshape((replicas // 2, 2)).T
+    axis_index_groups = axis_index_groups.tolist()
+
+    f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = f(x)
+
+    group_1_result = x[0::2]
+    group_2_result = x[1::2]
+    expected = np.empty((replicas, replicas // 2, x.shape[1]))
+    expected[0::2] = group_1_result
+    expected[1::2] = group_2_result
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherReplicaGroupsInterleaved(self):
+    replicas = jax.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest("Test expected an even number of devices greater than 1.")
+
+    indexes = np.arange(replicas)
+    indexes = np.concatenate([indexes[::2], indexes[1::2]])
+    axis_index_groups = indexes.reshape(2, replicas // 2).tolist()
+
+    f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = f(x)
+
+    expected = np.zeros((replicas, replicas // 2, x.shape[1]))
+    expected[::2] = x[::2]
+    expected[1::2] = x[1::2]
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.named_parameters(it.chain.from_iterable([
+      (name, prim, False, False),
+      (name + 'Tiled', prim, True, False),
+      (name + 'IndexGroups', prim, False, True),
+    ] for name, prim in
+    (('Gather', lax.all_gather), ('ReduceScatter', lax.psum_scatter))
+  ))
+  def testGradOf(self, prim, tiled, use_axis_index_groups):
+    axis_index_groups = None
+    devices = jax.devices()
+
+    if use_axis_index_groups:
+      if len(devices) < 2:
+        raise SkipTest("Need at least two devices")
+      axis_index_groups = [(l.id, r.id)
+                           for l, r in np.asarray(devices).reshape(-1, 2)]
+
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return prim(x, axis_name='i', tiled=tiled,
+                  axis_index_groups=axis_index_groups)
+
+    shape = (len(devices), 2 if axis_index_groups else jax.device_count())
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcast(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    f = pmap(f, 'i')
+    x = jnp.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [0] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastVmap(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    x = np.arange(device_count * 16, dtype=np.float32)
+    x = x.reshape((device_count, 4, 4))
+    ans = pmap(vmap(f), 'i')(x)
+    expected = jnp.broadcast_to(x[0:1], x.shape)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  def testCollectiveBroadcastGrad(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    x = np.arange(device_count, dtype=np.float32)
+    ans = pmap(grad(f), 'i')(x)
+    expected = np.zeros_like(x)
+    expected[0] = device_count
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testCollectivePermute(self):
+    device_count = jax.device_count()
+    rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
+    f = lambda x: lax.ppermute(x, perm=rotation, axis_name='i')
+    f = pmap(f, 'i')
+    x = jnp.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.roll(x, shift=1, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu")
+  def testCollectivePermuteGrad(self):
+    device_count = jax.device_count()
+    shift_right = [(i, (i + 1)) for i in range(device_count - 1)]
+    f = lambda x: lax.ppermute(x, perm=shift_right, axis_name='i')
+    y = np.pi + np.arange(device_count, dtype=np.float32)
+    g = lambda x: jnp.sum(y * pmap(f, 'i')(x))
+
+    x = np.arange(device_count, dtype=np.float32)
+    ans = grad(g)(x)
+    expected = np.concatenate([np.pi + np.arange(1, device_count), [0]])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testCollectivePermuteCyclicGrad(self):
+    device_count = jax.device_count()
+    shift_right = [(i, (i + 1) % device_count) for i in range(device_count)]
+    f = lambda x: lax.ppermute(x, perm=shift_right, axis_name='i')
+    y = np.pi + np.arange(device_count, dtype=np.float32)
+    g = lambda x: jnp.sum(y * pmap(f, 'i')(x))
+
+    x = np.arange(device_count, dtype=np.float32)
+
+    ans = grad(g)(x)
+    expected = np.roll(np.pi + np.arange(device_count), -1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(g, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2)
+
+  def testCollectivePermuteCyclicWithPShuffle(self):
+    device_count = jax.device_count()
+    values = np.arange(device_count)
+    shift_right = [(i - 1) % device_count for i in range(device_count)]
+    f = lambda x: lax.pshuffle(x, perm=shift_right, axis_name='i')
+    expected = np.roll(values, 1)
+    ans = np.asarray(pmap(f, "i")(values))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPShuffleWithBadPerm(self):
+    device_count = jax.device_count()
+    bad_perm = list(range(device_count))
+    bad_perm[0] = 1
+    f = lambda x: lax.pshuffle(x, perm=bad_perm, axis_name='i')
+    g = lambda: pmap(f, "i")(np.arange(device_count))
+    self.assertRaisesRegex(
+      ValueError,
+      "`perm` does not represent a permutation: \\[1.*\\]", g)
+
+  def testPpermuteWithZipObject(self):
+    # https://github.com/jax-ml/jax/issues/1703
+    num_devices = jax.device_count()
+    perm = [num_devices - 1] + list(range(num_devices - 1))
+    f = pmap(lambda x: lax.ppermute(x, "i", zip(perm, range(num_devices))), "i")
+    result = f(jnp.arange(num_devices, dtype=jnp.float32))
+    expected = jnp.asarray(perm, dtype=jnp.float32)
+    self.assertAllClose(result, expected)
+
+  def testRule30(self):
+    # This is a test of collective_permute implementing a simple halo exchange
+    # to run a rule 30 simulation: https://en.wikipedia.org/wiki/Rule_30
+    # Halo exchange should be useful in spatially-sharded convolutions and in
+    # other simulations.
+    device_count = jax.device_count()
+
+    def send_right(x, axis_name):
+      left_perm = [(i, (i + 1) % device_count) for i in range(device_count)]
+      return lax.ppermute(x, perm=left_perm, axis_name=axis_name)
+
+    def send_left(x, axis_name):
+      left_perm = [((i + 1) % device_count, i) for i in range(device_count)]
+      return lax.ppermute(x, perm=left_perm, axis_name=axis_name)
+
+    def update_board(board):
+      left = board[:-2]
+      right = board[2:]
+      center = board[1:-1]
+      return lax.bitwise_xor(left, lax.bitwise_or(center, right))
+
+    @partial(pmap, axis_name='i')
+    def step(board_slice):
+      left, right = board_slice[:1], board_slice[-1:]
+      right, left = send_left(left, 'i'), send_right(right, 'i')
+      enlarged_board_slice = jnp.concatenate([left, board_slice, right])
+      return update_board(enlarged_board_slice)
+
+    board = np.zeros(40, dtype=bool)
+    board[board.shape[0] // 2] = True
+    reshaped_board = board.reshape((device_count, -1))
+
+    boards = []
+    def print_board(board):
+      boards.append(''.join('*' if x else ' ' for x in board.ravel()))
+
+    print_board(reshaped_board)
+    for _ in range(9):
+      reshaped_board = step(reshaped_board)
+      print_board(reshaped_board)
+
+    ans = '\n'.join(boards)
+    expected = '\n'.join((
+        '                    *                   ',
+        '                   ***                  ',
+        '                  **  *                 ',
+        '                 ** ****                ',
+        '                **  *   *               ',
+        '               ** **** ***              ',
+        '              **  *    *  *             ',
+        '             ** ****  ******            ',
+        '            **  *   ***     *           ',
+        '           ** **** **  *   ***          ',
+    ))
+
+    print(ans)
+    self.assertEqual(ans, expected)
+
+  def testReduceMax(self):
+    f = pmap(lambda x: x - lax.pmax(x, 'i'), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x - np.max(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testReduceMin(self):
+    f = pmap(lambda x: x - lax.pmin(x, 'i'), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x - np.min(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testDeviceCountError(self):
+
+    device_count = jax.device_count()
+    f = pmap(lambda x: 2 * x)
+    x = jnp.arange(device_count + 1)
+    with self.assertRaises((IndivisibleError, ValueError)):
+      f(x)
+
+    f = pmap(lambda x: 2 * x)
+    x = np.ones((device_count + 1, 10))
+    with self.assertRaises((IndivisibleError, ValueError)):
+      f(x)
+
+    f = pmap(lambda x: pmap(lambda x: 2 * x)(x))
+    x = np.ones((device_count, 2, 10))
+    with self.assertRaises(ValueError):
+      f(x)
+
+  def testPmapConstant(self):
+    device_count = jax.device_count()
+    const = jnp.arange(16, dtype=np.int32)  # distinctive shape
+    f = pmap(lambda x: x + const[15])
+    x = jnp.arange(device_count, dtype=np.int32)
+    expected = x + np.int32(15)
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    if not config.disable_jit.value:
+      self.assertCacheMisses(lambda: f(x),
+                             compilation_after_persistent_cache_miss=0)
+
+    if not config.disable_jit.value:
+      f = pmap(lambda x: x + const[15])
+      x = np.arange(device_count, dtype=np.int32)
+      with jtu.assert_num_jit_and_pmap_compilations(1):
+        ans = f(x)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPmapConstantDevices(self):
+    if jax.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+
+    devices = jax.devices()[:-1]
+    shuffle(devices)
+    f = pmap(lambda x: 3, devices=devices)
+    x = jnp.arange(len(devices))
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
+      ans = f(x)
+    # self.assertEqual(count(), 0)  # TODO(mattjj): don't compile for constants
+    expected = np.repeat(3, len(devices))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # Test that 'ans' was properly replicated across devices.
+    ans_devices = ans.sharding._device_assignment
+    # TODO(mattjj,sharadmv): fix physical layout with eager pmap, remove 'if'
+    if not config.disable_jit.value:
+      self.assertEqual(ans_devices, tuple(devices))
+
+  def testPmapConstantError(self):
+
+    with self.assertRaises((IndivisibleError, ValueError)):
+      pmap(lambda x: 3)(jnp.arange(jax.device_count() + 1))
+
+  def testCollectiveConstant(self):
+    device_count = jax.device_count()
+    f = pmap(lambda x: lax.axis_size('i'), 'i')
+    x = jnp.arange(device_count)
+    ans = f(x)
+    expected = np.repeat(device_count, device_count)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testAxisIndex(self):
+    device_count = jax.device_count()
+    f = pmap(lambda x: x + lax.axis_index('i'), 'i')
+    x = jnp.ones(device_count, dtype='int32')
+    ans = f(x)
+    expected = 1 + np.arange(device_count)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testAxisIndexInInitialStyle(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      def body(carry, i):
+        return carry + i + lax.axis_index('i'), None
+      return lax.scan(body, 0, x)[0]
+    device_count = jax.device_count()
+    shape = (device_count, 10)
+    self.assertAllClose(f(jnp.ones(shape, dtype='int32')),
+                        (jnp.arange(device_count, dtype='int32') + 1) * 10)
+
+  def testVmapOfPmap(self):
+    device_count = jax.device_count()
+    f0 = lambda x: x
+    f1 = pmap(f0, axis_name='i')
+    ax = self.rng().randn(2, device_count, 50, 60)
+    bx = vmap(f1)(ax)
+    self.assertAllClose(ax, bx, check_dtypes=False)
+
+  def testVmapOfPmap2(self):
+    N_DEVICES = jax.device_count()
+    keys = random.split(random.PRNGKey(1), 13)  # [13, 2]
+
+    @pmap
+    def g(key):
+      _ = random.normal(key, ())
+      return 0.
+
+    @vmap
+    def s(keys):
+      keys = jax.tree.map(
+          lambda x: jnp.broadcast_to(x, (N_DEVICES,) + x.shape),
+          keys)
+      return g(keys)
+
+    ans = s(keys)  # doesn't crash
+    self.assertEqual(ans.shape, (13, N_DEVICES))
+
+  def testVmapOfPmap3(self):
+    # https://github.com/jax-ml/jax/issues/3399
+    device_count = jax.device_count()
+    if device_count < 2:
+      raise SkipTest("test requires at least two devices")
+
+    def map_version(qs, pts):
+      return jax.lax.map(lambda x: func(x, pts), qs)
+
+    def vmap_version(qs, pts):
+      return jax.vmap(func, in_axes=(0, None))(qs, pts)
+
+    def func(q, pts):
+      q_from_pmap = pmap(lambda x, y: y, in_axes=(0, None))(pts, q)
+      return q, q_from_pmap
+
+    pts = jnp.ones(device_count)
+    qs = jnp.asarray(((0,0), (3,3), (2,2)))
+
+    with ignore_jit_of_pmap_warning():
+      _, expected = map_version(qs, pts)
+    _, ans = vmap_version(qs, pts)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testVmapOfPmapNonLeadingAxis(self):
+    device_count = jax.device_count()
+    f0 = lambda x: x
+    f1 = pmap(f0, axis_name='i')
+    ax = self.rng().randn(device_count, 2, 50, 60)
+    bx = vmap(f1, in_axes=2, out_axes=2)(ax)
+    self.assertAllClose(ax, bx, check_dtypes=False)
+
+  def testVmapOfPmapTuple(self):
+    device_count = jax.device_count()
+    f0 = lambda *x: x
+    f1 = pmap(f0, axis_name='i')
+
+    ax = self.rng().randn(device_count, 2, 50, 60)
+    ay = self.rng().randn(device_count, 30, 2)
+    az1 = self.rng().randn(device_count, 20)
+    az2 = self.rng().randn(2, device_count, 20)
+
+    bx, by, bz = vmap(f1, in_axes=(1, 2, (None, 0)), out_axes=(1, 2, 0))(ax, ay, (az1, az2))
+
+    self.assertAllClose(ax, bx, check_dtypes=False)
+    self.assertAllClose(ay, by, check_dtypes=False)
+
+    bz1, bz2 = bz
+    expected_bz1 = np.broadcast_to(az1, (2,) + az1.shape)
+    self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
+    self.assertAllClose(bz2, bz2, check_dtypes=False)
+
+  def testPswapaxes(self):
+    device_count = jax.device_count()
+    shape = (device_count, 3, device_count, 5)
+    x = np.arange(math.prod(shape)).reshape(shape)
+
+    ans = pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
+    expected = np.swapaxes(x, 0, 2)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGradOfPswapaxes(self):
+    device_count = jax.device_count()
+    shape = (device_count, 1, device_count)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    w = np.arange(device_count, dtype=np.float32)
+
+    @partial(pmap, axis_name='i')
+    def f(x, w):
+      g = lambda x: jnp.sum(lax.pswapaxes(x, 'i', 1) * w)
+      return grad(g)(x)
+
+    ans = f(x, w)
+    expected = np.tile(w, reps=device_count).reshape(shape)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testAllToAllReplicaGroups(self):
+    # If num_devices = 4, these would be the inputs/outputs:
+    # input = [[0, 1], [2, 3], [4, 5], [6, 7]]
+    # axis_index_groups = [[0, 2], [1, 3]]
+    # output = [[0, 4], [2, 6], [1, 5], [3, 7]]
+    #
+    # This is essentially like splitting the number of rows in the input in two
+    # groups of rows, and swapping the two inner axes (axis=1 and axis=2), which
+    # is exactly what the test case checks.
+    device_count = jax.device_count()
+    if device_count % 2 != 0:
+      raise SkipTest('test requires an even number of devices')
+    shape = (device_count, device_count // 2)
+    x = np.arange(math.prod(shape)).reshape(shape)
+
+    axis_index_groups = np.arange(device_count, dtype=np.int32)
+    axis_index_groups = axis_index_groups.reshape((device_count // 2, 2)).T
+    axis_index_groups = axis_index_groups.tolist()
+
+    @partial(pmap, axis_name='i')
+    def fn(x):
+      return lax.all_to_all(x, 'i', 0, 0, axis_index_groups=axis_index_groups)
+
+    expected = np.swapaxes(
+        x.reshape((device_count // 2, 2, device_count // 2)),
+        0, 2).reshape(shape)
+    self.assertAllClose(fn(x), expected, check_dtypes=False)
+
+  def testGradOfAllToAllReplicaGroups(self):
+    device_count = jax.device_count()
+    if device_count % 2 != 0:
+      raise SkipTest('test requires an even number of devices')
+    shape = (device_count, device_count // 2, 1)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    w = np.arange(device_count, dtype=np.float32)
+
+    axis_index_groups = np.arange(device_count, dtype=np.int32)
+    axis_index_groups = axis_index_groups.reshape((2, device_count // 2))
+    axis_index_groups = axis_index_groups.tolist()
+
+    @partial(pmap, axis_name='i')
+    def fn(x, w):
+      g = lambda x: jnp.sum(lax.all_to_all(x, 'i', 0, 1, axis_index_groups=axis_index_groups) * w)
+      return grad(g)(x)
+
+    expected = np.ones_like(x) * w[:, np.newaxis, np.newaxis]
+    expected = np.swapaxes(
+        expected.reshape((2, device_count // 2, device_count // 2)),
+        1, 2).reshape(shape)
+    self.assertAllClose(fn(x, w), expected, check_dtypes=False)
+
+  def testArrayBlockUntilReady(self):
+    x = np.arange(jax.device_count())
+    x = pmap(lambda x: x)(x)
+    x.block_until_ready()  # doesn't crash
+
+  @ignore_jit_of_pmap_warning()
+  def testJitPmapComposition(self):
+    f = lambda x: x - lax.psum(x, 'i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x - np.sum(x, 0)
+
+    ans = jit(pmap(f, 'i'))(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = pmap(jit(f), 'i')(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testCompositionWithJitTwice(self):
+    @jit
+    def f(x):
+      y = jnp.float32(2) * x
+
+      @jit
+      def g(z):
+        return pmap(lambda x: x[jnp.newaxis] * y)(z)
+
+      return g(x)
+
+    f(np.arange(1., dtype='float32').reshape((1, 1)))  # doesn't crash
+
+  @ignore_jit_of_pmap_warning()
+  def testIssue1065(self):
+    # from https://github.com/jax-ml/jax/issues/1065
+    device_count = jax.device_count()
+
+    def multi_step_pmap(state, count):
+      @partial(pmap, axis_name='x')
+      @jit
+      def exchange_and_multi_step(state):
+        return state
+
+      @jit
+      def time_evolution(state):
+        return lax.fori_loop(0, count, lambda i, s: exchange_and_multi_step(s), state)
+
+      return time_evolution(state)
+
+    multi_step_pmap(jnp.zeros((device_count,)), count=1)
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_typed_prng_key_sharded(self):
+    devices = jax.local_devices()
+
+    @partial(jax.pmap, in_axes=0, out_axes=0, axis_size=len(devices),
+             axis_name='i', devices=devices)
+    def fn(key):
+      return jax.random.fold_in(key, 0)
+
+    sharded_key = jax.random.split(jax.random.key(0), len(devices))
+    replicated_key = jax.random.key(1)
+
+    sharded_key = src_api.device_put_sharded(jnp.unstack(sharded_key), devices)
+    replicated_key = src_api.device_put_replicated(replicated_key, devices)
+
+    fn(sharded_key)
+    fn(replicated_key)
+
+  def testArrayGetItem(self):
+    f = lambda x: 2 * x
+    f = pmap(f, axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    y = f(x)
+    self.assertIsInstance(y, jax.Array)
+    self.assertIsInstance(y, array.ArrayImpl)
+
+    z = y[0]  # doesn't crash
+    self.assertAllClose(z, 2 * x[0], check_dtypes=False)
+
+
+  def testManyArgs(self):
+    @pmap
+    def f(args_list):
+      return sum(args_list)
+
+    vals = list(range(500))
+    ndevices = jax.device_count()
+    self.assertAllClose(f([np.array([i] * ndevices) for i in range(500)]),
+                        jnp.array([sum(vals)] * ndevices))
+
+  @jax.default_matmul_precision("float32")
+  def testPostProcessMap2(self):
+    # code from https://github.com/jax-ml/jax/issues/2787
+    def vv(x, y):
+      """Vector-vector multiply"""
+      return jnp.dot(x, y)
+
+    def distributed_matrix_vector(x, y):
+      """Matrix vector multiply. First batch it and then row by row"""
+      fv = lambda z: lax.map(lambda j: vv(j, y), z)
+      res = pmap(fv)(x.reshape((jax.device_count(), -1) + tuple(x.shape[1:])))
+      res = res.reshape(res.shape[0] * res.shape[1], *res.shape[2:])
+      return res
+
+    key = lambda: random.PRNGKey(1)
+    x = random.normal(key(), (80, 50))
+    batched_mvm = vmap(lambda b: distributed_matrix_vector(x, b), in_axes=0)
+    y = random.normal(key(), (10, 50, 1))
+    result = batched_mvm(y)
+    expected = jnp.einsum('ij,njk->nik', x, y)
+    self.assertAllClose(result, expected, check_dtypes=False, atol=1e-3,
+                        rtol=1e-3)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', jax.remat),
+          ('_new', jax.checkpoint),
+      ])
+  def testAxisIndexRemat(self, remat):
+    # https://github.com/jax-ml/jax/issues/2716
+    n = len(jax.devices())
+
+    def f(key):
+      key = random.fold_in(key, jax.lax.axis_index('i'))
+      return random.bernoulli(key, p=0.5)
+
+    keys = random.split(random.PRNGKey(0), n)
+    pmap(remat(f), axis_name='i')(keys)
+
+  def testPmapMapVmapCombinations(self):
+    # https://github.com/jax-ml/jax/issues/2822
+    def vv(x, y):
+      """Vector-vector multiply"""
+      return jnp.dot(x, y)
+
+    def matrix_vector(x, y, parallel=True):
+      """Matrix vector multiply. First batch it and then row by row"""
+      fv = lambda z: lax.map(lambda j: vv(j, y), z)
+      if parallel:
+        # split leading axis in two
+        new_x = x.reshape((jax.device_count(), -1, *x.shape[1:]))
+        # apply map
+        new_res = pmap(fv)(new_x)
+        # reshape back out
+        res = new_res.reshape(x.shape[0], *new_res.shape[2:])
+      else:
+        res = fv(x)
+      return res
+
+    x = random.normal(random.PRNGKey(1), (40, 5))
+    y = random.normal(random.PRNGKey(1), (5, 5))
+
+    result1 = vmap(lambda b: matrix_vector(x, b, True))(y)       # vmap + pmap
+    result2 = lax.map(lambda b: matrix_vector(x, b, False), y)   # map + map
+    with ignore_jit_of_pmap_warning():
+      result3 = lax.map(lambda b: matrix_vector(x, b, True), y)    # map + pmap
+    result4 = jnp.stack([matrix_vector(x, b, False) for b in y])  # none + map
+
+    self.assertAllClose(result1, result2, check_dtypes=False, atol=1e-2, rtol=1e-2)
+    self.assertAllClose(result1, result3, check_dtypes=False, atol=1e-2, rtol=1e-2)
+    self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-2, rtol=1e-2)
+
+  def testPmapAxisNameError(self):
+    # https://github.com/jax-ml/jax/issues/3120
+    a = np.arange(4)[np.newaxis,:]
+    def test(x):
+      return jax.lax.psum(x, axis_name='batch')
+
+    with self.assertRaisesRegex(NameError, "unbound axis name: batch"):
+      pmap(test)(a)
+
+  def testPsumOnBooleanDtype(self):
+    # https://github.com/jax-ml/jax/issues/3123
+    n = jax.device_count()
+    if n > 1:
+      x = jnp.array([True, False])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1, 1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1/2, 1/2])
+    else:
+      x = jnp.array([True])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
+
+  def testJitOfPmapOutputSharding(self):
+    device_count = jax.device_count()
+
+    if device_count == 1 or config.disable_jit.value:
+      raise SkipTest("test requires at least two devices")
+
+    @jax.jit
+    @jax.pmap
+    def foo(x):
+      return x + x
+
+    x = np.ones((2,2,2), dtype=np.float32)
+    for _ in range(10):
+      # Does not crash.
+      with jtu.ignore_warning(
+          message=".*Using jit-of-pmap can lead to inefficient data movement"):
+        x = foo(x)
+
+  @jtu.ignore_warning(
+      message=".*Using jit-of-pmap can lead to inefficient data movement")
+  def testJitOfPmapLowerHasReplicaAttributes(self):
+    device_count = jax.device_count()
+
+    if device_count == 1 or config.disable_jit.value:
+      raise SkipTest("test requires at least two devices")
+
+    @jax.jit
+    @jax.pmap
+    def foo(x):
+      return x + x
+
+    x = np.ones((2,2,2), dtype=np.float32)
+
+    hlo = foo.lower(x).as_text("stablehlo")
+    self.assertIn('mhlo.num_replicas = 1', hlo)
+    self.assertIn('mhlo.num_partitions = 2', hlo)
+
+  def testPsumZeroCotangents(self):
+    # https://github.com/jax-ml/jax/issues/3651
+    def loss(params, meta_params):
+      (net, mpo) = params
+      return meta_params * mpo * net
+
+    def inner(meta_params, params):
+      grads = jax.grad(loss)(params, meta_params)
+      grads = lax.psum(grads, axis_name="i")
+      net_grads, mpo_grads = grads
+      net = params[0] + net_grads
+      mpo = params[1]
+      return mpo * net
+
+    def outer(params):
+      meta_params = jnp.array(4.0)
+      return jax.grad(inner)(meta_params, params)
+
+    params = (jnp.array([2.0]), jnp.array([3.0]))
+    pmap(outer, axis_name='i')(params)  # doesn't crash
+
+    f = pmap(outer, axis_name='i')
+    jtu.check_grads(f, (params,), 2, ["fwd", "rev"], 1e-3, 1e-3)
+
+  @ignore_jit_of_pmap_warning()
+  def test_issue_1062(self):
+    # code from https://github.com/jax-ml/jax/issues/1062 @shoyer
+    # this tests, among other things, whether ShardedDeviceTuple constants work
+    device_count = jax.device_count()
+
+    @jit
+    def multi_step(state, count):
+      return lax.fori_loop(0, count, lambda i, s: s, state)
+
+    @jit
+    def multi_step_pmap(state, count=2):
+      @partial(pmap, axis_name='x')
+      def pmapped_multi_step(state):
+        return multi_step(state, count)
+
+      return pmapped_multi_step(state)
+
+    u = np.ones((device_count, 100))
+    multi_step_pmap(u)  # doesn't crash
+
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_shape={}_axis={}_collective={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          axis, collective.__name__.replace(" ", "")),
+       "shape": shape, "dtype": dtype, "axis": axis,
+       "collective": collective, "bulk_op": bulk_op}
+      for collective, bulk_op in [
+          (parallel.pargmax, jnp.argmax),
+          (parallel.pargmin, jnp.argmin)
+      ]
+      for dtype in [np.float32, np.int32]
+      for shape in [(4,), (2, 2), (2, 4), (4, 2)]
+      for axis in range(len(shape))
+  )
+  def testArgAllReduce(self, shape, dtype, axis, collective, bulk_op):
+    if jax.device_count() < shape[axis]:
+      raise SkipTest(f"test requires at least {shape[axis]} devices")
+    if (jtu.test_device_matches(['cpu']) and
+        np.issubdtype(dtype, np.floating) and
+        len(shape) > 1):
+      raise SkipTest("skipped on cpu due to strange failures")  # TODO(mattjj)
+
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    ans = pmap(lambda x: collective(x, 'i'), in_axes=axis, out_axes=None,
+               axis_name='i')(x)
+    expected = bulk_op(x, axis=axis)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_dtype={}".format(
+          jtu.format_shape_dtype_string((), dtype)),
+       "dtype": dtype}
+      for dtype in [np.float32, np.int32]
+  )
+  def testPmapDtype(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/6022
+    @partial(pmap, axis_name='i')
+    def func(_):
+      return jax.lax.psum(dtype(0), axis_name='i')
+    unused_arg = jnp.arange(jax.device_count())
+    out_dtype = func(unused_arg).dtype
+    self.assertEqual(out_dtype, dtype)
+
+  def test_num_replicas_with_switch(self):
+    # https://github.com/jax-ml/jax/issues/7411
+    def identity(x):
+      return x
+
+    def cond_of_pmap(x):
+      y = lax.cond(True, jax.pmap(identity), jax.pmap(identity), x)
+      return y
+
+    with ignore_jit_of_pmap_warning():
+      cond_of_pmap(jnp.zeros((jax.device_count(), 2)))
+
+  def test_static_argnum_on_method(self):
+
+    class A:
+
+      @partial(pmap, static_broadcasted_argnums=(0,))
+      def my_func_pmap(self, x):
+        return x + 2
+
+    A().my_func_pmap(jnp.asarray([3] * jax.device_count()))
+
+  def test_pmap_error_on_non_hashable_static_argument(self):
+    f = lambda x, y: x + 3
+    pmapped_f = pmap(f, static_broadcasted_argnums=(1,))
+
+    inputs = np.asarray([1] * jax.device_count())
+    with self.assertRaisesRegex(
+        ValueError, "Non-hashable static arguments are not supported.*"):
+      pmapped_f(inputs, np.asarray(1))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{axis_size=}", "axis_size": axis_size}
+      for axis_size in [1, 2])
+  def test_grad_of_pmap_compilation_caching(self, axis_size):
+    if len(jax.local_devices()) < axis_size:
+      raise SkipTest("too few devices for test")
+    if config.disable_jit.value:
+      raise SkipTest("caching doesn't apply with jit disabled")
+
+    @jax.pmap
+    def f(x):
+      return jnp.sin(x)
+
+    # warm-up the cache
+    x = jnp.ones(axis_size)
+    _, f_bwd  = jax.vjp(f, x)
+    _ = f_bwd(x)
+
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
+      _, f_bwd2  = jax.vjp(f, x)
+      _ = f_bwd(x)
+      _ = f_bwd2(x)
+    self.assertEqual(count(), 0)  # cache hits on fwd and bwd
+
+  def testSizeOverflow(self):
+    if config.disable_jit.value:
+      # TODO(sharadmv, mattjj): investigate and fix this issue
+      raise SkipTest("OOMs in eager mode")
+    x = jnp.arange(1)
+    x = pmap(lambda _: jnp.ones([8, 267736, 1024], dtype=jnp.int8))(x)
+    self.assertEqual(x.size, 8 * 267736 * 1024)
+    self.assertEqual(type(x.size), int)
+
+  def test_axis_env_length(self):
+    f = lambda x: jax.pmap(g)(jnp.array([x]))[0]
+    def g(x):
+      assert len(core.get_axis_env().axis_names()) == 1
+      return x
+    jax.grad(f)(3.)  # doesn't fail
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', jax.remat),
+          ('_new', jax.checkpoint),
+      ])
+  def test_remat_of_pmap(self, remat):
+    f = remat(jax.pmap(lambda x: jnp.sin(jnp.sin(x))))
+    jtu.check_grads(f, (jnp.arange(1.),), order=2, modes=["rev"])
+
+    x = jnp.arange(1.)
+    jaxpr = jax.make_jaxpr(jax.linearize(f, x)[1])(x)
+    self.assertIn(' sin ', str(jaxpr))
+    self.assertIn(' cos ', str(jaxpr))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', jax.remat),
+          ('_new', jax.checkpoint),
+      ])
+  def test_remat_of_pmap_policy(self, remat):
+    g = jax.pmap(lambda x: jnp.sin(jnp.sin(x)))
+    x = jnp.arange(1.)
+
+    save_cos = lambda prim, *_, **__: str(prim) == 'cos'
+    f = remat(g, policy=save_cos)
+    _, f_vjp = jax.vjp(f, x)
+    jaxpr = f_vjp.jaxpr
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 0)
+
+    save_sin = lambda prim, *_, **__: str(prim) == 'sin'
+    f = remat(g, policy=save_sin)
+    _, f_vjp = jax.vjp(f, x)
+    jaxpr = f_vjp.jaxpr
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 2)
+
+    save_nothing = lambda prim, *_, **__: False
+    f = remat(g, policy=save_nothing)
+    _, f_vjp = jax.vjp(f, x)
+    jaxpr = f_vjp.jaxpr
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 1)
+    self.assertEqual(jaxpr_text.count(' cos '), 2)
+
+  def test_axis_name_shadowing_with_vmap(self):
+    # vmap-of-pmap with mismatched axis sizes
+    jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
+             axis_name='i')(jax.numpy.ones((2, 1)))  # don't crash
+
+    # vmap-of-pmap with matched axis sizes
+    jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
+             axis_name='i')(jax.numpy.ones((1, 1)))  # don't crash
+
+    # vmap-of-vmap with mismatched axis sizes
+    jax.vmap(jax.vmap(lambda x: 2 * x, axis_name='i'),
+             axis_name='i')(jax.numpy.ones((2, 1)))  # don't crash
+
+    # vmap-of-vmap with matched axis sizes
+    jax.vmap(jax.vmap(lambda x: 2 * x, axis_name='i'),
+             axis_name='i')(jax.numpy.ones((1, 1)))  # don't crash
+
+  @jtu.run_on_devices("cpu")
+  def test_pmap_stack_size(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/20428
+    # pmap isn't particularly important here, but it guarantees that the CPU
+    # client runs the computation on a threadpool rather than inline.
+    if jax.device_count() < 2:
+      raise SkipTest("test requires at least two devices")
+    x = jnp.eye(200)
+    y = jax.pmap(jax.scipy.linalg.expm)(jnp.array([x, x]))
+    y.block_until_ready()  # doesn't crash
+
+  def test_pmap_of_prng_key(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/20392
+    keys = jax.random.split(jax.random.key(0), jax.device_count())
+    result1 = jax.pmap(jax.random.bits)(keys)
+    with jtu.ignore_warning(
+        category=UserWarning, message="The function jit.bits. includes a pmap"):
+      result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
+    self.assertArraysEqual(result1, result2)
+
+
+@jtu.pytest_mark_if_available('multiaccelerator')
+class VmapOfPmapTest(jtu.JaxTestCase):
+
+  # TODO(apaszke)
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name": f"{shapes}_{vmap_in_axes}_{vmap_out_axes}_{pmap_in_axes}_{pmap_out_axes}",
+       "shapes": shapes,
+       "vmap_in_axes": vmap_in_axes, "vmap_out_axes": vmap_out_axes,
+       "pmap_in_axes": pmap_in_axes, "pmap_out_axes": pmap_out_axes
+    } for arg_shapes in s(compatible_shapes)
+      for num_args in s(range(1, 4))
+      for shapes in s(list(it.combinations_with_replacement(arg_shapes, num_args)))
+      for vmap_in_axes in s(all_bdims(*shapes))
+      for pmap_in_axes in s(all_bdims(*shapes))
+      for vmap_out_axes in s(out_bdims(shapes[0]))
+      for pmap_out_axes in s(out_bdims(shapes[0]))
+  )))
+  def testVmapOfPmap(self, shapes, vmap_in_axes, pmap_in_axes, vmap_out_axes, pmap_out_axes):
+    vmapped_size = 3
+    pmapped_size = jax.device_count()
+
+    rng = jtu.rand_default(self.rng())
+
+    def fun(*args):
+      return sum(args)
+
+    final_shapes = map(partial(add_bdim, vmapped_size), vmap_in_axes,
+                       map(partial(add_bdim, pmapped_size), pmap_in_axes, shapes))
+
+    def args_slice(vi, pi):
+      return args_slicer(args_slicer(args, vmap_in_axes)(vi), pmap_in_axes)(pi)
+
+    args = [rng(shape, jnp.float32) for shape in final_shapes]
+    ans = vmap(pmap(fun, in_axes=pmap_in_axes, out_axes=pmap_out_axes),
+               in_axes=vmap_in_axes,
+               out_axes=vmap_out_axes)(*args)
+    expected = np.stack(
+      [np.stack([fun(*args_slice(vi, pi)) for pi in range(pmapped_size)], axis=pmap_out_axes)
+       for vi in range(vmapped_size)],
+      axis=vmap_out_axes)
+    self.assertAllClose(ans, expected)
+
+
+@jtu.pytest_mark_if_available('multiaccelerator')
+class VmapPmapCollectivesTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_collective={collective.__name__}".replace(" ", ""),
+       "collective": collective}
+      for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
+  def testCollectivesWithVmap(self, collective):
+    def f(map1, map2):
+      @partial(map1, axis_name='i')
+      @partial(map2, axis_name='j')
+      def f(x, y):
+        return x + collective(x.dot(y), ('i', 'j'))
+      return f
+
+    if jax.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    x = jnp.ones((2, 2, 64, 64))
+    y = f(jax.vmap, jax.vmap)(x, x)
+    self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_collective={collective.__name__}".replace(" ", ""),
+       "collective": collective}
+      for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
+  def testCollectivesWithVmap2(self, collective):
+    if jtu.device_under_test() == "gpu":
+      raise SkipTest("TODO(b/456133538): Disable on GPUs until we figure out.")
+    def f(map1, map2):
+      @partial(map1, axis_name='i')
+      @partial(map2, axis_name='j')
+      def f(x, y):
+        return x + collective(x.dot(y), ('i', 'j'))
+      return f
+
+    if jax.device_count() < 8:
+      raise SkipTest("test requires at least eight devices")
+    x = jnp.arange(4*2*64*64, dtype=float).reshape(4, 2, 64, 64)
+    y = f(jax.vmap, jax.vmap)(x, x)
+    self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
+
+  def testPPermuteWithVmap(self):
+    perm = [(0, 1), (1, 0)]
+
+    def f(map1, map2):
+      @partial(map1, axis_name='i')
+      @partial(map2)
+      def f(x, y):
+        return x + jax.lax.ppermute(x.dot(y), 'i', perm)
+      return f
+
+    if jax.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    x = jnp.ones((2, 2, 64, 64))
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), f(jax.pmap, jax.vmap)(x, x))
+
+  def testPPermuteAgreesWithVmap(self):
+    if jax.device_count() < 3:
+      raise SkipTest("test requires at least three devices")
+
+    def f(x):
+      return lax.ppermute(x, 'i', [[1, 0], [2, 1], [0, 2]])
+
+    xs = jnp.arange(3) * 10
+    ys = jax.pmap(f, axis_name='i')(xs)
+    zs = jax.vmap(f, axis_name='i')(xs)
+    self.assertAllClose(ys, zs, check_dtypes=True)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
+  def testAllToAllInVmap(self, split_axis, concat_axis, vmap_axis):
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
+
+    def adj(axis, hidden_axes):
+      for hax in sorted(hidden_axes):
+        if hax <= axis:
+          axis += 1
+      return axis
+
+    def reference(x, split_axis, concat_axis, vmap_axis):
+      pmap_axis = 0
+      vmap_axis = adj(vmap_axis, [pmap_axis])
+      ref = x
+
+      # Step 1.
+      # Adjust the split axis to the real tensor layout and move it to
+      # position 1. Since pmap_axis is always 0 we don't have to adjust it,
+      # but we do have to adjust vmap_axis.
+      split_axis = adj(split_axis, [pmap_axis, vmap_axis])
+      ref = jnp.moveaxis(ref, split_axis, pmap_axis + 1)
+      vmap_axis = vmap_axis + (0 if split_axis < vmap_axis else 1)
+      split_axis = pmap_axis + 1  # split_axes == 1
+
+      # Step 2.
+      # Now, we move pmap_axis to the position indicated by concat_axis.
+      concat_axis = adj(concat_axis, [pmap_axis, split_axis, vmap_axis]) - 1
+      ref = jnp.moveaxis(ref, pmap_axis, concat_axis)
+      pmap_axis = 0
+      vmap_axis = vmap_axis - (1 if concat_axis >= vmap_axis else 0)
+      del split_axis, concat_axis
+
+      # Step 3. vmap_axis always ends in position 1, since out_axes=0.
+      ref = jnp.moveaxis(ref, vmap_axis, 1)
+      return ref
+
+    def verify_ref():
+      # Both the reference and the real implementation of all_to_all batching involve
+      # some pretty complicated axis arithmetic, so it would be good to verify that it's
+      # not the case that the test passes because they're both incorrect. Fortunately, it
+      # is quite easy to write out the shape function for this code, and we know
+      # that it should be equivalent to a bunch of transposes, so the code below verifies
+      # that the reference puts the right dimensions in the right places. Note that we
+      # can't do the same comparison on f, since all_to_all wouldn't allow us to swap axes of
+      # different sizes.
+      start_shape = [2, 3, 4, 5, 6]
+      instance_shape = start_shape.copy()
+      pmap_dim_id = instance_shape.pop(0)
+      vmap_dim_id = instance_shape.pop(vmap_axis)
+      split_axis_id = instance_shape.pop(split_axis)
+      instance_shape.insert(concat_axis, pmap_dim_id)
+      expected_shape = (split_axis_id, vmap_dim_id, *instance_shape)
+
+      x = np.ones(start_shape)
+      self.assertEqual(reference(x, split_axis, concat_axis, vmap_axis).shape,
+                       expected_shape)
+
+    verify_ref()
+
+    shape = (jax.device_count(),) * 5
+    x = jnp.arange(math.prod(shape)).reshape(shape)
+    self.assertAllClose(pmap(vmap(f, in_axes=vmap_axis), axis_name='i')(x),
+                        reference(x, split_axis, concat_axis, vmap_axis))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(3), range(3)))
+  def testAllToAllVsVmap(self, split_axis, concat_axis):
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
+
+    shape = (jax.device_count(),) * 4
+    x = jnp.arange(math.prod(shape)).reshape(shape)
+    self.assertAllClose(pmap(f, axis_name='i')(x),
+                        vmap(f, axis_name='i')(x))
+
+
+  @parameterized.named_parameters([
+    ('AllGather', lax.all_gather),
+    ('ReduceScatter', lax.psum_scatter),
+  ])
+  def testWithVmap(self, prim):
+    def f(map1, map2):
+      return map1(map2(partial(prim, axis_name='i')), axis_name='i')
+
+    if jax.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    x = jnp.ones((2, 2, 2, 64))
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x), f(jax.pmap, jax.vmap)(x))
+
+  @parameterized.named_parameters(it.chain.from_iterable([
+    ('AllGather' + ('Tiled' if tiled else ''), lax.all_gather, tiled),
+    ('ReduceScatter' + ('Tiled' if tiled else ''), lax.psum_scatter, tiled),
+  ] for tiled in (False, True)))
+  def testVsVmap(self, prim, tiled):
+    if jax.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    shape = (4, 4, 8)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
+    f = partial(prim, axis_name='i', tiled=tiled)
+    self.assertAllClose(vmap(f, axis_name='i')(x), pmap(f, axis_name='i')(x))
+
+
+@jtu.pytest_mark_if_available('multiaccelerator')
+class PmapWithDevicesTest(jtu.JaxTestCase):
+
+  def testAllDevices(self):
+    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i',
+             devices=jax.devices())
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x - np.sum(x, 0)
+    ans = f(x)
+    self.assertAllClose(ans, expected)
+
+  def testOneDevice(self):
+    if jax.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+
+    d0 = jax.devices()[0]
+    d1 = jax.devices()[1]
+    f = lambda x: jnp.dot(x, x.T)
+    f0 = pmap(f, devices=[d0])
+    f1 = pmap(f, devices=[d1])
+    x = self.rng().rand(1, 500, 500)
+    r0 = f0(x)
+    r1 = f1(x)
+    expected = np.expand_dims(np.dot(x.squeeze(), x.squeeze().T), 0)
+    self.assertAllClose(r0, expected, atol=1e-6, rtol=1e-3)
+    self.assertAllClose(r1, expected, atol=1e-6, rtol=1e-3)
+
+  def testNoDevicesError(self):
+    with self.assertRaisesRegex(
+        ValueError, "'devices' argument to pmap must be non-empty, or None."
+    ):
+      _ = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
+
+  def testBadAxisSizeError(self):
+    if jax.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+    raise SkipTest('jit(shmap) does not raise error.')
+
+    f = pmap(lambda x: lax.psum(x, 'i'), axis_name='i',
+             devices=jax.devices())
+    with self.assertRaisesRegex(
+        ValueError, r"Leading axis size of input to pmapped function must "
+        r"equal the number of local devices passed to pmap. Got axis_size=1, "
+        r"num_local_devices=\d."):
+      f(jnp.ones(1))
+
+    with self.assertRaisesRegex(
+        ValueError, r"Leading axis size of input to pmapped function must "
+        r"equal the number of local devices passed to pmap. Got axis_size=\d, "
+        r"num_local_devices=\d."):
+      f(jnp.ones(jax.device_count() + 1))
+
+  def testBadAxisSizeErrorNested(self):
+    if config.disable_jit.value:
+      raise SkipTest("error doesn't apply when jit is disabled")
+    raise SkipTest('Ignore nested pmap when `pmap_shmap_merge=True`.')
+    f = pmap(pmap(lambda x: lax.psum(x, ('i', 'j')),
+                  axis_name='j'),
+             axis_name='i',
+             devices=[jax.local_devices()[0]])
+    with self.assertRaisesRegex(
+        ValueError,
+        r"pmapped function requires 4 local devices to run due to nested "
+        r"pmapped or other parallel functions, but only 1 are available."):
+      f(jnp.ones((1, 4)))
+
+  def testNestedPmaps(self):
+    if jax.device_count() % 2 != 0:
+      raise SkipTest
+    if config.disable_jit.value:
+      raise SkipTest("disable_jit requires num devices to equal axis size")
+    raise SkipTest('Ignore nested pmap when `pmap_shmap_merge=True`.')
+
+    # Devices specified in outer pmap are OK
+    @partial(pmap, axis_name='i', devices=jax.devices())
+    def foo(x):
+      @partial(pmap, axis_name='j')
+      def bar(y):
+        return lax.psum(y, 'j')
+      return bar(x)
+
+    x = jnp.ones((jax.device_count() // 2, 2))
+    ans = foo(x)
+    expected = x * 2
+    self.assertAllClose(ans, expected)
+
+  def testNestedPmapsBools(self):
+    if jax.device_count() % 2 != 0:
+      raise SkipTest
+    if config.disable_jit.value:
+      raise SkipTest("disable_jit requires num devices to equal axis size")
+    raise SkipTest('Ignore nested pmap when `pmap_shmap_merge=True`.')
+
+    # Devices specified in outer pmap are OK
+    @partial(pmap, axis_name='i', devices=jax.devices())
+    def foo(x):
+      @partial(pmap, axis_name='j')
+      def bar(y):
+        return jnp.logical_not(y)
+      return bar(x)
+
+    x = jnp.ones((jax.device_count() // 2, 2), jnp.bool_)
+    ans = foo(x)
+    expected = jnp.zeros((jax.device_count() // 2, 2), jnp.bool_)
+    self.assertAllClose(ans, expected)
+
+  def testNestedPmapsError(self):
+    raise SkipTest('Ignore nested pmap when `pmap_shmap_merge=True`.')
+    # Devices specified in inner pmap not OK
+    @partial(pmap, axis_name='i')
+    def foo(x):
+      @partial(pmap, axis_name='j', devices=jax.devices())
+      def bar(y):
+        return lax.psum(y, 'j')
+      return bar(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Nested pmap with explicit devices argument."):
+      foo(jnp.ones((jax.device_count(), 1)))
+
+  def testJitInPmap(self):
+    @partial(pmap, axis_name='i', devices=jax.devices())
+    def foo(x):
+      @jit
+      def bar(y):
+        return y + 1
+      return lax.psum(bar(x), 'i')
+
+    ndevices = jax.device_count()
+    ans = foo(jnp.ones((ndevices, 1)))
+    expected = np.ones((ndevices, 1), dtype=jnp.float_) * ndevices * 2
+    self.assertAllClose(ans, expected)
+
+  @ignore_jit_of_pmap_warning()
+  def testPmapInJit(self):
+    @jit
+    def foo(x):
+      @partial(pmap, axis_name='i', devices=jax.devices())
+      def bar(y):
+        return lax.psum(y, 'i')
+      return bar(x)
+
+    ndevices = jax.device_count()
+    ans = foo(jnp.ones((ndevices, 1)))
+    expected = np.ones((ndevices, 1), dtype=jnp.float_) * ndevices
+    self.assertAllClose(ans, expected)
+
+  def testGradBasic(self):
+    @partial(pmap, axis_name='i', devices=jax.devices())
+    def f(x):
+      return jnp.sin(x)
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = grad(lambda x: jnp.sum(jnp.sin(x)))(x)
+    expected = grad(lambda x: jnp.sum(f(x)))(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPmapStaticArgnums(self):
+    @partial(pmap, axis_name='i', static_broadcasted_argnums=1)
+    def f(x, y):
+      return jnp.sin(x + y())
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    y = lambda: 3.
+
+    ans = f(x, y)
+    expected = np.sin(x + 3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPmapInAxesBasic(self):
+    @partial(pmap, in_axes=(1, 2))
+    def f(x, y):
+      return jnp.sin(x + y)
+    xshape = (2, jax.device_count(), 4)
+    x = np.arange(math.prod(xshape)).reshape(xshape)
+    yshape = (2, 4, jax.device_count())
+    y = np.arange(math.prod(yshape)).reshape(yshape)
+
+    self.assertAllClose(f(x, y),
+                        jnp.sin(x.transpose((1, 0, 2)) + y.transpose((2, 0, 1))))
+
+  def testPmapInAxesGrad(self):
+    def f(x, y, z):
+      return jnp.sin(x + y + z)
+    fp = pmap(f, in_axes=(1, 2, None))
+    fv = vmap(f, in_axes=(1, 2, None))
+    xshape = (5, jax.device_count(), 7)
+    x = np.arange(math.prod(xshape), dtype=np.float32).reshape(xshape)
+    yshape = (5, 7, jax.device_count())
+    y = np.arange(math.prod(yshape), dtype=np.float32).reshape(yshape)
+    zshape = (5, 7)
+    z = np.arange(math.prod(zshape), dtype=np.float32).reshape(zshape)
+
+    dx, dy, dz = jax.grad(lambda args: fp(*args).sum())((x, y, z))
+    assert dx.shape == xshape
+    assert dy.shape == yshape
+    assert dz.shape == zshape
+
+    self.assertAllClose(jax.grad(lambda args: fp(*args).sum())((x, y, z)),
+                        jax.grad(lambda args: fv(*args).sum())((x, y, z)))
+
+  def testPmapOutAxesBasic(self):
+    @partial(pmap, in_axes=(1, None), out_axes=(2, None))
+    def f(x, y):
+      return jnp.sin(x + y), y * 2
+    xshape = (2, jax.device_count(), 4)
+    x = np.arange(math.prod(xshape)).reshape(xshape)
+    yshape = (2, 4)
+    y = np.arange(math.prod(yshape)).reshape(yshape)
+
+    self.assertAllClose(f(x, y),
+                        (jnp.sin(x.transpose((1, 0, 2)) + y).transpose((1, 2, 0)), y * 2))
+
+  def testPmapDictOutAxes(self):
+    # see issue #6410
+    @partial(pmap, out_axes={'a': 0})
+    def f(x):
+      return {'a': x}
+    device_count = jax.device_count()
+    x = jnp.arange(device_count)
+    jax.tree.map(self.assertAllClose, f(x), {'a': x})
+
+  @jtu.sample_product(
+    in_axes=all_bdims((3, 4), (3, 1), (1, 4)),
+    out_axes=out_bdims((3, 4)),
+  )
+  def testPmapAllAxesGrad(self, in_axes, out_axes):
+    def f(x, y, z):
+      return jnp.sin(x + y) * z
+
+    pmapped_size = jax.device_count()
+    mapped_shapes = [(3, 4), (3, 1), (1, 4)]
+    arg_shapes = map(partial(add_bdim, pmapped_size), in_axes, mapped_shapes)
+    rng = jtu.rand_default(self.rng())
+    args = [rng(shape, jnp.float64) for shape in arg_shapes]
+    jtu.check_grads(pmap(f, in_axes=in_axes, out_axes=out_axes), args,
+                    order=2, atol=2e-2, rtol=2e-2, eps=1e-3)
+
+  def testPmapPostProcess(self):
+    def mk_case(map_fun):
+      def f(x, y):
+        # NOTE: Map doesn't have any arguments we differentiate wrt
+        @partial(map_fun, in_axes=1, out_axes=2)
+        def h(y):
+          return jnp.sin(x + y)
+        return h(y).sum()
+      return f
+
+    xshape = (5, 7)
+    x = np.arange(math.prod(xshape), dtype=np.float32).reshape(xshape)
+    yshape = (5, jax.device_count(), 7)
+    y = np.arange(math.prod(yshape), dtype=np.float32).reshape(yshape)
+    self.assertAllClose(jax.grad(mk_case(pmap))(x, y),
+                        jax.grad(mk_case(vmap))(x, y))
+
+
+@jtu.pytest_mark_if_available('multiaccelerator')
+class ArrayTest(jtu.JaxTestCase):
+
+  def testThreadsafeIndexing(self):
+    raise SkipTest('TODO(dsuo): See https://github.com/jax-ml/jax/issues/31911')
+    # NOTE(skye): I picked these values to be big enough to cause interesting
+    # execution overlap, but small enough to not use too much memory. YMMV.
+    shape = (8, 4000, 1000)
+
+    if jax.device_count() < shape[0]:
+      raise SkipTest(f"requires {shape[0]} devices")
+
+    x = jnp.arange(math.prod(shape)).reshape(shape)
+    sharded_x = pmap(lambda x: x)(x)
+
+    num_threads = 10
+    futures = []
+    expected = []
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+      for i in range(num_threads):
+        idx = i % shape[0]
+        # Mix together different kinds of indices
+        if i % 2 == 0:
+          idx = slice(idx, idx + 1)
+        # Use the "kwarg trick" to work around late-binding closures. See
+        # https://docs.python-guide.org/writing/gotchas/#late-binding-closures.
+        futures.append(executor.submit(
+            lambda idx=idx: [sharded_x[idx] for _ in range(10)][0]))
+        expected.append(x[idx])
+      actual = [f.result() for f in futures]
+    self.assertAllClose(actual, expected, check_dtypes=False)
+
+  def testNoCopyIndexing1D(self):
+    shape = (8, 4)
+
+    if jax.device_count() < shape[0]:
+      raise SkipTest(f"requires {shape[0]} devices")
+
+    x = jnp.arange(math.prod(shape)).reshape(shape)
+    sharded_x = pmap(lambda x: x)(x)
+    self.assertIsNone(sharded_x._npy_value)
+
+    for i in range(8):
+      self.assertIsInstance(sharded_x[i], array.ArrayImpl)
+    self.assertIsNone(sharded_x._npy_value)
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_device_put_sharded(self):
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    x = [np.arange(i, i + 4) for i in range(n_devices)]
+    y = src_api.device_put_sharded(x, devices)
+    self.assertIsInstance(y, array.ArrayImpl)
+    self.assertIsInstance(y.sharding, jax.NamedSharding)
+    for s in y.addressable_shards:
+      self.assertArraysEqual(s.data, y[s.index])
+      self.assertEqual(s.replica_id, 0)
+    buffers = getattr(y, '_arrays')
+    self.assertEqual(len(buffers), len(devices))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(buffers, devices)))
+    self.assertArraysEqual(y, jnp.stack(x))
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_device_put_sharded_pytree(self):
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
+    y1, y2 = src_api.device_put_sharded(x, devices)
+
+    self.assertIsInstance(y1, array.ArrayImpl)
+    self.assertArraysEqual(y1, jnp.array([a for a, _ in x]))
+    y1_buffers = getattr(y1, '_arrays')
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(y1_buffers, devices)))
+
+    self.assertIsInstance(y2, array.ArrayImpl)
+    self.assertArraysEqual(y2, jnp.vstack([b for _, b in x]))
+    y2_buffers = getattr(y2, '_arrays')
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(y2_buffers, devices)))
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_device_put_replicated(self):
+    devices = jax.local_devices()
+    x = np.arange(1, 5)
+    y = src_api.device_put_replicated(x, devices)
+
+    self.assertIsInstance(y, array.ArrayImpl)
+    buffers = getattr(y, '_arrays')
+    self.assertEqual(len(buffers), len(devices))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(buffers, devices)))
+    self.assertArraysEqual(y, np.stack([x for _ in devices]))
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_device_put_replicated_pytree(self):
+    devices = jax.local_devices()
+    xs = {'a': np.arange(1, 5), 'b': np.arange(3)}
+    ys = src_api.device_put_replicated(xs, devices)
+    self.assertIsInstance(ys, dict)
+    y1, y2 = ys['a'], ys['b']
+
+    self.assertIsInstance(y1, array.ArrayImpl)
+    y1_buffers = getattr(y1, '_arrays')
+    self.assertEqual(len(y1_buffers), len(devices))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(y1_buffers, devices)))
+    self.assertArraysEqual(y1, np.stack([xs['a'] for _ in devices]))
+
+    self.assertIsInstance(y2, array.ArrayImpl)
+    y2_buffers = getattr(y2, '_arrays')
+    self.assertEqual(len(y2_buffers), len(devices))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(y2_buffers, devices)))
+    self.assertArraysEqual(y2, np.stack([xs['b'] for _ in devices]))
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_repr(self):
+    x = src_api.device_put_replicated(1, jax.devices())
+    self.assertStartsWith(repr(x), 'Array')
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_delete_is_idempotent(self):
+    x = src_api.device_put_replicated(1, jax.devices())
+    x.delete()
+    x.delete()
+
+    with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
+      _ = x[0]
+
+
+@jtu.pytest_mark_if_available('multiaccelerator')
+class ArrayPmapTest(jtu.JaxTestCase):
+
+  def test_pmap_input_array_output_array(self):
+    input_shape = (jax.device_count(), 2)
+    input_array, input_data = create_input_array_for_pmap(input_shape)
+
+    f = jax.pmap(lambda x, y: x * y)
+    out = f(input_array, input_array)
+
+    expected = input_data * input_data
+
+    self.assertIsInstance(out, array.ArrayImpl)
+    for s in out.addressable_shards:
+      self.assertArraysEqual(s.data, expected[s.index])
+    self.assertArraysEqual(out, expected)
+
+  def test_pmap_double_input_array_output_array(self):
+    input_shape = (jax.device_count(), 2)
+    input_array, input_data = create_input_array_for_pmap(input_shape)
+
+    def f(x, y):
+      assert x.shape == (2,)
+      assert y.shape == (2,)
+      return x, y
+
+    f = jax.pmap(f)
+    out1, out2 = f(input_array, input_array)
+
+    self.assertIsInstance(out1, array.ArrayImpl)
+    self.assertIsInstance(out2, array.ArrayImpl)
+    for s1, s2 in safe_zip(out1.addressable_shards, out2.addressable_shards):
+      self.assertArraysEqual(s1.data, input_data[s1.index])
+      self.assertArraysEqual(s2.data, input_data[s2.index])
+    self.assertArraysEqual(out1, input_data)
+    self.assertArraysEqual(out2, input_data)
+
+  def test_pmap_array_in_axes_out_axes(self):
+    dc = jax.device_count()
+    input_shape = (dc, 2)
+    a1, input_data = create_input_array_for_pmap(input_shape, in_axes=0)
+    a2, _ = create_input_array_for_pmap(input_shape, in_axes=None,
+                                        sharded_dim_size=a1.shape[0])
+
+    def f(x, y):
+      assert x.shape == (2,)
+      assert y.shape == input_shape
+      return x, y
+
+    f = jax.pmap(f, in_axes=(0, None), out_axes=(None, 0))
+    out1, out2 = f(a1, a2)
+
+    self.assertIsInstance(out1, array.ArrayImpl)
+    self.assertIsInstance(out2, array.ArrayImpl)
+    self.assertEqual(out1.shape, (2,))
+    self.assertEqual(out2.shape, (dc, dc, 2))
+    for i, (s1, s2) in enumerate(safe_zip(out1.addressable_shards, out2.addressable_shards)):
+      self.assertArraysEqual(s1.data, input_data[i])
+      self.assertArraysEqual(s2.data, input_data[None])
+
+  def test_pmap_array_sharding_mismatch(self):
+    input_shape = (jax.device_count(), 2)
+    inp_data = np.arange(math.prod(input_shape)).reshape(input_shape)
+    a1 = jnp.array(inp_data)
+
+    f = jax.pmap(lambda x: x, in_axes=0, out_axes=0)
+    out_array = f(a1)
+
+    self.assertArraysEqual(out_array, inp_data)
+
+  def test_pmap_array_devices_mismatch(self):
+    if jax.device_count() <= 1:
+      raise unittest.SkipTest('Skipping because this test needs more than '
+                              '1 device.')
+    input_shape = (jax.device_count(), 2)
+    a1, inp_data = create_input_array_for_pmap(input_shape)
+
+    f = jax.pmap(lambda x: x, devices=jax.devices()[::-1])
+    out_array = f(a1)
+
+    self.assertArraysEqual(out_array, inp_data)
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_amap(self):
+    # Copied from an example mattjj@ posted in a chat thread.
+
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >= 2 devices.')
+
+    def amap(f, xs):
+      ys = [f(jax.device_put(x, list(x.devices())[0])) for x in xs]
+      return src_api.device_put_sharded(ys, jax.local_devices()[:2])
+
+    # leading axis is batch dim (i.e. mapped/parallel dim), of size 2
+    x = jnp.array([[1., 0., 0.],
+                   [0., 2., 3.]])
+
+    # first pmapped computation
+    y = jax.pmap(jnp.sin)(x)
+
+    def dynamic_shape_function(y):
+      nonzero_idx = y != 0
+      results = y[nonzero_idx] ** 2
+      return y.at[nonzero_idx].set(results)
+    z = amap(dynamic_shape_function, y)
+
+    # second pmapped computation
+    w = jax.pmap(jnp.cos)(z)
+
+    self.assertArraysEqual(w, jnp.cos(jnp.sin(x) ** 2))
+
+  def test_same_out_sharding_id(self):
+    if config.disable_jit.value:
+      self.skipTest('Skip this under eager pmap mode.')
+    shape = (jax.device_count(), 2)
+    arr, inp_data = create_input_array_for_pmap(shape)
+
+    f = pmap(lambda x: x)
+    out1 = f(arr)
+    self.assertArraysEqual(out1, inp_data)
+    out1_sharding_id = id(out1.sharding)
+
+    out2 = f(out1)
+    self.assertArraysEqual(out2, inp_data)
+    out2_sharding_id = id(out2.sharding)
+
+    out3 = f(out2)
+    self.assertArraysEqual(out3, inp_data)
+    out3_sharding_id = id(out3.sharding)
+
+    self.assertEqual(out1_sharding_id, out2_sharding_id)
+    self.assertEqual(out1_sharding_id, out3_sharding_id)
+    self.assertEqual(out2_sharding_id, out3_sharding_id)
+
+  def test_array_with_pmap_sharding_copy_without_round_trip(self):
+
+    def _compare_if_equal(out, out_copy):
+      self.assertArraysEqual(out, out_copy)
+      self.assertEqual(out.sharding, out_copy.sharding)
+      for o, o_copy in safe_zip(out.addressable_shards, out_copy.addressable_shards):
+        self.assertArraysEqual(o.data, o_copy.data)
+        self.assertEqual(o.device, o_copy.device)
+        self.assertEqual(o.index, o_copy.index)
+        self.assertEqual(o.replica_id, o_copy.replica_id)
+        self.assertNotEqual(o.data.unsafe_buffer_pointer(),
+                            o_copy.data.unsafe_buffer_pointer())
+
+    sharding = jax.sharding.NamedSharding(
+        jax.sharding.Mesh(np.array(jax.devices()), 'x'),
+        jax.sharding.PartitionSpec('x'),
+    )
+    out = jax.device_put(jnp.ones((jax.device_count(),)), sharding)
+    out_copy = jnp.copy(out)
+    _compare_if_equal(out, out_copy)
+
+    sharding = jax.sharding.NamedSharding(
+        jax.sharding.Mesh(np.array(jax.devices()).reshape(1, -1), ('x', 'y')),
+        jax.sharding.PartitionSpec('x', 'y'),
+    )
+    out1 = jax.device_put(jnp.ones((1, jax.device_count())), sharding)
+    out_copy1 = jnp.copy(out1)
+    _compare_if_equal(out1, out_copy1)
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_device_put_sharded_transfer_guard(self):
+    inp = jnp.arange(jax.device_count())
+    arr_inp = [jax.device_put(i, d) for i, d in zip(inp, jax.devices())]
+
+    with jax.transfer_guard("disallow_explicit"):
+      src_api.device_put_sharded(arr_inp, jax.devices())
+
+  def test_jnp_stack(self):
+    @jax.pmap
+    def something(x):
+      return (x + x).reshape([])
+
+    z = something(np.arange(jax.device_count()))
+    self.assertArraysEqual(jnp.stack([z[i] for i in range(jax.device_count())]),
+                           np.arange(jax.device_count()) * 2)
+
+
+
+
+
+@jtu.pytest_mark_if_available('multiaccelerator')
+class PmapShmapMergeTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jax.device_count() < 2:
+      raise unittest.SkipTest('test requires at least two devices')
+
+  def test_store_exception(self):
+    def f(x):
+      return x
+
+    inp = jnp.ones((jax.device_count(), 1), dtype=jnp.float32)
+    jax.pmap(f, axis_name='i')(inp)
+    inp = jnp.ones((jax.device_count(), 1), dtype=jnp.int32)
+    jax.pmap(f, axis_name='i')(inp)
+
+  def test_prng_key(self):
+    keys = jax.random.split(jax.random.key(0), jax.device_count())
+    out = jax.pmap(lambda x: x)(keys)
+    self.assertEqual(type(out), type(keys))
+    out = jax.pmap(lambda x, y: y, in_axes=(0, None))(keys, jax.random.key(0))
+    self.assertEqual(type(out), type(keys))
+    out = jax.pmap(lambda x, y: y, in_axes=(0, None), out_axes=None)(
+        keys, jax.random.key(0)
+    )
+    self.assertEqual(type(out), type(keys))
+
+  def test_lower_with_flattened_args(self):
+    shape = (jax.device_count(), 3)
+
+    inputs = np.reshape(np.arange(math.prod(shape)), shape)
+    _ = jax.pmap(lambda x: x[0]).lower((inputs, ())).compile()
+
+  def test_float0_dtype_input(self):
+    inputs = np.array([b''] * jax.device_count(), dtype=dtypes.float0)
+    _ = jax.pmap(lambda x: x)(inputs)
+
+  def test_float0_dtype_output(self):
+    inputs = np.ones(jax.device_count())
+    _ = jax.pmap(lambda x: jnp.array(b'', dtype=dtypes.float0))(inputs)
+
+  def test_lowered_args_info(self):
+    shmap_lowered = jax.pmap(lambda x: x).lower(
+        (jnp.ones((1,), jnp.float32), ())
+    )
+    aval = core.ShapedArray((1,), jnp.float32)
+    expected_args_info = (
+        (
+            (
+                stages.ArgInfo(aval, donated=False),
+                (),
+            ),
+        ),
+        {},
+    )
+    self.assertEqual(shmap_lowered.args_info, expected_args_info)
+
+  def test_wrapped(self):
+    f = lambda x: x
+    g = jax.pmap(f)
+    self.assertTrue(hasattr(g, '__wrapped__'))
+    self.assertEqual(g.__wrapped__, f)
+
+  def test_numpy_input_sharding(self):
+    np_input = np.arange(jax.device_count(), dtype=np.float32)
+    result = jax.pmap(lambda x: x * 2)(np_input)
+    expected = np_input * 2
+    self.assertAllClose(result, expected)
+
+  def test_int_arg_with_in_axes_none(self):
+    """Regression test: int arg with in_axes=None must not raise AttributeError.
+
+    When a plain Python int is passed as a non-mapped (in_axes=None) argument,
+    host_local_array_to_global_array must handle it without crashing on
+    'int' object has no attribute 'dtype'.
+    """
+    n = jax.device_count()
+    devices = jax.devices()[:n]
+    mesh = jax.sharding.Mesh(np.array(devices), ('i',))
+
+    pspec_mapped = jax.P('i')
+    pspec_unmapped = jax.P()
+
+    in_local_shardings = [
+        jax.NamedSharding(mesh, pspec_mapped),
+        jax.NamedSharding(mesh, pspec_unmapped),
+    ]
+    in_global_shardings = [
+        jax.NamedSharding(mesh, pspec_mapped),
+        jax.NamedSharding(mesh, pspec_unmapped),
+    ]
+
+    class FakeCached:
+      pass
+    cached = FakeCached()
+    cached.in_local_shardings = in_local_shardings
+    cached.in_global_shardings = in_global_shardings
+    cached.in_specs_flat = (pspec_mapped, pspec_unmapped)
+    cached.mesh = mesh
+
+    x = np.arange(n, dtype=np.float32)
+    scale = 3
+    dyn_args_flat = [x, scale]
+    donated_invars = (False, False)
+
+    pmap_lib.host_local_array_to_global_array(
+        dyn_args_flat, cached, True, donated_invars
+    )
+
+
+if __name__ == '__main__':
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1,0 +1,6 @@
+notes/
+_build/
+.venv/
+.DS_Store
+*.install
+goldens/

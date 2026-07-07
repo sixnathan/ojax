@@ -1,0 +1,314 @@
+# Copyright 2020 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import inspect
+
+from absl.testing import absltest
+from absl.testing import parameterized
+import jax
+from jax import numpy as jnp
+from jax._src import config
+from jax._src import core
+from jax._src import dtypes
+from jax._src import lib as jaxlib
+from jax._src import literals
+from jax._src import test_util as jtu
+from jax._src.interpreters import pxla
+from jax._src.sharding_impls import make_single_device_sharding
+import numpy as np
+
+
+config.parse_flags_with_absl()
+
+def _cpp_device_put(value, device, enable_x64: bool | None = None):
+  aval = core.shaped_abstractify(value)
+  return pxla.batched_device_put(
+      aval, make_single_device_sharding(device), [value], [device],
+      enable_x64=enable_x64)
+
+
+class JaxJitTest(jtu.JaxTestCase):
+
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_numpy_masked_array(self, device_put_function):
+    # TODO(jakevdp): add appropriate logic to jaxlib device_put and update this test.
+    if device_put_function is _cpp_device_put:
+      self.skipTest("cpp device_put does not yet reject masked arrays.")
+    device = jax.devices()[0]
+    value = np.ma.array([1, 2, 3], mask=[True, False, True])
+    with self.assertRaisesRegex(ValueError, "numpy masked arrays are not supported"):
+      device_put_function(value, device=device)
+
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_numpy_scalars(self, device_put_function):
+
+    device = jax.devices()[0]
+    for dtype in jtu.supported_dtypes():
+      value = dtype(0)
+
+      output_buffer = device_put_function(value, device=device)
+
+      self.assertFalse(output_buffer.aval.weak_type)
+      dtype = dtypes.canonicalize_dtype(dtype)
+      self.assertEqual(output_buffer.aval, core.ShapedArray((), dtype))
+      self.assertEqual(output_buffer.dtype, dtype)
+
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_numpy_arrays(self, device_put_function):
+
+    device = jax.devices()[0]
+    for dtype in jtu.supported_dtypes():
+      value = np.zeros((3, 4), dtype=dtype)
+      output_buffer = device_put_function(value, device=device)
+
+      self.assertFalse(output_buffer.aval.weak_type)
+      dtype = dtypes.canonicalize_dtype(dtype)
+      self.assertEqual(output_buffer.aval, core.ShapedArray((3, 4), dtype))
+      self.assertEqual(output_buffer.dtype, dtype)
+      np.testing.assert_array_equal(output_buffer, np.zeros((3, 4),
+                                                            dtype=dtype))
+
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_buffers(self, device_put_function):
+    device = jax.devices()[0]
+    jitted_f = jax.jit(lambda x: x + 1)
+
+    for value in range(2):
+      buffer = jitted_f(value)
+      output_buffer = device_put_function(buffer, device=device)
+
+      self.assertEqual(output_buffer.dtype, buffer.dtype)
+      self.assertEqual(output_buffer.aval, buffer.aval)
+      np.testing.assert_array_equal(output_buffer, np.array(value + 1))
+
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_sharded_device_array(self, device_put_function):
+    device = jax.devices()[0]
+
+    pmaped_f = jax.pmap(lambda x: x + 1)
+    for _ in range(2):
+      sda = pmaped_f(np.asarray([[1]]))
+      output_buffer = device_put_function(sda, device=device)
+
+      self.assertEqual(output_buffer.dtype, sda.dtype)
+      self.assertEqual(output_buffer.aval, sda.aval)
+      np.testing.assert_array_equal(output_buffer, np.asarray(sda))
+
+  def test_device_put_on_python_scalars(self):
+    device = jax.devices()[0]
+    int_type = dtypes.default_int_dtype()
+    float_type = dtypes.default_float_dtype()
+    complex_type = dtypes.canonicalize_dtype(np.complex128)
+
+    # int
+    res = np.asarray(_cpp_device_put(1, device))
+    self.assertEqual(res, 1)
+    self.assertEqual(res.dtype, int_type)
+    # We also compare to the Python Jax API, to make sure we have the exact
+    # same behavior. When Jax removes the flag and removes this feature, this
+    # test will fail.
+    self.assertEqual(jnp.asarray(1).dtype, res.dtype)
+
+    # float
+    res = np.asarray(_cpp_device_put(1.0, device))
+    self.assertEqual(res, 1.0)
+    self.assertEqual(res.dtype, float_type)
+    self.assertEqual(jnp.asarray(1.0).dtype, res.dtype)
+
+    # bool
+    for bool_value in [True, False]:
+      res = np.asarray(_cpp_device_put(bool_value, device))
+      self.assertEqual(res, np.asarray(bool_value))
+      self.assertEqual(res.dtype, np.bool_)
+      self.assertEqual(jnp.asarray(bool_value).dtype, res.dtype)
+
+    # Complex
+    if not (config.enable_x64.value and jtu.test_device_matches(["tpu"])):
+      # No TPU support for complex128.
+      res = np.asarray(_cpp_device_put(1 + 1j, device))
+      self.assertEqual(res, 1 + 1j)
+      self.assertEqual(res.dtype, complex_type)
+      self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)
+
+  def test_arg_signature_of_value(self):
+    """Tests the C++ code-path."""
+    jax_enable_x64 = config.enable_x64.value
+
+    # 1. Numpy scalar types
+    for dtype in jtu.supported_dtypes():
+      value = dtype(0)
+
+      signature = jaxlib.jax_jit._ArgSignatureOfValue(value, jax_enable_x64)
+      self.assertEqual(signature.dtype, jax.device_put(value).dtype)
+      self.assertEqual(signature.shape, ())
+      self.assertFalse(signature.weak_type)
+
+    # 2. Numpy arrays
+    for dtype in jtu.supported_dtypes():
+      value = np.zeros((3, 4), dtype=dtype)
+
+      signature = jaxlib.jax_jit._ArgSignatureOfValue(value, jax_enable_x64)
+      self.assertEqual(signature.dtype, jax.device_put(value).dtype)
+      self.assertEqual(signature.shape, (3, 4))
+      self.assertFalse(signature.weak_type)
+
+    # 3. TypedNdArray
+    for dtype in jtu.supported_dtypes():
+      for weak_type in [False, True]:
+        aval = core.ShapedArray((3, 4), dtype, weak_type=weak_type)
+        value = literals.TypedNdArray(np.zeros((3, 4), dtype=dtype), aval=aval)
+        signature = jaxlib.jax_jit._ArgSignatureOfValue(value, jax_enable_x64)
+        self.assertEqual(signature.dtype, dtype)
+        self.assertEqual(signature.shape, (3, 4))
+        self.assertEqual(signature.weak_type, weak_type)
+
+    int_type = dtypes.default_int_dtype()
+    float_type = dtypes.default_float_dtype()
+    complex_type = dtypes.canonicalize_dtype(np.complex128)
+
+    # 3. Python scalar types
+    # int
+    signature = jaxlib.jax_jit._ArgSignatureOfValue(1, jax_enable_x64)
+    self.assertEqual(signature.dtype, jax.device_put(1).dtype)
+    self.assertEqual(signature.dtype, int_type)
+    self.assertEqual(signature.shape, ())
+    self.assertTrue(signature.weak_type)
+    # float
+    signature = jaxlib.jax_jit._ArgSignatureOfValue(1.0, jax_enable_x64)
+    self.assertEqual(signature.dtype, jax.device_put(1.0).dtype)
+    self.assertEqual(signature.dtype, float_type)
+    self.assertEqual(signature.shape, ())
+    self.assertTrue(signature.weak_type)
+    # bool
+    for bool_value in [True, False]:
+      signature = jaxlib.jax_jit._ArgSignatureOfValue(bool_value,
+                                                      jax_enable_x64)
+      self.assertEqual(signature.dtype, jax.device_put(bool_value).dtype)
+      self.assertEqual(signature.dtype, np.bool_)
+      self.assertEqual(signature.shape, ())
+      self.assertTrue(signature.weak_type)
+    # Complex
+    if not (jax_enable_x64 and jtu.test_device_matches(["tpu"])):
+      # No TPU support for complex128.
+      signature = jaxlib.jax_jit._ArgSignatureOfValue(1 + 1j, jax_enable_x64)
+      self.assertEqual(signature.dtype, jax.device_put(1 + 1j).dtype)
+      self.assertEqual(signature.dtype, complex_type)
+      self.assertEqual(signature.shape, ())
+      self.assertTrue(signature.weak_type)
+
+  def test_device_put_on_numpy_arrays_x64_enabled(self):
+    device = jax.devices()[0]
+    for dtype in jtu.supported_dtypes():
+      value = np.zeros((3, 4), dtype=dtype)
+      output_buffer = _cpp_device_put(value, device=device, enable_x64=True)
+      self.assertFalse(output_buffer.aval.weak_type)
+      self.assertEqual(output_buffer.aval, core.ShapedArray((3, 4), dtype))
+      self.assertEqual(output_buffer.dtype, dtype)  # NB: no canonicalization
+      np.testing.assert_array_equal(output_buffer, np.zeros((3, 4),
+                                                            dtype=dtype))
+
+
+  def test_signature_support(self):
+    def f(a, b, c):
+      return a + b + c
+
+    jitted_f = jax.jit(f)
+    self.assertEqual(inspect.signature(f), inspect.signature(jitted_f))
+
+  def test_jit_compile_vmap(self):
+    # Regression test for https://github.com/openxla/xla/issues/15744
+    @jax.vmap
+    def fn(x):
+      R1 = jnp.array([[x[0], 0, 0],
+                      [0, x[0], 0],
+                      [0, 0, x[0]]])
+      R2 = jnp.array([[x[0], 0, 0],
+                      [0, x[1], 0],
+                      [0, 0, x[2]]])
+      H = jnp.eye(4)
+      H = H.at[:3, :3].set(R2.T)
+      pos = H @ jnp.concatenate([x, jnp.array([1.0])])
+      return pos, R1
+    jitted_fn = jax.jit(fn)
+    v1, v2 = jitted_fn(jnp.zeros((2,3)))
+    v1_expected = jnp.array([[0., 0., 0., 1.],
+                             [0., 0., 0., 1.]])
+    v2_expected = jnp.zeros((2, 3, 3))
+    self.assertArraysEqual(v1, v1_expected)
+    self.assertArraysEqual(v2, v2_expected)
+
+  @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", True)
+  def test_check_for_large_number_of_constants_old(self):
+    y = jnp.ones((128, 128), dtype=np.float32)
+    x = jnp.zeros((128,), dtype=np.float32)
+
+    def jit_maker(): # need to ensure we lower at each test
+      def func(x):
+        return x @ y
+      return jax.jit(func)
+
+    with self.assertWarnsRegex(UserWarning, "A large amount of constants were captured during lowering"):
+      with config.captured_constants_warn_bytes(y.nbytes):
+        jit_maker()(x)
+
+    with self.assertNoWarnings():
+      with config.captured_constants_warn_bytes(y.nbytes + 1):
+        jit_maker()(x)
+
+      with config.captured_constants_warn_bytes(-1):
+        jit_maker()(x)
+
+  @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
+  def test_check_for_large_number_of_constants_new(self):
+    self.enter_context(config.embedded_constants_max_bytes(4))
+    y = np.ones((128, 128), dtype=np.float32)
+    x = jnp.zeros((128,), dtype=np.float32)
+
+    def jit_maker(): # need to ensure we lower at each test
+      def my_func(x):
+        return x @ y
+      return jax.jit(my_func)
+
+    with self.assertWarnsRegex(UserWarning,
+        r'Closed-over constant .* float..\[128,128\] in my_func .*'):
+      with config.captured_constants_warn_bytes(y.nbytes):
+        jit_maker()(x)
+
+    with self.assertNoWarnings():
+      with config.captured_constants_warn_bytes(y.nbytes + 1):
+        jit_maker()(x)
+
+      with config.captured_constants_warn_bytes(-1):
+        jit_maker()(x)
+
+  def testParseArguments(self):
+    pytree_registry = jaxlib.pytree.default_registry()
+    sig, args = jaxlib.jax_jit.parse_arguments(
+        positional_args=[1, 2, 3],
+        keyword_args=[4, 5],
+        kwnames=("a", "b"),
+        static_argnums=[0, 2],
+        static_argnames=["a"],
+        pytree_registry=pytree_registry,
+    )
+    self.assertEqual(args, [2, 5])
+    self.assertEqual(sig.static_args, [1, 3, 4])
+    self.assertEqual(sig.static_arg_names, ["a"])
+    _, leaf = pytree_registry.flatten(0)
+    self.assertEqual(sig.dynamic_arg_names, ["b"])
+    self.assertEqual(sig.dynamic_arg_treedefs, [leaf, leaf])
+
+
+if __name__ == "__main__":
+  absltest.main(testLoader=jtu.JaxTestLoader())

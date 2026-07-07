@@ -1,0 +1,871 @@
+# Copyright 2025 The JAX Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""Tests for Mosaic GPU's `constraints` module."""
+
+import dataclasses
+
+from absl.testing import parameterized
+from jax._src import config
+from jax._src import test_util as jtu
+import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.mosaic.gpu import constraints as cs
+from jax.experimental.mosaic.gpu import fragmented_array as fa
+from jax.experimental.mosaic.gpu import launch_context as lc
+from jax.experimental.mosaic.gpu import tcgen05
+
+config.parse_flags_with_absl()
+
+RL = cs.RegisterLayout
+Eq = cs.Equals
+V = cs.Variable
+
+
+@dataclasses.dataclass(frozen=True)
+class MockVariableKey:
+  idx: int
+  shape: tuple[int, ...]
+  memory_space: cs.MemorySpace
+
+
+class ConstraintSystemTest(parameterized.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
+
+  def test_constraint_system_is_unsatisfiable_if_assignment_is_invalid(
+      self,
+  ):
+    v0 = V(MockVariableKey(0, (128, 128), cs.MemorySpace.REG))
+    layout0 = RL(mgpu.WGSplatFragLayout((64, 64)))
+    system = cs.ConstraintSystem(constraints=[Eq(v0, layout0)])
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
+  def test_constraint_system_is_unsatisfiable_if_assignments_are_incompatible(
+      self,
+  ):
+    var = V(MockVariableKey(0, (128, 128), cs.MemorySpace.REG))
+    layout0 = RL(mgpu.WGMMA_LAYOUT)
+    layout1 = RL(mgpu.WGMMA_TRANSPOSED_LAYOUT)
+    system = cs.ConstraintSystem(
+        constraints=[Eq(var, layout0), Eq(var, layout1)],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
+  def test_constraint_system_is_unsatisfiable_if_constraints_are_unsatisfiable(
+      self,
+  ):
+    v0 = V(0)
+    layout0, layout1 = (RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2))
+    system = cs.ConstraintSystem(
+        assignments={v0: layout0},
+        constraints=[cs.Relayout(v0, layout1, 32)],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
+  @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_TRANSPOSED_LAYOUT),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (mgpu.TCGEN05_LAYOUT, mgpu.TCGEN05_TRANSPOSED_LAYOUT),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, mgpu.TCGEN05_LAYOUT),
+      (mgpu.WGMMA_LAYOUT_UPCAST_2X, mgpu.WGMMA_LAYOUT),
+      (mgpu.WGMMA_LAYOUT_UPCAST_4X, mgpu.WGMMA_LAYOUT_UPCAST_2X),
+      (mgpu.WGMMA_LAYOUT_UPCAST_4X, mgpu.WGMMA_LAYOUT),
+      (mgpu.tmem_native_layout(2), mgpu.tmem_native_layout(1)),
+  )
+  def test_reduce_constraint_system_removes_satisfed_relayouts(self, src, tgt):
+    system = cs.ConstraintSystem(
+        constraints=[cs.Relayout(RL(src), RL(tgt), 4)],
+    )
+    self.assertEqual(cs.reduce(system), cs.ConstraintSystem())
+
+  def test_relayout_constraint_does_not_hold_for_incompatible_layouts(self):
+    self.assertFalse(
+        cs.Relayout(
+            RL(mgpu.WGMMA_ROW_LAYOUT), RL(mgpu.WGMMA_COL_LAYOUT), 32
+        ).holds()
+    )
+
+  @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_LAYOUT, True),
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_TRANSPOSED_LAYOUT, False),
+      (mgpu.WGSplatFragLayout((128, 128)), mgpu.WGMMA_LAYOUT, True),
+      (
+          mgpu.WGSplatFragLayout((128, 128)),
+          mgpu.WGStridedFragLayout((128, 128), vec_size=1),
+          True,
+      ),
+  )
+  def test_strict_relayout_constraint_holds(self, src, tgt, holds):
+    self.assertEqual(
+        cs.Relayout(RL(src), RL(tgt), 32, strict=True).holds(), holds
+    )
+
+  def test_not_of_type_constraint_holds_for_different_types(self):
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    self.assertTrue(cs.NotOfType(layout, mgpu.WGSplatFragLayout).holds())
+
+  def test_not_of_type_constraint_does_not_holds_for_same_types(self):
+    layout = RL(mgpu.WGSplatFragLayout((1, 128)))
+    self.assertFalse(cs.NotOfType(layout, mgpu.WGSplatFragLayout).holds())
+
+  def test_not_of_type_constraint_is_unknown_for_unreduced_expression(self):
+    self.assertIsNone(cs.NotOfType(V(0), mgpu.WGSplatFragLayout).holds())
+
+  def test_reduce_constraint_system_removes_tautological_constraints_and_constraints(
+      self,
+  ):
+    v0, v1 = V(0), V(1)
+    system = cs.ConstraintSystem(
+        constraints=[
+            Eq(v0, v1),
+            Eq(v0, v0),
+            cs.Relayout(v0, v0, 32),
+            cs.NotOfType(RL(mgpu.WGMMA_LAYOUT), mgpu.WGSplatFragLayout),
+            cs.NotOfType(v1, mgpu.WGSplatFragLayout),
+        ],
+    )
+    self.assertLen(cs.reduce(system).constraints, 2)
+
+  def test_reduce_constraint_system_drops_always_true_constraints(self):
+    v0, v1 = V(0), V(1)
+    system = cs.ConstraintSystem(
+        constraints=[
+            cs.AlwaysTrue(),
+            Eq(v0, v1),
+        ],
+    )
+    self.assertEqual(
+        cs.reduce(system),
+        cs.ConstraintSystem(constraints=[Eq(v0, v1)]),
+    )
+
+  def test_reduce_constraint_system_of_simplified_system_is_noop(self):
+    v0, v1 = V(0), V(1)
+    system = cs.ConstraintSystem(constraints=[Eq(v0, v1)])
+    self.assertEqual(cs.reduce(system), system)
+
+  def test_reduce_constraint_system_assigns_variables_with_known_constraints(
+      self,
+  ):
+    shape = (1, 1)
+    v0 = V(MockVariableKey(0, shape, cs.MemorySpace.REG))
+    v1 = V(MockVariableKey(1, shape, cs.MemorySpace.REG))
+    layout = RL(mgpu.WGSplatFragLayout(shape))
+
+    with self.subTest("left-to-right-assignment"):
+      system = cs.ConstraintSystem(
+          constraints=[Eq(v0, layout), Eq(v0, v1)],
+      )
+      self.assertEqual(
+          cs.reduce(system),
+          cs.ConstraintSystem(assignments={v0: layout, v1: layout}),
+      )
+
+    with self.subTest("right-to-left-assignment"):
+      system = cs.ConstraintSystem(
+          constraints=[Eq(v1, layout), Eq(v0, v1)],
+      )
+      self.assertEqual(
+          cs.reduce(system),
+          cs.ConstraintSystem(assignments={v0: layout, v1: layout}),
+      )
+
+  def test_constraint_system_unknowns_are_all_the_variables_without_assignment(
+      self,
+  ):
+    v0, v1, v2, v3 = V(0), V(1), V(2), V(3)
+    layout = RL(mgpu.WGSplatFragLayout((1, 1)))
+    system = cs.ConstraintSystem(
+        assignments={v0: layout},
+        constraints=[Eq(v1, v2), cs.Relayout(v2, v3, 32)],
+    )
+    self.assertSequenceEqual(system.unknowns(), [v1, v2, v3])
+
+  def test_intersection_of_conflicting_systems_is_unsatisfiable(self):
+    v0 = V(0)
+    layout0, layout1 = (RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2))
+    system0 = cs.ConstraintSystem(assignments={v0: layout0})
+    system1 = cs.ConstraintSystem(assignments={v0: layout1})
+    self.assertIsInstance(system0 & system1, cs.Unsatisfiable)
+
+  def test_intersection_of_compatible_systems_is_union_of_fields(self):
+    v0, v1, v2 = V(0), V(1), V(2)
+    layout0, layout1, layout2 = (
+        RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2, 3)
+    )
+    system0 = cs.ConstraintSystem(constraints=[Eq(v0, layout0)])
+    system1 = cs.ConstraintSystem(
+        assignments={v2: layout2},
+        constraints=[Eq(v1, layout1)],
+    )
+    system_intersection = system0 & system1
+    self.assertEqual(
+        system_intersection,
+        cs.ConstraintSystem(
+            assignments={v2: layout2},
+            constraints=[Eq(v0, layout0), Eq(v1, layout1)],
+        ),
+    )
+    self.assertSequenceEqual(system0.unknowns(), [v0])
+    self.assertSequenceEqual(system1.unknowns(), [v1])
+    self.assertSequenceEqual(system_intersection.unknowns(), [v0, v1])
+
+  @parameterized.named_parameters(
+      ("reduce_to_row_layout", (1,), mgpu.WGMMA_ROW_LAYOUT),
+      ("reduce_to_col_layout", (0,), mgpu.WGMMA_COL_LAYOUT),
+  )
+  def test_reduce_reduce_expression_reduces_layout(self, axes, expected_layout):
+    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
+    self.assertEqual(
+        cs.reduce_expression(cs.Reduce(tiled_layout, axes=axes, rank=2), {}),
+        RL(expected_layout),
+    )
+
+  def test_reduce_reduce_expression_does_not_reduce_tiled_layout_if_axes_are_not_tiled(self):
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    self.assertEqual(
+        cs.reduce_expression(cs.Reduce(layout, axes=(0,), rank=3), {}),
+        layout,
+    )
+
+  # TODO(allanrenucci): Add support for reducing tiled layouts when keep_dims=True.
+  def test_reduce_reduce_expression_does_not_reduce_tiled_layout_if_keep_dims_is_true(self):
+    expr = cs.Reduce(RL(mgpu.WGMMA_LAYOUT), axes=(0,), rank=2, keep_dims=True)
+    self.assertEqual(cs.reduce_expression(expr, {}), expr)
+
+  @parameterized.parameters(
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 128), vec_size=1),
+          (0,),
+          mgpu.WGStridedFragLayout(shape=(128,), vec_size=1),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 128), vec_size=1),
+          (0,),
+          mgpu.WGStridedFragLayout(shape=(1, 128), vec_size=1),
+          True,
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 2, 128), vec_size=1),
+          (0, 1),
+          mgpu.WGStridedFragLayout(shape=(128,), vec_size=1),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 2, 128), vec_size=2),
+          (0,),
+          mgpu.WGStridedFragLayout(shape=(2, 128), vec_size=2),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(2, 4, 128), vec_size=1),
+          (1,),
+          mgpu.WGStridedFragLayout(shape=(2, 1, 128), vec_size=1),
+          True,
+      ),
+  )
+  def test_reduce_reduce_expression_reduces_strided_layout(
+      self, layout, axes, expected_layout, keep_dims=False
+  ):
+    rank = len(layout.shape)
+    expr = cs.Reduce(RL(layout), axes, rank, keep_dims)
+    self.assertEqual(cs.reduce_expression(expr, {}), RL(expected_layout))
+
+  def test_reduce_expression_reduces_nested_reduce_expression(self):
+    layout = RL(mgpu.WGStridedFragLayout((2, 4, 128), vec_size=1))
+    expr = cs.Reduce(
+        cs.Reduce(layout, axes=(1,), rank=3, keep_dims=True),
+        axes=(0,),
+        rank=3,
+        keep_dims=False,
+    )
+    expected_layout = RL(mgpu.WGStridedFragLayout((1, 128), vec_size=1))
+    self.assertEqual(cs.reduce_expression(expr, {}), expected_layout)
+
+  @parameterized.parameters(
+      (
+          mgpu.WGStridedFragLayout(shape=(128, 128), vec_size=1),
+          (1,),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(4, 2, 128), vec_size=2),
+          (0, 1),
+      ),
+      (
+          mgpu.WGStridedFragLayout(shape=(128, 2, 129), vec_size=2),
+          (0,),
+      ),
+  )
+  def test_reduce_reduce_expression_cant_reduce_unsupported_strided_layout(
+      self, layout, axes
+  ):
+    expr = cs.Reduce(RL(layout), axes, rank=len(layout.shape))
+    self.assertEqual(cs.reduce_expression(expr, {}), expr)
+
+  def test_reduce_reduce_expression_reduces_splat_layout(self):
+    layout = RL(mgpu.WGSplatFragLayout((128, 8)))
+    expr = cs.Reduce(layout, axes=(0,), rank=2)
+    expected_layout = RL(mgpu.WGSplatFragLayout((8,)))
+    self.assertEqual(cs.reduce_expression(expr, {}), expected_layout)
+
+  def test_reduce_reshape_of_splat_layout_is_reduced_to_splat_layout(self):
+    layout = RL(mgpu.WGSplatFragLayout((1024,)))
+    source_shape, target_shape = (1024,), (128, 8)
+    self.assertEqual(
+        cs.reduce_expression(
+            cs.Reshape(layout, source_shape, target_shape), {}
+        ),
+        RL(mgpu.WGSplatFragLayout(target_shape)),
+    )
+
+  def test_reduce_reshape_of_strided_layout_is_reduced_to_strided_layout(self):
+    layout = RL(mgpu.WGStridedFragLayout((1024,), vec_size=8))
+    source_shape, target_shape = (1024,), (128, 8)
+    self.assertEqual(
+        cs.reduce_expression(
+            cs.Reshape(layout, source_shape, target_shape), {}
+        ),
+        RL(mgpu.WGStridedFragLayout(target_shape, vec_size=8)),
+    )
+
+  def test_reduce_reshape_of_tiled_layout_with_indivisible_shape_is_irreducible(self):
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    source_shape, target_shape = (128, 8), (129, 8)
+    eq = cs.Reshape(layout, source_shape, target_shape)
+    self.assertEqual(cs.reduce_expression(eq, {}), eq)
+
+  def test_reduce_reshape_of_tiled_layout_with_modified_minor_tiled_dimensions_is_irreducible(
+      self,
+  ):
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    source_shape, target_shape = (2, 128, 8), (2, 64, 16)
+    eq = cs.Reshape(layout, source_shape, target_shape)
+    self.assertEqual(cs.reduce_expression(eq, {}), eq)
+
+  def test_reduce_reshape_of_tiled_layout_with_compatible_shape_is_identity(
+      self,
+  ):
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    source_shape, target_shape = (2, 128, 8), (256, 8)
+    eq = cs.Reshape(layout, source_shape, target_shape)
+    self.assertEqual(cs.reduce_expression(eq, {}), layout)
+
+  def test_reduce_strict_relayout_produces_equals_constraint(self):
+    layout = RL(mgpu.WGStridedFragLayout((128, 128), vec_size=1))
+    relayout = cs.Relayout(layout, V(0), 32, strict=True)
+    self.assertEqual(
+        cs.reduce_constraint(relayout, {}), cs.Equals(layout, V(0))
+    )
+    layout = RL(mgpu.WGMMA_LAYOUT)
+    relayout = cs.Relayout(layout, V(0), 32, strict=True)
+    self.assertEqual(
+        cs.reduce_constraint(relayout, {}), cs.Equals(layout, V(0))
+    )
+    layout = RL(mgpu.WGSplatFragLayout((128, 128)))
+    relayout = cs.Relayout(layout, V(0), 32, strict=True)
+    self.assertEqual(cs.reduce_constraint(relayout, {}), relayout)
+
+  def test_reduce_relayout_same_source_and_target_returns_always_true(self):
+    v0 = V(0)
+    relayout = cs.Relayout(v0, v0, 32)
+    self.assertEqual(
+        cs.reduce_constraint(relayout, assignments={}), cs.AlwaysTrue()
+    )
+
+  def test_reduce_equals_same_lhs_and_rhs_returns_always_true(self):
+    v0 = V(0)
+    equals = Eq(v0, v0)
+    self.assertEqual(
+        cs.reduce_constraint(equals, assignments={}), cs.AlwaysTrue()
+    )
+
+  def test_relayout_of_non_splat_to_splat_is_unsatisfiable_shortcut(
+      self,
+  ):
+    splat_layout = RL(mgpu.WGSplatFragLayout((128,)))
+    v0, v1 = V(0), V(1)
+    system = cs.ConstraintSystem(
+        assignments={v1: splat_layout},
+        constraints=[
+            cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+            cs.Relayout(v0, v1, 32),
+        ],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
+  def test_saturate_distinct_from_splat_does_not_create_duplicate_constraints(
+      self,
+  ):
+    bw = 32
+    v0, v1, v2 = V(0), V(1), V(2)
+    system = cs.ConstraintSystem(
+        constraints=[
+            cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+            cs.NotOfType(v1, mgpu.WGSplatFragLayout),
+            cs.Relayout(v0, v2, bw),
+            cs.Relayout(v1, v2, bw),
+        ],
+    )
+
+    self.assertEqual(
+        cs.saturate_distinct_from_splat(system),
+        cs.ConstraintSystem(
+            constraints=[
+                cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+                cs.NotOfType(v1, mgpu.WGSplatFragLayout),
+                cs.Relayout(v0, v2, bw),
+                cs.Relayout(v1, v2, bw),
+                cs.NotOfType(v2, mgpu.WGSplatFragLayout),
+            ],
+        ),
+    )
+
+  def test_saturate_distinct_from_splat_does_not_affect_non_splat(
+      self,
+  ):
+    bw = 32
+    v0, v1, v2, v3, v4 = V(0), V(1), V(2), V(3), V(4)
+    system = cs.ConstraintSystem(
+        constraints=[
+            cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+            cs.NotOfType(v1, mgpu.WGStridedFragLayout),
+            cs.Relayout(v0, v2, bw),
+            cs.Relayout(v1, v3, bw),
+            cs.Relayout(v4, v0, bw),
+        ],
+    )
+
+    self.assertEqual(
+        cs.saturate_distinct_from_splat(system),
+        cs.ConstraintSystem(
+            constraints=[
+                cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+                cs.NotOfType(v1, mgpu.WGStridedFragLayout),
+                cs.Relayout(v0, v2, bw),
+                cs.Relayout(v1, v3, bw),
+                cs.Relayout(v4, v0, bw),
+                cs.NotOfType(v2, mgpu.WGSplatFragLayout),
+            ],
+        ),
+    )
+
+  @parameterized.parameters(
+      # Should work for any tiled layout.
+      mgpu.WGMMA_LAYOUT,
+      mgpu.TCGEN05_LAYOUT,
+      mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
+      mgpu.WGMMA_ROW_LAYOUT,
+      mgpu.WGMMA_COL_LAYOUT,
+      mgpu.TCGEN05_ROW_LAYOUT,
+      mgpu.WGSplatFragLayout((128, 128)),
+      mgpu.WGStridedFragLayout((128, 128), vec_size=4),
+  )
+  def test_tiled_contiguous_smem_is_transferable_holds_unoptimized(self, layout):
+    holds = not isinstance(layout, (mgpu.WGStridedFragLayout, mgpu.WGSplatFragLayout))
+    reg_layout = cs.RegisterLayout(layout)
+    smem_layout = cs.SMEMTransforms(lc.TileTransform((64, 64)))
+    strides = (128, 1)
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+    )
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+    )
+    self.assertEqual(reg_to_smem.holds(), holds)
+    self.assertEqual(smem_to_reg.holds(), holds)
+
+  @parameterized.parameters(
+      # True only for specific transposed layouts.
+      (mgpu.WGMMA_LAYOUT, False),
+      (mgpu.TCGEN05_LAYOUT, False),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, True),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, True),
+      (mgpu.WGSplatFragLayout((128, 128)), False),
+      (mgpu.WGStridedFragLayout((128, 128), vec_size=4), False),
+  )
+  def test_tiled_non_contiguous_smem_is_transferable_holds_unoptimized(self, layout, holds):
+    reg_layout = cs.RegisterLayout(layout)
+    smem_layout = cs.SMEMTransforms(lc.TileTransform((64, 64)))
+    strides = (1, 128)
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+    )
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+    )
+    self.assertEqual(reg_to_smem.holds(), holds)
+    self.assertEqual(smem_to_reg.holds(), holds)
+
+  @parameterized.parameters(
+      # Should hold for any layout.
+      mgpu.WGMMA_LAYOUT,
+      mgpu.TCGEN05_LAYOUT,
+      mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
+      mgpu.WGMMA_ROW_LAYOUT,
+      mgpu.WGMMA_COL_LAYOUT,
+      mgpu.TCGEN05_ROW_LAYOUT,
+      mgpu.WGSplatFragLayout((128, 128)),
+      mgpu.WGStridedFragLayout((128, 128), vec_size=4),
+  )
+  def test_untiled_contiguous_smem_is_transferable_holds_downgradable(self, layout):
+    reg_layout = cs.RegisterLayout(layout)
+    smem_layout = cs.SMEMTransforms(None)
+    strides = (128, 1)
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.DOWNGRADABLE,
+    )
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.DOWNGRADABLE,
+    )
+    self.assertTrue(reg_to_smem.holds())
+    self.assertTrue(smem_to_reg.holds())
+
+  @parameterized.parameters(
+      # Works for some tiled layouts.
+      (mgpu.WGMMA_LAYOUT, False),
+      (mgpu.TCGEN05_LAYOUT, False),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, True),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, True),
+      (mgpu.WGMMA_ROW_LAYOUT, True),
+      (mgpu.WGMMA_COL_LAYOUT, True),
+      (mgpu.TCGEN05_ROW_LAYOUT, True),
+      # True for non-tiled layouts.
+      (mgpu.WGSplatFragLayout((128, 128)), True),
+      (mgpu.WGStridedFragLayout((128, 128), vec_size=4), True),
+  )
+  def test_untiled_contiguous_smem_is_transferable_holds_optimized(self, layout, holds):
+    reg_layout = cs.RegisterLayout(layout)
+    smem_layout = cs.SMEMTransforms(None)
+    strides = (128, 1)
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+    )
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+    )
+    self.assertEqual(reg_to_smem.holds(), holds)
+    self.assertEqual(smem_to_reg.holds(), holds)
+
+  @parameterized.parameters(
+      (None, (), None),
+      ((2, 3), (1, 0), (3, 2)),
+      ((3,), (0,), (3,)),
+      ((2, 4, 8), (1, 0, 2), (4, 2, 8)),
+      ((2, 4, 8), (1, 2, 0), (4, 8, 2)),
+      ((2, 4, 8), (2, 1, 0), (8, 4, 2)),
+      ((2, 4), (1, 0, 3, 2), (4, 2)),
+      ((2, 4), (0, 1, 3, 2), (4, 2)),
+      ((2, 4), (0, 1, 2, 3), (2, 4)),
+
+  )
+  def test_transpose_expression(self, tiling, permutation, expected):
+    transform = None if tiling is None else lc.TileTransform(tiling)
+    expected_transform = None if expected is None else lc.TileTransform(expected)
+    expr = cs.Transpose(cs.SMEMTransforms(transform), permutation)
+    self.assertEqual(cs.reduce_expression(expr, {}), cs.SMEMTransforms(expected_transform))
+
+  @parameterized.parameters(
+      ((2, 32), (1, 0, 2)),
+      ((2, 32), (1, 2, 0)),
+      ((2, 32), (2, 0, 1)),
+      ((2, 32), (2, 1, 0)),
+      ((2, 4), (2, 3, 1, 0)),
+  )
+  def test_reduce_transpose_of_untiled_and_tiled_dimensions_is_unsatisfiable(
+      self, tiling, permutation
+  ):
+    expr = cs.Transpose(cs.SMEMTransforms(lc.TileTransform(tiling)), permutation)
+    self.assertIsInstance(cs.reduce_expression(expr, {}), cs.Unsatisfiable)
+
+  def test_divides_constraint_are_satisfied_by_empty_tiling(self):
+    self.assertTrue(cs.Divides(cs.SMEMTransforms(None), (1, 2)).holds())
+
+  def test_divides_constraints_are_satisfied_by_divisor_tiling(self):
+    with self.subTest("SMEMTransforms"):
+      tiling = cs.SMEMTransforms(lc.TileTransform((2, 2)))
+      self.assertTrue(cs.Divides(tiling, (4, 6)).holds())
+    with self.subTest("RegisterLayout"):
+      tiling = cs.RegisterLayout(fa.WGMMA_LAYOUT)
+      self.assertTrue(cs.Divides(tiling, (0, 64)).holds())
+    with self.subTest("TMEMLayout"):
+      layout = tcgen05.tmem_default_layout(packing=1)
+      tiling = cs.TMEMLayout(layout)
+      self.assertTrue(cs.Divides(tiling, (0, 64)).holds())
+
+  def test_divides_constraints_are_not_satisfied_by_non_divisor_tiling(self):
+    with self.subTest("SMEMTransforms"):
+      tiling = cs.SMEMTransforms(lc.TileTransform((2, 2)))
+      self.assertFalse(cs.Divides(tiling, (4, 3)).holds())
+    with self.subTest("RegisterLayout"):
+      tiling = cs.RegisterLayout(fa.WGMMA_LAYOUT)
+      self.assertFalse(cs.Divides(tiling, (3, 64)).holds())
+    with self.subTest("TMEMLayout"):
+      layout = tcgen05.tmem_default_layout(packing=1)
+      tiling = cs.TMEMLayout(layout)
+      self.assertFalse(cs.Divides(tiling, (3, 64)).holds())
+
+  @parameterized.parameters(
+      fa.WGSplatFragLayout((4, 32)),
+      fa.WGStridedFragLayout((4, 32), vec_size=1),
+  )
+  def test_divides_constraints_for_strided_and_splat_are_satisfied_for_any_tiling(
+      self, layout
+  ):
+    tiling = cs.RegisterLayout(layout)
+    self.assertTrue(cs.Divides(tiling, (2, 16)).holds())
+
+  def test_reduce_merges_divides_constraints_on_same_variable(self):
+    v0, v1 = cs.Variable(0), cs.Variable(1)
+    constraints = [
+        cs.Divides(v0, (18, 17)),
+        cs.Divides(v0, (3, 19)),
+        cs.Divides(v1, (6, 1, 3)),
+    ]
+    self.assertEqual(
+        cs.reduce(cs.ConstraintSystem(constraints=constraints)).constraints,
+        [
+            cs.Divides(v0, (3, 1)),
+            cs.Divides(v1, (6, 1, 3)),
+        ],
+    )
+
+    # Check that merging constraints with different lenghts yields a constraint
+    # whose length matches the one of the shorter tiling_multiple.
+    constraints = [
+        cs.Divides(v0, (16, 10)),
+        cs.Divides(v0, (8,)),
+    ]
+    self.assertEqual(
+        cs.reduce(cs.ConstraintSystem(constraints=constraints)).constraints,
+        [
+            cs.Divides(v0, (2,)),
+        ],
+    )
+
+  def test_saturate_divides_constraints_for_equal_vars(self):
+    def equals(a, b):
+      return cs.Equals(cs.Variable(a), cs.Variable(b))
+    def divides(var, dims):
+      return cs.Divides(cs.Variable(var), dims)
+
+    # One equality
+    s = cs.ConstraintSystem(
+        constraints=[
+            equals(0, 1),
+            divides(0, (1,)),
+        ],
+    )
+    got = cs.saturate_divides_constraints_for_equal_vars(s)
+    want = [equals(0, 1), divides(0, (1,)), divides(1, (1,))]
+    self.assertEqual(got.constraints, want)
+
+    # Five transitively equal variables and one disconnected one.
+    s = cs.ConstraintSystem(
+        constraints=[
+            equals(0, 1),
+            equals(2, 3),
+            equals(2, 4),
+            equals(1, 4),
+            divides(0, (1,)),
+            divides(5, (1,)),
+        ],
+    )
+    got = cs.saturate_divides_constraints_for_equal_vars(s)
+    want = [
+        equals(0, 1),
+        equals(2, 3),
+        equals(2, 4),
+        equals(1, 4),
+        divides(0, (1,)),
+        divides(1, (1,)),
+        divides(2, (1,)),
+        divides(3, (1,)),
+        divides(4, (1,)),
+        divides(5, (1,)),
+    ]
+    self.assertEqual(got.constraints, want)
+
+  @parameterized.parameters(
+    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
+    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),
+    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 32),
+  )
+  def test_forcing_relayout_on_unsupported_bitwidth_raises(self, src, dst, bitwidth):
+    self.assertFalse(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
+
+  @parameterized.parameters(
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 4),
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 4),
+      (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 16),
+  )
+  def test_forcing_relayout_on_supported_bitwidth_succeeds(self, src, dst, bitwidth):
+    self.assertTrue(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
+
+  @parameterized.product(
+      bitwidth=(16, 32),
+      swizzle=(32, 64, 128)
+  )
+  def test_tiling_is_valid_mma_tiling_holds_for_valid_tiling(self, swizzle, bitwidth):
+    swizzle_elems = swizzle * 8 // bitwidth
+    layout = cs.SMEMTransforms(lc.TileTransform((8, swizzle_elems)))
+    self.assertTrue(cs.IsValidMmaTiling(layout, bitwidth).holds())
+
+  @parameterized.parameters(False, True)
+  def test_tiling_is_valid_mma_tiling_holds_for_unswizzled_tiling_only_if_allowed(self, allow_unswizzled):
+    layout = cs.SMEMTransforms(lc.TileTransform((8, 8)))
+    self.assertEqual(cs.IsValidMmaTiling(layout, 16, allow_unswizzled).holds(), allow_unswizzled)
+
+  @parameterized.named_parameters(
+      (
+          "(1, 128) -> (4, 128), vec_size=1",
+          fa.WGStridedFragLayout((1, 128), vec_size=1),
+          fa.WGStridedFragLayout((4, 128), vec_size=1),
+          (0, 1),
+          True,
+      ),
+      (
+          "Not supported: vec_size mismatch",
+          fa.WGStridedFragLayout((1, 128), vec_size=1),
+          fa.WGStridedFragLayout((4, 128), vec_size=2),
+          (0, 1),
+          False,
+      ),
+      (
+          "(1, 1, 128) -> (2, 4, 128), vec_size=1",
+          fa.WGStridedFragLayout((1, 1, 128), vec_size=1),
+          fa.WGStridedFragLayout((2, 4, 128), vec_size=1),
+          (0, 1, 2),
+          True,
+      ),
+      (
+          "(1, 4, 128) -> (2, 4, 128), vec_size=1",
+          fa.WGStridedFragLayout((1, 4, 128), vec_size=1),
+          fa.WGStridedFragLayout((2, 4, 128), vec_size=1),
+          (0, 1, 2),
+          True,
+      ),
+      (
+          "(128,) -> (4, 128), vec_size=1",
+          fa.WGStridedFragLayout((128,), vec_size=1),
+          fa.WGStridedFragLayout((4, 128), vec_size=1),
+          (1,),
+          True,
+      ),
+      (
+          "Not supported: broadcasting trailing dimensions",
+          fa.WGStridedFragLayout((2, 1, 128), vec_size=1),
+          fa.WGStridedFragLayout((2, 4, 128), vec_size=1),
+          (0, 1, 2),
+          False,
+      ),
+      (
+          "(128,) -> (128, 128), vec_size=1",
+          fa.WGStridedFragLayout((128,), vec_size=1),
+          fa.WGStridedFragLayout((128, 128), vec_size=1),
+          (1,),
+          True,
+      ),
+      (
+          "(1, 128) -> (18, 4, 128), vec_size=1",
+          fa.WGStridedFragLayout((1, 128), vec_size=1),
+          fa.WGStridedFragLayout((18, 4, 128), vec_size=1),
+          (1, 2),
+          True,
+      ),
+  )
+  def test_is_supported_broadcast_constraint_holds_for_strided_layouts(
+      self, src, dst, dims, holds
+  ):
+    self.assertEqual(
+        cs.IsSupportedBroadcast(RL(src), RL(dst), dims).holds(), holds
+    )
+
+  @parameterized.parameters(
+      (cs.SMEMTransforms(lc.TileTransform((2, 8))), 4, True),
+      (cs.SMEMTransforms(lc.TileTransform((2, 8))), 3, False),
+      (cs.SMEMTransforms(lc.TileTransform(())), 4, True),
+      (cs.SMEMTransforms(None), 4, True),
+  )
+  def test_minor_dim_divisible_by_constraint_holds(self, tiling, divisor, expected):
+    self.assertEqual(cs.MinorDimDivisibleBy(tiling, divisor).holds(), expected)
+
+  def test_reduce_minor_dim_divisible_by_divisor_holds(self):
+    v0 = V(0)
+    tiling = cs.SMEMTransforms(lc.TileTransform((2, 8)))
+    system = cs.ConstraintSystem(
+        assignments={v0: tiling},
+        constraints=[cs.MinorDimDivisibleBy(v0, 4)],
+    )
+    reduced = cs.reduce(system)
+    self.assertEqual(reduced.constraints, [])
+
+  def test_reduce_minor_dim_divisible_by_nondivisible_divisor_returns_unsat(self):
+    v0 = V(0)
+    tiling = cs.SMEMTransforms(lc.TileTransform((2, 8)))
+    system = cs.ConstraintSystem(
+        assignments={v0: tiling},
+        constraints=[cs.MinorDimDivisibleBy(v0, 3)],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
+  @parameterized.named_parameters(
+      ("invalid_reassociation_empty_dims", (0,), "must contain at least one dimension"),
+      ("invalid_reassociation_wrong_rank", (2,), "equal to the rank of the source shape"),
+  )
+  def test_collapse_shape_invalid_reassociation_raises(self, reassociation, msg):
+    with self.assertRaisesRegex(ValueError, msg):
+      shape = (2, 4, 6)
+      cs.CollapseShape(cs.Variable(0), shape, reassociation)
+
+  @parameterized.named_parameters(
+      ("tiling_does_not_divide_shape", (2, 4, 8), (3, 4, 8), (1, 1, 1)),
+      ("multiple_non_unit_tiled_and_tiling_dimensions", (2, 4, 8), (4, 8, 16), (2, 1)),
+      ("collapsing_tiled_and_untiled_dimensions", (2, 4), (2, 4, 8), (2, 1)),
+      ("leading_full_dimensions", (4, 8), (4, 16), (2,)),
+      ("trailing_unit_dimensions", (4, 1), (16, 16), (2,))
+  )
+  def test_reduce_collapse_shape_is_unsatisfiable_(self, tiling, shape, reassociation):
+    expr = cs.CollapseShape(
+        cs.SMEMTransforms(lc.TileTransform(tiling)), shape, reassociation
+    )
+    self.assertIsInstance(cs.reduce_expression(expr, assignments={}), cs.Unsatisfiable)
+
+  @parameterized.named_parameters(
+      ("leading_unit_dimensions", (1, 2, 8), (4, 4, 16), (2, 1), (2, 8)),
+      ("trailing_full_dimensions", (4, 8), (4, 8, 8), (1, 2), (32,)),
+      ("leading_unit_and_trailing_full_dimensions", (1, 4, 8), (4, 8, 8), (3,), (32,))
+  )
+  def test_reduce_collapse_shape_reduces_tiling_(
+      self, tiling, shape, reassociation, reassociated_tiling
+  ):
+    expr = cs.CollapseShape(
+        cs.SMEMTransforms(lc.TileTransform(tiling)), shape, reassociation
+    )
+    self.assertEqual(cs.reduce_expression(expr, assignments={}),
+                     cs.SMEMTransforms(lc.TileTransform(reassociated_tiling)))
+
+
+if __name__ == "__main__":
+  parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1,3 +1,3 @@
 (tests
- (names test_ndarray test_dtypes test_tree_util)
+ (names test_ndarray test_dtypes test_tree_util test_basearray)
  (libraries ojax alcotest))

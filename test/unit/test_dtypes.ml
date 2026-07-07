@@ -1,0 +1,61 @@
+module D = Ojax.Dtype
+module Dt = Ojax.Dtypes
+
+let dt =
+  Alcotest.testable
+    (fun ppf d -> Format.pp_print_string ppf (D.short_name d))
+    ( = )
+
+let pair = Alcotest.pair dt Alcotest.bool
+
+let check_result name x64 args expected =
+  Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+      Alcotest.check pair name expected (Dt.result_type args))
+
+let x64_off () =
+  check_result "bool,i32" false
+    [ (D.Bool, false); (D.I32, false) ]
+    (D.I32, false);
+  check_result "f32,i32" false [ (D.F32, false); (D.I32, false) ] (D.F32, false);
+  check_result "f32w,i32" false [ (D.F32, true); (D.I32, false) ] (D.F32, true);
+  check_result "f32w,i32w" false [ (D.F32, true); (D.I32, true) ] (D.F32, true);
+  check_result "i32w,f32" false [ (D.I32, true); (D.F32, false) ] (D.F32, false);
+  check_result "i32w,i32w" false [ (D.I32, true); (D.I32, true) ] (D.I32, true)
+
+let x64_on () =
+  check_result "bool,i32" true [ (D.Bool, false); (D.I32, false) ] (D.I32, false);
+  check_result "f32,f64" true [ (D.F32, false); (D.F64, false) ] (D.F64, false);
+  check_result "f32,i32" true [ (D.F32, false); (D.I32, false) ] (D.F32, false);
+  check_result "f64w,i32" true [ (D.F64, true); (D.I32, false) ] (D.F64, true);
+  check_result "f64w,i64w" true [ (D.F64, true); (D.I64, true) ] (D.F64, true);
+  check_result "i64w,f32" true [ (D.I64, true); (D.F32, false) ] (D.F32, false);
+  check_result "i64w,i64w" true [ (D.I64, true); (D.I64, true) ] (D.I64, true);
+  check_result "i64,f32" true [ (D.I64, false); (D.F32, false) ] (D.F32, false)
+
+let promote () =
+  Alcotest.check dt "i32,f32" D.F32 (Dt.promote_types D.I32 D.F32);
+  Alcotest.check dt "i32,i64" D.I64 (Dt.promote_types D.I32 D.I64);
+  Alcotest.check dt "bool,i32" D.I32 (Dt.promote_types D.Bool D.I32);
+  Alcotest.check dt "f32,f64" D.F64 (Dt.promote_types D.F32 D.F64);
+  Alcotest.check dt "i64,f32" D.F32 (Dt.promote_types D.I64 D.F32)
+
+let canonicalize () =
+  Ojax.Config.with_value Ojax.Config.enable_x64 false (fun () ->
+      Alcotest.check dt "off f64" D.F32 (Dt.canonicalize_dtype D.F64);
+      Alcotest.check dt "off i64" D.I32 (Dt.canonicalize_dtype D.I64);
+      Alcotest.check dt "off f32" D.F32 (Dt.canonicalize_dtype D.F32));
+  Ojax.Config.with_value Ojax.Config.enable_x64 true (fun () ->
+      Alcotest.check dt "on f64" D.F64 (Dt.canonicalize_dtype D.F64);
+      Alcotest.check dt "on i64" D.I64 (Dt.canonicalize_dtype D.I64))
+
+let () =
+  Alcotest.run "dtypes"
+    [
+      ( "result_type",
+        [
+          Alcotest.test_case "x64_off" `Quick x64_off;
+          Alcotest.test_case "x64_on" `Quick x64_on;
+        ] );
+      ("promote_types", [ Alcotest.test_case "pairs" `Quick promote ]);
+      ("canonicalize", [ Alcotest.test_case "x64 map" `Quick canonicalize ]);
+    ]

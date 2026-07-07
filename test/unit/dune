@@ -4,5 +4,6 @@
   test_dtypes
   test_tree_util
   test_basearray
-  test_linear_util)
+  test_linear_util
+  test_source_info_util)
  (libraries ojax alcotest))

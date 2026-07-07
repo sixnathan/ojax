@@ -6,5 +6,6 @@
   test_basearray
   test_linear_util
   test_source_info_util
-  test_errors)
+  test_errors
+  test_core)
  (libraries ojax alcotest))

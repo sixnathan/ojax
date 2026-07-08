@@ -1,0 +1,14 @@
+[
+  {"case_id":"sin","fn":"sin","in_avals":[{"shape":[3],"dtype":"float32"}]},
+  {"case_id":"sin_mul","fn":"sin_mul","in_avals":[{"shape":[2,3],"dtype":"float32"},{"shape":[2,3],"dtype":"float32"}]},
+  {"case_id":"chain","fn":"chain","in_avals":[{"shape":[4],"dtype":"float32"}]},
+  {"case_id":"reduce","fn":"reduce","in_avals":[{"shape":[2,3],"dtype":"float32"}]},
+  {"case_id":"dot","fn":"dot","in_avals":[{"shape":[2,3],"dtype":"float32"},{"shape":[3,4],"dtype":"float32"}]},
+  {"case_id":"reshape","fn":"reshape","in_avals":[{"shape":[2,3],"dtype":"float32"}]},
+  {"case_id":"broadcast","fn":"broadcast","in_avals":[{"shape":[3],"dtype":"float32"}]},
+  {"case_id":"convert","fn":"convert","in_avals":[{"shape":[3],"dtype":"float32"}]},
+  {"case_id":"compare","fn":"compare","in_avals":[{"shape":[3],"dtype":"float32"},{"shape":[3],"dtype":"float32"}]},
+  {"case_id":"select","fn":"select","in_avals":[{"shape":[3],"dtype":"bool"},{"shape":[3],"dtype":"float32"},{"shape":[3],"dtype":"float32"}]},
+  {"case_id":"lit_mul","fn":"lit_mul","in_avals":[]},
+  {"case_id":"nested","fn":"nested","in_avals":[{"shape":[3],"dtype":"float32"},{"shape":[3],"dtype":"float32"}]}
+]

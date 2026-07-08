@@ -201,6 +201,183 @@ LAX_BUILDERS = {
 }
 
 
+SHORT_DTYPE = {
+    "float32": "f32",
+    "float64": "f64",
+    "int32": "i32",
+    "int64": "i64",
+    "bool": "bool",
+}
+
+
+def jaxpr_short_dtype(name):
+    return SHORT_DTYPE[name]
+
+
+def jaxpr_aval_short(aval):
+    shape = "[" + ",".join(str(int(d)) for d in aval.shape) + "]"
+    return jaxpr_short_dtype(aval.dtype.name) + shape
+
+
+def jaxpr_int_tuple(xs):
+    return "(" + ",".join(str(int(x)) for x in xs) + ")"
+
+
+def jaxpr_dot_dims(dn):
+    (lc, rc), (lb, rb) = dn
+    return (
+        "(("
+        + jaxpr_int_tuple(lc)
+        + ","
+        + jaxpr_int_tuple(rc)
+        + "),("
+        + jaxpr_int_tuple(lb)
+        + ","
+        + jaxpr_int_tuple(rb)
+        + "))"
+    )
+
+
+def jaxpr_prim_params(name, params):
+    if name == "convert_element_type":
+        return "[new_dtype=" + jaxpr_short_dtype(np.dtype(params["new_dtype"]).name) + "]"
+    if name == "broadcast_in_dim":
+        return (
+            "[broadcast_dimensions="
+            + jaxpr_int_tuple(params["broadcast_dimensions"])
+            + " shape="
+            + jaxpr_int_tuple(params["shape"])
+            + "]"
+        )
+    if name == "reshape":
+        return "[new_sizes=" + jaxpr_int_tuple(params["new_sizes"]) + "]"
+    if name == "reduce_sum":
+        return "[axes=" + jaxpr_int_tuple(params["axes"]) + "]"
+    if name == "dot_general":
+        return "[dimension_numbers=" + jaxpr_dot_dims(params["dimension_numbers"]) + "]"
+    return ""
+
+
+def jaxpr_encode_var(n):
+    s = ""
+    while True:
+        s = chr(97 + (n % 26)) + s
+        n = n // 26 - 1
+        if n < 0:
+            break
+    return s
+
+
+def jaxpr_lit_str(a):
+    name = a.aval.dtype.name
+    if name == "bool":
+        val = "True" if bool(a.val) else "False"
+    elif name.startswith("int"):
+        val = str(int(a.val))
+    else:
+        val = repr(float(a.val))
+    return val + ":" + jaxpr_aval_short(a.aval)
+
+
+def jaxpr_render(cj):
+    jx = cj.jaxpr
+    names = {}
+    counter = [0]
+
+    def bind(v):
+        if id(v) not in names:
+            names[id(v)] = jaxpr_encode_var(counter[0])
+            counter[0] += 1
+
+    binders = list(jx.constvars) + list(jx.invars)
+    for v in binders:
+        bind(v)
+    for e in jx.eqns:
+        for v in e.outvars:
+            bind(v)
+
+    def is_lit(a):
+        return type(a).__name__ == "Literal"
+
+    def atom(a):
+        if is_lit(a):
+            return jaxpr_lit_str(a)
+        return names[id(a)]
+
+    def binder(v):
+        return names[id(v)] + ":" + jaxpr_aval_short(v.aval)
+
+    def eqn(e):
+        lhs = " ".join(binder(v) for v in e.outvars)
+        rhs = (
+            e.primitive.name
+            + jaxpr_prim_params(e.primitive.name, dict(e.params))
+            + " "
+            + " ".join(atom(a) for a in e.invars)
+        )
+        return lhs + " = " + rhs
+
+    bstr = ", ".join(binder(v) for v in binders)
+    estr = " ; ".join(eqn(e) for e in jx.eqns)
+    ostr = ", ".join(atom(a) for a in jx.outvars)
+    return "{ lambda " + bstr + " . let " + estr + " in ( " + ostr + " ) }"
+
+
+JAXPR_FNS = {
+    "sin": lambda x: LAX.sin(x),
+    "sin_mul": lambda x, y: LAX.mul(LAX.sin(x), y),
+    "chain": lambda x: LAX.exp(LAX.neg(x)),
+    "reduce": lambda x: LAX.reduce_sum(x, axes=(0,)),
+    "dot": lambda x, y: LAX.dot_general(x, y, (((1,), (0,)), ((), ()))),
+    "reshape": lambda x: LAX.reshape(x, (6,)),
+    "broadcast": lambda x: LAX.broadcast_in_dim(x, (2, 3), (1,)),
+    "convert": lambda x: LAX.convert_element_type(x, np.int32),
+    "compare": lambda x, y: LAX.lt(x, y),
+    "select": lambda p, a, b: LAX.select_n(p, a, b),
+    "lit_mul": lambda: LAX.mul(np.float32(2.0), np.float32(3.0)),
+    "nested": lambda x, y: LAX.add(LAX.mul(x, y), LAX.sin(x)),
+}
+
+
+def gen_jaxpr_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(outdir)
+    manifest_cases = []
+    for c in cases:
+        fn = JAXPR_FNS[c["fn"]]
+        args = [
+            np.zeros(tuple(a["shape"]), np.dtype(a["dtype"])) for a in c["in_avals"]
+        ]
+        cj = jax.make_jaxpr(fn)(*args)
+        manifest_cases.append({"case_id": c["case_id"], "text": jaxpr_render(cj)})
+    manifest_cases.sort(key=lambda c: c["case_id"])
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_jaxpr(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_jaxpr_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_jaxpr_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def _add_all(*xs):
     return functools.reduce(jnp.add, xs)
 
@@ -347,7 +524,10 @@ def generate(module):
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
-    n_off, n_on = generate(sys.argv[1])
+    if sys.argv[1] == "jaxpr":
+        n_off, n_on = generate_jaxpr(sys.argv[1])
+    else:
+        n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")
 
 

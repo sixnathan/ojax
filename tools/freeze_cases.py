@@ -13,7 +13,25 @@ def load_source(module):
         return json.load(fh)
 
 
+def freeze_jaxpr(module):
+    records = load_source(module)
+    cases = sorted(records, key=lambda c: c["case_id"])
+    doc = {
+        "schema_version": 1,
+        "module": module,
+        "num_generated_cases": ec.NUM,
+        "cases": cases,
+    }
+    dst = os.path.join(ROOT, "spec", module + ".cases.json")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(doc))
+    return dst, len(cases)
+
+
 def freeze(module):
+    if module == "jaxpr":
+        return freeze_jaxpr(module)
     records = load_source(module)
     explicit = []
     generated = []

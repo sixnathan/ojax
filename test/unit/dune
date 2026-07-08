@@ -9,5 +9,6 @@
   test_errors
   test_core
   test_ad_util
-  test_lax)
+  test_lax
+  test_jaxpr)
  (libraries ojax alcotest))

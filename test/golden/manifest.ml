@@ -278,6 +278,114 @@ let lax_suite_for set_name =
   in
   ("lax:" ^ set_name, coverage :: case_tests)
 
+module J = Ojax.Jaxpr
+module PP = Ojax.Pretty_printer
+
+let av shape dtype : T.aval = { shape; dtype; weak_type = false }
+let jb1 = C.bind1
+let scalar_f32 x = T.Concrete (Nd.of_floats D.F32 [||] [| x |])
+
+let jaxpr_builders :
+    (string * T.aval list * (T.value list -> T.value list)) list =
+  [
+    ("sin", [ av [| 3 |] D.F32 ], fun a -> [ jb1 T.Sin a ]);
+    ( "sin_mul",
+      [ av [| 2; 3 |] D.F32; av [| 2; 3 |] D.F32 ],
+      fun args ->
+        match args with
+        | [ x; y ] ->
+            let c = jb1 T.Sin [ x ] in
+            [ jb1 T.Mul [ c; y ] ]
+        | _ -> assert false );
+    ( "chain",
+      [ av [| 4 |] D.F32 ],
+      fun args ->
+        match args with
+        | [ x ] ->
+            let n = jb1 T.Neg [ x ] in
+            [ jb1 T.Exp [ n ] ]
+        | _ -> assert false );
+    ( "reduce",
+      [ av [| 2; 3 |] D.F32 ],
+      fun args -> [ jb1 (T.Reduce_sum [| 0 |]) args ] );
+    ( "dot",
+      [ av [| 2; 3 |] D.F32; av [| 3; 4 |] D.F32 ],
+      fun args ->
+        [
+          jb1
+            (T.Dot_general
+               {
+                 lhs_contract = [| 1 |];
+                 rhs_contract = [| 0 |];
+                 lhs_batch = [||];
+                 rhs_batch = [||];
+               })
+            args;
+        ] );
+    ( "reshape",
+      [ av [| 2; 3 |] D.F32 ],
+      fun args -> [ jb1 (T.Reshape [| 6 |]) args ] );
+    ( "broadcast",
+      [ av [| 3 |] D.F32 ],
+      fun args ->
+        [ jb1 (T.Broadcast_in_dim { shape = [| 2; 3 |]; dims = [| 1 |] }) args ]
+    );
+    ( "convert",
+      [ av [| 3 |] D.F32 ],
+      fun args -> [ jb1 (T.Convert_element_type D.I32) args ] );
+    ( "compare",
+      [ av [| 3 |] D.F32; av [| 3 |] D.F32 ],
+      fun args -> [ jb1 T.Lt args ] );
+    ( "select",
+      [ av [| 3 |] D.Bool; av [| 3 |] D.F32; av [| 3 |] D.F32 ],
+      fun args -> [ jb1 T.Select_n args ] );
+    ("lit_mul", [], fun _ -> [ jb1 T.Mul [ scalar_f32 2.0; scalar_f32 3.0 ] ]);
+    ( "nested",
+      [ av [| 3 |] D.F32; av [| 3 |] D.F32 ],
+      fun args ->
+        match args with
+        | [ x; y ] ->
+            let m = jb1 T.Mul [ x; y ] in
+            let s = jb1 T.Sin [ x ] in
+            [ jb1 T.Add [ m; s ] ]
+        | _ -> assert false );
+  ]
+
+let load_jaxpr_manifest path =
+  let j = Yojson.Safe.from_file path in
+  U.member "cases" j |> U.to_list
+  |> List.map (fun c ->
+      (U.member "case_id" c |> U.to_string, U.member "text" c |> U.to_string))
+
+let jaxpr_check_case want (_case_id, avals, f) () =
+  let got = PP.closed_jaxpr_to_string (J.make_jaxpr avals f) in
+  Alcotest.(check string) "jaxpr text" want got
+
+let jaxpr_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "jaxpr") set_name
+  in
+  let cases = load_jaxpr_manifest (Filename.concat set_dir "manifest.json") in
+  let builder_ids =
+    List.map (fun (id, _, _) -> id) jaxpr_builders |> List.sort String.compare
+  in
+  let manifest_ids = List.map fst cases |> List.sort String.compare in
+  let coverage () =
+    if builder_ids <> manifest_ids then
+      Alcotest.failf "jaxpr:%s coverage mismatch" set_name
+  in
+  let case_tests =
+    List.map
+      (fun (case_id, want) ->
+        let builder =
+          List.find (fun (id, _, _) -> id = case_id) jaxpr_builders
+        in
+        Alcotest.test_case case_id `Quick (jaxpr_check_case want builder))
+      cases
+  in
+  ( "jaxpr:" ^ set_name,
+    Alcotest.test_case "coverage" `Quick coverage :: case_tests )
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -324,5 +432,7 @@ let () =
       suite_for "dtypes" "x64_on";
       lax_suite_for "x64_off";
       lax_suite_for "x64_on";
+      jaxpr_suite_for "x64_off";
+      jaxpr_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

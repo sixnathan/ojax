@@ -5,4 +5,5 @@
  (deps
   (source_tree %{project_root}/goldens/dtypes)
   (source_tree %{project_root}/goldens/lax)
-  (source_tree %{project_root}/goldens/jaxpr)))
+  (source_tree %{project_root}/goldens/jaxpr)
+  (source_tree %{project_root}/goldens/ad)))

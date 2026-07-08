@@ -378,6 +378,137 @@ def generate_jaxpr(module):
     return n_off, n_on
 
 
+AD_FNS = {
+    "sin": lambda x: LAX.sin(x),
+    "sin_mul": lambda x, y: LAX.mul(LAX.sin(x), y),
+    "exp_neg": lambda x: LAX.exp(LAX.neg(x)),
+    "tanh": lambda x: LAX.tanh(x),
+    "cubic": lambda x: LAX.sub(LAX.mul(x, LAX.mul(x, x)), x),
+    "div2": lambda x, y: LAX.div(x, y),
+    "dot": lambda x, y: LAX.dot_general(x, y, (((1,), (0,)), ((), ()))),
+    "max2": lambda x, y: LAX.max(x, y),
+    "reduce": lambda x: LAX.reduce_sum(x, axes=(0,)),
+    "bcast": lambda x: LAX.broadcast_in_dim(x, (2, 3), (1,)),
+    "reshape_fn": lambda x: LAX.reshape(x, (6,)),
+    "sum_sin": lambda x: LAX.reduce_sum(LAX.sin(x), axes=(0,)),
+    "sum_cubic": lambda x: LAX.reduce_sum(
+        LAX.sub(LAX.mul(x, LAX.mul(x, x)), x), axes=(0,)
+    ),
+    "sum_max": lambda x, y: LAX.reduce_sum(LAX.max(x, y), axes=(0,)),
+    "bcast_sum": lambda x: LAX.reduce_sum(
+        LAX.broadcast_in_dim(x, (2, 3), (1,)), axes=(0, 1)
+    ),
+    "reshape_sum": lambda x: LAX.reduce_sum(LAX.reshape(x, (6,)), axes=(0,)),
+}
+
+
+def run_ad_case(c, seed):
+    fn = AD_FNS[c["fn"]]
+    mode = c["mode"]
+    avals = c["in_avals"]
+    primals = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"]) for i, a in enumerate(avals)
+    ]
+    if mode == "jvp":
+        tangents = [
+            draw(a["rng"], seed + 1000 + i, a["shape"], a["dtype"])
+            for i, a in enumerate(avals)
+        ]
+        po, to = jax.jvp(fn, tuple(primals), tuple(tangents))
+        return primals, tangents, [np.asarray(po), np.asarray(to)]
+    if mode == "grad":
+        g = jax.grad(fn)(*primals)
+        return primals, None, [np.asarray(g)]
+    if mode == "grad2":
+        g = jax.grad(jax.grad(fn))(*primals)
+        return primals, None, [np.asarray(g)]
+    raise SystemExit("unknown ad mode " + mode)
+
+
+def gen_ad_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and any(ec.is_wide64(a["dtype"]) for a in c["in_avals"]):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        primals, tangents, outputs = run_ad_case(c, seed)
+        in_arrays = {"arg" + str(i): np.asarray(v) for i, v in enumerate(primals)}
+        tan_meta = []
+        if tangents is not None:
+            for i, v in enumerate(tangents):
+                in_arrays["tan" + str(i)] = np.asarray(v)
+                tv = np.asarray(v)
+                tan_meta.append(
+                    {
+                        "name": "tan" + str(i),
+                        "shape": [int(d) for d in tv.shape],
+                        "dtype": tv.dtype.name,
+                    }
+                )
+        out_arrays = {"out" + str(i): np.asarray(o) for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **in_arrays)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": "arg" + str(i),
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+                "rng": a["rng"],
+            }
+            for i, (a, v) in enumerate(zip(c["in_avals"], primals))
+        ]
+        outs_meta = [
+            {
+                "name": "out" + str(i),
+                "shape": [int(d) for d in np.asarray(o).shape],
+                "dtype": np.asarray(o).dtype.name,
+            }
+            for i, o in enumerate(outputs)
+        ]
+        compare, tol = resolve_tol(np.asarray(outputs[0]).dtype.name)
+        manifest_cases.append(
+            {
+                "case_id": case_id,
+                "fn": c["fn"],
+                "mode": c["mode"],
+                "args": args_meta,
+                "tangents": tan_meta,
+                "outputs": outs_meta,
+                "compare": compare,
+                "tol": tol,
+            }
+        )
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_ad(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_ad_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_ad_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def _add_all(*xs):
     return functools.reduce(jnp.add, xs)
 
@@ -526,6 +657,8 @@ def main():
         raise SystemExit("usage: gen_goldens.py <module>")
     if sys.argv[1] == "jaxpr":
         n_off, n_on = generate_jaxpr(sys.argv[1])
+    elif sys.argv[1] == "ad":
+        n_off, n_on = generate_ad(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

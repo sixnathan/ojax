@@ -11,5 +11,6 @@
   test_ad_util
   test_lax
   test_jaxpr
-  test_partial_eval)
+  test_partial_eval
+  test_ad)
  (libraries ojax alcotest))

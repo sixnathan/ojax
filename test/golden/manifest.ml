@@ -386,6 +386,185 @@ let jaxpr_suite_for set_name =
   ( "jaxpr:" ^ set_name,
     Alcotest.test_case "coverage" `Quick coverage :: case_tests )
 
+module Ad = Ojax.Interpreters.Ad
+
+let ad_builders : (string * (T.value list -> T.value list)) list =
+  [
+    ("sin", fun a -> [ jb1 T.Sin a ]);
+    ( "sin_mul",
+      fun a ->
+        match a with
+        | [ x; y ] -> [ jb1 T.Mul [ jb1 T.Sin [ x ]; y ] ]
+        | _ -> assert false );
+    ("exp_neg", fun a -> [ jb1 T.Exp [ jb1 T.Neg a ] ]);
+    ("tanh", fun a -> [ jb1 T.Tanh a ]);
+    ( "cubic",
+      fun a ->
+        match a with
+        | [ x ] -> [ jb1 T.Sub [ jb1 T.Mul [ x; jb1 T.Mul [ x; x ] ]; x ] ]
+        | _ -> assert false );
+    ("div2", fun a -> [ jb1 T.Div a ]);
+    ( "dot",
+      fun a ->
+        [
+          jb1
+            (T.Dot_general
+               {
+                 lhs_contract = [| 1 |];
+                 rhs_contract = [| 0 |];
+                 lhs_batch = [||];
+                 rhs_batch = [||];
+               })
+            a;
+        ] );
+    ("max2", fun a -> [ jb1 T.Max a ]);
+    ("reduce", fun a -> [ jb1 (T.Reduce_sum [| 0 |]) a ]);
+    ( "bcast",
+      fun a ->
+        [ jb1 (T.Broadcast_in_dim { shape = [| 2; 3 |]; dims = [| 1 |] }) a ] );
+    ("reshape_fn", fun a -> [ jb1 (T.Reshape [| 6 |]) a ]);
+    ("sum_sin", fun a -> [ jb1 (T.Reduce_sum [| 0 |]) [ jb1 T.Sin a ] ]);
+    ( "sum_cubic",
+      fun a ->
+        match a with
+        | [ x ] ->
+            [
+              jb1 (T.Reduce_sum [| 0 |])
+                [ jb1 T.Sub [ jb1 T.Mul [ x; jb1 T.Mul [ x; x ] ]; x ] ];
+            ]
+        | _ -> assert false );
+    ("sum_max", fun a -> [ jb1 (T.Reduce_sum [| 0 |]) [ jb1 T.Max a ] ]);
+    ( "bcast_sum",
+      fun a ->
+        [
+          jb1
+            (T.Reduce_sum [| 0; 1 |])
+            [
+              jb1 (T.Broadcast_in_dim { shape = [| 2; 3 |]; dims = [| 1 |] }) a;
+            ];
+        ] );
+    ( "reshape_sum",
+      fun a -> [ jb1 (T.Reduce_sum [| 0 |]) [ jb1 (T.Reshape [| 6 |]) a ] ] );
+  ]
+
+let ad_run mode fn primals tangents =
+  match mode with
+  | "jvp" ->
+      let po, to_ = Ad.jvp fn primals tangents in
+      po @ to_
+  | "grad" -> [ List.hd (Ad.grad (fun a -> List.hd (fn a)) primals) ]
+  | "grad2" ->
+      [
+        List.hd
+          (Ad.grad
+             (fun xs -> List.hd (Ad.grad (fun a -> List.hd (fn a)) xs))
+             primals);
+      ]
+  | _ -> failwith ("ad golden: unknown mode " ^ mode)
+
+type ad_case = {
+  a_id : string;
+  a_fn : string;
+  a_mode : string;
+  a_args : arg list;
+  a_tans : arg list;
+  a_outs : out list;
+  a_compare : string;
+  a_atol : float;
+  a_rtol : float;
+}
+
+let parse_ad_case j =
+  let tol = U.member "tol" j in
+  {
+    a_id = U.member "case_id" j |> U.to_string;
+    a_fn = U.member "fn" j |> U.to_string;
+    a_mode = U.member "mode" j |> U.to_string;
+    a_args = U.member "args" j |> U.to_list |> List.map parse_arg;
+    a_tans = U.member "tangents" j |> U.to_list |> List.map parse_arg;
+    a_outs = U.member "outputs" j |> U.to_list |> List.map parse_out;
+    a_compare = U.member "compare" j |> U.to_string;
+    a_atol = U.member "atol" tol |> U.to_number;
+    a_rtol = U.member "rtol" tol |> U.to_number;
+  }
+
+let load_ad_manifest path =
+  let j = Yojson.Safe.from_file path in
+  ( U.member "x64" j |> U.to_bool,
+    U.member "cases" j |> U.to_list |> List.map parse_ad_case )
+
+let ad_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.a_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.a_id ^ ".npz"))
+  in
+  let read_operand (a : arg) =
+    T.Concrete (nd_of_npz (find_member inputs a.name))
+  in
+  let primals = List.map read_operand c.a_args in
+  let tangents = List.map read_operand c.a_tans in
+  let fn =
+    match List.assoc_opt c.a_fn ad_builders with
+    | Some f -> f
+    | None -> Alcotest.failf "%s: unknown fn %s" c.a_id c.a_fn
+  in
+  let results = ad_run c.a_mode fn primals tangents in
+  let paired =
+    try List.combine c.a_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.a_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.a_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.a_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual =
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data = Npz.F (read_nd nd);
+        }
+      in
+      Compare.assert_tol o.odtype c.a_atol c.a_rtol;
+      Compare.check
+        ~name:(c.a_id ^ ":" ^ o.oname)
+        ~compare:c.a_compare ~atol:c.a_atol ~rtol:c.a_rtol ~expected:golden
+        ~actual)
+    paired
+
+let ad_check_coverage ~set_dir cases () =
+  let expected = List.map (fun c -> c.a_id) cases |> List.sort String.compare in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then Alcotest.failf "%s: ad coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let ad_suite_for set_name =
+  let set_dir = Filename.concat (Filename.concat goldens_root "ad") set_name in
+  let x64, cases = load_ad_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.a_id `Quick (ad_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (ad_check_coverage ~set_dir cases)
+  in
+  ("ad:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -434,5 +613,7 @@ let () =
       lax_suite_for "x64_on";
       jaxpr_suite_for "x64_off";
       jaxpr_suite_for "x64_on";
+      ad_suite_for "x64_off";
+      ad_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

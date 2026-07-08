@@ -325,6 +325,11 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Population_count -> failwith "ad: population_count has no jvp rule"
   | Clz -> failwith "ad: clz has no jvp rule"
   | Nextafter -> failwith "ad: nextafter has no jvp rule"
+  | Concatenate _ | Pad _ | Rev _ | Squeeze _ | Stack _ | Tile _ | Transpose _
+    ->
+      (b1 prim primals, b1 prim tangents)
+  | Split _ | Unstack _ ->
+      failwith "ad: multi-output jvp handled by jvp_process_primitive"
   | Xla_call _ | Cond _ ->
       failwith "ad: jvp of control primitive not supported in M1"
 
@@ -349,8 +354,14 @@ let as_jvp trace v =
 let jvp_process_primitive trace prim args =
   let pairs = List.map (as_jvp trace) args in
   let primals = List.map fst pairs and tangents = List.map snd pairs in
-  let po, to_ = jvp_rule prim primals tangents in
-  [ Tracer (new_jvp_tracer trace po to_) ]
+  match prim with
+  | Split _ | Unstack _ ->
+      let pos = Core.bind prim primals in
+      let tos = Core.bind prim tangents in
+      List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) pos tos
+  | _ ->
+      let po, to_ = jvp_rule prim primals tangents in
+      [ Tracer (new_jvp_tracer trace po to_) ]
 
 let interpreter : Core.interpreter =
   {
@@ -449,6 +460,22 @@ let reduce_sum_transpose (axes : int array) (in_shape : int array) ct =
   done;
   b1 (Broadcast_in_dim { shape = in_shape; dims = Array.of_list !kept }) [ ct ]
 
+let argsort perm =
+  let n = Array.length perm in
+  let out = Array.make n 0 in
+  Array.iteri (fun i p -> out.(p) <- i) perm;
+  out
+
+let tile_transpose (reps : int array) (in_shape : int array) ct =
+  let n = Array.length in_shape in
+  let inter =
+    Array.init (2 * n) (fun i ->
+        if i mod 2 = 0 then reps.(i / 2) else in_shape.(i / 2))
+  in
+  let reshaped = b1 (Reshape inter) [ ct ] in
+  let axes = Array.init n (fun i -> 2 * i) in
+  b1 (Reduce_sum axes) [ reshaped ]
+
 let transpose_rule prim (cts : value list) (primals : tval list) :
     value option list =
   let ct1 () =
@@ -516,13 +543,47 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
       | _ -> arity ())
   | Copy -> [ Some (b1 Copy [ ct1 () ]) ]
   | Conj -> [ Some (ct1 ()) ]
+  | Rev dims -> [ Some (b1 (Rev dims) [ ct1 () ]) ]
+  | Transpose perm -> [ Some (b1 (Transpose (argsort perm)) [ ct1 () ]) ]
+  | Squeeze _ -> (
+      match primals with
+      | [ x ] -> [ Some (b1 (Reshape (in_aval x).shape) [ ct1 () ]) ]
+      | _ -> arity ())
+  | Tile reps -> (
+      match primals with
+      | [ x ] -> [ Some (tile_transpose reps (in_aval x).shape (ct1 ())) ]
+      | _ -> arity ())
+  | Concatenate dim ->
+      let ct = ct1 () in
+      let sizes =
+        Array.of_list (List.map (fun p -> (in_aval p).shape.(dim)) primals)
+      in
+      let pieces = Core.bind (Split { sizes; axis = dim }) [ ct ] in
+      List.map2
+        (fun p piece -> if is_undef p then Some piece else None)
+        primals pieces
+  | Stack axis ->
+      let ct = ct1 () in
+      let pieces = Core.bind (Unstack axis) [ ct ] in
+      List.map2
+        (fun p piece -> if is_undef p then Some piece else None)
+        primals pieces
+  | Split { axis; _ } -> (
+      match primals with
+      | [ x ] ->
+          [ (if is_undef x then Some (b1 (Concatenate axis) cts) else None) ]
+      | _ -> arity ())
+  | Unstack axis -> (
+      match primals with
+      | [ x ] -> [ (if is_undef x then Some (b1 (Stack axis) cts) else None) ]
+      | _ -> arity ())
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And
   | Atan2 | Complex | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter
   | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-  | Dot_general _ | Xla_call _ | Cond _ ->
+  | Pad _ | Dot_general _ | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

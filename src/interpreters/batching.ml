@@ -153,6 +153,99 @@ let convert_rule (dt : Dtype.t) (x : value) (bdim : int option) :
     value * int option =
   (b1 (Convert_element_type dt) [ x ], bdim)
 
+let insert_pad_cfg (cfg : (int * int * int) array) (idx : int)
+    (v : int * int * int) : (int * int * int) array =
+  let n = Array.length cfg in
+  Array.init (n + 1) (fun i ->
+      if i < idx then cfg.(i) else if i = idx then v else cfg.(i - 1))
+
+let concatenate_batch (axis_size : int) (dim : int) (vals : value list)
+    (bdims : int option list) : value * int option =
+  let aligned =
+    List.map2 (fun v b -> move_batch_axis axis_size b 0 v) vals bdims
+  in
+  (b1 (Concatenate (dim + 1)) aligned, Some 0)
+
+let stack_batch (axis_size : int) (axis : int) (vals : value list)
+    (bdims : int option list) : value * int option =
+  let aligned =
+    List.map2 (fun v b -> move_batch_axis axis_size b 0 v) vals bdims
+  in
+  (b1 (Stack (axis + 1)) aligned, Some 0)
+
+let pad_batch (cfg : (int * int * int) array) (vals : value list)
+    (bdims : int option list) : value * int option =
+  match (vals, bdims) with
+  | [ operand; pv ], [ ob; pvb ] -> (
+      match pvb with
+      | Some _ ->
+          failwith
+            "batching: pad with batched padding_value not supported in M1"
+      | None -> (
+          match ob with
+          | Some d ->
+              let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
+              (b1 (Pad cfg2) [ operand; pv ], Some d)
+          | None ->
+              failwith
+                "batching: pad with unbatched operand not supported in M1"))
+  | _ -> failwith "batching: pad expects 2 operands"
+
+let rev_batch (dims : int array) (x : value) (bdim : int option) :
+    value * int option =
+  match bdim with
+  | None -> (b1 (Rev dims) [ x ], None)
+  | Some d ->
+      let nd = Array.map (fun i -> if i >= d then i + 1 else i) dims in
+      (b1 (Rev nd) [ x ], Some d)
+
+let squeeze_batch (axis_size : int) (dims : int array) (x : value)
+    (bdim : int option) : value * int option =
+  match bdim with
+  | None -> (b1 (Squeeze dims) [ x ], None)
+  | Some d ->
+      let x = move_batch_axis axis_size (Some d) 0 x in
+      let nd = Array.map (fun i -> i + 1) dims in
+      (b1 (Squeeze nd) [ x ], Some 0)
+
+let tile_batch (reps : int array) (x : value) (bdim : int option) :
+    value * int option =
+  match bdim with
+  | None -> (b1 (Tile reps) [ x ], None)
+  | Some d ->
+      let nr = insert_size reps d 1 in
+      (b1 (Tile nr) [ x ], Some d)
+
+let transpose_batch (perm : int array) (x : value) (bdim : int option) :
+    value * int option =
+  match bdim with
+  | None -> (b1 (Transpose perm) [ x ], None)
+  | Some d ->
+      let np = Array.map (fun i -> if i < d then i else i + 1) perm in
+      (b1 (Transpose (Array.append [| d |] np)) [ x ], Some 0)
+
+let split_batch (sizes : int array) (axis : int) (x : value) (bdim : int option)
+    : value list * int option list =
+  match bdim with
+  | None ->
+      let outs = Core.bind (Split { sizes; axis }) [ x ] in
+      (outs, List.map (fun _ -> None) outs)
+  | Some d ->
+      let ax = if axis >= d then axis + 1 else axis in
+      let outs = Core.bind (Split { sizes; axis = ax }) [ x ] in
+      (outs, List.map (fun _ -> Some d) outs)
+
+let unstack_batch (axis : int) (x : value) (bdim : int option) :
+    value list * int option list =
+  match bdim with
+  | None ->
+      let outs = Core.bind (Unstack axis) [ x ] in
+      (outs, List.map (fun _ -> None) outs)
+  | Some d ->
+      let ax, out_bdim = if axis < d then (axis, d - 1) else (axis + 1, d) in
+      let outs = Core.bind (Unstack ax) [ x ] in
+      (outs, List.map (fun _ -> Some out_bdim) outs)
+
 let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
   let un () =
@@ -192,18 +285,51 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       match (vals, bdims) with
       | [ x ], [ b ] -> broadcast_rule axis_size shape dims x b
       | _ -> failwith "batching: expected 1 operand")
+  | Concatenate dim -> concatenate_batch axis_size dim vals bdims
+  | Stack axis -> stack_batch axis_size axis vals bdims
+  | Pad cfg -> pad_batch cfg vals bdims
+  | Rev dims -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] -> rev_batch dims x b
+      | _ -> failwith "batching: expected 1 operand")
+  | Squeeze dims -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] -> squeeze_batch axis_size dims x b
+      | _ -> failwith "batching: expected 1 operand")
+  | Tile reps -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] -> tile_batch reps x b
+      | _ -> failwith "batching: expected 1 operand")
+  | Transpose perm -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] -> transpose_batch perm x b
+      | _ -> failwith "batching: expected 1 operand")
+  | Split _ | Unstack _ ->
+      failwith "batching: multi-output handled by batch_process_primitive"
   | Dot_general _ ->
       failwith "batching: vmap of dot_general not supported in M1"
   | Xla_call _ | Cond _ ->
       failwith "batching: vmap of control primitive not supported in M1"
+
+let vmap_rule_multi (prim : primitive) (vals : value list)
+    (bdims : int option list) : value list * int option list =
+  match (prim, vals, bdims) with
+  | Split { sizes; axis }, [ x ], [ b ] -> split_batch sizes axis x b
+  | Unstack axis, [ x ], [ b ] -> unstack_batch axis x b
+  | _ -> failwith "batching: expected a multi-output primitive with 1 operand"
 
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
   let axis_size = axis_size_of trace in
   let pairs = List.map (to_batch_info trace) args in
   let vals = List.map fst pairs and bdims = List.map snd pairs in
-  let out, out_bdim = vmap_rule axis_size prim vals bdims in
-  [ Tracer (new_batch_tracer trace out out_bdim) ]
+  match prim with
+  | Split _ | Unstack _ ->
+      let outs, out_bdims = vmap_rule_multi prim vals bdims in
+      List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
+  | _ ->
+      let out, out_bdim = vmap_rule axis_size prim vals bdims in
+      [ Tracer (new_batch_tracer trace out out_bdim) ]
 
 let full_lower_batch (v : value) : value =
   match v with

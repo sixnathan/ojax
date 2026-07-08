@@ -237,6 +237,26 @@ let prim_of op params : T.primitive =
   | "shift_right_arithmetic" -> T.Shift_right_arithmetic
   | "shift_right_logical" -> T.Shift_right_logical
   | "xor" -> T.Xor
+  | "concatenate" -> T.Concatenate (U.to_int (member "dimension"))
+  | "pad" ->
+      let cfg =
+        Array.of_list
+          (List.map
+             (fun t ->
+               match U.to_list t with
+               | [ a; b; c ] -> (U.to_int a, U.to_int b, U.to_int c)
+               | _ -> failwith "lax golden: bad padding_config")
+             (U.to_list (member "padding_config")))
+      in
+      T.Pad cfg
+  | "rev" -> T.Rev (ia (member "dimensions"))
+  | "split" ->
+      T.Split { sizes = ia (member "sizes"); axis = U.to_int (member "axis") }
+  | "squeeze" -> T.Squeeze (ia (member "dimensions"))
+  | "stack" -> T.Stack (U.to_int (member "axis"))
+  | "tile" -> T.Tile (ia (member "reps"))
+  | "transpose" -> T.Transpose (ia (member "permutation"))
+  | "unstack" -> T.Unstack (U.to_int (member "axis"))
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

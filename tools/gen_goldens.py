@@ -178,6 +178,52 @@ def lax_integer_pow(params):
     return lambda x: LAX.integer_pow(x, y)
 
 
+def lax_concatenate(params):
+    dimension = int(params["dimension"])
+    return lambda *xs: LAX.concatenate(list(xs), dimension)
+
+
+def lax_pad(params):
+    cfg = [tuple(t) for t in params["padding_config"]]
+    return lambda operand, pv: LAX.pad(operand, pv, cfg)
+
+
+def lax_rev(params):
+    dims = tuple(params["dimensions"])
+    return lambda x: LAX.rev(x, dims)
+
+
+def lax_split(params):
+    sizes = tuple(params["sizes"])
+    axis = int(params["axis"])
+    return lambda x: LAX.split(x, sizes, axis)
+
+
+def lax_squeeze(params):
+    dims = tuple(params["dimensions"])
+    return lambda x: LAX.squeeze(x, dims)
+
+
+def lax_stack(params):
+    axis = int(params["axis"])
+    return lambda *xs: LAX.stack(list(xs), axis)
+
+
+def lax_tile(params):
+    reps = tuple(params["reps"])
+    return lambda x: LAX.tile(x, reps)
+
+
+def lax_transpose(params):
+    perm = tuple(params["permutation"])
+    return lambda x: LAX.transpose(x, perm)
+
+
+def lax_unstack(params):
+    axis = int(params["axis"])
+    return lambda x: LAX.unstack(x, axis)
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -245,6 +291,15 @@ LAX_BUILDERS = {
     "shift_right_arithmetic": _binary(LAX.shift_right_arithmetic),
     "shift_right_logical": _binary(LAX.shift_right_logical),
     "xor": _binary(LAX.xor_p.bind),
+    "concatenate": lax_concatenate,
+    "pad": lax_pad,
+    "rev": lax_rev,
+    "split": lax_split,
+    "squeeze": lax_squeeze,
+    "stack": lax_stack,
+    "tile": lax_tile,
+    "transpose": lax_transpose,
+    "unstack": lax_unstack,
 }
 
 
@@ -831,7 +886,11 @@ def run_case(c, seed):
             for i, a in enumerate(c["args"])
         ]
         out = jax.jit(LAX_BUILDERS[op](c["params"]))(*inputs)
-        return inputs, [np.asarray(out)], [None]
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
     if op == "result_type":
         operands = []
         stored = []

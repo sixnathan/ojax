@@ -105,6 +105,15 @@ and primitive =
   | Shift_right_arithmetic
   | Shift_right_logical
   | Xor
+  | Concatenate of int
+  | Pad of (int * int * int) array
+  | Rev of int array
+  | Split of { sizes : int array; axis : int }
+  | Squeeze of int array
+  | Stack of int
+  | Tile of int array
+  | Transpose of int array
+  | Unstack of int
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

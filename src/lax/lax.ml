@@ -273,6 +273,213 @@ let select_n_impl = function
       [ Ndarray.of_floats out_dt shp out ]
   | [] -> failwith "lax: select_n expects at least a predicate"
 
+let concatenate_impl dim operands =
+  let shapes = List.map Ndarray.shape operands in
+  let out_shape = Utils.concatenate_shape dim shapes in
+  let out_str = Utils.strides out_shape in
+  let out = Array.make (Utils.prod out_shape) 0.0 in
+  let dt = Ndarray.dtype (List.hd operands) in
+  let offset = ref 0 in
+  List.iter
+    (fun op ->
+      let os = Ndarray.shape op in
+      let av = to_array op in
+      for f = 0 to Array.length av - 1 do
+        let oidx = Utils.decode f os in
+        let flat = ref 0 in
+        Array.iteri
+          (fun d idx ->
+            let od = if d = dim then idx + !offset else idx in
+            flat := !flat + (od * out_str.(d)))
+          oidx;
+        out.(!flat) <- av.(f)
+      done;
+      offset := !offset + os.(dim))
+    operands;
+  Ndarray.of_floats dt out_shape out
+
+let pad_impl cfg operand pv =
+  let in_shape = Ndarray.shape operand in
+  let n = Array.length in_shape in
+  let pad_v = Ndarray.get_f pv [||] in
+  let inter =
+    Array.init n (fun i ->
+        let _, _, interior = cfg.(i) in
+        Utils.dilate_dim in_shape.(i) (interior + 1))
+  in
+  let lo_pos =
+    Array.init n (fun i ->
+        let lo, _, _ = cfg.(i) in
+        max lo 0)
+  in
+  let hi_pos =
+    Array.init n (fun i ->
+        let _, hi, _ = cfg.(i) in
+        max hi 0)
+  in
+  let pos_shape = Array.init n (fun i -> lo_pos.(i) + hi_pos.(i) + inter.(i)) in
+  let pos_str = Utils.strides pos_shape in
+  let pos = Array.make (Utils.prod pos_shape) pad_v in
+  let av = to_array operand in
+  for f = 0 to Array.length av - 1 do
+    let oidx = Utils.decode f in_shape in
+    let flat = ref 0 in
+    for d = 0 to n - 1 do
+      let _, _, interior = cfg.(d) in
+      let p = lo_pos.(d) + (oidx.(d) * (interior + 1)) in
+      flat := !flat + (p * pos_str.(d))
+    done;
+    pos.(!flat) <- av.(f)
+  done;
+  let final_shape = Utils.pad_shape cfg in_shape in
+  let start =
+    Array.init n (fun i ->
+        let lo, _, _ = cfg.(i) in
+        max (-lo) 0)
+  in
+  let out = Array.make (Utils.prod final_shape) 0.0 in
+  for f = 0 to Array.length out - 1 do
+    let fidx = Utils.decode f final_shape in
+    let flat = ref 0 in
+    for d = 0 to n - 1 do
+      flat := !flat + ((fidx.(d) + start.(d)) * pos_str.(d))
+    done;
+    out.(f) <- pos.(!flat)
+  done;
+  Ndarray.of_floats (Ndarray.dtype operand) final_shape out
+
+let rev_impl dims operand =
+  let os = Ndarray.shape operand in
+  let n = Array.length os in
+  let is_rev = Array.make n false in
+  Array.iter (fun d -> is_rev.(d) <- true) dims;
+  let av = to_array operand in
+  let str = Utils.strides os in
+  let out = Array.make (Array.length av) 0.0 in
+  for f = 0 to Array.length av - 1 do
+    let oidx = Utils.decode f os in
+    let flat = ref 0 in
+    for d = 0 to n - 1 do
+      let id = if is_rev.(d) then os.(d) - 1 - oidx.(d) else oidx.(d) in
+      flat := !flat + (id * str.(d))
+    done;
+    out.(f) <- av.(!flat)
+  done;
+  Ndarray.of_floats (Ndarray.dtype operand) os out
+
+let split_impl sizes axis operand =
+  let os = Ndarray.shape operand in
+  let str = Utils.strides os in
+  let av = to_array operand in
+  let dt = Ndarray.dtype operand in
+  let _, rev_out =
+    Array.fold_left
+      (fun (offset, acc) size ->
+        let out_shape =
+          Array.mapi (fun i d -> if i = axis then size else d) os
+        in
+        let out = Array.make (Utils.prod out_shape) 0.0 in
+        for f = 0 to Array.length out - 1 do
+          let oidx = Utils.decode f out_shape in
+          let flat = ref 0 in
+          for d = 0 to Array.length os - 1 do
+            let id = if d = axis then oidx.(d) + offset else oidx.(d) in
+            flat := !flat + (id * str.(d))
+          done;
+          out.(f) <- av.(!flat)
+        done;
+        (offset + size, Ndarray.of_floats dt out_shape out :: acc))
+      (0, []) sizes
+  in
+  List.rev rev_out
+
+let squeeze_impl dims operand =
+  reshape_impl (Utils.squeeze_shape dims (Ndarray.shape operand)) operand
+
+let stack_impl axis operands =
+  let in_shape = Ndarray.shape (List.hd operands) in
+  let out_shape = Utils.stack_shape axis (List.length operands) in_shape in
+  let out_str = Utils.strides out_shape in
+  let dt = Ndarray.dtype (List.hd operands) in
+  let out = Array.make (Utils.prod out_shape) 0.0 in
+  List.iteri
+    (fun k op ->
+      let av = to_array op in
+      let os = Ndarray.shape op in
+      for f = 0 to Array.length av - 1 do
+        let iidx = Utils.decode f os in
+        let flat = ref 0 and src = ref 0 in
+        for d = 0 to Array.length out_shape - 1 do
+          let idx =
+            if d = axis then k
+            else
+              let v = iidx.(!src) in
+              incr src;
+              v
+          in
+          flat := !flat + (idx * out_str.(d))
+        done;
+        out.(!flat) <- av.(f)
+      done)
+    operands;
+  Ndarray.of_floats dt out_shape out
+
+let tile_impl reps operand =
+  let os = Ndarray.shape operand in
+  let out_shape = Utils.tile_shape reps os in
+  let av = to_array operand in
+  let str = Utils.strides os in
+  let out = Array.make (Utils.prod out_shape) 0.0 in
+  for f = 0 to Array.length out - 1 do
+    let oidx = Utils.decode f out_shape in
+    let flat = ref 0 in
+    for d = 0 to Array.length os - 1 do
+      flat := !flat + (oidx.(d) mod os.(d) * str.(d))
+    done;
+    out.(f) <- av.(!flat)
+  done;
+  Ndarray.of_floats (Ndarray.dtype operand) out_shape out
+
+let transpose_impl perm operand =
+  let os = Ndarray.shape operand in
+  let out_shape = Utils.transpose_shape perm os in
+  let av = to_array operand in
+  let str = Utils.strides os in
+  let out = Array.make (Utils.prod out_shape) 0.0 in
+  for f = 0 to Array.length out - 1 do
+    let oidx = Utils.decode f out_shape in
+    let flat = ref 0 in
+    Array.iteri (fun d p -> flat := !flat + (oidx.(d) * str.(p))) perm;
+    out.(f) <- av.(!flat)
+  done;
+  Ndarray.of_floats (Ndarray.dtype operand) out_shape out
+
+let unstack_impl axis operand =
+  let os = Ndarray.shape operand in
+  let str = Utils.strides os in
+  let av = to_array operand in
+  let out_shape = Utils.remove_int os axis in
+  let out_n = Utils.prod out_shape in
+  let dt = Ndarray.dtype operand in
+  List.init os.(axis) (fun k ->
+      let out = Array.make out_n 0.0 in
+      for f = 0 to out_n - 1 do
+        let oidx = Utils.decode f out_shape in
+        let flat = ref 0 and src = ref 0 in
+        for d = 0 to Array.length os - 1 do
+          let idx =
+            if d = axis then k
+            else
+              let v = oidx.(!src) in
+              incr src;
+              v
+          in
+          flat := !flat + (idx * str.(d))
+        done;
+        out.(f) <- av.(!flat)
+      done;
+      Ndarray.of_floats dt out_shape out)
+
 let impl prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
@@ -417,6 +624,21 @@ let impl prim inputs =
         (fun a b ->
           Ndarray.map2 (Ndarray.dtype a) (xor_f (Ndarray.dtype a)) a b)
         inputs
+  | Concatenate dim -> [ concatenate_impl dim inputs ]
+  | Pad cfg -> bin (fun a pv -> pad_impl cfg a pv) inputs
+  | Rev dims -> un (rev_impl dims) inputs
+  | Split { sizes; axis } -> (
+      match inputs with
+      | [ a ] -> split_impl sizes axis a
+      | _ -> failwith "lax: split expects 1 operand")
+  | Squeeze dims -> un (squeeze_impl dims) inputs
+  | Stack axis -> [ stack_impl axis inputs ]
+  | Tile reps -> un (tile_impl reps) inputs
+  | Transpose perm -> un (transpose_impl perm) inputs
+  | Unstack axis -> (
+      match inputs with
+      | [ a ] -> unstack_impl axis a
+      | _ -> failwith "lax: unstack expects 1 operand")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -466,6 +688,60 @@ let abstract_eval prim avals =
             (Utils.dot_general_shape dd l.shape r.shape)
             l.dtype (Utils.all_weak avals))
         avals
+  | Concatenate dim -> (
+      match avals with
+      | [] -> failwith "lax: concatenate expects at least one operand"
+      | first :: _ ->
+          [
+            shaped
+              (Utils.concatenate_shape dim (List.map (fun a -> a.shape) avals))
+              first.dtype (Utils.all_weak avals);
+          ])
+  | Pad cfg ->
+      bin_aval
+        (fun a pv ->
+          shaped
+            (Utils.pad_shape cfg a.shape)
+            a.dtype
+            (a.weak_type && pv.weak_type))
+        avals
+  | Rev _ -> un_aval (fun a -> a) avals
+  | Split { sizes; axis } -> (
+      match avals with
+      | [ a ] ->
+          List.map
+            (fun s -> shaped s a.dtype a.weak_type)
+            (Utils.split_shapes sizes axis a.shape)
+      | _ -> failwith "lax: split expects 1 operand")
+  | Squeeze dims ->
+      un_aval
+        (fun a -> shaped (Utils.squeeze_shape dims a.shape) a.dtype a.weak_type)
+        avals
+  | Stack axis -> (
+      match avals with
+      | [] -> failwith "lax: stack expects at least one operand"
+      | first :: _ ->
+          [
+            shaped
+              (Utils.stack_shape axis (List.length avals) first.shape)
+              first.dtype (Utils.all_weak avals);
+          ])
+  | Tile reps ->
+      un_aval
+        (fun a -> shaped (Utils.tile_shape reps a.shape) a.dtype a.weak_type)
+        avals
+  | Transpose perm ->
+      un_aval
+        (fun a ->
+          shaped (Utils.transpose_shape perm a.shape) a.dtype a.weak_type)
+        avals
+  | Unstack axis -> (
+      match avals with
+      | [ a ] ->
+          List.map
+            (fun s -> shaped s a.dtype a.weak_type)
+            (Utils.unstack_shapes axis a.shape)
+      | _ -> failwith "lax: unstack expects 1 operand")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

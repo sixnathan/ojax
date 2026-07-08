@@ -173,6 +173,11 @@ def lax_select_n(params):
     return lambda which, *cases: LAX.select_n(which, *cases)
 
 
+def lax_integer_pow(params):
+    y = int(params["y"])
+    return lambda x: LAX.integer_pow(x, y)
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -212,6 +217,18 @@ LAX_BUILDERS = {
     "exp2": _unary(LAX.exp2),
     "expm1": _unary(LAX.expm1),
     "floor": _unary(LAX.floor),
+    "integer_pow": lax_integer_pow,
+    "is_finite": _unary(LAX.is_finite),
+    "log1p": _unary(LAX.log1p),
+    "logistic": _unary(LAX.logistic),
+    "not": _unary(LAX.bitwise_not),
+    "population_count": _unary(LAX.population_count),
+    "round": _unary(LAX.round),
+    "rsqrt": _unary(LAX.rsqrt),
+    "sinh": _unary(LAX.sinh),
+    "sqrt": _unary(LAX.sqrt),
+    "square": _unary(LAX.square),
+    "tan": _unary(LAX.tan),
 }
 
 

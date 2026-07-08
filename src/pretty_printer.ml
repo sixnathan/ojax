@@ -122,6 +122,20 @@ let prim_name = function
   | Exp2 -> "exp2"
   | Expm1 -> "expm1"
   | Floor -> "floor"
+  | Imag -> "imag"
+  | Integer_pow _ -> "integer_pow"
+  | Is_finite -> "is_finite"
+  | Log1p -> "log1p"
+  | Logistic -> "logistic"
+  | Not -> "not"
+  | Population_count -> "population_count"
+  | Real -> "real"
+  | Round -> "round"
+  | Rsqrt -> "rsqrt"
+  | Sinh -> "sinh"
+  | Sqrt -> "sqrt"
+  | Square -> "square"
+  | Tan -> "tan"
   | Xla_call _ -> "xla_call"
   | Cond _ -> "cond"
 
@@ -133,6 +147,7 @@ let prim_params = function
   | Reshape ns -> "[new_sizes=" ^ int_tuple ns ^ "]"
   | Reduce_sum axes -> "[axes=" ^ int_tuple axes ^ "]"
   | Dot_general dd -> "[dimension_numbers=" ^ dot_dims_str dd ^ "]"
+  | Integer_pow y -> "[y=" ^ string_of_int y ^ "]"
   | _ -> ""
 
 let lit_short nd =

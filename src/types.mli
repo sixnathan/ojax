@@ -74,6 +74,20 @@ and primitive =
   | Exp2
   | Expm1
   | Floor
+  | Imag
+  | Integer_pow of int
+  | Is_finite
+  | Log1p
+  | Logistic
+  | Not
+  | Population_count
+  | Real
+  | Round
+  | Rsqrt
+  | Sinh
+  | Sqrt
+  | Square
+  | Tan
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

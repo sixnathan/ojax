@@ -206,6 +206,20 @@ let prim_of op params : T.primitive =
   | "exp2" -> T.Exp2
   | "expm1" -> T.Expm1
   | "floor" -> T.Floor
+  | "imag" -> T.Imag
+  | "integer_pow" -> T.Integer_pow (U.to_int (member "y"))
+  | "is_finite" -> T.Is_finite
+  | "log1p" -> T.Log1p
+  | "logistic" -> T.Logistic
+  | "not" -> T.Not
+  | "population_count" -> T.Population_count
+  | "real" -> T.Real
+  | "round" -> T.Round
+  | "rsqrt" -> T.Rsqrt
+  | "sinh" -> T.Sinh
+  | "sqrt" -> T.Sqrt
+  | "square" -> T.Square
+  | "tan" -> T.Tan
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

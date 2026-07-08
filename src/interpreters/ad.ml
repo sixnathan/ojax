@@ -225,6 +225,85 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       match (primals, tangents) with
       | [ x ], [ tx ] -> (b1 Copy [ x ], b1 Copy [ tx ])
       | _ -> arity ())
+  | Integer_pow y -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let po = b1 (Integer_pow y) [ x ] in
+          let dydx =
+            if y = 0 then zeros_like_value x
+            else if y = 1 then tx
+            else if y = 2 then mul tx (mul (const_like x 2.0) x)
+            else
+              mul tx
+                (mul
+                   (const_like x (float_of_int y))
+                   (b1 (Integer_pow (y - 1)) [ x ]))
+          in
+          (po, dydx)
+      | _ -> arity ())
+  | Log1p -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Log1p [ x ], div tx (add x (ones_like_value x)))
+      | _ -> arity ())
+  | Logistic -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let po = b1 Logistic [ x ] in
+          (po, mul tx (mul po (sub (ones_like_value po) po)))
+      | _ -> arity ())
+  | Sinh -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Sinh [ x ], mul (b1 Cosh [ x ]) tx)
+      | _ -> arity ())
+  | Sqrt -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let po = b1 Sqrt [ x ] in
+          (po, mul tx (div (const_like x 0.5) po))
+      | _ -> arity ())
+  | Rsqrt -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let po = b1 Rsqrt [ x ] in
+          (po, mul tx (mul (const_like x (-0.5)) (div po x)))
+      | _ -> arity ())
+  | Square -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Square [ x ], mul tx (mul (const_like x 2.0) x))
+      | _ -> arity ())
+  | Tan -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let po = b1 Tan [ x ] in
+          (po, mul tx (add (ones_like_value po) (mul po po)))
+      | _ -> arity ())
+  | Real -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Real [ x ], b1 Real [ tx ])
+      | _ -> arity ())
+  | Imag -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Imag [ x ], b1 Imag [ tx ])
+      | _ -> arity ())
+  | Is_finite -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 Is_finite [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Round -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 Round [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Not -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 Not [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Population_count -> failwith "ad: population_count has no jvp rule"
   | Clz -> failwith "ad: clz has no jvp rule"
   | Xla_call _ | Cond _ ->
       failwith "ad: jvp of control primitive not supported in M1"
@@ -419,7 +498,9 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Conj -> [ Some (ct1 ()) ]
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
-  | Expm1 | Floor | Dot_general _ | Xla_call _ | Cond _ ->
+  | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
+  | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan
+  | Dot_general _ | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

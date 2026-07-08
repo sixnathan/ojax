@@ -34,6 +34,32 @@ let clz_bits nbits x =
     in
     loop (nbits - 1)
 
+let int_nbits = function
+  | Dtype.I32 -> 32
+  | Dtype.I64 -> 64
+  | _ -> failwith "lax: integer operand required"
+
+let popcount_bits nbits x =
+  let m = Int64.of_float x in
+  let m = if nbits = 32 then Int64.logand m 0xFFFFFFFFL else m in
+  let rec loop k acc =
+    if k >= nbits then acc
+    else
+      loop (k + 1)
+        (acc + Int64.to_int (Int64.logand (Int64.shift_right_logical m k) 1L))
+  in
+  float_of_int (loop 0 0)
+
+let not_f dt x =
+  match dt with
+  | Dtype.Bool -> if x = 0.0 then 1.0 else 0.0
+  | Dtype.I32 | Dtype.I64 -> Int64.to_float (Int64.lognot (Int64.of_float x))
+  | _ -> failwith "lax: not requires a boolean or integer operand"
+
+let integer_pow_f y x = Float.pow x (float_of_int y)
+let logistic_f x = 1.0 /. (1.0 +. Float.exp (-.x))
+let rsqrt_f x = 1.0 /. Float.sqrt x
+let square_f x = x *. x
 let un f = function [ a ] -> [ f a ] | _ -> failwith "lax: expected 1 operand"
 
 let bin f = function
@@ -190,6 +216,33 @@ let impl prim inputs =
   | Exp2 -> un (fun a -> Ndarray.map (Ndarray.dtype a) exp2_f a) inputs
   | Expm1 -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.expm1 a) inputs
   | Floor -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.floor a) inputs
+  | Imag -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun _ -> 0.0) a) inputs
+  | Integer_pow y ->
+      un (fun a -> Ndarray.map (Ndarray.dtype a) (integer_pow_f y) a) inputs
+  | Is_finite ->
+      un
+        (fun a -> Ndarray.map Bool (fun x -> bool_of (Float.is_finite x)) a)
+        inputs
+  | Log1p -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.log1p a) inputs
+  | Logistic -> un (fun a -> Ndarray.map (Ndarray.dtype a) logistic_f a) inputs
+  | Not ->
+      un
+        (fun a -> Ndarray.map (Ndarray.dtype a) (not_f (Ndarray.dtype a)) a)
+        inputs
+  | Population_count ->
+      un
+        (fun a ->
+          Ndarray.map (Ndarray.dtype a)
+            (popcount_bits (int_nbits (Ndarray.dtype a)))
+            a)
+        inputs
+  | Real -> un (fun a -> a) inputs
+  | Round -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.round a) inputs
+  | Rsqrt -> un (fun a -> Ndarray.map (Ndarray.dtype a) rsqrt_f a) inputs
+  | Sinh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.sinh a) inputs
+  | Sqrt -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.sqrt a) inputs
+  | Square -> un (fun a -> Ndarray.map (Ndarray.dtype a) square_f a) inputs
+  | Tan -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.tan a) inputs
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -207,8 +260,10 @@ let abstract_eval prim avals =
   match prim with
   | Neg | Sin | Cos | Exp | Log | Tanh | Abs | Sign | Acos | Acosh | Asin
   | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Conj | Copy | Cosh | Exp2 | Expm1
-  | Floor ->
+  | Floor | Imag | Integer_pow _ | Log1p | Logistic | Not | Population_count
+  | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan ->
       un_aval (fun a -> a) avals
+  | Is_finite -> un_aval (fun a -> shaped a.shape Bool false) avals
   | Add | Sub | Mul | Div | Max | Min | Pow ->
       bin_aval
         (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))

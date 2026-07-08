@@ -129,6 +129,7 @@ def weak_scalar(dtype_name, seed):
 
 
 LAX = jax.lax
+from jax._src.lax import lax as LAX_INTERNAL
 
 
 def _unary(fn):
@@ -287,6 +288,37 @@ def lax_iota(params):
     return lambda: LAX.broadcasted_iota(dt, shape, dimension)
 
 
+def lax_optimization_barrier(params):
+    return lambda *xs: LAX.optimization_barrier(tuple(xs))
+
+
+def lax_reduce_precision(params):
+    exponent_bits = int(params["exponent_bits"])
+    mantissa_bits = int(params["mantissa_bits"])
+    return lambda x: LAX.reduce_precision(
+        x, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits
+    )
+
+
+def lax_sort(params):
+    dimension = int(params["dimension"])
+    is_stable = bool(params["is_stable"])
+    num_keys = int(params["num_keys"])
+    return lambda x: LAX.sort(
+        x, dimension=dimension, is_stable=is_stable, num_keys=num_keys
+    )
+
+
+def lax_tie(params):
+    return lambda x, y: LAX_INTERNAL.tie_p.bind(x, y)
+
+
+def lax_top_k(params):
+    k = int(params["k"])
+    axis = int(params["axis"])
+    return lambda x: LAX.top_k(x, k, axis=axis)
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -375,6 +407,11 @@ LAX_BUILDERS = {
     "clamp": lax_clamp,
     "bitcast_convert_type": lax_bitcast_convert_type,
     "iota": lax_iota,
+    "optimization_barrier": lax_optimization_barrier,
+    "reduce_precision": lax_reduce_precision,
+    "sort": lax_sort,
+    "tie": lax_tie,
+    "top_k": lax_top_k,
 }
 
 
@@ -1043,10 +1080,13 @@ def gen_set(module, cases, x64, outdir):
         outs_meta = []
         for i, o in enumerate(outputs):
             oa = np.asarray(o)
+            ocompare, otol = resolve_tol(oa.dtype.name)
             entry = {
                 "name": "out" + str(i),
                 "shape": [int(d) for d in oa.shape],
                 "dtype": oa.dtype.name,
+                "compare": ocompare,
+                "tol": otol,
             }
             if out_weak[i] is not None:
                 entry["weak"] = out_weak[i]

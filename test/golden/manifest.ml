@@ -6,7 +6,15 @@ let goldens_root =
   | None -> Filename.concat (Filename.concat ".." "..") "goldens"
 
 type arg = { name : string; shape : int array; dtype : string }
-type out = { oname : string; oshape : int array; odtype : string }
+
+type out = {
+  oname : string;
+  oshape : int array;
+  odtype : string;
+  ocompare : string option;
+  oatol : float option;
+  ortol : float option;
+}
 
 type case = {
   case_id : string;
@@ -29,10 +37,23 @@ let parse_arg j =
   }
 
 let parse_out j =
+  let ocompare =
+    match U.member "compare" j with `Null -> None | v -> Some (U.to_string v)
+  in
+  let oatol, ortol =
+    match U.member "tol" j with
+    | `Null -> (None, None)
+    | tol ->
+        ( Some (U.member "atol" tol |> U.to_number),
+          Some (U.member "rtol" tol |> U.to_number) )
+  in
   {
     oname = U.member "name" j |> U.to_string;
     oshape = U.member "shape" j |> to_shape;
     odtype = U.member "dtype" j |> U.to_string;
+    ocompare;
+    oatol;
+    ortol;
   }
 
 let parse_case j =
@@ -292,6 +313,23 @@ let prim_of op params : T.primitive =
           shape = ia (member "shape");
           dimension = U.to_int (member "dimension");
         }
+  | "optimization_barrier" -> T.Optimization_barrier
+  | "reduce_precision" ->
+      T.Reduce_precision
+        {
+          exponent_bits = U.to_int (member "exponent_bits");
+          mantissa_bits = U.to_int (member "mantissa_bits");
+        }
+  | "sort" ->
+      T.Sort
+        {
+          dimension = U.to_int (member "dimension");
+          is_stable = U.to_bool (member "is_stable");
+          num_keys = U.to_int (member "num_keys");
+        }
+  | "tie" -> T.Tie
+  | "top_k" ->
+      T.Top_k { k = U.to_int (member "k"); axis = U.to_int (member "axis") }
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))
@@ -340,6 +378,9 @@ let lax_check_case ~set_dir ~x64 c () =
   in
   List.iter
     (fun (o, v) ->
+      let ocompare = match o.ocompare with Some s -> s | None -> c.compare in
+      let oatol = match o.oatol with Some t -> t | None -> c.atol in
+      let ortol = match o.ortol with Some t -> t | None -> c.rtol in
       let nd = concrete v in
       if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
         Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
@@ -350,16 +391,16 @@ let lax_check_case ~set_dir ~x64 c () =
       let golden = find_member outputs o.oname in
       let floats = read_nd nd in
       let data =
-        if c.compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        if ocompare = "exact" then Npz.I (Array.map Int64.of_float floats)
         else Npz.F floats
       in
       let actual =
         { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
       in
-      Compare.assert_tol o.odtype c.atol c.rtol;
+      Compare.assert_tol o.odtype oatol ortol;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
-        ~compare:c.compare ~atol:c.atol ~rtol:c.rtol ~expected:golden ~actual)
+        ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
     paired
 
 let lax_suite_for set_name =

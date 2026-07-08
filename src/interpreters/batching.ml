@@ -316,11 +316,11 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Conj | Copy | Cosh | Exp2 | Expm1
   | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan
-  | Bitcast_convert_type _ ->
+  | Bitcast_convert_type _ | Reduce_precision _ ->
       un ()
   | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le | Eq_to
   | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or | Rem
-  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor ->
+  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie ->
       bin ()
   | Select_n -> select_rule axis_size vals bdims
   | Convert_element_type dt -> (
@@ -390,22 +390,57 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Reduce { jaxpr; dimensions } ->
       reduce_general_batch axis_size jaxpr dimensions vals bdims
   | Clamp -> clamp_rule axis_size vals bdims
-  | Split _ | Unstack _ ->
+  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
-  | Dce_sink | From_edtype _ ->
+  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
+  | Rng_uniform | To_edtype _ ->
       failwith "batching: vmap of this primitive not supported in M1"
   | Dot_general _ ->
       failwith "batching: vmap of dot_general not supported in M1"
   | Xla_call _ | Cond _ ->
       failwith "batching: vmap of control primitive not supported in M1"
 
-let vmap_rule_multi (prim : primitive) (vals : value list)
+let opt_barrier_batch (vals : value list) (bdims : int option list) :
+    value list * int option list =
+  (Core.bind Optimization_barrier vals, bdims)
+
+let sort_batch (axis_size : int) (dimension : int) (is_stable : bool)
+    (num_keys : int) (vals : value list) (bdims : int option list) :
+    value list * int option list =
+  let dst =
+    match List.find_opt (fun b -> b <> None) bdims with
+    | Some (Some d) -> d
+    | _ -> 0
+  in
+  let aligned = List.map2 (align_to axis_size dst) vals bdims in
+  let new_dimension = if dst <= dimension then dimension + 1 else dimension in
+  let outs =
+    Core.bind (Sort { dimension = new_dimension; is_stable; num_keys }) aligned
+  in
+  (outs, List.map (fun _ -> Some dst) outs)
+
+let top_k_batch (k : int) (axis : int) (x : value) (bdim : int option) :
+    value list * int option list =
+  match bdim with
+  | None ->
+      let outs = Core.bind (Top_k { k; axis }) [ x ] in
+      (outs, List.map (fun _ -> None) outs)
+  | Some d ->
+      let ax = if d <= axis then axis + 1 else axis in
+      let outs = Core.bind (Top_k { k; axis = ax }) [ x ] in
+      (outs, List.map (fun _ -> Some d) outs)
+
+let vmap_rule_multi (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value list * int option list =
   match (prim, vals, bdims) with
   | Split { sizes; axis }, [ x ], [ b ] -> split_batch sizes axis x b
   | Unstack axis, [ x ], [ b ] -> unstack_batch axis x b
-  | _ -> failwith "batching: expected a multi-output primitive with 1 operand"
+  | Optimization_barrier, _, _ -> opt_barrier_batch vals bdims
+  | Sort { dimension; is_stable; num_keys }, _, _ ->
+      sort_batch axis_size dimension is_stable num_keys vals bdims
+  | Top_k { k; axis }, [ x ], [ b ] -> top_k_batch k axis x b
+  | _ -> failwith "batching: expected a multi-output primitive"
 
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
@@ -413,8 +448,8 @@ let batch_process_primitive (trace : trace) (prim : primitive)
   let pairs = List.map (to_batch_info trace) args in
   let vals = List.map fst pairs and bdims = List.map snd pairs in
   match prim with
-  | Split _ | Unstack _ ->
-      let outs, out_bdims = vmap_rule_multi prim vals bdims in
+  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
+      let outs, out_bdims = vmap_rule_multi axis_size prim vals bdims in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | _ ->
       let out, out_bdim = vmap_rule axis_size prim vals bdims in

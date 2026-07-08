@@ -622,6 +622,128 @@ let reduce_impl (cj : closed_jaxpr) dimensions operands inits =
   done;
   List.map (fun acc -> Ndarray.of_floats dt out_shape acc) accs
 
+let reduce_precision_bits32 mant_bits bits =
+  if mant_bits >= 23 then bits
+  else
+    let shift = 23 - mant_bits in
+    let last = Int32.shift_left 1l shift in
+    let base = Int32.sub (Int32.shift_right_logical last 1) 1l in
+    let x_last = Int32.logand (Int32.shift_right_logical bits shift) 1l in
+    let bias = Int32.add x_last base in
+    let rounded = Int32.add bits bias in
+    let trunc = Int32.lognot (Int32.sub last 1l) in
+    Int32.logand rounded trunc
+
+let reduce_precision_bits64 mant_bits bits =
+  if mant_bits >= 52 then bits
+  else
+    let shift = 52 - mant_bits in
+    let last = Int64.shift_left 1L shift in
+    let base = Int64.sub (Int64.shift_right_logical last 1) 1L in
+    let x_last = Int64.logand (Int64.shift_right_logical bits shift) 1L in
+    let bias = Int64.add x_last base in
+    let rounded = Int64.add bits bias in
+    let trunc = Int64.lognot (Int64.sub last 1L) in
+    Int64.logand rounded trunc
+
+let reduce_precision_f dt exponent_bits mantissa_bits x =
+  match dt with
+  | Dtype.F32 ->
+      if exponent_bits < 8 then
+        failwith "lax: reduce_precision exponent reduction deferred (M5)"
+      else if not (Float.is_finite x) then x
+      else
+        Int32.float_of_bits
+          (reduce_precision_bits32 mantissa_bits (Int32.bits_of_float x))
+  | Dtype.F64 ->
+      if exponent_bits < 11 then
+        failwith "lax: reduce_precision exponent reduction deferred (M5)"
+      else if not (Float.is_finite x) then x
+      else
+        Int64.float_of_bits
+          (reduce_precision_bits64 mantissa_bits (Int64.bits_of_float x))
+  | _ -> failwith "lax: reduce_precision requires a floating-point operand"
+
+let line_base os str dimension lidx =
+  let base = ref 0 and k = ref 0 in
+  for d = 0 to Array.length os - 1 do
+    if d <> dimension then begin
+      base := !base + (lidx.(!k) * str.(d));
+      incr k
+    end
+  done;
+  !base
+
+let sort_impl dimension num_keys operands =
+  let os = Ndarray.shape (List.hd operands) in
+  let str = Utils.strides os in
+  let n = os.(dimension) in
+  let stride = str.(dimension) in
+  let arrs = Array.of_list (List.map to_array operands) in
+  let outs = Array.map Array.copy arrs in
+  let line_shape = Utils.remove_int os dimension in
+  let nlines = Utils.prod line_shape in
+  for line = 0 to nlines - 1 do
+    let lidx = Utils.decode line line_shape in
+    let base = line_base os str dimension lidx in
+    let perm = Array.init n (fun i -> i) in
+    let cmp i j =
+      let rec go ki =
+        if ki >= num_keys then 0
+        else
+          let ka = arrs.(ki) in
+          let vi = ka.(base + (i * stride)) and vj = ka.(base + (j * stride)) in
+          if vi < vj then -1 else if vi > vj then 1 else go (ki + 1)
+      in
+      go 0
+    in
+    Array.stable_sort cmp perm;
+    Array.iteri
+      (fun opi src ->
+        let dst = outs.(opi) in
+        Array.iteri
+          (fun newpos oldi ->
+            dst.(base + (newpos * stride)) <- src.(base + (oldi * stride)))
+          perm)
+      arrs
+  done;
+  List.mapi
+    (fun i op -> Ndarray.of_floats (Ndarray.dtype op) os outs.(i))
+    operands
+
+let top_k_impl k axis operand =
+  let os = Ndarray.shape operand in
+  let str = Utils.strides os in
+  let n = os.(axis) in
+  let stride = str.(axis) in
+  let a = to_array operand in
+  let out_shape = Array.mapi (fun i d -> if i = axis then k else d) os in
+  let out_str = Utils.strides out_shape in
+  let vals = Array.make (Utils.prod out_shape) 0.0 in
+  let idxs = Array.make (Utils.prod out_shape) 0.0 in
+  let line_shape = Utils.remove_int os axis in
+  let nlines = Utils.prod line_shape in
+  for line = 0 to nlines - 1 do
+    let lidx = Utils.decode line line_shape in
+    let base = line_base os str axis lidx in
+    let obase = line_base out_shape out_str axis lidx in
+    let perm = Array.init n (fun i -> i) in
+    let cmp i j =
+      let vi = a.(base + (i * stride)) and vj = a.(base + (j * stride)) in
+      if vi > vj then -1 else if vi < vj then 1 else 0
+    in
+    Array.stable_sort cmp perm;
+    for t = 0 to k - 1 do
+      let oi = perm.(t) in
+      vals.(obase + (t * out_str.(axis))) <- a.(base + (oi * stride));
+      idxs.(obase + (t * out_str.(axis))) <- float_of_int oi
+    done
+  done;
+  [
+    Ndarray.of_floats (Ndarray.dtype operand) out_shape vals;
+    Ndarray.of_floats Dtype.I32 out_shape idxs;
+  ]
+
 let impl prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
@@ -810,6 +932,25 @@ let impl prim inputs =
       failwith "lax: token primitives are not represented in M1"
   | From_edtype _ ->
       failwith "lax: from_edtype (extended dtypes) deferred to M5"
+  | Optimization_barrier -> inputs
+  | Reduce_precision { exponent_bits; mantissa_bits } ->
+      un
+        (fun a ->
+          Ndarray.map (Ndarray.dtype a)
+            (reduce_precision_f (Ndarray.dtype a) exponent_bits mantissa_bits)
+            a)
+        inputs
+  | Sort { dimension; num_keys; _ } -> sort_impl dimension num_keys inputs
+  | Tie -> bin (fun _ b -> b) inputs
+  | Top_k { k; axis } -> (
+      match inputs with
+      | [ a ] -> top_k_impl k axis a
+      | _ -> failwith "lax: top_k expects 1 operand")
+  | Ragged_dot_general ->
+      failwith "lax: ragged_dot_general deferred (needs group_sizes machinery)"
+  | Rng_bit_generator | Rng_uniform ->
+      failwith "lax: rng primitives deferred to M3 (PRNG)"
+  | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -958,6 +1099,21 @@ let abstract_eval prim avals =
       failwith "lax: token primitives have no shaped aval in M1"
   | From_edtype _ ->
       failwith "lax: from_edtype (extended dtypes) deferred to M5"
+  | Optimization_barrier -> avals
+  | Reduce_precision _ -> un_aval (fun a -> a) avals
+  | Sort _ -> avals
+  | Tie -> bin_aval (fun _ b -> b) avals
+  | Top_k { k; axis } -> (
+      match avals with
+      | [ a ] ->
+          let s = Array.mapi (fun i d -> if i = axis then k else d) a.shape in
+          [ shaped s a.dtype a.weak_type; shaped s Dtype.I32 a.weak_type ]
+      | _ -> failwith "lax: top_k expects 1 operand")
+  | Ragged_dot_general ->
+      failwith "lax: ragged_dot_general deferred (needs group_sizes machinery)"
+  | Rng_bit_generator | Rng_uniform ->
+      failwith "lax: rng primitives deferred to M3 (PRNG)"
+  | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

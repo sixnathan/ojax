@@ -364,8 +364,17 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Concatenate _ | Pad _ | Rev _ | Squeeze _ | Stack _ | Tile _ | Transpose _
     ->
       (b1 prim primals, b1 prim tangents)
-  | Split _ | Unstack _ ->
+  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
       failwith "ad: multi-output jvp handled by jvp_process_primitive"
+  | Reduce_precision p -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          (b1 (Reduce_precision p) [ x ], b1 (Reduce_precision p) [ tx ])
+      | _ -> arity ())
+  | Tie -> (
+      match (primals, tangents) with
+      | [ x; y ], [ _; ty ] -> (b1 Tie [ x; y ], ty)
+      | _ -> arity ())
   | Clamp -> (
       match (primals, tangents) with
       | [ mn; x; mx ], [ tmn; tx; tmx ] ->
@@ -384,7 +393,8 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           (po, zeros_like_value po)
       | _ -> arity ())
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
-  | Dce_sink | From_edtype _ ->
+  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
+  | Rng_uniform | To_edtype _ ->
       failwith "ad: primitive has no jvp rule in M1"
   | Xla_call _ | Cond _ ->
       failwith "ad: jvp of control primitive not supported in M1"
@@ -411,10 +421,11 @@ let jvp_process_primitive trace prim args =
   let pairs = List.map (as_jvp trace) args in
   let primals = List.map fst pairs and tangents = List.map snd pairs in
   match prim with
-  | Split _ | Unstack _ ->
+  | Split _ | Unstack _ | Optimization_barrier ->
       let pos = Core.bind prim primals in
       let tos = Core.bind prim tangents in
       List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) pos tos
+  | Sort _ | Top_k _ -> failwith "ad: jvp of sort/top_k needs gather (M2 gap)"
   | _ ->
       let po, to_ = jvp_rule prim primals tangents in
       [ Tracer (new_jvp_tracer trace po to_) ]
@@ -633,6 +644,11 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
       match primals with
       | [ x ] -> [ (if is_undef x then Some (b1 (Stack axis) cts) else None) ]
       | _ -> arity ())
+  | Optimization_barrier ->
+      let bcts = Core.bind Optimization_barrier cts in
+      List.map2 (fun p b -> if is_undef p then Some b else None) primals bcts
+  | Tie -> [ None; Some (ct1 ()) ]
+  | Reduce_precision p -> [ Some (b1 (Reduce_precision p) [ ct1 () ]) ]
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
@@ -642,8 +658,9 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Pad _ | Dot_general _ | Argmax _ | Argmin _ | Reduce _ | Reduce_and _
   | Reduce_max _ | Reduce_min _ | Reduce_or _ | Reduce_prod _ | Reduce_xor _
   | After_all | Bitcast_convert_type _ | Clamp | Composite _ | Create_token
-  | Dce_sink | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Xla_call _ | Cond _
-    ->
+  | Dce_sink | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general
+  | Rng_bit_generator | Rng_uniform | Sort _ | To_edtype _ | Top_k _
+  | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

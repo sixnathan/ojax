@@ -133,6 +133,15 @@ and primitive =
   | Empty2 of Dtype.t
   | From_edtype of Dtype.t
   | Iota of { dtype : Dtype.t; shape : int array; dimension : int }
+  | Optimization_barrier
+  | Ragged_dot_general
+  | Reduce_precision of { exponent_bits : int; mantissa_bits : int }
+  | Rng_bit_generator
+  | Rng_uniform
+  | Sort of { dimension : int; is_stable : bool; num_keys : int }
+  | Tie
+  | To_edtype of Dtype.t
+  | Top_k of { k : int; axis : int }
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

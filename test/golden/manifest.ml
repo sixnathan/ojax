@@ -565,6 +565,155 @@ let ad_suite_for set_name =
   in
   ("ad:" ^ set_name, coverage :: case_tests)
 
+module Batching = Ojax.Interpreters.Batching
+
+let cubic_fn a =
+  match a with
+  | [ z ] -> [ jb1 T.Sub [ jb1 T.Mul [ z; jb1 T.Mul [ z; z ] ]; z ] ]
+  | _ -> assert false
+
+let sum_sin_fn a = [ jb1 (T.Reduce_sum [| 0 |]) [ jb1 T.Sin a ] ]
+
+let jvp_tangent g a =
+  match a with
+  | [ x; t ] ->
+      let _, to_ = Ad.jvp g [ x ] [ t ] in
+      [ List.hd to_ ]
+  | _ -> assert false
+
+let batch_builders : (string * (T.value list -> T.value list)) list =
+  [
+    ("sin", fun a -> [ jb1 T.Sin a ]);
+    ("neg", fun a -> [ jb1 T.Neg a ]);
+    ("exp", fun a -> [ jb1 T.Exp a ]);
+    ("tanh", fun a -> [ jb1 T.Tanh a ]);
+    ("add", fun a -> [ jb1 T.Add a ]);
+    ("mul", fun a -> [ jb1 T.Mul a ]);
+    ("sub", fun a -> [ jb1 T.Sub a ]);
+    ("div", fun a -> [ jb1 T.Div a ]);
+    ("max", fun a -> [ jb1 T.Max a ]);
+    ("min", fun a -> [ jb1 T.Min a ]);
+    ("sum_sin", sum_sin_fn);
+    ( "bcast",
+      fun a ->
+        [ jb1 (T.Broadcast_in_dim { shape = [| 2; 3 |]; dims = [| 1 |] }) a ] );
+    ("reshape_fn", fun a -> [ jb1 (T.Reshape [| 6 |]) a ]);
+    ("convert", fun a -> [ jb1 (T.Convert_element_type D.I32) a ]);
+    ("select", fun a -> [ jb1 T.Select_n a ]);
+    ("jvp_sin", jvp_tangent (fun z -> [ jb1 T.Sin z ]));
+    ("jvp_cubic", jvp_tangent cubic_fn);
+    ("jvp_sum_sin", jvp_tangent sum_sin_fn);
+  ]
+
+type batch_case = {
+  b_id : string;
+  b_fn : string;
+  b_in_axes : int option list;
+  b_args : arg list;
+  b_outs : out list;
+  b_compare : string;
+  b_atol : float;
+  b_rtol : float;
+}
+
+let parse_in_axis j = match j with `Null -> None | _ -> Some (U.to_int j)
+
+let parse_batch_case j =
+  let tol = U.member "tol" j in
+  {
+    b_id = U.member "case_id" j |> U.to_string;
+    b_fn = U.member "fn" j |> U.to_string;
+    b_in_axes = U.member "in_axes" j |> U.to_list |> List.map parse_in_axis;
+    b_args = U.member "args" j |> U.to_list |> List.map parse_arg;
+    b_outs = U.member "outputs" j |> U.to_list |> List.map parse_out;
+    b_compare = U.member "compare" j |> U.to_string;
+    b_atol = U.member "atol" tol |> U.to_number;
+    b_rtol = U.member "rtol" tol |> U.to_number;
+  }
+
+let load_batch_manifest path =
+  let j = Yojson.Safe.from_file path in
+  ( U.member "x64" j |> U.to_bool,
+    U.member "cases" j |> U.to_list |> List.map parse_batch_case )
+
+let batch_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.b_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.b_id ^ ".npz"))
+  in
+  let operands =
+    List.map
+      (fun a -> T.Concrete (nd_of_npz (find_member inputs a.name)))
+      c.b_args
+  in
+  let fn =
+    match List.assoc_opt c.b_fn batch_builders with
+    | Some f -> f
+    | None -> Alcotest.failf "%s: unknown fn %s" c.b_id c.b_fn
+  in
+  let results = Batching.vmap fn c.b_in_axes operands in
+  let paired =
+    try List.combine c.b_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.b_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.b_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.b_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let floats = read_nd nd in
+      let data =
+        if c.b_compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      let actual =
+        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+      in
+      Compare.assert_tol o.odtype c.b_atol c.b_rtol;
+      Compare.check
+        ~name:(c.b_id ^ ":" ^ o.oname)
+        ~compare:c.b_compare ~atol:c.b_atol ~rtol:c.b_rtol ~expected:golden
+        ~actual)
+    paired
+
+let batch_check_coverage ~set_dir cases () =
+  let expected = List.map (fun c -> c.b_id) cases |> List.sort String.compare in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then
+        Alcotest.failf "%s: batching coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let batch_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "batching") set_name
+  in
+  let x64, cases =
+    load_batch_manifest (Filename.concat set_dir "manifest.json")
+  in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.b_id `Quick (batch_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (batch_check_coverage ~set_dir cases)
+  in
+  ("batching:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -615,5 +764,7 @@ let () =
       jaxpr_suite_for "x64_on";
       ad_suite_for "x64_off";
       ad_suite_for "x64_on";
+      batch_suite_for "x64_off";
+      batch_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

@@ -509,6 +509,123 @@ def generate_ad(module):
     return n_off, n_on
 
 
+def _cubic(z):
+    return LAX.sub(LAX.mul(z, LAX.mul(z, z)), z)
+
+
+def _sum_sin(z):
+    return LAX.reduce_sum(LAX.sin(z), axes=(0,))
+
+
+BATCH_FNS = {
+    "sin": lambda x: LAX.sin(x),
+    "neg": lambda x: LAX.neg(x),
+    "exp": lambda x: LAX.exp(x),
+    "tanh": lambda x: LAX.tanh(x),
+    "add": lambda x, y: LAX.add(x, y),
+    "mul": lambda x, y: LAX.mul(x, y),
+    "sub": lambda x, y: LAX.sub(x, y),
+    "div": lambda x, y: LAX.div(x, y),
+    "max": lambda x, y: LAX.max(x, y),
+    "min": lambda x, y: LAX.min(x, y),
+    "sum_sin": _sum_sin,
+    "bcast": lambda x: LAX.broadcast_in_dim(x, (2, 3), (1,)),
+    "reshape_fn": lambda x: LAX.reshape(x, (6,)),
+    "convert": lambda x: LAX.convert_element_type(x, np.int32),
+    "select": lambda p, a, b: LAX.select_n(p, a, b),
+    "jvp_sin": lambda x, t: jax.jvp(lambda z: LAX.sin(z), (x,), (t,))[1],
+    "jvp_cubic": lambda x, t: jax.jvp(_cubic, (x,), (t,))[1],
+    "jvp_sum_sin": lambda x, t: jax.jvp(_sum_sin, (x,), (t,))[1],
+}
+
+
+def _in_axes_tuple(in_axes):
+    return tuple(None if a is None else int(a) for a in in_axes)
+
+
+def run_batch_case(c, seed):
+    fn = BATCH_FNS[c["fn"]]
+    in_axes = _in_axes_tuple(c["in_axes"])
+    avals = c["in_avals"]
+    inputs = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"]) for i, a in enumerate(avals)
+    ]
+    out = jax.vmap(fn, in_axes=in_axes)(*inputs)
+    return inputs, [np.asarray(out)]
+
+
+def gen_batch_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and any(ec.is_wide64(a["dtype"]) for a in c["in_avals"]):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        inputs, outputs = run_batch_case(c, seed)
+        in_arrays = {"arg" + str(i): np.asarray(v) for i, v in enumerate(inputs)}
+        out_arrays = {"out" + str(i): np.asarray(o) for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **in_arrays)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": "arg" + str(i),
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+                "rng": a["rng"],
+                "in_axis": c["in_axes"][i],
+            }
+            for i, (a, v) in enumerate(zip(c["in_avals"], inputs))
+        ]
+        outs_meta = [
+            {
+                "name": "out" + str(i),
+                "shape": [int(d) for d in np.asarray(o).shape],
+                "dtype": np.asarray(o).dtype.name,
+            }
+            for i, o in enumerate(outputs)
+        ]
+        compare, tol = resolve_tol(np.asarray(outputs[0]).dtype.name)
+        manifest_cases.append(
+            {
+                "case_id": case_id,
+                "fn": c["fn"],
+                "in_axes": c["in_axes"],
+                "args": args_meta,
+                "outputs": outs_meta,
+                "compare": compare,
+                "tol": tol,
+            }
+        )
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_batching(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_batch_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_batch_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def _add_all(*xs):
     return functools.reduce(jnp.add, xs)
 
@@ -659,6 +776,8 @@ def main():
         n_off, n_on = generate_jaxpr(sys.argv[1])
     elif sys.argv[1] == "ad":
         n_off, n_on = generate_ad(sys.argv[1])
+    elif sys.argv[1] == "batching":
+        n_off, n_on = generate_batching(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

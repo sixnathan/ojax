@@ -97,6 +97,14 @@ and primitive =
   | Le_to
   | Lt_to
   | Mulhi
+  | Ne
+  | Nextafter
+  | Or
+  | Rem
+  | Shift_left
+  | Shift_right_arithmetic
+  | Shift_right_logical
+  | Xor
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

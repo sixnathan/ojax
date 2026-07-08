@@ -95,5 +95,21 @@
   {"op":"atan2","primitive":"lax.atan2","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"},{"shape":[3],"dtype":"float64","rng":"rand_default"}],"params":{}},
   {"op":"ge","primitive":"lax.ge","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"},{"shape":[3],"dtype":"float64","rng":"rand_default"}],"params":{}},
   {"op":"and","primitive":"lax.and","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{}},
-  {"op":"mulhi","primitive":"lax.mulhi","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{}}
+  {"op":"mulhi","primitive":"lax.mulhi","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{}},
+  {"op":"ne","primitive":"lax.ne","args":[{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_default"}],"params":{}},
+  {"op":"nextafter","primitive":"lax.nextafter","args":[{"shape":[2,3],"dtype":"float32","rng":"rand_default"},{"shape":[2,3],"dtype":"float32","rng":"rand_default"}],"params":{}},
+  {"op":"or","primitive":"lax.or","args":[{"shape":[3],"dtype":"bool","rng":"rand_bool"},{"shape":[3],"dtype":"bool","rng":"rand_bool"}],"params":{}},
+  {"op":"or","primitive":"lax.or","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"rem","primitive":"lax.rem","args":[{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_nonzero"}],"params":{}},
+  {"op":"rem","primitive":"lax.rem","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small_nz"}],"params":{}},
+  {"op":"shift_left","primitive":"lax.shift_left","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"shift_right_arithmetic","primitive":"lax.shift_right_arithmetic","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"shift_right_logical","primitive":"lax.shift_right_logical","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"xor","primitive":"lax.xor","args":[{"shape":[3],"dtype":"bool","rng":"rand_bool"},{"shape":[3],"dtype":"bool","rng":"rand_bool"}],"params":{}},
+  {"op":"xor","primitive":"lax.xor","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"ne","primitive":"lax.ne","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"},{"shape":[3],"dtype":"float64","rng":"rand_default"}],"params":{}},
+  {"op":"nextafter","primitive":"lax.nextafter","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"},{"shape":[3],"dtype":"float64","rng":"rand_default"}],"params":{}},
+  {"op":"rem","primitive":"lax.rem","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"},{"shape":[3],"dtype":"float64","rng":"rand_nonzero"}],"params":{}},
+  {"op":"or","primitive":"lax.or","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{}},
+  {"op":"shift_left","primitive":"lax.shift_left","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{}}
 ]

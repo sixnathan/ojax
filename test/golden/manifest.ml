@@ -229,6 +229,14 @@ let prim_of op params : T.primitive =
   | "le_to" -> T.Le_to
   | "lt_to" -> T.Lt_to
   | "mulhi" -> T.Mulhi
+  | "ne" -> T.Ne
+  | "nextafter" -> T.Nextafter
+  | "or" -> T.Or
+  | "rem" -> T.Rem
+  | "shift_left" -> T.Shift_left
+  | "shift_right_arithmetic" -> T.Shift_right_arithmetic
+  | "shift_right_logical" -> T.Shift_right_logical
+  | "xor" -> T.Xor
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

@@ -97,6 +97,74 @@ let mulhi_f dt x y =
       Int64.to_float (mulhi_i64 (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: mulhi requires an integer operand"
 
+let or_f dt x y =
+  match dt with
+  | Dtype.Bool -> if x <> 0.0 || y <> 0.0 then 1.0 else 0.0
+  | Dtype.I32 | Dtype.I64 ->
+      Int64.to_float (Int64.logor (Int64.of_float x) (Int64.of_float y))
+  | _ -> failwith "lax: or requires a boolean or integer operand"
+
+let xor_f dt x y =
+  match dt with
+  | Dtype.Bool -> if x <> 0.0 <> (y <> 0.0) then 1.0 else 0.0
+  | Dtype.I32 | Dtype.I64 ->
+      Int64.to_float (Int64.logxor (Int64.of_float x) (Int64.of_float y))
+  | _ -> failwith "lax: xor requires a boolean or integer operand"
+
+let rem_f dt x y =
+  match dt with
+  | Dtype.F32 | Dtype.F64 -> Float.rem x y
+  | Dtype.I32 | Dtype.I64 ->
+      Int64.to_float (Int64.rem (Int64.of_float x) (Int64.of_float y))
+  | _ -> failwith "lax: rem requires an integer or float operand"
+
+let shift_left_f x y =
+  Int64.to_float (Int64.shift_left (Int64.of_float x) (int_of_float y))
+
+let shift_right_arithmetic_f x y =
+  Int64.to_float (Int64.shift_right (Int64.of_float x) (int_of_float y))
+
+let shift_right_logical_f dt x y =
+  let s = int_of_float y in
+  match dt with
+  | Dtype.I32 ->
+      let u = Int64.logand (Int64.of_float x) 0xFFFFFFFFL in
+      Int64.to_float (Int64.shift_right_logical u s)
+  | Dtype.I64 -> Int64.to_float (Int64.shift_right_logical (Int64.of_float x) s)
+  | _ -> failwith "lax: shift_right_logical requires an integer operand"
+
+let f64_nextafter x y =
+  if x <> x || y <> y then Float.nan
+  else if x = y then y
+  else if y > x then Float.succ x
+  else Float.pred x
+
+let f32_next_up x =
+  if x = infinity then infinity
+  else if x = 0.0 then Int32.float_of_bits 1l
+  else
+    let b = Int32.bits_of_float x in
+    Int32.float_of_bits (if x > 0.0 then Int32.add b 1l else Int32.sub b 1l)
+
+let f32_next_down x =
+  if x = neg_infinity then neg_infinity
+  else if x = 0.0 then Int32.float_of_bits (Int32.logor Int32.min_int 1l)
+  else
+    let b = Int32.bits_of_float x in
+    Int32.float_of_bits (if x > 0.0 then Int32.sub b 1l else Int32.add b 1l)
+
+let f32_nextafter x y =
+  if x <> x || y <> y then Float.nan
+  else if x = y then y
+  else if y > x then f32_next_up x
+  else f32_next_down x
+
+let nextafter_f dt x y =
+  match dt with
+  | Dtype.F32 -> f32_nextafter x y
+  | Dtype.F64 -> f64_nextafter x y
+  | _ -> failwith "lax: nextafter requires a float operand"
+
 let integer_pow_f y x = Float.pow x (float_of_int y)
 let logistic_f x = 1.0 /. (1.0 +. Float.exp (-.x))
 let rsqrt_f x = 1.0 /. Float.sqrt x
@@ -313,6 +381,42 @@ let impl prim inputs =
         (fun a b ->
           Ndarray.map2 (Ndarray.dtype a) (mulhi_f (Ndarray.dtype a)) a b)
         inputs
+  | Ne ->
+      bin
+        (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x <> y)) a b)
+        inputs
+  | Nextafter ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (nextafter_f (Ndarray.dtype a)) a b)
+        inputs
+  | Or ->
+      bin
+        (fun a b -> Ndarray.map2 (Ndarray.dtype a) (or_f (Ndarray.dtype a)) a b)
+        inputs
+  | Rem ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (rem_f (Ndarray.dtype a)) a b)
+        inputs
+  | Shift_left ->
+      bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) shift_left_f a b) inputs
+  | Shift_right_arithmetic ->
+      bin
+        (fun a b -> Ndarray.map2 (Ndarray.dtype a) shift_right_arithmetic_f a b)
+        inputs
+  | Shift_right_logical ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a)
+            (shift_right_logical_f (Ndarray.dtype a))
+            a b)
+        inputs
+  | Xor ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (xor_f (Ndarray.dtype a)) a b)
+        inputs
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -334,11 +438,13 @@ let abstract_eval prim avals =
   | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan ->
       un_aval (fun a -> a) avals
   | Is_finite -> un_aval (fun a -> shaped a.shape Bool false) avals
-  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Complex | Mulhi ->
+  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Complex | Mulhi
+  | Nextafter | Or | Rem | Shift_left | Shift_right_arithmetic
+  | Shift_right_logical | Xor ->
       bin_aval
         (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))
         avals
-  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to ->
+  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | Ne ->
       bin_aval (fun a _ -> shaped a.shape Bool false) avals
   | Select_n -> (
       match avals with

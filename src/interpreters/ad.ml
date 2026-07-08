@@ -102,11 +102,19 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           let po = b1 Sign [ x ] in
           (po, zeros_like_value po)
       | _ -> arity ())
-  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | And | Mulhi -> (
+  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | And | Mulhi | Ne | Or | Xor
+  | Shift_left | Shift_right_arithmetic | Shift_right_logical -> (
       match (primals, tangents) with
       | [ x; y ], [ _; _ ] ->
           let po = b1 prim [ x; y ] in
           (po, zeros_like_value po)
+      | _ -> arity ())
+  | Rem -> (
+      match (primals, tangents) with
+      | [ x; y ], [ tx; ty ] ->
+          let q = div x y in
+          let corr = mul (b1 Sign [ q ]) (b1 Floor [ b1 Abs [ q ] ]) in
+          (b1 Rem [ x; y ], add tx (mul (neg ty) corr))
       | _ -> arity ())
   | Atan2 -> (
       match (primals, tangents) with
@@ -316,6 +324,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       | _ -> arity ())
   | Population_count -> failwith "ad: population_count has no jvp rule"
   | Clz -> failwith "ad: clz has no jvp rule"
+  | Nextafter -> failwith "ad: nextafter has no jvp rule"
   | Xla_call _ | Cond _ ->
       failwith "ad: jvp of control primitive not supported in M1"
 
@@ -511,8 +520,9 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And
-  | Atan2 | Complex | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Dot_general _
-  | Xla_call _ | Cond _ ->
+  | Atan2 | Complex | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter
+  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
+  | Dot_general _ | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

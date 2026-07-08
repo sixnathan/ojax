@@ -13,6 +13,7 @@
   test_lax_unary_a
   test_lax_unary_b
   test_lax_binary_a
+  test_lax_binary_b
   test_jaxpr
   test_partial_eval
   test_ad

@@ -172,7 +172,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan ->
       un ()
   | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le | Eq_to
-  | Le_to | Lt_to | And | Atan2 | Complex | Mulhi ->
+  | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or | Rem
+  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor ->
       bin ()
   | Select_n -> select_rule axis_size vals bdims
   | Convert_element_type dt -> (

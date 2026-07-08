@@ -237,6 +237,14 @@ LAX_BUILDERS = {
     "le_to": _binary(LAX.le_to_p.bind),
     "lt_to": _binary(LAX.lt_to_p.bind),
     "mulhi": _binary(LAX.mulhi),
+    "ne": _binary(LAX.ne),
+    "nextafter": _binary(LAX.nextafter),
+    "or": _binary(LAX.or_p.bind),
+    "rem": _binary(LAX.rem),
+    "shift_left": _binary(LAX.shift_left),
+    "shift_right_arithmetic": _binary(LAX.shift_right_arithmetic),
+    "shift_right_logical": _binary(LAX.shift_right_logical),
+    "xor": _binary(LAX.xor_p.bind),
 }
 
 

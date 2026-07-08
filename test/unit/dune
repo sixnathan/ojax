@@ -8,5 +8,6 @@
   test_source_info_util
   test_errors
   test_core
-  test_ad_util)
+  test_ad_util
+  test_lax)
  (libraries ojax alcotest))

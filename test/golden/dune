@@ -1,6 +1,7 @@
 (test
  (name manifest)
  (modules npz compare manifest)
- (libraries alcotest yojson)
+ (libraries alcotest yojson ojax)
  (deps
-  (source_tree %{project_root}/goldens/dtypes)))
+  (source_tree %{project_root}/goldens/dtypes)
+  (source_tree %{project_root}/goldens/lax)))

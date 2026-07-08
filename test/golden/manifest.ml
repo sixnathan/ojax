@@ -10,6 +10,8 @@ type out = { oname : string; oshape : int array; odtype : string }
 
 type case = {
   case_id : string;
+  op : string;
+  params : Yojson.Safe.t;
   compare : string;
   atol : float;
   rtol : float;
@@ -37,6 +39,8 @@ let parse_case j =
   let tol = U.member "tol" j in
   {
     case_id = U.member "case_id" j |> U.to_string;
+    op = U.member "op" j |> U.to_string;
+    params = U.member "params" j;
     compare = U.member "compare" j |> U.to_string;
     atol = U.member "atol" tol |> U.to_number;
     rtol = U.member "rtol" tol |> U.to_number;
@@ -125,6 +129,155 @@ let suite_for module_ set_name =
   in
   (module_ ^ ":" ^ set_name, coverage :: case_tests)
 
+module Nd = Ojax.Ndarray
+module C = Ojax.Core
+module T = Ojax.Types
+module D = Ojax.Dtype
+
+let dtype_of_string = function
+  | "float32" -> D.F32
+  | "float64" -> D.F64
+  | "int32" -> D.I32
+  | "int64" -> D.I64
+  | "bool" -> D.Bool
+  | s -> failwith ("lax golden: unsupported dtype " ^ s)
+
+let string_of_dtype = function
+  | D.F32 -> "float32"
+  | D.F64 -> "float64"
+  | D.I32 -> "int32"
+  | D.I64 -> "int64"
+  | D.Bool -> "bool"
+
+let nd_of_npz (a : Npz.t) =
+  let floats =
+    match a.Npz.data with
+    | Npz.F f -> f
+    | Npz.I i -> Array.map Int64.to_float i
+    | Npz.C _ -> failwith "lax golden: complex operand unsupported"
+  in
+  Nd.of_floats (dtype_of_string a.Npz.dtype) a.Npz.shape floats
+
+let read_nd nd =
+  let n = Array.fold_left ( * ) 1 (Nd.shape nd) in
+  let arr = Array.make n 0.0 in
+  let _ =
+    Nd.fold
+      (fun i x ->
+        arr.(i) <- x;
+        i + 1)
+      0 nd
+  in
+  arr
+
+let ia j = Array.of_list (List.map U.to_int (U.to_list j))
+
+let prim_of op params : T.primitive =
+  let member name = U.member name params in
+  match op with
+  | "neg" -> T.Neg
+  | "sin" -> T.Sin
+  | "cos" -> T.Cos
+  | "exp" -> T.Exp
+  | "log" -> T.Log
+  | "tanh" -> T.Tanh
+  | "abs" -> T.Abs
+  | "sign" -> T.Sign
+  | "add" -> T.Add
+  | "sub" -> T.Sub
+  | "mul" -> T.Mul
+  | "div" -> T.Div
+  | "max" -> T.Max
+  | "min" -> T.Min
+  | "pow" -> T.Pow
+  | "eq" -> T.Eq
+  | "lt" -> T.Lt
+  | "gt" -> T.Gt
+  | "select_n" -> T.Select_n
+  | "convert_element_type" ->
+      T.Convert_element_type
+        (dtype_of_string (U.to_string (member "new_dtype")))
+  | "broadcast_in_dim" ->
+      T.Broadcast_in_dim
+        { shape = ia (member "shape"); dims = ia (member "dims") }
+  | "reshape" -> T.Reshape (ia (member "new_sizes"))
+  | "reduce_sum" -> T.Reduce_sum (ia (member "axes"))
+  | "dot_general" ->
+      let dn = U.to_list (member "dimension_numbers") in
+      let contracting = U.to_list (List.nth dn 0) in
+      let batch = U.to_list (List.nth dn 1) in
+      T.Dot_general
+        {
+          lhs_contract = ia (List.nth contracting 0);
+          rhs_contract = ia (List.nth contracting 1);
+          lhs_batch = ia (List.nth batch 0);
+          rhs_batch = ia (List.nth batch 1);
+        }
+  | _ -> failwith ("lax golden: unknown op " ^ op)
+
+let concrete = function
+  | T.Concrete n -> n
+  | T.Tracer _ -> failwith "lax golden: expected concrete result"
+
+let lax_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.case_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.case_id ^ ".npz"))
+  in
+  let operands =
+    List.map
+      (fun a -> T.Concrete (nd_of_npz (find_member inputs a.name)))
+      c.args
+  in
+  let results = C.bind (prim_of c.op c.params) operands in
+  let paired =
+    try List.combine c.outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.case_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let floats = read_nd nd in
+      let data =
+        if c.compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      let actual =
+        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+      in
+      Compare.assert_tol o.odtype c.atol c.rtol;
+      Compare.check
+        ~name:(c.case_id ^ ":" ^ o.oname)
+        ~compare:c.compare ~atol:c.atol ~rtol:c.rtol ~expected:golden ~actual)
+    paired
+
+let lax_suite_for set_name =
+  let set_dir = Filename.concat (Filename.concat goldens_root "lax") set_name in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick (lax_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("lax:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -164,9 +317,12 @@ let compare_tests () =
   must_fail "tol table" (fun () -> Compare.assert_tol "float32" 1e-3 1e-3)
 
 let () =
+  Ojax.Lax.install ();
   Alcotest.run "goldens"
     [
       suite_for "dtypes" "x64_off";
       suite_for "dtypes" "x64_on";
+      lax_suite_for "x64_off";
+      lax_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

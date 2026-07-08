@@ -15,10 +15,15 @@ def load_source(module):
 
 def freeze(module):
     records = load_source(module)
-    cands = []
+    explicit = []
+    generated = []
     for rec in records:
-        cands.extend(ec.expand_record(rec))
-    chosen = ec.sample(cands)
+        expanded = ec.expand_record(rec)
+        if "args" in rec:
+            explicit.extend(expanded)
+        else:
+            generated.extend(expanded)
+    chosen = explicit + ec.sample(generated)
     chosen.sort(key=ec.sort_key)
     cases = ec.assign_ids(chosen)
     doc = {

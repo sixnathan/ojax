@@ -88,6 +88,14 @@ def rand_int(rng, shape, dtype):
     return rng.randint(0, high, size=tuple(shape), dtype=dtype)
 
 
+def rand_int_small(rng, shape, dtype):
+    return rng.randint(0, 10, size=tuple(shape), dtype=dtype)
+
+
+def rand_int_small_nz(rng, shape, dtype):
+    return rng.randint(1, 10, size=tuple(shape), dtype=dtype)
+
+
 def rand_bool(rng, shape, dtype):
     return np.asarray(rng.rand(*tuple(shape)) < 0.5, dtype=dtype)
 
@@ -98,6 +106,8 @@ RNG_FACTORIES = {
     "rand_positive": rand_positive,
     "rand_nonzero": rand_nonzero,
     "rand_int": rand_int,
+    "rand_int_small": rand_int_small,
+    "rand_int_small_nz": rand_int_small_nz,
     "rand_bool": rand_bool,
 }
 
@@ -118,18 +128,76 @@ def weak_scalar(dtype_name, seed):
     return int(rng.randint(0, 10))
 
 
-def lax_add(params):
-    return lambda *xs: jax.lax.add(*xs)
+LAX = jax.lax
+
+
+def _unary(fn):
+    return lambda params: (lambda x: fn(x))
+
+
+def _binary(fn):
+    return lambda params: (lambda a, b: fn(a, b))
+
+
+def lax_convert(params):
+    dt = np.dtype(params["new_dtype"])
+    return lambda x: LAX.convert_element_type(x, dt)
+
+
+def lax_broadcast_in_dim(params):
+    shape = tuple(params["shape"])
+    dims = tuple(params["dims"])
+    return lambda x: LAX.broadcast_in_dim(x, shape, dims)
+
+
+def lax_reshape(params):
+    new_sizes = tuple(params["new_sizes"])
+    return lambda x: LAX.reshape(x, new_sizes)
 
 
 def lax_reduce_sum(params):
     axes = tuple(params["axes"])
-    return lambda x: jax.lax.reduce_sum(x, axes=axes)
+    return lambda x: LAX.reduce_sum(x, axes=axes)
+
+
+def lax_dot_general(params):
+    dn = params["dimension_numbers"]
+    dimension_numbers = (
+        (tuple(dn[0][0]), tuple(dn[0][1])),
+        (tuple(dn[1][0]), tuple(dn[1][1])),
+    )
+    return lambda a, b: LAX.dot_general(a, b, dimension_numbers)
+
+
+def lax_select_n(params):
+    return lambda which, *cases: LAX.select_n(which, *cases)
 
 
 LAX_BUILDERS = {
-    "add": lax_add,
+    "neg": _unary(LAX.neg),
+    "sin": _unary(LAX.sin),
+    "cos": _unary(LAX.cos),
+    "exp": _unary(LAX.exp),
+    "log": _unary(LAX.log),
+    "tanh": _unary(LAX.tanh),
+    "abs": _unary(LAX.abs),
+    "sign": _unary(LAX.sign),
+    "add": _binary(LAX.add),
+    "sub": _binary(LAX.sub),
+    "mul": _binary(LAX.mul),
+    "div": _binary(LAX.div),
+    "max": _binary(LAX.max),
+    "min": _binary(LAX.min),
+    "pow": _binary(LAX.pow),
+    "eq": _binary(LAX.eq),
+    "lt": _binary(LAX.lt),
+    "gt": _binary(LAX.gt),
+    "select_n": lax_select_n,
+    "convert_element_type": lax_convert,
+    "broadcast_in_dim": lax_broadcast_in_dim,
+    "reshape": lax_reshape,
     "reduce_sum": lax_reduce_sum,
+    "dot_general": lax_dot_general,
 }
 
 

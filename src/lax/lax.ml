@@ -56,6 +56,47 @@ let not_f dt x =
   | Dtype.I32 | Dtype.I64 -> Int64.to_float (Int64.lognot (Int64.of_float x))
   | _ -> failwith "lax: not requires a boolean or integer operand"
 
+let and_f dt x y =
+  match dt with
+  | Dtype.Bool -> if x <> 0.0 && y <> 0.0 then 1.0 else 0.0
+  | Dtype.I32 | Dtype.I64 ->
+      Int64.to_float (Int64.logand (Int64.of_float x) (Int64.of_float y))
+  | _ -> failwith "lax: and requires a boolean or integer operand"
+
+let umulhi a b =
+  let m = 0xFFFFFFFFL in
+  let al = Int64.logand a m and ah = Int64.shift_right_logical a 32 in
+  let bl = Int64.logand b m and bh = Int64.shift_right_logical b 32 in
+  let lo_lo = Int64.mul al bl in
+  let hi_lo = Int64.mul ah bl in
+  let lo_hi = Int64.mul al bh in
+  let hi_hi = Int64.mul ah bh in
+  let cross =
+    Int64.add
+      (Int64.add (Int64.shift_right_logical lo_lo 32) (Int64.logand hi_lo m))
+      (Int64.logand lo_hi m)
+  in
+  Int64.add hi_hi
+    (Int64.add
+       (Int64.shift_right_logical hi_lo 32)
+       (Int64.add
+          (Int64.shift_right_logical lo_hi 32)
+          (Int64.shift_right_logical cross 32)))
+
+let mulhi_i64 a b =
+  let u = umulhi a b in
+  let u = if a < 0L then Int64.sub u b else u in
+  if b < 0L then Int64.sub u a else u
+
+let mulhi_f dt x y =
+  match dt with
+  | Dtype.I32 ->
+      Int64.to_float
+        (Int64.shift_right (Int64.mul (Int64.of_float x) (Int64.of_float y)) 32)
+  | Dtype.I64 ->
+      Int64.to_float (mulhi_i64 (Int64.of_float x) (Int64.of_float y))
+  | _ -> failwith "lax: mulhi requires an integer operand"
+
 let integer_pow_f y x = Float.pow x (float_of_int y)
 let logistic_f x = 1.0 /. (1.0 +. Float.exp (-.x))
 let rsqrt_f x = 1.0 /. Float.sqrt x
@@ -243,6 +284,35 @@ let impl prim inputs =
   | Sqrt -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.sqrt a) inputs
   | Square -> un (fun a -> Ndarray.map (Ndarray.dtype a) square_f a) inputs
   | Tan -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.tan a) inputs
+  | And ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (and_f (Ndarray.dtype a)) a b)
+        inputs
+  | Atan2 ->
+      bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.atan2 a b) inputs
+  | Complex -> bin (fun a _ -> a) inputs
+  | Eq_to ->
+      bin (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x = y)) a b) inputs
+  | Ge ->
+      bin
+        (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x >= y)) a b)
+        inputs
+  | Le ->
+      bin
+        (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x <= y)) a b)
+        inputs
+  | Le_to ->
+      bin
+        (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x <= y)) a b)
+        inputs
+  | Lt_to ->
+      bin (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x < y)) a b) inputs
+  | Mulhi ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (mulhi_f (Ndarray.dtype a)) a b)
+        inputs
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -264,11 +334,12 @@ let abstract_eval prim avals =
   | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan ->
       un_aval (fun a -> a) avals
   | Is_finite -> un_aval (fun a -> shaped a.shape Bool false) avals
-  | Add | Sub | Mul | Div | Max | Min | Pow ->
+  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Complex | Mulhi ->
       bin_aval
         (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))
         avals
-  | Eq | Lt | Gt -> bin_aval (fun a _ -> shaped a.shape Bool false) avals
+  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to ->
+      bin_aval (fun a _ -> shaped a.shape Bool false) avals
   | Select_n -> (
       match avals with
       | _ :: (c :: _ as cases) ->

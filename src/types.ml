@@ -88,6 +88,15 @@ and primitive =
   | Sqrt
   | Square
   | Tan
+  | And
+  | Atan2
+  | Complex
+  | Eq_to
+  | Ge
+  | Le
+  | Le_to
+  | Lt_to
+  | Mulhi
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

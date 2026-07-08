@@ -102,11 +102,22 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           let po = b1 Sign [ x ] in
           (po, zeros_like_value po)
       | _ -> arity ())
-  | Eq | Lt | Gt -> (
+  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | And | Mulhi -> (
       match (primals, tangents) with
       | [ x; y ], [ _; _ ] ->
           let po = b1 prim [ x; y ] in
           (po, zeros_like_value po)
+      | _ -> arity ())
+  | Atan2 -> (
+      match (primals, tangents) with
+      | [ x; y ], [ tx; ty ] ->
+          let denom = add (square x) (square y) in
+          ( b1 Atan2 [ x; y ],
+            add (mul tx (div y denom)) (mul ty (div (neg x) denom)) )
+      | _ -> arity ())
+  | Complex -> (
+      match (primals, tangents) with
+      | [ x; y ], [ tx; ty ] -> (b1 Complex [ x; y ], b1 Complex [ tx; ty ])
       | _ -> arity ())
   | Select_n -> (
       match (primals, tangents) with
@@ -499,8 +510,9 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
-  | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan
-  | Dot_general _ | Xla_call _ | Cond _ ->
+  | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And
+  | Atan2 | Complex | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Dot_general _
+  | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

@@ -171,7 +171,9 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan ->
       un ()
-  | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt -> bin ()
+  | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le | Eq_to
+  | Le_to | Lt_to | And | Atan2 | Complex | Mulhi ->
+      bin ()
   | Select_n -> select_rule axis_size vals bdims
   | Convert_element_type dt -> (
       match (vals, bdims) with

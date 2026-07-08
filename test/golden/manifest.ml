@@ -220,6 +220,15 @@ let prim_of op params : T.primitive =
   | "sqrt" -> T.Sqrt
   | "square" -> T.Square
   | "tan" -> T.Tan
+  | "and" -> T.And
+  | "atan2" -> T.Atan2
+  | "complex" -> T.Complex
+  | "eq_to" -> T.Eq_to
+  | "ge" -> T.Ge
+  | "le" -> T.Le
+  | "le_to" -> T.Le_to
+  | "lt_to" -> T.Lt_to
+  | "mulhi" -> T.Mulhi
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

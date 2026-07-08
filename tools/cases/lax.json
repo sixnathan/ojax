@@ -82,5 +82,18 @@
   {"op":"sinh","primitive":"lax.sinh","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"}],"params":{}},
   {"op":"sqrt","primitive":"lax.sqrt","args":[{"shape":[3],"dtype":"float64","rng":"rand_positive"}],"params":{}},
   {"op":"square","primitive":"lax.square","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"}],"params":{}},
-  {"op":"tan","primitive":"lax.tan","args":[{"shape":[3],"dtype":"float64","rng":"rand_small"}],"params":{}}
+  {"op":"tan","primitive":"lax.tan","args":[{"shape":[3],"dtype":"float64","rng":"rand_small"}],"params":{}},
+  {"op":"and","primitive":"lax.and","args":[{"shape":[3],"dtype":"bool","rng":"rand_bool"},{"shape":[3],"dtype":"bool","rng":"rand_bool"}],"params":{}},
+  {"op":"and","primitive":"lax.and","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"atan2","primitive":"lax.atan2","args":[{"shape":[2,3],"dtype":"float32","rng":"rand_default"},{"shape":[2,3],"dtype":"float32","rng":"rand_default"}],"params":{}},
+  {"op":"eq_to","primitive":"lax.eq_to","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"ge","primitive":"lax.ge","args":[{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_default"}],"params":{}},
+  {"op":"le","primitive":"lax.le","args":[{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_default"}],"params":{}},
+  {"op":"le_to","primitive":"lax.le_to","args":[{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_default"}],"params":{}},
+  {"op":"lt_to","primitive":"lax.lt_to","args":[{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_default"}],"params":{}},
+  {"op":"mulhi","primitive":"lax.mulhi","args":[{"shape":[3],"dtype":"int32","rng":"rand_int"},{"shape":[3],"dtype":"int32","rng":"rand_int"}],"params":{}},
+  {"op":"atan2","primitive":"lax.atan2","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"},{"shape":[3],"dtype":"float64","rng":"rand_default"}],"params":{}},
+  {"op":"ge","primitive":"lax.ge","args":[{"shape":[3],"dtype":"float64","rng":"rand_default"},{"shape":[3],"dtype":"float64","rng":"rand_default"}],"params":{}},
+  {"op":"and","primitive":"lax.and","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{}},
+  {"op":"mulhi","primitive":"lax.mulhi","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{}}
 ]

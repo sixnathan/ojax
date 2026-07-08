@@ -229,6 +229,14 @@ LAX_BUILDERS = {
     "sqrt": _unary(LAX.sqrt),
     "square": _unary(LAX.square),
     "tan": _unary(LAX.tan),
+    "and": _binary(LAX.and_p.bind),
+    "atan2": _binary(LAX.atan2),
+    "eq_to": _binary(LAX.eq_to_p.bind),
+    "ge": _binary(LAX.ge),
+    "le": _binary(LAX.le),
+    "le_to": _binary(LAX.le_to_p.bind),
+    "lt_to": _binary(LAX.lt_to_p.bind),
+    "mulhi": _binary(LAX.mulhi),
 }
 
 

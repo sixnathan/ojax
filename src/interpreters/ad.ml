@@ -15,6 +15,16 @@ let ones_like_aval a =
 let ones_like_value v = ones_like_aval (Core.get_aval v)
 let arity () = failwith "ad: rule arity mismatch"
 
+let const_like v c =
+  let a = Core.get_aval v in
+  let n = Array.fold_left ( * ) 1 a.shape in
+  Concrete (Ndarray.of_floats a.dtype a.shape (Array.make n c))
+
+let square x = mul x x
+let rsqrt z = b1 Pow [ z; const_like z (-0.5) ]
+let recip z = div (ones_like_value z) z
+let sinh_of x = div (sub (b1 Exp [ x ]) (b1 Exp [ neg x ])) (const_like x 2.0)
+
 let jvp_rule prim (primals : value list) (tangents : value list) : value * value
     =
   match prim with
@@ -134,6 +144,88 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
             add (b1 (Dot_general dd) [ tx; y ]) (b1 (Dot_general dd) [ x; ty ])
           )
       | _ -> arity ())
+  | Asin -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          (b1 Asin [ x ], mul (rsqrt (sub (ones_like_value x) (square x))) tx)
+      | _ -> arity ())
+  | Acos -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          ( b1 Acos [ x ],
+            mul (neg (rsqrt (sub (ones_like_value x) (square x)))) tx )
+      | _ -> arity ())
+  | Atan -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          (b1 Atan [ x ], div tx (add (ones_like_value x) (square x)))
+      | _ -> arity ())
+  | Asinh -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          (b1 Asinh [ x ], mul (rsqrt (add (square x) (ones_like_value x))) tx)
+      | _ -> arity ())
+  | Acosh -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          (b1 Acosh [ x ], mul (rsqrt (sub (square x) (ones_like_value x))) tx)
+      | _ -> arity ())
+  | Atanh -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          ( b1 Atanh [ x ],
+            mul
+              (recip (add (ones_like_value x) x))
+              (div tx (sub (ones_like_value x) x)) )
+      | _ -> arity ())
+  | Cbrt -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let po = b1 Cbrt [ x ] in
+          ( po,
+            mul
+              (mul
+                 (const_like x (1.0 /. 3.0))
+                 (b1 Pow [ po; const_like po (-2.0) ]))
+              tx )
+      | _ -> arity ())
+  | Cosh -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Cosh [ x ], mul (sinh_of x) tx)
+      | _ -> arity ())
+  | Exp2 -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let po = b1 Exp2 [ x ] in
+          (po, mul (const_like x (Float.log 2.0)) (mul tx po))
+      | _ -> arity ())
+  | Expm1 -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let po = b1 Expm1 [ x ] in
+          (po, mul tx (add po (ones_like_value po)))
+      | _ -> arity ())
+  | Ceil -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 Ceil [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Floor -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 Floor [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Conj -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Conj [ x ], b1 Conj [ tx ])
+      | _ -> arity ())
+  | Copy -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Copy [ x ], b1 Copy [ tx ])
+      | _ -> arity ())
+  | Clz -> failwith "ad: clz has no jvp rule"
   | Xla_call _ | Cond _ ->
       failwith "ad: jvp of control primitive not supported in M1"
 
@@ -323,8 +415,11 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
       match primals with
       | [ x ] -> [ Some (reduce_sum_transpose axes (in_aval x).shape ct) ]
       | _ -> arity ())
+  | Copy -> [ Some (b1 Copy [ ct1 () ]) ]
+  | Conj -> [ Some (ct1 ()) ]
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
-  | Dot_general _ | Xla_call _ | Cond _ ->
+  | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
+  | Expm1 | Floor | Dot_general _ | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

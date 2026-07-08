@@ -14,6 +14,26 @@ let to_array nd =
 
 let sign_f x = if x > 0.0 then 1.0 else if x < 0.0 then -1.0 else x
 let bool_of b = if b then 1.0 else 0.0
+let exp2_f x = Float.pow 2.0 x
+
+let clz_nbits = function
+  | Dtype.I32 -> 32
+  | Dtype.I64 -> 64
+  | _ -> failwith "lax: clz requires an integer operand"
+
+let clz_bits nbits x =
+  let m = Int64.of_float x in
+  let m = if nbits = 32 then Int64.logand m 0xFFFFFFFFL else m in
+  if Int64.equal m 0L then float_of_int nbits
+  else
+    let rec loop k =
+      if k < 0 then float_of_int nbits
+      else if Int64.equal (Int64.logand (Int64.shift_right_logical m k) 1L) 1L
+      then float_of_int (nbits - 1 - k)
+      else loop (k - 1)
+    in
+    loop (nbits - 1)
+
 let un f = function [ a ] -> [ f a ] | _ -> failwith "lax: expected 1 operand"
 
 let bin f = function
@@ -149,6 +169,27 @@ let impl prim inputs =
   | Reshape ns -> un (reshape_impl ns) inputs
   | Reduce_sum axes -> un (reduce_sum_impl axes) inputs
   | Dot_general dd -> bin (dot_general_impl dd) inputs
+  | Acos -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.acos a) inputs
+  | Acosh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.acosh a) inputs
+  | Asin -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.asin a) inputs
+  | Asinh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.asinh a) inputs
+  | Atan -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.atan a) inputs
+  | Atanh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.atanh a) inputs
+  | Cbrt -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.cbrt a) inputs
+  | Ceil -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.ceil a) inputs
+  | Clz ->
+      un
+        (fun a ->
+          Ndarray.map (Ndarray.dtype a)
+            (clz_bits (clz_nbits (Ndarray.dtype a)))
+            a)
+        inputs
+  | Conj -> un (fun a -> a) inputs
+  | Copy -> un (fun a -> a) inputs
+  | Cosh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.cosh a) inputs
+  | Exp2 -> un (fun a -> Ndarray.map (Ndarray.dtype a) exp2_f a) inputs
+  | Expm1 -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.expm1 a) inputs
+  | Floor -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.floor a) inputs
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -164,7 +205,9 @@ let bin_aval f = function
 
 let abstract_eval prim avals =
   match prim with
-  | Neg | Sin | Cos | Exp | Log | Tanh | Abs | Sign ->
+  | Neg | Sin | Cos | Exp | Log | Tanh | Abs | Sign | Acos | Acosh | Asin
+  | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Conj | Copy | Cosh | Exp2 | Expm1
+  | Floor ->
       un_aval (fun a -> a) avals
   | Add | Sub | Mul | Div | Max | Min | Pow ->
       bin_aval

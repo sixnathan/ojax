@@ -198,6 +198,20 @@ LAX_BUILDERS = {
     "reshape": lax_reshape,
     "reduce_sum": lax_reduce_sum,
     "dot_general": lax_dot_general,
+    "acos": _unary(LAX.acos),
+    "acosh": _unary(LAX.acosh),
+    "asin": _unary(LAX.asin),
+    "asinh": _unary(LAX.asinh),
+    "atan": _unary(LAX.atan),
+    "atanh": _unary(LAX.atanh),
+    "cbrt": _unary(LAX.cbrt),
+    "ceil": _unary(LAX.ceil),
+    "clz": _unary(LAX.clz),
+    "copy": _unary(LAX.copy_p.bind),
+    "cosh": _unary(LAX.cosh),
+    "exp2": _unary(LAX.exp2),
+    "expm1": _unary(LAX.expm1),
+    "floor": _unary(LAX.floor),
 }
 
 

@@ -191,6 +191,21 @@ let prim_of op params : T.primitive =
   | "lt" -> T.Lt
   | "gt" -> T.Gt
   | "select_n" -> T.Select_n
+  | "acos" -> T.Acos
+  | "acosh" -> T.Acosh
+  | "asin" -> T.Asin
+  | "asinh" -> T.Asinh
+  | "atan" -> T.Atan
+  | "atanh" -> T.Atanh
+  | "cbrt" -> T.Cbrt
+  | "ceil" -> T.Ceil
+  | "clz" -> T.Clz
+  | "conj" -> T.Conj
+  | "copy" -> T.Copy
+  | "cosh" -> T.Cosh
+  | "exp2" -> T.Exp2
+  | "expm1" -> T.Expm1
+  | "floor" -> T.Floor
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

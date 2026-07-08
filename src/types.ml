@@ -59,6 +59,21 @@ and primitive =
   | Reshape of int array
   | Reduce_sum of int array
   | Dot_general of dot_dims
+  | Acos
+  | Acosh
+  | Asin
+  | Asinh
+  | Atan
+  | Atanh
+  | Cbrt
+  | Ceil
+  | Clz
+  | Conj
+  | Copy
+  | Cosh
+  | Exp2
+  | Expm1
+  | Floor
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

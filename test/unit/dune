@@ -10,6 +10,7 @@
   test_core
   test_ad_util
   test_lax
+  test_lax_unary_a
   test_jaxpr
   test_partial_eval
   test_ad

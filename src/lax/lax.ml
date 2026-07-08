@@ -173,7 +173,8 @@ let abstract_eval prim avals =
   | Eq | Lt | Gt -> bin_aval (fun a _ -> shaped a.shape Bool false) avals
   | Select_n -> (
       match avals with
-      | _ :: c :: _ -> [ c ]
+      | _ :: (c :: _ as cases) ->
+          [ shaped c.shape c.dtype (Utils.all_weak cases) ]
       | _ -> failwith "lax: select_n expects a predicate and cases")
   | Convert_element_type dt -> un_aval (fun a -> shaped a.shape dt false) avals
   | Broadcast_in_dim { shape; _ } ->
@@ -186,7 +187,9 @@ let abstract_eval prim avals =
   | Dot_general dd ->
       bin_aval
         (fun l r ->
-          shaped (Utils.dot_general_shape dd l.shape r.shape) l.dtype false)
+          shaped
+            (Utils.dot_general_shape dd l.shape r.shape)
+            l.dtype (Utils.all_weak avals))
         avals
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"

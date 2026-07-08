@@ -89,12 +89,13 @@ let full_raise trace v =
   match v with
   | Concrete _ -> (interpreter_for trace).i_pure trace v
   | Tracer t ->
-      if t.trace.level = trace.level then v
+      if t.trace == trace then v
       else if t.trace.level < trace.level then
         (interpreter_for trace).i_lift trace v
-      else
+      else if t.trace.level > trace.level then
         invalid_arg
           (Printf.sprintf "Can't lift level %d to %d." t.trace.level trace.level)
+      else invalid_arg "Different traces at same level."
 
 let full_lower v =
   match v with

@@ -85,10 +85,7 @@ let check_case ~set_dir ~x64 c () =
       if canon arr.Npz.dtype <> canon o.odtype then
         Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
           arr.Npz.dtype o.odtype;
-      Compare.assert_tol o.odtype c.atol c.rtol;
-      Compare.check
-        ~name:(c.case_id ^ ":" ^ o.oname)
-        ~compare:c.compare ~atol:c.atol ~rtol:c.rtol ~expected:arr ~actual:arr)
+      Compare.assert_tol o.odtype c.atol c.rtol)
     c.outs
 
 let dir_case_ids dir =

@@ -165,6 +165,7 @@ let tracers_to_jaxpr (tracers_in : tracer list) (tracers_out : tracer list) :
         { vid = Core.fresh_id (); vaval = t.aval })
     tracers_in;
   let constvar_to_val : (var * value) list ref = ref [] in
+  let constid_to_var : (value * var) list ref = ref [] in
   let processed_eqns : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   let eqns = ref [] in
   let recipe_key er_out =
@@ -199,8 +200,15 @@ let tracers_to_jaxpr (tracers_in : tracer list) (tracers_out : tracer list) :
       match t.payload with
       | PE { recipe = Some LambdaBinding; _ } -> ()
       | PE { recipe = Some (ConstRecipe v); _ } ->
-          let var = { vid = Core.fresh_id (); vaval = t.aval } in
-          constvar_to_val := (var, v) :: !constvar_to_val;
+          let var =
+            match List.find_opt (fun (v', _) -> v' == v) !constid_to_var with
+            | Some (_, var) -> var
+            | None ->
+                let var = { vid = Core.fresh_id (); vaval = t.aval } in
+                constvar_to_val := (var, v) :: !constvar_to_val;
+                constid_to_var := (v, var) :: !constid_to_var;
+                var
+          in
           Hashtbl.replace tracer_to_var t.id var
       | PE { recipe = Some (EqnRecipe e); _ } ->
           let key = recipe_key e.er_out in

@@ -14,6 +14,17 @@ let aval_key (avals : aval list) : string =
          ^ if a.weak_type then "w" else "s")
        avals)
 
+let rec treedef_key (td : Tree.treedef) : string =
+  match td with
+  | Tree.Leaf_def -> "L"
+  | Tree.Null_def -> "N"
+  | Tree.List_def ds -> "[" ^ String.concat "," (List.map treedef_key ds) ^ "]"
+  | Tree.Tuple_def ds -> "(" ^ String.concat "," (List.map treedef_key ds) ^ ")"
+  | Tree.Dict_def kvs ->
+      "{"
+      ^ String.concat "," (List.map (fun (k, d) -> k ^ ":" ^ treedef_key d) kvs)
+      ^ "}"
+
 let ones_like_value (v : value) : value =
   let a = Core.get_aval v in
   let n = Array.fold_left ( * ) 1 a.shape in
@@ -61,16 +72,20 @@ let stage (f : value list -> value list) (args : value list) :
 
 let weave (plan : out_slot list) (unknowns : value list) : value list =
   let rem = ref unknowns in
-  List.map
-    (function
-      | Known c -> c
-      | Unknown -> (
-          match !rem with
-          | u :: r ->
-              rem := r;
-              u
-          | [] -> failwith "api.call: output plan underflow"))
-    plan
+  let result =
+    List.map
+      (function
+        | Known c -> c
+        | Unknown -> (
+            match !rem with
+            | u :: r ->
+                rem := r;
+                u
+            | [] -> failwith "api.call: output plan underflow"))
+      plan
+  in
+  if !rem <> [] then failwith "api.call: output plan overflow";
+  result
 
 let call (f : value list -> value list) (args : value list) : value list =
   let jaxpr, consts, plan = stage f args in
@@ -95,7 +110,7 @@ let jit (f : value Tree.t list -> value Tree.t) :
   fun args ->
     let flat_args, in_tree = flatten_args args in
     let avals = List.map Core.get_aval flat_args in
-    let key = aval_key avals in
+    let key = aval_key avals ^ "#" ^ treedef_key in_tree in
     let cj, out_tree =
       match Hashtbl.find_opt cache key with
       | Some entry -> entry
@@ -163,6 +178,12 @@ let value_and_grad (f : value Tree.t list -> value Tree.t)
         | [ y ] -> y
         | _ -> failwith "value_and_grad: expected a single output"
       in
+      if (Core.get_aval y).shape <> [||] then
+        invalid_arg
+          (Printf.sprintf
+             "Gradient only defined for scalar-output functions. Output had \
+              shape: %s."
+             (aval_key [ Core.get_aval y ]));
       let g = f_vjp [ ones_like_value y ] in
       (Tree.Leaf y, Tree.tree_unflatten tree0 g)
 

@@ -1,16 +1,14 @@
 open Types
 
 module Doc = struct
-  type t = Text of string | Concat of t list | Group of t
+  type t = Text of string | Concat of t list
 
   let text s = Text s
   let concat ts = Concat ts
-  let group d = Group d
 
   let rec flat = function
     | Text s -> s
     | Concat ts -> String.concat "" (List.map flat ts)
-    | Group d -> flat d
 
   let to_string d = flat d
 end
@@ -27,19 +25,49 @@ let python_repr_float x =
   if x <> x then "nan"
   else if x = infinity then "inf"
   else if x = neg_infinity then "-inf"
+  else if x = 0.0 then if 1.0 /. x = neg_infinity then "-0.0" else "0.0"
   else begin
+    let neg = x < 0.0 in
+    let ax = abs_float x in
     let rec find p =
-      if p > 17 then Printf.sprintf "%.17g" x
-      else
-        let s = Printf.sprintf "%.*g" p x in
-        if float_of_string s = x then s else find (p + 1)
+      if p >= 17 then 17
+      else if float_of_string (Printf.sprintf "%.*e" (p - 1) ax) = ax then p
+      else find (p + 1)
     in
-    let s = find 1 in
-    if
-      String.contains s '.' || String.contains s 'e' || String.contains s 'E'
-      || String.contains s 'n'
-    then s
-    else s ^ ".0"
+    let sig_digits = find 1 in
+    let s = Printf.sprintf "%.*e" (sig_digits - 1) ax in
+    let mantissa, exp =
+      match String.split_on_char 'e' s with
+      | [ m; e ] -> (m, int_of_string e)
+      | _ -> (s, 0)
+    in
+    let raw = String.concat "" (String.split_on_char '.' mantissa) in
+    let digits =
+      let n = ref (String.length raw) in
+      while !n > 1 && raw.[!n - 1] = '0' do
+        decr n
+      done;
+      String.sub raw 0 !n
+    in
+    let ndigits = String.length digits in
+    let decpt = exp + 1 in
+    let body =
+      if decpt <= -4 || decpt > 16 then begin
+        let m =
+          if ndigits = 1 then digits
+          else String.sub digits 0 1 ^ "." ^ String.sub digits 1 (ndigits - 1)
+        in
+        let e = decpt - 1 in
+        Printf.sprintf "%se%c%02d" m (if e < 0 then '-' else '+') (abs e)
+      end
+      else if decpt <= 0 then "0." ^ String.make (-decpt) '0' ^ digits
+      else if decpt >= ndigits then
+        digits ^ String.make (decpt - ndigits) '0' ^ ".0"
+      else
+        String.sub digits 0 decpt ^ "."
+        ^ String.sub digits decpt (ndigits - decpt)
+    in
+    if neg then "-" ^ body else body
   end
 
 let shape_str shape =
@@ -116,7 +144,9 @@ let jaxpr_to_doc (jx : jaxpr) =
   List.iter bind_var jx.in_binders;
   List.iter (fun (e : eqn) -> List.iter bind_var e.outs) jx.eqns;
   let var_name (v : var) =
-    match Hashtbl.find_opt names v.vid with Some n -> n | None -> "?"
+    match Hashtbl.find_opt names v.vid with
+    | Some n -> n
+    | None -> invalid_arg "pretty_printer: unbound variable"
   in
   let atom_str = function
     | A_var v -> var_name v
@@ -134,13 +164,12 @@ let jaxpr_to_doc (jx : jaxpr) =
   in
   let binders = String.concat ", " (List.map binder_str jx.in_binders) in
   let eqns =
-    Doc.group
-      (Doc.concat
-         (match jx.eqns with
-         | [] -> []
-         | first :: rest ->
-             eqn_doc first
-             :: List.concat_map (fun e -> [ Doc.text " ; "; eqn_doc e ]) rest))
+    Doc.concat
+      (match jx.eqns with
+      | [] -> []
+      | first :: rest ->
+          eqn_doc first
+          :: List.concat_map (fun e -> [ Doc.text " ; "; eqn_doc e ]) rest)
   in
   let outs = String.concat ", " (List.map atom_str jx.outs) in
   Doc.concat

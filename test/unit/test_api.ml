@@ -1,5 +1,6 @@
 module Api = Ojax.Api
 module Ad = Ojax.Interpreters.Ad
+module J = Ojax.Jaxpr
 module C = Ojax.Core
 module T = Ojax.Types
 module D = Ojax.Dtype
@@ -115,6 +116,39 @@ let test_pytree_vmap () =
       (geti out i)
   done
 
+let expected_primal = get0 (List.hd (poly [ scalar 0.5 ]))
+let expected_tangent = (cos 0.5 *. 2.0) -. 1.0
+
+let test_api_jvp () =
+  let v, t = Api.jvp poly_tree [ leaf (scalar 0.5) ] [ leaf (scalar 1.0) ] in
+  Alcotest.(check (float 1e-6)) "jvp primal" expected_primal (get0 (unleaf v));
+  Alcotest.(check (float 1e-5)) "jvp tangent" expected_tangent (get0 (unleaf t))
+
+let test_api_linearize () =
+  let y, f_lin = Api.linearize poly_tree [ leaf (scalar 0.5) ] in
+  Alcotest.(check (float 1e-6))
+    "linearize primal" expected_primal
+    (get0 (unleaf y));
+  let t = f_lin [ leaf (scalar 1.0) ] in
+  Alcotest.(check (float 1e-5))
+    "linearize tangent" expected_tangent
+    (get0 (unleaf t))
+
+let test_api_vjp () =
+  let y, f_vjp = Api.vjp poly_tree [ leaf (scalar 0.5) ] in
+  Alcotest.(check (float 1e-6)) "vjp primal" expected_primal (get0 (unleaf y));
+  let g = f_vjp (leaf (scalar 1.0)) in
+  Alcotest.(check (float 1e-5))
+    "vjp cotangent" expected_tangent
+    (get0 (unleaf (List.hd g)))
+
+let test_api_make_jaxpr () =
+  let cj = Api.make_jaxpr poly_tree [ leaf (scalar 0.5) ] in
+  match J.eval_closed_jaxpr cj [ scalar 0.5 ] with
+  | [ out ] ->
+      Alcotest.(check (float 1e-6)) "make_jaxpr eval" expected_primal (get0 out)
+  | _ -> Alcotest.fail "make_jaxpr: expected one output"
+
 let call1 f x = List.hd (Api.call (fun a -> [ f (List.hd a) ]) [ x ])
 let call0 f = List.hd (Api.call (fun _ -> [ f () ]) [])
 
@@ -165,6 +199,13 @@ let () =
           Alcotest.test_case "grad" `Quick test_pytree_grad;
           Alcotest.test_case "value_and_grad" `Quick test_value_and_grad;
           Alcotest.test_case "vmap" `Quick test_pytree_vmap;
+        ] );
+      ( "transforms",
+        [
+          Alcotest.test_case "jvp" `Quick test_api_jvp;
+          Alcotest.test_case "linearize" `Quick test_api_linearize;
+          Alcotest.test_case "vjp" `Quick test_api_vjp;
+          Alcotest.test_case "make_jaxpr" `Quick test_api_make_jaxpr;
         ] );
       ( "nested",
         [

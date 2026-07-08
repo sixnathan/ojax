@@ -94,6 +94,7 @@ let test_shared_const () =
       ]
   in
   J.typecheck_jaxpr jaxpr;
+  Alcotest.(check int) "dedup shared const" 1 (List.length consts);
   let x = ndf D.F32 [| 2 |] [| 1.0; 2.0 |] in
   match J.eval_jaxpr jaxpr (consts @ [ T.Concrete x ]) with
   | [ out ] ->

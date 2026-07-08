@@ -151,5 +151,14 @@
   {"op":"reduce_or","primitive":"lax.reduce_or","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{"axes":[0]}},
   {"op":"reduce_and","primitive":"lax.reduce_and","args":[{"shape":[2,3],"dtype":"int64","rng":"rand_int_small"}],"params":{"axes":[1]}},
   {"op":"argmax","primitive":"lax.argmax","args":[{"shape":[2,3],"dtype":"float64","rng":"rand_default"}],"params":{"axis":1,"index_dtype":"int32"}},
-  {"op":"reduce","primitive":"lax.reduce","args":[{"shape":[2,3],"dtype":"float64","rng":"rand_default"},{"shape":[],"dtype":"float64","rng":"rand_default"}],"params":{"dimensions":[0]}}
+  {"op":"reduce","primitive":"lax.reduce","args":[{"shape":[2,3],"dtype":"float64","rng":"rand_default"},{"shape":[],"dtype":"float64","rng":"rand_default"}],"params":{"dimensions":[0]}},
+  {"op":"clamp","primitive":"lax.clamp","args":[{"shape":[2,3],"dtype":"float32","rng":"rand_default"},{"shape":[2,3],"dtype":"float32","rng":"rand_default"},{"shape":[2,3],"dtype":"float32","rng":"rand_default"}],"params":{}},
+  {"op":"clamp","primitive":"lax.clamp","args":[{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"clamp","primitive":"lax.clamp","args":[{"shape":[2,3],"dtype":"float64","rng":"rand_default"},{"shape":[2,3],"dtype":"float64","rng":"rand_default"},{"shape":[2,3],"dtype":"float64","rng":"rand_default"}],"params":{}},
+  {"op":"clamp","primitive":"lax.clamp","args":[{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"},{"shape":[3],"dtype":"int64","rng":"rand_int_small"}],"params":{}},
+  {"op":"bitcast_convert_type","primitive":"lax.bitcast_convert_type","args":[{"shape":[2,3],"dtype":"float32","rng":"rand_default"}],"params":{"new_dtype":"int32"}},
+  {"op":"bitcast_convert_type","primitive":"lax.bitcast_convert_type","args":[{"shape":[3],"dtype":"int32","rng":"rand_int"}],"params":{"new_dtype":"float32"}},
+  {"op":"iota","primitive":"lax.iota","args":[],"params":{"dtype":"float32","shape":[4],"dimension":0}},
+  {"op":"iota","primitive":"lax.iota","args":[],"params":{"dtype":"int32","shape":[2,3],"dimension":0}},
+  {"op":"iota","primitive":"lax.iota","args":[],"params":{"dtype":"int32","shape":[2,3],"dimension":1}}
 ]

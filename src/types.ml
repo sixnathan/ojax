@@ -123,6 +123,16 @@ and primitive =
   | Reduce_or of int array
   | Reduce_prod of int array
   | Reduce_xor of int array
+  | After_all
+  | Bitcast_convert_type of Dtype.t
+  | Clamp
+  | Composite of closed_jaxpr
+  | Create_token
+  | Dce_sink
+  | Empty of { shape : int array; dtype : Dtype.t }
+  | Empty2 of Dtype.t
+  | From_edtype of Dtype.t
+  | Iota of { dtype : Dtype.t; shape : int array; dimension : int }
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

@@ -366,6 +366,26 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       (b1 prim primals, b1 prim tangents)
   | Split _ | Unstack _ ->
       failwith "ad: multi-output jvp handled by jvp_process_primitive"
+  | Clamp -> (
+      match (primals, tangents) with
+      | [ mn; x; mx ], [ tmn; tx; tmx ] ->
+          let po = b1 Clamp [ mn; x; mx ] in
+          let zeros = zeros_like_value x in
+          let sel pred g = b1 Select_n [ pred; zeros; g ] in
+          let t_mn = sel (b1 And [ b1 Gt [ mn; x ]; b1 Lt [ mn; mx ] ]) tmn in
+          let t_x = sel (b1 And [ b1 Gt [ x; mn ]; b1 Lt [ x; mx ] ]) tx in
+          let t_mx = sel (b1 Lt [ mx; x ]) tmx in
+          (po, add (add t_mn t_x) t_mx)
+      | _ -> arity ())
+  | Bitcast_convert_type _ -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 prim [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
+  | Dce_sink | From_edtype _ ->
+      failwith "ad: primitive has no jvp rule in M1"
   | Xla_call _ | Cond _ ->
       failwith "ad: jvp of control primitive not supported in M1"
 
@@ -621,7 +641,9 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
   | Pad _ | Dot_general _ | Argmax _ | Argmin _ | Reduce _ | Reduce_and _
   | Reduce_max _ | Reduce_min _ | Reduce_or _ | Reduce_prod _ | Reduce_xor _
-  | Xla_call _ | Cond _ ->
+  | After_all | Bitcast_convert_type _ | Clamp | Composite _ | Create_token
+  | Dce_sink | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Xla_call _ | Cond _
+    ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

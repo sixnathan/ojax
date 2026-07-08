@@ -115,6 +115,16 @@ let select_rule (axis_size : int) (vals : value list) (bdims : int option list)
   let aligned = List.map2 (align_to axis_size dst) vals bdims in
   (b1 Select_n aligned, Some dst)
 
+let clamp_rule (axis_size : int) (vals : value list) (bdims : int option list) :
+    value * int option =
+  let dst =
+    match List.find_opt (fun b -> b <> None) bdims with
+    | Some (Some d) -> d
+    | _ -> 0
+  in
+  let aligned = List.map2 (align_to axis_size dst) vals bdims in
+  (b1 Clamp aligned, Some dst)
+
 let reduce_sum_rule (axes : int array) (x : value) (bdim : int option) :
     value * int option =
   match bdim with
@@ -305,7 +315,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Neg | Sin | Cos | Exp | Log | Tanh | Abs | Sign | Acos | Acosh | Asin
   | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Conj | Copy | Cosh | Exp2 | Expm1
   | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
-  | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan ->
+  | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan
+  | Bitcast_convert_type _ ->
       un ()
   | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le | Eq_to
   | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or | Rem
@@ -378,8 +389,12 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       | _ -> failwith "batching: expected 1 operand")
   | Reduce { jaxpr; dimensions } ->
       reduce_general_batch axis_size jaxpr dimensions vals bdims
+  | Clamp -> clamp_rule axis_size vals bdims
   | Split _ | Unstack _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
+  | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
+  | Dce_sink | From_edtype _ ->
+      failwith "batching: vmap of this primitive not supported in M1"
   | Dot_general _ ->
       failwith "batching: vmap of dot_general not supported in M1"
   | Xla_call _ | Cond _ ->

@@ -541,6 +541,50 @@ let argminmax_impl is_max axis index_dtype operand =
   done;
   Ndarray.of_floats index_dtype out_shape out
 
+let clamp_impl mn x mx =
+  let a = to_array mn and b = to_array x and c = to_array mx in
+  let out =
+    Array.init (Array.length b) (fun i ->
+        Float.max (Float.min a.(i) c.(i)) (Float.min b.(i) c.(i)))
+  in
+  Ndarray.of_floats (Ndarray.dtype x) (Ndarray.shape x) out
+
+let bitcast_impl new_dt operand =
+  let f =
+    match (Ndarray.dtype operand, new_dt) with
+    | Dtype.F32, Dtype.I32 -> fun x -> Int32.to_float (Int32.bits_of_float x)
+    | Dtype.I32, Dtype.F32 -> fun x -> Int32.float_of_bits (Int32.of_float x)
+    | Dtype.F64, Dtype.I64 -> fun x -> Int64.to_float (Int64.bits_of_float x)
+    | Dtype.I64, Dtype.F64 -> fun x -> Int64.float_of_bits (Int64.of_float x)
+    | a, b when a = b -> fun x -> x
+    | _ ->
+        failwith
+          "lax: bitcast_convert_type only supports same-width real reinterpret \
+           in M1"
+  in
+  Ndarray.of_floats new_dt (Ndarray.shape operand)
+    (Array.map f (to_array operand))
+
+let iota_impl dtype shape dimension =
+  let n = Utils.prod shape in
+  let out =
+    Array.init n (fun f -> float_of_int (Utils.decode f shape).(dimension))
+  in
+  Ndarray.of_floats dtype shape out
+
+let empty_impl dtype shape =
+  Ndarray.of_floats dtype shape (Array.make (Utils.prod shape) 0.0)
+
+let composite_impl (cj : closed_jaxpr) inputs =
+  let outs =
+    Jaxpr.eval_closed_jaxpr cj (List.map (fun nd -> Concrete nd) inputs)
+  in
+  List.map
+    (function
+      | Concrete nd -> nd
+      | Tracer _ -> failwith "lax: composite reducer produced a tracer")
+    outs
+
 let reduce_impl (cj : closed_jaxpr) dimensions operands inits =
   let os = Ndarray.shape (List.hd operands) in
   let out_shape = Utils.reduce_shape os dimensions in
@@ -752,10 +796,30 @@ let impl prim inputs =
       match Util.split_list inputs [ num ] with
       | [ operands; inits ] -> reduce_impl jaxpr dimensions operands inits
       | _ -> failwith "lax: reduce expects operands and init values")
+  | Clamp -> (
+      match inputs with
+      | [ mn; x; mx ] -> [ clamp_impl mn x mx ]
+      | _ -> failwith "lax: clamp expects 3 operands")
+  | Bitcast_convert_type new_dt -> un (bitcast_impl new_dt) inputs
+  | Iota { dtype; shape; dimension } -> [ iota_impl dtype shape dimension ]
+  | Empty { shape; dtype } -> [ empty_impl dtype shape ]
+  | Empty2 dtype -> [ empty_impl dtype [||] ]
+  | Composite cj -> composite_impl cj inputs
+  | Dce_sink -> []
+  | After_all | Create_token ->
+      failwith "lax: token primitives are not represented in M1"
+  | From_edtype _ ->
+      failwith "lax: from_edtype (extended dtypes) deferred to M5"
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
+
+let aval_of_atom = function
+  | A_var v -> v.vaval
+  | A_lit nd ->
+      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+  | DropVar a -> a
 
 let un_aval f = function
   | [ a ] -> [ f a ]
@@ -879,6 +943,21 @@ let abstract_eval prim avals =
                 (op.weak_type && init.weak_type))
             operands inits
       | _ -> failwith "lax: reduce expects operands and init values")
+  | Clamp -> (
+      match avals with
+      | [ _; x; _ ] -> [ shaped x.shape x.dtype (Utils.all_weak avals) ]
+      | _ -> failwith "lax: clamp expects 3 avals")
+  | Bitcast_convert_type new_dt ->
+      un_aval (fun a -> shaped a.shape new_dt false) avals
+  | Iota { dtype; shape; _ } -> [ shaped shape dtype false ]
+  | Empty { shape; dtype } -> [ shaped shape dtype false ]
+  | Empty2 dtype -> [ shaped [||] dtype false ]
+  | Composite cj -> List.map aval_of_atom cj.jaxpr.outs
+  | Dce_sink -> []
+  | After_all | Create_token ->
+      failwith "lax: token primitives have no shaped aval in M1"
+  | From_edtype _ ->
+      failwith "lax: from_edtype (extended dtypes) deferred to M5"
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

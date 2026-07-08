@@ -271,6 +271,22 @@ def lax_reduce(params):
     return lambda operand, init: LAX.reduce(operand, init, LAX.add, dimensions)
 
 
+def lax_clamp(params):
+    return lambda mn, x, mx: LAX.clamp(mn, x, mx)
+
+
+def lax_bitcast_convert_type(params):
+    dt = np.dtype(params["new_dtype"])
+    return lambda x: LAX.bitcast_convert_type(x, dt)
+
+
+def lax_iota(params):
+    dt = np.dtype(params["dtype"])
+    shape = tuple(params["shape"])
+    dimension = int(params["dimension"])
+    return lambda: LAX.broadcasted_iota(dt, shape, dimension)
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -356,6 +372,9 @@ LAX_BUILDERS = {
     "argmax": lax_argmax,
     "argmin": lax_argmin,
     "reduce": lax_reduce,
+    "clamp": lax_clamp,
+    "bitcast_convert_type": lax_bitcast_convert_type,
+    "iota": lax_iota,
 }
 
 

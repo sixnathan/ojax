@@ -281,6 +281,17 @@ let prim_of op params : T.primitive =
         Ojax.Jaxpr.make_jaxpr [ sc; sc ] (fun args -> [ C.bind1 T.Add args ])
       in
       T.Reduce { jaxpr = reducer; dimensions = ia (member "dimensions") }
+  | "clamp" -> T.Clamp
+  | "bitcast_convert_type" ->
+      T.Bitcast_convert_type
+        (dtype_of_string (U.to_string (member "new_dtype")))
+  | "iota" ->
+      T.Iota
+        {
+          dtype = dtype_of_string (U.to_string (member "dtype"));
+          shape = ia (member "shape");
+          dimension = U.to_int (member "dimension");
+        }
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

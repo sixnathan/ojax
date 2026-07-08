@@ -13,5 +13,6 @@
   test_jaxpr
   test_partial_eval
   test_ad
-  test_batching)
+  test_batching
+  test_api_util)
  (libraries ojax alcotest))

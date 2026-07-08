@@ -114,6 +114,15 @@ and primitive =
   | Tile of int array
   | Transpose of int array
   | Unstack of int
+  | Argmax of { axis : int; index_dtype : Dtype.t }
+  | Argmin of { axis : int; index_dtype : Dtype.t }
+  | Reduce of { jaxpr : closed_jaxpr; dimensions : int array }
+  | Reduce_and of int array
+  | Reduce_max of int array
+  | Reduce_min of int array
+  | Reduce_or of int array
+  | Reduce_prod of int array
+  | Reduce_xor of int array
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

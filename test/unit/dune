@@ -15,6 +15,7 @@
   test_lax_binary_a
   test_lax_binary_b
   test_lax_shape
+  test_lax_reductions
   test_jaxpr
   test_partial_eval
   test_ad

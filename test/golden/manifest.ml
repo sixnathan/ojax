@@ -257,6 +257,30 @@ let prim_of op params : T.primitive =
   | "tile" -> T.Tile (ia (member "reps"))
   | "transpose" -> T.Transpose (ia (member "permutation"))
   | "unstack" -> T.Unstack (U.to_int (member "axis"))
+  | "reduce_max" -> T.Reduce_max (ia (member "axes"))
+  | "reduce_min" -> T.Reduce_min (ia (member "axes"))
+  | "reduce_prod" -> T.Reduce_prod (ia (member "axes"))
+  | "reduce_and" -> T.Reduce_and (ia (member "axes"))
+  | "reduce_or" -> T.Reduce_or (ia (member "axes"))
+  | "reduce_xor" -> T.Reduce_xor (ia (member "axes"))
+  | "argmax" ->
+      T.Argmax
+        {
+          axis = U.to_int (member "axis");
+          index_dtype = dtype_of_string (U.to_string (member "index_dtype"));
+        }
+  | "argmin" ->
+      T.Argmin
+        {
+          axis = U.to_int (member "axis");
+          index_dtype = dtype_of_string (U.to_string (member "index_dtype"));
+        }
+  | "reduce" ->
+      let sc = { T.shape = [||]; dtype = D.F32; weak_type = false } in
+      let reducer =
+        Ojax.Jaxpr.make_jaxpr [ sc; sc ] (fun args -> [ C.bind1 T.Add args ])
+      in
+      T.Reduce { jaxpr = reducer; dimensions = ia (member "dimensions") }
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

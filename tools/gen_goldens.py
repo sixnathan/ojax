@@ -224,6 +224,53 @@ def lax_unstack(params):
     return lambda x: LAX.unstack(x, axis)
 
 
+def lax_reduce_max(params):
+    axes = tuple(params["axes"])
+    return lambda x: LAX.reduce_max(x, axes=axes)
+
+
+def lax_reduce_min(params):
+    axes = tuple(params["axes"])
+    return lambda x: LAX.reduce_min(x, axes=axes)
+
+
+def lax_reduce_prod(params):
+    axes = tuple(params["axes"])
+    return lambda x: LAX.reduce_prod(x, axes=axes)
+
+
+def lax_reduce_and(params):
+    axes = tuple(params["axes"])
+    return lambda x: LAX.reduce_and(x, axes=axes)
+
+
+def lax_reduce_or(params):
+    axes = tuple(params["axes"])
+    return lambda x: LAX.reduce_or(x, axes=axes)
+
+
+def lax_reduce_xor(params):
+    axes = tuple(params["axes"])
+    return lambda x: LAX.reduce_xor(x, axes=axes)
+
+
+def lax_argmax(params):
+    axis = int(params["axis"])
+    index_dtype = np.dtype(params["index_dtype"])
+    return lambda x: LAX.argmax(x, axis, index_dtype)
+
+
+def lax_argmin(params):
+    axis = int(params["axis"])
+    index_dtype = np.dtype(params["index_dtype"])
+    return lambda x: LAX.argmin(x, axis, index_dtype)
+
+
+def lax_reduce(params):
+    dimensions = tuple(params["dimensions"])
+    return lambda operand, init: LAX.reduce(operand, init, LAX.add, dimensions)
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -300,6 +347,15 @@ LAX_BUILDERS = {
     "tile": lax_tile,
     "transpose": lax_transpose,
     "unstack": lax_unstack,
+    "reduce_max": lax_reduce_max,
+    "reduce_min": lax_reduce_min,
+    "reduce_prod": lax_reduce_prod,
+    "reduce_and": lax_reduce_and,
+    "reduce_or": lax_reduce_or,
+    "reduce_xor": lax_reduce_xor,
+    "argmax": lax_argmax,
+    "argmin": lax_argmin,
+    "reduce": lax_reduce,
 }
 
 

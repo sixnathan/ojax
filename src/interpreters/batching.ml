@@ -246,6 +246,49 @@ let unstack_batch (axis : int) (x : value) (bdim : int option) :
       let outs = Core.bind (Unstack ax) [ x ] in
       (outs, List.map (fun _ -> Some out_bdim) outs)
 
+let reduce_axes_batch (make : int array -> primitive) (axes : int array)
+    (x : value) (bdim : int option) : value * int option =
+  match bdim with
+  | None -> (b1 (make axes) [ x ], None)
+  | Some d ->
+      let new_axes =
+        Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes
+      in
+      let shift =
+        Array.fold_left (fun acc ax -> if ax < d then acc + 1 else acc) 0 axes
+      in
+      (b1 (make new_axes) [ x ], Some (d - shift))
+
+let argminmax_batch (make : int -> primitive) (axis : int) (x : value)
+    (bdim : int option) : value * int option =
+  match bdim with
+  | None -> (b1 (make axis) [ x ], None)
+  | Some d ->
+      let new_axis = if d <= axis then axis + 1 else axis in
+      let out_bdim = if axis < d then d - 1 else d in
+      (b1 (make new_axis) [ x ], Some out_bdim)
+
+let reduce_general_batch (axis_size : int) (jaxpr : closed_jaxpr)
+    (dimensions : int array) (vals : value list) (bdims : int option list) :
+    value * int option =
+  let num = List.length vals / 2 in
+  match (Util.split_list vals [ num ], Util.split_list bdims [ num ]) with
+  | [ operands; inits ], [ op_bdims; init_bdims ] ->
+      if List.for_all (fun b -> b = None) init_bdims then begin
+        let moved =
+          List.map2
+            (fun v b -> move_batch_axis axis_size b 0 v)
+            operands op_bdims
+        in
+        let new_dims = Array.map (fun d -> d + 1) dimensions in
+        let outs =
+          Core.bind (Reduce { jaxpr; dimensions = new_dims }) (moved @ inits)
+        in
+        (List.hd outs, Some 0)
+      end
+      else failwith "batching: reduce with batched init not supported in M1"
+  | _ -> failwith "batching: reduce arity"
+
 let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
   let un () =
@@ -304,6 +347,37 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       match (vals, bdims) with
       | [ x ], [ b ] -> transpose_batch perm x b
       | _ -> failwith "batching: expected 1 operand")
+  | Reduce_max axes
+  | Reduce_min axes
+  | Reduce_prod axes
+  | Reduce_and axes
+  | Reduce_or axes
+  | Reduce_xor axes -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] ->
+          let make a =
+            match prim with
+            | Reduce_max _ -> Reduce_max a
+            | Reduce_min _ -> Reduce_min a
+            | Reduce_prod _ -> Reduce_prod a
+            | Reduce_and _ -> Reduce_and a
+            | Reduce_or _ -> Reduce_or a
+            | _ -> Reduce_xor a
+          in
+          reduce_axes_batch make axes x b
+      | _ -> failwith "batching: expected 1 operand")
+  | Argmax { axis; index_dtype } -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] ->
+          argminmax_batch (fun ax -> Argmax { axis = ax; index_dtype }) axis x b
+      | _ -> failwith "batching: expected 1 operand")
+  | Argmin { axis; index_dtype } -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] ->
+          argminmax_batch (fun ax -> Argmin { axis = ax; index_dtype }) axis x b
+      | _ -> failwith "batching: expected 1 operand")
+  | Reduce { jaxpr; dimensions } ->
+      reduce_general_batch axis_size jaxpr dimensions vals bdims
   | Split _ | Unstack _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Dot_general _ ->

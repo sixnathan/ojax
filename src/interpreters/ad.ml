@@ -25,6 +25,24 @@ let rsqrt z = b1 Pow [ z; const_like z (-0.5) ]
 let recip z = div (ones_like_value z) z
 let sinh_of x = div (sub (b1 Exp [ x ]) (b1 Exp [ neg x ])) (const_like x 2.0)
 
+let reduce_chooser_jvp prim axes x tx =
+  let a = Core.get_aval x in
+  let shape = a.shape in
+  let ndim = Array.length shape in
+  let is_red = Array.make ndim false in
+  Array.iter (fun i -> is_red.(i) <- true) axes;
+  let shape_with_1 =
+    Array.mapi (fun i d -> if is_red.(i) then 1 else d) shape
+  in
+  let ident = Array.init ndim (fun i -> i) in
+  let ans = b1 prim [ x ] in
+  let reshaped = b1 (Reshape shape_with_1) [ ans ] in
+  let bcast = b1 (Broadcast_in_dim { shape; dims = ident }) [ reshaped ] in
+  let loc = b1 (Convert_element_type a.dtype) [ b1 Eq [ x; bcast ] ] in
+  let counts = b1 (Reduce_sum axes) [ loc ] in
+  let numer = b1 (Reduce_sum axes) [ mul tx loc ] in
+  (ans, div numer counts)
+
 let jvp_rule prim (primals : value list) (tangents : value list) : value * value
     =
   match prim with
@@ -322,6 +340,24 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           let po = b1 Not [ x ] in
           (po, zeros_like_value po)
       | _ -> arity ())
+  | Reduce_max axes -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> reduce_chooser_jvp (Reduce_max axes) axes x tx
+      | _ -> arity ())
+  | Reduce_min axes -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> reduce_chooser_jvp (Reduce_min axes) axes x tx
+      | _ -> arity ())
+  | Reduce_and _ | Reduce_or _ | Reduce_xor _ | Argmax _ | Argmin _ -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 prim [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Reduce_prod _ ->
+      failwith "ad: reduce_prod jvp needs the variadic reduce tree (M2 gap)"
+  | Reduce _ ->
+      failwith "ad: general reduce jvp needs the variadic reduce tree (M2 gap)"
   | Population_count -> failwith "ad: population_count has no jvp rule"
   | Clz -> failwith "ad: clz has no jvp rule"
   | Nextafter -> failwith "ad: nextafter has no jvp rule"
@@ -583,7 +619,9 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And
   | Atan2 | Complex | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter
   | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-  | Pad _ | Dot_general _ | Xla_call _ | Cond _ ->
+  | Pad _ | Dot_general _ | Argmax _ | Argmin _ | Reduce _ | Reduce_and _
+  | Reduce_max _ | Reduce_min _ | Reduce_or _ | Reduce_prod _ | Reduce_xor _
+  | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

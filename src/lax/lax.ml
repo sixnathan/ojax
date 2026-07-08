@@ -480,6 +480,104 @@ let unstack_impl axis operand =
       done;
       Ndarray.of_floats dt out_shape out)
 
+let reduce_op_impl combine identity axes a =
+  let os = Ndarray.shape a in
+  let out_shape = Utils.reduce_shape os axes in
+  let out_str = Utils.strides out_shape in
+  let ndim = Array.length os in
+  let is_red = Array.make ndim false in
+  Array.iter (fun ax -> is_red.(ax) <- true) axes;
+  let src = to_array a in
+  let out = Array.make (Utils.prod out_shape) identity in
+  for flat = 0 to Array.length src - 1 do
+    let oidx = Utils.decode flat os in
+    let of_ = ref 0 and k = ref 0 in
+    for d = 0 to ndim - 1 do
+      if not is_red.(d) then begin
+        of_ := !of_ + (oidx.(d) * out_str.(!k));
+        incr k
+      end
+    done;
+    out.(!of_) <- combine out.(!of_) src.(flat)
+  done;
+  Ndarray.of_floats (Ndarray.dtype a) out_shape out
+
+let and_identity = function Dtype.Bool -> 1.0 | _ -> -1.0
+
+let reduce_and_impl axes a =
+  let dt = Ndarray.dtype a in
+  reduce_op_impl (and_f dt) (and_identity dt) axes a
+
+let reduce_or_impl axes a = reduce_op_impl (or_f (Ndarray.dtype a)) 0.0 axes a
+let reduce_xor_impl axes a = reduce_op_impl (xor_f (Ndarray.dtype a)) 0.0 axes a
+
+let argminmax_impl is_max axis index_dtype operand =
+  let os = Ndarray.shape operand in
+  let str = Utils.strides os in
+  let out_shape = Utils.remove_int os axis in
+  let out_n = Utils.prod out_shape in
+  let av = to_array operand in
+  let n = os.(axis) in
+  let out = Array.make out_n 0.0 in
+  for of_ = 0 to out_n - 1 do
+    let oidx = Utils.decode of_ out_shape in
+    let base = ref 0 and k = ref 0 in
+    for d = 0 to Array.length os - 1 do
+      if d <> axis then begin
+        base := !base + (oidx.(!k) * str.(d));
+        incr k
+      end
+    done;
+    let best = ref av.(!base) and best_i = ref 0 in
+    for i = 1 to n - 1 do
+      let v = av.(!base + (i * str.(axis))) in
+      let pick = (if is_max then v > !best else v < !best) || v <> v in
+      if pick then begin
+        best := v;
+        best_i := i
+      end
+    done;
+    out.(of_) <- float_of_int !best_i
+  done;
+  Ndarray.of_floats index_dtype out_shape out
+
+let reduce_impl (cj : closed_jaxpr) dimensions operands inits =
+  let os = Ndarray.shape (List.hd operands) in
+  let out_shape = Utils.reduce_shape os dimensions in
+  let out_str = Utils.strides out_shape in
+  let ndim = Array.length os in
+  let is_red = Array.make ndim false in
+  Array.iter (fun ax -> is_red.(ax) <- true) dimensions;
+  let dt = Ndarray.dtype (List.hd operands) in
+  let out_n = Utils.prod out_shape in
+  let op_arrays = List.map to_array operands in
+  let accs =
+    List.map (fun nd -> Array.make out_n (Ndarray.get_f nd [||])) inits
+  in
+  let src0 = List.hd op_arrays in
+  let mk x = Concrete (Ndarray.of_floats dt [||] [| x |]) in
+  let as_nd = function
+    | Concrete nd -> nd
+    | Tracer _ -> failwith "lax: reduce reducer produced a tracer"
+  in
+  for flat = 0 to Array.length src0 - 1 do
+    let oidx = Utils.decode flat os in
+    let of_ = ref 0 and k = ref 0 in
+    for d = 0 to ndim - 1 do
+      if not is_red.(d) then begin
+        of_ := !of_ + (oidx.(d) * out_str.(!k));
+        incr k
+      end
+    done;
+    let acc_args = List.map (fun acc -> mk acc.(!of_)) accs in
+    let elem_args = List.map (fun a -> mk a.(flat)) op_arrays in
+    let res = Jaxpr.eval_closed_jaxpr cj (acc_args @ elem_args) in
+    List.iteri
+      (fun i v -> (List.nth accs i).(!of_) <- Ndarray.get_f (as_nd v) [||])
+      res
+  done;
+  List.map (fun acc -> Ndarray.of_floats dt out_shape acc) accs
+
 let impl prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
@@ -639,6 +737,21 @@ let impl prim inputs =
       match inputs with
       | [ a ] -> unstack_impl axis a
       | _ -> failwith "lax: unstack expects 1 operand")
+  | Reduce_max axes -> un (reduce_op_impl Float.max neg_infinity axes) inputs
+  | Reduce_min axes -> un (reduce_op_impl Float.min infinity axes) inputs
+  | Reduce_prod axes -> un (reduce_op_impl ( *. ) 1.0 axes) inputs
+  | Reduce_and axes -> un (reduce_and_impl axes) inputs
+  | Reduce_or axes -> un (reduce_or_impl axes) inputs
+  | Reduce_xor axes -> un (reduce_xor_impl axes) inputs
+  | Argmax { axis; index_dtype } ->
+      un (argminmax_impl true axis index_dtype) inputs
+  | Argmin { axis; index_dtype } ->
+      un (argminmax_impl false axis index_dtype) inputs
+  | Reduce { jaxpr; dimensions } -> (
+      let num = List.length inputs / 2 in
+      match Util.split_list inputs [ num ] with
+      | [ operands; inits ] -> reduce_impl jaxpr dimensions operands inits
+      | _ -> failwith "lax: reduce expects operands and init values")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -742,6 +855,30 @@ let abstract_eval prim avals =
             (fun s -> shaped s a.dtype a.weak_type)
             (Utils.unstack_shapes axis a.shape)
       | _ -> failwith "lax: unstack expects 1 operand")
+  | Reduce_max axes | Reduce_min axes | Reduce_prod axes ->
+      un_aval
+        (fun a -> shaped (Utils.reduce_shape a.shape axes) a.dtype a.weak_type)
+        avals
+  | Reduce_and axes | Reduce_or axes | Reduce_xor axes ->
+      un_aval
+        (fun a -> shaped (Utils.reduce_shape a.shape axes) a.dtype false)
+        avals
+  | Argmax { axis; index_dtype } | Argmin { axis; index_dtype } ->
+      un_aval
+        (fun a -> shaped (Utils.remove_int a.shape axis) index_dtype false)
+        avals
+  | Reduce { dimensions; _ } -> (
+      let num = List.length avals / 2 in
+      match Util.split_list avals [ num ] with
+      | [ operands; inits ] ->
+          List.map2
+            (fun (op : aval) (init : aval) ->
+              shaped
+                (Utils.reduce_shape op.shape dimensions)
+                op.dtype
+                (op.weak_type && init.weak_type))
+            operands inits
+      | _ -> failwith "lax: reduce expects operands and init values")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

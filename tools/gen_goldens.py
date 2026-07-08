@@ -626,6 +626,152 @@ def generate_batching(module):
     return n_off, n_on
 
 
+API_FNS = {
+    "sin": lambda x: LAX.sin(x),
+    "cubic": lambda x: LAX.sub(LAX.mul(x, LAX.mul(x, x)), x),
+    "exp_neg": lambda x: LAX.exp(LAX.neg(x)),
+    "tanh": lambda x: LAX.tanh(x),
+    "sin_mul": lambda x, y: LAX.mul(LAX.sin(x), y),
+    "sum_sin": lambda x: LAX.reduce_sum(LAX.sin(x), axes=(0,)),
+}
+
+
+def api_fun_with_nested_calls_2(x):
+    one = np.asarray(1.0, x.dtype)
+
+    def bar(y):
+        def baz(w):
+            q = y
+            q = q + y
+            q = q + (w + y)
+            inner = LAX.mul(LAX.sin(x), y)
+            return inner + q
+
+        p, t = jax.jvp(baz, (x + one,), (y,))
+        return t + (x * p)
+
+    return bar(x)
+
+
+def run_api_case(c, seed):
+    mode = c["mode"]
+    avals = c["in_avals"]
+    primals = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"]) for i, a in enumerate(avals)
+    ]
+    if mode == "jit":
+        out = jax.jit(API_FNS[c["fn"]])(*primals)
+        return primals, None, [np.asarray(out)]
+    if mode == "jvp_jit":
+        tangents = [
+            draw(a["rng"], seed + 1000 + i, a["shape"], a["dtype"])
+            for i, a in enumerate(avals)
+        ]
+        po, to = jax.jvp(
+            jax.jit(API_FNS[c["fn"]]), tuple(primals), tuple(tangents)
+        )
+        return primals, tangents, [np.asarray(po), np.asarray(to)]
+    if mode == "vmap_jit":
+        in_axes = tuple(None if a is None else int(a) for a in c["in_axes"])
+        out = jax.vmap(jax.jit(API_FNS[c["fn"]]), in_axes=in_axes)(*primals)
+        return primals, None, [np.asarray(out)]
+    if mode == "grad_jit":
+        g = jax.grad(jax.jit(API_FNS[c["fn"]]))(*primals)
+        return primals, None, [np.asarray(g)]
+    if mode == "nested2_jit":
+        out = jax.jit(api_fun_with_nested_calls_2)(*primals)
+        return primals, None, [np.asarray(out)]
+    if mode == "nested2_vmap":
+        out = jax.vmap(api_fun_with_nested_calls_2)(*primals)
+        return primals, None, [np.asarray(out)]
+    raise SystemExit("unknown api mode " + mode)
+
+
+def gen_api_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and any(ec.is_wide64(a["dtype"]) for a in c["in_avals"]):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        primals, tangents, outputs = run_api_case(c, seed)
+        in_arrays = {"arg" + str(i): np.asarray(v) for i, v in enumerate(primals)}
+        tan_meta = []
+        if tangents is not None:
+            for i, v in enumerate(tangents):
+                in_arrays["tan" + str(i)] = np.asarray(v)
+                tv = np.asarray(v)
+                tan_meta.append(
+                    {
+                        "name": "tan" + str(i),
+                        "shape": [int(d) for d in tv.shape],
+                        "dtype": tv.dtype.name,
+                    }
+                )
+        out_arrays = {"out" + str(i): np.asarray(o) for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **in_arrays)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": "arg" + str(i),
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+                "rng": a["rng"],
+            }
+            for i, (a, v) in enumerate(zip(c["in_avals"], primals))
+        ]
+        outs_meta = [
+            {
+                "name": "out" + str(i),
+                "shape": [int(d) for d in np.asarray(o).shape],
+                "dtype": np.asarray(o).dtype.name,
+            }
+            for i, o in enumerate(outputs)
+        ]
+        compare, tol = resolve_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "fn": c["fn"],
+            "mode": c["mode"],
+            "args": args_meta,
+            "tangents": tan_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        if "in_axes" in c:
+            entry["in_axes"] = c["in_axes"]
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_api(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_api_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_api_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def _add_all(*xs):
     return functools.reduce(jnp.add, xs)
 
@@ -778,6 +924,8 @@ def main():
         n_off, n_on = generate_ad(sys.argv[1])
     elif sys.argv[1] == "batching":
         n_off, n_on = generate_batching(sys.argv[1])
+    elif sys.argv[1] == "api":
+        n_off, n_on = generate_api(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

@@ -14,5 +14,6 @@
   test_partial_eval
   test_ad
   test_batching
-  test_api_util)
+  test_api_util
+  test_api)
  (libraries ojax alcotest))

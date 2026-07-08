@@ -1,0 +1,23 @@
+[
+  {"case_id":"sin_jit_f32_3","fn":"sin","mode":"jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"cubic_jit_f32_3","fn":"cubic","mode":"jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"exp_neg_jit_f32_3","fn":"exp_neg","mode":"jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"tanh_jit_f32_3","fn":"tanh","mode":"jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"sin_mul_jit_f32_3","fn":"sin_mul","mode":"jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"cubic_jit_f32_s","fn":"cubic","mode":"jit","in_avals":[{"shape":[],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"sin_jit_f64_3","fn":"sin","mode":"jit","in_avals":[{"shape":[3],"dtype":"float64","rng":"rand_default"}]},
+  {"case_id":"sin_jvpjit_f32_3","fn":"sin","mode":"jvp_jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"cubic_jvpjit_f32_3","fn":"cubic","mode":"jvp_jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"sin_mul_jvpjit_f32_3","fn":"sin_mul","mode":"jvp_jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"sin_jvpjit_f64_3","fn":"sin","mode":"jvp_jit","in_avals":[{"shape":[3],"dtype":"float64","rng":"rand_default"}]},
+  {"case_id":"sin_vmapjit_f32_5x3","fn":"sin","mode":"vmap_jit","in_axes":[0],"in_avals":[{"shape":[5,3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"cubic_vmapjit_f32_5x3","fn":"cubic","mode":"vmap_jit","in_axes":[0],"in_avals":[{"shape":[5,3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"sin_mul_vmapjit_f32_5x3","fn":"sin_mul","mode":"vmap_jit","in_axes":[0,0],"in_avals":[{"shape":[5,3],"dtype":"float32","rng":"rand_default"},{"shape":[5,3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"sin_vmapjit_f64_5x3","fn":"sin","mode":"vmap_jit","in_axes":[0],"in_avals":[{"shape":[5,3],"dtype":"float64","rng":"rand_default"}]},
+  {"case_id":"cubic_gradjit_f32_s","fn":"cubic","mode":"grad_jit","in_avals":[{"shape":[],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"sum_sin_gradjit_f32_3","fn":"sum_sin","mode":"grad_jit","in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"cubic_gradjit_f64_s","fn":"cubic","mode":"grad_jit","in_avals":[{"shape":[],"dtype":"float64","rng":"rand_default"}]},
+  {"case_id":"nested2_jit_f32_s","fn":"nested2","mode":"nested2_jit","in_avals":[{"shape":[],"dtype":"float32","rng":"rand_default"}]},
+  {"case_id":"nested2_jit_f64_s","fn":"nested2","mode":"nested2_jit","in_avals":[{"shape":[],"dtype":"float64","rng":"rand_default"}]},
+  {"case_id":"nested2_vmap_f32_3","fn":"nested2","mode":"nested2_vmap","in_axes":[0],"in_avals":[{"shape":[3],"dtype":"float32","rng":"rand_default"}]}
+]

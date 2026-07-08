@@ -714,6 +714,190 @@ let batch_suite_for set_name =
   in
   ("batching:" ^ set_name, coverage :: case_tests)
 
+module ApiM = Ojax.Api
+
+let api_add a b = jb1 T.Add [ a; b ]
+let api_mul a b = jb1 T.Mul [ a; b ]
+let api_sin a = jb1 T.Sin [ a ]
+
+let scalar_like (v : T.value) (x : float) : T.value =
+  let dt = (C.get_aval v).T.dtype in
+  T.Concrete (Nd.of_floats dt [||] [| x |])
+
+let api_builders : (string * (T.value list -> T.value list)) list =
+  [
+    ("sin", fun a -> [ jb1 T.Sin a ]);
+    ( "cubic",
+      fun a ->
+        match a with
+        | [ x ] -> [ jb1 T.Sub [ jb1 T.Mul [ x; jb1 T.Mul [ x; x ] ]; x ] ]
+        | _ -> assert false );
+    ("exp_neg", fun a -> [ jb1 T.Exp [ jb1 T.Neg a ] ]);
+    ("tanh", fun a -> [ jb1 T.Tanh a ]);
+    ( "sin_mul",
+      fun a ->
+        match a with
+        | [ x; y ] -> [ jb1 T.Mul [ jb1 T.Sin [ x ]; y ] ]
+        | _ -> assert false );
+    ("sum_sin", fun a -> [ jb1 (T.Reduce_sum [| 0 |]) [ jb1 T.Sin a ] ]);
+  ]
+
+let nested_calls_2 (x : T.value) : T.value =
+  let one = scalar_like x 1.0 in
+  let bar (y : T.value) : T.value =
+    let baz (w : T.value) : T.value =
+      let q = List.hd (ApiM.call (fun _ -> [ y ]) [ x ]) in
+      let q = api_add q (List.hd (ApiM.call (fun _ -> [ y ]) [])) in
+      let q =
+        api_add q
+          (List.hd (ApiM.call (fun a -> [ api_add w (List.hd a) ]) [ y ]))
+      in
+      let inner =
+        List.hd
+          (ApiM.call
+             (fun _ ->
+               [
+                 api_mul
+                   (List.hd
+                      (ApiM.call (fun b -> [ api_sin (List.hd b) ]) [ x ]))
+                   y;
+               ])
+             [ one ])
+      in
+      api_add inner q
+    in
+    let p, t = Ad.jvp (fun a -> [ baz (List.hd a) ]) [ api_add x one ] [ y ] in
+    api_add (List.hd t) (api_mul x (List.hd p))
+  in
+  List.hd (ApiM.call (fun a -> [ bar (List.hd a) ]) [ x ])
+
+let api_run mode fn in_axes primals tangents =
+  match mode with
+  | "jit" -> ApiM.jit_flat fn primals
+  | "jvp_jit" ->
+      let po, to_ = Ad.jvp (ApiM.jit_flat fn) primals tangents in
+      po @ to_
+  | "vmap_jit" -> Batching.vmap (ApiM.jit_flat fn) in_axes primals
+  | "grad_jit" -> Ad.grad (fun a -> List.hd (ApiM.jit_flat fn a)) primals
+  | "nested2_jit" ->
+      ApiM.jit_flat (fun a -> [ nested_calls_2 (List.hd a) ]) primals
+  | "nested2_vmap" ->
+      Batching.vmap (fun a -> [ nested_calls_2 (List.hd a) ]) in_axes primals
+  | _ -> failwith ("api golden: unknown mode " ^ mode)
+
+type api_case = {
+  ap_id : string;
+  ap_fn : string;
+  ap_mode : string;
+  ap_in_axes : int option list;
+  ap_args : arg list;
+  ap_tans : arg list;
+  ap_outs : out list;
+  ap_compare : string;
+  ap_atol : float;
+  ap_rtol : float;
+}
+
+let parse_api_case j =
+  let tol = U.member "tol" j in
+  let in_axes_j = U.member "in_axes" j in
+  {
+    ap_id = U.member "case_id" j |> U.to_string;
+    ap_fn = U.member "fn" j |> U.to_string;
+    ap_mode = U.member "mode" j |> U.to_string;
+    ap_in_axes =
+      (match in_axes_j with
+      | `Null -> []
+      | _ -> U.to_list in_axes_j |> List.map parse_in_axis);
+    ap_args = U.member "args" j |> U.to_list |> List.map parse_arg;
+    ap_tans = U.member "tangents" j |> U.to_list |> List.map parse_arg;
+    ap_outs = U.member "outputs" j |> U.to_list |> List.map parse_out;
+    ap_compare = U.member "compare" j |> U.to_string;
+    ap_atol = U.member "atol" tol |> U.to_number;
+    ap_rtol = U.member "rtol" tol |> U.to_number;
+  }
+
+let load_api_manifest path =
+  let j = Yojson.Safe.from_file path in
+  ( U.member "x64" j |> U.to_bool,
+    U.member "cases" j |> U.to_list |> List.map parse_api_case )
+
+let api_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.ap_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.ap_id ^ ".npz"))
+  in
+  let read_operand (a : arg) =
+    T.Concrete (nd_of_npz (find_member inputs a.name))
+  in
+  let primals = List.map read_operand c.ap_args in
+  let tangents = List.map read_operand c.ap_tans in
+  let fn =
+    match List.assoc_opt c.ap_fn api_builders with
+    | Some f -> f
+    | None -> fun _ -> assert false
+  in
+  let results = api_run c.ap_mode fn c.ap_in_axes primals tangents in
+  let paired =
+    try List.combine c.ap_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.ap_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.ap_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.ap_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual =
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data = Npz.F (read_nd nd);
+        }
+      in
+      Compare.assert_tol o.odtype c.ap_atol c.ap_rtol;
+      Compare.check
+        ~name:(c.ap_id ^ ":" ^ o.oname)
+        ~compare:c.ap_compare ~atol:c.ap_atol ~rtol:c.ap_rtol ~expected:golden
+        ~actual)
+    paired
+
+let api_check_coverage ~set_dir cases () =
+  let expected =
+    List.map (fun c -> c.ap_id) cases |> List.sort String.compare
+  in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then Alcotest.failf "%s: api coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let api_suite_for set_name =
+  let set_dir = Filename.concat (Filename.concat goldens_root "api") set_name in
+  let x64, cases =
+    load_api_manifest (Filename.concat set_dir "manifest.json")
+  in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.ap_id `Quick (api_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (api_check_coverage ~set_dir cases)
+  in
+  ("api:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -766,5 +950,7 @@ let () =
       ad_suite_for "x64_on";
       batch_suite_for "x64_off";
       batch_suite_for "x64_on";
+      api_suite_for "x64_off";
+      api_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

@@ -1383,11 +1383,35 @@ def loops_fn(name, reverse, num_carry):
     return g
 
 
+def _while_pyf(name):
+    if name == "wdouble":
+        return (lambda v: v < 8.0, lambda v: v + v)
+    if name == "wtwo":
+        return (lambda s: s[0] < 20.0, lambda s: (s[0] + s[1], s[1]))
+    raise SystemExit("loops: unknown while fn " + name)
+
+
+def while_fn(name, num_carry):
+    cond_fun, body_fun = _while_pyf(name)
+
+    def g(*flat):
+        init_arrays = list(flat[:num_carry])
+        init = init_arrays[0] if num_carry == 1 else tuple(init_arrays)
+        out = jax.lax.while_loop(cond_fun, body_fun, init)
+        return jax.tree_util.tree_leaves(out)
+
+    return g
+
+
 def run_loops_case(c, seed):
     mode = c["mode"]
+    kind = c.get("kind", "scan")
     num_carry = len(c["init"])
-    avals = c["init"] + c["xs"]
-    g = loops_fn(c["fn"], c["reverse"], num_carry)
+    avals = c["init"] + c.get("xs", [])
+    if kind == "while":
+        g = while_fn(c["fn"], num_carry)
+    else:
+        g = loops_fn(c["fn"], c["reverse"], num_carry)
     primals = [
         draw(a["rng"], seed + i, a["shape"], a["dtype"]) for i, a in enumerate(avals)
     ]
@@ -1418,7 +1442,7 @@ def gen_loops_set(module, cases, x64, outdir):
     os.makedirs(os.path.join(outdir, "outputs"))
     manifest_cases = []
     for c in cases:
-        avals = c["init"] + c["xs"]
+        avals = c["init"] + c.get("xs", [])
         if not x64 and any(ec.is_wide64(a["dtype"]) for a in avals):
             continue
         case_id = c["case_id"]
@@ -1461,6 +1485,7 @@ def gen_loops_set(module, cases, x64, outdir):
         entry = {
             "case_id": case_id,
             "fn": c["fn"],
+            "kind": c.get("kind", "scan"),
             "mode": c["mode"],
             "reverse": c["reverse"],
             "num_carry": len(c["init"]),

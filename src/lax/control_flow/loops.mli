@@ -16,3 +16,12 @@ val scan :
   value list ->
   value list ->
   value list
+
+val while_out_avals : closed_jaxpr -> aval list
+val while_impl : closed_jaxpr -> closed_jaxpr -> value list -> value list
+
+val while_loop :
+  (value list -> value) ->
+  (value list -> value list) ->
+  value list ->
+  value list

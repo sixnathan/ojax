@@ -198,6 +198,7 @@ and primitive =
       num_carry : int;
       jaxpr : closed_jaxpr;
     }
+  | While of { cond : closed_jaxpr; body : closed_jaxpr }
 
 and dot_dims = {
   lhs_contract : int array;

@@ -19,3 +19,9 @@ val scan :
   value list ->
   value list ->
   value list
+
+val while_loop :
+  (value list -> value) ->
+  (value list -> value list) ->
+  value list ->
+  value list

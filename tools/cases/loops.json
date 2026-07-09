@@ -15,5 +15,11 @@
   {"case_id":"cumsum_vmap_f32","fn":"cumsum","mode":"vmap","reverse":false,"in_axes":[0,0],"init":[{"shape":[3],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[3,4],"dtype":"float32","rng":"rand_default"}]},
   {"case_id":"cumprod_vmap_f32","fn":"cumprod","mode":"vmap","reverse":false,"in_axes":[0,0],"init":[{"shape":[3],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[3,4],"dtype":"float32","rng":"rand_positive"}]},
   {"case_id":"lin_vmap_f32","fn":"lin","mode":"vmap","reverse":false,"in_axes":[0,0],"init":[{"shape":[3,2],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[3,4,2],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"twocarry_vmap_f32","fn":"twocarry","mode":"vmap","reverse":false,"in_axes":[0,0,0],"init":[{"shape":[3],"dtype":"float32","rng":"rand_positive"},{"shape":[3],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[3,5],"dtype":"float32","rng":"rand_positive"}]}
+  {"case_id":"twocarry_vmap_f32","fn":"twocarry","mode":"vmap","reverse":false,"in_axes":[0,0,0],"init":[{"shape":[3],"dtype":"float32","rng":"rand_positive"},{"shape":[3],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[3,5],"dtype":"float32","rng":"rand_positive"}]},
+  {"case_id":"wdouble_eval_f32","fn":"wdouble","kind":"while","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"}]},
+  {"case_id":"wdouble_eval_f64","fn":"wdouble","kind":"while","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float64","rng":"rand_positive"}]},
+  {"case_id":"wdouble_jvp_f32","fn":"wdouble","kind":"while","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"}]},
+  {"case_id":"wdouble_jvp_f64","fn":"wdouble","kind":"while","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float64","rng":"rand_positive"}]},
+  {"case_id":"wtwo_eval_f32","fn":"wtwo","kind":"while","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"},{"shape":[],"dtype":"float32","rng":"rand_positive"}]},
+  {"case_id":"wtwo_jvp_f32","fn":"wtwo","kind":"while","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"},{"shape":[],"dtype":"float32","rng":"rand_positive"}]}
 ]

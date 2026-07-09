@@ -491,7 +491,8 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       failwith
         "ad: scatter_min/scatter_max jvp needs the extremal averaging rule (M2 \
          gap)"
-  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ | Scan _ ->
+  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ | Scan _
+  | While _ ->
       failwith "ad: multi-output jvp handled by jvp_process_primitive"
   | Reduce_precision p -> (
       match (primals, tangents) with
@@ -780,6 +781,32 @@ let jvp_process_primitive trace prim args =
       List.map2
         (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
         primal_outs tangent_outs
+  | While { cond; body } ->
+      let split2 l n =
+        match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
+      in
+      let nc = List.length primals in
+      let carry_avals = List.map Core.get_aval primals in
+      let new_body =
+        Jaxpr.make_jaxpr (carry_avals @ carry_avals) (fun args ->
+            let pc, tc = split2 args nc in
+            let po, to_ = jvp (fun a -> Jaxpr.eval_closed_jaxpr body a) pc tc in
+            po @ to_)
+      in
+      let new_cond =
+        Jaxpr.make_jaxpr (carry_avals @ carry_avals) (fun args ->
+            let pc, _ = split2 args nc in
+            Jaxpr.eval_closed_jaxpr cond pc)
+      in
+      let out =
+        Core.bind
+          (While { cond = new_cond; body = new_body })
+          (primals @ tangents)
+      in
+      let pcarry, tcarry = split2 out nc in
+      List.map2
+        (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
+        pcarry tcarry
   | Cond { t; f } -> (
       match (primals, tangents) with
       | pred :: prim_ops, _ :: tan_ops ->
@@ -1230,6 +1257,9 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Zeta | Platform_index _ | Xla_call _ ->
       failwith "ad: primitive has no transpose rule in M1"
   | Scan _ -> failwith "ad: scan transpose deferred to a later row (M2)"
+  | While _ ->
+      failwith
+        "ad: reverse-mode differentiation does not work for lax.while_loop"
 
 and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     value list =

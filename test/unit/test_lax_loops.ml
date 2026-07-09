@@ -109,6 +109,52 @@ let test_transpose_deferred () =
   | _ -> Alcotest.fail "expected scan transpose to be deferred"
   | exception Failure _ -> ()
 
+let wdouble_cond l =
+  match l with [ v ] -> b1 T.Lt [ v; sc 8.0 ] | _ -> assert false
+
+let wdouble_body l =
+  match l with [ v ] -> [ b1 T.Add [ v; v ] ] | _ -> assert false
+
+let wtwo_cond l =
+  match l with [ a; _ ] -> b1 T.Lt [ a; sc 20.0 ] | _ -> assert false
+
+let wtwo_body l =
+  match l with [ a; b ] -> [ b1 T.Add [ a; b ]; b ] | _ -> assert false
+
+let test_while_eval () =
+  match Lax.while_loop wdouble_cond wdouble_body [ sc 1.5 ] with
+  | [ v ] -> approx "while final" (read v) [| 12.0 |]
+  | _ -> Alcotest.fail "while arity"
+
+let test_while_twocarry () =
+  match Lax.while_loop wtwo_cond wtwo_body [ sc 1.0; sc 2.0 ] with
+  | [ a; b ] ->
+      approx "wtwo a" (read a) [| 21.0 |];
+      approx "wtwo b" (read b) [| 2.0 |]
+  | _ -> Alcotest.fail "wtwo arity"
+
+let test_while_jvp () =
+  let wrapped inputs = Lax.while_loop wdouble_cond wdouble_body inputs in
+  let _, to_ = Ad.jvp wrapped [ sc 1.5 ] [ sc 1.0 ] in
+  match to_ with
+  | [ vt ] -> approx "while jvp" (read vt) [| 8.0 |]
+  | _ -> Alcotest.fail "while jvp arity"
+
+let test_while_transpose_deferred () =
+  match
+    Ad.grad
+      (fun ops -> List.hd (Lax.while_loop wdouble_cond wdouble_body ops))
+      [ sc 1.5 ]
+  with
+  | _ -> Alcotest.fail "expected while transpose to be deferred"
+  | exception Failure _ -> ()
+
+let test_while_vmap_deferred () =
+  let wrapped inputs = Lax.while_loop wdouble_cond wdouble_body inputs in
+  match Batching.vmap wrapped [ Some 0 ] [ f32 [| 2 |] [| 1.5; 2.0 |] ] with
+  | _ -> Alcotest.fail "expected while vmap to be deferred"
+  | exception Failure _ -> ()
+
 let () =
   Alcotest.run "lax_loops"
     [
@@ -119,5 +165,14 @@ let () =
           Alcotest.test_case "jvp" `Quick test_jvp;
           Alcotest.test_case "vmap" `Quick test_vmap;
           Alcotest.test_case "transpose_deferred" `Quick test_transpose_deferred;
+        ] );
+      ( "while",
+        [
+          Alcotest.test_case "eval" `Quick test_while_eval;
+          Alcotest.test_case "twocarry" `Quick test_while_twocarry;
+          Alcotest.test_case "jvp" `Quick test_while_jvp;
+          Alcotest.test_case "transpose_deferred" `Quick
+            test_while_transpose_deferred;
+          Alcotest.test_case "vmap_deferred" `Quick test_while_vmap_deferred;
         ] );
     ]

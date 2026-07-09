@@ -1135,6 +1135,12 @@ let impl prim inputs =
       |> List.map (function
         | Concrete nd -> nd
         | Tracer _ -> failwith "lax: scan produced a tracer")
+  | While { cond; body } ->
+      let inputs_v = List.map (fun nd -> Concrete nd) inputs in
+      Control_flow.Loops.while_impl cond body inputs_v
+      |> List.map (function
+        | Concrete nd -> nd
+        | Tracer _ -> failwith "lax: while produced a tracer")
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1395,6 +1401,7 @@ let abstract_eval prim avals =
   | Cond { t; _ } -> List.map aval_of_atom t.jaxpr.outs
   | Scan { length; num_carry; jaxpr; _ } ->
       Control_flow.Loops.scan_out_avals ~length ~num_carry jaxpr
+  | While { body; _ } -> Control_flow.Loops.while_out_avals body
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =
@@ -1405,3 +1412,4 @@ let () = install ()
 let cond = Control_flow.Conditionals.cond
 let platform_index = Control_flow.Conditionals.platform_index
 let scan = Control_flow.Loops.scan
+let while_loop = Control_flow.Loops.while_loop

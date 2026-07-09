@@ -225,6 +225,7 @@ let prim_name = function
   | Xla_call _ -> "xla_call"
   | Cond _ -> "cond"
   | Scan _ -> "scan"
+  | While _ -> "while"
 
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"

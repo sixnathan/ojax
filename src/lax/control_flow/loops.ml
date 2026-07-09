@@ -61,6 +61,30 @@ let scan_impl ~length ~reverse ~num_carry (jaxpr : closed_jaxpr)
   in
   !carry @ stacked
 
+let while_out_avals (body : closed_jaxpr) : aval list =
+  List.map aval_of_atom body.jaxpr.outs
+
+let while_impl (cond : closed_jaxpr) (body : closed_jaxpr) (inputs : value list)
+    : value list =
+  let carry = ref inputs in
+  let pred () =
+    match Jaxpr.eval_closed_jaxpr cond !carry with
+    | [ Concrete nd ] -> Ndarray.get_f nd [||] <> 0.0
+    | [ _ ] -> failwith "loops: while cond must be concrete"
+    | _ -> failwith "loops: while cond must return one value"
+  in
+  while pred () do
+    carry := Jaxpr.eval_closed_jaxpr body !carry
+  done;
+  !carry
+
+let while_loop (cond_fun : value list -> value)
+    (body_fun : value list -> value list) (init : value list) : value list =
+  let avals = List.map Core.get_aval init in
+  let cond = Jaxpr.make_jaxpr avals (fun vs -> [ cond_fun vs ]) in
+  let body = Jaxpr.make_jaxpr avals body_fun in
+  Core.bind (While { cond; body }) init
+
 let scan ?(reverse = false) (body : value list -> value list)
     (init : value list) (xs : value list) : value list =
   let num_carry = List.length init in

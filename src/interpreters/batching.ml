@@ -626,6 +626,10 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Platform_index _ ->
       failwith "batching: vmap of platform_index not supported"
   | Cond _ -> failwith "batching: cond handled by batch_process_primitive"
+  | While _ ->
+      failwith
+        "batching: vmap of while_loop needs the batched-predicate fixpoint (M2 \
+         gap)"
   | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :

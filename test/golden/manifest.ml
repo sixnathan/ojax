@@ -1381,9 +1381,33 @@ let loops_bodies : (string * int * (T.value list -> T.value list)) list =
         | _ -> assert false );
   ]
 
+let loops_while :
+    (string * int * (T.value list -> T.value) * (T.value list -> T.value list))
+    list =
+  [
+    ( "wdouble",
+      1,
+      (fun l ->
+        match l with
+        | [ v ] -> jb1 T.Lt [ v; scalar_like v 8.0 ]
+        | _ -> assert false),
+      fun l ->
+        match l with [ v ] -> [ jb1 T.Add [ v; v ] ] | _ -> assert false );
+    ( "wtwo",
+      2,
+      (fun l ->
+        match l with
+        | [ a; _ ] -> jb1 T.Lt [ a; scalar_like a 20.0 ]
+        | _ -> assert false),
+      fun l ->
+        match l with [ a; b ] -> [ jb1 T.Add [ a; b ]; b ] | _ -> assert false
+    );
+  ]
+
 type loops_case = {
   lp_id : string;
   lp_fn : string;
+  lp_kind : string;
   lp_mode : string;
   lp_reverse : bool;
   lp_num_carry : int;
@@ -1402,6 +1426,8 @@ let parse_loops_case j =
   {
     lp_id = U.member "case_id" j |> U.to_string;
     lp_fn = U.member "fn" j |> U.to_string;
+    lp_kind =
+      (match U.member "kind" j with `Null -> "scan" | k -> U.to_string k);
     lp_mode = U.member "mode" j |> U.to_string;
     lp_reverse = U.member "reverse" j |> U.to_bool;
     lp_num_carry = U.member "num_carry" j |> U.to_int;
@@ -1433,15 +1459,22 @@ let loops_split_at n l =
   go n l []
 
 let loops_run c primals tangents =
-  let _, num_carry, body =
-    match List.find_opt (fun (n, _, _) -> n = c.lp_fn) loops_bodies with
-    | Some x -> x
-    | None -> Alcotest.failf "%s: unknown loops fn %s" c.lp_id c.lp_fn
-  in
-  let reverse = c.lp_reverse in
-  let wrapped inputs =
-    let init, xs = loops_split_at num_carry inputs in
-    Ojax.Lax.scan ~reverse body init xs
+  let wrapped =
+    if c.lp_kind = "while" then
+      match List.find_opt (fun (n, _, _, _) -> n = c.lp_fn) loops_while with
+      | Some (_, _, cond_f, body_f) ->
+          fun inputs -> Ojax.Lax.while_loop cond_f body_f inputs
+      | None -> Alcotest.failf "%s: unknown while fn %s" c.lp_id c.lp_fn
+    else
+      let _, num_carry, body =
+        match List.find_opt (fun (n, _, _) -> n = c.lp_fn) loops_bodies with
+        | Some x -> x
+        | None -> Alcotest.failf "%s: unknown loops fn %s" c.lp_id c.lp_fn
+      in
+      let reverse = c.lp_reverse in
+      fun inputs ->
+        let init, xs = loops_split_at num_carry inputs in
+        Ojax.Lax.scan ~reverse body init xs
   in
   match c.lp_mode with
   | "eval" -> wrapped primals

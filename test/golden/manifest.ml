@@ -1339,6 +1339,55 @@ let contractions_suite_for set_name =
   in
   ("contractions:" ^ set_name, coverage :: case_tests)
 
+module WF = Ojax.Numpy.Window_functions
+module SORT = Ojax.Numpy.Sorting
+module SETOPS = Ojax.Numpy.Setops
+
+let axis_opt params =
+  match U.member "axis" params with `Null -> None | j -> Some (U.to_int j)
+
+let setops_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let one v = [ v ] in
+  match (op, operands) with
+  | "blackman", [] -> one (WF.blackman (U.to_int (member "M")))
+  | "bartlett", [] -> one (WF.bartlett (U.to_int (member "M")))
+  | "hamming", [] -> one (WF.hamming (U.to_int (member "M")))
+  | "hanning", [] -> one (WF.hanning (U.to_int (member "M")))
+  | "kaiser", [] ->
+      one (WF.kaiser (U.to_int (member "M")) (U.to_number (member "beta")))
+  | "sort", [ x ] ->
+      one
+        (SORT.sort ~axis:(axis_opt params) ?stable:(opt_b params "stable")
+           ?descending:(opt_b params "descending") x)
+  | "argsort", [ x ] ->
+      one
+        (SORT.argsort ~axis:(axis_opt params) ?stable:(opt_b params "stable")
+           ?descending:(opt_b params "descending")
+           ?dtype:(opt_dt params "dtype") x)
+  | "lexsort", keys -> one (SORT.lexsort ?axis:(opt_i params "axis") keys)
+  | "partition", [ x ] ->
+      one (SORT.partition ?axis:(opt_i params "axis") x ~kth:(U.to_int (member "kth")))
+  | "isin", [ a; b ] -> one (SETOPS.isin ?invert:(opt_b params "invert") a b)
+  | _ -> failwith ("setops golden: unknown op " ^ op)
+
+let setops_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "setops") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:setops_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("setops:" ^ set_name, coverage :: case_tests)
+
 let reductions_suite_for set_name =
   let set_dir =
     Filename.concat (Filename.concat goldens_root "reductions") set_name
@@ -2591,5 +2640,7 @@ let () =
       creation_suite_for "x64_on";
       contractions_suite_for "x64_off";
       contractions_suite_for "x64_on";
+      setops_suite_for "x64_off";
+      setops_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

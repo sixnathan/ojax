@@ -1638,6 +1638,76 @@ NUMPY_BUILDERS["cumsum"] = np_cumsum
 NUMPY_BUILDERS["average"] = np_average
 
 
+def np_blackman(params):
+    m = int(params["M"])
+    return lambda: jnp.blackman(m)
+
+
+def np_bartlett(params):
+    m = int(params["M"])
+    return lambda: jnp.bartlett(m)
+
+
+def np_hamming(params):
+    m = int(params["M"])
+    return lambda: jnp.hamming(m)
+
+
+def np_hanning(params):
+    m = int(params["M"])
+    return lambda: jnp.hanning(m)
+
+
+def np_kaiser(params):
+    m = int(params["M"])
+    beta = float(params["beta"])
+    return lambda: jnp.kaiser(m, beta)
+
+
+def np_sort(params):
+    ax = params.get("axis", -1)
+    stable = params.get("stable", True)
+    descending = params.get("descending", False)
+    return lambda x: jnp.sort(x, axis=ax, stable=stable, descending=descending)
+
+
+def np_argsort(params):
+    ax = params.get("axis", -1)
+    stable = params.get("stable", True)
+    descending = params.get("descending", False)
+    return lambda x: jnp.argsort(
+        x, axis=ax, stable=stable, descending=descending
+    )
+
+
+def np_lexsort(params):
+    ax = int(params.get("axis", -1))
+    return lambda *xs: jnp.lexsort(list(xs), axis=ax)
+
+
+def np_partition(params):
+    kth = int(params["kth"])
+    ax = int(params.get("axis", -1))
+    return lambda x: jnp.partition(x, kth, axis=ax)
+
+
+def np_isin(params):
+    invert = params.get("invert", False)
+    return lambda a, b: jnp.isin(a, b, invert=invert)
+
+
+NUMPY_BUILDERS["blackman"] = np_blackman
+NUMPY_BUILDERS["bartlett"] = np_bartlett
+NUMPY_BUILDERS["hamming"] = np_hamming
+NUMPY_BUILDERS["hanning"] = np_hanning
+NUMPY_BUILDERS["kaiser"] = np_kaiser
+NUMPY_BUILDERS["sort"] = np_sort
+NUMPY_BUILDERS["argsort"] = np_argsort
+NUMPY_BUILDERS["lexsort"] = np_lexsort
+NUMPY_BUILDERS["partition"] = np_partition
+NUMPY_BUILDERS["isin"] = np_isin
+
+
 def _cum_simple(name):
     fn = getattr(jnp, name)
 

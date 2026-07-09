@@ -18,4 +18,5 @@
   (source_tree %{project_root}/goldens/indexing)
   (source_tree %{project_root}/goldens/array_methods)
   (source_tree %{project_root}/goldens/creation)
-  (source_tree %{project_root}/goldens/contractions)))
+  (source_tree %{project_root}/goldens/contractions)
+  (source_tree %{project_root}/goldens/setops)))

@@ -232,6 +232,14 @@ let prim_name = function
   | Cummin _ -> "cummin"
   | Cumlogsumexp _ -> "cumlogsumexp"
   | Custom_linear_solve _ -> "custom_linear_solve"
+  | Threefry2x32 -> "threefry2x32"
+  | Iota_2x32_shape _ -> "iota_2x32_shape"
+  | Random_seed -> "random_seed"
+  | Random_split _ -> "random_split"
+  | Random_fold_in -> "random_fold_in"
+  | Random_bits _ -> "random_bits"
+  | Random_wrap -> "random_wrap"
+  | Random_unwrap -> "random_unwrap"
 
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"

@@ -2601,6 +2601,49 @@ let solves_suite_for set_name =
   in
   ("solves:" ^ set_name, coverage :: case_tests)
 
+module PR = Ojax.Random.Prng
+module TF = Ojax.Random.Threefry
+
+let prng_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let shape () = ia (member "shape") in
+  let bw () = U.to_int (member "bit_width") in
+  match (op, operands) with
+  | "threefry_seed", [ s ] -> [ TF.threefry_seed s ]
+  | "threefry_2x32", [ k; c ] -> [ TF.threefry_2x32 k c ]
+  | "threefry_split", [ k ] -> [ TF.threefry_split k (shape ()) ]
+  | "threefry_fold_in", [ k; d ] -> [ TF.threefry_fold_in k d ]
+  | "threefry_random_bits", [ k ] ->
+      [ TF.threefry_random_bits k (bw ()) (shape ()) ]
+  | "iota_2x32_shape", [] ->
+      let a, b = PR.iota_2x32_shape (shape ()) in
+      [ a; b ]
+  | "random_seed", [ s ] -> [ PR.random_seed s ]
+  | "random_split", [ k ] -> [ PR.random_split (PR.random_wrap k) (shape ()) ]
+  | "random_fold_in", [ k; m ] -> [ PR.random_fold_in (PR.random_wrap k) m ]
+  | "random_bits", [ k ] ->
+      [ PR.random_bits (PR.random_wrap k) ~bit_width:(bw ()) ~shape:(shape ()) ]
+  | "random_wrap", [ k ] -> [ PR.random_unwrap (PR.random_wrap k) ]
+  | "random_unwrap", [ k ] -> [ PR.random_unwrap (PR.random_wrap k) ]
+  | _ -> failwith ("prng golden: unknown op " ^ op)
+
+let prng_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "prng") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:prng_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("prng:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -2641,6 +2684,8 @@ let compare_tests () =
 
 let () =
   Ojax.Lax.install ();
+  Ojax.Random.Prng.install ();
+  Ojax.Random.Threefry.install ();
   Alcotest.run "goldens"
     [
       suite_for "dtypes" "x64_off";
@@ -2679,5 +2724,7 @@ let () =
       setops_suite_for "x64_on";
       polynomial_suite_for "x64_off";
       polynomial_suite_for "x64_on";
+      prng_suite_for "x64_off";
+      prng_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

@@ -1,0 +1,11 @@
+Third-party code adapted into ojax
+==================================
+
+raven `nx` (ISC)
+----------------
+The threefry2x32 PRNG hash in `src/random/threefry.ml` (the rotate/round
+schedule, key-schedule parity constant, and two-word mixing) is adapted from
+the raven `nx` numerical library, which is ISC licensed. The ISC license text
+is reproduced verbatim in the top-level `LICENSE.raven` file. The numeric
+results are additionally anchored bit-exactly to JAX v0.10.2
+(`jax._src.random.threefry2x32`) via the checked-in goldens.

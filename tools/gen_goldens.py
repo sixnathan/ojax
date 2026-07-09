@@ -2984,7 +2984,102 @@ for _name in ["var", "std"]:
     ARRAY_METHODS_BUILDERS[_name] = _am_reduce_ddof(_name)
 
 
+from jax._src.random import prng as PRNG_MOD
+from jax._src.random import threefry2x32 as TF_MOD
+from jax._src.random.threefry2x32 import threefry_prng_impl as PRNG_IMPL
+
+
+def _prng_wrap(a):
+    return PRNG_MOD.random_wrap(a, impl=PRNG_IMPL)
+
+
+def _prng_unwrap(x):
+    return PRNG_MOD.random_unwrap(x)
+
+
+def prng_threefry_seed(params):
+    return lambda s: TF_MOD.threefry_seed(s)
+
+
+def prng_threefry_2x32(params):
+    return lambda k, c: TF_MOD.threefry_2x32(k, c)
+
+
+def prng_threefry_split(params):
+    shape = tuple(params["shape"])
+    return lambda k: TF_MOD.threefry_split(k, shape)
+
+
+def prng_threefry_fold_in(params):
+    return lambda k, d: TF_MOD.threefry_fold_in(k, d)
+
+
+def prng_threefry_random_bits(params):
+    shape = tuple(params["shape"])
+    bw = int(params["bit_width"])
+    return lambda k: TF_MOD.threefry_random_bits(k, bw, shape)
+
+
+def prng_iota_2x32_shape(params):
+    shape = tuple(params["shape"])
+    return lambda: list(PRNG_MOD.iota_2x32_shape(shape))
+
+
+def prng_random_seed(params):
+    return lambda s: _prng_unwrap(PRNG_MOD.random_seed(s, impl=PRNG_IMPL))
+
+
+def prng_random_split(params):
+    shape = tuple(params["shape"])
+    return lambda k: _prng_unwrap(PRNG_MOD.random_split(_prng_wrap(k), shape))
+
+
+def prng_random_fold_in(params):
+    return lambda k, m: _prng_unwrap(PRNG_MOD.random_fold_in(_prng_wrap(k), m))
+
+
+def prng_random_bits(params):
+    shape = tuple(params["shape"])
+    bw = int(params["bit_width"])
+    return lambda k: PRNG_MOD.random_bits(_prng_wrap(k), bw, shape)
+
+
+def prng_random_wrap(params):
+    return lambda k: _prng_unwrap(_prng_wrap(k))
+
+
+PRNG_BUILDERS = {
+    "threefry_seed": prng_threefry_seed,
+    "threefry_2x32": prng_threefry_2x32,
+    "threefry_split": prng_threefry_split,
+    "threefry_fold_in": prng_threefry_fold_in,
+    "threefry_random_bits": prng_threefry_random_bits,
+    "iota_2x32_shape": prng_iota_2x32_shape,
+    "random_seed": prng_random_seed,
+    "random_split": prng_random_split,
+    "random_fold_in": prng_random_fold_in,
+    "random_bits": prng_random_bits,
+    "random_wrap": prng_random_wrap,
+    "random_unwrap": prng_random_wrap,
+}
+
+
 def run_case(c, seed):
+    if c["primitive"].startswith("prng.") and c["op"] in PRNG_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = jax.jit(PRNG_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
+    return run_case_std(c, seed)
+
+
+def run_case_std(c, seed):
     op = c["op"]
     is_am = c["primitive"].startswith("arr.") and op in ARRAY_METHODS_BUILDERS
     is_numpy = c["primitive"].startswith("jnp.") and op in NUMPY_BUILDERS

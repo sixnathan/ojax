@@ -20,4 +20,5 @@
   (source_tree %{project_root}/goldens/creation)
   (source_tree %{project_root}/goldens/contractions)
   (source_tree %{project_root}/goldens/setops)
-  (source_tree %{project_root}/goldens/polynomial)))
+  (source_tree %{project_root}/goldens/polynomial)
+  (source_tree %{project_root}/goldens/prng)))

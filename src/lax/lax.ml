@@ -1205,6 +1205,9 @@ let impl prim inputs =
       |> List.map (function
         | Concrete nd -> nd
         | Tracer _ -> failwith "lax: custom_linear_solve produced a tracer")
+  | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
+  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
+      failwith "lax: prng primitive handled by the random module"
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1479,6 +1482,9 @@ let abstract_eval prim avals =
         avals
   | Custom_linear_solve { solve; _ } ->
       Control_flow.Solves.solve_out_avals solve
+  | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
+  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
+      failwith "lax: prng primitive handled by the random module"
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =

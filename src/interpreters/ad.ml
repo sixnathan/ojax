@@ -684,7 +684,9 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       failwith "ad: primitive has no jvp rule (matches jax)"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
-  | Rng_uniform | To_edtype _ | Platform_index _ ->
+  | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
+  | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
+  | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no jvp rule in M1"
   | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
   | Xla_call _ -> failwith "ad: jvp of xla_call not supported in M1"
@@ -1284,7 +1286,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Bessel_i0e | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Igamma
   | Igamma_grad_a | Igammac | Lgamma | Polygamma | Regularized_incomplete_beta
   | Zeta | Platform_index _ | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _
-  | Xla_call _ ->
+  | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
+  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | Xla_call _ ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
   | Scan _ -> failwith "ad: scan transpose is a standing M2 limitation"
   | While _ ->

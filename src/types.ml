@@ -208,6 +208,14 @@ and primitive =
       solve : closed_jaxpr;
       transpose_solve : closed_jaxpr option;
     }
+  | Threefry2x32
+  | Iota_2x32_shape of int array
+  | Random_seed
+  | Random_split of int array
+  | Random_fold_in
+  | Random_bits of { bit_width : int; shape : int array }
+  | Random_wrap
+  | Random_unwrap
 
 and dot_dims = {
   lhs_contract : int array;

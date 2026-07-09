@@ -401,6 +401,32 @@ let prim_of op params : T.primitive =
           lhs_batch = ia (List.nth batch 0);
           rhs_batch = ia (List.nth batch 1);
         }
+  | "conv_general_dilated" ->
+      let dn = U.to_list (member "dimension_numbers") in
+      let padding =
+        Array.of_list
+          (List.map
+             (fun t ->
+               match U.to_list t with
+               | [ a; b ] -> (U.to_int a, U.to_int b)
+               | _ -> failwith "lax golden: bad conv padding")
+             (U.to_list (member "padding")))
+      in
+      T.Conv_general_dilated
+        {
+          window_strides = ia (member "window_strides");
+          padding;
+          lhs_dilation = ia (member "lhs_dilation");
+          rhs_dilation = ia (member "rhs_dilation");
+          dimension_numbers =
+            {
+              lhs_spec = ia (List.nth dn 0);
+              rhs_spec = ia (List.nth dn 1);
+              out_spec = ia (List.nth dn 2);
+            };
+          feature_group_count = U.to_int (member "feature_group_count");
+          batch_group_count = U.to_int (member "batch_group_count");
+        }
   | _ -> failwith ("lax golden: unknown op " ^ op)
 
 let concrete = function

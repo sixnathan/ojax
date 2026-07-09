@@ -200,6 +200,7 @@ let prim_name = function
   | Scatter_mul _ -> "scatter_mul"
   | Scatter_min _ -> "scatter_min"
   | Scatter_max _ -> "scatter_max"
+  | Conv_general_dilated _ -> "conv_general_dilated"
   | Xla_call _ -> "xla_call"
   | Cond _ -> "cond"
 

@@ -222,6 +222,11 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
             add (b1 (Dot_general dd) [ tx; y ]) (b1 (Dot_general dd) [ x; ty ])
           )
       | _ -> arity ())
+  | Conv_general_dilated _ -> (
+      match (primals, tangents) with
+      | [ x; y ], [ tx; ty ] ->
+          (b1 prim [ x; y ], add (b1 prim [ tx; y ]) (b1 prim [ x; ty ]))
+      | _ -> arity ())
   | Asin -> (
       match (primals, tangents) with
       | [ x ], [ tx ] ->
@@ -951,12 +956,13 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And
   | Atan2 | Complex | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter
   | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-  | Pad _ | Dot_general _ | Argmax _ | Argmin _ | Reduce _ | Reduce_and _
-  | Reduce_max _ | Reduce_min _ | Reduce_or _ | Reduce_prod _ | Reduce_xor _
-  | After_all | Bitcast_convert_type _ | Clamp | Composite _ | Create_token
-  | Dce_sink | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general
-  | Rng_bit_generator | Rng_uniform | Sort _ | To_edtype _ | Top_k _
-  | Scatter_min _ | Scatter_max _ | Xla_call _ | Cond _ ->
+  | Pad _ | Dot_general _ | Conv_general_dilated _ | Argmax _ | Argmin _
+  | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _ | Reduce_or _
+  | Reduce_prod _ | Reduce_xor _ | After_all | Bitcast_convert_type _ | Clamp
+  | Composite _ | Create_token | Dce_sink | Empty _ | Empty2 _ | From_edtype _
+  | Iota _ | Ragged_dot_general | Rng_bit_generator | Rng_uniform | Sort _
+  | To_edtype _ | Top_k _ | Scatter_min _ | Scatter_max _ | Xla_call _ | Cond _
+    ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

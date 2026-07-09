@@ -981,6 +981,22 @@ let impl prim inputs =
               (scatter_dnums p) operand indices updates;
           ]
       | _ -> failwith "lax: scatter expects operand, indices and updates")
+  | Conv_general_dilated
+      {
+        window_strides;
+        padding;
+        lhs_dilation;
+        rhs_dilation;
+        dimension_numbers;
+        feature_group_count;
+        batch_group_count;
+      } ->
+      bin
+        (fun lhs rhs ->
+          Convolution.conv_impl dimension_numbers window_strides padding
+            lhs_dilation rhs_dilation feature_group_count batch_group_count lhs
+            rhs)
+        inputs
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -1174,6 +1190,24 @@ let abstract_eval prim avals =
       match avals with
       | operand :: _ -> [ operand ]
       | [] -> failwith "lax: scatter expects an operand aval")
+  | Conv_general_dilated
+      {
+        window_strides;
+        padding;
+        lhs_dilation;
+        rhs_dilation;
+        dimension_numbers;
+        feature_group_count;
+        batch_group_count;
+      } ->
+      bin_aval
+        (fun l r ->
+          shaped
+            (Convolution.conv_shape dimension_numbers window_strides padding
+               lhs_dilation rhs_dilation feature_group_count batch_group_count
+               l.shape r.shape)
+            l.dtype (Utils.all_weak avals))
+        avals
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

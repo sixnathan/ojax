@@ -156,6 +156,15 @@ and primitive =
   | Scatter_mul of { dimension_numbers : scatter_dims; unique_indices : bool }
   | Scatter_min of { dimension_numbers : scatter_dims }
   | Scatter_max of { dimension_numbers : scatter_dims }
+  | Conv_general_dilated of {
+      window_strides : int array;
+      padding : (int * int) array;
+      lhs_dilation : int array;
+      rhs_dilation : int array;
+      dimension_numbers : conv_dims;
+      feature_group_count : int;
+      batch_group_count : int;
+    }
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 
@@ -180,6 +189,12 @@ and scatter_dims = {
   scatter_dims_to_operand_dims : int array;
   s_operand_batching_dims : int array;
   s_scatter_indices_batching_dims : int array;
+}
+
+and conv_dims = {
+  lhs_spec : int array;
+  rhs_spec : int array;
+  out_spec : int array;
 }
 
 and var = { vid : int; vaval : aval }

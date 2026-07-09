@@ -425,6 +425,31 @@ def lax_scatter_max(params):
     )
 
 
+def lax_conv_general_dilated(params):
+    dn = LAX.ConvDimensionNumbers(
+        lhs_spec=tuple(params["dimension_numbers"][0]),
+        rhs_spec=tuple(params["dimension_numbers"][1]),
+        out_spec=tuple(params["dimension_numbers"][2]),
+    )
+    ws = tuple(params["window_strides"])
+    padding = tuple((int(lo), int(hi)) for lo, hi in params["padding"])
+    ld = tuple(params["lhs_dilation"])
+    rd = tuple(params["rhs_dilation"])
+    fgc = int(params["feature_group_count"])
+    bgc = int(params["batch_group_count"])
+    return lambda lhs, rhs: LAX.conv_general_dilated(
+        lhs,
+        rhs,
+        ws,
+        padding,
+        lhs_dilation=ld,
+        rhs_dilation=rd,
+        dimension_numbers=dn,
+        feature_group_count=fgc,
+        batch_group_count=bgc,
+    )
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -528,6 +553,7 @@ LAX_BUILDERS = {
     "scatter_mul": lax_scatter_mul,
     "scatter_min": lax_scatter_min,
     "scatter_max": lax_scatter_max,
+    "conv_general_dilated": lax_conv_general_dilated,
 }
 
 

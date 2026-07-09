@@ -3600,7 +3600,69 @@ OPS_BUILDERS = {
 }
 
 
+from jax._src.image import scale as jimage_scale
+
+
+def image_resize(params):
+    shape = tuple(params["shape"])
+    method = params["method"]
+    antialias = bool(params.get("antialias", True))
+    return lambda image: jax.image.resize(
+        image, shape, method, antialias=antialias
+    )
+
+
+def image_scale_and_translate(params):
+    shape = tuple(params["shape"])
+    spatial_dims = tuple(params["spatial_dims"])
+    scale = np.asarray(params["scale"], dtype=np.float64)
+    translation = np.asarray(params["translation"], dtype=np.float64)
+    method = params["method"]
+    antialias = bool(params.get("antialias", True))
+    return lambda image: jax.image.scale_and_translate(
+        image, shape, spatial_dims, scale, translation, method, antialias=antialias
+    )
+
+
+def image_compute_weight_mat(params):
+    input_size = int(params["input_size"])
+    output_size = int(params["output_size"])
+    scale = float(params["scale"])
+    translation = float(params["translation"])
+    method = jimage_scale.ResizeMethod.from_string(params["method"])
+    antialias = bool(params.get("antialias", True))
+    radius, kernel = jimage_scale._kernels[method]
+    return lambda: jimage_scale.compute_weight_mat(
+        input_size,
+        output_size,
+        scale,
+        translation,
+        kernel,
+        antialias,
+        edge_padding=False,
+        radius=radius,
+    )
+
+
+IMAGE_BUILDERS = {
+    "resize": image_resize,
+    "scale_and_translate": image_scale_and_translate,
+    "compute_weight_mat": image_compute_weight_mat,
+}
+
+
 def run_case(c, seed):
+    if c["primitive"].startswith("image.") and c["op"] in IMAGE_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = jax.jit(IMAGE_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
     if c["primitive"].startswith("ops.") and c["op"] in OPS_BUILDERS:
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])

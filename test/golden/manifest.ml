@@ -2931,6 +2931,56 @@ let special_suite_for set_name =
   in
   ("special:" ^ set_name, coverage :: case_tests)
 
+module SC = Ojax.Image.Scale
+
+let fa params name =
+  Array.of_list (List.map U.to_number (U.to_list (U.member name params)))
+
+let image_fn op params operands : T.value list =
+  let meth = SC.from_string (U.to_string (U.member "method" params)) in
+  let antialias = Option.value ~default:true (opt_b params "antialias") in
+  match (op, operands) with
+  | "resize", [ img ] ->
+      let shape = ia (U.member "shape" params) in
+      [ SC.resize img ~shape ~method_:meth ~antialias () ]
+  | "scale_and_translate", [ img ] ->
+      let shape = ia (U.member "shape" params) in
+      let spatial_dims = ia (U.member "spatial_dims" params) in
+      let scale = fa params "scale" in
+      let translation = fa params "translation" in
+      [
+        SC.scale_and_translate img ~shape ~spatial_dims ~scale ~translation
+          ~method_:meth ~antialias ();
+      ]
+  | "compute_weight_mat", [] ->
+      let input_size = U.to_int (U.member "input_size" params) in
+      let output_size = U.to_int (U.member "output_size" params) in
+      let scale = U.to_number (U.member "scale" params) in
+      let translation = U.to_number (U.member "translation" params) in
+      let _, kernel = SC.kernels meth in
+      [
+        SC.compute_weight_mat ~input_size ~output_size ~scale ~translation
+          ~kernel ~antialias ~edge_padding:false ~radius:0;
+      ]
+  | _ -> failwith ("image golden: unknown op " ^ op)
+
+let image_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "image") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:image_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("image:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -3023,5 +3073,7 @@ let () =
       segment_suite_for "x64_on";
       special_suite_for "x64_off";
       special_suite_for "x64_on";
+      image_suite_for "x64_off";
+      image_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

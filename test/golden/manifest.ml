@@ -969,12 +969,56 @@ let ufuncs_suite_for set_name =
   in
   ("ufuncs:" ^ set_name, coverage :: case_tests)
 
+let opt_s params name =
+  match U.member name params with `Null -> None | j -> Some (U.to_string j)
+
+let q_value params =
+  match U.member "q" params with
+  | `List _ as j ->
+      let vs = List.map U.to_number (U.to_list j) in
+      T.Concrete
+        (Nd.of_floats D.F32 [| List.length vs |] (Array.of_list vs))
+  | j -> T.Concrete (Nd.of_floats D.F32 [||] [| U.to_number j |])
+
 let reductions_fn op params operands : T.value list =
   let one v = [ v ] in
   let ax = opt_int_or_ia params "axis" in
+  let axi =
+    match U.member "axis" params with
+    | `Null -> None
+    | `List (x :: _) -> Some (U.to_int x)
+    | `List [] -> None
+    | j -> Some (U.to_int j)
+  in
   let kd = match opt_b params "keepdims" with Some b -> b | None -> false in
+  let ii =
+    match opt_b params "include_initial" with Some b -> b | None -> false
+  in
+  let meth = match opt_s params "method" with Some m -> m | None -> "linear" in
   let dopt params = match opt_i params "ddof" with Some d -> d | None -> 0 in
   match (op, operands) with
+  | "cumprod", [ x ] -> one (RED.cumprod ?axis:axi x)
+  | "nancumsum", [ x ] -> one (RED.nancumsum ?axis:axi x)
+  | "nancumprod", [ x ] -> one (RED.nancumprod ?axis:axi x)
+  | "cumulative_sum", [ x ] ->
+      one (RED.cumulative_sum ?axis:axi ~include_initial:ii x)
+  | "cumulative_prod", [ x ] ->
+      one (RED.cumulative_prod ?axis:axi ~include_initial:ii x)
+  | "median", [ x ] -> one (RED.median ?axis:axi ~keepdims:kd x)
+  | "nanmedian", [ x ] -> one (RED.nanmedian ?axis:axi ~keepdims:kd x)
+  | "quantile", [ x ] ->
+      one (RED.quantile ?axis:axi ~keepdims:kd ~method_:meth x (q_value params))
+  | "nanquantile", [ x ] ->
+      one
+        (RED.nanquantile ?axis:axi ~keepdims:kd ~method_:meth x
+           (q_value params))
+  | "percentile", [ x ] ->
+      one
+        (RED.percentile ?axis:axi ~keepdims:kd ~method_:meth x (q_value params))
+  | "nanpercentile", [ x ] ->
+      one
+        (RED.nanpercentile ?axis:axi ~keepdims:kd ~method_:meth x
+           (q_value params))
   | "sum", [ x ] -> one (RED.sum ?axis:ax ~keepdims:kd x)
   | "prod", [ x ] -> one (RED.prod ?axis:ax ~keepdims:kd x)
   | "max", [ x ] -> one (RED.max ?axis:ax ~keepdims:kd x)

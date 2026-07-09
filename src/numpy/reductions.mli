@@ -40,3 +40,47 @@ val nanstd :
   ?axis:int array -> ?keepdims:bool -> ?ddof:int -> Types.value -> Types.value
 
 val cumsum : ?axis:int -> Types.value -> Types.value
+val cumprod : ?axis:int -> Types.value -> Types.value
+val nancumsum : ?axis:int -> Types.value -> Types.value
+val nancumprod : ?axis:int -> Types.value -> Types.value
+
+val cumulative_sum :
+  ?axis:int -> ?include_initial:bool -> Types.value -> Types.value
+
+val cumulative_prod :
+  ?axis:int -> ?include_initial:bool -> Types.value -> Types.value
+
+val quantile :
+  ?axis:int ->
+  ?keepdims:bool ->
+  ?method_:string ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val nanquantile :
+  ?axis:int ->
+  ?keepdims:bool ->
+  ?method_:string ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val percentile :
+  ?axis:int ->
+  ?keepdims:bool ->
+  ?method_:string ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val nanpercentile :
+  ?axis:int ->
+  ?keepdims:bool ->
+  ?method_:string ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val median : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
+val nanmedian : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value

@@ -2845,5 +2845,1438 @@
       }
     ],
     "params": {}
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 0
+    }
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 0
+    }
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumprod",
+    "primitive": "jnp.cumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nancumsum",
+    "primitive": "jnp.nancumsum",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nancumsum",
+    "primitive": "jnp.nancumsum",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nancumsum",
+    "primitive": "jnp.nancumsum",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nancumsum",
+    "primitive": "jnp.nancumsum",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nancumsum",
+    "primitive": "jnp.nancumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nancumsum",
+    "primitive": "jnp.nancumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nancumsum",
+    "primitive": "jnp.nancumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nancumsum",
+    "primitive": "jnp.nancumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nancumprod",
+    "primitive": "jnp.nancumprod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nancumprod",
+    "primitive": "jnp.nancumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nancumprod",
+    "primitive": "jnp.nancumprod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nancumprod",
+    "primitive": "jnp.nancumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nancumprod",
+    "primitive": "jnp.nancumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nancumprod",
+    "primitive": "jnp.nancumprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 0
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 0
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "include_initial": true
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1,
+      "include_initial": true
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_sum",
+    "primitive": "jnp.cumulative_sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1,
+      "include_initial": true
+    }
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "include_initial": true
+    }
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1,
+      "include_initial": true
+    }
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumulative_prod",
+    "primitive": "jnp.cumulative_prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1,
+      "include_initial": true
+    }
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1,
+      "keepdims": true
+    }
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "median",
+    "primitive": "jnp.median",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nanmedian",
+    "primitive": "jnp.nanmedian",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nanmedian",
+    "primitive": "jnp.nanmedian",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nanmedian",
+    "primitive": "jnp.nanmedian",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nanmedian",
+    "primitive": "jnp.nanmedian",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "nanmedian",
+    "primitive": "jnp.nanmedian",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": 0.5
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.5,
+        0.75
+      ]
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.5,
+        0.75
+      ]
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.5,
+        0.75
+      ],
+      "method": "lower"
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.5,
+        0.75
+      ],
+      "method": "higher"
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.5,
+        0.75
+      ],
+      "method": "nearest"
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.5,
+        0.75
+      ],
+      "method": "midpoint"
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": 0.5,
+      "axis": 1
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": 0.5,
+      "axis": 1
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.75
+      ],
+      "axis": 1
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "q": 0.5
+    }
+  },
+  {
+    "op": "quantile",
+    "primitive": "jnp.quantile",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": 0.5,
+      "keepdims": true
+    }
+  },
+  {
+    "op": "nanquantile",
+    "primitive": "jnp.nanquantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.5,
+        0.75
+      ]
+    }
+  },
+  {
+    "op": "nanquantile",
+    "primitive": "jnp.nanquantile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        0.25,
+        0.5,
+        0.75
+      ]
+    }
+  },
+  {
+    "op": "nanquantile",
+    "primitive": "jnp.nanquantile",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": 0.5,
+      "axis": 1
+    }
+  },
+  {
+    "op": "percentile",
+    "primitive": "jnp.percentile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        25,
+        50,
+        75
+      ]
+    }
+  },
+  {
+    "op": "percentile",
+    "primitive": "jnp.percentile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        25,
+        50,
+        75
+      ]
+    }
+  },
+  {
+    "op": "percentile",
+    "primitive": "jnp.percentile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": 50
+    }
+  },
+  {
+    "op": "percentile",
+    "primitive": "jnp.percentile",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": 50,
+      "axis": 1
+    }
+  },
+  {
+    "op": "percentile",
+    "primitive": "jnp.percentile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        25,
+        50,
+        75
+      ],
+      "method": "nearest"
+    }
+  },
+  {
+    "op": "nanpercentile",
+    "primitive": "jnp.nanpercentile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        25,
+        50,
+        75
+      ]
+    }
+  },
+  {
+    "op": "nanpercentile",
+    "primitive": "jnp.nanpercentile",
+    "args": [
+      {
+        "shape": [
+          7
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": [
+        25,
+        50,
+        75
+      ]
+    }
+  },
+  {
+    "op": "nanpercentile",
+    "primitive": "jnp.nanpercentile",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "q": 50,
+      "axis": 1
+    }
   }
 ]

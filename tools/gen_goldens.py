@@ -1442,6 +1442,61 @@ NUMPY_BUILDERS["cumsum"] = np_cumsum
 NUMPY_BUILDERS["average"] = np_average
 
 
+def _cum_simple(name):
+    fn = getattr(jnp, name)
+
+    def build(params):
+        ax = params.get("axis")
+        return lambda x: fn(x, axis=ax)
+
+    return build
+
+
+def _cum_api(name):
+    fn = getattr(jnp, name)
+
+    def build(params):
+        ax = params.get("axis")
+        ii = params.get("include_initial", False)
+        return lambda x: fn(x, axis=ax, include_initial=ii)
+
+    return build
+
+
+def _median(name):
+    fn = getattr(jnp, name)
+
+    def build(params):
+        ax = params.get("axis")
+        kd = params.get("keepdims", False)
+        return lambda x: fn(x, axis=ax, keepdims=kd)
+
+    return build
+
+
+def _quantile(name):
+    fn = getattr(jnp, name)
+
+    def build(params):
+        q = jnp.array(params["q"])
+        ax = params.get("axis")
+        kd = params.get("keepdims", False)
+        method = params.get("method", "linear")
+        return lambda x: fn(x, q, axis=ax, method=method, keepdims=kd)
+
+    return build
+
+
+for _name in ["cumprod", "nancumsum", "nancumprod"]:
+    NUMPY_BUILDERS[_name] = _cum_simple(_name)
+for _name in ["cumulative_sum", "cumulative_prod"]:
+    NUMPY_BUILDERS[_name] = _cum_api(_name)
+for _name in ["median", "nanmedian"]:
+    NUMPY_BUILDERS[_name] = _median(_name)
+for _name in ["quantile", "nanquantile", "percentile", "nanpercentile"]:
+    NUMPY_BUILDERS[_name] = _quantile(_name)
+
+
 SHORT_DTYPE = {
     "float32": "f32",
     "float64": "f64",

@@ -369,12 +369,17 @@ let quantile_core a q ~axis ~method_ ~keepdims ~squash_nans =
   let qnd = Array.length qsh in
   let target = Array.append qsh bsh in
   let counts =
-    if squash_nans then
-      reduce_last_sum (convert (bind1 T.Not [ isnan am ]) cdt)
+    if squash_nans then reduce_last_sum (convert (bind1 T.Not [ isnan am ]) cdt)
     else const_full cdt bsh (float_of_int n)
   in
+  let am =
+    if squash_nans then where (isnan am) (const_full cdt (shape am) infinity) am
+    else am
+  in
   let am_sorted =
-    bind1 (T.Sort { dimension = ndc - 1; is_stable = true; num_keys = 1 }) [ am ]
+    bind1
+      (T.Sort { dimension = ndc - 1; is_stable = true; num_keys = 1 })
+      [ am ]
   in
   let q_r = reshape q (Array.append qsh (Array.make (ndc - 1) 1)) in
   let counts_r = reshape counts (Array.append (Array.make qnd 1) bsh) in

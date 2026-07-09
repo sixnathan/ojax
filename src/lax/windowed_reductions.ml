@@ -48,7 +48,7 @@ let window_pool ~op ~init (w : window_dims) operand =
       let widx = Utils.decode wf wsizes in
       match source_index operand_shape w oidx widx with
       | Some idx -> acc := op !acc (Ndarray.get_f operand idx)
-      | None -> ()
+      | None -> acc := op !acc init
     done;
     out.(of_) <- !acc
   done;

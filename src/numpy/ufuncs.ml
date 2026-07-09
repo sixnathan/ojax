@@ -64,8 +64,15 @@ let p2 = function [ a; b ] -> (a, b) | _ -> assert false
 let unary_inexact prim x = bind1 prim [ p1 (promote_inexact [ x ]) ]
 let unary_promote prim x = bind1 prim [ p1 (promote [ x ]) ]
 let fabs x = unary_inexact T.Abs x
-let floor x = unary_inexact T.Floor x
-let ceil x = unary_inexact T.Ceil x
+
+let floor x =
+  match dtype x with
+  | D.I32 | D.I64 | D.Bool -> x
+  | _ -> unary_inexact T.Floor x
+
+let ceil x =
+  match dtype x with D.I32 | D.I64 | D.Bool -> x | _ -> unary_inexact T.Ceil x
+
 let exp x = unary_inexact T.Exp x
 let expm1 x = unary_inexact T.Expm1 x
 let log x = unary_inexact T.Log x
@@ -245,6 +252,8 @@ let pow_int_int x1 x2 =
   loop 6 acc0 x1 x2
 
 let power x1 x2 =
+  let sh = broadcast_shapes (shape x1) (shape x2) in
+  let x1 = broadcast_to x1 sh and x2 = broadcast_to x2 sh in
   let d1 = dtype x1 and d2 = dtype x2 in
   let a, b = p2 (promote_numeric [ x1; x2 ]) in
   if is_integer (dtype a) || dtype a = D.Bool then pow_int_int a b

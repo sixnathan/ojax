@@ -1285,8 +1285,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Igamma_grad_a | Igammac | Lgamma | Polygamma | Regularized_incomplete_beta
   | Zeta | Platform_index _ | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _
   | Xla_call _ ->
-      failwith "ad: primitive has no transpose rule in M1"
-  | Scan _ -> failwith "ad: scan transpose deferred to a later row (M2)"
+      failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
+  | Scan _ -> failwith "ad: scan transpose is a standing M2 limitation"
   | While _ ->
       failwith
         "ad: reverse-mode differentiation does not work for lax.while_loop"

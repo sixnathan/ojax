@@ -617,14 +617,14 @@ let reduce_impl (cj : closed_jaxpr) dimensions operands inits =
   let ndim = Array.length os in
   let is_red = Array.make ndim false in
   Array.iter (fun ax -> is_red.(ax) <- true) dimensions;
-  let dt = Ndarray.dtype (List.hd operands) in
+  let op_dts = List.map Ndarray.dtype operands in
   let out_n = Utils.prod out_shape in
   let op_arrays = List.map to_array operands in
   let accs =
     List.map (fun nd -> Array.make out_n (Ndarray.get_f nd [||])) inits
   in
   let src0 = List.hd op_arrays in
-  let mk x = Concrete (Ndarray.of_floats dt [||] [| x |]) in
+  let mk dt x = Concrete (Ndarray.of_floats dt [||] [| x |]) in
   let as_nd = function
     | Concrete nd -> nd
     | Tracer _ -> failwith "lax: reduce reducer produced a tracer"
@@ -638,14 +638,14 @@ let reduce_impl (cj : closed_jaxpr) dimensions operands inits =
         incr k
       end
     done;
-    let acc_args = List.map (fun acc -> mk acc.(!of_)) accs in
-    let elem_args = List.map (fun a -> mk a.(flat)) op_arrays in
+    let acc_args = List.map2 (fun dt acc -> mk dt acc.(!of_)) op_dts accs in
+    let elem_args = List.map2 (fun dt a -> mk dt a.(flat)) op_dts op_arrays in
     let res = Jaxpr.eval_closed_jaxpr cj (acc_args @ elem_args) in
     List.iteri
       (fun i v -> (List.nth accs i).(!of_) <- Ndarray.get_f (as_nd v) [||])
       res
   done;
-  List.map (fun acc -> Ndarray.of_floats dt out_shape acc) accs
+  List.map2 (fun dt acc -> Ndarray.of_floats dt out_shape acc) op_dts accs
 
 let reduce_precision_bits32 mant_bits bits =
   if mant_bits >= 23 then bits

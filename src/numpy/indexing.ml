@@ -58,7 +58,11 @@ let take ?axis ?mode a indices =
   let indices =
     match mode with
     | Some "clip" -> indices
-    | _ -> wrap_negative indices axis_size
+    | Some "wrap" ->
+        let idt = dtype indices and ish = shape indices in
+        bind1 T.Rem [ indices; full idt ish (float_of_int axis_size) ]
+    | None | Some "fill" -> wrap_negative indices axis_size
+    | Some m -> invalid_arg ("take: unsupported mode " ^ m)
   in
   let index_dims = Array.length ish in
   let slice_sizes = Array.copy ash in

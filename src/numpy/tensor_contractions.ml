@@ -112,8 +112,8 @@ let inner ?preferred a b =
   end
   else tensordot ?preferred ~axes:(Ax_pair ([| -1 |], [| -1 |])) a b
 
-let outer ?preferred a b =
-  let pdt = pref preferred [ a; b ] in
+let outer a b =
+  let pdt = pref None [ a; b ] in
   let a = NL.ravel (astype a pdt) and b = NL.ravel (astype b pdt) in
   let a2 = NL.expand_dims a [| 1 |] in
   let b2 = NL.expand_dims b [| 0 |] in

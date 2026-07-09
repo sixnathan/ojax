@@ -502,7 +502,8 @@ let zeta dtype s a =
     t1_sum := !t1_sum +. (clipped /. bernoulli_coefs.(j))
   done;
   let tail = t0 *. (0.5 +. !t1_sum) in
-  !series +. integral +. tail
+  let result = !series +. integral +. tail in
+  if s < 1.0 then Float.nan else result
 
 let polygamma dtype m x =
   let n = int_of_float (Float.round m) in

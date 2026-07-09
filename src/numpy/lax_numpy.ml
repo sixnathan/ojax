@@ -467,25 +467,6 @@ let resize v new_shape =
   let sliced = slice_axis tiled 0 0 new_size in
   reshape sliced new_shape
 
-let unravel_index indices dims =
-  let n = Array.length dims in
-  let dt = dtype indices in
-  let ish = shape indices in
-  let out = Array.make n indices in
-  let cur = ref indices in
-  for i = n - 1 downto 0 do
-    let s = full dt ish (float_of_int dims.(i)) in
-    out.(i) <- bind1 T.Rem [ !cur; s ];
-    cur := bind1 T.Div [ !cur; s ]
-  done;
-  let zero = full dt ish 0.0 in
-  let negone = full dt ish (-1.0) in
-  let oob_pos = bind1 T.Gt [ !cur; zero ] in
-  let oob_neg = bind1 T.Lt [ !cur; negone ] in
-  List.init n (fun i ->
-      let smax = full dt ish (float_of_int (dims.(i) - 1)) in
-      where_ oob_pos smax (where_ oob_neg zero out.(i)))
-
 let mod_floor a b =
   let zero = full (dtype a) (shape a) 0.0 in
   let trunc_mod = bind1 T.Rem [ a; b ] in
@@ -498,6 +479,26 @@ let mod_floor a b =
       ]
   in
   bind1 T.Select_n [ do_plus; trunc_mod; bind1 T.Add [ trunc_mod; b ] ]
+
+let unravel_index indices dims =
+  let n = Array.length dims in
+  let dt = dtype indices in
+  let ish = shape indices in
+  let out = Array.make n indices in
+  let cur = ref indices in
+  for i = n - 1 downto 0 do
+    let s = full dt ish (float_of_int dims.(i)) in
+    let r = mod_floor !cur s in
+    out.(i) <- r;
+    cur := bind1 T.Div [ bind1 T.Sub [ !cur; r ]; s ]
+  done;
+  let zero = full dt ish 0.0 in
+  let negone = full dt ish (-1.0) in
+  let oob_pos = bind1 T.Gt [ !cur; zero ] in
+  let oob_neg = bind1 T.Lt [ !cur; negone ] in
+  List.init n (fun i ->
+      let smax = full dt ish (float_of_int (dims.(i) - 1)) in
+      where_ oob_pos smax (where_ oob_neg zero out.(i)))
 
 let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
   let nd = ndim p in

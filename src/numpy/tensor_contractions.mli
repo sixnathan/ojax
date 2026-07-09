@@ -17,4 +17,4 @@ val tensordot :
   Types.value
 
 val inner : ?preferred:Dtype.t -> Types.value -> Types.value -> Types.value
-val outer : ?preferred:Dtype.t -> Types.value -> Types.value -> Types.value
+val outer : Types.value -> Types.value -> Types.value

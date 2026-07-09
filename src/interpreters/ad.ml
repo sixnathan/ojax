@@ -24,6 +24,47 @@ let square x = mul x x
 let rsqrt z = b1 Pow [ z; const_like z (-0.5) ]
 let recip z = div (ones_like_value z) z
 let sinh_of x = div (sub (b1 Exp [ x ]) (b1 Exp [ neg x ])) (const_like x 2.0)
+let mem arr x = Array.exists (fun y -> y = x) arr
+
+let gather_to_scatter (gd : gather_dims) : scatter_dims =
+  {
+    update_window_dims = gd.offset_dims;
+    inserted_window_dims = gd.collapsed_slice_dims;
+    scatter_dims_to_operand_dims = gd.start_index_map;
+    s_operand_batching_dims = gd.g_operand_batching_dims;
+    s_scatter_indices_batching_dims = gd.g_start_indices_batching_dims;
+  }
+
+let scatter_to_gather (sd : scatter_dims) : gather_dims =
+  {
+    offset_dims = sd.update_window_dims;
+    collapsed_slice_dims = sd.inserted_window_dims;
+    start_index_map = sd.scatter_dims_to_operand_dims;
+    g_operand_batching_dims = sd.s_operand_batching_dims;
+    g_start_indices_batching_dims = sd.s_scatter_indices_batching_dims;
+  }
+
+let scatter_gather_slice_sizes (sd : scatter_dims) operand_shape updates_shape =
+  let op_rank = Array.length operand_shape in
+  let wod =
+    let out = ref [] in
+    for o = op_rank - 1 downto 0 do
+      if
+        (not (mem sd.inserted_window_dims o))
+        && not (mem sd.s_operand_batching_dims o)
+      then out := o :: !out
+    done;
+    Array.of_list !out
+  in
+  Array.init op_rank (fun o ->
+      if mem sd.inserted_window_dims o || mem sd.s_operand_batching_dims o then
+        1
+      else
+        let rec find j =
+          if wod.(j) = o then updates_shape.(sd.update_window_dims.(j))
+          else find (j + 1)
+        in
+        find 0)
 
 let reduce_chooser_jvp prim axes x tx =
   let a = Core.get_aval x in
@@ -376,6 +417,72 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           ( Core.bind1 Dynamic_update_slice (operand :: update :: idx),
             Core.bind1 Dynamic_update_slice (t_op :: t_up :: idx) )
       | _ -> arity ())
+  | Gather { dimension_numbers; slice_sizes } -> (
+      match (primals, tangents) with
+      | [ operand; indices ], [ t_op; _ ] ->
+          ( Core.bind1
+              (Gather { dimension_numbers; slice_sizes })
+              [ operand; indices ],
+            Core.bind1
+              (Gather { dimension_numbers; slice_sizes })
+              [ t_op; indices ] )
+      | _ -> arity ())
+  | Scatter_add { dimension_numbers } -> (
+      match (primals, tangents) with
+      | [ op; idx; up ], [ t_op; _; t_up ] ->
+          ( Core.bind1 (Scatter_add { dimension_numbers }) [ op; idx; up ],
+            Core.bind1 (Scatter_add { dimension_numbers }) [ t_op; idx; t_up ]
+          )
+      | _ -> arity ())
+  | Scatter_sub { dimension_numbers } -> (
+      match (primals, tangents) with
+      | [ op; idx; up ], [ t_op; _; t_up ] ->
+          ( Core.bind1 (Scatter_sub { dimension_numbers }) [ op; idx; up ],
+            Core.bind1 (Scatter_sub { dimension_numbers }) [ t_op; idx; t_up ]
+          )
+      | _ -> arity ())
+  | Scatter { dimension_numbers; unique_indices } -> (
+      if not unique_indices then
+        failwith "ad: scatter jvp only implemented for unique_indices (M2)"
+      else
+        match (primals, tangents) with
+        | [ op; idx; up ], [ t_op; _; t_up ] ->
+            ( Core.bind1
+                (Scatter { dimension_numbers; unique_indices })
+                [ op; idx; up ],
+              Core.bind1
+                (Scatter { dimension_numbers; unique_indices })
+                [ t_op; idx; t_up ] )
+        | _ -> arity ())
+  | Scatter_mul { dimension_numbers; unique_indices } -> (
+      if not unique_indices then
+        failwith "ad: scatter_mul jvp only implemented for unique_indices (M2)"
+      else
+        match (primals, tangents) with
+        | [ op; idx; up ], [ t_op; _; t_up ] ->
+            let po =
+              Core.bind1
+                (Scatter_mul { dimension_numbers; unique_indices })
+                [ op; idx; up ]
+            in
+            let term_op =
+              Core.bind1
+                (Scatter_mul { dimension_numbers; unique_indices })
+                [ t_op; idx; up ]
+            in
+            let zeros = zeros_like_value op in
+            let term_up =
+              mul op
+                (Core.bind1
+                   (Scatter_add { dimension_numbers })
+                   [ zeros; idx; t_up ])
+            in
+            (po, add term_op term_up)
+        | _ -> arity ())
+  | Scatter_min _ | Scatter_max _ ->
+      failwith
+        "ad: scatter_min/scatter_max jvp needs the extremal averaging rule (M2 \
+         gap)"
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
       failwith "ad: multi-output jvp handled by jvp_process_primitive"
   | Reduce_precision p -> (
@@ -720,6 +827,124 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
           in
           op_t :: up_t :: List.map (fun _ -> None) idx
       | _ -> arity ())
+  | Gather { dimension_numbers; _ } -> (
+      match primals with
+      | [ operand; indices ] ->
+          let ct = ct1 () in
+          let op_t =
+            if is_undef operand then
+              let zeros = Ad_util.zeros_like_aval (in_aval operand) in
+              let sd = gather_to_scatter dimension_numbers in
+              Some
+                (Core.bind1
+                   (Scatter_add { dimension_numbers = sd })
+                   [ zeros; prim_val indices; ct ])
+            else None
+          in
+          [ op_t; None ]
+      | _ -> arity ())
+  | Scatter_add { dimension_numbers } -> (
+      match primals with
+      | [ operand; indices; updates ] ->
+          let ct = ct1 () in
+          let op_t = if is_undef operand then Some ct else None in
+          let up_t =
+            if is_undef updates then
+              let gd = scatter_to_gather dimension_numbers in
+              let ss =
+                scatter_gather_slice_sizes dimension_numbers
+                  (in_aval operand).shape (in_aval updates).shape
+              in
+              Some
+                (Core.bind1
+                   (Gather { dimension_numbers = gd; slice_sizes = ss })
+                   [ ct; prim_val indices ])
+            else None
+          in
+          [ op_t; None; up_t ]
+      | _ -> arity ())
+  | Scatter_sub { dimension_numbers } -> (
+      match primals with
+      | [ operand; indices; updates ] ->
+          let ct = ct1 () in
+          let op_t = if is_undef operand then Some ct else None in
+          let up_t =
+            if is_undef updates then
+              let gd = scatter_to_gather dimension_numbers in
+              let ss =
+                scatter_gather_slice_sizes dimension_numbers
+                  (in_aval operand).shape (in_aval updates).shape
+              in
+              Some
+                (neg
+                   (Core.bind1
+                      (Gather { dimension_numbers = gd; slice_sizes = ss })
+                      [ ct; prim_val indices ]))
+            else None
+          in
+          [ op_t; None; up_t ]
+      | _ -> arity ())
+  | Scatter_mul { dimension_numbers; unique_indices } -> (
+      match primals with
+      | [ operand; indices; updates ] ->
+          let ct = ct1 () in
+          let op_t =
+            if is_undef operand then
+              Some
+                (Core.bind1
+                   (Scatter_mul { dimension_numbers; unique_indices })
+                   [ ct; prim_val indices; prim_val updates ])
+            else None
+          in
+          let up_t =
+            if is_undef updates then begin
+              if not unique_indices then
+                failwith "ad: scatter_mul transpose needs unique_indices";
+              let gd = scatter_to_gather dimension_numbers in
+              let ss =
+                scatter_gather_slice_sizes dimension_numbers
+                  (in_aval operand).shape (in_aval updates).shape
+              in
+              Some
+                (Core.bind1
+                   (Gather { dimension_numbers = gd; slice_sizes = ss })
+                   [ mul ct (prim_val operand); prim_val indices ])
+            end
+            else None
+          in
+          [ op_t; None; up_t ]
+      | _ -> arity ())
+  | Scatter { dimension_numbers; unique_indices } -> (
+      if not unique_indices then
+        failwith "ad: scatter transpose needs unique_indices"
+      else
+        match primals with
+        | [ operand; indices; updates ] ->
+            let ct = ct1 () in
+            let op_t =
+              if is_undef operand then
+                let zeros = Ad_util.zeros_like_aval (in_aval updates) in
+                Some
+                  (Core.bind1
+                     (Scatter { dimension_numbers; unique_indices })
+                     [ ct; prim_val indices; zeros ])
+              else None
+            in
+            let up_t =
+              if is_undef updates then
+                let gd = scatter_to_gather dimension_numbers in
+                let ss =
+                  scatter_gather_slice_sizes dimension_numbers
+                    (in_aval operand).shape (in_aval updates).shape
+                in
+                Some
+                  (Core.bind1
+                     (Gather { dimension_numbers = gd; slice_sizes = ss })
+                     [ ct; prim_val indices ])
+              else None
+            in
+            [ op_t; None; up_t ]
+        | _ -> arity ())
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
@@ -731,7 +956,7 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | After_all | Bitcast_convert_type _ | Clamp | Composite _ | Create_token
   | Dce_sink | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general
   | Rng_bit_generator | Rng_uniform | Sort _ | To_edtype _ | Top_k _
-  | Xla_call _ | Cond _ ->
+  | Scatter_min _ | Scatter_max _ | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

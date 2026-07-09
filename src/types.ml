@@ -149,6 +149,13 @@ and primitive =
     }
   | Dynamic_slice of { slice_sizes : int array }
   | Dynamic_update_slice
+  | Gather of { dimension_numbers : gather_dims; slice_sizes : int array }
+  | Scatter of { dimension_numbers : scatter_dims; unique_indices : bool }
+  | Scatter_add of { dimension_numbers : scatter_dims }
+  | Scatter_sub of { dimension_numbers : scatter_dims }
+  | Scatter_mul of { dimension_numbers : scatter_dims; unique_indices : bool }
+  | Scatter_min of { dimension_numbers : scatter_dims }
+  | Scatter_max of { dimension_numbers : scatter_dims }
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 
@@ -157,6 +164,22 @@ and dot_dims = {
   rhs_contract : int array;
   lhs_batch : int array;
   rhs_batch : int array;
+}
+
+and gather_dims = {
+  offset_dims : int array;
+  collapsed_slice_dims : int array;
+  start_index_map : int array;
+  g_operand_batching_dims : int array;
+  g_start_indices_batching_dims : int array;
+}
+
+and scatter_dims = {
+  update_window_dims : int array;
+  inserted_window_dims : int array;
+  scatter_dims_to_operand_dims : int array;
+  s_operand_batching_dims : int array;
+  s_scatter_indices_batching_dims : int array;
 }
 
 and var = { vid : int; vaval : aval }

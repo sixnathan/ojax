@@ -357,6 +357,141 @@ let dynamic_update_slice_batch (axis_size : int) (vals : value list)
         (Core.bind1 Dynamic_update_slice (x :: u :: zero :: idx_vals), Some 0)
   | _ -> failwith "batching: dynamic_update_slice expects operand and update"
 
+let bump arr = Array.map (fun i -> i + 1) arr
+
+let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
+    (vals : value list) (bdims : int option list) : value * int option =
+  match (vals, bdims) with
+  | [ operand; indices ], [ ob; ib ] -> (
+      match (ob, ib) with
+      | None, None ->
+          ( b1
+              (Gather { dimension_numbers = gd; slice_sizes })
+              [ operand; indices ],
+            None )
+      | Some od, None ->
+          let operand = move_batch_axis axis_size (Some od) 0 operand in
+          let op0 = (Core.get_aval operand).shape.(0) in
+          let slice_sizes = Array.append [| op0 |] slice_sizes in
+          let gd' =
+            {
+              offset_dims = Array.append [| 0 |] (bump gd.offset_dims);
+              collapsed_slice_dims = bump gd.collapsed_slice_dims;
+              start_index_map = bump gd.start_index_map;
+              g_operand_batching_dims = bump gd.g_operand_batching_dims;
+              g_start_indices_batching_dims = gd.g_start_indices_batching_dims;
+            }
+          in
+          ( b1
+              (Gather { dimension_numbers = gd'; slice_sizes })
+              [ operand; indices ],
+            Some 0 )
+      | None, Some idd ->
+          let indices = move_batch_axis axis_size (Some idd) 0 indices in
+          let gd' =
+            {
+              offset_dims = bump gd.offset_dims;
+              collapsed_slice_dims = gd.collapsed_slice_dims;
+              start_index_map = gd.start_index_map;
+              g_operand_batching_dims = gd.g_operand_batching_dims;
+              g_start_indices_batching_dims =
+                bump gd.g_start_indices_batching_dims;
+            }
+          in
+          ( b1
+              (Gather { dimension_numbers = gd'; slice_sizes })
+              [ operand; indices ],
+            Some 0 )
+      | Some od, Some idd ->
+          let operand = move_batch_axis axis_size (Some od) 0 operand in
+          let indices = move_batch_axis axis_size (Some idd) 0 indices in
+          let op0 = (Core.get_aval operand).shape.(0) in
+          let slice_sizes =
+            Array.append [| (if op0 = 0 then 0 else 1) |] slice_sizes
+          in
+          let gd' =
+            {
+              offset_dims = bump gd.offset_dims;
+              collapsed_slice_dims = bump gd.collapsed_slice_dims;
+              start_index_map = bump gd.start_index_map;
+              g_operand_batching_dims =
+                Array.append [| 0 |] (bump gd.g_operand_batching_dims);
+              g_start_indices_batching_dims =
+                Array.append [| 0 |] (bump gd.g_start_indices_batching_dims);
+            }
+          in
+          ( b1
+              (Gather { dimension_numbers = gd'; slice_sizes })
+              [ operand; indices ],
+            Some 0 ))
+  | _ -> failwith "batching: gather expects operand and indices"
+
+let scatter_dnums_of = function
+  | Scatter { dimension_numbers; _ }
+  | Scatter_add { dimension_numbers }
+  | Scatter_sub { dimension_numbers }
+  | Scatter_mul { dimension_numbers; _ }
+  | Scatter_min { dimension_numbers }
+  | Scatter_max { dimension_numbers } ->
+      dimension_numbers
+  | _ -> failwith "batching: not a scatter primitive"
+
+let rebuild_scatter prim (sd : scatter_dims) =
+  match prim with
+  | Scatter { unique_indices; _ } ->
+      Scatter { dimension_numbers = sd; unique_indices }
+  | Scatter_add _ -> Scatter_add { dimension_numbers = sd }
+  | Scatter_sub _ -> Scatter_sub { dimension_numbers = sd }
+  | Scatter_mul { unique_indices; _ } ->
+      Scatter_mul { dimension_numbers = sd; unique_indices }
+  | Scatter_min _ -> Scatter_min { dimension_numbers = sd }
+  | Scatter_max _ -> Scatter_max { dimension_numbers = sd }
+  | _ -> failwith "batching: not a scatter primitive"
+
+let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
+    (bdims : int option list) : value * int option =
+  match (vals, bdims) with
+  | [ operand; indices; updates ], [ ob; ib; ub ] ->
+      let sd = scatter_dnums_of prim in
+      if ob = None && ib = None && ub = None then (b1 prim vals, None)
+      else begin
+        let operand = move_batch_axis axis_size ob 0 operand in
+        let updates = move_batch_axis axis_size ub 0 updates in
+        match ib with
+        | None ->
+            let sd' =
+              {
+                update_window_dims =
+                  Array.append [| 0 |] (bump sd.update_window_dims);
+                inserted_window_dims = bump sd.inserted_window_dims;
+                scatter_dims_to_operand_dims =
+                  bump sd.scatter_dims_to_operand_dims;
+                s_operand_batching_dims = bump sd.s_operand_batching_dims;
+                s_scatter_indices_batching_dims =
+                  sd.s_scatter_indices_batching_dims;
+              }
+            in
+            ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],
+              Some 0 )
+        | Some idd ->
+            let indices = move_batch_axis axis_size (Some idd) 0 indices in
+            let sd' =
+              {
+                update_window_dims = bump sd.update_window_dims;
+                inserted_window_dims = bump sd.inserted_window_dims;
+                scatter_dims_to_operand_dims =
+                  bump sd.scatter_dims_to_operand_dims;
+                s_operand_batching_dims =
+                  Array.append [| 0 |] (bump sd.s_operand_batching_dims);
+                s_scatter_indices_batching_dims =
+                  Array.append [| 0 |] (bump sd.s_scatter_indices_batching_dims);
+              }
+            in
+            ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],
+              Some 0 )
+      end
+  | _ -> failwith "batching: scatter expects operand, indices and updates"
+
 let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
   let un () =
@@ -455,6 +590,11 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Dynamic_slice { slice_sizes } ->
       dynamic_slice_batch axis_size slice_sizes vals bdims
   | Dynamic_update_slice -> dynamic_update_slice_batch axis_size vals bdims
+  | Gather { dimension_numbers; slice_sizes } ->
+      gather_batch axis_size dimension_numbers slice_sizes vals bdims
+  | Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
+  | Scatter_max _ ->
+      scatter_batch axis_size prim vals bdims
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _

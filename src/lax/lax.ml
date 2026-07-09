@@ -744,6 +744,16 @@ let top_k_impl k axis operand =
     Ndarray.of_floats Dtype.I32 out_shape idxs;
   ]
 
+let scatter_dnums = function
+  | Scatter { dimension_numbers; _ }
+  | Scatter_add { dimension_numbers }
+  | Scatter_sub { dimension_numbers }
+  | Scatter_mul { dimension_numbers; _ }
+  | Scatter_min { dimension_numbers }
+  | Scatter_max { dimension_numbers } ->
+      dimension_numbers
+  | _ -> failwith "lax: not a scatter primitive"
+
 let impl prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
@@ -956,6 +966,21 @@ let impl prim inputs =
   | Dynamic_slice { slice_sizes } ->
       [ Slicing.dynamic_slice_impl slice_sizes inputs ]
   | Dynamic_update_slice -> [ Slicing.dynamic_update_slice_impl inputs ]
+  | Gather { dimension_numbers; slice_sizes } -> (
+      match inputs with
+      | [ operand; indices ] ->
+          [ Slicing.gather_impl dimension_numbers slice_sizes operand indices ]
+      | _ -> failwith "lax: gather expects operand and indices")
+  | ( Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
+    | Scatter_max _ ) as p -> (
+      match inputs with
+      | [ operand; indices; updates ] ->
+          [
+            Slicing.scatter_impl
+              (Slicing.scatter_combiner p)
+              (scatter_dnums p) operand indices updates;
+          ]
+      | _ -> failwith "lax: scatter expects operand, indices and updates")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -1134,6 +1159,21 @@ let abstract_eval prim avals =
       match avals with
       | operand :: _ -> [ operand ]
       | [] -> failwith "lax: dynamic_update_slice expects an operand")
+  | Gather { dimension_numbers; slice_sizes } -> (
+      match avals with
+      | [ operand; indices ] ->
+          [
+            shaped
+              (Slicing.gather_shape dimension_numbers slice_sizes indices.shape
+                 operand.shape)
+              operand.dtype operand.weak_type;
+          ]
+      | _ -> failwith "lax: gather expects operand and indices avals")
+  | Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
+  | Scatter_max _ -> (
+      match avals with
+      | operand :: _ -> [ operand ]
+      | [] -> failwith "lax: scatter expects an operand aval")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

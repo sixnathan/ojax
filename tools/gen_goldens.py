@@ -100,6 +100,11 @@ def rand_bool(rng, shape, dtype):
     return np.asarray(rng.rand(*tuple(shape)) < 0.5, dtype=dtype)
 
 
+def rand_index_unique(rng, shape, dtype):
+    n = int(np.prod(shape)) if len(shape) else 1
+    return rng.choice(10, size=n, replace=False).astype(dtype).reshape(tuple(shape))
+
+
 RNG_FACTORIES = {
     "rand_default": rand_default,
     "rand_small": rand_small,
@@ -109,6 +114,7 @@ RNG_FACTORIES = {
     "rand_int_small": rand_int_small,
     "rand_int_small_nz": rand_int_small_nz,
     "rand_bool": rand_bool,
+    "rand_index_unique": rand_index_unique,
 }
 
 
@@ -340,6 +346,85 @@ def lax_dynamic_update_slice(params):
     )
 
 
+def _gather_dnums(params):
+    return LAX.GatherDimensionNumbers(
+        offset_dims=tuple(params["offset_dims"]),
+        collapsed_slice_dims=tuple(params["collapsed_slice_dims"]),
+        start_index_map=tuple(params["start_index_map"]),
+        operand_batching_dims=tuple(params.get("operand_batching_dims", [])),
+        start_indices_batching_dims=tuple(
+            params.get("start_indices_batching_dims", [])
+        ),
+    )
+
+
+def _scatter_dnums(params):
+    return LAX.ScatterDimensionNumbers(
+        update_window_dims=tuple(params["update_window_dims"]),
+        inserted_window_dims=tuple(params["inserted_window_dims"]),
+        scatter_dims_to_operand_dims=tuple(params["scatter_dims_to_operand_dims"]),
+        operand_batching_dims=tuple(params.get("operand_batching_dims", [])),
+        scatter_indices_batching_dims=tuple(
+            params.get("scatter_indices_batching_dims", [])
+        ),
+    )
+
+
+MODE = LAX.GatherScatterMode.CLIP
+
+
+def lax_gather(params):
+    dnums = _gather_dnums(params)
+    slice_sizes = tuple(params["slice_sizes"])
+    return lambda operand, indices: LAX.gather(
+        operand, indices, dnums, slice_sizes, mode=MODE
+    )
+
+
+def lax_scatter(params):
+    dnums = _scatter_dnums(params)
+    unique = bool(params.get("unique_indices", True))
+    return lambda operand, indices, updates: LAX.scatter(
+        operand, indices, updates, dnums, unique_indices=unique, mode=MODE
+    )
+
+
+def lax_scatter_add(params):
+    dnums = _scatter_dnums(params)
+    return lambda operand, indices, updates: LAX.scatter_add(
+        operand, indices, updates, dnums, mode=MODE
+    )
+
+
+def lax_scatter_sub(params):
+    dnums = _scatter_dnums(params)
+    return lambda operand, indices, updates: LAX.scatter_sub(
+        operand, indices, updates, dnums, mode=MODE
+    )
+
+
+def lax_scatter_mul(params):
+    dnums = _scatter_dnums(params)
+    unique = bool(params.get("unique_indices", True))
+    return lambda operand, indices, updates: LAX.scatter_mul(
+        operand, indices, updates, dnums, unique_indices=unique, mode=MODE
+    )
+
+
+def lax_scatter_min(params):
+    dnums = _scatter_dnums(params)
+    return lambda operand, indices, updates: LAX.scatter_min(
+        operand, indices, updates, dnums, mode=MODE
+    )
+
+
+def lax_scatter_max(params):
+    dnums = _scatter_dnums(params)
+    return lambda operand, indices, updates: LAX.scatter_max(
+        operand, indices, updates, dnums, mode=MODE
+    )
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -436,6 +521,13 @@ LAX_BUILDERS = {
     "slice": lax_slice,
     "dynamic_slice": lax_dynamic_slice,
     "dynamic_update_slice": lax_dynamic_update_slice,
+    "gather": lax_gather,
+    "scatter": lax_scatter,
+    "scatter_add": lax_scatter_add,
+    "scatter_sub": lax_scatter_sub,
+    "scatter_mul": lax_scatter_mul,
+    "scatter_min": lax_scatter_min,
+    "scatter_max": lax_scatter_max,
 }
 
 

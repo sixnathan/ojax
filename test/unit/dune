@@ -16,6 +16,7 @@
   test_lax_binary_b
   test_lax_shape
   test_lax_slicing
+  test_lax_gather_scatter
   test_lax_reductions
   test_lax_rest_a
   test_lax_rest_b

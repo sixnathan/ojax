@@ -343,6 +343,45 @@ let prim_of op params : T.primitive =
   | "dynamic_slice" ->
       T.Dynamic_slice { slice_sizes = ia (member "slice_sizes") }
   | "dynamic_update_slice" -> T.Dynamic_update_slice
+  | "gather" ->
+      let opt name = match member name with `Null -> [||] | j -> ia j in
+      T.Gather
+        {
+          dimension_numbers =
+            {
+              offset_dims = ia (member "offset_dims");
+              collapsed_slice_dims = ia (member "collapsed_slice_dims");
+              start_index_map = ia (member "start_index_map");
+              g_operand_batching_dims = opt "operand_batching_dims";
+              g_start_indices_batching_dims = opt "start_indices_batching_dims";
+            };
+          slice_sizes = ia (member "slice_sizes");
+        }
+  | "scatter" | "scatter_add" | "scatter_sub" | "scatter_mul" | "scatter_min"
+  | "scatter_max" -> (
+      let opt name = match member name with `Null -> [||] | j -> ia j in
+      let sd : T.scatter_dims =
+        {
+          update_window_dims = ia (member "update_window_dims");
+          inserted_window_dims = ia (member "inserted_window_dims");
+          scatter_dims_to_operand_dims =
+            ia (member "scatter_dims_to_operand_dims");
+          s_operand_batching_dims = opt "operand_batching_dims";
+          s_scatter_indices_batching_dims = opt "scatter_indices_batching_dims";
+        }
+      in
+      let unique =
+        match member "unique_indices" with `Bool b -> b | _ -> true
+      in
+      match op with
+      | "scatter" ->
+          T.Scatter { dimension_numbers = sd; unique_indices = unique }
+      | "scatter_add" -> T.Scatter_add { dimension_numbers = sd }
+      | "scatter_sub" -> T.Scatter_sub { dimension_numbers = sd }
+      | "scatter_mul" ->
+          T.Scatter_mul { dimension_numbers = sd; unique_indices = unique }
+      | "scatter_min" -> T.Scatter_min { dimension_numbers = sd }
+      | _ -> T.Scatter_max { dimension_numbers = sd })
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

@@ -193,6 +193,13 @@ let prim_name = function
   | Slice _ -> "slice"
   | Dynamic_slice _ -> "dynamic_slice"
   | Dynamic_update_slice -> "dynamic_update_slice"
+  | Gather _ -> "gather"
+  | Scatter _ -> "scatter"
+  | Scatter_add _ -> "scatter_add"
+  | Scatter_sub _ -> "scatter_sub"
+  | Scatter_mul _ -> "scatter_mul"
+  | Scatter_min _ -> "scatter_min"
+  | Scatter_max _ -> "scatter_max"
   | Xla_call _ -> "xla_call"
   | Cond _ -> "cond"
 

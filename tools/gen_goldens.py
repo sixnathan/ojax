@@ -1365,6 +1365,83 @@ NUMPY_BUILDERS["divmod"] = np_divmod
 NUMPY_BUILDERS["modf"] = np_modf
 
 
+def _red_axis(params):
+    ax = params.get("axis")
+    return None if ax is None else tuple(ax)
+
+
+_REDUCTION_SIMPLE = [
+    "sum",
+    "prod",
+    "max",
+    "min",
+    "amax",
+    "amin",
+    "all",
+    "any",
+    "mean",
+    "ptp",
+    "count_nonzero",
+    "nansum",
+    "nanprod",
+    "nanmax",
+    "nanmin",
+    "nanmean",
+]
+
+_REDUCTION_DDOF = ["var", "std", "nanvar", "nanstd"]
+
+
+def _reduction_simple(name):
+    fn = getattr(jnp, name)
+
+    def build(params):
+        ax = _red_axis(params)
+        kd = params.get("keepdims", False)
+        return lambda x: fn(x, axis=ax, keepdims=kd)
+
+    return build
+
+
+def _reduction_ddof(name):
+    fn = getattr(jnp, name)
+
+    def build(params):
+        ax = _red_axis(params)
+        kd = params.get("keepdims", False)
+        ddof = params.get("ddof", 0)
+        return lambda x: fn(x, axis=ax, keepdims=kd, ddof=ddof)
+
+    return build
+
+
+for _name in _REDUCTION_SIMPLE:
+    NUMPY_BUILDERS[_name] = _reduction_simple(_name)
+for _name in _REDUCTION_DDOF:
+    NUMPY_BUILDERS[_name] = _reduction_ddof(_name)
+
+
+def np_cumsum(params):
+    ax = params.get("axis")
+    return lambda x: jnp.cumsum(x, axis=ax)
+
+
+def np_average(params):
+    ax = _red_axis(params)
+    kd = params.get("keepdims", False)
+
+    def build(*inputs):
+        if len(inputs) == 2:
+            return jnp.average(inputs[0], axis=ax, weights=inputs[1], keepdims=kd)
+        return jnp.average(inputs[0], axis=ax, keepdims=kd)
+
+    return build
+
+
+NUMPY_BUILDERS["cumsum"] = np_cumsum
+NUMPY_BUILDERS["average"] = np_average
+
+
 SHORT_DTYPE = {
     "float32": "f32",
     "float64": "f64",

@@ -1,0 +1,2849 @@
+[
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "mean",
+    "primitive": "jnp.mean",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "min",
+    "primitive": "jnp.min",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "amax",
+    "primitive": "jnp.amax",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "amin",
+    "primitive": "jnp.amin",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "ptp",
+    "primitive": "jnp.ptp",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "op": "sum",
+    "primitive": "jnp.sum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "max",
+    "primitive": "jnp.max",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "prod",
+    "primitive": "jnp.prod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ]
+    }
+  },
+  {
+    "op": "all",
+    "primitive": "jnp.all",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "all",
+    "primitive": "jnp.all",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "all",
+    "primitive": "jnp.all",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "all",
+    "primitive": "jnp.all",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "all",
+    "primitive": "jnp.all",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "any",
+    "primitive": "jnp.any",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "any",
+    "primitive": "jnp.any",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "any",
+    "primitive": "jnp.any",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "any",
+    "primitive": "jnp.any",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "any",
+    "primitive": "jnp.any",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "count_nonzero",
+    "primitive": "jnp.count_nonzero",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "count_nonzero",
+    "primitive": "jnp.count_nonzero",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "count_nonzero",
+    "primitive": "jnp.count_nonzero",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "count_nonzero",
+    "primitive": "jnp.count_nonzero",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "count_nonzero",
+    "primitive": "jnp.count_nonzero",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "count_nonzero",
+    "primitive": "jnp.count_nonzero",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "count_nonzero",
+    "primitive": "jnp.count_nonzero",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        0
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "var",
+    "primitive": "jnp.var",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "var",
+    "primitive": "jnp.var",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ],
+      "ddof": 1
+    }
+  },
+  {
+    "op": "var",
+    "primitive": "jnp.var",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "var",
+    "primitive": "jnp.var",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ],
+      "ddof": 1
+    }
+  },
+  {
+    "op": "var",
+    "primitive": "jnp.var",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "var",
+    "primitive": "jnp.var",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ],
+      "ddof": 1
+    }
+  },
+  {
+    "op": "var",
+    "primitive": "jnp.var",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "var",
+    "primitive": "jnp.var",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "std",
+    "primitive": "jnp.std",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "std",
+    "primitive": "jnp.std",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ],
+      "ddof": 1
+    }
+  },
+  {
+    "op": "std",
+    "primitive": "jnp.std",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "std",
+    "primitive": "jnp.std",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ],
+      "ddof": 1
+    }
+  },
+  {
+    "op": "std",
+    "primitive": "jnp.std",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "std",
+    "primitive": "jnp.std",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ],
+      "ddof": 1
+    }
+  },
+  {
+    "op": "std",
+    "primitive": "jnp.std",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "std",
+    "primitive": "jnp.std",
+    "args": [
+      {
+        "shape": [
+          2,
+          3,
+          2
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        0,
+        2
+      ],
+      "keepdims": true
+    }
+  },
+  {
+    "op": "nansum",
+    "primitive": "jnp.nansum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nansum",
+    "primitive": "jnp.nansum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nansum",
+    "primitive": "jnp.nansum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nansum",
+    "primitive": "jnp.nansum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanprod",
+    "primitive": "jnp.nanprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nanprod",
+    "primitive": "jnp.nanprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanprod",
+    "primitive": "jnp.nanprod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanprod",
+    "primitive": "jnp.nanprod",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmax",
+    "primitive": "jnp.nanmax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nanmax",
+    "primitive": "jnp.nanmax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmax",
+    "primitive": "jnp.nanmax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmax",
+    "primitive": "jnp.nanmax",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmin",
+    "primitive": "jnp.nanmin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nanmin",
+    "primitive": "jnp.nanmin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmin",
+    "primitive": "jnp.nanmin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmin",
+    "primitive": "jnp.nanmin",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmean",
+    "primitive": "jnp.nanmean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nanmean",
+    "primitive": "jnp.nanmean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmean",
+    "primitive": "jnp.nanmean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanmean",
+    "primitive": "jnp.nanmean",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanvar",
+    "primitive": "jnp.nanvar",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanvar",
+    "primitive": "jnp.nanvar",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ],
+      "ddof": 1
+    }
+  },
+  {
+    "op": "nanvar",
+    "primitive": "jnp.nanvar",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanvar",
+    "primitive": "jnp.nanvar",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanstd",
+    "primitive": "jnp.nanstd",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanstd",
+    "primitive": "jnp.nanstd",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ],
+      "ddof": 1
+    }
+  },
+  {
+    "op": "nanstd",
+    "primitive": "jnp.nanstd",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "nanstd",
+    "primitive": "jnp.nanstd",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "cumsum",
+    "primitive": "jnp.cumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumsum",
+    "primitive": "jnp.cumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumsum",
+    "primitive": "jnp.cumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumsum",
+    "primitive": "jnp.cumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "bool",
+        "rng": "rand_bool"
+      }
+    ],
+    "params": {
+      "axis": 1
+    }
+  },
+  {
+    "op": "cumsum",
+    "primitive": "jnp.cumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "cumsum",
+    "primitive": "jnp.cumsum",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "average",
+    "primitive": "jnp.average",
+    "args": [
+      {
+        "shape": [
+          6
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "average",
+    "primitive": "jnp.average",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "average",
+    "primitive": "jnp.average",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "average",
+    "primitive": "jnp.average",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "average",
+    "primitive": "jnp.average",
+    "args": [
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {
+      "axis": [
+        1
+      ]
+    }
+  },
+  {
+    "op": "average",
+    "primitive": "jnp.average",
+    "args": [
+      {
+        "shape": [
+          6
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          6
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  }
+]

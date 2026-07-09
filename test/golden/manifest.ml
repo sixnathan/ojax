@@ -556,6 +556,7 @@ let lax_check_case ~set_dir ~x64 c () =
 
 module NL = Ojax.Numpy.Lax_numpy
 module UF = Ojax.Numpy.Ufuncs
+module RED = Ojax.Numpy.Reductions
 
 let opt_ia params name =
   match U.member name params with `Null -> None | j -> Some (ia j)
@@ -967,6 +968,56 @@ let ufuncs_suite_for set_name =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
   ("ufuncs:" ^ set_name, coverage :: case_tests)
+
+let reductions_fn op params operands : T.value list =
+  let one v = [ v ] in
+  let ax = opt_int_or_ia params "axis" in
+  let kd = match opt_b params "keepdims" with Some b -> b | None -> false in
+  let dopt params = match opt_i params "ddof" with Some d -> d | None -> 0 in
+  match (op, operands) with
+  | "sum", [ x ] -> one (RED.sum ?axis:ax ~keepdims:kd x)
+  | "prod", [ x ] -> one (RED.prod ?axis:ax ~keepdims:kd x)
+  | "max", [ x ] -> one (RED.max ?axis:ax ~keepdims:kd x)
+  | "min", [ x ] -> one (RED.min ?axis:ax ~keepdims:kd x)
+  | "amax", [ x ] -> one (RED.amax ?axis:ax ~keepdims:kd x)
+  | "amin", [ x ] -> one (RED.amin ?axis:ax ~keepdims:kd x)
+  | "all", [ x ] -> one (RED.all ?axis:ax ~keepdims:kd x)
+  | "any", [ x ] -> one (RED.any ?axis:ax ~keepdims:kd x)
+  | "mean", [ x ] -> one (RED.mean ?axis:ax ~keepdims:kd x)
+  | "ptp", [ x ] -> one (RED.ptp ?axis:ax ~keepdims:kd x)
+  | "count_nonzero", [ x ] -> one (RED.count_nonzero ?axis:ax ~keepdims:kd x)
+  | "nansum", [ x ] -> one (RED.nansum ?axis:ax ~keepdims:kd x)
+  | "nanprod", [ x ] -> one (RED.nanprod ?axis:ax ~keepdims:kd x)
+  | "nanmax", [ x ] -> one (RED.nanmax ?axis:ax ~keepdims:kd x)
+  | "nanmin", [ x ] -> one (RED.nanmin ?axis:ax ~keepdims:kd x)
+  | "nanmean", [ x ] -> one (RED.nanmean ?axis:ax ~keepdims:kd x)
+  | "var", [ x ] -> one (RED.var ?axis:ax ~keepdims:kd ~ddof:(dopt params) x)
+  | "std", [ x ] -> one (RED.std ?axis:ax ~keepdims:kd ~ddof:(dopt params) x)
+  | "nanvar", [ x ] ->
+      one (RED.nanvar ?axis:ax ~keepdims:kd ~ddof:(dopt params) x)
+  | "nanstd", [ x ] ->
+      one (RED.nanstd ?axis:ax ~keepdims:kd ~ddof:(dopt params) x)
+  | "cumsum", [ x ] -> one (RED.cumsum ?axis:(opt_i params "axis") x)
+  | "average", [ x ] -> one (RED.average ?axis:ax ~keepdims:kd x)
+  | "average", [ x; w ] -> one (RED.average ?axis:ax ~keepdims:kd ~weights:w x)
+  | _ -> failwith ("reductions golden: unknown op " ^ op)
+
+let reductions_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "reductions") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:reductions_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("reductions:" ^ set_name, coverage :: case_tests)
 
 let lax_suite_for set_name =
   let set_dir = Filename.concat (Filename.concat goldens_root "lax") set_name in
@@ -2193,5 +2244,7 @@ let () =
       numpy_suite_for "x64_on";
       ufuncs_suite_for "x64_off";
       ufuncs_suite_for "x64_on";
+      reductions_suite_for "x64_off";
+      reductions_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

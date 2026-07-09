@@ -145,3 +145,24 @@ val tri : ?m:int -> ?k:int -> dtype:Dtype.t -> int -> Types.value
 val tril : ?k:int -> Types.value -> Types.value
 val triu : ?k:int -> Types.value -> Types.value
 val vander : ?n:int -> ?increasing:bool -> Types.value -> Types.value
+val argmin : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
+val nanargmax : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
+val nanargmin : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
+val roll : ?axis:int array -> Types.value -> int array -> Types.value
+val rollaxis : ?start:int -> int -> Types.value -> Types.value
+val gcd : Types.value -> Types.value -> Types.value
+val lcm : Types.value -> Types.value -> Types.value
+val searchsorted : ?side:string -> Types.value -> Types.value -> Types.value
+val digitize : ?right:bool -> Types.value -> Types.value -> Types.value
+
+val cov :
+  ?y:Types.value ->
+  ?rowvar:bool ->
+  ?bias:bool ->
+  ?ddof:int ->
+  ?dtype:Dtype.t ->
+  Types.value ->
+  Types.value
+
+val corrcoef :
+  ?y:Types.value -> ?rowvar:bool -> ?dtype:Dtype.t -> Types.value -> Types.value

@@ -1001,3 +1001,234 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
       let y0 = slice_axis y (nd - 1) 0 (l - 1) in
       let prod = mul2 dxa (add2 y1 y0) in
       mul_scalar 0.5 (bind1 (T.Reduce_sum [| nd - 1 |]) [ prod ])
+
+let any_reduce v =
+  let n = ndim v in
+  if n = 0 then v else bind1 (T.Reduce_or (Array.init n Fun.id)) [ v ]
+
+let all_over ?axis ?(keepdims = false) v =
+  match axis with
+  | None ->
+      let r = all_reduce v in
+      if keepdims then reshape r (Array.make (ndim v) 1) else r
+  | Some ax ->
+      let axc = canonicalize_axis ax (ndim v) in
+      let r = bind1 (T.Reduce_and [| axc |]) [ v ] in
+      if keepdims then expand_dims r [| axc |] else r
+
+let scalar_at v i = squeeze (slice_axis v 0 i (i + 1))
+
+let argmin ?axis ?(keepdims = false) a =
+  let orig_nd = ndim a in
+  let a2, ax, dims =
+    match axis with
+    | None -> (ravel a, 0, Array.init orig_nd Fun.id)
+    | Some x ->
+        let c = canonicalize_axis x orig_nd in
+        (a, c, [| c |])
+  in
+  let r =
+    bind1
+      (T.Argmin { axis = ax; index_dtype = Dtypes.default_int_dtype () })
+      [ a2 ]
+  in
+  if keepdims then expand_dims r dims else r
+
+let nanargmax ?axis ?(keepdims = false) a =
+  if not (is_inexact (dtype a)) then argmax ?axis ~keepdims a
+  else begin
+    let nan_mask = isnan a in
+    let a' = where_ nan_mask (const_full (dtype a) (shape a) neg_infinity) a in
+    let res = argmax ?axis ~keepdims a' in
+    let all_nan = all_over ?axis ~keepdims nan_mask in
+    where_ all_nan (scalar (dtype res) (-1.0)) res
+  end
+
+let nanargmin ?axis ?(keepdims = false) a =
+  if not (is_inexact (dtype a)) then argmin ?axis ~keepdims a
+  else begin
+    let nan_mask = isnan a in
+    let a' = where_ nan_mask (const_full (dtype a) (shape a) infinity) a in
+    let res = argmin ?axis ~keepdims a' in
+    let all_nan = all_over ?axis ~keepdims nan_mask in
+    where_ all_nan (scalar (dtype res) (-1.0)) res
+  end
+
+let roll_static a shift axis =
+  let n = max (Array.length shift) (Array.length axis) in
+  let get arr i = arr.(if Array.length arr = 1 then 0 else i) in
+  let acc = ref a in
+  for k = 0 to n - 1 do
+    let ax = get axis k and s = get shift k in
+    let sz = (shape !acc).(ax) in
+    if sz <> 0 then begin
+      let i = ((-s mod sz) + sz) mod sz in
+      if i <> 0 then
+        acc :=
+          concatenate ~axis:ax
+            [ slice_axis !acc ax i sz; slice_axis !acc ax 0 i ]
+    end
+  done;
+  !acc
+
+let roll ?axis a shift =
+  match axis with
+  | None -> reshape (roll_static (ravel a) shift [| 0 |]) (shape a)
+  | Some ax ->
+      let axc = Array.map (fun x -> canonicalize_axis x (ndim a)) ax in
+      roll_static a shift axc
+
+let rollaxis ?(start = 0) axis a =
+  let nd = ndim a in
+  let axis = canonicalize_axis axis nd in
+  if not (-nd <= start && start <= nd) then
+    invalid_arg
+      (Printf.sprintf "start=%d must satisfy %d<=start<=%d" start (-nd) nd);
+  let start = if start < 0 then start + nd else start in
+  let start = if start > axis then start - 1 else start in
+  moveaxis [| axis |] [| start |] a
+
+let gcd x1 x2 =
+  let x1, x2 =
+    match promote_values [ x1; x2 ] with
+    | [ a; b ] -> (a, b)
+    | _ -> assert false
+  in
+  if not (is_integral (dtype x1)) then
+    invalid_arg "Arguments to jax.numpy.gcd must be integers.";
+  let x1, x2 =
+    match broadcast_arrays [ x1; x2 ] with
+    | [ a; b ] -> (a, b)
+    | _ -> assert false
+  in
+  let cond carry =
+    match carry with
+    | [ _; b ] -> any_reduce (bind1 T.Ne [ b; zeros_like b ])
+    | _ -> assert false
+  in
+  let body carry =
+    match carry with
+    | [ a; b ] ->
+        let nz = bind1 T.Ne [ b; zeros_like b ] in
+        let bsafe = where_ nz b (const_full (dtype b) (shape b) 1.0) in
+        let t1 = where_ nz b a in
+        let t2 = where_ nz (bind1 T.Rem [ a; bsafe ]) (zeros_like b) in
+        let lt = bind1 T.Lt [ t1; t2 ] in
+        [ where_ lt t2 t1; where_ lt t1 t2 ]
+    | _ -> assert false
+  in
+  let init = [ bind1 T.Abs [ x1 ]; bind1 T.Abs [ x2 ] ] in
+  List.hd (Lax.while_loop cond body init)
+
+let lcm x1 x2 =
+  let x1, x2 =
+    match promote_values [ x1; x2 ] with
+    | [ a; b ] -> (a, b)
+    | _ -> assert false
+  in
+  let x1 = bind1 T.Abs [ x1 ] and x2 = bind1 T.Abs [ x2 ] in
+  if not (is_integral (dtype x1)) then
+    invalid_arg "Arguments to jax.numpy.lcm must be integers.";
+  let d = gcd x1 x2 in
+  let is_zero = bind1 T.Eq [ d; zeros_like d ] in
+  let dsafe = where_ is_zero (const_full (dtype d) (shape d) 1.0) d in
+  let prod = mul2 x1 (binop T.Div x2 dsafe) in
+  where_ is_zero (zeros_like prod) prod
+
+let searchsorted ?(side = "left") a v =
+  if ndim a <> 1 then invalid_arg "a should be 1-dimensional";
+  let a, v =
+    match promote_values [ a; v ] with [ a; v ] -> (a, v) | _ -> assert false
+  in
+  let na = (shape a).(0) in
+  let vsh = shape v in
+  let out_shape = Array.append [| na |] vsh in
+  let a_b =
+    bind1 (T.Broadcast_in_dim { shape = out_shape; dims = [| 0 |] }) [ a ]
+  in
+  let v_dims = Array.init (Array.length vsh) (fun i -> i + 1) in
+  let v_b =
+    bind1 (T.Broadcast_in_dim { shape = out_shape; dims = v_dims }) [ v ]
+  in
+  let cmp =
+    if side = "right" then bind1 T.Le [ a_b; v_b ] else bind1 T.Lt [ a_b; v_b ]
+  in
+  bind1 (T.Reduce_sum [| 0 |]) [ convert cmp D.I32 ]
+
+let digitize ?(right = false) x bins =
+  if ndim bins <> 1 then
+    invalid_arg "digitize: bins must be a 1-dimensional array";
+  let nb = (shape bins).(0) in
+  if nb = 0 then const_full D.I32 (shape x) 0.0
+  else begin
+    let side = if right then "left" else "right" in
+    let inc = bind1 T.Ge [ scalar_at bins (nb - 1); scalar_at bins 0 ] in
+    let asc = searchsorted ~side bins x in
+    let desc =
+      bind1 T.Sub
+        [
+          const_full D.I32 (shape x) (float_of_int nb);
+          searchsorted ~side (flip bins) x;
+        ]
+    in
+    where_ inc asc desc
+  end
+
+let dtype_of = dtype
+
+let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?dtype m =
+  let dt_common =
+    match y with
+    | None -> dtype_of m
+    | Some yv ->
+        fst (Dtypes.result_type [ (dtype_of m, false); (dtype_of yv, false) ])
+  in
+  let dtin = to_inexact_dtype dt_common in
+  let m = convert m dtin in
+  let y = Option.map (fun v -> convert v dtin) y in
+  let x0 = atleast_2d m in
+  let x0 = if (not rowvar) && ndim m <> 1 then matrix_transpose x0 else x0 in
+  let x =
+    match y with
+    | None -> x0
+    | Some yv ->
+        let y2 = atleast_2d yv in
+        let y2 =
+          if (not rowvar) && (shape y2).(0) <> 1 then matrix_transpose y2
+          else y2
+        in
+        concatenate ~axis:0 [ x0; y2 ]
+  in
+  let x = match dtype with Some d -> convert x d | None -> x in
+  let dt = dtype_of x in
+  let nvars = (shape x).(0) and nobs = (shape x).(1) in
+  let ddof = match ddof with Some d -> d | None -> if bias then 0 else 1 in
+  let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
+  let avg = bind1 T.Div [ sum1; full dt [| nvars |] (float_of_int nobs) ] in
+  let xc = sub2 x (expand_dims avg [| 1 |]) in
+  let prod =
+    bind1
+      (T.Dot_general
+         {
+           lhs_contract = [| 1 |];
+           rhs_contract = [| 1 |];
+           lhs_batch = [||];
+           rhs_batch = [||];
+         })
+      [ xc; xc ]
+  in
+  let res =
+    bind1 T.Div [ prod; full dt (shape prod) (float_of_int (nobs - ddof)) ]
+  in
+  squeeze res
+
+let corrcoef ?y ?(rowvar = true) ?dtype x =
+  let c = cov ?y ~rowvar ?dtype x in
+  if ndim c = 0 then bind1 T.Div [ c; c ]
+  else begin
+    let d = diagonal c in
+    let stddev = convert (bind1 T.Sqrt [ d ]) (dtype_of c) in
+    let c = binop T.Div c (expand_dims stddev [| 1 |]) in
+    let c = binop T.Div c (expand_dims stddev [| 0 |]) in
+    clip ~min:(-1.0) ~max:1.0 c
+  end

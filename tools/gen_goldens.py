@@ -117,6 +117,16 @@ def rand_poly_order(rng, shape, dtype):
     return rng.randint(1, 3, size=tuple(shape)).astype(dtype)
 
 
+def rand_sorted(rng, shape, dtype):
+    return np.sort(_rand_dtype(rng.randn, shape, dtype, scale=3.0), axis=-1)
+
+
+def rand_sorted_desc(rng, shape, dtype):
+    return np.sort(_rand_dtype(rng.randn, shape, dtype, scale=3.0), axis=-1)[
+        ..., ::-1
+    ]
+
+
 RNG_FACTORIES = {
     "rand_default": rand_default,
     "rand_small": rand_small,
@@ -130,6 +140,8 @@ RNG_FACTORIES = {
     "rand_uniform": rand_uniform,
     "rand_gt_one": rand_gt_one,
     "rand_poly_order": rand_poly_order,
+    "rand_sorted": rand_sorted,
+    "rand_sorted_desc": rand_sorted_desc,
 }
 
 
@@ -1077,7 +1089,82 @@ def np_vander(params):
     return lambda x: jnp.vander(x, N=n, increasing=increasing)
 
 
+def np_argmin(params):
+    axis = params.get("axis")
+    keepdims = bool(params.get("keepdims", False))
+    return lambda x: jnp.argmin(x, axis=axis, keepdims=keepdims)
+
+
+def np_nanargmax(params):
+    axis = params.get("axis")
+    keepdims = bool(params.get("keepdims", False))
+    return lambda x: jnp.nanargmax(x, axis=axis, keepdims=keepdims)
+
+
+def np_nanargmin(params):
+    axis = params.get("axis")
+    keepdims = bool(params.get("keepdims", False))
+    return lambda x: jnp.nanargmin(x, axis=axis, keepdims=keepdims)
+
+
+def np_roll(params):
+    shift = params["shift"]
+    axis = params.get("axis")
+    return lambda x: jnp.roll(x, shift, axis=axis)
+
+
+def np_rollaxis(params):
+    axis = int(params["axis"])
+    start = int(params.get("start", 0))
+    return lambda x: jnp.rollaxis(x, axis, start=start)
+
+
+def np_gcd(params):
+    return lambda a, b: jnp.gcd(a, b)
+
+
+def np_lcm(params):
+    return lambda a, b: jnp.lcm(a, b)
+
+
+def np_searchsorted(params):
+    side = params.get("side", "left")
+    return lambda a, v: jnp.searchsorted(a, v, side=side)
+
+
+def np_digitize(params):
+    right = bool(params.get("right", False))
+    return lambda x, bins: jnp.digitize(x, bins, right=right)
+
+
+def np_cov(params):
+    rowvar = bool(params.get("rowvar", True))
+    bias = bool(params.get("bias", False))
+    ddof = params.get("ddof")
+    return lambda *xs: jnp.cov(
+        xs[0], y=(xs[1] if len(xs) > 1 else None), rowvar=rowvar, bias=bias, ddof=ddof
+    )
+
+
+def np_corrcoef(params):
+    rowvar = bool(params.get("rowvar", True))
+    return lambda *xs: jnp.corrcoef(
+        xs[0], y=(xs[1] if len(xs) > 1 else None), rowvar=rowvar
+    )
+
+
 NUMPY_BUILDERS = {
+    "argmin": np_argmin,
+    "nanargmax": np_nanargmax,
+    "nanargmin": np_nanargmin,
+    "roll": np_roll,
+    "rollaxis": np_rollaxis,
+    "gcd": np_gcd,
+    "lcm": np_lcm,
+    "searchsorted": np_searchsorted,
+    "digitize": np_digitize,
+    "cov": np_cov,
+    "corrcoef": np_corrcoef,
     "astype": np_astype,
     "copy": np_copy,
     "atleast_1d": np_atleast_1d,

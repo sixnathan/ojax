@@ -573,6 +573,15 @@ let sections_of params =
   | `Null -> NL.Count (U.to_int (U.member "sections" params))
   | j -> NL.Indices (ia j)
 
+let int_or_ia params name =
+  match U.member name params with `List _ as j -> ia j | j -> [| U.to_int j |]
+
+let opt_int_or_ia params name =
+  match U.member name params with
+  | `Null -> None
+  | `List _ as j -> Some (ia j)
+  | j -> Some [| U.to_int j |]
+
 let numpy_fn op params operands : T.value list =
   let member name = U.member name params in
   let one v = [ v ] in
@@ -732,6 +741,49 @@ let numpy_fn op params operands : T.value list =
         (NL.vander ?n:(opt_i params "N")
            ?increasing:(opt_b params "increasing")
            x)
+  | "argmin", [ x ] ->
+      one
+        (NL.argmin ?axis:(opt_i params "axis")
+           ~keepdims:(U.to_bool (member "keepdims"))
+           x)
+  | "nanargmax", [ x ] ->
+      one
+        (NL.nanargmax ?axis:(opt_i params "axis")
+           ~keepdims:(U.to_bool (member "keepdims"))
+           x)
+  | "nanargmin", [ x ] ->
+      one
+        (NL.nanargmin ?axis:(opt_i params "axis")
+           ~keepdims:(U.to_bool (member "keepdims"))
+           x)
+  | "roll", [ x ] ->
+      one
+        (NL.roll
+           ?axis:(opt_int_or_ia params "axis")
+           x (int_or_ia params "shift"))
+  | "rollaxis", [ x ] ->
+      one
+        (NL.rollaxis ?start:(opt_i params "start") (U.to_int (member "axis")) x)
+  | "gcd", [ a; b ] -> one (NL.gcd a b)
+  | "lcm", [ a; b ] -> one (NL.lcm a b)
+  | "searchsorted", [ a; v ] ->
+      one (NL.searchsorted ~side:(U.to_string (member "side")) a v)
+  | "digitize", [ x; bins ] ->
+      one (NL.digitize ~right:(U.to_bool (member "right")) x bins)
+  | "cov", ops -> (
+      let rowvar = opt_b params "rowvar" in
+      let bias = opt_b params "bias" in
+      let ddof = opt_i params "ddof" in
+      match ops with
+      | [ m ] -> one (NL.cov ?rowvar ?bias ?ddof m)
+      | [ m; y ] -> one (NL.cov ~y ?rowvar ?bias ?ddof m)
+      | _ -> failwith "numpy golden: bad cov arity")
+  | "corrcoef", ops -> (
+      let rowvar = opt_b params "rowvar" in
+      match ops with
+      | [ x ] -> one (NL.corrcoef ?rowvar x)
+      | [ x; y ] -> one (NL.corrcoef ~y ?rowvar x)
+      | _ -> failwith "numpy golden: bad corrcoef arity")
   | _ -> failwith ("numpy golden: unknown op " ^ op)
 
 let numpy_check_case ~set_dir ~x64 c () =

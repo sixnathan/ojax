@@ -345,6 +345,48 @@ let test_g4 () =
     "diag_indices dtype" true
     (dtype_of (List.hd (NL.diag_indices 3)) = D.I32)
 
+let test_g5 () =
+  let nan = Float.nan in
+  Alcotest.check farr "argmin" [| 0.; 2. |]
+    (read (NL.argmin ~axis:1 (f32 [| 2; 3 |] [| 1.; 3.; 2.; 5.; 4.; 1. |])));
+  Alcotest.check farr "nanargmax nan-skip" [| 2. |]
+    (read (NL.nanargmax ~axis:0 (f32 [| 5 |] [| 1.; 3.; 5.; 4.; nan |])));
+  Alcotest.check farr "nanargmax all-nan -> -1" [| -1. |]
+    (read (NL.nanargmax ~axis:0 (f32 [| 3 |] [| nan; nan; nan |])));
+  Alcotest.check farr "nanargmin nan-skip" [| 4. |]
+    (read (NL.nanargmin ~axis:0 (f32 [| 5 |] [| nan; 3.; 5.; 4.; 2. |])));
+  Alcotest.check farr "roll"
+    [| 4.; 5.; 0.; 1.; 2.; 3. |]
+    (read (NL.roll (f32 [| 6 |] [| 0.; 1.; 2.; 3.; 4.; 5. |]) [| 2 |]));
+  Alcotest.(check (array int))
+    "rollaxis shape" [| 4; 2; 3 |]
+    (shape_of (NL.rollaxis 2 (f32 [| 2; 3; 4 |] (Array.make 24 0.))));
+  Alcotest.check farr "gcd" [| 1.; 2.; 3. |]
+    (read
+       (NL.gcd
+          (i32 [| 3 |] [| 12.; 18.; 24. |])
+          (i32 [| 3 |] [| 5.; 10.; 15. |])));
+  Alcotest.check farr "lcm" [| 60.; 90.; 120. |]
+    (read
+       (NL.lcm
+          (i32 [| 3 |] [| 12.; 18.; 24. |])
+          (i32 [| 3 |] [| 5.; 10.; 15. |])));
+  let a = f32 [| 7 |] [| 1.; 2.; 2.; 3.; 4.; 5.; 5. |] in
+  Alcotest.check farr "searchsorted left" [| 1.; 5. |]
+    (read (NL.searchsorted ~side:"left" a (f32 [| 2 |] [| 2.; 5. |])));
+  Alcotest.check farr "searchsorted right" [| 3.; 7. |]
+    (read (NL.searchsorted ~side:"right" a (f32 [| 2 |] [| 2.; 5. |])));
+  Alcotest.check farr "digitize"
+    [| 1.; 2.; 2.; 1.; 3.; 3. |]
+    (read
+       (NL.digitize
+          (f32 [| 6 |] [| 1.; 2.; 2.5; 1.5; 3.; 3.5 |])
+          (f32 [| 3 |] [| 1.; 2.; 3. |])));
+  Alcotest.check farr "cov perfect-anticorr" [| 1.; -1.; -1.; 1. |]
+    (read (NL.cov (f32 [| 2; 3 |] [| -1.; 0.; 1.; 1.; 0.; -1. |])));
+  Alcotest.check farr "corrcoef" [| 1.; -1.; -1.; 1. |]
+    (read (NL.corrcoef (f32 [| 2; 3 |] [| -1.; 0.; 1.; 1.; 0.; -1. |])))
+
 let () =
   Alcotest.run "numpy_lax_numpy"
     [
@@ -374,5 +416,6 @@ let () =
           Alcotest.test_case "i0_equal" `Quick test_i0_equal;
           Alcotest.test_case "meshgrid_ix" `Quick test_meshgrid_ix;
           Alcotest.test_case "g4" `Quick test_g4;
+          Alcotest.test_case "g5" `Quick test_g5;
         ] );
     ]

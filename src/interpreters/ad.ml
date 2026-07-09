@@ -673,10 +673,10 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       failwith "ad: primitive has no jvp rule (matches jax)"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
-  | Rng_uniform | To_edtype _ ->
+  | Rng_uniform | To_edtype _ | Platform_index _ ->
       failwith "ad: primitive has no jvp rule in M1"
-  | Xla_call _ | Cond _ ->
-      failwith "ad: jvp of control primitive not supported in M1"
+  | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
+  | Xla_call _ -> failwith "ad: jvp of xla_call not supported in M1"
 
 let new_jvp_tracer trace primal tangent : tracer =
   {
@@ -696,6 +696,36 @@ let as_jvp trace v =
       | _ -> failwith "ad: expected a JVP tracer")
   | _ -> (v, zeros_like_value v)
 
+let jvp (f : value list -> value list) (primals : value list)
+    (tangents : value list) : value list * value list =
+  Core.with_new_main KJVP GNone (fun main ->
+      let ins =
+        List.map2 (fun x t -> Tracer (new_jvp_tracer main x t)) primals tangents
+      in
+      let outs = f ins in
+      let pairs =
+        List.map
+          (fun v ->
+            match Core.full_raise main v with
+            | Tracer { payload = JVP { primal; tangent }; _ } ->
+                (primal, tangent)
+            | _ -> failwith "ad.jvp: expected a JVP tracer")
+          outs
+      in
+      List.split pairs)
+
+let cond_tangent_branch jvp_f (branch : closed_jaxpr) (op_avals : aval list) :
+    closed_jaxpr =
+  let n = List.length op_avals in
+  Jaxpr.make_jaxpr (op_avals @ op_avals) (fun args ->
+      match Util.split_list args [ n ] with
+      | [ prim_ops; tan_ops ] ->
+          let _, tans =
+            jvp_f (fun a -> Jaxpr.eval_closed_jaxpr branch a) prim_ops tan_ops
+          in
+          tans
+      | _ -> failwith "ad: cond tangent branch split")
+
 let jvp_process_primitive trace prim args =
   let pairs = List.map (as_jvp trace) args in
   let primals = List.map fst pairs and tangents = List.map snd pairs in
@@ -705,6 +735,22 @@ let jvp_process_primitive trace prim args =
       let tos = Core.bind prim tangents in
       List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) pos tos
   | Sort _ | Top_k _ -> failwith "ad: jvp of sort/top_k needs gather (M2 gap)"
+  | Cond { t; f } -> (
+      match (primals, tangents) with
+      | pred :: prim_ops, _ :: tan_ops ->
+          let op_avals = List.map Core.get_aval prim_ops in
+          let primal_outs = Core.bind (Cond { t; f }) primals in
+          let t_tan = cond_tangent_branch jvp t op_avals in
+          let f_tan = cond_tangent_branch jvp f op_avals in
+          let tangent_outs =
+            Core.bind
+              (Cond { t = t_tan; f = f_tan })
+              ((pred :: prim_ops) @ tan_ops)
+          in
+          List.map2
+            (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
+            primal_outs tangent_outs
+      | _ -> arity ())
   | _ ->
       let po, to_ = jvp_rule prim primals tangents in
       [ Tracer (new_jvp_tracer trace po to_) ]
@@ -725,24 +771,6 @@ let interpreter : Core.interpreter =
 
 let install () = Core.register_interpreter KJVP interpreter
 let () = install ()
-
-let jvp (f : value list -> value list) (primals : value list)
-    (tangents : value list) : value list * value list =
-  Core.with_new_main KJVP GNone (fun main ->
-      let ins =
-        List.map2 (fun x t -> Tracer (new_jvp_tracer main x t)) primals tangents
-      in
-      let outs = f ins in
-      let pairs =
-        List.map
-          (fun v ->
-            match Core.full_raise main v with
-            | Tracer { payload = JVP { primal; tangent }; _ } ->
-                (primal, tangent)
-            | _ -> failwith "ad.jvp: expected a JVP tracer")
-          outs
-      in
-      List.split pairs)
 
 let linearize (f : value list -> value list) (primals : value list) :
     value list * (value list -> value list) =
@@ -822,7 +850,7 @@ let tile_transpose (reps : int array) (in_shape : int array) ct =
   let axes = Array.init n (fun i -> 2 * i) in
   b1 (Reduce_sum axes) [ reshaped ]
 
-let transpose_rule prim (cts : value list) (primals : tval list) :
+let rec transpose_rule prim (cts : value list) (primals : tval list) :
     value option list =
   let ct1 () =
     match cts with
@@ -1105,6 +1133,39 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
             in
             [ op_t; None; up_t ]
         | _ -> arity ())
+  | Cond { t; f } -> (
+      match primals with
+      | pred :: rest ->
+          if is_undef pred then
+            failwith "ad: cond transpose needs a concrete predicate";
+          let pred_nd =
+            match prim_val pred with
+            | Concrete nd -> nd
+            | Tracer _ ->
+                failwith "ad: cond transpose needs a concrete predicate"
+          in
+          let branch = if Ndarray.get_f pred_nd [||] <> 0.0 then t else f in
+          let const_tvals =
+            List.map (fun c -> Prim (Concrete c)) branch.consts
+          in
+          let in_cts =
+            eval_jaxpr_transposed branch.jaxpr (const_tvals @ rest) cts
+          in
+          let remaining = ref in_cts in
+          let rest_cts =
+            List.map
+              (fun tv ->
+                if is_undef tv then
+                  match !remaining with
+                  | c :: tl ->
+                      remaining := tl;
+                      Some c
+                  | [] -> None
+                else None)
+              rest
+          in
+          None :: rest_cts
+      | _ -> arity ())
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
@@ -1121,10 +1182,10 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Select_and_gather_add _ | Select_and_scatter _ | Select_and_scatter_add _
   | Bessel_i0e | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Igamma
   | Igamma_grad_a | Igammac | Lgamma | Polygamma | Regularized_incomplete_beta
-  | Zeta | Xla_call _ | Cond _ ->
+  | Zeta | Platform_index _ | Xla_call _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
-let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
+and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     value list =
   let primal_env : (int, tval) Hashtbl.t = Hashtbl.create 32 in
   let read_primal = function
@@ -1141,6 +1202,14 @@ let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     | Prim _ -> Hashtbl.replace primal_env v.vid tv
   in
   List.iter2 write_primal jx.in_binders args;
+  List.iter
+    (fun (e : eqn) ->
+      let primals_in = List.map read_primal e.inputs in
+      if not (List.exists is_undef primals_in) then begin
+        let outs = Core.bind e.prim (List.map prim_val primals_in) in
+        List.iter2 (fun (v : var) o -> write_primal v (Prim o)) e.outs outs
+      end)
+    jx.eqns;
   let ct_env : (int, value) Hashtbl.t = Hashtbl.create 32 in
   let read_ct (v : var) =
     match Hashtbl.find_opt ct_env v.vid with
@@ -1160,13 +1229,15 @@ let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
   List.iter2 write_ct jx.outs cts;
   List.iter
     (fun (e : eqn) ->
-      let cts_in = List.map read_ct e.outs in
       let primals_in = List.map read_primal e.inputs in
-      let cts_out = transpose_rule e.prim cts_in primals_in in
-      List.iter2
-        (fun atom cto ->
-          match cto with Some ct -> write_ct atom ct | None -> ())
-        e.inputs cts_out)
+      if List.exists is_undef primals_in then begin
+        let cts_in = List.map read_ct e.outs in
+        let cts_out = transpose_rule e.prim cts_in primals_in in
+        List.iter2
+          (fun atom cto ->
+            match cto with Some ct -> write_ct atom ct | None -> ())
+          e.inputs cts_out
+      end)
     (List.rev jx.eqns);
   List.fold_right2
     (fun (v : var) tv acc ->

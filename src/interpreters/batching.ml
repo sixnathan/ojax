@@ -623,8 +623,10 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Reduce_window_sum _ | Select_and_gather_add _ | Select_and_scatter _
   | Select_and_scatter_add _ ->
       failwith "batching: vmap of windowed reductions not supported in M2"
-  | Xla_call _ | Cond _ ->
-      failwith "batching: vmap of control primitive not supported in M1"
+  | Platform_index _ ->
+      failwith "batching: vmap of platform_index not supported"
+  | Cond _ -> failwith "batching: cond handled by batch_process_primitive"
+  | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :
     value list * int option list =
@@ -667,6 +669,61 @@ let vmap_rule_multi (axis_size : int) (prim : primitive) (vals : value list)
   | Top_k { k; axis }, [ x ], [ b ] -> top_k_batch k axis x b
   | _ -> failwith "batching: expected a multi-output primitive"
 
+let vmap_flat (f : value list -> value list) (in_axes : int option list)
+    (args : value list) : value list =
+  let axis_size =
+    let rec find axes vals =
+      match (axes, vals) with
+      | Some d :: _, x :: _ -> (Core.get_aval x).shape.(d)
+      | None :: axes, _ :: vals -> find axes vals
+      | _ -> failwith "batching: vmap needs at least one mapped input"
+    in
+    find in_axes args
+  in
+  Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+      let tracers_in =
+        List.map2
+          (fun x ax ->
+            match ax with
+            | Some _ -> Tracer (new_batch_tracer main x ax)
+            | None -> x)
+          args in_axes
+      in
+      let outs = f tracers_in in
+      let vals_bdims =
+        List.map (fun o -> to_batch_info main (Core.full_raise main o)) outs
+      in
+      List.map (fun (v, bdim) -> move_batch_axis axis_size bdim 0 v) vals_bdims)
+
+let vmap (f : value list -> value list) (in_axes : int option list) :
+    value list -> value list =
+ fun args -> vmap_flat f in_axes args
+
+let cond_batch (axis_size : int) (t : closed_jaxpr) (f : closed_jaxpr)
+    (vals : value list) (bdims : int option list) : value list * int option list
+    =
+  match (vals, bdims) with
+  | pred :: ops, pred_bdim :: op_bdims ->
+      if pred_bdim <> None then
+        failwith
+          "batching: vmap of cond with batched predicate needs select_n (M2 \
+           gap)";
+      let moved =
+        List.map2 (fun v b -> move_batch_axis axis_size b 0 v) ops op_bdims
+      in
+      let moved_avals = List.map Core.get_aval moved in
+      let batch_branch (branch : closed_jaxpr) : closed_jaxpr =
+        Jaxpr.make_jaxpr moved_avals (fun bops ->
+            vmap
+              (fun a -> Jaxpr.eval_closed_jaxpr branch a)
+              (List.map (fun _ -> Some 0) bops)
+              bops)
+      in
+      let t' = batch_branch t and f' = batch_branch f in
+      let outs = Core.bind (Cond { t = t'; f = f' }) (pred :: moved) in
+      (outs, List.map (fun _ -> Some 0) outs)
+  | _ -> failwith "batching: cond expects a predicate"
+
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
   let axis_size = axis_size_of trace in
@@ -675,6 +732,9 @@ let batch_process_primitive (trace : trace) (prim : primitive)
   match prim with
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
       let outs, out_bdims = vmap_rule_multi axis_size prim vals bdims in
+      List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
+  | Cond { t; f } ->
+      let outs, out_bdims = cond_batch axis_size t f vals bdims in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | _ ->
       let out, out_bdim = vmap_rule axis_size prim vals bdims in
@@ -705,33 +765,3 @@ let interpreter : Core.interpreter =
 
 let install () = Core.register_interpreter KBatch interpreter
 let () = install ()
-
-let vmap_flat (f : value list -> value list) (in_axes : int option list)
-    (args : value list) : value list =
-  let axis_size =
-    let rec find axes vals =
-      match (axes, vals) with
-      | Some d :: _, x :: _ -> (Core.get_aval x).shape.(d)
-      | None :: axes, _ :: vals -> find axes vals
-      | _ -> failwith "batching: vmap needs at least one mapped input"
-    in
-    find in_axes args
-  in
-  Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
-      let tracers_in =
-        List.map2
-          (fun x ax ->
-            match ax with
-            | Some _ -> Tracer (new_batch_tracer main x ax)
-            | None -> x)
-          args in_axes
-      in
-      let outs = f tracers_in in
-      let vals_bdims =
-        List.map (fun o -> to_batch_info main (Core.full_raise main o)) outs
-      in
-      List.map (fun (v, bdim) -> move_batch_axis axis_size bdim 0 v) vals_bdims)
-
-let vmap (f : value list -> value list) (in_axes : int option list) :
-    value list -> value list =
- fun args -> vmap_flat f in_axes args

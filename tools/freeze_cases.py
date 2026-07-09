@@ -30,7 +30,7 @@ def freeze_jaxpr(module):
 
 
 def freeze(module):
-    if module in ("jaxpr", "ad", "batching", "api"):
+    if module in ("jaxpr", "ad", "batching", "api", "conditionals"):
         return freeze_jaxpr(module)
     records = load_source(module)
     explicit = []

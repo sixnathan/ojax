@@ -1188,6 +1188,170 @@ let api_suite_for set_name =
   in
   ("api:" ^ set_name, coverage :: case_tests)
 
+let cond_branches :
+    (string * (T.value list -> T.value list) * (T.value list -> T.value list))
+    list =
+  [
+    ("sin_cos", (fun a -> [ jb1 T.Sin a ]), fun a -> [ jb1 T.Cos a ]);
+    ("mul_add", (fun a -> [ jb1 T.Mul a ]), fun a -> [ jb1 T.Add a ]);
+    ( "sq_neg",
+      (fun a ->
+        match a with [ x ] -> [ jb1 T.Mul [ x; x ] ] | _ -> assert false),
+      fun a -> [ jb1 T.Neg a ] );
+  ]
+
+type cond_case = {
+  cn_id : string;
+  cn_fn : string;
+  cn_mode : string;
+  cn_pred : int option;
+  cn_platforms : string array option array;
+  cn_in_axes : int option list;
+  cn_args : arg list;
+  cn_tans : arg list;
+  cn_outs : out list;
+  cn_compare : string;
+  cn_atol : float;
+  cn_rtol : float;
+}
+
+let parse_platforms j =
+  match j with
+  | `Null -> [||]
+  | _ ->
+      Array.of_list
+        (List.map
+           (fun p ->
+             match p with
+             | `Null -> None
+             | _ -> Some (Array.of_list (List.map U.to_string (U.to_list p))))
+           (U.to_list j))
+
+let parse_cond_case j =
+  let tol = U.member "tol" j in
+  let in_axes_j = U.member "in_axes" j in
+  {
+    cn_id = U.member "case_id" j |> U.to_string;
+    cn_fn = U.member "fn" j |> U.to_string;
+    cn_mode = U.member "mode" j |> U.to_string;
+    cn_pred =
+      (match U.member "pred" j with `Null -> None | v -> Some (U.to_int v));
+    cn_platforms = parse_platforms (U.member "platforms" j);
+    cn_in_axes =
+      (match in_axes_j with
+      | `Null -> []
+      | _ -> U.to_list in_axes_j |> List.map parse_in_axis);
+    cn_args = U.member "args" j |> U.to_list |> List.map parse_arg;
+    cn_tans = U.member "tangents" j |> U.to_list |> List.map parse_arg;
+    cn_outs = U.member "outputs" j |> U.to_list |> List.map parse_out;
+    cn_compare = U.member "compare" j |> U.to_string;
+    cn_atol = U.member "atol" tol |> U.to_number;
+    cn_rtol = U.member "rtol" tol |> U.to_number;
+  }
+
+let load_cond_manifest path =
+  let j = Yojson.Safe.from_file path in
+  ( U.member "x64" j |> U.to_bool,
+    U.member "cases" j |> U.to_list |> List.map parse_cond_case )
+
+let cond_pred_value pred =
+  T.Concrete (Nd.of_floats D.Bool [||] [| (if pred <> 0 then 1.0 else 0.0) |])
+
+let cond_run c primals tangents =
+  match c.cn_mode with
+  | "platform" -> [ Ojax.Lax.platform_index ~platforms:c.cn_platforms ]
+  | _ -> (
+      let _, tf, ff =
+        match List.find_opt (fun (n, _, _) -> n = c.cn_fn) cond_branches with
+        | Some x -> x
+        | None -> Alcotest.failf "%s: unknown cond fn %s" c.cn_id c.cn_fn
+      in
+      let pred = cond_pred_value (Option.get c.cn_pred) in
+      let wrapped ops = Ojax.Lax.cond pred tf ff ops in
+      match c.cn_mode with
+      | "eval" -> wrapped primals
+      | "jvp" ->
+          let po, to_ = Ad.jvp wrapped primals tangents in
+          po @ to_
+      | "grad" -> Ad.grad (fun a -> List.hd (wrapped a)) primals
+      | "vmap" -> Batching.vmap wrapped c.cn_in_axes primals
+      | m -> failwith ("conditionals: unknown mode " ^ m))
+
+let cond_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.cn_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.cn_id ^ ".npz"))
+  in
+  let read_operand (a : arg) =
+    T.Concrete (nd_of_npz (find_member inputs a.name))
+  in
+  let primals = List.map read_operand c.cn_args in
+  let tangents = List.map read_operand c.cn_tans in
+  let results = cond_run c primals tangents in
+  let paired =
+    try List.combine c.cn_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.cn_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.cn_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.cn_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let floats = read_nd nd in
+      let data =
+        if c.cn_compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      let actual =
+        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+      in
+      Compare.assert_tol o.odtype c.cn_atol c.cn_rtol;
+      Compare.check
+        ~name:(c.cn_id ^ ":" ^ o.oname)
+        ~compare:c.cn_compare ~atol:c.cn_atol ~rtol:c.cn_rtol ~expected:golden
+        ~actual)
+    paired
+
+let cond_check_coverage ~set_dir cases () =
+  let expected =
+    List.map (fun c -> c.cn_id) cases |> List.sort String.compare
+  in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then
+        Alcotest.failf "%s: conditionals coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let cond_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "conditionals") set_name
+  in
+  let x64, cases =
+    load_cond_manifest (Filename.concat set_dir "manifest.json")
+  in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.cn_id `Quick (cond_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (cond_check_coverage ~set_dir cases)
+  in
+  ("conditionals:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -1242,5 +1406,7 @@ let () =
       batch_suite_for "x64_on";
       api_suite_for "x64_off";
       api_suite_for "x64_on";
+      cond_suite_for "x64_off";
+      cond_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

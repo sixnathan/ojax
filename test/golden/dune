@@ -8,4 +8,5 @@
   (source_tree %{project_root}/goldens/jaxpr)
   (source_tree %{project_root}/goldens/ad)
   (source_tree %{project_root}/goldens/batching)
-  (source_tree %{project_root}/goldens/api)))
+  (source_tree %{project_root}/goldens/api)
+  (source_tree %{project_root}/goldens/conditionals)))

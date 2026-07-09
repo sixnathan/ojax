@@ -189,6 +189,7 @@ and primitive =
   | Polygamma
   | Regularized_incomplete_beta
   | Zeta
+  | Platform_index of string array option array
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

@@ -586,6 +586,20 @@ let iota_impl dtype shape dimension =
 let empty_impl dtype shape =
   Ndarray.of_floats dtype shape (Array.make (Utils.prod shape) 0.0)
 
+let platform_cpu_index (platforms : string array option array) : int =
+  let n = Array.length platforms in
+  let rec find_cpu i =
+    if i >= n then find_default 0
+    else
+      match platforms.(i) with
+      | Some names when Array.exists (fun p -> p = "cpu") names -> i
+      | _ -> find_cpu (i + 1)
+  and find_default i =
+    if i >= n then failwith "lax: platform_index has no cpu or default branch"
+    else match platforms.(i) with None -> i | Some _ -> find_default (i + 1)
+  in
+  find_cpu 0
+
 let composite_impl (cj : closed_jaxpr) inputs =
   let outs =
     Jaxpr.eval_closed_jaxpr cj (List.map (fun nd -> Concrete nd) inputs)
@@ -1096,8 +1110,26 @@ let impl prim inputs =
           Ndarray.map2 (Ndarray.dtype x) (Special.zeta (Ndarray.dtype x)) x q)
         inputs
   | Regularized_incomplete_beta -> beta_impl inputs
-  | Xla_call _ | Cond _ ->
-      failwith "lax: control primitives handled by interpreters"
+  | Platform_index platforms ->
+      [
+        Ndarray.of_floats Dtype.I32 [||]
+          [| float_of_int (platform_cpu_index platforms) |];
+      ]
+  | Cond { t; f } -> (
+      match inputs with
+      | pred :: ops ->
+          let branch = if Ndarray.get_f pred [||] <> 0.0 then t else f in
+          let outs =
+            Jaxpr.eval_closed_jaxpr branch
+              (List.map (fun nd -> Concrete nd) ops)
+          in
+          List.map
+            (function
+              | Concrete nd -> nd
+              | Tracer _ -> failwith "lax: cond branch produced a tracer")
+            outs
+      | [] -> failwith "lax: cond expects a predicate")
+  | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
 
@@ -1353,11 +1385,14 @@ let abstract_eval prim avals =
       | [ a; b; x ] ->
           [ shaped x.shape x.dtype (a.weak_type && b.weak_type && x.weak_type) ]
       | _ -> failwith "lax: regularized_incomplete_beta expects 3 avals")
-  | Xla_call _ | Cond _ ->
-      failwith "lax: control primitives handled by interpreters"
+  | Platform_index _ -> [ shaped [||] Dtype.I32 false ]
+  | Cond { t; _ } -> List.map aval_of_atom t.jaxpr.outs
+  | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =
   Core.rules.impl <- impl;
   Core.rules.abstract_eval <- abstract_eval
 
 let () = install ()
+let cond = Control_flow.Conditionals.cond
+let platform_index = Control_flow.Conditionals.platform_index

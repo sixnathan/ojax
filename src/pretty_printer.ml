@@ -221,6 +221,7 @@ let prim_name = function
   | Polygamma -> "polygamma"
   | Regularized_incomplete_beta -> "regularized_incomplete_beta"
   | Zeta -> "zeta"
+  | Platform_index _ -> "platform_index"
   | Xla_call _ -> "xla_call"
   | Cond _ -> "cond"
 

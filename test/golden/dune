@@ -15,4 +15,5 @@
   (source_tree %{project_root}/goldens/lax_numpy)
   (source_tree %{project_root}/goldens/ufuncs)
   (source_tree %{project_root}/goldens/reductions)
-  (source_tree %{project_root}/goldens/indexing)))
+  (source_tree %{project_root}/goldens/indexing)
+  (source_tree %{project_root}/goldens/array_methods)))

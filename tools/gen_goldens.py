@@ -2541,11 +2541,185 @@ def _add_all(*xs):
     return functools.reduce(jnp.add, xs)
 
 
+def _am_reduce(name):
+    def build(params):
+        ax = _red_axis(params)
+        kd = params.get("keepdims", False)
+        return lambda x: getattr(x, name)(axis=ax, keepdims=kd)
+
+    return build
+
+
+def _am_reduce_ddof(name):
+    def build(params):
+        ax = _red_axis(params)
+        kd = params.get("keepdims", False)
+        ddof = params.get("ddof", 0)
+        return lambda x: getattr(x, name)(axis=ax, keepdims=kd, ddof=ddof)
+
+    return build
+
+
+def _am_cum(name):
+    def build(params):
+        ax = params.get("axis")
+        return lambda x: getattr(x, name)(axis=ax)
+
+    return build
+
+
+def _am_arg(name):
+    def build(params):
+        ax = params.get("axis")
+        return lambda x: getattr(x, name)(axis=ax)
+
+    return build
+
+
+def _am_call0(name):
+    return lambda params: (lambda x: getattr(x, name)())
+
+
+def _am_prop(name):
+    return lambda params: (lambda x: getattr(x, name))
+
+
+def _am_reshape(params):
+    shape = tuple(params["shape"])
+    return lambda x: x.reshape(shape)
+
+
+def _am_transpose(params):
+    axes = params.get("axes")
+    if axes is None:
+        return lambda x: x.transpose()
+    return lambda x: x.transpose(tuple(axes))
+
+
+def _am_squeeze(params):
+    axis = params.get("axis")
+    axis = None if axis is None else tuple(axis)
+    return lambda x: x.squeeze(axis=axis)
+
+
+def _am_swapaxes(params):
+    a1 = params["axis1"]
+    a2 = params["axis2"]
+    return lambda x: x.swapaxes(a1, a2)
+
+
+def _am_repeat(params):
+    n = params["repeats"]
+    axis = params.get("axis")
+    return lambda x: x.repeat(n, axis=axis)
+
+
+def _am_astype(params):
+    dt = np.dtype(params["dtype"])
+    return lambda x: x.astype(dt)
+
+
+def _am_clip(params):
+    lo = params.get("min")
+    hi = params.get("max")
+    return lambda x: x.clip(min=lo, max=hi)
+
+
+def _am_round(params):
+    d = params.get("decimals", 0)
+    return lambda x: x.round(decimals=d)
+
+
+def _am_diagonal(params):
+    off = params.get("offset", 0)
+    a1 = params.get("axis1", 0)
+    a2 = params.get("axis2", 1)
+    return lambda x: x.diagonal(offset=off, axis1=a1, axis2=a2)
+
+
+def _am_trace(params):
+    off = params.get("offset", 0)
+    a1 = params.get("axis1", 0)
+    a2 = params.get("axis2", 1)
+    return lambda x: x.trace(offset=off, axis1=a1, axis2=a2)
+
+
+def _am_searchsorted(params):
+    side = params.get("side", "left")
+    return lambda a, v: a.searchsorted(v, side=side)
+
+
+def _am_take(params):
+    axis = params.get("axis")
+    mode = params.get("mode")
+    return lambda a, ind: a.take(ind, axis=axis, mode=mode)
+
+
+ARRAY_METHODS_BUILDERS = {
+    "reshape": _am_reshape,
+    "ravel": _am_call0("ravel"),
+    "flatten": _am_call0("flatten"),
+    "copy": _am_call0("copy"),
+    "conj": _am_call0("conj"),
+    "conjugate": _am_call0("conjugate"),
+    "transpose": _am_transpose,
+    "squeeze": _am_squeeze,
+    "swapaxes": _am_swapaxes,
+    "repeat": _am_repeat,
+    "astype": _am_astype,
+    "clip": _am_clip,
+    "round": _am_round,
+    "diagonal": _am_diagonal,
+    "trace": _am_trace,
+    "searchsorted": _am_searchsorted,
+    "take": _am_take,
+    "cumsum": _am_cum("cumsum"),
+    "cumprod": _am_cum("cumprod"),
+    "argmax": _am_arg("argmax"),
+    "argmin": _am_arg("argmin"),
+    "T": _am_prop("T"),
+    "mT": _am_prop("mT"),
+    "real": _am_prop("real"),
+    "imag": _am_prop("imag"),
+    "add": lambda params: (lambda a, b: a + b),
+    "sub": lambda params: (lambda a, b: a - b),
+    "mul": lambda params: (lambda a, b: a * b),
+    "truediv": lambda params: (lambda a, b: a / b),
+    "floordiv": lambda params: (lambda a, b: a // b),
+    "mod": lambda params: (lambda a, b: a % b),
+    "pow": lambda params: (lambda a, b: a**b),
+    "eq": lambda params: (lambda a, b: a == b),
+    "ne": lambda params: (lambda a, b: a != b),
+    "lt": lambda params: (lambda a, b: a < b),
+    "le": lambda params: (lambda a, b: a <= b),
+    "gt": lambda params: (lambda a, b: a > b),
+    "ge": lambda params: (lambda a, b: a >= b),
+    "and": lambda params: (lambda a, b: a & b),
+    "or": lambda params: (lambda a, b: a | b),
+    "xor": lambda params: (lambda a, b: a ^ b),
+    "lshift": lambda params: (lambda a, b: a << b),
+    "rshift": lambda params: (lambda a, b: a >> b),
+    "neg": lambda params: (lambda x: -x),
+    "pos": lambda params: (lambda x: +x),
+    "abs": lambda params: (lambda x: abs(x)),
+    "invert": lambda params: (lambda x: ~x),
+}
+for _name in ["sum", "prod", "max", "min", "mean", "all", "any", "ptp"]:
+    ARRAY_METHODS_BUILDERS[_name] = _am_reduce(_name)
+for _name in ["var", "std"]:
+    ARRAY_METHODS_BUILDERS[_name] = _am_reduce_ddof(_name)
+
+
 def run_case(c, seed):
     op = c["op"]
+    is_am = c["primitive"].startswith("arr.") and op in ARRAY_METHODS_BUILDERS
     is_numpy = c["primitive"].startswith("jnp.") and op in NUMPY_BUILDERS
-    if is_numpy or op in LAX_BUILDERS:
-        builders = NUMPY_BUILDERS if is_numpy else LAX_BUILDERS
+    if is_am or is_numpy or op in LAX_BUILDERS:
+        builders = (
+            ARRAY_METHODS_BUILDERS
+            if is_am
+            else (NUMPY_BUILDERS if is_numpy else LAX_BUILDERS)
+        )
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])
             for i, a in enumerate(c["args"])

@@ -558,6 +558,7 @@ module NL = Ojax.Numpy.Lax_numpy
 module UF = Ojax.Numpy.Ufuncs
 module RED = Ojax.Numpy.Reductions
 module IDX = Ojax.Numpy.Indexing
+module AM = Ojax.Numpy.Array_methods
 
 let opt_ia params name =
   match U.member name params with `Null -> None | j -> Some (ia j)
@@ -1074,6 +1075,139 @@ let indexing_suite_for set_name =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
   ("indexing:" ^ set_name, coverage :: case_tests)
+
+let array_methods_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let one v = [ v ] in
+  match (op, operands) with
+  | "all", [ x ] ->
+      one
+        (AM.all
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") x)
+  | "any", [ x ] ->
+      one
+        (AM.any
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") x)
+  | "sum", [ x ] ->
+      one
+        (AM.sum
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") x)
+  | "prod", [ x ] ->
+      one
+        (AM.prod
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") x)
+  | "max", [ x ] ->
+      one
+        (AM.max
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") x)
+  | "min", [ x ] ->
+      one
+        (AM.min
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") x)
+  | "mean", [ x ] ->
+      one
+        (AM.mean
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") x)
+  | "ptp", [ x ] ->
+      one
+        (AM.ptp
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") x)
+  | "var", [ x ] ->
+      one
+        (AM.var
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") ?ddof:(opt_i params "ddof") x)
+  | "std", [ x ] ->
+      one
+        (AM.std
+           ?axis:(opt_int_or_ia params "axis")
+           ?keepdims:(opt_b params "keepdims") ?ddof:(opt_i params "ddof") x)
+  | "cumsum", [ x ] -> one (AM.cumsum ?axis:(opt_i params "axis") x)
+  | "cumprod", [ x ] -> one (AM.cumprod ?axis:(opt_i params "axis") x)
+  | "argmax", [ x ] -> one (AM.argmax ?axis:(opt_i params "axis") x)
+  | "argmin", [ x ] -> one (AM.argmin ?axis:(opt_i params "axis") x)
+  | "reshape", [ x ] -> one (AM.reshape x (ia (member "shape")))
+  | "ravel", [ x ] -> one (AM.ravel x)
+  | "flatten", [ x ] -> one (AM.flatten x)
+  | "copy", [ x ] -> one (AM.copy x)
+  | "conj", [ x ] -> one (AM.conj x)
+  | "transpose", [ x ] -> one (AM.transpose ?axes:(opt_ia params "axes") x)
+  | "squeeze", [ x ] -> one (AM.squeeze ?axis:(opt_ia params "axis") x)
+  | "swapaxes", [ x ] ->
+      one
+        (AM.swapaxes (U.to_int (member "axis1")) (U.to_int (member "axis2")) x)
+  | "repeat", [ x ] ->
+      one
+        (AM.repeat ?axis:(opt_i params "axis") x (U.to_int (member "repeats")))
+  | "astype", [ x ] ->
+      one (AM.astype x (dtype_of_string (U.to_string (member "dtype"))))
+  | "clip", [ x ] ->
+      one (AM.clip ?min:(opt_f params "min") ?max:(opt_f params "max") x)
+  | "round", [ x ] -> one (AM.round ?decimals:(opt_i params "decimals") x)
+  | "diagonal", [ x ] ->
+      one
+        (AM.diagonal ?offset:(opt_i params "offset")
+           ?axis1:(opt_i params "axis1") ?axis2:(opt_i params "axis2") x)
+  | "trace", [ x ] ->
+      one
+        (AM.trace ?offset:(opt_i params "offset") ?axis1:(opt_i params "axis1")
+           ?axis2:(opt_i params "axis2") x)
+  | "searchsorted", [ a; b ] ->
+      one (AM.searchsorted ?side:(opt_s params "side") a b)
+  | "take", [ a; b ] ->
+      one (AM.take ?axis:(opt_i params "axis") ?mode:(opt_s params "mode") a b)
+  | "T", [ x ] -> one (AM.t x)
+  | "mT", [ x ] -> one (AM.mt x)
+  | "real", [ x ] -> one (AM.real x)
+  | "imag", [ x ] -> one (AM.imag x)
+  | "neg", [ x ] -> one (AM.neg x)
+  | "pos", [ x ] -> one (AM.pos x)
+  | "abs", [ x ] -> one (AM.abs x)
+  | "invert", [ x ] -> one (AM.invert x)
+  | "add", [ a; b ] -> one (AM.add a b)
+  | "sub", [ a; b ] -> one (AM.sub a b)
+  | "mul", [ a; b ] -> one (AM.mul a b)
+  | "truediv", [ a; b ] -> one (AM.truediv a b)
+  | "floordiv", [ a; b ] -> one (AM.floordiv a b)
+  | "mod", [ a; b ] -> one (AM.mod_ a b)
+  | "pow", [ a; b ] -> one (AM.pow a b)
+  | "eq", [ a; b ] -> one (AM.eq a b)
+  | "ne", [ a; b ] -> one (AM.ne a b)
+  | "lt", [ a; b ] -> one (AM.lt a b)
+  | "le", [ a; b ] -> one (AM.le a b)
+  | "gt", [ a; b ] -> one (AM.gt a b)
+  | "ge", [ a; b ] -> one (AM.ge a b)
+  | "and", [ a; b ] -> one (AM.and_ a b)
+  | "or", [ a; b ] -> one (AM.or_ a b)
+  | "xor", [ a; b ] -> one (AM.xor a b)
+  | "lshift", [ a; b ] -> one (AM.lshift a b)
+  | "rshift", [ a; b ] -> one (AM.rshift a b)
+  | _ -> failwith ("array_methods golden: unknown op " ^ op)
+
+let array_methods_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "array_methods") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:array_methods_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("array_methods:" ^ set_name, coverage :: case_tests)
 
 let reductions_suite_for set_name =
   let set_dir =
@@ -2321,5 +2455,7 @@ let () =
       reductions_suite_for "x64_on";
       indexing_suite_for "x64_off";
       indexing_suite_for "x64_on";
+      array_methods_suite_for "x64_off";
+      array_methods_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

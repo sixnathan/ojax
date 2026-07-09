@@ -2644,6 +2644,62 @@ let prng_suite_for set_name =
   in
   ("prng:" ^ set_name, coverage :: case_tests)
 
+module RC = Ojax.Random.Core
+
+let random_core_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let shape () = ia (member "shape") in
+  let ip name = U.to_int (member name) in
+  let fp name = U.to_number (member name) in
+  match (op, operands) with
+  | "key", [ s ] -> [ RC.key s ]
+  | "key_data", [ k ] -> [ RC.key_data (PR.random_wrap k) ]
+  | "wrap_key_data", [ k ] -> [ RC.key_data (RC.wrap_key_data k) ]
+  | "clone", [ k ] -> [ RC.key_data (RC.clone (PR.random_wrap k)) ]
+  | "fold_in", [ k; d ] -> [ RC.fold_in k d ]
+  | "split", [ k ] -> [ RC.split k (ip "num") ]
+  | "bits", [ k ] -> [ RC.bits k ~shape:(shape ()) ]
+  | "randint", [ k ] ->
+      [
+        RC.randint k ~shape:(shape ()) ~minval:(ip "minval")
+          ~maxval:(ip "maxval");
+      ]
+  | "uniform", [ k ] ->
+      [
+        RC.uniform k ~shape:(shape ()) ~minval:(fp "minval")
+          ~maxval:(fp "maxval");
+      ]
+  | "normal", [ k ] -> [ RC.normal k ~shape:(shape ()) ]
+  | "truncated_normal", [ k ] ->
+      [
+        RC.truncated_normal k ~lower:(fp "lower") ~upper:(fp "upper")
+          ~shape:(shape ());
+      ]
+  | "permutation", [ k ] -> [ RC.permutation k (ip "n") ]
+  | "choice", [ k ] ->
+      [
+        RC.choice k ~n:(ip "n") ~shape:(shape ())
+          ~replace:(U.to_bool (member "replace"));
+      ]
+  | _ -> failwith ("random_core golden: unknown op " ^ op)
+
+let random_core_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "random_core") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:random_core_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("random_core:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -2726,5 +2782,7 @@ let () =
       polynomial_suite_for "x64_on";
       prng_suite_for "x64_off";
       prng_suite_for "x64_on";
+      random_core_suite_for "x64_off";
+      random_core_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

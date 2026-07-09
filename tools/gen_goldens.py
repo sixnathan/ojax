@@ -3064,6 +3064,105 @@ PRNG_BUILDERS = {
 }
 
 
+def rc_wrap(raw):
+    return PRNG_MOD.random_wrap(raw, impl=PRNG_IMPL)
+
+
+def rc_key(params):
+    return lambda s: jax.random.key_data(jax.random.key(s))
+
+
+def rc_key_data(params):
+    return lambda raw: jax.random.key_data(rc_wrap(raw))
+
+
+def rc_wrap_key_data(params):
+    return lambda raw: jax.random.key_data(
+        jax.random.wrap_key_data(raw, impl="threefry2x32")
+    )
+
+
+def rc_clone(params):
+    return lambda raw: jax.random.key_data(jax.random.clone(rc_wrap(raw)))
+
+
+def rc_fold_in(params):
+    return lambda raw, d: jax.random.key_data(jax.random.fold_in(rc_wrap(raw), d))
+
+
+def rc_split(params):
+    num = int(params["num"])
+    return lambda raw: jax.random.key_data(jax.random.split(rc_wrap(raw), num))
+
+
+def rc_bits(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.bits(rc_wrap(raw), shape, dtype=jnp.uint32)
+
+
+def rc_randint(params):
+    shape = tuple(params["shape"])
+    minval = int(params["minval"])
+    maxval = int(params["maxval"])
+    return lambda raw: jax.random.randint(
+        rc_wrap(raw), shape, minval, maxval, dtype=jnp.int32
+    )
+
+
+def rc_uniform(params):
+    shape = tuple(params["shape"])
+    minval = float(params["minval"])
+    maxval = float(params["maxval"])
+    return lambda raw: jax.random.uniform(
+        rc_wrap(raw), shape, dtype=jnp.float32, minval=minval, maxval=maxval
+    )
+
+
+def rc_normal(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.normal(rc_wrap(raw), shape, dtype=jnp.float32)
+
+
+def rc_truncated_normal(params):
+    shape = tuple(params["shape"])
+    lower = float(params["lower"])
+    upper = float(params["upper"])
+    return lambda raw: jax.random.truncated_normal(
+        rc_wrap(raw), lower, upper, shape, dtype=jnp.float32
+    )
+
+
+def rc_permutation(params):
+    n = int(params["n"])
+    return lambda raw: jax.random.permutation(rc_wrap(raw), n)
+
+
+def rc_choice(params):
+    n = int(params["n"])
+    shape = tuple(params["shape"])
+    replace = bool(params["replace"])
+    return lambda raw: jax.random.choice(
+        rc_wrap(raw), n, shape=shape, replace=replace
+    )
+
+
+RANDOM_CORE_BUILDERS = {
+    "key": rc_key,
+    "key_data": rc_key_data,
+    "wrap_key_data": rc_wrap_key_data,
+    "clone": rc_clone,
+    "fold_in": rc_fold_in,
+    "split": rc_split,
+    "bits": rc_bits,
+    "randint": rc_randint,
+    "uniform": rc_uniform,
+    "normal": rc_normal,
+    "truncated_normal": rc_truncated_normal,
+    "permutation": rc_permutation,
+    "choice": rc_choice,
+}
+
+
 def run_case(c, seed):
     if c["primitive"].startswith("prng.") and c["op"] in PRNG_BUILDERS:
         inputs = [
@@ -3071,6 +3170,17 @@ def run_case(c, seed):
             for i, a in enumerate(c["args"])
         ]
         out = jax.jit(PRNG_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
+    if c["primitive"].startswith("random.") and c["op"] in RANDOM_CORE_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = jax.jit(RANDOM_CORE_BUILDERS[c["op"]](c["params"]))(*inputs)
         if isinstance(out, (tuple, list)):
             outs = [np.asarray(o) for o in out]
         else:

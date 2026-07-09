@@ -1,5 +1,6 @@
 open Types
 module Nd = Ndarray
+module Core = Ojax__Core
 
 let mask = 0xFFFF_FFFF
 let prod a = Array.fold_left ( * ) 1 a

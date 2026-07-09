@@ -100,6 +100,8 @@ def expand_record(rec):
         }
         if "tol_widen" in rec:
             case["tol_widen"] = rec["tol_widen"]
+        if "x64_off_only" in rec:
+            case["x64_off_only"] = rec["x64_off_only"]
         return [case]
     nargs = rec["nargs"]
     rng = rec["rng"]

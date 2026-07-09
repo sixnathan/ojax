@@ -2681,6 +2681,45 @@ let random_core_fn op params operands : T.value list =
         RC.choice k ~n:(ip "n") ~shape:(shape ())
           ~replace:(U.to_bool (member "replace"));
       ]
+  | "exponential", [ k ] -> [ RC.exponential k ~shape:(shape ()) ]
+  | "cauchy", [ k ] -> [ RC.cauchy k ~shape:(shape ()) ]
+  | "laplace", [ k ] -> [ RC.laplace k ~shape:(shape ()) ]
+  | "logistic", [ k ] -> [ RC.logistic k ~shape:(shape ()) ]
+  | "gumbel", [ k ] -> [ RC.gumbel k ~shape:(shape ()) ]
+  | "pareto", [ k ] -> [ RC.pareto k ~shape:(shape ()) ~b:(fp "b") ]
+  | "rayleigh", [ k ] -> [ RC.rayleigh k ~shape:(shape ()) ~scale:(fp "scale") ]
+  | "weibull_min", [ k ] ->
+      [
+        RC.weibull_min k ~shape:(shape ()) ~scale:(fp "scale")
+          ~concentration:(fp "concentration");
+      ]
+  | "lognormal", [ k ] ->
+      [ RC.lognormal k ~shape:(shape ()) ~sigma:(fp "sigma") ]
+  | "triangular", [ k ] ->
+      [
+        RC.triangular k ~shape:(shape ()) ~left:(fp "left") ~mode:(fp "mode")
+          ~right:(fp "right");
+      ]
+  | "wald", [ k ] -> [ RC.wald k ~shape:(shape ()) ~mean:(fp "mean") ]
+  | "geometric", [ k ] -> [ RC.geometric k ~shape:(shape ()) ~p:(fp "p") ]
+  | "bernoulli", [ k ] -> [ RC.bernoulli k ~shape:(shape ()) ~p:(fp "p") ]
+  | "rademacher", [ k ] -> [ RC.rademacher k ~shape:(shape ()) ]
+  | "categorical", [ k; logits ] ->
+      [ RC.categorical k ~logits ~axis:(ip "axis") ]
+  | "gamma", [ k ] -> [ RC.gamma k ~shape:(shape ()) ~a:(fp "a") ]
+  | "loggamma", [ k ] -> [ RC.loggamma k ~shape:(shape ()) ~a:(fp "a") ]
+  | "beta", [ k ] -> [ RC.beta k ~shape:(shape ()) ~a:(fp "a") ~b:(fp "b") ]
+  | "chisquare", [ k ] -> [ RC.chisquare k ~shape:(shape ()) ~df:(fp "df") ]
+  | "t", [ k ] -> [ RC.t k ~shape:(shape ()) ~df:(fp "df") ]
+  | "f", [ k ] ->
+      [ RC.f k ~shape:(shape ()) ~dfnum:(fp "dfnum") ~dfden:(fp "dfden") ]
+  | "generalized_normal", [ k ] ->
+      [ RC.generalized_normal k ~shape:(shape ()) ~p:(fp "p") ]
+  | "dirichlet", [ k; alpha ] -> [ RC.dirichlet k ~alpha ~shape:[||] ]
+  | "poisson", [ k ] -> [ RC.poisson k ~shape:(shape ()) ~lam:(fp "lam") ]
+  | "binomial", [ k ] ->
+      [ RC.binomial k ~shape:(shape ()) ~count:(fp "n") ~prob:(fp "p") ]
+  | "multinomial", [ k; p ] -> [ RC.multinomial k ~p ~n_trials:(fp "n") ]
   | _ -> failwith ("random_core golden: unknown op " ^ op)
 
 let random_core_suite_for set_name =

@@ -3146,6 +3146,180 @@ def rc_choice(params):
     )
 
 
+def rc_exponential(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.exponential(rc_wrap(raw), shape, dtype=jnp.float32)
+
+
+def rc_cauchy(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.cauchy(rc_wrap(raw), shape, dtype=jnp.float32)
+
+
+def rc_laplace(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.laplace(rc_wrap(raw), shape, dtype=jnp.float32)
+
+
+def rc_logistic(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.logistic(rc_wrap(raw), shape, dtype=jnp.float32)
+
+
+def rc_gumbel(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.gumbel(rc_wrap(raw), shape, dtype=jnp.float32)
+
+
+def rc_pareto(params):
+    shape = tuple(params["shape"])
+    b = float(params["b"])
+    return lambda raw: jax.random.pareto(rc_wrap(raw), b, shape, dtype=jnp.float32)
+
+
+def rc_rayleigh(params):
+    shape = tuple(params["shape"])
+    scale = float(params["scale"])
+    return lambda raw: jax.random.rayleigh(
+        rc_wrap(raw), scale, shape, dtype=jnp.float32
+    )
+
+
+def rc_weibull_min(params):
+    shape = tuple(params["shape"])
+    scale = float(params["scale"])
+    concentration = float(params["concentration"])
+    return lambda raw: jax.random.weibull_min(
+        rc_wrap(raw), scale, concentration, shape, dtype=jnp.float32
+    )
+
+
+def rc_lognormal(params):
+    shape = tuple(params["shape"])
+    sigma = float(params["sigma"])
+    return lambda raw: jax.random.lognormal(
+        rc_wrap(raw), sigma, shape, dtype=jnp.float32
+    )
+
+
+def rc_triangular(params):
+    shape = tuple(params["shape"])
+    left = float(params["left"])
+    mode = float(params["mode"])
+    right = float(params["right"])
+    return lambda raw: jax.random.triangular(
+        rc_wrap(raw), left, mode, right, shape, dtype=jnp.float32
+    )
+
+
+def rc_wald(params):
+    shape = tuple(params["shape"])
+    mean = float(params["mean"])
+    return lambda raw: jax.random.wald(rc_wrap(raw), mean, shape, dtype=jnp.float32)
+
+
+def rc_geometric(params):
+    shape = tuple(params["shape"])
+    p = np.float32(params["p"])
+    return lambda raw: jax.random.geometric(rc_wrap(raw), p, shape)
+
+
+def rc_bernoulli(params):
+    shape = tuple(params["shape"])
+    p = np.float32(params["p"])
+    return lambda raw: jax.random.bernoulli(rc_wrap(raw), p, shape)
+
+
+def rc_rademacher(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.rademacher(rc_wrap(raw), shape)
+
+
+def rc_categorical(params):
+    axis = int(params["axis"])
+    return lambda raw, logits: jax.random.categorical(
+        rc_wrap(raw), logits, axis=axis
+    )
+
+
+def rc_gamma(params):
+    shape = tuple(params["shape"])
+    a = float(params["a"])
+    return lambda raw: jax.random.gamma(rc_wrap(raw), a, shape, dtype=jnp.float32)
+
+
+def rc_loggamma(params):
+    shape = tuple(params["shape"])
+    a = float(params["a"])
+    return lambda raw: jax.random.loggamma(rc_wrap(raw), a, shape, dtype=jnp.float32)
+
+
+def rc_beta(params):
+    shape = tuple(params["shape"])
+    a = float(params["a"])
+    b = float(params["b"])
+    return lambda raw: jax.random.beta(rc_wrap(raw), a, b, shape, dtype=jnp.float32)
+
+
+def rc_chisquare(params):
+    shape = tuple(params["shape"])
+    df = float(params["df"])
+    return lambda raw: jax.random.chisquare(
+        rc_wrap(raw), df, shape, dtype=jnp.float32
+    )
+
+
+def rc_t(params):
+    shape = tuple(params["shape"])
+    df = float(params["df"])
+    return lambda raw: jax.random.t(rc_wrap(raw), df, shape, dtype=jnp.float32)
+
+
+def rc_f(params):
+    shape = tuple(params["shape"])
+    dfnum = float(params["dfnum"])
+    dfden = float(params["dfden"])
+    return lambda raw: jax.random.f(
+        rc_wrap(raw), dfnum, dfden, shape, dtype=jnp.float32
+    )
+
+
+def rc_generalized_normal(params):
+    shape = tuple(params["shape"])
+    p = float(params["p"])
+    return lambda raw: jax.random.generalized_normal(
+        rc_wrap(raw), p, shape, dtype=jnp.float32
+    )
+
+
+def rc_dirichlet(params):
+    return lambda raw, alpha: jax.random.dirichlet(
+        rc_wrap(raw), alpha, dtype=jnp.float32
+    )
+
+
+def rc_poisson(params):
+    shape = tuple(params["shape"])
+    lam = float(params["lam"])
+    return lambda raw: jax.random.poisson(rc_wrap(raw), lam, shape)
+
+
+def rc_binomial(params):
+    shape = tuple(params["shape"])
+    n = np.float32(params["n"])
+    p = np.float32(params["p"])
+    return lambda raw: jax.random.binomial(
+        rc_wrap(raw), n, p, shape, dtype=jnp.float32
+    )
+
+
+def rc_multinomial(params):
+    n = float(params["n"])
+    return lambda raw, p: jax.random.multinomial(
+        rc_wrap(raw), n, p, dtype=jnp.float32
+    )
+
+
 RANDOM_CORE_BUILDERS = {
     "key": rc_key,
     "key_data": rc_key_data,
@@ -3160,6 +3334,32 @@ RANDOM_CORE_BUILDERS = {
     "truncated_normal": rc_truncated_normal,
     "permutation": rc_permutation,
     "choice": rc_choice,
+    "exponential": rc_exponential,
+    "cauchy": rc_cauchy,
+    "laplace": rc_laplace,
+    "logistic": rc_logistic,
+    "gumbel": rc_gumbel,
+    "pareto": rc_pareto,
+    "rayleigh": rc_rayleigh,
+    "weibull_min": rc_weibull_min,
+    "lognormal": rc_lognormal,
+    "triangular": rc_triangular,
+    "wald": rc_wald,
+    "geometric": rc_geometric,
+    "bernoulli": rc_bernoulli,
+    "rademacher": rc_rademacher,
+    "categorical": rc_categorical,
+    "gamma": rc_gamma,
+    "loggamma": rc_loggamma,
+    "beta": rc_beta,
+    "chisquare": rc_chisquare,
+    "t": rc_t,
+    "f": rc_f,
+    "generalized_normal": rc_generalized_normal,
+    "dirichlet": rc_dirichlet,
+    "poisson": rc_poisson,
+    "binomial": rc_binomial,
+    "multinomial": rc_multinomial,
 }
 
 
@@ -3263,6 +3463,8 @@ def gen_set(module, cases, x64, outdir):
         if not x64 and any(
             (not a["weak"]) and ec.is_wide64(a["dtype"]) for a in c["args"]
         ):
+            continue
+        if x64 and c.get("x64_off_only"):
             continue
         case_id = c["case_id"]
         seed = zlib.adler32(case_id.encode("utf-8"))

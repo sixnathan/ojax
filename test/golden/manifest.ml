@@ -1298,6 +1298,47 @@ let creation_suite_for set_name =
   in
   ("creation:" ^ set_name, coverage :: case_tests)
 
+module TC = Ojax.Numpy.Tensor_contractions
+module EI = Ojax.Numpy.Einsum
+
+let td_axes_of params =
+  match U.member "axes" params with
+  | `List (a :: b :: _) -> TC.Ax_pair (ia a, ia b)
+  | j -> TC.Ax_int (U.to_int j)
+
+let contractions_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let one v = [ v ] in
+  match (op, operands) with
+  | "dot", [ a; b ] -> one (TC.dot a b)
+  | "matmul", [ a; b ] -> one (TC.matmul a b)
+  | "matvec", [ a; b ] -> one (TC.matvec a b)
+  | "vecmat", [ a; b ] -> one (TC.vecmat a b)
+  | "vdot", [ a; b ] -> one (TC.vdot a b)
+  | "vecdot", [ a; b ] -> one (TC.vecdot ?axis:(opt_i params "axis") a b)
+  | "inner", [ a; b ] -> one (TC.inner a b)
+  | "outer", [ a; b ] -> one (TC.outer a b)
+  | "tensordot", [ a; b ] -> one (TC.tensordot ~axes:(td_axes_of params) a b)
+  | "einsum", ops -> one (EI.einsum (U.to_string (member "subscripts")) ops)
+  | _ -> failwith ("contractions golden: unknown op " ^ op)
+
+let contractions_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "contractions") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:contractions_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("contractions:" ^ set_name, coverage :: case_tests)
+
 let reductions_suite_for set_name =
   let set_dir =
     Filename.concat (Filename.concat goldens_root "reductions") set_name
@@ -2548,5 +2589,7 @@ let () =
       array_methods_suite_for "x64_on";
       creation_suite_for "x64_off";
       creation_suite_for "x64_on";
+      contractions_suite_for "x64_off";
+      contractions_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

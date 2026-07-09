@@ -1504,6 +1504,63 @@ NUMPY_BUILDERS["divmod"] = np_divmod
 NUMPY_BUILDERS["modf"] = np_modf
 
 
+def np_dot(params):
+    return lambda a, b: jnp.dot(a, b)
+
+
+def np_matmul(params):
+    return lambda a, b: jnp.matmul(a, b)
+
+
+def np_matvec(params):
+    return lambda a, b: jnp.matvec(a, b)
+
+
+def np_vecmat(params):
+    return lambda a, b: jnp.vecmat(a, b)
+
+
+def np_vdot(params):
+    return lambda a, b: jnp.vdot(a, b)
+
+
+def np_vecdot(params):
+    axis = int(params.get("axis", -1))
+    return lambda a, b: jnp.vecdot(a, b, axis=axis)
+
+
+def np_inner(params):
+    return lambda a, b: jnp.inner(a, b)
+
+
+def np_outer(params):
+    return lambda a, b: jnp.outer(a, b)
+
+
+def np_tensordot(params):
+    axes = params["axes"]
+    if isinstance(axes, list):
+        axes = (tuple(axes[0]), tuple(axes[1]))
+    return lambda a, b: jnp.tensordot(a, b, axes=axes)
+
+
+def np_einsum(params):
+    subscripts = params["subscripts"]
+    return lambda *xs: jnp.einsum(subscripts, *xs)
+
+
+NUMPY_BUILDERS["dot"] = np_dot
+NUMPY_BUILDERS["matmul"] = np_matmul
+NUMPY_BUILDERS["matvec"] = np_matvec
+NUMPY_BUILDERS["vecmat"] = np_vecmat
+NUMPY_BUILDERS["vdot"] = np_vdot
+NUMPY_BUILDERS["vecdot"] = np_vecdot
+NUMPY_BUILDERS["inner"] = np_inner
+NUMPY_BUILDERS["outer"] = np_outer
+NUMPY_BUILDERS["tensordot"] = np_tensordot
+NUMPY_BUILDERS["einsum"] = np_einsum
+
+
 def _red_axis(params):
     ax = params.get("axis")
     return None if ax is None else tuple(ax)

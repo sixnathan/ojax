@@ -557,6 +557,7 @@ let lax_check_case ~set_dir ~x64 c () =
 module NL = Ojax.Numpy.Lax_numpy
 module UF = Ojax.Numpy.Ufuncs
 module RED = Ojax.Numpy.Reductions
+module IDX = Ojax.Numpy.Indexing
 
 let opt_ia params name =
   match U.member name params with `Null -> None | j -> Some (ia j)
@@ -976,8 +977,7 @@ let q_value params =
   match U.member "q" params with
   | `List _ as j ->
       let vs = List.map U.to_number (U.to_list j) in
-      T.Concrete
-        (Nd.of_floats D.F32 [| List.length vs |] (Array.of_list vs))
+      T.Concrete (Nd.of_floats D.F32 [| List.length vs |] (Array.of_list vs))
   | j -> T.Concrete (Nd.of_floats D.F32 [||] [| U.to_number j |])
 
 let reductions_fn op params operands : T.value list =
@@ -994,7 +994,9 @@ let reductions_fn op params operands : T.value list =
   let ii =
     match opt_b params "include_initial" with Some b -> b | None -> false
   in
-  let meth = match opt_s params "method" with Some m -> m | None -> "linear" in
+  let meth =
+    match opt_s params "method" with Some m -> m | None -> "linear"
+  in
   let dopt params = match opt_i params "ddof" with Some d -> d | None -> 0 in
   match (op, operands) with
   | "cumprod", [ x ] -> one (RED.cumprod ?axis:axi x)
@@ -1010,8 +1012,7 @@ let reductions_fn op params operands : T.value list =
       one (RED.quantile ?axis:axi ~keepdims:kd ~method_:meth x (q_value params))
   | "nanquantile", [ x ] ->
       one
-        (RED.nanquantile ?axis:axi ~keepdims:kd ~method_:meth x
-           (q_value params))
+        (RED.nanquantile ?axis:axi ~keepdims:kd ~method_:meth x (q_value params))
   | "percentile", [ x ] ->
       one
         (RED.percentile ?axis:axi ~keepdims:kd ~method_:meth x (q_value params))
@@ -1045,6 +1046,34 @@ let reductions_fn op params operands : T.value list =
   | "average", [ x ] -> one (RED.average ?axis:ax ~keepdims:kd x)
   | "average", [ x; w ] -> one (RED.average ?axis:ax ~keepdims:kd ~weights:w x)
   | _ -> failwith ("reductions golden: unknown op " ^ op)
+
+let indexing_fn op params operands : T.value list =
+  match (op, operands) with
+  | "take", [ a; ind ] ->
+      [ IDX.take ?axis:(opt_i params "axis") ?mode:(opt_s params "mode") a ind ]
+  | "take_along_axis", [ a; ind ] ->
+      [ IDX.take_along_axis ?axis:(opt_i params "axis") a ind ]
+  | "put", [ a; ind; v ] -> [ IDX.put ?mode:(opt_s params "mode") a ind v ]
+  | "put_along_axis", [ arr; ind; v ] ->
+      [ IDX.put_along_axis ?axis:(opt_i params "axis") arr ind v ]
+  | _ -> failwith ("indexing golden: unknown op " ^ op)
+
+let indexing_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "indexing") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:indexing_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("indexing:" ^ set_name, coverage :: case_tests)
 
 let reductions_suite_for set_name =
   let set_dir =
@@ -2290,5 +2319,7 @@ let () =
       ufuncs_suite_for "x64_on";
       reductions_suite_for "x64_off";
       reductions_suite_for "x64_on";
+      indexing_suite_for "x64_off";
+      indexing_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

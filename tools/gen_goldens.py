@@ -1153,7 +1153,34 @@ def np_corrcoef(params):
     )
 
 
+def np_take(params):
+    axis = params.get("axis")
+    mode = params.get("mode")
+    return lambda a, ind: jnp.take(a, ind, axis=axis, mode=mode)
+
+
+def np_take_along_axis(params):
+    axis = params.get("axis", -1)
+    return lambda a, ind: jnp.take_along_axis(a, ind, axis=axis)
+
+
+def np_put(params):
+    mode = params.get("mode")
+    return lambda a, ind, v: jnp.put(a, ind, v, mode=mode, inplace=False)
+
+
+def np_put_along_axis(params):
+    axis = params.get("axis")
+    return lambda arr, ind, v: jnp.put_along_axis(
+        arr, ind, v, axis, inplace=False
+    )
+
+
 NUMPY_BUILDERS = {
+    "take": np_take,
+    "take_along_axis": np_take_along_axis,
+    "put": np_put,
+    "put_along_axis": np_put_along_axis,
     "argmin": np_argmin,
     "nanargmax": np_nanargmax,
     "nanargmin": np_nanargmin,

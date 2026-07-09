@@ -204,6 +204,10 @@ and primitive =
   | Cummax of { axis : int; reverse : bool }
   | Cummin of { axis : int; reverse : bool }
   | Cumlogsumexp of { axis : int; reverse : bool }
+  | Custom_linear_solve of {
+      solve : closed_jaxpr;
+      transpose_solve : closed_jaxpr option;
+    }
 
 and dot_dims = {
   lhs_contract : int array;

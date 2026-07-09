@@ -492,7 +492,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
         "ad: scatter_min/scatter_max jvp needs the extremal averaging rule (M2 \
          gap)"
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ | Scan _
-  | While _ ->
+  | While _ | Custom_linear_solve _ ->
       failwith "ad: multi-output jvp handled by jvp_process_primitive"
   | Reduce_precision p -> (
       match (primals, tangents) with
@@ -833,6 +833,10 @@ let jvp_process_primitive trace prim args =
             (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
             primal_outs tangent_outs
       | _ -> arity ())
+  | Custom_linear_solve _ ->
+      let x = Core.bind prim primals in
+      let x_dot = Core.bind prim tangents in
+      List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) x x_dot
   | _ ->
       let po, to_ = jvp_rule prim primals tangents in
       [ Tracer (new_jvp_tracer trace po to_) ]
@@ -1250,6 +1254,19 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           in
           None :: rest_cts
       | _ -> arity ())
+  | Custom_linear_solve { solve; transpose_solve } -> (
+      match transpose_solve with
+      | None ->
+          failwith
+            "ad: transpose_solve required for backwards mode automatic \
+             differentiation of custom_linear_solve"
+      | Some ts ->
+          let ct_b =
+            Core.bind
+              (Custom_linear_solve { solve = ts; transpose_solve = Some solve })
+              cts
+          in
+          List.map (fun c -> Some c) ct_b)
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not

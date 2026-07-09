@@ -634,7 +634,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
   | Scatter_max _ ->
       scatter_batch axis_size prim vals bdims
-  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ | Scan _ ->
+  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ | Scan _
+  | Custom_linear_solve _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
@@ -806,6 +807,10 @@ let batch_process_primitive (trace : trace) (prim : primitive)
         scan_batch axis_size ~length ~reverse ~num_carry jaxpr vals bdims
       in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
+  | Custom_linear_solve _ ->
+      failwith
+        "batching: vmap of custom_linear_solve needs the batched fixpoint (M2 \
+         gap)"
   | _ ->
       let out, out_bdim = vmap_rule axis_size prim vals bdims in
       [ Tracer (new_batch_tracer trace out out_bdim) ]

@@ -1574,6 +1574,147 @@ let loops_suite_for set_name =
   in
   ("loops:" ^ set_name, coverage :: case_tests)
 
+type solves_case = {
+  sv_id : string;
+  sv_mode : string;
+  sv_symmetric : bool;
+  sv_has_ts : bool;
+  sv_args : arg list;
+  sv_tans : arg list;
+  sv_outs : out list;
+  sv_compare : string;
+  sv_atol : float;
+  sv_rtol : float;
+}
+
+let parse_solves_case j =
+  let tol = U.member "tol" j in
+  {
+    sv_id = U.member "case_id" j |> U.to_string;
+    sv_mode = U.member "mode" j |> U.to_string;
+    sv_symmetric = U.member "symmetric" j |> U.to_bool;
+    sv_has_ts = U.member "has_ts" j |> U.to_bool;
+    sv_args = U.member "args" j |> U.to_list |> List.map parse_arg;
+    sv_tans = U.member "tangents" j |> U.to_list |> List.map parse_arg;
+    sv_outs = U.member "outputs" j |> U.to_list |> List.map parse_out;
+    sv_compare = U.member "compare" j |> U.to_string;
+    sv_atol = U.member "atol" tol |> U.to_number;
+    sv_rtol = U.member "rtol" tol |> U.to_number;
+  }
+
+let load_solves_manifest path =
+  let j = Yojson.Safe.from_file path in
+  ( U.member "x64" j |> U.to_bool,
+    U.member "cases" j |> U.to_list |> List.map parse_solves_case )
+
+let solves_run c primals tangents =
+  match primals with
+  | [ d; b ] -> (
+      let matvec xs =
+        match xs with [ x ] -> [ jb1 T.Mul [ x; d ] ] | _ -> assert false
+      in
+      let solve _mv bs =
+        match bs with [ bb ] -> [ jb1 T.Div [ bb; d ] ] | _ -> assert false
+      in
+      let transpose_solve =
+        if c.sv_has_ts then
+          Some
+            (fun _mv bs ->
+              match bs with
+              | [ bb ] -> [ jb1 T.Div [ bb; d ] ]
+              | _ -> assert false)
+        else None
+      in
+      let wrapped bs =
+        Ojax.Lax.custom_linear_solve ~symmetric:c.sv_symmetric ?transpose_solve
+          matvec bs solve
+      in
+      match c.sv_mode with
+      | "eval" -> wrapped [ b ]
+      | "jvp" ->
+          let po, to_ = Ad.jvp wrapped [ b ] tangents in
+          po @ to_
+      | "grad" ->
+          Ad.grad
+            (fun bs -> jb1 (T.Reduce_sum [| 0 |]) [ List.hd (wrapped bs) ])
+            [ b ]
+      | m -> failwith ("solves: unknown mode " ^ m))
+  | _ -> Alcotest.failf "%s: solves expects [d;b]" c.sv_id
+
+let solves_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.sv_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.sv_id ^ ".npz"))
+  in
+  let read_operand (a : arg) =
+    T.Concrete (nd_of_npz (find_member inputs a.name))
+  in
+  let primals = List.map read_operand c.sv_args in
+  let tangents = List.map read_operand c.sv_tans in
+  let results = solves_run c primals tangents in
+  let paired =
+    try List.combine c.sv_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.sv_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.sv_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.sv_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let floats = read_nd nd in
+      let data =
+        if c.sv_compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      let actual =
+        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+      in
+      Compare.assert_tol o.odtype c.sv_atol c.sv_rtol;
+      Compare.check
+        ~name:(c.sv_id ^ ":" ^ o.oname)
+        ~compare:c.sv_compare ~atol:c.sv_atol ~rtol:c.sv_rtol ~expected:golden
+        ~actual)
+    paired
+
+let solves_check_coverage ~set_dir cases () =
+  let expected =
+    List.map (fun c -> c.sv_id) cases |> List.sort String.compare
+  in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then Alcotest.failf "%s: solves coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let solves_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "solves") set_name
+  in
+  let x64, cases =
+    load_solves_manifest (Filename.concat set_dir "manifest.json")
+  in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.sv_id `Quick (solves_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (solves_check_coverage ~set_dir cases)
+  in
+  ("solves:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -1632,5 +1773,7 @@ let () =
       cond_suite_for "x64_on";
       loops_suite_for "x64_off";
       loops_suite_for "x64_on";
+      solves_suite_for "x64_off";
+      solves_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

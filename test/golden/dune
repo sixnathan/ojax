@@ -10,4 +10,5 @@
   (source_tree %{project_root}/goldens/batching)
   (source_tree %{project_root}/goldens/api)
   (source_tree %{project_root}/goldens/conditionals)
-  (source_tree %{project_root}/goldens/loops)))
+  (source_tree %{project_root}/goldens/loops)
+  (source_tree %{project_root}/goldens/solves)))

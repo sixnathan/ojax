@@ -231,6 +231,7 @@ let prim_name = function
   | Cummax _ -> "cummax"
   | Cummin _ -> "cummin"
   | Cumlogsumexp _ -> "cumlogsumexp"
+  | Custom_linear_solve _ -> "custom_linear_solve"
 
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"

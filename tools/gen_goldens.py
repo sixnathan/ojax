@@ -1548,6 +1548,122 @@ def generate_loops(module):
     return n_off, n_on
 
 
+def _solves_call(d, symmetric, has_ts):
+    matvec = lambda x: jnp.asarray(d) * x
+    solve = lambda mv, bb: bb / jnp.asarray(d)
+    ts = (lambda mv, bb: bb / jnp.asarray(d)) if has_ts else None
+    return lambda bb: jax.lax.custom_linear_solve(
+        matvec, bb, solve, ts, symmetric=symmetric
+    )
+
+
+def run_solves_case(c, seed):
+    mode = c["mode"]
+    dspec = c["const"]
+    bspec = c["operand"]
+    d = draw(dspec["rng"], seed, dspec["shape"], dspec["dtype"])
+    b = draw(bspec["rng"], seed + 1, bspec["shape"], bspec["dtype"])
+    call = _solves_call(d, c["symmetric"], c["has_ts"])
+    if mode == "eval":
+        out = jax.jit(call)(b)
+        return [d, b], None, [np.asarray(out)]
+    if mode == "jvp":
+        bdot = draw(bspec["rng"], seed + 1000, bspec["shape"], bspec["dtype"])
+        po, to = jax.jvp(call, (b,), (bdot,))
+        return [d, b], [bdot], [np.asarray(po), np.asarray(to)]
+    if mode == "grad":
+        g = jax.grad(lambda bb: jnp.sum(call(bb)))(b)
+        return [d, b], None, [np.asarray(g)]
+    raise SystemExit("unknown solves mode " + mode)
+
+
+def gen_solves_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        avals = [c["const"], c["operand"]]
+        if not x64 and any(ec.is_wide64(a["dtype"]) for a in avals):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        primals, tangents, outputs = run_solves_case(c, seed)
+        in_arrays = {"arg" + str(i): np.asarray(v) for i, v in enumerate(primals)}
+        tan_meta = []
+        if tangents is not None:
+            for i, v in enumerate(tangents):
+                in_arrays["tan" + str(i)] = np.asarray(v)
+                tv = np.asarray(v)
+                tan_meta.append(
+                    {
+                        "name": "tan" + str(i),
+                        "shape": [int(d) for d in tv.shape],
+                        "dtype": tv.dtype.name,
+                    }
+                )
+        out_arrays = {"out" + str(i): np.asarray(o) for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **in_arrays)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        rngs = [c["const"]["rng"], c["operand"]["rng"]]
+        args_meta = [
+            {
+                "name": "arg" + str(i),
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+                "rng": rngs[i],
+            }
+            for i, v in enumerate(primals)
+        ]
+        outs_meta = [
+            {
+                "name": "out" + str(i),
+                "shape": [int(d) for d in np.asarray(o).shape],
+                "dtype": np.asarray(o).dtype.name,
+            }
+            for i, o in enumerate(outputs)
+        ]
+        compare, tol = resolve_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "fn": c["fn"],
+            "mode": c["mode"],
+            "symmetric": c["symmetric"],
+            "has_ts": c["has_ts"],
+            "args": args_meta,
+            "tangents": tan_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_solves(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_solves_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_solves_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def _add_all(*xs):
     return functools.reduce(jnp.add, xs)
 
@@ -1727,6 +1843,8 @@ def main():
         n_off, n_on = generate_conditionals(sys.argv[1])
     elif sys.argv[1] == "loops":
         n_off, n_on = generate_loops(sys.argv[1])
+    elif sys.argv[1] == "solves":
+        n_off, n_on = generate_solves(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

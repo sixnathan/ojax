@@ -31,3 +31,11 @@ val cumprod : ?axis:int -> ?reverse:bool -> value -> value
 val cummax : ?axis:int -> ?reverse:bool -> value -> value
 val cummin : ?axis:int -> ?reverse:bool -> value -> value
 val cumlogsumexp : ?axis:int -> ?reverse:bool -> value -> value
+
+val custom_linear_solve :
+  ?symmetric:bool ->
+  ?transpose_solve:((value list -> value list) -> value list -> value list) ->
+  (value list -> value list) ->
+  value list ->
+  ((value list -> value list) -> value list -> value list) ->
+  value list

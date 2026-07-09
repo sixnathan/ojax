@@ -1158,6 +1158,12 @@ let impl prim inputs =
         (Control_flow.Loops.cumred_impl ~axis ~reverse
            ~combine:Control_flow.Loops.logaddexp)
         inputs
+  | Custom_linear_solve { solve; _ } ->
+      let inputs_v = List.map (fun nd -> Concrete nd) inputs in
+      Control_flow.Solves.solve_impl solve inputs_v
+      |> List.map (function
+        | Concrete nd -> nd
+        | Tracer _ -> failwith "lax: custom_linear_solve produced a tracer")
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1430,6 +1436,8 @@ let abstract_eval prim avals =
             failwith "lax: cumulative axis out of bounds";
           a)
         avals
+  | Custom_linear_solve { solve; _ } ->
+      Control_flow.Solves.solve_out_avals solve
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =
@@ -1446,3 +1454,4 @@ let cumprod = Control_flow.Loops.cumprod
 let cummax = Control_flow.Loops.cummax
 let cummin = Control_flow.Loops.cummin
 let cumlogsumexp = Control_flow.Loops.cumlogsumexp
+let custom_linear_solve = Control_flow.Solves.custom_linear_solve

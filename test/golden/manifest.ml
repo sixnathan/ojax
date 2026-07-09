@@ -690,6 +690,48 @@ let numpy_fn op params operands : T.value list =
       in
       NL.meshgrid ?indexing ?sparse:(opt_b params "sparse") ops
   | "ix_", ops -> NL.ix_ ops
+  | "append", [ a; b ] -> one (NL.append ?axis:(opt_i params "axis") a b)
+  | "argmax", [ x ] ->
+      one
+        (NL.argmax ?axis:(opt_i params "axis")
+           ~keepdims:(U.to_bool (member "keepdims"))
+           x)
+  | "cross", [ a; b ] ->
+      one
+        (NL.cross ?axisa:(opt_i params "axisa") ?axisb:(opt_i params "axisb")
+           ?axisc:(opt_i params "axisc") ?axis:(opt_i params "axis") a b)
+  | "diag", [ x ] -> one (NL.diag ?k:(opt_i params "k") x)
+  | "diagflat", [ x ] -> one (NL.diagflat ?k:(opt_i params "k") x)
+  | "diagonal", [ x ] ->
+      one
+        (NL.diagonal ?offset:(opt_i params "offset")
+           ?axis1:(opt_i params "axis1") ?axis2:(opt_i params "axis2") x)
+  | "diag_indices", [] ->
+      NL.diag_indices ?ndim:(opt_i params "ndim") (U.to_int (member "n"))
+  | "diag_indices_from", [ x ] -> NL.diag_indices_from x
+  | "kron", [ a; b ] -> one (NL.kron a b)
+  | "repeat", [ x ] ->
+      one
+        (NL.repeat ?axis:(opt_i params "axis") x (U.to_int (member "repeats")))
+  | "trace", [ x ] ->
+      one
+        (NL.trace ?offset:(opt_i params "offset") ?axis1:(opt_i params "axis1")
+           ?axis2:(opt_i params "axis2") x)
+  | "trapezoid", [ y ] ->
+      one (NL.trapezoid ?dx:(opt_f params "dx") ?axis:(opt_i params "axis") y)
+  | "trapezoid", [ y; x ] -> one (NL.trapezoid ~x ?axis:(opt_i params "axis") y)
+  | "tri", [] ->
+      one
+        (NL.tri ?m:(opt_i params "m") ?k:(opt_i params "k")
+           ~dtype:(dtype_of_string (U.to_string (member "dtype")))
+           (U.to_int (member "n")))
+  | "tril", [ x ] -> one (NL.tril ?k:(opt_i params "k") x)
+  | "triu", [ x ] -> one (NL.triu ?k:(opt_i params "k") x)
+  | "vander", [ x ] ->
+      one
+        (NL.vander ?n:(opt_i params "N")
+           ?increasing:(opt_b params "increasing")
+           x)
   | _ -> failwith ("numpy golden: unknown op " ^ op)
 
 let numpy_check_case ~set_dir ~x64 c () =
@@ -707,7 +749,10 @@ let numpy_check_case ~set_dir ~x64 c () =
       (fun a -> T.Concrete (nd_of_npz (find_member inputs a.name)))
       c.args
   in
-  let results = numpy_fn c.op c.params operands in
+  let results =
+    Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+        numpy_fn c.op c.params operands)
+  in
   let paired =
     try List.combine c.outs results
     with Invalid_argument _ ->

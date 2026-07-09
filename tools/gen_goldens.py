@@ -981,6 +981,102 @@ def np_ix_(params):
     return lambda *xs: jnp.ix_(*xs)
 
 
+def np_append(params):
+    axis = params.get("axis")
+    return lambda a, b: jnp.append(a, b, axis=axis)
+
+
+def np_argmax(params):
+    axis = params.get("axis")
+    keepdims = bool(params.get("keepdims", False))
+    return lambda x: jnp.argmax(x, axis=axis, keepdims=keepdims)
+
+
+def np_cross(params):
+    axisa = int(params.get("axisa", -1))
+    axisb = int(params.get("axisb", -1))
+    axisc = int(params.get("axisc", -1))
+    axis = params.get("axis")
+    return lambda a, b: jnp.cross(a, b, axisa=axisa, axisb=axisb, axisc=axisc, axis=axis)
+
+
+def np_diag(params):
+    k = int(params.get("k", 0))
+    return lambda x: jnp.diag(x, k=k)
+
+
+def np_diagflat(params):
+    k = int(params.get("k", 0))
+    return lambda x: jnp.diagflat(x, k=k)
+
+
+def np_diagonal(params):
+    offset = int(params.get("offset", 0))
+    axis1 = int(params.get("axis1", 0))
+    axis2 = int(params.get("axis2", 1))
+    return lambda x: jnp.diagonal(x, offset=offset, axis1=axis1, axis2=axis2)
+
+
+def np_diag_indices(params):
+    n = int(params["n"])
+    ndim = int(params.get("ndim", 2))
+    return lambda: jnp.diag_indices(n, ndim=ndim)
+
+
+def np_diag_indices_from(params):
+    return lambda x: jnp.diag_indices_from(x)
+
+
+def np_kron(params):
+    return lambda a, b: jnp.kron(a, b)
+
+
+def np_repeat(params):
+    repeats = int(params["repeats"])
+    axis = params.get("axis")
+    return lambda x: jnp.repeat(x, repeats, axis=axis)
+
+
+def np_trace(params):
+    offset = int(params.get("offset", 0))
+    axis1 = int(params.get("axis1", 0))
+    axis2 = int(params.get("axis2", 1))
+    return lambda x: jnp.trace(x, offset=offset, axis1=axis1, axis2=axis2)
+
+
+def np_trapezoid(params):
+    dx = float(params.get("dx", 1.0))
+    axis = int(params.get("axis", -1))
+    has_x = bool(params.get("has_x", False))
+    if has_x:
+        return lambda y, x: jnp.trapezoid(y, x=x, axis=axis)
+    return lambda y: jnp.trapezoid(y, dx=dx, axis=axis)
+
+
+def np_tri(params):
+    n = int(params["n"])
+    m = params.get("m")
+    k = int(params.get("k", 0))
+    dt = np.dtype(params["dtype"])
+    return lambda: jnp.tri(n, m, k=k, dtype=dt)
+
+
+def np_tril(params):
+    k = int(params.get("k", 0))
+    return lambda x: jnp.tril(x, k=k)
+
+
+def np_triu(params):
+    k = int(params.get("k", 0))
+    return lambda x: jnp.triu(x, k=k)
+
+
+def np_vander(params):
+    n = params.get("N")
+    increasing = bool(params.get("increasing", False))
+    return lambda x: jnp.vander(x, N=n, increasing=increasing)
+
+
 NUMPY_BUILDERS = {
     "astype": np_astype,
     "copy": np_copy,
@@ -1047,6 +1143,22 @@ NUMPY_BUILDERS = {
     "vsplit": np_vsplit,
     "hsplit": np_hsplit,
     "dsplit": np_dsplit,
+    "append": np_append,
+    "argmax": np_argmax,
+    "cross": np_cross,
+    "diag": np_diag,
+    "diagflat": np_diagflat,
+    "diagonal": np_diagonal,
+    "diag_indices": np_diag_indices,
+    "diag_indices_from": np_diag_indices_from,
+    "kron": np_kron,
+    "repeat": np_repeat,
+    "trace": np_trace,
+    "trapezoid": np_trapezoid,
+    "tri": np_tri,
+    "tril": np_tril,
+    "triu": np_triu,
+    "vander": np_vander,
 }
 
 

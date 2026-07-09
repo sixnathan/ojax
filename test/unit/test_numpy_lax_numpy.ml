@@ -297,6 +297,54 @@ let test_meshgrid_ix () =
       Alcotest.(check (array int)) "ix_ ay" [| 1; 3 |] (shape_of ay)
   | _ -> Alcotest.fail "ix_ arity"
 
+let test_g4 () =
+  let x1 = i32 [| 3 |] [| 1.; 2.; 3. |] in
+  Alcotest.check farr "diag construct"
+    [| 1.; 0.; 0.; 0.; 2.; 0.; 0.; 0.; 3. |]
+    (read (NL.diag x1));
+  let m = i32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+  Alcotest.check farr "diag extract" [| 1.; 5.; 9. |] (read (NL.diag m));
+  Alcotest.check farr "diagonal offset1" [| 2.; 6. |]
+    (read (NL.diagonal ~offset:1 m));
+  Alcotest.check farr "diagonal offset-1" [| 4.; 8. |]
+    (read (NL.diagonal ~offset:(-1) m));
+  Alcotest.check farr "trace" [| 15. |] (read (NL.trace m));
+  Alcotest.check farr "tril"
+    [| 1.; 0.; 0.; 4.; 5.; 0.; 7.; 8.; 9. |]
+    (read (NL.tril m));
+  Alcotest.check farr "triu"
+    [| 1.; 2.; 3.; 0.; 5.; 6.; 0.; 0.; 9. |]
+    (read (NL.triu m));
+  Alcotest.check farr "tri"
+    [| 1.; 0.; 0.; 1.; 1.; 0.; 1.; 1.; 1. |]
+    (read (NL.tri ~dtype:D.F32 3));
+  let a = i32 [| 2 |] [| 1.; 2. |] and b = i32 [| 2 |] [| 3.; 4. |] in
+  Alcotest.check farr "cross2d" [| -2. |] (read (NL.cross a b));
+  let a3 = i32 [| 3 |] [| 1.; 2.; 3. |] and b3 = i32 [| 3 |] [| 4.; 5.; 6. |] in
+  Alcotest.check farr "cross3d" [| -3.; 6.; -3. |] (read (NL.cross a3 b3));
+  Alcotest.check farr "append flat" [| 1.; 2.; 3.; 4. |] (read (NL.append a b));
+  Alcotest.(check (array int))
+    "kron shape" [| 6; 6 |]
+    (shape_of (NL.kron m (i32 [| 2; 2 |] [| 1.; 1.; 1.; 1. |])));
+  Alcotest.(check (array int))
+    "repeat shape" [| 3; 6 |]
+    (shape_of (NL.repeat ~axis:1 m 2));
+  let v = f32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  Alcotest.check farr "vander inc"
+    [| 1.; 1.; 1.; 1.; 2.; 4.; 1.; 3.; 9.; 1.; 4.; 16. |]
+    (read (NL.vander ~n:3 ~increasing:true v));
+  let y = f32 [| 5 |] [| 1.; 2.; 3.; 2.; 1. |] in
+  Alcotest.check farr "trapezoid" [| 8. |] (read (NL.trapezoid y));
+  Alcotest.(check int) "argmax" 2 (int_of_float (read (NL.argmax x1)).(0));
+  (match NL.diag_indices 3 with
+  | [ i; j ] ->
+      Alcotest.check farr "diag_indices i" [| 0.; 1.; 2. |] (read i);
+      Alcotest.check farr "diag_indices j" [| 0.; 1.; 2. |] (read j)
+  | _ -> Alcotest.fail "diag_indices arity");
+  Alcotest.(check bool)
+    "diag_indices dtype" true
+    (dtype_of (List.hd (NL.diag_indices 3)) = D.I32)
+
 let () =
   Alcotest.run "numpy_lax_numpy"
     [
@@ -325,5 +373,6 @@ let () =
           Alcotest.test_case "creation" `Quick test_creation;
           Alcotest.test_case "i0_equal" `Quick test_i0_equal;
           Alcotest.test_case "meshgrid_ix" `Quick test_meshgrid_ix;
+          Alcotest.test_case "g4" `Quick test_g4;
         ] );
     ]

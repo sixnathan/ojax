@@ -752,3 +752,252 @@ let ix_ xs =
       let sh = Array.init n (fun j -> if j = i then (shape a).(0) else 1) in
       bind1 (T.Broadcast_in_dim { shape = sh; dims = [| i |] }) [ a ])
     xs
+
+let binop prim x y =
+  let x, y, _, _ = promote2 x y in
+  bind1 prim [ x; y ]
+
+let mul2 = binop T.Mul
+let sub2 = binop T.Sub
+let add2 = binop T.Add
+let mul_scalar c v = bind1 T.Mul [ v; full (dtype v) (shape v) c ]
+let squeeze_last v = bind1 (T.Squeeze [| ndim v - 1 |]) [ v ]
+
+let last_index v i =
+  let n = ndim v in
+  squeeze_last (slice_axis v (n - 1) i (i + 1))
+
+let append ?axis arr values =
+  match axis with
+  | None -> concatenate ~axis:0 [ ravel arr; ravel values ]
+  | Some ax -> concatenate ~axis:ax [ arr; values ]
+
+let argmax ?axis ?(keepdims = false) a =
+  let orig_nd = ndim a in
+  let a2, ax, dims =
+    match axis with
+    | None -> (ravel a, 0, Array.init orig_nd Fun.id)
+    | Some x ->
+        let c = canonicalize_axis x orig_nd in
+        (a, c, [| c |])
+  in
+  let r =
+    bind1
+      (T.Argmax { axis = ax; index_dtype = Dtypes.default_int_dtype () })
+      [ a2 ]
+  in
+  if keepdims then expand_dims r dims else r
+
+let cross ?(axisa = -1) ?(axisb = -1) ?(axisc = -1) ?axis a b =
+  let axisa, axisb, axisc =
+    match axis with Some ax -> (ax, ax, ax) | None -> (axisa, axisb, axisc)
+  in
+  let a = moveaxis [| axisa |] [| ndim a - 1 |] a in
+  let b = moveaxis [| axisb |] [| ndim b - 1 |] b in
+  let na = (shape a).(ndim a - 1) and nb = (shape b).(ndim b - 1) in
+  if not ((na = 2 || na = 3) && (nb = 2 || nb = 3)) then
+    invalid_arg "Dimension must be either 2 or 3 for cross product";
+  if na = 2 && nb = 2 then
+    let a0 = last_index a 0 and a1 = last_index a 1 in
+    let b0 = last_index b 0 and b1 = last_index b 1 in
+    sub2 (mul2 a0 b1) (mul2 a1 b0)
+  else begin
+    let a0 = last_index a 0 and a1 = last_index a 1 in
+    let a2 = if na = 3 then last_index a 2 else zeros_like a0 in
+    let b0 = last_index b 0 and b1 = last_index b 1 in
+    let b2 = if nb = 3 then last_index b 2 else zeros_like b0 in
+    let c0 = sub2 (mul2 a1 b2) (mul2 a2 b1) in
+    let c1 = sub2 (mul2 a2 b0) (mul2 a0 b2) in
+    let c2 = sub2 (mul2 a0 b1) (mul2 a1 b0) in
+    let c = stack ~axis:0 [ c0; c1; c2 ] in
+    moveaxis [| 0 |] [| axisc |] c
+  end
+
+let diag_indices ?(ndim = 2) n =
+  let dt = Dtypes.default_int_dtype () in
+  let one = bind1 (T.Iota { dtype = dt; shape = [| n |]; dimension = 0 }) [] in
+  List.init ndim (fun _ -> one)
+
+let diag_indices_from arr =
+  let s = shape arr in
+  let nd = Array.length s in
+  if nd < 2 then invalid_arg "input array must be at least 2-d";
+  Array.iter
+    (fun d ->
+      if d <> s.(0) then
+        invalid_arg "All dimensions of input must be of equal length")
+    s;
+  diag_indices ~ndim:nd s.(0)
+
+let tri ?m ?(k = 0) ~dtype n =
+  let m = Option.value m ~default:n in
+  let i =
+    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 0 }) []
+  in
+  let j =
+    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
+  in
+  let ik =
+    if k = 0 then i
+    else bind1 T.Add [ i; full D.I32 [| n; m |] (float_of_int k) ]
+  in
+  convert (bind1 T.Ge [ ik; j ]) dtype
+
+let tril ?(k = 0) m =
+  let s = shape m in
+  let nd = Array.length s in
+  if nd < 2 then invalid_arg "Argument to jax.numpy.tril must be at least 2D";
+  let mask = tri ~m:s.(nd - 1) ~k ~dtype:D.Bool s.(nd - 2) in
+  where_ mask m (zeros_like m)
+
+let triu ?(k = 0) m =
+  let s = shape m in
+  let nd = Array.length s in
+  if nd < 2 then invalid_arg "Argument to jax.numpy.triu must be at least 2D";
+  let mask = tri ~m:s.(nd - 1) ~k:(k - 1) ~dtype:D.Bool s.(nd - 2) in
+  where_ mask (zeros_like m) m
+
+let reduce_over v axis =
+  if is_bool (dtype v) then bind1 (T.Reduce_or [| axis |]) [ v ]
+  else bind1 (T.Reduce_sum [| axis |]) [ v ]
+
+let trace ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) ?dtype a =
+  let s = shape a in
+  let nd = Array.length s in
+  let a1 = canonicalize_axis axis1 nd and a2 = canonicalize_axis axis2 nd in
+  if a1 = a2 then invalid_arg "axis1 and axis2 can not be same";
+  let na = s.(a1) and ma = s.(a2) in
+  let am = moveaxis [| axis1; axis2 |] [| nd - 2; nd - 1 |] a in
+  let mask = eye ~m:ma ~k:offset ~dtype:D.Bool na in
+  let masked = where_ mask am (zeros_like am) in
+  let acc =
+    let dt_in = (get_aval masked).T.dtype in
+    if is_inexact dt_in then masked
+    else
+      convert masked
+        (fst
+           (Dtypes.result_type
+              [ (dt_in, false); (Dtypes.default_int_dtype (), false) ]))
+  in
+  let res = bind1 (T.Reduce_sum [| nd - 2; nd - 1 |]) [ acc ] in
+  match dtype with Some d -> convert res d | None -> res
+
+let diagonal ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) a =
+  let s = shape a in
+  let nd = Array.length s in
+  if nd < 2 then
+    invalid_arg "diagonal requires an array of at least two dimensions.";
+  let a1 = canonicalize_axis axis1 nd and a2 = canonicalize_axis axis2 nd in
+  let na = s.(a1) and ma = s.(a2) in
+  let am = moveaxis [| axis1; axis2 |] [| nd - 2; nd - 1 |] a in
+  let diag_size = max 0 (min (na + min offset 0) (ma - max offset 0)) in
+  let mask = eye ~m:ma ~k:offset ~dtype:D.Bool na in
+  let masked = where_ mask am (zeros_like am) in
+  if offset >= 0 then
+    let reduced = reduce_over masked (nd - 2) in
+    slice_axis reduced (nd - 2) offset (offset + diag_size)
+  else
+    let reduced = reduce_over masked (nd - 1) in
+    slice_axis reduced (nd - 2) (-offset) (-offset + diag_size)
+
+let diag ?(k = 0) v =
+  let s = shape v in
+  match Array.length s with
+  | 1 ->
+      let n = s.(0) + abs k in
+      let padded = pad v [| (max 0 (-k), max 0 k) |] 0.0 in
+      let mask = eye ~k ~dtype:D.Bool n in
+      let col =
+        bind1
+          (T.Broadcast_in_dim { shape = [| n; 1 |]; dims = [| 0 |] })
+          [ padded ]
+      in
+      where_ mask col (const_full (dtype v) [| n; n |] 0.0)
+  | 2 -> diagonal ~offset:k v
+  | _ -> invalid_arg "diag input must be 1d or 2d"
+
+let diagflat ?(k = 0) v = diag ~k (ravel v)
+
+let kron a b =
+  let dt = result_type [ a; b ] in
+  let a = convert a dt and b = convert b dt in
+  let nda = ndim a and ndb = ndim b in
+  let a =
+    if nda < ndb then expand_dims a (Array.init (ndb - nda) Fun.id) else a
+  in
+  let b =
+    if ndb < nda then expand_dims b (Array.init (nda - ndb) Fun.id) else b
+  in
+  let nd = ndim a in
+  let a_r = expand_dims a (Array.init nd (fun i -> 1 + (2 * i))) in
+  let b_r = expand_dims b (Array.init nd (fun i -> 2 * i)) in
+  let sa = shape a and sb = shape b in
+  let out_shape = Array.init nd (fun i -> sa.(i) * sb.(i)) in
+  reshape (mul2 a_r b_r) out_shape
+
+let vander ?n ?(increasing = false) x =
+  if ndim x <> 1 then invalid_arg "x must be a one-dimensional array";
+  let len = (shape x).(0) in
+  let nn = Option.value n ~default:len in
+  if nn < 0 then invalid_arg "N must be nonnegative";
+  let dt = dtype x in
+  let io = bind1 (T.Iota { dtype = dt; shape = [| nn |]; dimension = 0 }) [] in
+  let io =
+    if increasing then io
+    else bind1 T.Sub [ full dt [| nn |] (float_of_int (nn - 1)); io ]
+  in
+  let xcol =
+    bind1 (T.Broadcast_in_dim { shape = [| len; nn |]; dims = [| 0 |] }) [ x ]
+  in
+  let expo =
+    bind1 (T.Broadcast_in_dim { shape = [| len; nn |]; dims = [| 1 |] }) [ io ]
+  in
+  bind1 T.Pow [ xcol; expo ]
+
+let repeat ?axis a repeats =
+  let a, ax =
+    match axis with
+    | None -> (ravel a, 0)
+    | Some x -> (a, canonicalize_axis x (ndim a))
+  in
+  let ish = shape a in
+  let nd = Array.length ish in
+  let aux_axis = ax + 1 in
+  let aux_shape =
+    Array.init (nd + 1) (fun i ->
+        if i < aux_axis then ish.(i)
+        else if i = aux_axis then repeats
+        else ish.(i - 1))
+  in
+  let dims = Array.init nd (fun i -> if i < aux_axis then i else i + 1) in
+  let bc = bind1 (T.Broadcast_in_dim { shape = aux_shape; dims }) [ a ] in
+  let result_shape = Array.copy ish in
+  result_shape.(ax) <- ish.(ax) * repeats;
+  reshape bc result_shape
+
+let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
+  let y = convert y (to_inexact_dtype (dtype y)) in
+  let nd = ndim y in
+  let ax = canonicalize_axis axis nd in
+  let dxd =
+    match x with
+    | None -> None
+    | Some xv ->
+        let xv = convert xv (to_inexact_dtype (dtype xv)) in
+        if ndim xv = 1 then Some (diff xv)
+        else invalid_arg "trapezoid: only 1-dimensional x is supported"
+  in
+  let y = moveaxis [| ax |] [| nd - 1 |] y in
+  let ny = shape y in
+  let l = ny.(nd - 1) in
+  match dxd with
+  | None ->
+      let s = bind1 (T.Reduce_sum [| nd - 1 |]) [ y ] in
+      let y0 = last_index y 0 and yl = last_index y (l - 1) in
+      let ends = mul_scalar 0.5 (add2 y0 yl) in
+      mul_scalar dx (sub2 s ends)
+  | Some dxa ->
+      let y1 = slice_axis y (nd - 1) 1 l in
+      let y0 = slice_axis y (nd - 1) 0 (l - 1) in
+      let prod = mul2 dxa (add2 y1 y0) in
+      mul_scalar 0.5 (bind1 (T.Reduce_sum [| nd - 1 |]) [ prod ])

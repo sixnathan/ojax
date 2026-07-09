@@ -107,3 +107,41 @@ val meshgrid :
   ?indexing:string -> ?sparse:bool -> Types.value list -> Types.value list
 
 val ix_ : Types.value list -> Types.value list
+val append : ?axis:int -> Types.value -> Types.value -> Types.value
+val argmax : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
+
+val cross :
+  ?axisa:int ->
+  ?axisb:int ->
+  ?axisc:int ->
+  ?axis:int ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val diag : ?k:int -> Types.value -> Types.value
+val diagflat : ?k:int -> Types.value -> Types.value
+
+val diagonal :
+  ?offset:int -> ?axis1:int -> ?axis2:int -> Types.value -> Types.value
+
+val diag_indices : ?ndim:int -> int -> Types.value list
+val diag_indices_from : Types.value -> Types.value list
+val kron : Types.value -> Types.value -> Types.value
+val repeat : ?axis:int -> Types.value -> int -> Types.value
+
+val trace :
+  ?offset:int ->
+  ?axis1:int ->
+  ?axis2:int ->
+  ?dtype:Dtype.t ->
+  Types.value ->
+  Types.value
+
+val trapezoid :
+  ?x:Types.value -> ?dx:float -> ?axis:int -> Types.value -> Types.value
+
+val tri : ?m:int -> ?k:int -> dtype:Dtype.t -> int -> Types.value
+val tril : ?k:int -> Types.value -> Types.value
+val triu : ?k:int -> Types.value -> Types.value
+val vander : ?n:int -> ?increasing:bool -> Types.value -> Types.value

@@ -1279,6 +1279,31 @@ _UFUNC_UNARY = [
     "invert",
     "logical_not",
     "spacing",
+    "abs",
+    "absolute",
+    "acos",
+    "acosh",
+    "asin",
+    "asinh",
+    "atan",
+    "atanh",
+    "deg2rad",
+    "degrees",
+    "exp2",
+    "isfinite",
+    "isinf",
+    "isnan",
+    "isneginf",
+    "isposinf",
+    "log10",
+    "log2",
+    "rad2deg",
+    "radians",
+    "reciprocal",
+    "rint",
+    "signbit",
+    "sinc",
+    "square",
 ]
 
 _UFUNC_BINARY = [
@@ -1302,12 +1327,42 @@ _UFUNC_BINARY = [
     "arctan2",
     "float_power",
     "nextafter",
+    "atan2",
+    "bitwise_right_shift",
+    "copysign",
+    "divide",
+    "floor_divide",
+    "fmod",
+    "heaviside",
+    "hypot",
+    "less",
+    "less_equal",
+    "logaddexp",
+    "logaddexp2",
+    "mod",
+    "power",
+    "pow",
+    "remainder",
+    "right_shift",
+    "true_divide",
 ]
 
 for _name in _UFUNC_UNARY:
     NUMPY_BUILDERS[_name] = _unary(getattr(jnp, _name))
 for _name in _UFUNC_BINARY:
     NUMPY_BUILDERS[_name] = _binary(getattr(jnp, _name))
+
+
+def np_divmod(params):
+    return lambda a, b: jnp.divmod(a, b)
+
+
+def np_modf(params):
+    return lambda x: jnp.modf(x)
+
+
+NUMPY_BUILDERS["divmod"] = np_divmod
+NUMPY_BUILDERS["modf"] = np_modf
 
 
 SHORT_DTYPE = {

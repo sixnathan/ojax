@@ -1887,5 +1887,1613 @@
       }
     ],
     "params": {}
+  },
+  {
+    "op": "abs",
+    "primitive": "jnp.abs",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "abs",
+    "primitive": "jnp.abs",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "abs",
+    "primitive": "jnp.abs",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "absolute",
+    "primitive": "jnp.absolute",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "absolute",
+    "primitive": "jnp.absolute",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "acos",
+    "primitive": "jnp.acos",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "acos",
+    "primitive": "jnp.acos",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "acosh",
+    "primitive": "jnp.acosh",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "acosh",
+    "primitive": "jnp.acosh",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "asin",
+    "primitive": "jnp.asin",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "asin",
+    "primitive": "jnp.asin",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "asinh",
+    "primitive": "jnp.asinh",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "asinh",
+    "primitive": "jnp.asinh",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "atan",
+    "primitive": "jnp.atan",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "atan",
+    "primitive": "jnp.atan",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "atanh",
+    "primitive": "jnp.atanh",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "atanh",
+    "primitive": "jnp.atanh",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "deg2rad",
+    "primitive": "jnp.deg2rad",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "deg2rad",
+    "primitive": "jnp.deg2rad",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "degrees",
+    "primitive": "jnp.degrees",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "degrees",
+    "primitive": "jnp.degrees",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "rad2deg",
+    "primitive": "jnp.rad2deg",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "rad2deg",
+    "primitive": "jnp.rad2deg",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "radians",
+    "primitive": "jnp.radians",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "radians",
+    "primitive": "jnp.radians",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "exp2",
+    "primitive": "jnp.exp2",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "exp2",
+    "primitive": "jnp.exp2",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "log2",
+    "primitive": "jnp.log2",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "log2",
+    "primitive": "jnp.log2",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "log10",
+    "primitive": "jnp.log10",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "log10",
+    "primitive": "jnp.log10",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "reciprocal",
+    "primitive": "jnp.reciprocal",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "reciprocal",
+    "primitive": "jnp.reciprocal",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "square",
+    "primitive": "jnp.square",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "square",
+    "primitive": "jnp.square",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "square",
+    "primitive": "jnp.square",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "rint",
+    "primitive": "jnp.rint",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "rint",
+    "primitive": "jnp.rint",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "rint",
+    "primitive": "jnp.rint",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "signbit",
+    "primitive": "jnp.signbit",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "signbit",
+    "primitive": "jnp.signbit",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "sinc",
+    "primitive": "jnp.sinc",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "sinc",
+    "primitive": "jnp.sinc",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "isfinite",
+    "primitive": "jnp.isfinite",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "isfinite",
+    "primitive": "jnp.isfinite",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "isinf",
+    "primitive": "jnp.isinf",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "isnan",
+    "primitive": "jnp.isnan",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "isnan",
+    "primitive": "jnp.isnan",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "isposinf",
+    "primitive": "jnp.isposinf",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "isneginf",
+    "primitive": "jnp.isneginf",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "modf",
+    "primitive": "jnp.modf",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "modf",
+    "primitive": "jnp.modf",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "atan2",
+    "primitive": "jnp.atan2",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "atan2",
+    "primitive": "jnp.atan2",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "less",
+    "primitive": "jnp.less",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "less",
+    "primitive": "jnp.less",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "less_equal",
+    "primitive": "jnp.less_equal",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "less_equal",
+    "primitive": "jnp.less_equal",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "true_divide",
+    "primitive": "jnp.true_divide",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "true_divide",
+    "primitive": "jnp.true_divide",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "divide",
+    "primitive": "jnp.divide",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "floor_divide",
+    "primitive": "jnp.floor_divide",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small_nz"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "floor_divide",
+    "primitive": "jnp.floor_divide",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "floor_divide",
+    "primitive": "jnp.floor_divide",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "fmod",
+    "primitive": "jnp.fmod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small_nz"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "fmod",
+    "primitive": "jnp.fmod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "remainder",
+    "primitive": "jnp.remainder",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small_nz"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "remainder",
+    "primitive": "jnp.remainder",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "mod",
+    "primitive": "jnp.mod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small_nz"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "mod",
+    "primitive": "jnp.mod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "divmod",
+    "primitive": "jnp.divmod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small_nz"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "divmod",
+    "primitive": "jnp.divmod",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_nonzero"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "right_shift",
+    "primitive": "jnp.right_shift",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "right_shift",
+    "primitive": "jnp.right_shift",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int64",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "bitwise_right_shift",
+    "primitive": "jnp.bitwise_right_shift",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "power",
+    "primitive": "jnp.power",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "power",
+    "primitive": "jnp.power",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "pow",
+    "primitive": "jnp.pow",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "pow",
+    "primitive": "jnp.pow",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "copysign",
+    "primitive": "jnp.copysign",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "heaviside",
+    "primitive": "jnp.heaviside",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "heaviside",
+    "primitive": "jnp.heaviside",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "hypot",
+    "primitive": "jnp.hypot",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "hypot",
+    "primitive": "jnp.hypot",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logaddexp",
+    "primitive": "jnp.logaddexp",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logaddexp",
+    "primitive": "jnp.logaddexp",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logaddexp2",
+    "primitive": "jnp.logaddexp2",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logaddexp2",
+    "primitive": "jnp.logaddexp2",
+    "args": [
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
   }
 ]

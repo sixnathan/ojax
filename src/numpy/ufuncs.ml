@@ -170,3 +170,289 @@ let spacing x =
   in
   let is_zero = bind1 T.Eq [ result; zeros_like result ] in
   bind1 T.Select_n [ is_zero; result; filled ]
+
+let is_integer = function D.I32 | D.I64 -> true | _ -> false
+let is_inexact = function D.F32 | D.F64 -> true | _ -> false
+let where c a b = bind1 T.Select_n [ c; b; a ]
+let absolute x = if dtype x = D.Bool then x else bind1 T.Abs [ x ]
+let abs = absolute
+let acos = arccos
+let acosh = arccosh
+let asin = arcsin
+let asinh = arcsinh
+let atan = arctan
+let atanh = arctanh
+let atan2 = arctan2
+
+let deg2rad x =
+  let a = p1 (promote_inexact [ x ]) in
+  bind1 T.Mul [ a; const_full (dtype a) (shape a) (Float.pi /. 180.0) ]
+
+let rad2deg x =
+  let a = p1 (promote_inexact [ x ]) in
+  bind1 T.Mul [ a; const_full (dtype a) (shape a) (180.0 /. Float.pi) ]
+
+let radians = deg2rad
+let degrees = rad2deg
+let exp2 x = unary_inexact T.Exp2 x
+
+let log2 x =
+  let a = p1 (promote_inexact [ x ]) in
+  bind1 T.Div
+    [ bind1 T.Log [ a ]; const_full (dtype a) (shape a) (Float.log 2.0) ]
+
+let log10 x =
+  let a = p1 (promote_inexact [ x ]) in
+  bind1 T.Mul
+    [ bind1 T.Log [ a ]; const_full (dtype a) (shape a) 0.4342944819032518 ]
+
+let reciprocal x =
+  let a = p1 (promote_inexact [ x ]) in
+  bind1 (T.Integer_pow (-1)) [ a ]
+
+let square x =
+  let a = p1 (promote_numeric [ x ]) in
+  bind1 T.Square [ a ]
+
+let true_divide x y =
+  let a, b = p2 (promote_inexact [ x; y ]) in
+  bind1 T.Div [ a; b ]
+
+let divide = true_divide
+let less x y = comparison T.Lt x y
+let less_equal x y = comparison T.Le x y
+
+let right_shift x y =
+  let a, b = p2 (promote_numeric [ x; y ]) in
+  bind1 T.Shift_right_arithmetic [ a; b ]
+
+let bitwise_right_shift = right_shift
+
+let pow_int_int x1 x2 =
+  let dt = dtype x1 and sh = shape x1 in
+  let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
+  let init = bind1 T.And [ bind1 T.Eq [ x1; zero ]; bind1 T.Ne [ x2; zero ] ] in
+  let acc0 = where init zero one in
+  let rec loop i acc b1 b2 =
+    if i = 0 then acc
+    else
+      let is_odd = bind1 T.Ne [ bind1 T.And [ b2; one ]; zero ] in
+      let acc' = where is_odd (bind1 T.Mul [ acc; b1 ]) acc in
+      let b1' = bind1 T.Mul [ b1; b1 ] in
+      let b2' = bind1 T.Shift_right_logical [ b2; one ] in
+      loop (i - 1) acc' b1' b2'
+  in
+  loop 6 acc0 x1 x2
+
+let power x1 x2 =
+  let d1 = dtype x1 and d2 = dtype x2 in
+  let a, b = p2 (promote_numeric [ x1; x2 ]) in
+  if is_integer (dtype a) || dtype a = D.Bool then pow_int_int a b
+  else if is_inexact d1 && is_integer d2 then bind1 T.Pow [ x1; x2 ]
+  else bind1 T.Pow [ a; b ]
+
+let pow = power
+
+let float_divmod x1 x2 =
+  let dt = dtype x1 and sh = shape x1 in
+  let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
+  let m = bind1 T.Rem [ x1; x2 ] in
+  let x1c = where (bind1 T.Eq [ x2; zero ]) x1 (bind1 T.Sub [ x1; m ]) in
+  let div = bind1 T.Div [ x1c; x2 ] in
+  let ind =
+    bind1 T.And
+      [
+        bind1 T.Ne [ m; zero ];
+        bind1 T.Ne [ bind1 T.Sign [ x2 ]; bind1 T.Sign [ m ] ];
+      ]
+  in
+  let m2 = where ind (bind1 T.Add [ m; x2 ]) m in
+  let div2 = where ind (bind1 T.Sub [ div; one ]) div in
+  (bind1 T.Round [ div2 ], m2)
+
+let floor_divide x1 x2 =
+  let a, b = p2 (promote_numeric [ x1; x2 ]) in
+  let dt = dtype a and sh = shape a in
+  if is_integer dt then begin
+    let q = bind1 T.Div [ a; b ] in
+    let sel =
+      bind1 T.And
+        [
+          bind1 T.Ne [ bind1 T.Sign [ a ]; bind1 T.Sign [ b ] ];
+          bind1 T.Ne [ bind1 T.Rem [ a; b ]; const_full dt sh 0.0 ];
+        ]
+    in
+    where sel (bind1 T.Sub [ q; const_full dt sh 1.0 ]) q
+  end
+  else fst (float_divmod a b)
+
+let remainder x1 x2 =
+  let a, b0 = p2 (promote_numeric [ x1; x2 ]) in
+  let dt = dtype a and sh = shape a in
+  let zero = const_full dt sh 0.0 in
+  let b =
+    if is_integer dt then
+      where (bind1 T.Eq [ b0; zero ]) (const_full dt sh 1.0) b0
+    else b0
+  in
+  let trunc_mod = bind1 T.Rem [ a; b ] in
+  let do_plus =
+    bind1 T.And
+      [
+        bind1 T.Ne [ bind1 T.Lt [ trunc_mod; zero ]; bind1 T.Lt [ b; zero ] ];
+        bind1 T.Ne [ trunc_mod; zero ];
+      ]
+  in
+  where do_plus (bind1 T.Add [ trunc_mod; b ]) trunc_mod
+
+let mod_ = remainder
+
+let fmod x1 x2 =
+  let rt, _ = Dtypes.result_type [ (dtype x1, weak x1); (dtype x2, weak x2) ] in
+  let x2 =
+    if is_integer rt then
+      where
+        (bind1 T.Eq [ x2; zeros_like x2 ])
+        (const_full (dtype x2) (shape x2) 1.0)
+        x2
+    else x2
+  in
+  let a, b = p2 (promote_numeric [ x1; x2 ]) in
+  bind1 T.Rem [ a; b ]
+
+let divmod x1 x2 =
+  let a, b = p2 (promote_numeric [ x1; x2 ]) in
+  if is_integer (dtype a) then [ floor_divide a b; remainder a b ]
+  else
+    let d, m = float_divmod a b in
+    [ d; m ]
+
+let modf x =
+  let a = p1 (promote_inexact [ x ]) in
+  let dt = dtype a and sh = shape a in
+  let whole =
+    where
+      (bind1 T.Ge [ a; const_full dt sh 0.0 ])
+      (bind1 T.Floor [ a ]) (bind1 T.Ceil [ a ])
+  in
+  [ bind1 T.Sub [ a; whole ]; whole ]
+
+let signbit x =
+  let a = p1 (promote [ x ]) in
+  let sh = shape a in
+  match dtype a with
+  | D.I32 | D.I64 -> bind1 T.Lt [ a; zeros_like a ]
+  | D.Bool -> const_full D.Bool sh 0.0
+  | D.F32 ->
+      let i = bind1 (T.Bitcast_convert_type D.I32) [ a ] in
+      let s = bind1 T.Shift_right_arithmetic [ i; const_full D.I32 sh 31.0 ] in
+      bind1 (T.Convert_element_type D.Bool) [ s ]
+  | D.F64 ->
+      let i = bind1 (T.Bitcast_convert_type D.I64) [ a ] in
+      let s = bind1 T.Shift_right_arithmetic [ i; const_full D.I64 sh 63.0 ] in
+      bind1 (T.Convert_element_type D.Bool) [ s ]
+
+let copysign x1 x2 =
+  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+  where (signbit b) (bind1 T.Neg [ bind1 T.Abs [ a ] ]) (bind1 T.Abs [ a ])
+
+let isfinite x =
+  match dtype x with
+  | D.F32 | D.F64 -> bind1 T.Is_finite [ x ]
+  | _ -> const_full D.Bool (shape x) 1.0
+
+let isinf x =
+  match dtype x with
+  | D.F32 | D.F64 ->
+      bind1 T.Eq [ bind1 T.Abs [ x ]; const_full (dtype x) (shape x) infinity ]
+  | _ -> const_full D.Bool (shape x) 0.0
+
+let isnan x = bind1 T.Ne [ x; x ]
+
+let isposinf x =
+  match dtype x with
+  | D.F32 | D.F64 -> bind1 T.Eq [ x; const_full (dtype x) (shape x) infinity ]
+  | _ -> const_full D.Bool (shape x) 0.0
+
+let isneginf x =
+  match dtype x with
+  | D.F32 | D.F64 ->
+      bind1 T.Eq [ x; const_full (dtype x) (shape x) neg_infinity ]
+  | _ -> const_full D.Bool (shape x) 0.0
+
+let heaviside x1 x2 =
+  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+  let dt = dtype a and sh = shape a in
+  let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
+  let inner2 = where (bind1 T.Ne [ a; a ]) a b in
+  let inner1 = where (bind1 T.Gt [ a; zero ]) one inner2 in
+  where (bind1 T.Lt [ a; zero ]) zero inner1
+
+let hypot x1 x2 =
+  let a0, b0 = p2 (promote_inexact [ x1; x2 ]) in
+  let dt = dtype a0 and sh = shape a0 in
+  let a = bind1 T.Abs [ a0 ] and b = bind1 T.Abs [ b0 ] in
+  let idx_inf = bind1 T.Or [ isposinf a; isposinf b ] in
+  let x1m = bind1 T.Max [ a; b ] and x2m = bind1 T.Min [ a; b ] in
+  let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
+  let x1_is0 = bind1 T.Eq [ x1m; zero ] in
+  let denom = where x1_is0 one x1m in
+  let ratio = bind1 T.Div [ x2m; denom ] in
+  let v =
+    bind1 T.Mul
+      [ x1m; bind1 T.Sqrt [ bind1 T.Add [ one; bind1 T.Square [ ratio ] ] ] ]
+  in
+  let x = where x1_is0 x1m v in
+  where idx_inf (const_full dt sh infinity) x
+
+let sinc x =
+  let a = p1 (promote_inexact [ x ]) in
+  let dt = dtype a and sh = shape a in
+  let eq_zero = bind1 T.Eq [ a; const_full dt sh 0.0 ] in
+  let pi_x = bind1 T.Mul [ const_full dt sh Float.pi; a ] in
+  let safe = where eq_zero (const_full dt sh 1.0) pi_x in
+  where eq_zero (const_full dt sh 1.0)
+    (bind1 T.Div [ bind1 T.Sin [ safe ]; safe ])
+
+let logaddexp x1 x2 =
+  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+  let amax = bind1 T.Max [ a; b ] in
+  let delta = bind1 T.Sub [ a; b ] in
+  let normal =
+    bind1 T.Add
+      [
+        amax;
+        bind1 T.Log1p [ bind1 T.Exp [ bind1 T.Neg [ bind1 T.Abs [ delta ] ] ] ];
+      ]
+  in
+  where (bind1 T.Ne [ delta; delta ]) (bind1 T.Add [ a; b ]) normal
+
+let logaddexp2 x1 x2 =
+  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+  let dt = dtype a and sh = shape a in
+  let amax = bind1 T.Max [ a; b ] in
+  let invln2 = const_full dt sh (1.0 /. Float.log 2.0) in
+  let delta = bind1 T.Sub [ a; b ] in
+  let normal =
+    bind1 T.Add
+      [
+        amax;
+        bind1 T.Mul
+          [
+            invln2;
+            bind1 T.Log1p
+              [ bind1 T.Exp2 [ bind1 T.Neg [ bind1 T.Abs [ delta ] ] ] ];
+          ];
+      ]
+  in
+  where (bind1 T.Ne [ delta; delta ]) (bind1 T.Add [ a; b ]) normal
+
+let rint x =
+  match dtype x with
+  | D.I32 | D.I64 | D.Bool -> convert x (Dtypes.default_float_dtype ())
+  | _ -> bind1 T.Round [ x ]
+
+let imag x = zeros_like x
+let real x = x
+let conjugate x = x
+let conj = conjugate

@@ -1,0 +1,9 @@
+val bool_ : Types.value -> Types.value
+val int32 : Types.value -> Types.value
+val int64 : Types.value -> Types.value
+val float32 : Types.value -> Types.value
+val float64 : Types.value -> Types.value
+val single : Types.value -> Types.value
+val double : Types.value -> Types.value
+val int_ : Types.value -> Types.value
+val float_ : Types.value -> Types.value

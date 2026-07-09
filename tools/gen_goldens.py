@@ -993,6 +993,102 @@ def np_ix_(params):
     return lambda *xs: jnp.ix_(*xs)
 
 
+def _opt_dtype(params):
+    d = params.get("dtype")
+    return np.dtype(d) if d is not None else None
+
+
+def _opt_shape(params):
+    s = params.get("shape")
+    return tuple(s) if s is not None else None
+
+
+def np_zeros(params):
+    return lambda: jnp.zeros(tuple(params["shape"]), dtype=_opt_dtype(params))
+
+
+def np_ones(params):
+    return lambda: jnp.ones(tuple(params["shape"]), dtype=_opt_dtype(params))
+
+
+def np_empty(params):
+    return lambda: jnp.empty(tuple(params["shape"]), dtype=_opt_dtype(params))
+
+
+def np_full(params):
+    return lambda: jnp.full(
+        tuple(params["shape"]), params["fill_value"], dtype=_opt_dtype(params)
+    )
+
+
+def np_zeros_like(params):
+    return lambda x: jnp.zeros_like(
+        x, dtype=_opt_dtype(params), shape=_opt_shape(params)
+    )
+
+
+def np_ones_like(params):
+    return lambda x: jnp.ones_like(
+        x, dtype=_opt_dtype(params), shape=_opt_shape(params)
+    )
+
+
+def np_empty_like(params):
+    return lambda x: jnp.empty_like(
+        x, dtype=_opt_dtype(params), shape=_opt_shape(params)
+    )
+
+
+def np_full_like(params):
+    return lambda x: jnp.full_like(
+        x, params["fill_value"], dtype=_opt_dtype(params), shape=_opt_shape(params)
+    )
+
+
+def np_linspace(params):
+    num = int(params.get("num", 50))
+    endpoint = bool(params.get("endpoint", True))
+    return lambda: jnp.linspace(
+        params["start"], params["stop"], num, endpoint=endpoint,
+        dtype=_opt_dtype(params)
+    )
+
+
+def np_logspace(params):
+    num = int(params.get("num", 50))
+    endpoint = bool(params.get("endpoint", True))
+    base = params.get("base", 10.0)
+    return lambda: jnp.logspace(
+        params["start"], params["stop"], num, endpoint=endpoint, base=base,
+        dtype=_opt_dtype(params)
+    )
+
+
+def np_geomspace(params):
+    num = int(params.get("num", 50))
+    endpoint = bool(params.get("endpoint", True))
+    return lambda: jnp.geomspace(
+        params["start"], params["stop"], num, endpoint=endpoint,
+        dtype=_opt_dtype(params)
+    )
+
+
+def np_array(params):
+    ndmin = int(params.get("ndmin", 0))
+    return lambda x: jnp.array(x, dtype=_opt_dtype(params), ndmin=ndmin)
+
+
+def np_asarray(params):
+    return lambda x: jnp.asarray(x, dtype=_opt_dtype(params))
+
+
+def _scalar_type(name):
+    def build(params):
+        return lambda x: getattr(jnp, name)(x)
+
+    return build
+
+
 def np_append(params):
     axis = params.get("axis")
     return lambda a, b: jnp.append(a, b, axis=axis)
@@ -1216,6 +1312,19 @@ NUMPY_BUILDERS = {
     "indices": np_indices,
     "meshgrid": np_meshgrid,
     "ix_": np_ix_,
+    "zeros": np_zeros,
+    "ones": np_ones,
+    "empty": np_empty,
+    "full": np_full,
+    "zeros_like": np_zeros_like,
+    "ones_like": np_ones_like,
+    "empty_like": np_empty_like,
+    "full_like": np_full_like,
+    "linspace": np_linspace,
+    "logspace": np_logspace,
+    "geomspace": np_geomspace,
+    "array": np_array,
+    "asarray": np_asarray,
     "transpose": np_transpose,
     "permute_dims": np_permute_dims,
     "matrix_transpose": np_matrix_transpose,
@@ -1274,6 +1383,9 @@ NUMPY_BUILDERS = {
     "triu": np_triu,
     "vander": np_vander,
 }
+
+for _sname in ["bool_", "int32", "int64", "float32", "float64"]:
+    NUMPY_BUILDERS[_sname] = _scalar_type(_sname)
 
 
 _UFUNC_UNARY = [

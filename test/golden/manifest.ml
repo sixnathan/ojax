@@ -572,6 +572,11 @@ let opt_i params name =
 let opt_b params name =
   match U.member name params with `Null -> None | j -> Some (U.to_bool j)
 
+let opt_dt params name =
+  match U.member name params with
+  | `Null -> None
+  | j -> Some (dtype_of_string (U.to_string j))
+
 let sections_of params =
   match U.member "indices" params with
   | `Null -> NL.Count (U.to_int (U.member "sections" params))
@@ -1208,6 +1213,90 @@ let array_methods_suite_for set_name =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
   ("array_methods:" ^ set_name, coverage :: case_tests)
+
+module AC = Ojax.Numpy.Array_creation
+module ACON = Ojax.Numpy.Array_constructors
+module ST = Ojax.Numpy.Scalar_types
+
+let creation_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let one v = [ v ] in
+  match (op, operands) with
+  | "zeros", [] ->
+      one (AC.zeros ?dtype:(opt_dt params "dtype") (ia (member "shape")))
+  | "ones", [] ->
+      one (AC.ones ?dtype:(opt_dt params "dtype") (ia (member "shape")))
+  | "empty", [] ->
+      one (AC.empty ?dtype:(opt_dt params "dtype") (ia (member "shape")))
+  | "full", [] ->
+      one
+        (AC.full ?dtype:(opt_dt params "dtype")
+           (ia (member "shape"))
+           (U.to_number (member "fill_value")))
+  | "zeros_like", [ x ] ->
+      one
+        (AC.zeros_like ?dtype:(opt_dt params "dtype")
+           ?shape:(opt_ia params "shape") x)
+  | "ones_like", [ x ] ->
+      one
+        (AC.ones_like ?dtype:(opt_dt params "dtype")
+           ?shape:(opt_ia params "shape") x)
+  | "empty_like", [ x ] ->
+      one
+        (AC.empty_like ?dtype:(opt_dt params "dtype")
+           ?shape:(opt_ia params "shape") x)
+  | "full_like", [ x ] ->
+      one
+        (AC.full_like ?dtype:(opt_dt params "dtype")
+           ?shape:(opt_ia params "shape") x
+           (U.to_number (member "fill_value")))
+  | "linspace", [] ->
+      one
+        (AC.linspace ?num:(opt_i params "num")
+           ?endpoint:(opt_b params "endpoint") ?dtype:(opt_dt params "dtype")
+           (U.to_number (member "start"))
+           (U.to_number (member "stop")))
+  | "logspace", [] ->
+      one
+        (AC.logspace ?num:(opt_i params "num")
+           ?endpoint:(opt_b params "endpoint") ?base:(opt_f params "base")
+           ?dtype:(opt_dt params "dtype")
+           (U.to_number (member "start"))
+           (U.to_number (member "stop")))
+  | "geomspace", [] ->
+      one
+        (AC.geomspace ?num:(opt_i params "num")
+           ?endpoint:(opt_b params "endpoint") ?dtype:(opt_dt params "dtype")
+           (U.to_number (member "start"))
+           (U.to_number (member "stop")))
+  | "array", [ x ] ->
+      one
+        (ACON.array ?dtype:(opt_dt params "dtype") ?ndmin:(opt_i params "ndmin")
+           x)
+  | "asarray", [ x ] -> one (ACON.asarray ?dtype:(opt_dt params "dtype") x)
+  | "bool_", [ x ] -> one (ST.bool_ x)
+  | "int32", [ x ] -> one (ST.int32 x)
+  | "int64", [ x ] -> one (ST.int64 x)
+  | "float32", [ x ] -> one (ST.float32 x)
+  | "float64", [ x ] -> one (ST.float64 x)
+  | _ -> failwith ("creation golden: unknown op " ^ op)
+
+let creation_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "creation") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:creation_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("creation:" ^ set_name, coverage :: case_tests)
 
 let reductions_suite_for set_name =
   let set_dir =
@@ -2457,5 +2546,7 @@ let () =
       indexing_suite_for "x64_on";
       array_methods_suite_for "x64_off";
       array_methods_suite_for "x64_on";
+      creation_suite_for "x64_off";
+      creation_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

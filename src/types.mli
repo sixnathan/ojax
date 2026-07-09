@@ -165,6 +165,17 @@ and primitive =
       feature_group_count : int;
       batch_group_count : int;
     }
+  | Reduce_window of { reducer : closed_jaxpr; window : window_dims }
+  | Reduce_window_max of window_dims
+  | Reduce_window_min of window_dims
+  | Reduce_window_sum of window_dims
+  | Select_and_gather_add of { select : window_select; window : window_dims }
+  | Select_and_scatter of {
+      select_jaxpr : closed_jaxpr;
+      scatter_jaxpr : closed_jaxpr;
+      window : window_dims;
+    }
+  | Select_and_scatter_add of { select : window_select; window : window_dims }
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 
@@ -197,6 +208,15 @@ and conv_dims = {
   out_spec : int array;
 }
 
+and window_dims = {
+  window_dimensions : int array;
+  window_strides : int array;
+  w_padding : (int * int) array;
+  base_dilation : int array;
+  window_dilation : int array;
+}
+
+and window_select = Wge | Wle
 and var = { vid : int; vaval : aval }
 and atom = A_var of var | A_lit of Ndarray.t | DropVar of aval
 

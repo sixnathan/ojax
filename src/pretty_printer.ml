@@ -201,6 +201,13 @@ let prim_name = function
   | Scatter_min _ -> "scatter_min"
   | Scatter_max _ -> "scatter_max"
   | Conv_general_dilated _ -> "conv_general_dilated"
+  | Reduce_window _ -> "reduce_window"
+  | Reduce_window_max _ -> "reduce_window_max"
+  | Reduce_window_min _ -> "reduce_window_min"
+  | Reduce_window_sum _ -> "reduce_window_sum"
+  | Select_and_gather_add _ -> "select_and_gather_add"
+  | Select_and_scatter _ -> "select_and_scatter"
+  | Select_and_scatter_add _ -> "select_and_scatter_add"
   | Xla_call _ -> "xla_call"
   | Cond _ -> "cond"
 

@@ -5275,5 +5275,919 @@
    "feature_group_count": 1,
    "batch_group_count": 1
   }
+ },
+ {
+  "op": "reduce_window_sum",
+  "primitive": "lax.reduce_window_sum",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_sum",
+  "primitive": "lax.reduce_window_sum",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "int32",
+    "rng": "rand_int_small"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_sum",
+  "primitive": "lax.reduce_window_sum",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_sum",
+  "primitive": "lax.reduce_window_sum",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "int64",
+    "rng": "rand_int_small"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_sum",
+  "primitive": "lax.reduce_window_sum",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    3
+   ],
+   "window_strides": [
+    2
+   ],
+   "padding": [
+    [
+     1,
+     1
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_sum",
+  "primitive": "lax.reduce_window_sum",
+  "args": [
+   {
+    "shape": [
+     4,
+     4
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2,
+    2
+   ],
+   "window_strides": [
+    1,
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1,
+    1
+   ],
+   "window_dilation": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_sum",
+  "primitive": "lax.reduce_window_sum",
+  "args": [
+   {
+    "shape": [
+     4,
+     4
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2,
+    2
+   ],
+   "window_strides": [
+    1,
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1,
+    1
+   ],
+   "window_dilation": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_sum",
+  "primitive": "lax.reduce_window_sum",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    2
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_max",
+  "primitive": "lax.reduce_window_max",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_max",
+  "primitive": "lax.reduce_window_max",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "int32",
+    "rng": "rand_int_small"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_max",
+  "primitive": "lax.reduce_window_max",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_max",
+  "primitive": "lax.reduce_window_max",
+  "args": [
+   {
+    "shape": [
+     4,
+     4
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2,
+    2
+   ],
+   "window_strides": [
+    2,
+    2
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1,
+    1
+   ],
+   "window_dilation": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_min",
+  "primitive": "lax.reduce_window_min",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_min",
+  "primitive": "lax.reduce_window_min",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window_min",
+  "primitive": "lax.reduce_window_min",
+  "args": [
+   {
+    "shape": [
+     4,
+     4
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2,
+    2
+   ],
+   "window_strides": [
+    2,
+    2
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1,
+    1
+   ],
+   "window_dilation": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window",
+  "primitive": "lax.reduce_window",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   },
+   {
+    "shape": [],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "reduce_window",
+  "primitive": "lax.reduce_window",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float64",
+    "rng": "rand_small"
+   },
+   {
+    "shape": [],
+    "dtype": "float64",
+    "rng": "rand_small"
+   }
+  ],
+  "params": {
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "select_and_gather_add",
+  "primitive": "lax.select_and_gather_add",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   },
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "select": "ge",
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "select_and_gather_add",
+  "primitive": "lax.select_and_gather_add",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   },
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "select": "le",
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "select_and_gather_add",
+  "primitive": "lax.select_and_gather_add",
+  "args": [
+   {
+    "shape": [
+     4,
+     4
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   },
+   {
+    "shape": [
+     4,
+     4
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "select": "ge",
+   "window_dimensions": [
+    2,
+    2
+   ],
+   "window_strides": [
+    2,
+    2
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1,
+    1
+   ],
+   "window_dilation": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "op": "select_and_gather_add",
+  "primitive": "lax.select_and_gather_add",
+  "args": [
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   },
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "select": "ge",
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "select_and_scatter_add",
+  "primitive": "lax.select_and_scatter_add",
+  "args": [
+   {
+    "shape": [
+     5
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   },
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "select": "ge",
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
+ },
+ {
+  "op": "select_and_scatter_add",
+  "primitive": "lax.select_and_scatter_add",
+  "args": [
+   {
+    "shape": [
+     2,
+     2
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   },
+   {
+    "shape": [
+     4,
+     4
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "select": "ge",
+   "window_dimensions": [
+    2,
+    2
+   ],
+   "window_strides": [
+    2,
+    2
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1,
+    1
+   ],
+   "window_dilation": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "op": "select_and_scatter_add",
+  "primitive": "lax.select_and_scatter_add",
+  "args": [
+   {
+    "shape": [
+     5
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   },
+   {
+    "shape": [
+     6
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {
+   "select": "ge",
+   "window_dimensions": [
+    2
+   ],
+   "window_strides": [
+    1
+   ],
+   "padding": [
+    [
+     0,
+     0
+    ]
+   ],
+   "base_dilation": [
+    1
+   ],
+   "window_dilation": [
+    1
+   ]
+  }
  }
 ]

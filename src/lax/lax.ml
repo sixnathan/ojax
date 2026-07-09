@@ -997,6 +997,46 @@ let impl prim inputs =
             lhs_dilation rhs_dilation feature_group_count batch_group_count lhs
             rhs)
         inputs
+  | Reduce_window_sum window ->
+      un (Windowed_reductions.reduce_window_sum window) inputs
+  | Reduce_window_max window ->
+      un (Windowed_reductions.reduce_window_max window) inputs
+  | Reduce_window_min window ->
+      un (Windowed_reductions.reduce_window_min window) inputs
+  | Reduce_window { reducer; window } -> (
+      match inputs with
+      | [ operand; init ] ->
+          let dt = Ndarray.dtype operand in
+          let mk x = Concrete (Ndarray.of_floats dt [||] [| x |]) in
+          let reducer_f a b =
+            match Jaxpr.eval_closed_jaxpr reducer [ mk a; mk b ] with
+            | [ Concrete nd ] -> Ndarray.get_f nd [||]
+            | _ ->
+                failwith "lax: reduce_window reducer produced unexpected output"
+          in
+          [
+            Windowed_reductions.reduce_window_general ~reducer:reducer_f
+              ~init:(Ndarray.get_f init [||]) window operand;
+          ]
+      | _ -> failwith "lax: reduce_window expects operand and init value")
+  | Select_and_gather_add { select; window } -> (
+      match inputs with
+      | [ tangents; operand ] ->
+          [
+            Windowed_reductions.select_and_gather_add select window tangents
+              operand;
+          ]
+      | _ -> failwith "lax: select_and_gather_add expects tangents and operand")
+  | Select_and_scatter_add { select; window } -> (
+      match inputs with
+      | [ source; operand ] ->
+          [
+            Windowed_reductions.select_and_scatter_add select window source
+              operand;
+          ]
+      | _ -> failwith "lax: select_and_scatter_add expects source and operand")
+  | Select_and_scatter _ ->
+      failwith "lax: select_and_scatter (general two-jaxpr form) deferred (M2)"
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -1208,6 +1248,42 @@ let abstract_eval prim avals =
                l.shape r.shape)
             l.dtype (Utils.all_weak avals))
         avals
+  | Reduce_window_sum window
+  | Reduce_window_max window
+  | Reduce_window_min window ->
+      un_aval
+        (fun a ->
+          shaped
+            (Windowed_reductions.out_shape a.shape window)
+            a.dtype a.weak_type)
+        avals
+  | Reduce_window { window; _ } -> (
+      match avals with
+      | [ operand; init ] ->
+          [
+            shaped
+              (Windowed_reductions.out_shape operand.shape window)
+              operand.dtype
+              (operand.weak_type && init.weak_type);
+          ]
+      | _ -> failwith "lax: reduce_window expects operand and init aval")
+  | Select_and_gather_add { window; _ } -> (
+      match avals with
+      | [ tangents; operand ] ->
+          [
+            shaped
+              (Windowed_reductions.out_shape operand.shape window)
+              operand.dtype tangents.weak_type;
+          ]
+      | _ -> failwith "lax: select_and_gather_add expects two avals")
+  | Select_and_scatter_add _ -> (
+      match avals with
+      | [ _source; operand ] -> [ operand ]
+      | _ -> failwith "lax: select_and_scatter_add expects two avals")
+  | Select_and_scatter _ -> (
+      match avals with
+      | operand :: _ -> [ operand ]
+      | [] -> failwith "lax: select_and_scatter expects an operand aval")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

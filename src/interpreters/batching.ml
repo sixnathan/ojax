@@ -605,6 +605,10 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       failwith "batching: vmap of dot_general not supported in M1"
   | Conv_general_dilated _ ->
       failwith "batching: vmap of conv_general_dilated not supported in M2"
+  | Reduce_window _ | Reduce_window_max _ | Reduce_window_min _
+  | Reduce_window_sum _ | Select_and_gather_add _ | Select_and_scatter _
+  | Select_and_scatter_add _ ->
+      failwith "batching: vmap of windowed reductions not supported in M2"
   | Xla_call _ | Cond _ ->
       failwith "batching: vmap of control primitive not supported in M1"
 

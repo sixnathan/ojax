@@ -516,6 +516,41 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           let po = b1 prim [ x ] in
           (po, zeros_like_value po)
       | _ -> arity ())
+  | Reduce_window_sum window -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          ( b1 (Reduce_window_sum window) [ x ],
+            b1 (Reduce_window_sum window) [ tx ] )
+      | _ -> arity ())
+  | Reduce_window_max window -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          ( b1 (Reduce_window_max window) [ x ],
+            b1 (Select_and_gather_add { select = Wge; window }) [ tx; x ] )
+      | _ -> arity ())
+  | Reduce_window_min window -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          ( b1 (Reduce_window_min window) [ x ],
+            b1 (Select_and_gather_add { select = Wle; window }) [ tx; x ] )
+      | _ -> arity ())
+  | Select_and_gather_add { select; window } -> (
+      match (primals, tangents) with
+      | [ t; op ], [ g_t; _ ] ->
+          ( b1 (Select_and_gather_add { select; window }) [ t; op ],
+            b1 (Select_and_gather_add { select; window }) [ g_t; op ] )
+      | _ -> arity ())
+  | Select_and_scatter_add { select; window } -> (
+      match (primals, tangents) with
+      | [ src; op ], [ g_src; _ ] ->
+          ( b1 (Select_and_scatter_add { select; window }) [ src; op ],
+            b1 (Select_and_scatter_add { select; window }) [ g_src; op ] )
+      | _ -> arity ())
+  | Reduce_window _ ->
+      failwith
+        "ad: reduce_window jvp needs the variadic jvp reducer jaxpr (M2 gap)"
+  | Select_and_scatter _ ->
+      failwith "ad: select_and_scatter has no jvp rule in M1"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
   | Rng_uniform | To_edtype _ ->
@@ -961,8 +996,10 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | Reduce_prod _ | Reduce_xor _ | After_all | Bitcast_convert_type _ | Clamp
   | Composite _ | Create_token | Dce_sink | Empty _ | Empty2 _ | From_edtype _
   | Iota _ | Ragged_dot_general | Rng_bit_generator | Rng_uniform | Sort _
-  | To_edtype _ | Top_k _ | Scatter_min _ | Scatter_max _ | Xla_call _ | Cond _
-    ->
+  | To_edtype _ | Top_k _ | Scatter_min _ | Scatter_max _ | Reduce_window _
+  | Reduce_window_max _ | Reduce_window_min _ | Reduce_window_sum _
+  | Select_and_gather_add _ | Select_and_scatter _ | Select_and_scatter_add _
+  | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

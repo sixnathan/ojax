@@ -190,6 +190,31 @@ let read_nd nd =
 
 let ia j = Array.of_list (List.map U.to_int (U.to_list j))
 
+let pairs j =
+  Array.of_list
+    (List.map
+       (fun t ->
+         match U.to_list t with
+         | [ a; b ] -> (U.to_int a, U.to_int b)
+         | _ -> failwith "lax golden: bad padding pair")
+       (U.to_list j))
+
+let window_of params : T.window_dims =
+  let member name = U.member name params in
+  {
+    window_dimensions = ia (member "window_dimensions");
+    window_strides = ia (member "window_strides");
+    w_padding = pairs (member "padding");
+    base_dilation = ia (member "base_dilation");
+    window_dilation = ia (member "window_dilation");
+  }
+
+let window_select params =
+  match U.to_string (U.member "select" params) with
+  | "ge" -> T.Wge
+  | "le" -> T.Wle
+  | s -> failwith ("lax golden: bad window select " ^ s)
+
 let prim_of op params : T.primitive =
   let member name = U.member name params in
   match op with
@@ -427,6 +452,21 @@ let prim_of op params : T.primitive =
           feature_group_count = U.to_int (member "feature_group_count");
           batch_group_count = U.to_int (member "batch_group_count");
         }
+  | "reduce_window_sum" -> T.Reduce_window_sum (window_of params)
+  | "reduce_window_max" -> T.Reduce_window_max (window_of params)
+  | "reduce_window_min" -> T.Reduce_window_min (window_of params)
+  | "reduce_window" ->
+      let sc = { T.shape = [||]; dtype = D.F32; weak_type = false } in
+      let reducer =
+        Ojax.Jaxpr.make_jaxpr [ sc; sc ] (fun args -> [ C.bind1 T.Mul args ])
+      in
+      T.Reduce_window { reducer; window = window_of params }
+  | "select_and_gather_add" ->
+      T.Select_and_gather_add
+        { select = window_select params; window = window_of params }
+  | "select_and_scatter_add" ->
+      T.Select_and_scatter_add
+        { select = window_select params; window = window_of params }
   | _ -> failwith ("lax golden: unknown op " ^ op)
 
 let concrete = function

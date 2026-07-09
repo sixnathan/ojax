@@ -136,6 +136,7 @@ def weak_scalar(dtype_name, seed):
 
 LAX = jax.lax
 from jax._src.lax import lax as LAX_INTERNAL
+from jax._src.lax import windowed_reductions as WR
 
 
 def _unary(fn):
@@ -450,6 +451,63 @@ def lax_conv_general_dilated(params):
     )
 
 
+def _window_geometry(params):
+    wd = tuple(params["window_dimensions"])
+    ws = tuple(params["window_strides"])
+    padding = tuple((int(lo), int(hi)) for lo, hi in params["padding"])
+    bd = tuple(params["base_dilation"])
+    wdil = tuple(params["window_dilation"])
+    return wd, ws, padding, bd, wdil
+
+
+def _window_select(params):
+    return LAX_INTERNAL.ge_p if params["select"] == "ge" else LAX_INTERNAL.le_p
+
+
+def lax_reduce_window_sum(params):
+    wd, ws, padding, bd, wdil = _window_geometry(params)
+    return lambda x: LAX.reduce_window(
+        x, LAX_INTERNAL._get_sum_identity(x.dtype), LAX.add, wd, ws, padding, bd, wdil
+    )
+
+
+def lax_reduce_window_max(params):
+    wd, ws, padding, bd, wdil = _window_geometry(params)
+    return lambda x: LAX.reduce_window(
+        x, LAX_INTERNAL._get_max_identity(x.dtype), LAX.max, wd, ws, padding, bd, wdil
+    )
+
+
+def lax_reduce_window_min(params):
+    wd, ws, padding, bd, wdil = _window_geometry(params)
+    return lambda x: LAX.reduce_window(
+        x, LAX_INTERNAL._get_min_identity(x.dtype), LAX.min, wd, ws, padding, bd, wdil
+    )
+
+
+def lax_reduce_window(params):
+    wd, ws, padding, bd, wdil = _window_geometry(params)
+    return lambda x, init: LAX.reduce_window(
+        x, init, LAX.mul, wd, ws, padding, bd, wdil
+    )
+
+
+def lax_select_and_gather_add(params):
+    sel = _window_select(params)
+    wd, ws, padding, bd, wdil = _window_geometry(params)
+    return lambda t, x: WR._select_and_gather_add(
+        t, x, sel, wd, ws, padding, bd, wdil
+    )
+
+
+def lax_select_and_scatter_add(params):
+    sel = _window_select(params)
+    wd, ws, padding, _bd, _wdil = _window_geometry(params)
+    return lambda source, operand: WR._select_and_scatter_add(
+        source, operand, sel, wd, ws, padding
+    )
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -554,6 +612,12 @@ LAX_BUILDERS = {
     "scatter_min": lax_scatter_min,
     "scatter_max": lax_scatter_max,
     "conv_general_dilated": lax_conv_general_dilated,
+    "reduce_window_sum": lax_reduce_window_sum,
+    "reduce_window_max": lax_reduce_window_max,
+    "reduce_window_min": lax_reduce_window_min,
+    "reduce_window": lax_reduce_window,
+    "select_and_gather_add": lax_select_and_gather_add,
+    "select_and_scatter_add": lax_select_and_scatter_add,
 }
 
 

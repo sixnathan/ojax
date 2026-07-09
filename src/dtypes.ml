@@ -8,22 +8,24 @@ let canonicalize_dtype (d : Dtype.t) : Dtype.t =
   if Config.x64_enabled () then d
   else match d with Dtype.F64 -> Dtype.F32 | Dtype.I64 -> Dtype.I32 | d -> d
 
-type node = Bool | Weak_int | I32 | I64 | Weak_float | F32 | F64
+type node = Bool | Weak_int | U32 | I32 | I64 | Weak_float | F32 | F64
 
 let rank = function
   | Bool -> 0
   | Weak_int -> 1
-  | I32 -> 2
-  | I64 -> 3
-  | Weak_float -> 4
-  | F32 -> 5
-  | F64 -> 6
+  | U32 -> 2
+  | I32 -> 3
+  | I64 -> 4
+  | Weak_float -> 5
+  | F32 -> 6
+  | F64 -> 7
 
 let jax_type (d : Dtype.t) (weak : bool) : node =
   match (d, weak) with
   | Dtype.Bool, _ -> Bool
   | (Dtype.I32 | Dtype.I64), true -> Weak_int
   | (Dtype.F32 | Dtype.F64), true -> Weak_float
+  | Dtype.Uint32, _ -> U32
   | Dtype.I32, false -> I32
   | Dtype.I64, false -> I64
   | Dtype.F32, false -> F32
@@ -31,6 +33,7 @@ let jax_type (d : Dtype.t) (weak : bool) : node =
 
 let dtype_of_node : node -> Dtype.t = function
   | Bool -> Dtype.Bool
+  | U32 -> Dtype.Uint32
   | I32 -> Dtype.I32
   | I64 -> Dtype.I64
   | F32 -> Dtype.F32
@@ -52,6 +55,7 @@ let default_of_kind (d : Dtype.t) : Dtype.t =
   match d with
   | Dtype.F32 | Dtype.F64 -> default_float_dtype ()
   | Dtype.I32 | Dtype.I64 -> default_int_dtype ()
+  | Dtype.Uint32 -> Dtype.Uint32
   | Dtype.Bool -> Dtype.Bool
 
 let lattice_result_type (args : (Dtype.t * bool) list) : Dtype.t * bool =

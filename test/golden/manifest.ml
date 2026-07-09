@@ -175,6 +175,7 @@ let dtype_of_string = function
   | "int32" -> D.I32
   | "int64" -> D.I64
   | "bool" -> D.Bool
+  | "uint32" -> D.Uint32
   | s -> failwith ("lax golden: unsupported dtype " ^ s)
 
 let string_of_dtype = function
@@ -183,6 +184,7 @@ let string_of_dtype = function
   | D.I32 -> "int32"
   | D.I64 -> "int64"
   | D.Bool -> "bool"
+  | D.Uint32 -> "uint32"
 
 let nd_of_npz (a : Npz.t) =
   let floats =

@@ -6620,5 +6620,275 @@
    }
   ],
   "params": {}
+ },
+ {
+  "op": "add",
+  "primitive": "lax.add",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "sub",
+  "primitive": "lax.sub",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "mul",
+  "primitive": "lax.mul",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "and",
+  "primitive": "lax.and",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "or",
+  "primitive": "lax.or",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "xor",
+  "primitive": "lax.xor",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "shift_left",
+  "primitive": "lax.shift_left",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int_small"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "shift_right_logical",
+  "primitive": "lax.shift_right_logical",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int_small"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "convert_element_type",
+  "primitive": "lax.convert_element_type",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "int32",
+    "rng": "rand_int_small"
+   }
+  ],
+  "params": {
+   "new_dtype": "uint32"
+  }
+ },
+ {
+  "op": "convert_element_type",
+  "primitive": "lax.convert_element_type",
+  "args": [
+   {
+    "shape": [
+     2,
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {
+   "new_dtype": "uint32"
+  }
+ },
+ {
+  "op": "convert_element_type",
+  "primitive": "lax.convert_element_type",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {
+   "new_dtype": "float32"
+  }
+ },
+ {
+  "op": "iota",
+  "primitive": "lax.iota",
+  "args": [],
+  "params": {
+   "dtype": "uint32",
+   "shape": [
+    4
+   ],
+   "dimension": 0
+  }
+ },
+ {
+  "op": "reshape",
+  "primitive": "lax.reshape",
+  "args": [
+   {
+    "shape": [
+     2,
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {
+   "new_sizes": [
+    6
+   ]
+  }
+ },
+ {
+  "op": "broadcast_in_dim",
+  "primitive": "lax.broadcast_in_dim",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "uint32",
+    "rng": "rand_int"
+   }
+  ],
+  "params": {
+   "shape": [
+    2,
+    3
+   ],
+   "dims": [
+    1
+   ]
+  }
  }
 ]

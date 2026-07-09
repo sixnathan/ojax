@@ -259,7 +259,8 @@ let lit_value nd =
   let scalar = [||] in
   match Ndarray.dtype nd with
   | Dtype.Bool -> if Ndarray.get_f nd scalar = 0.0 then "False" else "True"
-  | Dtype.I32 | Dtype.I64 -> Int64.to_string (Ndarray.get_i64 nd scalar)
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
+      Int64.to_string (Ndarray.get_i64 nd scalar)
   | Dtype.F32 | Dtype.F64 -> python_repr_float (Ndarray.get_f nd scalar)
 
 let lit_str nd = lit_value nd ^ ":" ^ lit_short nd

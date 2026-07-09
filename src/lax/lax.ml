@@ -56,10 +56,31 @@ let not_f dt x =
   | Dtype.I32 | Dtype.I64 -> Int64.to_float (Int64.lognot (Int64.of_float x))
   | _ -> failwith "lax: not requires a boolean or integer operand"
 
+let uint32_mask_i64 = 0xFFFFFFFFL
+let uint32_wrap v = Int64.to_float (Int64.logand v uint32_mask_i64)
+
+let add_f dt x y =
+  match dt with
+  | Dtype.Uint32 ->
+      uint32_wrap (Int64.add (Int64.of_float x) (Int64.of_float y))
+  | _ -> x +. y
+
+let sub_f dt x y =
+  match dt with
+  | Dtype.Uint32 ->
+      uint32_wrap (Int64.sub (Int64.of_float x) (Int64.of_float y))
+  | _ -> x -. y
+
+let mul_f dt x y =
+  match dt with
+  | Dtype.Uint32 ->
+      uint32_wrap (Int64.mul (Int64.of_float x) (Int64.of_float y))
+  | _ -> x *. y
+
 let and_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 && y <> 0.0 then 1.0 else 0.0
-  | Dtype.I32 | Dtype.I64 ->
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
       Int64.to_float (Int64.logand (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: and requires a boolean or integer operand"
 
@@ -100,14 +121,14 @@ let mulhi_f dt x y =
 let or_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 || y <> 0.0 then 1.0 else 0.0
-  | Dtype.I32 | Dtype.I64 ->
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
       Int64.to_float (Int64.logor (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: or requires a boolean or integer operand"
 
 let xor_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 <> (y <> 0.0) then 1.0 else 0.0
-  | Dtype.I32 | Dtype.I64 ->
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
       Int64.to_float (Int64.logxor (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: xor requires a boolean or integer operand"
 
@@ -118,8 +139,13 @@ let rem_f dt x y =
       Int64.to_float (Int64.rem (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: rem requires an integer or float operand"
 
-let shift_left_f x y =
-  Int64.to_float (Int64.shift_left (Int64.of_float x) (int_of_float y))
+let shift_left_f dt x y =
+  let s = int_of_float y in
+  match dt with
+  | Dtype.Uint32 ->
+      Int64.to_float
+        (Int64.logand (Int64.shift_left (Int64.of_float x) s) uint32_mask_i64)
+  | _ -> Int64.to_float (Int64.shift_left (Int64.of_float x) s)
 
 let shift_right_arithmetic_f x y =
   Int64.to_float (Int64.shift_right (Int64.of_float x) (int_of_float y))
@@ -127,7 +153,7 @@ let shift_right_arithmetic_f x y =
 let shift_right_logical_f dt x y =
   let s = int_of_float y in
   match dt with
-  | Dtype.I32 ->
+  | Dtype.I32 | Dtype.Uint32 ->
       let u = Int64.logand (Int64.of_float x) 0xFFFFFFFFL in
       Int64.to_float (Int64.shift_right_logical u s)
   | Dtype.I64 -> Int64.to_float (Int64.shift_right_logical (Int64.of_float x) s)
@@ -789,9 +815,21 @@ let impl prim inputs =
   | Tanh -> un (fun a -> Ndarray.map (Ndarray.dtype a) tanh a) inputs
   | Abs -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.abs a) inputs
   | Sign -> un (fun a -> Ndarray.map (Ndarray.dtype a) sign_f a) inputs
-  | Add -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) ( +. ) a b) inputs
-  | Sub -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) ( -. ) a b) inputs
-  | Mul -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) ( *. ) a b) inputs
+  | Add ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (add_f (Ndarray.dtype a)) a b)
+        inputs
+  | Sub ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (sub_f (Ndarray.dtype a)) a b)
+        inputs
+  | Mul ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (mul_f (Ndarray.dtype a)) a b)
+        inputs
   | Div -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) ( /. ) a b) inputs
   | Max -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.max a b) inputs
   | Min -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.min a b) inputs
@@ -906,7 +944,10 @@ let impl prim inputs =
           Ndarray.map2 (Ndarray.dtype a) (rem_f (Ndarray.dtype a)) a b)
         inputs
   | Shift_left ->
-      bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) shift_left_f a b) inputs
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (shift_left_f (Ndarray.dtype a)) a b)
+        inputs
   | Shift_right_arithmetic ->
       bin
         (fun a b -> Ndarray.map2 (Ndarray.dtype a) shift_right_arithmetic_f a b)

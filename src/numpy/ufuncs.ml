@@ -17,7 +17,7 @@ let zeros_like v = const_full (dtype v) (shape v) 0.0
 let to_inexact_dtype = function
   | D.F32 -> D.F32
   | D.F64 -> D.F64
-  | D.I32 | D.Bool -> D.F32
+  | D.I32 | D.Bool | D.Uint32 -> D.F32
   | D.I64 -> D.F64
 
 let to_numeric_dtype = function D.Bool -> D.I32 | d -> d
@@ -351,7 +351,7 @@ let signbit x =
   let sh = shape a in
   match dtype a with
   | D.I32 | D.I64 -> bind1 T.Lt [ a; zeros_like a ]
-  | D.Bool -> const_full D.Bool sh 0.0
+  | D.Bool | D.Uint32 -> const_full D.Bool sh 0.0
   | D.F32 ->
       let i = bind1 (T.Bitcast_convert_type D.I32) [ a ] in
       let s = bind1 T.Shift_right_arithmetic [ i; const_full D.I32 sh 31.0 ] in

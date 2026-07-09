@@ -96,6 +96,10 @@ def rand_int_small_nz(rng, shape, dtype):
     return rng.randint(1, 10, size=tuple(shape), dtype=dtype)
 
 
+def rand_seg(rng, shape, dtype):
+    return rng.randint(0, 4, size=tuple(shape), dtype=dtype)
+
+
 def rand_bool(rng, shape, dtype):
     return np.asarray(rng.rand(*tuple(shape)) < 0.5, dtype=dtype)
 
@@ -135,6 +139,7 @@ RNG_FACTORIES = {
     "rand_int": rand_int,
     "rand_int_small": rand_int_small,
     "rand_int_small_nz": rand_int_small_nz,
+    "rand_seg": rand_seg,
     "rand_bool": rand_bool,
     "rand_index_unique": rand_index_unique,
     "rand_uniform": rand_uniform,
@@ -3563,7 +3568,50 @@ for _init_name in [
     INIT_BUILDERS[_init_name] = init_fan(_init_name)
 
 
+import jax.ops as jops
+from jax.scipy.special import logsumexp as jlogsumexp
+
+
+def ops_segment(fn):
+    def build(params):
+        ns = params.get("num_segments")
+        ns = None if ns is None else int(ns)
+        return lambda data, seg: fn(data, seg, num_segments=ns)
+
+    return build
+
+
+def ops_logsumexp(params):
+    axis = params.get("axis")
+    axis = None if axis is None else tuple(int(x) for x in axis)
+    keepdims = bool(params.get("keepdims", False))
+    has_b = bool(params.get("has_b", False))
+    if has_b:
+        return lambda a, b: jlogsumexp(a, axis=axis, b=b, keepdims=keepdims)
+    return lambda a: jlogsumexp(a, axis=axis, keepdims=keepdims)
+
+
+OPS_BUILDERS = {
+    "segment_sum": ops_segment(jops.segment_sum),
+    "segment_prod": ops_segment(jops.segment_prod),
+    "segment_max": ops_segment(jops.segment_max),
+    "segment_min": ops_segment(jops.segment_min),
+    "logsumexp": ops_logsumexp,
+}
+
+
 def run_case(c, seed):
+    if c["primitive"].startswith("ops.") and c["op"] in OPS_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = OPS_BUILDERS[c["op"]](c["params"])(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
     if c["primitive"].startswith("initializers.") and c["op"] in INIT_BUILDERS:
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])

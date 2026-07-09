@@ -1,0 +1,10 @@
+[
+  {"op":"logsumexp","primitive":"ops.logsumexp","args":[{"shape":[4],"dtype":"float32","rng":"rand_default"}],"params":{"axis":null,"keepdims":false}},
+  {"op":"logsumexp","primitive":"ops.logsumexp","args":[{"shape":[4],"dtype":"float64","rng":"rand_default"}],"params":{"axis":null,"keepdims":false}},
+  {"op":"logsumexp","primitive":"ops.logsumexp","args":[{"shape":[3,4],"dtype":"float32","rng":"rand_default"}],"params":{"axis":[1],"keepdims":false}},
+  {"op":"logsumexp","primitive":"ops.logsumexp","args":[{"shape":[3,4],"dtype":"float32","rng":"rand_default"}],"params":{"axis":[1],"keepdims":true}},
+  {"op":"logsumexp","primitive":"ops.logsumexp","args":[{"shape":[3,4],"dtype":"float32","rng":"rand_default"}],"params":{"axis":null,"keepdims":false}},
+  {"op":"logsumexp","primitive":"ops.logsumexp","args":[{"shape":[3,4],"dtype":"float32","rng":"rand_default"}],"params":{"axis":[0],"keepdims":false}},
+  {"op":"logsumexp","primitive":"ops.logsumexp","args":[{"shape":[4],"dtype":"float32","rng":"rand_default"},{"shape":[4],"dtype":"float32","rng":"rand_positive"}],"params":{"axis":null,"keepdims":false,"has_b":true}},
+  {"op":"logsumexp","primitive":"ops.logsumexp","args":[{"shape":[3,4],"dtype":"float32","rng":"rand_default"},{"shape":[3,4],"dtype":"float32","rng":"rand_positive"}],"params":{"axis":[1],"keepdims":false,"has_b":true}}
+]

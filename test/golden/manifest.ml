@@ -2873,6 +2873,64 @@ let initializers_suite_for set_name =
   in
   ("initializers:" ^ set_name, coverage :: case_tests)
 
+module SEG = Ojax.Ops.Segment
+module SPC = Ojax.Ops.Special
+
+let segment_fn op params operands : T.value list =
+  let ns = opt_i params "num_segments" in
+  match (op, operands) with
+  | "segment_sum", [ data; seg ] ->
+      [ SEG.segment_sum ?num_segments:ns data seg ]
+  | "segment_prod", [ data; seg ] ->
+      [ SEG.segment_prod ?num_segments:ns data seg ]
+  | "segment_max", [ data; seg ] ->
+      [ SEG.segment_max ?num_segments:ns data seg ]
+  | "segment_min", [ data; seg ] ->
+      [ SEG.segment_min ?num_segments:ns data seg ]
+  | _ -> failwith ("segment golden: unknown op " ^ op)
+
+let segment_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "segment") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:segment_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("segment:" ^ set_name, coverage :: case_tests)
+
+let special_fn op params operands : T.value list =
+  let axis = opt_ia params "axis" in
+  let keepdims = Option.value ~default:false (opt_b params "keepdims") in
+  match (op, operands) with
+  | "logsumexp", [ a ] -> [ SPC.logsumexp ?axis ~keepdims a ]
+  | "logsumexp", [ a; b ] -> [ SPC.logsumexp ?axis ~b ~keepdims a ]
+  | _ -> failwith ("special golden: unknown op " ^ op)
+
+let special_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "special") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:special_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("special:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -2961,5 +3019,9 @@ let () =
       nn_suite_for "x64_on";
       initializers_suite_for "x64_off";
       initializers_suite_for "x64_on";
+      segment_suite_for "x64_off";
+      segment_suite_for "x64_on";
+      special_suite_for "x64_off";
+      special_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

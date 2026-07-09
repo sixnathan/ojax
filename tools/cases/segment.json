@@ -1,0 +1,17 @@
+[
+  {"op":"segment_sum","primitive":"ops.segment_sum","args":[{"shape":[6],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_sum","primitive":"ops.segment_sum","args":[{"shape":[6],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{}},
+  {"op":"segment_sum","primitive":"ops.segment_sum","args":[{"shape":[6],"dtype":"int32","rng":"rand_int_small"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_sum","primitive":"ops.segment_sum","args":[{"shape":[6,3],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":5}},
+  {"op":"segment_sum","primitive":"ops.segment_sum","args":[{"shape":[6],"dtype":"float64","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_prod","primitive":"ops.segment_prod","args":[{"shape":[6],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_prod","primitive":"ops.segment_prod","args":[{"shape":[6],"dtype":"int32","rng":"rand_int_small"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_prod","primitive":"ops.segment_prod","args":[{"shape":[6,2],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_prod","primitive":"ops.segment_prod","args":[{"shape":[6],"dtype":"float64","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_max","primitive":"ops.segment_max","args":[{"shape":[6],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_max","primitive":"ops.segment_max","args":[{"shape":[6,3],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":5}},
+  {"op":"segment_max","primitive":"ops.segment_max","args":[{"shape":[6],"dtype":"float64","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_min","primitive":"ops.segment_min","args":[{"shape":[6],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_min","primitive":"ops.segment_min","args":[{"shape":[6,2],"dtype":"float32","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}},
+  {"op":"segment_min","primitive":"ops.segment_min","args":[{"shape":[6],"dtype":"float64","rng":"rand_default"},{"shape":[6],"dtype":"int32","rng":"rand_seg"}],"params":{"num_segments":4}}
+]

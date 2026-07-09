@@ -554,6 +554,104 @@ let lax_check_case ~set_dir ~x64 c () =
         ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
     paired
 
+module NL = Ojax.Numpy.Lax_numpy
+
+let opt_ia params name =
+  match U.member name params with `Null -> None | j -> Some (ia j)
+
+let numpy_fn op params operands : T.value =
+  let member name = U.member name params in
+  match (op, operands) with
+  | "transpose", [ x ] -> NL.transpose ?axes:(opt_ia params "axes") x
+  | "permute_dims", [ x ] -> NL.permute_dims x (ia (member "axes"))
+  | "matrix_transpose", [ x ] -> NL.matrix_transpose x
+  | "flip", [ x ] -> NL.flip ?axis:(opt_ia params "axis") x
+  | "fliplr", [ x ] -> NL.fliplr x
+  | "flipud", [ x ] -> NL.flipud x
+  | "reshape", [ x ] -> NL.reshape x (ia (member "shape"))
+  | "ravel", [ x ] -> NL.ravel x
+  | "rot90", [ x ] ->
+      let axes =
+        match ia (member "axes") with
+        | [| a; b |] -> (a, b)
+        | _ -> failwith "numpy golden: bad rot90 axes"
+      in
+      NL.rot90 ~k:(U.to_int (member "k")) ~axes x
+  | "trunc", [ x ] -> NL.trunc x
+  | "fmax", [ a; b ] -> NL.fmax a b
+  | "fmin", [ a; b ] -> NL.fmin a b
+  | "diff", [ x ] ->
+      NL.diff ~n:(U.to_int (member "n")) ~axis:(U.to_int (member "axis")) x
+  | "ediff1d", [ x ] -> NL.ediff1d x
+  | "angle", [ x ] -> NL.angle ~deg:(U.to_bool (member "deg")) x
+  | "iscomplex", [ x ] -> NL.iscomplex x
+  | "isreal", [ x ] -> NL.isreal x
+  | "convolve", [ a; b ] -> NL.convolve ~mode:(U.to_string (member "mode")) a b
+  | "correlate", [ a; b ] ->
+      NL.correlate ~mode:(U.to_string (member "mode")) a b
+  | _ -> failwith ("numpy golden: unknown op " ^ op)
+
+let numpy_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.case_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.case_id ^ ".npz"))
+  in
+  let operands =
+    List.map
+      (fun a -> T.Concrete (nd_of_npz (find_member inputs a.name)))
+      c.args
+  in
+  let results = [ numpy_fn c.op c.params operands ] in
+  let paired =
+    try List.combine c.outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.case_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let floats = read_nd nd in
+      let data =
+        if c.compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      let actual =
+        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+      in
+      Compare.assert_tol o.odtype c.atol c.rtol;
+      Compare.check
+        ~name:(c.case_id ^ ":" ^ o.oname)
+        ~compare:c.compare ~atol:c.atol ~rtol:c.rtol ~expected:golden ~actual)
+    paired
+
+let numpy_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "lax_numpy") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick (numpy_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("lax_numpy:" ^ set_name, coverage :: case_tests)
+
 let lax_suite_for set_name =
   let set_dir = Filename.concat (Filename.concat goldens_root "lax") set_name in
   let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
@@ -1775,5 +1873,7 @@ let () =
       loops_suite_for "x64_on";
       solves_suite_for "x64_off";
       solves_suite_for "x64_on";
+      numpy_suite_for "x64_off";
+      numpy_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

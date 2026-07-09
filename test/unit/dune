@@ -32,5 +32,6 @@
   test_ad
   test_batching
   test_api_util
-  test_api)
+  test_api
+  test_numpy_lax_numpy)
  (libraries ojax alcotest))

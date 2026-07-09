@@ -651,6 +651,121 @@ LAX_BUILDERS = {
 }
 
 
+def _opt_axes(params, key):
+    v = params.get(key)
+    return None if v is None else tuple(v)
+
+
+def np_transpose(params):
+    axes = _opt_axes(params, "axes")
+    return lambda x: jnp.transpose(x, axes)
+
+
+def np_permute_dims(params):
+    axes = tuple(params["axes"])
+    return lambda x: jnp.permute_dims(x, axes)
+
+
+def np_matrix_transpose(params):
+    return lambda x: jnp.matrix_transpose(x)
+
+
+def np_flip(params):
+    axis = _opt_axes(params, "axis")
+    return lambda x: jnp.flip(x, axis)
+
+
+def np_fliplr(params):
+    return lambda x: jnp.fliplr(x)
+
+
+def np_flipud(params):
+    return lambda x: jnp.flipud(x)
+
+
+def np_rot90(params):
+    k = int(params["k"])
+    axes = tuple(params["axes"])
+    return lambda x: jnp.rot90(x, k=k, axes=axes)
+
+
+def np_reshape(params):
+    shape = tuple(params["shape"])
+    return lambda x: jnp.reshape(x, shape)
+
+
+def np_ravel(params):
+    return lambda x: jnp.ravel(x)
+
+
+def np_trunc(params):
+    return lambda x: jnp.trunc(x)
+
+
+def np_fmax(params):
+    return lambda a, b: jnp.fmax(a, b)
+
+
+def np_fmin(params):
+    return lambda a, b: jnp.fmin(a, b)
+
+
+def np_diff(params):
+    n = int(params["n"])
+    axis = int(params["axis"])
+    return lambda x: jnp.diff(x, n=n, axis=axis)
+
+
+def np_ediff1d(params):
+    return lambda x: jnp.ediff1d(x)
+
+
+def np_angle(params):
+    deg = bool(params["deg"])
+    return lambda x: jnp.angle(x, deg=deg)
+
+
+def np_convolve(params):
+    mode = params["mode"]
+    return lambda a, b: jnp.convolve(a, b, mode=mode)
+
+
+def np_correlate(params):
+    mode = params["mode"]
+    return lambda a, b: jnp.correlate(a, b, mode=mode)
+
+
+def np_iscomplex(params):
+    return lambda x: jnp.iscomplex(x)
+
+
+def np_isreal(params):
+    return lambda x: jnp.isreal(x)
+
+
+NUMPY_BUILDERS = {
+    "transpose": np_transpose,
+    "permute_dims": np_permute_dims,
+    "matrix_transpose": np_matrix_transpose,
+    "flip": np_flip,
+    "fliplr": np_fliplr,
+    "flipud": np_flipud,
+    "rot90": np_rot90,
+    "reshape": np_reshape,
+    "ravel": np_ravel,
+    "trunc": np_trunc,
+    "fmax": np_fmax,
+    "fmin": np_fmin,
+    "diff": np_diff,
+    "ediff1d": np_ediff1d,
+    "angle": np_angle,
+    "convolve": np_convolve,
+    "correlate": np_correlate,
+    "iscomplex": np_iscomplex,
+    "isreal": np_isreal,
+}
+
+
 SHORT_DTYPE = {
     "float32": "f32",
     "float64": "f64",
@@ -1670,12 +1785,14 @@ def _add_all(*xs):
 
 def run_case(c, seed):
     op = c["op"]
-    if op in LAX_BUILDERS:
+    is_numpy = c["primitive"].startswith("jnp.") and op in NUMPY_BUILDERS
+    if is_numpy or op in LAX_BUILDERS:
+        builders = NUMPY_BUILDERS if is_numpy else LAX_BUILDERS
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])
             for i, a in enumerate(c["args"])
         ]
-        out = jax.jit(LAX_BUILDERS[op](c["params"]))(*inputs)
+        out = jax.jit(builders[op](c["params"]))(*inputs)
         if isinstance(out, (tuple, list)):
             outs = [np.asarray(o) for o in out]
         else:

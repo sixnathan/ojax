@@ -1129,6 +1129,12 @@ let impl prim inputs =
               | Tracer _ -> failwith "lax: cond branch produced a tracer")
             outs
       | [] -> failwith "lax: cond expects a predicate")
+  | Scan { length; reverse; num_carry; jaxpr } ->
+      let inputs_v = List.map (fun nd -> Concrete nd) inputs in
+      Control_flow.Loops.scan_impl ~length ~reverse ~num_carry jaxpr inputs_v
+      |> List.map (function
+        | Concrete nd -> nd
+        | Tracer _ -> failwith "lax: scan produced a tracer")
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1387,6 +1393,8 @@ let abstract_eval prim avals =
       | _ -> failwith "lax: regularized_incomplete_beta expects 3 avals")
   | Platform_index _ -> [ shaped [||] Dtype.I32 false ]
   | Cond { t; _ } -> List.map aval_of_atom t.jaxpr.outs
+  | Scan { length; num_carry; jaxpr; _ } ->
+      Control_flow.Loops.scan_out_avals ~length ~num_carry jaxpr
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =
@@ -1396,3 +1404,4 @@ let install () =
 let () = install ()
 let cond = Control_flow.Conditionals.cond
 let platform_index = Control_flow.Conditionals.platform_index
+let scan = Control_flow.Loops.scan

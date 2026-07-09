@@ -24,6 +24,7 @@
   test_lax_rest_b
   test_lax_special
   test_lax_conditionals
+  test_lax_loops
   test_jaxpr
   test_partial_eval
   test_ad

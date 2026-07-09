@@ -1352,6 +1352,179 @@ let cond_suite_for set_name =
   in
   ("conditionals:" ^ set_name, coverage :: case_tests)
 
+let loops_bodies : (string * int * (T.value list -> T.value list)) list =
+  [
+    ( "cumsum",
+      1,
+      fun l ->
+        match l with
+        | [ c; x ] ->
+            let s = jb1 T.Add [ c; x ] in
+            [ s; s ]
+        | _ -> assert false );
+    ( "cumprod",
+      1,
+      fun l ->
+        match l with [ c; x ] -> [ jb1 T.Mul [ c; x ]; c ] | _ -> assert false
+    );
+    ( "lin",
+      1,
+      fun l ->
+        match l with
+        | [ c; x ] -> [ jb1 T.Add [ c; x ]; jb1 T.Sin [ c ] ]
+        | _ -> assert false );
+    ( "twocarry",
+      2,
+      fun l ->
+        match l with
+        | [ a; b; x ] -> [ jb1 T.Add [ a; x ]; jb1 T.Mul [ b; x ]; a ]
+        | _ -> assert false );
+  ]
+
+type loops_case = {
+  lp_id : string;
+  lp_fn : string;
+  lp_mode : string;
+  lp_reverse : bool;
+  lp_num_carry : int;
+  lp_in_axes : int option list;
+  lp_args : arg list;
+  lp_tans : arg list;
+  lp_outs : out list;
+  lp_compare : string;
+  lp_atol : float;
+  lp_rtol : float;
+}
+
+let parse_loops_case j =
+  let tol = U.member "tol" j in
+  let in_axes_j = U.member "in_axes" j in
+  {
+    lp_id = U.member "case_id" j |> U.to_string;
+    lp_fn = U.member "fn" j |> U.to_string;
+    lp_mode = U.member "mode" j |> U.to_string;
+    lp_reverse = U.member "reverse" j |> U.to_bool;
+    lp_num_carry = U.member "num_carry" j |> U.to_int;
+    lp_in_axes =
+      (match in_axes_j with
+      | `Null -> []
+      | _ -> U.to_list in_axes_j |> List.map parse_in_axis);
+    lp_args = U.member "args" j |> U.to_list |> List.map parse_arg;
+    lp_tans = U.member "tangents" j |> U.to_list |> List.map parse_arg;
+    lp_outs = U.member "outputs" j |> U.to_list |> List.map parse_out;
+    lp_compare = U.member "compare" j |> U.to_string;
+    lp_atol = U.member "atol" tol |> U.to_number;
+    lp_rtol = U.member "rtol" tol |> U.to_number;
+  }
+
+let load_loops_manifest path =
+  let j = Yojson.Safe.from_file path in
+  ( U.member "x64" j |> U.to_bool,
+    U.member "cases" j |> U.to_list |> List.map parse_loops_case )
+
+let loops_split_at n l =
+  let rec go n l acc =
+    if n = 0 then (List.rev acc, l)
+    else
+      match l with
+      | x :: tl -> go (n - 1) tl (x :: acc)
+      | [] -> (List.rev acc, [])
+  in
+  go n l []
+
+let loops_run c primals tangents =
+  let _, num_carry, body =
+    match List.find_opt (fun (n, _, _) -> n = c.lp_fn) loops_bodies with
+    | Some x -> x
+    | None -> Alcotest.failf "%s: unknown loops fn %s" c.lp_id c.lp_fn
+  in
+  let reverse = c.lp_reverse in
+  let wrapped inputs =
+    let init, xs = loops_split_at num_carry inputs in
+    Ojax.Lax.scan ~reverse body init xs
+  in
+  match c.lp_mode with
+  | "eval" -> wrapped primals
+  | "jvp" ->
+      let po, to_ = Ad.jvp wrapped primals tangents in
+      po @ to_
+  | "vmap" -> Batching.vmap wrapped c.lp_in_axes primals
+  | m -> failwith ("loops: unknown mode " ^ m)
+
+let loops_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.lp_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.lp_id ^ ".npz"))
+  in
+  let read_operand (a : arg) =
+    T.Concrete (nd_of_npz (find_member inputs a.name))
+  in
+  let primals = List.map read_operand c.lp_args in
+  let tangents = List.map read_operand c.lp_tans in
+  let results = loops_run c primals tangents in
+  let paired =
+    try List.combine c.lp_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.lp_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.lp_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.lp_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let floats = read_nd nd in
+      let data =
+        if c.lp_compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      let actual =
+        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+      in
+      Compare.assert_tol o.odtype c.lp_atol c.lp_rtol;
+      Compare.check
+        ~name:(c.lp_id ^ ":" ^ o.oname)
+        ~compare:c.lp_compare ~atol:c.lp_atol ~rtol:c.lp_rtol ~expected:golden
+        ~actual)
+    paired
+
+let loops_check_coverage ~set_dir cases () =
+  let expected =
+    List.map (fun c -> c.lp_id) cases |> List.sort String.compare
+  in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then Alcotest.failf "%s: loops coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let loops_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "loops") set_name
+  in
+  let x64, cases =
+    load_loops_manifest (Filename.concat set_dir "manifest.json")
+  in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.lp_id `Quick (loops_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (loops_check_coverage ~set_dir cases)
+  in
+  ("loops:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -1408,5 +1581,7 @@ let () =
       api_suite_for "x64_on";
       cond_suite_for "x64_off";
       cond_suite_for "x64_on";
+      loops_suite_for "x64_off";
+      loops_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

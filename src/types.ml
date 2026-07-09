@@ -192,6 +192,12 @@ and primitive =
   | Platform_index of string array option array
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
+  | Scan of {
+      length : int;
+      reverse : bool;
+      num_carry : int;
+      jaxpr : closed_jaxpr;
+    }
 
 and dot_dims = {
   lhs_contract : int array;

@@ -1357,6 +1357,147 @@ def generate_conditionals(module):
     return n_off, n_on
 
 
+def _scan_pyf(name):
+    if name == "cumsum":
+        return lambda c, x: (c + x, c + x)
+    if name == "cumprod":
+        return lambda c, x: (c * x, c)
+    if name == "lin":
+        return lambda c, x: (c + x, jnp.sin(c))
+    if name == "twocarry":
+        return lambda c, x: ((c[0] + x, c[1] * x), c[0])
+    raise SystemExit("loops: unknown fn " + name)
+
+
+def loops_fn(name, reverse, num_carry):
+    f = _scan_pyf(name)
+
+    def g(*flat):
+        init_arrays = list(flat[:num_carry])
+        xs_arrays = list(flat[num_carry:])
+        init = init_arrays[0] if num_carry == 1 else tuple(init_arrays)
+        xs = xs_arrays[0]
+        carry, ys = jax.lax.scan(f, init, xs, reverse=reverse)
+        return jax.tree_util.tree_leaves(carry) + jax.tree_util.tree_leaves(ys)
+
+    return g
+
+
+def run_loops_case(c, seed):
+    mode = c["mode"]
+    num_carry = len(c["init"])
+    avals = c["init"] + c["xs"]
+    g = loops_fn(c["fn"], c["reverse"], num_carry)
+    primals = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"]) for i, a in enumerate(avals)
+    ]
+    if mode == "eval":
+        out = jax.jit(g)(*primals)
+        return primals, None, [np.asarray(o) for o in out]
+    if mode == "jvp":
+        tangents = [
+            draw(a["rng"], seed + 1000 + i, a["shape"], a["dtype"])
+            for i, a in enumerate(avals)
+        ]
+        po, to = jax.jvp(g, tuple(primals), tuple(tangents))
+        return primals, tangents, [np.asarray(o) for o in po] + [
+            np.asarray(o) for o in to
+        ]
+    if mode == "vmap":
+        in_axes = tuple(None if a is None else int(a) for a in c["in_axes"])
+        out = jax.vmap(g, in_axes=in_axes)(*primals)
+        return primals, None, [np.asarray(o) for o in out]
+    raise SystemExit("unknown loops mode " + mode)
+
+
+def gen_loops_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        avals = c["init"] + c["xs"]
+        if not x64 and any(ec.is_wide64(a["dtype"]) for a in avals):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        primals, tangents, outputs = run_loops_case(c, seed)
+        in_arrays = {"arg" + str(i): np.asarray(v) for i, v in enumerate(primals)}
+        tan_meta = []
+        if tangents is not None:
+            for i, v in enumerate(tangents):
+                in_arrays["tan" + str(i)] = np.asarray(v)
+                tv = np.asarray(v)
+                tan_meta.append(
+                    {
+                        "name": "tan" + str(i),
+                        "shape": [int(d) for d in tv.shape],
+                        "dtype": tv.dtype.name,
+                    }
+                )
+        out_arrays = {"out" + str(i): np.asarray(o) for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **in_arrays)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": "arg" + str(i),
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+                "rng": a["rng"],
+            }
+            for i, (a, v) in enumerate(zip(avals, primals))
+        ]
+        outs_meta = [
+            {
+                "name": "out" + str(i),
+                "shape": [int(d) for d in np.asarray(o).shape],
+                "dtype": np.asarray(o).dtype.name,
+            }
+            for i, o in enumerate(outputs)
+        ]
+        compare, tol = resolve_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "fn": c["fn"],
+            "mode": c["mode"],
+            "reverse": c["reverse"],
+            "num_carry": len(c["init"]),
+            "args": args_meta,
+            "tangents": tan_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        if "in_axes" in c:
+            entry["in_axes"] = c["in_axes"]
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_loops(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_loops_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_loops_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def _add_all(*xs):
     return functools.reduce(jnp.add, xs)
 
@@ -1534,6 +1675,8 @@ def main():
         n_off, n_on = generate_api(sys.argv[1])
     elif sys.argv[1] == "conditionals":
         n_off, n_on = generate_conditionals(sys.argv[1])
+    elif sys.argv[1] == "loops":
+        n_off, n_on = generate_loops(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

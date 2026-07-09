@@ -224,6 +224,7 @@ let prim_name = function
   | Platform_index _ -> "platform_index"
   | Xla_call _ -> "xla_call"
   | Cond _ -> "cond"
+  | Scan _ -> "scan"
 
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"

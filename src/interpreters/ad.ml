@@ -491,7 +491,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       failwith
         "ad: scatter_min/scatter_max jvp needs the extremal averaging rule (M2 \
          gap)"
-  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
+  | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ | Scan _ ->
       failwith "ad: multi-output jvp handled by jvp_process_primitive"
   | Reduce_precision p -> (
       match (primals, tangents) with
@@ -735,6 +735,51 @@ let jvp_process_primitive trace prim args =
       let tos = Core.bind prim tangents in
       List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) pos tos
   | Sort _ | Top_k _ -> failwith "ad: jvp of sort/top_k needs gather (M2 gap)"
+  | Scan { length; reverse; num_carry; jaxpr } ->
+      let split2 l n =
+        match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
+      in
+      let mapped_leading (a : aval) =
+        let n = Array.length a.shape in
+        { a with shape = Array.sub a.shape 1 (n - 1) }
+      in
+      let nc = num_carry in
+      let carry, xs = split2 primals nc in
+      let carry_t, xs_t = split2 tangents nc in
+      let nx = List.length xs in
+      let num_ys = List.length jaxpr.jaxpr.outs - nc in
+      let carry_avals = List.map Core.get_aval carry in
+      let x_slice_avals =
+        List.map (fun x -> mapped_leading (Core.get_aval x)) xs
+      in
+      let new_body =
+        Jaxpr.make_jaxpr
+          (carry_avals @ carry_avals @ x_slice_avals @ x_slice_avals)
+          (fun args ->
+            let pc, r1 = split2 args nc in
+            let tc, r2 = split2 r1 nc in
+            let px, tx = split2 r2 nx in
+            let po, to_ =
+              jvp (fun a -> Jaxpr.eval_closed_jaxpr jaxpr a) (pc @ px) (tc @ tx)
+            in
+            let pc', py = split2 po nc in
+            let tc', ty = split2 to_ nc in
+            pc' @ tc' @ py @ ty)
+      in
+      let new_operands = carry @ carry_t @ xs @ xs_t in
+      let out =
+        Core.bind
+          (Scan { length; reverse; num_carry = 2 * nc; jaxpr = new_body })
+          new_operands
+      in
+      let pcarry, r1 = split2 out nc in
+      let tcarry, r2 = split2 r1 nc in
+      let pys, tys = split2 r2 num_ys in
+      let primal_outs = pcarry @ pys in
+      let tangent_outs = tcarry @ tys in
+      List.map2
+        (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
+        primal_outs tangent_outs
   | Cond { t; f } -> (
       match (primals, tangents) with
       | pred :: prim_ops, _ :: tan_ops ->
@@ -1184,6 +1229,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Igamma_grad_a | Igammac | Lgamma | Polygamma | Regularized_incomplete_beta
   | Zeta | Platform_index _ | Xla_call _ ->
       failwith "ad: primitive has no transpose rule in M1"
+  | Scan _ -> failwith "ad: scan transpose deferred to a later row (M2)"
 
 and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     value list =

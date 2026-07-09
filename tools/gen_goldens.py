@@ -862,7 +862,150 @@ def np_dsplit(params):
     return lambda x: jnp.dsplit(x, ios)
 
 
+def np_astype(params):
+    dt = np.dtype(params["dtype"])
+    return lambda x: jnp.astype(x, dt)
+
+
+def np_copy(params):
+    return lambda x: jnp.copy(x)
+
+
+def np_atleast_1d(params):
+    return lambda x: jnp.atleast_1d(x)
+
+
+def np_atleast_2d(params):
+    return lambda x: jnp.atleast_2d(x)
+
+
+def np_atleast_3d(params):
+    return lambda x: jnp.atleast_3d(x)
+
+
+def np_concatenate(params):
+    axis = int(params.get("axis", 0))
+    return lambda *xs: jnp.concatenate(list(xs), axis=axis)
+
+
+def np_concat(params):
+    axis = int(params.get("axis", 0))
+    return lambda *xs: jnp.concat(list(xs), axis=axis)
+
+
+def np_stack(params):
+    axis = int(params.get("axis", 0))
+    return lambda *xs: jnp.stack(list(xs), axis=axis)
+
+
+def np_unstack(params):
+    axis = int(params.get("axis", 0))
+    return lambda x: jnp.unstack(x, axis=axis)
+
+
+def np_vstack(params):
+    return lambda *xs: jnp.vstack(list(xs))
+
+
+def np_hstack(params):
+    return lambda *xs: jnp.hstack(list(xs))
+
+
+def np_dstack(params):
+    return lambda *xs: jnp.dstack(list(xs))
+
+
+def np_column_stack(params):
+    return lambda *xs: jnp.column_stack(list(xs))
+
+
+def np_tile(params):
+    reps = tuple(params["reps"])
+    return lambda x: jnp.tile(x, reps)
+
+
+def np_pad(params):
+    pad_width = [tuple(t) for t in params["pad_width"]]
+    cval = params.get("constant_values", 0)
+    return lambda x: jnp.pad(x, pad_width, constant_values=cval)
+
+
+def np_i0(params):
+    return lambda x: jnp.i0(x)
+
+
+def np_array_equal(params):
+    equal_nan = bool(params.get("equal_nan", False))
+    return lambda a, b: jnp.array_equal(a, b, equal_nan=equal_nan)
+
+
+def np_array_equiv(params):
+    return lambda a, b: jnp.array_equiv(a, b)
+
+
+def np_arange(params):
+    start = params.get("start", 0)
+    step = params.get("step", 1)
+    stop = params["stop"]
+    dt = np.dtype(params["dtype"])
+    return lambda: jnp.arange(start, stop, step, dtype=dt)
+
+
+def np_eye(params):
+    n = int(params["n"])
+    m = params.get("m")
+    k = int(params.get("k", 0))
+    dt = np.dtype(params["dtype"])
+    return lambda: jnp.eye(n, m, k=k, dtype=dt)
+
+
+def np_identity(params):
+    n = int(params["n"])
+    dt = np.dtype(params["dtype"])
+    return lambda: jnp.identity(n, dtype=dt)
+
+
+def np_indices(params):
+    dims = tuple(params["dimensions"])
+    dt = np.dtype(params["dtype"])
+    return lambda: jnp.indices(dims, dtype=dt)
+
+
+def np_meshgrid(params):
+    indexing = params.get("indexing", "xy")
+    sparse = bool(params.get("sparse", False))
+    return lambda *xs: jnp.meshgrid(*xs, indexing=indexing, sparse=sparse)
+
+
+def np_ix_(params):
+    return lambda *xs: jnp.ix_(*xs)
+
+
 NUMPY_BUILDERS = {
+    "astype": np_astype,
+    "copy": np_copy,
+    "atleast_1d": np_atleast_1d,
+    "atleast_2d": np_atleast_2d,
+    "atleast_3d": np_atleast_3d,
+    "concatenate": np_concatenate,
+    "concat": np_concat,
+    "stack": np_stack,
+    "unstack": np_unstack,
+    "vstack": np_vstack,
+    "hstack": np_hstack,
+    "dstack": np_dstack,
+    "column_stack": np_column_stack,
+    "tile": np_tile,
+    "pad": np_pad,
+    "i0": np_i0,
+    "array_equal": np_array_equal,
+    "array_equiv": np_array_equiv,
+    "arange": np_arange,
+    "eye": np_eye,
+    "identity": np_identity,
+    "indices": np_indices,
+    "meshgrid": np_meshgrid,
+    "ix_": np_ix_,
     "transpose": np_transpose,
     "permute_dims": np_permute_dims,
     "matrix_transpose": np_matrix_transpose,

@@ -638,6 +638,58 @@ let numpy_fn op params operands : T.value list =
   | "vsplit", [ x ] -> NL.vsplit x (sections_of params)
   | "hsplit", [ x ] -> NL.hsplit x (sections_of params)
   | "dsplit", [ x ] -> NL.dsplit x (sections_of params)
+  | "astype", [ x ] ->
+      one (NL.astype x (dtype_of_string (U.to_string (member "dtype"))))
+  | "copy", [ x ] -> one (NL.copy x)
+  | "atleast_1d", [ x ] -> one (NL.atleast_1d x)
+  | "atleast_2d", [ x ] -> one (NL.atleast_2d x)
+  | "atleast_3d", [ x ] -> one (NL.atleast_3d x)
+  | "concatenate", ops -> one (NL.concatenate ?axis:(opt_i params "axis") ops)
+  | "concat", ops -> one (NL.concat ?axis:(opt_i params "axis") ops)
+  | "stack", ops -> one (NL.stack ?axis:(opt_i params "axis") ops)
+  | "unstack", [ x ] -> NL.unstack ?axis:(opt_i params "axis") x
+  | "vstack", ops -> one (NL.vstack ops)
+  | "hstack", ops -> one (NL.hstack ops)
+  | "dstack", ops -> one (NL.dstack ops)
+  | "column_stack", ops -> one (NL.column_stack ops)
+  | "tile", [ x ] -> one (NL.tile x (ia (member "reps")))
+  | "pad", [ x ] ->
+      let cval =
+        match opt_f params "constant_values" with Some v -> v | None -> 0.0
+      in
+      one (NL.pad x (pairs (member "pad_width")) cval)
+  | "i0", [ x ] -> one (NL.i0 x)
+  | "array_equal", [ a; b ] ->
+      one (NL.array_equal ?equal_nan:(opt_b params "equal_nan") a b)
+  | "array_equiv", [ a; b ] -> one (NL.array_equiv a b)
+  | "arange", [] ->
+      one
+        (NL.arange ?start:(opt_f params "start") ?step:(opt_f params "step")
+           ~dtype:(dtype_of_string (U.to_string (member "dtype")))
+           (U.to_number (member "stop")))
+  | "eye", [] ->
+      one
+        (NL.eye ?m:(opt_i params "m") ?k:(opt_i params "k")
+           ~dtype:(dtype_of_string (U.to_string (member "dtype")))
+           (U.to_int (member "n")))
+  | "identity", [] ->
+      one
+        (NL.identity
+           ~dtype:(dtype_of_string (U.to_string (member "dtype")))
+           (U.to_int (member "n")))
+  | "indices", [] ->
+      one
+        (NL.indices
+           ~dtype:(dtype_of_string (U.to_string (member "dtype")))
+           (ia (member "dimensions")))
+  | "meshgrid", ops ->
+      let indexing =
+        match U.member "indexing" params with
+        | `Null -> None
+        | j -> Some (U.to_string j)
+      in
+      NL.meshgrid ?indexing ?sparse:(opt_b params "sparse") ops
+  | "ix_", ops -> NL.ix_ ops
   | _ -> failwith ("numpy golden: unknown op " ^ op)
 
 let numpy_check_case ~set_dir ~x64 c () =

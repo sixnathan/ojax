@@ -77,3 +77,33 @@ val vsplit : Types.value -> sections -> Types.value list
 val hsplit : Types.value -> sections -> Types.value list
 val dsplit : Types.value -> sections -> Types.value list
 val select : Types.value list -> Types.value list -> Types.value
+val astype : Types.value -> Dtype.t -> Types.value
+val copy : Types.value -> Types.value
+val atleast_1d : Types.value -> Types.value
+val atleast_2d : Types.value -> Types.value
+val atleast_3d : Types.value -> Types.value
+val concatenate : ?axis:int -> Types.value list -> Types.value
+val concat : ?axis:int -> Types.value list -> Types.value
+val stack : ?axis:int -> Types.value list -> Types.value
+val unstack : ?axis:int -> Types.value -> Types.value list
+val vstack : Types.value list -> Types.value
+val hstack : Types.value list -> Types.value
+val dstack : Types.value list -> Types.value
+val column_stack : Types.value list -> Types.value
+val tile : Types.value -> int array -> Types.value
+val pad : Types.value -> (int * int) array -> float -> Types.value
+val i0 : Types.value -> Types.value
+val array_equal : ?equal_nan:bool -> Types.value -> Types.value -> Types.value
+val array_equiv : Types.value -> Types.value -> Types.value
+
+val arange :
+  ?start:float -> ?step:float -> dtype:Dtype.t -> float -> Types.value
+
+val eye : ?m:int -> ?k:int -> dtype:Dtype.t -> int -> Types.value
+val identity : dtype:Dtype.t -> int -> Types.value
+val indices : dtype:Dtype.t -> int array -> Types.value
+
+val meshgrid :
+  ?indexing:string -> ?sparse:bool -> Types.value list -> Types.value list
+
+val ix_ : Types.value list -> Types.value list

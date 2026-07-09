@@ -194,6 +194,109 @@ let test_round () =
   let x = f32 [| 4 |] [| 1.4; 2.6; -1.7; 3.2 |] in
   Alcotest.check farr "round" [| 1.; 3.; -2.; 3. |] (read (NL.round x))
 
+let test_stack_concat () =
+  let a = f32 [| 3 |] [| 1.; 2.; 3. |] in
+  let b = f32 [| 3 |] [| 4.; 5.; 6. |] in
+  Alcotest.check farr "concatenate"
+    [| 1.; 2.; 3.; 4.; 5.; 6. |]
+    (read (NL.concatenate [ a; b ]));
+  Alcotest.(check (array int))
+    "stack shape" [| 2; 3 |]
+    (shape_of (NL.stack [ a; b ]));
+  match NL.unstack (NL.stack [ a; b ]) with
+  | [ p; q ] ->
+      Alcotest.check farr "unstack0" [| 1.; 2.; 3. |] (read p);
+      Alcotest.check farr "unstack1" [| 4.; 5.; 6. |] (read q)
+  | _ -> Alcotest.fail "unstack arity"
+
+let test_atleast () =
+  let s = f32 [||] [| 5. |] in
+  Alcotest.(check (array int)) "atleast_1d" [| 1 |] (shape_of (NL.atleast_1d s));
+  Alcotest.(check (array int))
+    "atleast_2d" [| 1; 1 |]
+    (shape_of (NL.atleast_2d s));
+  Alcotest.(check (array int))
+    "atleast_3d" [| 1; 1; 1 |]
+    (shape_of (NL.atleast_3d s));
+  let v = f32 [| 3 |] [| 1.; 2.; 3. |] in
+  Alcotest.(check (array int))
+    "atleast_2d 1d" [| 1; 3 |]
+    (shape_of (NL.atleast_2d v));
+  Alcotest.(check (array int))
+    "atleast_3d 1d" [| 1; 3; 1 |]
+    (shape_of (NL.atleast_3d v))
+
+let test_stacks () =
+  let a = f32 [| 3 |] [| 1.; 2.; 3. |] in
+  let b = f32 [| 3 |] [| 4.; 5.; 6. |] in
+  Alcotest.(check (array int))
+    "vstack" [| 2; 3 |]
+    (shape_of (NL.vstack [ a; b ]));
+  Alcotest.(check (array int)) "hstack" [| 6 |] (shape_of (NL.hstack [ a; b ]));
+  Alcotest.(check (array int))
+    "dstack" [| 1; 3; 2 |]
+    (shape_of (NL.dstack [ a; b ]));
+  Alcotest.(check (array int))
+    "column_stack" [| 3; 2 |]
+    (shape_of (NL.column_stack [ a; b ]))
+
+let test_tile_pad () =
+  let a = f32 [| 2 |] [| 1.; 2. |] in
+  Alcotest.check farr "tile"
+    [| 1.; 2.; 1.; 2.; 1.; 2. |]
+    (read (NL.tile a [| 3 |]));
+  Alcotest.check farr "pad"
+    [| 0.; 0.; 1.; 2.; 0.; 0. |]
+    (read (NL.pad a [| (2, 2) |] 0.0))
+
+let test_creation () =
+  Alcotest.check farr "arange" [| 0.; 1.; 2.; 3.; 4. |]
+    (read (NL.arange ~dtype:D.I32 5.0));
+  Alcotest.check farr "arange step" [| 0.; 0.5; 1.; 1.5 |]
+    (read (NL.arange ~step:0.5 ~dtype:D.F32 2.0));
+  Alcotest.check farr "eye"
+    [| 1.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 1. |]
+    (read (NL.eye ~dtype:D.F32 3));
+  Alcotest.(check (array int))
+    "eye shape" [| 3; 5 |]
+    (shape_of (NL.eye ~m:5 ~k:1 ~dtype:D.F32 3));
+  Alcotest.check farr "identity" [| 1.; 0.; 0.; 1. |]
+    (read (NL.identity ~dtype:D.F32 2));
+  Alcotest.(check (array int))
+    "indices shape" [| 2; 2; 3 |]
+    (shape_of (NL.indices ~dtype:D.I32 [| 2; 3 |]))
+
+let test_i0_equal () =
+  let x = f32 [| 3 |] [| 0.; 1.; 2. |] in
+  let r = read (NL.i0 x) in
+  Alcotest.(check bool) "i0(0)=1" true (Float.abs (r.(0) -. 1.0) < 1e-5);
+  Alcotest.(check bool) "i0 monotone" true (r.(2) > r.(1) && r.(1) > r.(0));
+  let a = i32 [| 3 |] [| 1.; 2.; 3. |] in
+  let b = i32 [| 3 |] [| 1.; 2.; 3. |] in
+  let c = i32 [| 3 |] [| 1.; 2.; 9. |] in
+  Alcotest.check farr "array_equal true" [| 1. |] (read (NL.array_equal a b));
+  Alcotest.check farr "array_equal false" [| 0. |] (read (NL.array_equal a c));
+  Alcotest.check farr "array_equiv true" [| 1. |] (read (NL.array_equiv a b))
+
+let test_meshgrid_ix () =
+  let x = i32 [| 2 |] [| 1.; 2. |] in
+  let y = i32 [| 3 |] [| 10.; 20.; 30. |] in
+  (match NL.meshgrid [ x; y ] with
+  | [ gx; gy ] ->
+      Alcotest.(check (array int)) "meshgrid xg" [| 3; 2 |] (shape_of gx);
+      Alcotest.check farr "meshgrid xg vals"
+        [| 1.; 2.; 1.; 2.; 1.; 2. |]
+        (read gx);
+      Alcotest.check farr "meshgrid yg vals"
+        [| 10.; 10.; 20.; 20.; 30.; 30. |]
+        (read gy)
+  | _ -> Alcotest.fail "meshgrid arity");
+  match NL.ix_ [ x; y ] with
+  | [ ax; ay ] ->
+      Alcotest.(check (array int)) "ix_ ax" [| 2; 1 |] (shape_of ax);
+      Alcotest.(check (array int)) "ix_ ay" [| 1; 3 |] (shape_of ay)
+  | _ -> Alcotest.fail "ix_ arity"
+
 let () =
   Alcotest.run "numpy_lax_numpy"
     [
@@ -215,5 +318,12 @@ let () =
           Alcotest.test_case "split_resize" `Quick test_split_resize;
           Alcotest.test_case "unravel" `Quick test_unravel;
           Alcotest.test_case "round" `Quick test_round;
+          Alcotest.test_case "stack_concat" `Quick test_stack_concat;
+          Alcotest.test_case "atleast" `Quick test_atleast;
+          Alcotest.test_case "stacks" `Quick test_stacks;
+          Alcotest.test_case "tile_pad" `Quick test_tile_pad;
+          Alcotest.test_case "creation" `Quick test_creation;
+          Alcotest.test_case "i0_equal" `Quick test_i0_equal;
+          Alcotest.test_case "meshgrid_ix" `Quick test_meshgrid_ix;
         ] );
     ]

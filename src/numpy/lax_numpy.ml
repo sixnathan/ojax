@@ -583,3 +583,172 @@ let select condlist choicelist =
   let default_v = scalar dt 0.0 in
   let cases = List.map (fun v -> convert v dt) (default_v :: choicelist) in
   bind1 T.Select_n (broadcast_arrays (idx :: cases))
+
+let all_reduce v =
+  let n = ndim v in
+  if n = 0 then v else bind1 (T.Reduce_and (Array.init n Fun.id)) [ v ]
+
+let promote_values vs =
+  let dt = result_type vs in
+  List.map (fun v -> convert v dt) vs
+
+let astype v dt = convert v dt
+let copy v = bind1 T.Copy [ v ]
+let atleast_1d v = if ndim v >= 1 then v else expand_dims v [| 0 |]
+
+let atleast_2d v =
+  match ndim v with
+  | 0 -> expand_dims v [| 0; 1 |]
+  | 1 -> expand_dims v [| 0 |]
+  | _ -> v
+
+let atleast_3d v =
+  match ndim v with
+  | 0 -> expand_dims v [| 0; 1; 2 |]
+  | 1 -> expand_dims v [| 0; 2 |]
+  | 2 -> expand_dims v [| 2 |]
+  | _ -> v
+
+let concatenate ?(axis = 0) arrays =
+  match arrays with
+  | [] -> invalid_arg "concatenate: need at least one array"
+  | first :: _ ->
+      let ax = canonicalize_axis axis (ndim first) in
+      bind1 (T.Concatenate ax) (promote_values arrays)
+
+let concat ?(axis = 0) arrays = concatenate ~axis arrays
+
+let stack ?(axis = 0) arrays =
+  match arrays with
+  | [] -> invalid_arg "stack: need at least one array"
+  | first :: _ ->
+      let ax = canonicalize_axis axis (ndim first + 1) in
+      bind1 (T.Stack ax) (promote_values arrays)
+
+let unstack ?(axis = 0) v =
+  bind (T.Unstack (canonicalize_axis axis (ndim v))) [ v ]
+
+let vstack arrays = concatenate ~axis:0 (List.map atleast_2d arrays)
+
+let hstack arrays =
+  let arrs = List.map atleast_1d arrays in
+  let ax = if ndim (List.hd arrs) = 1 then 0 else 1 in
+  concatenate ~axis:ax arrs
+
+let dstack arrays = concatenate ~axis:2 (List.map atleast_3d arrays)
+
+let column_stack arrays =
+  let prep v = if ndim v < 2 then transpose (atleast_2d v) else v in
+  concatenate ~axis:1 (List.map prep arrays)
+
+let tile v reps =
+  let nd = ndim v in
+  let nr = Array.length reps in
+  let reps =
+    if nr < nd then Array.append (Array.make (nd - nr) 1) reps else reps
+  in
+  let nr2 = Array.length reps in
+  let v =
+    if nr2 > nd then expand_dims v (Array.init (nr2 - nd) Fun.id) else v
+  in
+  bind1 (T.Tile reps) [ v ]
+
+let pad v pad_width cval =
+  let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
+  bind1 (T.Pad cfg) [ v; scalar (dtype v) cval ]
+
+let i0 v =
+  let v = convert v (to_inexact_dtype (dtype v)) in
+  let ax = bind1 T.Abs [ v ] in
+  bind1 T.Mul [ bind1 T.Exp [ ax ]; bind1 T.Bessel_i0e [ ax ] ]
+
+let array_equal ?(equal_nan = false) a b =
+  if shape a <> shape b then scalar D.Bool 0.0
+  else begin
+    let a, b, _, _ = promote2 a b in
+    let eq = bind1 T.Eq [ a; b ] in
+    let eq =
+      if equal_nan then bind1 T.Or [ eq; bind1 T.And [ isnan a; isnan b ] ]
+      else eq
+    in
+    all_reduce eq
+  end
+
+let array_equiv a b =
+  match promote2 a b with
+  | exception Invalid_argument _ -> scalar D.Bool 0.0
+  | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
+
+let arange ?(start = 0.0) ?(step = 1.0) ~dtype stop =
+  let size = max 0 (int_of_float (ceil ((stop -. start) /. step))) in
+  let idx = bind1 (T.Iota { dtype; shape = [| size |]; dimension = 0 }) [] in
+  if start = 0.0 && step = 1.0 then idx
+  else
+    bind1 T.Add
+      [
+        full dtype [| size |] start;
+        bind1 T.Mul [ full dtype [| size |] step; idx ];
+      ]
+
+let eye ?m ?(k = 0) ~dtype n =
+  let m = Option.value m ~default:n in
+  let i =
+    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 0 }) []
+  in
+  let j =
+    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
+  in
+  let ik =
+    if k = 0 then i
+    else bind1 T.Add [ i; full D.I32 [| n; m |] (float_of_int k) ]
+  in
+  convert (bind1 T.Eq [ ik; j ]) dtype
+
+let identity ~dtype n = eye ~dtype n
+
+let indices ~dtype dims =
+  let n = Array.length dims in
+  let outs =
+    List.init n (fun i ->
+        let idx =
+          bind1 (T.Iota { dtype; shape = [| dims.(i) |]; dimension = 0 }) []
+        in
+        bind1 (T.Broadcast_in_dim { shape = dims; dims = [| i |] }) [ idx ])
+  in
+  stack ~axis:0 outs
+
+let meshgrid ?(indexing = "xy") ?(sparse = false) xs =
+  let args = Array.of_list xs in
+  let n = Array.length args in
+  let swap = indexing = "xy" && n >= 2 in
+  if swap then begin
+    let t = args.(0) in
+    args.(0) <- args.(1);
+    args.(1) <- t
+  end;
+  let base = Array.map (fun a -> (shape a).(0)) args in
+  let out =
+    Array.mapi
+      (fun i a ->
+        let sh =
+          if sparse then
+            Array.init n (fun j -> if j = i then (shape a).(0) else 1)
+          else base
+        in
+        bind1 (T.Broadcast_in_dim { shape = sh; dims = [| i |] }) [ a ])
+      args
+  in
+  if swap then begin
+    let t = out.(0) in
+    out.(0) <- out.(1);
+    out.(1) <- t
+  end;
+  Array.to_list out
+
+let ix_ xs =
+  let n = List.length xs in
+  List.mapi
+    (fun i a ->
+      let sh = Array.init n (fun j -> if j = i then (shape a).(0) else 1) in
+      bind1 (T.Broadcast_in_dim { shape = sh; dims = [| i |] }) [ a ])
+    xs

@@ -951,6 +951,11 @@ let impl prim inputs =
   | Rng_bit_generator | Rng_uniform ->
       failwith "lax: rng primitives deferred to M3 (PRNG)"
   | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
+  | Slice { start_indices; limit_indices; strides } ->
+      un (Slicing.slice_impl start_indices limit_indices strides) inputs
+  | Dynamic_slice { slice_sizes } ->
+      [ Slicing.dynamic_slice_impl slice_sizes inputs ]
+  | Dynamic_update_slice -> [ Slicing.dynamic_update_slice_impl inputs ]
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -1114,6 +1119,21 @@ let abstract_eval prim avals =
   | Rng_bit_generator | Rng_uniform ->
       failwith "lax: rng primitives deferred to M3 (PRNG)"
   | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
+  | Slice { start_indices; limit_indices; strides } ->
+      un_aval
+        (fun a ->
+          shaped
+            (Slicing.slice_shape start_indices limit_indices strides a.shape)
+            a.dtype a.weak_type)
+        avals
+  | Dynamic_slice { slice_sizes } -> (
+      match avals with
+      | operand :: _ -> [ shaped slice_sizes operand.dtype operand.weak_type ]
+      | [] -> failwith "lax: dynamic_slice expects an operand")
+  | Dynamic_update_slice -> (
+      match avals with
+      | operand :: _ -> [ operand ]
+      | [] -> failwith "lax: dynamic_update_slice expects an operand")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

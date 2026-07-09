@@ -330,6 +330,19 @@ let prim_of op params : T.primitive =
   | "tie" -> T.Tie
   | "top_k" ->
       T.Top_k { k = U.to_int (member "k"); axis = U.to_int (member "axis") }
+  | "slice" ->
+      let strides =
+        match member "strides" with `Null -> None | j -> Some (ia j)
+      in
+      T.Slice
+        {
+          start_indices = ia (member "start_indices");
+          limit_indices = ia (member "limit_indices");
+          strides;
+        }
+  | "dynamic_slice" ->
+      T.Dynamic_slice { slice_sizes = ia (member "slice_sizes") }
+  | "dynamic_update_slice" -> T.Dynamic_update_slice
   | "convert_element_type" ->
       T.Convert_element_type
         (dtype_of_string (U.to_string (member "new_dtype")))

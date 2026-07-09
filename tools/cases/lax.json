@@ -178,5 +178,18 @@
   {"op":"tie","primitive":"lax.tie","args":[{"shape":[2,3],"dtype":"float64","rng":"rand_default"},{"shape":[2,3],"dtype":"float64","rng":"rand_default"}],"params":{}},
   {"op":"top_k","primitive":"lax.top_k","args":[{"shape":[6],"dtype":"float32","rng":"rand_default"}],"params":{"k":3,"axis":0}},
   {"op":"top_k","primitive":"lax.top_k","args":[{"shape":[2,4],"dtype":"float32","rng":"rand_default"}],"params":{"k":2,"axis":1}},
-  {"op":"top_k","primitive":"lax.top_k","args":[{"shape":[6],"dtype":"float64","rng":"rand_default"}],"params":{"k":3,"axis":0}}
+  {"op":"top_k","primitive":"lax.top_k","args":[{"shape":[6],"dtype":"float64","rng":"rand_default"}],"params":{"k":3,"axis":0}},
+  {"op":"slice","primitive":"lax.slice","args":[{"shape":[4,5],"dtype":"float32","rng":"rand_default"}],"params":{"start_indices":[1,0],"limit_indices":[3,4]}},
+  {"op":"slice","primitive":"lax.slice","args":[{"shape":[6],"dtype":"float32","rng":"rand_default"}],"params":{"start_indices":[0],"limit_indices":[6],"strides":[2]}},
+  {"op":"slice","primitive":"lax.slice","args":[{"shape":[2,3],"dtype":"int32","rng":"rand_int_small"}],"params":{"start_indices":[0,1],"limit_indices":[2,3]}},
+  {"op":"slice","primitive":"lax.slice","args":[{"shape":[4,5],"dtype":"float64","rng":"rand_default"}],"params":{"start_indices":[1,0],"limit_indices":[3,4]}},
+  {"op":"slice","primitive":"lax.slice","args":[{"shape":[2,3],"dtype":"int64","rng":"rand_int_small"}],"params":{"start_indices":[0,1],"limit_indices":[2,3]}},
+  {"op":"dynamic_slice","primitive":"lax.dynamic_slice","args":[{"shape":[5],"dtype":"float32","rng":"rand_default"},{"shape":[],"dtype":"int32","rng":"rand_int_small"}],"params":{"slice_sizes":[2]}},
+  {"op":"dynamic_slice","primitive":"lax.dynamic_slice","args":[{"shape":[4,5],"dtype":"float32","rng":"rand_default"},{"shape":[],"dtype":"int32","rng":"rand_int_small"},{"shape":[],"dtype":"int32","rng":"rand_int_small"}],"params":{"slice_sizes":[2,3]}},
+  {"op":"dynamic_slice","primitive":"lax.dynamic_slice","args":[{"shape":[6],"dtype":"int32","rng":"rand_int_small"},{"shape":[],"dtype":"int32","rng":"rand_int_small"}],"params":{"slice_sizes":[3]}},
+  {"op":"dynamic_slice","primitive":"lax.dynamic_slice","args":[{"shape":[5],"dtype":"float64","rng":"rand_default"},{"shape":[],"dtype":"int32","rng":"rand_int_small"}],"params":{"slice_sizes":[2]}},
+  {"op":"dynamic_update_slice","primitive":"lax.dynamic_update_slice","args":[{"shape":[6],"dtype":"float32","rng":"rand_default"},{"shape":[3],"dtype":"float32","rng":"rand_default"},{"shape":[],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"dynamic_update_slice","primitive":"lax.dynamic_update_slice","args":[{"shape":[4,4],"dtype":"float32","rng":"rand_default"},{"shape":[2,2],"dtype":"float32","rng":"rand_default"},{"shape":[],"dtype":"int32","rng":"rand_int_small"},{"shape":[],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"dynamic_update_slice","primitive":"lax.dynamic_update_slice","args":[{"shape":[6],"dtype":"int32","rng":"rand_int_small"},{"shape":[3],"dtype":"int32","rng":"rand_int_small"},{"shape":[],"dtype":"int32","rng":"rand_int_small"}],"params":{}},
+  {"op":"dynamic_update_slice","primitive":"lax.dynamic_update_slice","args":[{"shape":[6],"dtype":"float64","rng":"rand_default"},{"shape":[3],"dtype":"float64","rng":"rand_default"},{"shape":[],"dtype":"int32","rng":"rand_int_small"}],"params":{}}
 ]

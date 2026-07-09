@@ -362,8 +362,20 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Clz -> failwith "ad: clz has no jvp rule"
   | Nextafter -> failwith "ad: nextafter has no jvp rule"
   | Concatenate _ | Pad _ | Rev _ | Squeeze _ | Stack _ | Tile _ | Transpose _
-    ->
+  | Slice _ ->
       (b1 prim primals, b1 prim tangents)
+  | Dynamic_slice p -> (
+      match (primals, tangents) with
+      | operand :: idx, t_op :: _ ->
+          ( Core.bind1 (Dynamic_slice p) (operand :: idx),
+            Core.bind1 (Dynamic_slice p) (t_op :: idx) )
+      | _ -> arity ())
+  | Dynamic_update_slice -> (
+      match (primals, tangents) with
+      | operand :: update :: idx, t_op :: t_up :: _ ->
+          ( Core.bind1 Dynamic_update_slice (operand :: update :: idx),
+            Core.bind1 Dynamic_update_slice (t_op :: t_up :: idx) )
+      | _ -> arity ())
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
       failwith "ad: multi-output jvp handled by jvp_process_primitive"
   | Reduce_precision p -> (
@@ -649,6 +661,65 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
       List.map2 (fun p b -> if is_undef p then Some b else None) primals bcts
   | Tie -> [ None; Some (ct1 ()) ]
   | Reduce_precision p -> [ Some (b1 (Reduce_precision p) [ ct1 () ]) ]
+  | Slice { start_indices; limit_indices; strides } -> (
+      match primals with
+      | [ x ] ->
+          let os = (in_aval x).shape in
+          let ct = ct1 () in
+          let n = Array.length os in
+          let strides =
+            match strides with Some s -> s | None -> Array.make n 1
+          in
+          let ct_shape = (Core.get_aval ct).shape in
+          let cfg =
+            Array.init n (fun i ->
+                let s = strides.(i) in
+                let out_d = ct_shape.(i) in
+                let real_limit =
+                  start_indices.(i)
+                  + if out_d = 0 then 0 else 1 + ((out_d - 1) * s)
+                in
+                (start_indices.(i), os.(i) - real_limit, s - 1))
+          in
+          let dt = (Core.get_aval ct).dtype in
+          let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+          [ Some (b1 (Pad cfg) [ ct; zero ]) ]
+      | _ -> arity ())
+  | Dynamic_slice _ -> (
+      match primals with
+      | operand :: idx ->
+          let ct = ct1 () in
+          let idx_vals = List.map prim_val idx in
+          let op_t =
+            if is_undef operand then
+              let zeros = Ad_util.zeros_like_aval (in_aval operand) in
+              Some (Core.bind1 Dynamic_update_slice (zeros :: ct :: idx_vals))
+            else None
+          in
+          op_t :: List.map (fun _ -> None) idx
+      | _ -> arity ())
+  | Dynamic_update_slice -> (
+      match primals with
+      | operand :: update :: idx ->
+          let ct = ct1 () in
+          let ua = in_aval update in
+          let idx_vals = List.map prim_val idx in
+          let op_t =
+            if is_undef operand then
+              let zeros_u = Ad_util.zeros_like_aval ua in
+              Some (Core.bind1 Dynamic_update_slice (ct :: zeros_u :: idx_vals))
+            else None
+          in
+          let up_t =
+            if is_undef update then
+              Some
+                (Core.bind1
+                   (Dynamic_slice { slice_sizes = ua.shape })
+                   (ct :: idx_vals))
+            else None
+          in
+          op_t :: up_t :: List.map (fun _ -> None) idx
+      | _ -> arity ())
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not

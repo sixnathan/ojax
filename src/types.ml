@@ -142,6 +142,13 @@ and primitive =
   | Tie
   | To_edtype of Dtype.t
   | Top_k of { k : int; axis : int }
+  | Slice of {
+      start_indices : int array;
+      limit_indices : int array;
+      strides : int array option;
+    }
+  | Dynamic_slice of { slice_sizes : int array }
+  | Dynamic_update_slice
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

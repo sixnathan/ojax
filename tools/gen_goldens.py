@@ -319,6 +319,27 @@ def lax_top_k(params):
     return lambda x: LAX.top_k(x, k, axis=axis)
 
 
+def lax_slice(params):
+    start = tuple(params["start_indices"])
+    limit = tuple(params["limit_indices"])
+    strides = params.get("strides")
+    strides = None if strides is None else tuple(strides)
+    return lambda x: LAX.slice(x, start, limit, strides)
+
+
+def lax_dynamic_slice(params):
+    slice_sizes = tuple(params["slice_sizes"])
+    return lambda operand, *starts: LAX.dynamic_slice(
+        operand, list(starts), slice_sizes
+    )
+
+
+def lax_dynamic_update_slice(params):
+    return lambda operand, update, *starts: LAX.dynamic_update_slice(
+        operand, update, list(starts)
+    )
+
+
 LAX_BUILDERS = {
     "neg": _unary(LAX.neg),
     "sin": _unary(LAX.sin),
@@ -412,6 +433,9 @@ LAX_BUILDERS = {
     "sort": lax_sort,
     "tie": lax_tie,
     "top_k": lax_top_k,
+    "slice": lax_slice,
+    "dynamic_slice": lax_dynamic_slice,
+    "dynamic_update_slice": lax_dynamic_update_slice,
 }
 
 

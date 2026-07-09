@@ -299,6 +299,64 @@ let reduce_general_batch (axis_size : int) (jaxpr : closed_jaxpr)
       else failwith "batching: reduce with batched init not supported in M1"
   | _ -> failwith "batching: reduce arity"
 
+let slice_batch (start_indices : int array) (limit_indices : int array)
+    (strides : int array option) (x : value) (bdim : int option) :
+    value * int option =
+  match bdim with
+  | None -> (b1 (Slice { start_indices; limit_indices; strides }) [ x ], None)
+  | Some d ->
+      let dim_size = (Core.get_aval x).shape.(d) in
+      let ns = insert_size start_indices d 0 in
+      let nl = insert_size limit_indices d dim_size in
+      let nst =
+        match strides with None -> None | Some s -> Some (insert_size s d 1)
+      in
+      ( b1
+          (Slice { start_indices = ns; limit_indices = nl; strides = nst })
+          [ x ],
+        Some d )
+
+let index_zero (idx_vals : value list) : value =
+  let dt =
+    match idx_vals with v :: _ -> (Core.get_aval v).dtype | [] -> Dtype.I32
+  in
+  Concrete (Ndarray.of_floats dt [||] [| 0.0 |])
+
+let dynamic_slice_batch (axis_size : int) (slice_sizes : int array)
+    (vals : value list) (bdims : int option list) : value * int option =
+  match (vals, bdims) with
+  | operand :: idx_vals, ob :: idx_bdims -> (
+      if List.exists (fun b -> b <> None) idx_bdims then
+        failwith
+          "batching: dynamic_slice with batched indices needs gather (row 29)"
+      else
+        match ob with
+        | None -> (b1 (Dynamic_slice { slice_sizes }) vals, None)
+        | Some d ->
+            let x = move_batch_axis axis_size (Some d) 0 operand in
+            let zero = index_zero idx_vals in
+            let new_sizes = insert_size slice_sizes 0 axis_size in
+            ( Core.bind1
+                (Dynamic_slice { slice_sizes = new_sizes })
+                (x :: zero :: idx_vals),
+              Some 0 ))
+  | _ -> failwith "batching: dynamic_slice expects an operand"
+
+let dynamic_update_slice_batch (axis_size : int) (vals : value list)
+    (bdims : int option list) : value * int option =
+  match (vals, bdims) with
+  | operand :: update :: idx_vals, ob :: ub :: idx_bdims ->
+      if List.exists (fun b -> b <> None) idx_bdims then
+        failwith
+          "batching: dynamic_update_slice with batched indices needs scatter \
+           (row 29)"
+      else
+        let x = move_batch_axis axis_size ob 0 operand in
+        let u = move_batch_axis axis_size ub 0 update in
+        let zero = index_zero idx_vals in
+        (Core.bind1 Dynamic_update_slice (x :: u :: zero :: idx_vals), Some 0)
+  | _ -> failwith "batching: dynamic_update_slice expects operand and update"
+
 let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
   let un () =
@@ -390,6 +448,13 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Reduce { jaxpr; dimensions } ->
       reduce_general_batch axis_size jaxpr dimensions vals bdims
   | Clamp -> clamp_rule axis_size vals bdims
+  | Slice { start_indices; limit_indices; strides } -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] -> slice_batch start_indices limit_indices strides x b
+      | _ -> failwith "batching: expected 1 operand")
+  | Dynamic_slice { slice_sizes } ->
+      dynamic_slice_batch axis_size slice_sizes vals bdims
+  | Dynamic_update_slice -> dynamic_update_slice_batch axis_size vals bdims
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _

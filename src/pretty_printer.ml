@@ -190,6 +190,9 @@ let prim_name = function
   | Tie -> "tie"
   | To_edtype _ -> "to_edtype"
   | Top_k _ -> "top_k"
+  | Slice _ -> "slice"
+  | Dynamic_slice _ -> "dynamic_slice"
+  | Dynamic_update_slice -> "dynamic_update_slice"
   | Xla_call _ -> "xla_call"
   | Cond _ -> "cond"
 

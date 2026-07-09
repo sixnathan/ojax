@@ -1403,14 +1403,35 @@ def while_fn(name, num_carry):
     return g
 
 
+def cumulative_fn(name, axis, reverse):
+    prim = {
+        "cumsum": jax.lax.cumsum,
+        "cumprod": jax.lax.cumprod,
+        "cummax": jax.lax.cummax,
+        "cummin": jax.lax.cummin,
+        "cumlogsumexp": jax.lax.cumlogsumexp,
+    }[name]
+
+    def g(*flat):
+        (x,) = flat
+        return [prim(x, axis=axis, reverse=reverse)]
+
+    return g
+
+
 def run_loops_case(c, seed):
     mode = c["mode"]
     kind = c.get("kind", "scan")
-    num_carry = len(c["init"])
-    avals = c["init"] + c.get("xs", [])
-    if kind == "while":
+    if kind == "cumulative":
+        avals = [c["operand"]]
+        g = cumulative_fn(c["fn"], c["axis"], c["reverse"])
+    elif kind == "while":
+        num_carry = len(c["init"])
+        avals = c["init"]
         g = while_fn(c["fn"], num_carry)
     else:
+        num_carry = len(c["init"])
+        avals = c["init"] + c.get("xs", [])
         g = loops_fn(c["fn"], c["reverse"], num_carry)
     primals = [
         draw(a["rng"], seed + i, a["shape"], a["dtype"]) for i, a in enumerate(avals)
@@ -1442,7 +1463,10 @@ def gen_loops_set(module, cases, x64, outdir):
     os.makedirs(os.path.join(outdir, "outputs"))
     manifest_cases = []
     for c in cases:
-        avals = c["init"] + c.get("xs", [])
+        if c.get("kind", "scan") == "cumulative":
+            avals = [c["operand"]]
+        else:
+            avals = c["init"] + c.get("xs", [])
         if not x64 and any(ec.is_wide64(a["dtype"]) for a in avals):
             continue
         case_id = c["case_id"]
@@ -1488,7 +1512,8 @@ def gen_loops_set(module, cases, x64, outdir):
             "kind": c.get("kind", "scan"),
             "mode": c["mode"],
             "reverse": c["reverse"],
-            "num_carry": len(c["init"]),
+            "num_carry": len(c.get("init", [])),
+            "axis": c.get("axis", 0),
             "args": args_meta,
             "tangents": tan_meta,
             "outputs": outs_meta,

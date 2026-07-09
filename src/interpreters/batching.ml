@@ -149,6 +149,14 @@ let reduce_sum_rule (axes : int array) (x : value) (bdim : int option) :
       let out_bdim = d - shift in
       (b1 (Reduce_sum new_axes) [ x ], Some out_bdim)
 
+let cumred_rule (make : int -> primitive) (axis : int) (x : value)
+    (bdim : int option) : value * int option =
+  match bdim with
+  | None -> (b1 (make axis) [ x ], None)
+  | Some d ->
+      let new_axis = if axis < d then axis else axis + 1 in
+      (b1 (make new_axis) [ x ], Some d)
+
 let reshape_rule (axis_size : int) (ns : int array) (x : value)
     (bdim : int option) : value * int option =
   match bdim with
@@ -596,6 +604,23 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       | _ -> failwith "batching: expected 1 operand")
   | Reduce { jaxpr; dimensions } ->
       reduce_general_batch axis_size jaxpr dimensions vals bdims
+  | Cumsum { axis; reverse }
+  | Cumprod { axis; reverse }
+  | Cummax { axis; reverse }
+  | Cummin { axis; reverse }
+  | Cumlogsumexp { axis; reverse } -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] ->
+          let make a =
+            match prim with
+            | Cumsum _ -> Cumsum { axis = a; reverse }
+            | Cumprod _ -> Cumprod { axis = a; reverse }
+            | Cummax _ -> Cummax { axis = a; reverse }
+            | Cummin _ -> Cummin { axis = a; reverse }
+            | _ -> Cumlogsumexp { axis = a; reverse }
+          in
+          cumred_rule make axis x b
+      | _ -> failwith "batching: expected 1 operand")
   | Clamp -> clamp_rule axis_size vals bdims
   | Slice { start_indices; limit_indices; strides } -> (
       match (vals, bdims) with

@@ -670,6 +670,16 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           in
           (po, mul partial_x tx)
       | _ -> arity ())
+  | Cumsum { axis; reverse } -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          ( b1 (Cumsum { axis; reverse }) [ x ],
+            b1 (Cumsum { axis; reverse }) [ tx ] )
+      | _ -> arity ())
+  | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ ->
+      failwith
+        "ad: cumprod/cummax/cummin/cumlogsumexp jvp needs associative_scan (M2 \
+         gap)"
   | Igamma_grad_a | Zeta ->
       failwith "ad: primitive has no jvp rule (matches jax)"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
@@ -987,6 +997,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       match primals with
       | [ x ] -> [ Some (reduce_sum_transpose axes (in_aval x).shape ct) ]
       | _ -> arity ())
+  | Cumsum { axis; reverse } ->
+      [ Some (b1 (Cumsum { axis; reverse = not reverse }) [ ct1 () ]) ]
   | Copy -> [ Some (b1 Copy [ ct1 () ]) ]
   | Conj -> [ Some (ct1 ()) ]
   | Rev dims -> [ Some (b1 (Rev dims) [ ct1 () ]) ]
@@ -1254,7 +1266,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Select_and_gather_add _ | Select_and_scatter _ | Select_and_scatter_add _
   | Bessel_i0e | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Igamma
   | Igamma_grad_a | Igammac | Lgamma | Polygamma | Regularized_incomplete_beta
-  | Zeta | Platform_index _ | Xla_call _ ->
+  | Zeta | Platform_index _ | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _
+  | Xla_call _ ->
       failwith "ad: primitive has no transpose rule in M1"
   | Scan _ -> failwith "ad: scan transpose deferred to a later row (M2)"
   | While _ ->

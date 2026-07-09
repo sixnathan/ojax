@@ -199,6 +199,11 @@ and primitive =
       jaxpr : closed_jaxpr;
     }
   | While of { cond : closed_jaxpr; body : closed_jaxpr }
+  | Cumsum of { axis : int; reverse : bool }
+  | Cumprod of { axis : int; reverse : bool }
+  | Cummax of { axis : int; reverse : bool }
+  | Cummin of { axis : int; reverse : bool }
+  | Cumlogsumexp of { axis : int; reverse : bool }
 
 and dot_dims = {
   lhs_contract : int array;

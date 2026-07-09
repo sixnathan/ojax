@@ -1410,6 +1410,7 @@ type loops_case = {
   lp_kind : string;
   lp_mode : string;
   lp_reverse : bool;
+  lp_axis : int;
   lp_num_carry : int;
   lp_in_axes : int option list;
   lp_args : arg list;
@@ -1430,6 +1431,7 @@ let parse_loops_case j =
       (match U.member "kind" j with `Null -> "scan" | k -> U.to_string k);
     lp_mode = U.member "mode" j |> U.to_string;
     lp_reverse = U.member "reverse" j |> U.to_bool;
+    lp_axis = (match U.member "axis" j with `Null -> 0 | a -> U.to_int a);
     lp_num_carry = U.member "num_carry" j |> U.to_int;
     lp_in_axes =
       (match in_axes_j with
@@ -1460,7 +1462,21 @@ let loops_split_at n l =
 
 let loops_run c primals tangents =
   let wrapped =
-    if c.lp_kind = "while" then
+    if c.lp_kind = "cumulative" then
+      let f =
+        match c.lp_fn with
+        | "cumsum" -> Ojax.Lax.cumsum
+        | "cumprod" -> Ojax.Lax.cumprod
+        | "cummax" -> Ojax.Lax.cummax
+        | "cummin" -> Ojax.Lax.cummin
+        | "cumlogsumexp" -> Ojax.Lax.cumlogsumexp
+        | _ -> Alcotest.failf "%s: unknown cumulative fn %s" c.lp_id c.lp_fn
+      in
+      fun inputs ->
+        match inputs with
+        | [ x ] -> [ f ~axis:c.lp_axis ~reverse:c.lp_reverse x ]
+        | _ -> Alcotest.failf "%s: cumulative expects 1 operand" c.lp_id
+    else if c.lp_kind = "while" then
       match List.find_opt (fun (n, _, _, _) -> n = c.lp_fn) loops_while with
       | Some (_, _, cond_f, body_f) ->
           fun inputs -> Ojax.Lax.while_loop cond_f body_f inputs

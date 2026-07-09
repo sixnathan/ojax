@@ -25,3 +25,18 @@ val while_loop :
   (value list -> value list) ->
   value list ->
   value list
+
+val logaddexp : float -> float -> float
+
+val cumred_impl :
+  axis:int ->
+  reverse:bool ->
+  combine:(float -> float -> float) ->
+  Ndarray.t ->
+  Ndarray.t
+
+val cumsum : ?axis:int -> ?reverse:bool -> value -> value
+val cumprod : ?axis:int -> ?reverse:bool -> value -> value
+val cummax : ?axis:int -> ?reverse:bool -> value -> value
+val cummin : ?axis:int -> ?reverse:bool -> value -> value
+val cumlogsumexp : ?axis:int -> ?reverse:bool -> value -> value

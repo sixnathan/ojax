@@ -25,6 +25,7 @@
   test_lax_special
   test_lax_conditionals
   test_lax_loops
+  test_lax_cumulatives
   test_jaxpr
   test_partial_eval
   test_ad

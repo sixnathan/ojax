@@ -85,6 +85,45 @@ let while_loop (cond_fun : value list -> value)
   let body = Jaxpr.make_jaxpr avals body_fun in
   Core.bind (While { cond; body }) init
 
+let logaddexp a b =
+  let m = Float.max a b in
+  if Float.is_finite m then m +. Float.log1p (Float.exp (Float.min a b -. m))
+  else m
+
+let cumred_impl ~axis ~reverse ~combine (nd : Ndarray.t) : Ndarray.t =
+  let sh = Ndarray.shape nd in
+  let ndim = Array.length sh in
+  if axis < 0 || axis >= ndim then
+    failwith "loops: cumulative axis out of bounds";
+  let dtype = Ndarray.dtype nd in
+  let total = Array.fold_left ( * ) 1 sh in
+  let out = Ndarray.of_floats dtype sh (Array.make total 0.0) in
+  let n = sh.(axis) in
+  let outer_shape = Array.mapi (fun d s -> if d = axis then 1 else s) sh in
+  let outer_total = Array.fold_left ( * ) 1 outer_shape in
+  let idx = Array.make ndim 0 in
+  let order =
+    if reverse then List.init n (fun i -> n - 1 - i)
+    else List.init n (fun i -> i)
+  in
+  for line = 0 to outer_total - 1 do
+    let rem = ref line in
+    for d = ndim - 1 downto 0 do
+      idx.(d) <- !rem mod outer_shape.(d);
+      rem := !rem / outer_shape.(d)
+    done;
+    let acc = ref None in
+    List.iter
+      (fun i ->
+        idx.(axis) <- i;
+        let x = Ndarray.get_f nd idx in
+        let v = match !acc with None -> x | Some a -> combine a x in
+        acc := Some v;
+        Ndarray.set_f out idx v)
+      order
+  done;
+  out
+
 let scan ?(reverse = false) (body : value list -> value list)
     (init : value list) (xs : value list) : value list =
   let num_carry = List.length init in
@@ -97,3 +136,18 @@ let scan ?(reverse = false) (body : value list -> value list)
   let x_slice_avals = List.map (fun x -> mapped_leading (Core.get_aval x)) xs in
   let jaxpr = Jaxpr.make_jaxpr (carry_avals @ x_slice_avals) body in
   Core.bind (Scan { length; reverse; num_carry; jaxpr }) (init @ xs)
+
+let cumsum ?(axis = 0) ?(reverse = false) (operand : value) : value =
+  Core.bind1 (Cumsum { axis; reverse }) [ operand ]
+
+let cumprod ?(axis = 0) ?(reverse = false) (operand : value) : value =
+  Core.bind1 (Cumprod { axis; reverse }) [ operand ]
+
+let cummax ?(axis = 0) ?(reverse = false) (operand : value) : value =
+  Core.bind1 (Cummax { axis; reverse }) [ operand ]
+
+let cummin ?(axis = 0) ?(reverse = false) (operand : value) : value =
+  Core.bind1 (Cummin { axis; reverse }) [ operand ]
+
+let cumlogsumexp ?(axis = 0) ?(reverse = false) (operand : value) : value =
+  Core.bind1 (Cumlogsumexp { axis; reverse }) [ operand ]

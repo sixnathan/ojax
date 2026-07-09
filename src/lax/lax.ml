@@ -1141,6 +1141,23 @@ let impl prim inputs =
       |> List.map (function
         | Concrete nd -> nd
         | Tracer _ -> failwith "lax: while produced a tracer")
+  | Cumsum { axis; reverse } ->
+      un (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:( +. )) inputs
+  | Cumprod { axis; reverse } ->
+      un (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:( *. )) inputs
+  | Cummax { axis; reverse } ->
+      un
+        (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.max)
+        inputs
+  | Cummin { axis; reverse } ->
+      un
+        (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.min)
+        inputs
+  | Cumlogsumexp { axis; reverse } ->
+      un
+        (Control_flow.Loops.cumred_impl ~axis ~reverse
+           ~combine:Control_flow.Loops.logaddexp)
+        inputs
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1402,6 +1419,17 @@ let abstract_eval prim avals =
   | Scan { length; num_carry; jaxpr; _ } ->
       Control_flow.Loops.scan_out_avals ~length ~num_carry jaxpr
   | While { body; _ } -> Control_flow.Loops.while_out_avals body
+  | Cumsum { axis; _ }
+  | Cumprod { axis; _ }
+  | Cummax { axis; _ }
+  | Cummin { axis; _ }
+  | Cumlogsumexp { axis; _ } ->
+      un_aval
+        (fun a ->
+          if axis < 0 || axis >= Array.length a.shape then
+            failwith "lax: cumulative axis out of bounds";
+          a)
+        avals
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =
@@ -1413,3 +1441,8 @@ let cond = Control_flow.Conditionals.cond
 let platform_index = Control_flow.Conditionals.platform_index
 let scan = Control_flow.Loops.scan
 let while_loop = Control_flow.Loops.while_loop
+let cumsum = Control_flow.Loops.cumsum
+let cumprod = Control_flow.Loops.cumprod
+let cummax = Control_flow.Loops.cummax
+let cummin = Control_flow.Loops.cummin
+let cumlogsumexp = Control_flow.Loops.cumlogsumexp

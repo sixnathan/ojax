@@ -226,6 +226,11 @@ let prim_name = function
   | Cond _ -> "cond"
   | Scan _ -> "scan"
   | While _ -> "while"
+  | Cumsum _ -> "cumsum"
+  | Cumprod _ -> "cumprod"
+  | Cummax _ -> "cummax"
+  | Cummin _ -> "cummin"
+  | Cumlogsumexp _ -> "cumlogsumexp"
 
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"
@@ -236,6 +241,14 @@ let prim_params = function
   | Reduce_sum axes -> "[axes=" ^ int_tuple axes ^ "]"
   | Dot_general dd -> "[dimension_numbers=" ^ dot_dims_str dd ^ "]"
   | Integer_pow y -> "[y=" ^ string_of_int y ^ "]"
+  | Cumsum { axis; reverse }
+  | Cumprod { axis; reverse }
+  | Cummax { axis; reverse }
+  | Cummin { axis; reverse }
+  | Cumlogsumexp { axis; reverse } ->
+      "[axis=" ^ string_of_int axis ^ " reverse="
+      ^ (if reverse then "True" else "False")
+      ^ "]"
   | _ -> ""
 
 let lit_short nd =

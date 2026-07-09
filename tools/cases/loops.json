@@ -1,25 +1,897 @@
 [
-  {"case_id":"cumsum_eval_f32","fn":"cumsum","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[5],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"cumsum_eval_rev_f32","fn":"cumsum","mode":"eval","reverse":true,"init":[{"shape":[],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[5],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"cumsum_eval_f64","fn":"cumsum","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float64","rng":"rand_default"}],"xs":[{"shape":[5],"dtype":"float64","rng":"rand_default"}]},
-  {"case_id":"cumsum_jvp_f32","fn":"cumsum","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[5],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"cumsum_jvp_f64","fn":"cumsum","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float64","rng":"rand_default"}],"xs":[{"shape":[5],"dtype":"float64","rng":"rand_default"}]},
-  {"case_id":"cumprod_eval_f32","fn":"cumprod","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[5],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"cumprod_jvp_f32","fn":"cumprod","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[5],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"lin_eval_f32","fn":"lin","mode":"eval","reverse":false,"init":[{"shape":[3],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[4,3],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"lin_eval_rev_f32","fn":"lin","mode":"eval","reverse":true,"init":[{"shape":[3],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[4,3],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"lin_jvp_f32","fn":"lin","mode":"jvp","reverse":false,"init":[{"shape":[3],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[4,3],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"lin_jvp_f64","fn":"lin","mode":"jvp","reverse":false,"init":[{"shape":[3],"dtype":"float64","rng":"rand_default"}],"xs":[{"shape":[4,3],"dtype":"float64","rng":"rand_default"}]},
-  {"case_id":"twocarry_eval_f32","fn":"twocarry","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"},{"shape":[],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[5],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"twocarry_jvp_f32","fn":"twocarry","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"},{"shape":[],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[5],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"cumsum_vmap_f32","fn":"cumsum","mode":"vmap","reverse":false,"in_axes":[0,0],"init":[{"shape":[3],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[3,4],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"cumprod_vmap_f32","fn":"cumprod","mode":"vmap","reverse":false,"in_axes":[0,0],"init":[{"shape":[3],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[3,4],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"lin_vmap_f32","fn":"lin","mode":"vmap","reverse":false,"in_axes":[0,0],"init":[{"shape":[3,2],"dtype":"float32","rng":"rand_default"}],"xs":[{"shape":[3,4,2],"dtype":"float32","rng":"rand_default"}]},
-  {"case_id":"twocarry_vmap_f32","fn":"twocarry","mode":"vmap","reverse":false,"in_axes":[0,0,0],"init":[{"shape":[3],"dtype":"float32","rng":"rand_positive"},{"shape":[3],"dtype":"float32","rng":"rand_positive"}],"xs":[{"shape":[3,5],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"wdouble_eval_f32","fn":"wdouble","kind":"while","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"wdouble_eval_f64","fn":"wdouble","kind":"while","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float64","rng":"rand_positive"}]},
-  {"case_id":"wdouble_jvp_f32","fn":"wdouble","kind":"while","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"wdouble_jvp_f64","fn":"wdouble","kind":"while","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float64","rng":"rand_positive"}]},
-  {"case_id":"wtwo_eval_f32","fn":"wtwo","kind":"while","mode":"eval","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"},{"shape":[],"dtype":"float32","rng":"rand_positive"}]},
-  {"case_id":"wtwo_jvp_f32","fn":"wtwo","kind":"while","mode":"jvp","reverse":false,"init":[{"shape":[],"dtype":"float32","rng":"rand_positive"},{"shape":[],"dtype":"float32","rng":"rand_positive"}]}
+    {
+        "case_id": "cumsum_eval_f32",
+        "fn": "cumsum",
+        "mode": "eval",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "cumsum_eval_rev_f32",
+        "fn": "cumsum",
+        "mode": "eval",
+        "reverse": true,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "cumsum_eval_f64",
+        "fn": "cumsum",
+        "mode": "eval",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float64",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float64",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "cumsum_jvp_f32",
+        "fn": "cumsum",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "cumsum_jvp_f64",
+        "fn": "cumsum",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float64",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float64",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "cumprod_eval_f32",
+        "fn": "cumprod",
+        "mode": "eval",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "cumprod_jvp_f32",
+        "fn": "cumprod",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "lin_eval_f32",
+        "fn": "lin",
+        "mode": "eval",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    4,
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "lin_eval_rev_f32",
+        "fn": "lin",
+        "mode": "eval",
+        "reverse": true,
+        "init": [
+            {
+                "shape": [
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    4,
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "lin_jvp_f32",
+        "fn": "lin",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    4,
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "lin_jvp_f64",
+        "fn": "lin",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [
+                    3
+                ],
+                "dtype": "float64",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    4,
+                    3
+                ],
+                "dtype": "float64",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "twocarry_eval_f32",
+        "fn": "twocarry",
+        "mode": "eval",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            },
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "twocarry_jvp_f32",
+        "fn": "twocarry",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            },
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    5
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "cumsum_vmap_f32",
+        "fn": "cumsum",
+        "mode": "vmap",
+        "reverse": false,
+        "in_axes": [
+            0,
+            0
+        ],
+        "init": [
+            {
+                "shape": [
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    3,
+                    4
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "cumprod_vmap_f32",
+        "fn": "cumprod",
+        "mode": "vmap",
+        "reverse": false,
+        "in_axes": [
+            0,
+            0
+        ],
+        "init": [
+            {
+                "shape": [
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    3,
+                    4
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "lin_vmap_f32",
+        "fn": "lin",
+        "mode": "vmap",
+        "reverse": false,
+        "in_axes": [
+            0,
+            0
+        ],
+        "init": [
+            {
+                "shape": [
+                    3,
+                    2
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    3,
+                    4,
+                    2
+                ],
+                "dtype": "float32",
+                "rng": "rand_default"
+            }
+        ]
+    },
+    {
+        "case_id": "twocarry_vmap_f32",
+        "fn": "twocarry",
+        "mode": "vmap",
+        "reverse": false,
+        "in_axes": [
+            0,
+            0,
+            0
+        ],
+        "init": [
+            {
+                "shape": [
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            },
+            {
+                "shape": [
+                    3
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ],
+        "xs": [
+            {
+                "shape": [
+                    3,
+                    5
+                ],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "wdouble_eval_f32",
+        "fn": "wdouble",
+        "kind": "while",
+        "mode": "eval",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "wdouble_eval_f64",
+        "fn": "wdouble",
+        "kind": "while",
+        "mode": "eval",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float64",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "wdouble_jvp_f32",
+        "fn": "wdouble",
+        "kind": "while",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "wdouble_jvp_f64",
+        "fn": "wdouble",
+        "kind": "while",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float64",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "wtwo_eval_f32",
+        "fn": "wtwo",
+        "kind": "while",
+        "mode": "eval",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            },
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "wtwo_jvp_f32",
+        "fn": "wtwo",
+        "kind": "while",
+        "mode": "jvp",
+        "reverse": false,
+        "init": [
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            },
+            {
+                "shape": [],
+                "dtype": "float32",
+                "rng": "rand_positive"
+            }
+        ]
+    },
+    {
+        "case_id": "csum_eval_f32",
+        "fn": "cumsum",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "csum_evalrev_f32",
+        "fn": "cumsum",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": true,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "csum_ax1_f32",
+        "fn": "cumsum",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 1,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                3,
+                4
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "csum_eval_i32",
+        "fn": "cumsum",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "int32",
+            "rng": "rand_int_small"
+        }
+    },
+    {
+        "case_id": "csum_eval_f64",
+        "fn": "cumsum",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float64",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "csum_jvp_f32",
+        "fn": "cumsum",
+        "kind": "cumulative",
+        "mode": "jvp",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "csum_jvp_f64",
+        "fn": "cumsum",
+        "kind": "cumulative",
+        "mode": "jvp",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float64",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "csum_vmap_f32",
+        "fn": "cumsum",
+        "kind": "cumulative",
+        "mode": "vmap",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                3,
+                4
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        },
+        "in_axes": [
+            0
+        ]
+    },
+    {
+        "case_id": "cprod_eval_f32",
+        "fn": "cumprod",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_positive"
+        }
+    },
+    {
+        "case_id": "cprod_ax1_f32",
+        "fn": "cumprod",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 1,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                3,
+                4
+            ],
+            "dtype": "float32",
+            "rng": "rand_positive"
+        }
+    },
+    {
+        "case_id": "cprod_eval_f64",
+        "fn": "cumprod",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float64",
+            "rng": "rand_positive"
+        }
+    },
+    {
+        "case_id": "cprod_vmap_f32",
+        "fn": "cumprod",
+        "kind": "cumulative",
+        "mode": "vmap",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                3,
+                4
+            ],
+            "dtype": "float32",
+            "rng": "rand_positive"
+        },
+        "in_axes": [
+            0
+        ]
+    },
+    {
+        "case_id": "cmax_eval_f32",
+        "fn": "cummax",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "cmax_evalrev_f32",
+        "fn": "cummax",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": true,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "cmax_eval_f64",
+        "fn": "cummax",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float64",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "cmax_vmap_f32",
+        "fn": "cummax",
+        "kind": "cumulative",
+        "mode": "vmap",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                3,
+                4
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        },
+        "in_axes": [
+            0
+        ]
+    },
+    {
+        "case_id": "cmin_eval_f32",
+        "fn": "cummin",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "cmin_eval_f64",
+        "fn": "cummin",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float64",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "cmin_vmap_f32",
+        "fn": "cummin",
+        "kind": "cumulative",
+        "mode": "vmap",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                3,
+                4
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        },
+        "in_axes": [
+            0
+        ]
+    },
+    {
+        "case_id": "clse_eval_f32",
+        "fn": "cumlogsumexp",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "clse_evalrev_f32",
+        "fn": "cumlogsumexp",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": true,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "clse_eval_f64",
+        "fn": "cumlogsumexp",
+        "kind": "cumulative",
+        "mode": "eval",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                5
+            ],
+            "dtype": "float64",
+            "rng": "rand_default"
+        }
+    },
+    {
+        "case_id": "clse_vmap_f32",
+        "fn": "cumlogsumexp",
+        "kind": "cumulative",
+        "mode": "vmap",
+        "axis": 0,
+        "reverse": false,
+        "operand": {
+            "shape": [
+                3,
+                4
+            ],
+            "dtype": "float32",
+            "rng": "rand_default"
+        },
+        "in_axes": [
+            0
+        ]
+    }
 ]

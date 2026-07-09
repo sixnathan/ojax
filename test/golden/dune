@@ -12,4 +12,5 @@
   (source_tree %{project_root}/goldens/conditionals)
   (source_tree %{project_root}/goldens/loops)
   (source_tree %{project_root}/goldens/solves)
-  (source_tree %{project_root}/goldens/lax_numpy)))
+  (source_tree %{project_root}/goldens/lax_numpy)
+  (source_tree %{project_root}/goldens/ufuncs)))

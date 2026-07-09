@@ -1249,6 +1249,67 @@ NUMPY_BUILDERS = {
 }
 
 
+_UFUNC_UNARY = [
+    "negative",
+    "positive",
+    "sign",
+    "fabs",
+    "floor",
+    "ceil",
+    "exp",
+    "expm1",
+    "log",
+    "log1p",
+    "sin",
+    "cos",
+    "tan",
+    "arcsin",
+    "arccos",
+    "arctan",
+    "sinh",
+    "cosh",
+    "arcsinh",
+    "arccosh",
+    "tanh",
+    "arctanh",
+    "sqrt",
+    "cbrt",
+    "bitwise_not",
+    "bitwise_invert",
+    "invert",
+    "logical_not",
+    "spacing",
+]
+
+_UFUNC_BINARY = [
+    "add",
+    "subtract",
+    "multiply",
+    "maximum",
+    "minimum",
+    "bitwise_and",
+    "bitwise_or",
+    "bitwise_xor",
+    "left_shift",
+    "bitwise_left_shift",
+    "logical_and",
+    "logical_or",
+    "logical_xor",
+    "equal",
+    "not_equal",
+    "greater",
+    "greater_equal",
+    "arctan2",
+    "float_power",
+    "nextafter",
+]
+
+for _name in _UFUNC_UNARY:
+    NUMPY_BUILDERS[_name] = _unary(getattr(jnp, _name))
+for _name in _UFUNC_BINARY:
+    NUMPY_BUILDERS[_name] = _binary(getattr(jnp, _name))
+
+
 SHORT_DTYPE = {
     "float32": "f32",
     "float64": "f64",

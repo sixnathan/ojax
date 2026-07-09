@@ -555,6 +555,7 @@ let lax_check_case ~set_dir ~x64 c () =
     paired
 
 module NL = Ojax.Numpy.Lax_numpy
+module UF = Ojax.Numpy.Ufuncs
 
 let opt_ia params name =
   match U.member name params with `Null -> None | j -> Some (ia j)
@@ -786,7 +787,61 @@ let numpy_fn op params operands : T.value list =
       | _ -> failwith "numpy golden: bad corrcoef arity")
   | _ -> failwith ("numpy golden: unknown op " ^ op)
 
-let numpy_check_case ~set_dir ~x64 c () =
+let ufuncs_fn op _params operands : T.value list =
+  let one v = [ v ] in
+  match (op, operands) with
+  | "negative", [ x ] -> one (UF.negative x)
+  | "positive", [ x ] -> one (UF.positive x)
+  | "sign", [ x ] -> one (UF.sign x)
+  | "fabs", [ x ] -> one (UF.fabs x)
+  | "floor", [ x ] -> one (UF.floor x)
+  | "ceil", [ x ] -> one (UF.ceil x)
+  | "exp", [ x ] -> one (UF.exp x)
+  | "expm1", [ x ] -> one (UF.expm1 x)
+  | "log", [ x ] -> one (UF.log x)
+  | "log1p", [ x ] -> one (UF.log1p x)
+  | "sin", [ x ] -> one (UF.sin x)
+  | "cos", [ x ] -> one (UF.cos x)
+  | "tan", [ x ] -> one (UF.tan x)
+  | "arcsin", [ x ] -> one (UF.arcsin x)
+  | "arccos", [ x ] -> one (UF.arccos x)
+  | "arctan", [ x ] -> one (UF.arctan x)
+  | "sinh", [ x ] -> one (UF.sinh x)
+  | "cosh", [ x ] -> one (UF.cosh x)
+  | "arcsinh", [ x ] -> one (UF.arcsinh x)
+  | "arccosh", [ x ] -> one (UF.arccosh x)
+  | "tanh", [ x ] -> one (UF.tanh x)
+  | "arctanh", [ x ] -> one (UF.arctanh x)
+  | "sqrt", [ x ] -> one (UF.sqrt x)
+  | "cbrt", [ x ] -> one (UF.cbrt x)
+  | "bitwise_not", [ x ] -> one (UF.bitwise_not x)
+  | "bitwise_invert", [ x ] -> one (UF.bitwise_invert x)
+  | "invert", [ x ] -> one (UF.invert x)
+  | "logical_not", [ x ] -> one (UF.logical_not x)
+  | "spacing", [ x ] -> one (UF.spacing x)
+  | "add", [ a; b ] -> one (UF.add a b)
+  | "subtract", [ a; b ] -> one (UF.subtract a b)
+  | "multiply", [ a; b ] -> one (UF.multiply a b)
+  | "maximum", [ a; b ] -> one (UF.maximum a b)
+  | "minimum", [ a; b ] -> one (UF.minimum a b)
+  | "bitwise_and", [ a; b ] -> one (UF.bitwise_and a b)
+  | "bitwise_or", [ a; b ] -> one (UF.bitwise_or a b)
+  | "bitwise_xor", [ a; b ] -> one (UF.bitwise_xor a b)
+  | "left_shift", [ a; b ] -> one (UF.left_shift a b)
+  | "bitwise_left_shift", [ a; b ] -> one (UF.bitwise_left_shift a b)
+  | "logical_and", [ a; b ] -> one (UF.logical_and a b)
+  | "logical_or", [ a; b ] -> one (UF.logical_or a b)
+  | "logical_xor", [ a; b ] -> one (UF.logical_xor a b)
+  | "equal", [ a; b ] -> one (UF.equal a b)
+  | "not_equal", [ a; b ] -> one (UF.not_equal a b)
+  | "greater", [ a; b ] -> one (UF.greater a b)
+  | "greater_equal", [ a; b ] -> one (UF.greater_equal a b)
+  | "arctan2", [ a; b ] -> one (UF.arctan2 a b)
+  | "float_power", [ a; b ] -> one (UF.float_power a b)
+  | "nextafter", [ a; b ] -> one (UF.nextafter a b)
+  | _ -> failwith ("ufuncs golden: unknown op " ^ op)
+
+let numpy_check_case ~fn ~set_dir ~x64 c () =
   let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
   let inputs =
     Npz.read
@@ -803,7 +858,7 @@ let numpy_check_case ~set_dir ~x64 c () =
   in
   let results =
     Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
-        numpy_fn c.op c.params operands)
+        fn c.op c.params operands)
   in
   let paired =
     try List.combine c.outs results
@@ -842,13 +897,31 @@ let numpy_suite_for set_name =
   let case_tests =
     List.map
       (fun c ->
-        Alcotest.test_case c.case_id `Quick (numpy_check_case ~set_dir ~x64 c))
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:numpy_fn ~set_dir ~x64 c))
       cases
   in
   let coverage =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
   ("lax_numpy:" ^ set_name, coverage :: case_tests)
+
+let ufuncs_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "ufuncs") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:ufuncs_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("ufuncs:" ^ set_name, coverage :: case_tests)
 
 let lax_suite_for set_name =
   let set_dir = Filename.concat (Filename.concat goldens_root "lax") set_name in
@@ -2073,5 +2146,7 @@ let () =
       solves_suite_for "x64_on";
       numpy_suite_for "x64_off";
       numpy_suite_for "x64_on";
+      ufuncs_suite_for "x64_off";
+      ufuncs_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

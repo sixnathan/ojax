@@ -1342,6 +1342,7 @@ let contractions_suite_for set_name =
 module WF = Ojax.Numpy.Window_functions
 module SORT = Ojax.Numpy.Sorting
 module SETOPS = Ojax.Numpy.Setops
+module POLY = Ojax.Numpy.Polynomial
 
 let axis_opt params =
   match U.member "axis" params with `Null -> None | j -> Some (U.to_int j)
@@ -1359,7 +1360,8 @@ let setops_fn op params operands : T.value list =
   | "sort", [ x ] ->
       one
         (SORT.sort ~axis:(axis_opt params) ?stable:(opt_b params "stable")
-           ?descending:(opt_b params "descending") x)
+           ?descending:(opt_b params "descending")
+           x)
   | "argsort", [ x ] ->
       one
         (SORT.argsort ~axis:(axis_opt params) ?stable:(opt_b params "stable")
@@ -1367,7 +1369,9 @@ let setops_fn op params operands : T.value list =
            ?dtype:(opt_dt params "dtype") x)
   | "lexsort", keys -> one (SORT.lexsort ?axis:(opt_i params "axis") keys)
   | "partition", [ x ] ->
-      one (SORT.partition ?axis:(opt_i params "axis") x ~kth:(U.to_int (member "kth")))
+      one
+        (SORT.partition ?axis:(opt_i params "axis") x
+           ~kth:(U.to_int (member "kth")))
   | "isin", [ a; b ] -> one (SETOPS.isin ?invert:(opt_b params "invert") a b)
   | _ -> failwith ("setops golden: unknown op " ^ op)
 
@@ -1387,6 +1391,35 @@ let setops_suite_for set_name =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
   ("setops:" ^ set_name, coverage :: case_tests)
+
+let poly_fn op params operands : T.value list =
+  let one v = [ v ] in
+  match (op, operands) with
+  | "polyval", [ p; x ] -> one (POLY.polyval p x)
+  | "polyadd", [ a; b ] -> one (POLY.polyadd a b)
+  | "polysub", [ a; b ] -> one (POLY.polysub a b)
+  | "polymul", [ a; b ] -> one (POLY.polymul a b)
+  | "poly", [ s ] -> one (POLY.poly s)
+  | "polyint", [ p ] -> one (POLY.polyint ?m:(opt_i params "m") p)
+  | "polyder", [ p ] -> one (POLY.polyder ?m:(opt_i params "m") p)
+  | _ -> failwith ("polynomial golden: unknown op " ^ op)
+
+let polynomial_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "polynomial") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:poly_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("polynomial:" ^ set_name, coverage :: case_tests)
 
 let reductions_suite_for set_name =
   let set_dir =
@@ -2642,5 +2675,7 @@ let () =
       contractions_suite_for "x64_on";
       setops_suite_for "x64_off";
       setops_suite_for "x64_on";
+      polynomial_suite_for "x64_off";
+      polynomial_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

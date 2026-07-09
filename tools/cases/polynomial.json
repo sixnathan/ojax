@@ -1,0 +1,39 @@
+[
+  {"op": "polyval", "primitive": "jnp.polyval", "args": [{"shape": [3], "dtype": "float32", "rng": "rand_default"}, {"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polyval", "primitive": "jnp.polyval", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}, {"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polyval", "primitive": "jnp.polyval", "args": [{"shape": [3], "dtype": "float32", "rng": "rand_default"}, {"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polyval", "primitive": "jnp.polyval", "args": [{"shape": [3], "dtype": "int32", "rng": "rand_int_small"}, {"shape": [4], "dtype": "int32", "rng": "rand_int_small"}], "params": {}},
+  {"op": "polyval", "primitive": "jnp.polyval", "args": [{"shape": [3], "dtype": "float64", "rng": "rand_default"}, {"shape": [4], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+  {"op": "polyval", "primitive": "jnp.polyval", "args": [{"shape": [3], "dtype": "int64", "rng": "rand_int_small"}, {"shape": [4], "dtype": "int64", "rng": "rand_int_small"}], "params": {}},
+
+  {"op": "polyadd", "primitive": "jnp.polyadd", "args": [{"shape": [3], "dtype": "float32", "rng": "rand_default"}, {"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polyadd", "primitive": "jnp.polyadd", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}, {"shape": [3], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polyadd", "primitive": "jnp.polyadd", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}, {"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polyadd", "primitive": "jnp.polyadd", "args": [{"shape": [3], "dtype": "int32", "rng": "rand_int_small"}, {"shape": [5], "dtype": "int32", "rng": "rand_int_small"}], "params": {}},
+  {"op": "polyadd", "primitive": "jnp.polyadd", "args": [{"shape": [3], "dtype": "float64", "rng": "rand_default"}, {"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+  {"op": "polyadd", "primitive": "jnp.polyadd", "args": [{"shape": [4], "dtype": "int64", "rng": "rand_int_small"}, {"shape": [2], "dtype": "int64", "rng": "rand_int_small"}], "params": {}},
+
+  {"op": "polysub", "primitive": "jnp.polysub", "args": [{"shape": [3], "dtype": "float32", "rng": "rand_default"}, {"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polysub", "primitive": "jnp.polysub", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}, {"shape": [2], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polysub", "primitive": "jnp.polysub", "args": [{"shape": [4], "dtype": "int32", "rng": "rand_int_small"}, {"shape": [4], "dtype": "int32", "rng": "rand_int_small"}], "params": {}},
+  {"op": "polysub", "primitive": "jnp.polysub", "args": [{"shape": [3], "dtype": "float64", "rng": "rand_default"}, {"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "polymul", "primitive": "jnp.polymul", "args": [{"shape": [3], "dtype": "float32", "rng": "rand_default"}, {"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polymul", "primitive": "jnp.polymul", "args": [{"shape": [2], "dtype": "float32", "rng": "rand_default"}, {"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "polymul", "primitive": "jnp.polymul", "args": [{"shape": [3], "dtype": "float64", "rng": "rand_default"}, {"shape": [4], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "poly", "primitive": "jnp.poly", "args": [{"shape": [3], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "poly", "primitive": "jnp.poly", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "poly", "primitive": "jnp.poly", "args": [{"shape": [1], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "poly", "primitive": "jnp.poly", "args": [{"shape": [3], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "polyint", "primitive": "jnp.polyint", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {"m": 1}},
+  {"op": "polyint", "primitive": "jnp.polyint", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {"m": 2}},
+  {"op": "polyint", "primitive": "jnp.polyint", "args": [{"shape": [3], "dtype": "float32", "rng": "rand_default"}], "params": {"m": 1}},
+  {"op": "polyint", "primitive": "jnp.polyint", "args": [{"shape": [4], "dtype": "float64", "rng": "rand_default"}], "params": {"m": 1}},
+
+  {"op": "polyder", "primitive": "jnp.polyder", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {"m": 1}},
+  {"op": "polyder", "primitive": "jnp.polyder", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {"m": 2}},
+  {"op": "polyder", "primitive": "jnp.polyder", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {"m": 1}},
+  {"op": "polyder", "primitive": "jnp.polyder", "args": [{"shape": [4], "dtype": "float64", "rng": "rand_default"}], "params": {"m": 1}}
+]

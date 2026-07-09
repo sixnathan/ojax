@@ -1708,6 +1708,41 @@ NUMPY_BUILDERS["partition"] = np_partition
 NUMPY_BUILDERS["isin"] = np_isin
 
 
+def _poly_binary(name):
+    fn = getattr(jnp, name)
+
+    def build(params):
+        return lambda a, b: fn(a, b)
+
+    return build
+
+
+def _poly_unary(name):
+    fn = getattr(jnp, name)
+
+    def build(params):
+        return lambda a: fn(a)
+
+    return build
+
+
+def _polyint(params):
+    m = params.get("m", 1)
+    return lambda p: jnp.polyint(p, m=m)
+
+
+def _polyder(params):
+    m = params.get("m", 1)
+    return lambda p: jnp.polyder(p, m=m)
+
+
+for _name in ["polyval", "polyadd", "polysub", "polymul"]:
+    NUMPY_BUILDERS[_name] = _poly_binary(_name)
+NUMPY_BUILDERS["poly"] = _poly_unary("poly")
+NUMPY_BUILDERS["polyint"] = _polyint
+NUMPY_BUILDERS["polyder"] = _polyder
+
+
 def _cum_simple(name):
     fn = getattr(jnp, name)
 

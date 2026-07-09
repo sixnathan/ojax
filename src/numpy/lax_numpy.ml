@@ -292,3 +292,294 @@ let convolve ?(mode = "full") a v =
 let correlate ?(mode = "valid") a v =
   let la = (shape a).(0) and lv = (shape v).(0) in
   conv1d ~mode ~flip_kernel:false ~reverse_out:(la < lv) a v
+
+let bind = C.bind
+let scalar dt x = const_full dt [||] x
+let full dt sh x = const_full dt sh x
+
+let maximum a b =
+  let a, b, _, _ = promote2 a b in
+  bind1 T.Max [ a; b ]
+
+let minimum a b =
+  let a, b, _, _ = promote2 a b in
+  bind1 T.Min [ a; b ]
+
+let where_ c x y =
+  let dt, _ =
+    Dtypes.result_type
+      [
+        ((get_aval x).T.dtype, (get_aval x).T.weak_type);
+        ((get_aval y).T.dtype, (get_aval y).T.weak_type);
+      ]
+  in
+  let sh = broadcast_shapes (broadcast_shapes (shape c) (shape x)) (shape y) in
+  let cb = broadcast_to c sh in
+  let xb = broadcast_to (convert x dt) sh in
+  let yb = broadcast_to (convert y dt) sh in
+  bind1 T.Select_n [ cb; yb; xb ]
+
+let finfo_max = function
+  | D.F64 -> Float.max_float
+  | _ -> 3.4028234663852886e+38
+
+let isposinf v = bind1 T.Eq [ v; full (dtype v) (shape v) Float.infinity ]
+let isneginf v = bind1 T.Eq [ v; full (dtype v) (shape v) Float.neg_infinity ]
+
+let nan_to_num ?(nan = 0.0) ?posinf ?neginf x =
+  let dt = dtype x in
+  if not (is_inexact dt) then x
+  else begin
+    let maxv = finfo_max dt in
+    let pv = Option.value posinf ~default:maxv in
+    let nv = Option.value neginf ~default:(-.maxv) in
+    let out = where_ (isnan x) (scalar dt nan) x in
+    let out = where_ (isposinf out) (scalar dt pv) out in
+    where_ (isneginf out) (scalar dt nv) out
+  end
+
+let isclose ?(rtol = 1e-5) ?(atol = 1e-8) ?(equal_nan = false) a b =
+  let dt0, _ =
+    Dtypes.result_type
+      [
+        ((get_aval a).T.dtype, (get_aval a).T.weak_type);
+        ((get_aval b).T.dtype, (get_aval b).T.weak_type);
+      ]
+  in
+  let dt = to_inexact_dtype dt0 in
+  let sh = broadcast_shapes (shape a) (shape b) in
+  let a = broadcast_to (convert a dt) sh in
+  let b = broadcast_to (convert b dt) sh in
+  let rt = full dt sh rtol and at = full dt sh atol in
+  let in_range =
+    bind1 T.Le
+      [
+        bind1 T.Abs [ bind1 T.Sub [ a; b ] ];
+        bind1 T.Add [ at; bind1 T.Mul [ rt; bind1 T.Abs [ b ] ] ];
+      ]
+  in
+  let out =
+    bind1 T.Or
+      [ bind1 T.Eq [ a; b ]; bind1 T.And [ bind1 T.Is_finite [ b ]; in_range ] ]
+  in
+  if equal_nan then bind1 T.Or [ out; bind1 T.And [ isnan a; isnan b ] ]
+  else out
+
+let allclose ?rtol ?atol ?equal_nan a b =
+  let c = isclose ?rtol ?atol ?equal_nan a b in
+  let n = ndim c in
+  bind1 (T.Reduce_and (Array.init n (fun i -> i))) [ c ]
+
+let clip ?min ?max arr =
+  let dt = dtype arr in
+  let arr =
+    match min with None -> arr | Some m -> maximum (scalar dt m) arr
+  in
+  match max with None -> arr | Some m -> minimum (scalar dt m) arr
+
+let round ?(decimals = 0) v =
+  let dt = dtype v in
+  if is_integral dt || is_bool dt then v
+  else if decimals = 0 then bind1 T.Round [ v ]
+  else begin
+    let factor = full dt (shape v) (10.0 ** float_of_int decimals) in
+    bind1 T.Div [ bind1 T.Round [ bind1 T.Mul [ v; factor ] ]; factor ]
+  end
+
+let around ?decimals v = round ?decimals v
+
+let expand_dims v axes =
+  let nd = ndim v in
+  let result_ndim = nd + Array.length axes in
+  let axes = Array.map (fun a -> canonicalize_axis a result_ndim) axes in
+  let is_new = Array.make result_ndim false in
+  Array.iter (fun a -> is_new.(a) <- true) axes;
+  let sh = shape v in
+  let out_shape = Array.make result_ndim 1 in
+  let dims = Array.make nd 0 in
+  let j = ref 0 in
+  for i = 0 to result_ndim - 1 do
+    if not is_new.(i) then begin
+      out_shape.(i) <- sh.(!j);
+      dims.(!j) <- i;
+      incr j
+    end
+  done;
+  bind1 (T.Broadcast_in_dim { shape = out_shape; dims }) [ v ]
+
+let squeeze ?axis v =
+  let sh = shape v in
+  let nd = Array.length sh in
+  let dims =
+    match axis with
+    | None ->
+        Array.of_list
+          (List.filter (fun i -> sh.(i) = 1) (List.init nd (fun i -> i)))
+    | Some ax ->
+        let d = Array.map (fun a -> canonicalize_axis a nd) ax in
+        Array.sort compare d;
+        d
+  in
+  bind1 (T.Squeeze dims) [ v ]
+
+let swapaxes axis1 axis2 v =
+  let n = ndim v in
+  let perm = Array.init n (fun i -> i) in
+  let a1 = canonicalize_axis axis1 n and a2 = canonicalize_axis axis2 n in
+  perm.(a1) <- a2;
+  perm.(a2) <- a1;
+  bind1 (T.Transpose perm) [ v ]
+
+let moveaxis source destination v =
+  let n = ndim v in
+  let src = Array.map (fun a -> canonicalize_axis a n) source in
+  let dst = Array.map (fun a -> canonicalize_axis a n) destination in
+  if Array.length src <> Array.length dst then
+    invalid_arg "moveaxis: inconsistent number of elements";
+  let src_list = Array.to_list src in
+  let perm =
+    ref (List.filter (fun i -> not (List.mem i src_list)) (List.init n Fun.id))
+  in
+  let pairs =
+    List.sort compare (List.combine (Array.to_list dst) (Array.to_list src))
+  in
+  let rec insert l i x =
+    if i = 0 then x :: l
+    else match l with [] -> [ x ] | h :: t -> h :: insert t (i - 1) x
+  in
+  List.iter (fun (d, s) -> perm := insert !perm d s) pairs;
+  bind1 (T.Transpose (Array.of_list !perm)) [ v ]
+
+let broadcast_shapes_n shapes = List.fold_left broadcast_shapes [||] shapes
+
+let broadcast_arrays vs =
+  let sh =
+    List.fold_left (fun acc v -> broadcast_shapes acc (shape v)) [||] vs
+  in
+  List.map (fun v -> broadcast_to v sh) vs
+
+let resize v new_shape =
+  let arr = ravel v in
+  let sz = (shape arr).(0) in
+  let new_size = Array.fold_left ( * ) 1 new_shape in
+  let repeats = (new_size + sz - 1) / sz in
+  let tiled = bind1 (T.Tile [| repeats |]) [ arr ] in
+  let sliced = slice_axis tiled 0 0 new_size in
+  reshape sliced new_shape
+
+let unravel_index indices dims =
+  let n = Array.length dims in
+  let dt = dtype indices in
+  let ish = shape indices in
+  let out = Array.make n indices in
+  let cur = ref indices in
+  for i = n - 1 downto 0 do
+    let s = full dt ish (float_of_int dims.(i)) in
+    out.(i) <- bind1 T.Rem [ !cur; s ];
+    cur := bind1 T.Div [ !cur; s ]
+  done;
+  let zero = full dt ish 0.0 in
+  let negone = full dt ish (-1.0) in
+  let oob_pos = bind1 T.Gt [ !cur; zero ] in
+  let oob_neg = bind1 T.Lt [ !cur; negone ] in
+  List.init n (fun i ->
+      let smax = full dt ish (float_of_int (dims.(i) - 1)) in
+      where_ oob_pos smax (where_ oob_neg zero out.(i)))
+
+let mod_floor a b =
+  let zero = full (dtype a) (shape a) 0.0 in
+  let trunc_mod = bind1 T.Rem [ a; b ] in
+  let nz = bind1 T.Ne [ trunc_mod; zero ] in
+  let do_plus =
+    bind1 T.And
+      [
+        bind1 T.Ne [ bind1 T.Lt [ trunc_mod; zero ]; bind1 T.Lt [ b; zero ] ];
+        nz;
+      ]
+  in
+  bind1 T.Select_n [ do_plus; trunc_mod; bind1 T.Add [ trunc_mod; b ] ]
+
+let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
+  let nd = ndim p in
+  let axis = canonicalize_axis axis nd in
+  let dt = to_inexact_dtype (dtype p) in
+  let p = convert p dt in
+  let size = (shape p).(axis) in
+  if size = 0 then p
+  else begin
+    let interval = period /. 2.0 in
+    let discont = Option.value discont ~default:(period /. 2.0) in
+    let dd = diff ~axis p in
+    let sh = shape dd in
+    let per = full dt sh period in
+    let iv = full dt sh interval in
+    let ddmod = bind1 T.Sub [ mod_floor (bind1 T.Add [ dd; iv ]) per; iv ] in
+    let cond1 =
+      bind1 T.And
+        [
+          bind1 T.Eq [ ddmod; full dt sh (-.interval) ];
+          bind1 T.Gt [ dd; full dt sh 0.0 ];
+        ]
+    in
+    let ddmod = where_ cond1 iv ddmod in
+    let ph_correct =
+      where_
+        (bind1 T.Lt [ bind1 T.Abs [ dd ]; full dt sh discont ])
+        (full dt sh 0.0)
+        (bind1 T.Sub [ ddmod; dd ])
+    in
+    let first = slice_axis p axis 0 1 in
+    let rest = slice_axis p axis 1 size in
+    let cs = bind1 (T.Cumsum { axis; reverse = false }) [ ph_correct ] in
+    bind1 (T.Concatenate axis) [ first; bind1 T.Add [ rest; cs ] ]
+  end
+
+type sections = Count of int | Indices of int array
+
+let do_split ~array_split ?(axis = 0) v s =
+  let nd = ndim v in
+  let axis = canonicalize_axis axis nd in
+  let size = (shape v).(axis) in
+  let sizes =
+    match s with
+    | Indices idx ->
+        let bounds = Array.concat [ [| 0 |]; idx; [| size |] ] in
+        Array.init
+          (Array.length bounds - 1)
+          (fun i -> bounds.(i + 1) - bounds.(i))
+    | Count nsec ->
+        let part = size / nsec and r = size mod nsec in
+        if r = 0 then Array.make nsec part
+        else if array_split then
+          Array.init nsec (fun i -> if i < r then part + 1 else part)
+        else invalid_arg "array split does not result in an equal division"
+  in
+  bind (T.Split { sizes; axis }) [ v ]
+
+let split ?axis v s = do_split ~array_split:false ?axis v s
+let array_split ?axis v s = do_split ~array_split:true ?axis v s
+let vsplit v s = do_split ~array_split:false ~axis:0 v s
+
+let hsplit v s =
+  do_split ~array_split:false ~axis:(if ndim v = 1 then 0 else 1) v s
+
+let dsplit v s = do_split ~array_split:false ~axis:2 v s
+
+let select condlist choicelist =
+  let k = List.length condlist in
+  if k = 0 then invalid_arg "select: condlist must be non-empty";
+  if List.length choicelist <> k then
+    invalid_arg "select: condlist and choicelist must have the same length";
+  let false0 = scalar D.Bool 0.0 in
+  let conds_b = broadcast_arrays (false0 :: condlist) in
+  let conds_i = List.map (fun c -> convert c D.I32) conds_b in
+  let stacked = bind1 (T.Stack 0) conds_i in
+  let idx =
+    bind1
+      (T.Argmax { axis = 0; index_dtype = Dtypes.default_int_dtype () })
+      [ stacked ]
+  in
+  let dt = result_type choicelist in
+  let default_v = scalar dt 0.0 in
+  let cases = List.map (fun v -> convert v dt) (default_v :: choicelist) in
+  bind1 T.Select_n (broadcast_arrays (idx :: cases))

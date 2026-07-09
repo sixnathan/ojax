@@ -743,6 +743,125 @@ def np_isreal(params):
     return lambda x: jnp.isreal(x)
 
 
+def np_allclose(params):
+    return lambda a, b: jnp.allclose(a, b)
+
+
+def np_isclose(params):
+    return lambda a, b: jnp.isclose(a, b)
+
+
+def np_clip(params):
+    mn = params.get("min")
+    mx = params.get("max")
+    return lambda x: jnp.clip(x, mn, mx)
+
+
+def np_round(params):
+    d = int(params["decimals"])
+    return lambda x: jnp.round(x, decimals=d)
+
+
+def np_around(params):
+    d = int(params["decimals"])
+    return lambda x: jnp.around(x, decimals=d)
+
+
+def np_nan_to_num(params):
+    return lambda x: jnp.nan_to_num(x)
+
+
+def np_expand_dims(params):
+    axis = tuple(params["axis"])
+    return lambda x: jnp.expand_dims(x, axis)
+
+
+def np_squeeze(params):
+    axis = params.get("axis")
+    axis = None if axis is None else tuple(axis)
+    return lambda x: jnp.squeeze(x, axis)
+
+
+def np_swapaxes(params):
+    a1 = int(params["axis1"])
+    a2 = int(params["axis2"])
+    return lambda x: jnp.swapaxes(x, a1, a2)
+
+
+def np_moveaxis(params):
+    source = tuple(params["source"])
+    destination = tuple(params["destination"])
+    return lambda x: jnp.moveaxis(x, source, destination)
+
+
+def np_broadcast_to(params):
+    shape = tuple(params["shape"])
+    return lambda x: jnp.broadcast_to(x, shape)
+
+
+def np_broadcast_arrays(params):
+    return lambda *xs: jnp.broadcast_arrays(*xs)
+
+
+def np_resize(params):
+    new_shape = tuple(params["new_shape"])
+    return lambda x: jnp.resize(x, new_shape)
+
+
+def np_unravel_index(params):
+    shape = tuple(params["shape"])
+    return lambda x: jnp.unravel_index(x, shape)
+
+
+def np_unwrap(params):
+    axis = int(params.get("axis", -1))
+    return lambda x: jnp.unwrap(x, axis=axis)
+
+
+def np_where(params):
+    return lambda c, x, y: jnp.where(c, x, y)
+
+
+def np_select(params):
+    k = int(params["n"])
+    default = params.get("default", 0)
+    return lambda *xs: jnp.select(list(xs[:k]), list(xs[k:]), default)
+
+
+def _ios(params):
+    idx = params.get("indices")
+    if idx is not None:
+        return list(idx)
+    return int(params["sections"])
+
+
+def np_split(params):
+    axis = int(params.get("axis", 0))
+    ios = _ios(params)
+    return lambda x: jnp.split(x, ios, axis=axis)
+
+
+def np_array_split(params):
+    axis = int(params.get("axis", 0))
+    ios = _ios(params)
+    return lambda x: jnp.array_split(x, ios, axis=axis)
+
+
+def np_vsplit(params):
+    ios = _ios(params)
+    return lambda x: jnp.vsplit(x, ios)
+
+
+def np_hsplit(params):
+    ios = _ios(params)
+    return lambda x: jnp.hsplit(x, ios)
+
+
+def np_dsplit(params):
+    ios = _ios(params)
+    return lambda x: jnp.dsplit(x, ios)
+
+
 NUMPY_BUILDERS = {
     "transpose": np_transpose,
     "permute_dims": np_permute_dims,
@@ -763,6 +882,28 @@ NUMPY_BUILDERS = {
     "correlate": np_correlate,
     "iscomplex": np_iscomplex,
     "isreal": np_isreal,
+    "allclose": np_allclose,
+    "isclose": np_isclose,
+    "clip": np_clip,
+    "round": np_round,
+    "around": np_around,
+    "nan_to_num": np_nan_to_num,
+    "expand_dims": np_expand_dims,
+    "squeeze": np_squeeze,
+    "swapaxes": np_swapaxes,
+    "moveaxis": np_moveaxis,
+    "broadcast_to": np_broadcast_to,
+    "broadcast_arrays": np_broadcast_arrays,
+    "resize": np_resize,
+    "unravel_index": np_unravel_index,
+    "unwrap": np_unwrap,
+    "where": np_where,
+    "select": np_select,
+    "split": np_split,
+    "array_split": np_array_split,
+    "vsplit": np_vsplit,
+    "hsplit": np_hsplit,
+    "dsplit": np_dsplit,
 }
 
 

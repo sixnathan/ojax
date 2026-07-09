@@ -559,36 +559,85 @@ module NL = Ojax.Numpy.Lax_numpy
 let opt_ia params name =
   match U.member name params with `Null -> None | j -> Some (ia j)
 
-let numpy_fn op params operands : T.value =
+let opt_f params name =
+  match U.member name params with `Null -> None | j -> Some (U.to_number j)
+
+let opt_i params name =
+  match U.member name params with `Null -> None | j -> Some (U.to_int j)
+
+let opt_b params name =
+  match U.member name params with `Null -> None | j -> Some (U.to_bool j)
+
+let sections_of params =
+  match U.member "indices" params with
+  | `Null -> NL.Count (U.to_int (U.member "sections" params))
+  | j -> NL.Indices (ia j)
+
+let numpy_fn op params operands : T.value list =
   let member name = U.member name params in
+  let one v = [ v ] in
   match (op, operands) with
-  | "transpose", [ x ] -> NL.transpose ?axes:(opt_ia params "axes") x
-  | "permute_dims", [ x ] -> NL.permute_dims x (ia (member "axes"))
-  | "matrix_transpose", [ x ] -> NL.matrix_transpose x
-  | "flip", [ x ] -> NL.flip ?axis:(opt_ia params "axis") x
-  | "fliplr", [ x ] -> NL.fliplr x
-  | "flipud", [ x ] -> NL.flipud x
-  | "reshape", [ x ] -> NL.reshape x (ia (member "shape"))
-  | "ravel", [ x ] -> NL.ravel x
+  | "transpose", [ x ] -> one (NL.transpose ?axes:(opt_ia params "axes") x)
+  | "permute_dims", [ x ] -> one (NL.permute_dims x (ia (member "axes")))
+  | "matrix_transpose", [ x ] -> one (NL.matrix_transpose x)
+  | "flip", [ x ] -> one (NL.flip ?axis:(opt_ia params "axis") x)
+  | "fliplr", [ x ] -> one (NL.fliplr x)
+  | "flipud", [ x ] -> one (NL.flipud x)
+  | "reshape", [ x ] -> one (NL.reshape x (ia (member "shape")))
+  | "ravel", [ x ] -> one (NL.ravel x)
   | "rot90", [ x ] ->
       let axes =
         match ia (member "axes") with
         | [| a; b |] -> (a, b)
         | _ -> failwith "numpy golden: bad rot90 axes"
       in
-      NL.rot90 ~k:(U.to_int (member "k")) ~axes x
-  | "trunc", [ x ] -> NL.trunc x
-  | "fmax", [ a; b ] -> NL.fmax a b
-  | "fmin", [ a; b ] -> NL.fmin a b
+      one (NL.rot90 ~k:(U.to_int (member "k")) ~axes x)
+  | "trunc", [ x ] -> one (NL.trunc x)
+  | "fmax", [ a; b ] -> one (NL.fmax a b)
+  | "fmin", [ a; b ] -> one (NL.fmin a b)
   | "diff", [ x ] ->
-      NL.diff ~n:(U.to_int (member "n")) ~axis:(U.to_int (member "axis")) x
-  | "ediff1d", [ x ] -> NL.ediff1d x
-  | "angle", [ x ] -> NL.angle ~deg:(U.to_bool (member "deg")) x
-  | "iscomplex", [ x ] -> NL.iscomplex x
-  | "isreal", [ x ] -> NL.isreal x
-  | "convolve", [ a; b ] -> NL.convolve ~mode:(U.to_string (member "mode")) a b
+      one
+        (NL.diff ~n:(U.to_int (member "n")) ~axis:(U.to_int (member "axis")) x)
+  | "ediff1d", [ x ] -> one (NL.ediff1d x)
+  | "angle", [ x ] -> one (NL.angle ~deg:(U.to_bool (member "deg")) x)
+  | "iscomplex", [ x ] -> one (NL.iscomplex x)
+  | "isreal", [ x ] -> one (NL.isreal x)
+  | "convolve", [ a; b ] ->
+      one (NL.convolve ~mode:(U.to_string (member "mode")) a b)
   | "correlate", [ a; b ] ->
-      NL.correlate ~mode:(U.to_string (member "mode")) a b
+      one (NL.correlate ~mode:(U.to_string (member "mode")) a b)
+  | "allclose", [ a; b ] -> one (NL.allclose a b)
+  | "isclose", [ a; b ] -> one (NL.isclose a b)
+  | "clip", [ x ] ->
+      one (NL.clip ?min:(opt_f params "min") ?max:(opt_f params "max") x)
+  | "round", [ x ] -> one (NL.round ?decimals:(opt_i params "decimals") x)
+  | "around", [ x ] -> one (NL.around ?decimals:(opt_i params "decimals") x)
+  | "nan_to_num", [ x ] -> one (NL.nan_to_num x)
+  | "expand_dims", [ x ] -> one (NL.expand_dims x (ia (member "axis")))
+  | "squeeze", [ x ] -> one (NL.squeeze ?axis:(opt_ia params "axis") x)
+  | "swapaxes", [ x ] ->
+      one
+        (NL.swapaxes (U.to_int (member "axis1")) (U.to_int (member "axis2")) x)
+  | "moveaxis", [ x ] ->
+      one (NL.moveaxis (ia (member "source")) (ia (member "destination")) x)
+  | "broadcast_to", [ x ] -> one (NL.broadcast_to x (ia (member "shape")))
+  | "broadcast_arrays", ops -> NL.broadcast_arrays ops
+  | "resize", [ x ] -> one (NL.resize x (ia (member "new_shape")))
+  | "unravel_index", [ x ] -> NL.unravel_index x (ia (member "shape"))
+  | "unwrap", [ x ] -> one (NL.unwrap ?axis:(opt_i params "axis") x)
+  | "where", [ c; x; y ] -> one (NL.where_ c x y)
+  | "select", ops ->
+      let k = U.to_int (member "n") in
+      let conds = List.filteri (fun i _ -> i < k) ops in
+      let choices = List.filteri (fun i _ -> i >= k) ops in
+      one (NL.select conds choices)
+  | "split", [ x ] ->
+      NL.split ~axis:(U.to_int (member "axis")) x (sections_of params)
+  | "array_split", [ x ] ->
+      NL.array_split ~axis:(U.to_int (member "axis")) x (sections_of params)
+  | "vsplit", [ x ] -> NL.vsplit x (sections_of params)
+  | "hsplit", [ x ] -> NL.hsplit x (sections_of params)
+  | "dsplit", [ x ] -> NL.dsplit x (sections_of params)
   | _ -> failwith ("numpy golden: unknown op " ^ op)
 
 let numpy_check_case ~set_dir ~x64 c () =
@@ -606,7 +655,7 @@ let numpy_check_case ~set_dir ~x64 c () =
       (fun a -> T.Concrete (nd_of_npz (find_member inputs a.name)))
       c.args
   in
-  let results = [ numpy_fn c.op c.params operands ] in
+  let results = numpy_fn c.op c.params operands in
   let paired =
     try List.combine c.outs results
     with Invalid_argument _ ->

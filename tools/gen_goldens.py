@@ -3362,8 +3362,135 @@ RANDOM_CORE_BUILDERS = {
     "multinomial": rc_multinomial,
 }
 
+import jax.nn as jnn
+
+
+def nn_unary(name):
+    fn = getattr(jnn, name)
+
+    def build(params):
+        return lambda x: fn(x)
+
+    return build
+
+
+def nn_elu(params):
+    alpha = float(params["alpha"])
+    return lambda x: jnn.elu(x, alpha)
+
+
+def nn_celu(params):
+    alpha = float(params["alpha"])
+    return lambda x: jnn.celu(x, alpha)
+
+
+def nn_leaky_relu(params):
+    slope = float(params["negative_slope"])
+    return lambda x: jnn.leaky_relu(x, slope)
+
+
+def nn_squareplus(params):
+    b = float(params["b"])
+    return lambda x: jnn.squareplus(x, b)
+
+
+def nn_gelu(params):
+    approximate = bool(params["approximate"])
+    return lambda x: jnn.gelu(x, approximate=approximate)
+
+
+def nn_glu(params):
+    axis = int(params["axis"])
+    return lambda x: jnn.glu(x, axis=axis)
+
+
+def nn_softmax(params):
+    axis = int(params["axis"])
+    return lambda x: jnn.softmax(x, axis=axis)
+
+
+def nn_log_softmax(params):
+    axis = int(params["axis"])
+    return lambda x: jnn.log_softmax(x, axis=axis)
+
+
+def nn_standardize(params):
+    axis = int(params["axis"])
+    epsilon = float(params["epsilon"])
+    return lambda x: jnn.standardize(x, axis=axis, epsilon=epsilon)
+
+
+def nn_logmeanexp(params):
+    keepdims = bool(params.get("keepdims", False))
+    if "axis" in params:
+        axis = int(params["axis"])
+        return lambda x: jnn.logmeanexp(x, axis=axis, keepdims=keepdims)
+    return lambda x: jnn.logmeanexp(x, keepdims=keepdims)
+
+
+def nn_one_hot(params):
+    num_classes = int(params["num_classes"])
+    axis = int(params["axis"])
+    return lambda x: jnn.one_hot(x, num_classes, axis=axis)
+
+
+def nn_scaled_dot_general(params):
+    lc = tuple(int(d) for d in params["lhs_contract"])
+    rc = tuple(int(d) for d in params["rhs_contract"])
+    lb = tuple(int(d) for d in params["lhs_batch"])
+    rb = tuple(int(d) for d in params["rhs_batch"])
+    dn = ((lc, rc), (lb, rb))
+    return lambda a, b: jnn.scaled_dot_general(a, b, dn)
+
+
+NN_BUILDERS = {
+    "elu": nn_elu,
+    "celu": nn_celu,
+    "leaky_relu": nn_leaky_relu,
+    "squareplus": nn_squareplus,
+    "gelu": nn_gelu,
+    "glu": nn_glu,
+    "softmax": nn_softmax,
+    "log_softmax": nn_log_softmax,
+    "standardize": nn_standardize,
+    "logmeanexp": nn_logmeanexp,
+    "one_hot": nn_one_hot,
+    "scaled_dot_general": nn_scaled_dot_general,
+}
+
+for _nn_name in [
+    "identity",
+    "relu",
+    "relu6",
+    "softplus",
+    "sparse_plus",
+    "soft_sign",
+    "sigmoid",
+    "sparse_sigmoid",
+    "silu",
+    "mish",
+    "log_sigmoid",
+    "hard_tanh",
+    "hard_sigmoid",
+    "hard_silu",
+    "selu",
+    "log1mexp",
+]:
+    NN_BUILDERS[_nn_name] = nn_unary(_nn_name)
+
 
 def run_case(c, seed):
+    if c["primitive"].startswith("nn.") and c["op"] in NN_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = NN_BUILDERS[c["op"]](c["params"])(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
     if c["primitive"].startswith("prng.") and c["op"] in PRNG_BUILDERS:
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])

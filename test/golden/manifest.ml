@@ -1345,6 +1345,7 @@ module WF = Ojax.Numpy.Window_functions
 module SORT = Ojax.Numpy.Sorting
 module SETOPS = Ojax.Numpy.Setops
 module POLY = Ojax.Numpy.Polynomial
+module NN = Ojax.Nn.Functions
 
 let axis_opt params =
   match U.member "axis" params with `Null -> None | j -> Some (U.to_int j)
@@ -2739,6 +2740,73 @@ let random_core_suite_for set_name =
   in
   ("random_core:" ^ set_name, coverage :: case_tests)
 
+let nn_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let ip name = U.to_int (member name) in
+  let fp name = U.to_number (member name) in
+  let one v = [ v ] in
+  match (op, operands) with
+  | "identity", [ x ] -> one (NN.identity x)
+  | "relu", [ x ] -> one (NN.relu x)
+  | "relu6", [ x ] -> one (NN.relu6 x)
+  | "softplus", [ x ] -> one (NN.softplus x)
+  | "sparse_plus", [ x ] -> one (NN.sparse_plus x)
+  | "soft_sign", [ x ] -> one (NN.soft_sign x)
+  | "sigmoid", [ x ] -> one (NN.sigmoid x)
+  | "sparse_sigmoid", [ x ] -> one (NN.sparse_sigmoid x)
+  | "silu", [ x ] -> one (NN.silu x)
+  | "mish", [ x ] -> one (NN.mish x)
+  | "log_sigmoid", [ x ] -> one (NN.log_sigmoid x)
+  | "hard_tanh", [ x ] -> one (NN.hard_tanh x)
+  | "hard_sigmoid", [ x ] -> one (NN.hard_sigmoid x)
+  | "hard_silu", [ x ] -> one (NN.hard_silu x)
+  | "selu", [ x ] -> one (NN.selu x)
+  | "log1mexp", [ x ] -> one (NN.log1mexp x)
+  | "elu", [ x ] -> one (NN.elu ~alpha:(fp "alpha") x)
+  | "celu", [ x ] -> one (NN.celu ~alpha:(fp "alpha") x)
+  | "leaky_relu", [ x ] ->
+      one (NN.leaky_relu ~negative_slope:(fp "negative_slope") x)
+  | "squareplus", [ x ] -> one (NN.squareplus ~b:(fp "b") x)
+  | "gelu", [ x ] ->
+      one (NN.gelu ~approximate:(U.to_bool (member "approximate")) x)
+  | "glu", [ x ] -> one (NN.glu ~axis:(ip "axis") x)
+  | "softmax", [ x ] -> one (NN.softmax ~axis:(ip "axis") x)
+  | "log_softmax", [ x ] -> one (NN.log_softmax ~axis:(ip "axis") x)
+  | "standardize", [ x ] ->
+      one (NN.standardize ~axis:(ip "axis") ~epsilon:(fp "epsilon") x)
+  | "logmeanexp", [ x ] ->
+      one
+        (NN.logmeanexp
+           ?axis:(Option.map (fun a -> [| a |]) (opt_i params "axis"))
+           ~keepdims:(Option.value ~default:false (opt_b params "keepdims"))
+           x)
+  | "one_hot", [ x ] ->
+      one (NN.one_hot ~num_classes:(ip "num_classes") ~axis:(ip "axis") x)
+  | "scaled_dot_general", [ a; b ] ->
+      one
+        (NN.scaled_dot_general
+           ~lhs_contract:(ia (member "lhs_contract"))
+           ~rhs_contract:(ia (member "rhs_contract"))
+           ~lhs_batch:(ia (member "lhs_batch"))
+           ~rhs_batch:(ia (member "rhs_batch"))
+           a b)
+  | _ -> failwith ("nn golden: unknown op " ^ op)
+
+let nn_suite_for set_name =
+  let set_dir = Filename.concat (Filename.concat goldens_root "nn") set_name in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:nn_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("nn:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -2823,5 +2891,7 @@ let () =
       prng_suite_for "x64_on";
       random_core_suite_for "x64_off";
       random_core_suite_for "x64_on";
+      nn_suite_for "x64_off";
+      nn_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

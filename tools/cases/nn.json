@@ -1,0 +1,106 @@
+[
+  {"op": "identity", "primitive": "nn.identity", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "identity", "primitive": "nn.identity", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "identity", "primitive": "nn.identity", "args": [{"shape": [4], "dtype": "int32", "rng": "rand_int_small"}], "params": {}},
+  {"op": "identity", "primitive": "nn.identity", "args": [{"shape": [4], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "relu", "primitive": "nn.relu", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "relu", "primitive": "nn.relu", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "relu", "primitive": "nn.relu", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "relu6", "primitive": "nn.relu6", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "relu6", "primitive": "nn.relu6", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "softplus", "primitive": "nn.softplus", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "softplus", "primitive": "nn.softplus", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "softplus", "primitive": "nn.softplus", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "sparse_plus", "primitive": "nn.sparse_plus", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "sparse_plus", "primitive": "nn.sparse_plus", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "soft_sign", "primitive": "nn.soft_sign", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "soft_sign", "primitive": "nn.soft_sign", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "sigmoid", "primitive": "nn.sigmoid", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "sigmoid", "primitive": "nn.sigmoid", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "sigmoid", "primitive": "nn.sigmoid", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "sparse_sigmoid", "primitive": "nn.sparse_sigmoid", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "sparse_sigmoid", "primitive": "nn.sparse_sigmoid", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "silu", "primitive": "nn.silu", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "silu", "primitive": "nn.silu", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "mish", "primitive": "nn.mish", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "mish", "primitive": "nn.mish", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "log_sigmoid", "primitive": "nn.log_sigmoid", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "log_sigmoid", "primitive": "nn.log_sigmoid", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "hard_tanh", "primitive": "nn.hard_tanh", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "hard_tanh", "primitive": "nn.hard_tanh", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "hard_sigmoid", "primitive": "nn.hard_sigmoid", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "hard_sigmoid", "primitive": "nn.hard_sigmoid", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "hard_silu", "primitive": "nn.hard_silu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "hard_silu", "primitive": "nn.hard_silu", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "selu", "primitive": "nn.selu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {}},
+  {"op": "selu", "primitive": "nn.selu", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {}},
+
+  {"op": "elu", "primitive": "nn.elu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {"alpha": 1.0}},
+  {"op": "elu", "primitive": "nn.elu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {"alpha": 1.5}},
+  {"op": "elu", "primitive": "nn.elu", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {"alpha": 1.0}},
+
+  {"op": "celu", "primitive": "nn.celu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {"alpha": 1.0}},
+  {"op": "celu", "primitive": "nn.celu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {"alpha": 1.5}},
+  {"op": "celu", "primitive": "nn.celu", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {"alpha": 1.0}},
+
+  {"op": "leaky_relu", "primitive": "nn.leaky_relu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {"negative_slope": 0.01}},
+  {"op": "leaky_relu", "primitive": "nn.leaky_relu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {"negative_slope": 0.1}},
+  {"op": "leaky_relu", "primitive": "nn.leaky_relu", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {"negative_slope": 0.01}},
+
+  {"op": "squareplus", "primitive": "nn.squareplus", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {"b": 4.0}},
+  {"op": "squareplus", "primitive": "nn.squareplus", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {"b": 2.0}},
+  {"op": "squareplus", "primitive": "nn.squareplus", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {"b": 4.0}},
+
+  {"op": "log1mexp", "primitive": "nn.log1mexp", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_positive"}], "params": {}},
+  {"op": "log1mexp", "primitive": "nn.log1mexp", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_positive"}], "params": {}},
+
+  {"op": "gelu", "primitive": "nn.gelu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {"approximate": true}},
+  {"op": "gelu", "primitive": "nn.gelu", "args": [{"shape": [6], "dtype": "float32", "rng": "rand_default"}], "params": {"approximate": false}},
+  {"op": "gelu", "primitive": "nn.gelu", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {"approximate": true}},
+  {"op": "gelu", "primitive": "nn.gelu", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {"approximate": true}},
+  {"op": "gelu", "primitive": "nn.gelu", "args": [{"shape": [6], "dtype": "float64", "rng": "rand_default"}], "params": {"approximate": false}},
+
+  {"op": "glu", "primitive": "nn.glu", "args": [{"shape": [4], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1}},
+  {"op": "glu", "primitive": "nn.glu", "args": [{"shape": [2, 4], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1}},
+  {"op": "glu", "primitive": "nn.glu", "args": [{"shape": [4, 2], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": 0}},
+  {"op": "glu", "primitive": "nn.glu", "args": [{"shape": [4], "dtype": "float64", "rng": "rand_default"}], "params": {"axis": -1}},
+
+  {"op": "softmax", "primitive": "nn.softmax", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1}},
+  {"op": "softmax", "primitive": "nn.softmax", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1}},
+  {"op": "softmax", "primitive": "nn.softmax", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": 0}},
+  {"op": "softmax", "primitive": "nn.softmax", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {"axis": -1}},
+
+  {"op": "log_softmax", "primitive": "nn.log_softmax", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1}},
+  {"op": "log_softmax", "primitive": "nn.log_softmax", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1}},
+  {"op": "log_softmax", "primitive": "nn.log_softmax", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": 0}},
+  {"op": "log_softmax", "primitive": "nn.log_softmax", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {"axis": -1}},
+
+  {"op": "standardize", "primitive": "nn.standardize", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1, "epsilon": 1e-05}},
+  {"op": "standardize", "primitive": "nn.standardize", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1, "epsilon": 1e-05}},
+  {"op": "standardize", "primitive": "nn.standardize", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {"axis": -1, "epsilon": 1e-05}},
+
+  {"op": "logmeanexp", "primitive": "nn.logmeanexp", "args": [{"shape": [5], "dtype": "float32", "rng": "rand_default"}], "params": {"keepdims": false}},
+  {"op": "logmeanexp", "primitive": "nn.logmeanexp", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": -1, "keepdims": false}},
+  {"op": "logmeanexp", "primitive": "nn.logmeanexp", "args": [{"shape": [2, 3], "dtype": "float32", "rng": "rand_default"}], "params": {"axis": 0, "keepdims": true}},
+  {"op": "logmeanexp", "primitive": "nn.logmeanexp", "args": [{"shape": [5], "dtype": "float64", "rng": "rand_default"}], "params": {"keepdims": false}},
+
+  {"op": "one_hot", "primitive": "nn.one_hot", "args": [{"shape": [3], "dtype": "int32", "rng": "rand_int_small"}], "params": {"num_classes": 10, "axis": -1}},
+  {"op": "one_hot", "primitive": "nn.one_hot", "args": [{"shape": [2, 3], "dtype": "int32", "rng": "rand_int_small"}], "params": {"num_classes": 10, "axis": -1}},
+
+  {"op": "scaled_dot_general", "primitive": "nn.scaled_dot_general", "args": [{"shape": [2, 4], "dtype": "float32", "rng": "rand_default"}, {"shape": [3, 4], "dtype": "float32", "rng": "rand_default"}], "params": {"lhs_contract": [1], "rhs_contract": [1], "lhs_batch": [], "rhs_batch": []}},
+  {"op": "scaled_dot_general", "primitive": "nn.scaled_dot_general", "args": [{"shape": [2, 3, 4], "dtype": "float32", "rng": "rand_default"}, {"shape": [2, 5, 4], "dtype": "float32", "rng": "rand_default"}], "params": {"lhs_contract": [2], "rhs_contract": [2], "lhs_batch": [0], "rhs_batch": [0]}}
+]

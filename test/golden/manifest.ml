@@ -2807,6 +2807,72 @@ let nn_suite_for set_name =
   in
   ("nn:" ^ set_name, coverage :: case_tests)
 
+module INIT = Ojax.Nn.Initializers
+
+let init_mode_of j =
+  match U.to_string j with
+  | "fan_in" -> INIT.Fan_in
+  | "fan_out" -> INIT.Fan_out
+  | "fan_avg" -> INIT.Fan_avg
+  | "fan_geo_avg" -> INIT.Fan_geo_avg
+  | s -> failwith ("initializers golden: unknown mode " ^ s)
+
+let init_dist_of j =
+  match U.to_string j with
+  | "truncated_normal" -> INIT.Truncated_normal
+  | "normal" -> INIT.Normal
+  | "uniform" -> INIT.Uniform
+  | s -> failwith ("initializers golden: unknown distribution " ^ s)
+
+let initializers_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let fp name = U.to_number (member name) in
+  let shape () = ia (member "shape") in
+  match (op, operands) with
+  | "zeros", [ k ] -> [ INIT.zeros k ~shape:(shape ()) ]
+  | "ones", [ k ] -> [ INIT.ones k ~shape:(shape ()) ]
+  | "constant", [ k ] -> [ INIT.constant (fp "value") k ~shape:(shape ()) ]
+  | "uniform", [ k ] ->
+      [ INIT.uniform ~scale:(fp "scale") () k ~shape:(shape ()) ]
+  | "normal", [ k ] ->
+      [ INIT.normal ~stddev:(fp "stddev") () k ~shape:(shape ()) ]
+  | "truncated_normal", [ k ] ->
+      [
+        INIT.truncated_normal ~stddev:(fp "stddev") ~lower:(fp "lower")
+          ~upper:(fp "upper") () k ~shape:(shape ());
+      ]
+  | "variance_scaling", [ k ] ->
+      [
+        INIT.variance_scaling (fp "scale")
+          (init_mode_of (member "mode"))
+          (init_dist_of (member "distribution"))
+          () k ~shape:(shape ());
+      ]
+  | "glorot_uniform", [ k ] -> [ INIT.glorot_uniform () k ~shape:(shape ()) ]
+  | "glorot_normal", [ k ] -> [ INIT.glorot_normal () k ~shape:(shape ()) ]
+  | "lecun_uniform", [ k ] -> [ INIT.lecun_uniform () k ~shape:(shape ()) ]
+  | "lecun_normal", [ k ] -> [ INIT.lecun_normal () k ~shape:(shape ()) ]
+  | "he_uniform", [ k ] -> [ INIT.he_uniform () k ~shape:(shape ()) ]
+  | "he_normal", [ k ] -> [ INIT.he_normal () k ~shape:(shape ()) ]
+  | _ -> failwith ("initializers golden: unknown op " ^ op)
+
+let initializers_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "initializers") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:initializers_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("initializers:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -2893,5 +2959,7 @@ let () =
       random_core_suite_for "x64_on";
       nn_suite_for "x64_off";
       nn_suite_for "x64_on";
+      initializers_suite_for "x64_off";
+      initializers_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

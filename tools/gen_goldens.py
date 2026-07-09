@@ -3479,7 +3479,102 @@ for _nn_name in [
     NN_BUILDERS[_nn_name] = nn_unary(_nn_name)
 
 
+import jax.nn.initializers as jinit
+
+
+def init_zeros(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jinit.zeros(rc_wrap(raw), shape, jnp.float32)
+
+
+def init_ones(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jinit.ones(rc_wrap(raw), shape, jnp.float32)
+
+
+def init_constant(params):
+    shape = tuple(params["shape"])
+    value = float(params["value"])
+    init = jinit.constant(value)
+    return lambda raw: init(rc_wrap(raw), shape, jnp.float32)
+
+
+def init_uniform(params):
+    shape = tuple(params["shape"])
+    scale = float(params["scale"])
+    init = jinit.uniform(scale)
+    return lambda raw: init(rc_wrap(raw), shape, jnp.float32)
+
+
+def init_normal(params):
+    shape = tuple(params["shape"])
+    stddev = float(params["stddev"])
+    init = jinit.normal(stddev)
+    return lambda raw: init(rc_wrap(raw), shape, jnp.float32)
+
+
+def init_truncated_normal(params):
+    shape = tuple(params["shape"])
+    stddev = float(params["stddev"])
+    lower = float(params["lower"])
+    upper = float(params["upper"])
+    init = jinit.truncated_normal(stddev, lower=lower, upper=upper)
+    return lambda raw: init(rc_wrap(raw), shape, jnp.float32)
+
+
+def init_variance_scaling(params):
+    shape = tuple(params["shape"])
+    scale = float(params["scale"])
+    mode = str(params["mode"])
+    distribution = str(params["distribution"])
+    init = jinit.variance_scaling(scale, mode, distribution)
+    return lambda raw: init(rc_wrap(raw), shape, jnp.float32)
+
+
+def init_fan(name):
+    fn = getattr(jinit, name)
+
+    def build(params):
+        shape = tuple(params["shape"])
+        init = fn()
+        return lambda raw: init(rc_wrap(raw), shape, jnp.float32)
+
+    return build
+
+
+INIT_BUILDERS = {
+    "zeros": init_zeros,
+    "ones": init_ones,
+    "constant": init_constant,
+    "uniform": init_uniform,
+    "normal": init_normal,
+    "truncated_normal": init_truncated_normal,
+    "variance_scaling": init_variance_scaling,
+}
+
+for _init_name in [
+    "glorot_uniform",
+    "glorot_normal",
+    "lecun_uniform",
+    "lecun_normal",
+    "he_uniform",
+    "he_normal",
+]:
+    INIT_BUILDERS[_init_name] = init_fan(_init_name)
+
+
 def run_case(c, seed):
+    if c["primitive"].startswith("initializers.") and c["op"] in INIT_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = jax.jit(INIT_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
     if c["primitive"].startswith("nn.") and c["op"] in NN_BUILDERS:
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])

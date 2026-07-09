@@ -105,6 +105,18 @@ def rand_index_unique(rng, shape, dtype):
     return rng.choice(10, size=n, replace=False).astype(dtype).reshape(tuple(shape))
 
 
+def rand_uniform(rng, shape, dtype):
+    return _rand_dtype(rng.rand, shape, dtype, scale=1.0)
+
+
+def rand_gt_one(rng, shape, dtype):
+    return _rand_dtype(rng.rand, shape, dtype, scale=2.0, post=lambda x: x + 1.5)
+
+
+def rand_poly_order(rng, shape, dtype):
+    return rng.randint(1, 3, size=tuple(shape)).astype(dtype)
+
+
 RNG_FACTORIES = {
     "rand_default": rand_default,
     "rand_small": rand_small,
@@ -115,6 +127,9 @@ RNG_FACTORIES = {
     "rand_int_small_nz": rand_int_small_nz,
     "rand_bool": rand_bool,
     "rand_index_unique": rand_index_unique,
+    "rand_uniform": rand_uniform,
+    "rand_gt_one": rand_gt_one,
+    "rand_poly_order": rand_poly_order,
 }
 
 
@@ -618,6 +633,21 @@ LAX_BUILDERS = {
     "reduce_window": lax_reduce_window,
     "select_and_gather_add": lax_select_and_gather_add,
     "select_and_scatter_add": lax_select_and_scatter_add,
+    "bessel_i0e": _unary(LAX.bessel_i0e),
+    "bessel_i1e": _unary(LAX.bessel_i1e),
+    "digamma": _unary(LAX.digamma),
+    "erf": _unary(LAX.erf),
+    "erf_inv": _unary(LAX.erf_inv),
+    "erfc": _unary(LAX.erfc),
+    "lgamma": _unary(LAX.lgamma),
+    "igamma": _binary(LAX.igamma),
+    "igamma_grad_a": _binary(LAX.igamma_grad_a),
+    "igammac": _binary(LAX.igammac),
+    "polygamma": _binary(LAX.polygamma),
+    "zeta": _binary(LAX.zeta),
+    "regularized_incomplete_beta": lambda params: (
+        lambda a, b, x: LAX.betainc(a, b, x)
+    ),
 }
 
 
@@ -1273,6 +1303,16 @@ def gen_set(module, cases, x64, outdir):
         np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
         out0 = np.asarray(outputs[0])
         compare, tol = resolve_tol(out0.dtype.name)
+        widen = c.get("tol_widen")
+
+        def widen_tol(dtype_name, base_compare, base_tol):
+            if widen is None or base_compare != "allclose":
+                return base_tol, None
+            factor = float(widen["factor"])
+            val = TOLERANCES["default"][dtype_name] * factor
+            return {"atol": val, "rtol": val}, widen["reason"]
+
+        tol, case_reason = widen_tol(out0.dtype.name, compare, tol)
         args_meta = [
             {
                 "name": a["name"],
@@ -1287,6 +1327,7 @@ def gen_set(module, cases, x64, outdir):
         for i, o in enumerate(outputs):
             oa = np.asarray(o)
             ocompare, otol = resolve_tol(oa.dtype.name)
+            otol, oreason = widen_tol(oa.dtype.name, ocompare, otol)
             entry = {
                 "name": "out" + str(i),
                 "shape": [int(d) for d in oa.shape],
@@ -1294,23 +1335,26 @@ def gen_set(module, cases, x64, outdir):
                 "compare": ocompare,
                 "tol": otol,
             }
+            if oreason is not None:
+                entry["tol_reason"] = oreason
             if out_weak[i] is not None:
                 entry["weak"] = out_weak[i]
             outs_meta.append(entry)
-        manifest_cases.append(
-            {
-                "case_id": case_id,
-                "op": c["op"],
-                "primitive": c["primitive"],
-                "nargs": c["nargs"],
-                "args": args_meta,
-                "params": c["params"],
-                "outputs": outs_meta,
-                "compare": compare,
-                "tol": tol,
-                "grads": None,
-            }
-        )
+        entry = {
+            "case_id": case_id,
+            "op": c["op"],
+            "primitive": c["primitive"],
+            "nargs": c["nargs"],
+            "args": args_meta,
+            "params": c["params"],
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+            "grads": None,
+        }
+        if case_reason is not None:
+            entry["tol_reason"] = case_reason
+        manifest_cases.append(entry)
     manifest = {
         "schema_version": 1,
         "module": module,

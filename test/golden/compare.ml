@@ -30,6 +30,35 @@ let assert_tol dtype atol rtol =
       (Printf.sprintf "compare: manifest tol (%g,%g) != table %g for %s" atol
          rtol expected dtype)
 
+let valid_tol_reason = function
+  | "reduction_reassociation" | "argmax_tie" | "transcendental_ulp"
+  | "matmul_reassociation" ->
+      true
+  | _ -> false
+
+let assert_tol_widened dtype atol rtol reason =
+  match reason with
+  | None -> assert_tol dtype atol rtol
+  | Some r ->
+      let base = default_tol dtype in
+      if not (valid_tol_reason r) then
+        failwith ("compare: invalid tol widening reason " ^ r)
+      else if atol <> rtol then
+        failwith "compare: widened tol requires atol = rtol"
+      else if base = 0.0 then
+        failwith "compare: cannot widen an exact tolerance"
+      else
+        let ok = ref false in
+        List.iter
+          (fun k -> if atol = base *. (10.0 ** float_of_int k) then ok := true)
+          [ 0; 1; 2 ];
+        if not !ok then
+          failwith
+            (Printf.sprintf
+               "compare: widened tol %g not a 1..100x multiple of base %g for \
+                %s"
+               atol base dtype)
+
 let shapes_equal a b =
   Array.length a = Array.length b && Array.for_all2 (fun x y -> x = y) a b
 

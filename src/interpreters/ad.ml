@@ -24,6 +24,9 @@ let square x = mul x x
 let rsqrt z = b1 Pow [ z; const_like z (-0.5) ]
 let recip z = div (ones_like_value z) z
 let sinh_of x = div (sub (b1 Exp [ x ]) (b1 Exp [ neg x ])) (const_like x 2.0)
+let pi_const = 4.0 *. Float.atan 1.0
+let two_over_sqrt_pi = 2.0 /. Float.sqrt pi_const
+let sqrt_pi_over_2 = Float.sqrt pi_const /. 2.0
 let mem arr x = Array.exists (fun y -> y = x) arr
 
 let gather_to_scatter (gd : gather_dims) : scatter_dims =
@@ -551,6 +554,123 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
         "ad: reduce_window jvp needs the variadic jvp reducer jaxpr (M2 gap)"
   | Select_and_scatter _ ->
       failwith "ad: select_and_scatter has no jvp rule in M1"
+  | Lgamma -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 Lgamma [ x ], mul (b1 Digamma [ x ]) tx)
+      | _ -> arity ())
+  | Digamma -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          (b1 Digamma [ x ], mul (b1 Polygamma [ const_like x 1.0; x ]) tx)
+      | _ -> arity ())
+  | Erf -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          ( b1 Erf [ x ],
+            mul
+              (const_like x two_over_sqrt_pi)
+              (mul tx (b1 Exp [ neg (square x) ])) )
+      | _ -> arity ())
+  | Erfc -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          ( b1 Erfc [ x ],
+            mul
+              (const_like x (-.two_over_sqrt_pi))
+              (mul tx (b1 Exp [ neg (square x) ])) )
+      | _ -> arity ())
+  | Erf_inv -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let ans = b1 Erf_inv [ x ] in
+          ( ans,
+            mul (const_like x sqrt_pi_over_2) (mul tx (b1 Exp [ square ans ]))
+          )
+      | _ -> arity ())
+  | Bessel_i0e -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let y = b1 Bessel_i0e [ x ] in
+          (y, mul tx (sub (b1 Bessel_i1e [ x ]) (mul (b1 Sign [ x ]) y)))
+      | _ -> arity ())
+  | Bessel_i1e -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] ->
+          let y = b1 Bessel_i1e [ x ] in
+          let eps = const_like x 2.220446049250313e-16 in
+          let not_tiny = b1 Gt [ b1 Abs [ x ]; eps ] in
+          let safe_x = b1 Select_n [ not_tiny; eps; x ] in
+          let dy_dx =
+            sub (b1 Bessel_i0e [ safe_x ])
+              (mul y (add (b1 Sign [ safe_x ]) (recip safe_x)))
+          in
+          let dy_dx = b1 Select_n [ not_tiny; const_like x 0.5; dy_dx ] in
+          (y, mul tx dy_dx)
+      | _ -> arity ())
+  | Igamma -> (
+      match (primals, tangents) with
+      | [ a; x ], [ ta; tx ] ->
+          let po = b1 Igamma [ a; x ] in
+          let one = ones_like_value a in
+          let gradx =
+            b1 Exp
+              [
+                add
+                  (add (neg x) (mul (sub a one) (b1 Log [ x ])))
+                  (neg (b1 Lgamma [ a ]));
+              ]
+          in
+          let da = mul ta (b1 Igamma_grad_a [ a; x ]) in
+          let dx = mul tx gradx in
+          (po, add da dx)
+      | _ -> arity ())
+  | Igammac -> (
+      match (primals, tangents) with
+      | [ a; x ], [ ta; tx ] ->
+          let po = b1 Igammac [ a; x ] in
+          let one = ones_like_value a in
+          let gradx =
+            b1 Exp
+              [
+                add
+                  (add (neg x) (mul (sub a one) (b1 Log [ x ])))
+                  (neg (b1 Lgamma [ a ]));
+              ]
+          in
+          let da = mul ta (neg (b1 Igamma_grad_a [ a; x ])) in
+          let dx = mul tx (neg gradx) in
+          (po, add da dx)
+      | _ -> arity ())
+  | Polygamma -> (
+      match (primals, tangents) with
+      | [ m; x ], [ _; tx ] ->
+          let po = b1 Polygamma [ m; x ] in
+          (po, mul tx (b1 Polygamma [ add m (ones_like_value m); x ]))
+      | _ -> arity ())
+  | Regularized_incomplete_beta -> (
+      match (primals, tangents) with
+      | [ a; b; x ], [ _; _; tx ] ->
+          let po = b1 Regularized_incomplete_beta [ a; b; x ] in
+          let one = ones_like_value a in
+          let lbeta =
+            sub
+              (add (b1 Lgamma [ a ]) (b1 Lgamma [ b ]))
+              (b1 Lgamma [ add a b ])
+          in
+          let partial_x =
+            b1 Exp
+              [
+                add
+                  (add
+                     (mul (sub b one) (b1 Log1p [ neg x ]))
+                     (mul (sub a one) (b1 Log [ x ])))
+                  (neg lbeta);
+              ]
+          in
+          (po, mul partial_x tx)
+      | _ -> arity ())
+  | Igamma_grad_a | Zeta ->
+      failwith "ad: primitive has no jvp rule (matches jax)"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
   | Rng_uniform | To_edtype _ ->
@@ -999,7 +1119,9 @@ let transpose_rule prim (cts : value list) (primals : tval list) :
   | To_edtype _ | Top_k _ | Scatter_min _ | Scatter_max _ | Reduce_window _
   | Reduce_window_max _ | Reduce_window_min _ | Reduce_window_sum _
   | Select_and_gather_add _ | Select_and_scatter _ | Select_and_scatter_add _
-  | Xla_call _ | Cond _ ->
+  | Bessel_i0e | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Igamma
+  | Igamma_grad_a | Igammac | Lgamma | Polygamma | Regularized_incomplete_beta
+  | Zeta | Xla_call _ | Cond _ ->
       failwith "ad: primitive has no transpose rule in M1"
 
 let eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :

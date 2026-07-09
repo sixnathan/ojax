@@ -549,6 +549,17 @@ let clamp_impl mn x mx =
   in
   Ndarray.of_floats (Ndarray.dtype x) (Ndarray.shape x) out
 
+let beta_impl = function
+  | [ av; bv; xv ] ->
+      let dt = Ndarray.dtype av in
+      let a = to_array av and b = to_array bv and x = to_array xv in
+      let out =
+        Array.init (Array.length a) (fun i ->
+            Special.regularized_incomplete_beta dt a.(i) b.(i) x.(i))
+      in
+      [ Ndarray.of_floats dt (Ndarray.shape xv) out ]
+  | _ -> failwith "lax: regularized_incomplete_beta expects 3 operands"
+
 let bitcast_impl new_dt operand =
   let f =
     match (Ndarray.dtype operand, new_dt) with
@@ -1037,6 +1048,54 @@ let impl prim inputs =
       | _ -> failwith "lax: select_and_scatter_add expects source and operand")
   | Select_and_scatter _ ->
       failwith "lax: select_and_scatter (general two-jaxpr form) deferred (M2)"
+  | Bessel_i0e ->
+      un
+        (fun a ->
+          Ndarray.map (Ndarray.dtype a) (Special.bessel_i0e (Ndarray.dtype a)) a)
+        inputs
+  | Bessel_i1e ->
+      un
+        (fun a ->
+          Ndarray.map (Ndarray.dtype a) (Special.bessel_i1e (Ndarray.dtype a)) a)
+        inputs
+  | Digamma ->
+      un (fun a -> Ndarray.map (Ndarray.dtype a) Special.digamma a) inputs
+  | Erf -> un (fun a -> Ndarray.map (Ndarray.dtype a) Special.erf a) inputs
+  | Erf_inv ->
+      un (fun a -> Ndarray.map (Ndarray.dtype a) Special.erf_inv a) inputs
+  | Erfc -> un (fun a -> Ndarray.map (Ndarray.dtype a) Special.erfc a) inputs
+  | Lgamma ->
+      un (fun a -> Ndarray.map (Ndarray.dtype a) Special.lgamma a) inputs
+  | Igamma ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (Special.igamma (Ndarray.dtype a)) a b)
+        inputs
+  | Igammac ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a) (Special.igammac (Ndarray.dtype a)) a b)
+        inputs
+  | Igamma_grad_a ->
+      bin
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a)
+            (Special.igamma_grad_a (Ndarray.dtype a))
+            a b)
+        inputs
+  | Polygamma ->
+      bin
+        (fun m x ->
+          Ndarray.map2 (Ndarray.dtype x)
+            (Special.polygamma (Ndarray.dtype x))
+            m x)
+        inputs
+  | Zeta ->
+      bin
+        (fun x q ->
+          Ndarray.map2 (Ndarray.dtype x) (Special.zeta (Ndarray.dtype x)) x q)
+        inputs
+  | Regularized_incomplete_beta -> beta_impl inputs
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 
@@ -1061,7 +1120,8 @@ let abstract_eval prim avals =
   | Neg | Sin | Cos | Exp | Log | Tanh | Abs | Sign | Acos | Acosh | Asin
   | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Conj | Copy | Cosh | Exp2 | Expm1
   | Floor | Imag | Integer_pow _ | Log1p | Logistic | Not | Population_count
-  | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan ->
+  | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | Bessel_i0e | Bessel_i1e
+  | Digamma | Erf | Erf_inv | Erfc | Lgamma ->
       un_aval (fun a -> a) avals
   | Is_finite -> un_aval (fun a -> shaped a.shape Bool false) avals
   | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Complex | Mulhi
@@ -1284,6 +1344,15 @@ let abstract_eval prim avals =
       match avals with
       | operand :: _ -> [ operand ]
       | [] -> failwith "lax: select_and_scatter expects an operand aval")
+  | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta ->
+      bin_aval
+        (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))
+        avals
+  | Regularized_incomplete_beta -> (
+      match avals with
+      | [ a; b; x ] ->
+          [ shaped x.shape x.dtype (a.weak_type && b.weak_type && x.weak_type) ]
+      | _ -> failwith "lax: regularized_incomplete_beta expects 3 avals")
   | Xla_call _ | Cond _ ->
       failwith "lax: control primitives handled by interpreters"
 

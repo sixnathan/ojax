@@ -14,6 +14,7 @@ type out = {
   ocompare : string option;
   oatol : float option;
   ortol : float option;
+  otreason : string option;
 }
 
 type case = {
@@ -23,6 +24,7 @@ type case = {
   compare : string;
   atol : float;
   rtol : float;
+  treason : string option;
   args : arg list;
   outs : out list;
 }
@@ -47,6 +49,11 @@ let parse_out j =
         ( Some (U.member "atol" tol |> U.to_number),
           Some (U.member "rtol" tol |> U.to_number) )
   in
+  let otreason =
+    match U.member "tol_reason" j with
+    | `Null -> None
+    | v -> Some (U.to_string v)
+  in
   {
     oname = U.member "name" j |> U.to_string;
     oshape = U.member "shape" j |> to_shape;
@@ -54,10 +61,16 @@ let parse_out j =
     ocompare;
     oatol;
     ortol;
+    otreason;
   }
 
 let parse_case j =
   let tol = U.member "tol" j in
+  let treason =
+    match U.member "tol_reason" j with
+    | `Null -> None
+    | v -> Some (U.to_string v)
+  in
   {
     case_id = U.member "case_id" j |> U.to_string;
     op = U.member "op" j |> U.to_string;
@@ -65,6 +78,7 @@ let parse_case j =
     compare = U.member "compare" j |> U.to_string;
     atol = U.member "atol" tol |> U.to_number;
     rtol = U.member "rtol" tol |> U.to_number;
+    treason;
     args = U.member "args" j |> U.to_list |> List.map parse_arg;
     outs = U.member "outputs" j |> U.to_list |> List.map parse_out;
   }
@@ -106,7 +120,10 @@ let check_case ~set_dir ~x64 c () =
       if canon arr.Npz.dtype <> canon o.odtype then
         Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
           arr.Npz.dtype o.odtype;
-      Compare.assert_tol o.odtype c.atol c.rtol)
+      let reason =
+        match o.otreason with Some _ as r -> r | None -> c.treason
+      in
+      Compare.assert_tol_widened o.odtype c.atol c.rtol reason)
     c.outs
 
 let dir_case_ids dir =
@@ -467,6 +484,19 @@ let prim_of op params : T.primitive =
   | "select_and_scatter_add" ->
       T.Select_and_scatter_add
         { select = window_select params; window = window_of params }
+  | "bessel_i0e" -> T.Bessel_i0e
+  | "bessel_i1e" -> T.Bessel_i1e
+  | "digamma" -> T.Digamma
+  | "erf" -> T.Erf
+  | "erf_inv" -> T.Erf_inv
+  | "erfc" -> T.Erfc
+  | "igamma" -> T.Igamma
+  | "igamma_grad_a" -> T.Igamma_grad_a
+  | "igammac" -> T.Igammac
+  | "lgamma" -> T.Lgamma
+  | "polygamma" -> T.Polygamma
+  | "regularized_incomplete_beta" -> T.Regularized_incomplete_beta
+  | "zeta" -> T.Zeta
   | _ -> failwith ("lax golden: unknown op " ^ op)
 
 let concrete = function
@@ -499,6 +529,9 @@ let lax_check_case ~set_dir ~x64 c () =
       let ocompare = match o.ocompare with Some s -> s | None -> c.compare in
       let oatol = match o.oatol with Some t -> t | None -> c.atol in
       let ortol = match o.ortol with Some t -> t | None -> c.rtol in
+      let oreason =
+        match o.otreason with Some _ as r -> r | None -> c.treason
+      in
       let nd = concrete v in
       if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
         Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
@@ -515,7 +548,7 @@ let lax_check_case ~set_dir ~x64 c () =
       let actual =
         { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
       in
-      Compare.assert_tol o.odtype oatol ortol;
+      Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
         ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)

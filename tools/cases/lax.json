@@ -6189,5 +6189,436 @@
     1
    ]
   }
+ },
+ {
+  "op": "bessel_i0e",
+  "primitive": "lax.bessel_i0e",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "bessel_i0e",
+  "primitive": "lax.bessel_i0e",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "bessel_i1e",
+  "primitive": "lax.bessel_i1e",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "bessel_i1e",
+  "primitive": "lax.bessel_i1e",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_default"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "digamma",
+  "primitive": "lax.digamma",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "digamma",
+  "primitive": "lax.digamma",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {},
+  "tol_widen": {
+   "factor": 100,
+   "reason": "transcendental_ulp"
+  }
+ },
+ {
+  "op": "erf",
+  "primitive": "lax.erf",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_small"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "erf",
+  "primitive": "lax.erf",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_small"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "erf_inv",
+  "primitive": "lax.erf_inv",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_small"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "erfc",
+  "primitive": "lax.erfc",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_small"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "erfc",
+  "primitive": "lax.erfc",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_small"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "lgamma",
+  "primitive": "lax.lgamma",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "lgamma",
+  "primitive": "lax.lgamma",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "igamma",
+  "primitive": "lax.igamma",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "igamma",
+  "primitive": "lax.igamma",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_positive"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "igammac",
+  "primitive": "lax.igammac",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "igammac",
+  "primitive": "lax.igammac",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_positive"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "igamma_grad_a",
+  "primitive": "lax.igamma_grad_a",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "polygamma",
+  "primitive": "lax.polygamma",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_poly_order"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "polygamma",
+  "primitive": "lax.polygamma",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_poly_order"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "zeta",
+  "primitive": "lax.zeta",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_gt_one"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "zeta",
+  "primitive": "lax.zeta",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_gt_one"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_positive"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "regularized_incomplete_beta",
+  "primitive": "lax.regularized_incomplete_beta",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_uniform"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_uniform"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float32",
+    "rng": "rand_uniform"
+   }
+  ],
+  "params": {}
+ },
+ {
+  "op": "regularized_incomplete_beta",
+  "primitive": "lax.regularized_incomplete_beta",
+  "args": [
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_uniform"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_uniform"
+   },
+   {
+    "shape": [
+     3
+    ],
+    "dtype": "float64",
+    "rng": "rand_uniform"
+   }
+  ],
+  "params": {}
  }
 ]

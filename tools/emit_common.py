@@ -91,15 +91,16 @@ def expand_record(rec):
             _arg(i, a["shape"], a["dtype"], a["rng"], a.get("weak", False))
             for i, a in enumerate(rec["args"])
         ]
-        return [
-            {
-                "op": op,
-                "primitive": primitive,
-                "nargs": len(args),
-                "args": args,
-                "params": params,
-            }
-        ]
+        case = {
+            "op": op,
+            "primitive": primitive,
+            "nargs": len(args),
+            "args": args,
+            "params": params,
+        }
+        if "tol_widen" in rec:
+            case["tol_widen"] = rec["tol_widen"]
+        return [case]
     nargs = rec["nargs"]
     rng = rec["rng"]
     out = []

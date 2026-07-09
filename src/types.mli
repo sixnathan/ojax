@@ -176,6 +176,19 @@ and primitive =
       window : window_dims;
     }
   | Select_and_scatter_add of { select : window_select; window : window_dims }
+  | Bessel_i0e
+  | Bessel_i1e
+  | Digamma
+  | Erf
+  | Erf_inv
+  | Erfc
+  | Igamma
+  | Igamma_grad_a
+  | Igammac
+  | Lgamma
+  | Polygamma
+  | Regularized_incomplete_beta
+  | Zeta
   | Xla_call of closed_jaxpr
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
 

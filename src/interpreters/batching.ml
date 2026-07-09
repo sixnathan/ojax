@@ -125,6 +125,16 @@ let clamp_rule (axis_size : int) (vals : value list) (bdims : int option list) :
   let aligned = List.map2 (align_to axis_size dst) vals bdims in
   (b1 Clamp aligned, Some dst)
 
+let naryop_rule (axis_size : int) (prim : primitive) (vals : value list)
+    (bdims : int option list) : value * int option =
+  let dst =
+    match List.find_opt (fun b -> b <> None) bdims with
+    | Some (Some d) -> d
+    | _ -> 0
+  in
+  let aligned = List.map2 (align_to axis_size dst) vals bdims in
+  (b1 prim aligned, Some dst)
+
 let reduce_sum_rule (axes : int array) (x : value) (bdim : int option) :
     value * int option =
   match bdim with
@@ -509,8 +519,12 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Conj | Copy | Cosh | Exp2 | Expm1
   | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan
-  | Bitcast_convert_type _ | Reduce_precision _ ->
+  | Bitcast_convert_type _ | Reduce_precision _ | Bessel_i0e | Bessel_i1e
+  | Digamma | Erf | Erf_inv | Erfc | Lgamma ->
       un ()
+  | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta
+  | Regularized_incomplete_beta ->
+      naryop_rule axis_size prim vals bdims
   | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le | Eq_to
   | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or | Rem
   | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie ->

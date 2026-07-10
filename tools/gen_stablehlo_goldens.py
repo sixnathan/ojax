@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax._src.lax import lax as _lax
+from jax._src.lax.control_flow import conditionals as _cf
 
 import stablehlo_normalize as normalizer
 
@@ -111,6 +112,30 @@ CASES = [
         "select_n3",
         lambda p, x, y, z: lax.select_n(p, x, y, z),
         [i32(3), f32(3), f32(3), f32(3)],
+    ),
+    ("convert_f32_to_i32", lambda x: lax.convert_element_type(x, jnp.int32), [f32(3)]),
+    ("convert_i32_to_f32", lambda x: lax.convert_element_type(x, jnp.float32), [i32(3)]),
+    ("convert_bool_to_i32", lambda x: lax.convert_element_type(x, jnp.int32), [bl(3)]),
+    ("convert_f32_to_bool", lambda x: lax.convert_element_type(x, jnp.bool_), [f32(3)]),
+    ("bitcast_f32_to_i32", lambda x: lax.bitcast_convert_type(x, jnp.int32), [f32(3)]),
+    ("optimization_barrier", lambda x: lax.optimization_barrier(x), [f32(3)]),
+    (
+        "reduce_precision",
+        lambda x: lax.reduce_precision(x, exponent_bits=8, mantissa_bits=10),
+        [f32(3)],
+    ),
+    ("tie", lambda x, y: _lax.tie_p.bind(x, y), [f32(3), f32(3)]),
+    (
+        "empty",
+        lambda: _lax.empty_p.bind(
+            shape=(3,), dtype=jnp.dtype(jnp.float32), out_sharding=None
+        ),
+        [],
+    ),
+    (
+        "platform_index",
+        lambda: _cf.platform_index_p.bind(platforms=(("cpu",),)),
+        [],
     ),
 ]
 

@@ -191,6 +191,24 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
             match args with
             | [ p; a; b; c ] -> C.bind T.Select_n [ p; a; b; c ]
             | _ -> assert false) );
+    ("convert_f32_to_i32", unary (T.Convert_element_type D.I32) D.F32);
+    ("convert_i32_to_f32", unary (T.Convert_element_type D.F32) D.I32);
+    ("convert_bool_to_i32", unary (T.Convert_element_type D.I32) D.Bool);
+    ("convert_f32_to_bool", unary (T.Convert_element_type D.Bool) D.F32);
+    ("bitcast_f32_to_i32", unary (T.Bitcast_convert_type D.I32) D.F32);
+    ("optimization_barrier", unary T.Optimization_barrier D.F32);
+    ( "reduce_precision",
+      unary (T.Reduce_precision { exponent_bits = 8; mantissa_bits = 10 }) D.F32
+    );
+    ("tie", binary T.Tie D.F32);
+    ( "empty",
+      fun () ->
+        J.make_jaxpr [] (fun _ ->
+            C.bind (T.Empty { shape = [| 3 |]; dtype = D.F32 }) []) );
+    ( "platform_index",
+      fun () ->
+        J.make_jaxpr [] (fun _ ->
+            C.bind (T.Platform_index [| Some [| "cpu" |] |]) []) );
   ]
 
 let check_case name build () =

@@ -337,6 +337,124 @@ let emit_select_n ctx (eqn : eqn) in_ids =
   in
   Hashtbl.replace ctx.ids out.vid result
 
+let zero_dense dt =
+  match dt with
+  | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt 0.0
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 -> Ir.int_literal 0L
+  | Dtype.Bool -> Ir.bool_literal false
+
+let emit_convert ctx (eqn : eqn) in_ids =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let out = sole eqn.outs in
+  let in_dt = in_aval.dtype in
+  let out_dt = out.vaval.dtype in
+  let oty = Ir.tensor_type_of_aval out.vaval in
+  if out_dt = Dtype.Bool && in_dt <> Dtype.Bool then begin
+    let inty = Ir.tensor_type_of_aval in_aval in
+    let sty = Ir.tensor_type in_dt [||] in
+    let c = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+         (Ir.dense (zero_dense in_dt))
+         sty);
+    let b = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+         (name b) (name c) sty inty);
+    let cmp = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = stablehlo.compare NE, %s, %s, %s : (%s, %s) -> %s\n"
+         (name cmp) (name x) (name b)
+         (compare_type_of in_dt false)
+         inty inty oty);
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.convert %s : %s\n" (name n) (name cmp)
+         oty)
+  end
+  else if in_dt = out_dt then Hashtbl.replace ctx.ids out.vid x
+  else begin
+    let inty = Ir.tensor_type_of_aval in_aval in
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.convert %s : (%s) -> %s\n" (name n)
+         (name x) inty oty)
+  end
+
+let emit_bitcast ctx (eqn : eqn) in_ids =
+  let x = sole in_ids in
+  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.bitcast_convert %s : (%s) -> %s\n"
+       (name n) (name x) inty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_opt_barrier ctx (eqn : eqn) in_ids =
+  match (eqn.outs, in_ids) with
+  | [ out ], [ x ] ->
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.optimization_barrier %s : %s\n"
+           (name n) (name x)
+           (Ir.tensor_type_of_aval out.vaval))
+  | _ ->
+      failwith
+        "Stablehlo.Emit: optimization_barrier multi-result grouped SSA deferred"
+
+let emit_reduce_precision ctx (eqn : eqn) in_ids exponent_bits mantissa_bits =
+  let x = sole in_ids in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.reduce_precision %s, format = e%dm%d : %s\n" (name n)
+       (name x) exponent_bits mantissa_bits
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_empty ctx (eqn : eqn) =
+  let out = sole eqn.outs in
+  let dt = out.vaval.dtype in
+  let oty = Ir.tensor_type_of_aval out.vaval in
+  let sty = Ir.tensor_type dt [||] in
+  let c = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+       (Ir.dense (zero_dense dt))
+       sty);
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+       (name n) (name c) sty oty)
+
+let platform_cpu_index platforms =
+  let n = Array.length platforms in
+  let rec find_cpu i =
+    if i >= n then find_default 0
+    else
+      match platforms.(i) with
+      | Some names when Array.exists (fun p -> p = "cpu") names -> i
+      | _ -> find_cpu (i + 1)
+  and find_default i =
+    if i >= n then
+      failwith "Stablehlo.Emit: platform_index has no cpu or default branch"
+    else match platforms.(i) with None -> i | Some _ -> find_default (i + 1)
+  in
+  find_cpu 0
+
+let emit_platform_index ctx (eqn : eqn) platforms =
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name n)
+       (Ir.dense (Ir.int_literal (Int64.of_int (platform_cpu_index platforms))))
+       (Ir.tensor_type_of_aval out.vaval))
+
 let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -407,9 +525,37 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Lt_to -> emit_compare ctx eqn in_ids "LT" true
   | Clamp -> emit_clamp ctx eqn in_ids
   | Select_n -> emit_select_n ctx eqn in_ids
+  | Convert_element_type _ -> emit_convert ctx eqn in_ids
+  | Bitcast_convert_type _ -> emit_bitcast ctx eqn in_ids
+  | Optimization_barrier -> emit_opt_barrier ctx eqn in_ids
+  | Reduce_precision { exponent_bits; mantissa_bits } ->
+      emit_reduce_precision ctx eqn in_ids exponent_bits mantissa_bits
+  | Tie -> (
+      match in_ids with
+      | [ _; b ] -> Hashtbl.replace ctx.ids (sole eqn.outs).vid b
+      | _ -> invalid_arg "Stablehlo.Emit: tie arity")
+  | Empty _ -> emit_empty ctx eqn
+  | Platform_index platforms -> emit_platform_index ctx eqn platforms
+  | After_all ->
+      failwith
+        "Stablehlo.Emit: After_all produces a token (no ShapedArray aval), \
+         non-representable (M5)"
+  | Create_token ->
+      failwith
+        "Stablehlo.Emit: Create_token produces a token (no ShapedArray aval), \
+         non-representable (M5)"
+  | Dce_sink ->
+      failwith
+        "Stablehlo.Emit: Dce_sink is a DCE-effect marker, non-representable"
+  | Empty2 _ ->
+      failwith "Stablehlo.Emit: Empty2 (extended dtype) deferred to M5"
+  | From_edtype _ ->
+      failwith "Stablehlo.Emit: From_edtype (extended dtypes) deferred to M5"
+  | To_edtype _ ->
+      failwith "Stablehlo.Emit: To_edtype (extended dtypes) deferred to M5"
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 80-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 81-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

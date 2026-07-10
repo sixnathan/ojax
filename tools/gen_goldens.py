@@ -96,6 +96,10 @@ def rand_int_small_nz(rng, shape, dtype):
     return rng.randint(1, 10, size=tuple(shape), dtype=dtype)
 
 
+def rand_int_float(rng, shape, dtype):
+    return rng.randint(0, 10, size=tuple(shape)).astype(dtype)
+
+
 def rand_seg(rng, shape, dtype):
     return rng.randint(0, 4, size=tuple(shape), dtype=dtype)
 
@@ -144,6 +148,7 @@ RNG_FACTORIES = {
     "rand_int": rand_int,
     "rand_int_small": rand_int_small,
     "rand_int_small_nz": rand_int_small_nz,
+    "rand_int_float": rand_int_float,
     "rand_seg": rand_seg,
     "rand_bool": rand_bool,
     "rand_index_unique": rand_index_unique,
@@ -3805,9 +3810,29 @@ for _dist, _names in {
     "multinomial": ["logpmf", "pmf"],
     "nbinom": ["logpmf", "pmf"],
     "norm": ["cdf", "isf", "logcdf", "logpdf", "logsf", "pdf", "ppf", "sf"],
+    "pareto": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "ppf", "sf"],
+    "poisson": ["cdf", "entropy", "logpmf", "pmf"],
+    "t": ["logpdf", "pdf"],
+    "truncnorm": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "sf"],
+    "uniform": ["cdf", "logpdf", "pdf", "ppf"],
+    "vonmises": ["logpdf", "pdf"],
+    "wrapcauchy": ["logpdf", "pdf"],
 }.items():
     for _fname in _names:
         STATS_BUILDERS[_dist + "." + _fname] = stats_fn(_dist, _fname)
+
+import jax._src.scipy.stats._core as _stats_core
+
+
+def core_fn(fn):
+    def build(params):
+        return lambda *inputs: fn(*inputs)
+
+    return build
+
+
+STATS_BUILDERS["core.sem"] = core_fn(jstats.sem)
+STATS_BUILDERS["core.invert_permutation"] = core_fn(_stats_core.invert_permutation)
 
 
 def run_case(c, seed):

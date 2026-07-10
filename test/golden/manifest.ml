@@ -3000,6 +3000,14 @@ module SS_logistic = Ojax.Scipy.Stats.Logistic
 module SS_multinomial = Ojax.Scipy.Stats.Multinomial
 module SS_nbinom = Ojax.Scipy.Stats.Nbinom
 module SS_norm = Ojax.Scipy.Stats.Norm
+module SS_pareto = Ojax.Scipy.Stats.Pareto
+module SS_poisson = Ojax.Scipy.Stats.Poisson
+module SS_t = Ojax.Scipy.Stats.T
+module SS_truncnorm = Ojax.Scipy.Stats.Truncnorm
+module SS_uniform = Ojax.Scipy.Stats.Uniform
+module SS_vonmises = Ojax.Scipy.Stats.Vonmises
+module SS_wrapcauchy = Ojax.Scipy.Stats.Wrapcauchy
+module SS_core = Ojax.Scipy.Stats.Stats_core
 
 let scipy_special_fn op params operands : T.value list =
   let one v = [ v ] in
@@ -3164,6 +3172,35 @@ let scipy_stats_fn op _params operands : T.value list =
   | "norm.logsf", [ x ] -> one (SS_norm.logsf x)
   | "norm.sf", [ x ] -> one (SS_norm.sf x)
   | "norm.isf", [ q ] -> one (SS_norm.isf q)
+  | "pareto.logpdf", [ x; b ] -> one (SS_pareto.logpdf x b)
+  | "pareto.pdf", [ x; b ] -> one (SS_pareto.pdf x b)
+  | "pareto.cdf", [ x; b ] -> one (SS_pareto.cdf x b)
+  | "pareto.logcdf", [ x; b ] -> one (SS_pareto.logcdf x b)
+  | "pareto.logsf", [ x; b ] -> one (SS_pareto.logsf x b)
+  | "pareto.sf", [ x; b ] -> one (SS_pareto.sf x b)
+  | "pareto.ppf", [ q; b ] -> one (SS_pareto.ppf q b)
+  | "poisson.logpmf", [ k; mu ] -> one (SS_poisson.logpmf k mu)
+  | "poisson.pmf", [ k; mu ] -> one (SS_poisson.pmf k mu)
+  | "poisson.cdf", [ k; mu ] -> one (SS_poisson.cdf k mu)
+  | "poisson.entropy", [ mu ] -> one (SS_poisson.entropy mu)
+  | "t.logpdf", [ x; df ] -> one (SS_t.logpdf x df)
+  | "t.pdf", [ x; df ] -> one (SS_t.pdf x df)
+  | "truncnorm.logpdf", [ x; a; b ] -> one (SS_truncnorm.logpdf x a b)
+  | "truncnorm.pdf", [ x; a; b ] -> one (SS_truncnorm.pdf x a b)
+  | "truncnorm.logcdf", [ x; a; b ] -> one (SS_truncnorm.logcdf x a b)
+  | "truncnorm.cdf", [ x; a; b ] -> one (SS_truncnorm.cdf x a b)
+  | "truncnorm.logsf", [ x; a; b ] -> one (SS_truncnorm.logsf x a b)
+  | "truncnorm.sf", [ x; a; b ] -> one (SS_truncnorm.sf x a b)
+  | "uniform.logpdf", [ x ] -> one (SS_uniform.logpdf x)
+  | "uniform.pdf", [ x ] -> one (SS_uniform.pdf x)
+  | "uniform.cdf", [ x ] -> one (SS_uniform.cdf x)
+  | "uniform.ppf", [ q ] -> one (SS_uniform.ppf q)
+  | "vonmises.logpdf", [ x; kappa ] -> one (SS_vonmises.logpdf x kappa)
+  | "vonmises.pdf", [ x; kappa ] -> one (SS_vonmises.pdf x kappa)
+  | "wrapcauchy.logpdf", [ x; c ] -> one (SS_wrapcauchy.logpdf x c)
+  | "wrapcauchy.pdf", [ x; c ] -> one (SS_wrapcauchy.pdf x c)
+  | "core.sem", [ a ] -> one (SS_core.sem a)
+  | "core.invert_permutation", [ i ] -> one (SS_core.invert_permutation i)
   | _ -> failwith ("scipy_stats golden: unknown op " ^ op)
 
 let scipy_stats_suite_for set_name =

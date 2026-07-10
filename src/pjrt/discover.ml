@@ -154,9 +154,9 @@ let sha256_hex msg =
     h.(6) <- (h.(6) + !g) land mask;
     h.(7) <- (h.(7) + !hh) land mask
   done;
-  let buf = Buffer.create 64 in
-  Array.iter (fun x -> Buffer.add_string buf (Printf.sprintf "%08x" x)) h;
-  Buffer.contents buf
+  let buf = Stdlib.Buffer.create 64 in
+  Array.iter (fun x -> Stdlib.Buffer.add_string buf (Printf.sprintf "%08x" x)) h;
+  Stdlib.Buffer.contents buf
 
 let sha256_file path =
   let ic = open_in_bin path in

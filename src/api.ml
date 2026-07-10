@@ -36,7 +36,7 @@ let compile (cj : closed_jaxpr) : value list -> value list =
   match Hashtbl.find_opt compiled cj.jid with
   | Some executable -> executable
   | None ->
-      let executable args = Jaxpr.eval_closed_jaxpr cj args in
+      let executable = Backend.executor cj in
       Hashtbl.replace compiled cj.jid executable;
       executable
 

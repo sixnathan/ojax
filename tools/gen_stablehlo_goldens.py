@@ -158,6 +158,24 @@ CASES = [
     ("shape_tile", lambda x: lax.tile(x, [2]), [f32(3)]),
     ("shape_transpose", lambda x: lax.transpose(x, (1, 0)), [f32(2, 3)]),
     ("shape_unstack", lambda x: lax.unstack(x, 0), [f32(2, 3)]),
+    (
+        "reduce_sum",
+        lambda x: _lax.reduce_sum_p.bind(x, axes=(0,), out_sharding=None),
+        [f32(3)],
+    ),
+    ("reduce_max", lambda x: _lax.reduce_max_p.bind(x, axes=(0,)), [f32(3)]),
+    ("reduce_min", lambda x: _lax.reduce_min_p.bind(x, axes=(0,)), [f32(3)]),
+    ("reduce_prod", lambda x: _lax.reduce_prod_p.bind(x, axes=(0,)), [f32(3)]),
+    ("reduce_and", lambda x: _lax.reduce_and_p.bind(x, axes=(0,)), [i32(3)]),
+    ("reduce_or", lambda x: _lax.reduce_or_p.bind(x, axes=(0,)), [i32(3)]),
+    ("reduce_xor", lambda x: _lax.reduce_xor_p.bind(x, axes=(0,)), [i32(3)]),
+    ("argmax", lambda x: _lax.argmax(x, 0, jnp.int32), [f32(3)]),
+    ("argmin", lambda x: _lax.argmin(x, 0, jnp.int32), [f32(3)]),
+    ("cumsum", lambda x: lax.cumsum(x, 0), [f32(3)]),
+    ("cumprod", lambda x: lax.cumprod(x, 0), [f32(3)]),
+    ("cummax", lambda x: lax.cummax(x, 0), [f32(3)]),
+    ("cummin", lambda x: lax.cummin(x, 0), [f32(3)]),
+    ("cumlogsumexp", lambda x: lax.cumlogsumexp(x, 0), [f32(3)]),
 ]
 
 

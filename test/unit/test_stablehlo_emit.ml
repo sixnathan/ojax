@@ -316,6 +316,20 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
             match args with
             | [ x ] -> C.bind (T.Unstack 0) [ x ]
             | _ -> assert false) );
+    ("reduce_sum", unary (T.Reduce_sum [| 0 |]) D.F32);
+    ("reduce_max", unary (T.Reduce_max [| 0 |]) D.F32);
+    ("reduce_min", unary (T.Reduce_min [| 0 |]) D.F32);
+    ("reduce_prod", unary (T.Reduce_prod [| 0 |]) D.F32);
+    ("reduce_and", unary (T.Reduce_and [| 0 |]) D.I32);
+    ("reduce_or", unary (T.Reduce_or [| 0 |]) D.I32);
+    ("reduce_xor", unary (T.Reduce_xor [| 0 |]) D.I32);
+    ("argmax", unary (T.Argmax { axis = 0; index_dtype = D.I32 }) D.F32);
+    ("argmin", unary (T.Argmin { axis = 0; index_dtype = D.I32 }) D.F32);
+    ("cumsum", unary (T.Cumsum { axis = 0; reverse = false }) D.F32);
+    ("cumprod", unary (T.Cumprod { axis = 0; reverse = false }) D.F32);
+    ("cummax", unary (T.Cummax { axis = 0; reverse = false }) D.F32);
+    ("cummin", unary (T.Cummin { axis = 0; reverse = false }) D.F32);
+    ("cumlogsumexp", unary (T.Cumlogsumexp { axis = 0; reverse = false }) D.F32);
   ]
 
 let check_case name build () =

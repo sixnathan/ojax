@@ -41,7 +41,12 @@ let dense_body nd =
   | first :: rest when List.for_all (String.equal first) rest -> first
   | _ -> nested_literals nd
 
-type ctx = { buf : Buffer.t; ids : (int, int) Hashtbl.t; mutable next : int }
+type ctx = {
+  buf : Buffer.t;
+  extras : Buffer.t;
+  ids : (int, int) Hashtbl.t;
+  mutable next : int;
+}
 
 let fresh ctx =
   let n = ctx.next in
@@ -665,6 +670,262 @@ let emit_tile ctx (eqn : eqn) in_ids reps =
     (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name n)
        (name b) bty outty)
 
+let reduce_zero dt = Ir.dense (zero_dense dt)
+
+let reduce_one dt =
+  Ir.dense
+    (match dt with
+    | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt 1.0
+    | Dtype.I32 | Dtype.I64 | Dtype.Uint32 -> Ir.int_literal 1L
+    | Dtype.Bool -> Ir.bool_literal true)
+
+let reduce_allones dt =
+  Ir.dense
+    (match dt with
+    | Dtype.I32 | Dtype.I64 -> Ir.int_literal (-1L)
+    | Dtype.Uint32 -> Ir.int_literal 4294967295L
+    | Dtype.Bool -> Ir.bool_literal true
+    | Dtype.F32 | Dtype.F64 ->
+        invalid_arg "Stablehlo.Emit: bitwise reduce on floating-point dtype")
+
+let reduce_maxid dt =
+  Ir.dense
+    (match dt with
+    | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt neg_infinity
+    | Dtype.I32 -> Ir.int_literal (-2147483648L)
+    | Dtype.I64 -> Ir.int_literal Int64.min_int
+    | Dtype.Uint32 -> Ir.int_literal 0L
+    | Dtype.Bool -> Ir.bool_literal false)
+
+let reduce_minid dt =
+  Ir.dense
+    (match dt with
+    | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt infinity
+    | Dtype.I32 -> Ir.int_literal 2147483647L
+    | Dtype.I64 -> Ir.int_literal Int64.max_int
+    | Dtype.Uint32 -> Ir.int_literal 4294967295L
+    | Dtype.Bool -> Ir.bool_literal true)
+
+let emit_reduce ctx (eqn : eqn) in_ids axes op init =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let dt = in_aval.dtype in
+  let sty = Ir.tensor_type dt [||] in
+  let out = sole eqn.outs in
+  let c = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c) (init dt)
+       sty);
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.reduce(%s init: %s) applies stablehlo.%s across \
+        dimensions = %s : (%s, %s) -> %s\n"
+       (name n) (name x) (name c) op (Ir.int_array_attr axes)
+       (Ir.tensor_type_of_aval in_aval)
+       sty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_argminmax ctx (eqn : eqn) in_ids ~is_max ~axis ~index_dtype =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let dt = in_aval.dtype in
+  let inty = Ir.tensor_type_of_aval in_aval in
+  let out = sole eqn.outs in
+  let outty = Ir.tensor_type_of_aval out.vaval in
+  let fname = if is_max then "argmax" else "argmin" in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
+       (name x) inty outty);
+  let vscalar = Ir.tensor_type dt [||] in
+  let iscalar = Ir.tensor_type index_dtype [||] in
+  let iota_ty = Ir.tensor_type index_dtype in_aval.shape in
+  let vout = Ir.tensor_type dt out.vaval.shape in
+  let bty = Ir.tensor_type Dtype.Bool [||] in
+  let dir = if is_max then "GT" else "LT" in
+  let ct = compare_type_of dt false in
+  let ict = compare_type_of index_dtype false in
+  let init_v = if is_max then reduce_maxid dt else reduce_minid dt in
+  let init_i = Ir.dense (zero_dense index_dtype) in
+  let b = ctx.extras in
+  Buffer.add_string b
+    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname inty
+       outty);
+  Buffer.add_string b
+    (Printf.sprintf "    %%1 = stablehlo.iota dim = %d : %s\n" axis iota_ty);
+  Buffer.add_string b
+    (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" init_v vscalar);
+  Buffer.add_string b
+    (Printf.sprintf "    %%3 = stablehlo.constant %s : %s\n" init_i iscalar);
+  Buffer.add_string b
+    (Printf.sprintf
+       "    %%4:2 = stablehlo.reduce(%%0 init: %%2), (%%1 init: %%3) across \
+        dimensions = [%d] : (%s, %s, %s, %s) -> (%s, %s)\n"
+       axis inty iota_ty vscalar iscalar vout outty);
+  Buffer.add_string b
+    (Printf.sprintf "     reducer(%%5: %s, %%6: %s) (%%7: %s, %%8: %s)  {\n"
+       vscalar vscalar iscalar iscalar);
+  Buffer.add_string b
+    (Printf.sprintf
+       "      %%9 = stablehlo.compare %s, %%5, %%6, %s : (%s, %s) -> %s\n" dir
+       ct vscalar vscalar bty);
+  Buffer.add_string b
+    (Printf.sprintf
+       "      %%10 = stablehlo.compare NE, %%5, %%5, %s : (%s, %s) -> %s\n" ct
+       vscalar vscalar bty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%11 = stablehlo.or %%9, %%10 : %s\n" bty);
+  Buffer.add_string b
+    (Printf.sprintf
+       "      %%12 = stablehlo.compare EQ, %%5, %%6, %s : (%s, %s) -> %s\n" ct
+       vscalar vscalar bty);
+  Buffer.add_string b
+    (Printf.sprintf
+       "      %%13 = stablehlo.compare LT, %%7, %%8, %s : (%s, %s) -> %s\n" ict
+       iscalar iscalar bty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%14 = stablehlo.and %%12, %%13 : %s\n" bty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%15 = stablehlo.or %%11, %%14 : %s\n" bty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%16 = stablehlo.select %%11, %%5, %%6 : %s, %s\n"
+       bty vscalar);
+  Buffer.add_string b
+    (Printf.sprintf "      %%17 = stablehlo.select %%15, %%7, %%8 : %s, %s\n"
+       bty iscalar);
+  Buffer.add_string b
+    (Printf.sprintf "      stablehlo.return %%16, %%17 : %s, %s\n" vscalar
+       iscalar);
+  Buffer.add_string b "    }\n";
+  Buffer.add_string b (Printf.sprintf "    return %%4#1 : %s\n" outty);
+  Buffer.add_string b "  }\n"
+
+let cum_window_attrs shape axis reverse =
+  let ndim = Array.length shape in
+  let ones = Array.make ndim 1 in
+  let arr a =
+    "array<i64: "
+    ^ (Array.to_list a |> List.map string_of_int |> String.concat ", ")
+    ^ ">"
+  in
+  let window_dims = Array.mapi (fun d s -> if d = axis then s else 1) shape in
+  let pad =
+    Array.to_list
+      (Array.mapi
+         (fun d _ ->
+           if d = axis then
+             if reverse then (0, shape.(axis) - 1) else (shape.(axis) - 1, 0)
+           else (0, 0))
+         shape)
+  in
+  let pad_str =
+    "dense<["
+    ^ (List.map (fun (l, h) -> Printf.sprintf "[%d, %d]" l h) pad
+      |> String.concat ", ")
+    ^ Printf.sprintf "]> : tensor<%dx2xi64>" ndim
+  in
+  Printf.sprintf
+    "base_dilations = %s, padding = %s, window_dilations = %s, \
+     window_dimensions = %s, window_strides = %s"
+    (arr ones) pad_str (arr ones) (arr window_dims) (arr ones)
+
+let emit_cum_single ctx (eqn : eqn) in_ids ~fname ~axis ~reverse ~init
+    ~broadcast ~op =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let dt = in_aval.dtype in
+  let ty = Ir.tensor_type_of_aval in_aval in
+  let sty = Ir.tensor_type dt [||] in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
+       (name x) ty ty);
+  let attrs = cum_window_attrs in_aval.shape axis reverse in
+  let b = ctx.extras in
+  Buffer.add_string b
+    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
+  Buffer.add_string b
+    (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
+  if broadcast then (
+    Buffer.add_string b
+      (Printf.sprintf
+         "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
+         sty sty);
+    Buffer.add_string b
+      (Printf.sprintf
+         "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
+    Buffer.add_string b (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
+    Buffer.add_string b (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
+    Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+    Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
+  else begin
+    Buffer.add_string b
+      (Printf.sprintf
+         "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
+    Buffer.add_string b (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
+    Buffer.add_string b (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
+    Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+    Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
+  end;
+  Buffer.add_string b "  }\n"
+
+let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let dt = in_aval.dtype in
+  let ty = Ir.tensor_type_of_aval in_aval in
+  let sty = Ir.tensor_type dt [||] in
+  let bty = Ir.tensor_type Dtype.Bool [||] in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = call @cumlogsumexp(%s) : (%s) -> %s\n" (name n)
+       (name x) ty ty);
+  let attrs = cum_window_attrs in_aval.shape axis reverse in
+  let b = ctx.extras in
+  Buffer.add_string b
+    (Printf.sprintf "  func.func private @cumlogsumexp(%%0: %s) -> %s {\n" ty ty);
+  Buffer.add_string b
+    (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (reduce_maxid dt)
+       sty);
+  Buffer.add_string b
+    (Printf.sprintf
+       "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
+  Buffer.add_string b (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%5 = stablehlo.maximum %%3, %%4 : %s\n" sty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%6 = stablehlo.subtract %%3, %%4 : %s\n" sty);
+  Buffer.add_string b
+    (Printf.sprintf
+       "      %%7 = stablehlo.compare NE, %%6, %%6, FLOAT : (%s, %s) -> %s\n"
+       sty sty bty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%8 = stablehlo.add %%3, %%4 : %s\n" sty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%9 = stablehlo.abs %%6 : %s\n" sty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%10 = stablehlo.negate %%9 : %s\n" sty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%11 = stablehlo.exponential %%10 : %s\n" sty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%12 = stablehlo.log_plus_one %%11 : %s\n" sty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%13 = stablehlo.add %%5, %%12 : %s\n" sty);
+  Buffer.add_string b
+    (Printf.sprintf "      %%14 = stablehlo.select %%7, %%8, %%13 : %s, %s\n"
+       bty sty);
+  Buffer.add_string b (Printf.sprintf "      stablehlo.return %%14 : %s\n" sty);
+  Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+  Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty);
+  Buffer.add_string b "  }\n"
+
 let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -775,9 +1036,34 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith "Stablehlo.Emit: From_edtype (extended dtypes) deferred to M5"
   | To_edtype _ ->
       failwith "Stablehlo.Emit: To_edtype (extended dtypes) deferred to M5"
+  | Reduce_sum axes -> emit_reduce ctx eqn in_ids axes "add" reduce_zero
+  | Reduce_max axes -> emit_reduce ctx eqn in_ids axes "maximum" reduce_maxid
+  | Reduce_min axes -> emit_reduce ctx eqn in_ids axes "minimum" reduce_minid
+  | Reduce_prod axes -> emit_reduce ctx eqn in_ids axes "multiply" reduce_one
+  | Reduce_and axes -> emit_reduce ctx eqn in_ids axes "and" reduce_allones
+  | Reduce_or axes -> emit_reduce ctx eqn in_ids axes "or" reduce_zero
+  | Reduce_xor axes -> emit_reduce ctx eqn in_ids axes "xor" reduce_zero
+  | Argmax { axis; index_dtype } ->
+      emit_argminmax ctx eqn in_ids ~is_max:true ~axis ~index_dtype
+  | Argmin { axis; index_dtype } ->
+      emit_argminmax ctx eqn in_ids ~is_max:false ~axis ~index_dtype
+  | Cumsum { axis; reverse } ->
+      emit_cum_single ctx eqn in_ids ~fname:"cumsum" ~axis ~reverse
+        ~init:reduce_zero ~broadcast:true ~op:"add"
+  | Cumprod { axis; reverse } ->
+      emit_cum_single ctx eqn in_ids ~fname:"cumprod" ~axis ~reverse
+        ~init:reduce_one ~broadcast:false ~op:"multiply"
+  | Cummax { axis; reverse } ->
+      emit_cum_single ctx eqn in_ids ~fname:"cummax" ~axis ~reverse
+        ~init:reduce_maxid ~broadcast:true ~op:"maximum"
+  | Cummin { axis; reverse } ->
+      emit_cum_single ctx eqn in_ids ~fname:"cummin" ~axis ~reverse
+        ~init:reduce_minid ~broadcast:true ~op:"minimum"
+  | Cumlogsumexp { axis; reverse } ->
+      emit_cum_logsumexp ctx eqn in_ids ~axis ~reverse
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 82-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 83-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in
@@ -787,7 +1073,14 @@ let emit_closed_jaxpr (cj : closed_jaxpr) : string =
     | [ cb; ob ] -> (cb, ob)
     | _ -> invalid_arg "Stablehlo.Emit: binder split"
   in
-  let ctx = { buf = Buffer.create 256; ids = Hashtbl.create 16; next = 0 } in
+  let ctx =
+    {
+      buf = Buffer.create 256;
+      extras = Buffer.create 256;
+      ids = Hashtbl.create 16;
+      next = 0;
+    }
+  in
   let params =
     List.map
       (fun (v : var) ->
@@ -816,7 +1109,9 @@ let emit_closed_jaxpr (cj : closed_jaxpr) : string =
       (Printf.sprintf "    return %s : %s\n"
          (String.concat ", " out_names)
          (String.concat ", " out_types));
-  Printf.sprintf "module {\n  func.func public @main(%s) -> (%s) {\n%s  }\n}\n"
+  Printf.sprintf
+    "module {\n  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
     (String.concat ", " params)
     (String.concat ", " out_types)
     (Buffer.contents ctx.buf)
+    (Buffer.contents ctx.extras)

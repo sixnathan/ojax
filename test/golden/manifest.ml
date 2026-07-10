@@ -4182,6 +4182,45 @@ let composed_suite_for ~run module_name set_name =
   in
   (module_name ^ ":" ^ set_name, coverage :: case_tests)
 
+module KDE = Ojax.Scipy.Stats.Kde
+module MVN = Ojax.Scipy.Stats.Multivariate_normal
+
+let scipy_stats_bw p =
+  match pstr "bw" p with
+  | "scott" -> KDE.Scott
+  | "silverman" -> KDE.Silverman
+  | s -> failwith ("scipy_stats golden: unknown bw " ^ s)
+
+let scipy_stats_make c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  let bw = scipy_stats_bw c.params in
+  if pbool "weighted" c.params then
+    KDE.make ~bw_method:bw ~weights:(get "weights") (get "dataset")
+  else KDE.make ~bw_method:bw (get "dataset")
+
+let scipy_stats_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  match c.op with
+  | "mvn_logpdf" -> [ MVN.logpdf (get "x") (get "mean") (get "cov") ]
+  | "mvn_pdf" -> [ MVN.pdf (get "x") (get "mean") (get "cov") ]
+  | "kde_pdf" -> [ KDE.pdf (scipy_stats_make c inputs) (get "points") ]
+  | "kde_logpdf" -> [ KDE.logpdf (scipy_stats_make c inputs) (get "points") ]
+  | "kde_integrate_gaussian" ->
+      [
+        KDE.integrate_gaussian
+          (scipy_stats_make c inputs)
+          (get "gmean") (get "gcov");
+      ]
+  | "kde_integrate_box_1d" ->
+      let low = U.member "low" c.params |> U.to_number in
+      let high = U.member "high" c.params |> U.to_number in
+      [ KDE.integrate_box_1d (scipy_stats_make c inputs) low high ]
+  | "kde_integrate_kde" ->
+      let k1 = scipy_stats_make c inputs in
+      let k2 = KDE.make ~bw_method:(scipy_stats_bw c.params) (get "dataset2") in
+      [ KDE.integrate_kde k1 k2 ]
+  | _ -> failwith ("scipy_stats golden: unknown op " ^ c.op)
+
 let () =
   Ojax.Lax.install ();
   Ojax.Random.Prng.install ();
@@ -4265,5 +4304,7 @@ let () =
       composed_suite_for ~run:spatial_transform_run "spatial_transform"
         "x64_off";
       composed_suite_for ~run:spatial_transform_run "spatial_transform" "x64_on";
+      composed_suite_for ~run:scipy_stats_run "scipy_stats_linalg" "x64_off";
+      composed_suite_for ~run:scipy_stats_run "scipy_stats_linalg" "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

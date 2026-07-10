@@ -5346,6 +5346,86 @@ def generate_scipy_optimize(module):
     return n_off, n_on
 
 
+def _scipy_stats_inputs(op, params, npdt, rng):
+    from jax.scipy.stats import gaussian_kde
+    from jax.scipy.stats import multivariate_normal as mvn
+
+    if op in ("mvn_logpdf", "mvn_pdf"):
+        branch = params["branch"]
+        k = params.get("k", 1)
+        batch = params.get("batch", 0)
+        if branch == "scalar":
+            x = np.asarray(rng.standard_normal(), dtype=npdt)
+            mean = np.asarray(rng.standard_normal(), dtype=npdt)
+            cov = np.asarray(abs(rng.standard_normal()) + 1.0, dtype=npdt)
+        elif branch == "scalarcov":
+            xshape = (batch, k) if batch else (k,)
+            x = rng.standard_normal(xshape).astype(npdt)
+            mean = rng.standard_normal(k).astype(npdt)
+            cov = np.asarray(abs(rng.standard_normal()) + 1.0, dtype=npdt)
+        else:
+            xshape = (batch, k) if batch else (k,)
+            x = rng.standard_normal(xshape).astype(npdt)
+            mean = rng.standard_normal(k).astype(npdt)
+            a = rng.standard_normal((k, k))
+            cov = (a @ a.T + k * np.eye(k)).astype(npdt)
+        fn = mvn.logpdf if op == "mvn_logpdf" else mvn.pdf
+        return {"cov": cov, "mean": mean, "x": x}, [np.asarray(fn(x, mean, cov))]
+
+    d = params["d"]
+    n = params["n"]
+    bw = params.get("bw", "scott")
+    weighted = params.get("weighted", False)
+    dataset = rng.standard_normal((d, n)).astype(npdt)
+    stored = {"dataset": dataset}
+    kwargs = {}
+    if weighted:
+        wts = rng.uniform(0.5, 1.5, n).astype(npdt)
+        stored["weights"] = wts
+        kwargs["weights"] = wts
+    kde = gaussian_kde(dataset, bw_method=bw, **kwargs)
+    if op in ("kde_pdf", "kde_logpdf"):
+        m = params["m"]
+        points = rng.standard_normal((d, m)).astype(npdt)
+        stored["points"] = points
+        out = kde.logpdf(points) if op == "kde_logpdf" else kde.pdf(points)
+        return stored, [np.asarray(out)]
+    if op == "kde_integrate_gaussian":
+        gmean = rng.standard_normal(d).astype(npdt)
+        a = rng.standard_normal((d, d))
+        gcov = (a @ a.T + d * np.eye(d)).astype(npdt)
+        stored["gcov"] = gcov
+        stored["gmean"] = gmean
+        return stored, [np.asarray(kde.integrate_gaussian(gmean, gcov))]
+    if op == "kde_integrate_box_1d":
+        low = params["low"]
+        high = params["high"]
+        return stored, [np.asarray(kde.integrate_box_1d(low, high))]
+    if op == "kde_integrate_kde":
+        n2 = params["n2"]
+        dataset2 = rng.standard_normal((d, n2)).astype(npdt)
+        stored["dataset2"] = dataset2
+        kde2 = gaussian_kde(dataset2, bw_method=bw)
+        return stored, [np.asarray(kde.integrate_kde(kde2))]
+    raise SystemExit("unknown scipy_stats op " + op)
+
+
+def generate_scipy_stats_linalg(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = _gen_composed_set(
+        _scipy_stats_inputs, module, cases, False, os.path.join(base, "x64_off")
+    )
+    n_on = _gen_composed_set(
+        _scipy_stats_inputs, module, cases, True, os.path.join(base, "x64_on")
+    )
+    return n_off, n_on
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
@@ -5375,6 +5455,8 @@ def main():
         n_off, n_on = generate_scipy_cluster_vq(sys.argv[1])
     elif sys.argv[1] == "scipy_optimize":
         n_off, n_on = generate_scipy_optimize(sys.argv[1])
+    elif sys.argv[1] == "scipy_stats_linalg":
+        n_off, n_on = generate_scipy_stats_linalg(sys.argv[1])
     elif sys.argv[1] == "vectorize":
         n_off, n_on = generate_vectorize(sys.argv[1])
     elif sys.argv[1] == "spatial_transform":

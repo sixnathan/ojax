@@ -2960,6 +2960,74 @@ let random_core_suite_for set_name =
   in
   ("random_core:" ^ set_name, coverage :: case_tests)
 
+module AP2 = Ojax.Random.Philox
+module AT4 = Ojax.Random.Threefry4x32
+module ARBG = Ojax.Random.Rbg
+module AST = Ojax.Random.Stateful
+
+let alt_prng_fn op params operands : T.value list =
+  let member name = U.member name params in
+  let shape () = ia (member "shape") in
+  let size () = ia (member "size") in
+  let bw () = U.to_int (member "bit_width") in
+  let ip name = U.to_int (member name) in
+  let seq n f =
+    let rec go i acc =
+      if i = n then List.rev acc else go (i + 1) (f () :: acc)
+    in
+    go 0 []
+  in
+  match (op, operands) with
+  | "philox2x32_seed", [ s ] -> [ AP2.philox2x32_seed s ]
+  | "philox2x32_split", [ k ] -> [ AP2.philox2x32_split k (shape ()) ]
+  | "philox2x32_bits", [ k ] ->
+      [ AP2.philox2x32_random_bits k ~bit_width:(bw ()) ~shape:(shape ()) ]
+  | "philox2x32_fold_in", [ k; d ] -> [ AP2.philox2x32_fold_in k d ]
+  | "philox4x32_seed", [ s ] -> [ AP2.philox4x32_seed s ]
+  | "philox4x32_split", [ k ] -> [ AP2.philox4x32_split k (shape ()) ]
+  | "philox4x32_bits", [ k ] ->
+      [ AP2.philox4x32_random_bits k ~bit_width:(bw ()) ~shape:(shape ()) ]
+  | "philox4x32_fold_in", [ k; d ] -> [ AP2.philox4x32_fold_in k d ]
+  | "threefry4x32_seed", [ s ] -> [ AT4.threefry4x32_seed s ]
+  | "threefry4x32_split", [ k ] -> [ AT4.threefry4x32_split k (shape ()) ]
+  | "threefry4x32_bits", [ k ] ->
+      [ AT4.threefry4x32_random_bits k ~bit_width:(bw ()) ~shape:(shape ()) ]
+  | "threefry4x32_fold_in", [ k; d ] -> [ AT4.threefry4x32_fold_in k d ]
+  | "rbg_seed", [ s ] -> [ ARBG.rbg_seed s ]
+  | "rbg_split", [ k ] -> [ ARBG.rbg_split k (shape ()) ]
+  | "rbg_fold_in", [ k; d ] -> [ ARBG.rbg_fold_in k d ]
+  | "stateful_keys", [] ->
+      let g = AST.stateful_rng (ip "seed") in
+      seq (ip "n") (fun () -> AST.key g)
+  | "stateful_uniform", [] ->
+      let g = AST.stateful_rng (ip "seed") in
+      seq (ip "count") (fun () -> AST.uniform ~size:(size ()) g)
+  | "stateful_integers", [] ->
+      let g = AST.stateful_rng (ip "seed") in
+      seq (ip "count") (fun () ->
+          AST.integers ~low:(ip "low") ~high:(ip "high") ~size:(size ()) g)
+  | "stateful_split", [] ->
+      let g = AST.stateful_rng (ip "seed") in
+      [ AST.base_key (AST.split (ip "num") g) ]
+  | _ -> failwith ("alt_prng golden: unknown op " ^ op)
+
+let alt_prng_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "alt_prng") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:alt_prng_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("alt_prng:" ^ set_name, coverage :: case_tests)
+
 let nn_fn op params operands : T.value list =
   let member name = U.member name params in
   let ip name = U.to_int (member name) in
@@ -4482,6 +4550,8 @@ let () =
       prng_suite_for "x64_on";
       random_core_suite_for "x64_off";
       random_core_suite_for "x64_on";
+      alt_prng_suite_for "x64_off";
+      alt_prng_suite_for "x64_on";
       nn_suite_for "x64_off";
       nn_suite_for "x64_on";
       initializers_suite_for "x64_off";

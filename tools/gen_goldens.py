@@ -3690,6 +3690,118 @@ RANDOM_CORE_BUILDERS = {
     "multivariate_normal": rc_multivariate_normal,
 }
 
+from jax._src.random import philox2x32 as AP_P2
+from jax._src.random import philox4x32 as AP_P4
+from jax._src.random import threefry4x32 as AP_T4
+from jax._src.random import rbg as AP_RBG
+from jax._src.random import stateful_rng as AP_ST
+
+
+def _ap_seed(fn):
+    def build(params):
+        return lambda s: fn(s)
+
+    return build
+
+
+def _ap_split(fn):
+    def build(params):
+        shape = tuple(params["shape"])
+        return lambda k: fn(k, shape)
+
+    return build
+
+
+def _ap_bits(fn):
+    def build(params):
+        shape = tuple(params["shape"])
+        bw = int(params["bit_width"])
+        return lambda k: fn(k, bw, shape)
+
+    return build
+
+
+def _ap_fold_in(fn):
+    def build(params):
+        return lambda k, d: fn(k, d)
+
+    return build
+
+
+def ap_stateful_keys(params):
+    seed = int(params["seed"])
+    n = int(params["n"])
+
+    def f():
+        rng = AP_ST.stateful_rng(seed)
+        return tuple(jax.random.key_data(rng.key()) for _ in range(n))
+
+    return f
+
+
+def ap_stateful_uniform(params):
+    seed = int(params["seed"])
+    size = tuple(params["size"])
+    count = int(params["count"])
+
+    def f():
+        rng = AP_ST.stateful_rng(seed)
+        return tuple(rng.uniform(size=size, dtype=jnp.float32) for _ in range(count))
+
+    return f
+
+
+def ap_stateful_integers(params):
+    seed = int(params["seed"])
+    low = int(params["low"])
+    high = int(params["high"])
+    size = tuple(params["size"])
+    count = int(params["count"])
+
+    def f():
+        rng = AP_ST.stateful_rng(seed)
+        return tuple(
+            rng.integers(low, high, size=size, dtype=jnp.int32)
+            for _ in range(count)
+        )
+
+    return f
+
+
+def ap_stateful_split(params):
+    seed = int(params["seed"])
+    num = int(params["num"])
+
+    def f():
+        rng = AP_ST.stateful_rng(seed)
+        sp = rng.split(num)
+        return (jax.random.key_data(sp._base_key),)
+
+    return f
+
+
+ALT_PRNG_BUILDERS = {
+    "philox2x32_seed": _ap_seed(AP_P2.philox2x32_seed),
+    "philox2x32_split": _ap_split(AP_P2.philox2x32_split),
+    "philox2x32_bits": _ap_bits(AP_P2.philox2x32_random_bits),
+    "philox2x32_fold_in": _ap_fold_in(AP_P2.philox2x32_fold_in),
+    "philox4x32_seed": _ap_seed(AP_P4.philox4x32_seed),
+    "philox4x32_split": _ap_split(AP_P4.philox4x32_split),
+    "philox4x32_bits": _ap_bits(AP_P4.philox4x32_random_bits),
+    "philox4x32_fold_in": _ap_fold_in(AP_P4.philox4x32_fold_in),
+    "threefry4x32_seed": _ap_seed(AP_T4.threefry4x32_seed),
+    "threefry4x32_split": _ap_split(AP_T4.threefry4x32_split),
+    "threefry4x32_bits": _ap_bits(AP_T4.threefry4x32_random_bits),
+    "threefry4x32_fold_in": _ap_fold_in(AP_T4.threefry4x32_fold_in),
+    "rbg_seed": _ap_seed(AP_RBG._rbg_seed),
+    "rbg_split": _ap_split(AP_RBG._rbg_split),
+    "rbg_fold_in": _ap_fold_in(AP_RBG._rbg_fold_in),
+    "stateful_keys": ap_stateful_keys,
+    "stateful_uniform": ap_stateful_uniform,
+    "stateful_integers": ap_stateful_integers,
+    "stateful_split": ap_stateful_split,
+}
+
 import jax.nn as jnn
 
 
@@ -4277,6 +4389,17 @@ def run_case(c, seed):
             for i, a in enumerate(c["args"])
         ]
         out = jax.jit(PRNG_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
+    if c["primitive"].startswith("alt_prng.") and c["op"] in ALT_PRNG_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = ALT_PRNG_BUILDERS[c["op"]](c["params"])(*inputs)
         if isinstance(out, (tuple, list)):
             outs = [np.asarray(o) for o in out]
         else:

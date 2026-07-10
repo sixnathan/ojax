@@ -221,6 +221,9 @@ and primitive =
   | Random_bits of { bit_width : int; shape : int array }
   | Random_wrap
   | Random_unwrap
+  | Philox2x32
+  | Philox4x32
+  | Threefry4x32
   | Cholesky
   | Householder_product
   | Lu

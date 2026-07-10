@@ -686,7 +686,8 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-  | Random_bits _ | Random_wrap | Random_unwrap ->
+  | Random_bits _ | Random_wrap | Random_unwrap | Philox2x32 | Philox4x32
+  | Threefry4x32 ->
       failwith "ad: primitive has no jvp rule in M1"
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
@@ -1342,7 +1343,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Igamma_grad_a | Igammac | Lgamma | Polygamma | Regularized_incomplete_beta
   | Zeta | Platform_index _ | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
-  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | Xla_call _ ->
+  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | Philox2x32
+  | Philox4x32 | Threefry4x32 | Xla_call _ ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
   | Scan _ -> failwith "ad: scan transpose is a standing M2 limitation"
   | While _ ->

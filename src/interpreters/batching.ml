@@ -653,7 +653,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       failwith "batching: vmap of platform_index not supported"
   | Cond _ -> failwith "batching: cond handled by batch_process_primitive"
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
-  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
+  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | Philox2x32
+  | Philox4x32 | Threefry4x32 ->
       failwith "batching: vmap of prng primitive not supported"
   | While _ ->
       failwith

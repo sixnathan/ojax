@@ -1942,6 +1942,16 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
         "Stablehlo.Emit: Random_unwrap lowers to a sdy.sharding_constraint \
          over the physical key array; sharding machinery is out of scope \
          (STRIP-ON-PORT), non-representable"
+  | Philox2x32 | Philox4x32 ->
+      failwith
+        "Stablehlo.Emit: philox counter prng lowers via mlir.lower_fun into a \
+         mul/mulhi/xor round decomposition (many stablehlo ops); \
+         non-single-op, end-to-end deferred to the PJRT execution rows"
+  | Threefry4x32 ->
+      failwith
+        "Stablehlo.Emit: threefry4x32 lowers via mlir.lower_fun into a \
+         20-round add/rotate/xor decomposition (many stablehlo ops); \
+         non-single-op, end-to-end deferred to the PJRT execution rows"
   | Cond { t; f } -> emit_cond ctx eqn in_ids f t
   | Reduce { jaxpr; dimensions } ->
       emit_reduce_general ctx eqn in_ids jaxpr dimensions

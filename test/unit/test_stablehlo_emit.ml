@@ -48,6 +48,16 @@ let binary prim dtype =
          match args with [ x; y ] -> C.bind prim [ x; y ] | _ -> assert false)
     : unit -> T.closed_jaxpr)
 
+let ternary prim dtype =
+  (fun () ->
+     J.make_jaxpr
+       [ av [| 3 |] dtype; av [| 3 |] dtype; av [| 3 |] dtype ]
+       (fun args ->
+         match args with
+         | [ a; b; c ] -> C.bind prim [ a; b; c ]
+         | _ -> assert false)
+    : unit -> T.closed_jaxpr)
+
 let builders : (string * (unit -> T.closed_jaxpr)) list =
   [
     ("identity_vec", fun () -> J.make_jaxpr [ av [| 3 |] D.F32 ] (fun a -> a));
@@ -148,6 +158,39 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
     ("binary_shift_right_logical", binary T.Shift_right_logical D.I32);
     ("binary_sub", binary T.Sub D.F32);
     ("binary_xor", binary T.Xor D.I32);
+    ("compare_eq", binary T.Eq D.F32);
+    ("compare_ne", binary T.Ne D.F32);
+    ("compare_ge", binary T.Ge D.F32);
+    ("compare_gt", binary T.Gt D.F32);
+    ("compare_le", binary T.Le D.F32);
+    ("compare_lt", binary T.Lt D.F32);
+    ("compare_eq_i32", binary T.Eq D.I32);
+    ("compare_eq_bool", binary T.Eq D.Bool);
+    ("compare_eq_to", binary T.Eq_to D.F32);
+    ("compare_le_to", binary T.Le_to D.F32);
+    ("compare_lt_to", binary T.Lt_to D.F32);
+    ("clamp", ternary T.Clamp D.F32);
+    ( "select_n2",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 3 |] D.Bool; av [| 3 |] D.F32; av [| 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ p; a; b ] -> C.bind T.Select_n [ p; a; b ]
+            | _ -> assert false) );
+    ( "select_n3",
+      fun () ->
+        J.make_jaxpr
+          [
+            av [| 3 |] D.I32;
+            av [| 3 |] D.F32;
+            av [| 3 |] D.F32;
+            av [| 3 |] D.F32;
+          ]
+          (fun args ->
+            match args with
+            | [ p; a; b; c ] -> C.bind T.Select_n [ p; a; b; c ]
+            | _ -> assert false) );
   ]
 
 let check_case name build () =

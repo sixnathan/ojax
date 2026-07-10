@@ -240,6 +240,103 @@ let emit_integer_pow ctx (eqn : eqn) in_ids y =
   in
   Hashtbl.replace ctx.ids out.vid result
 
+let compare_type_of dtype total_order =
+  match dtype with
+  | Dtype.F32 | Dtype.F64 -> if total_order then "TOTALORDER" else "FLOAT"
+  | Dtype.I32 | Dtype.I64 -> "SIGNED"
+  | Dtype.Bool | Dtype.Uint32 -> "UNSIGNED"
+
+let emit_compare ctx (eqn : eqn) in_ids dir total_order =
+  let a, b = pair in_ids in
+  let inty = atom_aval (List.hd eqn.inputs) in
+  let ctype = compare_type_of inty.dtype total_order in
+  let tystr = Ir.tensor_type_of_aval inty in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.compare %s, %s, %s, %s : (%s, %s) -> %s\n" (name n)
+       dir (name a) (name b) ctype tystr tystr
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_clamp ctx (eqn : eqn) in_ids =
+  let mn, op, mx =
+    match in_ids with
+    | [ a; b; c ] -> (a, b, c)
+    | _ -> invalid_arg "Stablehlo.Emit: clamp arity"
+  in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.clamp %s, %s, %s : %s\n" (name n)
+       (name mn) (name op) (name mx)
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_select_n ctx (eqn : eqn) in_ids =
+  let which, cases =
+    match in_ids with
+    | w :: cs -> (w, cs)
+    | [] -> invalid_arg "Stablehlo.Emit: select_n arity"
+  in
+  let out = sole eqn.outs in
+  let vty = Ir.tensor_type_of_aval out.vaval in
+  let which_aval = atom_aval (List.hd eqn.inputs) in
+  let wty = Ir.tensor_type_of_aval which_aval in
+  let bty = Ir.tensor_type Dtype.Bool which_aval.shape in
+  let emit_select pred a b =
+    let n = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.select %s, %s, %s : %s, %s\n" (name n)
+         (name pred) (name a) (name b) bty vty);
+    n
+  in
+  let result =
+    match which_aval.dtype with
+    | Dtype.Bool -> (
+        match cases with
+        | [ c ] -> c
+        | [ c0; c1 ] -> emit_select which c1 c0
+        | _ -> invalid_arg "Stablehlo.Emit: bool select_n arity")
+    | dt ->
+        let ctype =
+          match dt with Dtype.I32 | Dtype.I64 -> "SIGNED" | _ -> "UNSIGNED"
+        in
+        let sty = Ir.tensor_type dt [||] in
+        let rec sel offset cs =
+          match cs with
+          | [ c ] -> c
+          | _ ->
+              let mid = List.length cs / 2 in
+              let cid = fresh ctx in
+              Buffer.add_string ctx.buf
+                (Printf.sprintf "    %s = stablehlo.constant %s : %s\n"
+                   (name cid)
+                   (Ir.dense (Ir.int_literal (Int64.of_int (offset + mid))))
+                   sty);
+              let bid = fresh ctx in
+              Buffer.add_string ctx.buf
+                (Printf.sprintf
+                   "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) \
+                    -> %s\n"
+                   (name bid) (name cid) sty wty);
+              let pid = fresh ctx in
+              Buffer.add_string ctx.buf
+                (Printf.sprintf
+                   "    %s = stablehlo.compare LT, %s, %s, %s : (%s, %s) -> %s\n"
+                   (name pid) (name which) (name bid) ctype wty wty bty);
+              let left, right =
+                match Util.split_list cs [ mid ] with
+                | [ l; r ] -> (l, r)
+                | _ -> invalid_arg "Stablehlo.Emit: select split"
+              in
+              let lv = sel offset left in
+              let rv = sel (offset + mid) right in
+              emit_select pid lv rv
+        in
+        sel 0 cases
+  in
+  Hashtbl.replace ctx.ids out.vid result
+
 let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -299,9 +396,20 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Mulhi -> emit_chlo_binary ctx eqn in_ids "mulhi"
   | Nextafter -> emit_chlo_binary ctx eqn in_ids "next_after"
   | Complex -> failwith "Stablehlo.Emit: Complex requires complex dtype (M5)"
+  | Eq -> emit_compare ctx eqn in_ids "EQ" false
+  | Ne -> emit_compare ctx eqn in_ids "NE" false
+  | Ge -> emit_compare ctx eqn in_ids "GE" false
+  | Gt -> emit_compare ctx eqn in_ids "GT" false
+  | Le -> emit_compare ctx eqn in_ids "LE" false
+  | Lt -> emit_compare ctx eqn in_ids "LT" false
+  | Eq_to -> emit_compare ctx eqn in_ids "EQ" true
+  | Le_to -> emit_compare ctx eqn in_ids "LE" true
+  | Lt_to -> emit_compare ctx eqn in_ids "LT" true
+  | Clamp -> emit_clamp ctx eqn in_ids
+  | Select_n -> emit_select_n ctx eqn in_ids
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 79-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 80-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

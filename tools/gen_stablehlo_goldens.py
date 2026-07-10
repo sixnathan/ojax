@@ -20,6 +20,10 @@ def i32(*shape):
     return jnp.zeros(shape, jnp.int32)
 
 
+def bl(*shape):
+    return jnp.zeros(shape, jnp.bool_)
+
+
 CASES = [
     ("identity_vec", lambda x: x, [f32(3)]),
     ("identity_scalar", lambda x: x, [f32()]),
@@ -90,6 +94,24 @@ CASES = [
     ("binary_shift_right_logical", lax.shift_right_logical, [i32(3), i32(3)]),
     ("binary_sub", lax.sub, [f32(3), f32(3)]),
     ("binary_xor", lax.bitwise_xor, [i32(3), i32(3)]),
+    ("compare_eq", lax.eq, [f32(3), f32(3)]),
+    ("compare_ne", lax.ne, [f32(3), f32(3)]),
+    ("compare_ge", lax.ge, [f32(3), f32(3)]),
+    ("compare_gt", lax.gt, [f32(3), f32(3)]),
+    ("compare_le", lax.le, [f32(3), f32(3)]),
+    ("compare_lt", lax.lt, [f32(3), f32(3)]),
+    ("compare_eq_i32", lax.eq, [i32(3), i32(3)]),
+    ("compare_eq_bool", lax.eq, [bl(3), bl(3)]),
+    ("compare_eq_to", lambda a, b: _lax.eq_to_p.bind(a, b), [f32(3), f32(3)]),
+    ("compare_le_to", lambda a, b: _lax.le_to_p.bind(a, b), [f32(3), f32(3)]),
+    ("compare_lt_to", lambda a, b: _lax.lt_to_p.bind(a, b), [f32(3), f32(3)]),
+    ("clamp", lax.clamp, [f32(3), f32(3), f32(3)]),
+    ("select_n2", lambda p, x, y: lax.select_n(p, x, y), [bl(3), f32(3), f32(3)]),
+    (
+        "select_n3",
+        lambda p, x, y, z: lax.select_n(p, x, y, z),
+        [i32(3), f32(3), f32(3), f32(3)],
+    ),
 ]
 
 

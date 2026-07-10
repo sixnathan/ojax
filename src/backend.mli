@@ -15,3 +15,5 @@ module Xla :
   S with type buffer = Pjrt.Buffer.t and type compiled = Pjrt.Executable.t
 
 val executor : Types.closed_jaxpr -> Types.value list -> Types.value list
+val of_host_value : Types.value -> Types.value
+val to_host_value : Types.value -> Types.value

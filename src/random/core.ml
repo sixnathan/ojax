@@ -11,6 +11,7 @@ let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 let concrete = function
   | Concrete nd -> nd
   | Tracer _ -> failwith "random/core: sampler on a tracer not supported in M3"
+  | Device _ -> failwith "random/core: sampler on a tracer not supported in M3"
 
 let unravel shape i =
   let n = Array.length shape in

@@ -11,6 +11,7 @@ let cval dtype shape xs = T.Concrete (nd dtype shape xs)
 let concrete_of = function
   | T.Concrete a -> a
   | T.Tracer _ -> failwith "not concrete"
+  | T.Device _ -> failwith "not concrete"
 
 let out_floats v =
   let a = concrete_of v in

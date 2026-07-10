@@ -13,6 +13,9 @@ val jit :
   value Tree_util.t list ->
   value Tree_util.t
 
+val device_put : value Tree_util.t -> value Tree_util.t
+val to_host : value Tree_util.t -> value Tree_util.t
+
 val jvp :
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->

@@ -1,0 +1,4 @@
+(executable
+ (name matmul_chain)
+ (modules matmul_chain)
+ (libraries ojax unix))

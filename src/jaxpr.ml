@@ -88,6 +88,7 @@ let new_arg builder trace aval =
 let as_tracer = function
   | Tracer t -> t
   | Concrete _ -> invalid_arg "jaxpr: expected a JaxprTracer"
+  | Device _ -> invalid_arg "jaxpr: expected a JaxprTracer"
 
 let get_or_make_const_tracer trace v =
   let builder = builder_of trace in
@@ -144,7 +145,8 @@ let inline_literals (jx : jaxpr) (consts : value list) : jaxpr * Ndarray.t list
     (fun (b : var) v ->
       match v with
       | Concrete nd -> Hashtbl.replace literals b.vid (A_lit nd)
-      | Tracer _ -> invalid_arg "inline_literals: non-concrete literal")
+      | Tracer _ -> invalid_arg "inline_literals: non-concrete literal"
+      | Device _ -> invalid_arg "inline_literals: non-concrete literal")
     lit_binders lit_vals;
   let subst = function
     | A_var v as a -> (
@@ -168,7 +170,8 @@ let inline_literals (jx : jaxpr) (consts : value list) : jaxpr * Ndarray.t list
     List.map
       (function
         | Concrete nd -> nd
-        | Tracer _ -> invalid_arg "inline_literals: non-concrete const")
+        | Tracer _ -> invalid_arg "inline_literals: non-concrete const"
+        | Device _ -> invalid_arg "inline_literals: non-concrete const")
       new_consts
   in
   (new_jaxpr, const_nds)

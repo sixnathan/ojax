@@ -265,6 +265,36 @@ let run_case c () =
       ~expected ~actual
   end
 
+let host_single label c in_nds =
+  match Backend.executor (J.make_jaxpr c.args (builder c.case_id)) in_nds with
+  | [ T.Concrete nd ] -> nd
+  | _ -> Alcotest.fail (c.case_id ^ ": " ^ label ^ " expected single concrete")
+
+let run_resident c () =
+  if not plugin_present then ()
+  else begin
+    let inputs =
+      Npz.read (Filename.concat e2e_dir ("inputs/" ^ c.case_id ^ ".npz"))
+    in
+    let inputs = List.sort (fun (a, _) (b, _) -> String.compare a b) inputs in
+    let in_nds = List.map (fun (_, a) -> ndarray_of_npz a) inputs in
+    let host_out =
+      host_single "host" c (List.map (fun nd -> T.Concrete nd) in_nds)
+    in
+    let dev_in =
+      List.map (fun nd -> Backend.of_host_value (T.Concrete nd)) in_nds
+    in
+    let cj = J.make_jaxpr c.args (builder c.case_id) in
+    let dev_out =
+      match List.map Backend.to_host_value (Backend.executor cj dev_in) with
+      | [ T.Concrete nd ] -> nd
+      | _ -> Alcotest.fail (c.case_id ^ ": resident expected single concrete")
+    in
+    Compare.check ~name:(c.case_id ^ ":resident") ~compare:c.compare
+      ~atol:c.atol ~rtol:c.rtol ~expected:(npz_of_ndarray host_out)
+      ~actual:(npz_of_ndarray dev_out)
+  end
+
 let leak_smoke cases () =
   if not plugin_present then ()
   else begin
@@ -297,9 +327,15 @@ let () =
   let corpus =
     List.map (fun c -> Alcotest.test_case c.case_id `Quick (run_case c)) cases
   in
+  let resident =
+    List.map
+      (fun c -> Alcotest.test_case c.case_id `Quick (run_resident c))
+      cases
+  in
   Alcotest.run "e2e"
     [
       ("corpus", corpus);
+      ("resident", resident);
       ( "leak",
         [ Alcotest.test_case "matmul_add 1000x" `Slow (leak_smoke cases) ] );
     ]

@@ -1,6 +1,10 @@
 type aval = { shape : int array; dtype : Dtype.t; weak_type : bool }
 
-type value = Concrete of Ndarray.t | Tracer of tracer
+type value =
+  | Concrete of Ndarray.t
+  | Tracer of tracer
+  | Device of Pjrt.Buffer.t
+
 and tracer = { id : int; trace : trace; aval : aval; payload : payload }
 
 and payload =

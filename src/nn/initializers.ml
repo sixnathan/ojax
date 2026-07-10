@@ -15,6 +15,8 @@ let concrete = function
   | Concrete nd -> nd
   | Tracer _ ->
       failwith "nn/initializers: initializer on a tracer not supported"
+  | Device _ ->
+      failwith "nn/initializers: initializer on a tracer not supported"
 
 let const shape x =
   Concrete

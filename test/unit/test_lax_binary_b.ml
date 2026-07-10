@@ -23,11 +23,13 @@ let out_floats v =
       in
       arr
   | T.Tracer _ -> Alcotest.fail "not concrete"
+  | T.Device _ -> Alcotest.fail "not concrete"
 
 let get0 v =
   match v with
   | T.Concrete a -> Nd.get_f a [| 0 |]
   | T.Tracer _ -> Alcotest.fail "not concrete"
+  | T.Device _ -> Alcotest.fail "not concrete"
 
 let close = Alcotest.(check (float 1e-6))
 let flist = Alcotest.(check (list (float 1e-6)))

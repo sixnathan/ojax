@@ -21,6 +21,7 @@ let read v =
       in
       a
   | T.Tracer _ -> failwith "expected concrete"
+  | T.Device _ -> failwith "expected concrete"
 
 let shape_of v = (Ojax.Core.get_aval v).T.shape
 let farr = Alcotest.(array (float 1e-6))

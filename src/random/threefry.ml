@@ -204,6 +204,7 @@ let threefry_seed seed =
   match seed with
   | Concrete nd -> Concrete (seed_nd nd)
   | Tracer _ -> failwith "threefry: seed of a tracer not supported in M3"
+  | Device _ -> failwith "threefry: seed of a tracer not supported in M3"
 
 let threefry_2x32 keypair count =
   let key1 = scalar_at keypair 0 and key2 = scalar_at keypair 1 in

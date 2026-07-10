@@ -80,7 +80,8 @@ let find_top_trace args =
       (fun acc v ->
         match v with
         | Tracer t -> if t.trace.level > acc.level then t.trace else acc
-        | Concrete _ -> acc)
+        | Concrete _ -> acc
+        | Device _ -> acc)
       eval_trace args
   in
   match !dynamic_trace with Some dt when dt.level > top.level -> dt | _ -> top
@@ -88,6 +89,8 @@ let find_top_trace args =
 let full_raise trace v =
   match v with
   | Concrete _ -> (interpreter_for trace).i_pure trace v
+  | Device b ->
+      (interpreter_for trace).i_pure trace (Concrete (Pjrt.Buffer.to_host b))
   | Tracer t ->
       if t.trace == trace then v
       else if t.trace.level < trace.level then
@@ -100,6 +103,7 @@ let full_raise trace v =
 let full_lower v =
   match v with
   | Concrete _ -> v
+  | Device _ -> v
   | Tracer t -> (interpreter_for t.trace).i_full_lower v
 
 let process_primitive trace prim args =
@@ -126,9 +130,16 @@ let get_aval = function
   | Concrete a ->
       { shape = Ndarray.shape a; dtype = Ndarray.dtype a; weak_type = false }
   | Tracer t -> t.aval
+  | Device b ->
+      {
+        shape = Pjrt.Buffer.dimensions b;
+        dtype = Pjrt.Buffer.element_type b;
+        weak_type = false;
+      }
 
 let as_concrete = function
   | Concrete a -> a
+  | Device b -> Pjrt.Buffer.to_host b
   | Tracer _ -> failwith "eval: expected a concrete value"
 
 let eval_process_primitive _trace prim args =

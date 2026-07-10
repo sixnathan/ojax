@@ -26,16 +26,19 @@ let out_floats v =
       in
       arr
   | T.Tracer _ -> Alcotest.fail "not concrete"
+  | T.Device _ -> Alcotest.fail "not concrete"
 
 let shape_of v =
   match v with
   | T.Concrete a -> Nd.shape a
   | T.Tracer _ -> Alcotest.fail "not concrete"
+  | T.Device _ -> Alcotest.fail "not concrete"
 
 let dtype_of v =
   match v with
   | T.Concrete a -> Nd.dtype a
   | T.Tracer _ -> Alcotest.fail "not concrete"
+  | T.Device _ -> Alcotest.fail "not concrete"
 
 let farr = Alcotest.(array (float 1e-6))
 let iarr = Alcotest.(array int)

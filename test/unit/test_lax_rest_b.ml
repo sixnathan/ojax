@@ -24,6 +24,7 @@ let out_floats v =
       in
       arr
   | T.Tracer _ -> Alcotest.fail "not concrete"
+  | T.Device _ -> Alcotest.fail "not concrete"
 
 let approx = Alcotest.(float 1e-6)
 let arr = Alcotest.(array approx)

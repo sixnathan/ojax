@@ -1233,6 +1233,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
             | Concrete nd -> nd
             | Tracer _ ->
                 failwith "ad: cond transpose needs a concrete predicate"
+            | Device _ ->
+                failwith "ad: cond transpose needs a concrete predicate"
           in
           let branch = if Ndarray.get_f pred_nd [||] <> 0.0 then t else f in
           let const_tvals =

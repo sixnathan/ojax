@@ -20,6 +20,7 @@ let out_floats v =
       in
       arr
   | T.Tracer _ -> Alcotest.fail "not concrete"
+  | T.Device _ -> Alcotest.fail "not concrete"
 
 let bind1 prim a =
   match C.bind prim [ a ] with [ r ] -> r | _ -> Alcotest.fail "arity"

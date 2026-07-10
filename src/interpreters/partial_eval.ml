@@ -21,6 +21,7 @@ let pe_pval (t : tracer) =
 let as_tracer = function
   | Tracer t -> t
   | Concrete _ -> invalid_arg "partial_eval: expected a PartialEval tracer"
+  | Device _ -> invalid_arg "partial_eval: expected a PartialEval tracer"
 
 let pure trace v = Tracer (new_pe_tracer trace (partial_val_known v) None)
 
@@ -77,6 +78,7 @@ let full_lower_pe v =
           match pval.pv_const with Some c -> Core.full_lower c | None -> v)
       | _ -> v)
   | Concrete _ -> v
+  | Device _ -> v
 
 let interpreter : Core.interpreter =
   {

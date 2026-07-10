@@ -10,6 +10,7 @@ let read nd = Nd.get_f nd [| 0 |]
 let concrete_of = function
   | T.Concrete a -> a
   | T.Tracer _ -> failwith "not concrete"
+  | T.Device _ -> failwith "not concrete"
 
 let zeros_like_aval_shape () =
   let av = { T.shape = [| 2; 3 |]; dtype = D.F32; weak_type = false } in

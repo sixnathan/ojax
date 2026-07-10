@@ -19,6 +19,8 @@ let concrete_max_index v =
       int_of_float m
   | T.Tracer _ ->
       invalid_arg "segment: num_segments must be static for traced segment_ids"
+  | T.Device _ ->
+      invalid_arg "segment: num_segments must be static for traced segment_ids"
 
 let identity_sum = 0.0
 let identity_prod = 1.0

@@ -123,6 +123,12 @@ let jit (f : value Tree.t list -> value Tree.t) :
     in
     Tree.tree_unflatten out_tree ((compile cj) flat_args)
 
+let device_put (x : value Tree.t) : value Tree.t =
+  Tree.tree_map Backend.of_host_value x
+
+let to_host (x : value Tree.t) : value Tree.t =
+  Tree.tree_map Backend.to_host_value x
+
 let jvp (f : value Tree.t list -> value Tree.t) (primals : value Tree.t list)
     (tangents : value Tree.t list) : value Tree.t * value Tree.t =
   let pf, in_tree = flatten_args primals in

@@ -20,6 +20,7 @@ module Interpreter = struct
 
   let concrete = function
     | Concrete nd -> nd
+    | Device b -> Pjrt.Buffer.to_host b
     | Tracer _ -> failwith "Backend.Interpreter: unexpected tracer result"
 
   let execute cj bufs =
@@ -66,27 +67,43 @@ let use_xla =
               \"xla\")"
              other))
 
-let concrete_arg = function
-  | Concrete nd -> nd
+let is_device = function Device _ -> true | Concrete _ | Tracer _ -> false
+let is_hostable = function Concrete _ | Device _ -> true | Tracer _ -> false
+
+let to_input = function
+  | Device b -> (b, false)
+  | Concrete nd -> (Xla.of_host nd, true)
   | Tracer _ -> failwith "Backend: xla execution requires concrete arguments"
 
-let all_concrete =
-  List.for_all (function Concrete _ -> true | Tracer _ -> false)
-
-let xla_run exec args =
-  let bufs = List.map (fun v -> Xla.of_host (concrete_arg v)) args in
+let xla_run exec args resident =
+  let inputs = List.map to_input args in
   Fun.protect
-    ~finally:(fun () -> List.iter Pjrt.Buffer.destroy bufs)
+    ~finally:(fun () ->
+      List.iter (fun (b, owned) -> if owned then Pjrt.Buffer.destroy b) inputs)
     (fun () ->
-      let outs = Xla.execute exec bufs in
-      Fun.protect
-        ~finally:(fun () -> List.iter Pjrt.Buffer.destroy outs)
-        (fun () -> List.map (fun b -> Concrete (Xla.to_host b)) outs))
+      let outs = Xla.execute exec (List.map fst inputs) in
+      if resident then List.map (fun b -> Device b) outs
+      else
+        Fun.protect
+          ~finally:(fun () -> List.iter Pjrt.Buffer.destroy outs)
+          (fun () -> List.map (fun b -> Concrete (Xla.to_host b)) outs))
 
 let executor (cj : closed_jaxpr) : value list -> value list =
   if Lazy.force use_xla then
     let exec = lazy (Xla.compile cj) in
     fun args ->
-      if all_concrete args then xla_run (Lazy.force exec) args
+      if List.for_all is_hostable args then
+        xla_run (Lazy.force exec) args (List.exists is_device args)
       else Jaxpr.eval_closed_jaxpr cj args
   else fun args -> Jaxpr.eval_closed_jaxpr cj args
+
+let of_host_value v =
+  if Lazy.force use_xla then
+    match v with
+    | Concrete nd -> Device (Xla.of_host nd)
+    | Device _ | Tracer _ -> v
+  else v
+
+let to_host_value = function
+  | Device b -> Concrete (Pjrt.Buffer.to_host b)
+  | (Concrete _ | Tracer _) as v -> v

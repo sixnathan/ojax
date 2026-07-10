@@ -826,6 +826,7 @@ let full_lower_batch (v : value) : value =
       | Batch _ -> v
       | _ -> v)
   | Concrete _ -> v
+  | Device _ -> v
 
 let interpreter : Core.interpreter =
   {

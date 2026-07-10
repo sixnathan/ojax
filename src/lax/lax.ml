@@ -633,7 +633,8 @@ let composite_impl (cj : closed_jaxpr) inputs =
   List.map
     (function
       | Concrete nd -> nd
-      | Tracer _ -> failwith "lax: composite reducer produced a tracer")
+      | Tracer _ -> failwith "lax: composite reducer produced a tracer"
+      | Device _ -> failwith "lax: composite reducer produced a tracer")
     outs
 
 let reduce_impl (cj : closed_jaxpr) dimensions operands inits =
@@ -654,6 +655,7 @@ let reduce_impl (cj : closed_jaxpr) dimensions operands inits =
   let as_nd = function
     | Concrete nd -> nd
     | Tracer _ -> failwith "lax: reduce reducer produced a tracer"
+    | Device _ -> failwith "lax: reduce reducer produced a tracer"
   in
   for flat = 0 to Array.length src0 - 1 do
     let oidx = Utils.decode flat os in
@@ -1167,7 +1169,8 @@ let impl prim inputs =
           List.map
             (function
               | Concrete nd -> nd
-              | Tracer _ -> failwith "lax: cond branch produced a tracer")
+              | Tracer _ -> failwith "lax: cond branch produced a tracer"
+              | Device _ -> failwith "lax: cond branch produced a tracer")
             outs
       | [] -> failwith "lax: cond expects a predicate")
   | Scan { length; reverse; num_carry; jaxpr } ->
@@ -1175,13 +1178,15 @@ let impl prim inputs =
       Control_flow.Loops.scan_impl ~length ~reverse ~num_carry jaxpr inputs_v
       |> List.map (function
         | Concrete nd -> nd
-        | Tracer _ -> failwith "lax: scan produced a tracer")
+        | Tracer _ -> failwith "lax: scan produced a tracer"
+        | Device _ -> failwith "lax: scan produced a tracer")
   | While { cond; body } ->
       let inputs_v = List.map (fun nd -> Concrete nd) inputs in
       Control_flow.Loops.while_impl cond body inputs_v
       |> List.map (function
         | Concrete nd -> nd
-        | Tracer _ -> failwith "lax: while produced a tracer")
+        | Tracer _ -> failwith "lax: while produced a tracer"
+        | Device _ -> failwith "lax: while produced a tracer")
   | Cumsum { axis; reverse } ->
       un (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:( +. )) inputs
   | Cumprod { axis; reverse } ->
@@ -1204,7 +1209,8 @@ let impl prim inputs =
       Control_flow.Solves.solve_impl solve inputs_v
       |> List.map (function
         | Concrete nd -> nd
-        | Tracer _ -> failwith "lax: custom_linear_solve produced a tracer")
+        | Tracer _ -> failwith "lax: custom_linear_solve produced a tracer"
+        | Device _ -> failwith "lax: custom_linear_solve produced a tracer")
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "lax: prng primitive handled by the random module"

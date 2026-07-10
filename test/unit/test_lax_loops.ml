@@ -25,6 +25,7 @@ let read v =
       in
       a
   | T.Tracer _ -> failwith "expected concrete"
+  | T.Device _ -> failwith "expected concrete"
 
 let shape_of v = match v with T.Concrete nd -> Nd.shape nd | _ -> [||]
 

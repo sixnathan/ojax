@@ -504,6 +504,7 @@ let prim_of op params : T.primitive =
 let concrete = function
   | T.Concrete n -> n
   | T.Tracer _ -> failwith "lax golden: expected concrete result"
+  | T.Device _ -> failwith "lax golden: expected concrete result"
 
 let lax_check_case ~set_dir ~x64 c () =
   let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in

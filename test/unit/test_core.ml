@@ -9,6 +9,7 @@ let read nd = Nd.get_f nd [| 0 |]
 let concrete_of = function
   | T.Concrete a -> a
   | T.Tracer _ -> failwith "not concrete"
+  | T.Device _ -> failwith "not concrete"
 
 let install_impl () =
   C.rules.impl <-

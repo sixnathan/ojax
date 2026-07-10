@@ -23,6 +23,7 @@ let read v =
       in
       a
   | T.Tracer _ -> failwith "expected concrete"
+  | T.Device _ -> failwith "expected concrete"
 
 let approx name a b =
   Array.iter2

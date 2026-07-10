@@ -36,5 +36,6 @@
   test_api
   test_numpy_lax_numpy
   test_numpy_reductions
-  test_numpy_indexing)
+  test_numpy_indexing
+  test_pjrt_discover)
  (libraries ojax alcotest))

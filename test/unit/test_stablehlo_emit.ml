@@ -76,6 +76,23 @@ let sdn : T.scatter_dims =
     s_scatter_indices_batching_dims = [||];
   }
 
+let unary5 prim dtype =
+  (fun () ->
+     J.make_jaxpr
+       [ av [| 5 |] dtype ]
+       (fun args ->
+         match args with [ x ] -> C.bind prim [ x ] | _ -> assert false)
+    : unit -> T.closed_jaxpr)
+
+let window1 : T.window_dims =
+  {
+    window_dimensions = [| 2 |];
+    window_strides = [| 1 |];
+    w_padding = [| (0, 0) |];
+    base_dilation = [| 1 |];
+    window_dilation = [| 1 |];
+  }
+
 let scatter_case prim () =
   J.make_jaxpr
     [ av [| 5; 3 |] D.F32; av [| 2; 1 |] D.I32; av [| 2; 3 |] D.F32 ]
@@ -427,6 +444,100 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
         (T.Scatter_mul { dimension_numbers = sdn; unique_indices = false }) );
     ("scatter_min", scatter_case (T.Scatter_min { dimension_numbers = sdn }));
     ("scatter_max", scatter_case (T.Scatter_max { dimension_numbers = sdn }));
+    ( "dot_general",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 2; 3 |] D.F32; av [| 3; 4 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ a; b ] ->
+                C.bind
+                  (T.Dot_general
+                     {
+                       lhs_contract = [| 1 |];
+                       rhs_contract = [| 0 |];
+                       lhs_batch = [||];
+                       rhs_batch = [||];
+                     })
+                  [ a; b ]
+            | _ -> assert false) );
+    ( "dot_general_batch",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 2; 3; 4 |] D.F32; av [| 2; 4; 5 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ a; b ] ->
+                C.bind
+                  (T.Dot_general
+                     {
+                       lhs_contract = [| 2 |];
+                       rhs_contract = [| 1 |];
+                       lhs_batch = [| 0 |];
+                       rhs_batch = [| 0 |];
+                     })
+                  [ a; b ]
+            | _ -> assert false) );
+    ( "conv",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 1; 1; 5 |] D.F32; av [| 1; 1; 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ l; r ] ->
+                C.bind
+                  (T.Conv_general_dilated
+                     {
+                       window_strides = [| 1 |];
+                       padding = [| (0, 0) |];
+                       lhs_dilation = [| 1 |];
+                       rhs_dilation = [| 1 |];
+                       dimension_numbers =
+                         {
+                           lhs_spec = [| 0; 1; 2 |];
+                           rhs_spec = [| 0; 1; 2 |];
+                           out_spec = [| 0; 1; 2 |];
+                         };
+                       feature_group_count = 1;
+                       batch_group_count = 1;
+                     })
+                  [ l; r ]
+            | _ -> assert false) );
+    ("reduce_window_sum", unary5 (T.Reduce_window_sum window1) D.F32);
+    ("reduce_window_max", unary5 (T.Reduce_window_max window1) D.F32);
+    ("reduce_window_min", unary5 (T.Reduce_window_min window1) D.F32);
+    ( "select_and_scatter_add",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 4 |] D.F32; av [| 5 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ s; o ] ->
+                C.bind
+                  (T.Select_and_scatter_add { select = T.Wge; window = window1 })
+                  [ s; o ]
+            | _ -> assert false) );
+    ( "select_and_gather_add",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 5 |] D.F32; av [| 5 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ t; o ] ->
+                C.bind
+                  (T.Select_and_gather_add { select = T.Wge; window = window1 })
+                  [ t; o ]
+            | _ -> assert false) );
+    ( "sort",
+      unary5 (T.Sort { dimension = 0; is_stable = true; num_keys = 1 }) D.F32 );
+    ( "top_k",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 5 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] -> C.bind (T.Top_k { k = 2; axis = 0 }) [ x ]
+            | _ -> assert false) );
   ]
 
 let check_case name build () =

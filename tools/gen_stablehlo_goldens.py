@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax import lax
 from jax._src.lax import lax as _lax
 from jax._src.lax import slicing as _sl
+from jax._src.lax import windowed_reductions as _wr
 from jax._src.lax.control_flow import conditionals as _cf
 
 import stablehlo_normalize as normalizer
@@ -234,6 +235,54 @@ CASES = [
         lambda o, i, u: lax.scatter_max(o, i, u, SDN),
         [f32(5, 3), i32(2, 1), f32(2, 3)],
     ),
+    (
+        "dot_general",
+        lambda a, b: lax.dot_general(a, b, (((1,), (0,)), ((), ()))),
+        [f32(2, 3), f32(3, 4)],
+    ),
+    (
+        "dot_general_batch",
+        lambda a, b: lax.dot_general(a, b, (((2,), (1,)), ((0,), (0,)))),
+        [f32(2, 3, 4), f32(2, 4, 5)],
+    ),
+    (
+        "conv",
+        lambda l, r: lax.conv_general_dilated(
+            l, r, (1,), [(0, 0)], (1,), (1,), ("NCH", "OIH", "NCH")
+        ),
+        [f32(1, 1, 5), f32(1, 1, 3)],
+    ),
+    (
+        "reduce_window_sum",
+        lambda x: _wr._reduce_window_sum(x, (2,), (1,), [(0, 0)]),
+        [f32(5)],
+    ),
+    (
+        "reduce_window_max",
+        lambda x: _wr._reduce_window_max(x, (2,), (1,), [(0, 0)]),
+        [f32(5)],
+    ),
+    (
+        "reduce_window_min",
+        lambda x: _wr._reduce_window_min(x, (2,), (1,), [(0, 0)]),
+        [f32(5)],
+    ),
+    (
+        "select_and_scatter_add",
+        lambda s, o: _wr._select_and_scatter_add(
+            s, o, _lax.ge_p, (2,), (1,), [(0, 0)]
+        ),
+        [f32(4), f32(5)],
+    ),
+    (
+        "select_and_gather_add",
+        lambda t, o: _wr._select_and_gather_add(
+            t, o, _lax.ge_p, (2,), (1,), [(0, 0)], (1,), (1,)
+        ),
+        [f32(5), f32(5)],
+    ),
+    ("sort", lambda x: lax.sort(x, dimension=0), [f32(5)]),
+    ("top_k", lambda x: lax.top_k(x, 2), [f32(5)]),
 ]
 
 

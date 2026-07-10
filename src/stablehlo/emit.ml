@@ -45,6 +45,7 @@ type ctx = {
   buf : Buffer.t;
   extras : Buffer.t;
   ids : (int, int) Hashtbl.t;
+  names : (int, string) Hashtbl.t;
   mutable next : int;
 }
 
@@ -59,9 +60,12 @@ let bind_var ctx (v : var) =
   n
 
 let ssa_of_var ctx (v : var) =
-  match Hashtbl.find_opt ctx.ids v.vid with
-  | Some n -> "%" ^ string_of_int n
-  | None -> invalid_arg "Stablehlo.Emit: unbound variable"
+  match Hashtbl.find_opt ctx.names v.vid with
+  | Some s -> s
+  | None -> (
+      match Hashtbl.find_opt ctx.ids v.vid with
+      | Some n -> "%" ^ string_of_int n
+      | None -> invalid_arg "Stablehlo.Emit: unbound variable")
 
 let emit_constant_at ctx n nd =
   Buffer.add_string ctx.buf
@@ -1087,6 +1091,386 @@ let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
        (Ir.tensor_type_of_aval upd_av)
        (Ir.tensor_type_of_aval out.vaval))
 
+let dot_dims_str (dd : dot_dims) =
+  let batch =
+    if Array.length dd.lhs_batch > 0 then
+      Printf.sprintf "batching_dims = %s x %s, "
+        (Ir.int_array_attr dd.lhs_batch)
+        (Ir.int_array_attr dd.rhs_batch)
+    else ""
+  in
+  Printf.sprintf "%scontracting_dims = %s x %s, precision = [DEFAULT, DEFAULT]"
+    batch
+    (Ir.int_array_attr dd.lhs_contract)
+    (Ir.int_array_attr dd.rhs_contract)
+
+let emit_dot_general ctx (eqn : eqn) in_ids dd =
+  let a, b = pair in_ids in
+  let la, lb =
+    match eqn.inputs with
+    | [ l; r ] ->
+        ( Ir.tensor_type_of_aval (atom_aval l),
+          Ir.tensor_type_of_aval (atom_aval r) )
+    | _ -> invalid_arg "Stablehlo.Emit: dot_general arity"
+  in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.dot_general %s, %s, %s : (%s, %s) -> %s\n" (name n)
+       (name a) (name b) (dot_dims_str dd) la lb
+       (Ir.tensor_type_of_aval out.vaval))
+
+let conv_spec_str spec l0 l1 =
+  let ndim = Array.length spec in
+  let role = Array.make ndim "" in
+  role.(spec.(0)) <- l0;
+  role.(spec.(1)) <- l1;
+  for k = 2 to ndim - 1 do
+    role.(spec.(k)) <- string_of_int (k - 2)
+  done;
+  "[" ^ String.concat ", " (Array.to_list role) ^ "]"
+
+let pad_pairs_str padding =
+  "["
+  ^ (Array.to_list padding
+    |> List.map (fun (l, h) -> Printf.sprintf "[%d, %d]" l h)
+    |> String.concat ", ")
+  ^ "]"
+
+let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
+    ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count =
+  let a, b = pair in_ids in
+  let la, lb =
+    match eqn.inputs with
+    | [ l; r ] ->
+        ( Ir.tensor_type_of_aval (atom_aval l),
+          Ir.tensor_type_of_aval (atom_aval r) )
+    | _ -> invalid_arg "Stablehlo.Emit: convolution arity"
+  in
+  let out = sole eqn.outs in
+  let n_spatial = Array.length window_strides in
+  let reverse =
+    "[" ^ String.concat ", " (List.init n_spatial (fun _ -> "false")) ^ "]"
+  in
+  let dim_numbers =
+    Printf.sprintf "%sx%s->%s"
+      (conv_spec_str dn.lhs_spec "b" "f")
+      (conv_spec_str dn.rhs_spec "o" "i")
+      (conv_spec_str dn.out_spec "b" "f")
+  in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.convolution(%s, %s) dim_numbers = %s, window = \
+        {stride = %s, pad = %s, lhs_dilate = %s, rhs_dilate = %s, reverse = \
+        %s} {batch_group_count = %d : i64, feature_group_count = %d : i64, \
+        precision_config = [#stablehlo<precision DEFAULT>, \
+        #stablehlo<precision DEFAULT>]} : (%s, %s) -> %s\n"
+       (name n) (name a) (name b) dim_numbers
+       (Ir.int_array_attr window_strides)
+       (pad_pairs_str padding)
+       (Ir.int_array_attr lhs_dilation)
+       (Ir.int_array_attr rhs_dilation)
+       reverse batch_group_count feature_group_count la lb
+       (Ir.tensor_type_of_aval out.vaval))
+
+let pad_dense_str padding =
+  let n = Array.length padding in
+  let flat =
+    Array.to_list padding |> List.concat_map (fun (l, h) -> [ l; h ])
+  in
+  match flat with
+  | first :: rest when List.for_all (Int.equal first) rest ->
+      Printf.sprintf "dense<%d> : tensor<%dx2xi64>" first n
+  | _ -> Printf.sprintf "dense<%s> : tensor<%dx2xi64>" (pad_pairs_str padding) n
+
+let reduce_window_attrs (w : window_dims) =
+  Printf.sprintf
+    "base_dilations = %s, padding = %s, window_dilations = %s, \
+     window_dimensions = %s, window_strides = %s"
+    (array_i64 w.base_dilation)
+    (pad_dense_str w.w_padding)
+    (array_i64 w.window_dilation)
+    (array_i64 w.window_dimensions)
+    (array_i64 w.window_strides)
+
+let emit_reduce_window_op ctx (eqn : eqn) in_ids ~window ~op ~init =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let dt = in_aval.dtype in
+  let sty = Ir.tensor_type dt [||] in
+  let out = sole eqn.outs in
+  let c = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c) (init dt)
+       sty);
+  let b = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+       (name b) (name c) sty sty);
+  let n = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = \"stablehlo.reduce_window\"(%s, %s) <{%s}> ({\n"
+       (name n) (name x) (name b)
+       (reduce_window_attrs window));
+  let a1 = fresh ctx in
+  let a2 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name a1) sty (name a2) sty);
+  let r = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.%s %s, %s : %s\n" (name r) op
+       (name a1) (name a2) sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      stablehlo.return %s : %s\n" (name r) sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s, %s) -> %s\n"
+       (Ir.tensor_type_of_aval in_aval)
+       sty
+       (Ir.tensor_type_of_aval out.vaval));
+  Hashtbl.replace ctx.ids out.vid n
+
+let window_select_dir = function Wge -> "GE" | Wle -> "LE"
+let window_select_init = function Wge -> reduce_maxid | Wle -> reduce_minid
+
+let emit_select_and_gather_add ctx (eqn : eqn) in_ids ~select ~window =
+  let t, o = pair in_ids in
+  let t_av, o_av =
+    match eqn.inputs with
+    | [ ta; oa ] -> (atom_aval ta, atom_aval oa)
+    | _ -> invalid_arg "Stablehlo.Emit: select_and_gather_add arity"
+  in
+  let dt = o_av.dtype in
+  let sty = Ir.tensor_type dt [||] in
+  let bty = Ir.tensor_type Dtype.Bool [||] in
+  let out = sole eqn.outs in
+  let outty = Ir.tensor_type_of_aval out.vaval in
+  let dir = window_select_dir select in
+  let c_op = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c_op)
+       (window_select_init select dt)
+       sty);
+  let c_tan = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c_tan)
+       (reduce_zero dt) sty);
+  let grp = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s:2 = \"stablehlo.reduce_window\"(%s, %s, %s, %s) <{%s}> ({\n"
+       (name grp) (name o) (name t) (name c_op) (name c_tan)
+       (reduce_window_attrs window));
+  let kx = fresh ctx in
+  let vx = fresh ctx in
+  let ky = fresh ctx in
+  let vy = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    ^bb0(%s: %s, %s: %s, %s: %s, %s: %s):\n" (name kx) sty
+       (name vx) sty (name ky) sty (name vy) sty);
+  let cmp = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "      %s = stablehlo.compare %s, %s, %s, FLOAT : (%s, %s) -> %s\n"
+       (name cmp) dir (name kx) (name ky) sty sty bty);
+  let s1 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.select %s, %s, %s : %s, %s\n"
+       (name s1) (name cmp) (name kx) (name ky) bty sty);
+  let s2 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.select %s, %s, %s : %s, %s\n"
+       (name s2) (name cmp) (name vx) (name vy) bty sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      stablehlo.return %s, %s : %s, %s\n" (name s1)
+       (name s2) sty sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s, %s, %s, %s) -> (%s, %s)\n"
+       (Ir.tensor_type_of_aval o_av)
+       (Ir.tensor_type_of_aval t_av)
+       sty sty outty outty);
+  Hashtbl.replace ctx.names out.vid (Printf.sprintf "%%%d#1" grp)
+
+let emit_select_and_scatter_add ctx (eqn : eqn) in_ids ~select ~window =
+  let s, o = pair in_ids in
+  let s_av, o_av =
+    match eqn.inputs with
+    | [ sa; oa ] -> (atom_aval sa, atom_aval oa)
+    | _ -> invalid_arg "Stablehlo.Emit: select_and_scatter_add arity"
+  in
+  let dt = o_av.dtype in
+  let sty = Ir.tensor_type dt [||] in
+  let bty = Ir.tensor_type Dtype.Bool [||] in
+  let out = sole eqn.outs in
+  let dir = window_select_dir select in
+  let low = Array.map fst window.w_padding in
+  let high = Array.map snd window.w_padding in
+  let interior = Array.map (fun _ -> 0) window.w_padding in
+  let padded_shape =
+    Array.mapi (fun d s -> s + low.(d) + high.(d)) o_av.shape
+  in
+  let padty = Ir.tensor_type dt padded_shape in
+  let c_pad = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c_pad)
+       (window_select_init select dt)
+       sty);
+  let padded = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.pad %s, %s, low = %s, high = %s, interior = %s : \
+        (%s, %s) -> %s\n"
+       (name padded) (name o) (name c_pad) (Ir.int_array_attr low)
+       (Ir.int_array_attr high)
+       (Ir.int_array_attr interior)
+       (Ir.tensor_type_of_aval o_av)
+       sty padty);
+  let c_init = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c_init)
+       (reduce_zero dt) sty);
+  let zero_pad = Array.map (fun _ -> (0, 0)) window.w_padding in
+  let sas = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = \"stablehlo.select_and_scatter\"(%s, %s, %s) <{padding = %s, \
+        window_dimensions = %s, window_strides = %s}> ({\n"
+       (name sas) (name padded) (name s) (name c_init) (pad_dense_str zero_pad)
+       (array_i64 window.window_dimensions)
+       (array_i64 window.window_strides));
+  let a1 = fresh ctx in
+  let a2 = fresh ctx in
+  let r = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name a1) sty (name a2) sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "      %s = stablehlo.compare %s, %s, %s, FLOAT : (%s, %s) -> %s\n"
+       (name r) dir (name a1) (name a2) sty sty bty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      stablehlo.return %s : %s\n" (name r) bty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }, {\n    ^bb0(%s: %s, %s: %s):\n" (name a1) sty
+       (name a2) sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.add %s, %s : %s\n" (name r) (name a1)
+       (name a2) sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      stablehlo.return %s : %s\n" (name r) sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s, %s, %s) -> %s\n" padty
+       (Ir.tensor_type_of_aval s_av)
+       sty padty);
+  let ranges =
+    List.init (Array.length o_av.shape) (fun d ->
+        (low.(d), low.(d) + o_av.shape.(d)))
+  in
+  let sliced =
+    emit_slice ctx sas padty ranges (Ir.tensor_type_of_aval out.vaval)
+  in
+  Hashtbl.replace ctx.ids out.vid sliced
+
+let emit_sort_comparator ctx dt =
+  let sty = Ir.tensor_type dt [||] in
+  let bty = Ir.tensor_type Dtype.Bool [||] in
+  let x = fresh ctx in
+  let y = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name x) sty (name y) sty);
+  match dt with
+  | Dtype.F32 | Dtype.F64 ->
+      let canon operand =
+        let c0 = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name c0)
+             (Ir.dense (Ir.float_literal dt 0.0))
+             sty);
+        let iszero = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "      %s = stablehlo.compare EQ, %s, %s, FLOAT : (%s, %s) -> %s\n"
+             (name iszero) (name operand) (name c0) sty sty bty);
+        let c0b = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name c0b)
+             (Ir.dense (Ir.float_literal dt 0.0))
+             sty);
+        let selz = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "      %s = stablehlo.select %s, %s, %s : %s, %s\n"
+             (name selz) (name iszero) (name c0b) (name operand) bty sty);
+        let isnan = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "      %s = stablehlo.compare NE, %s, %s, FLOAT : (%s, %s) -> %s\n"
+             (name isnan) (name operand) (name operand) sty sty bty);
+        let cnan = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name cnan)
+             (Ir.dense (Ir.float_literal dt Float.nan))
+             sty);
+        let cres = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "      %s = stablehlo.select %s, %s, %s : %s, %s\n"
+             (name cres) (name isnan) (name cnan) (name selz) bty sty);
+        cres
+      in
+      let cx = canon x in
+      let cy = canon y in
+      let p = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "      %s = stablehlo.compare LT, %s, %s, TOTALORDER : (%s, %s) -> %s\n"
+           (name p) (name cx) (name cy) sty sty bty);
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "      stablehlo.return %s : %s\n" (name p) bty)
+  | _ ->
+      let ct = compare_type_of dt false in
+      let p = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "      %s = stablehlo.compare LT, %s, %s, %s : (%s, %s) -> %s\n"
+           (name p) (name x) (name y) ct sty sty bty);
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "      stablehlo.return %s : %s\n" (name p) bty)
+
+let emit_sort ctx (eqn : eqn) in_ids ~dimension ~is_stable =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let dt = in_aval.dtype in
+  let out = sole eqn.outs in
+  let n = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = \"stablehlo.sort\"(%s) <{dimension = %d : i64, is_stable = \
+        %s}> ({\n"
+       (name n) (name x) dimension
+       (if is_stable then "true" else "false"));
+  emit_sort_comparator ctx dt;
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s) -> %s\n"
+       (Ir.tensor_type_of_aval in_aval)
+       (Ir.tensor_type_of_aval out.vaval));
+  Hashtbl.replace ctx.ids out.vid n
+
+let emit_top_k ctx (eqn : eqn) in_ids k =
+  let x = sole in_ids in
+  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let vout, iout =
+    match eqn.outs with
+    | [ v; i ] -> (v, i)
+    | _ -> invalid_arg "Stablehlo.Emit: top_k expects two outputs"
+  in
+  let r1 = bind_var ctx vout in
+  let r2 = bind_var ctx iout in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s, %s = chlo.top_k(%s, k = %d) : %s -> (%s, %s)\n"
+       (name r1) (name r2) (name x) k inty
+       (Ir.tensor_type_of_aval vout.vaval)
+       (Ir.tensor_type_of_aval iout.vaval))
+
 let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -1241,9 +1625,42 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_scatter ctx eqn in_ids dimension_numbers (Some "minimum")
   | Scatter_max { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "maximum")
+  | Dot_general dd -> emit_dot_general ctx eqn in_ids dd
+  | Conv_general_dilated
+      {
+        window_strides;
+        padding;
+        lhs_dilation;
+        rhs_dilation;
+        dimension_numbers;
+        feature_group_count;
+        batch_group_count;
+      } ->
+      emit_conv ctx eqn in_ids ~window_strides ~padding ~lhs_dilation
+        ~rhs_dilation ~dn:dimension_numbers ~feature_group_count
+        ~batch_group_count
+  | Ragged_dot_general ->
+      failwith
+        "Stablehlo.Emit: Ragged_dot_general non-representable (needs \
+         group_sizes machinery, matches host row 27)"
+  | Reduce_window_sum window ->
+      emit_reduce_window_op ctx eqn in_ids ~window ~op:"add" ~init:reduce_zero
+  | Reduce_window_max window ->
+      emit_reduce_window_op ctx eqn in_ids ~window ~op:"maximum"
+        ~init:reduce_maxid
+  | Reduce_window_min window ->
+      emit_reduce_window_op ctx eqn in_ids ~window ~op:"minimum"
+        ~init:reduce_minid
+  | Select_and_gather_add { select; window } ->
+      emit_select_and_gather_add ctx eqn in_ids ~select ~window
+  | Select_and_scatter_add { select; window } ->
+      emit_select_and_scatter_add ctx eqn in_ids ~select ~window
+  | Sort { dimension; is_stable; _ } ->
+      emit_sort ctx eqn in_ids ~dimension ~is_stable
+  | Top_k { k; _ } -> emit_top_k ctx eqn in_ids k
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 84-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 85-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in
@@ -1258,6 +1675,7 @@ let emit_closed_jaxpr (cj : closed_jaxpr) : string =
       buf = Buffer.create 256;
       extras = Buffer.create 256;
       ids = Hashtbl.create 16;
+      names = Hashtbl.create 4;
       next = 0;
     }
   in

@@ -2990,6 +2990,16 @@ module SS_cauchy = Ojax.Scipy.Stats.Cauchy
 module SS_chi2 = Ojax.Scipy.Stats.Chi2
 module SS_dirichlet = Ojax.Scipy.Stats.Dirichlet
 module SS_expon = Ojax.Scipy.Stats.Expon
+module SS_gamma = Ojax.Scipy.Stats.Gamma
+module SS_gennorm = Ojax.Scipy.Stats.Gennorm
+module SS_geom = Ojax.Scipy.Stats.Geom
+module SS_gumbel_l = Ojax.Scipy.Stats.Gumbel_l
+module SS_gumbel_r = Ojax.Scipy.Stats.Gumbel_r
+module SS_laplace = Ojax.Scipy.Stats.Laplace
+module SS_logistic = Ojax.Scipy.Stats.Logistic
+module SS_multinomial = Ojax.Scipy.Stats.Multinomial
+module SS_nbinom = Ojax.Scipy.Stats.Nbinom
+module SS_norm = Ojax.Scipy.Stats.Norm
 
 let scipy_special_fn op params operands : T.value list =
   let one v = [ v ] in
@@ -3108,6 +3118,52 @@ let scipy_stats_fn op _params operands : T.value list =
   | "expon.sf", [ x ] -> one (SS_expon.sf x)
   | "expon.logsf", [ x ] -> one (SS_expon.logsf x)
   | "expon.ppf", [ q ] -> one (SS_expon.ppf q)
+  | "gamma.logpdf", [ x; a ] -> one (SS_gamma.logpdf x a)
+  | "gamma.pdf", [ x; a ] -> one (SS_gamma.pdf x a)
+  | "gamma.cdf", [ x; a ] -> one (SS_gamma.cdf x a)
+  | "gamma.logcdf", [ x; a ] -> one (SS_gamma.logcdf x a)
+  | "gamma.sf", [ x; a ] -> one (SS_gamma.sf x a)
+  | "gamma.logsf", [ x; a ] -> one (SS_gamma.logsf x a)
+  | "gennorm.logpdf", [ x; beta ] -> one (SS_gennorm.logpdf x beta)
+  | "gennorm.pdf", [ x; beta ] -> one (SS_gennorm.pdf x beta)
+  | "gennorm.cdf", [ x; beta ] -> one (SS_gennorm.cdf x beta)
+  | "geom.logpmf", [ k; p ] -> one (SS_geom.logpmf k p)
+  | "geom.pmf", [ k; p ] -> one (SS_geom.pmf k p)
+  | "gumbel_l.logpdf", [ x ] -> one (SS_gumbel_l.logpdf x)
+  | "gumbel_l.pdf", [ x ] -> one (SS_gumbel_l.pdf x)
+  | "gumbel_l.logcdf", [ x ] -> one (SS_gumbel_l.logcdf x)
+  | "gumbel_l.cdf", [ x ] -> one (SS_gumbel_l.cdf x)
+  | "gumbel_l.ppf", [ p ] -> one (SS_gumbel_l.ppf p)
+  | "gumbel_l.logsf", [ x ] -> one (SS_gumbel_l.logsf x)
+  | "gumbel_l.sf", [ x ] -> one (SS_gumbel_l.sf x)
+  | "gumbel_r.logpdf", [ x ] -> one (SS_gumbel_r.logpdf x)
+  | "gumbel_r.pdf", [ x ] -> one (SS_gumbel_r.pdf x)
+  | "gumbel_r.logcdf", [ x ] -> one (SS_gumbel_r.logcdf x)
+  | "gumbel_r.cdf", [ x ] -> one (SS_gumbel_r.cdf x)
+  | "gumbel_r.ppf", [ p ] -> one (SS_gumbel_r.ppf p)
+  | "gumbel_r.sf", [ x ] -> one (SS_gumbel_r.sf x)
+  | "gumbel_r.logsf", [ x ] -> one (SS_gumbel_r.logsf x)
+  | "laplace.logpdf", [ x ] -> one (SS_laplace.logpdf x)
+  | "laplace.pdf", [ x ] -> one (SS_laplace.pdf x)
+  | "laplace.cdf", [ x ] -> one (SS_laplace.cdf x)
+  | "logistic.logpdf", [ x ] -> one (SS_logistic.logpdf x)
+  | "logistic.pdf", [ x ] -> one (SS_logistic.pdf x)
+  | "logistic.cdf", [ x ] -> one (SS_logistic.cdf x)
+  | "logistic.sf", [ x ] -> one (SS_logistic.sf x)
+  | "logistic.ppf", [ x ] -> one (SS_logistic.ppf x)
+  | "logistic.isf", [ x ] -> one (SS_logistic.isf x)
+  | "multinomial.logpmf", [ x; n; p ] -> one (SS_multinomial.logpmf x n p)
+  | "multinomial.pmf", [ x; n; p ] -> one (SS_multinomial.pmf x n p)
+  | "nbinom.logpmf", [ k; n; p ] -> one (SS_nbinom.logpmf k n p)
+  | "nbinom.pmf", [ k; n; p ] -> one (SS_nbinom.pmf k n p)
+  | "norm.logpdf", [ x ] -> one (SS_norm.logpdf x)
+  | "norm.pdf", [ x ] -> one (SS_norm.pdf x)
+  | "norm.cdf", [ x ] -> one (SS_norm.cdf x)
+  | "norm.logcdf", [ x ] -> one (SS_norm.logcdf x)
+  | "norm.ppf", [ q ] -> one (SS_norm.ppf q)
+  | "norm.logsf", [ x ] -> one (SS_norm.logsf x)
+  | "norm.sf", [ x ] -> one (SS_norm.sf x)
+  | "norm.isf", [ q ] -> one (SS_norm.isf q)
   | _ -> failwith ("scipy_stats golden: unknown op " ^ op)
 
 let scipy_stats_suite_for set_name =

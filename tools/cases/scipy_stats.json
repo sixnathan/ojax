@@ -1534,5 +1534,1571 @@
       }
     ],
     "params": {}
+  },
+  {
+    "op": "gamma.cdf",
+    "primitive": "scipy.stats.gamma.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gamma.cdf",
+    "primitive": "scipy.stats.gamma.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {},
+    "tol_widen": {
+      "factor": 10,
+      "reason": "transcendental_ulp"
+    }
+  },
+  {
+    "op": "gamma.logcdf",
+    "primitive": "scipy.stats.gamma.logcdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gamma.logcdf",
+    "primitive": "scipy.stats.gamma.logcdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {},
+    "tol_widen": {
+      "factor": 10,
+      "reason": "transcendental_ulp"
+    }
+  },
+  {
+    "op": "gamma.logpdf",
+    "primitive": "scipy.stats.gamma.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gamma.logpdf",
+    "primitive": "scipy.stats.gamma.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gamma.logsf",
+    "primitive": "scipy.stats.gamma.logsf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gamma.logsf",
+    "primitive": "scipy.stats.gamma.logsf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {},
+    "tol_widen": {
+      "factor": 10,
+      "reason": "transcendental_ulp"
+    }
+  },
+  {
+    "op": "gamma.pdf",
+    "primitive": "scipy.stats.gamma.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gamma.pdf",
+    "primitive": "scipy.stats.gamma.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gamma.sf",
+    "primitive": "scipy.stats.gamma.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gamma.sf",
+    "primitive": "scipy.stats.gamma.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gennorm.cdf",
+    "primitive": "scipy.stats.gennorm.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gennorm.cdf",
+    "primitive": "scipy.stats.gennorm.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gennorm.logpdf",
+    "primitive": "scipy.stats.gennorm.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gennorm.logpdf",
+    "primitive": "scipy.stats.gennorm.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gennorm.pdf",
+    "primitive": "scipy.stats.gennorm.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gennorm.pdf",
+    "primitive": "scipy.stats.gennorm.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "geom.logpmf",
+    "primitive": "scipy.stats.geom.logpmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "geom.logpmf",
+    "primitive": "scipy.stats.geom.logpmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "geom.pmf",
+    "primitive": "scipy.stats.geom.pmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "geom.pmf",
+    "primitive": "scipy.stats.geom.pmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.cdf",
+    "primitive": "scipy.stats.gumbel_l.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.cdf",
+    "primitive": "scipy.stats.gumbel_l.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.logcdf",
+    "primitive": "scipy.stats.gumbel_l.logcdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.logcdf",
+    "primitive": "scipy.stats.gumbel_l.logcdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.logpdf",
+    "primitive": "scipy.stats.gumbel_l.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.logpdf",
+    "primitive": "scipy.stats.gumbel_l.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.logsf",
+    "primitive": "scipy.stats.gumbel_l.logsf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.logsf",
+    "primitive": "scipy.stats.gumbel_l.logsf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.pdf",
+    "primitive": "scipy.stats.gumbel_l.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.pdf",
+    "primitive": "scipy.stats.gumbel_l.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.sf",
+    "primitive": "scipy.stats.gumbel_l.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.sf",
+    "primitive": "scipy.stats.gumbel_l.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.ppf",
+    "primitive": "scipy.stats.gumbel_l.ppf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_l.ppf",
+    "primitive": "scipy.stats.gumbel_l.ppf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {},
+    "tol_widen": {
+      "factor": 100,
+      "reason": "transcendental_ulp"
+    }
+  },
+  {
+    "op": "gumbel_r.cdf",
+    "primitive": "scipy.stats.gumbel_r.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.cdf",
+    "primitive": "scipy.stats.gumbel_r.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.logcdf",
+    "primitive": "scipy.stats.gumbel_r.logcdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.logcdf",
+    "primitive": "scipy.stats.gumbel_r.logcdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.logpdf",
+    "primitive": "scipy.stats.gumbel_r.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.logpdf",
+    "primitive": "scipy.stats.gumbel_r.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.logsf",
+    "primitive": "scipy.stats.gumbel_r.logsf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.logsf",
+    "primitive": "scipy.stats.gumbel_r.logsf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.pdf",
+    "primitive": "scipy.stats.gumbel_r.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.pdf",
+    "primitive": "scipy.stats.gumbel_r.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.sf",
+    "primitive": "scipy.stats.gumbel_r.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.sf",
+    "primitive": "scipy.stats.gumbel_r.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.ppf",
+    "primitive": "scipy.stats.gumbel_r.ppf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "gumbel_r.ppf",
+    "primitive": "scipy.stats.gumbel_r.ppf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "laplace.cdf",
+    "primitive": "scipy.stats.laplace.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "laplace.cdf",
+    "primitive": "scipy.stats.laplace.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "laplace.logpdf",
+    "primitive": "scipy.stats.laplace.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "laplace.logpdf",
+    "primitive": "scipy.stats.laplace.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "laplace.pdf",
+    "primitive": "scipy.stats.laplace.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "laplace.pdf",
+    "primitive": "scipy.stats.laplace.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.cdf",
+    "primitive": "scipy.stats.logistic.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.cdf",
+    "primitive": "scipy.stats.logistic.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.logpdf",
+    "primitive": "scipy.stats.logistic.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.logpdf",
+    "primitive": "scipy.stats.logistic.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.pdf",
+    "primitive": "scipy.stats.logistic.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.pdf",
+    "primitive": "scipy.stats.logistic.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.sf",
+    "primitive": "scipy.stats.logistic.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.sf",
+    "primitive": "scipy.stats.logistic.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.ppf",
+    "primitive": "scipy.stats.logistic.ppf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.ppf",
+    "primitive": "scipy.stats.logistic.ppf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.isf",
+    "primitive": "scipy.stats.logistic.isf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "logistic.isf",
+    "primitive": "scipy.stats.logistic.isf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nbinom.logpmf",
+    "primitive": "scipy.stats.nbinom.logpmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nbinom.logpmf",
+    "primitive": "scipy.stats.nbinom.logpmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nbinom.pmf",
+    "primitive": "scipy.stats.nbinom.pmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "nbinom.pmf",
+    "primitive": "scipy.stats.nbinom.pmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_positive"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.cdf",
+    "primitive": "scipy.stats.norm.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.cdf",
+    "primitive": "scipy.stats.norm.cdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.logcdf",
+    "primitive": "scipy.stats.norm.logcdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.logcdf",
+    "primitive": "scipy.stats.norm.logcdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.logpdf",
+    "primitive": "scipy.stats.norm.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.logpdf",
+    "primitive": "scipy.stats.norm.logpdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.logsf",
+    "primitive": "scipy.stats.norm.logsf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.logsf",
+    "primitive": "scipy.stats.norm.logsf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.pdf",
+    "primitive": "scipy.stats.norm.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.pdf",
+    "primitive": "scipy.stats.norm.pdf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.sf",
+    "primitive": "scipy.stats.norm.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.sf",
+    "primitive": "scipy.stats.norm.sf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_default"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.ppf",
+    "primitive": "scipy.stats.norm.ppf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.ppf",
+    "primitive": "scipy.stats.norm.ppf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.isf",
+    "primitive": "scipy.stats.norm.isf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "norm.isf",
+    "primitive": "scipy.stats.norm.isf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "multinomial.logpmf",
+    "primitive": "scipy.stats.multinomial.logpmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "multinomial.logpmf",
+    "primitive": "scipy.stats.multinomial.logpmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {},
+    "tol_widen": {
+      "factor": 10,
+      "reason": "transcendental_ulp"
+    }
+  },
+  {
+    "op": "multinomial.pmf",
+    "primitive": "scipy.stats.multinomial.pmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float32",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
+  },
+  {
+    "op": "multinomial.pmf",
+    "primitive": "scipy.stats.multinomial.pmf",
+    "args": [
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [],
+        "dtype": "int32",
+        "rng": "rand_int_small"
+      },
+      {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "rng": "rand_uniform"
+      }
+    ],
+    "params": {}
   }
 ]

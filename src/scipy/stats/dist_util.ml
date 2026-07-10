@@ -12,6 +12,7 @@ let sc v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
 let ninf v = sc v Float.neg_infinity
 let nan v = sc v Float.nan
 let f32s x = T.Concrete (Nd.of_floats D.F32 [||] [| x |])
+let default_float () = if Config.x64_enabled () then D.F64 else D.F32
 
 let to_inexact = function
   | D.I32 | D.Bool | D.Uint32 -> D.F32

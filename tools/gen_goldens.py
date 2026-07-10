@@ -3795,6 +3795,16 @@ for _dist, _names in {
     "chi2": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "sf"],
     "dirichlet": ["logpdf", "pdf"],
     "expon": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "ppf", "sf"],
+    "gamma": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "sf"],
+    "gennorm": ["cdf", "logpdf", "pdf"],
+    "geom": ["logpmf", "pmf"],
+    "gumbel_l": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "ppf", "sf"],
+    "gumbel_r": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "ppf", "sf"],
+    "laplace": ["cdf", "logpdf", "pdf"],
+    "logistic": ["cdf", "isf", "logpdf", "pdf", "ppf", "sf"],
+    "multinomial": ["logpmf", "pmf"],
+    "nbinom": ["logpmf", "pmf"],
+    "norm": ["cdf", "isf", "logcdf", "logpdf", "logsf", "pdf", "ppf", "sf"],
 }.items():
     for _fname in _names:
         STATS_BUILDERS[_dist + "." + _fname] = stats_fn(_dist, _fname)
@@ -3806,6 +3816,12 @@ def run_case(c, seed):
             draw(a["rng"], seed + i, a["shape"], a["dtype"])
             for i, a in enumerate(c["args"])
         ]
+        if c["op"].startswith("multinomial."):
+            x = inputs[0]
+            n = np.sum(x, dtype=x.dtype)
+            p = inputs[2]
+            p = p / np.sum(p)
+            inputs = [x, n, p]
         out = jax.jit(STATS_BUILDERS[c["op"]](c["params"]))(*inputs)
         if isinstance(out, (tuple, list)):
             outs = [np.asarray(o) for o in out]

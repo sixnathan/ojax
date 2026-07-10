@@ -91,6 +91,7 @@ let as_tracer = function
   | Device _ -> invalid_arg "jaxpr: expected a JaxprTracer"
 
 let get_or_make_const_tracer trace v =
+  let v = Core.full_lower v in
   let builder = builder_of trace in
   let t = new_tracer builder trace (Core.get_aval v) in
   let _ = add_const builder t v in
@@ -115,12 +116,8 @@ let interpreter : Core.interpreter =
     i_lift = get_or_make_const_tracer;
     i_full_lower = (fun v -> v);
     i_process_primitive = process_primitive;
-    i_process_custom_jvp =
-      (fun _ ~primal:_ ~jvp:_ _ ->
-        failwith "jaxpr: custom_jvp not supported in M1");
-    i_process_custom_vjp =
-      (fun _ ~primal:_ ~fwd:_ ~bwd:_ _ ->
-        failwith "jaxpr: custom_vjp not supported in M1");
+    i_process_custom_jvp = (fun _ ~primal ~jvp:_ args -> primal args);
+    i_process_custom_vjp = (fun _ ~primal ~fwd:_ ~bwd:_ args -> primal args);
   }
 
 let install () = Core.register_interpreter KJaxpr interpreter

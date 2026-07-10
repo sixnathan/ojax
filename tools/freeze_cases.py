@@ -38,6 +38,7 @@ def freeze(module):
         "conditionals",
         "loops",
         "solves",
+        "custom_derivatives",
     ):
         return freeze_jaxpr(module)
     records = load_source(module)

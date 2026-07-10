@@ -1749,6 +1749,206 @@ let ad_suite_for set_name =
   in
   ("ad:" ^ set_name, coverage :: case_tests)
 
+module Cd = Ojax.Custom_derivatives
+
+let full_like v c =
+  let a = C.get_aval v in
+  let n = Array.fold_left ( * ) 1 a.T.shape in
+  T.Concrete (Nd.of_floats a.T.dtype a.T.shape (Array.make n c))
+
+let cj_sin2 args =
+  let primal a = [ jb1 T.Sin a ] in
+  let jvp inp =
+    match inp with
+    | [ x; t ] ->
+        [
+          jb1 T.Sin [ x ];
+          jb1 T.Mul [ jb1 T.Mul [ full_like x 2.0; jb1 T.Cos [ x ] ]; t ];
+        ]
+    | _ -> assert false
+  in
+  Cd.custom_jvp ~primal ~jvp args
+
+let cj_exphalf args =
+  let primal a = [ jb1 T.Exp a ] in
+  let jvp inp =
+    match inp with
+    | [ x; t ] ->
+        [
+          jb1 T.Exp [ x ];
+          jb1 T.Mul [ jb1 T.Mul [ full_like x 0.5; jb1 T.Exp [ x ] ]; t ];
+        ]
+    | _ -> assert false
+  in
+  Cd.custom_jvp ~primal ~jvp args
+
+let cj_iddouble args =
+  let primal a = a in
+  let jvp inp =
+    match inp with
+    | [ x; t ] -> [ x; jb1 T.Mul [ full_like x 2.0; t ] ]
+    | _ -> assert false
+  in
+  Cd.custom_jvp ~primal ~jvp args
+
+let cv_exp3 args =
+  let primal a = [ jb1 T.Exp a ] in
+  let fwd a =
+    let y = jb1 T.Exp a in
+    [ y; y ]
+  in
+  let bwd inp =
+    match inp with
+    | [ res; g ] -> [ jb1 T.Mul [ jb1 T.Mul [ full_like res 3.0; res ]; g ] ]
+    | _ -> assert false
+  in
+  Cd.custom_vjp ~primal ~fwd ~bwd args
+
+let cv_sq5 args =
+  let primal a =
+    match a with [ x ] -> [ jb1 T.Mul [ x; x ] ] | _ -> assert false
+  in
+  let fwd a =
+    match a with [ x ] -> [ jb1 T.Mul [ x; x ]; x ] | _ -> assert false
+  in
+  let bwd inp =
+    match inp with
+    | [ res; g ] -> [ jb1 T.Mul [ jb1 T.Mul [ full_like res 5.0; res ]; g ] ]
+    | _ -> assert false
+  in
+  Cd.custom_vjp ~primal ~fwd ~bwd args
+
+let cv_negid args =
+  let primal a = a in
+  let fwd a = match a with [ x ] -> [ x; x ] | _ -> assert false in
+  let bwd inp =
+    match inp with [ _res; g ] -> [ jb1 T.Neg [ g ] ] | _ -> assert false
+  in
+  Cd.custom_vjp ~primal ~fwd ~bwd args
+
+let cg_exp4 args =
+  let fun_ a =
+    let y = jb1 T.Exp a in
+    let rule cts =
+      match cts with
+      | [ g ] -> [ jb1 T.Mul [ jb1 T.Mul [ full_like y 4.0; y ]; g ] ]
+      | _ -> assert false
+    in
+    ([ y ], rule)
+  in
+  Cd.custom_gradient fun_ args
+
+let cg_sq6 args =
+  let fun_ a =
+    match a with
+    | [ x ] ->
+        let y = jb1 T.Mul [ x; x ] in
+        let rule cts =
+          match cts with
+          | [ g ] -> [ jb1 T.Mul [ jb1 T.Mul [ full_like x 6.0; x ]; g ] ]
+          | _ -> assert false
+        in
+        ([ y ], rule)
+    | _ -> assert false
+  in
+  Cd.custom_gradient fun_ args
+
+let custom_builders : (string * (T.value list -> T.value list)) list =
+  [
+    ("cj_sin2", cj_sin2);
+    ("cj_exphalf", cj_exphalf);
+    ("cj_iddouble", cj_iddouble);
+    ("cv_exp3", cv_exp3);
+    ("cv_sq5", cv_sq5);
+    ("cv_negid", cv_negid);
+    ("cg_exp4", cg_exp4);
+    ("cg_sq6", cg_sq6);
+  ]
+
+let custom_run mode fn primals tangents =
+  match mode with
+  | "eval" -> fn primals
+  | "jvp" ->
+      let po, to_ = Ad.jvp fn primals tangents in
+      po @ to_
+  | "grad" -> [ List.hd (Ad.grad (fun a -> List.hd (fn a)) primals) ]
+  | _ -> failwith ("custom golden: unknown mode " ^ mode)
+
+let custom_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.a_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.a_id ^ ".npz"))
+  in
+  let read_operand (a : arg) =
+    T.Concrete (nd_of_npz (find_member inputs a.name))
+  in
+  let primals = List.map read_operand c.a_args in
+  let tangents = List.map read_operand c.a_tans in
+  let fn =
+    match List.assoc_opt c.a_fn custom_builders with
+    | Some f -> f
+    | None -> Alcotest.failf "%s: unknown fn %s" c.a_id c.a_fn
+  in
+  let results = custom_run c.a_mode fn primals tangents in
+  let paired =
+    try List.combine c.a_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.a_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.a_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.a_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual =
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data = Npz.F (read_nd nd);
+        }
+      in
+      Compare.assert_tol o.odtype c.a_atol c.a_rtol;
+      Compare.check
+        ~name:(c.a_id ^ ":" ^ o.oname)
+        ~compare:c.a_compare ~atol:c.a_atol ~rtol:c.a_rtol ~expected:golden
+        ~actual)
+    paired
+
+let custom_check_coverage ~set_dir cases () =
+  let expected = List.map (fun c -> c.a_id) cases |> List.sort String.compare in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then
+        Alcotest.failf "%s: custom_derivatives coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let custom_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "custom_derivatives") set_name
+  in
+  let x64, cases = load_ad_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.a_id `Quick (custom_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (custom_check_coverage ~set_dir cases)
+  in
+  ("custom_derivatives:" ^ set_name, coverage :: case_tests)
+
 module Batching = Ojax.Interpreters.Batching
 
 let cubic_fn a =
@@ -4248,6 +4448,8 @@ let () =
       jaxpr_suite_for "x64_on";
       ad_suite_for "x64_off";
       ad_suite_for "x64_on";
+      custom_suite_for "x64_off";
+      custom_suite_for "x64_on";
       batch_suite_for "x64_off";
       batch_suite_for "x64_on";
       api_suite_for "x64_off";

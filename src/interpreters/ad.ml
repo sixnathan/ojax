@@ -492,7 +492,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
         "ad: scatter_min/scatter_max jvp needs the extremal averaging rule (M2 \
          gap)"
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ | Scan _
-  | While _ | Custom_linear_solve _ ->
+  | While _ | Custom_linear_solve _ | Custom_lin _ ->
       failwith "ad: multi-output jvp handled by jvp_process_primitive"
   | Reduce_precision p -> (
       match (primals, tangents) with
@@ -843,9 +843,47 @@ let jvp_process_primitive trace prim args =
       let x = Core.bind prim primals in
       let x_dot = Core.bind prim tangents in
       List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) x x_dot
+  | Custom_lin _ ->
+      failwith
+        "ad: jvp of custom_lin (higher-order differentiation of a custom_vjp \
+         function) is not supported"
   | _ ->
       let po, to_ = jvp_rule prim primals tangents in
       [ Tracer (new_jvp_tracer trace po to_) ]
+
+let jvp_process_custom_jvp trace ~jvp args =
+  let pairs = List.map (as_jvp trace) args in
+  let primals = List.map fst pairs and tangents = List.map snd pairs in
+  let outs = jvp (primals @ tangents) in
+  let primal_outs, tangent_outs = Util.split_half outs in
+  List.map2
+    (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
+    primal_outs tangent_outs
+
+let jvp_process_custom_vjp trace ~primal ~fwd ~bwd args =
+  let pairs = List.map (as_jvp trace) args in
+  let primals = List.map fst pairs and tangents = List.map snd pairs in
+  let primal_outs = primal primals in
+  let fwd_out = fwd primals in
+  let num_out = List.length primal_outs in
+  let residuals =
+    match Util.split_list fwd_out [ num_out ] with
+    | [ _; res ] -> res
+    | _ ->
+        failwith "ad: custom_vjp fwd must return primal outputs then residuals"
+  in
+  let num_res = List.length residuals in
+  let out_avals = List.map Core.get_aval primal_outs in
+  let res_avals = List.map Core.get_aval residuals in
+  let bwd_jaxpr = Jaxpr.make_jaxpr (res_avals @ out_avals) bwd in
+  let tangent_outs =
+    Core.bind
+      (Custom_lin { num_res; bwd = bwd_jaxpr; out_avals })
+      (residuals @ tangents)
+  in
+  List.map2
+    (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
+    primal_outs tangent_outs
 
 let interpreter : Core.interpreter =
   {
@@ -854,11 +892,10 @@ let interpreter : Core.interpreter =
     i_full_lower = (fun v -> v);
     i_process_primitive = jvp_process_primitive;
     i_process_custom_jvp =
-      (fun _ ~primal:_ ~jvp:_ _ ->
-        failwith "ad: custom_jvp not supported in M1");
+      (fun trace ~primal:_ ~jvp args -> jvp_process_custom_jvp trace ~jvp args);
     i_process_custom_vjp =
-      (fun _ ~primal:_ ~fwd:_ ~bwd:_ _ ->
-        failwith "ad: custom_vjp not supported in M1");
+      (fun trace ~primal ~fwd ~bwd args ->
+        jvp_process_custom_vjp trace ~primal ~fwd ~bwd args);
   }
 
 let install () = Core.register_interpreter KJVP interpreter
@@ -1275,6 +1312,18 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               cts
           in
           List.map (fun c -> Some c) ct_b)
+  | Custom_lin { num_res; bwd; out_avals = _ } ->
+      let res, tangents =
+        match Util.split_list primals [ num_res ] with
+        | [ r; t ] -> (r, t)
+        | _ -> arity ()
+      in
+      let res_vals = List.map prim_val res in
+      let ct_ins = Jaxpr.eval_closed_jaxpr bwd (res_vals @ cts) in
+      List.map (fun _ -> None) res
+      @ List.map2
+          (fun p ct -> if is_undef p then Some ct else None)
+          tangents ct_ins
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not

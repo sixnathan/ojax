@@ -86,12 +86,8 @@ let interpreter : Core.interpreter =
     i_lift = pure;
     i_full_lower = full_lower_pe;
     i_process_primitive = process_primitive;
-    i_process_custom_jvp =
-      (fun _ ~primal:_ ~jvp:_ _ ->
-        failwith "partial_eval: custom_jvp not supported in M1");
-    i_process_custom_vjp =
-      (fun _ ~primal:_ ~fwd:_ ~bwd:_ _ ->
-        failwith "partial_eval: custom_vjp not supported in M1");
+    i_process_custom_jvp = (fun _ ~primal ~jvp:_ args -> primal args);
+    i_process_custom_vjp = (fun _ ~primal ~fwd:_ ~bwd:_ args -> primal args);
   }
 
 let install () = Core.register_interpreter KPE interpreter

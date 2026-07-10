@@ -2166,6 +2166,228 @@ def generate_ad(module):
     return n_off, n_on
 
 
+def _make_cj_sin2():
+    @jax.custom_jvp
+    def f(x):
+        return jnp.sin(x)
+
+    @f.defjvp
+    def _fj(primals, tangents):
+        (x,), (t,) = primals, tangents
+        return f(x), 2.0 * jnp.cos(x) * t
+
+    return f
+
+
+def _make_cj_exphalf():
+    @jax.custom_jvp
+    def f(x):
+        return jnp.exp(x)
+
+    @f.defjvp
+    def _fj(primals, tangents):
+        (x,), (t,) = primals, tangents
+        return f(x), 0.5 * jnp.exp(x) * t
+
+    return f
+
+
+def _make_cj_iddouble():
+    @jax.custom_jvp
+    def f(x):
+        return x
+
+    @f.defjvp
+    def _fj(primals, tangents):
+        (x,), (t,) = primals, tangents
+        return f(x), 2.0 * t
+
+    return f
+
+
+def _make_cv_exp3():
+    @jax.custom_vjp
+    def f(x):
+        return jnp.exp(x)
+
+    def fwd(x):
+        y = jnp.exp(x)
+        return y, y
+
+    def bwd(res, g):
+        return (3.0 * res * g,)
+
+    f.defvjp(fwd, bwd)
+    return f
+
+
+def _make_cv_sq5():
+    @jax.custom_vjp
+    def f(x):
+        return x * x
+
+    def fwd(x):
+        return x * x, x
+
+    def bwd(res, g):
+        return (5.0 * res * g,)
+
+    f.defvjp(fwd, bwd)
+    return f
+
+
+def _make_cv_negid():
+    @jax.custom_vjp
+    def f(x):
+        return x
+
+    def fwd(x):
+        return x, x
+
+    def bwd(res, g):
+        del res
+        return (-g,)
+
+    f.defvjp(fwd, bwd)
+    return f
+
+
+def _make_cg_exp4():
+    @jax.custom_gradient
+    def f(x):
+        y = jnp.exp(x)
+        return y, lambda g: (4.0 * y * g,)
+
+    return f
+
+
+def _make_cg_sq6():
+    @jax.custom_gradient
+    def f(x):
+        return x * x, lambda g: (6.0 * x * g,)
+
+    return f
+
+
+CUSTOM_FNS = {
+    "cj_sin2": _make_cj_sin2,
+    "cj_exphalf": _make_cj_exphalf,
+    "cj_iddouble": _make_cj_iddouble,
+    "cv_exp3": _make_cv_exp3,
+    "cv_sq5": _make_cv_sq5,
+    "cv_negid": _make_cv_negid,
+    "cg_exp4": _make_cg_exp4,
+    "cg_sq6": _make_cg_sq6,
+}
+
+
+def run_custom_case(c, seed):
+    fn = CUSTOM_FNS[c["fn"]]()
+    mode = c["mode"]
+    avals = c["in_avals"]
+    primals = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"]) for i, a in enumerate(avals)
+    ]
+    if mode == "eval":
+        out = fn(*primals)
+        return primals, None, [np.asarray(out)]
+    if mode == "jvp":
+        tangents = [
+            draw(a["rng"], seed + 1000 + i, a["shape"], a["dtype"])
+            for i, a in enumerate(avals)
+        ]
+        po, to = jax.jvp(fn, tuple(primals), tuple(tangents))
+        return primals, tangents, [np.asarray(po), np.asarray(to)]
+    if mode == "grad":
+        g = jax.grad(fn)(*primals)
+        return primals, None, [np.asarray(g)]
+    raise SystemExit("unknown custom mode " + mode)
+
+
+def gen_custom_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and any(ec.is_wide64(a["dtype"]) for a in c["in_avals"]):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        primals, tangents, outputs = run_custom_case(c, seed)
+        in_arrays = {"arg" + str(i): np.asarray(v) for i, v in enumerate(primals)}
+        tan_meta = []
+        if tangents is not None:
+            for i, v in enumerate(tangents):
+                in_arrays["tan" + str(i)] = np.asarray(v)
+                tv = np.asarray(v)
+                tan_meta.append(
+                    {
+                        "name": "tan" + str(i),
+                        "shape": [int(d) for d in tv.shape],
+                        "dtype": tv.dtype.name,
+                    }
+                )
+        out_arrays = {"out" + str(i): np.asarray(o) for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **in_arrays)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": "arg" + str(i),
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+                "rng": a["rng"],
+            }
+            for i, (a, v) in enumerate(zip(c["in_avals"], primals))
+        ]
+        outs_meta = [
+            {
+                "name": "out" + str(i),
+                "shape": [int(d) for d in np.asarray(o).shape],
+                "dtype": np.asarray(o).dtype.name,
+            }
+            for i, o in enumerate(outputs)
+        ]
+        compare, tol = resolve_tol(np.asarray(outputs[0]).dtype.name)
+        manifest_cases.append(
+            {
+                "case_id": case_id,
+                "fn": c["fn"],
+                "mode": c["mode"],
+                "args": args_meta,
+                "tangents": tan_meta,
+                "outputs": outs_meta,
+                "compare": compare,
+                "tol": tol,
+            }
+        )
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_custom_derivatives(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_custom_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_custom_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def _cubic(z):
     return LAX.sub(LAX.mul(z, LAX.mul(z, z)), z)
 
@@ -5488,6 +5710,8 @@ def main():
         n_off, n_on = generate_jaxpr(sys.argv[1])
     elif sys.argv[1] == "ad":
         n_off, n_on = generate_ad(sys.argv[1])
+    elif sys.argv[1] == "custom_derivatives":
+        n_off, n_on = generate_custom_derivatives(sys.argv[1])
     elif sys.argv[1] == "batching":
         n_off, n_on = generate_batching(sys.argv[1])
     elif sys.argv[1] == "api":

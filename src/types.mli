@@ -212,6 +212,7 @@ and primitive =
       solve : closed_jaxpr;
       transpose_solve : closed_jaxpr option;
     }
+  | Custom_lin of { num_res : int; bwd : closed_jaxpr; out_avals : aval list }
   | Threefry2x32
   | Iota_2x32_shape of int array
   | Random_seed

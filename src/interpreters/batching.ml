@@ -635,7 +635,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Scatter_max _ ->
       scatter_batch axis_size prim vals bdims
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ | Scan _
-  | Custom_linear_solve _ ->
+  | Custom_linear_solve _ | Custom_lin _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
@@ -818,6 +818,10 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       failwith
         "batching: vmap of custom_linear_solve needs the batched fixpoint (M2 \
          gap)"
+  | Custom_lin _ ->
+      failwith
+        "batching: vmap of custom_lin (vmap of grad of custom_vjp) needs \
+         batched residuals (bounded)"
   | _ ->
       let out, out_bdim = vmap_rule axis_size prim vals bdims in
       [ Tracer (new_batch_tracer trace out out_bdim) ]
@@ -838,12 +842,8 @@ let interpreter : Core.interpreter =
     i_lift = batch_pure;
     i_full_lower = full_lower_batch;
     i_process_primitive = batch_process_primitive;
-    i_process_custom_jvp =
-      (fun _ ~primal:_ ~jvp:_ _ ->
-        failwith "batching: custom_jvp not supported in M1");
-    i_process_custom_vjp =
-      (fun _ ~primal:_ ~fwd:_ ~bwd:_ _ ->
-        failwith "batching: custom_vjp not supported in M1");
+    i_process_custom_jvp = (fun _ ~primal ~jvp:_ args -> primal args);
+    i_process_custom_vjp = (fun _ ~primal ~fwd:_ ~bwd:_ args -> primal args);
   }
 
 let install () = Core.register_interpreter KBatch interpreter

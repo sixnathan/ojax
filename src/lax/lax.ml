@@ -1404,6 +1404,9 @@ let impl prim inputs =
         | Concrete nd -> nd
         | Tracer _ -> failwith "lax: custom_linear_solve produced a tracer"
         | Device _ -> failwith "lax: custom_linear_solve produced a tracer")
+  | Custom_lin _ ->
+      failwith
+        "can't apply forward-mode autodiff (jvp) to a custom_vjp function."
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "lax: prng primitive handled by the random module"
@@ -1711,6 +1714,7 @@ let abstract_eval prim avals =
         avals
   | Custom_linear_solve { solve; _ } ->
       Control_flow.Solves.solve_out_avals solve
+  | Custom_lin { out_avals; _ } -> out_avals
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "lax: prng primitive handled by the random module"

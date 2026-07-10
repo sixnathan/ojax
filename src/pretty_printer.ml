@@ -232,6 +232,7 @@ let prim_name = function
   | Cummin _ -> "cummin"
   | Cumlogsumexp _ -> "cumlogsumexp"
   | Custom_linear_solve _ -> "custom_linear_solve"
+  | Custom_lin _ -> "custom_lin"
   | Threefry2x32 -> "threefry2x32"
   | Iota_2x32_shape _ -> "iota_2x32_shape"
   | Random_seed -> "random_seed"

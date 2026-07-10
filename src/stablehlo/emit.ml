@@ -1970,6 +1970,10 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
         "Stablehlo.Emit: Custom_linear_solve lowers to an iterative \
          while/solve decomposition (non-single-op); end-to-end deferred to the \
          PJRT execution rows"
+  | Custom_lin _ ->
+      failwith
+        "Stablehlo.Emit: Custom_lin appears only inside interpreter-evaluated \
+         custom_vjp transpose jaxprs and is never lowered to StableHLO"
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->

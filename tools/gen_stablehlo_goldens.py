@@ -7,10 +7,12 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 import jax
 import jax.numpy as jnp
 from jax import lax
+from jax import make_jaxpr
 from jax._src.lax import lax as _lax
 from jax._src.lax import slicing as _sl
 from jax._src.lax import windowed_reductions as _wr
 from jax._src.lax.control_flow import conditionals as _cf
+from jax._src.lax.control_flow import conditionals as _cond
 
 import stablehlo_normalize as normalizer
 
@@ -292,6 +294,34 @@ CASES = [
     ("special_polygamma", lax.polygamma, [f32(3), f32(3)]),
     ("special_zeta", lax.zeta, [f32(3), f32(3)]),
     ("rng_uniform", lambda a, b: _lax.rng_uniform(a, b, (3,)), [f32(), f32()]),
+    (
+        "region_cond",
+        lambda idx, x, y: _cond.cond_p.bind(
+            idx,
+            x,
+            y,
+            branches=(
+                make_jaxpr(lambda a, b: a - b)(x, y),
+                make_jaxpr(lambda a, b: a + b)(x, y),
+            ),
+        ),
+        [i32(), f32(3), f32(3)],
+    ),
+    (
+        "region_reduce",
+        lambda x: lax.reduce(x, jnp.float32(1.0), lambda a, b: a * b + a, (0,)),
+        [f32(3)],
+    ),
+    (
+        "region_reduce_window",
+        lambda x: lax.reduce_window(x, jnp.float32(0.0), lax.add, (2,), (1,), "VALID"),
+        [f32(5)],
+    ),
+    (
+        "region_while",
+        lambda x: lax.while_loop(lambda v: v < 10.0, lambda v: v + 1.0, x),
+        [f32()],
+    ),
 ]
 
 

@@ -565,6 +565,125 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
             { T.in_binders = [ a; b ]; eqns = [ eqn ]; outs = [ T.A_var o ] };
           consts = [];
         } );
+    ( "region_cond",
+      fun () ->
+        let idx : T.var = { vid = 0; vaval = av [||] D.I32 } in
+        let x : T.var = { vid = 1; vaval = av [| 3 |] D.F32 } in
+        let y : T.var = { vid = 2; vaval = av [| 3 |] D.F32 } in
+        let o : T.var = { vid = 3; vaval = av [| 3 |] D.F32 } in
+        let branch prim =
+          J.make_jaxpr
+            [ av [| 3 |] D.F32; av [| 3 |] D.F32 ]
+            (fun args ->
+              match args with
+              | [ p; q ] -> C.bind prim [ p; q ]
+              | _ -> assert false)
+        in
+        let eqn : T.eqn =
+          {
+            prim = T.Cond { t = branch T.Add; f = branch T.Sub };
+            inputs = [ T.A_var idx; T.A_var x; T.A_var y ];
+            outs = [ o ];
+            multiple_results = false;
+          }
+        in
+        {
+          T.jid = 0;
+          jaxpr =
+            {
+              T.in_binders = [ idx; x; y ];
+              eqns = [ eqn ];
+              outs = [ T.A_var o ];
+            };
+          consts = [];
+        } );
+    ( "region_reduce",
+      fun () ->
+        let x : T.var = { vid = 0; vaval = av [| 3 |] D.F32 } in
+        let o : T.var = { vid = 1; vaval = av [||] D.F32 } in
+        let reducer =
+          J.make_jaxpr
+            [ av [||] D.F32; av [||] D.F32 ]
+            (fun args ->
+              match args with
+              | [ p; q ] -> (
+                  match C.bind T.Mul [ p; q ] with
+                  | [ pr ] -> C.bind T.Add [ pr; p ]
+                  | _ -> assert false)
+              | _ -> assert false)
+        in
+        let eqn : T.eqn =
+          {
+            prim = T.Reduce { jaxpr = reducer; dimensions = [| 0 |] };
+            inputs = [ T.A_var x; T.A_lit (Nd.of_floats D.F32 [||] [| 1.0 |]) ];
+            outs = [ o ];
+            multiple_results = false;
+          }
+        in
+        {
+          T.jid = 0;
+          jaxpr = { T.in_binders = [ x ]; eqns = [ eqn ]; outs = [ T.A_var o ] };
+          consts = [];
+        } );
+    ( "region_reduce_window",
+      fun () ->
+        let x : T.var = { vid = 0; vaval = av [| 5 |] D.F32 } in
+        let o : T.var = { vid = 1; vaval = av [| 4 |] D.F32 } in
+        let reducer =
+          J.make_jaxpr
+            [ av [||] D.F32; av [||] D.F32 ]
+            (fun args ->
+              match args with
+              | [ p; q ] -> C.bind T.Add [ p; q ]
+              | _ -> assert false)
+        in
+        let eqn : T.eqn =
+          {
+            prim = T.Reduce_window { reducer; window = window1 };
+            inputs = [ T.A_var x; T.A_lit (Nd.of_floats D.F32 [||] [| 0.0 |]) ];
+            outs = [ o ];
+            multiple_results = false;
+          }
+        in
+        {
+          T.jid = 0;
+          jaxpr = { T.in_binders = [ x ]; eqns = [ eqn ]; outs = [ T.A_var o ] };
+          consts = [];
+        } );
+    ( "region_while",
+      fun () ->
+        let init : T.var = { vid = 0; vaval = av [||] D.F32 } in
+        let o : T.var = { vid = 1; vaval = av [||] D.F32 } in
+        let cond =
+          J.make_jaxpr
+            [ av [||] D.F32 ]
+            (fun args ->
+              match args with
+              | [ v ] -> C.bind T.Lt [ v; cst D.F32 [||] [| 10.0 |] ]
+              | _ -> assert false)
+        in
+        let body =
+          J.make_jaxpr
+            [ av [||] D.F32 ]
+            (fun args ->
+              match args with
+              | [ v ] -> C.bind T.Add [ v; cst D.F32 [||] [| 1.0 |] ]
+              | _ -> assert false)
+        in
+        let eqn : T.eqn =
+          {
+            prim = T.While { cond; body };
+            inputs = [ T.A_var init ];
+            outs = [ o ];
+            multiple_results = false;
+          }
+        in
+        {
+          T.jid = 0;
+          jaxpr =
+            { T.in_binders = [ init ]; eqns = [ eqn ]; outs = [ T.A_var o ] };
+          consts = [];
+        } );
   ]
 
 let check_case name build () =

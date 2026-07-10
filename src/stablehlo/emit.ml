@@ -42,7 +42,7 @@ let dense_body nd =
   | _ -> nested_literals nd
 
 type ctx = {
-  buf : Buffer.t;
+  mutable buf : Buffer.t;
   extras : Buffer.t;
   ids : (int, int) Hashtbl.t;
   names : (int, string) Hashtbl.t;
@@ -74,6 +74,20 @@ let emit_constant_at ctx n nd =
        (Ir.tensor_type (Ndarray.dtype nd) (Ndarray.shape nd)))
 
 let name n = "%" ^ string_of_int n
+
+let capture ctx f =
+  let saved = ctx.buf in
+  ctx.buf <- Buffer.create 128;
+  f ();
+  let s = Buffer.contents ctx.buf in
+  ctx.buf <- saved;
+  s
+
+let reindent extra s =
+  let pad = String.make extra ' ' in
+  String.split_on_char '\n' s
+  |> List.map (fun ln -> if ln = "" then "" else pad ^ ln)
+  |> String.concat "\n"
 
 let ssa_of_atom ctx = function
   | A_var v -> ssa_of_var ctx v
@@ -1507,7 +1521,140 @@ let emit_rng_uniform ctx (eqn : eqn) in_ids =
        (name n) (name a) (name b) (name c) aty bty shty
        (Ir.tensor_type_of_aval out.vaval))
 
-let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
+let rec emit_region_returning ctx (jx : jaxpr) =
+  let s =
+    capture ctx (fun () ->
+        List.iter
+          (fun (e : eqn) ->
+            let ids = List.map (id_of_atom ctx) e.inputs in
+            emit_eqn ctx e ids)
+          jx.eqns;
+        let outs = List.map (ssa_of_atom ctx) jx.outs in
+        let otys =
+          List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) jx.outs
+        in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    stablehlo.return %s : %s\n"
+             (String.concat ", " outs) (String.concat ", " otys)))
+  in
+  Buffer.add_string ctx.buf (reindent 2 s)
+
+and map_binders ctx (jx : jaxpr) target_ids =
+  List.iter2
+    (fun (v : var) tid -> Hashtbl.replace ctx.ids v.vid tid)
+    jx.in_binders target_ids
+
+and emit_cond ctx (eqn : eqn) in_ids branch_f branch_t =
+  let index_id, operand_ids =
+    match in_ids with
+    | i :: r -> (i, r)
+    | [] -> invalid_arg "Stablehlo.Emit: cond arity"
+  in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" (name n)
+       (name index_id));
+  let start = ctx.next in
+  let emit_branch (cj : closed_jaxpr) =
+    ctx.next <- start;
+    map_binders ctx cj.jaxpr operand_ids;
+    emit_region_returning ctx cj.jaxpr
+  in
+  emit_branch branch_f;
+  Buffer.add_string ctx.buf "    }, {\n";
+  emit_branch branch_t;
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s) -> %s\n"
+       (Ir.tensor_type_of_aval (atom_aval (List.hd eqn.inputs)))
+       (Ir.tensor_type_of_aval out.vaval))
+
+and emit_reduce_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr) dims =
+  let op_id, init_id = pair in_ids in
+  let in_aval = atom_aval (List.hd eqn.inputs) in
+  let dt = in_aval.dtype in
+  let sty = Ir.tensor_type dt [||] in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.reduce(%s init: %s) across dimensions = %s : (%s, \
+        %s) -> %s\n"
+       (name n) (name op_id) (name init_id) (Ir.int_array_attr dims)
+       (Ir.tensor_type_of_aval in_aval)
+       sty
+       (Ir.tensor_type_of_aval out.vaval));
+  let ba, bb =
+    match reducer.jaxpr.in_binders with
+    | [ a; b ] ->
+        let ia = bind_var ctx a in
+        let ib = bind_var ctx b in
+        (ia, ib)
+    | _ -> invalid_arg "Stablehlo.Emit: reduce reducer arity"
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "     reducer(%s: %s, %s: %s)  {\n" (name ba) sty (name bb)
+       sty);
+  emit_region_returning ctx reducer.jaxpr;
+  Buffer.add_string ctx.buf "    }\n"
+
+and emit_reduce_window_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr)
+    window =
+  let op_id, init_id = pair in_ids in
+  let in_aval = atom_aval (List.hd eqn.inputs) in
+  let dt = in_aval.dtype in
+  let sty = Ir.tensor_type dt [||] in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = \"stablehlo.reduce_window\"(%s, %s) <{%s}> ({\n"
+       (name n) (name op_id) (name init_id)
+       (reduce_window_attrs window));
+  let ba, bb =
+    match reducer.jaxpr.in_binders with
+    | [ a; b ] ->
+        let ia = bind_var ctx a in
+        let ib = bind_var ctx b in
+        (ia, ib)
+    | _ -> invalid_arg "Stablehlo.Emit: reduce_window reducer arity"
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name ba) sty (name bb) sty);
+  emit_region_returning ctx reducer.jaxpr;
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s, %s) -> %s\n"
+       (Ir.tensor_type_of_aval in_aval)
+       sty
+       (Ir.tensor_type_of_aval out.vaval))
+
+and emit_while ctx (eqn : eqn) in_ids (cond : closed_jaxpr)
+    (body : closed_jaxpr) =
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  let carry_ids = List.map (fun _ -> fresh ctx) in_ids in
+  let carry_tys =
+    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+  in
+  let header_pairs =
+    List.map2
+      (fun ba init -> Printf.sprintf "%s = %s" (name ba) (name init))
+      carry_ids in_ids
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.while(%s) : %s\n" (name n)
+       (String.concat ", " header_pairs)
+       (String.concat ", " carry_tys));
+  let start = ctx.next in
+  map_binders ctx cond.jaxpr carry_ids;
+  Buffer.add_string ctx.buf "    cond {\n";
+  emit_region_returning ctx cond.jaxpr;
+  Buffer.add_string ctx.buf "    } do {\n";
+  ctx.next <- start;
+  map_binders ctx body.jaxpr carry_ids;
+  emit_region_returning ctx body.jaxpr;
+  Buffer.add_string ctx.buf "    }\n"
+
+and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
   | Cbrt -> emit_stablehlo_unary ctx eqn in_ids "cbrt"
@@ -1776,7 +1923,39 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
         "Stablehlo.Emit: Random_unwrap lowers to a sdy.sharding_constraint \
          over the physical key array; sharding machinery is out of scope \
          (STRIP-ON-PORT), non-representable"
-  | _ -> failwith "Stablehlo.Emit: no lowering rule for this primitive (row 87)"
+  | Cond { t; f } -> emit_cond ctx eqn in_ids f t
+  | Reduce { jaxpr; dimensions } ->
+      emit_reduce_general ctx eqn in_ids jaxpr dimensions
+  | Reduce_window { reducer; window } ->
+      emit_reduce_window_general ctx eqn in_ids reducer window
+  | While { cond; body } -> emit_while ctx eqn in_ids cond body
+  | Scan _ ->
+      failwith
+        "Stablehlo.Emit: Scan lowers to a counted stablehlo.while over sliced \
+         xs plus three private helper functions (@dynamic_index_in_dim, \
+         @closed_call, @dynamic_update_index_in_dim); non-single-op \
+         decomposition, end-to-end deferred to the PJRT execution rows"
+  | Select_and_scatter _ ->
+      failwith
+        "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \
+         stablehlo.select_and_scatter (two arbitrary regions) + slice \
+         decomposition; the common add-variant is goldened at row 84, the \
+         general dual-region form is deferred to the PJRT execution rows"
+  | Composite _ ->
+      failwith
+        "Stablehlo.Emit: Composite lowers to a stablehlo.composite op that \
+         references a separate decomposition func by symbol; the \
+         decomposition-symbol machinery is out of scope for this row, deferred"
+  | Custom_linear_solve _ ->
+      failwith
+        "Stablehlo.Emit: Custom_linear_solve lowers to an iterative \
+         while/solve decomposition (non-single-op); end-to-end deferred to the \
+         PJRT execution rows"
+  | Xla_call _ ->
+      failwith
+        "Stablehlo.Emit: a nested Xla_call must be inlined by the caller; the \
+         top-level compiled jaxpr body is @main (emitter core row 75), an \
+         eqn-level Xla_call is non-representable here"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

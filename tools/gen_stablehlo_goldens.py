@@ -1,0 +1,53 @@
+import json
+import os
+import sys
+
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
+import jax
+import jax.numpy as jnp
+
+import stablehlo_normalize as normalizer
+
+
+def f32(*shape):
+    return jnp.zeros(shape, jnp.float32)
+
+
+def i32(*shape):
+    return jnp.zeros(shape, jnp.int32)
+
+
+CASES = [
+    ("identity_vec", lambda x: x, [f32(3)]),
+    ("identity_scalar", lambda x: x, [f32()]),
+    ("multi_out", lambda x, y: (x, y), [f32(2), i32(3)]),
+    ("dup_out", lambda x: (x, x), [f32(2)]),
+    ("const_scalar_f32", lambda: jnp.float32(2.0), []),
+    ("const_scalar_i32", lambda: jnp.int32(7), []),
+    ("const_scalar_bool", lambda: jnp.array(True), []),
+    ("const_vec_i32", lambda: jnp.array([1, 2, 3], jnp.int32), []),
+    ("const_vec_f32", lambda: jnp.array([1.0, 2.0, 3.0], jnp.float32), []),
+    ("const_mat_f32", lambda: jnp.array([[1.0, 2.0], [3.0, 4.0]], jnp.float32), []),
+    ("const_splat_i32", lambda: jnp.array([5, 5, 5], jnp.int32), []),
+    ("const_splat_f32", lambda: jnp.array([2.0, 2.0], jnp.float32), []),
+    ("const_neg_zero", lambda: jnp.array([-0.0, 1.5, -2.25], jnp.float32), []),
+    ("const_and_arg", lambda x: (jnp.float32(2.0), x), [f32(2)]),
+]
+
+
+def main():
+    cases = []
+    for name, fn, args in CASES:
+        text = jax.jit(fn).lower(*args).as_text()
+        cases.append({"name": name, "text": normalizer.normalize(text)})
+    cases.sort(key=lambda c: c["name"])
+    out = {"cases": cases}
+    json.dump(
+        out, sys.stdout, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()

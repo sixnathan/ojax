@@ -38,7 +38,9 @@
   test_numpy_reductions
   test_numpy_indexing
   test_pjrt_discover
-  test_stablehlo_ir)
+  test_stablehlo_ir
+  test_stablehlo_emit)
  (libraries ojax alcotest yojson)
  (deps
-  (file %{project_root}/spec/stablehlo_ir.cases.json)))
+  (file %{project_root}/spec/stablehlo_ir.cases.json)
+  (file %{project_root}/spec/stablehlo_emit.cases.json)))

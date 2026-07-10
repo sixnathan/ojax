@@ -7,3 +7,4 @@ goldens/
 __pycache__/
 vendor/pjrt/*.so
 vendor/pjrt/*.dylib
+compile_commands.json

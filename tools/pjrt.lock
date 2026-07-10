@@ -29,9 +29,19 @@ api_version_jaxlib_0_10_2 = 9
 pinned_at = row 74 sess-m4-r74
 
 [header]
-vendored = false
+vendored = true
 vendor_target = reference/pjrt/pjrt_c_api.h
-provenance = openxla/xla pjrt/c/pjrt_c_api.h at the commit whose PJRT_API_MINOR == 81; vendored in ledger row 88
+provenance = openxla/xla xla/pjrt/c/pjrt_c_api.h at the commit whose PJRT_API_MINOR == 81; vendored in ledger row 88 sess-m4-r88
+xla_commit = dd6381370d6f1f43104745d0dd013d4ff5136146
+xla_commit_note = last commit touching pjrt_c_api.h at minor 81 (bumped to 82 late Nov 2025); any minor-81 commit is ABI-identical (fields only appended on a minor bump)
+header_bytes = 106019
+header_sha256 = c85bb95cb1743c2a353a555b3ab35f065e5f17007c7f182ad68d23754950235c
+pjrt_api_major = 0
+pjrt_api_minor = 81
+sizeof_pjrt_api = 984
+sizeof_pjrt_api_version = 24
+num_fn_ptr_fields = 118
+sizeof_matches_plugin_struct_size = true
 
 [parity_risk]
 jaxlib_0_10_2_ships_getpjrtapi_plugin = false

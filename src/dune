@@ -1,4 +1,8 @@
 (include_subdirs qualified)
 
 (library
- (name ojax))
+ (name ojax)
+ (foreign_stubs
+  (language c)
+  (names pjrt_shim)
+  (include_dirs %{project_root}/reference/pjrt)))

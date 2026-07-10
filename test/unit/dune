@@ -43,7 +43,8 @@
   test_pjrt_executable
   test_stablehlo_ir
   test_stablehlo_emit
-  test_backend)
+  test_backend
+  test_linalg_lapack)
  (libraries ojax alcotest yojson unix)
  (deps
   (file %{project_root}/spec/stablehlo_ir.cases.json)

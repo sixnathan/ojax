@@ -283,6 +283,14 @@ CASES = [
     ),
     ("sort", lambda x: lax.sort(x, dimension=0), [f32(5)]),
     ("top_k", lambda x: lax.top_k(x, 2), [f32(5)]),
+    ("special_bessel_i1e", lax.bessel_i1e, [f32(3)]),
+    ("special_digamma", lax.digamma, [f32(3)]),
+    ("special_erf", lax.erf, [f32(3)]),
+    ("special_erf_inv", lax.erf_inv, [f32(3)]),
+    ("special_erfc", lax.erfc, [f32(3)]),
+    ("special_lgamma", lax.lgamma, [f32(3)]),
+    ("special_polygamma", lax.polygamma, [f32(3), f32(3)]),
+    ("special_zeta", lax.zeta, [f32(3), f32(3)]),
 ]
 
 

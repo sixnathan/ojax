@@ -1658,9 +1658,42 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Sort { dimension; is_stable; _ } ->
       emit_sort ctx eqn in_ids ~dimension ~is_stable
   | Top_k { k; _ } -> emit_top_k ctx eqn in_ids k
+  | Bessel_i1e -> emit_chlo_unary ctx eqn in_ids "bessel_i1e"
+  | Digamma -> emit_chlo_unary ctx eqn in_ids "digamma"
+  | Erf -> emit_chlo_unary ctx eqn in_ids "erf"
+  | Erf_inv -> emit_chlo_unary ctx eqn in_ids "erf_inv"
+  | Erfc -> emit_chlo_unary ctx eqn in_ids "erfc"
+  | Lgamma -> emit_chlo_unary ctx eqn in_ids "lgamma"
+  | Polygamma -> emit_chlo_binary ctx eqn in_ids "polygamma"
+  | Zeta -> emit_chlo_binary ctx eqn in_ids "zeta"
+  | Bessel_i0e ->
+      failwith
+        "Stablehlo.Emit: Bessel_i0e has no native chlo op; jax lowers it via a \
+         lower_fun Cephes decomposition into many stablehlo ops \
+         (non-single-op), end-to-end decomposition deferred"
+  | Igamma ->
+      failwith
+        "Stablehlo.Emit: Igamma has no native chlo op; jax lowers it via a \
+         lower_fun decomposition into many stablehlo ops (non-single-op), \
+         end-to-end decomposition deferred"
+  | Igamma_grad_a ->
+      failwith
+        "Stablehlo.Emit: Igamma_grad_a has no native chlo op; jax lowers it \
+         via a lower_fun decomposition into many stablehlo ops \
+         (non-single-op), end-to-end decomposition deferred"
+  | Igammac ->
+      failwith
+        "Stablehlo.Emit: Igammac has no native chlo op; jax lowers it via a \
+         lower_fun decomposition into many stablehlo ops (non-single-op), \
+         end-to-end decomposition deferred"
+  | Regularized_incomplete_beta ->
+      failwith
+        "Stablehlo.Emit: Regularized_incomplete_beta has no native chlo op; \
+         jax lowers it via a lower_fun decomposition into many stablehlo ops \
+         (non-single-op), end-to-end decomposition deferred"
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 85-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 86-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

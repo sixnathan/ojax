@@ -538,6 +538,14 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
             match args with
             | [ x ] -> C.bind (T.Top_k { k = 2; axis = 0 }) [ x ]
             | _ -> assert false) );
+    ("special_bessel_i1e", unary T.Bessel_i1e D.F32);
+    ("special_digamma", unary T.Digamma D.F32);
+    ("special_erf", unary T.Erf D.F32);
+    ("special_erf_inv", unary T.Erf_inv D.F32);
+    ("special_erfc", unary T.Erfc D.F32);
+    ("special_lgamma", unary T.Lgamma D.F32);
+    ("special_polygamma", binary T.Polygamma D.F32);
+    ("special_zeta", binary T.Zeta D.F32);
   ]
 
 let check_case name build () =

@@ -3023,6 +3023,24 @@ let scipy_special_fn op params operands : T.value list =
   | "betainc", [ a; b; x ] -> one (SP.betainc a b x)
   | "multigammaln", [ a ] ->
       one (SP.multigammaln a (U.to_int (U.member "d" params)))
+  | "softmax", [ x ] -> (
+      match U.member "axis" params with
+      | `Null -> one (SP.softmax x)
+      | j -> one (SP.softmax ~axis:(U.to_int j) x))
+  | "log_softmax", [ x ] -> (
+      match U.member "axis" params with
+      | `Null -> one (SP.log_softmax x)
+      | j -> one (SP.log_softmax ~axis:(U.to_int j) x))
+  | "poch", [ z; m ] -> one (SP.poch z m)
+  | "spence", [ x ] -> one (SP.spence x)
+  | "sici", [ x ] -> SP.sici x
+  | "owens_t", [ h; a ] -> one (SP.owens_t h a)
+  | "bernoulli", [] -> one (SP.bernoulli (U.to_int (U.member "n" params)))
+  | "bessel_jn", [ z ] ->
+      one (SP.bessel_jn ~v:(U.to_int (U.member "v" params)) z)
+  | "hyp1f1", [ a; b; x ] -> one (SP.hyp1f1 a b x)
+  | "exp1", [ x ] -> one (SP.exp1 x)
+  | "expn", [ n; x ] -> one (SP.expn n x)
   | _ -> failwith ("scipy_special golden: unknown op " ^ op)
 
 let scipy_special_suite_for set_name =

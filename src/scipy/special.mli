@@ -35,3 +35,30 @@ val log_ndtr : ?series_order:int -> Types.value -> Types.value
 val polygamma : Types.value -> Types.value -> Types.value
 val zeta : ?q:Types.value -> Types.value -> Types.value
 val wofz : Types.value -> Types.value
+val softmax : ?axis:int -> Types.value -> Types.value
+val log_softmax : ?axis:int -> Types.value -> Types.value
+val poch : Types.value -> Types.value -> Types.value
+val spence : Types.value -> Types.value
+val sici : Types.value -> Types.value list
+val owens_t : Types.value -> Types.value -> Types.value
+val bernoulli : int -> Types.value
+val bessel_jn : ?n_iter:int -> v:int -> Types.value -> Types.value
+val hyp1f1 : Types.value -> Types.value -> Types.value -> Types.value
+val expn : Types.value -> Types.value -> Types.value
+val exp1 : Types.value -> Types.value
+
+val hyp2f1 :
+  Types.value -> Types.value -> Types.value -> Types.value -> Types.value
+
+val expi : Types.value -> Types.value
+val lpmn : int -> int -> Types.value -> Types.value list
+val lpmn_values : int -> int -> Types.value -> bool -> Types.value
+
+val sph_harm_y :
+  ?diff_n:int ->
+  ?n_max:int ->
+  Types.value ->
+  Types.value ->
+  Types.value ->
+  Types.value ->
+  Types.value

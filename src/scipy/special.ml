@@ -7,6 +7,9 @@ module RED = Numpy.Reductions
 module NL = Numpy.Lax_numpy
 module AC = Numpy.Array_creation
 module Poly = Numpy.Polynomial
+module NN = Nn.Functions
+module TC = Numpy.Tensor_contractions
+module Dts = Dtypes
 
 let get_aval = C.get_aval
 let dtype v = (get_aval v).T.dtype
@@ -649,3 +652,685 @@ let zeta ?q x =
 
 let wofz _z =
   failwith "wofz: complex-valued output unsupported (no complex dtype until M5)"
+
+let euler_gamma = 0.5772156649015329
+let eps_of v = match dtype v with D.F64 -> epsilon_float | _ -> 1.1920929e-7
+let full_like v x = const_full (dtype v) (shape v) x
+
+let masked_iter ~maxiter ~cond ~body state0 =
+  let state = ref state0 in
+  for _ = 1 to maxiter do
+    let m = cond !state in
+    let nxt = body !state in
+    state := List.map2 (fun n o -> where_ m n o) nxt !state
+  done;
+  !state
+
+let softmax ?axis x =
+  match axis with
+  | Some ax -> NN.softmax ~axis:ax x
+  | None ->
+      let sh = shape x in
+      NL.reshape (NN.softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
+
+let log_softmax ?axis x =
+  match axis with
+  | Some ax -> NN.log_softmax ~axis:ax x
+  | None ->
+      let sh = shape x in
+      NL.reshape (NN.log_softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
+
+let poch z m =
+  let z, m = promote2 z m in
+  where_
+    (UF.equal m (scalar_of m 0.0))
+    (scalar_of z 1.0)
+    (UF.divide (gamma (UF.add z m)) (gamma z))
+
+let spence_a =
+  [|
+    4.65128586073990045278e-5;
+    7.31589045238094711071e-3;
+    1.33847639578309018650e-1;
+    8.79691311754530315341e-1;
+    2.71149851196553469920e0;
+    4.25697156008121755724e0;
+    3.29771340985225106936e0;
+    1.00000000000000000126e0;
+  |]
+
+let spence_b =
+  [|
+    6.90990488912553276999e-4;
+    2.54043763932544379113e-2;
+    2.82974860602568089943e-1;
+    1.41172597751831069617e0;
+    3.63800533345137075418e0;
+    5.03278880143316990390e0;
+    3.54771340985225096217e0;
+    9.99999999999999998740e-1;
+  |]
+
+let spence_poly w =
+  let a = coeff_of w spence_a and b = coeff_of w spence_b in
+  UF.divide (UF.multiply (UF.negative w) (Poly.polyval a w)) (Poly.polyval b w)
+
+let spence_calc x =
+  let s v = scalar_of x v in
+  let one = s 1.0 in
+  let x2_bool = UF.greater x (s 2.0) in
+  let x = where_ x2_bool (UF.divide one x) x in
+  let x1_5_bool = UF.greater x (s 1.5) in
+  let x_5_bool = UF.less x (s 0.5) in
+  let x2_bool = UF.logical_or x2_bool x1_5_bool in
+  let w =
+    where_ x1_5_bool
+      (UF.subtract (UF.divide one x) one)
+      (where_ x_5_bool (UF.negative x) (UF.subtract x one))
+  in
+  let y = spence_poly w in
+  let pi2_6 = s (Float.pi *. Float.pi /. 6.0) in
+  let y_flag_one =
+    UF.subtract
+      (UF.subtract pi2_6 (UF.multiply (UF.log x) (UF.log (UF.subtract one x))))
+      y
+  in
+  let y = where_ x_5_bool y_flag_one y in
+  let y_flag_two =
+    UF.subtract (UF.multiply (s (-0.5)) (UF.square (UF.log x))) y
+  in
+  where_ x2_bool y_flag_two y
+
+let spence x =
+  (match dtype x with
+  | D.F32 | D.F64 -> ()
+  | _ ->
+      invalid_arg "x.dtype is not supported, see docstring for supported types.");
+  let s v = scalar_of x v in
+  let pi2_6 = s (Float.pi *. Float.pi /. 6.0) in
+  where_
+    (UF.less x (s 0.0))
+    (s Float.nan)
+    (where_
+       (UF.equal x (s 1.0))
+       (s 0.0)
+       (where_ (UF.equal x (s 0.0)) pi2_6 (spence_calc x)))
+
+let sici_sn =
+  [|
+    -8.39167827910303881427e-11;
+    4.62591714427012837309e-8;
+    -9.75759303843632795789e-6;
+    9.76945438170435310816e-4;
+    -4.13470316229406538752e-2;
+    1.00000000000000000302e0;
+  |]
+
+let sici_sd =
+  [|
+    2.03269266195951942049e-12;
+    1.27997891179943299903e-9;
+    4.41827842801218905784e-7;
+    9.96412122043875552487e-5;
+    1.42085239326149893930e-2;
+    9.99999999999999996984e-1;
+  |]
+
+let sici_cn =
+  [|
+    2.02524002389102268789e-11;
+    -1.35249504915790756375e-8;
+    3.59325051419993077021e-6;
+    -4.74007206873407909465e-4;
+    2.89159652607555242092e-2;
+    -1.00000000000000000080e0;
+  |]
+
+let sici_cd =
+  [|
+    4.07746040061880559506e-12;
+    3.06780997581887812692e-9;
+    1.23210355685883423679e-6;
+    3.17442024775032769882e-4;
+    5.10028056236446052392e-2;
+    4.00000000000000000080e0;
+  |]
+
+let sici_fn4 =
+  [|
+    4.23612862892216586994e0;
+    5.45937717161812843388e0;
+    1.62083287701538329132e0;
+    1.67006611831323023771e-1;
+    6.81020132472518137426e-3;
+    1.08936580650328664411e-4;
+    5.48900223421373614008e-7;
+  |]
+
+let sici_fd4 =
+  [|
+    1.0;
+    8.16496634205391016773e0;
+    7.30828822505564552187e0;
+    1.86792257950184183883e0;
+    1.78792052963149907262e-1;
+    7.01710668322789753610e-3;
+    1.10034357153915731354e-4;
+    5.48900252756255700982e-7;
+  |]
+
+let sici_gn4 =
+  [|
+    8.71001698973114191777e-2;
+    6.11379109952219284151e-1;
+    3.97180296392337498885e-1;
+    7.48527737628469092119e-2;
+    5.38868681462177273157e-3;
+    1.61999794598934024525e-4;
+    1.97963874140963632189e-6;
+    7.82579040744090311069e-9;
+  |]
+
+let sici_gd4 =
+  [|
+    1.0;
+    1.64402202413355338886e0;
+    6.66296701268987968381e-1;
+    9.88771761277688796203e-2;
+    6.22396345441768420760e-3;
+    1.73221081474177119497e-4;
+    2.02659182086343991969e-6;
+    7.82579218933534490868e-9;
+  |]
+
+let sici_fn8 =
+  [|
+    4.55880873470465315206e-1;
+    7.13715274100146711374e-1;
+    1.60300158222319456320e-1;
+    1.16064229408124407915e-2;
+    3.49556442447859055605e-4;
+    4.86215430826454749482e-6;
+    3.20092790091004902806e-8;
+    9.41779576128512936592e-11;
+    9.70507110881952024631e-14;
+  |]
+
+let sici_fd8 =
+  [|
+    1.0;
+    9.17463611873684053703e-1;
+    1.78685545332074536321e-1;
+    1.22253594771971293032e-2;
+    3.58696481881851580297e-4;
+    4.92435064317881464393e-6;
+    3.21956939101046018377e-8;
+    9.43720590350276732376e-11;
+    9.70507110881952025725e-14;
+  |]
+
+let sici_gn8 =
+  [|
+    6.97359953443276214934e-1;
+    3.30410979305632063225e-1;
+    3.84878767649974295920e-2;
+    1.71718239052347903558e-3;
+    3.48941165502279436777e-5;
+    3.47131167084116673800e-7;
+    1.70404452782044526189e-9;
+    3.85945925430276600453e-12;
+    3.14040098946363334640e-15;
+  |]
+
+let sici_gd8 =
+  [|
+    1.0;
+    1.68548898811011640017e0;
+    4.87852258695304967486e-1;
+    4.67913194259625806320e-2;
+    1.90284426674399523638e-3;
+    3.68475504442561108162e-5;
+    3.57043223443740838771e-7;
+    1.72693748966316146736e-9;
+    3.87830166023954706752e-12;
+    3.14040098946363335242e-15;
+  |]
+
+let sici_series x =
+  let s v = scalar_of x v in
+  let t = UF.multiply x x in
+  let si_s =
+    UF.divide
+      (UF.multiply x (Poly.polyval (coeff_of x sici_sn) t))
+      (Poly.polyval (coeff_of x sici_sd) t)
+  in
+  let ci_s =
+    UF.add
+      (UF.add (s euler_gamma) (UF.log x))
+      (UF.divide
+         (UF.multiply t (Poly.polyval (coeff_of x sici_cn) t))
+         (Poly.polyval (coeff_of x sici_cd) t))
+  in
+  let si = where_ (UF.equal x (s 0.0)) (s 0.0) si_s in
+  let ci = where_ (UF.equal x (s 0.0)) (s Float.neg_infinity) ci_s in
+  (si, ci)
+
+let sici_asympt x =
+  let s v = scalar_of x v in
+  let sn = UF.sin x and cn = UF.cos x in
+  let z = UF.divide (s 1.0) (UF.multiply x x) in
+  let f4 =
+    UF.divide
+      (Poly.polyval (coeff_of x sici_fn4) z)
+      (UF.multiply x (Poly.polyval (coeff_of x sici_fd4) z))
+  in
+  let g4 =
+    UF.divide
+      (UF.multiply z (Poly.polyval (coeff_of x sici_gn4) z))
+      (Poly.polyval (coeff_of x sici_gd4) z)
+  in
+  let f8 =
+    UF.divide
+      (Poly.polyval (coeff_of x sici_fn8) z)
+      (UF.multiply x (Poly.polyval (coeff_of x sici_fd8) z))
+  in
+  let g8 =
+    UF.divide
+      (UF.multiply z (Poly.polyval (coeff_of x sici_gn8) z))
+      (Poly.polyval (coeff_of x sici_gd8) z)
+  in
+  let mask = UF.less x (s 8.0) in
+  let f = where_ mask f4 f8 in
+  let g = where_ mask g4 g8 in
+  let si =
+    UF.subtract
+      (UF.subtract (s (Float.pi /. 2.0)) (UF.multiply f cn))
+      (UF.multiply g sn)
+  in
+  let ci = UF.subtract (UF.multiply f sn) (UF.multiply g cn) in
+  (si, ci)
+
+let sici_approx x =
+  let s v = scalar_of x v in
+  let si = UF.subtract (s (Float.pi /. 2.0)) (UF.divide (UF.cos x) x) in
+  let ci = UF.divide (UF.sin x) x in
+  let si = where_ (UF.isposinf x) (s (Float.pi /. 2.0)) si in
+  let ci = where_ (UF.isposinf x) (s 0.0) ci in
+  (si, ci)
+
+let sici x =
+  let x = promote1 x in
+  let s v = scalar_of x v in
+  let x_abs = UF.abs x in
+  let si_series, ci_series = sici_series x_abs in
+  let si_asymp, ci_asymp = sici_asympt x_abs in
+  let si_approx, ci_approx = sici_approx x_abs in
+  let cond1 = UF.less_equal x_abs (s 4.0) in
+  let cond2 =
+    UF.logical_and (UF.greater x_abs (s 4.0)) (UF.less_equal x_abs (s 1e9))
+  in
+  let si = where_ cond1 si_series (where_ cond2 si_asymp si_approx) in
+  let ci = where_ cond1 ci_series (where_ cond2 ci_asymp ci_approx) in
+  let si = UF.multiply (UF.sign x) si in
+  let ci = where_ (UF.isneginf x) (s Float.nan) ci in
+  [ si; ci ]
+
+let owens_t_quad_pts =
+  [|
+    0.0035082039676451715;
+    0.031279042338030754;
+    0.085266826283219451;
+    0.16245071730812277;
+    0.25851196049125435;
+    0.36807553840697534;
+    0.48501092905604697;
+    0.60277514152618577;
+    0.71477884217753227;
+    0.81475510988760099;
+    0.89711029755948966;
+    0.95723808085944262;
+    0.99178832974629704;
+  |]
+
+let owens_t_quad_wts =
+  [|
+    0.018831438115323503;
+    0.018567086243977649;
+    0.018042093461223386;
+    0.017263829606398753;
+    0.016243219975989857;
+    0.014994592034116705;
+    0.013535474469662088;
+    0.011886351605820165;
+    0.010070377242777432;
+    0.0081130545742299587;
+    0.0060419009528470239;
+    0.0038862217010742058;
+    0.0016793031084546090;
+  |]
+
+let coeff_f64 a = T.Concrete (Nd.of_floats D.F64 [| Array.length a |] a)
+
+let owens_t_quadrature h a =
+  let ndim = Array.length (shape a) in
+  let quad_pts =
+    NL.expand_dims (coeff_f64 owens_t_quad_pts) (Array.init ndim (fun i -> i))
+  in
+  let r = UF.multiply (NL.expand_dims (UF.square a) [| ndim |]) quad_pts in
+  let one = coeff_f64 [| 1.0 |] in
+  let integrand =
+    UF.divide
+      (UF.exp
+         (UF.multiply
+            (UF.multiply (coeff_f64 [| -0.5 |])
+               (NL.expand_dims (UF.square h) [| ndim |]))
+            (UF.add one r)))
+      (UF.add one r)
+  in
+  UF.multiply a (TC.matmul integrand (coeff_f64 owens_t_quad_wts))
+
+let owens_t h a =
+  let h, a = promote2 h a in
+  let s v = scalar_of h v in
+  let sign_a = UF.sign a in
+  let nan_mask = UF.logical_or (UF.isnan a) (UF.isnan h) in
+  let h = UF.abs h in
+  let abs_a = UF.abs a in
+  let root_2 = sqrt 2.0 in
+  let h_normed = UF.divide h (s root_2) in
+  let le1 = UF.less_equal abs_a (s 1.0) in
+  let modified_a = where_ le1 abs_a (UF.divide (s 1.0) abs_a) in
+  let modified_h = where_ le1 h (UF.multiply abs_a h) in
+  let result = owens_t_quadrature modified_h modified_a in
+  let result =
+    where_
+      (UF.equal modified_h (s 0.0))
+      (UF.divide (UF.arctan modified_a) (s (2.0 *. Float.pi)))
+      result
+  in
+  let result =
+    where_
+      (UF.equal modified_a (s 1.0))
+      (UF.multiply
+         (UF.multiply (s 0.125)
+            (bind1 T.Erfc [ UF.divide (UF.negative modified_h) (s root_2) ]))
+         (bind1 T.Erfc [ UF.divide modified_h (s root_2) ]))
+      result
+  in
+  let normh = bind1 T.Erfc [ h_normed ] in
+  let normah = bind1 T.Erfc [ UF.multiply abs_a h_normed ] in
+  let branch_lo =
+    UF.subtract
+      (UF.subtract (s 0.25)
+         (UF.multiply
+            (UF.multiply (s 0.25) (bind1 T.Erf [ h_normed ]))
+            (bind1 T.Erf [ UF.multiply abs_a h_normed ])))
+      result
+  in
+  let branch_hi =
+    UF.subtract
+      (UF.multiply (s 0.25)
+         (UF.subtract (UF.add normh normah) (UF.multiply normh normah)))
+      result
+  in
+  let result =
+    where_
+      (UF.greater abs_a (s 1.0))
+      (where_
+         (UF.less_equal (UF.multiply abs_a h) (s 0.67))
+         branch_lo branch_hi)
+      result
+  in
+  let result = UF.multiply sign_a result in
+  where_ nan_mask (full_like result Float.nan) result
+
+let bernoulli n =
+  if n < 0 then invalid_arg "n must be a non-negative integer.";
+  let dt = Dts.default_float_dtype () in
+  let b3 = [| 1.0; -0.5; 1.0 /. 6.0 |] in
+  if n < 3 then
+    T.Concrete (Nd.of_floats dt [| n + 1 |] (Array.sub b3 0 (n + 1)))
+  else begin
+    if n mod 2 <> 0 then
+      failwith "bernoulli: only even n supported (odd-n assembly deferred)";
+    let num_even = (n - 2) / 2 in
+    let s v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
+    let m = NL.arange ~start:4.0 ~step:2.0 ~dtype:dt (float_of_int (n + 1)) in
+    let pi2 = Float.pi *. Float.pi in
+    let term =
+      UF.divide
+        (UF.divide
+           (UF.multiply (UF.negative (UF.subtract m (s 1.0))) m)
+           (s 4.0))
+        (s pi2)
+    in
+    let q1 = UF.multiply (s (1.0 /. pi2)) (RED.cumprod term) in
+    let k = NL.arange ~start:2.0 ~dtype:dt 50.0 in
+    let kk = NL.expand_dims k [| 1 |] in
+    let mm = NL.expand_dims m [| 0 |] in
+    let q2 = RED.sum ~axis:[| 0 |] (UF.power kk (UF.negative mm)) in
+    let vals = UF.multiply q1 (UF.add (s 1.0) q2) in
+    let zeros_e = AC.zeros_like vals in
+    let body =
+      NL.reshape (NL.stack ~axis:1 [ zeros_e; vals ]) [| 2 * num_even |]
+    in
+    let head = T.Concrete (Nd.of_floats dt [| 3 |] b3) in
+    NL.concatenate [ head; body ]
+  end
+
+let bessel_jn ?(n_iter = 50) ~v z =
+  let z = promote1 z in
+  let dt = dtype z and sh = shape z in
+  let s x = scalar_of z x in
+  let cf x = const_full dt sh x in
+  let f0 = ref (cf 0.0) in
+  let f1 = ref (cf 1e-16) in
+  let bs = ref (cf 0.0) in
+  let out = Array.make (n_iter + 1) !f0 in
+  for k = n_iter downto 0 do
+    let kf = float_of_int k in
+    let f =
+      UF.subtract (UF.divide (UF.multiply (s (2.0 *. (kf +. 1.0))) !f1) z) !f0
+    in
+    if k mod 2 = 0 then bs := UF.add !bs (UF.multiply (s 2.0) f);
+    out.(k) <- f;
+    f0 := !f1;
+    f1 := f
+  done;
+  let f_last = out.(0) in
+  let denom = UF.subtract !bs f_last in
+  let js =
+    Array.to_list
+      (Array.map (fun jv -> UF.divide jv denom) (Array.sub out 0 (v + 1)))
+  in
+  NL.stack ~axis:0 js
+
+let hyp1f1_serie a b x =
+  let s v = scalar_of x v in
+  let prec = s (eps_of x) in
+  let one = s 1.0 in
+  let init = [ one; one; UF.multiply (UF.divide a b) x ] in
+  let cond st =
+    match st with
+    | [ serie; k; term ] ->
+        UF.logical_and
+          (UF.less k (s 250.0))
+          (UF.greater (UF.divide (UF.abs term) (UF.abs serie)) prec)
+    | _ -> assert false
+  in
+  let body st =
+    match st with
+    | [ serie; k; term ] ->
+        let serie' = UF.add serie term in
+        let term' =
+          UF.divide
+            (UF.multiply
+               (UF.multiply (UF.divide (UF.add a k) (UF.add b k)) x)
+               term)
+            (UF.add k one)
+        in
+        [ serie'; UF.add k one; term' ]
+    | _ -> assert false
+  in
+  match masked_iter ~maxiter:250 ~cond ~body init with
+  | [ serie; _; _ ] -> serie
+  | _ -> assert false
+
+let hyp1f1_asymptotic a b x =
+  let s v = scalar_of x v in
+  let prec = s (eps_of x) in
+  let one = s 1.0 in
+  let init =
+    [
+      one; one; UF.divide (UF.multiply (UF.subtract b a) (UF.subtract one a)) x;
+    ]
+  in
+  let cond st =
+    match st with
+    | [ serie; k; term ] ->
+        UF.logical_and
+          (UF.less k (s 250.0))
+          (UF.greater (UF.divide (UF.abs term) (UF.abs serie)) prec)
+    | _ -> assert false
+  in
+  let body st =
+    match st with
+    | [ serie; k; term ] ->
+        let serie' = UF.add serie term in
+        let term' =
+          UF.divide
+            (UF.divide
+               (UF.multiply
+                  (UF.multiply
+                     (UF.add (UF.subtract b a) k)
+                     (UF.add (UF.subtract one a) k))
+                  term)
+               (UF.add k one))
+            x
+        in
+        [ serie'; UF.add k one; term' ]
+    | _ -> assert false
+  in
+  let serie =
+    match masked_iter ~maxiter:250 ~cond ~body init with
+    | [ serie; _; _ ] -> serie
+    | _ -> assert false
+  in
+  UF.multiply
+    (UF.multiply
+       (UF.multiply (UF.divide (gamma b) (gamma a)) (UF.exp x))
+       (UF.power x (UF.subtract a b)))
+    serie
+
+let hyp1f1 a b x =
+  let a, b, x = promote3 a b x in
+  let s v = scalar_of x v in
+  let result =
+    where_
+      (UF.less (UF.abs x) (s 100.0))
+      (hyp1f1_serie a b x) (hyp1f1_asymptotic a b x)
+  in
+  let a0 = UF.equal a (s 0.0) in
+  let anz = UF.not_equal a (s 0.0) in
+  let ab = UF.logical_and (UF.equal a b) anz in
+  let b0 = UF.logical_and (UF.equal b (s 0.0)) anz in
+  where_ a0 (s 1.0) (where_ ab (UF.exp x) (where_ b0 (s Float.infinity) result))
+
+let expn2 x n =
+  let s v = scalar_of x v in
+  let big = s 1.44115188075855872e17 in
+  let machep = s (eps_of x) in
+  let one = s 1.0 in
+  let two = s 2.0 in
+  let init =
+    [
+      one;
+      one;
+      x;
+      one;
+      UF.add x n;
+      UF.divide one (UF.add x n);
+      s Float.infinity;
+      s 0.0;
+    ]
+  in
+  let cond st =
+    match st with
+    | [ _; _; _; _; _; _; t; _ ] ->
+        UF.logical_and (UF.greater x (s 0.0)) (UF.greater t machep)
+    | _ -> assert false
+  in
+  let body st =
+    match st with
+    | [ k; pkm2; qkm2; pkm1; qkm1; ans; _t; r ] ->
+        let k = UF.add k one in
+        let odd = UF.equal (UF.remainder k two) one in
+        let yk = where_ odd one x in
+        let xk =
+          where_ odd
+            (UF.add n (UF.divide (UF.subtract k one) two))
+            (UF.divide k two)
+        in
+        let pk = UF.add (UF.multiply pkm1 yk) (UF.multiply pkm2 xk) in
+        let qk = UF.add (UF.multiply qkm1 yk) (UF.multiply qkm2 xk) in
+        let nz = UF.not_equal qk (s 0.0) in
+        let r' = where_ nz (UF.divide pk qk) r in
+        let t' = where_ nz (UF.abs (UF.divide (UF.subtract ans r') r')) one in
+        let ans' = where_ nz r' ans in
+        let big_m = UF.greater (UF.abs pk) big in
+        let db u = where_ big_m (UF.divide u big) u in
+        [ k; db pkm1; db qkm1; db pk; db qk; ans'; t'; r' ]
+    | _ -> assert false
+  in
+  match masked_iter ~maxiter:500 ~cond ~body init with
+  | [ _; _; _; _; _; ans; _; _ ] -> UF.multiply ans (UF.exp (UF.negative x))
+  | _ -> assert false
+
+let expn n x =
+  let n, x = promote2 n x in
+  let s v = scalar_of x v in
+  let one = s 1.0 in
+  let n1 = where_ (UF.equal n one) (UF.add n n) n in
+  let cond0 = UF.logical_or (UF.less n (s 0.0)) (UF.less x (s 0.0)) in
+  let cond1 = UF.logical_and (UF.equal x (s 0.0)) (UF.less n (s 2.0)) in
+  let cond2 =
+    UF.logical_and (UF.equal x (s 0.0)) (UF.greater_equal n (s 2.0))
+  in
+  let cond3 =
+    UF.logical_and (UF.equal n (s 0.0)) (UF.greater_equal x (s 0.0))
+  in
+  let cond5 = UF.greater x one in
+  where_ cond0 (s Float.nan)
+    (where_ cond1 (s Float.infinity)
+       (where_ cond2 (UF.divide one n1)
+          (where_ cond3
+             (UF.divide (UF.exp (UF.negative x)) x)
+             (where_ cond5 (expn2 x n) (s Float.nan)))))
+
+let exp1 x =
+  let x = promote1 x in
+  expn (scalar_of x 1.0) x
+
+let hyp2f1 _a _b _c _x =
+  failwith
+    "hyp2f1: unsupported (digamma-transform + data-dependent masked fori \
+     recurrence deferred)"
+
+let expi _x =
+  failwith
+    "expi: unsupported (Cephes 7-interval piecewise coefficient tables \
+     deferred)"
+
+let lpmn _m _n _z =
+  failwith
+    "lpmn: unsupported (associated-Legendre recurrence needs fancy .at[] \
+     scatter, deferred)"
+
+let lpmn_values _m _n _z _is_normalized =
+  failwith
+    "lpmn_values: unsupported (associated-Legendre recurrence needs fancy \
+     .at[] scatter, deferred)"
+
+let sph_harm_y ?diff_n:_ ?n_max:_ _n _m _theta _phi =
+  failwith
+    "sph_harm_y: complex-valued output unsupported (no complex dtype until M5)"

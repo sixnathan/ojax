@@ -3686,7 +3686,34 @@ def sp_multigammaln(params):
     return lambda a: jsp.multigammaln(a, d)
 
 
-SCIPY_SPECIAL_BUILDERS = {"multigammaln": sp_multigammaln}
+def sp_softmax(params):
+    axis = params.get("axis")
+    return lambda x: jsp.softmax(x, axis=axis)
+
+
+def sp_log_softmax(params):
+    axis = params.get("axis")
+    return lambda x: jsp.log_softmax(x, axis=axis)
+
+
+def sp_bernoulli(params):
+    n = int(params["n"])
+    return lambda: jsp.bernoulli(n)
+
+
+def sp_bessel_jn(params):
+    v = int(params["v"])
+    n_iter = int(params.get("n_iter", 50))
+    return lambda z: jsp.bessel_jn(z, v=v, n_iter=n_iter)
+
+
+SCIPY_SPECIAL_BUILDERS = {
+    "multigammaln": sp_multigammaln,
+    "softmax": sp_softmax,
+    "log_softmax": sp_log_softmax,
+    "bernoulli": sp_bernoulli,
+    "bessel_jn": sp_bessel_jn,
+}
 
 for _sp_name in [
     "gammaln",
@@ -3710,6 +3737,9 @@ for _sp_name in [
     "ndtri",
     "log_ndtr",
     "factorial",
+    "spence",
+    "exp1",
+    "sici",
 ]:
     SCIPY_SPECIAL_BUILDERS[_sp_name] = sp_unary(_sp_name)
 
@@ -3727,10 +3757,14 @@ for _sp_name in [
     "kl_div",
     "zeta",
     "polygamma",
+    "poch",
+    "owens_t",
+    "expn",
 ]:
     SCIPY_SPECIAL_BUILDERS[_sp_name] = sp_binary(_sp_name)
 
 SCIPY_SPECIAL_BUILDERS["betainc"] = sp_ternary("betainc")
+SCIPY_SPECIAL_BUILDERS["hyp1f1"] = sp_ternary("hyp1f1")
 
 
 def run_case(c, seed):

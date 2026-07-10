@@ -1,0 +1,12 @@
+(test
+ (name e2e)
+ (modules npz compare e2e)
+ (libraries ojax alcotest yojson unix)
+ (deps
+  (source_tree %{project_root}/goldens/e2e)))
+
+(copy_files
+ (files %{project_root}/test/golden/npz.ml))
+
+(copy_files
+ (files %{project_root}/test/golden/compare.ml))

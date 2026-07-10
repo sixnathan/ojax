@@ -47,11 +47,17 @@ module Xla = struct
     Array.to_list (Pjrt.Executable.execute exec (Array.of_list bufs))
 end
 
+let plugin_available () =
+  match Sys.getenv_opt Pjrt.Discover.env_var with
+  | Some path -> (not (Filename.is_relative path)) && Sys.file_exists path
+  | None -> false
+
 let use_xla =
   lazy
     (match Sys.getenv_opt "OJAX_BACKEND" with
-    | None | Some "interpreter" -> false
+    | Some "interpreter" -> false
     | Some "xla" -> true
+    | None -> plugin_available ()
     | Some other ->
         invalid_arg
           (Printf.sprintf

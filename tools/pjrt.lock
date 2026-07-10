@@ -22,7 +22,11 @@ minor = 81
 struct_size_bytes = 984
 
 [stablehlo]
-target_version = PIN_AT_ROW_74
+target_version = 1.17.0
+current_version_jaxlib_0_10_2 = 1.17.0
+minimum_version_jaxlib_0_10_2 = 0.9.0
+api_version_jaxlib_0_10_2 = 9
+pinned_at = row 74 sess-m4-r74
 
 [header]
 vendored = false

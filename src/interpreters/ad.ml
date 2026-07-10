@@ -688,6 +688,9 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no jvp rule in M1"
+  | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
+  | Triangular_solve _ | Tridiagonal_solve ->
+      failwith "ad: linalg jvp deferred (M5 gap, forward-eval only)"
   | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
   | Xla_call _ -> failwith "ad: jvp of xla_call not supported in M1"
 
@@ -1295,6 +1298,9 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | While _ ->
       failwith
         "ad: reverse-mode differentiation does not work for lax.while_loop"
+  | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
+  | Triangular_solve _ | Tridiagonal_solve ->
+      failwith "ad: linalg transpose deferred (M5 gap, forward-eval only)"
 
 and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     value list =

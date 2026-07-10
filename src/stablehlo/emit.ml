@@ -1970,6 +1970,11 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
         "Stablehlo.Emit: Custom_linear_solve lowers to an iterative \
          while/solve decomposition (non-single-op); end-to-end deferred to the \
          PJRT execution rows"
+  | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
+  | Triangular_solve _ | Tridiagonal_solve ->
+      failwith
+        "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
+         host-interpreter only (M5 lax/linalg, XLA emission deferred)"
   | Xla_call _ ->
       failwith
         "Stablehlo.Emit: a nested Xla_call must be inlined by the caller; the \

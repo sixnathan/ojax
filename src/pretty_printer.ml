@@ -240,6 +240,13 @@ let prim_name = function
   | Random_bits _ -> "random_bits"
   | Random_wrap -> "random_wrap"
   | Random_unwrap -> "random_unwrap"
+  | Cholesky -> "cholesky"
+  | Householder_product -> "householder_product"
+  | Lu -> "lu"
+  | Lu_pivots_to_permutation _ -> "lu_pivots_to_permutation"
+  | Qr _ -> "qr"
+  | Triangular_solve _ -> "triangular_solve"
+  | Tridiagonal_solve -> "tridiagonal_solve"
 
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"

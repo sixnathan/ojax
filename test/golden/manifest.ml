@@ -3427,6 +3427,96 @@ let complex_suite_for set_name =
   in
   ("complex:" ^ set_name, coverage :: case_tests)
 
+module LL = Ojax.Lax.Linalg
+
+let linalg_run c inputs =
+  let get name = T.Concrete (nd_of_npz (find_member inputs name)) in
+  let pb name = U.member name c.params |> U.to_bool in
+  let pi name = U.member name c.params |> U.to_int in
+  match c.op with
+  | "cholesky" -> [ LL.cholesky (get "a") ]
+  | "lu" ->
+      let a, b, cc = LL.lu (get "a") in
+      [ a; b; cc ]
+  | "qr" ->
+      let q, r = LL.qr ~full_matrices:(pb "full_matrices") (get "a") in
+      [ q; r ]
+  | "householder_product" -> [ LL.householder_product (get "a") (get "taus") ]
+  | "lu_pivots_to_permutation" ->
+      [
+        LL.lu_pivots_to_permutation ~permutation_size:(pi "permutation_size")
+          (get "pivots");
+      ]
+  | "triangular_solve" ->
+      [
+        LL.triangular_solve ~left_side:(pb "left_side") ~lower:(pb "lower")
+          ~transpose_a:(pb "transpose_a") ~unit_diagonal:(pb "unit_diagonal")
+          (get "a") (get "b");
+      ]
+  | "tridiagonal_solve" ->
+      [ LL.tridiagonal_solve (get "dl") (get "d") (get "du") (get "b") ]
+  | _ -> failwith ("linalg golden: unknown op " ^ c.op)
+
+let linalg_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.case_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.case_id ^ ".npz"))
+  in
+  let results = linalg_run c inputs in
+  let paired =
+    try List.combine c.outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.case_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let ocompare = match o.ocompare with Some s -> s | None -> c.compare in
+      let oatol = match o.oatol with Some t -> t | None -> c.atol in
+      let ortol = match o.ortol with Some t -> t | None -> c.rtol in
+      let oreason = o.otreason in
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let floats = read_nd nd in
+      let data =
+        if ocompare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      let actual =
+        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+      in
+      Compare.assert_tol_widened o.odtype oatol ortol oreason;
+      Compare.check
+        ~name:(c.case_id ^ ":" ^ o.oname)
+        ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
+    paired
+
+let linalg_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "linalg") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick (linalg_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("linalg:" ^ set_name, coverage :: case_tests)
+
 let () =
   Ojax.Lax.install ();
   Ojax.Random.Prng.install ();
@@ -3493,5 +3583,7 @@ let () =
       scipy_ndimage_suite_for "x64_on";
       complex_suite_for "x64_off";
       complex_suite_for "x64_on";
+      linalg_suite_for "x64_off";
+      linalg_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

@@ -4188,6 +4188,180 @@ def generate(module):
     return n_off, n_on
 
 
+LINALG_TOL_FACTOR = 10
+LINALG_TOL_REASON = "matmul_reassociation"
+
+
+def _linalg_tol(dtype_name):
+    if ec.is_exact_dtype(dtype_name):
+        return "exact", {"atol": 0, "rtol": 0}, None
+    base = TOLERANCES["default"][dtype_name]
+    v = base * LINALG_TOL_FACTOR
+    return "allclose", {"atol": v, "rtol": v}, LINALG_TOL_REASON
+
+
+def _linalg_out_meta(name, arr):
+    a = np.asarray(arr)
+    compare, tol, reason = _linalg_tol(a.dtype.name)
+    entry = {
+        "name": name,
+        "shape": [int(d) for d in a.shape],
+        "dtype": a.dtype.name,
+        "compare": compare,
+        "tol": tol,
+    }
+    if reason is not None:
+        entry["tol_reason"] = reason
+    return entry
+
+
+def _linalg_inputs(op, params, npdt, rng):
+    jla = jax.lax.linalg
+    from jax._src.lax import linalg as jla_src
+    if op == "cholesky":
+        n = params["n"]
+        m = rng.standard_normal((n, n))
+        a = (m @ m.T + n * np.eye(n)).astype(npdt)
+        return {"a": a}, jla.cholesky(a)
+    if op == "lu":
+        m = params["m"]
+        n = params["n"]
+        a = rng.standard_normal((m, n)).astype(npdt)
+        return {"a": a}, jla.lu(a)
+    if op == "qr":
+        m = params["m"]
+        n = params["n"]
+        fm = params["full_matrices"]
+        a = rng.standard_normal((m, n)).astype(npdt)
+        return {"a": a}, jla.qr(a, full_matrices=fm)
+    if op == "householder_product":
+        m = params["m"]
+        n = params["n"]
+        a0 = rng.standard_normal((m, n)).astype(npdt)
+        packed, taus = jla_src.geqrf(a0)
+        packed = np.asarray(packed)
+        taus = np.asarray(taus)
+        return {"a": packed, "taus": taus}, jla.householder_product(packed, taus)
+    if op == "lu_pivots_to_permutation":
+        m = params["m"]
+        n = params["n"]
+        ps = params["permutation_size"]
+        a = rng.standard_normal((m, n)).astype(npdt)
+        _, piv, _ = jla.lu(a)
+        piv = np.asarray(piv)
+        return {"pivots": piv}, jla.lu_pivots_to_permutation(piv, ps)
+    if op == "triangular_solve":
+        m = params["m"]
+        k = params["k"]
+        ls = params["left_side"]
+        lo = params["lower"]
+        ta = params["transpose_a"]
+        ud = params["unit_diagonal"]
+        a = (rng.standard_normal((m, m)) + m * np.eye(m)).astype(npdt)
+        bshape = (m, k) if ls else (k, m)
+        b = rng.standard_normal(bshape).astype(npdt)
+        out = jla.triangular_solve(
+            a,
+            b,
+            left_side=ls,
+            lower=lo,
+            transpose_a=ta,
+            conjugate_a=False,
+            unit_diagonal=ud,
+        )
+        return {"a": a, "b": b}, out
+    if op == "tridiagonal_solve":
+        m = params["m"]
+        k = params["k"]
+        d = rng.uniform(4.0, 5.0, m).astype(npdt)
+        dl = (rng.standard_normal(m) * 0.5).astype(npdt)
+        dl[0] = 0
+        du = (rng.standard_normal(m) * 0.5).astype(npdt)
+        du[m - 1] = 0
+        b = rng.standard_normal((m, k)).astype(npdt)
+        out = jla.tridiagonal_solve(dl, d, du, b)
+        return {"dl": dl, "d": d, "du": du, "b": b}, out
+    raise SystemExit("unknown linalg op " + op)
+
+
+def run_linalg_case(c):
+    seed = zlib.adler32(c["case_id"].encode("utf-8"))
+    rng = np.random.RandomState(seed)
+    npdt = np.dtype(c["dtype"])
+    in_arrays, out = _linalg_inputs(c["op"], c["params"], npdt, rng)
+    if isinstance(out, (tuple, list)):
+        outputs = [np.asarray(o) for o in out]
+    else:
+        outputs = [np.asarray(out)]
+    return in_arrays, outputs
+
+
+def gen_linalg_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and ec.is_wide64(c["dtype"]):
+            continue
+        case_id = c["case_id"]
+        in_arrays, outputs = run_linalg_case(c)
+        stored_in = {k: np.asarray(v) for k, v in in_arrays.items()}
+        out_arrays = {"out" + str(i): o for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **stored_in)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": k,
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+            }
+            for k, v in sorted(stored_in.items())
+        ]
+        outs_meta = [
+            _linalg_out_meta("out" + str(i), o) for i, o in enumerate(outputs)
+        ]
+        compare, tol, reason = _linalg_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "op": c["op"],
+            "primitive": c["primitive"],
+            "params": c["params"],
+            "args": args_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        if reason is not None:
+            entry["tol_reason"] = reason
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_linalg(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_linalg_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_linalg_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
@@ -4205,6 +4379,8 @@ def main():
         n_off, n_on = generate_loops(sys.argv[1])
     elif sys.argv[1] == "solves":
         n_off, n_on = generate_solves(sys.argv[1])
+    elif sys.argv[1] == "linalg":
+        n_off, n_on = generate_linalg(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

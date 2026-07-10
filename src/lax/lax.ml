@@ -1407,6 +1407,17 @@ let impl prim inputs =
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "lax: prng primitive handled by the random module"
+  | Cholesky -> Linalg.cholesky_impl inputs
+  | Lu -> Linalg.lu_impl inputs
+  | Qr full_matrices -> Linalg.qr_impl full_matrices inputs
+  | Householder_product -> Linalg.householder_product_impl inputs
+  | Lu_pivots_to_permutation permutation_size ->
+      Linalg.lu_pivots_to_permutation_impl permutation_size inputs
+  | Triangular_solve
+      { left_side; lower; transpose_a; conjugate_a; unit_diagonal } ->
+      Linalg.triangular_solve_impl left_side lower transpose_a conjugate_a
+        unit_diagonal inputs
+  | Tridiagonal_solve -> Linalg.tridiagonal_solve_impl inputs
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1695,6 +1706,14 @@ let abstract_eval prim avals =
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "lax: prng primitive handled by the random module"
+  | Cholesky -> Linalg.cholesky_aval avals
+  | Lu -> Linalg.lu_aval avals
+  | Qr full_matrices -> Linalg.qr_aval full_matrices avals
+  | Householder_product -> Linalg.householder_product_aval avals
+  | Lu_pivots_to_permutation permutation_size ->
+      Linalg.lu_pivots_to_permutation_aval permutation_size avals
+  | Triangular_solve _ -> Linalg.triangular_solve_aval avals
+  | Tridiagonal_solve -> Linalg.tridiagonal_solve_aval avals
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =
@@ -1712,3 +1731,5 @@ let cummax = Control_flow.Loops.cummax
 let cummin = Control_flow.Loops.cummin
 let cumlogsumexp = Control_flow.Loops.cumlogsumexp
 let custom_linear_solve = Control_flow.Solves.custom_linear_solve
+
+module Linalg = Linalg

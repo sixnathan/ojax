@@ -220,6 +220,19 @@ and primitive =
   | Random_bits of { bit_width : int; shape : int array }
   | Random_wrap
   | Random_unwrap
+  | Cholesky
+  | Householder_product
+  | Lu
+  | Lu_pivots_to_permutation of int
+  | Qr of bool
+  | Triangular_solve of {
+      left_side : bool;
+      lower : bool;
+      transpose_a : bool;
+      conjugate_a : bool;
+      unit_diagonal : bool;
+    }
+  | Tridiagonal_solve
 
 and dot_dims = {
   lhs_contract : int array;

@@ -39,3 +39,5 @@ val custom_linear_solve :
   value list ->
   ((value list -> value list) -> value list -> value list) ->
   value list
+
+module Linalg = Linalg

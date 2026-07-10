@@ -938,7 +938,7 @@ let numpy_check_case ~fn ~set_dir ~x64 c () =
       let actual =
         { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
       in
-      Compare.assert_tol o.odtype c.atol c.rtol;
+      Compare.assert_tol_widened o.odtype c.atol c.rtol c.treason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
         ~compare:c.compare ~atol:c.atol ~rtol:c.rtol ~expected:golden ~actual)
@@ -2981,6 +2981,67 @@ let image_suite_for set_name =
   in
   ("image:" ^ set_name, coverage :: case_tests)
 
+module SP = Ojax.Scipy.Special
+
+let scipy_special_fn op params operands : T.value list =
+  let one v = [ v ] in
+  match (op, operands) with
+  | "gammaln", [ x ] -> one (SP.gammaln x)
+  | "gammasgn", [ x ] -> one (SP.gammasgn x)
+  | "loggamma", [ x ] -> one (SP.loggamma x)
+  | "gamma", [ x ] -> one (SP.gamma x)
+  | "digamma", [ x ] -> one (SP.digamma x)
+  | "erf", [ x ] -> one (SP.erf x)
+  | "erfc", [ x ] -> one (SP.erfc x)
+  | "erfinv", [ x ] -> one (SP.erfinv x)
+  | "erfcx", [ x ] -> one (SP.erfcx x)
+  | "dawsn", [ x ] -> one (SP.dawsn x)
+  | "expit", [ x ] -> one (SP.expit x)
+  | "logit", [ x ] -> one (SP.logit x)
+  | "entr", [ x ] -> one (SP.entr x)
+  | "i0", [ x ] -> one (SP.i0 x)
+  | "i0e", [ x ] -> one (SP.i0e x)
+  | "i1", [ x ] -> one (SP.i1 x)
+  | "i1e", [ x ] -> one (SP.i1e x)
+  | "ndtr", [ x ] -> one (SP.ndtr x)
+  | "ndtri", [ x ] -> one (SP.ndtri x)
+  | "log_ndtr", [ x ] -> one (SP.log_ndtr x)
+  | "factorial", [ x ] -> one (SP.factorial x)
+  | "betaln", [ a; b ] -> one (SP.betaln a b)
+  | "beta", [ a; b ] -> one (SP.beta a b)
+  | "comb", [ a; b ] -> one (SP.comb a b)
+  | "gammainc", [ a; b ] -> one (SP.gammainc a b)
+  | "gammaincc", [ a; b ] -> one (SP.gammaincc a b)
+  | "xlogy", [ a; b ] -> one (SP.xlogy a b)
+  | "xlog1py", [ a; b ] -> one (SP.xlog1py a b)
+  | "boxcox", [ a; b ] -> one (SP.boxcox a b)
+  | "boxcox1p", [ a; b ] -> one (SP.boxcox1p a b)
+  | "rel_entr", [ a; b ] -> one (SP.rel_entr a b)
+  | "kl_div", [ a; b ] -> one (SP.kl_div a b)
+  | "zeta", [ x; q ] -> one (SP.zeta ~q x)
+  | "polygamma", [ n; x ] -> one (SP.polygamma n x)
+  | "betainc", [ a; b; x ] -> one (SP.betainc a b x)
+  | "multigammaln", [ a ] ->
+      one (SP.multigammaln a (U.to_int (U.member "d" params)))
+  | _ -> failwith ("scipy_special golden: unknown op " ^ op)
+
+let scipy_special_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "scipy_special") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:scipy_special_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("scipy_special:" ^ set_name, coverage :: case_tests)
+
 let must_fail msg f =
   match f () with
   | () -> Alcotest.failf "expected failure: %s" msg
@@ -3075,5 +3136,7 @@ let () =
       special_suite_for "x64_on";
       image_suite_for "x64_off";
       image_suite_for "x64_on";
+      scipy_special_suite_for "x64_off";
+      scipy_special_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

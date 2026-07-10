@@ -27,4 +27,5 @@
   (source_tree %{project_root}/goldens/initializers)
   (source_tree %{project_root}/goldens/segment)
   (source_tree %{project_root}/goldens/special)
-  (source_tree %{project_root}/goldens/image)))
+  (source_tree %{project_root}/goldens/image)
+  (source_tree %{project_root}/goldens/scipy_special)))

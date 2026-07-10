@@ -3651,7 +3651,100 @@ IMAGE_BUILDERS = {
 }
 
 
+import jax.scipy.special as jsp
+
+
+def sp_unary(name):
+    fn = getattr(jsp, name)
+
+    def build(params):
+        return lambda x: fn(x)
+
+    return build
+
+
+def sp_binary(name):
+    fn = getattr(jsp, name)
+
+    def build(params):
+        return lambda a, b: fn(a, b)
+
+    return build
+
+
+def sp_ternary(name):
+    fn = getattr(jsp, name)
+
+    def build(params):
+        return lambda a, b, c: fn(a, b, c)
+
+    return build
+
+
+def sp_multigammaln(params):
+    d = int(params["d"])
+    return lambda a: jsp.multigammaln(a, d)
+
+
+SCIPY_SPECIAL_BUILDERS = {"multigammaln": sp_multigammaln}
+
+for _sp_name in [
+    "gammaln",
+    "gammasgn",
+    "loggamma",
+    "gamma",
+    "digamma",
+    "erf",
+    "erfc",
+    "erfinv",
+    "erfcx",
+    "dawsn",
+    "expit",
+    "logit",
+    "entr",
+    "i0",
+    "i0e",
+    "i1",
+    "i1e",
+    "ndtr",
+    "ndtri",
+    "log_ndtr",
+    "factorial",
+]:
+    SCIPY_SPECIAL_BUILDERS[_sp_name] = sp_unary(_sp_name)
+
+for _sp_name in [
+    "betaln",
+    "beta",
+    "comb",
+    "gammainc",
+    "gammaincc",
+    "xlogy",
+    "xlog1py",
+    "boxcox",
+    "boxcox1p",
+    "rel_entr",
+    "kl_div",
+    "zeta",
+    "polygamma",
+]:
+    SCIPY_SPECIAL_BUILDERS[_sp_name] = sp_binary(_sp_name)
+
+SCIPY_SPECIAL_BUILDERS["betainc"] = sp_ternary("betainc")
+
+
 def run_case(c, seed):
+    if c["primitive"].startswith("scipy.special.") and c["op"] in SCIPY_SPECIAL_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = jax.jit(SCIPY_SPECIAL_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
     if c["primitive"].startswith("image.") and c["op"] in IMAGE_BUILDERS:
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])

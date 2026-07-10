@@ -40,6 +40,14 @@ let unary prim dtype =
          match args with [ x ] -> C.bind prim [ x ] | _ -> assert false)
     : unit -> T.closed_jaxpr)
 
+let binary prim dtype =
+  (fun () ->
+     J.make_jaxpr
+       [ av [| 3 |] dtype; av [| 3 |] dtype ]
+       (fun args ->
+         match args with [ x; y ] -> C.bind prim [ x; y ] | _ -> assert false)
+    : unit -> T.closed_jaxpr)
+
 let builders : (string * (unit -> T.closed_jaxpr)) list =
   [
     ("identity_vec", fun () -> J.make_jaxpr [ av [| 3 |] D.F32 ] (fun a -> a));
@@ -123,6 +131,23 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
     ("unary_square", unary T.Square D.F32);
     ("unary_tan", unary T.Tan D.F32);
     ("unary_tanh", unary T.Tanh D.F32);
+    ("binary_add", binary T.Add D.F32);
+    ("binary_and", binary T.And D.I32);
+    ("binary_atan2", binary T.Atan2 D.F32);
+    ("binary_div", binary T.Div D.F32);
+    ("binary_max", binary T.Max D.F32);
+    ("binary_min", binary T.Min D.F32);
+    ("binary_mul", binary T.Mul D.F32);
+    ("binary_mulhi", binary T.Mulhi D.I32);
+    ("binary_nextafter", binary T.Nextafter D.F32);
+    ("binary_or", binary T.Or D.I32);
+    ("binary_pow", binary T.Pow D.F32);
+    ("binary_rem", binary T.Rem D.F32);
+    ("binary_shift_left", binary T.Shift_left D.I32);
+    ("binary_shift_right_arithmetic", binary T.Shift_right_arithmetic D.I32);
+    ("binary_shift_right_logical", binary T.Shift_right_logical D.I32);
+    ("binary_sub", binary T.Sub D.F32);
+    ("binary_xor", binary T.Xor D.I32);
   ]
 
 let check_case name build () =

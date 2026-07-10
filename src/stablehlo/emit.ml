@@ -104,6 +104,35 @@ let emit_chlo_unary ctx (eqn : eqn) in_ids op =
     (Printf.sprintf "    %s = chlo.%s %s : %s -> %s\n" (name n) op (name x) inty
        (Ir.tensor_type_of_aval out.vaval))
 
+let pair = function
+  | [ a; b ] -> (a, b)
+  | _ -> invalid_arg "Stablehlo.Emit: arity"
+
+let emit_stablehlo_binary ctx (eqn : eqn) in_ids op =
+  let a, b = pair in_ids in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.%s %s, %s : %s\n" (name n) op (name a)
+       (name b)
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_chlo_binary ctx (eqn : eqn) in_ids op =
+  let a, b = pair in_ids in
+  let lhs, rhs =
+    match eqn.inputs with
+    | [ l; r ] -> (l, r)
+    | _ -> invalid_arg "Stablehlo.Emit: arity"
+  in
+  let lty = Ir.tensor_type_of_aval (atom_aval lhs) in
+  let rty = Ir.tensor_type_of_aval (atom_aval rhs) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = chlo.%s %s, %s : %s, %s -> %s\n" (name n) op
+       (name a) (name b) lty rty
+       (Ir.tensor_type_of_aval out.vaval))
+
 let emit_exp2 ctx (eqn : eqn) in_ids =
   let x = sole in_ids in
   let out = sole eqn.outs in
@@ -250,9 +279,29 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Integer_pow y -> emit_integer_pow ctx eqn in_ids y
   | Imag -> failwith "Stablehlo.Emit: Imag requires complex dtype (M5)"
   | Real -> failwith "Stablehlo.Emit: Real requires complex dtype (M5)"
+  | Add -> emit_stablehlo_binary ctx eqn in_ids "add"
+  | And -> emit_stablehlo_binary ctx eqn in_ids "and"
+  | Atan2 -> emit_stablehlo_binary ctx eqn in_ids "atan2"
+  | Div -> emit_stablehlo_binary ctx eqn in_ids "divide"
+  | Max -> emit_stablehlo_binary ctx eqn in_ids "maximum"
+  | Min -> emit_stablehlo_binary ctx eqn in_ids "minimum"
+  | Mul -> emit_stablehlo_binary ctx eqn in_ids "multiply"
+  | Or -> emit_stablehlo_binary ctx eqn in_ids "or"
+  | Pow -> emit_stablehlo_binary ctx eqn in_ids "power"
+  | Rem -> emit_stablehlo_binary ctx eqn in_ids "remainder"
+  | Shift_left -> emit_stablehlo_binary ctx eqn in_ids "shift_left"
+  | Shift_right_arithmetic ->
+      emit_stablehlo_binary ctx eqn in_ids "shift_right_arithmetic"
+  | Shift_right_logical ->
+      emit_stablehlo_binary ctx eqn in_ids "shift_right_logical"
+  | Sub -> emit_stablehlo_binary ctx eqn in_ids "subtract"
+  | Xor -> emit_stablehlo_binary ctx eqn in_ids "xor"
+  | Mulhi -> emit_chlo_binary ctx eqn in_ids "mulhi"
+  | Nextafter -> emit_chlo_binary ctx eqn in_ids "next_after"
+  | Complex -> failwith "Stablehlo.Emit: Complex requires complex dtype (M5)"
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 78-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 79-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

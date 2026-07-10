@@ -69,6 +69,27 @@ CASES = [
     ("unary_square", lax.square, [f32(3)]),
     ("unary_tan", lax.tan, [f32(3)]),
     ("unary_tanh", lax.tanh, [f32(3)]),
+    ("binary_add", lax.add, [f32(3), f32(3)]),
+    ("binary_and", lax.bitwise_and, [i32(3), i32(3)]),
+    ("binary_atan2", lax.atan2, [f32(3), f32(3)]),
+    ("binary_div", lax.div, [f32(3), f32(3)]),
+    ("binary_max", lax.max, [f32(3), f32(3)]),
+    ("binary_min", lax.min, [f32(3), f32(3)]),
+    ("binary_mul", lax.mul, [f32(3), f32(3)]),
+    ("binary_mulhi", lax.mulhi, [i32(3), i32(3)]),
+    ("binary_nextafter", lax.nextafter, [f32(3), f32(3)]),
+    ("binary_or", lax.bitwise_or, [i32(3), i32(3)]),
+    ("binary_pow", lax.pow, [f32(3), f32(3)]),
+    ("binary_rem", lax.rem, [f32(3), f32(3)]),
+    ("binary_shift_left", lax.shift_left, [i32(3), i32(3)]),
+    (
+        "binary_shift_right_arithmetic",
+        lax.shift_right_arithmetic,
+        [i32(3), i32(3)],
+    ),
+    ("binary_shift_right_logical", lax.shift_right_logical, [i32(3), i32(3)]),
+    ("binary_sub", lax.sub, [f32(3), f32(3)]),
+    ("binary_xor", lax.bitwise_xor, [i32(3), i32(3)]),
 ]
 
 

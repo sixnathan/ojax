@@ -233,6 +233,12 @@ and primitive =
       unit_diagonal : bool;
     }
   | Tridiagonal_solve
+  | Eig of { compute_left : bool; compute_right : bool }
+  | Eigh of { lower : bool }
+  | Hessenberg
+  | Schur of { compute_vectors : bool }
+  | Svd of { full_matrices : bool; compute_uv : bool }
+  | Tridiagonal of { lower : bool }
 
 and dot_dims = {
   lhs_contract : int array;

@@ -4270,6 +4270,44 @@ def _linalg_inputs(op, params, npdt, rng):
             unit_diagonal=ud,
         )
         return {"a": a, "b": b}, out
+    if op == "eigh":
+        n = params["n"]
+        lower = params["lower"]
+        m = rng.standard_normal((n, n))
+        a = (m + m.T).astype(npdt)
+        v, w = jla.eigh(a, lower=lower, symmetrize_input=False)
+        return {"a": a}, (v, w)
+    if op == "eig":
+        n = params["n"]
+        cl = params["compute_left"]
+        cr = params["compute_right"]
+        a = rng.standard_normal((n, n)).astype(npdt)
+        out = jla.eig(
+            a, compute_left_eigenvectors=cl, compute_right_eigenvectors=cr
+        )
+        return {"a": a}, out
+    if op == "hessenberg":
+        n = params["n"]
+        a = rng.standard_normal((n, n)).astype(npdt)
+        return {"a": a}, jla.hessenberg(a)
+    if op == "schur":
+        n = params["n"]
+        cv = params["compute_schur_vectors"]
+        a = rng.standard_normal((n, n)).astype(npdt)
+        return {"a": a}, jla.schur(a, compute_schur_vectors=cv)
+    if op == "svd":
+        m = params["m"]
+        n = params["n"]
+        fm = params["full_matrices"]
+        uv = params["compute_uv"]
+        a = rng.standard_normal((m, n)).astype(npdt)
+        return {"a": a}, jla.svd(a, full_matrices=fm, compute_uv=uv)
+    if op == "tridiagonal":
+        n = params["n"]
+        lower = params["lower"]
+        m = rng.standard_normal((n, n))
+        a = (m + m.T).astype(npdt)
+        return {"a": a}, jla.tridiagonal(a, lower=lower)
     if op == "tridiagonal_solve":
         m = params["m"]
         k = params["k"]

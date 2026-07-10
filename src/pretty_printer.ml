@@ -247,6 +247,12 @@ let prim_name = function
   | Qr _ -> "qr"
   | Triangular_solve _ -> "triangular_solve"
   | Tridiagonal_solve -> "tridiagonal_solve"
+  | Eig _ -> "eig"
+  | Eigh _ -> "eigh"
+  | Hessenberg -> "hessenberg"
+  | Schur _ -> "schur"
+  | Svd _ -> "svd"
+  | Tridiagonal _ -> "tridiagonal"
 
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"

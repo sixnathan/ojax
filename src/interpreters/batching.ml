@@ -660,7 +660,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
         "batching: vmap of while_loop needs the batched-predicate fixpoint (M2 \
          gap)"
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Triangular_solve _ | Tridiagonal_solve ->
+  | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
+  | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "batching: vmap of linalg primitive deferred (M5 gap)"
   | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
 

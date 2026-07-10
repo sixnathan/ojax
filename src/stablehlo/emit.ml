@@ -1971,7 +1971,8 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
          while/solve decomposition (non-single-op); end-to-end deferred to the \
          PJRT execution rows"
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Triangular_solve _ | Tridiagonal_solve ->
+  | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
+  | Schur _ | Svd _ | Tridiagonal _ ->
       failwith
         "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
          host-interpreter only (M5 lax/linalg, XLA emission deferred)"

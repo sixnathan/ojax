@@ -282,6 +282,68 @@ CAMLprim value ojax_lapack_gees(value v_ip, value v_a, value v_wri, value v_vs,
   CAMLreturn(Val_int((int)info));
 }
 
+CAMLprim value ojax_lapack_gehrd(value v_ip, value v_a, value v_tau) {
+  CAMLparam3(v_ip, v_a, v_tau);
+  __LAPACK_int n = (__LAPACK_int)IP(v_ip, 0);
+  __LAPACK_int ilo = (__LAPACK_int)IP(v_ip, 1);
+  __LAPACK_int ihi = (__LAPACK_int)IP(v_ip, 2);
+  __LAPACK_int lda = (__LAPACK_int)IP(v_ip, 3);
+  double *a = D(v_a);
+  double *tau = D(v_tau);
+  __LAPACK_int info = 0, lwork = -1;
+  double wkopt = 0.0;
+  double *work = NULL;
+  int alloc_failed = 0;
+  caml_release_runtime_system();
+  dgehrd_(&n, &ilo, &ihi, a, &lda, tau, &wkopt, &lwork, &info);
+  if (info == 0) {
+    lwork = (__LAPACK_int)wkopt;
+    if (lwork < 1) lwork = 1;
+    work = (double *)malloc(sizeof(double) * (size_t)lwork);
+    if (work == NULL)
+      alloc_failed = 1;
+    else {
+      dgehrd_(&n, &ilo, &ihi, a, &lda, tau, work, &lwork, &info);
+      free(work);
+    }
+  }
+  caml_acquire_runtime_system();
+  if (alloc_failed) caml_failwith("ojax linalg: gehrd workspace alloc failed");
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_sytrd(value v_ip, value v_a, value v_d, value v_e,
+                                 value v_tau) {
+  CAMLparam5(v_ip, v_a, v_d, v_e, v_tau);
+  char uplo = (char)IP(v_ip, 0);
+  __LAPACK_int n = (__LAPACK_int)IP(v_ip, 1);
+  __LAPACK_int lda = (__LAPACK_int)IP(v_ip, 2);
+  double *a = D(v_a);
+  double *d = D(v_d);
+  double *e = D(v_e);
+  double *tau = D(v_tau);
+  __LAPACK_int info = 0, lwork = -1;
+  double wkopt = 0.0;
+  double *work = NULL;
+  int alloc_failed = 0;
+  caml_release_runtime_system();
+  dsytrd_(&uplo, &n, a, &lda, d, e, tau, &wkopt, &lwork, &info);
+  if (info == 0) {
+    lwork = (__LAPACK_int)wkopt;
+    if (lwork < 1) lwork = 1;
+    work = (double *)malloc(sizeof(double) * (size_t)lwork);
+    if (work == NULL)
+      alloc_failed = 1;
+    else {
+      dsytrd_(&uplo, &n, a, &lda, d, e, tau, work, &lwork, &info);
+      free(work);
+    }
+  }
+  caml_acquire_runtime_system();
+  if (alloc_failed) caml_failwith("ojax linalg: sytrd workspace alloc failed");
+  CAMLreturn(Val_int((int)info));
+}
+
 CAMLprim value ojax_lapack_trtrs(value v_ip, value v_a, value v_b) {
   CAMLparam3(v_ip, v_a, v_b);
   char uplo = (char)IP(v_ip, 0);
@@ -381,6 +443,20 @@ CAMLprim value ojax_lapack_geev(value a, value b, value c, value d, value e) {
   return ojax_lapack_unavail();
 }
 CAMLprim value ojax_lapack_gees(value a, value b, value c, value d, value e) {
+  (void)a;
+  (void)b;
+  (void)c;
+  (void)d;
+  (void)e;
+  return ojax_lapack_unavail();
+}
+CAMLprim value ojax_lapack_gehrd(value a, value b, value c) {
+  (void)a;
+  (void)b;
+  (void)c;
+  return ojax_lapack_unavail();
+}
+CAMLprim value ojax_lapack_sytrd(value a, value b, value c, value d, value e) {
   (void)a;
   (void)b;
   (void)c;

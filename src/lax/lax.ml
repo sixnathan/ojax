@@ -1418,6 +1418,14 @@ let impl prim inputs =
       Linalg.triangular_solve_impl left_side lower transpose_a conjugate_a
         unit_diagonal inputs
   | Tridiagonal_solve -> Linalg.tridiagonal_solve_impl inputs
+  | Eig { compute_left; compute_right } ->
+      Linalg.eig_impl compute_left compute_right inputs
+  | Eigh { lower } -> Linalg.eigh_impl lower inputs
+  | Hessenberg -> Linalg.hessenberg_impl inputs
+  | Schur { compute_vectors } -> Linalg.schur_impl compute_vectors inputs
+  | Svd { full_matrices; compute_uv } ->
+      Linalg.svd_impl full_matrices compute_uv inputs
+  | Tridiagonal { lower } -> Linalg.tridiagonal_impl lower inputs
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1714,6 +1722,14 @@ let abstract_eval prim avals =
       Linalg.lu_pivots_to_permutation_aval permutation_size avals
   | Triangular_solve _ -> Linalg.triangular_solve_aval avals
   | Tridiagonal_solve -> Linalg.tridiagonal_solve_aval avals
+  | Eig { compute_left; compute_right } ->
+      Linalg.eig_aval compute_left compute_right avals
+  | Eigh _ -> Linalg.eigh_aval avals
+  | Hessenberg -> Linalg.hessenberg_aval avals
+  | Schur { compute_vectors } -> Linalg.schur_aval compute_vectors avals
+  | Svd { full_matrices; compute_uv } ->
+      Linalg.svd_aval full_matrices compute_uv avals
+  | Tridiagonal _ -> Linalg.tridiagonal_aval avals
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =

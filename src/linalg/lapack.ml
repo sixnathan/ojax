@@ -19,6 +19,11 @@ external geev_ : int array -> f64 -> f64 -> f64 -> f64 -> int
 external gees_ : int array -> f64 -> f64 -> f64 -> i32 -> int
   = "ojax_lapack_gees"
 
+external gehrd_ : int array -> f64 -> f64 -> int = "ojax_lapack_gehrd"
+
+external sytrd_ : int array -> f64 -> f64 -> f64 -> f64 -> int
+  = "ojax_lapack_sytrd"
+
 external trtrs_ : int array -> f64 -> f64 -> int = "ojax_lapack_trtrs"
 external gecon_ : int array -> f64 -> float -> f64 -> int = "ojax_lapack_gecon"
 
@@ -63,6 +68,14 @@ let geev ~jobvl ~jobvr ~n ~a ~lda ~wri ~vl ~ldvl ~vr ~ldvr =
 let gees ~jobvs ~n ~a ~lda ~wri ~vs ~ldvs ~sdim =
   guard "gees";
   gees_ [| Char.code jobvs; n; lda; ldvs |] a wri vs sdim
+
+let gehrd ~n ~ilo ~ihi ~a ~lda ~tau =
+  guard "gehrd";
+  gehrd_ [| n; ilo; ihi; lda |] a tau
+
+let sytrd ~uplo ~n ~a ~lda ~d ~e ~tau =
+  guard "sytrd";
+  sytrd_ [| Char.code uplo; n; lda |] a d e tau
 
 let trtrs ~uplo ~trans ~diag ~n ~nrhs ~a ~lda ~b ~ldb =
   guard "trtrs";

@@ -49,6 +49,11 @@ val gees :
   sdim:i32 ->
   int
 
+val gehrd : n:int -> ilo:int -> ihi:int -> a:f64 -> lda:int -> tau:f64 -> int
+
+val sytrd :
+  uplo:char -> n:int -> a:f64 -> lda:int -> d:f64 -> e:f64 -> tau:f64 -> int
+
 val trtrs :
   uplo:char ->
   trans:char ->

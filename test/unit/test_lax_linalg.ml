@@ -74,11 +74,64 @@ let tridiagonal_solve_residual () =
     done
   end
 
+let sym3 = [| 4.; 1.; 2.; 1.; 5.; 3.; 2.; 3.; 6. |]
+
+let eigh_reconstruction () =
+  if D.available then begin
+    let a = v [| 3; 3 |] sym3 in
+    let vv, ww = LL.eigh a in
+    let vm = nd vv and wm = nd ww and am = nd a in
+    for i = 0 to 2 do
+      for j = 0 to 2 do
+        let acc = ref 0.0 in
+        for k = 0 to 2 do
+          acc :=
+            !acc
+            +. Nd.get_f vm [| i; k |]
+               *. Nd.get_f wm [| k |]
+               *. Nd.get_f vm [| j; k |]
+        done;
+        Alcotest.check close "A = V diag(w) V^T" (Nd.get_f am [| i; j |]) !acc
+      done
+    done
+  end
+
+let svd_reconstruction () =
+  if D.available then begin
+    let a = v [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |] in
+    let u, s, vt =
+      match LL.svd a with [ u; s; vt ] -> (u, s, vt) | _ -> assert false
+    in
+    let um = nd u and sm = nd s and vtm = nd vt and am = nd a in
+    for i = 0 to 2 do
+      for j = 0 to 2 do
+        let acc = ref 0.0 in
+        for k = 0 to 2 do
+          acc :=
+            !acc
+            +. Nd.get_f um [| i; k |]
+               *. Nd.get_f sm [| k |]
+               *. Nd.get_f vtm [| k; j |]
+        done;
+        Alcotest.check close "A = U diag(s) V^T" (Nd.get_f am [| i; j |]) !acc
+      done
+    done
+  end
+
+let hessenberg_structure () =
+  if D.available then begin
+    let a = v [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |] in
+    let h, taus = LL.hessenberg a in
+    Alcotest.(check (array int)) "hessenberg shape" [| 3; 3 |] (Nd.shape (nd h));
+    Alcotest.(check (array int)) "taus shape" [| 2 |] (Nd.shape (nd taus))
+  end
+
 let leak_smoke () =
   if D.available then begin
     let before = Ojax.Pjrt.Abi.maxrss_bytes () in
     let a = v [| 3; 3 |] [| 4.; 1.; 1.; 1.; 4.; 1.; 1.; 1.; 4. |] in
     let g = v [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |] in
+    let sym = v [| 3; 3 |] sym3 in
     let tri = v [| 3; 3 |] [| 2.; 0.; 0.; 6.; 1.; 0.; -8.; 5.; 3. |] in
     let b = v [| 3; 1 |] [| 4.; 13.; 3. |] in
     let dl = v [| 4 |] [| 0.; 1.; 1.; 1. |] in
@@ -89,6 +142,12 @@ let leak_smoke () =
       ignore (LL.cholesky a);
       ignore (LL.lu g);
       ignore (LL.qr g);
+      ignore (LL.eig g);
+      ignore (LL.eigh sym);
+      ignore (LL.hessenberg g);
+      ignore (LL.schur g);
+      ignore (LL.svd g);
+      ignore (LL.tridiagonal sym);
       ignore (LL.triangular_solve ~left_side:true ~lower:true tri b);
       ignore (LL.tridiagonal_solve dl d du rhs)
     done;
@@ -109,6 +168,9 @@ let () =
             triangular_solve_residual;
           Alcotest.test_case "tridiagonal_solve residual" `Quick
             tridiagonal_solve_residual;
+          Alcotest.test_case "eigh reconstruction" `Quick eigh_reconstruction;
+          Alcotest.test_case "svd reconstruction" `Quick svd_reconstruction;
+          Alcotest.test_case "hessenberg structure" `Quick hessenberg_structure;
         ] );
       ("ffi", [ Alcotest.test_case "leak smoke" `Slow leak_smoke ]);
     ]

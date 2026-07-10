@@ -3430,10 +3430,27 @@ let complex_suite_for set_name =
 module LL = Ojax.Lax.Linalg
 
 let linalg_run c inputs =
-  let get name = T.Concrete (nd_of_npz (find_member inputs name)) in
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
   let pb name = U.member name c.params |> U.to_bool in
   let pi name = U.member name c.params |> U.to_int in
   match c.op with
+  | "eigh" ->
+      let v, w = LL.eigh ~lower:(pb "lower") (get "a") in
+      [ v; w ]
+  | "eig" ->
+      LL.eig ~compute_left_eigenvectors:(pb "compute_left")
+        ~compute_right_eigenvectors:(pb "compute_right") (get "a")
+  | "hessenberg" ->
+      let a, taus = LL.hessenberg (get "a") in
+      [ a; taus ]
+  | "schur" ->
+      LL.schur ~compute_schur_vectors:(pb "compute_schur_vectors") (get "a")
+  | "svd" ->
+      LL.svd ~full_matrices:(pb "full_matrices") ~compute_uv:(pb "compute_uv")
+        (get "a")
+  | "tridiagonal" ->
+      let a, d, e, taus = LL.tridiagonal ~lower:(pb "lower") (get "a") in
+      [ a; d; e; taus ]
   | "cholesky" -> [ LL.cholesky (get "a") ]
   | "lu" ->
       let a, b, cc = LL.lu (get "a") in
@@ -3487,14 +3504,7 @@ let linalg_check_case ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let floats = read_nd nd in
-      let data =
-        if ocompare = "exact" then Npz.I (Array.map Int64.of_float floats)
-        else Npz.F floats
-      in
-      let actual =
-        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
-      in
+      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)

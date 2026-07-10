@@ -52,6 +52,23 @@ CASES = [
     ("unary_exp2", lax.exp2, [f32(3)]),
     ("unary_expm1", lax.expm1, [f32(3)]),
     ("unary_floor", lax.floor, [f32(3)]),
+    ("unary_integer_pow", lambda x: lax.integer_pow(x, 3), [f32(3)]),
+    ("unary_is_finite", lax.is_finite, [f32(3)]),
+    ("unary_log", lax.log, [f32(3)]),
+    ("unary_log1p", lax.log1p, [f32(3)]),
+    ("unary_logistic", lax.logistic, [f32(3)]),
+    ("unary_neg", lax.neg, [f32(3)]),
+    ("unary_not", lax.bitwise_not, [i32(3)]),
+    ("unary_population_count", lax.population_count, [i32(3)]),
+    ("unary_round", lax.round, [f32(3)]),
+    ("unary_rsqrt", lax.rsqrt, [f32(3)]),
+    ("unary_sign", lax.sign, [f32(3)]),
+    ("unary_sin", lax.sin, [f32(3)]),
+    ("unary_sinh", lax.sinh, [f32(3)]),
+    ("unary_sqrt", lax.sqrt, [f32(3)]),
+    ("unary_square", lax.square, [f32(3)]),
+    ("unary_tan", lax.tan, [f32(3)]),
+    ("unary_tanh", lax.tanh, [f32(3)]),
 ]
 
 

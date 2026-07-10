@@ -129,6 +129,88 @@ let emit_exp2 ctx (eqn : eqn) in_ids =
     (Printf.sprintf "    %s = stablehlo.exponential %s : %s\n" (name n) (name m)
        xty)
 
+let emit_is_finite ctx (eqn : eqn) in_ids =
+  let x = sole in_ids in
+  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.is_finite %s : (%s) -> %s\n" (name n)
+       (name x) inty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_logistic ctx (eqn : eqn) in_ids =
+  let x = sole in_ids in
+  let out = sole eqn.outs in
+  let dt = out.vaval.dtype in
+  let xty = Ir.tensor_type_of_aval out.vaval in
+  let sty = Ir.tensor_type dt [||] in
+  let one = Ir.dense (Ir.float_literal dt 1.0) in
+  let ng = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.negate %s : %s\n" (name ng) (name x) xty);
+  let e = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.exponential %s : %s\n" (name e)
+       (name ng) xty);
+  let c1 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c1) one sty);
+  let b1 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+       (name b1) (name c1) sty xty);
+  let a = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.add %s, %s : %s\n" (name a) (name b1)
+       (name e) xty);
+  let c2 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c2) one sty);
+  let b2 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+       (name b2) (name c2) sty xty);
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.divide %s, %s : %s\n" (name n) (name b2)
+       (name a) xty)
+
+let emit_integer_pow ctx (eqn : eqn) in_ids y =
+  let x = sole in_ids in
+  let out = sole eqn.outs in
+  let ty = Ir.tensor_type_of_aval out.vaval in
+  let mul a b =
+    let n = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.multiply %s, %s : %s\n" (name n)
+         (name a) (name b) ty);
+    n
+  in
+  let result =
+    if y = 1 then x
+    else if y = 2 then mul x x
+    else if y = 3 then
+      let m = mul x x in
+      mul m x
+    else if y >= 4 then begin
+      let acc = ref None in
+      let base = ref x in
+      let yy = ref y in
+      while !yy > 0 do
+        if !yy land 1 = 1 then
+          acc := Some (match !acc with None -> !base | Some a -> mul a !base);
+        yy := !yy asr 1;
+        if !yy > 0 then base := mul !base !base
+      done;
+      match !acc with Some a -> a | None -> assert false
+    end
+    else failwith "Stablehlo.Emit: Integer_pow non-positive exponent (M5)"
+  in
+  Hashtbl.replace ctx.ids out.vid result
+
 let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -149,9 +231,28 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Copy -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
   | Exp2 -> emit_exp2 ctx eqn in_ids
   | Conj -> failwith "Stablehlo.Emit: Conj requires complex dtype (M5)"
+  | Log -> emit_stablehlo_unary ctx eqn in_ids "log"
+  | Log1p -> emit_stablehlo_unary ctx eqn in_ids "log_plus_one"
+  | Neg -> emit_stablehlo_unary ctx eqn in_ids "negate"
+  | Not -> emit_stablehlo_unary ctx eqn in_ids "not"
+  | Population_count -> emit_stablehlo_unary ctx eqn in_ids "popcnt"
+  | Round -> emit_stablehlo_unary ctx eqn in_ids "round_nearest_afz"
+  | Rsqrt -> emit_stablehlo_unary ctx eqn in_ids "rsqrt"
+  | Sign -> emit_stablehlo_unary ctx eqn in_ids "sign"
+  | Sin -> emit_stablehlo_unary ctx eqn in_ids "sine"
+  | Sqrt -> emit_stablehlo_unary ctx eqn in_ids "sqrt"
+  | Tan -> emit_stablehlo_unary ctx eqn in_ids "tan"
+  | Tanh -> emit_stablehlo_unary ctx eqn in_ids "tanh"
+  | Sinh -> emit_chlo_unary ctx eqn in_ids "sinh"
+  | Square -> emit_chlo_unary ctx eqn in_ids "square"
+  | Is_finite -> emit_is_finite ctx eqn in_ids
+  | Logistic -> emit_logistic ctx eqn in_ids
+  | Integer_pow y -> emit_integer_pow ctx eqn in_ids y
+  | Imag -> failwith "Stablehlo.Emit: Imag requires complex dtype (M5)"
+  | Real -> failwith "Stablehlo.Emit: Real requires complex dtype (M5)"
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 77-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 78-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

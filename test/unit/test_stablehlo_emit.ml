@@ -106,6 +106,23 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
     ("unary_exp2", unary T.Exp2 D.F32);
     ("unary_expm1", unary T.Expm1 D.F32);
     ("unary_floor", unary T.Floor D.F32);
+    ("unary_integer_pow", unary (T.Integer_pow 3) D.F32);
+    ("unary_is_finite", unary T.Is_finite D.F32);
+    ("unary_log", unary T.Log D.F32);
+    ("unary_log1p", unary T.Log1p D.F32);
+    ("unary_logistic", unary T.Logistic D.F32);
+    ("unary_neg", unary T.Neg D.F32);
+    ("unary_not", unary T.Not D.I32);
+    ("unary_population_count", unary T.Population_count D.I32);
+    ("unary_round", unary T.Round D.F32);
+    ("unary_rsqrt", unary T.Rsqrt D.F32);
+    ("unary_sign", unary T.Sign D.F32);
+    ("unary_sin", unary T.Sin D.F32);
+    ("unary_sinh", unary T.Sinh D.F32);
+    ("unary_sqrt", unary T.Sqrt D.F32);
+    ("unary_square", unary T.Square D.F32);
+    ("unary_tan", unary T.Tan D.F32);
+    ("unary_tanh", unary T.Tanh D.F32);
   ]
 
 let check_case name build () =

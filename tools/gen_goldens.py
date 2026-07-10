@@ -131,6 +131,11 @@ def rand_sorted_desc(rng, shape, dtype):
     ]
 
 
+def rand_simplex(rng, shape, dtype):
+    x = rng.rand(*tuple(shape)).astype(dtype) + np.array(0.1, dtype=dtype)
+    return (x / x.sum(axis=0, keepdims=True)).astype(dtype)
+
+
 RNG_FACTORIES = {
     "rand_default": rand_default,
     "rand_small": rand_small,
@@ -147,6 +152,7 @@ RNG_FACTORIES = {
     "rand_poly_order": rand_poly_order,
     "rand_sorted": rand_sorted,
     "rand_sorted_desc": rand_sorted_desc,
+    "rand_simplex": rand_simplex,
 }
 
 
@@ -3767,7 +3773,45 @@ SCIPY_SPECIAL_BUILDERS["betainc"] = sp_ternary("betainc")
 SCIPY_SPECIAL_BUILDERS["hyp1f1"] = sp_ternary("hyp1f1")
 
 
+import jax.scipy.stats as jstats
+
+
+def stats_fn(dist, name):
+    fn = getattr(getattr(jstats, dist), name)
+
+    def build(params):
+        return lambda *inputs: fn(*inputs)
+
+    return build
+
+
+STATS_BUILDERS = {}
+for _dist, _names in {
+    "bernoulli": ["cdf", "logpmf", "pmf", "ppf"],
+    "beta": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "sf"],
+    "betabinom": ["logpmf", "pmf"],
+    "binom": ["logpmf", "pmf"],
+    "cauchy": ["cdf", "isf", "logcdf", "logpdf", "logsf", "pdf", "ppf", "sf"],
+    "chi2": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "sf"],
+    "dirichlet": ["logpdf", "pdf"],
+    "expon": ["cdf", "logcdf", "logpdf", "logsf", "pdf", "ppf", "sf"],
+}.items():
+    for _fname in _names:
+        STATS_BUILDERS[_dist + "." + _fname] = stats_fn(_dist, _fname)
+
+
 def run_case(c, seed):
+    if c["primitive"].startswith("scipy.stats.") and c["op"] in STATS_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = jax.jit(STATS_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
     if c["primitive"].startswith("scipy.special.") and c["op"] in SCIPY_SPECIAL_BUILDERS:
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])

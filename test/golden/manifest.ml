@@ -2982,6 +2982,14 @@ let image_suite_for set_name =
   ("image:" ^ set_name, coverage :: case_tests)
 
 module SP = Ojax.Scipy.Special
+module SS_bernoulli = Ojax.Scipy.Stats.Bernoulli
+module SS_beta = Ojax.Scipy.Stats.Beta
+module SS_betabinom = Ojax.Scipy.Stats.Betabinom
+module SS_binom = Ojax.Scipy.Stats.Binom
+module SS_cauchy = Ojax.Scipy.Stats.Cauchy
+module SS_chi2 = Ojax.Scipy.Stats.Chi2
+module SS_dirichlet = Ojax.Scipy.Stats.Dirichlet
+module SS_expon = Ojax.Scipy.Stats.Expon
 
 let scipy_special_fn op params operands : T.value list =
   let one v = [ v ] in
@@ -3059,6 +3067,65 @@ let scipy_special_suite_for set_name =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
   ("scipy_special:" ^ set_name, coverage :: case_tests)
+
+let scipy_stats_fn op _params operands : T.value list =
+  let one v = [ v ] in
+  match (op, operands) with
+  | "bernoulli.logpmf", [ k; p ] -> one (SS_bernoulli.logpmf k p)
+  | "bernoulli.pmf", [ k; p ] -> one (SS_bernoulli.pmf k p)
+  | "bernoulli.cdf", [ k; p ] -> one (SS_bernoulli.cdf k p)
+  | "bernoulli.ppf", [ q; p ] -> one (SS_bernoulli.ppf q p)
+  | "beta.logpdf", [ x; a; b ] -> one (SS_beta.logpdf x a b)
+  | "beta.pdf", [ x; a; b ] -> one (SS_beta.pdf x a b)
+  | "beta.cdf", [ x; a; b ] -> one (SS_beta.cdf x a b)
+  | "beta.logcdf", [ x; a; b ] -> one (SS_beta.logcdf x a b)
+  | "beta.sf", [ x; a; b ] -> one (SS_beta.sf x a b)
+  | "beta.logsf", [ x; a; b ] -> one (SS_beta.logsf x a b)
+  | "betabinom.logpmf", [ k; n; a; b ] -> one (SS_betabinom.logpmf k n a b)
+  | "betabinom.pmf", [ k; n; a; b ] -> one (SS_betabinom.pmf k n a b)
+  | "binom.logpmf", [ k; n; p ] -> one (SS_binom.logpmf k n p)
+  | "binom.pmf", [ k; n; p ] -> one (SS_binom.pmf k n p)
+  | "cauchy.logpdf", [ x ] -> one (SS_cauchy.logpdf x)
+  | "cauchy.pdf", [ x ] -> one (SS_cauchy.pdf x)
+  | "cauchy.cdf", [ x ] -> one (SS_cauchy.cdf x)
+  | "cauchy.logcdf", [ x ] -> one (SS_cauchy.logcdf x)
+  | "cauchy.sf", [ x ] -> one (SS_cauchy.sf x)
+  | "cauchy.logsf", [ x ] -> one (SS_cauchy.logsf x)
+  | "cauchy.isf", [ q ] -> one (SS_cauchy.isf q)
+  | "cauchy.ppf", [ q ] -> one (SS_cauchy.ppf q)
+  | "chi2.logpdf", [ x; df ] -> one (SS_chi2.logpdf x df)
+  | "chi2.pdf", [ x; df ] -> one (SS_chi2.pdf x df)
+  | "chi2.cdf", [ x; df ] -> one (SS_chi2.cdf x df)
+  | "chi2.logcdf", [ x; df ] -> one (SS_chi2.logcdf x df)
+  | "chi2.sf", [ x; df ] -> one (SS_chi2.sf x df)
+  | "chi2.logsf", [ x; df ] -> one (SS_chi2.logsf x df)
+  | "dirichlet.logpdf", [ x; alpha ] -> one (SS_dirichlet.logpdf x alpha)
+  | "dirichlet.pdf", [ x; alpha ] -> one (SS_dirichlet.pdf x alpha)
+  | "expon.logpdf", [ x ] -> one (SS_expon.logpdf x)
+  | "expon.pdf", [ x ] -> one (SS_expon.pdf x)
+  | "expon.cdf", [ x ] -> one (SS_expon.cdf x)
+  | "expon.logcdf", [ x ] -> one (SS_expon.logcdf x)
+  | "expon.sf", [ x ] -> one (SS_expon.sf x)
+  | "expon.logsf", [ x ] -> one (SS_expon.logsf x)
+  | "expon.ppf", [ q ] -> one (SS_expon.ppf q)
+  | _ -> failwith ("scipy_stats golden: unknown op " ^ op)
+
+let scipy_stats_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "scipy_stats") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:scipy_stats_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("scipy_stats:" ^ set_name, coverage :: case_tests)
 
 let must_fail msg f =
   match f () with
@@ -3156,5 +3223,7 @@ let () =
       image_suite_for "x64_on";
       scipy_special_suite_for "x64_off";
       scipy_special_suite_for "x64_on";
+      scipy_stats_suite_for "x64_off";
+      scipy_stats_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

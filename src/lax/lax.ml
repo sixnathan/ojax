@@ -201,6 +201,55 @@ let bin f = function
   | [ a; b ] -> [ f a b ]
   | _ -> failwith "lax: expected 2 operands"
 
+let is_complex_dtype = function
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let complex_basetype = function
+  | Dtype.Complex64 -> Dtype.F32
+  | Dtype.Complex128 -> Dtype.F64
+  | d -> d
+
+let complexify = function
+  | Dtype.F32 -> Dtype.Complex64
+  | Dtype.F64 -> Dtype.Complex128
+  | d -> d
+
+let to_carray nd =
+  let sh = Ndarray.shape nd in
+  let n = Utils.prod sh in
+  Array.init n (fun i -> Ndarray.get_c nd (Utils.decode i sh))
+
+let map_c dt f nd =
+  Ndarray.of_complex dt (Ndarray.shape nd) (Array.map f (to_carray nd))
+
+let map_c2r dt f nd =
+  Ndarray.of_floats dt (Ndarray.shape nd) (Array.map f (to_carray nd))
+
+let map_r2c dt f nd =
+  Ndarray.of_complex dt (Ndarray.shape nd) (Array.map f (to_array nd))
+
+let map2_c dt f a b =
+  let ca = to_carray a and cb = to_carray b in
+  Ndarray.of_complex dt (Ndarray.shape a)
+    (Array.init (Array.length ca) (fun i -> f ca.(i) cb.(i)))
+
+let csin (z : Complex.t) =
+  {
+    Complex.re = Stdlib.sin z.re *. Stdlib.cosh z.im;
+    im = Stdlib.cos z.re *. Stdlib.sinh z.im;
+  }
+
+let ccos (z : Complex.t) =
+  {
+    Complex.re = Stdlib.cos z.re *. Stdlib.cosh z.im;
+    im = -.(Stdlib.sin z.re *. Stdlib.sinh z.im);
+  }
+
+let complex_of_re_im a b =
+  let ra = to_array a and rb = to_array b in
+  Array.init (Array.length ra) (fun i -> { Complex.re = ra.(i); im = rb.(i) })
+
 let broadcast_in_dim_impl shape dims a =
   let os = Ndarray.shape a in
   let ostr = Utils.strides os in
@@ -286,6 +335,72 @@ let dot_general_impl (dd : dot_dims) lhs rhs =
     out.(f) <- !acc
   done;
   Ndarray.of_floats (Ndarray.dtype lhs) out_shape out
+
+let dot_general_complex_impl (dd : dot_dims) lhs rhs =
+  let ls = Ndarray.shape lhs and rs = Ndarray.shape rhs in
+  let la = to_carray lhs and ra = to_carray rhs in
+  let lstr = Utils.strides ls and rstr = Utils.strides rs in
+  let lhs_free =
+    Utils.free_axes (Array.length ls) dd.lhs_batch dd.lhs_contract
+  in
+  let rhs_free =
+    Utils.free_axes (Array.length rs) dd.rhs_batch dd.rhs_contract
+  in
+  let contract_sizes = Array.map (fun a -> ls.(a)) dd.lhs_contract in
+  let out_shape = Utils.dot_general_shape dd ls rs in
+  let out_n = Utils.prod out_shape in
+  let out = Array.make out_n Complex.zero in
+  let nb = Array.length dd.lhs_batch in
+  let nlf = Array.length lhs_free in
+  let ncon = Array.length dd.lhs_contract in
+  let cprod = Utils.prod contract_sizes in
+  for f = 0 to out_n - 1 do
+    let oidx = Utils.decode f out_shape in
+    let acc = ref Complex.zero in
+    for cf = 0 to cprod - 1 do
+      let cidx = Utils.decode cf contract_sizes in
+      let lflat = ref 0 and rflat = ref 0 in
+      for k = 0 to nb - 1 do
+        lflat := !lflat + (oidx.(k) * lstr.(dd.lhs_batch.(k)));
+        rflat := !rflat + (oidx.(k) * rstr.(dd.rhs_batch.(k)))
+      done;
+      for j = 0 to nlf - 1 do
+        lflat := !lflat + (oidx.(nb + j) * lstr.(lhs_free.(j)))
+      done;
+      for j = 0 to Array.length rhs_free - 1 do
+        rflat := !rflat + (oidx.(nb + nlf + j) * rstr.(rhs_free.(j)))
+      done;
+      for m = 0 to ncon - 1 do
+        lflat := !lflat + (cidx.(m) * lstr.(dd.lhs_contract.(m)));
+        rflat := !rflat + (cidx.(m) * rstr.(dd.rhs_contract.(m)))
+      done;
+      acc := Complex.add !acc (Complex.mul la.(!lflat) ra.(!rflat))
+    done;
+    out.(f) <- !acc
+  done;
+  Ndarray.of_complex (Ndarray.dtype lhs) out_shape out
+
+let reduce_sum_complex_impl axes a =
+  let os = Ndarray.shape a in
+  let out_shape = Utils.reduce_shape os axes in
+  let out_str = Utils.strides out_shape in
+  let ndim = Array.length os in
+  let is_red = Array.make ndim false in
+  Array.iter (fun ax -> is_red.(ax) <- true) axes;
+  let src = to_carray a in
+  let out = Array.make (Utils.prod out_shape) Complex.zero in
+  for flat = 0 to Array.length src - 1 do
+    let oidx = Utils.decode flat os in
+    let of_ = ref 0 and k = ref 0 in
+    for d = 0 to ndim - 1 do
+      if not is_red.(d) then begin
+        of_ := !of_ + (oidx.(d) * out_str.(!k));
+        incr k
+      end
+    done;
+    out.(!of_) <- Complex.add out.(!of_) src.(flat)
+  done;
+  Ndarray.of_complex (Ndarray.dtype a) out_shape out
 
 let select_n_impl = function
   | which :: cases ->
@@ -810,12 +925,41 @@ let scatter_dnums = function
 let impl prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
-  | Sin -> un (fun a -> Ndarray.map (Ndarray.dtype a) sin a) inputs
-  | Cos -> un (fun a -> Ndarray.map (Ndarray.dtype a) cos a) inputs
-  | Exp -> un (fun a -> Ndarray.map (Ndarray.dtype a) exp a) inputs
-  | Log -> un (fun a -> Ndarray.map (Ndarray.dtype a) log a) inputs
+  | Sin ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map_c dt csin a else Ndarray.map dt sin a)
+        inputs
+  | Cos ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map_c dt ccos a else Ndarray.map dt cos a)
+        inputs
+  | Exp ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map_c dt Complex.exp a
+          else Ndarray.map dt exp a)
+        inputs
+  | Log ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map_c dt Complex.log a
+          else Ndarray.map dt log a)
+        inputs
   | Tanh -> un (fun a -> Ndarray.map (Ndarray.dtype a) tanh a) inputs
-  | Abs -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.abs a) inputs
+  | Abs ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then
+            map_c2r (complex_basetype dt) Complex.norm a
+          else Ndarray.map dt Float.abs a)
+        inputs
   | Sign -> un (fun a -> Ndarray.map (Ndarray.dtype a) sign_f a) inputs
   | Add ->
       bin
@@ -835,7 +979,13 @@ let impl prim inputs =
   | Div -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) ( /. ) a b) inputs
   | Max -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.max a b) inputs
   | Min -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.min a b) inputs
-  | Pow -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.pow a b) inputs
+  | Pow ->
+      bin
+        (fun a b ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map2_c dt Complex.pow a b
+          else Ndarray.map2 dt Float.pow a b)
+        inputs
   | Eq ->
       bin (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x = y)) a b) inputs
   | Lt ->
@@ -848,8 +998,20 @@ let impl prim inputs =
   | Broadcast_in_dim { shape; dims } ->
       un (broadcast_in_dim_impl shape dims) inputs
   | Reshape ns -> un (reshape_impl ns) inputs
-  | Reduce_sum axes -> un (reduce_sum_impl axes) inputs
-  | Dot_general dd -> bin (dot_general_impl dd) inputs
+  | Reduce_sum axes ->
+      un
+        (fun a ->
+          if is_complex_dtype (Ndarray.dtype a) then
+            reduce_sum_complex_impl axes a
+          else reduce_sum_impl axes a)
+        inputs
+  | Dot_general dd ->
+      bin
+        (fun l r ->
+          if is_complex_dtype (Ndarray.dtype l) then
+            dot_general_complex_impl dd l r
+          else dot_general_impl dd l r)
+        inputs
   | Acos -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.acos a) inputs
   | Acosh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.acosh a) inputs
   | Asin -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.asin a) inputs
@@ -865,13 +1027,26 @@ let impl prim inputs =
             (clz_bits (clz_nbits (Ndarray.dtype a)))
             a)
         inputs
-  | Conj -> un (fun a -> a) inputs
+  | Conj ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map_c dt Complex.conj a
+          else map_r2c (complexify dt) (fun x -> { Complex.re = x; im = 0.0 }) a)
+        inputs
   | Copy -> un (fun a -> a) inputs
   | Cosh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.cosh a) inputs
   | Exp2 -> un (fun a -> Ndarray.map (Ndarray.dtype a) exp2_f a) inputs
   | Expm1 -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.expm1 a) inputs
   | Floor -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.floor a) inputs
-  | Imag -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun _ -> 0.0) a) inputs
+  | Imag ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then
+            map_c2r (complex_basetype dt) (fun z -> z.Complex.im) a
+          else Ndarray.map (complex_basetype dt) (fun _ -> 0.0) a)
+        inputs
   | Integer_pow y ->
       un (fun a -> Ndarray.map (Ndarray.dtype a) (integer_pow_f y) a) inputs
   | Is_finite ->
@@ -891,11 +1066,24 @@ let impl prim inputs =
             (popcount_bits (int_nbits (Ndarray.dtype a)))
             a)
         inputs
-  | Real -> un (fun a -> a) inputs
+  | Real ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then
+            map_c2r (complex_basetype dt) (fun z -> z.Complex.re) a
+          else a)
+        inputs
   | Round -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.round a) inputs
   | Rsqrt -> un (fun a -> Ndarray.map (Ndarray.dtype a) rsqrt_f a) inputs
   | Sinh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.sinh a) inputs
-  | Sqrt -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.sqrt a) inputs
+  | Sqrt ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map_c dt Complex.sqrt a
+          else Ndarray.map dt Float.sqrt a)
+        inputs
   | Square -> un (fun a -> Ndarray.map (Ndarray.dtype a) square_f a) inputs
   | Tan -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.tan a) inputs
   | And ->
@@ -905,7 +1093,12 @@ let impl prim inputs =
         inputs
   | Atan2 ->
       bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.atan2 a b) inputs
-  | Complex -> bin (fun a _ -> a) inputs
+  | Complex ->
+      bin
+        (fun a b ->
+          let dt = complexify (Ndarray.dtype a) in
+          Ndarray.of_complex dt (Ndarray.shape a) (complex_of_re_im a b))
+        inputs
   | Eq_to ->
       bin (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x = y)) a b) inputs
   | Ge ->
@@ -1234,16 +1427,27 @@ let bin_aval f = function
 
 let abstract_eval prim avals =
   match prim with
-  | Neg | Sin | Cos | Exp | Log | Tanh | Abs | Sign | Acos | Acosh | Asin
-  | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Conj | Copy | Cosh | Exp2 | Expm1
-  | Floor | Imag | Integer_pow _ | Log1p | Logistic | Not | Population_count
-  | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | Bessel_i0e | Bessel_i1e
-  | Digamma | Erf | Erf_inv | Erfc | Lgamma ->
+  | Neg | Sin | Cos | Exp | Log | Tanh | Sign | Acos | Acosh | Asin | Asinh
+  | Atan | Atanh | Cbrt | Ceil | Clz | Copy | Cosh | Exp2 | Expm1 | Floor
+  | Integer_pow _ | Log1p | Logistic | Not | Population_count | Round | Rsqrt
+  | Sinh | Sqrt | Square | Tan | Bessel_i0e | Bessel_i1e | Digamma | Erf
+  | Erf_inv | Erfc | Lgamma ->
       un_aval (fun a -> a) avals
+  | Abs | Real | Imag ->
+      un_aval
+        (fun a -> shaped a.shape (complex_basetype a.dtype) a.weak_type)
+        avals
+  | Conj ->
+      un_aval (fun a -> shaped a.shape (complexify a.dtype) a.weak_type) avals
+  | Complex ->
+      bin_aval
+        (fun a b ->
+          shaped a.shape (complexify a.dtype) (a.weak_type && b.weak_type))
+        avals
   | Is_finite -> un_aval (fun a -> shaped a.shape Bool false) avals
-  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Complex | Mulhi
-  | Nextafter | Or | Rem | Shift_left | Shift_right_arithmetic
-  | Shift_right_logical | Xor ->
+  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi | Nextafter
+  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
+    ->
       bin_aval
         (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))
         avals

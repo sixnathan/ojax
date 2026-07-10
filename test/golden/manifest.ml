@@ -20,6 +20,7 @@ type out = {
 type case = {
   case_id : string;
   op : string;
+  primitive : string;
   params : Yojson.Safe.t;
   compare : string;
   atol : float;
@@ -74,6 +75,7 @@ let parse_case j =
   {
     case_id = U.member "case_id" j |> U.to_string;
     op = U.member "op" j |> U.to_string;
+    primitive = U.member "primitive" j |> U.to_string;
     params = U.member "params" j;
     compare = U.member "compare" j |> U.to_string;
     atol = U.member "atol" tol |> U.to_number;
@@ -176,6 +178,8 @@ let dtype_of_string = function
   | "int64" -> D.I64
   | "bool" -> D.Bool
   | "uint32" -> D.Uint32
+  | "complex64" -> D.Complex64
+  | "complex128" -> D.Complex128
   | s -> failwith ("lax golden: unsupported dtype " ^ s)
 
 let string_of_dtype = function
@@ -3315,6 +3319,114 @@ let scipy_ndimage_suite_for set_name =
   in
   ("scipy_ndimage:" ^ set_name, coverage :: case_tests)
 
+let flat_decode flat shape =
+  let n = Array.length shape in
+  let idx = Array.make n 0 in
+  let f = ref flat in
+  for d = n - 1 downto 0 do
+    idx.(d) <- !f mod shape.(d);
+    f := !f / shape.(d)
+  done;
+  idx
+
+let nd_of_npz_any (a : Npz.t) =
+  let dt = dtype_of_string a.Npz.dtype in
+  match a.Npz.data with
+  | Npz.C c -> Nd.of_complex dt a.Npz.shape c
+  | Npz.F f -> Nd.of_floats dt a.Npz.shape f
+  | Npz.I i -> Nd.of_floats dt a.Npz.shape (Array.map Int64.to_float i)
+
+let npz_of_nd nd golden_dtype compare =
+  let sh = Nd.shape nd in
+  match Nd.dtype nd with
+  | D.Complex64 | D.Complex128 ->
+      let n = Array.fold_left ( * ) 1 sh in
+      let c = Array.init n (fun i -> Nd.get_c nd (flat_decode i sh)) in
+      { Npz.dtype = golden_dtype; shape = sh; data = Npz.C c }
+  | _ ->
+      let floats = read_nd nd in
+      let data =
+        if compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      { Npz.dtype = golden_dtype; shape = sh; data }
+
+let complex_fn c operands : T.value list =
+  if String.length c.primitive >= 4 && String.sub c.primitive 0 4 = "lax." then
+    C.bind (prim_of c.op c.params) operands
+  else
+    let one v = [ v ] in
+    match (c.op, operands) with
+    | "angle", [ x ] ->
+        let deg = Option.value ~default:false (opt_b c.params "deg") in
+        one (NL.angle ~deg x)
+    | "conjugate", [ x ] -> one (UF.conjugate x)
+    | "imag", [ x ] -> one (UF.imag x)
+    | "real", [ x ] -> one (UF.real x)
+    | "iscomplex", [ x ] -> one (NL.iscomplex x)
+    | "isreal", [ x ] -> one (NL.isreal x)
+    | _ -> failwith ("complex golden: unknown op " ^ c.op)
+
+let complex_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.case_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.case_id ^ ".npz"))
+  in
+  let operands =
+    List.map
+      (fun a -> T.Concrete (nd_of_npz_any (find_member inputs a.name)))
+      c.args
+  in
+  let results = complex_fn c operands in
+  let paired =
+    try List.combine c.outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.case_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let ocompare = match o.ocompare with Some s -> s | None -> c.compare in
+      let oatol = match o.oatol with Some t -> t | None -> c.atol in
+      let ortol = match o.ortol with Some t -> t | None -> c.rtol in
+      let oreason =
+        match o.otreason with Some _ as r -> r | None -> c.treason
+      in
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      Compare.assert_tol_widened o.odtype oatol ortol oreason;
+      Compare.check
+        ~name:(c.case_id ^ ":" ^ o.oname)
+        ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
+    paired
+
+let complex_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "complex") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick (complex_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("complex:" ^ set_name, coverage :: case_tests)
+
 let () =
   Ojax.Lax.install ();
   Ojax.Random.Prng.install ();
@@ -3379,5 +3491,7 @@ let () =
       scipy_integrate_suite_for "x64_on";
       scipy_ndimage_suite_for "x64_off";
       scipy_ndimage_suite_for "x64_on";
+      complex_suite_for "x64_off";
+      complex_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

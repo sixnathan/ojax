@@ -140,7 +140,23 @@ def rand_simplex(rng, shape, dtype):
     return (x / x.sum(axis=0, keepdims=True)).astype(dtype)
 
 
+def rand_complex(rng, shape, dtype):
+    shape = tuple(shape)
+    re = 3.0 * rng.randn(*shape)
+    im = 3.0 * rng.randn(*shape)
+    return (re + 1j * im).astype(dtype).reshape(shape)
+
+
+def rand_complex_small(rng, shape, dtype):
+    shape = tuple(shape)
+    re = 0.5 * rng.randn(*shape)
+    im = 0.5 * rng.randn(*shape)
+    return (re + 1j * im).astype(dtype).reshape(shape)
+
+
 RNG_FACTORIES = {
+    "rand_complex": rand_complex,
+    "rand_complex_small": rand_complex_small,
     "rand_default": rand_default,
     "rand_small": rand_small,
     "rand_positive": rand_positive,
@@ -586,6 +602,10 @@ LAX_BUILDERS = {
     "ceil": _unary(LAX.ceil),
     "clz": _unary(LAX.clz),
     "copy": _unary(LAX.copy_p.bind),
+    "conj": _unary(LAX.conj),
+    "real": _unary(LAX.real),
+    "imag": _unary(LAX.imag),
+    "complex": _binary(LAX.complex),
     "cosh": _unary(LAX.cosh),
     "exp2": _unary(LAX.exp2),
     "expm1": _unary(LAX.expm1),
@@ -751,6 +771,18 @@ def np_ediff1d(params):
 def np_angle(params):
     deg = bool(params["deg"])
     return lambda x: jnp.angle(x, deg=deg)
+
+
+def np_conjugate(params):
+    return lambda x: jnp.conjugate(x)
+
+
+def np_imag(params):
+    return lambda x: jnp.imag(x)
+
+
+def np_real(params):
+    return lambda x: jnp.real(x)
 
 
 def np_convolve(params):
@@ -1360,6 +1392,9 @@ NUMPY_BUILDERS = {
     "correlate": np_correlate,
     "iscomplex": np_iscomplex,
     "isreal": np_isreal,
+    "conjugate": np_conjugate,
+    "imag": np_imag,
+    "real": np_real,
     "allclose": np_allclose,
     "isclose": np_isclose,
     "clip": np_clip,

@@ -179,8 +179,14 @@ let ediff1d v =
   let d = (shape a).(0) in
   bind1 T.Sub [ slice_axis a 0 1 d; slice_axis a 0 0 (d - 1) ]
 
-let real v = v
-let imag v = zeros_like v
+let is_complex_dtype = function
+  | D.Complex64 | D.Complex128 -> true
+  | _ -> false
+
+let real v = if is_complex_dtype (dtype v) then bind1 T.Real [ v ] else v
+
+let imag v =
+  if is_complex_dtype (dtype v) then bind1 T.Imag [ v ] else zeros_like v
 
 let degrees v =
   let dt = dtype v in
@@ -207,7 +213,7 @@ let isreal v =
   let i = imag v in
   bind1 T.Eq [ i; zeros_like i ]
 
-let iscomplexobj _ = false
+let iscomplexobj v = is_complex_dtype (dtype v)
 let isrealobj v = not (iscomplexobj v)
 let isscalar v = ndim v = 0
 

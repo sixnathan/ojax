@@ -464,7 +464,13 @@ let rint x =
   | D.I32 | D.I64 | D.Bool -> convert x (Dtypes.default_float_dtype ())
   | _ -> bind1 T.Round [ x ]
 
-let imag x = zeros_like x
-let real x = x
-let conjugate x = x
+let is_complex_dtype = function
+  | D.Complex64 | D.Complex128 -> true
+  | _ -> false
+
+let imag x =
+  if is_complex_dtype (dtype x) then bind1 T.Imag [ x ] else zeros_like x
+
+let real x = if is_complex_dtype (dtype x) then bind1 T.Real [ x ] else x
+let conjugate x = if is_complex_dtype (dtype x) then bind1 T.Conj [ x ] else x
 let conj = conjugate

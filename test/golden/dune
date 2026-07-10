@@ -31,4 +31,5 @@
   (source_tree %{project_root}/goldens/scipy_special)
   (source_tree %{project_root}/goldens/scipy_stats)
   (source_tree %{project_root}/goldens/scipy_integrate)
-  (source_tree %{project_root}/goldens/scipy_ndimage)))
+  (source_tree %{project_root}/goldens/scipy_ndimage)
+  (source_tree %{project_root}/goldens/complex)))

@@ -137,6 +137,27 @@ CASES = [
         lambda: _cf.platform_index_p.bind(platforms=(("cpu",),)),
         [],
     ),
+    (
+        "shape_broadcast_in_dim",
+        lambda x: lax.broadcast_in_dim(x, (2, 3), (1,)),
+        [f32(3)],
+    ),
+    ("shape_concatenate", lambda x, y: lax.concatenate([x, y], 0), [f32(2), f32(3)]),
+    ("shape_iota", lambda: lax.broadcasted_iota(jnp.int32, (2, 3), 1), []),
+    ("shape_pad", lambda x: lax.pad(x, jnp.float32(0.0), [(1, 2, 0)]), [f32(3)]),
+    (
+        "shape_pad_interior",
+        lambda x: lax.pad(x, jnp.float32(0.0), [(0, 0, 1)]),
+        [f32(3)],
+    ),
+    ("shape_reshape", lambda x: lax.reshape(x, (2, 3)), [f32(6)]),
+    ("shape_rev", lambda x: lax.rev(x, [0]), [f32(3)]),
+    ("shape_split", lambda x: lax.split(x, [2, 3], 0), [f32(5)]),
+    ("shape_squeeze", lambda x: lax.squeeze(x, [0]), [f32(1, 3)]),
+    ("shape_stack", lambda x, y: lax.stack([x, y], 0), [f32(3), f32(3)]),
+    ("shape_tile", lambda x: lax.tile(x, [2]), [f32(3)]),
+    ("shape_transpose", lambda x: lax.transpose(x, (1, 0)), [f32(2, 3)]),
+    ("shape_unstack", lambda x: lax.unstack(x, 0), [f32(2, 3)]),
 ]
 
 

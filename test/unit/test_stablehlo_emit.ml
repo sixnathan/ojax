@@ -209,6 +209,113 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
       fun () ->
         J.make_jaxpr [] (fun _ ->
             C.bind (T.Platform_index [| Some [| "cpu" |] |]) []) );
+    ( "shape_broadcast_in_dim",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] ->
+                C.bind
+                  (T.Broadcast_in_dim { shape = [| 2; 3 |]; dims = [| 1 |] })
+                  [ x ]
+            | _ -> assert false) );
+    ( "shape_concatenate",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 2 |] D.F32; av [| 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x; y ] -> C.bind (T.Concatenate 0) [ x; y ]
+            | _ -> assert false) );
+    ( "shape_iota",
+      fun () ->
+        J.make_jaxpr [] (fun _ ->
+            C.bind
+              (T.Iota { dtype = D.I32; shape = [| 2; 3 |]; dimension = 1 })
+              []) );
+    ( "shape_pad",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] ->
+                C.bind (T.Pad [| (1, 2, 0) |]) [ x; cst D.F32 [||] [| 0.0 |] ]
+            | _ -> assert false) );
+    ( "shape_pad_interior",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] ->
+                C.bind (T.Pad [| (0, 0, 1) |]) [ x; cst D.F32 [||] [| 0.0 |] ]
+            | _ -> assert false) );
+    ( "shape_reshape",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 6 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] -> C.bind (T.Reshape [| 2; 3 |]) [ x ]
+            | _ -> assert false) );
+    ( "shape_rev",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] -> C.bind (T.Rev [| 0 |]) [ x ]
+            | _ -> assert false) );
+    ( "shape_split",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 5 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] -> C.bind (T.Split { sizes = [| 2; 3 |]; axis = 0 }) [ x ]
+            | _ -> assert false) );
+    ( "shape_squeeze",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 1; 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] -> C.bind (T.Squeeze [| 0 |]) [ x ]
+            | _ -> assert false) );
+    ( "shape_stack",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 3 |] D.F32; av [| 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x; y ] -> C.bind (T.Stack 0) [ x; y ]
+            | _ -> assert false) );
+    ( "shape_tile",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] -> C.bind (T.Tile [| 2 |]) [ x ]
+            | _ -> assert false) );
+    ( "shape_transpose",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 2; 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] -> C.bind (T.Transpose [| 1; 0 |]) [ x ]
+            | _ -> assert false) );
+    ( "shape_unstack",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 2; 3 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] -> C.bind (T.Unstack 0) [ x ]
+            | _ -> assert false) );
   ]
 
 let check_case name build () =

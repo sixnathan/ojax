@@ -455,6 +455,216 @@ let emit_platform_index ctx (eqn : eqn) platforms =
        (Ir.dense (Ir.int_literal (Int64.of_int (platform_cpu_index platforms))))
        (Ir.tensor_type_of_aval out.vaval))
 
+let emit_broadcast_in_dim ctx (eqn : eqn) in_ids dims =
+  let x = sole in_ids in
+  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.broadcast_in_dim %s, dims = %s : (%s) -> %s\n"
+       (name n) (name x) (Ir.int_array_attr dims) inty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_concatenate ctx (eqn : eqn) in_ids dim =
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  let operands = String.concat ", " (List.map name in_ids) in
+  let intys =
+    String.concat ", "
+      (List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) eqn.inputs)
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.concatenate %s, dim = %d : (%s) -> %s\n"
+       (name n) operands dim intys
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_iota ctx (eqn : eqn) dimension =
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.iota dim = %d : %s\n" (name n) dimension
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_pad ctx (eqn : eqn) in_ids config =
+  let op, pv = pair in_ids in
+  let opty, pvty =
+    match eqn.inputs with
+    | [ o; p ] ->
+        ( Ir.tensor_type_of_aval (atom_aval o),
+          Ir.tensor_type_of_aval (atom_aval p) )
+    | _ -> invalid_arg "Stablehlo.Emit: pad arity"
+  in
+  let out = sole eqn.outs in
+  let low = Array.map (fun (l, _, _) -> l) config in
+  let high = Array.map (fun (_, h, _) -> h) config in
+  let interior = Array.map (fun (_, _, i) -> i) config in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.pad %s, %s, low = %s, high = %s, interior = %s : \
+        (%s, %s) -> %s\n"
+       (name n) (name op) (name pv) (Ir.int_array_attr low)
+       (Ir.int_array_attr high)
+       (Ir.int_array_attr interior)
+       opty pvty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_reshape ctx (eqn : eqn) in_ids =
+  let x = sole in_ids in
+  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name n)
+       (name x) inty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_rev ctx (eqn : eqn) in_ids dims =
+  let x = sole in_ids in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.reverse %s, dims = %s : %s\n" (name n)
+       (name x) (Ir.int_array_attr dims)
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_transpose ctx (eqn : eqn) in_ids perm =
+  let x = sole in_ids in
+  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.transpose %s, dims = %s : (%s) -> %s\n"
+       (name n) (name x) (Ir.int_array_attr perm) inty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_slice ctx x_id inty ranges outty =
+  let idx =
+    String.concat ", "
+      (List.map (fun (lo, hi) -> Printf.sprintf "%d:%d" lo hi) ranges)
+  in
+  let n = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.slice %s [%s] : (%s) -> %s\n" (name n)
+       (name x_id) idx inty outty);
+  n
+
+let emit_split ctx (eqn : eqn) in_ids axis sizes =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let inty = Ir.tensor_type_of_aval in_aval in
+  let ndim = Array.length in_aval.shape in
+  let start = ref 0 in
+  List.iteri
+    (fun i (out : var) ->
+      let sz = sizes.(i) in
+      let ranges =
+        List.init ndim (fun d ->
+            if d = axis then (!start, !start + sz) else (0, in_aval.shape.(d)))
+      in
+      let sid =
+        emit_slice ctx x inty ranges (Ir.tensor_type_of_aval out.vaval)
+      in
+      Hashtbl.replace ctx.ids out.vid sid;
+      start := !start + sz)
+    eqn.outs
+
+let emit_unstack ctx (eqn : eqn) in_ids axis =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let inty = Ir.tensor_type_of_aval in_aval in
+  let ndim = Array.length in_aval.shape in
+  let dt = in_aval.dtype in
+  List.iteri
+    (fun i (out : var) ->
+      let ranges =
+        List.init ndim (fun d ->
+            if d = axis then (i, i + 1) else (0, in_aval.shape.(d)))
+      in
+      let mid_shape =
+        Array.mapi (fun d s -> if d = axis then 1 else s) in_aval.shape
+      in
+      let midty = Ir.tensor_type dt mid_shape in
+      let sid = emit_slice ctx x inty ranges midty in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name n)
+           (name sid) midty
+           (Ir.tensor_type_of_aval out.vaval)))
+    eqn.outs
+
+let insert_dim shape axis v =
+  Array.init
+    (Array.length shape + 1)
+    (fun i ->
+      if i < axis then shape.(i) else if i = axis then v else shape.(i - 1))
+
+let emit_stack ctx (eqn : eqn) in_ids axis =
+  let out = sole eqn.outs in
+  let outty = Ir.tensor_type_of_aval out.vaval in
+  let expanded =
+    List.map2
+      (fun xid a ->
+        let av = atom_aval a in
+        let ndim = Array.length av.shape in
+        let new_shape = insert_dim av.shape axis 1 in
+        let dims =
+          Array.of_list
+            (List.filter (fun i -> i <> axis) (List.init (ndim + 1) Fun.id))
+        in
+        let ty_in = Ir.tensor_type_of_aval av in
+        let ty_exp = Ir.tensor_type av.dtype new_shape in
+        let n = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "    %s = stablehlo.broadcast_in_dim %s, dims = %s : (%s) -> %s\n"
+             (name n) (name xid) (Ir.int_array_attr dims) ty_in ty_exp);
+        (n, ty_exp))
+      in_ids eqn.inputs
+  in
+  let n = bind_var ctx out in
+  let operands =
+    String.concat ", " (List.map (fun (i, _) -> name i) expanded)
+  in
+  let intys = String.concat ", " (List.map snd expanded) in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.concatenate %s, dim = %d : (%s) -> %s\n"
+       (name n) operands axis intys outty)
+
+let emit_tile ctx (eqn : eqn) in_ids reps =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let inty = Ir.tensor_type_of_aval in_aval in
+  let dt = in_aval.dtype in
+  let shape = in_aval.shape in
+  let ndim = Array.length shape in
+  let out = sole eqn.outs in
+  let outty = Ir.tensor_type_of_aval out.vaval in
+  let expand_shape =
+    Array.init (2 * ndim) (fun i -> if i land 1 = 0 then 1 else shape.(i / 2))
+  in
+  let expty = Ir.tensor_type dt expand_shape in
+  let r1 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name r1)
+       (name x) inty expty);
+  let bshape =
+    Array.init (2 * ndim) (fun i ->
+        if i land 1 = 0 then reps.(i / 2) else shape.(i / 2))
+  in
+  let bty = Ir.tensor_type dt bshape in
+  let dims = Array.init (2 * ndim) Fun.id in
+  let b = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.broadcast_in_dim %s, dims = %s : (%s) -> %s\n"
+       (name b) (name r1) (Ir.int_array_attr dims) expty bty);
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name n)
+       (name b) bty outty)
+
 let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -536,6 +746,18 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       | _ -> invalid_arg "Stablehlo.Emit: tie arity")
   | Empty _ -> emit_empty ctx eqn
   | Platform_index platforms -> emit_platform_index ctx eqn platforms
+  | Broadcast_in_dim { dims; _ } -> emit_broadcast_in_dim ctx eqn in_ids dims
+  | Concatenate dim -> emit_concatenate ctx eqn in_ids dim
+  | Iota { dimension; _ } -> emit_iota ctx eqn dimension
+  | Pad config -> emit_pad ctx eqn in_ids config
+  | Reshape _ -> emit_reshape ctx eqn in_ids
+  | Squeeze _ -> emit_reshape ctx eqn in_ids
+  | Rev dims -> emit_rev ctx eqn in_ids dims
+  | Split { sizes; axis } -> emit_split ctx eqn in_ids axis sizes
+  | Stack axis -> emit_stack ctx eqn in_ids axis
+  | Tile reps -> emit_tile ctx eqn in_ids reps
+  | Transpose perm -> emit_transpose ctx eqn in_ids perm
+  | Unstack axis -> emit_unstack ctx eqn in_ids axis
   | After_all ->
       failwith
         "Stablehlo.Emit: After_all produces a token (no ShapedArray aval), \
@@ -555,7 +777,7 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith "Stablehlo.Emit: To_edtype (extended dtypes) deferred to M5"
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 81-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 82-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

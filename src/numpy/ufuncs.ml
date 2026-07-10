@@ -19,6 +19,7 @@ let to_inexact_dtype = function
   | D.F64 -> D.F64
   | D.I32 | D.Bool | D.Uint32 -> D.F32
   | D.I64 -> D.F64
+  | (D.Complex64 | D.Complex128) as c -> c
 
 let to_numeric_dtype = function D.Bool -> D.I32 | d -> d
 
@@ -352,6 +353,8 @@ let signbit x =
   match dtype a with
   | D.I32 | D.I64 -> bind1 T.Lt [ a; zeros_like a ]
   | D.Bool | D.Uint32 -> const_full D.Bool sh 0.0
+  | D.Complex64 | D.Complex128 ->
+      invalid_arg "signbit: complex dtype unsupported"
   | D.F32 ->
       let i = bind1 (T.Bitcast_convert_type D.I32) [ a ] in
       let s = bind1 T.Shift_right_arithmetic [ i; const_full D.I32 sh 31.0 ] in

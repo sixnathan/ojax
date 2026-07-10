@@ -233,6 +233,7 @@ let class_chain = function
   | Cdtype D.I32 | Cdtype D.I64 | Signedinteger ->
       [ Signedinteger; Integer; Number; Generic ]
   | Cdtype D.Uint32 -> [ Integer; Number; Generic ]
+  | Cdtype D.Complex64 | Cdtype D.Complex128 -> [ Inexact; Number; Generic ]
   | Cdtype D.Bool | Cbool -> [ Cbool; Generic ]
   | Integer -> [ Integer; Number; Generic ]
   | Inexact -> [ Inexact; Number; Generic ]

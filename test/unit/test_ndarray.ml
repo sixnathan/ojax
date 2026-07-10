@@ -44,6 +44,51 @@ let f32_canonicalize () =
     "canonicalize F32 rounds to single precision" expected
     (Ojax.Ndarray.get_f c [| 0 |])
 
+let c re im = { Complex.re; im }
+
+let check_complex name (e : Complex.t) (a : Complex.t) =
+  Alcotest.(check (float 0.0)) (name ^ ".re") e.re a.re;
+  Alcotest.(check (float 0.0)) (name ^ ".im") e.im a.im
+
+let complex128_roundtrip () =
+  let vals = [| c 1.5 (-2.5); c 0.0 3.25; c (-7.0) 0.0 |] in
+  let a = Ojax.Ndarray.of_complex Ojax.Dtype.Complex128 [| 3 |] vals in
+  Alcotest.check
+    (Alcotest.testable
+       (fun ppf d -> Format.pp_print_string ppf (Ojax.Dtype.short_name d))
+       ( = ))
+    "dtype c128" Ojax.Dtype.Complex128 (Ojax.Ndarray.dtype a);
+  check_complex "e0" vals.(0) (Ojax.Ndarray.get_c a [| 0 |]);
+  check_complex "e1" vals.(1) (Ojax.Ndarray.get_c a [| 1 |]);
+  check_complex "e2" vals.(2) (Ojax.Ndarray.get_c a [| 2 |])
+
+let f32r v = Int32.float_of_bits (Int32.bits_of_float v)
+
+let complex64_storage_rounds () =
+  let a =
+    Ojax.Ndarray.of_complex Ojax.Dtype.Complex64 [| 1 |] [| c 0.1 0.2 |]
+  in
+  check_complex "c64 store rounds to f32"
+    (c (f32r 0.1) (f32r 0.2))
+    (Ojax.Ndarray.get_c a [| 0 |])
+
+let complex64_canonicalize () =
+  let a =
+    Ojax.Ndarray.of_complex Ojax.Dtype.Complex128 [| 1 |] [| c 0.1 0.2 |]
+  in
+  let cc = Ojax.Ndarray.canonicalize Ojax.Dtype.Complex64 a in
+  check_complex "canonicalize c128->c64 rounds components"
+    (c (f32r 0.1) (f32r 0.2))
+    (Ojax.Ndarray.get_c cc [| 0 |])
+
+let complex_set () =
+  let a =
+    Ojax.Ndarray.of_complex Ojax.Dtype.Complex128 [| 2 |]
+      [| c 0.0 0.0; c 0.0 0.0 |]
+  in
+  Ojax.Ndarray.set_c a [| 1 |] (c 4.0 (-9.0));
+  check_complex "set/get" (c 4.0 (-9.0)) (Ojax.Ndarray.get_c a [| 1 |])
+
 let () =
   Alcotest.run "ndarray"
     [
@@ -61,4 +106,13 @@ let () =
         ] );
       ( "canonicalize",
         [ Alcotest.test_case "f32 rounding" `Quick f32_canonicalize ] );
+      ( "complex-backing",
+        [
+          Alcotest.test_case "c128 round-trip exact" `Quick complex128_roundtrip;
+          Alcotest.test_case "c64 storage rounds to f32" `Quick
+            complex64_storage_rounds;
+          Alcotest.test_case "canonicalize c128->c64" `Quick
+            complex64_canonicalize;
+          Alcotest.test_case "set_c/get_c" `Quick complex_set;
+        ] );
     ]

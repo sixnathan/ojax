@@ -27,7 +27,7 @@ let where_ = NL.where_
 let to_inexact = function
   | D.I32 | D.Bool | D.Uint32 -> D.F32
   | D.I64 -> D.F64
-  | (D.F32 | D.F64) as d -> d
+  | (D.F32 | D.F64 | D.Complex64 | D.Complex128) as d -> d
 
 let promote_inexact vs =
   let dt = to_inexact (NL.result_type vs) in
@@ -47,7 +47,7 @@ let promote3 a b c =
 
 let is_integer_dtype = function
   | D.I32 | D.I64 | D.Uint32 -> true
-  | D.F32 | D.F64 | D.Bool -> false
+  | D.F32 | D.F64 | D.Bool | D.Complex64 | D.Complex128 -> false
 
 let gammaln x = bind1 T.Lgamma [ promote1 x ]
 

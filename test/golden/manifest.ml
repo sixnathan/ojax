@@ -185,6 +185,8 @@ let string_of_dtype = function
   | D.I64 -> "int64"
   | D.Bool -> "bool"
   | D.Uint32 -> "uint32"
+  | D.Complex64 -> "complex64"
+  | D.Complex128 -> "complex128"
 
 let nd_of_npz (a : Npz.t) =
   let floats =

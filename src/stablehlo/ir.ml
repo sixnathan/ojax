@@ -7,6 +7,8 @@ let element_type = function
   | Dtype.I64 -> "i64"
   | Dtype.Bool -> "i1"
   | Dtype.Uint32 -> "ui32"
+  | Dtype.Complex64 -> "complex<f32>"
+  | Dtype.Complex128 -> "complex<f64>"
 
 let tensor_type dtype shape =
   let elt = element_type dtype in

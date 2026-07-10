@@ -23,6 +23,7 @@ let to_inexact = function
   | D.F64 -> D.F64
   | D.I32 | D.Bool | D.Uint32 -> D.F32
   | D.I64 -> D.F64
+  | (D.Complex64 | D.Complex128) as c -> c
 
 let inexact v =
   let dt = to_inexact (dtype v) in

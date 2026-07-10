@@ -45,6 +45,7 @@ let to_inexact_dtype = function
   | D.F64 -> D.F64
   | D.I32 | D.Bool | D.Uint32 -> D.F32
   | D.I64 -> D.F64
+  | (D.Complex64 | D.Complex128) as c -> c
 
 let to_inexact v = convert v (to_inexact_dtype (dtype v))
 let to_bool v = if dtype v = D.Bool then v else convert v D.Bool
@@ -56,7 +57,7 @@ let promote_integer_dtype dt =
   | D.I32 -> if di = D.I64 then D.I64 else D.I32
   | D.I64 -> D.I64
   | D.Uint32 -> D.Uint32
-  | (D.F32 | D.F64) as f -> f
+  | (D.F32 | D.F64 | D.Complex64 | D.Complex128) as f -> f
 
 let all_axes v = Array.init (ndim v) (fun i -> i)
 

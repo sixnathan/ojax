@@ -270,6 +270,11 @@ let lit_value nd =
   | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
       Int64.to_string (Ndarray.get_i64 nd scalar)
   | Dtype.F32 | Dtype.F64 -> python_repr_float (Ndarray.get_f nd scalar)
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      let z = Ndarray.get_c nd scalar in
+      let im = python_repr_float z.Complex.im in
+      let sign = if String.length im > 0 && im.[0] = '-' then "" else "+" in
+      "(" ^ python_repr_float z.Complex.re ^ sign ^ im ^ "j)"
 
 let lit_str nd = lit_value nd ^ ":" ^ lit_short nd
 

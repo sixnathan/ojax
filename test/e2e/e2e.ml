@@ -191,6 +191,8 @@ let npz_of_ndarray nd : Npz.t =
     | Dt.I64 -> "int64"
     | Dt.Bool -> "bool"
     | Dt.Uint32 -> "uint32"
+    | Dt.Complex64 -> "complex64"
+    | Dt.Complex128 -> "complex128"
   in
   let data =
     match dtype with

@@ -1,4 +1,4 @@
-type t = F32 | F64 | I32 | I64 | Bool | Uint32
+type t = F32 | F64 | I32 | I64 | Bool | Uint32 | Complex64 | Complex128
 
 let short_name = function
   | F32 -> "f32"
@@ -7,3 +7,5 @@ let short_name = function
   | I64 -> "i64"
   | Bool -> "bool"
   | Uint32 -> "u32"
+  | Complex64 -> "c64"
+  | Complex128 -> "c128"

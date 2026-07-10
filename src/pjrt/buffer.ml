@@ -17,6 +17,8 @@ let elt_bytes = function
   | Dtype.F64 | Dtype.I64 -> 8
   | Dtype.F32 | Dtype.I32 | Dtype.Uint32 -> 4
   | Dtype.Bool -> 1
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      invalid_arg "Pjrt.Buffer: complex unsupported"
 
 let set_byte buf off b = Bigarray.Array1.set buf off (b land 0xff)
 
@@ -56,6 +58,8 @@ let encode buf off dtype v =
   | Dtype.Uint32 ->
       put_i32 buf off (Int32.of_int (int_of_float v land u32_mask))
   | Dtype.Bool -> set_byte buf off (if v = 0.0 then 0 else 1)
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      invalid_arg "Pjrt.Buffer: complex unsupported"
 
 let decode buf off dtype =
   match dtype with
@@ -65,6 +69,8 @@ let decode buf off dtype =
   | Dtype.I64 -> Int64.to_float (get_i64 buf off)
   | Dtype.Uint32 -> float_of_int (Int32.to_int (get_i32 buf off) land u32_mask)
   | Dtype.Bool -> if Bigarray.Array1.get buf off = 0 then 0.0 else 1.0
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      invalid_arg "Pjrt.Buffer: complex unsupported"
 
 let unravel shape flat =
   let r = Array.length shape in

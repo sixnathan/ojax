@@ -15,6 +15,8 @@ let element_literal nd idx =
   | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
       Ir.int_literal (Ndarray.get_i64 nd idx)
   | Dtype.Bool -> Ir.bool_literal (Ndarray.get_i64 nd idx <> 0L)
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      invalid_arg "Stablehlo.Emit: complex unsupported (row 96)"
 
 let all_literals nd =
   let shape = Ndarray.shape nd in
@@ -268,6 +270,8 @@ let compare_type_of dtype total_order =
   | Dtype.F32 | Dtype.F64 -> if total_order then "TOTALORDER" else "FLOAT"
   | Dtype.I32 | Dtype.I64 -> "SIGNED"
   | Dtype.Bool | Dtype.Uint32 -> "UNSIGNED"
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      invalid_arg "Stablehlo.Emit: complex unsupported (row 96)"
 
 let emit_compare ctx (eqn : eqn) in_ids dir total_order =
   let a, b = pair in_ids in
@@ -370,6 +374,8 @@ let zero_dense dt =
   | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt 0.0
   | Dtype.I32 | Dtype.I64 | Dtype.Uint32 -> Ir.int_literal 0L
   | Dtype.Bool -> Ir.bool_literal false
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      invalid_arg "Stablehlo.Emit: complex unsupported (row 96)"
 
 let emit_convert ctx (eqn : eqn) in_ids =
   let x = sole in_ids in
@@ -700,7 +706,9 @@ let reduce_one dt =
     (match dt with
     | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt 1.0
     | Dtype.I32 | Dtype.I64 | Dtype.Uint32 -> Ir.int_literal 1L
-    | Dtype.Bool -> Ir.bool_literal true)
+    | Dtype.Bool -> Ir.bool_literal true
+    | Dtype.Complex64 | Dtype.Complex128 ->
+        invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
 
 let reduce_allones dt =
   Ir.dense
@@ -709,7 +717,9 @@ let reduce_allones dt =
     | Dtype.Uint32 -> Ir.int_literal 4294967295L
     | Dtype.Bool -> Ir.bool_literal true
     | Dtype.F32 | Dtype.F64 ->
-        invalid_arg "Stablehlo.Emit: bitwise reduce on floating-point dtype")
+        invalid_arg "Stablehlo.Emit: bitwise reduce on floating-point dtype"
+    | Dtype.Complex64 | Dtype.Complex128 ->
+        invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
 
 let reduce_maxid dt =
   Ir.dense
@@ -718,7 +728,9 @@ let reduce_maxid dt =
     | Dtype.I32 -> Ir.int_literal (-2147483648L)
     | Dtype.I64 -> Ir.int_literal Int64.min_int
     | Dtype.Uint32 -> Ir.int_literal 0L
-    | Dtype.Bool -> Ir.bool_literal false)
+    | Dtype.Bool -> Ir.bool_literal false
+    | Dtype.Complex64 | Dtype.Complex128 ->
+        invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
 
 let reduce_minid dt =
   Ir.dense
@@ -727,7 +739,9 @@ let reduce_minid dt =
     | Dtype.I32 -> Ir.int_literal 2147483647L
     | Dtype.I64 -> Ir.int_literal Int64.max_int
     | Dtype.Uint32 -> Ir.int_literal 4294967295L
-    | Dtype.Bool -> Ir.bool_literal true)
+    | Dtype.Bool -> Ir.bool_literal true
+    | Dtype.Complex64 | Dtype.Complex128 ->
+        invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
 
 let emit_reduce ctx (eqn : eqn) in_ids axes op init =
   let x = sole in_ids in

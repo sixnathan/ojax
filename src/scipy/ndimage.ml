@@ -19,7 +19,7 @@ let scalar dt x = const_full dt [||] x
 
 let is_integer = function
   | D.I32 | D.I64 | D.Uint32 -> true
-  | D.F32 | D.F64 | D.Bool -> false
+  | D.F32 | D.F64 | D.Bool | D.Complex64 | D.Complex128 -> false
 
 let round_half_away a = if is_integer (dtype a) then a else bind1 T.Round [ a ]
 let to_i32 v = NL.astype v D.I32

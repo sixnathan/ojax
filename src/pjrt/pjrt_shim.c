@@ -451,3 +451,236 @@ CAMLprim value ojax_pjrt_buffer_destroy(value v_buffer) {
   }
   CAMLreturn(Val_unit);
 }
+
+struct ojax_pjrt_executable {
+  const PJRT_Api *api;
+  PJRT_LoadedExecutable *executable;
+  int num_outputs;
+};
+
+#define Ojax_executable_val(v) \
+  ((struct ojax_pjrt_executable *)Data_custom_val(v))
+
+static void ojax_pjrt_loaded_destroy(const PJRT_Api *api,
+                                     PJRT_LoadedExecutable *exec) {
+  PJRT_LoadedExecutable_Destroy_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_LoadedExecutable_Destroy_Args_STRUCT_SIZE;
+  a.executable = exec;
+  PJRT_Error *err = api->PJRT_LoadedExecutable_Destroy(&a);
+  if (err != NULL) {
+    PJRT_Error_Destroy_Args da;
+    memset(&da, 0, sizeof da);
+    da.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+    da.error = err;
+    api->PJRT_Error_Destroy(&da);
+  }
+}
+
+static void ojax_pjrt_executable_finalize(value v_exec) {
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  if (e->executable != NULL) {
+    ojax_pjrt_loaded_destroy(e->api, e->executable);
+    e->executable = NULL;
+  }
+}
+
+static struct custom_operations ojax_pjrt_executable_ops = {
+    "ojax.pjrt.executable",
+    ojax_pjrt_executable_finalize,
+    custom_compare_default,
+    custom_hash_default,
+    custom_serialize_default,
+    custom_deserialize_default,
+    custom_compare_ext_default,
+    custom_fixed_length_default};
+
+CAMLprim value ojax_pjrt_compile(value v_client, value v_code,
+                                 value v_options) {
+  CAMLparam3(v_client, v_code, v_options);
+  CAMLlocal1(v_exec);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  if (c->client == NULL) ojax_pjrt_raise("compile on closed client");
+  const PJRT_Api *api = c->api;
+  mlsize_t code_len = caml_string_length(v_code);
+  mlsize_t opt_len = caml_string_length(v_options);
+  char *code = caml_stat_alloc(code_len > 0 ? code_len : 1);
+  memcpy(code, String_val(v_code), code_len);
+  char *opts = caml_stat_alloc(opt_len > 0 ? opt_len : 1);
+  memcpy(opts, String_val(v_options), opt_len);
+  static const char fmt[] = "mlir";
+
+  PJRT_Program program;
+  memset(&program, 0, sizeof program);
+  program.struct_size = PJRT_Program_STRUCT_SIZE;
+  program.code = code;
+  program.code_size = (size_t)code_len;
+  program.format = fmt;
+  program.format_size = sizeof(fmt) - 1;
+
+  PJRT_Client_Compile_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_Client_Compile_Args_STRUCT_SIZE;
+  a.client = c->client;
+  a.program = &program;
+  a.compile_options = opts;
+  a.compile_options_size = (size_t)opt_len;
+
+  caml_release_runtime_system();
+  PJRT_Error *err = api->PJRT_Client_Compile(&a);
+  caml_acquire_runtime_system();
+  caml_stat_free(code);
+  caml_stat_free(opts);
+  ojax_pjrt_check(api, err);
+
+  PJRT_LoadedExecutable_GetExecutable_Args ga;
+  memset(&ga, 0, sizeof ga);
+  ga.struct_size = PJRT_LoadedExecutable_GetExecutable_Args_STRUCT_SIZE;
+  ga.loaded_executable = a.executable;
+  PJRT_Error *gerr = api->PJRT_LoadedExecutable_GetExecutable(&ga);
+  if (gerr != NULL) {
+    ojax_pjrt_loaded_destroy(api, a.executable);
+    ojax_pjrt_check(api, gerr);
+  }
+  PJRT_Executable_NumOutputs_Args na;
+  memset(&na, 0, sizeof na);
+  na.struct_size = PJRT_Executable_NumOutputs_Args_STRUCT_SIZE;
+  na.executable = ga.executable;
+  PJRT_Error *nerr = api->PJRT_Executable_NumOutputs(&na);
+  int num_outputs = (int)na.num_outputs;
+  PJRT_Executable_Destroy_Args da;
+  memset(&da, 0, sizeof da);
+  da.struct_size = PJRT_Executable_Destroy_Args_STRUCT_SIZE;
+  da.executable = ga.executable;
+  PJRT_Error *derr = api->PJRT_Executable_Destroy(&da);
+  if (derr != NULL) {
+    PJRT_Error_Destroy_Args de;
+    memset(&de, 0, sizeof de);
+    de.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+    de.error = derr;
+    api->PJRT_Error_Destroy(&de);
+  }
+  if (nerr != NULL) {
+    ojax_pjrt_loaded_destroy(api, a.executable);
+    ojax_pjrt_check(api, nerr);
+  }
+
+  v_exec = caml_alloc_custom(&ojax_pjrt_executable_ops,
+                             sizeof(struct ojax_pjrt_executable), 0, 1);
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  e->api = api;
+  e->executable = a.executable;
+  e->num_outputs = num_outputs;
+  CAMLreturn(v_exec);
+}
+
+CAMLprim value ojax_pjrt_executable_num_outputs(value v_exec) {
+  CAMLparam1(v_exec);
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  if (e->executable == NULL) ojax_pjrt_raise("num_outputs on destroyed executable");
+  CAMLreturn(Val_int(e->num_outputs));
+}
+
+CAMLprim value ojax_pjrt_executable_destroy(value v_exec) {
+  CAMLparam1(v_exec);
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  if (e->executable != NULL) {
+    const PJRT_Api *api = e->api;
+    PJRT_LoadedExecutable *exec = e->executable;
+    e->executable = NULL;
+    caml_release_runtime_system();
+    ojax_pjrt_loaded_destroy(api, exec);
+    caml_acquire_runtime_system();
+  }
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value ojax_pjrt_execute(value v_exec, value v_args) {
+  CAMLparam2(v_exec, v_args);
+  CAMLlocal2(v_out, v_buf);
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  if (e->executable == NULL) ojax_pjrt_raise("execute on destroyed executable");
+  const PJRT_Api *api = e->api;
+  int num_args = (int)Wosize_val(v_args);
+  int num_outputs = e->num_outputs;
+
+  PJRT_Buffer **args = NULL;
+  if (num_args > 0)
+    args = caml_stat_alloc((size_t)num_args * sizeof(PJRT_Buffer *));
+  for (int i = 0; i < num_args; i++) {
+    struct ojax_pjrt_buffer *b = Ojax_buffer_val(Field(v_args, i));
+    if (b->buffer == NULL) {
+      if (args != NULL) caml_stat_free(args);
+      ojax_pjrt_raise("execute given destroyed input buffer");
+    }
+    args[i] = b->buffer;
+  }
+  PJRT_Buffer **outputs =
+      caml_stat_alloc((size_t)(num_outputs > 0 ? num_outputs : 1) *
+                      sizeof(PJRT_Buffer *));
+  for (int i = 0; i < num_outputs; i++) outputs[i] = NULL;
+
+  PJRT_Buffer *const *argument_lists[1];
+  argument_lists[0] = args;
+  PJRT_Buffer **output_lists[1];
+  output_lists[0] = outputs;
+  PJRT_Event *events[1];
+  events[0] = NULL;
+
+  PJRT_ExecuteOptions opts;
+  memset(&opts, 0, sizeof opts);
+  opts.struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
+
+  PJRT_LoadedExecutable_Execute_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
+  a.executable = e->executable;
+  a.options = &opts;
+  a.argument_lists = argument_lists;
+  a.num_devices = 1;
+  a.num_args = (size_t)num_args;
+  a.output_lists = output_lists;
+  a.device_complete_events = events;
+  a.execute_device = NULL;
+
+  caml_release_runtime_system();
+  PJRT_Error *err = api->PJRT_LoadedExecutable_Execute(&a);
+  PJRT_Error *awaited = NULL;
+  if (err == NULL) awaited = ojax_pjrt_await(api, events[0]);
+  caml_acquire_runtime_system();
+
+  if (args != NULL) caml_stat_free(args);
+  if (err != NULL || awaited != NULL) {
+    for (int i = 0; i < num_outputs; i++) {
+      if (outputs[i] != NULL) {
+        PJRT_Buffer_Destroy_Args bd;
+        memset(&bd, 0, sizeof bd);
+        bd.struct_size = PJRT_Buffer_Destroy_Args_STRUCT_SIZE;
+        bd.buffer = outputs[i];
+        PJRT_Error *be = api->PJRT_Buffer_Destroy(&bd);
+        if (be != NULL) {
+          PJRT_Error_Destroy_Args de;
+          memset(&de, 0, sizeof de);
+          de.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+          de.error = be;
+          api->PJRT_Error_Destroy(&de);
+        }
+      }
+    }
+    caml_stat_free(outputs);
+    ojax_pjrt_check(api, err);
+    ojax_pjrt_check(api, awaited);
+  }
+
+  v_out = caml_alloc(num_outputs, 0);
+  for (int i = 0; i < num_outputs; i++) {
+    v_buf = caml_alloc_custom(&ojax_pjrt_buffer_ops,
+                              sizeof(struct ojax_pjrt_buffer), 0, 1);
+    struct ojax_pjrt_buffer *ob = Ojax_buffer_val(v_buf);
+    ob->api = api;
+    ob->buffer = outputs[i];
+    Store_field(v_out, i, v_buf);
+  }
+  caml_stat_free(outputs);
+  CAMLreturn(v_out);
+}

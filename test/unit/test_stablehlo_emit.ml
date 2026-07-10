@@ -1,9 +1,13 @@
 module Emit = Ojax.Stablehlo.Emit
 module J = Ojax.Jaxpr
+module C = Ojax.Core
+module L = Ojax.Lax
 module T = Ojax.Types
 module D = Ojax.Dtype
 module Nd = Ojax.Ndarray
 module U = Yojson.Safe.Util
+
+let () = L.install ()
 
 let spec_path =
   match Sys.getenv_opt "OJAX_SPEC" with
@@ -27,6 +31,14 @@ let golden name =
 
 let av shape dtype : T.aval = { shape; dtype; weak_type = false }
 let cst dtype shape data = T.Concrete (Nd.of_floats dtype shape data)
+
+let unary prim dtype =
+  (fun () ->
+     J.make_jaxpr
+       [ av [| 3 |] dtype ]
+       (fun args ->
+         match args with [ x ] -> C.bind prim [ x ] | _ -> assert false)
+    : unit -> T.closed_jaxpr)
 
 let builders : (string * (unit -> T.closed_jaxpr)) list =
   [
@@ -77,6 +89,23 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
             match args with
             | [ x ] -> [ cst D.F32 [||] [| 2.0 |]; x ]
             | _ -> assert false) );
+    ("unary_abs", unary T.Abs D.F32);
+    ("unary_acos", unary T.Acos D.F32);
+    ("unary_acosh", unary T.Acosh D.F32);
+    ("unary_asin", unary T.Asin D.F32);
+    ("unary_asinh", unary T.Asinh D.F32);
+    ("unary_atan", unary T.Atan D.F32);
+    ("unary_atanh", unary T.Atanh D.F32);
+    ("unary_cbrt", unary T.Cbrt D.F32);
+    ("unary_ceil", unary T.Ceil D.F32);
+    ("unary_clz", unary T.Clz D.I32);
+    ("unary_copy", unary T.Copy D.F32);
+    ("unary_cos", unary T.Cos D.F32);
+    ("unary_cosh", unary T.Cosh D.F32);
+    ("unary_exp", unary T.Exp D.F32);
+    ("unary_exp2", unary T.Exp2 D.F32);
+    ("unary_expm1", unary T.Expm1 D.F32);
+    ("unary_floor", unary T.Floor D.F32);
   ]
 
 let check_case name build () =

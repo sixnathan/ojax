@@ -64,21 +64,94 @@ let emit_constant_at ctx n nd =
        (Ir.dense (dense_body nd))
        (Ir.tensor_type (Ndarray.dtype nd) (Ndarray.shape nd)))
 
+let name n = "%" ^ string_of_int n
+
 let ssa_of_atom ctx = function
   | A_var v -> ssa_of_var ctx v
   | A_lit nd ->
       let n = fresh ctx in
       emit_constant_at ctx n nd;
-      "%" ^ string_of_int n
+      name n
   | DropVar _ -> invalid_arg "Stablehlo.Emit: DropVar in value position"
 
-let emit_eqn ctx (eqn : eqn) (in_names : string list) : unit =
-  ignore in_names;
-  ignore ctx;
+let id_of_atom ctx = function
+  | A_var v -> (
+      match Hashtbl.find_opt ctx.ids v.vid with
+      | Some n -> n
+      | None -> invalid_arg "Stablehlo.Emit: unbound variable")
+  | A_lit nd ->
+      let n = fresh ctx in
+      emit_constant_at ctx n nd;
+      n
+  | DropVar _ -> invalid_arg "Stablehlo.Emit: DropVar in value position"
+
+let sole = function [ x ] -> x | _ -> invalid_arg "Stablehlo.Emit: arity"
+
+let emit_stablehlo_unary ctx (eqn : eqn) in_ids op =
+  let x = sole in_ids in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.%s %s : %s\n" (name n) op (name x)
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_chlo_unary ctx (eqn : eqn) in_ids op =
+  let x = sole in_ids in
+  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = chlo.%s %s : %s -> %s\n" (name n) op (name x) inty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_exp2 ctx (eqn : eqn) in_ids =
+  let x = sole in_ids in
+  let out = sole eqn.outs in
+  let dt = out.vaval.dtype in
+  let xty = Ir.tensor_type_of_aval out.vaval in
+  let sty = Ir.tensor_type dt [||] in
+  let c = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+       (Ir.dense (Ir.float_literal dt (Float.log 2.0)))
+       sty);
+  let b = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+       (name b) (name c) sty xty);
+  let m = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.multiply %s, %s : %s\n" (name m)
+       (name b) (name x) xty);
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.exponential %s : %s\n" (name n) (name m)
+       xty)
+
+let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
+  | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
+  | Cbrt -> emit_stablehlo_unary ctx eqn in_ids "cbrt"
+  | Ceil -> emit_stablehlo_unary ctx eqn in_ids "ceil"
+  | Clz -> emit_stablehlo_unary ctx eqn in_ids "count_leading_zeros"
+  | Cos -> emit_stablehlo_unary ctx eqn in_ids "cosine"
+  | Exp -> emit_stablehlo_unary ctx eqn in_ids "exponential"
+  | Expm1 -> emit_stablehlo_unary ctx eqn in_ids "exponential_minus_one"
+  | Floor -> emit_stablehlo_unary ctx eqn in_ids "floor"
+  | Acos -> emit_chlo_unary ctx eqn in_ids "acos"
+  | Acosh -> emit_chlo_unary ctx eqn in_ids "acosh"
+  | Asin -> emit_chlo_unary ctx eqn in_ids "asin"
+  | Asinh -> emit_chlo_unary ctx eqn in_ids "asinh"
+  | Atan -> emit_chlo_unary ctx eqn in_ids "atan"
+  | Atanh -> emit_chlo_unary ctx eqn in_ids "atanh"
+  | Cosh -> emit_chlo_unary ctx eqn in_ids "cosh"
+  | Copy -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
+  | Exp2 -> emit_exp2 ctx eqn in_ids
+  | Conj -> failwith "Stablehlo.Emit: Conj requires complex dtype (M5)"
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 76-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 77-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in
@@ -104,8 +177,8 @@ let emit_closed_jaxpr (cj : closed_jaxpr) : string =
     const_binders cj.consts;
   List.iter
     (fun (e : eqn) ->
-      let in_names = List.map (ssa_of_atom ctx) e.inputs in
-      emit_eqn ctx e in_names)
+      let in_ids = List.map (id_of_atom ctx) e.inputs in
+      emit_eqn ctx e in_ids)
     jx.eqns;
   let out_names = List.map (ssa_of_atom ctx) jx.outs in
   let out_types =

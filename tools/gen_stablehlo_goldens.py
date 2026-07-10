@@ -6,6 +6,8 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import jax
 import jax.numpy as jnp
+from jax import lax
+from jax._src.lax import lax as _lax
 
 import stablehlo_normalize as normalizer
 
@@ -33,6 +35,23 @@ CASES = [
     ("const_splat_f32", lambda: jnp.array([2.0, 2.0], jnp.float32), []),
     ("const_neg_zero", lambda: jnp.array([-0.0, 1.5, -2.25], jnp.float32), []),
     ("const_and_arg", lambda x: (jnp.float32(2.0), x), [f32(2)]),
+    ("unary_abs", lax.abs, [f32(3)]),
+    ("unary_acos", lax.acos, [f32(3)]),
+    ("unary_acosh", lax.acosh, [f32(3)]),
+    ("unary_asin", lax.asin, [f32(3)]),
+    ("unary_asinh", lax.asinh, [f32(3)]),
+    ("unary_atan", lax.atan, [f32(3)]),
+    ("unary_atanh", lax.atanh, [f32(3)]),
+    ("unary_cbrt", lax.cbrt, [f32(3)]),
+    ("unary_ceil", lax.ceil, [f32(3)]),
+    ("unary_clz", lax.clz, [i32(3)]),
+    ("unary_copy", lambda x: _lax.copy_p.bind(x), [f32(3)]),
+    ("unary_cos", lax.cos, [f32(3)]),
+    ("unary_cosh", lax.cosh, [f32(3)]),
+    ("unary_exp", lax.exp, [f32(3)]),
+    ("unary_exp2", lax.exp2, [f32(3)]),
+    ("unary_expm1", lax.expm1, [f32(3)]),
+    ("unary_floor", lax.floor, [f32(3)]),
 ]
 
 

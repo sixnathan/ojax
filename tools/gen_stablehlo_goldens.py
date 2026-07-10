@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax._src.lax import lax as _lax
+from jax._src.lax import slicing as _sl
 from jax._src.lax.control_flow import conditionals as _cf
 
 import stablehlo_normalize as normalizer
@@ -23,6 +24,16 @@ def i32(*shape):
 
 def bl(*shape):
     return jnp.zeros(shape, jnp.bool_)
+
+
+GDN = lax.GatherDimensionNumbers(
+    offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)
+)
+SDN = lax.ScatterDimensionNumbers(
+    update_window_dims=(1,),
+    inserted_window_dims=(0,),
+    scatter_dims_to_operand_dims=(0,),
+)
 
 
 CASES = [
@@ -176,6 +187,53 @@ CASES = [
     ("cummax", lambda x: lax.cummax(x, 0), [f32(3)]),
     ("cummin", lambda x: lax.cummin(x, 0), [f32(3)]),
     ("cumlogsumexp", lambda x: lax.cumlogsumexp(x, 0), [f32(3)]),
+    ("slice", lambda x: lax.slice(x, (1,), (4,), None), [f32(6)]),
+    ("slice_strided", lambda x: lax.slice(x, (0, 1), (2, 4), (1, 2)), [f32(3, 5)]),
+    (
+        "dynamic_slice",
+        lambda x, i: _sl.dynamic_slice_p.bind(x, i, slice_sizes=(3,)),
+        [f32(6), i32()],
+    ),
+    (
+        "dynamic_update_slice",
+        lambda x, u, i: _sl.dynamic_update_slice_p.bind(x, u, i),
+        [f32(6), f32(2), i32()],
+    ),
+    (
+        "gather",
+        lambda o, i: lax.gather(o, i, GDN, (1, 3)),
+        [f32(5, 3), i32(2, 1)],
+    ),
+    (
+        "scatter",
+        lambda o, i, u: lax.scatter(o, i, u, SDN),
+        [f32(5, 3), i32(2, 1), f32(2, 3)],
+    ),
+    (
+        "scatter_add",
+        lambda o, i, u: lax.scatter_add(o, i, u, SDN),
+        [f32(5, 3), i32(2, 1), f32(2, 3)],
+    ),
+    (
+        "scatter_sub",
+        lambda o, i, u: lax.scatter_sub(o, i, u, SDN),
+        [f32(5, 3), i32(2, 1), f32(2, 3)],
+    ),
+    (
+        "scatter_mul",
+        lambda o, i, u: lax.scatter_mul(o, i, u, SDN),
+        [f32(5, 3), i32(2, 1), f32(2, 3)],
+    ),
+    (
+        "scatter_min",
+        lambda o, i, u: lax.scatter_min(o, i, u, SDN),
+        [f32(5, 3), i32(2, 1), f32(2, 3)],
+    ),
+    (
+        "scatter_max",
+        lambda o, i, u: lax.scatter_max(o, i, u, SDN),
+        [f32(5, 3), i32(2, 1), f32(2, 3)],
+    ),
 ]
 
 

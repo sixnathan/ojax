@@ -926,6 +926,167 @@ let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty);
   Buffer.add_string b "  }\n"
 
+let array_i64 a =
+  "array<i64: "
+  ^ (Array.to_list a |> List.map string_of_int |> String.concat ", ")
+  ^ ">"
+
+let emit_slice_op ctx (eqn : eqn) in_ids start_indices limit_indices strides =
+  let x = sole in_ids in
+  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  let ndim = Array.length start_indices in
+  let idx =
+    String.concat ", "
+      (List.init ndim (fun d ->
+           let lo = start_indices.(d) and hi = limit_indices.(d) in
+           let st = match strides with None -> 1 | Some s -> s.(d) in
+           if st = 1 then Printf.sprintf "%d:%d" lo hi
+           else Printf.sprintf "%d:%d:%d" lo hi st))
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.slice %s [%s] : (%s) -> %s\n" (name n)
+       (name x) idx inty
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_dynamic_slice ctx (eqn : eqn) in_ids slice_sizes =
+  let op_id, idx_ids =
+    match in_ids with
+    | o :: r -> (o, r)
+    | _ -> invalid_arg "Stablehlo.Emit: arity"
+  in
+  let op_ty, idx_tys =
+    match eqn.inputs with
+    | o :: r ->
+        ( Ir.tensor_type_of_aval (atom_aval o),
+          List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) r )
+    | _ -> invalid_arg "Stablehlo.Emit: arity"
+  in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  let operands = String.concat ", " (List.map name (op_id :: idx_ids)) in
+  let intys = String.concat ", " (op_ty :: idx_tys) in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.dynamic_slice %s, sizes = %s : (%s) -> %s\n" (name n)
+       operands
+       (Ir.int_array_attr slice_sizes)
+       intys
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_dynamic_update_slice ctx (eqn : eqn) in_ids =
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  let operands = String.concat ", " (List.map name in_ids) in
+  let intys =
+    String.concat ", "
+      (List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) eqn.inputs)
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.dynamic_update_slice %s : (%s) -> %s\n"
+       (name n) operands intys
+       (Ir.tensor_type_of_aval out.vaval))
+
+let dim_field name a =
+  if Array.length a = 0 then None
+  else Some (Printf.sprintf "%s = %s" name (Ir.int_array_attr a))
+
+let gather_dnums_attr (d : gather_dims) index_vector_dim =
+  let parts =
+    List.filter_map Fun.id
+      [
+        dim_field "offset_dims" d.offset_dims;
+        dim_field "collapsed_slice_dims" d.collapsed_slice_dims;
+        dim_field "operand_batching_dims" d.g_operand_batching_dims;
+        dim_field "start_indices_batching_dims" d.g_start_indices_batching_dims;
+        dim_field "start_index_map" d.start_index_map;
+        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+      ]
+  in
+  "#stablehlo.gather<" ^ String.concat ", " parts ^ ">"
+
+let scatter_dnums_attr (d : scatter_dims) index_vector_dim =
+  let parts =
+    List.filter_map Fun.id
+      [
+        dim_field "update_window_dims" d.update_window_dims;
+        dim_field "inserted_window_dims" d.inserted_window_dims;
+        dim_field "input_batching_dims" d.s_operand_batching_dims;
+        dim_field "scatter_indices_batching_dims"
+          d.s_scatter_indices_batching_dims;
+        dim_field "scatter_dims_to_operand_dims" d.scatter_dims_to_operand_dims;
+        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+      ]
+  in
+  "#stablehlo.scatter<" ^ String.concat ", " parts ^ ">"
+
+let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
+  let op_id, idx_id = pair in_ids in
+  let op_av, idx_av =
+    match eqn.inputs with
+    | [ o; i ] -> (atom_aval o, atom_aval i)
+    | _ -> invalid_arg "Stablehlo.Emit: gather arity"
+  in
+  let ivd = Array.length idx_av.shape - 1 in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = \"stablehlo.gather\"(%s, %s) <{dimension_numbers = %s, \
+        indices_are_sorted = false, slice_sizes = %s}> : (%s, %s) -> %s\n"
+       (name n) (name op_id) (name idx_id)
+       (gather_dnums_attr dnums ivd)
+       (array_i64 slice_sizes)
+       (Ir.tensor_type_of_aval op_av)
+       (Ir.tensor_type_of_aval idx_av)
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
+  let op_id, idx_id, upd_id =
+    match in_ids with
+    | [ a; b; c ] -> (a, b, c)
+    | _ -> invalid_arg "Stablehlo.Emit: scatter arity"
+  in
+  let op_av, idx_av, upd_av =
+    match eqn.inputs with
+    | [ a; b; c ] -> (atom_aval a, atom_aval b, atom_aval c)
+    | _ -> invalid_arg "Stablehlo.Emit: scatter arity"
+  in
+  let dt = op_av.dtype in
+  let sty = Ir.tensor_type dt [||] in
+  let ivd = Array.length idx_av.shape - 1 in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = \
+        false, scatter_dimension_numbers = %s, unique_indices = false}> ({\n"
+       (name n) (name op_id) (name idx_id) (name upd_id)
+       (scatter_dnums_attr dnums ivd));
+  let a = fresh ctx in
+  let b = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name a) sty (name b) sty);
+  let ret =
+    match combiner with
+    | None -> b
+    | Some op ->
+        let c = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "      %s = stablehlo.%s %s, %s : %s\n" (name c) op
+             (name a) (name b) sty);
+        c
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      stablehlo.return %s : %s\n" (name ret) sty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s, %s, %s) -> %s\n"
+       (Ir.tensor_type_of_aval op_av)
+       (Ir.tensor_type_of_aval idx_av)
+       (Ir.tensor_type_of_aval upd_av)
+       (Ir.tensor_type_of_aval out.vaval))
+
 let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -1061,9 +1222,28 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
         ~init:reduce_minid ~broadcast:true ~op:"minimum"
   | Cumlogsumexp { axis; reverse } ->
       emit_cum_logsumexp ctx eqn in_ids ~axis ~reverse
+  | Slice { start_indices; limit_indices; strides } ->
+      emit_slice_op ctx eqn in_ids start_indices limit_indices strides
+  | Dynamic_slice { slice_sizes } ->
+      emit_dynamic_slice ctx eqn in_ids slice_sizes
+  | Dynamic_update_slice -> emit_dynamic_update_slice ctx eqn in_ids
+  | Gather { dimension_numbers; slice_sizes } ->
+      emit_gather ctx eqn in_ids dimension_numbers slice_sizes
+  | Scatter { dimension_numbers; _ } ->
+      emit_scatter ctx eqn in_ids dimension_numbers None
+  | Scatter_add { dimension_numbers } ->
+      emit_scatter ctx eqn in_ids dimension_numbers (Some "add")
+  | Scatter_sub { dimension_numbers } ->
+      emit_scatter ctx eqn in_ids dimension_numbers (Some "subtract")
+  | Scatter_mul { dimension_numbers; _ } ->
+      emit_scatter ctx eqn in_ids dimension_numbers (Some "multiply")
+  | Scatter_min { dimension_numbers } ->
+      emit_scatter ctx eqn in_ids dimension_numbers (Some "minimum")
+  | Scatter_max { dimension_numbers } ->
+      emit_scatter ctx eqn in_ids dimension_numbers (Some "maximum")
   | _ ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 83-87)"
+        "Stablehlo.Emit: no lowering rule for this primitive (rows 84-87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

@@ -58,6 +58,32 @@ let ternary prim dtype =
          | _ -> assert false)
     : unit -> T.closed_jaxpr)
 
+let gdn : T.gather_dims =
+  {
+    offset_dims = [| 1 |];
+    collapsed_slice_dims = [| 0 |];
+    start_index_map = [| 0 |];
+    g_operand_batching_dims = [||];
+    g_start_indices_batching_dims = [||];
+  }
+
+let sdn : T.scatter_dims =
+  {
+    update_window_dims = [| 1 |];
+    inserted_window_dims = [| 0 |];
+    scatter_dims_to_operand_dims = [| 0 |];
+    s_operand_batching_dims = [||];
+    s_scatter_indices_batching_dims = [||];
+  }
+
+let scatter_case prim () =
+  J.make_jaxpr
+    [ av [| 5; 3 |] D.F32; av [| 2; 1 |] D.I32; av [| 2; 3 |] D.F32 ]
+    (fun args ->
+      match args with
+      | [ o; i; u ] -> C.bind prim [ o; i; u ]
+      | _ -> assert false)
+
 let builders : (string * (unit -> T.closed_jaxpr)) list =
   [
     ("identity_vec", fun () -> J.make_jaxpr [ av [| 3 |] D.F32 ] (fun a -> a));
@@ -330,6 +356,77 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
     ("cummax", unary (T.Cummax { axis = 0; reverse = false }) D.F32);
     ("cummin", unary (T.Cummin { axis = 0; reverse = false }) D.F32);
     ("cumlogsumexp", unary (T.Cumlogsumexp { axis = 0; reverse = false }) D.F32);
+    ( "slice",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 6 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] ->
+                C.bind
+                  (T.Slice
+                     {
+                       start_indices = [| 1 |];
+                       limit_indices = [| 4 |];
+                       strides = None;
+                     })
+                  [ x ]
+            | _ -> assert false) );
+    ( "slice_strided",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 3; 5 |] D.F32 ]
+          (fun args ->
+            match args with
+            | [ x ] ->
+                C.bind
+                  (T.Slice
+                     {
+                       start_indices = [| 0; 1 |];
+                       limit_indices = [| 2; 4 |];
+                       strides = Some [| 1; 2 |];
+                     })
+                  [ x ]
+            | _ -> assert false) );
+    ( "dynamic_slice",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 6 |] D.F32; av [||] D.I32 ]
+          (fun args ->
+            match args with
+            | [ x; i ] ->
+                C.bind (T.Dynamic_slice { slice_sizes = [| 3 |] }) [ x; i ]
+            | _ -> assert false) );
+    ( "dynamic_update_slice",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 6 |] D.F32; av [| 2 |] D.F32; av [||] D.I32 ]
+          (fun args ->
+            match args with
+            | [ x; u; i ] -> C.bind T.Dynamic_update_slice [ x; u; i ]
+            | _ -> assert false) );
+    ( "gather",
+      fun () ->
+        J.make_jaxpr
+          [ av [| 5; 3 |] D.F32; av [| 2; 1 |] D.I32 ]
+          (fun args ->
+            match args with
+            | [ o; i ] ->
+                C.bind
+                  (T.Gather
+                     { dimension_numbers = gdn; slice_sizes = [| 1; 3 |] })
+                  [ o; i ]
+            | _ -> assert false) );
+    ( "scatter",
+      scatter_case
+        (T.Scatter { dimension_numbers = sdn; unique_indices = false }) );
+    ("scatter_add", scatter_case (T.Scatter_add { dimension_numbers = sdn }));
+    ("scatter_sub", scatter_case (T.Scatter_sub { dimension_numbers = sdn }));
+    ( "scatter_mul",
+      scatter_case
+        (T.Scatter_mul { dimension_numbers = sdn; unique_indices = false }) );
+    ("scatter_min", scatter_case (T.Scatter_min { dimension_numbers = sdn }));
+    ("scatter_max", scatter_case (T.Scatter_max { dimension_numbers = sdn }));
   ]
 
 let check_case name build () =

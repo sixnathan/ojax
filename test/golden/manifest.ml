@@ -3708,6 +3708,24 @@ let scipy_linalg_run c inputs =
         SL.solve_triangular ~trans:(pi "trans") ~lower:(pb "lower")
           ~unit_diagonal:(pb "unit_diagonal") (get "a") (get "b");
       ]
+  | "svd" ->
+      SL.svd ~full_matrices:(pb "full_matrices") ~compute_uv:(pb "compute_uv")
+        (get "a")
+  | "eigh" ->
+      SL.eigh ~lower:(pb "lower") ~eigvals_only:(pb "eigvals_only") (get "a")
+  | "schur" -> SL.schur ~output:(ps "output") (get "a")
+  | "block_diag" ->
+      let k = U.member "shapes" c.params |> U.to_list |> List.length in
+      SL.block_diag (List.init k (fun i -> get ("a" ^ string_of_int i)))
+      |> fun v -> [ v ]
+  | "toeplitz" ->
+      if pb "has_r" then [ SL.toeplitz ~r:(get "r") (get "c") ]
+      else [ SL.toeplitz (get "c") ]
+  | "hessenberg" -> SL.hessenberg ~calc_q:(pb "calc_q") (get "a")
+  | "expm" -> [ SL.expm ~upper_triangular:(pb "upper_triangular") (get "a") ]
+  | "polar" -> SL.polar ~side:(ps "side") ~method_:"svd" (get "a")
+  | "eigh_tridiagonal" ->
+      [ SL.eigh_tridiagonal ~eigvals_only:true (get "d") (get "e") ]
   | _ -> failwith ("scipy_linalg golden: unknown op " ^ c.op)
 
 let scipy_linalg_check_case ~set_dir ~x64 c () =

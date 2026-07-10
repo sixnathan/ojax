@@ -4749,6 +4749,51 @@ def _scipy_linalg_inputs(op, params, npdt, rng):
             unit_diagonal=params["unit_diagonal"],
         )
         return {"a": a, "b": b}, out
+    if op == "svd":
+        a = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        out = jsl.svd(
+            a, full_matrices=params["full_matrices"], compute_uv=params["compute_uv"]
+        )
+        return {"a": a}, out
+    if op == "eigh":
+        n = params["n"]
+        m = rng.standard_normal((n, n))
+        a = ((m + m.T) / 2).astype(npdt)
+        out = jsl.eigh(a, lower=params["lower"], eigvals_only=params["eigvals_only"])
+        return {"a": a}, out
+    if op == "schur":
+        n = params["n"]
+        a = rng.standard_normal((n, n)).astype(npdt)
+        return {"a": a}, jsl.schur(a, output=params["output"])
+    if op == "block_diag":
+        arrs = [rng.standard_normal(tuple(s)).astype(npdt) for s in params["shapes"]]
+        inp = {"a" + str(i): v for i, v in enumerate(arrs)}
+        return inp, jsl.block_diag(*arrs)
+    if op == "toeplitz":
+        c = rng.standard_normal(params["m"]).astype(npdt)
+        if params["has_r"]:
+            r = rng.standard_normal(params["n"]).astype(npdt)
+            return {"c": c, "r": r}, jsl.toeplitz(c, r)
+        return {"c": c}, jsl.toeplitz(c)
+    if op == "hessenberg":
+        n = params["n"]
+        a = rng.standard_normal((n, n)).astype(npdt)
+        return {"a": a}, jsl.hessenberg(a, calc_q=params["calc_q"])
+    if op == "expm":
+        n = params["n"]
+        a = (0.5 * rng.standard_normal((n, n))).astype(npdt)
+        if params["upper_triangular"]:
+            a = np.triu(a).astype(npdt)
+        return {"a": a}, jsl.expm(a, upper_triangular=params["upper_triangular"])
+    if op == "polar":
+        a = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        out = jsl.polar(a, side=params["side"], method="svd")
+        return {"a": a}, out
+    if op == "eigh_tridiagonal":
+        n = params["n"]
+        d = rng.standard_normal(n).astype(npdt)
+        e = rng.standard_normal(n - 1).astype(npdt)
+        return {"d": d, "e": e}, jsl.eigh_tridiagonal(d, e, eigvals_only=True)
     raise SystemExit("unknown scipy_linalg op " + op)
 
 

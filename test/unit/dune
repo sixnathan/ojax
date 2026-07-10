@@ -49,7 +49,8 @@
   test_scipy_linalg
   test_scipy_sparse_linalg
   test_numpy_vectorize
-  test_scipy_spatial_transform)
+  test_scipy_spatial_transform
+  test_scipy_optimize)
  (libraries ojax alcotest yojson unix)
  (deps
   (file %{project_root}/spec/stablehlo_ir.cases.json)

@@ -5288,6 +5288,64 @@ def generate_spatial_transform(module):
     return n_off, n_on
 
 
+def _optimize_obj(fn, x):
+    if fn == "sphere":
+        return jnp.sum(x * x)
+    if fn == "shifted":
+        d = x - 1.0
+        return jnp.sum(d * d)
+    if fn == "aniso3":
+        w = jnp.array([1.0, 4.0, 9.0], dtype=x.dtype)
+        c = jnp.array([1.0, -2.0, 0.5], dtype=x.dtype)
+        d = x - c
+        return jnp.sum(w * d * d)
+    if fn == "aniso4":
+        w = jnp.array([1.0, 2.0, 4.0, 8.0], dtype=x.dtype)
+        c = jnp.array([0.5, -1.0, 2.0, -0.5], dtype=x.dtype)
+        d = x - c
+        return jnp.sum(w * d * d)
+    raise SystemExit("unknown optimize objective " + fn)
+
+
+def _scipy_optimize_inputs(op, params, npdt, rng):
+    from jax.scipy.optimize import minimize
+    from jax.flatten_util import ravel_pytree
+
+    if op == "minimize":
+        fn = params["fn"]
+        method = params["method"]
+        n = params["n"]
+        x0 = rng.standard_normal(n).astype(npdt)
+        r = minimize(lambda x: _optimize_obj(fn, x), x0, method=method)
+        return (
+            {"x0": x0},
+            [np.asarray(r.x), np.asarray(r.fun), np.asarray(r.jac)],
+        )
+    if op == "ravel":
+        shapes = params["shapes"]
+        leaves = [rng.standard_normal(tuple(s)).astype(npdt) for s in shapes]
+        flat, _ = ravel_pytree(leaves)
+        in_arrays = {"leaf" + str(i): l for i, l in enumerate(leaves)}
+        return in_arrays, [np.asarray(flat)]
+    raise SystemExit("unknown scipy_optimize op " + op)
+
+
+def generate_scipy_optimize(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = _gen_composed_set(
+        _scipy_optimize_inputs, module, cases, False, os.path.join(base, "x64_off")
+    )
+    n_on = _gen_composed_set(
+        _scipy_optimize_inputs, module, cases, True, os.path.join(base, "x64_on")
+    )
+    return n_off, n_on
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
@@ -5315,6 +5373,8 @@ def main():
         n_off, n_on = generate_scipy_sparse_linalg(sys.argv[1])
     elif sys.argv[1] == "scipy_cluster_vq":
         n_off, n_on = generate_scipy_cluster_vq(sys.argv[1])
+    elif sys.argv[1] == "scipy_optimize":
+        n_off, n_on = generate_scipy_optimize(sys.argv[1])
     elif sys.argv[1] == "vectorize":
         n_off, n_on = generate_vectorize(sys.argv[1])
     elif sys.argv[1] == "spatial_transform":

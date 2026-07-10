@@ -3938,6 +3938,110 @@ let scipy_cluster_vq_suite_for set_name =
   in
   ("scipy_cluster_vq:" ^ set_name, coverage :: case_tests)
 
+module MIN = Ojax.Scipy.Optimize.Minimize
+module FU = Ojax.Flatten_util
+module TU = Ojax.Tree_util
+
+let opt_konst dt x = AC.full ~dtype:dt [||] x
+
+let opt_vec dt xs =
+  T.Concrete (Nd.of_floats dt [| List.length xs |] (Array.of_list xs))
+
+let optimize_obj fn x =
+  let dt = (Ojax.Core.get_aval x).T.dtype in
+  match fn with
+  | "sphere" -> RED.sum (UF.multiply x x)
+  | "shifted" ->
+      let d = UF.subtract x (opt_konst dt 1.0) in
+      RED.sum (UF.multiply d d)
+  | "aniso3" ->
+      let w = opt_vec dt [ 1.0; 4.0; 9.0 ] in
+      let c = opt_vec dt [ 1.0; -2.0; 0.5 ] in
+      let d = UF.subtract x c in
+      RED.sum (UF.multiply (UF.multiply w d) d)
+  | "aniso4" ->
+      let w = opt_vec dt [ 1.0; 2.0; 4.0; 8.0 ] in
+      let c = opt_vec dt [ 0.5; -1.0; 2.0; -0.5 ] in
+      let d = UF.subtract x c in
+      RED.sum (UF.multiply (UF.multiply w d) d)
+  | _ -> failwith ("scipy_optimize golden: unknown objective " ^ fn)
+
+let scipy_optimize_run c inputs =
+  match c.op with
+  | "minimize" ->
+      let x0 = T.Concrete (nd_of_npz_any (find_member inputs "x0")) in
+      let fn = U.member "fn" c.params |> U.to_string in
+      let method_ = U.member "method" c.params |> U.to_string in
+      let r = MIN.minimize (optimize_obj fn) x0 ~method_ () in
+      [ r.MIN.x; r.MIN.fun_; r.MIN.jac ]
+  | "ravel" ->
+      let leaves =
+        List.map
+          (fun a ->
+            TU.Leaf (T.Concrete (nd_of_npz_any (find_member inputs a.name))))
+          c.args
+      in
+      let flat, _ = FU.ravel_pytree (TU.List leaves) in
+      [ flat ]
+  | _ -> failwith ("scipy_optimize golden: unknown op " ^ c.op)
+
+let scipy_optimize_check_case ~set_dir ~x64 c () =
+  Ojax.Config.set Ojax.Config.enable_x64 x64;
+  Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
+  @@ fun () ->
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.case_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.case_id ^ ".npz"))
+  in
+  let results = scipy_optimize_run c inputs in
+  let paired =
+    try List.combine c.outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.case_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let ocompare = match o.ocompare with Some s -> s | None -> c.compare in
+      let oatol = match o.oatol with Some t -> t | None -> c.atol in
+      let ortol = match o.ortol with Some t -> t | None -> c.rtol in
+      let oreason = o.otreason in
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      Compare.assert_tol_widened o.odtype oatol ortol oreason;
+      Compare.check
+        ~name:(c.case_id ^ ":" ^ o.oname)
+        ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
+    paired
+
+let scipy_optimize_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "scipy_optimize") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (scipy_optimize_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("scipy_optimize:" ^ set_name, coverage :: case_tests)
+
 module VEC = Ojax.Numpy.Vectorize
 module RT = Ojax.Scipy.Spatial.Transform.Rotation
 module SLERP = Ojax.Scipy.Spatial.Transform.Slerp
@@ -4154,6 +4258,8 @@ let () =
       scipy_sparse_linalg_suite_for "x64_on";
       scipy_cluster_vq_suite_for "x64_off";
       scipy_cluster_vq_suite_for "x64_on";
+      scipy_optimize_suite_for "x64_off";
+      scipy_optimize_suite_for "x64_on";
       composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
       composed_suite_for ~run:vectorize_run "vectorize" "x64_on";
       composed_suite_for ~run:spatial_transform_run "spatial_transform"

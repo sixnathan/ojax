@@ -4875,6 +4875,120 @@ def generate_scipy_linalg(module):
     return n_off, n_on
 
 
+def _scipy_sparse_linalg_inputs(op, params, npdt, rng):
+    jssl = jax.scipy.sparse.linalg
+    n = params["n"]
+    tol = params.get("tol", 1e-5)
+    atol = params.get("atol", 0.0)
+    maxiter = params.get("maxiter", None)
+    if op == "cg":
+        m = rng.standard_normal((n, n))
+        a = (m @ m.T + n * np.eye(n)).astype(npdt)
+        b = rng.standard_normal(n).astype(npdt)
+        stored = {"a": a, "b": b}
+        precond = params.get("precond", False)
+        mmat = None
+        if precond:
+            mmat = np.diag(1.0 / np.diag(a)).astype(npdt)
+            stored["m"] = mmat
+        x, _ = jssl.cg(a, b, tol=tol, atol=atol, maxiter=maxiter, M=mmat)
+        return stored, x
+    if op == "bicgstab":
+        a = (rng.standard_normal((n, n)) + n * np.eye(n)).astype(npdt)
+        b = rng.standard_normal(n).astype(npdt)
+        x, _ = jssl.bicgstab(a, b, tol=tol, atol=atol, maxiter=maxiter)
+        return {"a": a, "b": b}, x
+    if op == "gmres":
+        a = (rng.standard_normal((n, n)) + n * np.eye(n)).astype(npdt)
+        b = rng.standard_normal(n).astype(npdt)
+        restart = params.get("restart", 20)
+        method = params.get("solve_method", "batched")
+        x, _ = jssl.gmres(
+            a, b, tol=tol, atol=atol, restart=restart, maxiter=maxiter,
+            solve_method=method,
+        )
+        return {"a": a, "b": b}, x
+    raise SystemExit("unknown scipy_sparse_linalg op " + op)
+
+
+def run_scipy_sparse_linalg_case(c):
+    seed = zlib.adler32(c["case_id"].encode("utf-8"))
+    rng = np.random.RandomState(seed)
+    npdt = np.dtype(c["dtype"])
+    in_arrays, out = _scipy_sparse_linalg_inputs(c["op"], c["params"], npdt, rng)
+    return in_arrays, [np.asarray(out)]
+
+
+def gen_scipy_sparse_linalg_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and ec.is_wide64(c["dtype"]):
+            continue
+        case_id = c["case_id"]
+        in_arrays, outputs = run_scipy_sparse_linalg_case(c)
+        stored_in = {k: np.asarray(v) for k, v in in_arrays.items()}
+        out_arrays = {"out" + str(i): o for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **stored_in)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": k,
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+            }
+            for k, v in sorted(stored_in.items())
+        ]
+        outs_meta = [
+            _linalg_out_meta("out" + str(i), o) for i, o in enumerate(outputs)
+        ]
+        compare, tol, reason = _linalg_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "op": c["op"],
+            "primitive": c["primitive"],
+            "params": c["params"],
+            "args": args_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        if reason is not None:
+            entry["tol_reason"] = reason
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_scipy_sparse_linalg(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_scipy_sparse_linalg_set(
+        module, cases, False, os.path.join(base, "x64_off")
+    )
+    n_on = gen_scipy_sparse_linalg_set(
+        module, cases, True, os.path.join(base, "x64_on")
+    )
+    return n_off, n_on
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
@@ -4898,6 +5012,8 @@ def main():
         n_off, n_on = generate_numpy_linalg(sys.argv[1])
     elif sys.argv[1] == "scipy_linalg":
         n_off, n_on = generate_scipy_linalg(sys.argv[1])
+    elif sys.argv[1] == "scipy_sparse_linalg":
+        n_off, n_on = generate_scipy_sparse_linalg(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

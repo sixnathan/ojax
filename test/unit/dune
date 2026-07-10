@@ -46,7 +46,8 @@
   test_backend
   test_linalg_lapack
   test_lax_linalg
-  test_scipy_linalg)
+  test_scipy_linalg
+  test_scipy_sparse_linalg)
  (libraries ojax alcotest yojson unix)
  (deps
   (file %{project_root}/spec/stablehlo_ir.cases.json)

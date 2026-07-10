@@ -2659,6 +2659,7 @@ let random_core_fn op params operands : T.value list =
   let shape () = ia (member "shape") in
   let ip name = U.to_int (member name) in
   let fp name = U.to_number (member name) in
+  let sp name = U.to_string (member name) in
   match (op, operands) with
   | "key", [ s ] -> [ RC.key s ]
   | "key_data", [ k ] -> [ RC.key_data (PR.random_wrap k) ]
@@ -2728,6 +2729,18 @@ let random_core_fn op params operands : T.value list =
   | "binomial", [ k ] ->
       [ RC.binomial k ~shape:(shape ()) ~count:(fp "n") ~prob:(fp "p") ]
   | "multinomial", [ k; p ] -> [ RC.multinomial k ~p ~n_trials:(fp "n") ]
+  | "maxwell", [ k ] -> [ RC.maxwell k ~shape:(shape ()) ]
+  | "double_sided_maxwell", [ k ] ->
+      [
+        RC.double_sided_maxwell k ~shape:(shape ()) ~loc:(fp "loc")
+          ~scale:(fp "scale");
+      ]
+  | "orthogonal", [ k ] ->
+      let m = if U.member "m" params = `Null then None else Some (ip "m") in
+      [ RC.orthogonal k ?m ~n:(ip "n") ~shape:(shape ()) () ]
+  | "ball", [ k ] -> [ RC.ball k ~d:(ip "d") ~p:(fp "p") ~shape:(shape ()) ]
+  | "multivariate_normal", [ k; mean; cov ] ->
+      [ RC.multivariate_normal k ~mean ~cov ~shape:[||] ~method_:(sp "method") ]
   | _ -> failwith ("random_core golden: unknown op " ^ op)
 
 let random_core_suite_for set_name =

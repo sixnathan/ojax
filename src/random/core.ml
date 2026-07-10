@@ -4,6 +4,7 @@ module C = Ojax__Core
 module D = Dtype
 module PR = Prng
 module TF = Threefry
+module LN = Numpy.Linalg
 
 let prod a = Array.fold_left ( * ) 1 a
 let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
@@ -561,3 +562,75 @@ let multinomial k ~p ~n_trials =
     remainder := f32 (!remainder -. cj)
   done;
   Concrete (Nd.of_floats D.F32 [| kk |] counts)
+
+let shape_of v = Nd.shape (concrete v)
+
+let broadcast_to full dims v =
+  C.bind1 (Broadcast_in_dim { shape = full; dims }) [ v ]
+
+let maxwell k ~shape =
+  let full = Array.append shape [| 3 |] in
+  let z = normal k ~shape:full in
+  LN.norm ~axis:(LN.Aint (-1)) z
+
+let double_sided_maxwell k ~shape ~loc ~scale =
+  let mk, rk = split2 k in
+  let mx = maxwell mk ~shape in
+  let signs = rademacher_f rk ~shape in
+  e_add (e_mul (e_mul signs mx) (cf shape (f32 scale))) (cf shape (f32 loc))
+
+let orthogonal k ?m ~n ~shape () =
+  if Array.length shape <> 0 then
+    failwith "random/core: orthogonal batched shape unsupported (2-D only)";
+  let m = match m with None -> n | Some v -> v in
+  let mx = max n m and mn = min n m in
+  let z = normal k ~shape:[| mx; mn |] in
+  let qr = LN.qr z in
+  let q = List.nth qr 0 and r = List.nth qr 1 in
+  let d = LN.diagonal r in
+  let signs = e_sign d in
+  let signs_b = broadcast_to [| mx; mn |] [| 1 |] signs in
+  let x = e_mul q signs_b in
+  if n < m then LN.matrix_transpose x else x
+
+let ball k ~d ~p ~shape =
+  let k1, k2 = split2 k in
+  let full = Array.append shape [| d |] in
+  let last = Array.length full - 1 in
+  let g = generalized_normal k1 ~shape:full ~p in
+  let e = exponential k2 ~shape in
+  let absg_p = e_pow (e_abs g) (cf full (f32 p)) in
+  let summed = C.bind1 (Reduce_sum [| last |]) [ absg_p ] in
+  let denom_base = e_add summed e in
+  let denom = e_pow denom_base (cf shape (f32 (1.0 /. p))) in
+  let dims = Array.init last (fun i -> i) in
+  let denom_b = broadcast_to full dims denom in
+  e_div g denom_b
+
+let mvn_factor cov n = function
+  | "cholesky" -> LN.cholesky cov
+  | "svd" ->
+      let usv = LN.svd cov in
+      let u = List.nth usv 0 and sv = List.nth usv 1 in
+      let sqrt_s = e_sqrt sv in
+      e_mul u (broadcast_to [| n; n |] [| 1 |] sqrt_s)
+  | "eigh" ->
+      let w, v = LN.eigh cov in
+      let sqrt_w = e_sqrt w in
+      e_mul v (broadcast_to [| n; n |] [| 1 |] sqrt_w)
+  | _ -> invalid_arg "method must be one of {'svd', 'eigh', 'cholesky'}"
+
+let multivariate_normal k ~mean ~cov ~shape ~method_ =
+  let msh = shape_of mean in
+  let n = msh.(Array.length msh - 1) in
+  let full = Array.append shape [| n |] in
+  let b = prod shape in
+  let factor = mvn_factor cov n method_ in
+  let samples = normal k ~shape:full in
+  let samples_2d = C.bind1 (Reshape [| b; n |]) [ samples ] in
+  let factor_t = LN.matrix_transpose factor in
+  let core = LN.matmul samples_2d factor_t in
+  let core_full = C.bind1 (Reshape full) [ core ] in
+  let last = Array.length full - 1 in
+  let mean_b = broadcast_to full [| last |] mean in
+  e_add mean_b core_full

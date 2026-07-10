@@ -154,9 +154,18 @@ def rand_complex_small(rng, shape, dtype):
     return (re + 1j * im).astype(dtype).reshape(shape)
 
 
+def rand_spd(rng, shape, dtype):
+    shape = tuple(shape)
+    n = shape[-1]
+    m = rng.standard_normal((n, n))
+    a = m @ m.T + n * np.eye(n)
+    return a.astype(dtype).reshape(shape)
+
+
 RNG_FACTORIES = {
     "rand_complex": rand_complex,
     "rand_complex_small": rand_complex_small,
+    "rand_spd": rand_spd,
     "rand_default": rand_default,
     "rand_small": rand_small,
     "rand_positive": rand_positive,
@@ -3371,6 +3380,47 @@ def rc_multinomial(params):
     )
 
 
+def rc_maxwell(params):
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.maxwell(rc_wrap(raw), shape, dtype=jnp.float32)
+
+
+def rc_double_sided_maxwell(params):
+    shape = tuple(params["shape"])
+    loc = float(params["loc"])
+    scale = float(params["scale"])
+    return lambda raw: jax.random.double_sided_maxwell(
+        rc_wrap(raw), loc, scale, shape, dtype=jnp.float32
+    )
+
+
+def rc_orthogonal(params):
+    n = int(params["n"])
+    shape = tuple(params["shape"])
+    m = params.get("m")
+    m = None if m is None else int(m)
+    return lambda raw: jax.random.orthogonal(
+        rc_wrap(raw), n, shape, dtype=jnp.float32, m=m
+    )
+
+
+def rc_ball(params):
+    d = int(params["d"])
+    p = float(params["p"])
+    shape = tuple(params["shape"])
+    return lambda raw: jax.random.ball(
+        rc_wrap(raw), d, p, shape, dtype=jnp.float32
+    )
+
+
+def rc_multivariate_normal(params):
+    shape = tuple(params["shape"])
+    method = params["method"]
+    return lambda raw, mean, cov: jax.random.multivariate_normal(
+        rc_wrap(raw), mean, cov, shape=shape, method=method
+    )
+
+
 RANDOM_CORE_BUILDERS = {
     "key": rc_key,
     "key_data": rc_key_data,
@@ -3411,6 +3461,11 @@ RANDOM_CORE_BUILDERS = {
     "poisson": rc_poisson,
     "binomial": rc_binomial,
     "multinomial": rc_multinomial,
+    "maxwell": rc_maxwell,
+    "double_sided_maxwell": rc_double_sided_maxwell,
+    "orthogonal": rc_orthogonal,
+    "ball": rc_ball,
+    "multivariate_normal": rc_multivariate_normal,
 }
 
 import jax.nn as jnn

@@ -52,3 +52,13 @@ val dirichlet : value -> alpha:value -> shape:int array -> value
 val poisson : value -> shape:int array -> lam:float -> value
 val binomial : value -> shape:int array -> count:float -> prob:float -> value
 val multinomial : value -> p:value -> n_trials:float -> value
+val maxwell : value -> shape:int array -> value
+
+val double_sided_maxwell :
+  value -> shape:int array -> loc:float -> scale:float -> value
+
+val orthogonal : value -> ?m:int -> n:int -> shape:int array -> unit -> value
+val ball : value -> d:int -> p:float -> shape:int array -> value
+
+val multivariate_normal :
+  value -> mean:value -> cov:value -> shape:int array -> method_:string -> value

@@ -39,7 +39,11 @@ let kernels = function
   | Lanczos3 -> (3, Lanczos 3.0)
   | Lanczos5 -> (5, Lanczos 5.0)
   | Cubic -> (2, Keys_cubic)
-  | Cubic_pytorch -> (2, Keys_cubic)
+  | Cubic_pytorch ->
+      invalid_arg
+        "image/scale: cubic-pytorch uses the OpenCV cubic kernel (a=-0.75), \
+         not implemented; only its antialias path (remapped to cubic) is \
+         supported"
   | Area -> (1, Area_kernel)
   | Nearest -> invalid_arg "image/scale: nearest has no interpolation kernel"
 

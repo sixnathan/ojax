@@ -1,6 +1,48 @@
 Third-party code adapted into ojax
 ==================================
 
+JAX (Apache License 2.0)
+------------------------
+ojax is a port of JAX v0.10.2 (commit
+990e6a0b84138346e6a38785412f36356e0e5dc3). Substantial portions of the OCaml
+sources under `src/` (in particular the lax primitives, the jax.numpy surface,
+the interpreters, `src/random/*`, `src/nn/*`, `src/ops/*`, `src/image/*`, and
+`src/scipy/*`) are line-faithful derivative works of the corresponding JAX
+Python modules.
+
+  Copyright The JAX Authors.
+  Licensed under the Apache License, Version 2.0.
+
+The full Apache License 2.0 text is reproduced in the top-level `LICENSE.jax`
+file; the canonical copy is at https://www.apache.org/licenses/LICENSE-2.0 and
+the upstream project is https://github.com/jax-ml/jax .
+
+SciPy / Cephes derived special functions
+----------------------------------------
+Numeric code in `src/scipy/special.ml` derives from third-party sources that
+JAX itself segregates and attributes. The attribution is retained here (the
+no-comments rule of this project keeps it out of the sources).
+
+  betaln, algdiv
+    Ported from `jax._src.third_party.scipy.betaln`, which is derived from
+    SciPy's cdflib routines `algdiv.f` and `betaln.f` (BSD-3-Clause):
+    https://github.com/scipy/scipy/blob/c89dfc2b90d993f2a8174e57e0cbc8fbe6f3ee19/scipy/special/cdflib/algdiv.f
+    https://github.com/scipy/scipy/blob/ef2dee592ba8fb900ff2308b9d1c79e4d6a0ad8b/scipy/special/cdflib/betaln.f
+
+  ndtr, ndtri, log_ndtr
+    Rational-approximation coefficients are from the Cephes Mathematical
+    Library by Stephen Moshier. JAX redistributes the Cephes code under the
+    Apache License 2.0 with the author's documented written consent
+    ("Yes, Google may distribute Cephes files under the Apache 2 license.",
+    Stephen Moshier). Reference:
+    https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
+    https://netlib.org/cephes/misc.tgz
+
+  dawsn
+    Rational approximations from Cody, Paciorek, Thacher (1970),
+    "Chebyshev Approximations for Dawson's Integral", Math. Comp. 24,
+    as used by the Cephes library.
+
 raven `nx` (ISC)
 ----------------
 The threefry2x32 PRNG hash in `src/random/threefry.ml` (the rotate/round
@@ -9,3 +51,4 @@ the raven `nx` numerical library, which is ISC licensed. The ISC license text
 is reproduced verbatim in the top-level `LICENSE.raven` file. The numeric
 results are additionally anchored bit-exactly to JAX v0.10.2
 (`jax._src.random.threefry2x32`) via the checked-in goldens.
+</content>

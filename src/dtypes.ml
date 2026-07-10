@@ -43,7 +43,15 @@ let dtype_of_node : node -> Dtype.t = function
 
 let is_weak_node = function Weak_int | Weak_float -> true | _ -> false
 
-let least_upper_bound = function
+let least_upper_bound nodes =
+  let has = List.mem in
+  (if has U32 nodes then
+     let is_signed = function I32 | I64 | Weak_int -> true | _ -> false in
+     if List.exists is_signed nodes then
+       invalid_arg
+         "dtypes: uint32 promoted against a signed integer joins to int64 in \
+          jax (incomparable lattice edge); unsupported in this port");
+  match nodes with
   | [] -> invalid_arg "least_upper_bound: empty"
   | n :: rest ->
       List.fold_left (fun a b -> if rank b > rank a then b else a) n rest

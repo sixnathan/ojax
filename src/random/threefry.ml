@@ -257,7 +257,9 @@ let threefry_split key shape =
   | [ b1; b2 ] -> Core.bind1 (Stack (Array.length shape)) [ b1; b2 ]
   | _ -> failwith "threefry: split arity"
 
-let threefry_fold_in key data = threefry_2x32 key (threefry_seed data)
+let threefry_fold_in key data =
+  let data_u32 = Core.bind1 (Convert_element_type Dtype.Uint32) [ data ] in
+  threefry_2x32 key (threefry_seed data_u32)
 
 let threefry_random_bits key bit_width shape =
   if bit_width <> 32 then

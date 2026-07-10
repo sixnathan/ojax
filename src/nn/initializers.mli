@@ -39,5 +39,17 @@ val he_uniform :
 val he_normal :
   ?in_axis:int -> ?out_axis:int -> ?batch_axis:int array -> unit -> t
 
+val xavier_uniform :
+  ?in_axis:int -> ?out_axis:int -> ?batch_axis:int array -> unit -> t
+
+val xavier_normal :
+  ?in_axis:int -> ?out_axis:int -> ?batch_axis:int array -> unit -> t
+
+val kaiming_uniform :
+  ?in_axis:int -> ?out_axis:int -> ?batch_axis:int array -> unit -> t
+
+val kaiming_normal :
+  ?in_axis:int -> ?out_axis:int -> ?batch_axis:int array -> unit -> t
+
 val orthogonal : ?scale:float -> ?column_axis:int -> unit -> t
 val delta_orthogonal : ?scale:float -> ?column_axis:int -> unit -> t

@@ -108,6 +108,11 @@ let he_uniform ?in_axis ?out_axis ?batch_axis () : t =
 let he_normal ?in_axis ?out_axis ?batch_axis () : t =
   variance_scaling 2.0 Fan_in Truncated_normal ?in_axis ?out_axis ?batch_axis ()
 
+let xavier_uniform = glorot_uniform
+let xavier_normal = glorot_normal
+let kaiming_uniform = he_uniform
+let kaiming_normal = he_normal
+
 let orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
   let _ = scale and _ = column_axis in
   fun _key ~shape:_ ->

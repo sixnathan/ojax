@@ -3835,7 +3835,58 @@ STATS_BUILDERS["core.sem"] = core_fn(jstats.sem)
 STATS_BUILDERS["core.invert_permutation"] = core_fn(_stats_core.invert_permutation)
 
 
+import jax.scipy.integrate as jsintegrate
+import jax.scipy.ndimage as jsndimage
+
+
+def integrate_trapezoid(params):
+    dx = float(params.get("dx", 1.0))
+    axis = int(params.get("axis", -1))
+    if params.get("has_x", False):
+        return lambda y, x: jsintegrate.trapezoid(y, x, dx, axis)
+    return lambda y: jsintegrate.trapezoid(y, None, dx, axis)
+
+
+INTEGRATE_BUILDERS = {"trapezoid": integrate_trapezoid}
+
+
+def ndimage_map_coordinates(params):
+    order = int(params["order"])
+    mode = params.get("mode", "constant")
+    cval = float(params.get("cval", 0.0))
+
+    def fn(inp, *coords):
+        return jsndimage.map_coordinates(inp, list(coords), order, mode=mode, cval=cval)
+
+    return fn
+
+
+NDIMAGE_BUILDERS = {"map_coordinates": ndimage_map_coordinates}
+
+
 def run_case(c, seed):
+    if c["primitive"].startswith("scipy.integrate.") and c["op"] in INTEGRATE_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = jax.jit(INTEGRATE_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
+    if c["primitive"].startswith("scipy.ndimage.") and c["op"] in NDIMAGE_BUILDERS:
+        inputs = [
+            draw(a["rng"], seed + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["args"])
+        ]
+        out = jax.jit(NDIMAGE_BUILDERS[c["op"]](c["params"]))(*inputs)
+        if isinstance(out, (tuple, list)):
+            outs = [np.asarray(o) for o in out]
+        else:
+            outs = [np.asarray(out)]
+        return inputs, outs, [None] * len(outs)
     if c["primitive"].startswith("scipy.stats.") and c["op"] in STATS_BUILDERS:
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])

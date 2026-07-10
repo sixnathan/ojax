@@ -3258,6 +3258,60 @@ let compare_tests () =
       chk ~compare:"exact" ~atol:0.0 ~rtol:0.0 (i32 [| 1L |]) (i32 [| 1L; 1L |]));
   must_fail "tol table" (fun () -> Compare.assert_tol "float32" 1e-3 1e-3)
 
+module SI = Ojax.Scipy.Integrate
+module SN = Ojax.Scipy.Ndimage
+
+let scipy_integrate_fn op params operands : T.value list =
+  let dx = opt_f params "dx" in
+  let axis = opt_i params "axis" in
+  match (op, operands) with
+  | "trapezoid", [ y ] -> [ SI.trapezoid ?dx ?axis y ]
+  | "trapezoid", [ y; x ] -> [ SI.trapezoid ~x ?dx ?axis y ]
+  | _ -> failwith ("scipy_integrate golden: unknown op " ^ op)
+
+let scipy_integrate_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "scipy_integrate") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:scipy_integrate_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("scipy_integrate:" ^ set_name, coverage :: case_tests)
+
+let scipy_ndimage_fn op params operands : T.value list =
+  let order = U.to_int (U.member "order" params) in
+  let mode = Option.value ~default:"constant" (opt_s params "mode") in
+  let cval = Option.value ~default:0.0 (opt_f params "cval") in
+  match (op, operands) with
+  | "map_coordinates", input :: coords ->
+      [ SN.map_coordinates ~mode ~cval input coords ~order ]
+  | _ -> failwith ("scipy_ndimage golden: unknown op " ^ op)
+
+let scipy_ndimage_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "scipy_ndimage") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_check_case ~fn:scipy_ndimage_fn ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("scipy_ndimage:" ^ set_name, coverage :: case_tests)
+
 let () =
   Ojax.Lax.install ();
   Ojax.Random.Prng.install ();
@@ -3318,5 +3372,9 @@ let () =
       scipy_special_suite_for "x64_on";
       scipy_stats_suite_for "x64_off";
       scipy_stats_suite_for "x64_on";
+      scipy_integrate_suite_for "x64_off";
+      scipy_integrate_suite_for "x64_on";
+      scipy_ndimage_suite_for "x64_off";
+      scipy_ndimage_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

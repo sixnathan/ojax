@@ -200,4 +200,12 @@ let verify_at path =
             expected_sha256 actual));
   path
 
-let preflight () = verify_at (resolve ())
+let cached = ref None
+
+let preflight () =
+  match !cached with
+  | Some p -> p
+  | None ->
+      let p = verify_at (resolve ()) in
+      cached := Some p;
+      p

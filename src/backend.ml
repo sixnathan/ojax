@@ -48,9 +48,10 @@ module Xla = struct
 end
 
 let plugin_available () =
-  match Sys.getenv_opt Pjrt.Discover.env_var with
-  | Some path -> (not (Filename.is_relative path)) && Sys.file_exists path
-  | None -> false
+  try
+    ignore (Pjrt.Discover.preflight ());
+    true
+  with Pjrt.Discover.Error _ -> false
 
 let use_xla =
   lazy
@@ -74,11 +75,13 @@ let all_concrete =
 
 let xla_run exec args =
   let bufs = List.map (fun v -> Xla.of_host (concrete_arg v)) args in
-  let outs = Xla.execute exec bufs in
-  let results = List.map (fun b -> Concrete (Xla.to_host b)) outs in
-  List.iter Pjrt.Buffer.destroy bufs;
-  List.iter Pjrt.Buffer.destroy outs;
-  results
+  Fun.protect
+    ~finally:(fun () -> List.iter Pjrt.Buffer.destroy bufs)
+    (fun () ->
+      let outs = Xla.execute exec bufs in
+      Fun.protect
+        ~finally:(fun () -> List.iter Pjrt.Buffer.destroy outs)
+        (fun () -> List.map (fun b -> Concrete (Xla.to_host b)) outs))
 
 let executor (cj : closed_jaxpr) : value list -> value list =
   if Lazy.force use_xla then

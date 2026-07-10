@@ -289,6 +289,11 @@ let emit_clamp ctx (eqn : eqn) in_ids =
     | _ -> invalid_arg "Stablehlo.Emit: clamp arity"
   in
   let out = sole eqn.outs in
+  List.iter
+    (fun a ->
+      if (atom_aval a).shape <> out.vaval.shape then
+        failwith "Stablehlo.Emit: scalar-bound clamp (broadcast) deferred")
+    eqn.inputs;
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.clamp %s, %s, %s : %s\n" (name n)

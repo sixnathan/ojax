@@ -4989,6 +4989,100 @@ def generate_scipy_sparse_linalg(module):
     return n_off, n_on
 
 
+def _scipy_cluster_vq_inputs(op, params, npdt, rng):
+    jvq = jax.scipy.cluster.vq
+    m = params["m"]
+    n = params["n"]
+    k = params["k"]
+    ndim = params.get("ndim", 2)
+    if ndim == 1:
+        obs = rng.standard_normal(m).astype(npdt)
+        cb = rng.standard_normal(k).astype(npdt)
+    else:
+        obs = rng.standard_normal((m, n)).astype(npdt)
+        cb = rng.standard_normal((k, n)).astype(npdt)
+    code, dist = jvq.vq(obs, cb)
+    return {"obs": obs, "cb": cb}, [code, dist]
+
+
+def run_scipy_cluster_vq_case(c):
+    seed = zlib.adler32(c["case_id"].encode("utf-8"))
+    rng = np.random.RandomState(seed)
+    npdt = np.dtype(c["dtype"])
+    in_arrays, out = _scipy_cluster_vq_inputs(c["op"], c["params"], npdt, rng)
+    return in_arrays, [np.asarray(o) for o in out]
+
+
+def gen_scipy_cluster_vq_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and ec.is_wide64(c["dtype"]):
+            continue
+        case_id = c["case_id"]
+        in_arrays, outputs = run_scipy_cluster_vq_case(c)
+        stored_in = {k: np.asarray(v) for k, v in in_arrays.items()}
+        out_arrays = {"out" + str(i): o for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **stored_in)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": k,
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+            }
+            for k, v in sorted(stored_in.items())
+        ]
+        outs_meta = [
+            _linalg_out_meta("out" + str(i), o) for i, o in enumerate(outputs)
+        ]
+        compare, tol, reason = _linalg_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "op": c["op"],
+            "primitive": c["primitive"],
+            "params": c["params"],
+            "args": args_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        if reason is not None:
+            entry["tol_reason"] = reason
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_scipy_cluster_vq(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_scipy_cluster_vq_set(
+        module, cases, False, os.path.join(base, "x64_off")
+    )
+    n_on = gen_scipy_cluster_vq_set(
+        module, cases, True, os.path.join(base, "x64_on")
+    )
+    return n_off, n_on
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
@@ -5014,6 +5108,8 @@ def main():
         n_off, n_on = generate_scipy_linalg(sys.argv[1])
     elif sys.argv[1] == "scipy_sparse_linalg":
         n_off, n_on = generate_scipy_sparse_linalg(sys.argv[1])
+    elif sys.argv[1] == "scipy_cluster_vq":
+        n_off, n_on = generate_scipy_cluster_vq(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

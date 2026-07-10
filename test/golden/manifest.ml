@@ -3871,6 +3871,73 @@ let scipy_sparse_linalg_suite_for set_name =
   in
   ("scipy_sparse_linalg:" ^ set_name, coverage :: case_tests)
 
+module SCV = Ojax.Scipy.Cluster.Vq
+
+let scipy_cluster_vq_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  match c.op with
+  | "vq" ->
+      let code, dist = SCV.vq (get "obs") (get "cb") in
+      [ code; dist ]
+  | _ -> failwith ("scipy_cluster_vq golden: unknown op " ^ c.op)
+
+let scipy_cluster_vq_check_case ~set_dir ~x64 c () =
+  Ojax.Config.set Ojax.Config.enable_x64 x64;
+  Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
+  @@ fun () ->
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.case_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.case_id ^ ".npz"))
+  in
+  let results = scipy_cluster_vq_run c inputs in
+  let paired =
+    try List.combine c.outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.case_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let ocompare = match o.ocompare with Some s -> s | None -> c.compare in
+      let oatol = match o.oatol with Some t -> t | None -> c.atol in
+      let ortol = match o.ortol with Some t -> t | None -> c.rtol in
+      let oreason = o.otreason in
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      Compare.assert_tol_widened o.odtype oatol ortol oreason;
+      Compare.check
+        ~name:(c.case_id ^ ":" ^ o.oname)
+        ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
+    paired
+
+let scipy_cluster_vq_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "scipy_cluster_vq") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (scipy_cluster_vq_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("scipy_cluster_vq:" ^ set_name, coverage :: case_tests)
+
 let () =
   Ojax.Lax.install ();
   Ojax.Random.Prng.install ();
@@ -3945,5 +4012,7 @@ let () =
       scipy_linalg_suite_for "x64_on";
       scipy_sparse_linalg_suite_for "x64_off";
       scipy_sparse_linalg_suite_for "x64_on";
+      scipy_cluster_vq_suite_for "x64_off";
+      scipy_cluster_vq_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

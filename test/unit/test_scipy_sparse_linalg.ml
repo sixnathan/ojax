@@ -19,7 +19,10 @@ let residual a x b =
   sqrt !acc
 
 let a_spd () = v [| 3; 3 |] [| 4.; 1.; 1.; 1.; 3.; 0.; 1.; 0.; 2. |]
-let a_gen () = v [| 4; 4 |] [| 6.; 1.; 0.; 1.; 1.; 7.; 2.; 0.; 0.; 1.; 8.; 1.; 2.; 0.; 1.; 9. |]
+
+let a_gen () =
+  v [| 4; 4 |]
+    [| 6.; 1.; 0.; 1.; 1.; 7.; 2.; 0.; 0.; 1.; 8.; 1.; 2.; 0.; 1.; 9. |]
 
 let check_small name r = Alcotest.(check bool) name true (r < 1e-6)
 
@@ -52,7 +55,8 @@ let gmres_info () =
   let b = v [| 4 |] [| 1.; 1.; 1.; 1. |] in
   let _, info = SSL.gmres a b in
   match info with
-  | Some iv -> Alcotest.(check int) "info0" 0 (Int64.to_int (Nd.get_i64 (nd iv) [||]))
+  | Some iv ->
+      Alcotest.(check int) "info0" 0 (Int64.to_int (Nd.get_i64 (nd iv) [||]))
   | None -> Alcotest.fail "gmres info missing"
 
 let leak_smoke () =

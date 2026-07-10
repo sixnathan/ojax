@@ -34,4 +34,5 @@
   (source_tree %{project_root}/goldens/scipy_ndimage)
   (source_tree %{project_root}/goldens/complex)
   (source_tree %{project_root}/goldens/linalg)
-  (source_tree %{project_root}/goldens/numpy_linalg)))
+  (source_tree %{project_root}/goldens/numpy_linalg)
+  (source_tree %{project_root}/goldens/scipy_linalg)))

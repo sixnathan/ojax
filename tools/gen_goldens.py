@@ -4657,6 +4657,179 @@ def generate_numpy_linalg(module):
     return n_off, n_on
 
 
+def _scipy_linalg_inputs(op, params, npdt, rng):
+    jsl = jax.scipy.linalg
+    if op == "cholesky":
+        n = params["n"]
+        m = rng.standard_normal((n, n))
+        a = (m @ m.T + n * np.eye(n)).astype(npdt)
+        return {"a": a}, jsl.cholesky(a, lower=params["lower"])
+    if op == "cho_factor":
+        n = params["n"]
+        m = rng.standard_normal((n, n))
+        a = (m @ m.T + n * np.eye(n)).astype(npdt)
+        c, _ = jsl.cho_factor(a, lower=params["lower"])
+        return {"a": a}, c
+    if op == "cho_solve":
+        n = params["n"]
+        lower = params["lower"]
+        m = rng.standard_normal((n, n))
+        a = (m @ m.T + n * np.eye(n)).astype(npdt)
+        c, _ = jsl.cho_factor(a, lower=lower)
+        c = np.asarray(c).astype(npdt)
+        if params["b_vector"]:
+            b = rng.standard_normal(n).astype(npdt)
+        else:
+            b = rng.standard_normal((n, params["nrhs"])).astype(npdt)
+        return {"b": b, "c": c}, jsl.cho_solve((c, lower), b)
+    if op == "det":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        return {"a": a}, jsl.det(a)
+    if op == "inv":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        return {"a": a}, jsl.inv(a)
+    if op == "lu":
+        m = params["m"]
+        n = params["n"]
+        a = rng.standard_normal((m, n)).astype(npdt)
+        return {"a": a}, jsl.lu(a, permute_l=params["permute_l"])
+    if op == "lu_factor":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        lu, piv = jsl.lu_factor(a)
+        return {"a": a}, (lu, piv)
+    if op == "lu_solve":
+        n = params["n"]
+        trans = params["trans"]
+        a = _well_conditioned(rng, n, npdt)
+        lu, piv = jsl.lu_factor(a)
+        lu = np.asarray(lu).astype(npdt)
+        piv = np.asarray(piv)
+        if params["b_vector"]:
+            b = rng.standard_normal(n).astype(npdt)
+        else:
+            b = rng.standard_normal((n, params["nrhs"])).astype(npdt)
+        return {"b": b, "lu": lu, "piv": piv}, jsl.lu_solve((lu, piv), b, trans=trans)
+    if op == "qr":
+        m = params["m"]
+        n = params["n"]
+        a = rng.standard_normal((m, n)).astype(npdt)
+        return {"a": a}, jsl.qr(a, mode=params["mode"], pivoting=False)
+    if op == "solve":
+        n = params["n"]
+        assume_a = params["assume_a"]
+        if assume_a == "pos":
+            m = rng.standard_normal((n, n))
+            a = (m @ m.T + n * np.eye(n)).astype(npdt)
+        else:
+            a = _well_conditioned(rng, n, npdt)
+        if params["b_vector"]:
+            b = rng.standard_normal(n).astype(npdt)
+        else:
+            b = rng.standard_normal((n, params["nrhs"])).astype(npdt)
+        return {"a": a, "b": b}, jsl.solve(
+            a, b, lower=params["lower"], assume_a=assume_a
+        )
+    if op == "solve_triangular":
+        n = params["n"]
+        lower = params["lower"]
+        full = (rng.standard_normal((n, n)) + n * np.eye(n)).astype(npdt)
+        a = (np.tril(full) if lower else np.triu(full)).astype(npdt)
+        if params["b_vector"]:
+            b = rng.standard_normal(n).astype(npdt)
+        else:
+            b = rng.standard_normal((n, params["nrhs"])).astype(npdt)
+        out = jsl.solve_triangular(
+            a,
+            b,
+            trans=params["trans"],
+            lower=lower,
+            unit_diagonal=params["unit_diagonal"],
+        )
+        return {"a": a, "b": b}, out
+    raise SystemExit("unknown scipy_linalg op " + op)
+
+
+def run_scipy_linalg_case(c):
+    seed = zlib.adler32(c["case_id"].encode("utf-8"))
+    rng = np.random.RandomState(seed)
+    npdt = np.dtype(c["dtype"])
+    in_arrays, out = _scipy_linalg_inputs(c["op"], c["params"], npdt, rng)
+    if isinstance(out, (tuple, list)):
+        outputs = [np.asarray(o) for o in out]
+    else:
+        outputs = [np.asarray(out)]
+    return in_arrays, outputs
+
+
+def gen_scipy_linalg_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and ec.is_wide64(c["dtype"]):
+            continue
+        case_id = c["case_id"]
+        in_arrays, outputs = run_scipy_linalg_case(c)
+        stored_in = {k: np.asarray(v) for k, v in in_arrays.items()}
+        out_arrays = {"out" + str(i): o for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **stored_in)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": k,
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+            }
+            for k, v in sorted(stored_in.items())
+        ]
+        outs_meta = [
+            _linalg_out_meta("out" + str(i), o) for i, o in enumerate(outputs)
+        ]
+        compare, tol, reason = _linalg_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "op": c["op"],
+            "primitive": c["primitive"],
+            "params": c["params"],
+            "args": args_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        if reason is not None:
+            entry["tol_reason"] = reason
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_scipy_linalg(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_scipy_linalg_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_scipy_linalg_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
@@ -4678,6 +4851,8 @@ def main():
         n_off, n_on = generate_linalg(sys.argv[1])
     elif sys.argv[1] == "numpy_linalg":
         n_off, n_on = generate_numpy_linalg(sys.argv[1])
+    elif sys.argv[1] == "scipy_linalg":
+        n_off, n_on = generate_scipy_linalg(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

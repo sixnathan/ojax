@@ -4400,6 +4400,263 @@ def generate_linalg(module):
     return n_off, n_on
 
 
+def _ord_val(s):
+    return {
+        "none": None,
+        "fro": "fro",
+        "nuc": "nuc",
+        "0": 0,
+        "1": 1,
+        "-1": -1,
+        "2": 2,
+        "-2": -2,
+        "3": 3,
+        "inf": np.inf,
+        "-inf": -np.inf,
+    }[s]
+
+
+def _norm_axis_val(s):
+    return {"none": None, "int0": 0, "matrix": (-2, -1)}[s]
+
+
+def _well_conditioned(rng, n, npdt):
+    return (rng.standard_normal((n, n)) + n * np.eye(n)).astype(npdt)
+
+
+def _numpy_linalg_inputs(op, params, npdt, rng):
+    jla = jnp.linalg
+    if op == "cholesky":
+        n = params["n"]
+        m = rng.standard_normal((n, n))
+        a = (m @ m.T + n * np.eye(n)).astype(npdt)
+        return {"a": a}, jla.cholesky(a, upper=params["upper"])
+    if op == "svd":
+        a = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        out = jla.svd(
+            a, full_matrices=params["full_matrices"], compute_uv=params["compute_uv"]
+        )
+        return {"a": a}, out
+    if op == "svdvals":
+        a = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        return {"a": a}, jla.svdvals(a)
+    if op == "solve":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        if params["b_vector"]:
+            b = rng.standard_normal(n).astype(npdt)
+        else:
+            b = rng.standard_normal((n, params["nrhs"])).astype(npdt)
+        return {"a": a, "b": b}, jla.solve(a, b)
+    if op == "inv":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        return {"a": a}, jla.inv(a)
+    if op == "slogdet":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        sign, logabsdet = jla.slogdet(a)
+        return {"a": a}, (sign, logabsdet)
+    if op == "det":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        return {"a": a}, jla.det(a)
+    if op == "eig":
+        n = params["n"]
+        a = rng.standard_normal((n, n)).astype(npdt)
+        w, v = jla.eig(a)
+        return {"a": a}, (w, v)
+    if op == "eigvals":
+        n = params["n"]
+        a = rng.standard_normal((n, n)).astype(npdt)
+        return {"a": a}, jla.eigvals(a)
+    if op == "eigh":
+        n = params["n"]
+        m = rng.standard_normal((n, n))
+        a = (m + m.T).astype(npdt)
+        w, v = jla.eigh(a, UPLO=params["uplo"])
+        return {"a": a}, (w, v)
+    if op == "eigvalsh":
+        n = params["n"]
+        m = rng.standard_normal((n, n))
+        a = (m + m.T).astype(npdt)
+        return {"a": a}, jla.eigvalsh(a, UPLO=params["uplo"])
+    if op == "pinv":
+        a = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        return {"a": a}, jla.pinv(a)
+    if op == "matrix_power":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        return {"a": a}, jla.matrix_power(a, params["p"])
+    if op == "matrix_rank":
+        a = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        return {"a": a}, jla.matrix_rank(a)
+    if op == "vector_norm":
+        x = rng.standard_normal(tuple(params["shape"])).astype(npdt)
+        out = jla.vector_norm(
+            x,
+            axis=_norm_axis_val(params["axis"]),
+            keepdims=params["keepdims"],
+            ord=_ord_val(params["ord"]),
+        )
+        return {"x": x}, out
+    if op == "norm":
+        x = rng.standard_normal(tuple(params["shape"])).astype(npdt)
+        out = jla.norm(
+            x,
+            ord=_ord_val(params["ord"]),
+            axis=_norm_axis_val(params["axis"]),
+            keepdims=params["keepdims"],
+        )
+        return {"x": x}, out
+    if op == "matrix_norm":
+        x = rng.standard_normal(tuple(params["shape"])).astype(npdt)
+        out = jla.matrix_norm(x, ord=_ord_val(params["ord"]), keepdims=params["keepdims"])
+        return {"x": x}, out
+    if op == "matrix_transpose":
+        x = rng.standard_normal(tuple(params["shape"])).astype(npdt)
+        return {"x": x}, jla.matrix_transpose(x)
+    if op == "qr":
+        a = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        out = jla.qr(a, mode=params["mode"])
+        if params["mode"] == "r":
+            return {"a": a}, out
+        return {"a": a}, (out.Q, out.R)
+    if op == "lstsq":
+        m = params["m"]
+        n = params["n"]
+        a = rng.standard_normal((m, n)).astype(npdt)
+        if params["b_vector"]:
+            b = rng.standard_normal(m).astype(npdt)
+        else:
+            b = rng.standard_normal((m, params["nrhs"])).astype(npdt)
+        x, resid, rank, s = jla.lstsq(a, b)
+        return {"a": a, "b": b}, (x, resid, rank, s)
+    if op == "cross":
+        x1 = rng.standard_normal(3).astype(npdt)
+        x2 = rng.standard_normal(3).astype(npdt)
+        return {"x1": x1, "x2": x2}, jla.cross(x1, x2)
+    if op == "outer":
+        x1 = rng.standard_normal(params["m"]).astype(npdt)
+        x2 = rng.standard_normal(params["n"]).astype(npdt)
+        return {"x1": x1, "x2": x2}, jla.outer(x1, x2)
+    if op == "matmul":
+        x1 = rng.standard_normal(tuple(params["s1"])).astype(npdt)
+        x2 = rng.standard_normal(tuple(params["s2"])).astype(npdt)
+        return {"x1": x1, "x2": x2}, jla.matmul(x1, x2)
+    if op == "vecdot":
+        x1 = rng.standard_normal(params["k"]).astype(npdt)
+        x2 = rng.standard_normal(params["k"]).astype(npdt)
+        return {"x1": x1, "x2": x2}, jla.vecdot(x1, x2)
+    if op == "tensordot":
+        x1 = rng.standard_normal(tuple(params["s1"])).astype(npdt)
+        x2 = rng.standard_normal(tuple(params["s2"])).astype(npdt)
+        return {"x1": x1, "x2": x2}, jla.tensordot(x1, x2, axes=params["axes"])
+    if op == "diagonal":
+        x = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        return {"x": x}, jla.diagonal(x, offset=params["offset"])
+    if op == "trace":
+        x = rng.standard_normal((params["m"], params["n"])).astype(npdt)
+        return {"x": x}, jla.trace(x, offset=params["offset"])
+    if op == "tensorinv":
+        a4 = _well_conditioned(rng, 4, npdt)
+        a = a4.reshape(2, 2, 4)
+        return {"a": a}, jla.tensorinv(a, ind=params["ind"])
+    if op == "tensorsolve":
+        a4 = _well_conditioned(rng, 4, npdt)
+        a = a4.reshape(2, 2, 4)
+        b = rng.standard_normal((2, 2)).astype(npdt)
+        return {"a": a, "b": b}, jla.tensorsolve(a, b)
+    if op == "multi_dot":
+        m1 = rng.standard_normal((2, 3)).astype(npdt)
+        m2 = rng.standard_normal((3, 4)).astype(npdt)
+        m3 = rng.standard_normal((4, 2)).astype(npdt)
+        return {"m0": m1, "m1": m2, "m2": m3}, jla.multi_dot([m1, m2, m3])
+    if op == "cond":
+        n = params["n"]
+        a = _well_conditioned(rng, n, npdt)
+        return {"a": a}, jla.cond(a, p=_ord_val(params["p"]))
+    raise SystemExit("unknown numpy_linalg op " + op)
+
+
+def run_numpy_linalg_case(c):
+    seed = zlib.adler32(c["case_id"].encode("utf-8"))
+    rng = np.random.RandomState(seed)
+    npdt = np.dtype(c["dtype"])
+    in_arrays, out = _numpy_linalg_inputs(c["op"], c["params"], npdt, rng)
+    if isinstance(out, (tuple, list)):
+        outputs = [np.asarray(o) for o in out]
+    else:
+        outputs = [np.asarray(out)]
+    return in_arrays, outputs
+
+
+def gen_numpy_linalg_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and ec.is_wide64(c["dtype"]):
+            continue
+        case_id = c["case_id"]
+        in_arrays, outputs = run_numpy_linalg_case(c)
+        stored_in = {k: np.asarray(v) for k, v in in_arrays.items()}
+        out_arrays = {"out" + str(i): o for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **stored_in)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": k,
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+            }
+            for k, v in sorted(stored_in.items())
+        ]
+        outs_meta = [
+            _linalg_out_meta("out" + str(i), o) for i, o in enumerate(outputs)
+        ]
+        compare, tol, reason = _linalg_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "op": c["op"],
+            "primitive": c["primitive"],
+            "params": c["params"],
+            "args": args_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        if reason is not None:
+            entry["tol_reason"] = reason
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_numpy_linalg(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_numpy_linalg_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_numpy_linalg_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
@@ -4419,6 +4676,8 @@ def main():
         n_off, n_on = generate_solves(sys.argv[1])
     elif sys.argv[1] == "linalg":
         n_off, n_on = generate_linalg(sys.argv[1])
+    elif sys.argv[1] == "numpy_linalg":
+        n_off, n_on = generate_numpy_linalg(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

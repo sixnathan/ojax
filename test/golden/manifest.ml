@@ -3527,6 +3527,155 @@ let linalg_suite_for set_name =
   in
   ("linalg:" ^ set_name, coverage :: case_tests)
 
+module LN = Ojax.Numpy.Linalg
+
+let numpy_linalg_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  let pb name = U.member name c.params |> U.to_bool in
+  let pi name = U.member name c.params |> U.to_int in
+  let ps name = U.member name c.params |> U.to_string in
+  let ord_of s =
+    match s with
+    | "none" -> LN.Onone
+    | "fro" -> LN.Ofro
+    | "nuc" -> LN.Onuc
+    | "inf" -> LN.Onum infinity
+    | "-inf" -> LN.Onum neg_infinity
+    | s -> LN.Onum (float_of_string s)
+  in
+  let norm_axis s =
+    match s with
+    | "none" -> LN.Anone
+    | "int0" -> LN.Aint 0
+    | "matrix" -> LN.Apair (-2, -1)
+    | _ -> failwith ("numpy_linalg golden: bad axis " ^ s)
+  in
+  let vec_axis s =
+    match s with
+    | "none" -> None
+    | "int0" -> Some [| 0 |]
+    | _ -> failwith ("numpy_linalg golden: bad vector axis " ^ s)
+  in
+  match c.op with
+  | "cholesky" -> [ LN.cholesky ~upper:(pb "upper") (get "a") ]
+  | "svd" ->
+      LN.svd ~full_matrices:(pb "full_matrices") ~compute_uv:(pb "compute_uv")
+        (get "a")
+  | "svdvals" -> [ LN.svdvals (get "a") ]
+  | "solve" -> [ LN.solve (get "a") (get "b") ]
+  | "inv" -> [ LN.inv (get "a") ]
+  | "slogdet" ->
+      let s, l = LN.slogdet (get "a") in
+      [ s; l ]
+  | "det" -> [ LN.det (get "a") ]
+  | "eig" ->
+      let w, v = LN.eig (get "a") in
+      [ w; v ]
+  | "eigvals" -> [ LN.eigvals (get "a") ]
+  | "eigh" ->
+      let w, v = LN.eigh ~uplo:(ps "uplo") (get "a") in
+      [ w; v ]
+  | "eigvalsh" -> [ LN.eigvalsh ~uplo:(ps "uplo") (get "a") ]
+  | "pinv" -> [ LN.pinv (get "a") ]
+  | "matrix_power" -> [ LN.matrix_power (get "a") (pi "p") ]
+  | "matrix_rank" -> [ LN.matrix_rank (get "a") ]
+  | "vector_norm" ->
+      [
+        LN.vector_norm
+          ~axis:(vec_axis (ps "axis"))
+          ~keepdims:(pb "keepdims")
+          ~ord:(ord_of (ps "ord"))
+          (get "x");
+      ]
+  | "norm" ->
+      [
+        LN.norm
+          ~ord:(ord_of (ps "ord"))
+          ~axis:(norm_axis (ps "axis"))
+          ~keepdims:(pb "keepdims") (get "x");
+      ]
+  | "matrix_norm" ->
+      [
+        LN.matrix_norm
+          ~ord:(ord_of (ps "ord"))
+          ~keepdims:(pb "keepdims") (get "x");
+      ]
+  | "matrix_transpose" -> [ LN.matrix_transpose (get "x") ]
+  | "qr" -> LN.qr ~mode:(ps "mode") (get "a")
+  | "lstsq" ->
+      let x, resid, rank, s = LN.lstsq (get "a") (get "b") in
+      [ x; resid; rank; s ]
+  | "cross" -> [ LN.cross (get "x1") (get "x2") ]
+  | "outer" -> [ LN.outer (get "x1") (get "x2") ]
+  | "matmul" -> [ LN.matmul (get "x1") (get "x2") ]
+  | "vecdot" -> [ LN.vecdot (get "x1") (get "x2") ]
+  | "tensordot" ->
+      [ LN.tensordot ~axes:(TC.Ax_int (pi "axes")) (get "x1") (get "x2") ]
+  | "diagonal" -> [ LN.diagonal ~offset:(pi "offset") (get "x") ]
+  | "trace" -> [ LN.trace ~offset:(pi "offset") (get "x") ]
+  | "tensorinv" -> [ LN.tensorinv ~ind:(pi "ind") (get "a") ]
+  | "tensorsolve" -> [ LN.tensorsolve (get "a") (get "b") ]
+  | "multi_dot" -> [ LN.multi_dot [ get "m0"; get "m1"; get "m2" ] ]
+  | "cond" -> [ LN.cond ~p:(ord_of (ps "p")) (get "a") ]
+  | _ -> failwith ("numpy_linalg golden: unknown op " ^ c.op)
+
+let numpy_linalg_check_case ~set_dir ~x64 c () =
+  Ojax.Config.set Ojax.Config.enable_x64 x64;
+  Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
+  @@ fun () ->
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.case_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.case_id ^ ".npz"))
+  in
+  let results = numpy_linalg_run c inputs in
+  let paired =
+    try List.combine c.outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.case_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let ocompare = match o.ocompare with Some s -> s | None -> c.compare in
+      let oatol = match o.oatol with Some t -> t | None -> c.atol in
+      let ortol = match o.ortol with Some t -> t | None -> c.rtol in
+      let oreason = o.otreason in
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      Compare.assert_tol_widened o.odtype oatol ortol oreason;
+      Compare.check
+        ~name:(c.case_id ^ ":" ^ o.oname)
+        ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
+    paired
+
+let numpy_linalg_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "numpy_linalg") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (numpy_linalg_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  ("numpy_linalg:" ^ set_name, coverage :: case_tests)
+
 let () =
   Ojax.Lax.install ();
   Ojax.Random.Prng.install ();
@@ -3595,5 +3744,7 @@ let () =
       complex_suite_for "x64_on";
       linalg_suite_for "x64_off";
       linalg_suite_for "x64_on";
+      numpy_linalg_suite_for "x64_off";
+      numpy_linalg_suite_for "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

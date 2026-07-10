@@ -1471,6 +1471,42 @@ let emit_top_k ctx (eqn : eqn) in_ids k =
        (Ir.tensor_type_of_aval vout.vaval)
        (Ir.tensor_type_of_aval iout.vaval))
 
+let shape_i64_body dims =
+  let n = Array.length dims in
+  if n > 0 && Array.for_all (fun d -> d = dims.(0)) dims then
+    Ir.int_literal (Int64.of_int dims.(0))
+  else
+    "["
+    ^ String.concat ", "
+        (Array.to_list
+           (Array.map (fun d -> Ir.int_literal (Int64.of_int d)) dims))
+    ^ "]"
+
+let emit_rng_uniform ctx (eqn : eqn) in_ids =
+  let a, b = pair in_ids in
+  let la, ra =
+    match eqn.inputs with
+    | [ l; r ] -> (l, r)
+    | _ -> invalid_arg "Stablehlo.Emit: rng_uniform expects two operands"
+  in
+  let aty = Ir.tensor_type_of_aval (atom_aval la) in
+  let bty = Ir.tensor_type_of_aval (atom_aval ra) in
+  let out = sole eqn.outs in
+  let dims = out.vaval.shape in
+  let shty = Ir.tensor_type Dtype.I64 [| Array.length dims |] in
+  let c = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+       (Ir.dense (shape_i64_body dims))
+       shty);
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.rng %s, %s, %s, distribution = UNIFORM : (%s, %s, \
+        %s) -> %s\n"
+       (name n) (name a) (name b) (name c) aty bty shty
+       (Ir.tensor_type_of_aval out.vaval))
+
 let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -1691,9 +1727,56 @@ let emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
         "Stablehlo.Emit: Regularized_incomplete_beta has no native chlo op; \
          jax lowers it via a lower_fun decomposition into many stablehlo ops \
          (non-single-op), end-to-end decomposition deferred"
-  | _ ->
+  | Rng_uniform -> emit_rng_uniform ctx eqn in_ids
+  | Rng_bit_generator ->
       failwith
-        "Stablehlo.Emit: no lowering rule for this primitive (rows 86-87)"
+        "Stablehlo.Emit: Rng_bit_generator lowers via a u32[4] -> u64[2] \
+         bitcast_convert into stablehlo.rng_bit_generator; uint64 is not in \
+         the M4 dtype set (F32/F64/I32/I64/Bool/Uint32) and Ojax has no \
+         abstract_eval for it, so it is non-representable (M5)"
+  | Threefry2x32 ->
+      failwith
+        "Stablehlo.Emit: Threefry2x32 lowers on cpu to a stablehlo.while \
+         rolled loop (unrolled elsewhere) with private subfunctions \
+         (non-single-op decomposition); end-to-end deferred to the PJRT \
+         execution rows"
+  | Iota_2x32_shape _ ->
+      failwith
+        "Stablehlo.Emit: Iota_2x32_shape lowers via a uint64 iota + \
+         shift_right_logical + convert decomposition; uint64 is not in the M4 \
+         dtype set, non-representable (M5)"
+  | Random_bits _ ->
+      failwith
+        "Stablehlo.Emit: Random_bits lowers via mlir.lower_fun into the full \
+         threefry bit-generation decomposition (many stablehlo ops); \
+         non-single-op, end-to-end deferred to the PJRT execution rows"
+  | Random_seed ->
+      failwith
+        "Stablehlo.Emit: Random_seed lowers via mlir.lower_fun into a \
+         shift/convert/and/concatenate decomposition plus a \
+         sdy.sharding_constraint; sharding machinery is out of scope \
+         (STRIP-ON-PORT), non-representable"
+  | Random_split _ ->
+      failwith
+        "Stablehlo.Emit: Random_split lowers via mlir.lower_fun into the \
+         threefry fold/split decomposition (many stablehlo ops); \
+         non-single-op, end-to-end deferred to the PJRT execution rows"
+  | Random_fold_in ->
+      failwith
+        "Stablehlo.Emit: Random_fold_in lowers via mlir.lower_fun into the \
+         threefry fold-in decomposition (many stablehlo ops); non-single-op, \
+         end-to-end deferred to the PJRT execution rows"
+  | Random_wrap ->
+      failwith
+        "Stablehlo.Emit: Random_wrap lowers to a sdy.sharding_constraint over \
+         the physical key array; sharding machinery is out of scope \
+         (STRIP-ON-PORT), non-representable"
+  | Random_unwrap ->
+      failwith
+        "Stablehlo.Emit: Random_unwrap lowers to a sdy.sharding_constraint \
+         over the physical key array; sharding machinery is out of scope \
+         (STRIP-ON-PORT), non-representable"
+  | _ -> failwith "Stablehlo.Emit: no lowering rule for this primitive (row 87)"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   let n_consts = List.length cj.consts in

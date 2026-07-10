@@ -291,6 +291,7 @@ CASES = [
     ("special_lgamma", lax.lgamma, [f32(3)]),
     ("special_polygamma", lax.polygamma, [f32(3), f32(3)]),
     ("special_zeta", lax.zeta, [f32(3), f32(3)]),
+    ("rng_uniform", lambda a, b: _lax.rng_uniform(a, b, (3,)), [f32(), f32()]),
 ]
 
 

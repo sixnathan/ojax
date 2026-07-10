@@ -546,6 +546,25 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
     ("special_lgamma", unary T.Lgamma D.F32);
     ("special_polygamma", binary T.Polygamma D.F32);
     ("special_zeta", binary T.Zeta D.F32);
+    ( "rng_uniform",
+      fun () ->
+        let a : T.var = { vid = 0; vaval = av [||] D.F32 } in
+        let b : T.var = { vid = 1; vaval = av [||] D.F32 } in
+        let o : T.var = { vid = 2; vaval = av [| 3 |] D.F32 } in
+        let eqn : T.eqn =
+          {
+            prim = T.Rng_uniform;
+            inputs = [ T.A_var a; T.A_var b ];
+            outs = [ o ];
+            multiple_results = false;
+          }
+        in
+        {
+          T.jid = 0;
+          jaxpr =
+            { T.in_binders = [ a; b ]; eqns = [ eqn ]; outs = [ T.A_var o ] };
+          consts = [];
+        } );
   ]
 
 let check_case name build () =

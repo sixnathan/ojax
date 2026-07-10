@@ -1,0 +1,37 @@
+[plugin]
+name = pjrt_c_api_cpu_plugin
+platform = darwin-arm64
+kind = cpu
+provider = gomlx/gopjrt
+source_release = https://github.com/gomlx/gopjrt/releases/tag/v0.9.1
+tarball_url = https://github.com/gomlx/gopjrt/releases/download/v0.9.1/gopjrt_cpu_darwin_arm64.tar.gz
+tarball_sha256 = c301873a34d5160965d4a2d00d0a31b7833ac11d440e95d9888a3d962c3de4ca
+member_path = pjrt_c_api_cpu_plugin.so
+plugin_sha256 = a30b08a486bf4e80c64940ef70035ca2339f4a9badfc07cae2aab9901ed9d979
+plugin_bytes = 184274840
+plugin_format = mach-o-arm64-dylib
+exported_symbol = GetPjrtApi
+runtime_env_var = OJAX_PJRT_PLUGIN
+default_path = vendor/pjrt/pjrt_c_api_cpu_plugin.so
+verified_dlopen = true
+verified_date = 2026-07-10
+
+[pjrt_api]
+major = 0
+minor = 81
+struct_size_bytes = 984
+
+[stablehlo]
+target_version = PIN_AT_ROW_74
+
+[header]
+vendored = false
+vendor_target = reference/pjrt/pjrt_c_api.h
+provenance = openxla/xla pjrt/c/pjrt_c_api.h at the commit whose PJRT_API_MINOR == 81; vendored in ledger row 88
+
+[parity_risk]
+jaxlib_0_10_2_ships_getpjrtapi_plugin = false
+jaxlib_cpu_client = in-process pybind (_jax.so make_cpu_client), not a C-API GetPjrtApi plugin
+bit_exact_premise = requires same XLA kernels as jaxlib 0.10.2
+gomlx_v0_9_1_build = separate/newer XLA CPU build, kernels may diverge on transcendentals
+resolution = row 92 audits exact-vs-tol; if transcendentals diverge, self-build pjrt_c_api_cpu_plugin from jaxlib-0.10.2 XLA commit, else fall back to PLAYBOOK section 4 tol table

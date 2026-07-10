@@ -5,3 +5,5 @@ _build/
 *.install
 goldens/
 __pycache__/
+vendor/pjrt/*.so
+vendor/pjrt/*.dylib

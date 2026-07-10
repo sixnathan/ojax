@@ -5083,6 +5083,211 @@ def generate_scipy_cluster_vq(module):
     return n_off, n_on
 
 
+def _vectorize_pyfunc(op):
+    if op == "matvec":
+        return jnp.vectorize(lambda m, x: m @ x, signature="(n,m),(m)->(n)")
+    if op == "cross3":
+        return jnp.vectorize(
+            lambda a, b: jnp.array(
+                [
+                    a[1] * b[2] - a[2] * b[1],
+                    a[2] * b[0] - a[0] * b[2],
+                    a[0] * b[1] - a[1] * b[0],
+                ]
+            ),
+            signature="(k),(k)->(k)",
+        )
+    if op == "add":
+        return jnp.vectorize(lambda a, b: a + b)
+    raise SystemExit("unknown vectorize op " + op)
+
+
+def _vectorize_inputs(op, params, npdt, rng):
+    f = _vectorize_pyfunc(op)
+    a = rng.standard_normal(tuple(params["ashape"])).astype(npdt)
+    b = rng.standard_normal(tuple(params["bshape"])).astype(npdt)
+    return {"a": a, "b": b}, [np.asarray(f(a, b))]
+
+
+def _rand_quat(rng, npdt, n):
+    if n == 0:
+        q = rng.standard_normal(4)
+        q = q / np.linalg.norm(q)
+        return q.astype(npdt)
+    q = rng.standard_normal((n, 4))
+    q = q / np.linalg.norm(q, axis=-1, keepdims=True)
+    return q.astype(npdt)
+
+
+def _spatial_transform_inputs(op, params, npdt, rng):
+    import jax.scipy.spatial.transform as _st
+
+    rot = _st.Rotation
+    slerp = _st.Slerp
+    n = params.get("n", 0)
+    deg = params.get("degrees", False)
+    if op == "as_quat":
+        q = _rand_quat(rng, npdt, n)
+        return {"quat": q}, [rot.from_quat(q).as_quat()]
+    if op == "as_quat_canonical":
+        q = _rand_quat(rng, npdt, n)
+        return {"quat": q}, [rot.from_quat(q).as_quat(canonical=True)]
+    if op == "as_matrix":
+        q = _rand_quat(rng, npdt, n)
+        return {"quat": q}, [rot.from_quat(q).as_matrix()]
+    if op == "as_rotvec":
+        q = _rand_quat(rng, npdt, n)
+        return {"quat": q}, [rot.from_quat(q).as_rotvec(degrees=deg)]
+    if op == "as_mrp":
+        q = _rand_quat(rng, npdt, n)
+        return {"quat": q}, [rot.from_quat(q).as_mrp()]
+    if op == "as_euler":
+        q = _rand_quat(rng, npdt, n)
+        return {"quat": q}, [rot.from_quat(q).as_euler(params["seq"], degrees=deg)]
+    if op == "magnitude":
+        q = _rand_quat(rng, npdt, n)
+        return {"quat": q}, [rot.from_quat(q).magnitude()]
+    if op == "inv":
+        q = _rand_quat(rng, npdt, n)
+        return {"quat": q}, [rot.from_quat(q).inv().as_quat()]
+    if op == "from_rotvec":
+        shp = (3,) if n == 0 else (n, 3)
+        rv = (0.5 * rng.standard_normal(shp)).astype(npdt)
+        return {"rotvec": rv}, [rot.from_rotvec(rv, degrees=deg).as_quat()]
+    if op == "from_matrix":
+        q = _rand_quat(rng, npdt, n)
+        m = np.asarray(rot.from_quat(q).as_matrix()).astype(npdt)
+        return {"matrix": m}, [rot.from_matrix(m).as_quat()]
+    if op == "from_mrp":
+        shp = (3,) if n == 0 else (n, 3)
+        mrp = (0.3 * rng.standard_normal(shp)).astype(npdt)
+        return {"mrp": mrp}, [rot.from_mrp(mrp).as_quat()]
+    if op == "from_euler":
+        seq = params["seq"]
+        k = len(seq)
+        shp = (k,) if n == 0 else (n, k)
+        scale = 30.0 if deg else 0.5
+        angles = (scale * rng.standard_normal(shp)).astype(npdt)
+        return {"angles": angles}, [
+            rot.from_euler(seq, angles, degrees=deg).as_quat()
+        ]
+    if op == "apply":
+        q = _rand_quat(rng, npdt, n)
+        shp = (3,) if n == 0 else (n, 3)
+        vec = rng.standard_normal(shp).astype(npdt)
+        return {"quat": q, "vectors": vec}, [
+            rot.from_quat(q).apply(vec, inverse=params.get("inverse", False))
+        ]
+    if op == "compose":
+        p = _rand_quat(rng, npdt, n)
+        qq = _rand_quat(rng, npdt, n)
+        return {"p": p, "q": qq}, [(rot.from_quat(p) * rot.from_quat(qq)).as_quat()]
+    if op == "mean":
+        q = _rand_quat(rng, npdt, params["n"])
+        return {"quat": q}, [rot.from_quat(q).mean().as_quat()]
+    if op == "slerp":
+        seq = params["seq"]
+        m = params["n"]
+        angles = (20.0 * rng.standard_normal((m, len(seq)))).astype(npdt)
+        kr = rot.from_euler(seq, angles, degrees=True)
+        times = np.arange(m).astype(npdt)
+        query = np.linspace(0.0, float(m - 1), params["t"]).astype(npdt)
+        sl = slerp.init(times, kr)
+        out = sl(query).as_euler(seq)
+        return {"angles": angles, "times": times, "query": query}, [np.asarray(out)]
+    raise SystemExit("unknown spatial_transform op " + op)
+
+
+def _gen_composed_set(inputs_fn, module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and ec.is_wide64(c["dtype"]):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        rng = np.random.RandomState(seed)
+        npdt = np.dtype(c["dtype"])
+        in_arrays, out = inputs_fn(c["op"], c["params"], npdt, rng)
+        outputs = [np.asarray(o) for o in out]
+        stored_in = {k: np.asarray(v) for k, v in in_arrays.items()}
+        out_arrays = {"out" + str(i): o for i, o in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **stored_in)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": k,
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+            }
+            for k, v in sorted(stored_in.items())
+        ]
+        outs_meta = [
+            _linalg_out_meta("out" + str(i), o) for i, o in enumerate(outputs)
+        ]
+        compare, tol, reason = _linalg_tol(np.asarray(outputs[0]).dtype.name)
+        entry = {
+            "case_id": case_id,
+            "op": c["op"],
+            "primitive": c["primitive"],
+            "params": c["params"],
+            "args": args_meta,
+            "outputs": outs_meta,
+            "compare": compare,
+            "tol": tol,
+        }
+        if reason is not None:
+            entry["tol_reason"] = reason
+        manifest_cases.append(entry)
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_vectorize(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = _gen_composed_set(
+        _vectorize_inputs, module, cases, False, os.path.join(base, "x64_off")
+    )
+    n_on = _gen_composed_set(
+        _vectorize_inputs, module, cases, True, os.path.join(base, "x64_on")
+    )
+    return n_off, n_on
+
+
+def generate_spatial_transform(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = _gen_composed_set(
+        _spatial_transform_inputs, module, cases, False, os.path.join(base, "x64_off")
+    )
+    n_on = _gen_composed_set(
+        _spatial_transform_inputs, module, cases, True, os.path.join(base, "x64_on")
+    )
+    return n_off, n_on
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: gen_goldens.py <module>")
@@ -5110,6 +5315,10 @@ def main():
         n_off, n_on = generate_scipy_sparse_linalg(sys.argv[1])
     elif sys.argv[1] == "scipy_cluster_vq":
         n_off, n_on = generate_scipy_cluster_vq(sys.argv[1])
+    elif sys.argv[1] == "vectorize":
+        n_off, n_on = generate_vectorize(sys.argv[1])
+    elif sys.argv[1] == "spatial_transform":
+        n_off, n_on = generate_spatial_transform(sys.argv[1])
     else:
         n_off, n_on = generate(sys.argv[1])
     sys.stdout.write(sys.argv[1] + " x64_off " + str(n_off) + " x64_on " + str(n_on) + "\n")

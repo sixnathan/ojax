@@ -3938,6 +3938,146 @@ let scipy_cluster_vq_suite_for set_name =
   in
   ("scipy_cluster_vq:" ^ set_name, coverage :: case_tests)
 
+module VEC = Ojax.Numpy.Vectorize
+module RT = Ojax.Scipy.Spatial.Transform.Rotation
+module SLERP = Ojax.Scipy.Spatial.Transform.Slerp
+
+let pstr k p = U.member k p |> U.to_string
+let pbool k p = match U.member k p with `Null -> false | v -> U.to_bool v
+
+let vec_cross3 = function
+  | [ a; b ] ->
+      let fa = read_nd (concrete a) and fb = read_nd (concrete b) in
+      let dt = Nd.dtype (concrete a) in
+      T.Concrete
+        (Nd.of_floats dt [| 3 |]
+           [|
+             (fa.(1) *. fb.(2)) -. (fa.(2) *. fb.(1));
+             (fa.(2) *. fb.(0)) -. (fa.(0) *. fb.(2));
+             (fa.(0) *. fb.(1)) -. (fa.(1) *. fb.(0));
+           |])
+  | _ -> assert false
+
+let vectorize_run c inputs =
+  let a = T.Concrete (nd_of_npz_any (find_member inputs "a")) in
+  let b = T.Concrete (nd_of_npz_any (find_member inputs "b")) in
+  match c.op with
+  | "matvec" ->
+      [
+        VEC.vectorize ~signature:"(n,m),(m)->(n)"
+          (function [ m; x ] -> TC.matmul m x | _ -> assert false)
+          [ a; b ];
+      ]
+  | "cross3" -> [ VEC.vectorize ~signature:"(k),(k)->(k)" vec_cross3 [ a; b ] ]
+  | "add" ->
+      [
+        VEC.vectorize
+          (function [ x; y ] -> UF.add x y | _ -> assert false)
+          [ a; b ];
+      ]
+  | _ -> failwith ("vectorize golden: unknown op " ^ c.op)
+
+let spatial_transform_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  let deg = pbool "degrees" c.params in
+  match c.op with
+  | "as_quat" -> [ RT.as_quat (RT.from_quat (get "quat")) ]
+  | "as_quat_canonical" ->
+      [ RT.as_quat ~canonical:true (RT.from_quat (get "quat")) ]
+  | "as_matrix" -> [ RT.as_matrix (RT.from_quat (get "quat")) ]
+  | "as_rotvec" -> [ RT.as_rotvec ~degrees:deg (RT.from_quat (get "quat")) ]
+  | "as_mrp" -> [ RT.as_mrp (RT.from_quat (get "quat")) ]
+  | "as_euler" ->
+      [
+        RT.as_euler ~degrees:deg (pstr "seq" c.params)
+          (RT.from_quat (get "quat"));
+      ]
+  | "magnitude" -> [ RT.magnitude (RT.from_quat (get "quat")) ]
+  | "inv" -> [ RT.as_quat (RT.inv (RT.from_quat (get "quat"))) ]
+  | "from_rotvec" -> [ RT.as_quat (RT.from_rotvec ~degrees:deg (get "rotvec")) ]
+  | "from_matrix" -> [ RT.as_quat (RT.from_matrix (get "matrix")) ]
+  | "from_mrp" -> [ RT.as_quat (RT.from_mrp (get "mrp")) ]
+  | "from_euler" ->
+      [
+        RT.as_quat
+          (RT.from_euler (pstr "seq" c.params) (get "angles") ~degrees:deg);
+      ]
+  | "apply" ->
+      [
+        RT.apply ~inverse:(pbool "inverse" c.params)
+          (RT.from_quat (get "quat"))
+          (get "vectors");
+      ]
+  | "compose" ->
+      [
+        RT.as_quat
+          (RT.compose (RT.from_quat (get "p")) (RT.from_quat (get "q")));
+      ]
+  | "mean" -> [ RT.as_quat (RT.mean (RT.from_quat (get "quat"))) ]
+  | "slerp" ->
+      let seq = pstr "seq" c.params in
+      let kr = RT.from_euler seq (get "angles") ~degrees:true in
+      let sl = SLERP.init (get "times") kr in
+      [ RT.as_euler seq (SLERP.apply sl (get "query")) ]
+  | _ -> failwith ("spatial_transform golden: unknown op " ^ c.op)
+
+let composed_check_case ~run ~set_dir ~x64 c () =
+  Ojax.Config.set Ojax.Config.enable_x64 x64;
+  Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
+  @@ fun () ->
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.case_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.case_id ^ ".npz"))
+  in
+  let results = run c inputs in
+  let paired =
+    try List.combine c.outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.case_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let ocompare = match o.ocompare with Some s -> s | None -> c.compare in
+      let oatol = match o.oatol with Some t -> t | None -> c.atol in
+      let ortol = match o.ortol with Some t -> t | None -> c.rtol in
+      let oreason = o.otreason in
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.case_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.case_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      Compare.assert_tol_widened o.odtype oatol ortol oreason;
+      Compare.check
+        ~name:(c.case_id ^ ":" ^ o.oname)
+        ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
+    paired
+
+let composed_suite_for ~run module_name set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root module_name) set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (composed_check_case ~run ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+  in
+  (module_name ^ ":" ^ set_name, coverage :: case_tests)
+
 let () =
   Ojax.Lax.install ();
   Ojax.Random.Prng.install ();
@@ -4014,5 +4154,10 @@ let () =
       scipy_sparse_linalg_suite_for "x64_on";
       scipy_cluster_vq_suite_for "x64_off";
       scipy_cluster_vq_suite_for "x64_on";
+      composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
+      composed_suite_for ~run:vectorize_run "vectorize" "x64_on";
+      composed_suite_for ~run:spatial_transform_run "spatial_transform"
+        "x64_off";
+      composed_suite_for ~run:spatial_transform_run "spatial_transform" "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

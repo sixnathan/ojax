@@ -37,4 +37,6 @@
   (source_tree %{project_root}/goldens/numpy_linalg)
   (source_tree %{project_root}/goldens/scipy_linalg)
   (source_tree %{project_root}/goldens/scipy_sparse_linalg)
-  (source_tree %{project_root}/goldens/scipy_cluster_vq)))
+  (source_tree %{project_root}/goldens/scipy_cluster_vq)
+  (source_tree %{project_root}/goldens/vectorize)
+  (source_tree %{project_root}/goldens/spatial_transform)))

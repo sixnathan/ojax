@@ -61,7 +61,7 @@ def freeze(module):
         "custom_derivatives",
     ):
         return freeze_jaxpr(module)
-    if module == "fft":
+    if module in ("fft", "scipy_fft_signal"):
         return freeze_all(module)
     records = load_source(module)
     explicit = []

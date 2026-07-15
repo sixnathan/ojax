@@ -1,0 +1,38 @@
+[
+  {"op":"dct","primitive":"scipy.fft.dct","nargs":1,"dtypes":["float32","float64"],"shapes":[[5],[2,5]],"rng":"rand_default","params":{"axis":-1,"n":null,"norm":null,"type":2}},
+  {"op":"dct","primitive":"scipy.fft.dct","nargs":1,"dtypes":["float32","float64"],"shapes":[[7]],"rng":"rand_default","params":{"axis":0,"n":4,"norm":"ortho","type":2}},
+  {"op":"dct","primitive":"scipy.fft.dct","nargs":1,"dtypes":["complex64","complex128"],"shapes":[[4]],"rng":"rand_complex","params":{"axis":-1,"n":7,"norm":"backward","type":2}},
+  {"op":"dctn","primitive":"scipy.fft.dctn","nargs":1,"dtypes":["float32","float64"],"shapes":[[3,5]],"rng":"rand_default","params":{"axes":null,"norm":null,"s":null,"type":2}},
+  {"op":"dctn","primitive":"scipy.fft.dctn","nargs":1,"dtypes":["float32","float64"],"shapes":[[2,5,3]],"rng":"rand_default","params":{"axes":[1,0],"norm":"ortho","s":[4,3],"type":2}},
+  {"op":"dctn","primitive":"scipy.fft.dctn","nargs":1,"dtypes":["complex64","complex128"],"shapes":[[2,3,4]],"rng":"rand_complex","params":{"axes":[0,1,2],"norm":"backward","s":null,"type":2}},
+  {"op":"idct","primitive":"scipy.fft.idct","nargs":1,"dtypes":["float32","float64"],"shapes":[[5],[2,5]],"rng":"rand_default","params":{"axis":-1,"n":null,"norm":null,"type":2}},
+  {"op":"idct","primitive":"scipy.fft.idct","nargs":1,"dtypes":["float32","float64"],"shapes":[[7]],"rng":"rand_default","params":{"axis":0,"n":4,"norm":"ortho","type":2}},
+  {"op":"idct","primitive":"scipy.fft.idct","nargs":1,"dtypes":["complex64","complex128"],"shapes":[[4]],"rng":"rand_complex","params":{"axis":-1,"n":7,"norm":"backward","type":2}},
+  {"op":"idctn","primitive":"scipy.fft.idctn","nargs":1,"dtypes":["float32","float64"],"shapes":[[3,5]],"rng":"rand_default","params":{"axes":null,"norm":null,"s":null,"type":2}},
+  {"op":"idctn","primitive":"scipy.fft.idctn","nargs":1,"dtypes":["float32","float64"],"shapes":[[2,5,3]],"rng":"rand_default","params":{"axes":[1,0],"norm":"ortho","s":[4,3],"type":2}},
+  {"op":"idctn","primitive":"scipy.fft.idctn","nargs":1,"dtypes":["complex64","complex128"],"shapes":[[2,3,4]],"rng":"rand_complex","params":{"axes":[0,1,2],"norm":"backward","s":null,"type":2}},
+
+  {"op":"fftconvolve","primitive":"scipy.signal.fftconvolve","args":[{"dtype":"float32","rng":"rand_default","shape":[7]},{"dtype":"float32","rng":"rand_default","shape":[4]}],"params":{"axes":null,"mode":"full"}},
+  {"op":"fftconvolve","primitive":"scipy.signal.fftconvolve","args":[{"dtype":"float64","rng":"rand_default","shape":[7]},{"dtype":"float64","rng":"rand_default","shape":[4]}],"params":{"axes":null,"mode":"same"},"tol_widen":{"factor":10,"reason":"reduction_reassociation"}},
+  {"op":"fftconvolve","primitive":"scipy.signal.fftconvolve","args":[{"dtype":"complex64","rng":"rand_complex","shape":[7]},{"dtype":"complex64","rng":"rand_complex","shape":[4]}],"params":{"axes":null,"mode":"valid"}},
+  {"op":"fftconvolve","primitive":"scipy.signal.fftconvolve","args":[{"dtype":"complex128","rng":"rand_complex","shape":[2,5]},{"dtype":"complex128","rng":"rand_complex","shape":[2,3]}],"params":{"axes":[1],"mode":"full"}},
+  {"op":"fftconvolve","primitive":"scipy.signal.fftconvolve","args":[{"dtype":"float32","rng":"rand_default","shape":[2,4]},{"dtype":"float32","rng":"rand_default","shape":[2,3]}],"params":{"axes":[1],"mode":"same"}},
+
+  {"op":"stft","primitive":"scipy.signal.stft","nargs":1,"dtypes":["float32","float64"],"shapes":[[8]],"rng":"rand_default","params":{"axis":-1,"boundary":"zeros","detrend":"none","fs":1.0,"nfft":null,"noverlap":null,"nperseg":4,"padded":true,"return_onesided":true,"window":"hann"}},
+  {"op":"stft","primitive":"scipy.signal.stft","nargs":1,"dtypes":["float32","float64"],"shapes":[[9]],"rng":"rand_default","params":{"axis":-1,"boundary":null,"detrend":"constant","fs":2.0,"nfft":6,"noverlap":2,"nperseg":4,"padded":false,"return_onesided":false,"window":"hann"}},
+  {"op":"stft","primitive":"scipy.signal.stft","nargs":1,"dtypes":["complex64","complex128"],"shapes":[[8]],"rng":"rand_complex","params":{"axis":-1,"boundary":"constant","detrend":"none","fs":4.0,"nfft":4,"noverlap":1,"nperseg":4,"padded":true,"return_onesided":true,"window":"hann"}},
+  {"op":"stft","primitive":"scipy.signal.stft","nargs":1,"dtypes":["float32","float64"],"shapes":[[8,2]],"rng":"rand_default","params":{"axis":0,"boundary":"zeros","detrend":"none","fs":1.0,"nfft":4,"noverlap":2,"nperseg":4,"padded":true,"return_onesided":true,"window":"hann"}},
+
+  {"op":"csd","primitive":"scipy.signal.csd","args":[{"dtype":"float32","rng":"rand_default","shape":[10]},{"dtype":"float32","rng":"rand_default","shape":[10]}],"params":{"average":"mean","axis":-1,"detrend":"constant","fs":2.0,"has_y":true,"nfft":4,"noverlap":2,"nperseg":4,"return_onesided":true,"scaling":"density","window":"hann"}},
+  {"op":"csd","primitive":"scipy.signal.csd","args":[{"dtype":"float64","rng":"rand_default","shape":[10]},{"dtype":"float64","rng":"rand_default","shape":[10]}],"params":{"average":"median","axis":-1,"detrend":"none","fs":1.0,"has_y":true,"nfft":5,"noverlap":2,"nperseg":5,"return_onesided":false,"scaling":"spectrum","window":"hann"}},
+  {"op":"csd","primitive":"scipy.signal.csd","args":[{"dtype":"complex64","rng":"rand_complex","shape":[8]},{"dtype":"complex64","rng":"rand_complex","shape":[8]}],"params":{"average":"mean","axis":-1,"detrend":"constant","fs":1.0,"has_y":true,"nfft":4,"noverlap":2,"nperseg":4,"return_onesided":true,"scaling":"density","window":"hann"}},
+  {"op":"csd","primitive":"scipy.signal.csd","args":[{"dtype":"complex128","rng":"rand_complex","shape":[8]},{"dtype":"complex128","rng":"rand_complex","shape":[8]}],"params":{"average":"median","axis":-1,"detrend":"none","fs":1.0,"has_y":true,"nfft":4,"noverlap":2,"nperseg":4,"return_onesided":false,"scaling":"spectrum","window":"hann"}},
+  {"op":"csd","primitive":"scipy.signal.csd","args":[{"dtype":"float32","rng":"rand_default","shape":[8]}],"params":{"average":"mean","axis":-1,"detrend":"constant","fs":1.0,"has_y":false,"nfft":4,"noverlap":2,"nperseg":4,"return_onesided":true,"scaling":"density","window":"hann"}},
+
+  {"op":"welch","primitive":"scipy.signal.welch","nargs":1,"dtypes":["float32","float64"],"shapes":[[10]],"rng":"rand_default","params":{"average":"mean","axis":-1,"detrend":"constant","fs":2.0,"nfft":4,"noverlap":2,"nperseg":4,"return_onesided":true,"scaling":"density","window":"hann"}},
+  {"op":"welch","primitive":"scipy.signal.welch","nargs":1,"dtypes":["float32","float64"],"shapes":[[2,9]],"rng":"rand_default","params":{"average":"median","axis":1,"detrend":"none","fs":1.0,"nfft":5,"noverlap":2,"nperseg":5,"return_onesided":false,"scaling":"spectrum","window":"hann"}},
+
+  {"op":"istft","primitive":"scipy.signal.istft","nargs":1,"dtypes":["complex64","complex128"],"shapes":[[3,5]],"rng":"rand_complex","params":{"boundary":true,"freq_axis":-2,"fs":1.0,"input_onesided":true,"nfft":4,"noverlap":2,"nperseg":4,"time_axis":-1,"window":"hann"}},
+  {"op":"istft","primitive":"scipy.signal.istft","nargs":1,"dtypes":["complex64","complex128"],"shapes":[[4,4]],"rng":"rand_complex","params":{"boundary":false,"freq_axis":0,"fs":2.0,"input_onesided":false,"nfft":4,"noverlap":1,"nperseg":4,"time_axis":1,"window":"hann"}},
+  {"op":"istft","primitive":"scipy.signal.istft","nargs":1,"dtypes":["complex64","complex128"],"shapes":[[2,5,3]],"rng":"rand_complex","params":{"boundary":true,"freq_axis":-1,"fs":1.0,"input_onesided":true,"nfft":4,"noverlap":2,"nperseg":4,"time_axis":1,"window":"hann"}}
+]

@@ -4333,7 +4333,105 @@ def run_fft_case(c, seed):
     return inputs, [np.asarray(out)], [None]
 
 
+def run_scipy_fft_signal_case(c, seed):
+    params = c["params"]
+    inputs = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"])
+        for i, a in enumerate(c["args"])
+    ]
+    op = c["op"]
+    if c["primitive"].startswith("scipy.fft."):
+        fn = getattr(jax.scipy.fft, op)
+        kwargs = {"type": params["type"], "norm": params["norm"]}
+        if op in ("dct", "idct"):
+            kwargs["n"] = params["n"]
+            kwargs["axis"] = params["axis"]
+        else:
+            kwargs["s"] = None if params["s"] is None else tuple(params["s"])
+            kwargs["axes"] = None if params["axes"] is None else tuple(params["axes"])
+        out = jax.jit(lambda x: fn(x, **kwargs))(*inputs)
+    elif op == "fftconvolve":
+        axes = None if params["axes"] is None else tuple(params["axes"])
+        out = jax.jit(
+            lambda x, y: jax.scipy.signal.fftconvolve(
+                x, y, mode=params["mode"], axes=axes
+            )
+        )(*inputs)
+    elif op == "stft":
+        boundary = params["boundary"]
+        out = jax.jit(
+            lambda x: jax.scipy.signal.stft(
+                x,
+                fs=params["fs"],
+                window=params["window"],
+                nperseg=params["nperseg"],
+                noverlap=params["noverlap"],
+                nfft=params["nfft"],
+                detrend=False if params["detrend"] == "none" else params["detrend"],
+                return_onesided=params["return_onesided"],
+                boundary=boundary,
+                padded=params["padded"],
+                axis=params["axis"],
+            )
+        )(*inputs)
+    elif op == "csd":
+        y = inputs[1] if params["has_y"] else None
+        out = jax.jit(
+            lambda x, y: jax.scipy.signal.csd(
+                x,
+                y,
+                fs=params["fs"],
+                window=params["window"],
+                nperseg=params["nperseg"],
+                noverlap=params["noverlap"],
+                nfft=params["nfft"],
+                detrend=False if params["detrend"] == "none" else params["detrend"],
+                return_onesided=params["return_onesided"],
+                scaling=params["scaling"],
+                axis=params["axis"],
+                average=params["average"],
+            )
+        )(inputs[0], y)
+    elif op == "welch":
+        out = jax.jit(
+            lambda x: jax.scipy.signal.welch(
+                x,
+                fs=params["fs"],
+                window=params["window"],
+                nperseg=params["nperseg"],
+                noverlap=params["noverlap"],
+                nfft=params["nfft"],
+                detrend=False if params["detrend"] == "none" else params["detrend"],
+                return_onesided=params["return_onesided"],
+                scaling=params["scaling"],
+                axis=params["axis"],
+                average=params["average"],
+            )
+        )(*inputs)
+    elif op == "istft":
+        out = jax.jit(
+            lambda z: jax.scipy.signal.istft(
+                z,
+                fs=params["fs"],
+                window=params["window"],
+                nperseg=params["nperseg"],
+                noverlap=params["noverlap"],
+                nfft=params["nfft"],
+                input_onesided=params["input_onesided"],
+                boundary=params["boundary"],
+                time_axis=params["time_axis"],
+                freq_axis=params["freq_axis"],
+            )
+        )(*inputs)
+    else:
+        raise SystemExit("unknown scipy fft/signal op " + op)
+    outs = [np.asarray(o) for o in out] if isinstance(out, (tuple, list)) else [np.asarray(out)]
+    return inputs, outs, [None] * len(outs)
+
+
 def run_case(c, seed):
+    if c["primitive"].startswith("scipy.fft.") or c["primitive"].startswith("scipy.signal."):
+        return run_scipy_fft_signal_case(c, seed)
     if c["primitive"] == "lax.fft" or c["primitive"].startswith("jnp.fft."):
         return run_fft_case(c, seed)
     if c["primitive"].startswith("scipy.integrate.") and c["op"] in INTEGRATE_BUILDERS:

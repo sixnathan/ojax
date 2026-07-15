@@ -4543,6 +4543,95 @@ let fft_run c inputs =
     | "ifftshift" -> [ FFTN.ifftshift ?axes (get ()) ]
     | _ -> failwith ("fft golden: unknown op " ^ c.op)
 
+module SFFT = Ojax.Scipy.Fft
+module SSIG = Ojax.Scipy.Signal
+
+let scipy_fft_signal_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  let p = c.params in
+  let n = fft_opt_int "n" p in
+  let norm = fft_opt_string "norm" p in
+  let s = fft_opt_int_array "s" p in
+  let axes = fft_opt_int_array "axes" p in
+  let fs () = U.member "fs" p |> U.to_number in
+  let window () = U.member "window" p |> U.to_string in
+  let nperseg () = U.member "nperseg" p |> U.to_int in
+  let noverlap () = fft_opt_int "noverlap" p in
+  let nfft () = fft_opt_int "nfft" p in
+  let detrend () = U.member "detrend" p |> U.to_string in
+  let return_onesided () = U.member "return_onesided" p |> U.to_bool in
+  let axis () = U.member "axis" p |> U.to_int in
+  match c.op with
+  | "dct" ->
+      let type_ = U.member "type" p |> U.to_int in
+      [ SFFT.dct ~type_ ?n ~axis:(axis ()) ?norm (get "arg0") ]
+  | "dctn" ->
+      let type_ = U.member "type" p |> U.to_int in
+      [ SFFT.dctn ~type_ ?s ?axes ?norm (get "arg0") ]
+  | "idct" ->
+      let type_ = U.member "type" p |> U.to_int in
+      [ SFFT.idct ~type_ ?n ~axis:(axis ()) ?norm (get "arg0") ]
+  | "idctn" ->
+      let type_ = U.member "type" p |> U.to_int in
+      [ SFFT.idctn ~type_ ?s ?axes ?norm (get "arg0") ]
+  | "fftconvolve" ->
+      [
+        SSIG.fftconvolve
+          ~mode:(U.member "mode" p |> U.to_string)
+          ?axes (get "arg0") (get "arg1");
+      ]
+  | "stft" ->
+      let boundary =
+        match U.member "boundary" p with
+        | `Null -> None
+        | value -> Some (U.to_string value)
+      in
+      let f, t, z =
+        SSIG.stft ~fs:(fs ()) ~window:(window ()) ~nperseg:(nperseg ())
+          ?noverlap:(noverlap ()) ?nfft:(nfft ()) ~detrend:(detrend ())
+          ~return_onesided:(return_onesided ()) ~boundary
+          ~padded:(U.member "padded" p |> U.to_bool)
+          ~axis:(axis ()) (get "arg0")
+      in
+      [ f; t; z ]
+  | "csd" ->
+      let y =
+        if U.member "has_y" p |> U.to_bool then Some (get "arg1") else None
+      in
+      let f, pxy =
+        SSIG.csd ~fs:(fs ()) ~window:(window ()) ~nperseg:(nperseg ())
+          ?noverlap:(noverlap ()) ?nfft:(nfft ()) ~detrend:(detrend ())
+          ~return_onesided:(return_onesided ())
+          ~scaling:(U.member "scaling" p |> U.to_string)
+          ~axis:(axis ())
+          ~average:(U.member "average" p |> U.to_string)
+          (get "arg0") y
+      in
+      [ f; pxy ]
+  | "welch" ->
+      let f, pxx =
+        SSIG.welch ~fs:(fs ()) ~window:(window ()) ~nperseg:(nperseg ())
+          ?noverlap:(noverlap ()) ?nfft:(nfft ()) ~detrend:(detrend ())
+          ~return_onesided:(return_onesided ())
+          ~scaling:(U.member "scaling" p |> U.to_string)
+          ~axis:(axis ())
+          ~average:(U.member "average" p |> U.to_string)
+          (get "arg0")
+      in
+      [ f; pxx ]
+  | "istft" ->
+      let t, x =
+        SSIG.istft ~fs:(fs ()) ~window:(window ()) ~nperseg:(nperseg ())
+          ?noverlap:(noverlap ()) ?nfft:(nfft ())
+          ~input_onesided:(U.member "input_onesided" p |> U.to_bool)
+          ~boundary:(U.member "boundary" p |> U.to_bool)
+          ~time_axis:(U.member "time_axis" p |> U.to_int)
+          ~freq_axis:(U.member "freq_axis" p |> U.to_int)
+          (get "arg0")
+      in
+      [ t; x ]
+  | _ -> failwith ("scipy fft/signal golden: unknown op " ^ c.op)
+
 module KDE = Ojax.Scipy.Stats.Kde
 module MVN = Ojax.Scipy.Stats.Multivariate_normal
 
@@ -4673,5 +4762,7 @@ let () =
       composed_suite_for ~run:scipy_stats_run "scipy_stats_linalg" "x64_on";
       composed_suite_for ~run:fft_run "fft" "x64_off";
       composed_suite_for ~run:fft_run "fft" "x64_on";
+      composed_suite_for ~run:scipy_fft_signal_run "scipy_fft_signal" "x64_off";
+      composed_suite_for ~run:scipy_fft_signal_run "scipy_fft_signal" "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

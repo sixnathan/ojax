@@ -88,6 +88,7 @@ let interpreter : Core.interpreter =
     i_process_primitive = process_primitive;
     i_process_custom_jvp = (fun _ ~primal ~jvp:_ args -> primal args);
     i_process_custom_vjp = (fun _ ~primal ~fwd:_ ~bwd:_ args -> primal args);
+    i_process_custom_vmap = (fun _ ~primal ~vmap_rule:_ args -> primal args);
   }
 
 let install () = Core.register_interpreter KPE interpreter

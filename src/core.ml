@@ -36,6 +36,16 @@ type interpreter = {
     bwd:(value list -> value list) ->
     value list ->
     value list;
+  i_process_custom_vmap :
+    trace ->
+    primal:(value list -> value list) ->
+    vmap_rule:
+      (axis_size:int ->
+      in_batched:bool list ->
+      value list ->
+      value list * bool list) ->
+    value list ->
+    value list;
 }
 
 let num_kinds = 5
@@ -115,6 +125,9 @@ let process_custom_jvp trace primal ~jvp args =
 let process_custom_vjp trace primal ~fwd ~bwd args =
   (interpreter_for trace).i_process_custom_vjp trace ~primal ~fwd ~bwd args
 
+let process_custom_vmap trace primal ~vmap_rule args =
+  (interpreter_for trace).i_process_custom_vmap trace ~primal ~vmap_rule args
+
 let bind prim args =
   let top = find_top_trace args in
   let tracers = List.map (full_raise top) args in
@@ -157,6 +170,7 @@ let eval_interpreter =
     i_process_primitive = eval_process_primitive;
     i_process_custom_jvp = (fun _ ~primal ~jvp:_ args -> primal args);
     i_process_custom_vjp = (fun _ ~primal ~fwd:_ ~bwd:_ args -> primal args);
+    i_process_custom_vmap = (fun _ ~primal ~vmap_rule:_ args -> primal args);
   }
 
 let () = register_interpreter KEval eval_interpreter

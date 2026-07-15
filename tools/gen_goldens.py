@@ -2505,6 +2505,162 @@ def generate_batching(module):
     return n_off, n_on
 
 
+@jax.custom_batching.custom_vmap
+def custom_mul(x, y):
+    return x + y
+
+
+@custom_mul.def_vmap
+def custom_mul_rule(axis_size, in_batched, x, y):
+    del axis_size, in_batched
+    return x * y, True
+
+
+@jax.custom_batching.custom_vmap
+def custom_mixed(x, y):
+    return x + y
+
+
+@custom_mixed.def_vmap
+def custom_mixed_rule(axis_size, in_batched, x, y):
+    del axis_size, in_batched
+    return x * y, True
+
+
+@jax.custom_batching.custom_vmap
+def custom_unbatched(x):
+    return x
+
+
+@custom_unbatched.def_vmap
+def custom_unbatched_rule(axis_size, in_batched, x):
+    del axis_size, in_batched
+    return jnp.sum(x, axis=0), False
+
+
+@jax.custom_batching.custom_vmap
+def custom_axis1(x):
+    return x
+
+
+@custom_axis1.def_vmap
+def custom_axis1_rule(axis_size, in_batched, x):
+    del axis_size, in_batched
+    return x * x, True
+
+
+@jax.custom_batching.custom_vmap
+def custom_multi(x):
+    return x, x
+
+
+@custom_multi.def_vmap
+def custom_multi_rule(axis_size, in_batched, x):
+    del axis_size, in_batched
+    return (x * x, -x), (True, True)
+
+
+sequential_sin = jax.custom_batching.sequential_vmap(lambda x: jnp.sin(x) + 1)
+sequential_mixed = jax.custom_batching.sequential_vmap(lambda x, y: x * y + 1)
+
+
+CUSTOM_BATCH_FNS = {
+    "custom_axis1": custom_axis1,
+    "custom_mixed": custom_mixed,
+    "custom_mul": custom_mul,
+    "custom_multi": custom_multi,
+    "custom_unbatched": custom_unbatched,
+    "sequential_mixed": sequential_mixed,
+    "sequential_sin": sequential_sin,
+}
+
+
+def run_custom_batch_case(c, seed):
+    fn = CUSTOM_BATCH_FNS[c["fn"]]
+    inputs = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"])
+        for i, a in enumerate(c["in_avals"])
+    ]
+    out = jax.vmap(fn, in_axes=_in_axes_tuple(c["in_axes"]))(*inputs)
+    return [np.ascontiguousarray(x) for x in inputs], [
+        np.ascontiguousarray(x) for x in jax.tree.leaves(out)
+    ]
+
+
+def gen_custom_batch_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and any(ec.is_wide64(a["dtype"]) for a in c["in_avals"]):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        inputs, outputs = run_custom_batch_case(c, seed)
+        in_arrays = {"arg" + str(i): np.asarray(v) for i, v in enumerate(inputs)}
+        out_arrays = {"out" + str(i): np.asarray(v) for i, v in enumerate(outputs)}
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **in_arrays)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": "arg" + str(i),
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+                "rng": a["rng"],
+                "in_axis": c["in_axes"][i],
+            }
+            for i, (a, v) in enumerate(zip(c["in_avals"], inputs))
+        ]
+        outs_meta = [
+            {
+                "name": "out" + str(i),
+                "shape": [int(d) for d in np.asarray(v).shape],
+                "dtype": np.asarray(v).dtype.name,
+            }
+            for i, v in enumerate(outputs)
+        ]
+        compare, tol = resolve_tol(np.asarray(outputs[0]).dtype.name)
+        manifest_cases.append(
+            {
+                "case_id": case_id,
+                "fn": c["fn"],
+                "in_axes": c["in_axes"],
+                "args": args_meta,
+                "outputs": outs_meta,
+                "compare": compare,
+                "tol": tol,
+            }
+        )
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_custom_batching(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_custom_batch_set(
+        module, cases, False, os.path.join(base, "x64_off")
+    )
+    n_on = gen_custom_batch_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 API_FNS = {
     "sin": lambda x: LAX.sin(x),
     "cubic": lambda x: LAX.sub(LAX.mul(x, LAX.mul(x, x)), x),
@@ -5986,6 +6142,8 @@ def main():
         n_off, n_on = generate_ad(sys.argv[1])
     elif sys.argv[1] == "custom_derivatives":
         n_off, n_on = generate_custom_derivatives(sys.argv[1])
+    elif sys.argv[1] == "custom_batching":
+        n_off, n_on = generate_custom_batching(sys.argv[1])
     elif sys.argv[1] == "batching":
         n_off, n_on = generate_batching(sys.argv[1])
     elif sys.argv[1] == "api":

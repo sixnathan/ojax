@@ -97,6 +97,7 @@ let register_interpreter_dispatch () =
       i_process_primitive = (fun _ _ _ -> [ T.Concrete (scalar D.F64 42.0) ]);
       i_process_custom_jvp = (fun _ ~primal ~jvp:_ args -> primal args);
       i_process_custom_vjp = (fun _ ~primal ~fwd:_ ~bwd:_ args -> primal args);
+      i_process_custom_vmap = (fun _ ~primal ~vmap_rule:_ args -> primal args);
     };
   let batch_main = C.with_new_main T.KBatch T.GNone (fun m -> m) in
   let out = C.process_primitive batch_main T.Neg [] in

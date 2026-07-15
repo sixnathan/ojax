@@ -898,6 +898,7 @@ let interpreter : Core.interpreter =
     i_process_custom_vjp =
       (fun trace ~primal ~fwd ~bwd args ->
         jvp_process_custom_vjp trace ~primal ~fwd ~bwd args);
+    i_process_custom_vmap = (fun _ ~primal ~vmap_rule:_ args -> primal args);
   }
 
 let install () = Core.register_interpreter KJVP interpreter

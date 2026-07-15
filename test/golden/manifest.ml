@@ -1950,6 +1950,78 @@ let custom_suite_for set_name =
   ("custom_derivatives:" ^ set_name, coverage :: case_tests)
 
 module Batching = Ojax.Interpreters.Batching
+module Cb = Ojax.Custom_batching
+module ApiV = Ojax.Api
+module TreeV = Ojax.Tree_util
+
+let cb_custom_mul args =
+  let primal a = [ jb1 T.Add a ] in
+  let vmap_rule ~axis_size:_ ~in_batched:_ values =
+    ([ jb1 T.Mul values ], [ true ])
+  in
+  Cb.custom_vmap ~primal ~vmap_rule args
+
+let cb_custom_mixed args =
+  let primal a = [ jb1 T.Add a ] in
+  let vmap_rule ~axis_size:_ ~in_batched:_ values =
+    match values with
+    | [ x; y ] ->
+        let shape = (C.get_aval x).T.shape in
+        let y =
+          jb1
+            (T.Broadcast_in_dim { shape; dims = [| Array.length shape - 1 |] })
+            [ y ]
+        in
+        ([ jb1 T.Mul [ x; y ] ], [ true ])
+    | _ -> assert false
+  in
+  Cb.custom_vmap ~primal ~vmap_rule args
+
+let cb_custom_unbatched args =
+  let primal a = a in
+  let vmap_rule ~axis_size:_ ~in_batched:_ values =
+    ([ jb1 (T.Reduce_sum [| 0 |]) values ], [ false ])
+  in
+  Cb.custom_vmap ~primal ~vmap_rule args
+
+let cb_custom_axis1 args =
+  let primal a = a in
+  let vmap_rule ~axis_size:_ ~in_batched:_ values =
+    match values with
+    | [ x ] -> ([ jb1 T.Mul [ x; x ] ], [ true ])
+    | _ -> assert false
+  in
+  Cb.custom_vmap ~primal ~vmap_rule args
+
+let cb_custom_multi args =
+  let primal = function [ x ] -> [ x; x ] | _ -> assert false in
+  let vmap_rule ~axis_size:_ ~in_batched:_ values =
+    match values with
+    | [ x ] -> ([ jb1 T.Mul [ x; x ]; jb1 T.Neg [ x ] ], [ true; true ])
+    | _ -> assert false
+  in
+  Cb.custom_vmap ~primal ~vmap_rule args
+
+let cb_sequential_sin =
+  Cb.sequential_vmap (function
+    | [ x ] -> [ jb1 T.Add [ jb1 T.Sin [ x ]; full_like x 1.0 ] ]
+    | _ -> assert false)
+
+let cb_sequential_mixed =
+  Cb.sequential_vmap (function
+    | [ x; y ] -> [ jb1 T.Add [ jb1 T.Mul [ x; y ]; full_like x 1.0 ] ]
+    | _ -> assert false)
+
+let custom_batch_builders : (string * (T.value list -> T.value list)) list =
+  [
+    ("custom_axis1", cb_custom_axis1);
+    ("custom_mixed", cb_custom_mixed);
+    ("custom_mul", cb_custom_mul);
+    ("custom_multi", cb_custom_multi);
+    ("custom_unbatched", cb_custom_unbatched);
+    ("sequential_mixed", cb_sequential_mixed);
+    ("sequential_sin", cb_sequential_sin);
+  ]
 
 let cubic_fn a =
   match a with
@@ -2097,6 +2169,95 @@ let batch_suite_for set_name =
     Alcotest.test_case "coverage" `Quick (batch_check_coverage ~set_dir cases)
   in
   ("batching:" ^ set_name, coverage :: case_tests)
+
+let custom_batch_check_case ~set_dir ~x64 c () =
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (c.b_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (c.b_id ^ ".npz"))
+  in
+  let operands =
+    List.map
+      (fun a -> T.Concrete (nd_of_npz (find_member inputs a.name)))
+      c.b_args
+  in
+  let fn =
+    match List.assoc_opt c.b_fn custom_batch_builders with
+    | Some f -> f
+    | None -> Alcotest.failf "%s: unknown fn %s" c.b_id c.b_fn
+  in
+  let result_tree =
+    ApiV.vmap
+      (fun args ->
+        let values =
+          List.map (function TreeV.Leaf v -> v | _ -> assert false) args
+        in
+        TreeV.Tuple (List.map (fun v -> TreeV.Leaf v) (fn values)))
+      c.b_in_axes
+      (List.map (fun v -> TreeV.Leaf v) operands)
+  in
+  let results = TreeV.tree_leaves result_tree in
+  let paired =
+    try List.combine c.b_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" c.b_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" c.b_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" c.b_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let actual =
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data = Npz.F (read_nd nd);
+        }
+      in
+      Compare.assert_tol o.odtype c.b_atol c.b_rtol;
+      Compare.check
+        ~name:(c.b_id ^ ":" ^ o.oname)
+        ~compare:c.b_compare ~atol:c.b_atol ~rtol:c.b_rtol ~expected:golden
+        ~actual)
+    paired
+
+let custom_batch_check_coverage ~set_dir cases () =
+  let expected = List.map (fun c -> c.b_id) cases |> List.sort String.compare in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then
+        Alcotest.failf "%s: custom_batching coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let custom_batch_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "custom_batching") set_name
+  in
+  let x64, cases =
+    load_batch_manifest (Filename.concat set_dir "manifest.json")
+  in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.b_id `Quick
+          (custom_batch_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick
+      (custom_batch_check_coverage ~set_dir cases)
+  in
+  ("custom_batching:" ^ set_name, coverage :: case_tests)
 
 module ApiM = Ojax.Api
 
@@ -4687,6 +4848,8 @@ let () =
       ad_suite_for "x64_on";
       custom_suite_for "x64_off";
       custom_suite_for "x64_on";
+      custom_batch_suite_for "x64_off";
+      custom_batch_suite_for "x64_on";
       batch_suite_for "x64_off";
       batch_suite_for "x64_on";
       api_suite_for "x64_off";

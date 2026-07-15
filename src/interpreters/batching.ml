@@ -838,6 +838,28 @@ let full_lower_batch (v : value) : value =
   | Concrete _ -> v
   | Device _ -> v
 
+let batch_process_custom_vmap trace ~vmap_rule args =
+  let axis_size = axis_size_of trace in
+  let pairs = List.map (to_batch_info trace) args in
+  let vals =
+    List.map
+      (fun (v, bdim) ->
+        match bdim with
+        | None -> v
+        | Some d -> if d = 0 then v else moveaxis d 0 v)
+      pairs
+  in
+  let in_batched = List.map (fun (_, bdim) -> bdim <> None) pairs in
+  let outs, out_batched = vmap_rule ~axis_size ~in_batched vals in
+  if List.length outs <> List.length out_batched then
+    invalid_arg
+      "custom_vmap rule output values and batching specification must have the \
+       same length";
+  List.map2
+    (fun out batched ->
+      Tracer (new_batch_tracer trace out (if batched then Some 0 else None)))
+    outs out_batched
+
 let interpreter : Core.interpreter =
   {
     i_pure = batch_pure;
@@ -846,6 +868,9 @@ let interpreter : Core.interpreter =
     i_process_primitive = batch_process_primitive;
     i_process_custom_jvp = (fun _ ~primal ~jvp:_ args -> primal args);
     i_process_custom_vjp = (fun _ ~primal ~fwd:_ ~bwd:_ args -> primal args);
+    i_process_custom_vmap =
+      (fun trace ~primal:_ ~vmap_rule args ->
+        batch_process_custom_vmap trace ~vmap_rule args);
   }
 
 let install () = Core.register_interpreter KBatch interpreter

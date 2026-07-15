@@ -27,6 +27,16 @@ type interpreter = {
     bwd:(value list -> value list) ->
     value list ->
     value list;
+  i_process_custom_vmap :
+    trace ->
+    primal:(value list -> value list) ->
+    vmap_rule:
+      (axis_size:int ->
+      in_batched:bool list ->
+      value list ->
+      value list * bool list) ->
+    value list ->
+    value list;
 }
 
 val register_interpreter : trace_kind -> interpreter -> unit
@@ -49,6 +59,17 @@ val process_custom_vjp :
   (value list -> value list) ->
   fwd:(value list -> value list) ->
   bwd:(value list -> value list) ->
+  value list ->
+  value list
+
+val process_custom_vmap :
+  trace ->
+  (value list -> value list) ->
+  vmap_rule:
+    (axis_size:int ->
+    in_batched:bool list ->
+    value list ->
+    value list * bool list) ->
   value list ->
   value list
 

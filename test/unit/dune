@@ -54,6 +54,7 @@
   test_scipy_stats_linalg
   test_custom_derivatives
   test_custom_batching
+  test_ad_checkpoint
   test_fft
   test_scipy_fft_signal
   test_random_alt_prng)

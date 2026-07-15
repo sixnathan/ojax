@@ -1949,6 +1949,181 @@ let custom_suite_for set_name =
   in
   ("custom_derivatives:" ^ set_name, coverage :: case_tests)
 
+module Ac = Ojax.Ad_checkpoint
+module Checkpoint_batching = Ojax.Interpreters.Batching
+module Checkpoint_api = Ojax.Api
+
+type checkpoint_case = {
+  cp_ad : ad_case;
+  cp_policy : string;
+  cp_prevent_cse : bool;
+  cp_wrapper : string;
+}
+
+let parse_checkpoint_case j =
+  {
+    cp_ad = parse_ad_case j;
+    cp_policy = U.member "policy" j |> U.to_string;
+    cp_prevent_cse = U.member "prevent_cse" j |> U.to_bool;
+    cp_wrapper = U.member "wrapper" j |> U.to_string;
+  }
+
+let load_checkpoint_manifest path =
+  let j = Yojson.Safe.from_file path in
+  ( U.member "x64" j |> U.to_bool,
+    U.member "cases" j |> U.to_list |> List.map parse_checkpoint_case )
+
+let checkpoint_sin_sin = function
+  | [ x ] -> [ jb1 T.Sin [ jb1 T.Sin [ x ] ] ]
+  | _ -> assert false
+
+let checkpoint_cubic = function
+  | [ x ] -> [ jb1 T.Sub [ jb1 T.Mul [ x; jb1 T.Mul [ x; x ] ]; x ] ]
+  | _ -> assert false
+
+let checkpoint_named_sin_sin = function
+  | [ x ] ->
+      let y = Ac.checkpoint_name (jb1 T.Sin [ x ]) "mid" in
+      [ jb1 T.Sin [ y ] ]
+  | _ -> assert false
+
+let checkpoint_builders : (string * (T.value list -> T.value list)) list =
+  [
+    ("sin_sin", checkpoint_sin_sin);
+    ("cubic", checkpoint_cubic);
+    ("named_sin_sin", checkpoint_named_sin_sin);
+  ]
+
+let checkpoint_policy = function
+  | "default" -> Ac.nothing_saveable
+  | "everything" -> Ac.everything_saveable
+  | "nothing" -> Ac.nothing_saveable
+  | "dots" -> Ac.checkpoint_dots
+  | "dots_no_batch" -> Ac.dots_with_no_batch_dims_saveable
+  | "names_mid" -> Ac.save_only_these_names [ "mid" ]
+  | name -> failwith ("ad_checkpoint golden: unknown policy " ^ name)
+
+let checkpoint_wrap c fn =
+  let policy = checkpoint_policy c.cp_policy in
+  if c.cp_wrapper = "remat" then
+    Ac.remat ~prevent_cse:c.cp_prevent_cse ~policy fn
+  else Ac.checkpoint ~prevent_cse:c.cp_prevent_cse ~policy fn
+
+let checkpoint_count n =
+  T.Concrete (Nd.of_floats D.I32 [||] [| Float.of_int n |])
+
+let checkpoint_grad fn primals =
+  List.hd (Ad.grad (fun a -> List.hd (fn a)) primals)
+
+let checkpoint_run c fn primals tangents =
+  let wrapped = checkpoint_wrap c fn in
+  match c.cp_ad.a_mode with
+  | "grad_pair" ->
+      [ checkpoint_grad wrapped primals; checkpoint_grad fn primals ]
+  | "nested_grad_pair" ->
+      let nested = checkpoint_wrap c wrapped in
+      [ checkpoint_grad nested primals; checkpoint_grad fn primals ]
+  | "jit_grad_pair" ->
+      let remat_grad args = Ad.grad (fun a -> List.hd (wrapped a)) args in
+      let plain_grad args = Ad.grad (fun a -> List.hd (fn a)) args in
+      Checkpoint_api.jit_flat remat_grad primals
+      @ Checkpoint_api.jit_flat plain_grad primals
+  | "jvp" ->
+      let po, to_ = Ad.jvp wrapped primals tangents in
+      po @ to_
+  | "vmap" -> Checkpoint_batching.vmap wrapped [ Some 0 ] primals
+  | "residual_count" ->
+      [ checkpoint_count (List.length (Ac.saved_residuals wrapped primals)) ]
+  | "residual_count_plain" ->
+      [ checkpoint_count (List.length (Ac.saved_residuals fn primals)) ]
+  | mode -> failwith ("ad_checkpoint golden: unknown mode " ^ mode)
+
+let checkpoint_check_case ~set_dir ~x64 c () =
+  let base = c.cp_ad in
+  let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
+  let inputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "inputs") (base.a_id ^ ".npz"))
+  in
+  let outputs =
+    Npz.read
+      (Filename.concat (Filename.concat set_dir "outputs") (base.a_id ^ ".npz"))
+  in
+  let read_operand (a : arg) =
+    T.Concrete (nd_of_npz (find_member inputs a.name))
+  in
+  let primals = List.map read_operand base.a_args in
+  let tangents = List.map read_operand base.a_tans in
+  let fn =
+    match List.assoc_opt base.a_fn checkpoint_builders with
+    | Some f -> f
+    | None -> Alcotest.failf "%s: unknown fn %s" base.a_id base.a_fn
+  in
+  let results =
+    Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+        checkpoint_run c fn primals tangents)
+  in
+  let paired =
+    try List.combine base.a_outs results
+    with Invalid_argument _ ->
+      Alcotest.failf "%s: output arity mismatch" base.a_id
+  in
+  List.iter
+    (fun (o, v) ->
+      let nd = concrete v in
+      if not (Compare.shapes_equal (Nd.shape nd) o.oshape) then
+        Alcotest.failf "%s: output %s shape mismatch" base.a_id o.oname;
+      if canon (string_of_dtype (Nd.dtype nd)) <> canon o.odtype then
+        Alcotest.failf "%s: output %s dtype %s != %s" base.a_id o.oname
+          (string_of_dtype (Nd.dtype nd))
+          o.odtype;
+      let golden = find_member outputs o.oname in
+      let floats = read_nd nd in
+      let data =
+        if base.a_compare = "exact" then Npz.I (Array.map Int64.of_float floats)
+        else Npz.F floats
+      in
+      let actual =
+        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+      in
+      Compare.assert_tol o.odtype base.a_atol base.a_rtol;
+      Compare.check
+        ~name:(base.a_id ^ ":" ^ o.oname)
+        ~compare:base.a_compare ~atol:base.a_atol ~rtol:base.a_rtol
+        ~expected:golden ~actual)
+    paired
+
+let checkpoint_check_coverage ~set_dir cases () =
+  let expected =
+    List.map (fun c -> c.cp_ad.a_id) cases |> List.sort String.compare
+  in
+  List.iter
+    (fun sub ->
+      let got = dir_case_ids (Filename.concat set_dir sub) in
+      if got <> expected then
+        Alcotest.failf "%s: ad_checkpoint coverage mismatch" sub)
+    [ "inputs"; "outputs" ]
+
+let checkpoint_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "ad_checkpoint") set_name
+  in
+  let x64, cases =
+    load_checkpoint_manifest (Filename.concat set_dir "manifest.json")
+  in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.cp_ad.a_id `Quick
+          (checkpoint_check_case ~set_dir ~x64 c))
+      cases
+  in
+  let coverage =
+    Alcotest.test_case "coverage" `Quick
+      (checkpoint_check_coverage ~set_dir cases)
+  in
+  ("ad_checkpoint:" ^ set_name, coverage :: case_tests)
+
 module Batching = Ojax.Interpreters.Batching
 module Cb = Ojax.Custom_batching
 module ApiV = Ojax.Api
@@ -4850,6 +5025,8 @@ let () =
       custom_suite_for "x64_on";
       custom_batch_suite_for "x64_off";
       custom_batch_suite_for "x64_on";
+      checkpoint_suite_for "x64_off";
+      checkpoint_suite_for "x64_on";
       batch_suite_for "x64_off";
       batch_suite_for "x64_on";
       api_suite_for "x64_off";

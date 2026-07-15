@@ -60,6 +60,7 @@ def freeze(module):
         "solves",
         "custom_derivatives",
         "custom_batching",
+        "ad_checkpoint",
     ):
         return freeze_jaxpr(module)
     if module in ("fft", "scipy_fft_signal"):

@@ -2388,6 +2388,181 @@ def generate_custom_derivatives(module):
     return n_off, n_on
 
 
+def checkpoint_policy(name):
+    policies = jax.checkpoint_policies
+    if name == "default":
+        return None
+    if name == "everything":
+        return policies.everything_saveable
+    if name == "nothing":
+        return policies.nothing_saveable
+    if name == "dots":
+        return policies.checkpoint_dots
+    if name == "dots_no_batch":
+        return policies.dots_with_no_batch_dims_saveable
+    if name == "names_mid":
+        return policies.save_only_these_names("mid")
+    raise SystemExit("unknown checkpoint policy " + name)
+
+
+def checkpoint_sin_sin(x):
+    return jnp.sin(jnp.sin(x))
+
+
+def checkpoint_cubic(x):
+    return x * x * x - x
+
+
+def checkpoint_named_sin_sin(x):
+    from jax._src import ad_checkpoint as checkpoint_internal
+
+    y = checkpoint_internal.checkpoint_name(jnp.sin(x), "mid")
+    return jnp.sin(y)
+
+
+CHECKPOINT_FNS = {
+    "sin_sin": checkpoint_sin_sin,
+    "cubic": checkpoint_cubic,
+    "named_sin_sin": checkpoint_named_sin_sin,
+}
+
+
+def checkpoint_wrapper(c, fn):
+    kwargs = {"prevent_cse": bool(c["prevent_cse"])}
+    policy = checkpoint_policy(c["policy"])
+    if policy is not None:
+        kwargs["policy"] = policy
+    wrapper = jax.remat if c["wrapper"] == "remat" else jax.checkpoint
+    return wrapper(fn, **kwargs)
+
+
+def run_checkpoint_case(c, seed):
+    from jax._src import ad_checkpoint as checkpoint_internal
+
+    fn = CHECKPOINT_FNS[c["fn"]]
+    primals = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"])
+        for i, a in enumerate(c["in_avals"])
+    ]
+    wrapped = checkpoint_wrapper(c, fn)
+    mode = c["mode"]
+    if mode == "grad_pair":
+        return primals, None, [jax.grad(wrapped)(*primals), jax.grad(fn)(*primals)]
+    if mode == "nested_grad_pair":
+        nested = checkpoint_wrapper(c, wrapped)
+        return primals, None, [jax.grad(nested)(*primals), jax.grad(fn)(*primals)]
+    if mode == "jit_grad_pair":
+        return primals, None, [
+            jax.jit(jax.grad(wrapped))(*primals),
+            jax.jit(jax.grad(fn))(*primals),
+        ]
+    if mode == "jvp":
+        tangents = [
+            draw(a["rng"], seed + 1000 + i, a["shape"], a["dtype"])
+            for i, a in enumerate(c["in_avals"])
+        ]
+        po, to = jax.jvp(wrapped, tuple(primals), tuple(tangents))
+        return primals, tangents, [po, to]
+    if mode == "vmap":
+        return primals, None, [jax.vmap(wrapped)(*primals)]
+    if mode == "residual_count":
+        count = len(checkpoint_internal.saved_residuals(wrapped, *primals))
+        return primals, None, [np.asarray(count, dtype=np.int32)]
+    if mode == "residual_count_plain":
+        count = len(checkpoint_internal.saved_residuals(fn, *primals))
+        return primals, None, [np.asarray(count, dtype=np.int32)]
+    raise SystemExit("unknown checkpoint mode " + mode)
+
+
+def gen_checkpoint_set(module, cases, x64, outdir):
+    jax.config.update("jax_enable_x64", x64)
+    if os.path.isdir(outdir):
+        shutil.rmtree(outdir)
+    os.makedirs(os.path.join(outdir, "inputs"))
+    os.makedirs(os.path.join(outdir, "outputs"))
+    manifest_cases = []
+    for c in cases:
+        if not x64 and any(ec.is_wide64(a["dtype"]) for a in c["in_avals"]):
+            continue
+        case_id = c["case_id"]
+        seed = zlib.adler32(case_id.encode("utf-8"))
+        primals, tangents, outputs = run_checkpoint_case(c, seed)
+        in_arrays = {"arg" + str(i): np.asarray(v) for i, v in enumerate(primals)}
+        tan_meta = []
+        if tangents is not None:
+            for i, value in enumerate(tangents):
+                in_arrays["tan" + str(i)] = np.asarray(value)
+                array = np.asarray(value)
+                tan_meta.append(
+                    {
+                        "name": "tan" + str(i),
+                        "shape": [int(d) for d in array.shape],
+                        "dtype": array.dtype.name,
+                    }
+                )
+        out_arrays = {
+            "out" + str(i): np.asarray(value) for i, value in enumerate(outputs)
+        }
+        np.savez(os.path.join(outdir, "inputs", case_id + ".npz"), **in_arrays)
+        np.savez(os.path.join(outdir, "outputs", case_id + ".npz"), **out_arrays)
+        args_meta = [
+            {
+                "name": "arg" + str(i),
+                "shape": [int(d) for d in np.asarray(value).shape],
+                "dtype": np.asarray(value).dtype.name,
+                "rng": arg["rng"],
+            }
+            for i, (arg, value) in enumerate(zip(c["in_avals"], primals))
+        ]
+        outs_meta = [
+            {
+                "name": "out" + str(i),
+                "shape": [int(d) for d in np.asarray(value).shape],
+                "dtype": np.asarray(value).dtype.name,
+            }
+            for i, value in enumerate(outputs)
+        ]
+        compare, tol = resolve_tol(np.asarray(outputs[0]).dtype.name)
+        manifest_cases.append(
+            {
+                "case_id": case_id,
+                "fn": c["fn"],
+                "mode": c["mode"],
+                "policy": c["policy"],
+                "prevent_cse": c["prevent_cse"],
+                "wrapper": c["wrapper"],
+                "args": args_meta,
+                "tangents": tan_meta,
+                "outputs": outs_meta,
+                "compare": compare,
+                "tol": tol,
+            }
+        )
+    manifest = {
+        "schema_version": 1,
+        "module": module,
+        "jax_version": JAX_VERSION,
+        "x64": x64,
+        "cases": manifest_cases,
+    }
+    with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(manifest))
+    write_sha256sums(outdir)
+    return len(manifest_cases)
+
+
+def generate_ad_checkpoint(module):
+    preflight()
+    path = os.path.join(ROOT, "spec", module + ".cases.json")
+    with open(path, encoding="utf-8") as fh:
+        cases = list(json.load(fh)["cases"])
+    cases.sort(key=lambda c: c["case_id"])
+    base = os.path.join(ROOT, "goldens", module)
+    n_off = gen_checkpoint_set(module, cases, False, os.path.join(base, "x64_off"))
+    n_on = gen_checkpoint_set(module, cases, True, os.path.join(base, "x64_on"))
+    return n_off, n_on
+
+
 def _cubic(z):
     return LAX.sub(LAX.mul(z, LAX.mul(z, z)), z)
 
@@ -6144,6 +6319,8 @@ def main():
         n_off, n_on = generate_custom_derivatives(sys.argv[1])
     elif sys.argv[1] == "custom_batching":
         n_off, n_on = generate_custom_batching(sys.argv[1])
+    elif sys.argv[1] == "ad_checkpoint":
+        n_off, n_on = generate_ad_checkpoint(sys.argv[1])
     elif sys.argv[1] == "batching":
         n_off, n_on = generate_batching(sys.argv[1])
     elif sys.argv[1] == "api":

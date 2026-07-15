@@ -4288,7 +4288,54 @@ def ndimage_map_coordinates(params):
 NDIMAGE_BUILDERS = {"map_coordinates": ndimage_map_coordinates}
 
 
+def run_fft_case(c, seed):
+    params = c["params"]
+    inputs = [
+        draw(a["rng"], seed + i, a["shape"], a["dtype"])
+        for i, a in enumerate(c["args"])
+    ]
+    op = c["op"]
+    if c["primitive"] == "lax.fft":
+        fft_types = {
+            "fft": LAX.FftType.FFT,
+            "ifft": LAX.FftType.IFFT,
+            "rfft": LAX.FftType.RFFT,
+            "irfft": LAX.FftType.IRFFT,
+        }
+        fft_type = fft_types[params["fft_type"]]
+        lengths = tuple(params["fft_lengths"])
+        out = jax.jit(lambda x: LAX.fft(x, fft_type, lengths))(*inputs)
+    elif op in ("fft", "ifft", "rfft", "irfft"):
+        fn = getattr(jnp.fft, op)
+        n = params["n"]
+        axis = params["axis"]
+        norm = params["norm"]
+        out = jax.jit(lambda x: fn(x, n=n, axis=axis, norm=norm))(*inputs)
+    elif op in ("fftn", "ifftn", "rfftn", "irfftn", "fft2"):
+        fn = getattr(jnp.fft, op)
+        kwargs = {}
+        if params["s"] is not None:
+            kwargs["s"] = tuple(params["s"])
+        if params["axes"] is not None:
+            kwargs["axes"] = tuple(params["axes"])
+        if params["norm"] is not None:
+            kwargs["norm"] = params["norm"]
+        out = jax.jit(lambda x: fn(x, **kwargs))(*inputs)
+    elif op in ("fftfreq", "rfftfreq"):
+        fn = getattr(jnp.fft, op)
+        out = fn(params["n"], d=params["d"], dtype=np.dtype(params["dtype"]))
+    elif op in ("fftshift", "ifftshift"):
+        fn = getattr(jnp.fft, op)
+        axes = None if params["axes"] is None else tuple(params["axes"])
+        out = jax.jit(lambda x: fn(x, axes=axes))(*inputs)
+    else:
+        raise SystemExit("unknown fft op " + op)
+    return inputs, [np.asarray(out)], [None]
+
+
 def run_case(c, seed):
+    if c["primitive"] == "lax.fft" or c["primitive"].startswith("jnp.fft."):
+        return run_fft_case(c, seed)
     if c["primitive"].startswith("scipy.integrate.") and c["op"] in INTEGRATE_BUILDERS:
         inputs = [
             draw(a["rng"], seed + i, a["shape"], a["dtype"])
@@ -4492,6 +4539,12 @@ def gen_set(module, cases, x64, outdir):
     for c in cases:
         if not x64 and any(
             (not a["weak"]) and ec.is_wide64(a["dtype"]) for a in c["args"]
+        ):
+            continue
+        if (
+            not x64
+            and len(c["args"]) == 0
+            and ec.is_wide64(c.get("params", {}).get("dtype", ""))
         ):
             continue
         if x64 and c.get("x64_off_only"):

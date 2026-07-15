@@ -9,7 +9,36 @@ let slice_shape start_indices limit_indices strides ishape =
       let d = limit_indices.(i) - start_indices.(i) in
       if d <= 0 then 0 else (d + strides.(i) - 1) / strides.(i))
 
-let slice_impl start_indices limit_indices strides operand =
+let is_complex_dtype = function
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let complex_basetype = function
+  | Dtype.Complex64 -> Dtype.F32
+  | Dtype.Complex128 -> Dtype.F64
+  | d -> d
+
+let read_complex nd =
+  let shape = Ndarray.shape nd in
+  Array.init (Utils.prod shape) (fun i ->
+      Ndarray.get_c nd (Utils.decode i shape))
+
+let split_complex nd =
+  let dt = complex_basetype (Ndarray.dtype nd) in
+  let shape = Ndarray.shape nd in
+  let values = read_complex nd in
+  ( Ndarray.of_floats dt shape (Array.map (fun z -> z.Complex.re) values),
+    Ndarray.of_floats dt shape (Array.map (fun z -> z.Complex.im) values) )
+
+let join_complex dt re im =
+  let shape = Ndarray.shape re in
+  let n = Utils.prod shape in
+  Ndarray.of_complex dt shape
+    (Array.init n (fun i ->
+         let idx = Utils.decode i shape in
+         { Complex.re = Ndarray.get_f re idx; im = Ndarray.get_f im idx }))
+
+let slice_real_impl start_indices limit_indices strides operand =
   let os = Ndarray.shape operand in
   let n = Array.length os in
   let strides = resolve_strides n strides in
@@ -25,13 +54,22 @@ let slice_impl start_indices limit_indices strides operand =
   done;
   Ndarray.of_floats (Ndarray.dtype operand) out_shape out
 
+let slice_impl start_indices limit_indices strides operand =
+  let dt = Ndarray.dtype operand in
+  if is_complex_dtype dt then
+    let re, im = split_complex operand in
+    join_complex dt
+      (slice_real_impl start_indices limit_indices strides re)
+      (slice_real_impl start_indices limit_indices strides im)
+  else slice_real_impl start_indices limit_indices strides operand
+
 let clamp_start raw dim_size slice_size =
   let hi = dim_size - slice_size in
   if raw < 0 then 0 else if raw > hi then hi else raw
 
 let read_index nd = Int64.to_int (Ndarray.get_i64 nd [||])
 
-let dynamic_slice_impl slice_sizes inputs =
+let dynamic_slice_real_impl slice_sizes inputs =
   match inputs with
   | operand :: idx_nds ->
       let os = Ndarray.shape operand in
@@ -50,6 +88,18 @@ let dynamic_slice_impl slice_sizes inputs =
       Ndarray.of_floats (Ndarray.dtype operand) slice_sizes out
   | [] -> failwith "lax: dynamic_slice expects an operand"
 
+let dynamic_slice_impl slice_sizes inputs =
+  match inputs with
+  | operand :: idx_nds ->
+      let dt = Ndarray.dtype operand in
+      if is_complex_dtype dt then
+        let re, im = split_complex operand in
+        join_complex dt
+          (dynamic_slice_real_impl slice_sizes (re :: idx_nds))
+          (dynamic_slice_real_impl slice_sizes (im :: idx_nds))
+      else dynamic_slice_real_impl slice_sizes inputs
+  | [] -> failwith "lax: dynamic_slice expects an operand"
+
 let read_all nd =
   let os = Ndarray.shape nd in
   let n = Utils.prod os in
@@ -63,7 +113,7 @@ let read_all nd =
   in
   arr
 
-let dynamic_update_slice_impl inputs =
+let dynamic_update_slice_real_impl inputs =
   match inputs with
   | operand :: update :: idx_nds ->
       let os = Ndarray.shape operand in
@@ -85,6 +135,19 @@ let dynamic_update_slice_impl inputs =
         out.(!flat) <- upd.(f)
       done;
       Ndarray.of_floats (Ndarray.dtype operand) os out
+  | _ -> failwith "lax: dynamic_update_slice expects operand and update"
+
+let dynamic_update_slice_impl inputs =
+  match inputs with
+  | operand :: update :: idx_nds ->
+      let dt = Ndarray.dtype operand in
+      if is_complex_dtype dt then
+        let ore, oim = split_complex operand in
+        let ure, uim = split_complex update in
+        join_complex dt
+          (dynamic_update_slice_real_impl (ore :: ure :: idx_nds))
+          (dynamic_update_slice_real_impl (oim :: uim :: idx_nds))
+      else dynamic_update_slice_real_impl inputs
   | _ -> failwith "lax: dynamic_update_slice expects operand and update"
 
 let mem arr x = Array.exists (fun y -> y = x) arr
@@ -124,7 +187,7 @@ let gather_output_shape (gd : gather_dims) slice_sizes indices_shape
 let gather_shape (gd : gather_dims) slice_sizes indices_shape operand_shape =
   gather_output_shape gd slice_sizes indices_shape (Array.length operand_shape)
 
-let gather_impl (gd : gather_dims) slice_sizes operand indices =
+let gather_real_impl (gd : gather_dims) slice_sizes operand indices =
   let op_shape = Ndarray.shape operand in
   let op_rank = Array.length op_shape in
   let op_str = Utils.strides op_shape in
@@ -176,6 +239,15 @@ let gather_impl (gd : gather_dims) slice_sizes operand indices =
     out.(f) <- op_flat.(!flat)
   done;
   Ndarray.of_floats (Ndarray.dtype operand) out_shape out
+
+let gather_impl (gd : gather_dims) slice_sizes operand indices =
+  let dt = Ndarray.dtype operand in
+  if is_complex_dtype dt then
+    let re, im = split_complex operand in
+    join_complex dt
+      (gather_real_impl gd slice_sizes re indices)
+      (gather_real_impl gd slice_sizes im indices)
+  else gather_real_impl gd slice_sizes operand indices
 
 let window_operand_dims (sd : scatter_dims) rank =
   let out = ref [] in

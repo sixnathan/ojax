@@ -1990,6 +1990,10 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith
         "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
          host-interpreter only (M5 lax/linalg, XLA emission deferred)"
+  | Fft _ ->
+      failwith
+        "Stablehlo.Emit: fft lowers to hlo.fft; host-interpreter only (M5 \
+         lax/fft, XLA emission deferred to PJRT rows)"
   | Xla_call _ ->
       failwith
         "Stablehlo.Emit: a nested Xla_call must be inlined by the caller; the \

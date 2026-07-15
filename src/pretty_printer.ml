@@ -257,6 +257,7 @@ let prim_name = function
   | Schur _ -> "schur"
   | Svd _ -> "svd"
   | Tridiagonal _ -> "tridiagonal"
+  | Fft _ -> "fft"
 
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"

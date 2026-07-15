@@ -29,6 +29,26 @@ def freeze_jaxpr(module):
     return dst, len(cases)
 
 
+def freeze_all(module):
+    records = load_source(module)
+    cases = []
+    for rec in records:
+        cases.extend(ec.expand_record(rec))
+    cases.sort(key=ec.sort_key)
+    cases = ec.assign_ids(cases)
+    doc = {
+        "schema_version": 1,
+        "module": module,
+        "num_generated_cases": ec.NUM,
+        "cases": cases,
+    }
+    dst = os.path.join(ROOT, "spec", module + ".cases.json")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "w", encoding="utf-8") as fh:
+        fh.write(ec.canonical_dumps(doc))
+    return dst, len(cases)
+
+
 def freeze(module):
     if module in (
         "jaxpr",
@@ -41,6 +61,8 @@ def freeze(module):
         "custom_derivatives",
     ):
         return freeze_jaxpr(module)
+    if module == "fft":
+        return freeze_all(module)
     records = load_source(module)
     explicit = []
     generated = []

@@ -250,7 +250,39 @@ let complex_of_re_im a b =
   let ra = to_array a and rb = to_array b in
   Array.init (Array.length ra) (fun i -> { Complex.re = ra.(i); im = rb.(i) })
 
-let broadcast_in_dim_impl shape dims a =
+let split_complex nd =
+  let dt = complex_basetype (Ndarray.dtype nd) in
+  let shape = Ndarray.shape nd in
+  let values = to_carray nd in
+  ( Ndarray.of_floats dt shape (Array.map (fun z -> z.Complex.re) values),
+    Ndarray.of_floats dt shape (Array.map (fun z -> z.Complex.im) values) )
+
+let join_complex dt re im =
+  Ndarray.of_complex dt (Ndarray.shape re) (complex_of_re_im re im)
+
+let lift_complex_unary f operand =
+  let dt = Ndarray.dtype operand in
+  if is_complex_dtype dt then
+    let re, im = split_complex operand in
+    join_complex dt (f re) (f im)
+  else f operand
+
+let lift_complex_multi f operand =
+  let dt = Ndarray.dtype operand in
+  if is_complex_dtype dt then
+    let re, im = split_complex operand in
+    List.map2 (join_complex dt) (f re) (f im)
+  else f operand
+
+let lift_complex_operands f operands =
+  let dt = Ndarray.dtype (List.hd operands) in
+  if is_complex_dtype dt then
+    let parts = List.map split_complex operands in
+    let re = List.map fst parts and im = List.map snd parts in
+    join_complex dt (f re) (f im)
+  else f operands
+
+let broadcast_in_dim_real_impl shape dims a =
   let os = Ndarray.shape a in
   let ostr = Utils.strides os in
   let av = to_array a in
@@ -268,7 +300,11 @@ let broadcast_in_dim_impl shape dims a =
   done;
   Ndarray.of_floats (Ndarray.dtype a) shape out
 
-let reshape_impl ns a = Ndarray.of_floats (Ndarray.dtype a) ns (to_array a)
+let broadcast_in_dim_impl shape dims a =
+  lift_complex_unary (broadcast_in_dim_real_impl shape dims) a
+
+let reshape_real_impl ns a = Ndarray.of_floats (Ndarray.dtype a) ns (to_array a)
+let reshape_impl ns a = lift_complex_unary (reshape_real_impl ns) a
 
 let reduce_sum_impl axes a =
   let os = Ndarray.shape a in
@@ -402,7 +438,7 @@ let reduce_sum_complex_impl axes a =
   done;
   Ndarray.of_complex (Ndarray.dtype a) out_shape out
 
-let select_n_impl = function
+let select_n_real_impl = function
   | which :: cases ->
       let wa = to_array which in
       let carr = Array.of_list (List.map to_array cases) in
@@ -414,7 +450,23 @@ let select_n_impl = function
       [ Ndarray.of_floats out_dt shp out ]
   | [] -> failwith "lax: select_n expects at least a predicate"
 
-let concatenate_impl dim operands =
+let select_n_impl = function
+  | which :: cases as inputs ->
+      let dt = Ndarray.dtype (List.hd cases) in
+      if is_complex_dtype dt then
+        let parts = List.map split_complex cases in
+        let select xs =
+          match select_n_real_impl (which :: xs) with
+          | [ out ] -> out
+          | _ -> failwith "lax: select_n expected one result"
+        in
+        let re = select (List.map fst parts) in
+        let im = select (List.map snd parts) in
+        [ join_complex dt re im ]
+      else select_n_real_impl inputs
+  | [] -> failwith "lax: select_n expects at least a predicate"
+
+let concatenate_real_impl dim operands =
   let shapes = List.map Ndarray.shape operands in
   let out_shape = Utils.concatenate_shape dim shapes in
   let out_str = Utils.strides out_shape in
@@ -439,7 +491,10 @@ let concatenate_impl dim operands =
     operands;
   Ndarray.of_floats dt out_shape out
 
-let pad_impl cfg operand pv =
+let concatenate_impl dim operands =
+  lift_complex_operands (concatenate_real_impl dim) operands
+
+let pad_real_impl cfg operand pv =
   let in_shape = Ndarray.shape operand in
   let n = Array.length in_shape in
   let pad_v = Ndarray.get_f pv [||] in
@@ -489,7 +544,15 @@ let pad_impl cfg operand pv =
   done;
   Ndarray.of_floats (Ndarray.dtype operand) final_shape out
 
-let rev_impl dims operand =
+let pad_impl cfg operand pv =
+  let dt = Ndarray.dtype operand in
+  if is_complex_dtype dt then
+    let ore, oim = split_complex operand in
+    let pre, pim = split_complex pv in
+    join_complex dt (pad_real_impl cfg ore pre) (pad_real_impl cfg oim pim)
+  else pad_real_impl cfg operand pv
+
+let rev_real_impl dims operand =
   let os = Ndarray.shape operand in
   let n = Array.length os in
   let is_rev = Array.make n false in
@@ -508,7 +571,9 @@ let rev_impl dims operand =
   done;
   Ndarray.of_floats (Ndarray.dtype operand) os out
 
-let split_impl sizes axis operand =
+let rev_impl dims operand = lift_complex_unary (rev_real_impl dims) operand
+
+let split_real_impl sizes axis operand =
   let os = Ndarray.shape operand in
   let str = Utils.strides os in
   let av = to_array operand in
@@ -534,10 +599,13 @@ let split_impl sizes axis operand =
   in
   List.rev rev_out
 
+let split_impl sizes axis operand =
+  lift_complex_multi (split_real_impl sizes axis) operand
+
 let squeeze_impl dims operand =
   reshape_impl (Utils.squeeze_shape dims (Ndarray.shape operand)) operand
 
-let stack_impl axis operands =
+let stack_real_impl axis operands =
   let in_shape = Ndarray.shape (List.hd operands) in
   let out_shape = Utils.stack_shape axis (List.length operands) in_shape in
   let out_str = Utils.strides out_shape in
@@ -565,7 +633,10 @@ let stack_impl axis operands =
     operands;
   Ndarray.of_floats dt out_shape out
 
-let tile_impl reps operand =
+let stack_impl axis operands =
+  lift_complex_operands (stack_real_impl axis) operands
+
+let tile_real_impl reps operand =
   let os = Ndarray.shape operand in
   let out_shape = Utils.tile_shape reps os in
   let av = to_array operand in
@@ -581,7 +652,9 @@ let tile_impl reps operand =
   done;
   Ndarray.of_floats (Ndarray.dtype operand) out_shape out
 
-let transpose_impl perm operand =
+let tile_impl reps operand = lift_complex_unary (tile_real_impl reps) operand
+
+let transpose_real_impl perm operand =
   let os = Ndarray.shape operand in
   let out_shape = Utils.transpose_shape perm os in
   let av = to_array operand in
@@ -595,7 +668,10 @@ let transpose_impl perm operand =
   done;
   Ndarray.of_floats (Ndarray.dtype operand) out_shape out
 
-let unstack_impl axis operand =
+let transpose_impl perm operand =
+  lift_complex_unary (transpose_real_impl perm) operand
+
+let unstack_real_impl axis operand =
   let os = Ndarray.shape operand in
   let str = Utils.strides os in
   let av = to_array operand in
@@ -620,6 +696,9 @@ let unstack_impl axis operand =
         out.(f) <- av.(!flat)
       done;
       Ndarray.of_floats dt out_shape out)
+
+let unstack_impl axis operand =
+  lift_complex_multi (unstack_real_impl axis) operand
 
 let reduce_op_impl combine identity axes a =
   let os = Ndarray.shape a in
@@ -924,7 +1003,13 @@ let scatter_dnums = function
 
 let impl prim inputs =
   match prim with
-  | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
+  | Neg ->
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map_c dt Complex.neg a
+          else Ndarray.map dt (fun x -> -.x) a)
+        inputs
   | Sin ->
       un
         (fun a ->
@@ -964,19 +1049,31 @@ let impl prim inputs =
   | Add ->
       bin
         (fun a b ->
-          Ndarray.map2 (Ndarray.dtype a) (add_f (Ndarray.dtype a)) a b)
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map2_c dt Complex.add a b
+          else Ndarray.map2 dt (add_f dt) a b)
         inputs
   | Sub ->
       bin
         (fun a b ->
-          Ndarray.map2 (Ndarray.dtype a) (sub_f (Ndarray.dtype a)) a b)
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map2_c dt Complex.sub a b
+          else Ndarray.map2 dt (sub_f dt) a b)
         inputs
   | Mul ->
       bin
         (fun a b ->
-          Ndarray.map2 (Ndarray.dtype a) (mul_f (Ndarray.dtype a)) a b)
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map2_c dt Complex.mul a b
+          else Ndarray.map2 dt (mul_f dt) a b)
         inputs
-  | Div -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) ( /. ) a b) inputs
+  | Div ->
+      bin
+        (fun a b ->
+          let dt = Ndarray.dtype a in
+          if is_complex_dtype dt then map2_c dt Complex.div a b
+          else Ndarray.map2 dt ( /. ) a b)
+        inputs
   | Max -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.max a b) inputs
   | Min -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.min a b) inputs
   | Pow ->
@@ -994,7 +1091,15 @@ let impl prim inputs =
       bin (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x > y)) a b) inputs
   | Select_n -> select_n_impl inputs
   | Convert_element_type dt ->
-      un (fun a -> Ndarray.map dt (fun x -> x) a) inputs
+      un
+        (fun a ->
+          let src = Ndarray.dtype a in
+          if is_complex_dtype src && is_complex_dtype dt then
+            map_c dt (fun z -> z) a
+          else if is_complex_dtype dt then
+            map_r2c dt (fun x -> { Complex.re = x; im = 0.0 }) a
+          else Ndarray.map dt (fun x -> x) a)
+        inputs
   | Broadcast_in_dim { shape; dims } ->
       un (broadcast_in_dim_impl shape dims) inputs
   | Reshape ns -> un (reshape_impl ns) inputs
@@ -1430,6 +1535,7 @@ let impl prim inputs =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_impl full_matrices compute_uv inputs
   | Tridiagonal { lower } -> Linalg.tridiagonal_impl lower inputs
+  | Fft { fft_type; fft_lengths } -> Fft.fft_impl fft_type fft_lengths inputs
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1736,6 +1842,7 @@ let abstract_eval prim avals =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_aval full_matrices compute_uv avals
   | Tridiagonal _ -> Linalg.tridiagonal_aval avals
+  | Fft { fft_type; fft_lengths } -> Fft.fft_aval fft_type fft_lengths avals
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =
@@ -1755,3 +1862,4 @@ let cumlogsumexp = Control_flow.Loops.cumlogsumexp
 let custom_linear_solve = Control_flow.Solves.custom_linear_solve
 
 module Linalg = Linalg
+module Fft = Fft

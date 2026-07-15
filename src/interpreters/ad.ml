@@ -693,6 +693,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: linalg jvp deferred (M5 gap, forward-eval only)"
+  | Fft _ -> failwith "ad: fft jvp deferred (M5 gap, forward-eval only)"
   | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
   | Xla_call _ -> failwith "ad: jvp of xla_call not supported in M1"
 
@@ -1354,6 +1355,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: linalg transpose deferred (M5 gap, forward-eval only)"
+  | Fft _ -> failwith "ad: fft transpose deferred (M5 gap, forward-eval only)"
 
 and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     value list =

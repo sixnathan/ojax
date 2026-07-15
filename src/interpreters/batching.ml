@@ -664,6 +664,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "batching: vmap of linalg primitive deferred (M5 gap)"
+  | Fft _ -> failwith "batching: vmap of fft primitive deferred (M5 gap)"
   | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :

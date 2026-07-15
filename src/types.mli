@@ -243,6 +243,9 @@ and primitive =
   | Schur of { compute_vectors : bool }
   | Svd of { full_matrices : bool; compute_uv : bool }
   | Tridiagonal of { lower : bool }
+  | Fft of { fft_type : fft_type; fft_lengths : int array }
+
+and fft_type = Fft_fft | Fft_ifft | Fft_rfft | Fft_irfft
 
 and dot_dims = {
   lhs_contract : int array;

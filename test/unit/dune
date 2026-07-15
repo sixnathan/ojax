@@ -53,6 +53,7 @@
   test_scipy_optimize
   test_scipy_stats_linalg
   test_custom_derivatives
+  test_fft
   test_random_alt_prng)
  (libraries ojax alcotest yojson unix)
  (deps

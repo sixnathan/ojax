@@ -4463,6 +4463,86 @@ let composed_suite_for ~run module_name set_name =
   in
   (module_name ^ ":" ^ set_name, coverage :: case_tests)
 
+module FFTL = Ojax.Lax.Fft
+module FFTN = Ojax.Numpy.Fft
+
+let fft_opt_int k p =
+  match U.member k p with `Null -> None | v -> Some (U.to_int v)
+
+let fft_opt_string k p =
+  match U.member k p with `Null -> None | v -> Some (U.to_string v)
+
+let fft_opt_int_array k p =
+  match U.member k p with `Null -> None | v -> Some (to_shape v)
+
+let fft_type p =
+  match U.member "fft_type" p |> U.to_string with
+  | "fft" -> T.Fft_fft
+  | "ifft" -> T.Fft_ifft
+  | "rfft" -> T.Fft_rfft
+  | "irfft" -> T.Fft_irfft
+  | s -> failwith ("fft golden: unknown fft type " ^ s)
+
+let fft_run c inputs =
+  let get () = T.Concrete (nd_of_npz_any (find_member inputs "arg0")) in
+  let n = fft_opt_int "n" c.params in
+  let norm = fft_opt_string "norm" c.params in
+  let s = fft_opt_int_array "s" c.params in
+  let axes = fft_opt_int_array "axes" c.params in
+  if c.primitive = "lax.fft" then
+    [
+      FFTL.fft (get ()) (fft_type c.params)
+        (U.member "fft_lengths" c.params |> to_shape);
+    ]
+  else
+    match c.op with
+    | "fft" ->
+        [
+          FFTN.fft ?n
+            ~axis:(U.member "axis" c.params |> U.to_int)
+            ?norm (get ());
+        ]
+    | "ifft" ->
+        [
+          FFTN.ifft ?n
+            ~axis:(U.member "axis" c.params |> U.to_int)
+            ?norm (get ());
+        ]
+    | "rfft" ->
+        [
+          FFTN.rfft ?n
+            ~axis:(U.member "axis" c.params |> U.to_int)
+            ?norm (get ());
+        ]
+    | "irfft" ->
+        [
+          FFTN.irfft ?n
+            ~axis:(U.member "axis" c.params |> U.to_int)
+            ?norm (get ());
+        ]
+    | "fftn" -> [ FFTN.fftn ?s ?axes ?norm (get ()) ]
+    | "ifftn" -> [ FFTN.ifftn ?s ?axes ?norm (get ()) ]
+    | "rfftn" -> [ FFTN.rfftn ?s ?axes ?norm (get ()) ]
+    | "irfftn" -> [ FFTN.irfftn ?s ?axes ?norm (get ()) ]
+    | "fft2" -> [ FFTN.fft2 ?s ?axes ?norm (get ()) ]
+    | "fftfreq" ->
+        [
+          FFTN.fftfreq
+            ~d:(U.member "d" c.params |> U.to_number)
+            ~dtype:(U.member "dtype" c.params |> U.to_string |> dtype_of_string)
+            (U.member "n" c.params |> U.to_int);
+        ]
+    | "rfftfreq" ->
+        [
+          FFTN.rfftfreq
+            ~d:(U.member "d" c.params |> U.to_number)
+            ~dtype:(U.member "dtype" c.params |> U.to_string |> dtype_of_string)
+            (U.member "n" c.params |> U.to_int);
+        ]
+    | "fftshift" -> [ FFTN.fftshift ?axes (get ()) ]
+    | "ifftshift" -> [ FFTN.ifftshift ?axes (get ()) ]
+    | _ -> failwith ("fft golden: unknown op " ^ c.op)
+
 module KDE = Ojax.Scipy.Stats.Kde
 module MVN = Ojax.Scipy.Stats.Multivariate_normal
 
@@ -4591,5 +4671,7 @@ let () =
       composed_suite_for ~run:spatial_transform_run "spatial_transform" "x64_on";
       composed_suite_for ~run:scipy_stats_run "scipy_stats_linalg" "x64_off";
       composed_suite_for ~run:scipy_stats_run "scipy_stats_linalg" "x64_on";
+      composed_suite_for ~run:fft_run "fft" "x64_off";
+      composed_suite_for ~run:fft_run "fft" "x64_on";
       ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
     ]

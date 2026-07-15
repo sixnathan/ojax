@@ -1,0 +1,20 @@
+opam-version: "2.0"
+version: "0.1.0"
+synopsis: "jax in ocaml"
+description:
+  "Deterministic OCaml port of JAX v0.10.2: typed jaxpr IR, jvp/vmap/grad/jit transforms, host Bigarray interpreter backend, and an optional dlopen'd PJRT/StableHLO XLA backend. Zero Python at build, install, and runtime."
+maintainer: ["nathankarri11@gmail.com"]
+authors: ["sixnathan"]
+license: "Apache-2.0"
+homepage: "https://github.com/sixnathan/ojax"
+bug-reports: "https://github.com/sixnathan/ojax/issues"
+dev-repo: "git+https://github.com/sixnathan/ojax.git"
+depends: [
+  "ocaml" {= "5.4.1"}
+  "dune" {= "3.23.1"}
+  "alcotest" {with-test & = "1.9.0"}
+  "yojson" {with-test & = "2.2.2"}
+]
+build: [
+  ["dune" "build" "-p" name "-j" jobs "@install"]
+]

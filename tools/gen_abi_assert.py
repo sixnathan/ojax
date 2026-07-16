@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 
-HEADER = "reference/pjrt/pjrt_c_api.h"
+HEADER = "src/pjrt/pjrt_c_api.h"
 OUT = "src/pjrt/pjrt_abi_assert.h"
 GUARD = "OJAX_PJRT_ABI_ASSERT_H_"
 
@@ -40,7 +40,7 @@ def probe(root, fields):
         exe = os.path.join(d, "probe")
         with open(src, "w") as fh:
             fh.write("\n".join(lines) + "\n")
-        subprocess.run(["cc", "-I", os.path.join(root, "reference/pjrt"), src, "-o", exe],
+        subprocess.run(["cc", "-I", os.path.join(root, "src/pjrt"), src, "-o", exe],
                        check=True)
         out = subprocess.run([exe], check=True, capture_output=True, text=True).stdout
     values = {}

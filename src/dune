@@ -5,8 +5,7 @@
  (public_name ojax)
  (foreign_stubs
   (language c)
-  (names pjrt_shim lapack_shim)
-  (include_dirs %{project_root}/reference/pjrt))
+  (names pjrt_shim lapack_shim))
  (c_library_flags
   (:include accelerate_flags.sexp)))
 

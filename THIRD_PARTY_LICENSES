@@ -52,3 +52,15 @@ is reproduced verbatim in the top-level `LICENSE.raven` file. The numeric
 results are additionally anchored bit-exactly to JAX v0.10.2
 (`jax._src.random.threefry2x32`) via the checked-in goldens.
 </content>
+
+OpenXLA PJRT C API header (Apache License 2.0)
+----------------------------------------------
+`src/pjrt/pjrt_c_api.h` is the PJRT C API header vendored verbatim from the
+OpenXLA project (https://github.com/openxla/xla, `xla/pjrt/c/pjrt_c_api.h`) at
+the revision matching the pinned jaxlib 0.10.2 toolchain.
+
+  Copyright The OpenXLA Authors.
+  Licensed under the Apache License, Version 2.0.
+
+The full Apache License 2.0 text is reproduced in the top-level `LICENSE.jax`
+file.

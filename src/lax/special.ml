@@ -328,8 +328,12 @@ let igammac_cf_value dtype ax x a =
     y := !y +. 1.0;
     z := !z +. 2.0;
     let yc = !y *. !c in
-    let pk = (!pkm1 *. !z) -. (!pkm2 *. yc) in
-    let qk = (!qkm1 *. !z) -. (!qkm2 *. yc) in
+    let pk =
+      Sys.opaque_identity (!pkm1 *. !z) -. Sys.opaque_identity (!pkm2 *. yc)
+    in
+    let qk =
+      Sys.opaque_identity (!qkm1 *. !z) -. Sys.opaque_identity (!qkm2 *. yc)
+    in
     if qk <> 0.0 then begin
       let r = pk /. qk in
       t := Float.abs ((!ans -. r) /. r);
@@ -360,25 +364,39 @@ let igammac_cf_deriv dtype ax x a =
   let ans = ref (!pkm1 /. !qkm1) in
   let dpkm2_da = ref 0.0 and dqkm2_da = ref 0.0 in
   let dpkm1_da = ref 0.0 and dqkm1_da = ref (-.x) in
-  let dans_da = ref ((!dpkm1_da -. (!ans *. !dqkm1_da)) /. !qkm1) in
+  let dans_da =
+    ref ((!dpkm1_da -. Sys.opaque_identity (!ans *. !dqkm1_da)) /. !qkm1)
+  in
   let continue = ref true in
   while !continue && !c < 2000.0 do
     c := !c +. 1.0;
     y := !y +. 1.0;
     z := !z +. 2.0;
     let yc = !y *. !c in
-    let pk = (!pkm1 *. !z) -. (!pkm2 *. yc) in
-    let qk = (!qkm1 *. !z) -. (!qkm2 *. yc) in
+    let pk =
+      Sys.opaque_identity (!pkm1 *. !z) -. Sys.opaque_identity (!pkm2 *. yc)
+    in
+    let qk =
+      Sys.opaque_identity (!qkm1 *. !z) -. Sys.opaque_identity (!qkm2 *. yc)
+    in
     let dpk_da =
-      (!dpkm1_da *. !z) -. !pkm1 -. (!dpkm2_da *. yc) +. (!pkm2 *. !c)
+      Sys.opaque_identity (!dpkm1_da *. !z)
+      -. !pkm1
+      -. Sys.opaque_identity (!dpkm2_da *. yc)
+      +. Sys.opaque_identity (!pkm2 *. !c)
     in
     let dqk_da =
-      (!dqkm1_da *. !z) -. !qkm1 -. (!dqkm2_da *. yc) +. (!qkm2 *. !c)
+      Sys.opaque_identity (!dqkm1_da *. !z)
+      -. !qkm1
+      -. Sys.opaque_identity (!dqkm2_da *. yc)
+      +. Sys.opaque_identity (!qkm2 *. !c)
     in
     let grad_conditional = ref 1.0 in
     if qk <> 0.0 then begin
       let r = pk /. qk in
-      let dans_da_new = (dpk_da -. (!ans *. dqk_da)) /. qk in
+      let dans_da_new =
+        (dpk_da -. Sys.opaque_identity (!ans *. dqk_da)) /. qk
+      in
       grad_conditional := Float.abs (dans_da_new -. !dans_da);
       ans := r;
       dans_da := dans_da_new

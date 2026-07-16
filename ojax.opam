@@ -9,10 +9,10 @@ homepage: "https://github.com/sixnathan/ojax"
 bug-reports: "https://github.com/sixnathan/ojax/issues"
 dev-repo: "git+https://github.com/sixnathan/ojax.git"
 depends: [
-  "ocaml" {= "5.4.1"}
-  "dune" {= "3.23.1"}
-  "alcotest" {with-test & = "1.9.0"}
-  "yojson" {with-test & = "2.2.2"}
+  "ocaml" {>= "4.14"}
+  "dune" {>= "3.23"}
+  "alcotest" {with-test & >= "1.9.0"}
+  "yojson" {with-test & >= "2.2.2"}
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs "@install"]

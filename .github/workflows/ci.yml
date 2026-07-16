@@ -1,0 +1,23 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        ocaml: [4.14.x, 5.1.x, 5.2.x, 5.3.x, 5.4.x]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml }}
+      - run: opam install -y dune alcotest yojson
+      - run: opam exec -- dune build -p ojax @install
+      - run: opam exec -- dune build
+      - run: opam exec -- ./_build/default/test/unit/test_fft.exe
+      - run: opam exec -- ./_build/default/test/unit/test_custom_batching.exe

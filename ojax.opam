@@ -1,8 +1,7 @@
 opam-version: "2.0"
 version: "0.1.0"
 synopsis: "jax in ocaml"
-description:
-  "Deterministic OCaml port of JAX v0.10.2: typed jaxpr IR, jvp/vmap/grad/jit transforms, host Bigarray interpreter backend, and an optional dlopen'd PJRT/StableHLO XLA backend. Zero Python at build, install, and runtime."
+description: "jax in ocaml"
 maintainer: ["nathankarri11@gmail.com"]
 authors: ["sixnathan"]
 license: "Apache-2.0"

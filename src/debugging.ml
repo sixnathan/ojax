@@ -42,5 +42,19 @@ let callback f args =
 let print fmt args =
   callback (fun values -> print_endline (format_message fmt values)) args
 
+let log ?(level = "INFO") fmt args =
+  callback
+    (fun values ->
+      prerr_endline (Printf.sprintf "%s: %s" level (format_message fmt values)))
+    args
+
+let default_breakpoint values =
+  List.iteri
+    (fun i v -> prerr_endline (Printf.sprintf "%d: %s" i (render v)))
+    values
+
+let breakpoint_handler = ref default_breakpoint
+let set_breakpoint_handler f = breakpoint_handler := f
+let breakpoint args = callback (fun values -> !breakpoint_handler values) args
 let inspect_array_sharding _ ~callback:_ = ()
 let visualize_array_sharding _ = ()

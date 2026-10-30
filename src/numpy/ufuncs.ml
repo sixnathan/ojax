@@ -50,7 +50,27 @@ let broadcast_to v sh =
 let common_shape vs =
   List.fold_left (fun acc v -> broadcast_shapes acc (shape v)) [||] vs
 
+let check_rank_promotion vs =
+  let mode = Config.value Config.numpy_rank_promotion in
+  if mode <> "allow" then begin
+    let ranks =
+      List.sort_uniq compare
+        (List.filter_map
+           (fun v ->
+             match Array.length (shape v) with 0 -> None | r -> Some r)
+           vs)
+    in
+    if List.length ranks > 1 then begin
+      let text =
+        "Operands could not be broadcast together: implicit rank promotion is \
+         disabled by numpy_rank_promotion"
+      in
+      if mode = "raise" then invalid_arg text else prerr_endline text
+    end
+  end
+
 let promote_to dt vs =
+  check_rank_promotion vs;
   let sh = common_shape vs in
   List.map (fun v -> broadcast_to (convert v dt) sh) vs
 

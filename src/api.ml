@@ -55,6 +55,8 @@ let jit_flat (f : value list -> value list) : value list -> value list =
         match Hashtbl.find_opt cache key with
         | Some cj -> cj
         | None ->
+            if Config.value Config.no_tracing then
+              failwith "jit tracing is disabled by no_tracing";
             let cj = Jaxpr.make_jaxpr avals f in
             Hashtbl.replace cache key cj;
             cj
@@ -125,6 +127,8 @@ let jit (f : value Tree.t list -> value Tree.t) :
         | None ->
             let flat_fun, out_tree_get = Api_util.flatten_fun f in_tree in
             let cj =
+              if Config.value Config.no_tracing then
+                failwith "jit tracing is disabled by no_tracing";
               Jaxpr.make_jaxpr avals (Linear_util.call_wrapped flat_fun)
             in
             let ot = out_tree_get () in

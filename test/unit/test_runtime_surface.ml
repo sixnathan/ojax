@@ -92,6 +92,53 @@ let shape_tuples () =
        [| (0, 0); (0, 0) |]
        ())
 
+let raises name f =
+  let failed =
+    try
+      ignore (f ());
+      false
+    with Failure _ | Invalid_argument _ -> true
+  in
+  Alcotest.(check bool) name true failed
+
+let enforced_flags () =
+  let x = f32 [| 2 |] [| 1.0; 2.0 |] in
+  let double args = [ L.add (List.hd args) (List.hd args) ] in
+  let fresh = Api.jit_flat double in
+  raises "no_tracing stops a first trace" (fun () ->
+      Config.with_value Config.no_tracing true (fun () -> fresh [ x ]));
+  ignore (fresh [ x ]);
+  ignore (Config.with_value Config.no_tracing true (fun () -> fresh [ x ]));
+  raises "no_execution stops a compiled call" (fun () ->
+      Config.with_value Config.no_execution true (fun () -> fresh [ x ]));
+  let wide = f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let module UF = Numpy.Ufuncs in
+  ignore (UF.add x wide);
+  raises "rank promotion" (fun () ->
+      Config.with_value Config.numpy_rank_promotion "raise" (fun () ->
+          UF.add x wide));
+  let scalar = f32 [||] [| 1.0 |] in
+  ignore
+    (Config.with_value Config.numpy_rank_promotion "raise" (fun () ->
+         UF.add x scalar))
+
+let debug_hooks () =
+  let seen = ref 0 in
+  Debugging.set_breakpoint_handler (fun values -> seen := List.length values);
+  let x = f32 [| 1 |] [| 1.0 |] in
+  Debugging.breakpoint [ x; x ];
+  Alcotest.(check int) "breakpoint saw the values" 2 !seen;
+  ignore
+    (Api.jit_flat
+       (fun args ->
+         Debugging.breakpoint args;
+         args)
+       [ x ]);
+  Alcotest.(check int) "breakpoint runs under jit" 1 !seen;
+  Debugging.log "value {}" [ x ];
+  let zero = Custom_derivatives.zero_from_primal x in
+  Alcotest.(check (float 0.0)) "zero" 0.0 (Ndarray.get_f (nd zero) [| 0 |])
+
 let () =
   Alcotest.run "runtime_surface"
     [
@@ -103,5 +150,7 @@ let () =
           Alcotest.test_case "monitoring" `Quick monitoring;
           Alcotest.test_case "distributed" `Quick distributed;
           Alcotest.test_case "shape tuples" `Quick shape_tuples;
+          Alcotest.test_case "enforced flags" `Quick enforced_flags;
+          Alcotest.test_case "debug hooks" `Quick debug_hooks;
         ] );
     ]

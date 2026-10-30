@@ -10,3 +10,6 @@ val disable_jit : bool flag
 val debug_nans : bool flag
 val debug_infs : bool flag
 val log_compiles : bool flag
+val no_tracing : bool flag
+val no_execution : bool flag
+val numpy_rank_promotion : string flag

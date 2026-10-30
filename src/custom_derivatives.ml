@@ -96,3 +96,5 @@ let pure_callback host_fun ~result_avals =
     Core.register_custom_rule (Core.Callback_rule { host; result_avals })
   in
   fun args -> Core.bind (Custom_vjp_call id) args
+
+let zero_from_primal v = Ad_util.zeros_like_aval (Core.get_aval v)

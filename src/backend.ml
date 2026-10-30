@@ -91,7 +91,7 @@ let host_fallbacks : string list ref = ref []
 let stats () = (!compiled_on_xla, List.rev !host_fallbacks)
 
 let executor (cj : closed_jaxpr) : value list -> value list =
-  if Lazy.force use_xla then
+  if Lazy.force use_xla then (
     let exec =
       lazy
         (match Stablehlo.Emit.emit_closed_jaxpr cj with
@@ -103,10 +103,12 @@ let executor (cj : closed_jaxpr) : value list -> value list =
             None)
     in
     fun args ->
+      if Config.value Config.no_execution then
+        failwith "compiled execution is disabled by no_execution";
       match Lazy.force exec with
       | Some compiled when List.for_all is_hostable args ->
           xla_run compiled args (List.exists is_device args)
-      | Some _ | None -> Jaxpr.eval_closed_jaxpr cj args
+      | Some _ | None -> Jaxpr.eval_closed_jaxpr cj args)
   else fun args -> Jaxpr.eval_closed_jaxpr cj args
 
 let run_text text args =

@@ -16,3 +16,6 @@ let disable_jit = make "jax_disable_jit" false
 let debug_nans = make "jax_debug_nans" false
 let debug_infs = make "jax_debug_infs" false
 let log_compiles = make "jax_log_compiles" false
+let no_tracing = make "jax_no_tracing" false
+let no_execution = make "jax_no_execution" false
+let numpy_rank_promotion = make "jax_numpy_rank_promotion" "allow"

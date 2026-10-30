@@ -37,3 +37,5 @@ val pure_callback :
   result_avals:aval list ->
   value list ->
   value list
+
+val zero_from_primal : value -> value

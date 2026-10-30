@@ -113,6 +113,32 @@ val e : float
 val euler_gamma : float
 val inf : float
 val nan : float
+
+type printoptions = {
+  precision : int;
+  threshold : int;
+  edgeitems : int;
+  suppress : bool;
+}
+
+val get_printoptions : unit -> printoptions
+
+val set_printoptions :
+  ?precision:int ->
+  ?threshold:int ->
+  ?edgeitems:int ->
+  ?suppress:bool ->
+  unit ->
+  unit
+
+val with_printoptions :
+  ?precision:int ->
+  ?threshold:int ->
+  ?edgeitems:int ->
+  ?suppress:bool ->
+  (unit -> 'a) ->
+  'a
+
 val array_str : value -> string
 val array_repr : value -> string
 val packbits : ?axis:int -> ?bitorder:string -> value -> value

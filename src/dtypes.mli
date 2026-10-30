@@ -36,3 +36,5 @@ val issubdtype :
   | `Signed
   | `Unsigned ] ->
   bool
+
+val isdtype : Dtype.t -> string -> bool

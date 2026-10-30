@@ -380,6 +380,43 @@ def _linalg_batch_ops():
     }
 
 
+def _surface_batch_ops():
+    lx = jax.lax
+    over = lambda f, a: jax.vmap(f, axis_name="i")(a)
+    key = jnp.array([1, 2, 3, 4], dtype=jnp.uint32)
+
+    def rng(p):
+        algo = getattr(lx.RandomAlgorithm, p["algorithm"])
+        k, v = lx.rng_bit_generator(key, tuple(p["shape"]), dtype=jnp.dtype(p["dtype"]), algorithm=algo)
+        return k, v
+
+    def uf_add():
+        return jnp.frompyfunc(lambda x, y: x * y + 1.0, 2, 1)
+
+    return {
+        "sb_approx_max": lambda a, p: tuple(lx.approx_max_k(a, p["k"])),
+        "sb_approx_min": lambda a, p: tuple(lx.approx_min_k(a, p["k"])),
+        "sb_broadcast_like": lambda a, b, p: lx.broadcast_like(a, b),
+        "sb_ragged_dot": lambda a, b, p: lx.ragged_dot(a, b, jnp.array(p["groups"])),
+        "sb_conv_local": lambda a, b, p: lx.conv_general_dilated_local(a, b, (1, 1), "VALID", tuple(p["filter"])),
+        "sb_rng": lambda a, p: rng(p),
+        "sb_all_to_all": lambda a, p: over(lambda x: lx.all_to_all(x, "i", p["split"], p["concat"], tiled=p["tiled"]), a),
+        "sb_pswapaxes": lambda a, p: over(lambda x: lx.pswapaxes(x, "i", p["axis"]), a),
+        "sb_psum_scatter": lambda a, p: over(lambda x: lx.psum_scatter(x, "i", scatter_dimension=p["dim"], tiled=p["tiled"]), a),
+        "sb_pshuffle": lambda a, p: over(lambda x: lx.pshuffle(x, "i", p["perm"]), a),
+        "sb_mgrid_int": lambda a, p: jnp.mgrid[0:4, 1:7:2],
+        "sb_mgrid_count": lambda a, p: jnp.mgrid[0:1:5j, 0:2:3j],
+        "sb_mgrid_one": lambda a, p: jnp.mgrid[1:5],
+        "sb_ogrid": lambda a, p: tuple(jnp.ogrid[0:3, 0:1:4j]),
+        "sb_r": lambda a, b, p: jnp.r_[a, b],
+        "sb_c": lambda a, b, p: jnp.c_[a, b],
+        "sb_ufunc_call": lambda a, b, p: uf_add()(a, b),
+        "sb_ufunc_reduce": lambda a, p: uf_add().reduce(a, axis=p["axis"]),
+        "sb_ufunc_accumulate": lambda a, p: uf_add().accumulate(a, axis=p["axis"]),
+        "sb_ufunc_outer": lambda a, b, p: uf_add().outer(a, b),
+    }
+
+
 def _default_random_ops():
     from jax import random as jr
     k = lambda p: jr.key(p["seed"])
@@ -474,6 +511,7 @@ OPS.update(_gap_ops())
 OPS.update(_complex_linalg_ops())
 OPS.update(_complex_grad_ops())
 OPS.update(_linalg_batch_ops())
+OPS.update(_surface_batch_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -938,5 +976,44 @@ def _linalg_batch_cases():
     return out
 
 
+def _surface_batch_cases():
+    def two(sa, sb):
+        return {"a": {"kind": "real", "shape": sa}, "b": {"kind": "real", "shape": sb}}
+
+    r = _real_input
+    out = [
+        ("sb_approx_max", r([5]), {"k": 2}),
+        ("sb_approx_max", r([3, 4]), {"k": 2}),
+        ("sb_approx_min", r([5]), {"k": 2}),
+        ("sb_broadcast_like", two([3], [2, 3]), {}),
+        ("sb_ragged_dot", two([3, 2], [2, 2, 4]), {"groups": [1, 2]}),
+        ("sb_conv_local", two([1, 2, 4, 4], [3, 8, 3, 3]), {"filter": [2, 2]}),
+        ("sb_all_to_all", r([3, 3]), {"split": 0, "concat": 0, "tiled": False}),
+        ("sb_all_to_all", r([3, 3, 2]), {"split": 0, "concat": 1, "tiled": False}),
+        ("sb_all_to_all", r([3, 2, 3]), {"split": 1, "concat": 0, "tiled": False}),
+        ("sb_all_to_all", r([2, 4, 3]), {"split": 0, "concat": 1, "tiled": True}),
+        ("sb_pswapaxes", r([3, 3, 2]), {"axis": 0}),
+        ("sb_psum_scatter", r([3, 3]), {"dim": 0, "tiled": False}),
+        ("sb_psum_scatter", r([2, 4]), {"dim": 0, "tiled": True}),
+        ("sb_pshuffle", r([3, 2]), {"perm": [1, 2, 0]}),
+        ("sb_mgrid_int", r([1]), {}),
+        ("sb_mgrid_count", r([1]), {}),
+        ("sb_mgrid_one", r([1]), {}),
+        ("sb_ogrid", r([1]), {}),
+        ("sb_r", two([2], [3]), {}),
+        ("sb_c", two([3], [3]), {}),
+        ("sb_c", two([2, 2], [2, 1]), {}),
+        ("sb_ufunc_call", two([2, 1], [3]), {}),
+        ("sb_ufunc_reduce", r([4]), {"axis": 0}),
+        ("sb_ufunc_reduce", r([2, 3]), {"axis": 1}),
+        ("sb_ufunc_accumulate", r([2, 3]), {"axis": 1}),
+        ("sb_ufunc_outer", two([2], [3]), {}),
+    ]
+    for dt in ["uint8", "uint16", "uint32"]:
+        for algo in ["RNG_DEFAULT", "RNG_THREE_FRY", "RNG_PHILOX"]:
+            out.append(("sb_rng", r([1]), {"shape": [2, 3], "dtype": dt, "algorithm": algo}))
+    return out
+
+
 def all_cases():
-    return _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _surface_batch_cases() + _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

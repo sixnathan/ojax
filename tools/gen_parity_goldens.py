@@ -79,7 +79,7 @@ def gen_set(cases, x64, outdir):
         arrays = {k: draw(rng, c["inputs"][k], c["dtype"]) for k in sorted(c["inputs"])}
         result = registry.OPS[c["op"]](**arrays, p=c["params"])
         outs = list(result) if isinstance(result, (tuple, list)) else [result]
-        outs = [np.asarray(o) for o in outs]
+        outs = [np.asarray(o, order="C") for o in outs]
         out_arrays = {"out" + str(i): o for i, o in enumerate(outs)}
         np.savez(os.path.join(outdir, "inputs", c["case_id"] + ".npz"), **arrays)
         np.savez(os.path.join(outdir, "outputs", c["case_id"] + ".npz"), **out_arrays)

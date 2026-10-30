@@ -935,20 +935,81 @@ let euler_gamma = 0.5772156649015329
 let inf = Float.infinity
 let nan = Float.nan
 
-let rec render_elements nd idx dims =
+type printoptions = {
+  precision : int;
+  threshold : int;
+  edgeitems : int;
+  suppress : bool;
+}
+
+let default_printoptions =
+  { precision = 8; threshold = 1000; edgeitems = 3; suppress = false }
+
+let current_printoptions = ref default_printoptions
+let get_printoptions () = !current_printoptions
+
+let set_printoptions ?precision ?threshold ?edgeitems ?suppress () =
+  let o = !current_printoptions in
+  current_printoptions :=
+    {
+      precision = Option.value precision ~default:o.precision;
+      threshold = Option.value threshold ~default:o.threshold;
+      edgeitems = Option.value edgeitems ~default:o.edgeitems;
+      suppress = Option.value suppress ~default:o.suppress;
+    }
+
+let with_printoptions ?precision ?threshold ?edgeitems ?suppress f =
+  let saved = !current_printoptions in
+  set_printoptions ?precision ?threshold ?edgeitems ?suppress ();
+  Fun.protect ~finally:(fun () -> current_printoptions := saved) f
+
+let render_float o v =
+  if Float.is_nan v then "nan"
+  else if Float.is_integer v && Float.abs v < 1e16 then Printf.sprintf "%.0f." v
+  else if v = Float.infinity then "inf"
+  else if v = Float.neg_infinity then "-inf"
+  else if o.suppress && Float.abs v < 1e16 then (
+    let text = Printf.sprintf "%.*f" o.precision v in
+    let n = ref (String.length text) in
+    while text.[!n - 1] = '0' do
+      decr n
+    done;
+    String.sub text 0 !n)
+  else Printf.sprintf "%.*g" o.precision v
+
+let render_element o nd idx =
+  match Ndarray.dtype nd with
+  | Dtype.Bool -> if Ndarray.get_f nd idx <> 0.0 then "True" else "False"
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      let z = Ndarray.get_c nd idx in
+      let im = render_float o (Float.abs z.Complex.im) in
+      Printf.sprintf "%s%s%sj"
+        (render_float o z.Complex.re)
+        (if z.Complex.im < 0.0 then "-" else "+")
+        im
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 ->
+      render_float o (Ndarray.get_f nd idx)
+  | _ -> Int64.to_string (Ndarray.get_i64 nd idx)
+
+let rec render_elements o summarize nd idx dims =
   match dims with
-  | [] ->
-      let v = Ndarray.get_f nd (Array.of_list (List.rev idx)) in
-      Printf.sprintf "%g" v
+  | [] -> render_element o nd (Array.of_list (List.rev idx))
   | d :: rest ->
-      "["
-      ^ String.concat " "
-          (List.init d (fun i -> render_elements nd (i :: idx) rest))
-      ^ "]"
+      let item i = render_elements o summarize nd (i :: idx) rest in
+      let items =
+        if summarize && d > 2 * o.edgeitems then
+          List.init o.edgeitems item @ [ "..." ]
+          @ List.init o.edgeitems (fun i -> item (d - o.edgeitems + i))
+        else List.init d item
+      in
+      "[" ^ String.concat " " items ^ "]"
 
 let array_str a =
   let nd = host "array_str" a in
-  render_elements nd [] (Array.to_list (Ndarray.shape nd))
+  let o = !current_printoptions in
+  let sh = Ndarray.shape nd in
+  let summarize = Array.fold_left ( * ) 1 sh > o.threshold in
+  render_elements o summarize nd [] (Array.to_list sh)
 
 let array_repr a =
   "Array(" ^ array_str a ^ ", dtype=" ^ Dtype.short_name (dtype_of a) ^ ")"

@@ -1056,6 +1056,110 @@ let linalg_batch_run op params a b =
       Some [ d; UF.absolute e ]
   | _ -> None
 
+let surface_batch_run op params a b =
+  let module X = Ojax.Lax_extras in
+  let module P = Ojax.Parallel in
+  let module G = Ojax.Numpy.Grids in
+  let module UFN = Ojax.Numpy.Ufunc in
+  let over f =
+    List.hd
+      (Ojax.Interpreters.Batching.vmap ~axis_name:"i"
+         (fun args -> [ f (List.hd args) ])
+         [ Some 0 ]
+         [ a () ])
+  in
+  let int_p k = U.to_int (U.member k params) in
+  let bool_p k = U.to_bool (U.member k params) in
+  let int_list k = List.map U.to_int (U.to_list (U.member k params)) in
+  let uf =
+    UFN.frompyfunc
+      (fun args ->
+        match args with
+        | [ x; y ] -> [ UF.add (UF.multiply x y) (L.full_like x 1.0) ]
+        | _ -> failwith "parity: ufunc arity")
+      ~nin:2 ~nout:1
+  in
+  match op with
+  | "sb_approx_max" ->
+      let v, i = X.approx_max_k (a ()) (int_p "k") in
+      Some [ v; i ]
+  | "sb_approx_min" ->
+      let v, i = X.approx_min_k (a ()) (int_p "k") in
+      Some [ v; i ]
+  | "sb_broadcast_like" -> Some [ X.broadcast_like (a ()) (b ()) ]
+  | "sb_ragged_dot" ->
+      let groups = int_list "groups" in
+      let sizes =
+        T.Concrete
+          (Ojax.Ndarray.of_floats
+             (if Ojax.Config.x64_enabled () then Ojax.Dtype.I64
+              else Ojax.Dtype.I32)
+             [| List.length groups |]
+             (Array.of_list (List.map float_of_int groups)))
+      in
+      Some [ X.ragged_dot (a ()) (b ()) sizes ]
+  | "sb_conv_local" ->
+      Some
+        [
+          X.conv_general_dilated_local (a ()) (b ())
+            ~filter_shape:(Array.of_list (int_list "filter"));
+        ]
+  | "sb_rng" ->
+      let key =
+        T.Concrete
+          (Ojax.Ndarray.of_floats Ojax.Dtype.Uint32 [| 4 |] [| 1.; 2.; 3.; 4. |])
+      in
+      let dtype =
+        match U.to_string (U.member "dtype" params) with
+        | "uint8" -> Ojax.Dtype.Uint8
+        | "uint16" -> Ojax.Dtype.Uint16
+        | _ -> Ojax.Dtype.Uint32
+      in
+      let algorithm =
+        match U.to_string (U.member "algorithm" params) with
+        | "RNG_THREE_FRY" -> X.Three_fry
+        | "RNG_PHILOX" -> X.Philox
+        | _ -> X.Rng_default
+      in
+      let k, v =
+        X.rng_bit_generator ~dtype ~algorithm key
+          (Array.of_list (int_list "shape"))
+      in
+      Some [ k; v ]
+  | "sb_all_to_all" ->
+      Some
+        [
+          over (fun x ->
+              P.all_to_all ~tiled:(bool_p "tiled") x ~axis_name:"i"
+                ~split_axis:(int_p "split") ~concat_axis:(int_p "concat"));
+        ]
+  | "sb_pswapaxes" ->
+      Some [ over (fun x -> P.pswapaxes x ~axis_name:"i" ~axis:(int_p "axis")) ]
+  | "sb_psum_scatter" ->
+      Some
+        [
+          over (fun x ->
+              P.psum_scatter ~scatter_dimension:(int_p "dim")
+                ~tiled:(bool_p "tiled") x ~axis_name:"i");
+        ]
+  | "sb_pshuffle" ->
+      Some
+        [ over (fun x -> P.pshuffle x ~axis_name:"i" ~perm:(int_list "perm")) ]
+  | "sb_mgrid_int" ->
+      Some [ G.mgrid [ G.Step (0., 4., 1.); G.Step (1., 7., 2.) ] ]
+  | "sb_mgrid_count" ->
+      Some [ G.mgrid [ G.Count (0., 1., 5); G.Count (0., 2., 3) ] ]
+  | "sb_mgrid_one" -> Some [ G.mgrid [ G.Step (1., 5., 1.) ] ]
+  | "sb_ogrid" -> Some (G.ogrid [ G.Step (0., 3., 1.); G.Count (0., 1., 4) ])
+  | "sb_r" -> Some [ G.r_ [ a (); b () ] ]
+  | "sb_c" -> Some [ G.c_ [ a (); b () ] ]
+  | "sb_ufunc_call" -> Some (UFN.call uf [ a (); b () ])
+  | "sb_ufunc_reduce" -> Some [ UFN.reduce ~axis:(int_p "axis") uf (a ()) ]
+  | "sb_ufunc_accumulate" ->
+      Some [ UFN.accumulate ~axis:(int_p "axis") uf (a ()) ]
+  | "sb_ufunc_outer" -> Some [ UFN.outer uf (a ()) (b ()) ]
+  | _ -> None
+
 let fft_run op params a =
   match op with
   | "fft" -> fft1 F.fft (a ()) params
@@ -1082,6 +1186,7 @@ let run op params get =
   let c () = get "c" in
   let runners =
     [
+      (fun () -> surface_batch_run op params a b);
       (fun () -> linalg_batch_run op params a b);
       (fun () -> complex_grad_run op a);
       (fun () -> complex_linalg_run op a b);

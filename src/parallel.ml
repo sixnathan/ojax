@@ -1,5 +1,6 @@
 open Types
 module B = Interpreters.Batching
+module L = Lax_api
 
 let collective kind axis_name v =
   ignore (B.find_axis axis_name);
@@ -30,3 +31,86 @@ let ppermute v ~axis_name ~perm =
 let axis_index ~axis_name =
   ignore (B.find_axis axis_name);
   Core.bind1 (Collective { kind = Axis_index; axis_name }) []
+
+let chunk_of v ~axis ~index ~size = L.dynamic_slice_in_dim ~axis v index size
+
+let tiled_all_to_all x ~axis_name ~split_axis ~concat_axis =
+  let n = axis_size ~axis_name in
+  let sh = (Core.get_aval x).shape in
+  if sh.(split_axis) mod n <> 0 then
+    invalid_arg
+      (Printf.sprintf
+         "The size of all_to_all split_axis (%d) has to be divisible by the \
+          size of the named axis %s (%d)"
+         sh.(split_axis) axis_name n);
+  let size = sh.(split_axis) / n in
+  let gathered = all_gather x ~axis_name in
+  let me = axis_index ~axis_name in
+  let start =
+    L.mul me (L.full [||] (float_of_int size) (Core.get_aval me).dtype)
+  in
+  let pieces =
+    List.init n (fun j ->
+        chunk_of
+          (L.index_in_dim ~axis:0 ~keepdims:false gathered j)
+          ~axis:split_axis ~index:start ~size)
+  in
+  L.concatenate pieces concat_axis
+
+let all_to_all ?(tiled = false) x ~axis_name ~split_axis ~concat_axis =
+  if tiled then tiled_all_to_all x ~axis_name ~split_axis ~concat_axis
+  else begin
+    let n = axis_size ~axis_name in
+    let sh = (Core.get_aval x).shape in
+    if n <> sh.(split_axis) then
+      invalid_arg
+        (Printf.sprintf
+           "all_to_all requires the size of the mapped axis axis_name to equal \
+            x.shape[split_axis], but they are %d and %d respectively."
+           n sh.(split_axis));
+    if split_axis = concat_axis then
+      tiled_all_to_all x ~axis_name ~split_axis ~concat_axis
+    else
+      let concat, split =
+        if split_axis < concat_axis then (concat_axis + 1, split_axis)
+        else (concat_axis, split_axis + 1)
+      in
+      let expanded = L.expand_dims x [| concat |] in
+      L.squeeze
+        (tiled_all_to_all expanded ~axis_name ~split_axis:split
+           ~concat_axis:concat)
+        [| split |]
+  end
+
+let pswapaxes x ~axis_name ~axis =
+  all_to_all x ~axis_name ~split_axis:axis ~concat_axis:axis
+
+let psum_scatter ?(scatter_dimension = 0) ?(tiled = false) x ~axis_name =
+  let n = axis_size ~axis_name in
+  let sh = (Core.get_aval x).shape in
+  let summed = psum x ~axis_name in
+  let me = axis_index ~axis_name in
+  if tiled then begin
+    if sh.(scatter_dimension) mod n <> 0 then
+      invalid_arg "psum_scatter: scatter_dimension must divide by the axis size";
+    let size = sh.(scatter_dimension) / n in
+    let start =
+      L.mul me (L.full [||] (float_of_int size) (Core.get_aval me).dtype)
+    in
+    chunk_of summed ~axis:scatter_dimension ~index:start ~size
+  end
+  else begin
+    if sh.(scatter_dimension) <> n then
+      invalid_arg
+        "psum_scatter: scatter_dimension must equal the axis size when not \
+         tiled";
+    L.squeeze
+      (chunk_of summed ~axis:scatter_dimension ~index:me ~size:1)
+      [| scatter_dimension |]
+  end
+
+let pshuffle x ~axis_name ~perm =
+  let sorted = List.sort compare perm in
+  if sorted <> List.init (List.length perm) Fun.id then
+    invalid_arg "`perm` does not represent a permutation";
+  ppermute x ~axis_name ~perm:(List.mapi (fun i src -> (src, i)) perm)

@@ -270,3 +270,19 @@ let issubdtype (d : Dtype.t) kind =
   | `Floating, (Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64) -> true
   | `Complex, (Dtype.Complex64 | Dtype.Complex128) -> true
   | _ -> false
+
+let isdtype dt kind =
+  let f = Dtype.short_name dt in
+  ignore f;
+  let matches = function
+    | "bool" -> dt = Dtype.Bool
+    | "signed integer" -> List.mem dt Dtype.[ I8; I16; I32; I64 ]
+    | "unsigned integer" -> List.mem dt Dtype.[ Uint8; Uint16; Uint32; Uint64 ]
+    | "integral" ->
+        List.mem dt Dtype.[ I8; I16; I32; I64; Uint8; Uint16; Uint32; Uint64 ]
+    | "real floating" -> List.mem dt Dtype.[ F16; Bf16; F32; F64 ]
+    | "complex floating" -> List.mem dt Dtype.[ Complex64; Complex128 ]
+    | "numeric" -> dt <> Dtype.Bool
+    | k -> invalid_arg ("Unrecognized data type kind: " ^ k)
+  in
+  matches kind

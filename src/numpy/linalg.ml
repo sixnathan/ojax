@@ -90,13 +90,29 @@ and solve a b =
   let m = sa.(na - 1) in
   let b_vec = ndim b = 1 in
   let bmat = if b_vec then NL.reshape b [| m; 1 |] else b in
+  let sb = shape bmat in
+  let nb = Array.length sb in
+  let batch =
+    Lax_api.broadcast_shapes
+      [ Array.sub sa 0 (na - 2); Array.sub sb 0 (nb - 2) ]
+  in
+  let k = sb.(nb - 1) in
+  let a = NL.broadcast_to a (Array.append batch [| m; m |]) in
+  let bmat = NL.broadcast_to bmat (Array.append batch [| m; k |]) in
   let lu, _piv, perm = LL.lu a in
-  let x0 = IDX.take ~axis:0 bmat perm in
+  let rank = Array.length batch + 2 in
+  let x0 =
+    if rank = 2 then IDX.take ~axis:0 bmat perm
+    else
+      let expanded = NL.expand_dims perm [| -1 |] in
+      IDX.take_along_axis ~axis:(rank - 2) bmat
+        (NL.broadcast_to expanded (Array.append batch [| m; k |]))
+  in
   let x1 =
     LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x0
   in
   let x2 = LL.triangular_solve ~left_side:true ~lower:false lu x1 in
-  if b_vec then NL.reshape x2 [| m |] else x2
+  if b_vec then NL.reshape x2 (Array.append batch [| m |]) else x2
 
 and inv a =
   let sa = shape a in

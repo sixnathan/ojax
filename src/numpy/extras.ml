@@ -952,3 +952,65 @@ let array_str a =
 
 let array_repr a =
   "Array(" ^ array_str a ^ ", dtype=" ^ Dtype.short_name (dtype_of a) ^ ")"
+
+let packbits ?axis ?(bitorder = "big") a =
+  let source, ax =
+    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
+  in
+  let sh = shape source in
+  let n = sh.(ax) in
+  let bytes_out = (n + 7) / 8 in
+  let moved = NL.moveaxis [| ax |] [| rank source - 1 |] source in
+  let msh = shape moved in
+  let lanes = size_of moved / Stdlib.max n 1 in
+  let data = flat_floats (host "packbits" moved) in
+  let out =
+    Array.init (lanes * bytes_out) (fun k ->
+        let lane = k / bytes_out and byte = k mod bytes_out in
+        let value = ref 0 in
+        for bit = 0 to 7 do
+          let pos = (byte * 8) + bit in
+          if pos < n && data.((lane * n) + pos) <> 0.0 then
+            value :=
+              !value
+              lor if bitorder = "little" then 1 lsl bit else 1 lsl (7 - bit)
+        done;
+        float_of_int !value)
+  in
+  let out_shape = Array.copy msh in
+  out_shape.(Array.length msh - 1) <- bytes_out;
+  NL.moveaxis
+    [| rank source - 1 |]
+    [| ax |]
+    (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))
+
+let unpackbits ?axis ?count ?(bitorder = "big") a =
+  let source, ax =
+    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
+  in
+  let n = (shape source).(ax) in
+  let moved = NL.moveaxis [| ax |] [| rank source - 1 |] source in
+  let msh = shape moved in
+  let lanes = size_of moved / Stdlib.max n 1 in
+  let data = flat_floats (host "unpackbits" moved) in
+  let total = n * 8 in
+  let keep =
+    match count with
+    | None -> total
+    | Some c when c >= 0 -> Stdlib.min c total
+    | Some c -> Stdlib.max (total + c) 0
+  in
+  let out =
+    Array.init (lanes * keep) (fun k ->
+        let lane = k / keep and pos = k mod keep in
+        let byte = int_of_float data.((lane * n) + (pos / 8)) in
+        let bit = pos mod 8 in
+        let mask = if bitorder = "little" then 1 lsl bit else 1 lsl (7 - bit) in
+        if byte land mask <> 0 then 1.0 else 0.0)
+  in
+  let out_shape = Array.copy msh in
+  out_shape.(Array.length msh - 1) <- keep;
+  NL.moveaxis
+    [| rank source - 1 |]
+    [| ax |]
+    (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))

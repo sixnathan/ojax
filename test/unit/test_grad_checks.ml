@@ -359,6 +359,32 @@ let traced_cond () =
   Alcotest.(check (float 1e-9)) "true branch" 4.0 (value 1.0 2.0);
   Alcotest.(check (float 1e-9)) "false branch" 3.0 (value 0.0 2.0)
 
+let batched_linalg () =
+  let module NLA = Ojax.Numpy.Linalg in
+  let module LL = Ojax.Lax.Linalg in
+  let eye_stack = f64 [| 2; 2; 2 |] [| 2.; 0.; 0.; 2.; 4.; 0.; 0.; 4. |] in
+  let value v idx = Ndarray.get_f (to_nd v) idx in
+  let check name expected actual =
+    Alcotest.(check (float 1e-9)) name expected actual
+  in
+  check "inv" 0.25 (value (NLA.inv eye_stack) [| 1; 0; 0 |]);
+  check "det" 16.0 (value (NLA.det eye_stack) [| 1 |]);
+  check "cholesky" 2.0 (value (LL.cholesky eye_stack) [| 1; 1; 1 |]);
+  let rhs = f64 [| 2; 2 |] [| 2.; 4.; 4.; 8. |] in
+  check "solve" 2.0
+    (value
+       (NLA.solve eye_stack (f64 [| 2; 2; 1 |] [| 2.; 4.; 8.; 8. |]))
+       [| 1; 1; 0 |]);
+  ignore rhs;
+  (match NLA.svd eye_stack with
+  | _ :: s :: _ -> check "svd values" 4.0 (value s [| 1; 0 |])
+  | _ -> Alcotest.fail "svd arity");
+  (match NLA.qr eye_stack with
+  | [ _; r ] -> check "qr" 4.0 (Float.abs (value r [| 1; 1; 1 |]))
+  | _ -> Alcotest.fail "qr arity");
+  let w, _ = NLA.eigh eye_stack in
+  check "eigh" 4.0 (value w [| 1; 1 |])
+
 let constant_output () =
   let f a =
     match a with
@@ -399,6 +425,7 @@ let fft_rules () =
 let () =
   Alcotest.run "grad_checks"
     [
+      ("batched", [ Alcotest.test_case "linalg" `Quick batched_linalg ]);
       ("fft", [ Alcotest.test_case "transposes" `Quick fft_rules ]);
       ( "order and products",
         [

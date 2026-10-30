@@ -244,76 +244,109 @@ let qr_jvp ~full_matrices a t =
       (outs, [ dq; dr ])
   | _ -> failwith "ad: qr arity"
 
+let flat_gather v indices =
+  let n = Array.fold_left ( * ) 1 (Core.get_aval v).shape in
+  let m = Array.fold_left ( * ) 1 (Core.get_aval indices).shape in
+  let flat = b1 (Reshape [| n |]) [ v ] in
+  let idx = b1 (Reshape [| m; 1 |]) [ indices ] in
+  b1
+    (Gather
+       {
+         dimension_numbers =
+           {
+             offset_dims = [||];
+             collapsed_slice_dims = [| 0 |];
+             start_index_map = [| 0 |];
+             g_operand_batching_dims = [||];
+             g_start_indices_batching_dims = [||];
+           };
+         slice_sizes = [| 1 |];
+       })
+    [ flat; idx ]
+
+let take_along_axis_value v perm ~axis =
+  let shape = (Core.get_aval v).shape in
+  let ndim = Array.length shape in
+  let perm_shape = (Core.get_aval perm).shape in
+  let idt = (Core.get_aval perm).dtype in
+  let strides = Array.make ndim 1 in
+  for d = ndim - 2 downto 0 do
+    strides.(d) <- strides.(d + 1) * shape.(d + 1)
+  done;
+  let total = Array.fold_left ( * ) 1 perm_shape in
+  let rest =
+    Array.init total (fun i ->
+        let offset = ref 0 and remaining = ref i in
+        for d = ndim - 1 downto 0 do
+          let coord = !remaining mod perm_shape.(d) in
+          remaining := !remaining / perm_shape.(d);
+          if d <> axis then offset := !offset + (coord * strides.(d))
+        done;
+        float_of_int !offset)
+  in
+  let offsets = Concrete (Ndarray.of_floats idt perm_shape rest) in
+  let along = mul perm (const_like perm (float_of_int strides.(axis))) in
+  let picked = flat_gather v (add along offsets) in
+  b1 (Reshape perm_shape) [ picked ]
+
 let lu_jvp a t =
   let outs = Core.bind Lu [ a ] in
   match outs with
   | [ lu; pivots; permutation ] ->
-      let shape = (Core.get_aval a).shape in
+      let aval_a = Core.get_aval a in
+      let shape = aval_a.shape in
       let ndim = Array.length shape in
+      let batch = Array.sub shape 0 (ndim - 2) in
       let m = shape.(ndim - 2) and n = shape.(ndim - 1) in
       let k = min m n in
-      let dt = (Core.get_aval a).dtype in
+      let dt = aval_a.dtype in
       let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
-      let identity size =
-        Concrete
-          (Ndarray.of_floats dt [| size; size |]
-             (Array.init (size * size) (fun i ->
-                  if i mod (size + 1) = 0 then 1.0 else 0.0)))
+      let square size keep =
+        matrix_mask
+          (Ad_util.zeros_like_aval
+             { aval_a with shape = Array.append batch [| size; size |] })
+          keep
       in
-      let perm_nd =
-        match permutation with
-        | Concrete nd -> nd
-        | Device b -> Pjrt.Buffer.to_host b
-        | Tracer _ -> failwith "ad: lu jvp requires a concrete permutation"
+      let perm_rank = Array.length (Core.get_aval permutation).shape in
+      let expanded =
+        b1
+          (Reshape (Array.append (Core.get_aval permutation).shape [| 1 |]))
+          [ permutation ]
       in
-      let rows =
-        List.init m (fun i ->
-            let row = int_of_float (Ndarray.get_f perm_nd [| i |]) in
-            let start = [| row; 0 |] and limit = [| row + 1; n |] in
-            b1
-              (Slice
-                 {
-                   start_indices = start;
-                   limit_indices = limit;
-                   strides = None;
-                 })
-              [ t ])
+      let broadcast_perm =
+        b1
+          (Broadcast_in_dim { shape; dims = Array.init (perm_rank + 1) Fun.id })
+          [ expanded ]
       in
-      let x = b1 (Concatenate 0) rows in
-      let lu_left =
+      let x = take_along_axis_value t broadcast_perm ~axis:(ndim - 2) in
+      let slice_last rows cols =
+        let limit = Array.copy shape in
+        limit.(ndim - 2) <- rows;
+        limit.(ndim - 1) <- cols;
         b1
           (Slice
              {
-               start_indices = [| 0; 0 |];
-               limit_indices = [| m; k |];
+               start_indices = Array.make ndim 0;
+               limit_indices = limit;
                strides = None;
              })
           [ lu ]
       in
-      let lu_top =
-        b1
-          (Slice
-             {
-               start_indices = [| 0; 0 |];
-               limit_indices = [| k; n |];
-               strides = None;
-             })
-          [ lu ]
+      let pad_last row_extra col_extra v =
+        let cfg = Array.make ndim (0, 0, 0) in
+        cfg.(ndim - 2) <- (0, row_extra, 0);
+        cfg.(ndim - 1) <- (0, col_extra, 0);
+        b1 (Pad cfg) [ v; zero ]
       in
       let l =
         add
-          (b1
-             (Pad [| (0, 0, 0); (0, m - k, 0) |])
-             [ tril_of (-1) lu_left; zero ])
-          (identity m)
-      in
-      let u_eye =
-        b1 (Pad [| (k, 0, 0); (k, 0, 0) |]) [ identity (n - k); zero ]
+          (pad_last 0 (m - k) (tril_of (-1) (slice_last m k)))
+          (square m (fun i j -> i = j))
       in
       let u =
         add
-          (b1 (Pad [| (0, n - k, 0); (0, 0, 0) |]) [ triu_of 0 lu_top; zero ])
-          u_eye
+          (pad_last (n - k) 0 (triu_of 0 (slice_last k n)))
+          (square n (fun i j -> i = j && i >= k))
       in
       let la =
         triangular_solve_with ~left_side:true ~lower:true ~transpose_a:false
@@ -491,51 +524,6 @@ let reduce_fold_jvp x t axes step =
             (fun (acc, acc_t) xi ti -> step acc acc_t xi ti)
             (x0, t0) xrest trest
       | _ -> failwith "ad: reduction over an empty axis")
-
-let flat_gather v indices =
-  let n = Array.fold_left ( * ) 1 (Core.get_aval v).shape in
-  let m = Array.fold_left ( * ) 1 (Core.get_aval indices).shape in
-  let flat = b1 (Reshape [| n |]) [ v ] in
-  let idx = b1 (Reshape [| m; 1 |]) [ indices ] in
-  b1
-    (Gather
-       {
-         dimension_numbers =
-           {
-             offset_dims = [||];
-             collapsed_slice_dims = [| 0 |];
-             start_index_map = [| 0 |];
-             g_operand_batching_dims = [||];
-             g_start_indices_batching_dims = [||];
-           };
-         slice_sizes = [| 1 |];
-       })
-    [ flat; idx ]
-
-let take_along_axis_value v perm ~axis =
-  let shape = (Core.get_aval v).shape in
-  let ndim = Array.length shape in
-  let perm_shape = (Core.get_aval perm).shape in
-  let idt = (Core.get_aval perm).dtype in
-  let strides = Array.make ndim 1 in
-  for d = ndim - 2 downto 0 do
-    strides.(d) <- strides.(d + 1) * shape.(d + 1)
-  done;
-  let total = Array.fold_left ( * ) 1 perm_shape in
-  let rest =
-    Array.init total (fun i ->
-        let offset = ref 0 and remaining = ref i in
-        for d = ndim - 1 downto 0 do
-          let coord = !remaining mod perm_shape.(d) in
-          remaining := !remaining / perm_shape.(d);
-          if d <> axis then offset := !offset + (coord * strides.(d))
-        done;
-        float_of_int !offset)
-  in
-  let offsets = Concrete (Ndarray.of_floats idt perm_shape rest) in
-  let along = mul perm (const_like perm (float_of_int strides.(axis))) in
-  let picked = flat_gather v (add along offsets) in
-  b1 (Reshape perm_shape) [ picked ]
 
 let sort_jvp ~dimension ~is_stable ~num_keys primals tangents =
   let first = List.hd primals in

@@ -1590,7 +1590,65 @@ let complex_elementwise prim inputs =
   | Ne -> compare_with (fun a b -> a <> b) inputs
   | _ -> None
 
-let impl prim inputs =
+let linalg_core_ranks = function
+  | Cholesky | Lu | Qr _ | Eigh _ | Eig _ | Hessenberg | Schur _ | Svd _
+  | Tridiagonal _ ->
+      Some [ 2 ]
+  | Householder_product -> Some [ 2; 1 ]
+  | Lu_pivots_to_permutation _ -> Some [ 1 ]
+  | Triangular_solve _ -> Some [ 2; 2 ]
+  | Tridiagonal_solve -> Some [ 1; 1; 1; 2 ]
+  | _ -> None
+
+let batch_prefix ranks shapes =
+  match (ranks, shapes) with
+  | r :: _, s :: _ when Array.length s > r ->
+      Some (Array.sub s 0 (Array.length s - r))
+  | _ -> None
+
+let element_slice nd batch_rank batch_index =
+  let shape = Ndarray.shape nd in
+  let rank = Array.length shape in
+  let core = Array.sub shape batch_rank (rank - batch_rank) in
+  let n = Utils.prod core in
+  let full i =
+    Array.append
+      (Utils.decode batch_index (Array.sub shape 0 batch_rank))
+      (Utils.decode i core)
+  in
+  let dt = Ndarray.dtype nd in
+  if is_complex_dtype dt then
+    Ndarray.of_complex dt core
+      (Array.init n (fun i -> Ndarray.get_c nd (full i)))
+  else
+    Ndarray.of_floats dt core
+      (Array.init n (fun i -> Ndarray.get_f nd (full i)))
+
+let stack_elements batch elements =
+  match elements with
+  | [] -> failwith "lax: empty linalg batch"
+  | first :: _ ->
+      let core = Ndarray.shape first in
+      let dt = Ndarray.dtype first in
+      let shape = Array.append batch core in
+      let cell = Utils.prod core in
+      let total = List.length elements * cell in
+      let arr = Array.of_list elements in
+      let index k =
+        (arr.(k / max cell 1), Utils.decode (k mod max cell 1) core)
+      in
+      if is_complex_dtype dt then
+        Ndarray.of_complex dt shape
+          (Array.init total (fun k ->
+               let e, i = index k in
+               Ndarray.get_c e i))
+      else
+        Ndarray.of_floats dt shape
+          (Array.init total (fun k ->
+               let e, i = index k in
+               Ndarray.get_f e i))
+
+let impl_core prim inputs =
   let has_complex =
     List.exists (fun nd -> is_complex_dtype (Ndarray.dtype nd)) inputs
   in
@@ -1935,9 +1993,50 @@ let abstract_eval prim avals =
   | Custom_lin { out_avals; _ } -> out_avals
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
+let impl prim inputs =
+  let batch =
+    match linalg_core_ranks prim with
+    | Some ranks -> batch_prefix ranks (List.map Ndarray.shape inputs)
+    | None -> None
+  in
+  match batch with
+  | None -> impl_core prim inputs
+  | Some batch ->
+      let batch_rank = Array.length batch in
+      let count = Utils.prod batch in
+      let results =
+        List.init count (fun b ->
+            impl_core prim
+              (List.map (fun nd -> element_slice nd batch_rank b) inputs))
+      in
+      let n_out = List.length (List.hd results) in
+      List.init n_out (fun j ->
+          stack_elements batch (List.map (fun out -> List.nth out j) results))
+
+let abstract_eval_batched prim avals =
+  let batch =
+    match linalg_core_ranks prim with
+    | Some ranks ->
+        batch_prefix ranks (List.map (fun (a : aval) -> a.shape) avals)
+    | None -> None
+  in
+  match batch with
+  | None -> abstract_eval prim avals
+  | Some batch ->
+      let k = Array.length batch in
+      let core =
+        List.map
+          (fun (a : aval) ->
+            { a with shape = Array.sub a.shape k (Array.length a.shape - k) })
+          avals
+      in
+      List.map
+        (fun (a : aval) -> { a with shape = Array.append batch a.shape })
+        (abstract_eval prim core)
+
 let install () =
   Core.rules.impl <- impl;
-  Core.rules.abstract_eval <- abstract_eval
+  Core.rules.abstract_eval <- abstract_eval_batched
 
 let () = install ()
 let cond = Control_flow.Conditionals.cond

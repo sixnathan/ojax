@@ -184,3 +184,89 @@ let lattice_result_type (args : (Dtype.t * bool) list) : Dtype.t * bool =
 let result_type (args : (Dtype.t * bool) list) : Dtype.t * bool =
   let d, w = lattice_result_type args in
   ((if w then default_of_kind d else d), w)
+
+type finfo = {
+  bits : int;
+  eps : float;
+  epsneg : float;
+  fmax : float;
+  fmin : float;
+  tiny : float;
+  smallest_subnormal : float;
+  precision : int;
+  resolution : float;
+  nmant : int;
+  nexp : int;
+}
+
+let finfo (d : Dtype.t) =
+  let build bits nmant nexp precision resolution =
+    let eps = Float.ldexp 1.0 (-nmant) in
+    let max_exponent = (1 lsl (nexp - 1)) - 1 in
+    let tiny = Float.ldexp 1.0 (1 - max_exponent) in
+    let fmax = (2.0 -. eps) *. Float.ldexp 1.0 max_exponent in
+    {
+      bits;
+      eps;
+      epsneg = eps /. 2.0;
+      fmax;
+      fmin = -.fmax;
+      tiny;
+      smallest_subnormal = tiny *. eps;
+      precision;
+      resolution;
+      nmant;
+      nexp;
+    }
+  in
+  match d with
+  | Dtype.F16 -> build 16 10 5 3 1e-3
+  | Dtype.Bf16 -> build 16 7 8 2 1e-2
+  | Dtype.F32 | Dtype.Complex64 -> build 32 23 8 6 1e-6
+  | Dtype.F64 | Dtype.Complex128 -> build 64 52 11 15 1e-15
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 | Dtype.Uint64 | Dtype.Bool ->
+      invalid_arg "finfo requires a floating point dtype"
+
+type iinfo = { imin : float; imax : float; ibits : int }
+
+let iinfo (d : Dtype.t) =
+  let build signed ibits =
+    let span = Float.ldexp 1.0 ibits in
+    if signed then
+      { imin = -.(span /. 2.0); imax = (span /. 2.0) -. 1.0; ibits }
+    else { imin = 0.0; imax = span -. 1.0; ibits }
+  in
+  match d with
+  | Dtype.I8 -> build true 8
+  | Dtype.I16 -> build true 16
+  | Dtype.I32 -> build true 32
+  | Dtype.I64 -> build true 64
+  | Dtype.Uint8 -> build false 8
+  | Dtype.Uint16 -> build false 16
+  | Dtype.Uint32 -> build false 32
+  | Dtype.Uint64 -> build false 64
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
+  | Dtype.Complex128 | Dtype.Bool ->
+      invalid_arg "iinfo requires an integer dtype"
+
+let issubdtype (d : Dtype.t) kind =
+  match (kind, d) with
+  | `Generic, _ -> true
+  | `Bool, Dtype.Bool -> true
+  | `Number, Dtype.Bool -> false
+  | `Number, _ -> true
+  | ( `Integer,
+      ( Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8
+      | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 ) ) ->
+      true
+  | `Signed, (Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64) -> true
+  | `Unsigned, (Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64) ->
+      true
+  | ( `Inexact,
+      ( Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
+      | Dtype.Complex128 ) ) ->
+      true
+  | `Floating, (Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64) -> true
+  | `Complex, (Dtype.Complex64 | Dtype.Complex128) -> true
+  | _ -> false

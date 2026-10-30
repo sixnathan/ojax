@@ -180,6 +180,29 @@ def _opt_run(name, a, b, p):
     return get(state)
 
 
+def _spd(a):
+    return a @ jnp.swapaxes(a, -1, -2) + 3.0 * jnp.eye(a.shape[-1], dtype=a.dtype)
+
+
+def _batched_ops():
+    la = jnp.linalg
+    return {
+        "bl_inv": lambda a, p: la.inv(_spd(a)),
+        "bl_det": lambda a, p: la.det(_spd(a)),
+        "bl_slogdet": lambda a, p: tuple(la.slogdet(_spd(a))),
+        "bl_solve": lambda a, b, p: la.solve(_spd(a), b),
+        "bl_cholesky": lambda a, p: la.cholesky(_spd(a)),
+        "bl_eigvalsh": lambda a, p: la.eigvalsh(_spd(a)),
+        "bl_svdvals": lambda a, p: la.svd(a, compute_uv=False),
+        "bl_matrix_power": lambda a, p: la.matrix_power(a, p["n"]),
+        "bl_norm": lambda a, p: la.norm(a, axis=(-2, -1)),
+        "bl_grad_det": lambda a, p: jax.grad(lambda x: jnp.sum(jnp.linalg.det(_spd(x))))(a),
+        "bl_vmap_inv": lambda a, p: jax.vmap(lambda m: la.inv(_spd(m)))(a),
+        "np_packbits": lambda a, p: jnp.packbits(a > 0, axis=p.get("axis"), bitorder=p.get("order", "big")),
+        "np_unpackbits": lambda a, p: jnp.unpackbits(jnp.packbits(a > 0), count=p.get("count"), bitorder=p.get("order", "big")),
+    }
+
+
 def _in_range(a, name):
     return jnp.abs(a) if name.startswith("uint") else a
 
@@ -231,6 +254,7 @@ OPS.update(_lax_ops())
 OPS.update(_numpy_ops())
 OPS.update(_scipy_ops())
 OPS.update(_narrow_ops())
+OPS.update(_batched_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -526,5 +550,25 @@ def _narrow_cases():
     return out
 
 
+def _batched_cases():
+    r = _real_input
+    out = []
+    for shape in [[3, 3], [2, 3, 3], [2, 2, 3, 3]]:
+        for op in ["bl_inv", "bl_det", "bl_slogdet", "bl_cholesky", "bl_eigvalsh", "bl_svdvals", "bl_norm", "bl_grad_det"]:
+            out.append((op, r(shape), {}))
+        out.append(("bl_matrix_power", r(shape), {"n": 3}))
+    out += [
+        ("bl_solve", _two("real", [2, 3, 3], "real", [2, 3, 2]), {}),
+        ("bl_solve", _two("real", [2, 3, 3], "real", [3, 2]), {}),
+        ("bl_solve", _two("real", [2, 3, 3], "real", [3]), {}),
+        ("bl_vmap_inv", r([2, 3, 3]), {}),
+        ("np_packbits", r([12]), {}),
+        ("np_packbits", r([2, 10]), {"axis": 1, "order": "little"}),
+        ("np_unpackbits", r([12]), {}),
+        ("np_unpackbits", r([12]), {"count": 5, "order": "little"}),
+    ]
+    return out
+
+
 def all_cases():
-    return _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases()
+    return _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

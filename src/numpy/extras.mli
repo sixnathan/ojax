@@ -115,3 +115,5 @@ val inf : float
 val nan : float
 val array_str : value -> string
 val array_repr : value -> string
+val packbits : ?axis:int -> ?bitorder:string -> value -> value
+val unpackbits : ?axis:int -> ?count:int -> ?bitorder:string -> value -> value

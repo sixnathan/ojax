@@ -602,6 +602,56 @@ let narrow_run op p a b =
         ]
   | _ -> None
 
+module LA = Ojax.Numpy.Linalg
+
+let spd v =
+  let sh = shp v in
+  let n = sh.(Array.length sh - 1) in
+  let product = L.batch_matmul v (NL.swapaxes (-1) (-2) v) in
+  let eye = NL.broadcast_to (NL.identity ~dtype:(dt_of v) n) sh in
+  UF.add product (L.mul eye (L.full_like eye 3.0))
+
+let batched_run op p a b =
+  match op with
+  | "bl_inv" -> Some [ LA.inv (spd (a ())) ]
+  | "bl_det" -> Some [ LA.det (spd (a ())) ]
+  | "bl_slogdet" -> Some (pair (LA.slogdet (spd (a ()))))
+  | "bl_solve" -> Some [ LA.solve (spd (a ())) (b ()) ]
+  | "bl_cholesky" -> Some [ LA.cholesky (spd (a ())) ]
+  | "bl_eigvalsh" -> Some [ LA.eigvalsh (spd (a ())) ]
+  | "bl_svdvals" -> Some [ LA.svdvals (a ()) ]
+  | "bl_matrix_power" -> Some [ LA.matrix_power (a ()) (int "n" p) ]
+  | "bl_norm" ->
+      let rank = Array.length (shp (a ())) in
+      Some [ LA.norm ~axis:(LA.Apair (rank - 2, rank - 1)) (a ()) ]
+  | "bl_grad_det" ->
+      let x = a () in
+      let f args =
+        let d = LA.det (spd (List.hd args)) in
+        L.reduce_sum d (Array.init (Array.length (shp d)) Fun.id)
+      in
+      Some (Ojax.Interpreters.Ad.grad f [ x ])
+  | "bl_vmap_inv" ->
+      Some
+        (Ojax.Interpreters.Batching.vmap
+           (fun args -> [ LA.inv (spd (List.hd args)) ])
+           [ Some 0 ]
+           [ a () ])
+  | "np_packbits" ->
+      Some
+        [
+          E.packbits ?axis:(opt_int "axis" p) ?bitorder:(opt_string "order" p)
+            (binarize (a ()));
+        ]
+  | "np_unpackbits" ->
+      Some
+        [
+          E.unpackbits ?count:(opt_int "count" p)
+            ?bitorder:(opt_string "order" p)
+            (E.packbits (binarize (a ())));
+        ]
+  | _ -> None
+
 let optimizer_run op a b =
   match optimizer_of op with
   | None -> None
@@ -618,42 +668,57 @@ let run op params get =
   let a () = get "a" in
   let b () = get "b" in
   let c () = get "c" in
-  match narrow_run op params a b with
+  match batched_run op params a b with
   | Some out -> out
   | None -> (
-      match optimizer_run op a b with
+      match narrow_run op params a b with
       | Some out -> out
       | None -> (
-          match scipy_run op params a b c with
+          match optimizer_run op a b with
           | Some out -> out
           | None -> (
-              match numpy_run op params a b c with
+              match scipy_run op params a b c with
               | Some out -> out
               | None -> (
-                  match lax_run op params a b with
+                  match numpy_run op params a b c with
                   | Some out -> out
                   | None -> (
-                      match op with
-                      | "fft" -> fft1 F.fft (a ()) params
-                      | "ifft" -> fft1 F.ifft (a ()) params
-                      | "rfft" -> fft1 F.rfft (a ()) params
-                      | "irfft" -> fft1 F.irfft (a ()) params
-                      | "hfft" -> fft1 F.hfft (a ()) params
-                      | "ihfft" -> fft1 F.ihfft (a ()) params
-                      | "fftn" -> fftnd F.fftn (a ()) params
-                      | "ifftn" -> fftnd F.ifftn (a ()) params
-                      | "rfftn" -> fftnd F.rfftn (a ()) params
-                      | "irfftn" -> fftnd F.irfftn (a ()) params
-                      | "fft2" ->
-                          [ F.fft2 ?norm:(opt_string "norm" params) (a ()) ]
-                      | "ifft2" ->
-                          [ F.ifft2 ?norm:(opt_string "norm" params) (a ()) ]
-                      | "rfft2" ->
-                          [ F.rfft2 ?norm:(opt_string "norm" params) (a ()) ]
-                      | "irfft2" ->
-                          [ F.irfft2 ?norm:(opt_string "norm" params) (a ()) ]
-                      | "fftshift" ->
-                          [ F.fftshift ?axes:(opt_ints "axes" params) (a ()) ]
-                      | "ifftshift" ->
-                          [ F.ifftshift ?axes:(opt_ints "axes" params) (a ()) ]
-                      | other -> failwith ("parity: unknown op " ^ other))))))
+                      match lax_run op params a b with
+                      | Some out -> out
+                      | None -> (
+                          match op with
+                          | "fft" -> fft1 F.fft (a ()) params
+                          | "ifft" -> fft1 F.ifft (a ()) params
+                          | "rfft" -> fft1 F.rfft (a ()) params
+                          | "irfft" -> fft1 F.irfft (a ()) params
+                          | "hfft" -> fft1 F.hfft (a ()) params
+                          | "ihfft" -> fft1 F.ihfft (a ()) params
+                          | "fftn" -> fftnd F.fftn (a ()) params
+                          | "ifftn" -> fftnd F.ifftn (a ()) params
+                          | "rfftn" -> fftnd F.rfftn (a ()) params
+                          | "irfftn" -> fftnd F.irfftn (a ()) params
+                          | "fft2" ->
+                              [ F.fft2 ?norm:(opt_string "norm" params) (a ()) ]
+                          | "ifft2" ->
+                              [
+                                F.ifft2 ?norm:(opt_string "norm" params) (a ());
+                              ]
+                          | "rfft2" ->
+                              [
+                                F.rfft2 ?norm:(opt_string "norm" params) (a ());
+                              ]
+                          | "irfft2" ->
+                              [
+                                F.irfft2 ?norm:(opt_string "norm" params) (a ());
+                              ]
+                          | "fftshift" ->
+                              [
+                                F.fftshift ?axes:(opt_ints "axes" params) (a ());
+                              ]
+                          | "ifftshift" ->
+                              [
+                                F.ifftshift ?axes:(opt_ints "axes" params)
+                                  (a ());
+                              ]
+                          | other -> failwith ("parity: unknown op " ^ other))))
+              )))

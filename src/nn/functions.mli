@@ -34,3 +34,17 @@ val scaled_dot_general :
   Types.value ->
   Types.value ->
   Types.value
+
+val swish : Types.value -> Types.value
+val hard_swish : Types.value -> Types.value
+val tanh : Types.value -> Types.value
+
+val dot_product_attention :
+  ?bias:Types.value ->
+  ?mask:Types.value ->
+  ?scale:float ->
+  query:Types.value ->
+  key:Types.value ->
+  value:Types.value ->
+  unit ->
+  Types.value

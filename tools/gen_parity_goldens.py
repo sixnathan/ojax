@@ -73,6 +73,8 @@ def gen_set(cases, x64, outdir):
     for c in cases:
         if not x64 and ec.is_wide64(c["dtype"]):
             continue
+        if x64 and c["op"] in registry.SINGLE_PRECISION_ONLY:
+            continue
         rng = np.random.default_rng(zlib.adler32(c["case_id"].encode("utf-8")))
         arrays = {k: draw(rng, c["inputs"][k], c["dtype"]) for k in sorted(c["inputs"])}
         result = registry.OPS[c["op"]](**arrays, p=c["params"])

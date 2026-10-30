@@ -424,31 +424,140 @@ let numpy_run op p a b c =
         ]
   | _ -> None
 
+module SF = Ojax.Scipy.Fft
+module SG = Ojax.Scipy.Signal
+module SP = Ojax.Scipy.Linalg_special
+module RX = Ojax.Random_extras
+module NN = Ojax.Nn.Functions
+
+let seed_key p =
+  Ojax.Random.Core.key
+    (T.Concrete
+       (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||]
+          [| float_of_int (int "seed" p) |]))
+
+let required_string name p = U.to_string (U.member name p)
+
+let scipy_run op p a b c =
+  let mode () = required_string "mode" p in
+  match op with
+  | "sp_dct" ->
+      Some
+        [
+          SF.dct ?n:(opt_int "n" p) ?axis:(opt_int "axis" p)
+            ?norm:(opt_string "norm" p) (a ());
+        ]
+  | "sp_idct" ->
+      Some
+        [
+          SF.idct ?n:(opt_int "n" p) ?axis:(opt_int "axis" p)
+            ?norm:(opt_string "norm" p) (a ());
+        ]
+  | "sp_dctn" -> Some [ SF.dctn ?norm:(opt_string "norm" p) (a ()) ]
+  | "sp_idctn" -> Some [ SF.idctn ?norm:(opt_string "norm" p) (a ()) ]
+  | "sp_convolve" ->
+      Some
+        [
+          SG.convolve ~mode:(mode ()) ?method_:(opt_string "method" p) (a ())
+            (b ());
+        ]
+  | "sp_correlate" -> Some [ SG.correlate ~mode:(mode ()) (a ()) (b ()) ]
+  | "sp_convolve2d" -> Some [ SG.convolve2d ~mode:(mode ()) (a ()) (b ()) ]
+  | "sp_correlate2d" -> Some [ SG.correlate2d ~mode:(mode ()) (a ()) (b ()) ]
+  | "sp_fftconvolve" -> Some [ SG.fftconvolve ~mode:(mode ()) (a ()) (b ()) ]
+  | "sp_detrend" ->
+      Some
+        [
+          SG.detrend ?axis:(opt_int "axis" p) ~type_:(required_string "type" p)
+            (a ());
+        ]
+  | "sl_hilbert" -> Some [ SP.hilbert (int "n" p) ]
+  | "sl_circulant" -> Some [ SP.circulant (a ()) ]
+  | "sl_hankel" -> Some [ SP.hankel (a ()) ]
+  | "sl_hankel_r" -> Some [ SP.hankel ~r:(b ()) (a ()) ]
+  | "sl_fiedler" -> Some [ SP.fiedler (a ()) ]
+  | "sl_companion" -> Some [ SP.companion (a ()) ]
+  | "sl_fiedler_companion" -> Some [ SP.fiedler_companion (a ()) ]
+  | "sl_leslie" -> Some [ SP.leslie (a ()) (b ()) ]
+  | "sl_dft" -> Some [ SP.dft ?scale:(opt_string "scale" p) (int "n" p) ]
+  | "sl_pascal" ->
+      Some [ SP.pascal ~kind:(required_string "kind" p) (int "n" p) ]
+  | "sl_invpascal" ->
+      Some [ SP.invpascal ~kind:(required_string "kind" p) (int "n" p) ]
+  | "sl_helmert" -> Some [ SP.helmert ?full:(opt_bool "full" p) (int "n" p) ]
+  | "sl_hadamard" -> Some [ SP.hadamard (int "n" p) ]
+  | "sl_convolution_matrix" ->
+      Some [ SP.convolution_matrix ~mode:(mode ()) (a ()) (int "n" p) ]
+  | "sl_invhilbert" -> Some [ SP.invhilbert (int "n" p) ]
+  | "sl_solve_sylvester" ->
+      let shift v =
+        let n = (shp v).(0) in
+        let eye = NL.identity ~dtype:(dt_of v) n in
+        L.add v (L.mul eye (L.full_like eye 4.0))
+      in
+      Some [ SP.solve_sylvester (shift (a ())) (shift (b ())) (c ()) ]
+  | "rnd_maxwell" -> Some [ RX.maxwell (seed_key p) ~shape:(ints "shape" p) ]
+  | "rnd_double_sided_maxwell" ->
+      Some
+        [
+          RX.double_sided_maxwell (seed_key p)
+            ~loc:(U.to_number (U.member "loc" p))
+            ~scale:(U.to_number (U.member "scale" p))
+            ~shape:(ints "shape" p);
+        ]
+  | "rnd_ball" ->
+      Some [ RX.ball (seed_key p) ~d:(int "d" p) ~shape:(ints "shape" p) ]
+  | "rnd_multivariate_normal" ->
+      let m = b () in
+      let n = (shp m).(0) in
+      let product = L.dot m (L.transpose m [| 1; 0 |]) in
+      let eye = NL.identity ~dtype:(dt_of m) n in
+      let cov = L.add product (L.mul eye (L.full_like eye 2.0)) in
+      Some
+        [
+          RX.multivariate_normal ~shape:(ints "shape" p)
+            ~method_:(required_string "method" p)
+            (seed_key p) ~mean:(a ()) ~cov;
+        ]
+  | "nn_swish" -> Some [ NN.swish (a ()) ]
+  | "nn_hard_swish" -> Some [ NN.hard_swish (a ()) ]
+  | "nn_logsumexp" ->
+      Some [ Ojax.Ops.Special.logsumexp ~axis:[| int "axis" p |] (a ()) ]
+  | "nn_attention" ->
+      Some
+        [ NN.dot_product_attention ~query:(a ()) ~key:(b ()) ~value:(c ()) () ]
+  | _ -> None
+
 let run op params get =
   let a () = get "a" in
   let b () = get "b" in
   let c () = get "c" in
-  match numpy_run op params a b c with
+  match scipy_run op params a b c with
   | Some out -> out
   | None -> (
-      match lax_run op params a b with
+      match numpy_run op params a b c with
       | Some out -> out
       | None -> (
-          match op with
-          | "fft" -> fft1 F.fft (a ()) params
-          | "ifft" -> fft1 F.ifft (a ()) params
-          | "rfft" -> fft1 F.rfft (a ()) params
-          | "irfft" -> fft1 F.irfft (a ()) params
-          | "hfft" -> fft1 F.hfft (a ()) params
-          | "ihfft" -> fft1 F.ihfft (a ()) params
-          | "fftn" -> fftnd F.fftn (a ()) params
-          | "ifftn" -> fftnd F.ifftn (a ()) params
-          | "rfftn" -> fftnd F.rfftn (a ()) params
-          | "irfftn" -> fftnd F.irfftn (a ()) params
-          | "fft2" -> [ F.fft2 ?norm:(opt_string "norm" params) (a ()) ]
-          | "ifft2" -> [ F.ifft2 ?norm:(opt_string "norm" params) (a ()) ]
-          | "rfft2" -> [ F.rfft2 ?norm:(opt_string "norm" params) (a ()) ]
-          | "irfft2" -> [ F.irfft2 ?norm:(opt_string "norm" params) (a ()) ]
-          | "fftshift" -> [ F.fftshift ?axes:(opt_ints "axes" params) (a ()) ]
-          | "ifftshift" -> [ F.ifftshift ?axes:(opt_ints "axes" params) (a ()) ]
-          | other -> failwith ("parity: unknown op " ^ other)))
+          match lax_run op params a b with
+          | Some out -> out
+          | None -> (
+              match op with
+              | "fft" -> fft1 F.fft (a ()) params
+              | "ifft" -> fft1 F.ifft (a ()) params
+              | "rfft" -> fft1 F.rfft (a ()) params
+              | "irfft" -> fft1 F.irfft (a ()) params
+              | "hfft" -> fft1 F.hfft (a ()) params
+              | "ihfft" -> fft1 F.ihfft (a ()) params
+              | "fftn" -> fftnd F.fftn (a ()) params
+              | "ifftn" -> fftnd F.ifftn (a ()) params
+              | "rfftn" -> fftnd F.rfftn (a ()) params
+              | "irfftn" -> fftnd F.irfftn (a ()) params
+              | "fft2" -> [ F.fft2 ?norm:(opt_string "norm" params) (a ()) ]
+              | "ifft2" -> [ F.ifft2 ?norm:(opt_string "norm" params) (a ()) ]
+              | "rfft2" -> [ F.rfft2 ?norm:(opt_string "norm" params) (a ()) ]
+              | "irfft2" -> [ F.irfft2 ?norm:(opt_string "norm" params) (a ()) ]
+              | "fftshift" ->
+                  [ F.fftshift ?axes:(opt_ints "axes" params) (a ()) ]
+              | "ifftshift" ->
+                  [ F.ifftshift ?axes:(opt_ints "axes" params) (a ()) ]
+              | other -> failwith ("parity: unknown op " ^ other))))

@@ -117,6 +117,49 @@ def _numpy_ops():
     }
 
 
+def _scipy_ops():
+    import jax.scipy as js
+    from jax.scipy import linalg as sl
+    from jax import random as jr
+    from jax import nn as jn
+    return {
+        "sp_dct": lambda a, p: js.fft.dct(a, n=p.get("n"), axis=p.get("axis", -1), norm=p.get("norm")),
+        "sp_idct": lambda a, p: js.fft.idct(a, n=p.get("n"), axis=p.get("axis", -1), norm=p.get("norm")),
+        "sp_dctn": lambda a, p: js.fft.dctn(a, norm=p.get("norm")),
+        "sp_idctn": lambda a, p: js.fft.idctn(a, norm=p.get("norm")),
+        "sp_convolve": lambda a, b, p: js.signal.convolve(a, b, mode=p["mode"], method=p.get("method", "auto")),
+        "sp_correlate": lambda a, b, p: js.signal.correlate(a, b, mode=p["mode"]),
+        "sp_convolve2d": lambda a, b, p: js.signal.convolve2d(a, b, mode=p["mode"]),
+        "sp_correlate2d": lambda a, b, p: js.signal.correlate2d(a, b, mode=p["mode"]),
+        "sp_fftconvolve": lambda a, b, p: js.signal.fftconvolve(a, b, mode=p["mode"]),
+        "sp_detrend": lambda a, p: js.signal.detrend(a, axis=p.get("axis", -1), type=p["type"]),
+        "sl_hilbert": lambda a, p: sl.hilbert(p["n"]),
+        "sl_circulant": lambda a, p: sl.circulant(a),
+        "sl_hankel": lambda a, p: sl.hankel(a),
+        "sl_hankel_r": lambda a, b, p: sl.hankel(a, b),
+        "sl_fiedler": lambda a, p: sl.fiedler(a),
+        "sl_companion": lambda a, p: sl.companion(a),
+        "sl_fiedler_companion": lambda a, p: sl.fiedler_companion(a),
+        "sl_leslie": lambda a, b, p: sl.leslie(a, b),
+        "sl_dft": lambda a, p: sl.dft(p["n"], scale=p.get("scale")),
+        "sl_pascal": lambda a, p: sl.pascal(p["n"], kind=p["kind"]),
+        "sl_invpascal": lambda a, p: sl.invpascal(p["n"], kind=p["kind"]),
+        "sl_helmert": lambda a, p: sl.helmert(p["n"], full=p.get("full", False)),
+        "sl_hadamard": lambda a, p: sl.hadamard(p["n"]),
+        "sl_convolution_matrix": lambda a, p: sl.convolution_matrix(a, p["n"], mode=p["mode"]),
+        "sl_invhilbert": lambda a, p: sl.invhilbert(p["n"]),
+        "sl_solve_sylvester": lambda a, b, c, p: sl.solve_sylvester(a + 4.0 * jnp.eye(a.shape[0], dtype=a.dtype), b + 4.0 * jnp.eye(b.shape[0], dtype=b.dtype), c),
+        "rnd_maxwell": lambda a, p: jr.maxwell(jr.key(p["seed"]), tuple(p["shape"]), dtype=jnp.float32),
+        "rnd_double_sided_maxwell": lambda a, p: jr.double_sided_maxwell(jr.key(p["seed"]), p["loc"], p["scale"], tuple(p["shape"]), dtype=jnp.float32),
+        "rnd_ball": lambda a, p: jr.ball(jr.key(p["seed"]), p["d"], p=p.get("p", 2), shape=tuple(p["shape"]), dtype=jnp.float32),
+        "rnd_multivariate_normal": lambda a, b, p: jr.multivariate_normal(jr.key(p["seed"]), a.astype(jnp.float32), (b @ b.T + 2.0 * jnp.eye(b.shape[0], dtype=b.dtype)).astype(jnp.float32), shape=tuple(p["shape"]), method=p["method"], dtype=jnp.float32),
+        "nn_swish": lambda a, p: jn.swish(a),
+        "nn_hard_swish": lambda a, p: jn.hard_swish(a),
+        "nn_logsumexp": lambda a, p: jn.logsumexp(a, axis=p["axis"]),
+        "nn_attention": lambda a, b, c, p: jn.dot_product_attention(a, b, c),
+    }
+
+
 def _binarize(a):
     return a > 0
 
@@ -138,10 +181,19 @@ def _newton(f, x0):
     return x
 
 
+SINGLE_PRECISION_ONLY = {
+    "rnd_maxwell",
+    "rnd_double_sided_maxwell",
+    "rnd_ball",
+    "rnd_multivariate_normal",
+    "nn_attention",
+}
+
 OPS = {}
 OPS.update(_fft_ops())
 OPS.update(_lax_ops())
 OPS.update(_numpy_ops())
+OPS.update(_scipy_ops())
 
 
 def _complex_input(shape):
@@ -324,5 +376,74 @@ def _numpy_cases():
     ]
 
 
+def _scipy_cases():
+    r = _real_input
+    c1 = _complex_input
+    rr = lambda sa, sb: _two("real", sa, "real", sb)
+    out = []
+    for op in ["sp_dct", "sp_idct"]:
+        out += [
+            (op, r([8]), {}),
+            (op, r([7]), {"norm": "ortho"}),
+            (op, r([3, 4]), {"axis": 0}),
+            (op, r([4]), {"n": 6}),
+        ]
+    for op in ["sp_dctn", "sp_idctn"]:
+        out += [(op, r([3, 4]), {}), (op, r([3, 4]), {"norm": "ortho"})]
+    for mode in ["full", "same", "valid"]:
+        out += [
+            ("sp_convolve", rr([6], [3]), {"mode": mode}),
+            ("sp_convolve", rr([3], [6]), {"mode": mode}),
+            ("sp_correlate", rr([6], [3]), {"mode": mode}),
+            ("sp_convolve2d", rr([4, 5], [2, 3]), {"mode": mode}),
+            ("sp_correlate2d", rr([4, 5], [2, 3]), {"mode": mode}),
+            ("sp_fftconvolve", rr([6], [3]), {"mode": mode}),
+        ]
+    out += [
+        ("sp_convolve", rr([6], [3]), {"mode": "full", "method": "fft"}),
+        ("sp_detrend", r([6]), {"type": "constant"}),
+        ("sp_detrend", r([8]), {"type": "linear"}),
+        ("sp_detrend", r([3, 5]), {"type": "linear", "axis": 0}),
+        ("sl_hilbert", r([1]), {"n": 4}),
+        ("sl_circulant", r([4]), {}),
+        ("sl_hankel", r([3]), {}),
+        ("sl_hankel_r", rr([3], [4]), {}),
+        ("sl_fiedler", r([4]), {}),
+        ("sl_companion", r([4]), {}),
+        ("sl_fiedler_companion", r([2]), {}),
+        ("sl_fiedler_companion", r([3]), {}),
+        ("sl_fiedler_companion", r([5]), {}),
+        ("sl_fiedler_companion", r([6]), {}),
+        ("sl_leslie", rr([4], [3]), {}),
+        ("sl_dft", r([1]), {"n": 4}),
+        ("sl_dft", r([1]), {"n": 3, "scale": "sqrtn"}),
+        ("sl_dft", r([1]), {"n": 3, "scale": "n"}),
+        ("sl_pascal", r([1]), {"n": 4, "kind": "symmetric"}),
+        ("sl_pascal", r([1]), {"n": 4, "kind": "lower"}),
+        ("sl_pascal", r([1]), {"n": 4, "kind": "upper"}),
+        ("sl_invpascal", r([1]), {"n": 4, "kind": "symmetric"}),
+        ("sl_invpascal", r([1]), {"n": 4, "kind": "lower"}),
+        ("sl_invpascal", r([1]), {"n": 4, "kind": "upper"}),
+        ("sl_helmert", r([1]), {"n": 4}),
+        ("sl_helmert", r([1]), {"n": 4, "full": True}),
+        ("sl_hadamard", r([1]), {"n": 4}),
+        ("sl_convolution_matrix", r([3]), {"n": 4, "mode": "full"}),
+        ("sl_convolution_matrix", r([3]), {"n": 5, "mode": "same"}),
+        ("sl_convolution_matrix", r([3]), {"n": 5, "mode": "valid"}),
+        ("sl_invhilbert", r([1]), {"n": 3}),
+        ("sl_solve_sylvester", {"a": {"kind": "real", "shape": [2, 2]}, "b": {"kind": "real", "shape": [3, 3]}, "c": {"kind": "real", "shape": [2, 3]}}, {}),
+        ("rnd_maxwell", r([1]), {"seed": 1, "shape": [4]}),
+        ("rnd_double_sided_maxwell", r([1]), {"seed": 2, "loc": 1.0, "scale": 2.0, "shape": [4]}),
+        ("rnd_ball", r([1]), {"seed": 3, "d": 3, "shape": [4]}),
+        ("rnd_multivariate_normal", rr([3], [3, 3]), {"seed": 4, "shape": [2], "method": "cholesky"}),
+        ("nn_swish", r([4]), {}),
+        ("nn_hard_swish", r([4]), {}),
+        ("nn_logsumexp", r([2, 3]), {"axis": 1}),
+        ("nn_attention", {"a": {"kind": "real", "shape": [3, 2, 4]}, "b": {"kind": "real", "shape": [5, 2, 4]}, "c": {"kind": "real", "shape": [5, 2, 4]}}, {}),
+    ]
+    _ = c1
+    return out
+
+
 def all_cases():
-    return _fft_cases() + _lax_cases() + _numpy_cases()
+    return _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases()

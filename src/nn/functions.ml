@@ -187,3 +187,35 @@ let scaled_dot_general ~lhs_contract ~rhs_contract ~lhs_batch ~rhs_batch a b =
   bind1
     (T.Dot_general { lhs_contract; rhs_contract; lhs_batch; rhs_batch })
     [ a; b ]
+
+let swish = silu
+let hard_swish = hard_silu
+let tanh x = Core.bind1 T.Tanh [ x ]
+
+let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
+  let module E = Numpy.Einsum in
+  let module L = Lax_api in
+  let q_shape = (Core.get_aval query).T.shape in
+  let d = q_shape.(Array.length q_shape - 1) in
+  let rank_of v = Array.length (Core.get_aval v).T.shape in
+  let lift v =
+    let r = rank_of v in
+    if r >= 4 then v else L.expand_dims v (Array.init (4 - r) Fun.id)
+  in
+  let squeeze_back v = L.reshape v q_shape in
+  let scale_value =
+    match scale with Some s -> s | None -> 1.0 /. sqrt (float_of_int d)
+  in
+  let logits = E.einsum "BTNH,BSNH->BNTS" [ lift query; lift key ] in
+  let logits = L.mul logits (L.full_like logits scale_value) in
+  let logits = match bias with Some b -> L.add logits b | None -> logits in
+  let logits =
+    match mask with
+    | Some m -> L.select m logits (L.full_like logits Float.neg_infinity)
+    | None -> logits
+  in
+  let single = NL.astype logits D.F32 in
+  let probs =
+    NL.astype (softmax ~axis:(-1) single) (Core.get_aval key).T.dtype
+  in
+  squeeze_back (E.einsum "BNTS,BSNH->BTNH" [ probs; lift value ])

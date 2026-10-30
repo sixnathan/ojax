@@ -237,21 +237,75 @@ let implicit_output inputs =
   let once = List.filter (fun c -> count cnts c = 1) (distinct all) in
   string_of_chars (List.sort Char.compare once)
 
+let remove_ellipsis term = String.concat "" (String.split_on_char '.' term)
+let has_ellipsis term = String.contains term '.'
+
+let spare_letters used n =
+  let is_used c = List.exists (fun t -> String.contains t c) used in
+  let all =
+    List.filter
+      (fun c -> not (is_used c))
+      (List.init 26 (fun i -> Char.chr (Char.code 'A' + i))
+      @ List.init 26 (fun i -> Char.chr (Char.code 'a' + i)))
+  in
+  string_of_chars (List.filteri (fun i _ -> i < n) all)
+
+let expand_ellipsis inputs output operands =
+  if not (List.exists has_ellipsis (Option.to_list output @ inputs)) then
+    (inputs, output, operands)
+  else
+    let explicit = List.map remove_ellipsis (Option.to_list output @ inputs) in
+    let widths =
+      List.map2
+        (fun term op ->
+          if has_ellipsis term then
+            ndim op - String.length (remove_ellipsis term)
+          else 0)
+        inputs operands
+    in
+    let widest = List.fold_left Stdlib.max 0 widths in
+    let letters = spare_letters explicit widest in
+    let replace term width =
+      if has_ellipsis term then
+        let i = String.index term '.' in
+        String.sub term 0 i
+        ^ String.sub letters (widest - width) width
+        ^ String.sub term (i + 3) (String.length term - i - 3)
+      else term
+    in
+    let new_inputs = List.map2 replace inputs widths in
+    let new_output =
+      match output with
+      | Some o -> Some (replace o widest)
+      | None ->
+          Some
+            (letters
+            ^ remove_ellipsis
+                (implicit_output (List.map remove_ellipsis inputs)))
+    in
+    (new_inputs, new_output, operands)
+
+let rec contract inputs operands result =
+  match (operands, inputs) with
+  | [ op ], [ n0 ] -> einsum_single op n0 result
+  | [ a; b ], [ na; nb ] -> einsum_pair a b na nb result
+  | a :: b :: rest, na :: nb :: rest_names ->
+      let later = result :: rest_names in
+      let needed c = List.exists (fun t -> String.contains t c) later in
+      let kept = string_of_chars (List.filter needed (distinct (na ^ nb))) in
+      contract (kept :: rest_names) (einsum_pair a b na nb kept :: rest) result
+  | _ -> invalid_arg "einsum: operand and subscript counts differ"
+
 let einsum subscripts operands =
   let s = String.concat "" (String.split_on_char ' ' subscripts) in
-  if String.contains s '.' then
-    invalid_arg "einsum: ellipsis subscripts not supported";
   let input_part, output_opt = split_arrow s in
   let inputs = String.split_on_char ',' input_part in
+  let inputs, output_opt, operands =
+    expand_ellipsis inputs output_opt operands
+  in
   let result =
     match output_opt with Some o -> o | None -> implicit_output inputs
   in
   let pdt = NL.result_type operands in
   let operands = List.map (fun v -> astype v pdt) operands in
-  match (operands, inputs) with
-  | [ op ], [ n0 ] -> einsum_single op n0 result
-  | [ a; b ], [ na; nb ] -> einsum_pair a b na nb result
-  | _ ->
-      invalid_arg
-        "einsum: only one or two operands supported (n>2 needs the opt_einsum \
-         contraction path)"
+  contract inputs operands result

@@ -22,7 +22,7 @@ let is_inexact = function
   | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
   | _ -> false
 
-let to_inexact dt = if is_inexact dt then dt else Dtypes.default_float_dtype ()
+let to_inexact = Dtypes.to_inexact_dtype
 let default_float () = Dtypes.default_float_dtype ()
 
 let full ?dtype shape fill =

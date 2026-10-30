@@ -31,7 +31,8 @@ let is_inexact = function
 let default_float () = Dtypes.default_float_dtype ()
 
 let to_inexact v =
-  if is_inexact (dtype v) then v else NL.astype v (default_float ())
+  if is_inexact (dtype v) then v
+  else NL.astype v (Dtypes.to_inexact_dtype (dtype v))
 
 let const dt x = T.Concrete (Nd.of_floats dt [||] [| x |])
 

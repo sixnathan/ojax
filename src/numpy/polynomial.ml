@@ -25,8 +25,7 @@ let is_inexact = function
   | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
   | _ -> false
 
-let to_inexact_dtype dt =
-  if is_inexact dt then dt else Dtypes.default_float_dtype ()
+let to_inexact_dtype = Dtypes.to_inexact_dtype
 
 let result_dtype vs =
   fst (Dtypes.result_type (List.map (fun v -> (dtype v, weak v)) vs))
@@ -89,6 +88,9 @@ let polysub a1 a2 =
 let polyint ?(m = 1) ?k p =
   if m < 0 then invalid_arg "polyint: order of integral must be non-negative";
   let k = match k with Some k -> k | None -> scalar D.I32 0.0 in
+  let p =
+    if dtype p = D.Bool then NL.astype p (Dtypes.default_float_dtype ()) else p
+  in
   let p, k = two (promote_dtypes_inexact [ p; k ]) in
   if m = 0 then p
   else begin

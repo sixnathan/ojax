@@ -82,7 +82,15 @@ let read_float dtype data i =
 
 let write_float dtype data i v =
   match data with
-  | Float_buf a -> Array1.unsafe_set a i v
+  | Float_buf a ->
+      let stored =
+        match dtype with
+        | Dtype.F32 -> Int32.float_of_bits (Int32.bits_of_float v)
+        | Dtype.F16 -> f16_round v
+        | Dtype.Bf16 -> bf16_round v
+        | _ -> v
+      in
+      Array1.unsafe_set a i stored
   | Int32_buf a ->
       let stored =
         match dtype with

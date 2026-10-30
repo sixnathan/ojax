@@ -1,3 +1,4 @@
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import lax
@@ -496,9 +497,9 @@ def _dtype_sweep_ops():
         "isfinite": lambda a: n.isfinite(a),
         "isinf": lambda a: n.isinf(a),
         "round": lambda a: n.round(a, 1),
-        "floor_div_self": lambda a: a / (a + 2.0),
+        "floor_div_self": lambda a: (lambda x: x / (x + 2.0))(n.asarray(a)),
         "linspace_end": lambda a: n.linspace(a[0], a[1], 4),
-        "geomspace": lambda a: n.geomspace(a[0] + 2.0, a[1] + 3.0, 3),
+        "geomspace": lambda a: (lambda x: n.geomspace(x[0] + 2.0, x[1] + 3.0, 3))(n.asarray(a)),
         "logspace": lambda a: n.logspace(a[0], a[1], 3),
         "polyval": lambda a: n.polyval(a[:2], a[0]),
         "polyder": lambda a: n.polyder(a[0]),
@@ -523,7 +524,7 @@ def _dtype_sweep_ops():
         "min": lambda a: n.min(a, axis=0),
         "argmax": lambda a: n.argmax(a, axis=0),
         "take": lambda a: n.take(a, jnp.array([0, 1]), axis=0),
-        "where": lambda a: n.where(n.real(a) > 0, a, a * 2.0),
+        "where": lambda a: (lambda x: n.where(n.real(x) > 0, x, x * 2.0))(n.asarray(a)),
         "concatenate": lambda a: n.concatenate([a, a], axis=0),
         "pad": lambda a: n.pad(a, 1),
         "repeat": lambda a: n.repeat(a, 2, axis=0),
@@ -634,6 +635,21 @@ OPS.update(_linalg_batch_ops())
 OPS.update(_surface_batch_ops())
 OPS.update(_tracer_batch_ops())
 OPS.update(_dtype_sweep_ops())
+
+
+def _transform_sweep_ops():
+    base = _dtype_sweep_ops()
+    out = {}
+    for k, fn in base.items():
+        name = k[len("sw_"):]
+        f = (lambda g: lambda x: g(x, {}))(fn)
+        out["swv_" + name] = (lambda h: lambda a, p: jax.vmap(h)(a))(f)
+        out["swg_" + name] = (lambda h: lambda a, p: jax.grad(lambda x: jnp.sum(jnp.abs(h(x)) ** 2))(a))(f)
+        out["swj_" + name] = (lambda h: lambda a, p: jax.jvp(h, (a,), (a * 0.5 + 0.25,))[1])(f)
+    return out
+
+
+OPS.update(_transform_sweep_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -1178,5 +1194,39 @@ def _dtype_sweep_cases():
     return out
 
 
+def _extended_sweep_cases():
+    out = []
+    base = _dtype_sweep_ops()
+    for dt in ["int8", "uint8", "int16", "uint16", "float16", "bool"]:
+        spec = {"a": {"kind": "typed", "dtype": dt, "shape": [3, 3]}}
+        sample = jnp.ones((3, 3), dtype=dt)
+        for op, fn in base.items():
+            try:
+                fn(sample, {})
+            except (TypeError, NotImplementedError, ValueError):
+                continue
+            out.append((op, spec, {}))
+    transforms = _transform_sweep_ops()
+    real3 = jnp.ones((3, 3), dtype=jnp.float32) * jnp.arange(1.0, 4.0) + jnp.eye(3)
+    complex3 = real3 * (1.0 + 0.5j)
+    batch = jnp.stack([real3, real3 + 1.0])
+    for op, fn in transforms.items():
+        kinds = [("real", real3), ("complex", complex3)]
+        shape = [3, 3]
+        if op.startswith("swv_"):
+            kinds = [("real", batch), ("complex", batch * (1.0 + 0.5j))]
+            shape = [2, 3, 3]
+        for kind, sample in kinds:
+            try:
+                result = fn(sample, {})
+            except Exception:
+                continue
+            leaves = jax.tree_util.tree_leaves(result)
+            if any(np.asarray(x).dtype.kind == "V" for x in leaves):
+                continue
+            out.append((op, {"a": {"kind": kind, "shape": shape}}, {}))
+    return out
+
+
 def all_cases():
-    return _dtype_sweep_cases() + _tracer_batch_cases() + _surface_batch_cases() + _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _extended_sweep_cases() + _dtype_sweep_cases() + _tracer_batch_cases() + _surface_batch_cases() + _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

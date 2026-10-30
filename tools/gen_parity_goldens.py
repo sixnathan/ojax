@@ -35,6 +35,17 @@ def draw(rng, spec, dtype):
         return (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(cdt)
     if kind == "int":
         return rng.integers(-4, 5, shape).astype("int32")
+    if kind == "typed":
+        target = spec["dtype"]
+        if target in ("float16", "bfloat16"):
+            values = (rng.standard_normal(shape)).astype("float32")
+            if target == "bfloat16":
+                return np.asarray(jax.numpy.asarray(values, dtype=jax.numpy.bfloat16))
+            return values.astype("float16")
+        if target == "bool":
+            return rng.integers(0, 2, shape).astype("bool")
+        low = 0 if target.startswith("uint") else -4
+        return rng.integers(low, 5, shape).astype(target)
     if kind == "bool":
         return rng.integers(0, 2, shape).astype("bool")
     raise SystemExit("unknown input kind " + kind)

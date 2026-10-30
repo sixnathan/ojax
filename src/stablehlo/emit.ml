@@ -147,6 +147,43 @@ let emit_stablehlo_unary ctx (eqn : eqn) in_ids op =
     (Printf.sprintf "    %s = stablehlo.%s %s : %s\n" (name n) op (name x)
        signature)
 
+let is_unsigned_dtype = function
+  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 -> true
+  | _ -> false
+
+let is_integer_like = function
+  | Dtype.Bool | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8
+  | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 ->
+      true
+  | _ -> false
+
+let emit_self_multiply ctx (eqn : eqn) in_ids =
+  let x = sole in_ids in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.multiply %s, %s : %s\n" (name n)
+       (name x) (name x)
+       (Ir.tensor_type_of_aval out.vaval))
+
+let emit_unsigned_sign ctx (eqn : eqn) in_ids =
+  let x = sole in_ids in
+  let out = sole eqn.outs in
+  let ty = Ir.tensor_type_of_aval out.vaval in
+  let flag_ty = Ir.tensor_type Dtype.Bool out.vaval.shape in
+  let zero = fresh ctx in
+  let flag = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.constant dense<0> : %s\n" (name zero) ty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.compare NE, %s, %s, UNSIGNED : (%s, %s) -> %s\n"
+       (name flag) (name x) (name zero) ty ty flag_ty);
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.convert %s : (%s) -> %s\n" (name n)
+       (name flag) flag_ty ty)
+
 let emit_chlo_unary ctx (eqn : eqn) in_ids op =
   let x = sole in_ids in
   let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
@@ -1950,6 +1987,8 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
 
 and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
+  | Abs when is_unsigned_dtype (atom_aval (sole eqn.inputs)).dtype ->
+      emit_stablehlo_unary ctx eqn in_ids "convert"
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
   | Cbrt -> emit_stablehlo_unary ctx eqn in_ids "cbrt"
   | Ceil -> emit_stablehlo_unary ctx eqn in_ids "ceil"
@@ -1994,12 +2033,16 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Population_count -> emit_stablehlo_unary ctx eqn in_ids "popcnt"
   | Round -> emit_stablehlo_unary ctx eqn in_ids "round_nearest_afz"
   | Rsqrt -> emit_stablehlo_unary ctx eqn in_ids "rsqrt"
+  | Sign when is_unsigned_dtype (atom_aval (sole eqn.inputs)).dtype ->
+      emit_unsigned_sign ctx eqn in_ids
   | Sign -> emit_stablehlo_unary ctx eqn in_ids "sign"
   | Sin -> emit_stablehlo_unary ctx eqn in_ids "sine"
   | Sqrt -> emit_stablehlo_unary ctx eqn in_ids "sqrt"
   | Tan -> emit_stablehlo_unary ctx eqn in_ids "tan"
   | Tanh -> emit_stablehlo_unary ctx eqn in_ids "tanh"
   | Sinh -> emit_chlo_unary ctx eqn in_ids "sinh"
+  | Square when is_integer_like (atom_aval (sole eqn.inputs)).dtype ->
+      emit_self_multiply ctx eqn in_ids
   | Square -> emit_chlo_unary ctx eqn in_ids "square"
   | Is_finite -> emit_is_finite ctx eqn in_ids
   | Logistic -> emit_logistic ctx eqn in_ids

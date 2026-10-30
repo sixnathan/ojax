@@ -18,9 +18,7 @@ let is_inexact = function
   | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
   | _ -> false
 
-let to_inexact_dtype dt =
-  if is_inexact dt then dt else Dtypes.default_float_dtype ()
-
+let to_inexact_dtype = Dtypes.to_inexact_dtype
 let float_scalar dt x = AC.full ~dtype:dt [||] x
 let int_scalar i = AC.full ~dtype:D.I32 [||] (float_of_int i)
 let identity_op x = x

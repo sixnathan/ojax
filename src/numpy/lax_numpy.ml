@@ -32,9 +32,7 @@ let is_integral = function
   | _ -> false
 
 let is_bool = function D.Bool -> true | _ -> false
-
-let to_inexact_dtype dt =
-  if is_inexact dt then dt else Dtypes.default_float_dtype ()
+let to_inexact_dtype = Dtypes.to_inexact_dtype
 
 let convert v dt =
   if dtype v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
@@ -396,6 +394,17 @@ let allclose ?rtol ?atol ?equal_nan a b =
   bind1 (T.Reduce_and (Array.init n (fun i -> i))) [ c ]
 
 let clip ?min ?max arr =
+  let fractional = function
+    | Some m -> not (Float.is_integer m)
+    | None -> false
+  in
+  let arr =
+    if
+      (is_integral (dtype arr) || is_bool (dtype arr))
+      && (fractional min || fractional max)
+    then convert arr (Dtypes.default_float_dtype ())
+    else arr
+  in
   let dt = dtype arr in
   let arr =
     match min with None -> arr | Some m -> maximum (scalar dt m) arr
@@ -906,10 +915,12 @@ let trace ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) ?dtype a =
     let dt_in = (get_aval masked).T.dtype in
     if is_inexact dt_in then masked
     else
+      let wide = Config.x64_enabled () in
       convert masked
-        (fst
-           (Dtypes.result_type
-              [ (dt_in, false); (Dtypes.default_int_dtype (), false) ]))
+        (match dt_in with
+        | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
+            if wide then D.Uint64 else D.Uint32
+        | _ -> if wide then D.I64 else D.I32)
   in
   let res = bind1 (T.Reduce_sum [| nd - 2; nd - 1 |]) [ acc ] in
   match dtype with Some d -> convert res d | None -> res

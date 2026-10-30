@@ -1256,6 +1256,11 @@ let dtype_sweep_run op a =
   let t = NL.matrix_transpose in
   let one f = Some [ f (a ()) ] in
   let ax0 = [| 0 |] in
+  let as_float v =
+    if Ojax.Dtypes.isdtype (dt_of v) "integral" || dt_of v = Ojax.Dtype.Bool
+    then NL.astype v (Ojax.Dtypes.default_float_dtype ())
+    else v
+  in
   match op with
   | "sw_mean" -> one (fun v -> RD.mean v)
   | "sw_mean_axis" -> one (RD.mean ~axis:ax0)
@@ -1308,10 +1313,13 @@ let dtype_sweep_run op a =
   | "sw_isinf" -> one UF.isinf
   | "sw_round" -> one (NL.round ~decimals:1)
   | "sw_floor_div_self" ->
-      one (fun v -> UF.divide v (UF.add v (L.full_like v 2.0)))
+      one (fun v ->
+          let v = as_float v in
+          UF.divide v (UF.add v (L.full_like v 2.0)))
   | "sw_linspace_end" -> one (fun v -> AC.linspace_v ~num:4 (row v 0) (row v 1))
   | "sw_geomspace" ->
       one (fun v ->
+          let v = as_float v in
           AC.geomspace_v ~num:3
             (UF.add (row v 0) (L.full_like (row v 0) 2.0))
             (UF.add (row v 1) (L.full_like (row v 1) 3.0)))
@@ -1347,6 +1355,7 @@ let dtype_sweep_run op a =
                (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [| 2 |] [| 0.; 1. |])))
   | "sw_where" ->
       one (fun v ->
+          let v = as_float v in
           NL.where_
             (L.gt (UF.real v) (L.full_like (UF.real v) 0.0))
             v
@@ -1391,12 +1400,49 @@ let fft_run op params a =
   | "ifftshift" -> [ F.ifftshift ?axes:(opt_ints "axes" params) (a ()) ]
   | other -> failwith ("parity: unknown op " ^ other)
 
+let transform_sweep_run op a =
+  let prefixed p =
+    String.length op > String.length p && String.sub op 0 (String.length p) = p
+  in
+  let base () = "sw_" ^ String.sub op 4 (String.length op - 4) in
+  let apply v =
+    match dtype_sweep_run (base ()) (fun () -> v) with
+    | Some [ out ] -> out
+    | Some _ | None -> failwith "parity: transform sweep expects one output"
+  in
+  if prefixed "swv_" then
+    Some
+      (Ojax.Interpreters.Batching.vmap
+         (fun args -> [ apply (List.hd args) ])
+         [ Some 0 ]
+         [ a () ])
+  else if prefixed "swg_" then
+    Some
+      (Ojax.Interpreters.Ad.grad
+         (fun args ->
+           let m = UF.absolute (apply (List.hd args)) in
+           RD.sum (UF.multiply m m))
+         [ a () ])
+  else if prefixed "swj_" then begin
+    let x = a () in
+    let half = UF.multiply x (L.full_like x 0.5) in
+    let tangent = UF.add half (L.full_like x 0.25) in
+    let _, t =
+      Ojax.Interpreters.Ad.jvp
+        (fun args -> [ apply (List.hd args) ])
+        [ x ] [ tangent ]
+    in
+    Some t
+  end
+  else None
+
 let run op params get =
   let a () = get "a" in
   let b () = get "b" in
   let c () = get "c" in
   let runners =
     [
+      (fun () -> transform_sweep_run op a);
       (fun () -> dtype_sweep_run op a);
       (fun () -> tracer_batch_run op params a b);
       (fun () -> surface_batch_run op params a b);
@@ -1424,6 +1470,8 @@ let needs_concrete op =
   List.mem op
     [
       "sw_roots";
+      "swg_roots";
+      "swj_roots";
       "np_nonzero";
       "np_flatnonzero";
       "np_argwhere";

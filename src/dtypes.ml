@@ -4,6 +4,15 @@ let default_int_dtype () =
 let default_float_dtype () =
   if Config.x64_enabled () then Dtype.F64 else Dtype.F32
 
+let to_inexact_dtype = function
+  | Dtype.Bool | Dtype.I8 | Dtype.Uint8 | Dtype.I16 | Dtype.Uint16 | Dtype.I32
+  | Dtype.Uint32 ->
+      Dtype.F32
+  | Dtype.I64 | Dtype.Uint64 -> Dtype.F64
+  | ( Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
+    | Dtype.Complex128 ) as d ->
+      d
+
 let default_complex_dtype () =
   if Config.x64_enabled () then Dtype.Complex128 else Dtype.Complex64
 

@@ -50,7 +50,7 @@ let dot a b = TC.dot a b
 
 let to_inexact v =
   let dt = dtype_of v in
-  if is_inexact dt then v else LN.astype v (Dtypes.default_float_dtype ())
+  if is_inexact dt then v else LN.astype v (Dtypes.to_inexact_dtype dt)
 
 let vg f x =
   let fv, gv =

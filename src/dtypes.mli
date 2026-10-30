@@ -38,3 +38,4 @@ val issubdtype :
   bool
 
 val isdtype : Dtype.t -> string -> bool
+val to_inexact_dtype : Dtype.t -> Dtype.t

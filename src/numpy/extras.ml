@@ -14,10 +14,11 @@ let canon n a = if a < 0 then a + n else a
 let default_int () = Dtypes.default_int_dtype ()
 let default_float () = Dtypes.default_float_dtype ()
 
-let host name v =
+let rec host name v =
   match v with
   | Concrete nd -> nd
   | Device b -> Pjrt.Buffer.to_host b
+  | Tracer { payload = JVP { primal; _ }; _ } -> host name primal
   | Tracer _ ->
       raise
         (Errors.Non_concrete_boolean_index_error
@@ -41,7 +42,9 @@ let is_float_dtype = function
   | _ -> false
 
 let as_inexact v =
-  if is_float_dtype (dtype_of v) then v else NL.astype v (default_float ())
+  let dt = dtype_of v in
+  let target = Dtypes.to_inexact_dtype dt in
+  if target = dt then v else NL.astype v target
 
 let nonzero_mask a =
   match dtype_of a with

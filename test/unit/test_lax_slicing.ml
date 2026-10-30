@@ -227,8 +227,10 @@ let vmap_batched_indices_raises () =
     | _ -> assert false
   in
   match Batching.vmap fn [ Some 0; Some 0 ] [ x; idx ] with
-  | _ -> Alcotest.fail "expected gather failure"
-  | exception Failure _ -> ()
+  | [ T.Concrete nd ] ->
+      Alcotest.(check (float 1e-6)) "row 0" 0.0 (Nd.get_f nd [| 0; 0 |]);
+      Alcotest.(check (float 1e-6)) "row 1" 5.0 (Nd.get_f nd [| 1; 0 |])
+  | _ -> Alcotest.fail "unexpected slice output"
 
 let () =
   Alcotest.run "lax_slicing"

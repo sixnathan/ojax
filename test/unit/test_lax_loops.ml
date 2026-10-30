@@ -138,9 +138,11 @@ let test_while_transpose_deferred () =
 
 let test_while_vmap_deferred () =
   let wrapped inputs = Lax.while_loop wdouble_cond wdouble_body inputs in
-  match Batching.vmap wrapped [ Some 0 ] [ f32 [| 2 |] [| 1.5; 2.0 |] ] with
-  | _ -> Alcotest.fail "expected while vmap to be deferred"
-  | exception Failure _ -> ()
+  match Batching.vmap wrapped [ Some 0 ] [ f32 [| 2 |] [| 1.5; 9.0 |] ] with
+  | [ T.Concrete nd ] ->
+      Alcotest.(check (float 1e-6)) "doubled" 12.0 (Nd.get_f nd [| 0 |]);
+      Alcotest.(check (float 1e-6)) "already done" 9.0 (Nd.get_f nd [| 1 |])
+  | _ -> Alcotest.fail "unexpected vmap output"
 
 let () =
   Alcotest.run "lax_loops"

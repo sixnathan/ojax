@@ -146,8 +146,8 @@ let vmap_raises () =
     | _ -> assert false
   in
   match Batching.vmap fn [ Some 0 ] [ lhs ] with
-  | _ -> Alcotest.fail "expected conv vmap failure"
-  | exception Failure _ -> ()
+  | [ _ ] -> ()
+  | _ -> Alcotest.fail "expected one conv output"
 
 let () =
   Alcotest.run "lax_convolution"

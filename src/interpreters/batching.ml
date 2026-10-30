@@ -510,6 +510,64 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
       end
   | _ -> failwith "batching: scatter expects operand, indices and updates"
 
+let dot_general_batch (dims : dot_dims) (vals : value list)
+    (bdims : int option list) : value * int option =
+  let bump a b = Array.map (fun d -> if d >= b then d + 1 else d) a in
+  match (vals, bdims) with
+  | [ lhs; rhs ], [ None; None ] -> (b1 (Dot_general dims) [ lhs; rhs ], None)
+  | [ lhs; rhs ], [ Some l; Some r ] ->
+      let dims' =
+        {
+          lhs_batch = Array.append [| l |] (bump dims.lhs_batch l);
+          rhs_batch = Array.append [| r |] (bump dims.rhs_batch r);
+          lhs_contract = bump dims.lhs_contract l;
+          rhs_contract = bump dims.rhs_contract r;
+        }
+      in
+      (b1 (Dot_general dims') [ lhs; rhs ], Some 0)
+  | [ lhs; rhs ], [ Some l; None ] ->
+      let ndim = Array.length (Core.get_aval lhs).shape in
+      let dims' =
+        {
+          dims with
+          lhs_batch = bump dims.lhs_batch l;
+          lhs_contract = bump dims.lhs_contract l;
+        }
+      in
+      let tensors_before =
+        List.length
+          (List.filter
+             (fun d ->
+               d < l
+               && (not (Array.mem d dims'.lhs_batch))
+               && not (Array.mem d dims'.lhs_contract))
+             (List.init ndim Fun.id))
+      in
+      ( b1 (Dot_general dims') [ lhs; rhs ],
+        Some (Array.length dims.lhs_batch + tensors_before) )
+  | [ lhs; rhs ], [ None; Some r ] ->
+      let lhs_ndim = Array.length (Core.get_aval lhs).shape in
+      let rhs_ndim = Array.length (Core.get_aval rhs).shape in
+      let dims' =
+        {
+          dims with
+          rhs_batch = bump dims.rhs_batch r;
+          rhs_contract = bump dims.rhs_contract r;
+        }
+      in
+      let tensors_before =
+        List.length
+          (List.filter
+             (fun d ->
+               d < r
+               && (not (Array.mem d dims'.rhs_batch))
+               && not (Array.mem d dims'.rhs_contract))
+             (List.init rhs_ndim Fun.id))
+      in
+      ( b1 (Dot_general dims') [ lhs; rhs ],
+        Some (lhs_ndim - Array.length dims.lhs_contract + tensors_before) )
+  | _ -> failwith "batching: dot_general arity"
+
 let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
   let un () =
@@ -641,28 +699,20 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
   | Rng_uniform | To_edtype _ ->
       failwith "batching: vmap of this primitive not supported in M1"
-  | Dot_general _ ->
-      failwith "batching: vmap of dot_general not supported in M1"
-  | Conv_general_dilated _ ->
-      failwith "batching: vmap of conv_general_dilated not supported in M2"
-  | Reduce_window _ | Reduce_window_max _ | Reduce_window_min _
-  | Reduce_window_sum _ | Select_and_gather_add _ | Select_and_scatter _
-  | Select_and_scatter_add _ ->
-      failwith "batching: vmap of windowed reductions not supported in M2"
+  | Dot_general dims -> dot_general_batch dims vals bdims
+  | Conv_general_dilated _ | Reduce_window _ | Reduce_window_max _
+  | Reduce_window_min _ | Reduce_window_sum _ | Select_and_gather_add _
+  | Select_and_scatter _ | Select_and_scatter_add _ ->
+      failwith "batching: handled by unstacking in batch_process_primitive"
   | Platform_index _ ->
       failwith "batching: vmap of platform_index not supported"
   | Cond _ -> failwith "batching: cond handled by batch_process_primitive"
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
-  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
-      failwith "batching: vmap of prng primitive not supported"
-  | While _ ->
-      failwith
-        "batching: vmap of while_loop needs the batched-predicate fixpoint (M2 \
-         gap)"
+  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | While _
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
-      failwith "batching: vmap of linalg primitive deferred (M5 gap)"
+      failwith "batching: handled by unstacking in batch_process_primitive"
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       failwith "batching: custom rules handled by batch_process_primitive"
   | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
@@ -799,6 +849,49 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   in
   (outs, out_bdims)
 
+let unstacks_operands prim (bdims : int option list) =
+  let any_batched = List.exists (fun b -> b <> None) in
+  match (prim, bdims) with
+  | ( ( Conv_general_dilated _ | Reduce_window _ | Reduce_window_max _
+      | Reduce_window_min _ | Reduce_window_sum _ | Select_and_gather_add _
+      | Select_and_scatter _ | Select_and_scatter_add _ | Threefry2x32
+      | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
+      | Random_bits _ | Random_wrap | Random_unwrap | While _ | Cholesky
+      | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
+      | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
+      | Schur _ | Svd _ | Tridiagonal _ | Custom_linear_solve _ ),
+      _ ) ->
+      true
+  | Dynamic_slice _, _ :: indices -> any_batched indices
+  | Dynamic_update_slice, _ :: _ :: indices -> any_batched indices
+  | Pad _, [ _; padding ] -> padding <> None
+  | Cond _, pred :: _ -> pred <> None
+  | Reduce _, _ ->
+      let n = List.length bdims / 2 in
+      any_batched (List.filteri (fun i _ -> i >= n) bdims)
+  | _ -> false
+
+let unstacked_batch axis_size prim vals bdims =
+  let per_element =
+    List.map2
+      (fun v b ->
+        match b with
+        | None -> List.init axis_size (fun _ -> v)
+        | Some d -> Core.bind (Unstack d) [ v ])
+      vals bdims
+  in
+  let results =
+    List.init axis_size (fun i ->
+        Core.bind prim (List.map (fun column -> List.nth column i) per_element))
+  in
+  match results with
+  | [] -> failwith "batching: empty batch"
+  | first :: _ ->
+      List.mapi
+        (fun j _ ->
+          Core.bind1 (Stack 0) (List.map (fun out -> List.nth out j) results))
+        first
+
 let batched_custom_rules : (int * int, int) Hashtbl.t = Hashtbl.create 16
 let all_mapped l = List.map (fun _ -> Some 0) l
 let vmap_all f args = vmap_flat f (all_mapped args) args
@@ -903,6 +996,10 @@ let batch_process_primitive (trace : trace) (prim : primitive)
   let pairs = List.map (to_batch_info trace) args in
   let vals = List.map fst pairs and bdims = List.map snd pairs in
   match prim with
+  | _ when unstacks_operands prim bdims ->
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
+        (unstacked_batch axis_size prim vals bdims)
   | Split _ | Unstack _ | Optimization_barrier | Sort _ | Top_k _ ->
       let outs, out_bdims = vmap_rule_multi axis_size prim vals bdims in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
@@ -918,10 +1015,6 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
         (custom_batch axis_size prim vals bdims)
-  | Custom_linear_solve _ ->
-      failwith
-        "batching: vmap of custom_linear_solve needs the batched fixpoint (M2 \
-         gap)"
   | _ ->
       let out, out_bdim = vmap_rule axis_size prim vals bdims in
       [ Tracer (new_batch_tracer trace out out_bdim) ]

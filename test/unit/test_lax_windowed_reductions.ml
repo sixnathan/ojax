@@ -129,8 +129,8 @@ let vmap_raises () =
   let batched = f32 [| 2; 6 |] (Array.init 12 float_of_int) in
   let fn a = [ C.bind1 (T.Reduce_window_sum w) a ] in
   match Batching.vmap fn [ Some 0 ] [ batched ] with
-  | _ -> Alcotest.fail "expected reduce_window vmap failure"
-  | exception Failure _ -> ()
+  | [ _ ] -> ()
+  | _ -> Alcotest.fail "expected one window output"
 
 let () =
   Alcotest.run "lax_windowed_reductions"

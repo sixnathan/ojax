@@ -66,9 +66,46 @@ let test_jacfwd_via_vmap () =
     Alcotest.(check (float 1e-6)) "off diag" 0.0 (getij o i ((i + 1) mod 3))
   done
 
+let dot_general_rules () =
+  let module N = Ojax.Ndarray in
+  let module D = Ojax.Dtype in
+  let module T = Ojax.Types in
+  let module C = Ojax.Core in
+  let module B = Ojax.Interpreters.Batching in
+  let m shape xs = T.Concrete (N.of_floats D.F32 shape xs) in
+  let dims =
+    {
+      T.lhs_contract = [| 1 |];
+      rhs_contract = [| 0 |];
+      lhs_batch = [||];
+      rhs_batch = [||];
+    }
+  in
+  let dot = function
+    | [ a; b ] -> [ C.bind1 (T.Dot_general dims) [ a; b ] ]
+    | _ -> Alcotest.fail "arity"
+  in
+  let lhs_batched = m [| 2; 2; 2 |] [| 1.; 0.; 0.; 1.; 2.; 0.; 0.; 2. |] in
+  let rhs_vec = m [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let value out idx =
+    match out with
+    | [ T.Concrete nd ] -> N.get_f nd idx
+    | _ -> Alcotest.fail "unexpected output"
+  in
+  let both = m [| 2; 2; 3 |] (Array.init 12 float_of_int) in
+  let out = B.vmap dot [ Some 0; None ] [ lhs_batched; rhs_vec ] in
+  Alcotest.(check (float 1e-6)) "lhs batched" 8.0 (value out [| 1; 1; 0 |]);
+  let out = B.vmap dot [ Some 0; Some 0 ] [ lhs_batched; both ] in
+  Alcotest.(check (float 1e-6)) "both batched" 12.0 (value out [| 1; 0; 0 |]);
+  let lhs_single = m [| 2; 2 |] [| 1.; 0.; 0.; 1. |] in
+  let rhs_batched_last = m [| 2; 3; 2 |] (Array.init 12 float_of_int) in
+  let out = B.vmap dot [ None; Some 2 ] [ lhs_single; rhs_batched_last ] in
+  Alcotest.(check (float 1e-6)) "rhs batched" 9.0 (value out [| 1; 1; 1 |])
+
 let () =
   Alcotest.run "batching"
     [
+      ("dot_general", [ Alcotest.test_case "rules" `Quick dot_general_rules ]);
       ( "batching",
         [
           Alcotest.test_case "mapped_aval" `Quick test_mapped_aval;

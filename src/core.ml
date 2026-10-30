@@ -146,6 +146,7 @@ let custom_rule id =
   | Some rule -> rule
   | None -> failwith "core: unknown custom derivative rule"
 
+let with_eval_dynamic thunk = new_dynamic eval_trace thunk
 let named_axis_trace : (string -> trace option) ref = ref (fun _ -> None)
 
 let bind prim args =

@@ -449,7 +449,7 @@ let host_ids = process_indices
 let default_backend () = "cpu"
 let clear_caches () = Hashtbl.reset compiled
 let disable_jit thunk = Config.with_value Config.disable_jit true thunk
-let ensure_compile_time_eval thunk = thunk ()
+let ensure_compile_time_eval thunk = Core.with_eval_dynamic thunk
 
 let pmap f args =
   let flat, _ = Tree.tree_flatten (Tree.Tuple args) in

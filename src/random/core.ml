@@ -11,7 +11,7 @@ let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 let concrete = function
   | Concrete nd -> nd
   | Tracer _ -> failwith "random/core: sampler on a tracer not supported in M3"
-  | Device _ -> failwith "random/core: sampler on a tracer not supported in M3"
+  | Device b -> Pjrt.Buffer.to_host b
 
 let unravel shape i =
   let n = Array.length shape in
@@ -58,15 +58,12 @@ let bits k ~shape = PR.random_bits (wrap k) ~bit_width:32 ~shape
 
 let uniform k ~shape ~minval ~maxval =
   let dt = D.F32 in
-  let raw = concrete (PR.random_bits (wrap k) ~bit_width:32 ~shape) in
-  let n = prod shape in
-  let floats =
-    Array.init n (fun i ->
-        let b = geti raw i in
-        let fb = (b lsr 9) lor 0x3F800000 in
-        Int32.float_of_bits (Int32.of_int fb))
-  in
-  let floats_v = Concrete (Nd.of_floats dt shape floats) in
+  let raw = PR.random_bits (wrap k) ~bit_width:32 ~shape in
+  let shifted = C.bind1 Shift_right_logical [ raw; const D.Uint32 shape 9.0 ] in
+  let exponent = const D.Uint32 shape (float_of_int 0x3F800000) in
+  let mantissa = C.bind1 Or [ shifted; exponent ] in
+  let as_int = C.bind1 (Convert_element_type D.I32) [ mantissa ] in
+  let floats_v = C.bind1 (Bitcast_convert_type dt) [ as_int ] in
   let minv = f32 minval and maxv = f32 maxval in
   let span = f32 (maxv -. minv) in
   let u = C.bind1 Sub [ floats_v; const dt shape 1.0 ] in
@@ -75,11 +72,13 @@ let uniform k ~shape ~minval ~maxval =
   C.bind1 Max [ const dt shape minv; y ]
 
 let scalar_f v = Nd.get_f (concrete v) [||]
+let eagerly thunk = C.with_eval_dynamic thunk
 
 let normal k ~shape =
   let dt = D.F32 in
   let lo =
-    scalar_f (C.bind1 Nextafter [ const dt [||] (-1.0); const dt [||] 0.0 ])
+    eagerly (fun () ->
+        scalar_f (C.bind1 Nextafter [ const dt [||] (-1.0); const dt [||] 0.0 ]))
   in
   let u = uniform k ~shape ~minval:lo ~maxval:1.0 in
   let sqrt2 = f32 (sqrt 2.0) in
@@ -561,3 +560,85 @@ let multinomial k ~p ~n_trials =
     remainder := f32 (!remainder -. cj)
   done;
   Concrete (Nd.of_floats D.F32 [| kk |] counts)
+
+let is_tracer = function Tracer _ -> true | Concrete _ | Device _ -> false
+let sampler_key_aval key = C.get_aval key
+
+let host_key_of_aval (a : aval) =
+  let n = prod a.shape in
+  Concrete (Nd.of_floats a.dtype a.shape (Array.make n 0.0))
+
+let via_host f key =
+  if not (is_tracer key) then f key
+  else
+    try f key
+    with Failure msg when String.starts_with ~prefix:"random/core" msg ->
+      let probe =
+        C.with_eval_dynamic (fun () ->
+            f (host_key_of_aval (sampler_key_aval key)))
+      in
+      let result_avals = [ C.get_aval probe ] in
+      let host = function
+        | [ k ] -> [ f k ]
+        | _ -> failwith "random/core: callback arity"
+      in
+      List.hd (Custom_derivatives.pure_callback host ~result_avals [ key ])
+
+let randint k ~shape ~minval ~maxval =
+  via_host (fun k -> randint k ~shape ~minval ~maxval) k
+
+let uniform k ~shape ~minval ~maxval =
+  via_host (fun k -> uniform k ~shape ~minval ~maxval) k
+
+let normal k ~shape = via_host (fun k -> normal k ~shape) k
+
+let truncated_normal k ~lower ~upper ~shape =
+  via_host (fun k -> truncated_normal k ~lower ~upper ~shape) k
+
+let permutation k n = via_host (fun k -> permutation k n) k
+
+let choice k ~n ~shape ~replace =
+  via_host (fun k -> choice k ~n ~shape ~replace) k
+
+let exponential k ~shape = via_host (fun k -> exponential k ~shape) k
+let cauchy k ~shape = via_host (fun k -> cauchy k ~shape) k
+let laplace k ~shape = via_host (fun k -> laplace k ~shape) k
+let logistic k ~shape = via_host (fun k -> logistic k ~shape) k
+let gumbel k ~shape = via_host (fun k -> gumbel k ~shape) k
+let bernoulli k ~shape ~p = via_host (fun k -> bernoulli k ~shape ~p) k
+let rademacher k ~shape = via_host (fun k -> rademacher k ~shape) k
+
+let categorical k ~logits ~axis =
+  via_host (fun k -> categorical k ~logits ~axis) k
+
+let gamma k ~shape ~a = via_host (fun k -> gamma k ~shape ~a) k
+let loggamma k ~shape ~a = via_host (fun k -> loggamma k ~shape ~a) k
+let beta k ~shape ~a ~b = via_host (fun k -> beta k ~shape ~a ~b) k
+let chisquare k ~shape ~df = via_host (fun k -> chisquare k ~shape ~df) k
+let t k ~shape ~df = via_host (fun k -> t k ~shape ~df) k
+let f k ~shape ~dfnum ~dfden = via_host (fun k -> f k ~shape ~dfnum ~dfden) k
+
+let generalized_normal k ~shape ~p =
+  via_host (fun k -> generalized_normal k ~shape ~p) k
+
+let dirichlet k ~alpha ~shape = via_host (fun k -> dirichlet k ~alpha ~shape) k
+let poisson k ~shape ~lam = via_host (fun k -> poisson k ~shape ~lam) k
+let pareto k ~shape ~b = via_host (fun k -> pareto k ~shape ~b) k
+let rayleigh k ~shape ~scale = via_host (fun k -> rayleigh k ~shape ~scale) k
+
+let weibull_min k ~shape ~scale ~concentration =
+  via_host (fun k -> weibull_min k ~shape ~scale ~concentration) k
+
+let lognormal k ~shape ~sigma = via_host (fun k -> lognormal k ~shape ~sigma) k
+
+let triangular k ~shape ~left ~mode ~right =
+  via_host (fun k -> triangular k ~shape ~left ~mode ~right) k
+
+let wald k ~shape ~mean = via_host (fun k -> wald k ~shape ~mean) k
+let geometric k ~shape ~p = via_host (fun k -> geometric k ~shape ~p) k
+
+let binomial k ~shape ~count ~prob =
+  via_host (fun k -> binomial k ~shape ~count ~prob) k
+
+let multinomial k ~p ~n_trials =
+  via_host (fun k -> multinomial k ~p ~n_trials) k

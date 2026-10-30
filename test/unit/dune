@@ -36,6 +36,7 @@
   test_api_util
   test_api
   test_api_transforms
+  test_random_traced
   test_runtime_surface
   test_parallel
   test_example_libraries

@@ -435,6 +435,142 @@ let tridiagonal_matvec dl d du x =
   let upper = shifted 0 1 (scale (vec_slice du 0 (m - 1)) (row_slice 1 m)) in
   add main (add lower upper)
 
+let lane_fold_jvp x t ~axis step =
+  let xs = Core.bind (Unstack axis) [ x ] in
+  let ts = Core.bind (Unstack axis) [ t ] in
+  step xs ts
+
+let cumulative_jvp ~axis ~reverse x t combine =
+  let ordered l = if reverse then List.rev l else l in
+  lane_fold_jvp x t ~axis (fun xs ts ->
+      let xs = ordered xs and ts = ordered ts in
+      match (xs, ts) with
+      | x0 :: xrest, t0 :: trest ->
+          let _, _, outs, tans =
+            List.fold_left2
+              (fun (acc, acc_t, outs, tans) xi ti ->
+                let v, vt = combine acc acc_t xi ti in
+                (v, vt, v :: outs, vt :: tans))
+              (x0, t0, [ x0 ], [ t0 ]) xrest trest
+          in
+          let final l = if reverse then l else List.rev l in
+          (b1 (Stack axis) (final outs), b1 (Stack axis) (final tans))
+      | _ -> failwith "ad: cumulative of an empty axis")
+
+let product_step acc acc_t x t = (mul acc x, add (mul acc_t x) (mul acc t))
+
+let choose_step test acc acc_t x t =
+  let pick = b1 test [ x; acc ] in
+  (b1 Select_n [ pick; acc; x ], b1 Select_n [ pick; acc_t; t ])
+
+let logaddexp_step acc acc_t x t =
+  let big = b1 Max [ acc; x ] in
+  let result = add big (b1 Log1p [ b1 Exp [ sub (b1 Min [ acc; x ]) big ] ]) in
+  let wa = b1 Exp [ sub acc result ] and wx = b1 Exp [ sub x result ] in
+  (result, add (mul wa acc_t) (mul wx t))
+
+let flatten_axes_last x axes =
+  let shape = (Core.get_aval x).shape in
+  let ndim = Array.length shape in
+  let kept =
+    List.filter (fun d -> not (Array.mem d axes)) (List.init ndim Fun.id)
+  in
+  let perm = Array.of_list (kept @ Array.to_list axes) in
+  let moved = b1 (Transpose perm) [ x ] in
+  let kept_shape = Array.of_list (List.map (fun d -> shape.(d)) kept) in
+  let reduced = Array.fold_left (fun acc d -> acc * shape.(d)) 1 axes in
+  b1 (Reshape (Array.append kept_shape [| reduced |])) [ moved ]
+
+let reduce_fold_jvp x t axes step =
+  let fx = flatten_axes_last x axes and ft = flatten_axes_last t axes in
+  let last = Array.length (Core.get_aval fx).shape - 1 in
+  lane_fold_jvp fx ft ~axis:last (fun xs ts ->
+      match (xs, ts) with
+      | x0 :: xrest, t0 :: trest ->
+          List.fold_left2
+            (fun (acc, acc_t) xi ti -> step acc acc_t xi ti)
+            (x0, t0) xrest trest
+      | _ -> failwith "ad: reduction over an empty axis")
+
+let flat_gather v indices =
+  let n = Array.fold_left ( * ) 1 (Core.get_aval v).shape in
+  let m = Array.fold_left ( * ) 1 (Core.get_aval indices).shape in
+  let flat = b1 (Reshape [| n |]) [ v ] in
+  let idx = b1 (Reshape [| m; 1 |]) [ indices ] in
+  b1
+    (Gather
+       {
+         dimension_numbers =
+           {
+             offset_dims = [||];
+             collapsed_slice_dims = [| 0 |];
+             start_index_map = [| 0 |];
+             g_operand_batching_dims = [||];
+             g_start_indices_batching_dims = [||];
+           };
+         slice_sizes = [| 1 |];
+       })
+    [ flat; idx ]
+
+let take_along_axis_value v perm ~axis =
+  let shape = (Core.get_aval v).shape in
+  let ndim = Array.length shape in
+  let perm_shape = (Core.get_aval perm).shape in
+  let idt = (Core.get_aval perm).dtype in
+  let strides = Array.make ndim 1 in
+  for d = ndim - 2 downto 0 do
+    strides.(d) <- strides.(d + 1) * shape.(d + 1)
+  done;
+  let total = Array.fold_left ( * ) 1 perm_shape in
+  let rest =
+    Array.init total (fun i ->
+        let offset = ref 0 and remaining = ref i in
+        for d = ndim - 1 downto 0 do
+          let coord = !remaining mod perm_shape.(d) in
+          remaining := !remaining / perm_shape.(d);
+          if d <> axis then offset := !offset + (coord * strides.(d))
+        done;
+        float_of_int !offset)
+  in
+  let offsets = Concrete (Ndarray.of_floats idt perm_shape rest) in
+  let along = mul perm (const_like perm (float_of_int strides.(axis))) in
+  let picked = flat_gather v (add along offsets) in
+  b1 (Reshape perm_shape) [ picked ]
+
+let sort_jvp ~dimension ~is_stable ~num_keys primals tangents =
+  let first = List.hd primals in
+  let shape = (Core.get_aval first).shape in
+  let idt = if Config.x64_enabled () then Dtype.I64 else Dtype.I32 in
+  let iota = b1 (Iota { dtype = idt; shape; dimension }) [] in
+  let outs =
+    Core.bind (Sort { dimension; is_stable; num_keys }) (primals @ [ iota ])
+  in
+  let n = List.length primals in
+  let sorted = List.filteri (fun i _ -> i < n) outs in
+  let perm = List.nth outs n in
+  let sorted_t =
+    List.map (fun t -> take_along_axis_value t perm ~axis:dimension) tangents
+  in
+  (sorted, sorted_t)
+
+let top_k_jvp ~k ~axis x t =
+  let outs = Core.bind (Top_k { k; axis }) [ x ] in
+  match outs with
+  | [ values; indices ] ->
+      let indices_i =
+        let dt = if Config.x64_enabled () then Dtype.I64 else Dtype.I32 in
+        b1 (Convert_element_type dt) [ indices ]
+      in
+      ( outs,
+        [ take_along_axis_value t indices_i ~axis; zeros_like_value indices ] )
+  | _ -> failwith "ad: top_k arity"
+
+let reducer_jvp_ref :
+    (closed_jaxpr -> value list -> value list -> value * value) ref =
+  ref (fun _ _ _ -> failwith "ad: reducer jvp not installed")
+
+let reducer_jvp j p t = !reducer_jvp_ref j p t
+
 let jvp_rule prim (primals : value list) (tangents : value list) : value * value
     =
   match prim with
@@ -752,10 +888,39 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           let po = b1 prim [ x ] in
           (po, zeros_like_value po)
       | _ -> arity ())
-  | Reduce_prod _ ->
-      failwith "ad: reduce_prod jvp needs the variadic reduce tree (M2 gap)"
-  | Reduce _ ->
-      failwith "ad: general reduce jvp needs the variadic reduce tree (M2 gap)"
+  | Reduce_prod axes -> (
+      match (primals, tangents) with
+      | [ x ], [ t ] -> reduce_fold_jvp x t axes product_step
+      | _ -> arity ())
+  | Reduce { jaxpr; dimensions } -> (
+      match (primals, tangents) with
+      | [ x; init ], [ t; init_t ] ->
+          let fx = flatten_axes_last x dimensions in
+          let ft = flatten_axes_last t dimensions in
+          let flat_shape = (Core.get_aval fx).shape in
+          let rank = Array.length flat_shape in
+          let n = flat_shape.(rank - 1) in
+          let kept = Array.sub flat_shape 0 (rank - 1) in
+          let lanes = Array.fold_left ( * ) 1 kept in
+          let as_lanes v =
+            Core.bind (Unstack 0) [ b1 (Reshape [| lanes; n |]) [ v ] ]
+          in
+          let results =
+            List.map2
+              (fun lane_x lane_t ->
+                let xs = Core.bind (Unstack 0) [ lane_x ] in
+                let ts = Core.bind (Unstack 0) [ lane_t ] in
+                List.fold_left2
+                  (fun (acc, acc_t) xi ti ->
+                    reducer_jvp jaxpr [ acc; xi ] [ acc_t; ti ])
+                  (init, init_t) xs ts)
+              (as_lanes fx) (as_lanes ft)
+          in
+          let collect pick =
+            b1 (Reshape kept) [ b1 (Stack 0) (List.map pick results) ]
+          in
+          (collect fst, collect snd)
+      | _ -> arity ())
   | Population_count -> failwith "ad: population_count has no jvp rule"
   | Clz -> failwith "ad: clz has no jvp rule"
   | Nextafter -> failwith "ad: nextafter has no jvp rule"
@@ -799,18 +964,15 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           )
       | _ -> arity ())
   | Scatter { dimension_numbers; unique_indices } -> (
-      if not unique_indices then
-        failwith "ad: scatter jvp only implemented for unique_indices (M2)"
-      else
-        match (primals, tangents) with
-        | [ op; idx; up ], [ t_op; _; t_up ] ->
-            ( Core.bind1
-                (Scatter { dimension_numbers; unique_indices })
-                [ op; idx; up ],
-              Core.bind1
-                (Scatter { dimension_numbers; unique_indices })
-                [ t_op; idx; t_up ] )
-        | _ -> arity ())
+      match (primals, tangents) with
+      | [ op; idx; up ], [ t_op; _; t_up ] ->
+          ( Core.bind1
+              (Scatter { dimension_numbers; unique_indices })
+              [ op; idx; up ],
+            Core.bind1
+              (Scatter { dimension_numbers; unique_indices })
+              [ t_op; idx; t_up ] )
+      | _ -> arity ())
   | Scatter_mul { dimension_numbers; unique_indices } -> (
       if not unique_indices then
         failwith "ad: scatter_mul jvp only implemented for unique_indices (M2)"
@@ -1025,10 +1187,22 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           ( b1 (Cumsum { axis; reverse }) [ x ],
             b1 (Cumsum { axis; reverse }) [ tx ] )
       | _ -> arity ())
-  | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ ->
-      failwith
-        "ad: cumprod/cummax/cummin/cumlogsumexp jvp needs associative_scan (M2 \
-         gap)"
+  | Cumprod { axis; reverse } -> (
+      match (primals, tangents) with
+      | [ x ], [ t ] -> cumulative_jvp ~axis ~reverse x t product_step
+      | _ -> arity ())
+  | Cummax { axis; reverse } -> (
+      match (primals, tangents) with
+      | [ x ], [ t ] -> cumulative_jvp ~axis ~reverse x t (choose_step Gt)
+      | _ -> arity ())
+  | Cummin { axis; reverse } -> (
+      match (primals, tangents) with
+      | [ x ], [ t ] -> cumulative_jvp ~axis ~reverse x t (choose_step Lt)
+      | _ -> arity ())
+  | Cumlogsumexp { axis; reverse } -> (
+      match (primals, tangents) with
+      | [ x ], [ t ] -> cumulative_jvp ~axis ~reverse x t logaddexp_step
+      | _ -> arity ())
   | Igamma_grad_a | Zeta ->
       failwith "ad: primitive has no jvp rule (matches jax)"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
@@ -1132,7 +1306,15 @@ let jvp_process_primitive trace prim args =
       let pos = Core.bind prim primals in
       let tos = Core.bind prim tangents in
       List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) pos tos
-  | Sort _ | Top_k _ -> failwith "ad: jvp of sort/top_k needs gather (M2 gap)"
+  | Sort { dimension; is_stable; num_keys } ->
+      let po, to_ = sort_jvp ~dimension ~is_stable ~num_keys primals tangents in
+      List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
+  | Top_k { k; axis } -> (
+      match (primals, tangents) with
+      | [ x ], [ t ] ->
+          let po, to_ = top_k_jvp ~k ~axis x t in
+          List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
+      | _ -> arity ())
   | Eigh { lower } -> (
       match (primals, tangents) with
       | [ a ], [ t ] ->
@@ -1309,6 +1491,13 @@ let interpreter : Core.interpreter =
 
 let install () = Core.register_interpreter KJVP interpreter
 let () = install ()
+
+let () =
+  reducer_jvp_ref :=
+    fun jaxpr primals tangents ->
+      match jvp (fun a -> Jaxpr.eval_closed_jaxpr jaxpr a) primals tangents with
+      | [ p ], [ t ] -> (p, t)
+      | _ -> failwith "ad: reducer must return one value"
 
 let linearize (f : value list -> value list) (primals : value list) :
     value list * (value list -> value list) =
@@ -1877,21 +2066,50 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       match primals with
       | pred :: rest ->
           if is_undef pred then
-            failwith "ad: cond transpose needs a concrete predicate";
-          let pred_nd =
-            match prim_val pred with
-            | Concrete nd -> nd
-            | Tracer _ ->
-                failwith "ad: cond transpose needs a concrete predicate"
-            | Device _ ->
-                failwith "ad: cond transpose needs a concrete predicate"
+            failwith "ad: cond transpose needs a known predicate";
+          let residuals =
+            List.filter_map
+              (fun tv -> if is_undef tv then None else Some (prim_val tv))
+              rest
           in
-          let branch = if Ndarray.get_f pred_nd [||] <> 0.0 then t else f in
-          let const_tvals =
-            List.map (fun c -> Prim (Concrete c)) branch.consts
+          let n_cts = List.length cts in
+          let avals =
+            List.map Core.get_aval cts @ List.map Core.get_aval residuals
+          in
+          let transposed (branch : closed_jaxpr) =
+            Jaxpr.make_jaxpr avals (fun args ->
+                let body_cts, res =
+                  match Util.split_list args [ n_cts ] with
+                  | [ a; b ] -> (a, b)
+                  | _ -> arity ()
+                in
+                let remaining = ref res in
+                let n_consts = List.length branch.consts in
+                let binders =
+                  List.filteri
+                    (fun i _ -> i >= n_consts)
+                    branch.jaxpr.in_binders
+                in
+                let inner =
+                  List.map2
+                    (fun tv (v : var) ->
+                      if is_undef tv then Undef v.vaval
+                      else
+                        match !remaining with
+                        | r :: tl ->
+                            remaining := tl;
+                            Prim r
+                        | [] -> arity ())
+                    rest binders
+                in
+                eval_jaxpr_transposed branch.jaxpr
+                  (List.map (fun c -> Prim (Concrete c)) branch.consts @ inner)
+                  body_cts)
           in
           let in_cts =
-            eval_jaxpr_transposed branch.jaxpr (const_tvals @ rest) cts
+            Core.bind
+              (Cond { t = transposed t; f = transposed f })
+              ((prim_val pred :: cts) @ residuals)
           in
           let remaining = ref in_cts in
           let rest_cts =

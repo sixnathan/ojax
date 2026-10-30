@@ -273,6 +273,92 @@ let svd_rule () =
         shape)
     [ [| 3; 3 |]; [| 3; 2 |]; [| 2; 3 |] ]
 
+let order_rules () =
+  check_grad "sort"
+    (fun a ->
+      b1 Mul
+        [
+          List.hd
+            (Core.bind
+               (Sort { dimension = 0; is_stable = true; num_keys = 1 })
+               [ a ]);
+          f64 [| 4 |] [| 1.; 2.; 3.; 4. |];
+        ])
+    [| 4 |];
+  check_grad "sort matrix"
+    (fun a ->
+      b1 Mul
+        [
+          List.hd
+            (Core.bind
+               (Sort { dimension = 1; is_stable = true; num_keys = 1 })
+               [ a ]);
+          f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |];
+        ])
+    [| 2; 3 |];
+  check_grad "top_k"
+    (fun a -> List.hd (Core.bind (Top_k { k = 2; axis = 0 }) [ a ]))
+    [| 5 |]
+
+let cumulative_rules () =
+  check_grad "reduce_prod" (fun a -> b1 (Reduce_prod [| 0 |]) [ a ]) [| 2; 3 |];
+  check_grad "reduce_prod all"
+    (fun a -> b1 (Reduce_prod [| 0; 1 |]) [ a ])
+    [| 2; 2 |];
+  check_grad "cumprod"
+    (fun a -> b1 (Cumprod { axis = 0; reverse = false }) [ a ])
+    [| 4 |];
+  check_grad "cumprod reverse"
+    (fun a -> b1 (Cumprod { axis = 1; reverse = true }) [ a ])
+    [| 2; 3 |];
+  check_grad "cummax"
+    (fun a -> b1 (Cummax { axis = 0; reverse = false }) [ a ])
+    [| 5 |];
+  check_grad "cummin"
+    (fun a -> b1 (Cummin { axis = 0; reverse = true }) [ a ])
+    [| 5 |];
+  check_grad "cumlogsumexp"
+    (fun a -> b1 (Cumlogsumexp { axis = 0; reverse = false }) [ a ])
+    [| 4 |]
+
+let general_reduce () =
+  let reducer =
+    let a = { shape = [||]; dtype = Dtype.F64; weak_type = false } in
+    Jaxpr.make_jaxpr [ a; a ] (function
+      | [ x; y ] -> [ b1 Mul [ x; y ] ]
+      | _ -> Alcotest.fail "arity")
+  in
+  let init = f64 [||] [| 1.0 |] in
+  check_grad "reduce"
+    (fun a -> b1 (Reduce { jaxpr = reducer; dimensions = [| 0 |] }) [ a; init ])
+    [| 4 |]
+
+let traced_cond () =
+  let module A = Ojax.Api in
+  let pred b = Concrete (Ndarray.of_floats Dtype.Bool [||] [| b |]) in
+  let f = function
+    | [ p; x ] ->
+        List.hd
+          (Lax.cond p
+             (fun a -> [ b1 Mul [ List.hd a; List.hd a ] ])
+             (fun a -> [ b1 Mul [ List.hd a; f64 [||] [| 3.0 |] ] ])
+             [ x ])
+    | _ -> Alcotest.fail "arity"
+  in
+  let grad_x args =
+    match Ad.vjp (fun a -> [ f a ]) args with
+    | _, pull -> (
+        match pull [ f64 [||] [| 1.0 |] ] with
+        | [ _; g ] -> [ g ]
+        | _ -> Alcotest.fail "arity")
+  in
+  let jitted = A.jit_flat grad_x in
+  let value p x =
+    Ndarray.get_f (to_nd (List.hd (jitted [ pred p; f64 [||] [| x |] ]))) [||]
+  in
+  Alcotest.(check (float 1e-9)) "true branch" 4.0 (value 1.0 2.0);
+  Alcotest.(check (float 1e-9)) "false branch" 3.0 (value 0.0 2.0)
+
 let constant_output () =
   let f a =
     match a with
@@ -314,6 +400,13 @@ let () =
   Alcotest.run "grad_checks"
     [
       ("fft", [ Alcotest.test_case "transposes" `Quick fft_rules ]);
+      ( "order and products",
+        [
+          Alcotest.test_case "sort and top_k" `Quick order_rules;
+          Alcotest.test_case "cumulative" `Quick cumulative_rules;
+          Alcotest.test_case "general reduce" `Quick general_reduce;
+          Alcotest.test_case "traced cond" `Quick traced_cond;
+        ] );
       ( "outputs",
         [ Alcotest.test_case "independent of input" `Quick constant_output ] );
       ( "linalg",

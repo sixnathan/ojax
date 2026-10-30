@@ -1575,20 +1575,25 @@ let jvp_process_primitive trace prim args =
              use callbacks while taking gradients."
       | Core.Jvp_rule _ | Core.Linear_rule _ ->
           failwith "ad: custom_vjp_call with a non-vjp rule")
-  | Custom_lin { n_res; _ } ->
+  | Custom_lin { n_res; rule; _ } -> (
       let res, linear =
         match Util.split_list primals [ n_res ] with
         | [ a; b ] -> (a, b)
         | _ -> arity ()
       in
-      let _, linear_t =
+      let res_t, linear_t =
         match Util.split_list tangents [ n_res ] with
         | [ a; b ] -> (a, b)
         | _ -> arity ()
       in
-      let po = Core.bind prim (res @ linear) in
-      let to_ = Core.bind prim (res @ linear_t) in
-      List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_
+      match Core.custom_rule rule with
+      | Core.Linear_rule { forward; res_differentiable = true; _ } ->
+          let wrap p t = Tracer (new_jvp_tracer trace p t) in
+          forward (List.map2 wrap res res_t) (List.map2 wrap linear linear_t)
+      | _ ->
+          let po = Core.bind prim (res @ linear) in
+          let to_ = Core.bind prim (res @ linear_t) in
+          List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_)
   | _ ->
       let po, to_ = jvp_rule prim primals tangents in
       [ Tracer (new_jvp_tracer trace po to_) ]

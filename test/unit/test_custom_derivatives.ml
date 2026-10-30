@@ -140,6 +140,46 @@ let linear_call_rule () =
   check "jvp primal" 6.0 (value (sole po));
   check "jvp tangent" 3.0 (value (sole to_))
 
+let checkpointed calls =
+  Api.checkpoint (fun a ->
+      incr calls;
+      let x = sole a in
+      [ mul (mul x x) x ])
+
+let checkpoint_recomputes () =
+  let calls = ref 0 in
+  let f = checkpointed calls in
+  let g = grad_of f (scalar 2.0) in
+  check "grad" 12.0 (value g);
+  Alcotest.(check bool) "forward ran again on the way back" true (!calls >= 2)
+
+let checkpoint_orders () =
+  let f = checkpointed (ref 0) in
+  let _, t = Ad.jvp f [ scalar 2.0 ] [ scalar 1.0 ] in
+  check "jvp" 12.0 (value (sole t));
+  let first a = [ grad_of f (sole a) ] in
+  check "second order" 12.0 (value (grad_of first (scalar 2.0)));
+  let forward a =
+    let _, t = Ad.jvp f a [ scalar 1.0 ] in
+    t
+  in
+  let _, tt = Ad.jvp forward [ scalar 2.0 ] [ scalar 1.0 ] in
+  check "forward over forward" 12.0 (value (sole tt));
+  let reverse_of_forward = grad_of forward (scalar 2.0) in
+  check "reverse over forward" 12.0 (value reverse_of_forward)
+
+let checkpoint_jit_vmap () =
+  let f = checkpointed (ref 0) in
+  let jitted = Api.jit_flat (fun a -> [ grad_of f (sole a) ]) [ scalar 2.0 ] in
+  check "jit of grad" 12.0 (value (sole jitted));
+  let batched =
+    Batching.vmap
+      (fun a -> [ grad_of f (sole a) ])
+      [ Some 0 ]
+      [ vec [| 1.0; 2.0 |] ]
+  in
+  check "vmap of grad" 12.0 (Ndarray.get_f (to_nd (sole batched)) [| 1 |])
+
 let () =
   Alcotest.run "custom_derivatives"
     [
@@ -161,6 +201,12 @@ let () =
           Alcotest.test_case "grad of vmap" `Quick vjp_grad_of_vmap;
           Alcotest.test_case "forward raises" `Quick vjp_forward_raises;
           Alcotest.test_case "constant input" `Quick vjp_unused_input;
+        ] );
+      ( "checkpoint",
+        [
+          Alcotest.test_case "recomputes" `Quick checkpoint_recomputes;
+          Alcotest.test_case "derivative orders" `Quick checkpoint_orders;
+          Alcotest.test_case "jit and vmap" `Quick checkpoint_jit_vmap;
         ] );
       ( "others",
         [

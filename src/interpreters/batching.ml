@@ -1022,7 +1022,7 @@ let batch_custom_rule id =
                   bwd r c)
                 (res @ cts));
         }
-  | Core.Linear_rule { forward; transpose } ->
+  | Core.Linear_rule { forward; transpose; res_differentiable } ->
       let lift g res xs =
         let n = List.length res in
         vmap_all
@@ -1031,7 +1031,12 @@ let batch_custom_rule id =
             g r x)
           (res @ xs)
       in
-      Core.Linear_rule { forward = lift forward; transpose = lift transpose }
+      Core.Linear_rule
+        {
+          forward = lift forward;
+          transpose = lift transpose;
+          res_differentiable;
+        }
   | Core.Callback_rule _ -> failwith "batching: callbacks are unstacked"
 
 let batched_rule_id id axis_size =

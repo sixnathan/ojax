@@ -128,6 +128,7 @@ type custom_rule =
   | Linear_rule of {
       forward : value list -> value list -> value list;
       transpose : value list -> value list -> value list;
+      res_differentiable : bool;
     }
   | Callback_rule of {
       host : value list -> value list;

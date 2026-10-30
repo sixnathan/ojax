@@ -90,8 +90,8 @@ val linear_transpose :
   value Tree_util.t ->
   value Tree_util.t list
 
-val checkpoint : 'a -> 'a
-val remat : 'a -> 'a
+val checkpoint : (value list -> value list) -> value list -> value list
+val remat : (value list -> value list) -> value list -> value list
 val named_call : 'a -> 'a
 val named_scope : string -> (unit -> 'a) -> 'a
 val device_get : value Tree_util.t -> value Tree_util.t

@@ -430,7 +430,37 @@ let linear_transpose f primals =
     | Tree.Tuple xs -> xs
     | _ -> failwith "linear_transpose: result split"
 
-let checkpoint f = f
+let checkpoint f =
+  let linear =
+    Core.register_custom_rule
+      (Core.Linear_rule
+         {
+           forward = (fun res ts -> snd (Ad.jvp f res ts));
+           transpose =
+             (fun res cts ->
+               let _, pull = Ad.vjp f res in
+               pull cts);
+           res_differentiable = true;
+         })
+  in
+  let id =
+    Core.register_custom_rule
+      (Core.Jvp_rule
+         {
+           primal = f;
+           jvp =
+             (fun primals tangents ->
+               let outs = f primals in
+               let out_avals = List.map Core.get_aval outs in
+               ( outs,
+                 Core.bind
+                   (Custom_lin
+                      { rule = linear; n_res = List.length primals; out_avals })
+                   (primals @ tangents) ));
+         })
+  in
+  fun args -> Core.bind (Custom_jvp_call id) args
+
 let remat = checkpoint
 let named_call f = f
 let named_scope _name f = f ()

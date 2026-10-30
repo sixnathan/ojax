@@ -33,7 +33,8 @@ let custom_gradient f =
 
 let linear_call ~forward ~transpose =
   let id =
-    Core.register_custom_rule (Core.Linear_rule { forward; transpose })
+    Core.register_custom_rule
+      (Core.Linear_rule { forward; transpose; res_differentiable = false })
   in
   fun res linear ->
     let out_avals =

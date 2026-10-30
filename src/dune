@@ -7,22 +7,22 @@
   (names pjrt_shim lapack_shim)
   (include_dirs %{project_root}/reference/pjrt))
  (c_library_flags
-  (:include accelerate_flags.sexp)))
+  (:include lapack_flags.sexp)))
 
 (rule
- (target accelerate_flags.sexp)
+ (target lapack_flags.sexp)
  (enabled_if
   (= %{ocaml-config:system} macosx))
  (action
   (with-stdout-to
-   accelerate_flags.sexp
+   lapack_flags.sexp
    (echo "(-framework Accelerate)"))))
 
 (rule
- (target accelerate_flags.sexp)
+ (target lapack_flags.sexp)
  (enabled_if
   (<> %{ocaml-config:system} macosx))
  (action
   (with-stdout-to
-   accelerate_flags.sexp
-   (echo "()"))))
+   lapack_flags.sexp
+   (echo "(-ldl)"))))

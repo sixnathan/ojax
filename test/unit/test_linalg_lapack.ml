@@ -14,8 +14,8 @@ let of_list l =
 let get a i = Bigarray.Array1.get a i
 
 let available () =
-  Alcotest.(check bool) "accelerate available on macOS" true D.available;
-  Alcotest.(check string) "backend name" "accelerate" D.backend
+  Alcotest.(check bool) "lapack available" true D.available;
+  Alcotest.(check bool) "backend resolved" true (D.backend <> "unavailable")
 
 let abi_int () = Alcotest.(check int) "LAPACK int is 32-bit" 4 D.abi_int_size
 

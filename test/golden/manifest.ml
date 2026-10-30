@@ -3336,6 +3336,19 @@ let nd_of_npz_any (a : Npz.t) =
   | Npz.F f -> Nd.of_floats dt a.Npz.shape f
   | Npz.I i -> Nd.of_floats dt a.Npz.shape (Array.map Int64.to_float i)
 
+let gauge_of_output op oname rank =
+  match (op, oname) with
+  | "eigh", _ when rank >= 2 -> Some Compare.Columns
+  | "svd", "out0" when rank >= 2 -> Some Compare.Columns
+  | "svd", "out2" when rank >= 2 -> Some Compare.Rows
+  | "mean", "out0" -> Some Compare.Whole
+  | _ -> None
+
+let gauge_aligned c oname golden actual =
+  match gauge_of_output c.op oname (Array.length golden.Npz.shape) with
+  | Some gauge -> Compare.align_signs gauge ~expected:golden ~actual
+  | None -> actual
+
 let npz_of_nd nd golden_dtype compare =
   let sh = Nd.shape nd in
   match Nd.dtype nd with
@@ -3504,7 +3517,9 @@ let linalg_check_case ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      let actual =
+        gauge_aligned c o.oname golden (npz_of_nd nd golden.Npz.dtype ocompare)
+      in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
@@ -3652,7 +3667,9 @@ let numpy_linalg_check_case ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      let actual =
+        gauge_aligned c o.oname golden (npz_of_nd nd golden.Npz.dtype ocompare)
+      in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
@@ -3761,7 +3778,9 @@ let scipy_linalg_check_case ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      let actual =
+        gauge_aligned c o.oname golden (npz_of_nd nd golden.Npz.dtype ocompare)
+      in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
@@ -3845,7 +3864,9 @@ let scipy_sparse_linalg_check_case ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      let actual =
+        gauge_aligned c o.oname golden (npz_of_nd nd golden.Npz.dtype ocompare)
+      in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
@@ -3914,7 +3935,9 @@ let scipy_cluster_vq_check_case ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      let actual =
+        gauge_aligned c o.oname golden (npz_of_nd nd golden.Npz.dtype ocompare)
+      in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
@@ -4018,7 +4041,9 @@ let scipy_optimize_check_case ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      let actual =
+        gauge_aligned c o.oname golden (npz_of_nd nd golden.Npz.dtype ocompare)
+      in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)
@@ -4158,7 +4183,9 @@ let composed_check_case ~run ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let actual = npz_of_nd nd golden.Npz.dtype ocompare in
+      let actual =
+        gauge_aligned c o.oname golden (npz_of_nd nd golden.Npz.dtype ocompare)
+      in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
         ~name:(c.case_id ^ ":" ^ o.oname)

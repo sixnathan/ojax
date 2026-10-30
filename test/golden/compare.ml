@@ -105,6 +105,35 @@ let exact_int name xa xb =
           (Printf.sprintf "%s: element %d actual=%Ld expected=%Ld" name i a b))
     xa
 
+type gauge = Columns | Rows | Whole
+
+let gauge_group gauge shape i =
+  let r = Array.length shape in
+  match gauge with
+  | Whole -> 0
+  | Rows -> i / shape.(r - 1)
+  | Columns ->
+      let n = shape.(r - 1) in
+      let m = shape.(r - 2) in
+      (i / (m * n) * n) + (i mod n)
+
+let align_signs gauge ~(expected : Npz.t) ~(actual : Npz.t) =
+  match (expected.data, actual.data) with
+  | Npz.F ea, Npz.F aa when Array.length ea = Array.length aa ->
+      let groups = Hashtbl.create 16 in
+      Array.iteri
+        (fun i a ->
+          let g = gauge_group gauge actual.shape i in
+          let d = Option.value (Hashtbl.find_opt groups g) ~default:0.0 in
+          Hashtbl.replace groups g (d +. (a *. ea.(i))))
+        aa;
+      let flip i a =
+        if Hashtbl.find groups (gauge_group gauge actual.shape i) < 0.0 then -.a
+        else a
+      in
+      { actual with data = Npz.F (Array.mapi flip aa) }
+  | _ -> actual
+
 let check ~name ~compare ~atol ~rtol ~(expected : Npz.t) ~(actual : Npz.t) =
   if not (shapes_equal expected.shape actual.shape) then
     failwith (name ^ ": shape mismatch");

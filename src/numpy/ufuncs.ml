@@ -181,7 +181,11 @@ let spacing x =
   bind1 T.Select_n [ is_zero; result; filled ]
 
 let is_integer = function D.I32 | D.I64 -> true | _ -> false
-let is_inexact = function D.F32 | D.F64 -> true | _ -> false
+
+let is_inexact = function
+  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | _ -> false
+
 let where c a b = bind1 T.Select_n [ c; b; a ]
 let absolute x = if dtype x = D.Bool then x else bind1 T.Abs [ x ]
 let abs = absolute

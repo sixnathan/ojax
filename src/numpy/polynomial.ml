@@ -21,7 +21,9 @@ let scalar dt x = const_full dt [||] x
 let convert v dt =
   if dtype v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
 
-let is_inexact = function D.F32 | D.F64 -> true | _ -> false
+let is_inexact = function
+  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | _ -> false
 
 let to_inexact_dtype dt =
   if is_inexact dt then dt else Dtypes.default_float_dtype ()
@@ -133,9 +135,14 @@ let polyder ?(m = 1) p =
 
 let poly seq =
   let s = NL.atleast_1d (List.hd (promote_dtypes_inexact [ seq ])) in
+  let sh = shape s in
+  let s =
+    if Array.length sh = 2 && sh.(0) = sh.(1) && sh.(0) <> 0 then
+      Linalg.eigvals s
+    else s
+  in
   if Array.length (shape s) <> 1 then
-    invalid_arg
-      "poly: input must be 1d (square-matrix eigvals path deferred to M5)";
+    invalid_arg "input must be 1d or non-empty square 2d array.";
   let dt = dtype s in
   let n = (shape s).(0) in
   if n = 0 then const_full dt [||] 1.0

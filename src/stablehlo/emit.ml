@@ -1515,8 +1515,13 @@ let emit_sort_comparator ctx dt =
         (Printf.sprintf "      stablehlo.return %s : %s\n" (name p) bty)
 
 let emit_sort_multi ctx (eqn : eqn) in_ids ~dimension ~is_stable ~num_keys =
-  if num_keys <> 1 then
-    failwith "Stablehlo.Emit: sort with several keys runs on the host";
+  List.iter
+    (fun (av : aval) ->
+      match av.dtype with
+      | Dtype.Complex64 | Dtype.Complex128 ->
+          failwith "Stablehlo.Emit: sorting complex values runs on the host"
+      | _ -> ())
+    (List.map atom_aval eqn.inputs);
   let inputs = List.map atom_aval eqn.inputs in
   let bty = Ir.tensor_type Dtype.Bool [||] in
   let group = fresh ctx in
@@ -1541,20 +1546,39 @@ let emit_sort_multi ctx (eqn : eqn) in_ids ~dimension ~is_stable ~num_keys =
     (Printf.sprintf "    ^bb0(%s):\n"
        (String.concat ", "
           (List.map (fun (id, ty) -> name id ^ ": " ^ ty) args)));
-  let key = List.hd inputs in
-  let x, _ = List.nth args 0 and y, _ = List.nth args 1 in
-  let sty = Ir.tensor_type key.dtype [||] in
-  let p = fresh ctx in
-  let compare_kind =
-    match key.dtype with
-    | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> "TOTALORDER"
-    | dt -> compare_type_of dt false
+  let compare_op kind x y sty cmp =
+    let p = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "      %s = stablehlo.compare %s, %s, %s, %s : (%s, %s) -> %s\n"
+         (name p) kind (name x) (name y) cmp sty sty bty);
+    p
   in
+  let binary op l r =
+    let p = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "      %s = stablehlo.%s %s, %s : %s\n" (name p) op
+         (name l) (name r) bty);
+    p
+  in
+  let rec lex k =
+    let key = List.nth inputs k in
+    let x, _ = List.nth args (2 * k) and y, _ = List.nth args ((2 * k) + 1) in
+    let sty = Ir.tensor_type key.dtype [||] in
+    let cmp =
+      match key.dtype with
+      | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> "TOTALORDER"
+      | dt -> compare_type_of dt false
+    in
+    let lt = compare_op "LT" x y sty cmp in
+    if k = num_keys - 1 then lt
+    else
+      let eq = compare_op "EQ" x y sty cmp in
+      binary "or" lt (binary "and" eq (lex (k + 1)))
+  in
+  let result = lex 0 in
   Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "      %s = stablehlo.compare LT, %s, %s, %s : (%s, %s) -> %s\n\
-       \      stablehlo.return %s : %s\n"
-       (name p) (name x) (name y) compare_kind sty sty bty (name p) bty);
+    (Printf.sprintf "      stablehlo.return %s : %s\n" (name result) bty);
   Buffer.add_string ctx.buf
     (Printf.sprintf "    }) : (%s) -> (%s)\n"
        (String.concat ", " (List.map Ir.tensor_type_of_aval inputs))
@@ -1570,6 +1594,10 @@ let emit_sort ctx (eqn : eqn) in_ids ~dimension ~is_stable =
   let x = sole in_ids in
   let in_aval = atom_aval (sole eqn.inputs) in
   let dt = in_aval.dtype in
+  (match dt with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      failwith "Stablehlo.Emit: sorting complex values runs on the host"
+  | _ -> ());
   let out = sole eqn.outs in
   let n = fresh ctx in
   Buffer.add_string ctx.buf

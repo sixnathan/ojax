@@ -104,3 +104,31 @@ let argsort perm =
   let out = Array.make n 0 in
   Array.iteri (fun i p -> out.(p) <- i) perm;
   out
+
+let complex_bilinear f a b =
+  let is_complex v =
+    match (Core.get_aval v).dtype with
+    | Dtype.Complex64 | Dtype.Complex128 -> true
+    | _ -> false
+  in
+  if not (is_complex a || is_complex b) then f a b
+  else
+    let parts v =
+      if is_complex v then (Core.bind1 Real [ v ], Some (Core.bind1 Imag [ v ]))
+      else (v, None)
+    in
+    let ar, ai = parts a and br, bi = parts b in
+    let rr = f ar br in
+    let real =
+      match (ai, bi) with
+      | Some x, Some y -> Core.bind1 Sub [ rr; f x y ]
+      | _ -> rr
+    in
+    let cross =
+      match (ai, bi) with
+      | Some x, Some y -> Core.bind1 Add [ f ar y; f x br ]
+      | Some x, None -> f x br
+      | None, Some y -> f ar y
+      | None, None -> failwith "complex_bilinear: no complex operand"
+    in
+    Core.bind1 Complex [ real; cross ]

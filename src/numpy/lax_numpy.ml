@@ -21,8 +21,16 @@ let const_full dt sh x =
 
 let zeros_like v = const_full (dtype v) (shape v) 0.0
 let bind1 = C.bind1
-let is_inexact = function D.F32 | D.F64 -> true | _ -> false
-let is_integral = function D.I32 | D.I64 -> true | _ -> false
+
+let is_inexact = function
+  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | _ -> false
+
+let is_integral = function
+  | D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
+      true
+  | _ -> false
+
 let is_bool = function D.Bool -> true | _ -> false
 
 let to_inexact_dtype dt =
@@ -273,23 +281,26 @@ let conv1d ~mode ~flip_kernel ~reverse_out a v =
   let lhs = reshape x [| 1; 1; lx |] in
   let rhs = reshape y [| 1; 1; ly |] in
   let out =
-    bind1
-      (T.Conv_general_dilated
-         {
-           window_strides = [| 1 |];
-           padding;
-           lhs_dilation = [| 1 |];
-           rhs_dilation = [| 1 |];
-           dimension_numbers =
+    Lax.complex_bilinear
+      (fun lhs rhs ->
+        bind1
+          (T.Conv_general_dilated
              {
-               lhs_spec = [| 0; 1; 2 |];
-               rhs_spec = [| 0; 1; 2 |];
-               out_spec = [| 0; 1; 2 |];
-             };
-           feature_group_count = 1;
-           batch_group_count = 1;
-         })
-      [ lhs; rhs ]
+               window_strides = [| 1 |];
+               padding;
+               lhs_dilation = [| 1 |];
+               rhs_dilation = [| 1 |];
+               dimension_numbers =
+                 {
+                   lhs_spec = [| 0; 1; 2 |];
+                   rhs_spec = [| 0; 1; 2 |];
+                   out_spec = [| 0; 1; 2 |];
+                 };
+               feature_group_count = 1;
+               batch_group_count = 1;
+             })
+          [ lhs; rhs ])
+      lhs rhs
   in
   let m = (shape out).(2) in
   let flat = reshape out [| m |] in
@@ -299,6 +310,11 @@ let convolve ?(mode = "full") a v =
   conv1d ~mode ~flip_kernel:true ~reverse_out:false a v
 
 let correlate ?(mode = "valid") a v =
+  let v =
+    match dtype v with
+    | D.Complex64 | D.Complex128 -> bind1 T.Conj [ v ]
+    | _ -> v
+  in
   let la = (shape a).(0) and lv = (shape v).(0) in
   conv1d ~mode ~flip_kernel:false ~reverse_out:(la < lv) a v
 
@@ -386,9 +402,15 @@ let clip ?min ?max arr =
   in
   match max with None -> arr | Some m -> minimum (scalar dt m) arr
 
-let round ?(decimals = 0) v =
+let rec round ?(decimals = 0) v =
   let dt = dtype v in
   if is_integral dt || is_bool dt then v
+  else if dt = D.Complex64 || dt = D.Complex128 then
+    bind1 T.Complex
+      [
+        round ~decimals (bind1 T.Real [ v ]);
+        round ~decimals (bind1 T.Imag [ v ]);
+      ]
   else if decimals = 0 then bind1 T.Round [ v ]
   else begin
     let factor = full dt (shape v) (10.0 ** float_of_int decimals) in
@@ -1225,7 +1247,12 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?dtype m =
            lhs_batch = [||];
            rhs_batch = [||];
          })
-      [ xc; xc ]
+      [
+        xc;
+        (match dt with
+        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xc ]
+        | _ -> xc);
+      ]
   in
   let res =
     bind1 T.Div [ prod; full dt (shape prod) (float_of_int (nobs - ddof)) ]
@@ -1236,11 +1263,21 @@ let corrcoef ?y ?(rowvar = true) ?dtype x =
   let c = cov ?y ~rowvar ?dtype x in
   if ndim c = 0 then bind1 T.Div [ c; c ]
   else begin
+    let complex =
+      match dtype_of c with D.Complex64 | D.Complex128 -> true | _ -> false
+    in
     let d = diagonal c in
+    let d = if complex then bind1 T.Real [ d ] else d in
     let stddev = convert (bind1 T.Sqrt [ d ]) (dtype_of c) in
     let c = binop T.Div c (expand_dims stddev [| 1 |]) in
     let c = binop T.Div c (expand_dims stddev [| 0 |]) in
-    clip ~min:(-1.0) ~max:1.0 c
+    if complex then
+      bind1 T.Complex
+        [
+          clip ~min:(-1.0) ~max:1.0 (bind1 T.Real [ c ]);
+          clip ~min:(-1.0) ~max:1.0 (bind1 T.Imag [ c ]);
+        ]
+    else clip ~min:(-1.0) ~max:1.0 c
   end
 
 let argsort_values v =

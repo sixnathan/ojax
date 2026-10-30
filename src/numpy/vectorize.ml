@@ -142,33 +142,62 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
   in
   let broadcast_shape = LN.broadcast_shapes_n batch_shapes in
   let bsize = Array.fold_left ( * ) 1 broadcast_shape in
-  let concretes = Array.map concrete dyn_arr in
-  let fbuf = ref [||] in
-  let cbuf = ref [||] in
-  let out_dt = ref D.F32 in
-  let out_shape = ref [||] in
-  let out_csize = ref 0 in
-  let cplx = ref false in
-  for lin = 0 to bsize - 1 do
-    let bidx = unravel lin broadcast_shape in
-    let dyn_slices =
+  let traced =
+    Array.exists (function T.Tracer _ -> true | _ -> false) dyn_arr
+  in
+  if traced then begin
+    let flat =
       Array.to_list
         (Array.mapi
-           (fun idx nd -> T.Concrete (extract_slice nd ncs.(idx) bidx))
-           concretes)
+           (fun idx v ->
+             let sh = shape_of v in
+             let core_shape =
+               Array.sub sh (Array.length sh - ncs.(idx)) ncs.(idx)
+             in
+             let target = Array.append broadcast_shape core_shape in
+             LN.reshape (LN.broadcast_to v target)
+               (Array.append [| bsize |] core_shape))
+           dyn_arr)
     in
-    let out = concrete (call_full dyn_slices) in
-    if lin = 0 then (
-      out_dt := Nd.dtype out;
-      out_shape := Nd.shape out;
-      out_csize := Array.fold_left ( * ) 1 !out_shape;
-      cplx := is_complex !out_dt;
-      if !cplx then cbuf := Array.make (bsize * !out_csize) Complex.zero
-      else fbuf := Array.make (bsize * !out_csize) 0.0);
-    let base = lin * !out_csize in
-    if !cplx then Array.blit (flat_c out) 0 !cbuf base !out_csize
-    else Array.blit (flat_f out) 0 !fbuf base !out_csize
-  done;
-  let final_shape = Array.append broadcast_shape !out_shape in
-  if !cplx then T.Concrete (Nd.of_complex !out_dt final_shape !cbuf)
-  else T.Concrete (Nd.of_floats !out_dt final_shape !fbuf)
+    let out =
+      List.hd
+        (Interpreters.Batching.vmap
+           (fun slices -> [ call_full slices ])
+           (List.map (fun _ -> Some 0) flat)
+           flat)
+    in
+    let out_sh = shape_of out in
+    let per_item = Array.sub out_sh 1 (Array.length out_sh - 1) in
+    LN.reshape out (Array.append broadcast_shape per_item)
+  end
+  else
+    let concretes = Array.map concrete dyn_arr in
+    let fbuf = ref [||] in
+    let cbuf = ref [||] in
+    let out_dt = ref D.F32 in
+    let out_shape = ref [||] in
+    let out_csize = ref 0 in
+    let cplx = ref false in
+    for lin = 0 to bsize - 1 do
+      let bidx = unravel lin broadcast_shape in
+      let dyn_slices =
+        Array.to_list
+          (Array.mapi
+             (fun idx nd -> T.Concrete (extract_slice nd ncs.(idx) bidx))
+             concretes)
+      in
+      let out = concrete (call_full dyn_slices) in
+      if lin = 0 then (
+        out_dt := Nd.dtype out;
+        out_shape := Nd.shape out;
+        out_csize := Array.fold_left ( * ) 1 !out_shape;
+        cplx := is_complex !out_dt;
+        if !cplx then cbuf := Array.make (bsize * !out_csize) Complex.zero
+        else fbuf := Array.make (bsize * !out_csize) 0.0);
+      let base = lin * !out_csize in
+      if !cplx then Array.blit (flat_c out) 0 !cbuf base !out_csize
+      else Array.blit (flat_f out) 0 !fbuf base !out_csize
+    done;
+    let final_shape = Array.append broadcast_shape !out_shape in
+    if !cplx then T.Concrete (Nd.of_complex !out_dt final_shape !cbuf)
+    else T.Concrete (Nd.of_floats !out_dt final_shape !fbuf)

@@ -1160,6 +1160,217 @@ let surface_batch_run op params a b =
   | "sb_ufunc_outer" -> Some [ UFN.outer uf (a ()) (b ()) ]
   | _ -> None
 
+let tracer_batch_run op params a b =
+  let int_p k = U.to_int (U.member k params) in
+  let opt_int k =
+    match U.member k params with `Null -> None | v -> Some (U.to_int v)
+  in
+  match op with
+  | "tb_unique" ->
+      let fill_value = Option.map float_of_int (opt_int "fill") in
+      Some
+        (E.unique ~return_index:true ~return_inverse:true ~return_counts:true
+           ?axis:(opt_int "axis") ~size:(int_p "size") ?fill_value (a ()))
+  | "tb_lexsort" ->
+      let v = a () in
+      Some
+        [
+          Ojax.Numpy.Sorting.lexsort
+            [
+              L.index_in_dim ~axis:1 ~keepdims:false v 0;
+              L.index_in_dim ~axis:1 ~keepdims:false v 1;
+            ];
+        ]
+  | "tb_poly_matrix" -> Some [ Ojax.Numpy.Polynomial.poly (a ()) ]
+  | "tb_qr_raw" -> Some (LA.qr ~mode:"raw" (a ()))
+  | "tb_vectorize" ->
+      Some
+        [
+          Ojax.Numpy.Vectorize.vectorize
+            (fun args ->
+              match args with
+              | [ x; y ] -> UF.add (UF.multiply x y) (L.full_like x 1.0)
+              | _ -> failwith "parity: vectorize arity")
+            [ a (); b () ];
+        ]
+  | "tb_vectorize_core" ->
+      Some
+        [
+          Ojax.Numpy.Vectorize.vectorize ~signature:"(n)->()"
+            (fun args -> RD.sum (List.hd args))
+            [ a () ];
+        ]
+  | "tb_pad_vmap" ->
+      Some
+        (Ojax.Interpreters.Batching.vmap
+           (fun args ->
+             match args with
+             | [ x; v ] -> [ L.pad x v [| (1, 1, 0) |] ]
+             | _ -> failwith "parity: pad arity")
+           [ Some 0; Some 0 ]
+           [ a (); b () ])
+  | "tb_convolve_c" ->
+      Some
+        [
+          NL.convolve ~mode:(U.to_string (U.member "mode" params)) (a ()) (b ());
+        ]
+  | "tb_correlate_c" ->
+      Some
+        [
+          NL.correlate
+            ~mode:(U.to_string (U.member "mode" params))
+            (a ()) (b ());
+        ]
+  | "tb_lax_conv_c" ->
+      let x = a () and y = b () in
+      let widen v =
+        match dt_of v with
+        | Ojax.Dtype.Complex64 | Ojax.Dtype.Complex128 -> v
+        | _ -> NL.astype v (dt_of y)
+      in
+      ignore widen;
+      Some [ L.conv_general_dilated x y ~window_strides:[| 1; 1 |] L.Same ]
+  | "tb_grad_conv_c" ->
+      let kernel = b () in
+      Some
+        [
+          List.hd
+            (Ojax.Interpreters.Ad.grad
+               (fun args ->
+                 RD.sum (UF.absolute (NL.convolve (List.hd args) kernel)))
+               [ a () ]);
+        ]
+  | "tb_seed" ->
+      let seed = NL.astype (RD.sum (a ())) Ojax.Dtype.I32 in
+      Some [ Ojax.Random.Threefry.threefry_seed seed ]
+  | _ -> None
+
+let dtype_sweep_run op a =
+  let module AC = Ojax.Numpy.Array_creation in
+  let module PO = Ojax.Numpy.Polynomial in
+  let module TC = Ojax.Numpy.Tensor_contractions in
+  let module S = Ojax.Numpy.Sorting in
+  let module FFT = Ojax.Numpy.Fft in
+  let row v i = L.index_in_dim ~axis:0 ~keepdims:false v i in
+  let cell v i = L.index_in_dim ~axis:0 ~keepdims:false (row v 0) i in
+  let t = NL.matrix_transpose in
+  let one f = Some [ f (a ()) ] in
+  let ax0 = [| 0 |] in
+  match op with
+  | "sw_mean" -> one (fun v -> RD.mean v)
+  | "sw_mean_axis" -> one (RD.mean ~axis:ax0)
+  | "sw_var" -> one (RD.var ~axis:ax0)
+  | "sw_std" -> one (RD.std ~axis:ax0)
+  | "sw_sum" -> one (RD.sum ~axis:ax0)
+  | "sw_prod" -> one (RD.prod ~axis:ax0)
+  | "sw_cumsum" -> one (RD.cumsum ~axis:0)
+  | "sw_cumprod" -> one (RD.cumprod ~axis:0)
+  | "sw_diff" -> one (NL.diff ~axis:0)
+  | "sw_gradient" -> one (fun v -> List.hd (E.gradient ~axis:[ 0 ] v))
+  | "sw_trapezoid" -> one (NL.trapezoid ~axis:0)
+  | "sw_average" -> one (RD.average ~axis:ax0)
+  | "sw_cov" -> one (fun v -> NL.cov v)
+  | "sw_corrcoef" -> one (fun v -> NL.corrcoef v)
+  | "sw_sort" -> one (S.sort ~axis:(Some 0))
+  | "sw_argsort" -> one (S.argsort ~axis:(Some 0))
+  | "sw_flip" -> one (NL.flip ~axis:[| 0 |])
+  | "sw_roll" -> one (fun v -> NL.roll ~axis:[| 0 |] v [| 1 |])
+  | "sw_nanmean" -> one (RD.nanmean ~axis:ax0)
+  | "sw_nansum" -> one (RD.nansum ~axis:ax0)
+  | "sw_nanvar" -> one (RD.nanvar ~axis:ax0)
+  | "sw_sinc" -> one UF.sinc
+  | "sw_sign" -> one UF.sign
+  | "sw_square" -> one UF.square
+  | "sw_sqrt" -> one UF.sqrt
+  | "sw_exp" -> one UF.exp
+  | "sw_log" -> one UF.log
+  | "sw_log1p" -> one UF.log1p
+  | "sw_expm1" -> one UF.expm1
+  | "sw_sin" -> one UF.sin
+  | "sw_cos" -> one UF.cos
+  | "sw_tan" -> one UF.tan
+  | "sw_arcsin" -> one UF.arcsin
+  | "sw_arccos" -> one UF.arccos
+  | "sw_arctan" -> one UF.arctan
+  | "sw_sinh" -> one UF.sinh
+  | "sw_cosh" -> one UF.cosh
+  | "sw_tanh" -> one UF.tanh
+  | "sw_arcsinh" -> one UF.arcsinh
+  | "sw_arccosh" -> one UF.arccosh
+  | "sw_arctanh" -> one UF.arctanh
+  | "sw_real" -> one UF.real
+  | "sw_imag" -> one UF.imag
+  | "sw_conj" -> one UF.conj
+  | "sw_angle" -> one NL.angle
+  | "sw_abs" -> one UF.absolute
+  | "sw_isnan" -> one UF.isnan
+  | "sw_isfinite" -> one UF.isfinite
+  | "sw_isinf" -> one UF.isinf
+  | "sw_round" -> one (NL.round ~decimals:1)
+  | "sw_floor_div_self" ->
+      one (fun v -> UF.divide v (UF.add v (L.full_like v 2.0)))
+  | "sw_linspace_end" -> one (fun v -> AC.linspace_v ~num:4 (row v 0) (row v 1))
+  | "sw_geomspace" ->
+      one (fun v ->
+          AC.geomspace_v ~num:3
+            (UF.add (row v 0) (L.full_like (row v 0) 2.0))
+            (UF.add (row v 1) (L.full_like (row v 1) 3.0)))
+  | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
+  | "sw_polyval" ->
+      one (fun v -> PO.polyval (L.slice_in_dim ~axis:0 v 0 2) (row v 0))
+  | "sw_polyder" -> one (fun v -> PO.polyder (row v 0))
+  | "sw_polyint" -> one (fun v -> PO.polyint (row v 0))
+  | "sw_polyadd" -> one (fun v -> PO.polyadd (row v 0) (row v 1))
+  | "sw_polymul" -> one (fun v -> PO.polymul (row v 0) (row v 1))
+  | "sw_roots" ->
+      one (fun v -> S.sort ~axis:(Some 0) (UF.absolute (E.roots (row v 0))))
+  | "sw_kron" -> one (fun v -> NL.kron v v)
+  | "sw_dot" -> one (fun v -> TC.dot v (t v))
+  | "sw_vdot" -> one (fun v -> TC.vdot v v)
+  | "sw_inner" -> one (fun v -> TC.inner v v)
+  | "sw_outer" -> one (fun v -> TC.outer (row v 0) (row v 1))
+  | "sw_matmul" -> one (fun v -> TC.matmul v (t v))
+  | "sw_trace" -> one (fun v -> NL.trace (TC.matmul v (t v)))
+  | "sw_cross" -> one (fun v -> NL.cross (row v 0) (row v 1))
+  | "sw_tensordot" -> one (fun v -> TC.tensordot ~axes:(TC.Ax_int 1) v (t v))
+  | "sw_einsum" -> one (fun v -> Ojax.Numpy.Einsum.einsum "ij,kj->ik" [ v; v ])
+  | "sw_clip" -> one (NL.clip ~min:(-0.5) ~max:0.5)
+  | "sw_minimum" -> one (fun v -> UF.minimum v (NL.flip ~axis:[| 0 |] v))
+  | "sw_maximum" -> one (fun v -> UF.maximum v (NL.flip ~axis:[| 0 |] v))
+  | "sw_max" -> one (RD.amax ~axis:ax0)
+  | "sw_min" -> one (RD.amin ~axis:ax0)
+  | "sw_argmax" -> one (NL.argmax ~axis:0)
+  | "sw_take" ->
+      one (fun v ->
+          Ojax.Numpy.Indexing.take ~axis:0 v
+            (T.Concrete
+               (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [| 2 |] [| 0.; 1. |])))
+  | "sw_where" ->
+      one (fun v ->
+          NL.where_
+            (L.gt (UF.real v) (L.full_like (UF.real v) 0.0))
+            v
+            (UF.multiply v (L.full_like v 2.0)))
+  | "sw_concatenate" -> one (fun v -> NL.concatenate ~axis:0 [ v; v ])
+  | "sw_pad" ->
+      one (fun v -> NL.pad v (Array.map (fun _ -> (1, 1)) (shp v)) 0.0)
+  | "sw_repeat" -> one (fun v -> Ojax.Numpy.Array_methods.repeat ~axis:0 v 2)
+  | "sw_tile" -> one (fun v -> NL.tile v [| 2; 1 |])
+  | "sw_interp" ->
+      one (fun v ->
+          let dt = Ojax.Dtypes.default_float_dtype () in
+          let arr sh xs = T.Concrete (Ojax.Ndarray.of_floats dt sh xs) in
+          E.interp (arr [| 1 |] [| 0.5 |])
+            (arr [| 3 |] [| 0.; 1.; 2. |])
+            (row v 0))
+  | "sw_fft" -> one (FFT.fft ~axis:0)
+  | "sw_ifft" -> one (FFT.ifft ~axis:0)
+  | "sw_tril" -> one (fun v -> NL.tril v)
+  | "sw_diag" -> one (fun v -> NL.diag v)
+  | _ ->
+      ignore cell;
+      None
+
 let fft_run op params a =
   match op with
   | "fft" -> fft1 F.fft (a ()) params
@@ -1186,6 +1397,8 @@ let run op params get =
   let c () = get "c" in
   let runners =
     [
+      (fun () -> dtype_sweep_run op a);
+      (fun () -> tracer_batch_run op params a b);
       (fun () -> surface_batch_run op params a b);
       (fun () -> linalg_batch_run op params a b);
       (fun () -> complex_grad_run op a);
@@ -1210,6 +1423,7 @@ let run op params get =
 let needs_concrete op =
   List.mem op
     [
+      "sw_roots";
       "np_nonzero";
       "np_flatnonzero";
       "np_argwhere";

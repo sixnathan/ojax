@@ -204,19 +204,53 @@ let stack_batch (axis_size : int) (axis : int) (vals : value list)
 let pad_batch (cfg : (int * int * int) array) (vals : value list)
     (bdims : int option list) : value * int option =
   match (vals, bdims) with
-  | [ operand; pv ], [ ob; pvb ] -> (
-      match pvb with
-      | Some _ ->
-          failwith
-            "batching: pad with batched padding_value not supported in M1"
-      | None -> (
-          match ob with
-          | Some d ->
-              let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
-              (b1 (Pad cfg2) [ operand; pv ], Some d)
-          | None ->
-              failwith
-                "batching: pad with unbatched operand not supported in M1"))
+  | [ operand; pv ], [ Some d; None ] ->
+      let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
+      (b1 (Pad cfg2) [ operand; pv ], Some d)
+  | [ operand; pv ], [ ob; pvb ] ->
+      let size =
+        match (ob, pvb) with
+        | Some d, _ -> (Core.get_aval operand).shape.(d)
+        | None, Some d -> (Core.get_aval pv).shape.(d)
+        | None, None -> failwith "batching: pad with nothing batched"
+      in
+      let leading v bdim =
+        let a = Core.get_aval v in
+        match bdim with
+        | Some d ->
+            let n = Array.length a.shape in
+            let perm =
+              Array.of_list
+                (d :: List.filter (fun i -> i <> d) (List.init n Fun.id))
+            in
+            b1 (Transpose perm) [ v ]
+        | None ->
+            b1
+              (Broadcast_in_dim
+                 {
+                   shape = Array.append [| size |] a.shape;
+                   dims = Array.init (Array.length a.shape) (fun i -> i + 1);
+                 })
+              [ v ]
+      in
+      let x = leading operand ob in
+      let fill = leading pv pvb in
+      let cfg2 = insert_pad_cfg cfg 0 (0, 0, 0) in
+      let dt = (Core.get_aval x).dtype in
+      let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+      let padded = b1 (Pad cfg2) [ x; zero ] in
+      let keep =
+        Concrete
+          (Ndarray.of_floats Dtype.Bool (Core.get_aval x).shape
+             (Array.make (Array.fold_left ( * ) 1 (Core.get_aval x).shape) 1.0))
+      in
+      let off = Concrete (Ndarray.of_floats Dtype.Bool [||] [| 0.0 |]) in
+      let mask = b1 (Pad cfg2) [ keep; off ] in
+      let out_shape = (Core.get_aval padded).shape in
+      let wide_fill =
+        b1 (Broadcast_in_dim { shape = out_shape; dims = [| 0 |] }) [ fill ]
+      in
+      (b1 Select_n [ mask; wide_fill; padded ], Some 0)
   | _ -> failwith "batching: pad expects 2 operands"
 
 let rev_batch (dims : int array) (x : value) (bdim : int option) :

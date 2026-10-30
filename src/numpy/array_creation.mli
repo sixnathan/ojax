@@ -28,3 +28,31 @@ val logspace :
 
 val geomspace :
   ?num:int -> ?endpoint:bool -> ?dtype:Dtype.t -> float -> float -> Types.value
+
+val linspace_v :
+  ?num:int ->
+  ?endpoint:bool ->
+  ?axis:int ->
+  ?dtype:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val logspace_v :
+  ?num:int ->
+  ?endpoint:bool ->
+  ?base:float ->
+  ?axis:int ->
+  ?dtype:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val geomspace_v :
+  ?num:int ->
+  ?endpoint:bool ->
+  ?axis:int ->
+  ?dtype:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value

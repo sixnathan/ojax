@@ -43,3 +43,9 @@ val custom_linear_solve :
 
 module Linalg = Linalg
 module Fft = Fft
+
+val complex_bilinear :
+  (Types.value -> Types.value -> Types.value) ->
+  Types.value ->
+  Types.value ->
+  Types.value

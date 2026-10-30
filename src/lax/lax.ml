@@ -1723,9 +1723,98 @@ let acts_on_parts = function
   | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _ | Transpose _ | Unstack _
   | Slice _ | Dynamic_slice _ | Dynamic_update_slice | Gather _ | Scatter _
   | Reduce_sum _ | Cumsum _ | Neg | Add | Sub | Scatter_add _ | Scatter_sub _
-  | Reduce_window_sum _ ->
+  | Reduce_window_sum _ | Round ->
       true
   | _ -> false
+
+let complex_order (a : Complex.t) (b : Complex.t) =
+  match Float.compare a.re b.re with 0 -> Float.compare a.im b.im | c -> c
+
+let complex_reduce combine identity axes a =
+  let os = Ndarray.shape a in
+  let out_shape = Utils.reduce_shape os axes in
+  let out_str = Utils.strides out_shape in
+  let ndim = Array.length os in
+  let is_red = Array.make ndim false in
+  Array.iter (fun ax -> is_red.(ax) <- true) axes;
+  let src = to_carray a in
+  let count = Utils.prod out_shape in
+  let out = Array.make count identity in
+  let seen = Array.make count false in
+  Array.iteri
+    (fun flat value ->
+      let oidx = Utils.decode flat os in
+      let of_ = ref 0 and k = ref 0 in
+      for d = 0 to ndim - 1 do
+        if not is_red.(d) then begin
+          of_ := !of_ + (oidx.(d) * out_str.(!k));
+          incr k
+        end
+      done;
+      out.(!of_) <- (if seen.(!of_) then combine out.(!of_) value else value);
+      seen.(!of_) <- true)
+    src;
+  Ndarray.of_complex (Ndarray.dtype a) out_shape out
+
+let complex_cumulative combine ~axis ~reverse a =
+  let os = Ndarray.shape a in
+  let str = Utils.strides os in
+  let src = to_carray a in
+  let out = Array.copy src in
+  let n = os.(axis) in
+  let step = str.(axis) in
+  let visit flat =
+    let idx = Utils.decode flat os in
+    let position = if reverse then n - 1 - idx.(axis) else idx.(axis) in
+    if position > 0 then
+      let previous = if reverse then flat + step else flat - step in
+      out.(flat) <- combine out.(previous) out.(flat)
+  in
+  let total = Array.length src in
+  if reverse then
+    for flat = total - 1 downto 0 do
+      visit flat
+    done
+  else
+    for flat = 0 to total - 1 do
+      visit flat
+    done;
+  Ndarray.of_complex (Ndarray.dtype a) os out
+
+let complex_sort dimension num_keys operands =
+  let split nd =
+    if is_complex_dtype (Ndarray.dtype nd) then
+      let re, im = complex_parts nd in
+      [ re; im ]
+    else [ nd ]
+  in
+  let keys_after =
+    List.fold_left ( + ) 0
+      (List.mapi
+         (fun i nd ->
+           if i >= num_keys then 0
+           else if is_complex_dtype (Ndarray.dtype nd) then 2
+           else 1)
+         operands)
+  in
+  let sorted =
+    sort_impl dimension keys_after (List.concat_map split operands)
+  in
+  let rec join remaining sorted =
+    match (remaining, sorted) with
+    | [], _ -> []
+    | nd :: rest, re :: im :: tail when is_complex_dtype (Ndarray.dtype nd) ->
+        let shape = Ndarray.shape nd in
+        let n = Utils.prod shape in
+        Ndarray.of_complex (Ndarray.dtype nd) shape
+          (Array.init n (fun k ->
+               let idx = Utils.decode k shape in
+               { Complex.re = Ndarray.get_f re idx; im = Ndarray.get_f im idx }))
+        :: join rest tail
+    | _ :: rest, x :: tail -> x :: join rest tail
+    | _ :: _, [] -> failwith "lax: complex sort arity"
+  in
+  join operands sorted
 
 let complex_elementwise prim inputs =
   let one = Complex.one in
@@ -1760,9 +1849,62 @@ let complex_elementwise prim inputs =
           ]
     | _ -> None
   in
+  let cz re im = { Complex.re; im } in
+  let casin z =
+    let iz = Complex.mul Complex.i z in
+    let root = Complex.sqrt (Complex.sub one (Complex.mul z z)) in
+    Complex.mul (cz 0.0 (-1.0)) (Complex.log (Complex.add iz root))
+  in
+  let half_pi = cz (Float.pi /. 2.0) 0.0 in
+  let half = cz 0.5 0.0 in
+  let cacos z = Complex.sub half_pi (casin z) in
+  let catan z =
+    Complex.mul (cz 0.0 0.5)
+      (Complex.log
+         (Complex.div (Complex.add Complex.i z) (Complex.sub Complex.i z)))
+  in
+  let casinh z =
+    Complex.log
+      (Complex.add z (Complex.sqrt (Complex.add (Complex.mul z z) one)))
+  in
+  let cacosh z =
+    Complex.log
+      (Complex.add z
+         (Complex.mul
+            (Complex.sqrt (Complex.add z one))
+            (Complex.sqrt (Complex.sub z one))))
+  in
+  let catanh z =
+    Complex.mul half
+      (Complex.log (Complex.div (Complex.add one z) (Complex.sub one z)))
+  in
+  let pick keep a b = if keep (complex_order a b) then a else b in
+  let reduce_with combine identity axes = function
+    | [ a ] -> Some [ complex_reduce combine identity axes a ]
+    | _ -> None
+  in
   match prim with
   | Mul -> chain2 Complex.mul inputs
   | Div -> chain2 Complex.div inputs
+  | Asin -> chain casin inputs
+  | Acos -> chain cacos inputs
+  | Atan -> chain catan inputs
+  | Asinh -> chain casinh inputs
+  | Acosh -> chain cacosh inputs
+  | Atanh -> chain catanh inputs
+  | Max -> chain2 (pick (fun c -> c >= 0)) inputs
+  | Min -> chain2 (pick (fun c -> c <= 0)) inputs
+  | Reduce_prod axes -> reduce_with Complex.mul one axes inputs
+  | Reduce_max axes ->
+      reduce_with (pick (fun c -> c >= 0)) Complex.zero axes inputs
+  | Reduce_min axes ->
+      reduce_with (pick (fun c -> c <= 0)) Complex.zero axes inputs
+  | Cumprod { axis; reverse } -> (
+      match inputs with
+      | [ a ] -> Some [ complex_cumulative Complex.mul ~axis ~reverse a ]
+      | _ -> None)
+  | Sort { dimension; num_keys; _ } ->
+      Some (complex_sort dimension num_keys inputs)
   | Square -> chain (fun z -> Complex.mul z z) inputs
   | Cosh -> chain ccosh inputs
   | Sinh -> chain csinh inputs
@@ -2259,3 +2401,5 @@ let custom_linear_solve = Control_flow.Solves.custom_linear_solve
 
 module Linalg = Linalg
 module Fft = Fft
+
+let complex_bilinear = Utils.complex_bilinear

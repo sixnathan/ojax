@@ -19,3 +19,4 @@ val squeeze_shape : int array -> int array -> int array
 val split_shapes : int array -> int -> int array -> int array list
 val unstack_shapes : int -> int array -> int array list
 val argsort : int array -> int array
+val complex_bilinear : (value -> value -> value) -> value -> value -> value

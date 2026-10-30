@@ -417,6 +417,126 @@ def _surface_batch_ops():
     }
 
 
+def _tracer_batch_ops():
+    key = jax.random.key if False else None
+
+    def uq(a, p):
+        out = jnp.unique(a, size=p["size"], fill_value=p.get("fill"), axis=p.get("axis"), return_index=True, return_inverse=True, return_counts=True)
+        return tuple(out)
+
+    def pad_batched(a, b, p):
+        return jax.vmap(lambda x, v: jax.lax.pad(x, v, [(1, 1, 0)]))(a, b)
+
+    return {
+        "tb_unique": uq,
+        "tb_lexsort": lambda a, p: jnp.lexsort((a[:, 0], a[:, 1])),
+        "tb_poly_matrix": lambda a, p: jnp.poly(a),
+        "tb_qr_raw": lambda a, p: tuple(jnp.linalg.qr(a, mode="raw")),
+        "tb_vectorize": lambda a, b, p: jnp.vectorize(lambda x, y: x * y + 1.0)(a, b),
+        "tb_vectorize_core": lambda a, p: jnp.vectorize(lambda x: jnp.sum(x, keepdims=False), signature="(n)->()")(a),
+        "tb_pad_vmap": pad_batched,
+        "tb_convolve_c": lambda a, b, p: jnp.convolve(a, b, mode=p["mode"]),
+        "tb_correlate_c": lambda a, b, p: jnp.correlate(a, b, mode=p["mode"]),
+        "tb_lax_conv_c": lambda a, b, p: jax.lax.conv_general_dilated(a, b, (1, 1), "SAME"),
+        "tb_grad_conv_c": lambda a, b, p: jax.grad(lambda x: jnp.sum(jnp.abs(jnp.convolve(x, b))))(a),
+        "tb_seed": lambda a, p: jax.random.key_data(jax.random.PRNGKey(jnp.sum(a).astype(jnp.int32))),
+    }
+
+
+def _dtype_sweep_ops():
+    n = jnp
+    un = {
+        "mean": lambda a: n.mean(a),
+        "mean_axis": lambda a: n.mean(a, axis=0),
+        "var": lambda a: n.var(a, axis=0),
+        "std": lambda a: n.std(a, axis=0),
+        "sum": lambda a: n.sum(a, axis=0),
+        "prod": lambda a: n.prod(a, axis=0),
+        "cumsum": lambda a: n.cumsum(a, axis=0),
+        "cumprod": lambda a: n.cumprod(a, axis=0),
+        "diff": lambda a: n.diff(a, axis=0),
+        "gradient": lambda a: n.gradient(a, axis=0),
+        "trapezoid": lambda a: n.trapezoid(a, axis=0),
+        "average": lambda a: n.average(a, axis=0),
+        "cov": lambda a: n.cov(a),
+        "corrcoef": lambda a: n.corrcoef(a),
+        "sort": lambda a: n.sort(a, axis=0),
+        "argsort": lambda a: n.argsort(a, axis=0),
+        "flip": lambda a: n.flip(a, axis=0),
+        "roll": lambda a: n.roll(a, 1, axis=0),
+        "nanmean": lambda a: n.nanmean(a, axis=0),
+        "nansum": lambda a: n.nansum(a, axis=0),
+        "nanvar": lambda a: n.nanvar(a, axis=0),
+        "sinc": lambda a: n.sinc(a),
+        "sign": lambda a: n.sign(a),
+        "square": lambda a: n.square(a),
+        "sqrt": lambda a: n.sqrt(a),
+        "exp": lambda a: n.exp(a),
+        "log": lambda a: n.log(a),
+        "log1p": lambda a: n.log1p(a),
+        "expm1": lambda a: n.expm1(a),
+        "sin": lambda a: n.sin(a),
+        "cos": lambda a: n.cos(a),
+        "tan": lambda a: n.tan(a),
+        "arcsin": lambda a: n.arcsin(a),
+        "arccos": lambda a: n.arccos(a),
+        "arctan": lambda a: n.arctan(a),
+        "sinh": lambda a: n.sinh(a),
+        "cosh": lambda a: n.cosh(a),
+        "tanh": lambda a: n.tanh(a),
+        "arcsinh": lambda a: n.arcsinh(a),
+        "arccosh": lambda a: n.arccosh(a),
+        "arctanh": lambda a: n.arctanh(a),
+        "real": lambda a: n.real(a),
+        "imag": lambda a: n.imag(a),
+        "conj": lambda a: n.conj(a),
+        "angle": lambda a: n.angle(a),
+        "abs": lambda a: n.abs(a),
+        "isnan": lambda a: n.isnan(a),
+        "isfinite": lambda a: n.isfinite(a),
+        "isinf": lambda a: n.isinf(a),
+        "round": lambda a: n.round(a, 1),
+        "floor_div_self": lambda a: a / (a + 2.0),
+        "linspace_end": lambda a: n.linspace(a[0], a[1], 4),
+        "geomspace": lambda a: n.geomspace(a[0] + 2.0, a[1] + 3.0, 3),
+        "logspace": lambda a: n.logspace(a[0], a[1], 3),
+        "polyval": lambda a: n.polyval(a[:2], a[0]),
+        "polyder": lambda a: n.polyder(a[0]),
+        "polyint": lambda a: n.polyint(a[0]),
+        "polyadd": lambda a: n.polyadd(a[0], a[1]),
+        "polymul": lambda a: n.polymul(a[0], a[1]),
+        "roots": lambda a: n.sort(n.abs(n.roots(a[0]))),
+        "kron": lambda a: n.kron(a, a),
+        "dot": lambda a: n.dot(a, a.T),
+        "vdot": lambda a: n.vdot(a, a),
+        "inner": lambda a: n.inner(a, a),
+        "outer": lambda a: n.outer(a[0], a[1]),
+        "matmul": lambda a: a @ a.T,
+        "trace": lambda a: n.trace(a @ a.T),
+        "cross": lambda a: n.cross(a[0], a[1]),
+        "tensordot": lambda a: n.tensordot(a, a, axes=1) if False else n.tensordot(a, a.T, axes=1),
+        "einsum": lambda a: n.einsum("ij,kj->ik", a, a),
+        "clip": lambda a: n.clip(a, -0.5, 0.5),
+        "minimum": lambda a: n.minimum(a, a[::-1]),
+        "maximum": lambda a: n.maximum(a, a[::-1]),
+        "max": lambda a: n.max(a, axis=0),
+        "min": lambda a: n.min(a, axis=0),
+        "argmax": lambda a: n.argmax(a, axis=0),
+        "take": lambda a: n.take(a, jnp.array([0, 1]), axis=0),
+        "where": lambda a: n.where(n.real(a) > 0, a, a * 2.0),
+        "concatenate": lambda a: n.concatenate([a, a], axis=0),
+        "pad": lambda a: n.pad(a, 1),
+        "repeat": lambda a: n.repeat(a, 2, axis=0),
+        "tile": lambda a: n.tile(a, (2, 1)),
+        "interp": lambda a: n.interp(n.array([0.5]), n.array([0.0, 1.0, 2.0]), a[0]),
+        "fft": lambda a: n.fft.fft(a, axis=0),
+        "ifft": lambda a: n.fft.ifft(a, axis=0),
+        "tril": lambda a: n.tril(a),
+        "diag": lambda a: n.diag(a),
+    }
+    return {"sw_" + k: (lambda f: lambda a, p: f(a))(v) for k, v in un.items()}
+
+
 def _default_random_ops():
     from jax import random as jr
     k = lambda p: jr.key(p["seed"])
@@ -512,6 +632,8 @@ OPS.update(_complex_linalg_ops())
 OPS.update(_complex_grad_ops())
 OPS.update(_linalg_batch_ops())
 OPS.update(_surface_batch_ops())
+OPS.update(_tracer_batch_ops())
+OPS.update(_dtype_sweep_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -1015,5 +1137,46 @@ def _surface_batch_cases():
     return out
 
 
+def _tracer_batch_cases():
+    def two(sa, sb):
+        return {"a": {"kind": "real", "shape": sa}, "b": {"kind": "real", "shape": sb}}
+
+    ints = lambda shape: {"a": {"kind": "int", "shape": shape}}
+    r = _real_input
+    return [
+        ("tb_unique", ints([8]), {"size": 8}),
+        ("tb_unique", ints([8]), {"size": 3, "fill": -1}),
+        ("tb_unique", ints([8]), {"size": 10, "fill": 7}),
+        ("tb_unique", ints([6, 2]), {"size": 6, "axis": 0}),
+        ("tb_lexsort", ints([6, 2]), {}),
+        ("tb_poly_matrix", r([3, 3]), {}),
+        ("tb_qr_raw", r([3, 2]), {}),
+        ("tb_qr_raw", r([2, 3, 3]), {}),
+        ("tb_vectorize", two([2, 1], [3]), {}),
+        ("tb_vectorize_core", r([2, 3]), {}),
+        ("tb_pad_vmap", two([2, 3], [2]), {}),
+        ("tb_seed", r([3]), {}),
+        ("tb_lax_conv_c", {"a": {"kind": "complex", "shape": [1, 1, 4, 4]}, "b": {"kind": "complex", "shape": [1, 1, 2, 2]}}, {}),
+        ("tb_grad_conv_c", {"a": {"kind": "complex", "shape": [4]}, "b": {"kind": "complex", "shape": [3]}}, {}),
+    ] + [
+        (op, {"a": {"kind": "complex", "shape": sa}, "b": {"kind": "complex", "shape": sb}}, {"mode": m})
+        for op in ["tb_convolve_c", "tb_correlate_c"]
+        for m in ["full", "same", "valid"]
+        for sa, sb in [([5], [3]), ([3], [5])]
+    ]
+
+
+def _dtype_sweep_cases():
+    out = []
+    sample = jnp.ones((3, 3), dtype=jnp.complex64) * (1.0 + 0.5j)
+    for op, fn in _dtype_sweep_ops().items():
+        try:
+            fn(sample, {})
+        except (TypeError, NotImplementedError, ValueError):
+            continue
+        out.append((op, {"a": {"kind": "complex", "shape": [3, 3]}}, {}))
+    return out
+
+
 def all_cases():
-    return _surface_batch_cases() + _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _dtype_sweep_cases() + _tracer_batch_cases() + _surface_batch_cases() + _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

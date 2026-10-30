@@ -38,7 +38,9 @@ let broadcast_to v sh =
     bind1 (T.Broadcast_in_dim { shape = sh; dims }) [ v ]
   end
 
-let is_inexact = function D.F32 | D.F64 -> true | _ -> false
+let is_inexact = function
+  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | _ -> false
 
 let to_inexact_dtype = function
   | D.F32 -> D.F32
@@ -138,16 +140,31 @@ let mean ?axis ?(keepdims = false) a =
   let cdt = to_inexact_dtype (dtype a) in
   mean_over cdt axes ~keepdims (convert a cdt)
 
+let is_complex_dtype = function
+  | D.Complex64 | D.Complex128 -> true
+  | _ -> false
+
+let real_of_dtype = function
+  | D.Complex128 -> D.F64
+  | D.Complex64 -> D.F32
+  | d -> d
+
+let squared_magnitude cdt centered =
+  if is_complex_dtype cdt then
+    bind1 T.Real [ bind1 T.Mul [ centered; bind1 T.Conj [ centered ] ] ]
+  else bind1 T.Square [ centered ]
+
 let var ?axis ?(keepdims = false) ?(ddof = 0) a =
   let axes = resolve_axes a axis in
   let cdt = to_inexact_dtype (dtype a) in
+  let rdt = real_of_dtype cdt in
   let af = convert a cdt in
   let m = broadcast_to (mean_over cdt axes ~keepdims:true af) (shape af) in
-  let centered = bind1 T.Square [ bind1 T.Sub [ af; m ] ] in
+  let centered = squared_magnitude cdt (bind1 T.Sub [ af; m ]) in
   let s = reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes centered in
   let n = axis_count a axes - ddof in
-  if n > 0 then bind1 T.Div [ s; const_full cdt (shape s) (float_of_int n) ]
-  else const_full cdt (shape s) Float.nan
+  if n > 0 then bind1 T.Div [ s; const_full rdt (shape s) (float_of_int n) ]
+  else const_full rdt (shape s) Float.nan
 
 let std ?axis ?(keepdims = false) ?(ddof = 0) a =
   bind1 T.Sqrt [ var ?axis ~keepdims ~ddof a ]
@@ -220,25 +237,26 @@ let nanmean ?axis ?(keepdims = false) a =
 let nanvar ?axis ?(keepdims = false) ?(ddof = 0) a =
   let axes = resolve_axes a axis in
   let cdt = to_inexact_dtype (dtype a) in
+  let rdt = real_of_dtype cdt in
   let af = convert a cdt in
   let m = broadcast_to (nanmean ~axis:axes ~keepdims:true af) (shape af) in
   let centered =
     where (isnan af) (const_full cdt (shape af) 0.0) (bind1 T.Sub [ af; m ])
   in
-  let centered = bind1 T.Square [ centered ] in
+  let centered = squared_magnitude cdt centered in
   let notnan = bind1 T.Not [ isnan af ] in
   let count =
-    reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes (convert notnan cdt)
+    reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes (convert notnan rdt)
   in
   let nz =
-    bind1 T.Sub [ count; const_full cdt (shape count) (float_of_int ddof) ]
+    bind1 T.Sub [ count; const_full rdt (shape count) (float_of_int ddof) ]
   in
-  let mask = bind1 T.Le [ nz; const_full cdt (shape nz) 0.0 ] in
+  let mask = bind1 T.Le [ nz; const_full rdt (shape nz) 0.0 ] in
   let result =
     reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes centered
   in
-  let result = where mask (const_full cdt (shape result) Float.nan) result in
-  let divisor = where mask (const_full cdt (shape nz) 1.0) nz in
+  let result = where mask (const_full rdt (shape result) Float.nan) result in
+  let divisor = where mask (const_full rdt (shape nz) 1.0) nz in
   bind1 T.Div [ result; divisor ]
 
 let nanstd ?axis ?(keepdims = false) ?(ddof = 0) a =

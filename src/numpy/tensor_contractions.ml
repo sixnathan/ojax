@@ -74,7 +74,13 @@ let vecmat x1 x2 =
   let r = matmul x1e x2 in
   NL.squeeze ~axis:[| ndim r - 2 |] r
 
-let vdot ?preferred a b = dot ?preferred (NL.ravel a) (NL.ravel b)
+let vdot ?preferred a b =
+  let a =
+    match (C.get_aval a).T.dtype with
+    | D.Complex64 | D.Complex128 -> C.bind1 T.Conj [ a ]
+    | _ -> a
+  in
+  dot ?preferred (NL.ravel a) (NL.ravel b)
 
 let vecdot ?(axis = -1) ?preferred x1 x2 =
   let pdt = pref preferred [ x1; x2 ] in

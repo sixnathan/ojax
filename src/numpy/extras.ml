@@ -120,92 +120,189 @@ let compare_with_nan a b =
   | false, true -> -1
   | false, false -> compare a b
 
-let unique_full ?axis ?size ?(fill_value = 0.0) a =
-  let nd = host "unique" a in
-  let dt = Ndarray.dtype nd in
-  let sh = Ndarray.shape nd in
-  let data = flat_floats nd in
-  let axis = Option.map (canon (Array.length sh)) axis in
-  let rows, row_len, moved_shape, row_values =
+let traced_unique ?axis ~size ?fill_value a =
+  let module S = Sorting in
+  let axis =
+    match axis with None -> None | Some x -> Some (canon (rank a) x)
+  in
+  let rows, aux_source =
     match axis with
     | None ->
-        let n = Array.length data in
-        (n, 1, [| n |], fun i -> [| data.(i) |])
+        let flat_a = NL.reshape a [| size_of a |] in
+        (size_of a, flat_a)
     | Some ax ->
         let moved = NL.moveaxis [| ax |] [| 0 |] a in
-        let mdata = flat_floats (host "unique" moved) in
-        let msh = shape moved in
-        let r = msh.(0) in
-        let len = if r = 0 then 0 else Array.length mdata / r in
-        (r, len, msh, fun i -> Array.sub mdata (i * len) len)
+        ((shape moved).(0), moved)
   in
-  let compare_rows i j =
-    let x = row_values i and y = row_values j in
-    let rec go k =
-      if k = row_len then 0
-      else
-        let c = compare_with_nan x.(k) y.(k) in
-        if c <> 0 then c else go (k + 1)
-    in
-    go 0
+  let row_rest =
+    Array.sub (shape aux_source) 1 (Array.length (shape aux_source) - 1)
   in
-  let order = List.stable_sort compare_rows (List.init rows Fun.id) in
-  let groups =
-    List.fold_left
-      (fun acc i ->
-        match acc with
-        | (first, members) :: rest when compare_rows first i = 0 ->
-            (first, i :: members) :: rest
-        | _ -> (i, [ i ]) :: acc)
-      [] order
-    |> List.rev
+  let row_len = Array.fold_left ( * ) 1 row_rest in
+  let flat_rows = NL.reshape aux_source [| rows; row_len |] in
+  let keys =
+    List.init row_len (fun j ->
+        L.index_in_dim ~axis:1 ~keepdims:false flat_rows j)
   in
-  let n_unique = List.length groups in
-  let inverse = Array.make rows 0 in
-  List.iteri
-    (fun g (_, members) -> List.iter (fun i -> inverse.(i) <- g) members)
-    groups;
-  let firsts = Array.of_list (List.map fst groups) in
-  let counts_arr =
-    Array.of_list (List.map (fun (_, m) -> List.length m) groups)
+  let perm =
+    match keys with
+    | [ only ] -> S.argsort only
+    | _ -> S.lexsort (List.rev keys)
   in
-  let k = match size with Some s -> s | None -> n_unique in
-  let idt = default_int () in
-  let out_rows = k in
-  let value_at r col =
-    if r < n_unique then (row_values firsts.(r)).(col)
-    else match size with Some _ -> fill_value | None -> 0.0
+  let aux = I.take ~axis:0 aux_source perm in
+  let aux_flat = NL.reshape aux [| rows; row_len |] in
+  let tail = L.slice_in_dim ~axis:0 aux_flat 1 rows in
+  let head = L.slice_in_dim ~axis:0 aux_flat 0 (rows - 1) in
+  let differs =
+    let neq = L.ne tail head in
+    let dt = dtype_of a in
+    if Dtypes.isdtype dt "numeric" && not (Dtypes.isdtype dt "integral") then
+      L.bitwise_and neq
+        (L.bitwise_not (L.bitwise_and (L.ne tail tail) (L.ne head head)))
+    else neq
   in
-  let row_shape = Array.sub moved_shape 1 (Array.length moved_shape - 1) in
-  let values_flat =
-    Array.init (out_rows * row_len) (fun i ->
-        value_at (i / Stdlib.max row_len 1) (i mod Stdlib.max row_len 1))
+  let any_diff = R.any ~axis:[| 1 |] differs in
+  let mask =
+    NL.concatenate ~axis:0
+      [ Concrete (Ndarray.of_floats Dtype.Bool [| 1 |] [| 1.0 |]); any_diff ]
+  in
+  let ind = List.hd (nonzero ~size mask) in
+  let result = I.take ~axis:0 aux ind in
+  let idt = dtype_of ind in
+  let distinct = R.sum (NL.astype mask idt) in
+  let result =
+    match fill_value with
+    | None -> result
+    | Some fv ->
+        let positions = NL.arange ~dtype:idt (float_of_int size) in
+        let valid = L.lt positions (NL.broadcast_to distinct [| size |]) in
+        let wide =
+          NL.reshape valid
+            (Array.append [| size |] (Array.map (fun _ -> 1) row_rest))
+        in
+        NL.where_ wide result (L.full_like result fv)
   in
   let values =
     match axis with
-    | None -> Concrete (Ndarray.of_floats dt [| out_rows |] values_flat)
-    | Some ax ->
-        let moved =
-          Concrete
-            (Ndarray.of_floats dt
-               (Array.append [| out_rows |] row_shape)
-               values_flat)
+    | None -> result
+    | Some ax -> NL.moveaxis [| 0 |] [| ax |] result
+  in
+  let indices = I.take ~axis:0 perm ind in
+  let inverse =
+    let imask =
+      L.sub (L.cumsum ~axis:0 (NL.astype mask idt)) (L.full_like distinct 1.0)
+    in
+    I.take ~axis:0 imask (S.argsort perm)
+  in
+  let counts =
+    let edges = List.hd (nonzero ~size:(size + 1) mask) in
+    let upper = L.slice_in_dim ~axis:0 edges 1 (size + 1) in
+    let stops =
+      NL.where_
+        (L.ne upper (L.full_like upper 0.0))
+        upper
+        (L.full_like upper (float_of_int rows))
+    in
+    let starts =
+      NL.concatenate ~axis:0
+        [
+          L.slice_in_dim ~axis:0 edges 0 1;
+          L.slice_in_dim ~axis:0 stops 0 (size - 1);
+        ]
+    in
+    L.sub stops starts
+  in
+  { values; indices; inverse; counts }
+
+let unique_full ?axis ?size ?fill_value a =
+  match size with
+  | Some size when size_of a > 0 -> traced_unique ?axis ~size ?fill_value a
+  | _ ->
+      let fill_value = Option.value fill_value ~default:0.0 in
+      let nd = host "unique" a in
+      let dt = Ndarray.dtype nd in
+      let sh = Ndarray.shape nd in
+      let data = flat_floats nd in
+      let axis = Option.map (canon (Array.length sh)) axis in
+      let rows, row_len, moved_shape, row_values =
+        match axis with
+        | None ->
+            let n = Array.length data in
+            (n, 1, [| n |], fun i -> [| data.(i) |])
+        | Some ax ->
+            let moved = NL.moveaxis [| ax |] [| 0 |] a in
+            let mdata = flat_floats (host "unique" moved) in
+            let msh = shape moved in
+            let r = msh.(0) in
+            let len = if r = 0 then 0 else Array.length mdata / r in
+            (r, len, msh, fun i -> Array.sub mdata (i * len) len)
+      in
+      let compare_rows i j =
+        let x = row_values i and y = row_values j in
+        let rec go k =
+          if k = row_len then 0
+          else
+            let c = compare_with_nan x.(k) y.(k) in
+            if c <> 0 then c else go (k + 1)
         in
-        NL.moveaxis [| 0 |] [| ax |] moved
-  in
-  let pad_or_cut src fill =
-    Array.init out_rows (fun i ->
-        if i < Array.length src then src.(i) else fill)
-  in
-  {
-    values;
-    indices = ints_value idt [| out_rows |] (pad_or_cut firsts 0);
-    inverse =
-      (match axis with
-      | None -> ints_value idt sh inverse
-      | Some _ -> ints_value idt [| rows |] inverse);
-    counts = ints_value idt [| out_rows |] (pad_or_cut counts_arr 0);
-  }
+        go 0
+      in
+      let order = List.stable_sort compare_rows (List.init rows Fun.id) in
+      let groups =
+        List.fold_left
+          (fun acc i ->
+            match acc with
+            | (first, members) :: rest when compare_rows first i = 0 ->
+                (first, i :: members) :: rest
+            | _ -> (i, [ i ]) :: acc)
+          [] order
+        |> List.rev
+      in
+      let n_unique = List.length groups in
+      let inverse = Array.make rows 0 in
+      List.iteri
+        (fun g (_, members) -> List.iter (fun i -> inverse.(i) <- g) members)
+        groups;
+      let firsts = Array.of_list (List.map fst groups) in
+      let counts_arr =
+        Array.of_list (List.map (fun (_, m) -> List.length m) groups)
+      in
+      let k = match size with Some s -> s | None -> n_unique in
+      let idt = default_int () in
+      let out_rows = k in
+      let value_at r col =
+        if r < n_unique then (row_values firsts.(r)).(col)
+        else match size with Some _ -> fill_value | None -> 0.0
+      in
+      let row_shape = Array.sub moved_shape 1 (Array.length moved_shape - 1) in
+      let values_flat =
+        Array.init (out_rows * row_len) (fun i ->
+            value_at (i / Stdlib.max row_len 1) (i mod Stdlib.max row_len 1))
+      in
+      let values =
+        match axis with
+        | None -> Concrete (Ndarray.of_floats dt [| out_rows |] values_flat)
+        | Some ax ->
+            let moved =
+              Concrete
+                (Ndarray.of_floats dt
+                   (Array.append [| out_rows |] row_shape)
+                   values_flat)
+            in
+            NL.moveaxis [| 0 |] [| ax |] moved
+      in
+      let pad_or_cut src fill =
+        Array.init out_rows (fun i ->
+            if i < Array.length src then src.(i) else fill)
+      in
+      {
+        values;
+        indices = ints_value idt [| out_rows |] (pad_or_cut firsts 0);
+        inverse =
+          (match axis with
+          | None -> ints_value idt sh inverse
+          | Some _ -> ints_value idt [| rows |] inverse);
+        counts = ints_value idt [| out_rows |] (pad_or_cut counts_arr 0);
+      }
 
 let unique_values ?size ?fill_value a = (unique_full ?size ?fill_value a).values
 
@@ -882,45 +979,61 @@ let polyfit ?rcond x y deg =
   in
   U.divide c scale_c
 
+let roots_of_coefficients p =
+  let dt = dtype_of p in
+  let n = (shape p).(0) in
+  let d = n - 1 in
+  let tail = L.slice_in_dim ~axis:0 p 1 n in
+  let lead = L.slice_in_dim ~axis:0 p 0 1 in
+  let row = L.neg (U.divide tail lead) in
+  let top = NL.reshape row [| 1; d |] in
+  let companion =
+    if d = 1 then top
+    else NL.concatenate ~axis:0 [ top; NL.eye ~m:d ~dtype:dt (d - 1) ]
+  in
+  Linalg.eigvals companion
+
 let roots ?(strip_zeros = true) p =
-  let data = flat_floats (host "roots" p) in
-  let n = Array.length data in
-  let lead = ref 0 in
-  if strip_zeros then
-    while !lead < n && data.(!lead) = 0.0 do
+  let p = as_inexact p in
+  let n = (shape p).(0) in
+  let real_dt = dtype_of p in
+  let complex_dt =
+    match real_dt with
+    | Dtype.F64 | Dtype.Complex128 -> Dtype.Complex128
+    | _ -> Dtype.Complex64
+  in
+  if not strip_zeros then
+    if n < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
+    else roots_of_coefficients p
+  else begin
+    let nd = host "roots" p in
+    let nonzero i =
+      match real_dt with
+      | Dtype.Complex64 | Dtype.Complex128 ->
+          Ndarray.get_c nd [| i |] <> Complex.zero
+      | _ -> Ndarray.get_f nd [| i |] <> 0.0
+    in
+    let lead = ref 0 in
+    while !lead < n && not (nonzero !lead) do
       incr lead
     done;
-  let trail = ref n in
-  if strip_zeros then
-    while !trail > !lead && data.(!trail - 1) = 0.0 do
+    let trail = ref n in
+    while !trail > !lead && not (nonzero (!trail - 1)) do
       decr trail
     done;
-  let core = Array.sub data !lead (!trail - !lead) in
-  let degree = Array.length core - 1 in
-  let zero_roots = n - !trail in
-  let real_dt = dtype_of (as_inexact p) in
-  let complex_dt =
-    match real_dt with Dtype.F64 -> Dtype.Complex128 | _ -> Dtype.Complex64
-  in
-  let zeros =
-    Concrete
-      (Ndarray.of_complex complex_dt [| zero_roots |]
-         (Array.make zero_roots Complex.zero))
-  in
-  if degree < 1 then zeros
-  else
-    let companion =
-      Array.init (degree * degree) (fun i ->
-          let r = i / degree and c = i mod degree in
-          if r = 0 then -.core.(c + 1) /. core.(0)
-          else if r = c + 1 then 1.0
-          else 0.0)
+    let zero_roots = n - !trail in
+    let zeros =
+      Concrete
+        (Ndarray.of_complex complex_dt [| zero_roots |]
+           (Array.make zero_roots Complex.zero))
     in
-    let values =
-      Linalg.eigvals
-        (Concrete (Ndarray.of_floats real_dt [| degree; degree |] companion))
-    in
-    if zero_roots = 0 then values else NL.concatenate [ values; zeros ]
+    if !trail - !lead < 2 then zeros
+    else
+      let values =
+        roots_of_coefficients (L.slice_in_dim ~axis:0 p !lead !trail)
+      in
+      if zero_roots = 0 then values else NL.concatenate [ values; zeros ]
+  end
 
 let fromfunction f shape_ ~dtype =
   let grid =

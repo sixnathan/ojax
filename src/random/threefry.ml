@@ -211,8 +211,34 @@ let scalar_at v i =
 let threefry_seed seed =
   match seed with
   | Concrete nd -> Concrete (seed_nd nd)
-  | Tracer _ -> failwith "threefry: seed of a tracer not supported in M3"
-  | Device _ -> failwith "threefry: seed of a tracer not supported in M3"
+  | Device b -> Concrete (seed_nd (Pjrt.Buffer.to_host b))
+  | Tracer _ ->
+      let a = Core.get_aval seed in
+      if Array.length a.shape <> 0 then
+        invalid_arg "threefry: seed must be a scalar";
+      let to_u32 v = Core.bind1 (Convert_element_type Dtype.Uint32) [ v ] in
+      let wide =
+        match a.dtype with Dtype.I64 | Dtype.Uint64 -> true | _ -> false
+      in
+      let high =
+        if wide then
+          to_u32
+            (Core.bind1 Shift_right_logical
+               [ seed; Concrete (Ndarray.of_int64s a.dtype [||] [| 32L |]) ])
+        else Concrete (Ndarray.of_floats Dtype.Uint32 [||] [| 0.0 |])
+      in
+      let low =
+        if wide then
+          to_u32
+            (Core.bind1 And
+               [
+                 seed;
+                 Concrete (Ndarray.of_int64s a.dtype [||] [| 0xFFFFFFFFL |]);
+               ])
+        else to_u32 seed
+      in
+      let lift v = Core.bind1 (Reshape [| 1 |]) [ v ] in
+      Core.bind1 (Concatenate 0) [ lift high; lift low ]
 
 let threefry_2x32 keypair count =
   let key1 = scalar_at keypair 0 and key2 = scalar_at keypair 1 in

@@ -464,3 +464,17 @@ let pmap f args =
 
 let pure_callback host_fun ~result_avals args =
   Custom_derivatives.pure_callback host_fun ~result_avals args
+
+let typeof v = Core.get_aval v
+let effects_barrier () = ()
+let copy_to_host_async x = x
+let default_device () = List.hd (devices ())
+let live_arrays () = ([] : value list)
+
+let make_array_from_callback (shape : int array) callback =
+  callback (Array.map (fun s -> (0, s)) shape)
+
+let print_environment_info () =
+  print_endline
+    (Printf.sprintf "ojax: backend=%s devices=%d x64=%b" (default_backend ())
+       (device_count ()) (Config.x64_enabled ()))

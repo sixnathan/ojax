@@ -17,3 +17,4 @@ module Xla :
 val executor : Types.closed_jaxpr -> Types.value list -> Types.value list
 val of_host_value : Types.value -> Types.value
 val to_host_value : Types.value -> Types.value
+val run_text : string -> Types.value list -> Types.value list

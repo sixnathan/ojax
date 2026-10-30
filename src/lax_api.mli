@@ -258,4 +258,46 @@ val platform_dependent : ?default:'a -> cpu:(unit -> 'b) -> unit -> 'b
 val associative_scan : ?axis:int -> (value -> value -> value) -> value -> value
 val shape_as_value : value -> value
 val index_take : value -> value list -> int array -> value
+
+val reduce_window_shape_tuple :
+  int array ->
+  int array ->
+  int array ->
+  (int * int) array ->
+  ?base_dilation:int array ->
+  ?window_dilation:int array ->
+  unit ->
+  int array
+
+val conv_shape_tuple :
+  int array -> int array -> int array -> (int * int) array -> int array
+
+val conv_general_shape_tuple :
+  int array -> int array -> int array -> padding -> conv_dims -> int array
+
+val conv_transpose_shape_tuple :
+  int array -> int array -> int array -> padding -> conv_dims -> int array
+
+val conv_general_dilated_patches :
+  ?window_strides:int array ->
+  ?padding:padding ->
+  ?lhs_dilation:int array ->
+  ?rhs_dilation:int array ->
+  ?dimension_numbers:conv_dims ->
+  value ->
+  filter_shape:int array ->
+  value
+
+val scatter_apply : value -> value -> (value -> value) -> scatter_dims -> value
+val with_sharding_constraint : value -> 'a -> value
+val pcast : value -> dtype:'a -> value
+
+val composite :
+  (value list -> value list) ->
+  name:string ->
+  attrs:(string * string) list ->
+  version:int ->
+  value list ->
+  value list
+
 val fft : value -> fft_type:fft_kind -> fft_lengths:int array -> value

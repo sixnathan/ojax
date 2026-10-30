@@ -637,3 +637,117 @@ let index_take x indices axes =
   stack picked 0
 
 let fft x ~fft_type ~fft_lengths = b1 (Fft { fft_type; fft_lengths }) [ x ]
+let dilate_dim d rate = if d = 0 then 0 else 1 + (rate * (d - 1))
+
+let reduce_window_shape_tuple operand_shape window_dimensions window_strides
+    padding ?base_dilation ?window_dilation () =
+  let n = Array.length operand_shape in
+  let ones = Array.make n 1 in
+  let base = Option.value base_dilation ~default:ones in
+  let wd = Option.value window_dilation ~default:ones in
+  Array.init n (fun i ->
+      let lo, hi = padding.(i) in
+      let padded = dilate_dim operand_shape.(i) base.(i) + lo + hi in
+      let window = dilate_dim window_dimensions.(i) wd.(i) in
+      if padded < window then 0
+      else ((padded - window) / window_strides.(i)) + 1)
+
+let conv_shape_tuple lhs_shape rhs_shape strides pads =
+  let n = Array.length lhs_shape in
+  Array.init n (fun i ->
+      if i = 0 then lhs_shape.(0)
+      else if i = 1 then rhs_shape.(0)
+      else
+        let lo, hi = pads.(i - 2) in
+        let padded = lhs_shape.(i) + lo + hi in
+        let k = rhs_shape.(i) in
+        if padded < k then 0 else ((padded - k) / strides.(i - 2)) + 1)
+
+let permute_shape shape spec = Array.map (fun d -> shape.(d)) spec
+
+let conv_general_shape_tuple lhs_shape rhs_shape window_strides padding
+    dimension_numbers =
+  let canon_lhs = permute_shape lhs_shape dimension_numbers.lhs_spec in
+  let canon_rhs = permute_shape rhs_shape dimension_numbers.rhs_spec in
+  let spatial a = Array.sub a 2 (Array.length a - 2) in
+  let pads =
+    padtype_to_pads (spatial canon_lhs) (spatial canon_rhs) window_strides
+      padding
+  in
+  let canonical = conv_shape_tuple canon_lhs canon_rhs window_strides pads in
+  let out = Array.make (Array.length canonical) 0 in
+  Array.iteri (fun i d -> out.(d) <- canonical.(i)) dimension_numbers.out_spec;
+  out
+
+let conv_transpose_shape_tuple lhs_shape rhs_shape window_strides padding
+    dimension_numbers =
+  let canon_lhs = permute_shape lhs_shape dimension_numbers.lhs_spec in
+  let canon_rhs = permute_shape rhs_shape dimension_numbers.rhs_spec in
+  let spatial a = Array.sub a 2 (Array.length a - 2) in
+  let k = spatial canon_rhs in
+  let pads =
+    match padding with
+    | Explicit p -> p
+    | _ ->
+        Array.mapi
+          (fun i size -> conv_transpose_pad size window_strides.(i) padding)
+          k
+  in
+  let canonical =
+    Array.init (Array.length canon_lhs) (fun i ->
+        if i = 0 then canon_lhs.(0)
+        else if i = 1 then canon_rhs.(0)
+        else
+          let lo, hi = pads.(i - 2) in
+          let dilated = dilate_dim canon_lhs.(i) window_strides.(i - 2) in
+          dilated + lo + hi - canon_rhs.(i) + 1)
+  in
+  let out = Array.make (Array.length canonical) 0 in
+  Array.iteri (fun i d -> out.(d) <- canonical.(i)) dimension_numbers.out_spec;
+  out
+
+let conv_general_dilated_patches ?window_strides ?(padding = Valid)
+    ?lhs_dilation ?rhs_dilation ?dimension_numbers lhs ~filter_shape =
+  let rank = ndim lhs in
+  let k = Array.length filter_shape in
+  let dn =
+    match dimension_numbers with Some d -> d | None -> default_conv_dims rank
+  in
+  let in_features = (shape lhs).(dn.lhs_spec.(1)) in
+  let window = product filter_shape in
+  let out_features = in_features * window in
+  let cell = window * in_features in
+  let kernel_shape = Array.append [| out_features; 1 |] filter_shape in
+  let kernel =
+    Concrete
+      (Ndarray.of_floats (dtype_of lhs) kernel_shape
+         (Array.init (out_features * window) (fun i ->
+              let row = i / window and col = i mod window in
+              if row mod window = col then 1.0 else 0.0)))
+  in
+  ignore cell;
+  let strides = Option.value window_strides ~default:(Array.make k 1) in
+  let kernel_spec = Array.init (k + 2) Fun.id in
+  conv_general_dilated ?lhs_dilation ?rhs_dilation
+    ~dimension_numbers:{ dn with rhs_spec = kernel_spec }
+    ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
+
+let scatter_apply x indices func dimension_numbers =
+  let updates_shape = shape indices in
+  let n_updates = updates_shape.(0) in
+  let unused = filled (dtype_of x) [| n_updates |] 0.0 in
+  let touched =
+    scatter
+      (filled Dtype.Bool (shape x) 0.0)
+      indices
+      (filled Dtype.Bool [| n_updates |] 1.0)
+      dimension_numbers
+  in
+  ignore unused;
+  select touched (func x) x
+
+let with_sharding_constraint x _sharding = x
+let pcast x ~dtype:_ = x
+
+let composite decomposition ~name:_ ~attrs:_ ~version:_ args =
+  decomposition args

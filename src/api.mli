@@ -121,3 +121,11 @@ val pure_callback :
   result_avals:aval list ->
   value list ->
   value list
+
+val typeof : value -> aval
+val effects_barrier : unit -> unit
+val copy_to_host_async : 'a -> 'a
+val default_device : unit -> string
+val live_arrays : unit -> value list
+val make_array_from_callback : int array -> ((int * int) array -> 'a) -> 'a
+val print_environment_info : unit -> unit

@@ -127,6 +127,14 @@ let executor (cj : closed_jaxpr) : value list -> value list =
       | Some _ | None -> Jaxpr.eval_closed_jaxpr cj args
   else fun args -> Jaxpr.eval_closed_jaxpr cj args
 
+let run_text text args =
+  if Lazy.force use_xla then
+    let exec = Xla.compile_text text in
+    xla_run exec args (List.exists is_device args)
+  else
+    failwith
+      "Running an exported module needs the PJRT plugin; set OJAX_PJRT_PLUGIN"
+
 let of_host_value v =
   if Lazy.force use_xla then
     match v with

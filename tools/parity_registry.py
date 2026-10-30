@@ -223,6 +223,12 @@ def _misc_scipy_ops():
     }
 
 
+def _lax_extra_ops():
+    return {
+        "lax_patches": lambda a, p: lax.conv_general_dilated_patches(a, tuple(p["filter"]), tuple(p["str"]), p["padding"]),
+    }
+
+
 def _in_range(a, name):
     return jnp.abs(a) if name.startswith("uint") else a
 
@@ -276,6 +282,7 @@ OPS.update(_scipy_ops())
 OPS.update(_narrow_ops())
 OPS.update(_batched_ops())
 OPS.update(_misc_scipy_ops())
+OPS.update(_lax_extra_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -617,5 +624,12 @@ def _misc_scipy_cases():
     ]
 
 
+def _lax_extra_cases():
+    return [
+        ("lax_patches", _real_input([1, 1, 6]), {"filter": [2], "str": [1], "padding": "VALID"}),
+        ("lax_patches", _real_input([1, 2, 6]), {"filter": [3], "str": [2], "padding": "VALID"}),
+    ]
+
+
 def all_cases():
-    return _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

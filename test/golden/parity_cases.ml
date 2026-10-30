@@ -903,6 +903,71 @@ let gap_run op p a b =
   | "gp_int_pow_neg" -> Some [ L.integer_pow (a ()) (-2) ]
   | _ -> None
 
+let herm v =
+  let sh = shp v in
+  let n = sh.(Array.length sh - 1) in
+  let product = L.batch_matmul v (L.conj (NL.swapaxes (-1) (-2) v)) in
+  let eye = NL.broadcast_to (NL.identity ~dtype:(dt_of v) n) sh in
+  UF.add product (L.mul eye (L.full_like eye 3.0))
+
+let sum_all v = L.reduce_sum v (Array.init (Array.length (shp v)) Fun.id)
+
+let complex_linalg_run op a b =
+  let grad f = Some (Ojax.Interpreters.Ad.grad f [ a () ]) in
+  match op with
+  | "cl_inv" -> Some [ LA.inv (herm (a ())) ]
+  | "cl_det" -> Some [ LA.det (herm (a ())) ]
+  | "cl_solve" -> Some [ LA.solve (herm (a ())) (b ()) ]
+  | "cl_cholesky" -> Some [ LA.cholesky (herm (a ())) ]
+  | "cl_eigvalsh" -> Some [ LA.eigvalsh (herm (a ())) ]
+  | "cl_svdvals" -> Some [ LA.svdvals (a ()) ]
+  | "cl_qr_r" -> (
+      match LA.qr (a ()) with
+      | [ _; r ] -> Some [ UF.absolute r ]
+      | _ -> failwith "parity: qr arity")
+  | "cl_slogdet" -> Some (pair (LA.slogdet (herm (a ()))))
+  | "cl_grad_eigvalsh" ->
+      grad (fun args -> sum_all (LA.eigvalsh (herm (List.hd args))))
+  | "cl_grad_logdet" ->
+      grad (fun args -> sum_all (snd (LA.slogdet (herm (List.hd args)))))
+  | "cl_grad_svdvals" -> grad (fun args -> sum_all (LA.svdvals (List.hd args)))
+  | _ -> None
+
+let complex_grad_run op a =
+  let on f =
+    Some
+      (Ojax.Interpreters.Ad.grad
+         (fun args -> sum_all (f (List.hd args)))
+         [ a () ])
+  in
+  let abs_of g z = UF.absolute (g z) in
+  match op with
+  | "cg_abs" -> on UF.absolute
+  | "cg_sin" -> on (abs_of UF.sin)
+  | "cg_cos" -> on (abs_of UF.cos)
+  | "cg_tan" -> on (abs_of UF.tan)
+  | "cg_exp" -> on (abs_of UF.exp)
+  | "cg_log" -> on (abs_of UF.log)
+  | "cg_sqrt" -> on (abs_of UF.sqrt)
+  | "cg_tanh" -> on (abs_of UF.tanh)
+  | "cg_sinh" -> on (abs_of UF.sinh)
+  | "cg_cosh" -> on (abs_of UF.cosh)
+  | "cg_square" -> on (abs_of (fun z -> L.mul z z))
+  | "cg_reciprocal" -> on (abs_of L.reciprocal)
+  | "cg_conj" -> on (abs_of (fun z -> L.mul (L.conj z) z))
+  | "cg_real" ->
+      on (fun z ->
+          let r = L.real z in
+          L.mul r r)
+  | "cg_imag" ->
+      on (fun z ->
+          let r = L.imag z in
+          L.mul r r)
+  | "cg_matmul" -> on (abs_of (fun z -> L.dot z (L.conj z)))
+  | "cg_fft" -> on (abs_of (fun z -> Ojax.Numpy.Fft.fft z))
+  | "cg_angle" -> on (fun z -> NL.angle z)
+  | _ -> None
+
 let fft_run op params a =
   match op with
   | "fft" -> fft1 F.fft (a ()) params
@@ -929,6 +994,8 @@ let run op params get =
   let c () = get "c" in
   let runners =
     [
+      (fun () -> complex_grad_run op a);
+      (fun () -> complex_linalg_run op a b);
       (fun () -> gap_run op params a b);
       (fun () -> array_random_run op params a b);
       (fun () -> default_random_run op params);

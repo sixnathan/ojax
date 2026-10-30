@@ -86,3 +86,52 @@ let trtrs ~uplo ~trans ~diag ~n ~nrhs ~a ~lda ~b ~ldb =
 let gecon ~norm ~n ~a ~lda ~anorm ~rcond =
   guard "gecon";
   gecon_ [| Char.code norm; n; lda |] a anorm rcond
+
+external zpotrf_ : int array -> f64 -> int = "ojax_lapack_zpotrf"
+external zgetrf_ : int array -> f64 -> i32 -> int = "ojax_lapack_zgetrf"
+external zgeqrf_ : int array -> f64 -> f64 -> int = "ojax_lapack_zgeqrf"
+external zungqr_ : int array -> f64 -> f64 -> int = "ojax_lapack_zungqr"
+
+external zgesdd_ : int array -> f64 -> f64 -> f64 -> f64 -> int
+  = "ojax_lapack_zgesdd"
+
+external zheevd_ : int array -> f64 -> f64 -> int = "ojax_lapack_zheevd"
+
+external zgeev_ : int array -> f64 -> f64 -> f64 -> f64 -> int
+  = "ojax_lapack_zgeev"
+
+external ztrtrs_ : int array -> f64 -> f64 -> int = "ojax_lapack_ztrtrs"
+
+let zpotrf ~uplo ~n ~a ~lda =
+  guard "zpotrf";
+  zpotrf_ [| Char.code uplo; n; lda |] a
+
+let zgetrf ~m ~n ~a ~lda ~ipiv =
+  guard "zgetrf";
+  zgetrf_ [| m; n; lda |] a ipiv
+
+let zgeqrf ~m ~n ~a ~lda ~tau =
+  guard "zgeqrf";
+  zgeqrf_ [| m; n; lda |] a tau
+
+let zungqr ~m ~n ~k ~a ~lda ~tau =
+  guard "zungqr";
+  zungqr_ [| m; n; k; lda |] a tau
+
+let zgesdd ~jobz ~m ~n ~a ~lda ~s ~u ~ldu ~vt ~ldvt =
+  guard "zgesdd";
+  zgesdd_ [| Char.code jobz; m; n; lda; ldu; ldvt |] a s u vt
+
+let zheevd ~jobz ~uplo ~n ~a ~lda ~w =
+  guard "zheevd";
+  zheevd_ [| Char.code jobz; Char.code uplo; n; lda |] a w
+
+let zgeev ~jobvl ~jobvr ~n ~a ~lda ~w ~vl ~ldvl ~vr ~ldvr =
+  guard "zgeev";
+  zgeev_ [| Char.code jobvl; Char.code jobvr; n; lda; ldvl; ldvr |] a w vl vr
+
+let ztrtrs ~uplo ~trans ~diag ~n ~nrhs ~a ~lda ~b ~ldb =
+  guard "ztrtrs";
+  ztrtrs_
+    [| Char.code uplo; Char.code trans; Char.code diag; n; nrhs; lda; ldb |]
+    a b

@@ -94,6 +94,19 @@ let swap_last2 x =
   perm.(ndim - 2) <- ndim - 1;
   b1 (Transpose perm) [ x ]
 
+let is_complex_value v =
+  match (Core.get_aval v).dtype with
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let hconj x =
+  let swapped = swap_last2 x in
+  if is_complex_value x then b1 Conj [ swapped ] else swapped
+
+let like_dtype reference v =
+  let dt = (Core.get_aval reference).dtype in
+  if (Core.get_aval v).dtype = dt then v else b1 (Convert_element_type dt) [ v ]
+
 let matmul x y =
   let ndim = Array.length (Core.get_aval x).shape in
   let batch = Array.init (ndim - 2) Fun.id in
@@ -137,6 +150,7 @@ let triangular_tangent_a ~left_side ~lower ~transpose_a ~conjugate_a
   let g = if lower then tril_of (-k) ta else triu_of k ta in
   let g = neg g in
   let g = if transpose_a then swap_last2 g else g in
+  let g = if conjugate_a && is_complex_value g then b1 Conj [ g ] else g in
   let inverse =
     triangular_solve_with ~left_side ~lower ~transpose_a ~conjugate_a
       ~unit_diagonal a
@@ -152,7 +166,7 @@ let cholesky_jvp x t =
   in
   let tmp =
     triangular_solve_with ~left_side:false ~lower:true ~transpose_a:true
-      ~conjugate_a:false ~unit_diagonal:false l t
+      ~conjugate_a:true ~unit_diagonal:false l t
   in
   let inner =
     triangular_solve_with ~left_side:true ~lower:true ~transpose_a:false
@@ -218,9 +232,10 @@ let eigh_jvp ~lower a t =
       let ww_col = broadcast_to_matrix (expand_col w) shape in
       let eye = eye_like ww_row in
       let fmat = sub (recip (add eye (sub ww_col ww_row))) eye in
-      let vt_a_v = matmul (matmul (swap_last2 v) t) v in
-      let dv = matmul v (mul fmat vt_a_v) in
-      let dw = diagonal_of vt_a_v in
+      let vt_a_v = matmul (matmul (hconj v) t) v in
+      let dv = matmul v (mul (like_dtype vt_a_v fmat) vt_a_v) in
+      let diag = diagonal_of vt_a_v in
+      let dw = if is_complex_value diag then b1 Real [ diag ] else diag in
       (outs, [ dv; dw ])
   | _ -> failwith "ad: eigh arity"
 
@@ -236,9 +251,18 @@ let qr_jvp ~full_matrices a t =
         triangular_solve_with ~left_side:false ~lower:false ~transpose_a:false
           ~conjugate_a:false ~unit_diagonal:false r t
       in
-      let qt_dx_rinv = matmul (swap_last2 q) dx_rinv in
+      let qt_dx_rinv = matmul (hconj q) dx_rinv in
       let lower_part = tril_of (-1) qt_dx_rinv in
-      let d_omega = sub lower_part (swap_last2 lower_part) in
+      let skew = sub lower_part (hconj lower_part) in
+      let d_omega =
+        if is_complex_value qt_dx_rinv then
+          add skew
+            (mul (eye_like qt_dx_rinv)
+               (sub qt_dx_rinv
+                  (b1 (Convert_element_type (Core.get_aval qt_dx_rinv).dtype)
+                     [ b1 Real [ qt_dx_rinv ] ])))
+        else skew
+      in
       let dq = add (matmul q (sub d_omega qt_dx_rinv)) dx_rinv in
       let dr = matmul (sub qt_dx_rinv d_omega) r in
       (outs, [ dq; dr ])
@@ -373,9 +397,12 @@ let svd_jvp ~full_matrices ~compute_uv a t =
   in
   match thin with
   | [ u; s; vt ] ->
-      let ut = swap_last2 u and v = swap_last2 vt in
+      let ut = hconj u and v = hconj vt in
       let d_s_mat = matmul (matmul ut t) v in
-      let ds = diagonal_of d_s_mat in
+      let raw_diag = diagonal_of d_s_mat in
+      let ds =
+        if is_complex_value raw_diag then b1 Real [ raw_diag ] else raw_diag
+      in
       if not compute_uv then ([ s ], [ ds ])
       else
         let shape = matrix_shape_of_vector s in
@@ -383,9 +410,9 @@ let svd_jvp ~full_matrices ~compute_uv a t =
         let s_row = broadcast_to_matrix (expand_row s) shape in
         let s_diffs = mul (add s_col s_row) (sub s_col s_row) in
         let eye = eye_like s_col in
-        let f = sub (recip (add s_diffs eye)) eye in
-        let d_ss = mul s_col d_s_mat in
-        let sd_s = mul s_row d_s_mat in
+        let f = like_dtype d_s_mat (sub (recip (add s_diffs eye)) eye) in
+        let d_ss = mul (like_dtype d_s_mat s_col) d_s_mat in
+        let sd_s = mul (like_dtype d_s_mat s_row) d_s_mat in
         let is_zero =
           b1 (Convert_element_type (Core.get_aval s).dtype)
             [ b1 Eq [ s; zeros_like_value s ] ]
@@ -395,11 +422,9 @@ let svd_jvp ~full_matrices ~compute_uv a t =
           mul eye (broadcast_to_matrix (expand_col s_inv) shape)
         in
         let half = const_like d_s_mat 0.5 in
-        let d_ud_v =
-          mul (mul half (sub d_s_mat (swap_last2 d_s_mat))) s_inv_mat
-        in
-        let du = matmul u (add (mul f (add d_ss (swap_last2 d_ss))) d_ud_v) in
-        let dv = matmul v (mul f (add sd_s (swap_last2 sd_s))) in
+        let d_ud_v = mul (mul half (sub d_s_mat (hconj d_s_mat))) s_inv_mat in
+        let du = matmul u (add (mul f (add d_ss (hconj d_ss))) d_ud_v) in
+        let dv = matmul v (mul f (add sd_s (hconj sd_s))) in
         let a_shape = (Core.get_aval a).shape in
         let ndim = Array.length a_shape in
         let m = a_shape.(ndim - 2) and n = a_shape.(ndim - 1) in
@@ -415,7 +440,7 @@ let svd_jvp ~full_matrices ~compute_uv a t =
         in
         let dv =
           if n > m then
-            let da_u = matmul (swap_last2 t) u in
+            let da_u = matmul (hconj t) u in
             let residual = sub da_u (matmul v (matmul vt da_u)) in
             let denom =
               broadcast_to_matrix (expand_col s) (Core.get_aval residual).shape
@@ -423,7 +448,7 @@ let svd_jvp ~full_matrices ~compute_uv a t =
             add dv (div residual denom)
           else dv
         in
-        (thin, [ du; ds; swap_last2 dv ])
+        (thin, [ du; ds; hconj dv ])
   | _ -> failwith "ad: svd arity"
 
 let tridiagonal_matvec dl d du x =
@@ -628,7 +653,21 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       | _ -> arity ())
   | Abs -> (
       match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Abs [ x ], mul (b1 Sign [ x ]) tx)
+      | [ x ], [ tx ] ->
+          if is_complex_value x then
+            let po = b1 Abs [ x ] in
+            let real_part v = b1 Real [ v ] and imag_part v = b1 Imag [ v ] in
+            let numer =
+              add
+                (mul (real_part x) (real_part tx))
+                (mul (imag_part x) (imag_part tx))
+            in
+            let safe =
+              b1 Select_n
+                [ b1 Eq [ po; zeros_like_value po ]; po; ones_like_value po ]
+            in
+            (po, div numer safe)
+          else (b1 Abs [ x ], mul (b1 Sign [ x ]) tx)
       | _ -> arity ())
   | Sign -> (
       match (primals, tangents) with
@@ -1847,7 +1886,9 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Cumsum { axis; reverse } ->
       [ Some (b1 (Cumsum { axis; reverse = not reverse }) [ ct1 () ]) ]
   | Copy -> [ Some (b1 Copy [ ct1 () ]) ]
-  | Conj -> [ Some (ct1 ()) ]
+  | Conj ->
+      let t = ct1 () in
+      [ Some (if is_complex_value t then b1 Conj [ t ] else t) ]
   | Rev dims -> [ Some (b1 (Rev dims) [ ct1 () ]) ]
   | Transpose perm -> [ Some (b1 (Transpose (argsort perm)) [ ct1 () ]) ]
   | Squeeze _ -> (

@@ -138,9 +138,14 @@ let emit_stablehlo_unary ctx (eqn : eqn) in_ids op =
   let x = sole in_ids in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
+  let out_ty = Ir.tensor_type_of_aval out.vaval in
+  let in_ty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let signature =
+    if in_ty = out_ty then out_ty else Printf.sprintf "(%s) -> %s" in_ty out_ty
+  in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.%s %s : %s\n" (name n) op (name x)
-       (Ir.tensor_type_of_aval out.vaval))
+       signature)
 
 let emit_chlo_unary ctx (eqn : eqn) in_ids op =
   let x = sole in_ids in

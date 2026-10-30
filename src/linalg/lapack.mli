@@ -68,3 +68,48 @@ val trtrs :
 
 val gecon :
   norm:char -> n:int -> a:f64 -> lda:int -> anorm:float -> rcond:f64 -> int
+
+val zpotrf : uplo:char -> n:int -> a:f64 -> lda:int -> int
+val zgetrf : m:int -> n:int -> a:f64 -> lda:int -> ipiv:i32 -> int
+val zgeqrf : m:int -> n:int -> a:f64 -> lda:int -> tau:f64 -> int
+val zungqr : m:int -> n:int -> k:int -> a:f64 -> lda:int -> tau:f64 -> int
+
+val zgesdd :
+  jobz:char ->
+  m:int ->
+  n:int ->
+  a:f64 ->
+  lda:int ->
+  s:f64 ->
+  u:f64 ->
+  ldu:int ->
+  vt:f64 ->
+  ldvt:int ->
+  int
+
+val zheevd : jobz:char -> uplo:char -> n:int -> a:f64 -> lda:int -> w:f64 -> int
+
+val zgeev :
+  jobvl:char ->
+  jobvr:char ->
+  n:int ->
+  a:f64 ->
+  lda:int ->
+  w:f64 ->
+  vl:f64 ->
+  ldvl:int ->
+  vr:f64 ->
+  ldvr:int ->
+  int
+
+val ztrtrs :
+  uplo:char ->
+  trans:char ->
+  diag:char ->
+  n:int ->
+  nrhs:int ->
+  a:f64 ->
+  lda:int ->
+  b:f64 ->
+  ldb:int ->
+  int

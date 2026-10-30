@@ -23,8 +23,234 @@ let unpack_cm a p q =
   done;
   out
 
+let is_complex_nd nd =
+  match Ndarray.dtype nd with
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let zpack nd m n =
+  let a = Lp.alloc_f64 (2 * m * n) in
+  for j = 0 to n - 1 do
+    for i = 0 to m - 1 do
+      let z = Ndarray.get_c nd [| i; j |] in
+      let k = 2 * (i + (j * m)) in
+      a.{k} <- z.Complex.re;
+      a.{k + 1} <- z.Complex.im
+    done
+  done;
+  a
+
+let zat a k = { Complex.re = a.{2 * k}; im = a.{(2 * k) + 1} }
+
+let zunpack a p q =
+  Array.init (p * q) (fun f ->
+      let i = f / max q 1 and j = f mod max q 1 in
+      zat a (i + (j * p)))
+
+let z_cholesky a =
+  let dt = Ndarray.dtype a in
+  let n = (Ndarray.shape a).(0) in
+  let ca = zpack a n n in
+  let info = Lp.zpotrf ~uplo:'L' ~n ~a:ca ~lda:n in
+  let nan = { Complex.re = Float.nan; im = Float.nan } in
+  [
+    Ndarray.of_complex dt [| n; n |]
+      (Array.init (n * n) (fun f ->
+           let i = f / n and j = f mod n in
+           if info <> 0 then nan
+           else if j <= i then zat ca (i + (j * n))
+           else Complex.zero));
+  ]
+
+let z_lu a =
+  let dt = Ndarray.dtype a in
+  let sh = Ndarray.shape a in
+  let m = sh.(0) and n = sh.(1) in
+  let ca = zpack a m n in
+  let k = min m n in
+  let ipiv = Lp.alloc_i32 (max k 1) in
+  let _ = Lp.zgetrf ~m ~n ~a:ca ~lda:m ~ipiv in
+  let pivots = Array.init k (fun i -> Int32.to_int ipiv.{i} - 1) in
+  let perm = Array.init m (fun i -> i) in
+  for i = 0 to k - 1 do
+    let j = pivots.(i) in
+    let t = perm.(i) in
+    perm.(i) <- perm.(j);
+    perm.(j) <- t
+  done;
+  [
+    Ndarray.of_complex dt [| m; n |] (zunpack ca m n);
+    Ndarray.of_floats Dtype.I32 [| k |] (Array.map float_of_int pivots);
+    Ndarray.of_floats Dtype.I32 [| m |] (Array.map float_of_int perm);
+  ]
+
+let z_qr full_matrices a =
+  let dt = Ndarray.dtype a in
+  let sh = Ndarray.shape a in
+  let m = sh.(0) and n = sh.(1) in
+  let mn = min m n in
+  let k = if full_matrices then m else mn in
+  let ca = zpack a m n in
+  let tau = Lp.alloc_f64 (2 * max mn 1) in
+  let _ = Lp.zgeqrf ~m ~n ~a:ca ~lda:m ~tau in
+  let r =
+    Array.init (k * n) (fun f ->
+        let i = f / n and j = f mod n in
+        if j >= i then zat ca (i + (j * m)) else Complex.zero)
+  in
+  let work = Lp.alloc_f64 (2 * max (m * max k n) 1) in
+  for x = 0 to (2 * m * min n k) - 1 do
+    work.{x} <- ca.{x}
+  done;
+  let _ = Lp.zungqr ~m ~n:k ~k:mn ~a:work ~lda:m ~tau in
+  [
+    Ndarray.of_complex dt [| m; k |] (zunpack work m k);
+    Ndarray.of_complex dt [| k; n |] r;
+  ]
+
+let z_householder_product a taus =
+  let dt = Ndarray.dtype a in
+  let sh = Ndarray.shape a in
+  let m = sh.(0) and n = sh.(1) in
+  let k = (Ndarray.shape taus).(0) in
+  let ca = zpack a m n in
+  let tau =
+    zpack
+      (Ndarray.of_complex dt [| k; 1 |]
+         (Array.init k (fun i -> Ndarray.get_c taus [| i |])))
+      k 1
+  in
+  let _ = Lp.zungqr ~m ~n ~k ~a:ca ~lda:m ~tau in
+  [ Ndarray.of_complex dt [| m; n |] (zunpack ca m n) ]
+
+let z_real_basetype = function Dtype.Complex128 -> Dtype.F64 | _ -> Dtype.F32
+
+let z_eigh lower a =
+  let dt = Ndarray.dtype a in
+  let n = (Ndarray.shape a).(0) in
+  let ca = zpack a n n in
+  let w = Lp.alloc_f64 (max n 1) in
+  let uplo = if lower then 'L' else 'U' in
+  let _ = Lp.zheevd ~jobz:'V' ~uplo ~n ~a:ca ~lda:n ~w in
+  [
+    Ndarray.of_complex dt [| n; n |] (zunpack ca n n);
+    Ndarray.of_floats (z_real_basetype dt) [| n |]
+      (Array.init n (fun i -> w.{i}));
+  ]
+
+let z_svd full_matrices compute_uv a =
+  let dt = Ndarray.dtype a in
+  let sh = Ndarray.shape a in
+  let m = sh.(0) and n = sh.(1) in
+  let mn = min m n in
+  let ca = zpack a m n in
+  let s = Lp.alloc_f64 (max mn 1) in
+  let real = Ndarray.of_floats (z_real_basetype dt) [| mn |] in
+  if compute_uv then begin
+    let jobz = if full_matrices then 'A' else 'S' in
+    let ucols = if full_matrices then m else mn in
+    let vrows = if full_matrices then n else mn in
+    let u = Lp.alloc_f64 (2 * m * ucols) in
+    let vt = Lp.alloc_f64 (2 * vrows * n) in
+    let _ = Lp.zgesdd ~jobz ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:m ~vt ~ldvt:vrows in
+    [
+      Ndarray.of_complex dt [| m; ucols |] (zunpack u m ucols);
+      real (Array.init mn (fun i -> s.{i}));
+      Ndarray.of_complex dt [| vrows; n |] (zunpack vt vrows n);
+    ]
+  end
+  else begin
+    let u = Lp.alloc_f64 2 and vt = Lp.alloc_f64 2 in
+    let _ = Lp.zgesdd ~jobz:'N' ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:1 ~vt ~ldvt:1 in
+    [ real (Array.init mn (fun i -> s.{i})) ]
+  end
+
+let z_eig compute_left compute_right a =
+  let dt = Ndarray.dtype a in
+  let n = (Ndarray.shape a).(0) in
+  let ca = zpack a n n in
+  let w = Lp.alloc_f64 (2 * max n 1) in
+  let ldvl = if compute_left then n else 1 in
+  let ldvr = if compute_right then n else 1 in
+  let vl = Lp.alloc_f64 (2 * n * ldvl) in
+  let vr = Lp.alloc_f64 (2 * n * ldvr) in
+  let jobvl = if compute_left then 'V' else 'N' in
+  let jobvr = if compute_right then 'V' else 'N' in
+  let _ = Lp.zgeev ~jobvl ~jobvr ~n ~a:ca ~lda:n ~w ~vl ~ldvl ~vr ~ldvr in
+  let vectors flag buf =
+    if flag then [ Ndarray.of_complex dt [| n; n |] (zunpack buf n n) ] else []
+  in
+  Ndarray.of_complex dt [| n |] (Array.init n (fun i -> zat w i))
+  :: vectors compute_left vl
+  @ vectors compute_right vr
+
+let z_triangular_solve left_side lower transpose_a conjugate_a unit_diagonal a b
+    =
+  let dt = Ndarray.dtype b in
+  let m = (Ndarray.shape a).(0) in
+  let bs = Ndarray.shape b in
+  let as_complex nd =
+    if is_complex_nd nd then nd
+    else
+      let sh = Ndarray.shape nd in
+      let total = Array.fold_left ( * ) 1 sh in
+      Ndarray.of_complex dt sh
+        (Array.init total (fun f ->
+             let idx = Array.make (Array.length sh) 0 in
+             let r = ref f in
+             for d = Array.length sh - 1 downto 0 do
+               idx.(d) <- !r mod sh.(d);
+               r := !r / sh.(d)
+             done;
+             { Complex.re = Ndarray.get_f nd idx; im = 0.0 }))
+  in
+  let a = as_complex a in
+  let ca = zpack a m m in
+  let uplo = if lower then 'L' else 'U' in
+  let diag = if unit_diagonal then 'U' else 'N' in
+  let effective_transpose =
+    if left_side then transpose_a else not transpose_a
+  in
+  let trans, conjugate_rhs =
+    match (effective_transpose, conjugate_a) with
+    | false, false -> ('N', false)
+    | true, false -> ('T', false)
+    | true, true -> ('C', false)
+    | false, true -> ('N', true)
+  in
+  let nrhs = if left_side then bs.(1) else bs.(0) in
+  let cb = Lp.alloc_f64 (2 * m * nrhs) in
+  for c = 0 to nrhs - 1 do
+    for r = 0 to m - 1 do
+      let z =
+        if left_side then Ndarray.get_c b [| r; c |]
+        else Ndarray.get_c b [| c; r |]
+      in
+      let z = if conjugate_rhs then Complex.conj z else z in
+      let k = 2 * (r + (c * m)) in
+      cb.{k} <- z.Complex.re;
+      cb.{k + 1} <- z.Complex.im
+    done
+  done;
+  let _ = Lp.ztrtrs ~uplo ~trans ~diag ~n:m ~nrhs ~a:ca ~lda:m ~b:cb ~ldb:m in
+  let read r c =
+    let z = zat cb (r + (c * m)) in
+    if conjugate_rhs then Complex.conj z else z
+  in
+  if left_side then
+    [
+      Ndarray.of_complex dt [| m; nrhs |]
+        (Array.init (m * nrhs) (fun f -> read (f / nrhs) (f mod nrhs)));
+    ]
+  else
+    [
+      Ndarray.of_complex dt [| nrhs; m |]
+        (Array.init (nrhs * m) (fun f -> read (f mod m) (f / m)));
+    ]
+
 let cholesky_impl inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_cholesky a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let n, _ = dims2 a in
@@ -43,6 +269,7 @@ let cholesky_impl inputs =
 
 let lu_impl inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_lu a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let m, n = dims2 a in
@@ -68,6 +295,7 @@ let lu_impl inputs =
 
 let qr_impl full_matrices inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_qr full_matrices a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let m, n = dims2 a in
@@ -100,6 +328,7 @@ let qr_impl full_matrices inputs =
 
 let householder_product_impl inputs =
   match inputs with
+  | [ a; taus ] when is_complex_nd a -> z_householder_product a taus
   | [ a; taus ] ->
       let dt = Ndarray.dtype a in
       let m, n = dims2 a in
@@ -128,9 +357,12 @@ let lu_pivots_to_permutation_impl permutation_size inputs =
       [ Ndarray.of_floats Dtype.I32 [| m |] (Array.map float_of_int perm) ]
   | _ -> failwith "linalg: lu_pivots_to_permutation expects one operand"
 
-let triangular_solve_impl left_side lower transpose_a _conjugate_a unit_diagonal
+let triangular_solve_impl left_side lower transpose_a conjugate_a unit_diagonal
     inputs =
   match inputs with
+  | [ a; b ] when is_complex_nd a || is_complex_nd b ->
+      z_triangular_solve left_side lower transpose_a conjugate_a unit_diagonal a
+        b
   | [ a; b ] ->
       let dt = Ndarray.dtype b in
       let m, _ = dims2 a in
@@ -221,6 +453,7 @@ let to_farray b n = Array.init n (fun i -> b.{i})
 
 let eigh_impl lower inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_eigh lower a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let n, _ = dims2 a in
@@ -258,6 +491,7 @@ let unpack_eigvecs n pv wi =
 
 let eig_impl compute_left compute_right inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_eig compute_left compute_right a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let cdt = to_complex_dtype dt in
@@ -320,6 +554,7 @@ let schur_impl compute_vectors inputs =
 
 let svd_impl full_matrices compute_uv inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_svd full_matrices compute_uv a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let rdt = real_basetype dt in

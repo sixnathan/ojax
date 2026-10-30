@@ -464,3 +464,196 @@ CAMLprim value ojax_lapack_gecon(value v_ip, value v_a, value v_anorm,
   if (alloc_failed) caml_failwith("ojax linalg: gecon workspace alloc failed");
   CAMLreturn(Val_int((int)info));
 }
+
+#ifdef __APPLE__
+#define Z_ARG(p) ((void *)(p))
+#else
+#define LI __LAPACK_int
+static void (*p_zpotrf_)(char *, LI *, void *, LI *, LI *);
+static void (*p_zgetrf_)(LI *, LI *, void *, LI *, LI *, LI *);
+static void (*p_zgeqrf_)(LI *, LI *, void *, LI *, void *, void *, LI *, LI *);
+static void (*p_zungqr_)(LI *, LI *, LI *, void *, LI *, void *, void *, LI *,
+                         LI *);
+static void (*p_zgesdd_)(char *, LI *, LI *, void *, LI *, double *, void *,
+                         LI *, void *, LI *, void *, LI *, double *, LI *,
+                         LI *);
+static void (*p_zheevd_)(char *, char *, LI *, void *, LI *, double *, void *,
+                         LI *, double *, LI *, LI *, LI *, LI *);
+static void (*p_zgeev_)(char *, char *, LI *, void *, LI *, void *, void *,
+                        LI *, void *, LI *, void *, LI *, double *, LI *);
+static void (*p_ztrtrs_)(char *, char *, char *, LI *, LI *, void *, LI *,
+                         void *, LI *, LI *);
+#undef LI
+#define zpotrf_ p_zpotrf_
+#define zgetrf_ p_zgetrf_
+#define zgeqrf_ p_zgeqrf_
+#define zungqr_ p_zungqr_
+#define zgesdd_ p_zgesdd_
+#define zheevd_ p_zheevd_
+#define zgeev_ p_zgeev_
+#define ztrtrs_ p_ztrtrs_
+#define Z_ARG(p) ((void *)(p))
+
+static void *ojax_lapack_handle(void) {
+  static void *lib = NULL;
+  if (lib) return lib;
+  const char *env = getenv("OJAX_LAPACK_LIB");
+  const char *names[] = {env, "libopenblas.so.0", "liblapack.so.3"};
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && !lib; i++)
+    if (names[i] && names[i][0]) lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
+  return lib;
+}
+
+#define Z_RESOLVE(name)                                                        \
+  do {                                                                         \
+    if (!p_##name) *(void **)&p_##name = dlsym(ojax_lapack_handle(), #name);   \
+    if (!p_##name) caml_failwith("ojax linalg: complex LAPACK missing " #name); \
+  } while (0)
+#endif
+
+#ifdef __APPLE__
+#define Z_RESOLVE(name)                                                        \
+  do {                                                                         \
+  } while (0)
+#endif
+
+CAMLprim value ojax_lapack_zpotrf(value v_ip, value v_a) {
+  CAMLparam2(v_ip, v_a);
+  Z_RESOLVE(zpotrf_);
+  char uplo = (char)IP(v_ip, 0);
+  __LAPACK_int n = IP(v_ip, 1), lda = IP(v_ip, 2), info = 0;
+  zpotrf_(&uplo, &n, Z_ARG(D(v_a)), &lda, &info);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_zgetrf(value v_ip, value v_a, value v_ipiv) {
+  CAMLparam3(v_ip, v_a, v_ipiv);
+  Z_RESOLVE(zgetrf_);
+  __LAPACK_int m = IP(v_ip, 0), n = IP(v_ip, 1), lda = IP(v_ip, 2), info = 0;
+  zgetrf_(&m, &n, Z_ARG(D(v_a)), &lda, (__LAPACK_int *)I32(v_ipiv), &info);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_zgeqrf(value v_ip, value v_a, value v_tau) {
+  CAMLparam3(v_ip, v_a, v_tau);
+  Z_RESOLVE(zgeqrf_);
+  __LAPACK_int m = IP(v_ip, 0), n = IP(v_ip, 1), lda = IP(v_ip, 2), info = 0;
+  __LAPACK_int lwork = -1;
+  double query[2] = {0.0, 0.0};
+  zgeqrf_(&m, &n, Z_ARG(D(v_a)), &lda, Z_ARG(D(v_tau)), Z_ARG(query), &lwork,
+          &info);
+  lwork = (__LAPACK_int)query[0];
+  if (lwork < 1) lwork = 1;
+  double *work = malloc(sizeof(double) * 2 * lwork);
+  if (!work) caml_failwith("ojax linalg: zgeqrf workspace alloc failed");
+  zgeqrf_(&m, &n, Z_ARG(D(v_a)), &lda, Z_ARG(D(v_tau)), Z_ARG(work), &lwork,
+          &info);
+  free(work);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_zungqr(value v_ip, value v_a, value v_tau) {
+  CAMLparam3(v_ip, v_a, v_tau);
+  Z_RESOLVE(zungqr_);
+  __LAPACK_int m = IP(v_ip, 0), n = IP(v_ip, 1), k = IP(v_ip, 2);
+  __LAPACK_int lda = IP(v_ip, 3), info = 0, lwork = -1;
+  double query[2] = {0.0, 0.0};
+  zungqr_(&m, &n, &k, Z_ARG(D(v_a)), &lda, Z_ARG(D(v_tau)), Z_ARG(query),
+          &lwork, &info);
+  lwork = (__LAPACK_int)query[0];
+  if (lwork < 1) lwork = 1;
+  double *work = malloc(sizeof(double) * 2 * lwork);
+  if (!work) caml_failwith("ojax linalg: zungqr workspace alloc failed");
+  zungqr_(&m, &n, &k, Z_ARG(D(v_a)), &lda, Z_ARG(D(v_tau)), Z_ARG(work), &lwork,
+          &info);
+  free(work);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_zgesdd(value v_ip, value v_a, value v_s, value v_u,
+                                  value v_vt) {
+  CAMLparam5(v_ip, v_a, v_s, v_u, v_vt);
+  Z_RESOLVE(zgesdd_);
+  char jobz = (char)IP(v_ip, 0);
+  __LAPACK_int m = IP(v_ip, 1), n = IP(v_ip, 2), lda = IP(v_ip, 3);
+  __LAPACK_int ldu = IP(v_ip, 4), ldvt = IP(v_ip, 5), info = 0, lwork = -1;
+  __LAPACK_int mn = m < n ? m : n, mx = m < n ? n : m;
+  double query[2] = {0.0, 0.0};
+  size_t lrwork = 5 * (size_t)mn * (size_t)mn + 7 * (size_t)mn + 2 * (size_t)mx * (size_t)mn + 16;
+  double *rwork = malloc(sizeof(double) * lrwork);
+  __LAPACK_int *iwork = malloc(sizeof(__LAPACK_int) * (8 * (size_t)mn + 1));
+  if (!rwork || !iwork) caml_failwith("ojax linalg: zgesdd workspace alloc failed");
+  zgesdd_(&jobz, &m, &n, Z_ARG(D(v_a)), &lda, D(v_s), Z_ARG(D(v_u)), &ldu,
+          Z_ARG(D(v_vt)), &ldvt, Z_ARG(query), &lwork, rwork, iwork, &info);
+  lwork = (__LAPACK_int)query[0];
+  if (lwork < 1) lwork = 1;
+  double *work = malloc(sizeof(double) * 2 * lwork);
+  if (!work) caml_failwith("ojax linalg: zgesdd workspace alloc failed");
+  zgesdd_(&jobz, &m, &n, Z_ARG(D(v_a)), &lda, D(v_s), Z_ARG(D(v_u)), &ldu,
+          Z_ARG(D(v_vt)), &ldvt, Z_ARG(work), &lwork, rwork, iwork, &info);
+  free(work);
+  free(rwork);
+  free(iwork);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_zheevd(value v_ip, value v_a, value v_w) {
+  CAMLparam3(v_ip, v_a, v_w);
+  Z_RESOLVE(zheevd_);
+  char jobz = (char)IP(v_ip, 0), uplo = (char)IP(v_ip, 1);
+  __LAPACK_int n = IP(v_ip, 2), lda = IP(v_ip, 3), info = 0;
+  __LAPACK_int lwork = -1, lrwork = -1, liwork = -1, iquery = 0;
+  double query[2] = {0.0, 0.0}, rquery = 0.0;
+  zheevd_(&jobz, &uplo, &n, Z_ARG(D(v_a)), &lda, D(v_w), Z_ARG(query), &lwork,
+          &rquery, &lrwork, &iquery, &liwork, &info);
+  lwork = (__LAPACK_int)query[0];
+  lrwork = (__LAPACK_int)rquery;
+  liwork = iquery;
+  if (lwork < 1) lwork = 1;
+  if (lrwork < 1) lrwork = 1;
+  if (liwork < 1) liwork = 1;
+  double *work = malloc(sizeof(double) * 2 * lwork);
+  double *rwork = malloc(sizeof(double) * lrwork);
+  __LAPACK_int *iwork = malloc(sizeof(__LAPACK_int) * liwork);
+  if (!work || !rwork || !iwork) caml_failwith("ojax linalg: zheevd workspace alloc failed");
+  zheevd_(&jobz, &uplo, &n, Z_ARG(D(v_a)), &lda, D(v_w), Z_ARG(work), &lwork,
+          rwork, &lrwork, iwork, &liwork, &info);
+  free(work);
+  free(rwork);
+  free(iwork);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_zgeev(value v_ip, value v_a, value v_w, value v_vl,
+                                 value v_vr) {
+  CAMLparam5(v_ip, v_a, v_w, v_vl, v_vr);
+  Z_RESOLVE(zgeev_);
+  char jobvl = (char)IP(v_ip, 0), jobvr = (char)IP(v_ip, 1);
+  __LAPACK_int n = IP(v_ip, 2), lda = IP(v_ip, 3), ldvl = IP(v_ip, 4);
+  __LAPACK_int ldvr = IP(v_ip, 5), info = 0, lwork = -1;
+  double query[2] = {0.0, 0.0};
+  double *rwork = malloc(sizeof(double) * (2 * (size_t)n + 1));
+  if (!rwork) caml_failwith("ojax linalg: zgeev workspace alloc failed");
+  zgeev_(&jobvl, &jobvr, &n, Z_ARG(D(v_a)), &lda, Z_ARG(D(v_w)), Z_ARG(D(v_vl)),
+         &ldvl, Z_ARG(D(v_vr)), &ldvr, Z_ARG(query), &lwork, rwork, &info);
+  lwork = (__LAPACK_int)query[0];
+  if (lwork < 1) lwork = 1;
+  double *work = malloc(sizeof(double) * 2 * lwork);
+  if (!work) caml_failwith("ojax linalg: zgeev workspace alloc failed");
+  zgeev_(&jobvl, &jobvr, &n, Z_ARG(D(v_a)), &lda, Z_ARG(D(v_w)), Z_ARG(D(v_vl)),
+         &ldvl, Z_ARG(D(v_vr)), &ldvr, Z_ARG(work), &lwork, rwork, &info);
+  free(work);
+  free(rwork);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_ztrtrs(value v_ip, value v_a, value v_b) {
+  CAMLparam3(v_ip, v_a, v_b);
+  Z_RESOLVE(ztrtrs_);
+  char uplo = (char)IP(v_ip, 0), trans = (char)IP(v_ip, 1), diag = (char)IP(v_ip, 2);
+  __LAPACK_int n = IP(v_ip, 3), nrhs = IP(v_ip, 4), lda = IP(v_ip, 5);
+  __LAPACK_int ldb = IP(v_ip, 6), info = 0;
+  ztrtrs_(&uplo, &trans, &diag, &n, &nrhs, Z_ARG(D(v_a)), &lda, Z_ARG(D(v_b)),
+          &ldb, &info);
+  CAMLreturn(Val_int((int)info));
+}

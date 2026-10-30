@@ -156,16 +156,37 @@ and slogdet ?(method_ = "lu") a =
   let is_zero = RED.any ~axis:[| -1 |] (UF.equal diag zero) in
   let iota = NL.arange ~dtype:(dtype piv) (float_of_int n) in
   let swaps = RED.count_nonzero ~axis:[| -1 |] (UF.not_equal piv iota) in
-  let neg = RED.count_nonzero ~axis:[| -1 |] (UF.less diag zero) in
-  let parity = UF.add (NL.astype swaps dt) (NL.astype neg dt) in
-  let two = const dt 2.0 in
-  let half = UF.floor (UF.divide parity two) in
-  let pmod = UF.subtract parity (UF.multiply two half) in
-  let sgn = UF.subtract (const dt 1.0) (UF.multiply two pmod) in
-  let logdet = RED.sum ~axis:[| -1 |] (UF.log (UF.abs diag)) in
-  let sign = NL.where_ is_zero (const dt 0.0) sgn in
-  let logabsdet = NL.where_ is_zero (const dt neg_infinity) logdet in
-  (sign, logabsdet)
+  if dt = D.Complex64 || dt = D.Complex128 then begin
+    let magnitude = UF.abs diag in
+    let rdt = dtype magnitude in
+    let safe =
+      NL.where_ (UF.equal magnitude (const rdt 0.0)) (const rdt 1.0) magnitude
+    in
+    let unit = UF.divide diag (NL.astype safe dt) in
+    let swap_count = NL.astype swaps rdt in
+    let half = UF.floor (UF.divide swap_count (const rdt 2.0)) in
+    let odd = UF.subtract swap_count (UF.multiply (const rdt 2.0) half) in
+    let parity_sign =
+      UF.subtract (const rdt 1.0) (UF.multiply (const rdt 2.0) odd)
+    in
+    let phase =
+      UF.multiply (RED.prod ~axis:[| -1 |] unit) (NL.astype parity_sign dt)
+    in
+    let logdet = RED.sum ~axis:[| -1 |] (UF.log magnitude) in
+    ( NL.where_ is_zero (const dt 0.0) phase,
+      NL.where_ is_zero (const rdt neg_infinity) logdet )
+  end
+  else
+    let neg = RED.count_nonzero ~axis:[| -1 |] (UF.less diag zero) in
+    let parity = UF.add (NL.astype swaps dt) (NL.astype neg dt) in
+    let two = const dt 2.0 in
+    let half = UF.floor (UF.divide parity two) in
+    let pmod = UF.subtract parity (UF.multiply two half) in
+    let sgn = UF.subtract (const dt 1.0) (UF.multiply two pmod) in
+    let logdet = RED.sum ~axis:[| -1 |] (UF.log (UF.abs diag)) in
+    let sign = NL.where_ is_zero (const dt 0.0) sgn in
+    let logabsdet = NL.where_ is_zero (const dt neg_infinity) logdet in
+    (sign, logabsdet)
 
 and det a =
   let a = to_inexact a in

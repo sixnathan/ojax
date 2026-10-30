@@ -271,6 +271,52 @@ def _gap_ops():
     }
 
 
+def _herm(a):
+    return a @ jnp.conj(jnp.swapaxes(a, -1, -2)) + 3.0 * jnp.eye(a.shape[-1], dtype=a.dtype)
+
+
+def _complex_linalg_ops():
+    la = jnp.linalg
+    return {
+        "cl_inv": lambda a, p: la.inv(_herm(a)),
+        "cl_det": lambda a, p: la.det(_herm(a)),
+        "cl_solve": lambda a, b, p: la.solve(_herm(a), b),
+        "cl_cholesky": lambda a, p: la.cholesky(_herm(a)),
+        "cl_eigvalsh": lambda a, p: la.eigvalsh(_herm(a)),
+        "cl_svdvals": lambda a, p: la.svd(a, compute_uv=False),
+        "cl_qr_r": lambda a, p: jnp.abs(la.qr(a)[1]),
+        "cl_slogdet": lambda a, p: tuple(la.slogdet(_herm(a))),
+        "cl_grad_eigvalsh": lambda a, p: jax.grad(lambda x: jnp.sum(jnp.linalg.eigvalsh(_herm(x))))(a),
+        "cl_grad_logdet": lambda a, p: jax.grad(lambda x: jnp.linalg.slogdet(_herm(x))[1].sum())(a),
+        "cl_grad_svdvals": lambda a, p: jax.grad(lambda x: jnp.sum(jnp.linalg.svd(x, compute_uv=False)))(a),
+    }
+
+
+def _complex_grad_ops():
+    n = jnp
+    fns = {
+        "abs": lambda z: n.abs(z),
+        "sin": lambda z: n.abs(n.sin(z)),
+        "cos": lambda z: n.abs(n.cos(z)),
+        "tan": lambda z: n.abs(n.tan(z)),
+        "exp": lambda z: n.abs(n.exp(z)),
+        "log": lambda z: n.abs(n.log(z)),
+        "sqrt": lambda z: n.abs(n.sqrt(z)),
+        "tanh": lambda z: n.abs(n.tanh(z)),
+        "sinh": lambda z: n.abs(n.sinh(z)),
+        "cosh": lambda z: n.abs(n.cosh(z)),
+        "square": lambda z: n.abs(z * z),
+        "reciprocal": lambda z: n.abs(1.0 / z),
+        "conj": lambda z: n.abs(n.conj(z) * z),
+        "real": lambda z: n.real(z) ** 2,
+        "imag": lambda z: n.imag(z) ** 2,
+        "matmul": lambda z: n.abs(z @ n.conj(z)),
+        "fft": lambda z: n.abs(n.fft.fft(z)),
+        "angle": lambda z: n.angle(z),
+    }
+    return {"cg_" + k: (lambda f: lambda a, p: jax.grad(lambda x: n.sum(f(x)))(a))(v) for k, v in fns.items()}
+
+
 def _default_random_ops():
     from jax import random as jr
     k = lambda p: jr.key(p["seed"])
@@ -362,6 +408,8 @@ OPS.update(_lax_extra_ops())
 OPS.update(_default_random_ops())
 OPS.update(_array_random_ops())
 OPS.update(_gap_ops())
+OPS.update(_complex_linalg_ops())
+OPS.update(_complex_grad_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -763,5 +811,24 @@ def _gap_cases():
     return out
 
 
+def _complex_linalg_cases():
+    c = _complex_input
+    out = []
+    for op in ["cl_inv", "cl_det", "cl_cholesky", "cl_eigvalsh", "cl_slogdet", "cl_grad_eigvalsh", "cl_grad_logdet"]:
+        out.append((op, c([3, 3]), {}))
+        out.append((op, c([2, 3, 3]), {}))
+    for shape in [[3, 3], [4, 2], [2, 4]]:
+        out.append(("cl_svdvals", c(shape), {}))
+        out.append(("cl_qr_r", c(shape), {}))
+        out.append(("cl_grad_svdvals", c(shape), {}))
+    out.append(("cl_solve", {"a": {"kind": "complex", "shape": [3, 3]}, "b": {"kind": "complex", "shape": [3, 2]}}, {}))
+    return out
+
+
+def _complex_grad_cases():
+    names = "abs sin cos tan exp log sqrt tanh sinh cosh square reciprocal conj real imag fft angle".split()
+    return [("cg_" + n, _complex_input([4]), {}) for n in names] + [("cg_matmul", _complex_input([2, 2]), {})]
+
+
 def all_cases():
-    return _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

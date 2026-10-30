@@ -121,8 +121,8 @@ let transpose_raises () =
   match
     Ad.grad (fun a -> C.bind1 (T.Reduce_sum [| 0 |]) [ fn a ]) [ ramp6 ]
   with
-  | _ -> Alcotest.fail "expected reduce_window_sum transpose failure"
-  | exception Failure _ -> ()
+  | [ _ ] -> ()
+  | _ -> Alcotest.fail "expected one reduce_window_sum gradient"
 
 let vmap_raises () =
   let w = win1 ~w:2 ~s:1 ~p:(0, 0) ~bd:1 ~wd:1 in

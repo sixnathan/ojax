@@ -87,6 +87,354 @@ let reduce_chooser_jvp prim axes x tx =
   let numer = b1 (Reduce_sum axes) [ mul tx loc ] in
   (ans, div numer counts)
 
+let swap_last2 x =
+  let ndim = Array.length (Core.get_aval x).shape in
+  let perm = Array.init ndim Fun.id in
+  perm.(ndim - 1) <- ndim - 2;
+  perm.(ndim - 2) <- ndim - 1;
+  b1 (Transpose perm) [ x ]
+
+let matmul x y =
+  let ndim = Array.length (Core.get_aval x).shape in
+  let batch = Array.init (ndim - 2) Fun.id in
+  b1
+    (Dot_general
+       {
+         lhs_contract = [| ndim - 1 |];
+         rhs_contract = [| ndim - 2 |];
+         lhs_batch = batch;
+         rhs_batch = batch;
+       })
+    [ x; y ]
+
+let matrix_mask x keep =
+  let a = Core.get_aval x in
+  let ndim = Array.length a.shape in
+  let rows = a.shape.(ndim - 2) and cols = a.shape.(ndim - 1) in
+  let cell = rows * cols in
+  let total = Array.fold_left ( * ) 1 a.shape in
+  let data =
+    Array.init total (fun i ->
+        let local = i mod cell in
+        if keep (local / cols) (local mod cols) then 1.0 else 0.0)
+  in
+  Concrete (Ndarray.of_floats a.dtype a.shape data)
+
+let tril_of k x = mul x (matrix_mask x (fun i j -> j <= i + k))
+let triu_of k x = mul x (matrix_mask x (fun i j -> j >= i + k))
+let eye_like x = matrix_mask x (fun i j -> i = j)
+
+let triangular_solve_with ~left_side ~lower ~transpose_a ~conjugate_a
+    ~unit_diagonal a b =
+  b1
+    (Triangular_solve
+       { left_side; lower; transpose_a; conjugate_a; unit_diagonal })
+    [ a; b ]
+
+let triangular_tangent_a ~left_side ~lower ~transpose_a ~conjugate_a
+    ~unit_diagonal a ans ta =
+  let k = if unit_diagonal then 1 else 0 in
+  let g = if lower then tril_of (-k) ta else triu_of k ta in
+  let g = neg g in
+  let g = if transpose_a then swap_last2 g else g in
+  let inverse =
+    triangular_solve_with ~left_side ~lower ~transpose_a ~conjugate_a
+      ~unit_diagonal a
+  in
+  if left_side then matmul (inverse g) ans else matmul ans (inverse g)
+
+let cholesky_jvp x t =
+  let l = tril_of 0 (b1 Cholesky [ x ]) in
+  let phi m =
+    let half = matrix_mask m (fun i j -> if i = j then true else j < i) in
+    let scale = sub half (mul (eye_like m) (const_like m 0.5)) in
+    mul (tril_of 0 m) scale
+  in
+  let tmp =
+    triangular_solve_with ~left_side:false ~lower:true ~transpose_a:true
+      ~conjugate_a:false ~unit_diagonal:false l t
+  in
+  let inner =
+    triangular_solve_with ~left_side:true ~lower:true ~transpose_a:false
+      ~conjugate_a:false ~unit_diagonal:false l tmp
+  in
+  (l, matmul l (phi inner))
+
+let diagonal_of x =
+  let a = Core.get_aval x in
+  let ndim = Array.length a.shape in
+  let rows = a.shape.(ndim - 2) and cols = a.shape.(ndim - 1) in
+  let k = min rows cols in
+  let picks =
+    List.init k (fun i ->
+        let start = Array.make ndim 0 and limit = Array.copy a.shape in
+        start.(ndim - 2) <- i;
+        limit.(ndim - 2) <- i + 1;
+        start.(ndim - 1) <- i;
+        limit.(ndim - 1) <- i + 1;
+        let piece =
+          b1
+            (Slice
+               { start_indices = start; limit_indices = limit; strides = None })
+            [ x ]
+        in
+        b1 (Squeeze [| ndim - 2; ndim - 1 |]) [ piece ])
+  in
+  b1 (Stack (ndim - 2)) picks
+
+let expand_row w =
+  let a = Core.get_aval w in
+  let ndim = Array.length a.shape in
+  let shape = Array.append a.shape [| 1 |] in
+  ignore ndim;
+  b1 (Reshape shape) [ w ]
+
+let expand_col w =
+  let a = Core.get_aval w in
+  let ndim = Array.length a.shape in
+  let shape =
+    Array.concat
+      [ Array.sub a.shape 0 (ndim - 1); [| 1 |]; [| a.shape.(ndim - 1) |] ]
+  in
+  b1 (Reshape shape) [ w ]
+
+let broadcast_to_matrix x shape =
+  let a = Core.get_aval x in
+  b1
+    (Broadcast_in_dim { shape; dims = Array.init (Array.length a.shape) Fun.id })
+    [ x ]
+
+let matrix_shape_of_vector w =
+  let a = Core.get_aval w in
+  let n = a.shape.(Array.length a.shape - 1) in
+  Array.append a.shape [| n |]
+
+let eigh_jvp ~lower a t =
+  let outs = Core.bind (Eigh { lower }) [ a ] in
+  match outs with
+  | [ v; w ] ->
+      let shape = matrix_shape_of_vector w in
+      let ww_row = broadcast_to_matrix (expand_row w) shape in
+      let ww_col = broadcast_to_matrix (expand_col w) shape in
+      let eye = eye_like ww_row in
+      let fmat = sub (recip (add eye (sub ww_col ww_row))) eye in
+      let vt_a_v = matmul (matmul (swap_last2 v) t) v in
+      let dv = matmul v (mul fmat vt_a_v) in
+      let dw = diagonal_of vt_a_v in
+      (outs, [ dv; dw ])
+  | _ -> failwith "ad: eigh arity"
+
+let qr_jvp ~full_matrices a t =
+  let outs = Core.bind (Qr full_matrices) [ a ] in
+  match outs with
+  | [ q; r ] ->
+      let shape = (Core.get_aval a).shape in
+      let ndim = Array.length shape in
+      if full_matrices && shape.(ndim - 2) > shape.(ndim - 1) then
+        failwith "Unimplemented case of QR decomposition derivative";
+      let dx_rinv =
+        triangular_solve_with ~left_side:false ~lower:false ~transpose_a:false
+          ~conjugate_a:false ~unit_diagonal:false r t
+      in
+      let qt_dx_rinv = matmul (swap_last2 q) dx_rinv in
+      let lower_part = tril_of (-1) qt_dx_rinv in
+      let d_omega = sub lower_part (swap_last2 lower_part) in
+      let dq = add (matmul q (sub d_omega qt_dx_rinv)) dx_rinv in
+      let dr = matmul (sub qt_dx_rinv d_omega) r in
+      (outs, [ dq; dr ])
+  | _ -> failwith "ad: qr arity"
+
+let lu_jvp a t =
+  let outs = Core.bind Lu [ a ] in
+  match outs with
+  | [ lu; pivots; permutation ] ->
+      let shape = (Core.get_aval a).shape in
+      let ndim = Array.length shape in
+      let m = shape.(ndim - 2) and n = shape.(ndim - 1) in
+      let k = min m n in
+      let dt = (Core.get_aval a).dtype in
+      let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+      let identity size =
+        Concrete
+          (Ndarray.of_floats dt [| size; size |]
+             (Array.init (size * size) (fun i ->
+                  if i mod (size + 1) = 0 then 1.0 else 0.0)))
+      in
+      let perm_nd =
+        match permutation with
+        | Concrete nd -> nd
+        | Device b -> Pjrt.Buffer.to_host b
+        | Tracer _ -> failwith "ad: lu jvp requires a concrete permutation"
+      in
+      let rows =
+        List.init m (fun i ->
+            let row = int_of_float (Ndarray.get_f perm_nd [| i |]) in
+            let start = [| row; 0 |] and limit = [| row + 1; n |] in
+            b1
+              (Slice
+                 {
+                   start_indices = start;
+                   limit_indices = limit;
+                   strides = None;
+                 })
+              [ t ])
+      in
+      let x = b1 (Concatenate 0) rows in
+      let lu_left =
+        b1
+          (Slice
+             {
+               start_indices = [| 0; 0 |];
+               limit_indices = [| m; k |];
+               strides = None;
+             })
+          [ lu ]
+      in
+      let lu_top =
+        b1
+          (Slice
+             {
+               start_indices = [| 0; 0 |];
+               limit_indices = [| k; n |];
+               strides = None;
+             })
+          [ lu ]
+      in
+      let l =
+        add
+          (b1
+             (Pad [| (0, 0, 0); (0, m - k, 0) |])
+             [ tril_of (-1) lu_left; zero ])
+          (identity m)
+      in
+      let u_eye =
+        b1 (Pad [| (k, 0, 0); (k, 0, 0) |]) [ identity (n - k); zero ]
+      in
+      let u =
+        add
+          (b1 (Pad [| (0, n - k, 0); (0, 0, 0) |]) [ triu_of 0 lu_top; zero ])
+          u_eye
+      in
+      let la =
+        triangular_solve_with ~left_side:true ~lower:true ~transpose_a:false
+          ~conjugate_a:false ~unit_diagonal:true l x
+      in
+      let lau =
+        triangular_solve_with ~left_side:false ~lower:false ~transpose_a:false
+          ~conjugate_a:false ~unit_diagonal:false u la
+      in
+      let l_dot = matmul l (tril_of (-1) lau) in
+      let u_dot = matmul (triu_of 0 lau) u in
+      ( outs,
+        [
+          add l_dot u_dot; zeros_like_value pivots; zeros_like_value permutation;
+        ] )
+  | _ -> failwith "ad: lu arity"
+
+let svd_jvp ~full_matrices ~compute_uv a t =
+  if full_matrices then
+    failwith
+      "Singular value decomposition JVP not implemented for full matrices";
+  let thin =
+    Core.bind (Svd { full_matrices = false; compute_uv = true }) [ a ]
+  in
+  match thin with
+  | [ u; s; vt ] ->
+      let ut = swap_last2 u and v = swap_last2 vt in
+      let d_s_mat = matmul (matmul ut t) v in
+      let ds = diagonal_of d_s_mat in
+      if not compute_uv then ([ s ], [ ds ])
+      else
+        let shape = matrix_shape_of_vector s in
+        let s_col = broadcast_to_matrix (expand_col s) shape in
+        let s_row = broadcast_to_matrix (expand_row s) shape in
+        let s_diffs = mul (add s_col s_row) (sub s_col s_row) in
+        let eye = eye_like s_col in
+        let f = sub (recip (add s_diffs eye)) eye in
+        let d_ss = mul s_col d_s_mat in
+        let sd_s = mul s_row d_s_mat in
+        let is_zero =
+          b1 (Convert_element_type (Core.get_aval s).dtype)
+            [ b1 Eq [ s; zeros_like_value s ] ]
+        in
+        let s_inv = sub (recip (add s is_zero)) is_zero in
+        let s_inv_mat =
+          mul eye (broadcast_to_matrix (expand_col s_inv) shape)
+        in
+        let half = const_like d_s_mat 0.5 in
+        let d_ud_v =
+          mul (mul half (sub d_s_mat (swap_last2 d_s_mat))) s_inv_mat
+        in
+        let du = matmul u (add (mul f (add d_ss (swap_last2 d_ss))) d_ud_v) in
+        let dv = matmul v (mul f (add sd_s (swap_last2 sd_s))) in
+        let a_shape = (Core.get_aval a).shape in
+        let ndim = Array.length a_shape in
+        let m = a_shape.(ndim - 2) and n = a_shape.(ndim - 1) in
+        let du =
+          if m > n then
+            let da_v = matmul t v in
+            let residual = sub da_v (matmul u (matmul ut da_v)) in
+            let denom =
+              broadcast_to_matrix (expand_col s) (Core.get_aval residual).shape
+            in
+            add du (div residual denom)
+          else du
+        in
+        let dv =
+          if n > m then
+            let da_u = matmul (swap_last2 t) u in
+            let residual = sub da_u (matmul v (matmul vt da_u)) in
+            let denom =
+              broadcast_to_matrix (expand_col s) (Core.get_aval residual).shape
+            in
+            add dv (div residual denom)
+          else dv
+        in
+        (thin, [ du; ds; swap_last2 dv ])
+  | _ -> failwith "ad: svd arity"
+
+let tridiagonal_matvec dl d du x =
+  let m = (Core.get_aval d).shape.(0) in
+  let rows = (Core.get_aval x).shape in
+  let row_slice lo hi =
+    let start = Array.make (Array.length rows) 0 in
+    let limit = Array.copy rows in
+    start.(0) <- lo;
+    limit.(0) <- hi;
+    b1
+      (Slice { start_indices = start; limit_indices = limit; strides = None })
+      [ x ]
+  in
+  let scale coeff part =
+    let c =
+      broadcast_to_matrix
+        (b1
+           (Reshape
+              (Array.append (Core.get_aval coeff).shape
+                 (Array.make (Array.length rows - 1) 1)))
+           [ coeff ])
+        (Core.get_aval part).shape
+    in
+    mul c part
+  in
+  let dt = (Core.get_aval d).dtype in
+  let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+  let shifted lo hi part =
+    let cfg = Array.make (Array.length rows) (0, 0, 0) in
+    cfg.(0) <- (lo, hi, 0);
+    b1 (Pad cfg) [ part; zero ]
+  in
+  let vec_slice v lo hi =
+    b1
+      (Slice
+         { start_indices = [| lo |]; limit_indices = [| hi |]; strides = None })
+      [ v ]
+  in
+  let main = scale d x in
+  let lower = shifted 1 0 (scale (vec_slice dl 1 m) (row_slice 0 (m - 1))) in
+  let upper = shifted 0 1 (scale (vec_slice du 0 (m - 1)) (row_slice 1 m)) in
+  add main (add lower upper)
+
 let jvp_rule prim (primals : value list) (tangents : value list) : value * value
     =
   match prim with
@@ -688,10 +1036,32 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no jvp rule in M1"
-  | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
-  | Schur _ | Svd _ | Tridiagonal _ ->
-      failwith "ad: linalg jvp deferred (M5 gap, forward-eval only)"
+  | Cholesky -> (
+      match (primals, tangents) with
+      | [ x ], [ t ] -> cholesky_jvp x t
+      | _ -> arity ())
+  | Triangular_solve o -> (
+      match (primals, tangents) with
+      | [ a; b ], [ ta; tb ] ->
+          let ans = b1 prim [ a; b ] in
+          let from_b = b1 prim [ a; tb ] in
+          let from_a =
+            triangular_tangent_a ~left_side:o.left_side ~lower:o.lower
+              ~transpose_a:o.transpose_a ~conjugate_a:o.conjugate_a
+              ~unit_diagonal:o.unit_diagonal a ans ta
+          in
+          (ans, add from_a from_b)
+      | _ -> arity ())
+  | Tridiagonal_solve -> (
+      match (primals, tangents) with
+      | [ dl; d; du; b ], [ tdl; td; tdu; tb ] ->
+          let ans = b1 prim [ dl; d; du; b ] in
+          let rhs = sub tb (tridiagonal_matvec tdl td tdu ans) in
+          (ans, b1 prim [ dl; d; du; rhs ])
+      | _ -> arity ())
+  | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _ | Eig _
+  | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
+      failwith "ad: this linalg primitive has no forward-mode rule"
   | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       failwith "ad: custom rules handled by jvp_process_primitive"
@@ -758,6 +1128,30 @@ let jvp_process_primitive trace prim args =
       let tos = Core.bind prim tangents in
       List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) pos tos
   | Sort _ | Top_k _ -> failwith "ad: jvp of sort/top_k needs gather (M2 gap)"
+  | Eigh { lower } -> (
+      match (primals, tangents) with
+      | [ a ], [ t ] ->
+          let po, to_ = eigh_jvp ~lower a t in
+          List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
+      | _ -> arity ())
+  | Qr full_matrices -> (
+      match (primals, tangents) with
+      | [ a ], [ t ] ->
+          let po, to_ = qr_jvp ~full_matrices a t in
+          List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
+      | _ -> arity ())
+  | Lu -> (
+      match (primals, tangents) with
+      | [ a ], [ t ] ->
+          let po, to_ = lu_jvp a t in
+          List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
+      | _ -> arity ())
+  | Svd { full_matrices; compute_uv } -> (
+      match (primals, tangents) with
+      | [ a ], [ t ] ->
+          let po, to_ = svd_jvp ~full_matrices ~compute_uv a t in
+          List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
+      | _ -> arity ())
   | Scan { length; reverse; num_carry; jaxpr } ->
       let split2 l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
@@ -984,6 +1378,193 @@ let tile_transpose (reps : int array) (in_shape : int array) ct =
   let reshaped = b1 (Reshape inter) [ ct ] in
   let axes = Array.init n (fun i -> 2 * i) in
   b1 (Reduce_sum axes) [ reshaped ]
+
+let undef_aval = function Undef a -> a | Prim v -> Core.get_aval v
+
+let remaining_dims ndim (used : int array list) =
+  List.filter
+    (fun d -> not (List.exists (fun a -> Array.mem d a) used))
+    (List.init ndim Fun.id)
+
+let int_range start len = Array.init len (fun i -> start + i)
+
+let invert_permutation perm =
+  let inv = Array.make (Array.length perm) 0 in
+  Array.iteri (fun i p -> inv.(p) <- i) perm;
+  inv
+
+let argsort_ints a =
+  let idx = Array.init (Array.length a) Fun.id in
+  Array.stable_sort (fun i j -> compare a.(i) a.(j)) idx;
+  idx
+
+let dot_transpose_lhs g (x : aval) y (dims : dot_dims) swap_ans =
+  let x_ndim = Array.length x.shape in
+  let y_ndim = Array.length (Core.get_aval y).shape in
+  let x_kept =
+    Array.of_list (remaining_dims x_ndim [ dims.lhs_contract; dims.lhs_batch ])
+  in
+  let y_kept =
+    Array.of_list (remaining_dims y_ndim [ dims.rhs_contract; dims.rhs_batch ])
+  in
+  let n_batch = Array.length dims.lhs_batch in
+  let ans_batch = int_range 0 n_batch in
+  let ans_y =
+    if swap_ans then int_range n_batch (Array.length y_kept)
+    else int_range (n_batch + Array.length x_kept) (Array.length y_kept)
+  in
+  let g_dims =
+    {
+      lhs_contract = ans_y;
+      rhs_contract = y_kept;
+      lhs_batch = ans_batch;
+      rhs_batch = dims.rhs_batch;
+    }
+  in
+  let x_contract_sorted =
+    Array.map (fun i -> dims.lhs_contract.(i)) (argsort_ints dims.rhs_contract)
+  in
+  let order = Array.concat [ dims.lhs_batch; x_kept; x_contract_sorted ] in
+  b1 (Transpose (invert_permutation order)) [ b1 (Dot_general g_dims) [ g; y ] ]
+
+let dilate_shape shape dilation =
+  Array.mapi
+    (fun i s -> if s = 0 then 0 else 1 + (dilation.(i) * (s - 1)))
+    shape
+
+let conv_vjp_lhs_padding in_shape window_dimensions window_strides out_shape
+    padding lhs_dilation rhs_dilation =
+  let lhs_d = dilate_shape in_shape lhs_dilation in
+  let rhs_d = dilate_shape window_dimensions rhs_dilation in
+  let out_d = dilate_shape out_shape window_strides in
+  Array.mapi
+    (fun i (lo, _) ->
+      let before = rhs_d.(i) - lo - 1 in
+      (before, lhs_d.(i) + rhs_d.(i) - 1 - out_d.(i) - before))
+    padding
+
+let conv_vjp_rhs_padding in_shape window_dimensions window_strides out_shape
+    padding lhs_dilation rhs_dilation =
+  let lhs_d = dilate_shape in_shape lhs_dilation in
+  let rhs_d = dilate_shape window_dimensions rhs_dilation in
+  let out_d = dilate_shape out_shape window_strides in
+  Array.mapi
+    (fun i (lo, _) -> (lo, out_d.(i) - lhs_d.(i) + (rhs_d.(i) - lo - 1)))
+    padding
+
+let conv_sdims spec = Array.sub spec 2 (Array.length spec - 2)
+
+let conv_spec_transpose spec =
+  let t = Array.copy spec in
+  t.(0) <- spec.(1);
+  t.(1) <- spec.(0);
+  t
+
+let take_dims shape dims = Array.map (fun d -> shape.(d)) dims
+
+let reshape_axis_out_of src size1 x =
+  let shape = (Core.get_aval x).shape in
+  let before = Array.sub shape 0 src in
+  let after = Array.sub shape (src + 1) (Array.length shape - src - 1) in
+  let size2 = shape.(src) / size1 in
+  b1 (Reshape (Array.concat [ before; [| size1; size2 |]; after ])) [ x ]
+
+let reshape_axis_into src dst x =
+  let shape = (Core.get_aval x).shape in
+  let others =
+    List.filter (fun i -> i <> src) (List.init (Array.length shape) Fun.id)
+  in
+  let rec insert i l =
+    match (i, l) with
+    | 0, _ -> src :: l
+    | _, h :: t -> h :: insert (i - 1) t
+    | _, [] -> [ src ]
+  in
+  let perm = Array.of_list (insert dst others) in
+  let new_shape = Array.of_list (List.map (fun i -> shape.(i)) others) in
+  new_shape.(dst) <- new_shape.(dst) * shape.(src);
+  b1 (Reshape new_shape) [ b1 (Transpose perm) [ x ] ]
+
+let conv_transpose_lhs g (lhs : aval) rhs ~window_strides ~padding ~lhs_dilation
+    ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count =
+  let rhs_shape = (Core.get_aval rhs).shape in
+  let rhs', groups =
+    if feature_group_count > 1 then
+      ( reshape_axis_into dn.rhs_spec.(0) dn.rhs_spec.(1)
+          (reshape_axis_out_of dn.rhs_spec.(0) feature_group_count rhs),
+        feature_group_count )
+    else if batch_group_count > 1 then
+      ( reshape_axis_into dn.rhs_spec.(0) dn.rhs_spec.(1)
+          (reshape_axis_out_of dn.rhs_spec.(0) batch_group_count rhs),
+        batch_group_count )
+    else (rhs, 1)
+  in
+  let vjp_padding =
+    conv_vjp_lhs_padding
+      (take_dims lhs.shape (conv_sdims dn.lhs_spec))
+      (take_dims rhs_shape (conv_sdims dn.rhs_spec))
+      window_strides
+      (take_dims (Core.get_aval g).shape (conv_sdims dn.out_spec))
+      padding lhs_dilation rhs_dilation
+  in
+  let revd = b1 (Rev (conv_sdims dn.rhs_spec)) [ rhs' ] in
+  let out =
+    b1
+      (Conv_general_dilated
+         {
+           window_strides = lhs_dilation;
+           padding = vjp_padding;
+           lhs_dilation = window_strides;
+           rhs_dilation;
+           dimension_numbers =
+             {
+               lhs_spec = dn.out_spec;
+               rhs_spec = conv_spec_transpose dn.rhs_spec;
+               out_spec = dn.lhs_spec;
+             };
+           feature_group_count = groups;
+           batch_group_count = 1;
+         })
+      [ g; revd ]
+  in
+  if batch_group_count > 1 then
+    reshape_axis_into dn.lhs_spec.(1) dn.lhs_spec.(0)
+      (reshape_axis_out_of dn.lhs_spec.(1) batch_group_count out)
+  else out
+
+let conv_transpose_rhs g lhs (rhs : aval) ~window_strides ~padding ~lhs_dilation
+    ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count =
+  let lhs_shape = (Core.get_aval lhs).shape in
+  let new_feature, new_batch =
+    if batch_group_count > 1 then (batch_group_count, 1)
+    else if feature_group_count > 1 then (1, feature_group_count)
+    else (1, 1)
+  in
+  let vjp_padding =
+    conv_vjp_rhs_padding
+      (take_dims lhs_shape (conv_sdims dn.lhs_spec))
+      (take_dims rhs.shape (conv_sdims dn.rhs_spec))
+      window_strides
+      (take_dims (Core.get_aval g).shape (conv_sdims dn.out_spec))
+      padding lhs_dilation rhs_dilation
+  in
+  b1
+    (Conv_general_dilated
+       {
+         window_strides = rhs_dilation;
+         padding = vjp_padding;
+         lhs_dilation;
+         rhs_dilation = window_strides;
+         dimension_numbers =
+           {
+             lhs_spec = conv_spec_transpose dn.lhs_spec;
+             rhs_spec = conv_spec_transpose dn.out_spec;
+             out_spec = conv_spec_transpose dn.rhs_spec;
+           };
+         feature_group_count = new_feature;
+         batch_group_count = new_batch;
+       })
+    [ lhs; g ]
 
 let rec transpose_rule prim (cts : value list) (primals : tval list) :
     value option list =
@@ -1305,6 +1886,159 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           in
           None :: rest_cts
       | _ -> arity ())
+  | Dot_general dims -> (
+      match primals with
+      | [ x; y ] when is_undef x && not (is_undef y) ->
+          [
+            Some
+              (dot_transpose_lhs (ct1 ()) (undef_aval x) (prim_val y) dims false);
+            None;
+          ]
+      | [ x; y ] when is_undef y && not (is_undef x) ->
+          let swapped =
+            {
+              lhs_contract = dims.rhs_contract;
+              rhs_contract = dims.lhs_contract;
+              lhs_batch = dims.rhs_batch;
+              rhs_batch = dims.lhs_batch;
+            }
+          in
+          [
+            None;
+            Some
+              (dot_transpose_lhs (ct1 ()) (undef_aval y) (prim_val x) swapped
+                 true);
+          ]
+      | _ -> failwith "ad: dot_general transpose must be linear in one operand")
+  | Conv_general_dilated c -> (
+      match primals with
+      | [ lhs; rhs ] when is_undef lhs && not (is_undef rhs) ->
+          [
+            Some
+              (conv_transpose_lhs (ct1 ()) (undef_aval lhs) (prim_val rhs)
+                 ~window_strides:c.window_strides ~padding:c.padding
+                 ~lhs_dilation:c.lhs_dilation ~rhs_dilation:c.rhs_dilation
+                 ~dn:c.dimension_numbers
+                 ~feature_group_count:c.feature_group_count
+                 ~batch_group_count:c.batch_group_count);
+            None;
+          ]
+      | [ lhs; rhs ] when is_undef rhs && not (is_undef lhs) ->
+          [
+            None;
+            Some
+              (conv_transpose_rhs (ct1 ()) (prim_val lhs) (undef_aval rhs)
+                 ~window_strides:c.window_strides ~padding:c.padding
+                 ~lhs_dilation:c.lhs_dilation ~rhs_dilation:c.rhs_dilation
+                 ~dn:c.dimension_numbers
+                 ~feature_group_count:c.feature_group_count
+                 ~batch_group_count:c.batch_group_count);
+          ]
+      | _ -> failwith "ad: conv transpose must be linear in one operand")
+  | Pad cfg -> (
+      match primals with
+      | [ operand; padding_value ] ->
+          let t = ct1 () in
+          let ndim = Array.length cfg in
+          let t_operand () =
+            let unpad = Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg in
+            let dt = (Core.get_aval t).dtype in
+            let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+            let unpadded = b1 (Pad unpad) [ t; zero ] in
+            b1
+              (Slice
+                 {
+                   start_indices = Array.make ndim 0;
+                   limit_indices = (Core.get_aval unpadded).shape;
+                   strides = Some (Array.map (fun (_, _, i) -> i + 1) cfg);
+                 })
+              [ unpadded ]
+          in
+          let total x = b1 (Reduce_sum (Array.init ndim Fun.id)) [ x ] in
+          let operand_ct =
+            if is_undef operand then Some (t_operand ()) else None
+          in
+          let padding_ct =
+            if is_undef padding_value then
+              Some (b1 Sub [ total t; total (t_operand ()) ])
+            else None
+          in
+          [ operand_ct; padding_ct ]
+      | _ -> arity ())
+  | Reduce_window_sum w -> (
+      match primals with
+      | [ operand ] ->
+          let t = ct1 () in
+          let input_shape = (undef_aval operand).shape in
+          let pads =
+            conv_vjp_lhs_padding input_shape w.window_dimensions
+              w.window_strides (Core.get_aval t).shape w.w_padding
+              w.base_dilation w.window_dilation
+          in
+          let cfg =
+            Array.mapi
+              (fun i (lo, hi) -> (lo, hi, w.window_strides.(i) - 1))
+              pads
+          in
+          let dt = (Core.get_aval t).dtype in
+          let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+          let padded = b1 (Pad cfg) [ t; zero ] in
+          let ndim = Array.length input_shape in
+          [
+            Some
+              (b1
+                 (Reduce_window_sum
+                    {
+                      window_dimensions = w.window_dimensions;
+                      window_strides = w.base_dilation;
+                      w_padding = Array.make ndim (0, 0);
+                      base_dilation = Array.make ndim 1;
+                      window_dilation = w.window_dilation;
+                    })
+                 [ padded ]);
+          ]
+      | _ -> arity ())
+  | Select_and_scatter_add { select; window } -> (
+      match primals with
+      | [ source; operand ] when is_undef source ->
+          let ndim = Array.length window.window_dimensions in
+          let ones = Array.make ndim 1 in
+          let gathered =
+            b1
+              (Select_and_gather_add
+                 {
+                   select;
+                   window =
+                     {
+                       window with
+                       base_dilation = ones;
+                       window_dilation = ones;
+                     };
+                 })
+              [ ct1 (); prim_val operand ]
+          in
+          [ Some gathered; None ]
+      | _ ->
+          failwith
+            "ad: select_and_scatter_add transpose expects a linear source")
+  | Select_and_gather_add { select; window } -> (
+      match primals with
+      | [ tangents; operand ] when is_undef tangents ->
+          if Array.exists (fun d -> d <> 1) window.window_dilation then
+            failwith
+              "VJP not implemented for select_and_gather (MaxPool) with window \
+               dilation";
+          if Array.exists (fun d -> d <> 1) window.base_dilation then
+            failwith
+              "ad: select_and_gather transpose with base dilation is not \
+               implemented";
+          let result =
+            b1
+              (Select_and_scatter_add { select; window })
+              [ ct1 (); prim_val operand ]
+          in
+          [ Some result; None ]
+      | _ -> failwith "ad: select_and_gather transpose expects linear tangents")
   | Custom_lin { rule; n_res; _ } ->
       let transpose =
         match Core.custom_rule rule with
@@ -1345,19 +2079,18 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And
   | Atan2 | Complex | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter
   | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-  | Pad _ | Dot_general _ | Conv_general_dilated _ | Argmax _ | Argmin _
-  | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _ | Reduce_or _
-  | Reduce_prod _ | Reduce_xor _ | After_all | Bitcast_convert_type _ | Clamp
-  | Composite _ | Create_token | Dce_sink | Empty _ | Empty2 _ | From_edtype _
-  | Iota _ | Ragged_dot_general | Rng_bit_generator | Rng_uniform | Sort _
-  | To_edtype _ | Top_k _ | Scatter_min _ | Scatter_max _ | Reduce_window _
-  | Reduce_window_max _ | Reduce_window_min _ | Reduce_window_sum _
-  | Select_and_gather_add _ | Select_and_scatter _ | Select_and_scatter_add _
-  | Bessel_i0e | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Igamma
-  | Igamma_grad_a | Igammac | Lgamma | Polygamma | Regularized_incomplete_beta
-  | Zeta | Platform_index _ | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _
-  | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
-  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | Xla_call _ ->
+  | Argmax _ | Argmin _ | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _
+  | Reduce_or _ | Reduce_prod _ | Reduce_xor _ | After_all
+  | Bitcast_convert_type _ | Clamp | Composite _ | Create_token | Dce_sink
+  | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general
+  | Rng_bit_generator | Rng_uniform | Sort _ | To_edtype _ | Top_k _
+  | Scatter_min _ | Scatter_max _ | Reduce_window _ | Reduce_window_max _
+  | Reduce_window_min _ | Select_and_scatter _ | Bessel_i0e | Bessel_i1e
+  | Digamma | Erf | Erf_inv | Erfc | Igamma | Igamma_grad_a | Igammac | Lgamma
+  | Polygamma | Regularized_incomplete_beta | Zeta | Platform_index _
+  | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ | Threefry2x32
+  | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
+  | Random_bits _ | Random_wrap | Random_unwrap | Xla_call _ ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
   | Scan { length; reverse; num_carry; jaxpr } ->
       let split_at l n =
@@ -1444,10 +2177,49 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | While _ ->
       failwith
         "ad: reverse-mode differentiation does not work for lax.while_loop"
+  | Triangular_solve o -> (
+      match primals with
+      | [ a; b ] when is_undef b && not (is_undef a) ->
+          [
+            None;
+            Some
+              (triangular_solve_with ~left_side:o.left_side ~lower:o.lower
+                 ~transpose_a:(not o.transpose_a) ~conjugate_a:o.conjugate_a
+                 ~unit_diagonal:o.unit_diagonal (prim_val a) (ct1 ()));
+          ]
+      | _ -> failwith "ad: triangular_solve is linear only in its right side")
+  | Tridiagonal_solve -> (
+      match primals with
+      | [ dl; d; du; b ]
+        when is_undef b && not (is_undef dl || is_undef d || is_undef du) ->
+          let dl = prim_val dl and d = prim_val d and du = prim_val du in
+          let m = (Core.get_aval d).shape.(0) in
+          let dt = (Core.get_aval d).dtype in
+          let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+          let vec_slice v lo hi =
+            b1
+              (Slice
+                 {
+                   start_indices = [| lo |];
+                   limit_indices = [| hi |];
+                   strides = None;
+                 })
+              [ v ]
+          in
+          let dl_t =
+            b1 (Pad [| (1, 0, 0) |]) [ vec_slice du 0 (m - 1); zero ]
+          in
+          let du_t = b1 (Pad [| (0, 1, 0) |]) [ vec_slice dl 1 m; zero ] in
+          [
+            None;
+            None;
+            None;
+            Some (b1 Tridiagonal_solve [ dl_t; d; du_t; ct1 () ]);
+          ]
+      | _ -> failwith "ad: tridiagonal_solve is linear only in its right side")
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
-  | Schur _ | Svd _ | Tridiagonal _ ->
-      failwith "ad: linalg transpose deferred (M5 gap, forward-eval only)"
+  | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
+      failwith "ad: nonlinear linalg primitive has no transpose rule"
 
 and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     value list =

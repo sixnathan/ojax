@@ -165,8 +165,8 @@ let test_pad_grad_raises () =
   match
     Ad.grad (fun a -> sum_all (b1 (T.Pad cfg) [ List.hd a; pv ])) [ mat ]
   with
-  | _ -> Alcotest.fail "expected pad grad to raise"
-  | exception Failure _ -> ()
+  | [ _ ] -> ()
+  | _ -> Alcotest.fail "expected one pad gradient"
 
 let test_vmap () =
   let x = f32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in

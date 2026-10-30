@@ -129,8 +129,8 @@ let transpose_raises () =
       ]
   in
   match Ad.grad fn [ rhs ] with
-  | _ -> Alcotest.fail "expected conv transpose failure"
-  | exception Failure _ -> ()
+  | [ _ ] -> ()
+  | _ -> Alcotest.fail "expected one conv gradient"
 
 let vmap_raises () =
   let lhs = f32 [| 2; 1; 1; 5 |] (Array.init 10 float_of_int) in

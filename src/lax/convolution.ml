@@ -34,16 +34,15 @@ let conv_shape (dn : conv_dims) window_strides padding lhs_dilation rhs_dilation
 
 let conv_impl (dn : conv_dims) window_strides padding lhs_dilation rhs_dilation
     feature_group_count batch_group_count lhs rhs =
-  if batch_group_count <> 1 then
-    failwith "lax: conv_general_dilated batch_group_count>1 deferred (M2)";
   let lshape = Ndarray.shape lhs in
   let rshape = Ndarray.shape rhs in
   let ndim = Array.length lshape in
   let ns = ndim - 2 in
   let lhs_can = take lshape dn.lhs_spec in
   let rhs_can = take rshape dn.rhs_spec in
-  let bn = lhs_can.(0) in
+  let bn = lhs_can.(0) / batch_group_count in
   let cout = rhs_can.(0) in
+  let cout_bg = cout / batch_group_count in
   let cin_g = rhs_can.(1) in
   let l_sp = Array.sub lhs_can 2 ns in
   let k_sp = Array.sub rhs_can 2 ns in
@@ -89,7 +88,7 @@ let conv_impl (dn : conv_dims) window_strides padding lhs_dilation rhs_dilation
               incr i
             done;
             if !valid then begin
-              lhs_idx.(dn.lhs_spec.(0)) <- n;
+              lhs_idx.(dn.lhs_spec.(0)) <- (o / cout_bg * bn) + n;
               lhs_idx.(dn.lhs_spec.(1)) <- cin_idx;
               for d = 0 to ns - 1 do
                 lhs_idx.(dn.lhs_spec.(d + 2)) <- lsp.(d)

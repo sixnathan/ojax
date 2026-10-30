@@ -49,3 +49,16 @@ jaxlib_cpu_client = in-process pybind (_jax.so make_cpu_client), not a C-API Get
 bit_exact_premise = requires same XLA kernels as jaxlib 0.10.2
 gomlx_v0_9_1_build = separate/newer XLA CPU build, kernels may diverge on transcendentals
 resolution = row 92 audits exact-vs-tol; if transcendentals diverge, self-build pjrt_c_api_cpu_plugin from jaxlib-0.10.2 XLA commit, else fall back to PLAYBOOK section 4 tol table
+
+[plugin.linux-arm64]
+provider = gomlx/pjrt-cpu-binaries
+source_release = https://github.com/gomlx/pjrt-cpu-binaries/releases/tag/v0.83.1
+tarball_url = https://github.com/gomlx/pjrt-cpu-binaries/releases/download/v0.83.1/pjrt_cpu_linux_arm64.tar.gz
+tarball_sha256 = 48bfc40f2bf2b17b9ceaaf0a680a3ab9d4ab9ccc67cd7c2957411bf30aefad47
+member_path = pjrt_c_api_cpu_v0.83.1_plugin.so
+plugin_sha256 = 5c4ceb9f9b96562fe264ab55f6caa7a5e686a060fd53c55b0c39093100aca130
+plugin_bytes = 205434528
+pjrt_api_major = 0
+pjrt_api_minor = 83
+struct_size_bytes = 1000
+abi_note = minor bumps only append fields, so the minor 81 header remains valid

@@ -2,8 +2,11 @@ exception Error of string
 
 let env_var = "OJAX_PJRT_PLUGIN"
 
-let expected_sha256 =
-  "a30b08a486bf4e80c64940ef70035ca2339f4a9badfc07cae2aab9901ed9d979"
+let pinned_sha256 =
+  [
+    "a30b08a486bf4e80c64940ef70035ca2339f4a9badfc07cae2aab9901ed9d979";
+    "5c4ceb9f9b96562fe264ab55f6caa7a5e686a060fd53c55b0c39093100aca130";
+  ]
 
 let pjrt_api_minor = 81
 let mask = 0xFFFFFFFF
@@ -192,12 +195,13 @@ let verify_at path =
   if Sys.is_directory path then
     raise (Error (Printf.sprintf "PJRT plugin path is a directory: %s" path));
   let actual = sha256_file path in
-  if not (String.equal actual expected_sha256) then
+  if not (List.mem actual pinned_sha256) then
     raise
       (Error
          (Printf.sprintf
-            "PJRT plugin sha256 mismatch at %s: expected %s, got %s" path
-            expected_sha256 actual));
+            "PJRT plugin sha256 mismatch at %s: expected one of %s, got %s" path
+            (String.concat ", " pinned_sha256)
+            actual));
   path
 
 let cached = ref None

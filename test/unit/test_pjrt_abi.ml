@@ -51,8 +51,10 @@ let real_version () =
         (fun () ->
           let major, minor = A.api_version p in
           Alcotest.(check int) "plugin major" 0 major;
-          Alcotest.(check int) "plugin minor" 81 minor;
-          Alcotest.(check int) "plugin struct size" 984 (A.struct_size p))
+          Alcotest.(check bool) "plugin minor at least pin" true (minor >= 81);
+          Alcotest.(check bool)
+            "plugin struct size at least pin" true
+            (A.struct_size p >= 984))
 
 let real_close_idempotent () =
   match real_plugin_path () with

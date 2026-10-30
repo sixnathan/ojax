@@ -24,11 +24,14 @@ let sha256_two_block () =
     (D.sha256_hex "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
 
 let expected_is_hex () =
-  Alcotest.(check int) "length" 64 (String.length D.expected_sha256);
   let is_lower_hex c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') in
-  Alcotest.(check bool)
-    "lowercase hex" true
-    (String.for_all is_lower_hex D.expected_sha256)
+  List.iter
+    (fun sha ->
+      Alcotest.(check int) "length" 64 (String.length sha);
+      Alcotest.(check bool)
+        "lowercase hex" true
+        (String.for_all is_lower_hex sha))
+    D.pinned_sha256
 
 let api_minor () = Alcotest.(check int) "pjrt api minor" 81 D.pjrt_api_minor
 

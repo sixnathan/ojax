@@ -24,3 +24,16 @@ val linear_call :
   value list ->
   value list ->
   value list
+
+val stop_gradient : value -> value
+
+val closure_convert :
+  (value list -> value list) ->
+  aval list ->
+  (value list -> value list) * value list
+
+val pure_callback :
+  (value list -> value list) ->
+  result_avals:aval list ->
+  value list ->
+  value list

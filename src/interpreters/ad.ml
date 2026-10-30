@@ -1248,7 +1248,7 @@ let jvp_process_primitive trace prim args =
       | Core.Jvp_rule { jvp; _ } ->
           let po, to_ = jvp primals tangents in
           List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_
-      | Core.Vjp_rule _ | Core.Linear_rule _ ->
+      | Core.Vjp_rule _ | Core.Linear_rule _ | Core.Callback_rule _ ->
           failwith "ad: custom_jvp_call with a non-jvp rule")
   | Custom_vjp_call id -> (
       match Core.custom_rule id with
@@ -1264,6 +1264,10 @@ let jvp_process_primitive trace prim args =
                 (res @ tangents)
           in
           List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_
+      | Core.Callback_rule _ ->
+          invalid_arg
+            "Pure callbacks do not support JVP. Please use `jax.custom_jvp` to \
+             use callbacks while taking gradients."
       | Core.Jvp_rule _ | Core.Linear_rule _ ->
           failwith "ad: custom_vjp_call with a non-vjp rule")
   | Custom_lin { n_res; _ } ->
@@ -2044,7 +2048,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
         match Core.custom_rule rule with
         | Core.Vjp_rule { bwd; _ } -> bwd
         | Core.Linear_rule { transpose; _ } -> transpose
-        | Core.Jvp_rule _ -> failwith "ad: custom_lin with a jvp rule"
+        | Core.Jvp_rule _ | Core.Callback_rule _ ->
+            failwith "ad: custom_lin with a non-linear rule"
       in
       let res_tv, linear_tv =
         match Util.split_list primals [ n_res ] with

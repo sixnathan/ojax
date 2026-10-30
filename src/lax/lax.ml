@@ -1450,7 +1450,7 @@ let impl prim inputs =
             | _ -> failwith "lax: custom_lin arity"
           in
           List.map custom_output (forward res linear)
-      | Core.Jvp_rule _ | Core.Vjp_rule _ ->
+      | Core.Jvp_rule _ | Core.Vjp_rule _ | Core.Callback_rule _ ->
           failwith
             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
@@ -1757,14 +1757,13 @@ let abstract_eval prim avals =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_aval full_matrices compute_uv avals
   | Tridiagonal _ -> Linalg.tridiagonal_aval avals
-  | Custom_jvp_call id | Custom_vjp_call id ->
-      let primal =
-        match Core.custom_rule id with
-        | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } -> primal
-        | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call"
-      in
-      let traced = Jaxpr.make_jaxpr avals primal in
-      List.map aval_of_atom traced.jaxpr.outs
+  | Custom_jvp_call id | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule { result_avals; _ } -> result_avals
+      | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } ->
+          let traced = Jaxpr.make_jaxpr avals primal in
+          List.map aval_of_atom traced.jaxpr.outs
+      | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call")
   | Custom_lin { out_avals; _ } -> out_avals
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 

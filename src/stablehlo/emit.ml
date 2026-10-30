@@ -2133,6 +2133,8 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
         | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } -> primal
         | Core.Linear_rule _ ->
             invalid_arg "Stablehlo.Emit: linear rule has no primal call"
+        | Core.Callback_rule _ ->
+            failwith "Stablehlo.Emit: callbacks run on the host interpreter"
       in
       emit_inlined ctx eqn in_ids primal
   | Custom_lin { rule; n_res; _ } -> (
@@ -2144,7 +2146,7 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
             | _ -> invalid_arg "Stablehlo.Emit: custom_lin arity"
           in
           emit_inlined ctx eqn in_ids inline
-      | Core.Jvp_rule _ | Core.Vjp_rule _ ->
+      | Core.Jvp_rule _ | Core.Vjp_rule _ | Core.Callback_rule _ ->
           failwith
             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
   | Xla_call _ ->

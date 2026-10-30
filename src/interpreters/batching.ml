@@ -862,6 +862,8 @@ let unstacks_operands prim (bdims : int option list) =
       | Schur _ | Svd _ | Tridiagonal _ | Custom_linear_solve _ ),
       _ ) ->
       true
+  | Custom_vjp_call id, _ -> (
+      match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
   | Dynamic_slice _, _ :: indices -> any_batched indices
   | Dynamic_update_slice, _ :: _ :: indices -> any_batched indices
   | Pad _, [ _; padding ] -> padding <> None
@@ -958,6 +960,7 @@ let batch_custom_rule id =
           (res @ xs)
       in
       Core.Linear_rule { forward = lift forward; transpose = lift transpose }
+  | Core.Callback_rule _ -> failwith "batching: callbacks are unstacked"
 
 let batched_rule_id id axis_size =
   match Hashtbl.find_opt batched_custom_rules (id, axis_size) with

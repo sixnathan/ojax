@@ -66,6 +66,10 @@ type custom_rule =
       forward : value list -> value list -> value list;
       transpose : value list -> value list -> value list;
     }
+  | Callback_rule of {
+      host : value list -> value list;
+      result_avals : aval list;
+    }
 
 val register_custom_rule : custom_rule -> int
 val custom_rule : int -> custom_rule

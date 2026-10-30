@@ -129,6 +129,10 @@ type custom_rule =
       forward : value list -> value list -> value list;
       transpose : value list -> value list -> value list;
     }
+  | Callback_rule of {
+      host : value list -> value list;
+      result_avals : aval list;
+    }
 
 let custom_rules : (int, custom_rule) Hashtbl.t = Hashtbl.create 16
 

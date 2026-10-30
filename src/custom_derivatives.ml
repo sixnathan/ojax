@@ -60,3 +60,38 @@ let linear_call ~forward ~transpose =
     Core.bind
       (Custom_lin { rule = id; n_res = List.length res; out_avals })
       (res @ linear)
+
+let stop_gradient =
+  let id =
+    Core.register_custom_rule
+      (Core.Jvp_rule
+         {
+           primal = Fun.id;
+           jvp =
+             (fun primals _ ->
+               ( primals,
+                 List.map
+                   (fun v -> Ad_util.zeros_like_aval (Core.get_aval v))
+                   primals ));
+         })
+  in
+  fun v -> Core.bind1 (Custom_jvp_call id) [ v ]
+
+let closure_convert f avals =
+  let closed, hoisted = Jaxpr.make_jaxpr_hoisted avals f in
+  ((fun args -> Jaxpr.eval_closed_jaxpr closed args), hoisted)
+
+let pure_callback host_fun ~result_avals =
+  let host args =
+    host_fun
+      (List.map
+         (function
+           | Concrete nd -> Concrete nd
+           | Device b -> Concrete (Pjrt.Buffer.to_host b)
+           | Tracer _ -> failwith "pure_callback: expected concrete arguments")
+         args)
+  in
+  let id =
+    Core.register_custom_rule (Core.Callback_rule { host; result_avals })
+  in
+  fun args -> Core.bind (Custom_vjp_call id) args

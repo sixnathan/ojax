@@ -16,6 +16,8 @@ val hessenberg_impl : Ndarray.t list -> Ndarray.t list
 val schur_impl : bool -> Ndarray.t list -> Ndarray.t list
 val svd_impl : bool -> bool -> Ndarray.t list -> Ndarray.t list
 val tridiagonal_impl : bool -> Ndarray.t list -> Ndarray.t list
+val geqrf_impl : Ndarray.t -> Ndarray.t list
+val geqp3_impl : Ndarray.t -> Ndarray.t list
 val cholesky_aval : aval list -> aval list
 val lu_aval : aval list -> aval list
 val qr_aval : bool -> aval list -> aval list

@@ -288,6 +288,8 @@ def _complex_linalg_ops():
         "cl_slogdet": lambda a, p: tuple(la.slogdet(_herm(a))),
         "cl_grad_eigvalsh": lambda a, p: jax.grad(lambda x: jnp.sum(jnp.linalg.eigvalsh(_herm(x))))(a),
         "cl_grad_logdet": lambda a, p: jax.grad(lambda x: jnp.linalg.slogdet(_herm(x))[1].sum())(a),
+        "cl_grad_eigvals": lambda a, p: jax.grad(lambda x: jnp.sum(jnp.abs(jnp.linalg.eigvals(x))))(a),
+        "cl_jvp_eigvals": lambda a, p: jnp.sum(jax.jvp(jnp.linalg.eigvals, (a,), (a * 0.5 + 0.1,))[1]),
         "cl_grad_svdvals": lambda a, p: jax.grad(lambda x: jnp.sum(jnp.linalg.svd(x, compute_uv=False)))(a),
     }
 
@@ -315,6 +317,67 @@ def _complex_grad_ops():
         "angle": lambda z: n.angle(z),
     }
     return {"cg_" + k: (lambda f: lambda a, p: jax.grad(lambda x: n.sum(f(x)))(a))(v) for k, v in fns.items()}
+
+
+def _linalg_batch_ops():
+    ll = jax.lax.linalg
+    sl = jax.scipy.linalg
+    recon = lambda z, t: z @ t @ jnp.conj(jnp.swapaxes(z, -1, -2))
+    diag_mag = lambda t: jnp.sort(jnp.abs(jnp.diagonal(t, axis1=-2, axis2=-1)), axis=-1)
+
+    def rsf(a):
+        t, z = sl.schur(a)
+        tc, zc = sl.rsf2csf(t, z)
+        return recon(zc, tc), diag_mag(tc)
+
+    def schur_c(a):
+        t, z = sl.schur(a, output="complex")
+        return recon(z, t), diag_mag(t)
+
+    def hess(a):
+        h, q = sl.hessenberg(a, calc_q=True)
+        return recon(q, h), jnp.abs(h)
+
+    def tri(a):
+        _, d, e, _ = ll.tridiagonal(_herm(a))
+        return d, jnp.abs(e)
+
+    def ormqr(a, b, p):
+        from jax._src.lax.linalg import geqrf
+
+        h, t = geqrf(a)
+        return ll.ormqr(h, t, b, left=p["left"], transpose=p["transpose"])
+
+    def qdwh(a):
+        u, h, _, ok = ll.qdwh(a)
+        return u, h, ok
+
+    def qrp(a, p):
+        out = sl.qr(a, pivoting=True, mode=p["mode"])
+        if p["mode"] == "r":
+            return jnp.abs(out[0]), out[1]
+        return jnp.abs(out[0]), jnp.abs(out[1]), out[2]
+
+    def qrm(a, b, p):
+        out = sl.qr_multiply(a, b, mode=p["mode"], conjugate=p["conjugate"], pivoting=p["pivoting"])
+        return tuple(out)
+
+    return {
+        "lx_cholesky_update": lambda a, b, p: ll.cholesky_update(jnp.swapaxes(jnp.linalg.cholesky(_spd(a)), -1, -2), b),
+        "lx_symmetric_product": lambda a, b, p: ll.symmetric_product(a, _spd(b), alpha=2.0, beta=0.5, symmetrize_output=p["sym"]),
+        "lx_ormqr": ormqr,
+        "lx_qdwh": lambda a, p: qdwh(a),
+        "lx_qr_pivot": lambda a, p: qrp(a, p),
+        "lx_qr_multiply": qrm,
+        "lx_rsf2csf": lambda a, p: rsf(a),
+        "lx_schur_complex": lambda a, p: schur_c(a),
+        "lx_hessenberg": lambda a, p: hess(a),
+        "lx_tridiagonal": lambda a, p: tri(a),
+        "lx_sqrtm": lambda a, p: (lambda r: (r @ r, sl.sqrtm(_herm(a))))(sl.sqrtm(a)),
+        "lx_expm_frechet": lambda a, b, p: tuple(sl.expm_frechet(a, b)),
+        "lx_polar": lambda a, p: tuple(sl.polar(a, side=p["side"], method=p["method"])),
+        "lx_eigh_tri": lambda a, b, p: (lambda o: (o[0], jnp.abs(o[1])))(sl.eigh_tridiagonal(a, b)),
+    }
 
 
 def _default_random_ops():
@@ -410,6 +473,7 @@ OPS.update(_array_random_ops())
 OPS.update(_gap_ops())
 OPS.update(_complex_linalg_ops())
 OPS.update(_complex_grad_ops())
+OPS.update(_linalg_batch_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -817,6 +881,9 @@ def _complex_linalg_cases():
     for op in ["cl_inv", "cl_det", "cl_cholesky", "cl_eigvalsh", "cl_slogdet", "cl_grad_eigvalsh", "cl_grad_logdet"]:
         out.append((op, c([3, 3]), {}))
         out.append((op, c([2, 3, 3]), {}))
+    for op in ["cl_grad_eigvals", "cl_jvp_eigvals"]:
+        out.append((op, c([3, 3]), {}))
+        out.append((op, _real_input([3, 3]), {}))
     for shape in [[3, 3], [4, 2], [2, 4]]:
         out.append(("cl_svdvals", c(shape), {}))
         out.append(("cl_qr_r", c(shape), {}))
@@ -830,5 +897,46 @@ def _complex_grad_cases():
     return [("cg_" + n, _complex_input([4]), {}) for n in names] + [("cg_matmul", _complex_input([2, 2]), {})]
 
 
+def _linalg_batch_cases():
+    def two(kind, sa, sb):
+        return {"a": {"kind": kind, "shape": sa}, "b": {"kind": kind, "shape": sb}}
+
+    out = [
+        ("lx_cholesky_update", two("real", [3, 3], [3]), {}),
+        ("lx_symmetric_product", two("real", [3, 2], [3, 3]), {"sym": True}),
+        ("lx_symmetric_product", two("real", [3, 2], [3, 3]), {"sym": False}),
+    ]
+    for kind in ["real", "complex"]:
+        for left in [True, False]:
+            for transpose in [True, False]:
+                sb = [4, 2] if left else [2, 4]
+                out.append(("lx_ormqr", two(kind, [4, 3], sb), {"left": left, "transpose": transpose}))
+        one = _real_input if kind == "real" else _complex_input
+        out.append(("lx_qdwh", one([3, 3]), {}))
+        out.append(("lx_qdwh", one([4, 2]), {}))
+        for mode in ["full", "economic", "r"]:
+            out.append(("lx_qr_pivot", one([4, 3]), {"mode": mode}))
+            out.append(("lx_qr_pivot", one([3, 4]), {"mode": mode}))
+        out.append(("lx_qr_pivot", one([2, 4, 3]), {"mode": "economic"}))
+        for pivoting in [False, True]:
+            out.append(("lx_qr_multiply", two(kind, [4, 3], [2, 4]), {"mode": "right", "conjugate": False, "pivoting": pivoting}))
+            out.append(("lx_qr_multiply", two(kind, [4, 3], [3, 2]), {"mode": "left", "conjugate": False, "pivoting": pivoting}))
+            out.append(("lx_qr_multiply", two(kind, [4, 3], [2, 4]), {"mode": "right", "conjugate": True, "pivoting": pivoting}))
+        out.append(("lx_schur_complex", one([3, 3]), {}))
+        out.append(("lx_hessenberg", one([4, 4]), {}))
+    for kind in ["real", "complex"]:
+        one = _real_input if kind == "real" else _complex_input
+        out.append(("lx_sqrtm", one([3, 3]), {}))
+        out.append(("lx_expm_frechet", two(kind, [3, 3], [3, 3]), {}))
+        out.append(("lx_polar", one([3, 3]), {"side": "right", "method": "qdwh"}))
+        out.append(("lx_polar", one([4, 2]), {"side": "right", "method": "qdwh"}))
+        out.append(("lx_polar", one([2, 4]), {"side": "left", "method": "qdwh"}))
+        out.append(("lx_polar", one([2, 3, 3]), {"side": "right", "method": "qdwh"}))
+    out.append(("lx_eigh_tri", two("real", [4], [3]), {}))
+    out.append(("lx_rsf2csf", _real_input([4, 4]), {}))
+    out.append(("lx_tridiagonal", _complex_input([4, 4]), {}))
+    return out
+
+
 def all_cases():
-    return _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

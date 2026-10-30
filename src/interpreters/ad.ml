@@ -388,6 +388,77 @@ let lu_jvp a t =
         ] )
   | _ -> failwith "ad: lu arity"
 
+let solve_general a b =
+  match Core.bind Lu [ a ] with
+  | [ lu; _; permutation ] ->
+      let shape = (Core.get_aval b).shape in
+      let ndim = Array.length shape in
+      let perm_shape = (Core.get_aval permutation).shape in
+      let perm_rank = Array.length perm_shape in
+      let expanded =
+        b1 (Reshape (Array.append perm_shape [| 1 |])) [ permutation ]
+      in
+      let broadcast_perm =
+        b1
+          (Broadcast_in_dim { shape; dims = Array.init (perm_rank + 1) Fun.id })
+          [ expanded ]
+      in
+      let permuted = take_along_axis_value b broadcast_perm ~axis:(ndim - 2) in
+      let y =
+        triangular_solve_with ~left_side:true ~lower:true ~transpose_a:false
+          ~conjugate_a:false ~unit_diagonal:true lu permuted
+      in
+      triangular_solve_with ~left_side:true ~lower:false ~transpose_a:false
+        ~conjugate_a:false ~unit_diagonal:false lu y
+  | _ -> failwith "ad: lu arity"
+
+let eig_vec_jvp w v da =
+  let shape = (Core.get_aval v).shape in
+  let ndim = Array.length shape in
+  let ww_row = broadcast_to_matrix (expand_row w) shape in
+  let ww_col = broadcast_to_matrix (expand_col w) shape in
+  let eye = eye_like ww_row in
+  let fmat = sub (recip (add eye (sub ww_col ww_row))) eye in
+  let p = matmul (solve_general v da) v in
+  let dw = diagonal_of p in
+  let u = matmul v (mul fmat p) in
+  let k =
+    b1 (Argmax { axis = ndim - 2; index_dtype = Dtype.I32 }) [ b1 Abs [ v ] ]
+  in
+  let iota = b1 (Iota { dtype = Dtype.I32; shape; dimension = ndim - 2 }) [] in
+  let picked = b1 Eq [ iota; broadcast_to_matrix (expand_col k) shape ] in
+  let mask = like_dtype v picked in
+  let sum_rows x = b1 (Reduce_sum [| ndim - 2 |]) [ x ] in
+  let c =
+    b1 Complex
+      [
+        neg (b1 Real [ sum_rows (mul (b1 Conj [ v ]) u) ]);
+        div
+          (neg (b1 Imag [ sum_rows (mul mask u) ]))
+          (b1 Real [ sum_rows (mul mask v) ]);
+      ]
+  in
+  (dw, add u (mul v (broadcast_to_matrix (expand_col c) shape)))
+
+let eig_jvp ~compute_left ~compute_right a t =
+  let outs = Core.bind (Eig { compute_left; compute_right = true }) [ a ] in
+  let w = List.hd outs and vr = List.nth outs (List.length outs - 1) in
+  let da = like_dtype vr t in
+  if not (compute_left || compute_right) then
+    ([ w ], [ diagonal_of (matmul (solve_general vr da) vr) ])
+  else
+    let dw, dvr = eig_vec_jvp w vr da in
+    let left =
+      if compute_left then
+        let vl = List.nth outs 1 in
+        let _, dvl = eig_vec_jvp (b1 Conj [ w ]) vl (hconj da) in
+        [ (vl, dvl) ]
+      else []
+    in
+    let right = if compute_right then [ (vr, dvr) ] else [] in
+    let vectors = left @ right in
+    (w :: List.map fst vectors, dw :: List.map snd vectors)
+
 let svd_jvp ~full_matrices ~compute_uv a t =
   if full_matrices then
     failwith
@@ -1351,6 +1422,12 @@ let jvp_process_primitive trace prim args =
       match (primals, tangents) with
       | [ x ], [ t ] ->
           let po, to_ = top_k_jvp ~k ~axis x t in
+          List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
+      | _ -> arity ())
+  | Eig { compute_left; compute_right } -> (
+      match (primals, tangents) with
+      | [ a ], [ t ] ->
+          let po, to_ = eig_jvp ~compute_left ~compute_right a t in
           List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
       | _ -> arity ())
   | Eigh { lower } -> (

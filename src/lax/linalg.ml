@@ -248,6 +248,106 @@ let z_triangular_solve left_side lower transpose_a conjugate_a unit_diagonal a b
         (Array.init (nrhs * m) (fun f -> read (f mod m) (f / m)));
     ]
 
+let z_hessenberg a =
+  let dt = Ndarray.dtype a in
+  let n = (Ndarray.shape a).(0) in
+  let ca = zpack a n n in
+  let tau = Lp.alloc_f64 (2 * max (n - 1) 1) in
+  let _ = Lp.zgehrd ~n ~ilo:1 ~ihi:n ~a:ca ~lda:n ~tau in
+  [
+    Ndarray.of_complex dt [| n; n |] (zunpack ca n n);
+    Ndarray.of_complex dt [| n - 1 |] (Array.init (n - 1) (fun i -> zat tau i));
+  ]
+
+let z_schur compute_vectors a =
+  let dt = Ndarray.dtype a in
+  let n = (Ndarray.shape a).(0) in
+  let ca = zpack a n n in
+  let w = Lp.alloc_f64 (2 * max n 1) in
+  let ldvs = if compute_vectors then n else 1 in
+  let vs = Lp.alloc_f64 (2 * n * ldvs) in
+  let jobvs = if compute_vectors then 'V' else 'N' in
+  let _ = Lp.zgees ~jobvs ~n ~a:ca ~lda:n ~w ~vs ~ldvs in
+  let t = Ndarray.of_complex dt [| n; n |] (zunpack ca n n) in
+  if compute_vectors then
+    [ t; Ndarray.of_complex dt [| n; n |] (zunpack vs n n) ]
+  else [ t ]
+
+let z_tridiagonal lower a =
+  let dt = Ndarray.dtype a in
+  let rdt = z_real_basetype dt in
+  let n = (Ndarray.shape a).(0) in
+  let ca = zpack a n n in
+  let d = Lp.alloc_f64 (max n 1) in
+  let e = Lp.alloc_f64 (max (n - 1) 1) in
+  let tau = Lp.alloc_f64 (2 * max (n - 1) 1) in
+  let uplo = if lower then 'L' else 'U' in
+  let _ = Lp.zhetrd ~uplo ~n ~a:ca ~lda:n ~d ~e ~tau in
+  [
+    Ndarray.of_complex dt [| n; n |] (zunpack ca n n);
+    Ndarray.of_floats rdt [| n |] (Array.init n (fun i -> d.{i}));
+    Ndarray.of_floats rdt [| n - 1 |] (Array.init (n - 1) (fun i -> e.{i}));
+    Ndarray.of_complex dt [| n - 1 |] (Array.init (n - 1) (fun i -> zat tau i));
+  ]
+
+let geqrf_impl a =
+  let dt = Ndarray.dtype a in
+  let sh = Ndarray.shape a in
+  let m = sh.(0) and n = sh.(1) in
+  let k = min m n in
+  if is_complex_nd a then begin
+    let ca = zpack a m n in
+    let tau = Lp.alloc_f64 (2 * max k 1) in
+    let _ = Lp.zgeqrf ~m ~n ~a:ca ~lda:m ~tau in
+    [
+      Ndarray.of_complex dt [| m; n |] (zunpack ca m n);
+      Ndarray.of_complex dt [| k |] (Array.init k (fun i -> zat tau i));
+    ]
+  end
+  else begin
+    let ca = pack_cm a m n in
+    let tau = Lp.alloc_f64 (max k 1) in
+    let _ = Lp.geqrf ~m ~n ~a:ca ~lda:m ~tau in
+    [
+      Ndarray.of_floats dt [| m; n |] (unpack_cm ca m n);
+      Ndarray.of_floats dt [| k |] (Array.init k (fun i -> tau.{i}));
+    ]
+  end
+
+let geqp3_impl a =
+  let dt = Ndarray.dtype a in
+  let sh = Ndarray.shape a in
+  let m = sh.(0) and n = sh.(1) in
+  let k = min m n in
+  let jpvt = Lp.alloc_i32 (max n 1) in
+  for i = 0 to n - 1 do
+    jpvt.{i} <- 0l
+  done;
+  let pivots () =
+    Ndarray.of_floats Dtype.I32 [| n |]
+      (Array.init n (fun i -> Int32.to_float jpvt.{i}))
+  in
+  if is_complex_nd a then begin
+    let ca = zpack a m n in
+    let tau = Lp.alloc_f64 (2 * max k 1) in
+    let _ = Lp.zgeqp3 ~m ~n ~a:ca ~lda:m ~jpvt ~tau in
+    [
+      Ndarray.of_complex dt [| m; n |] (zunpack ca m n);
+      pivots ();
+      Ndarray.of_complex dt [| k |] (Array.init k (fun i -> zat tau i));
+    ]
+  end
+  else begin
+    let ca = pack_cm a m n in
+    let tau = Lp.alloc_f64 (max k 1) in
+    let _ = Lp.geqp3 ~m ~n ~a:ca ~lda:m ~jpvt ~tau in
+    [
+      Ndarray.of_floats dt [| m; n |] (unpack_cm ca m n);
+      pivots ();
+      Ndarray.of_floats dt [| k |] (Array.init k (fun i -> tau.{i}));
+    ]
+  end
+
 let cholesky_impl inputs =
   match inputs with
   | [ a ] when is_complex_nd a -> z_cholesky a
@@ -522,6 +622,7 @@ let eig_impl compute_left compute_right inputs =
 
 let hessenberg_impl inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_hessenberg a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let n, _ = dims2 a in
@@ -536,6 +637,7 @@ let hessenberg_impl inputs =
 
 let schur_impl compute_vectors inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_schur compute_vectors a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let n, _ = dims2 a in
@@ -588,6 +690,7 @@ let svd_impl full_matrices compute_uv inputs =
 
 let tridiagonal_impl lower inputs =
   match inputs with
+  | [ a ] when is_complex_nd a -> z_tridiagonal lower a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let rdt = real_basetype dt in

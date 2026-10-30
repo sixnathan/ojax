@@ -11,6 +11,16 @@ val lu_solve :
 
 val qr : ?mode:string -> ?pivoting:bool -> Types.value -> Types.value list
 
+val qr_multiply :
+  ?mode:string ->
+  ?pivoting:bool ->
+  ?conjugate:bool ->
+  Types.value ->
+  Types.value ->
+  Types.value list
+
+val rsf2csf : Types.value -> Types.value -> Types.value * Types.value
+
 val solve :
   ?lower:bool -> ?assume_a:string -> Types.value -> Types.value -> Types.value
 
@@ -33,9 +43,15 @@ val hessenberg : ?calc_q:bool -> Types.value -> Types.value list
 val expm : ?upper_triangular:bool -> Types.value -> Types.value
 
 val expm_frechet :
-  ?compute_expm:bool -> Types.value -> Types.value -> Types.value
+  ?compute_expm:bool -> Types.value -> Types.value -> Types.value list
 
-val polar : ?side:string -> ?method_:string -> Types.value -> Types.value list
+val polar :
+  ?side:string ->
+  ?method_:string ->
+  ?eps:float ->
+  Types.value ->
+  Types.value list
+
 val sqrtm : ?blocksize:int -> Types.value -> Types.value
 
 val funm :
@@ -44,7 +60,7 @@ val funm :
 val eigh_tridiagonal :
   ?eigvals_only:bool ->
   ?select:string ->
-  ?select_range:Types.value ->
+  ?select_range:float * float ->
   Types.value ->
   Types.value ->
-  Types.value
+  Types.value list

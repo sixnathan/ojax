@@ -3765,7 +3765,7 @@ let scipy_linalg_run c inputs =
   | "expm" -> [ SL.expm ~upper_triangular:(pb "upper_triangular") (get "a") ]
   | "polar" -> SL.polar ~side:(ps "side") ~method_:"svd" (get "a")
   | "eigh_tridiagonal" ->
-      [ SL.eigh_tridiagonal ~eigvals_only:true (get "d") (get "e") ]
+      SL.eigh_tridiagonal ~eigvals_only:true (get "d") (get "e")
   | _ -> failwith ("scipy_linalg golden: unknown op " ^ c.op)
 
 let scipy_linalg_check_case ~set_dir ~x64 c () =

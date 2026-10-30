@@ -135,3 +135,32 @@ let ztrtrs ~uplo ~trans ~diag ~n ~nrhs ~a ~lda ~b ~ldb =
   ztrtrs_
     [| Char.code uplo; Char.code trans; Char.code diag; n; nrhs; lda; ldb |]
     a b
+
+external zgees_ : int array -> f64 -> f64 -> f64 -> int = "ojax_lapack_zgees"
+external zgehrd_ : int array -> f64 -> f64 -> int = "ojax_lapack_zgehrd"
+
+external zhetrd_ : int array -> f64 -> f64 -> f64 -> f64 -> int
+  = "ojax_lapack_zhetrd"
+
+external dgeqp3_ : int array -> f64 -> i32 -> f64 -> int = "ojax_lapack_dgeqp3"
+external zgeqp3_ : int array -> f64 -> i32 -> f64 -> int = "ojax_lapack_zgeqp3"
+
+let zgees ~jobvs ~n ~a ~lda ~w ~vs ~ldvs =
+  guard "zgees";
+  zgees_ [| Char.code jobvs; n; lda; ldvs |] a w vs
+
+let zgehrd ~n ~ilo ~ihi ~a ~lda ~tau =
+  guard "zgehrd";
+  zgehrd_ [| n; ilo; ihi; lda |] a tau
+
+let zhetrd ~uplo ~n ~a ~lda ~d ~e ~tau =
+  guard "zhetrd";
+  zhetrd_ [| Char.code uplo; n; lda |] a d e tau
+
+let geqp3 ~m ~n ~a ~lda ~jpvt ~tau =
+  guard "geqp3";
+  dgeqp3_ [| m; n; lda |] a jpvt tau
+
+let zgeqp3 ~m ~n ~a ~lda ~jpvt ~tau =
+  guard "zgeqp3";
+  zgeqp3_ [| m; n; lda |] a jpvt tau

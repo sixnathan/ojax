@@ -113,3 +113,14 @@ val ztrtrs :
   b:f64 ->
   ldb:int ->
   int
+
+val zgees :
+  jobvs:char -> n:int -> a:f64 -> lda:int -> w:f64 -> vs:f64 -> ldvs:int -> int
+
+val zgehrd : n:int -> ilo:int -> ihi:int -> a:f64 -> lda:int -> tau:f64 -> int
+
+val zhetrd :
+  uplo:char -> n:int -> a:f64 -> lda:int -> d:f64 -> e:f64 -> tau:f64 -> int
+
+val geqp3 : m:int -> n:int -> a:f64 -> lda:int -> jpvt:i32 -> tau:f64 -> int
+val zgeqp3 : m:int -> n:int -> a:f64 -> lda:int -> jpvt:i32 -> tau:f64 -> int

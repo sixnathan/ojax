@@ -142,7 +142,7 @@ let eigtri_vs_eigh () =
   if D.available then begin
     let d = v [| 4 |] [| 1.; 2.; 3.; 4. |] in
     let e = v [| 3 |] [| 1.; 1.; 1. |] in
-    let w = SL.eigh_tridiagonal ~eigvals_only:true d e in
+    let w = List.hd (SL.eigh_tridiagonal ~eigvals_only:true d e) in
     let t =
       v [| 4; 4 |]
         [| 1.; 1.; 0.; 0.; 1.; 2.; 1.; 0.; 0.; 1.; 3.; 1.; 0.; 0.; 1.; 4. |]
@@ -164,13 +164,7 @@ let raises name f =
     | _ -> true)
 
 let bounded_raises () =
-  raises "sqrtm" (fun () -> SL.sqrtm (a_gen ()));
-  raises "funm" (fun () -> SL.funm (a_gen ()) (fun x -> x));
-  raises "expm_frechet" (fun () -> SL.expm_frechet (a_gen ()) (a_gen ()));
-  raises "polar_qdwh" (fun () -> SL.polar (a_gen ()));
-  raises "schur_complex" (fun () -> SL.schur ~output:"complex" (a_gen ()));
-  raises "eigtri_vec" (fun () ->
-      SL.eigh_tridiagonal (v [| 2 |] [| 1.; 2. |]) (v [| 1 |] [| 1. |]))
+  raises "funm" (fun () -> SL.funm (a_gen ()) (fun x -> x))
 
 let () =
   Alcotest.run "scipy_linalg"

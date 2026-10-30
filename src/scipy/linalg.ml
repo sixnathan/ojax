@@ -13,6 +13,8 @@ module RED = Numpy.Reductions
 module AC = Numpy.Array_creation
 
 let get_aval = C.get_aval
+let i32_scalar x = T.Concrete (Nd.of_floats D.I32 [||] [| float_of_int x |])
+let is_complex_dt = function D.Complex64 | D.Complex128 -> true | _ -> false
 let shape v = (get_aval v).T.shape
 let dtype v = (get_aval v).T.dtype
 let ndim v = Array.length (shape v)
@@ -111,9 +113,7 @@ let lu_solve ?(trans = 0) (lu_, piv) b =
   in
   if bvec then NL.reshape out [| m |] else out
 
-let qr ?(mode = "full") ?(pivoting = false) a =
-  if pivoting then
-    invalid_arg "scipy.linalg.qr: pivoting=True not supported in ojax";
+let rec qr ?(mode = "full") ?(pivoting = false) a =
   let full_matrices =
     match mode with
     | "full" | "r" -> true
@@ -123,8 +123,207 @@ let qr ?(mode = "full") ?(pivoting = false) a =
           (Printf.sprintf "Unsupported QR decomposition mode '%s'" mode)
   in
   let a = to_inexact a in
-  let q, r = LL.qr ~full_matrices a in
-  if mode = "r" then [ r ] else [ q; r ]
+  if not pivoting then
+    let q, r = LL.qr ~full_matrices a in
+    if mode = "r" then [ r ] else [ q; r ]
+  else if Array.length (shape a) > 2 then
+    Interpreters.Batching.vmap
+      (fun args -> qr ~mode ~pivoting (List.hd args))
+      [ Some 0 ] [ a ]
+  else begin
+    let sh = shape a in
+    let m = sh.(0) and n = sh.(1) in
+    let k = min m n in
+    let cols = if full_matrices then m else k in
+    let h, jpvt, taus = Linalg_extras.geqp3 a in
+    let perm = UF.subtract jpvt (i32_scalar 1) in
+    let r = NL.triu (Lax_api.slice h [| 0; 0 |] [| cols; n |]) in
+    if mode = "r" then [ r; perm ]
+    else
+      let dt = dtype a in
+      let base =
+        if cols <= n then Lax_api.slice h [| 0; 0 |] [| m; cols |]
+        else NL.concatenate ~axis:1 [ h; AC.zeros ~dtype:dt [| m; cols - n |] ]
+      in
+      [ LL.householder_product base taus; r; perm ]
+  end
+
+let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
+    c =
+  if mode <> "right" && mode <> "left" then
+    invalid_arg (Printf.sprintf "mode must be 'right' or 'left', got '%s'" mode);
+  let a = to_inexact a and c = to_inexact c in
+  let dt =
+    if is_complex_dt (dtype a) || is_complex_dt (dtype c) then
+      if
+        dtype a = D.Complex128
+        || dtype c = D.Complex128
+        || dtype a = D.F64
+        || dtype c = D.F64
+      then D.Complex128
+      else D.Complex64
+    else if dtype a = D.F64 || dtype c = D.F64 then D.F64
+    else D.F32
+  in
+  let a = NL.astype a dt and c = NL.astype c dt in
+  if Array.length (shape a) > 2 then
+    Interpreters.Batching.vmap
+      (fun args ->
+        match args with
+        | [ a; c ] -> qr_multiply ~mode ~pivoting ~conjugate a c
+        | _ -> failwith "qr_multiply: arity")
+      [ Some 0; Some 0 ] [ a; c ]
+  else begin
+    let onedim = Array.length (shape c) = 1 in
+    let c =
+      if not onedim then c
+      else
+        let l = (shape c).(0) in
+        NL.reshape c (if mode = "left" then [| l; 1 |] else [| 1; l |])
+    in
+    let sh = shape a in
+    let m = sh.(0) and n = sh.(1) in
+    let k = min m n in
+    let cs = shape c in
+    if mode = "left" && cs.(0) <> k then
+      invalid_arg "Array shapes are not compatible for Q @ c operation";
+    if mode = "right" && cs.(1) <> m then
+      invalid_arg "Array shapes are not compatible for c @ Q operation";
+    let h, perm, taus =
+      if pivoting then
+        let h, p, t = Linalg_extras.geqp3 a in
+        (h, Some (UF.subtract p (i32_scalar 1)), t)
+      else
+        let h, t = Linalg_extras.geqrf a in
+        (h, None, t)
+    in
+    let c =
+      if m > n && mode = "left" then
+        NL.concatenate ~axis:0 [ c; AC.zeros ~dtype:dt [| m - k; cs.(1) |] ]
+      else c
+    in
+    let c = if conjugate then NL.matrix_transpose c else c in
+    let left = mode = "left" <> conjugate in
+    let cq = Linalg_extras.ormqr ~left ~transpose:conjugate h taus c in
+    let cq = if conjugate then NL.matrix_transpose cq else cq in
+    let cq =
+      if mode = "right" then Lax_api.slice_in_dim ~axis:1 cq 0 k else cq
+    in
+    let cq =
+      if onedim then NL.reshape cq [| Array.fold_left ( * ) 1 (shape cq) |]
+      else cq
+    in
+    let r = NL.triu (Lax_api.slice h [| 0; 0 |] [| k; n |]) in
+    match perm with None -> [ cq; r ] | Some p -> [ cq; r; p ]
+  end
+
+let rec rsf2csf t z =
+  let st = shape t and sz = shape z in
+  let nd = Array.length st in
+  if nd < 2 || st.(nd - 1) <> st.(nd - 2) then
+    invalid_arg "Input 'T' must be square.";
+  if Array.length sz < 2 || sz.(Array.length sz - 1) <> sz.(Array.length sz - 2)
+  then invalid_arg "Input 'Z' must be square.";
+  if st.(nd - 1) <> sz.(Array.length sz - 1) then
+    invalid_arg "Input array shapes must match";
+  if nd > 2 then
+    let outs =
+      Interpreters.Batching.vmap
+        (fun args ->
+          match args with
+          | [ t; z ] ->
+              let a, b = rsf2csf t z in
+              [ a; b ]
+          | _ -> failwith "rsf2csf: arity")
+        [ Some 0; Some 0 ] [ t; z ]
+    in
+    (List.nth outs 0, List.nth outs 1)
+  else begin
+    let module L = Lax_api in
+    let widest =
+      dtype t = D.F64
+      || dtype z = D.F64
+      || dtype t = D.Complex128
+      || dtype z = D.Complex128
+    in
+    let cdt = if widest then D.Complex128 else D.Complex64 in
+    let t = NL.astype t cdt and z = NL.astype z cdt in
+    let rdt = if widest then D.F64 else D.F32 in
+    let eps = if widest then epsilon_float else 1.1920928955078125e-07 in
+    let n = st.(0) in
+    let idx v = T.Concrete (Nd.of_floats D.I32 [||] [| float_of_int v |]) in
+    let at x i j = L.reshape (L.slice x [| i; j |] [| i + 1; j + 1 |]) [||] in
+    let update m tv zv =
+      let mu0 =
+        let vals =
+          LN.eigvals (L.slice tv [| m - 1; m - 1 |] [| m + 1; m + 1 |])
+        in
+        UF.subtract (L.index_in_dim ~axis:0 ~keepdims:false vals 0) (at tv m m)
+      in
+      let sub = at tv m (m - 1) in
+      let magnitude v =
+        let a = UF.abs v in
+        UF.multiply a a
+      in
+      let r = NL.astype (L.sqrt (UF.add (magnitude mu0) (magnitude sub))) cdt in
+      let c = UF.divide mu0 r and s = UF.divide sub r in
+      let entry v = L.reshape v [| 1 |] in
+      let g =
+        L.reshape
+          (L.concatenate
+             [ entry (L.conj c); entry s; entry (L.neg s); entry c ]
+             0)
+          [| 2; 2 |]
+      in
+      let g_h = L.conj (NL.matrix_transpose g) in
+      let rows = L.slice_in_dim ~axis:0 tv (m - 1) (m + 1) in
+      let kept = L.slice_in_dim ~axis:1 rows 0 (m - 1) in
+      let moved = L.dot g (L.slice_in_dim ~axis:1 rows (m - 1) n) in
+      let tv =
+        L.dynamic_update_slice tv
+          (L.concatenate [ kept; moved ] 1)
+          [ idx (m - 1); idx 0 ]
+      in
+      let cols = L.slice_in_dim ~axis:1 tv (m - 1) (m + 1) in
+      let moved = L.dot (L.slice_in_dim ~axis:0 cols 0 (m + 1)) g_h in
+      let kept = L.slice_in_dim ~axis:0 cols (m + 1) n in
+      let tv =
+        L.dynamic_update_slice tv
+          (L.concatenate [ moved; kept ] 0)
+          [ idx 0; idx (m - 1) ]
+      in
+      let zcols = L.slice_in_dim ~axis:1 zv (m - 1) (m + 1) in
+      let zv =
+        L.dynamic_update_slice zv (L.dot zcols g_h) [ idx 0; idx (m - 1) ]
+      in
+      [ tv; zv ]
+    in
+    let rec go i tv zv =
+      if i >= n then (tv, zv)
+      else
+        let m = n - i in
+        let threshold =
+          UF.multiply (L.full [||] eps rdt)
+            (UF.add (UF.abs (at tv (m - 1) (m - 1))) (UF.abs (at tv m m)))
+        in
+        match
+          L.cond
+            (L.gt (UF.abs (at tv m (m - 1))) threshold)
+            (fun args ->
+              match args with
+              | [ a; b ] -> update m a b
+              | _ -> failwith "rsf2csf: arity")
+            Fun.id [ tv; zv ]
+        with
+        | [ tv; zv ] ->
+            let zero = L.full [| 1; 1 |] 0.0 cdt in
+            go (i + 1)
+              (L.dynamic_update_slice tv zero [ idx m; idx (m - 1) ])
+              zv
+        | _ -> failwith "rsf2csf: arity"
+    in
+    if n = 1 then (t, z) else go 1 t z
+  end
 
 let solve ?(lower = false) ?(assume_a = "gen") a b =
   (match assume_a with
@@ -164,7 +363,6 @@ let host_nd = function
 
 let host_float v = Nd.get_f (host_nd v) [||]
 let scalar_of v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
-let i32_scalar x = T.Concrete (Nd.of_floats D.I32 [||] [| float_of_int x |])
 
 let svd ?(full_matrices = true) ?(compute_uv = true) a =
   let a = to_inexact a in
@@ -177,16 +375,16 @@ let eigh ?(lower = true) ?(eigvals_only = false) a =
 
 let schur ?(output = "real") a =
   let a = to_inexact a in
-  (match output with
-  | "real" -> ()
-  | "complex" ->
-      failwith
-        "scipy.linalg.schur: output='complex' unsupported in ojax (needs the \
-         complex Schur decomposition / LAPACK zgees; the seam is real-double, \
-         row 99)"
-  | _ ->
-      invalid_arg
-        (Printf.sprintf "argument must be 'real' or 'complex', got %s" output));
+  let a =
+    match output with
+    | "real" -> a
+    | "complex" ->
+        if is_complex_dt (dtype a) then a
+        else NL.astype a (if dtype a = D.F64 then D.Complex128 else D.Complex64)
+    | _ ->
+        invalid_arg
+          (Printf.sprintf "argument must be 'real' or 'complex', got %s" output)
+  in
   LL.schur a
 
 let block_diag arrs =
@@ -454,25 +652,44 @@ let rec expm ?(upper_triangular = false) a =
       end
 
 let expm_frechet ?(compute_expm = true) a e =
-  ignore compute_expm;
-  ignore a;
-  ignore e;
-  failwith
-    "scipy.linalg.expm_frechet: unsupported in ojax (its Frechet derivative is \
-     jvp(expm), which requires forward-mode AD through a linear solve; linalg \
-     jvp rules are an M5 gap, rows 98/99)"
+  let a = to_inexact a and e = to_inexact e in
+  let sa = shape a and se = shape e in
+  if Array.length sa < 2 || sa.(Array.length sa - 1) <> sa.(Array.length sa - 2)
+  then invalid_arg "expected A to be a (batched) square matrix";
+  if sa <> se then invalid_arg "expected A and E to be the same shape";
+  let primal, tangent =
+    Interpreters.Ad.jvp
+      (fun args -> [ expm (List.hd args) ])
+      [ a ]
+      [ NL.astype e (dtype a) ]
+  in
+  if compute_expm then [ List.hd primal; List.hd tangent ]
+  else [ List.hd tangent ]
 
-let polar ?(side = "right") ?(method_ = "qdwh") a =
+let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
   let a = to_inexact a in
   if ndim a < 2 then invalid_arg "The input `a` must be at least a 2-D array.";
   (match side with
   | "right" | "left" -> ()
   | _ -> invalid_arg "The argument `side` must be either 'right' or 'left'.");
   match method_ with
+  | "qdwh" when ndim a > 2 ->
+      Interpreters.Batching.vmap
+        (fun args -> polar ~side ~method_ ?eps (List.hd args))
+        [ Some 0 ] [ a ]
   | "qdwh" ->
-      failwith
-        "scipy.linalg.polar: method='qdwh' unsupported in ojax (qdwh lives in \
-         the deferred jax._src.tpu.linalg tree); use method=\"svd\""
+      let sh = shape a in
+      let m = sh.(0) and n = sh.(1) in
+      if m >= n && side = "right" then
+        let unitary, posdef, _, _ = Linalg_extras.qdwh ?eps a in
+        [ unitary; posdef ]
+      else if m < n && side = "left" then
+        let unitary, posdef, _, _ = Linalg_extras.qdwh ?eps (hconj a) in
+        [ hconj unitary; hconj posdef ]
+      else
+        invalid_arg
+          "method='qdwh' only supports mxn matrices where m < n where \
+           side='right' and m >= n side='left'"
   | "svd" ->
       let u, s, vh =
         match LL.svd ~full_matrices:false a with
@@ -491,14 +708,52 @@ let polar ?(side = "right") ?(method_ = "qdwh") a =
       invalid_arg
         (Printf.sprintf "Unknown polar decomposition method %s." method_)
 
-let sqrtm ?(blocksize = 1) a =
+let rec sqrtm ?(blocksize = 1) a =
   if blocksize > 1 then
-    failwith "scipy.linalg.sqrtm: blocked version (blocksize>1) not implemented";
-  ignore a;
-  failwith
-    "scipy.linalg.sqrtm: unsupported in ojax (requires the complex Schur \
-     decomposition / LAPACK zgees, out of scope for the real-double seam, row \
-     99)"
+    failwith "scipy.linalg.sqrtm: Blocked version is not implemented yet.";
+  let a = to_inexact a in
+  if ndim a > 2 then
+    List.hd
+      (Interpreters.Batching.vmap
+         (fun args -> [ sqrtm (List.hd args) ])
+         [ Some 0 ] [ a ])
+  else
+    match schur ~output:"complex" a with
+    | [ t; z ] ->
+        let module L = Lax_api in
+        let n = (shape t).(0) in
+        let dt = dtype t in
+        let zero = L.full [||] 0.0 dt in
+        let at x i j =
+          L.reshape (L.slice x [| i; j |] [| i + 1; j + 1 |]) [||]
+        in
+        let diag = Array.init n (fun i -> L.sqrt (at t i i)) in
+        let u = Array.make_matrix n n zero in
+        for i = 0 to n - 1 do
+          u.(i).(i) <- diag.(i)
+        done;
+        for j = 0 to n - 1 do
+          for l = 0 to j - 1 do
+            let i = j - 1 - l in
+            let sum = ref zero in
+            for k = i + 1 to j - 1 do
+              sum := L.add !sum (L.mul u.(i).(k) u.(k).(j))
+            done;
+            let tij = at t i j in
+            u.(i).(j) <-
+              NL.where_ (L.eq tij !sum) zero
+                (L.div (L.sub tij !sum) (L.add diag.(i) diag.(j)))
+          done
+        done;
+        let cells =
+          List.concat_map
+            (fun row ->
+              List.map (fun x -> L.reshape x [| 1 |]) (Array.to_list row))
+            (Array.to_list u)
+        in
+        let root = L.reshape (L.concatenate cells 0) [| n; n |] in
+        L.dot (L.dot z root) (L.conj (NL.matrix_transpose z))
+    | _ -> failwith "sqrtm: schur arity"
 
 let funm ?(disp = true) a _func =
   ignore disp;
@@ -509,22 +764,23 @@ let funm ?(disp = true) a _func =
      99)"
 
 let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range d e =
-  ignore select_range;
-  if not eigvals_only then
-    failwith
-      "scipy.linalg.eigh_tridiagonal: eigenvector computation \
-       (eigvals_only=False) unsupported in ojax (needs random-init inverse \
-       iteration + static-size nonzero; bounded, M5)";
-  (match select with
-  | "a" -> ()
-  | _ ->
-      failwith
-        "scipy.linalg.eigh_tridiagonal: only select='a' supported in ojax");
   let d = to_inexact d and e = to_inexact e in
   let n = (shape d).(0) in
-  if n <= 1 then UF.real d
-  else begin
-    let t = UF.add (NL.diag d) (UF.add (NL.diag ~k:1 e) (NL.diag ~k:(-1) e)) in
-    let _, w = LL.eigh ~lower:true t in
-    w
-  end
+  let lo, hi =
+    match (select, select_range) with
+    | "a", _ -> (0, n - 1)
+    | "i", Some (l, h) -> (int_of_float l, int_of_float h)
+    | "i", None -> invalid_arg "eigh_tridiagonal: select='i' needs select_range"
+    | _ ->
+        invalid_arg
+          "eigh_tridiagonal: select must be 'a' or 'i'; 'v' has a data \
+           dependent output size"
+  in
+  let t =
+    if n <= 1 then NL.diag d
+    else UF.add (NL.diag d) (UF.add (NL.diag ~k:1 e) (NL.diag ~k:(-1) e))
+  in
+  let v, w = LL.eigh ~lower:true t in
+  let w = Lax_api.slice_in_dim ~axis:0 w lo (hi + 1) in
+  if eigvals_only then [ w ]
+  else [ w; Lax_api.slice_in_dim ~axis:1 v lo (hi + 1) ]

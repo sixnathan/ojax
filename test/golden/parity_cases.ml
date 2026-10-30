@@ -930,6 +930,19 @@ let complex_linalg_run op a b =
       grad (fun args -> sum_all (LA.eigvalsh (herm (List.hd args))))
   | "cl_grad_logdet" ->
       grad (fun args -> sum_all (snd (LA.slogdet (herm (List.hd args)))))
+  | "cl_grad_eigvals" ->
+      grad (fun args -> sum_all (UF.absolute (LA.eigvals (List.hd args))))
+  | "cl_jvp_eigvals" ->
+      let x = a () in
+      let dt = dt_of x in
+      let tangent = UF.add (L.mul x (L.full_like x 0.5)) (L.full_like x 0.1) in
+      ignore dt;
+      let _, t =
+        Ojax.Interpreters.Ad.jvp
+          (fun args -> [ LA.eigvals (List.hd args) ])
+          [ x ] [ tangent ]
+      in
+      Some [ sum_all (List.hd t) ]
   | "cl_grad_svdvals" -> grad (fun args -> sum_all (LA.svdvals (List.hd args)))
   | _ -> None
 
@@ -968,6 +981,81 @@ let complex_grad_run op a =
   | "cg_angle" -> on (fun z -> NL.angle z)
   | _ -> None
 
+let linalg_batch_run op params a b =
+  let module X = Ojax.Linalg_extras in
+  let module SL = Ojax.Scipy.Linalg in
+  let module LL = Ojax.Lax.Linalg in
+  let h_of v = UF.conj (NL.swapaxes (-1) (-2) v) in
+  let recon z t = L.batch_matmul (L.batch_matmul z t) (h_of z) in
+  let diag_mag t =
+    Ojax.Numpy.Sorting.sort ~axis:(Some (-1))
+      (UF.absolute (NL.diagonal ~axis1:(-2) ~axis2:(-1) t))
+  in
+  let bool_p k = U.to_bool (U.member k params) in
+  let str_p k = U.to_string (U.member k params) in
+  match op with
+  | "lx_cholesky_update" ->
+      Some
+        [
+          X.cholesky_update
+            (NL.swapaxes (-1) (-2) (LA.cholesky (spd (a ()))))
+            (b ());
+        ]
+  | "lx_symmetric_product" ->
+      Some
+        [
+          X.symmetric_product ~alpha:2.0 ~beta:0.5
+            ~symmetrize_output:(bool_p "sym") (a ())
+            (spd (b ()));
+        ]
+  | "lx_ormqr" ->
+      let h, t = X.geqrf (a ()) in
+      Some
+        [
+          X.ormqr ~left:(bool_p "left") ~transpose:(bool_p "transpose") h t
+            (b ());
+        ]
+  | "lx_qdwh" ->
+      let u, h, _, ok = X.qdwh (a ()) in
+      Some [ u; h; ok ]
+  | "lx_qr_pivot" -> (
+      match SL.qr ~mode:(str_p "mode") ~pivoting:true (a ()) with
+      | [ r; p ] -> Some [ UF.absolute r; p ]
+      | [ q; r; p ] -> Some [ UF.absolute q; UF.absolute r; p ]
+      | _ -> failwith "parity: qr arity")
+  | "lx_qr_multiply" ->
+      Some
+        (SL.qr_multiply ~mode:(str_p "mode") ~conjugate:(bool_p "conjugate")
+           ~pivoting:(bool_p "pivoting") (a ()) (b ()))
+  | "lx_rsf2csf" -> (
+      match SL.schur (a ()) with
+      | [ t; z ] ->
+          let tc, zc = SL.rsf2csf t z in
+          Some [ recon zc tc; diag_mag tc ]
+      | _ -> failwith "parity: schur arity")
+  | "lx_schur_complex" -> (
+      match SL.schur ~output:"complex" (a ()) with
+      | [ t; z ] -> Some [ recon z t; diag_mag t ]
+      | _ -> failwith "parity: schur arity")
+  | "lx_hessenberg" -> (
+      match SL.hessenberg ~calc_q:true (a ()) with
+      | [ h; q ] -> Some [ recon q h; UF.absolute h ]
+      | _ -> failwith "parity: hessenberg arity")
+  | "lx_sqrtm" ->
+      let r = SL.sqrtm (a ()) in
+      Some [ L.dot r r; SL.sqrtm (herm (a ())) ]
+  | "lx_expm_frechet" -> Some (SL.expm_frechet (a ()) (b ()))
+  | "lx_polar" ->
+      Some (SL.polar ~side:(str_p "side") ~method_:(str_p "method") (a ()))
+  | "lx_eigh_tri" -> (
+      match SL.eigh_tridiagonal (a ()) (b ()) with
+      | [ w; v ] -> Some [ w; UF.absolute v ]
+      | _ -> failwith "parity: eigh_tridiagonal arity")
+  | "lx_tridiagonal" ->
+      let _, d, e, _ = LL.tridiagonal (herm (a ())) in
+      Some [ d; UF.absolute e ]
+  | _ -> None
+
 let fft_run op params a =
   match op with
   | "fft" -> fft1 F.fft (a ()) params
@@ -994,6 +1082,7 @@ let run op params get =
   let c () = get "c" in
   let runners =
     [
+      (fun () -> linalg_batch_run op params a b);
       (fun () -> complex_grad_run op a);
       (fun () -> complex_linalg_run op a b);
       (fun () -> gap_run op params a b);

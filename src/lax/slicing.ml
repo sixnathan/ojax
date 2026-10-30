@@ -212,6 +212,7 @@ let scatter_impl combiner (sd : scatter_dims) operand indices updates =
         end)
       uidx;
     let op_idx = Array.make op_rank 0 in
+    let in_bounds = ref true in
     Array.iteri
       (fun m o ->
         op_idx.(o) <- scatter_coords.(sd.s_scatter_indices_batching_dims.(m)))
@@ -223,6 +224,7 @@ let scatter_impl combiner (sd : scatter_dims) operand indices updates =
         full.(idx_rank - 1) <- k;
         let raw = read_index_at indices full in
         let hi = op_shape.(o) - win_size.(o) in
+        if raw < 0 || raw > hi then in_bounds := false;
         op_idx.(o) <- clamp 0 hi raw)
       sd.scatter_dims_to_operand_dims;
     let jw = ref 0 in
@@ -238,7 +240,7 @@ let scatter_impl combiner (sd : scatter_dims) operand indices updates =
     for o = 0 to op_rank - 1 do
       flat := !flat + (op_idx.(o) * op_str.(o))
     done;
-    out.(!flat) <- combiner out.(!flat) upd_flat.(f)
+    if !in_bounds then out.(!flat) <- combiner out.(!flat) upd_flat.(f)
   done;
   Ndarray.of_floats (Ndarray.dtype operand) op_shape out
 

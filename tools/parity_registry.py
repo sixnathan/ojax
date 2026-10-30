@@ -58,6 +58,77 @@ def _lax_ops():
     }
 
 
+def _sc(v):
+    return jnp.sort_complex(v)
+
+
+def _numpy_ops():
+    n = jnp
+    return {
+        "np_nonzero": lambda a, p: n.nonzero(_binarize(a)),
+        "np_nonzero_size": lambda a, p: n.nonzero(_binarize(a), size=p["size"], fill_value=p.get("fill", 0)),
+        "np_flatnonzero": lambda a, p: n.flatnonzero(_binarize(a)),
+        "np_argwhere": lambda a, p: n.argwhere(_binarize(a)),
+        "np_unique_values": lambda a, p: n.unique_values(_rounded(a)),
+        "np_unique_counts": lambda a, p: tuple(n.unique_counts(_rounded(a))),
+        "np_unique_inverse": lambda a, p: tuple(n.unique_inverse(_rounded(a))),
+        "np_unique_all": lambda a, p: tuple(n.unique_all(_rounded(a))),
+        "np_unique_size": lambda a, p: n.unique(_rounded(a), size=p["size"], fill_value=p["fill"]),
+        "np_unique_axis": lambda a, p: n.unique(_rounded(a), axis=p["axis"]),
+        "np_union1d": lambda a, b, p: n.union1d(_rounded(a), _rounded(b)),
+        "np_intersect1d": lambda a, b, p: n.intersect1d(_rounded(a), _rounded(b)),
+        "np_setdiff1d": lambda a, b, p: n.setdiff1d(_rounded(a), _rounded(b)),
+        "np_setxor1d": lambda a, b, p: n.setxor1d(_rounded(a), _rounded(b)),
+        "np_bincount": lambda a, p: n.bincount(_nonneg(a)),
+        "np_bincount_length": lambda a, b, p: n.bincount(_nonneg(a), weights=b, length=p["length"]),
+        "np_histogram": lambda a, p: tuple(n.histogram(a, bins=p["bins"], density=p.get("density", False))),
+        "np_histogram_range": lambda a, p: tuple(n.histogram(a, bins=p["bins"], range=tuple(p["range"]))),
+        "np_histogram_bin_edges": lambda a, p: n.histogram_bin_edges(a, bins=p["bins"]),
+        "np_histogram2d": lambda a, b, p: tuple(n.histogram2d(a, b, bins=p["bins"], density=p.get("density", False))),
+        "np_histogramdd": lambda a, p: (lambda r: (r[0], *r[1]))(n.histogramdd(a, bins=p["bins"])),
+        "np_interp": lambda a, b, c, p: n.interp(a, jnp.sort(b), c),
+        "np_interp_fill": lambda a, b, c, p: n.interp(a, jnp.sort(b), c, left=p["left"], right=p["right"]),
+        "np_interp_period": lambda a, b, c, p: n.interp(a, jnp.sort(b), c, period=p["period"]),
+        "np_gradient": lambda a, p: n.gradient(a, p.get("spacing", 1.0)),
+        "np_gradient_axis": lambda a, p: n.gradient(a, axis=tuple(p["axis"])),
+        "np_choose": lambda a, b, p: n.choose(_nonneg(a) % 2, [b, -b], mode="clip"),
+        "np_compress": lambda a, p: n.compress(jnp.asarray(p["cond"], bool), a, axis=p["axis"]),
+        "np_extract": lambda a, p: n.extract(a > 0, a),
+        "np_delete": lambda a, p: n.delete(a, jnp.asarray(p["obj"]), axis=p.get("axis")),
+        "np_insert": lambda a, p: n.insert(a, p["pos"], jnp.asarray(p["val"], a.dtype), axis=p.get("axis")),
+        "np_place": lambda a, p: n.place(a, a > 0, jnp.asarray(p["val"], a.dtype), inplace=False),
+        "np_piecewise": lambda a, p: n.piecewise(a, [a < 0, a >= 0], [lambda x: -x, lambda x: x * 2.0]),
+        "np_fill_diagonal": lambda a, p: n.fill_diagonal(a, jnp.asarray(p["val"], a.dtype), inplace=False),
+        "np_tril_indices": lambda a, p: n.tril_indices(p["n"], k=p.get("k", 0), m=p.get("m")),
+        "np_triu_indices": lambda a, p: n.triu_indices(p["n"], k=p.get("k", 0), m=p.get("m")),
+        "np_tril_indices_from": lambda a, p: n.tril_indices_from(a, k=p.get("k", 0)),
+        "np_triu_indices_from": lambda a, p: n.triu_indices_from(a, k=p.get("k", 0)),
+        "np_ravel_multi_index": lambda a, p: n.ravel_multi_index(tuple(n.asarray(c) for c in p["coords"]), tuple(p["dims"]), mode=p["mode"]),
+        "np_trim_zeros": lambda a, p: n.trim_zeros(jnp.concatenate([jnp.zeros(2, a.dtype), a, jnp.zeros(1, a.dtype)]), trim=p["trim"]),
+        "np_frexp": lambda a, p: tuple(n.frexp(a)),
+        "np_ldexp": lambda a, p: n.ldexp(a, jnp.asarray(p["e"], jnp.int32)),
+        "np_apply_along_axis": lambda a, p: n.apply_along_axis(jnp.sum, p["axis"], a),
+        "np_apply_along_axis_keep": lambda a, p: n.apply_along_axis(lambda v: v * 2.0, p["axis"], a),
+        "np_apply_over_axes": lambda a, p: n.apply_over_axes(jnp.sum, a, p["axes"]),
+        "np_polydiv": lambda a, b, p: tuple(n.polydiv(a, b)),
+        "np_polyfit": lambda a, b, p: n.polyfit(a, b, p["deg"]),
+        "np_roots": lambda a, p: _sc(n.roots(a)),
+        "np_block": lambda a, b, p: n.block([[a, b], [b, a]]),
+    }
+
+
+def _binarize(a):
+    return a > 0
+
+
+def _rounded(a):
+    return jnp.round(a * 2.0) / 2.0
+
+
+def _nonneg(a):
+    return jnp.abs(a).astype(jnp.int32)
+
+
 def _newton(f, x0):
     x = x0
     for _ in range(40):
@@ -70,6 +141,7 @@ def _newton(f, x0):
 OPS = {}
 OPS.update(_fft_ops())
 OPS.update(_lax_ops())
+OPS.update(_numpy_ops())
 
 
 def _complex_input(shape):
@@ -175,5 +247,82 @@ def _lax_cases():
     ]
 
 
+def _three(sa, sb, sc):
+    return {
+        "a": {"kind": "real", "shape": sa},
+        "b": {"kind": "real", "shape": sb},
+        "c": {"kind": "real", "shape": sc},
+    }
+
+
+def _numpy_cases():
+    r = _real_input
+    rr = lambda sa, sb: _two("real", sa, "real", sb)
+    return [
+        ("np_nonzero", r([5]), {}),
+        ("np_nonzero", r([3, 4]), {}),
+        ("np_nonzero_size", r([3, 4]), {"size": 3}),
+        ("np_nonzero_size", r([3, 2]), {"size": 8, "fill": 1}),
+        ("np_flatnonzero", r([3, 2]), {}),
+        ("np_argwhere", r([3, 2]), {}),
+        ("np_unique_values", r([9]), {}),
+        ("np_unique_counts", r([9]), {}),
+        ("np_unique_inverse", r([2, 5]), {}),
+        ("np_unique_all", r([9]), {}),
+        ("np_unique_size", r([9]), {"size": 12, "fill": -9.0}),
+        ("np_unique_size", r([9]), {"size": 2, "fill": 0.0}),
+        ("np_unique_axis", r([4, 2]), {"axis": 0}),
+        ("np_union1d", rr([6], [5]), {}),
+        ("np_intersect1d", rr([12], [12]), {}),
+        ("np_setdiff1d", rr([8], [8]), {}),
+        ("np_setxor1d", rr([8], [8]), {}),
+        ("np_bincount", r([8]), {}),
+        ("np_bincount_length", rr([8], [8]), {"length": 3}),
+        ("np_histogram", r([20]), {"bins": 5}),
+        ("np_histogram", r([20]), {"bins": 4, "density": True}),
+        ("np_histogram_range", r([20]), {"bins": 3, "range": [-1.0, 1.0]}),
+        ("np_histogram_bin_edges", r([20]), {"bins": 6}),
+        ("np_histogram2d", rr([15], [15]), {"bins": [3, 2]}),
+        ("np_histogram2d", rr([15], [15]), {"bins": [2, 2], "density": True}),
+        ("np_histogramdd", r([15, 3]), {"bins": [2, 3, 2]}),
+        ("np_interp", _three([6], [5], [5]), {}),
+        ("np_interp_fill", _three([6], [5], [5]), {"left": -7.0, "right": 9.0}),
+        ("np_interp_period", _three([6], [5], [5]), {"period": 2.0}),
+        ("np_gradient", r([3, 4]), {}),
+        ("np_gradient", r([5]), {"spacing": 0.5}),
+        ("np_gradient_axis", r([3, 4]), {"axis": [1]}),
+        ("np_choose", rr([5], [5]), {}),
+        ("np_compress", r([3, 2]), {"cond": [True, False, True], "axis": 0}),
+        ("np_extract", r([3, 2]), {}),
+        ("np_delete", r([5]), {"obj": [1, 3]}),
+        ("np_delete", r([3, 2]), {"obj": [0], "axis": 0}),
+        ("np_insert", r([4]), {"pos": 1, "val": 9.0}),
+        ("np_insert", r([3, 2]), {"pos": 1, "val": 9.0, "axis": 1}),
+        ("np_place", r([6]), {"val": 5.0}),
+        ("np_piecewise", r([6]), {}),
+        ("np_fill_diagonal", r([3, 3]), {"val": 7.0}),
+        ("np_fill_diagonal", r([5, 2]), {"val": 7.0}),
+        ("np_tril_indices", r([1]), {"n": 3}),
+        ("np_tril_indices", r([1]), {"n": 3, "k": -1, "m": 4}),
+        ("np_triu_indices", r([1]), {"n": 3, "k": 1}),
+        ("np_tril_indices_from", r([3, 4]), {}),
+        ("np_triu_indices_from", r([3, 4]), {"k": 1}),
+        ("np_ravel_multi_index", r([1]), {"coords": [[0, 1, 2], [3, 1, 0]], "dims": [3, 4], "mode": "clip"}),
+        ("np_ravel_multi_index", r([1]), {"coords": [[5, 1], [7, 1]], "dims": [3, 4], "mode": "wrap"}),
+        ("np_trim_zeros", r([3]), {"trim": "fb"}),
+        ("np_trim_zeros", r([3]), {"trim": "f"}),
+        ("np_frexp", r([5]), {}),
+        ("np_ldexp", r([3]), {"e": [1, 2, 3]}),
+        ("np_apply_along_axis", r([3, 4]), {"axis": 0}),
+        ("np_apply_along_axis", r([3, 4]), {"axis": 1}),
+        ("np_apply_along_axis_keep", r([3, 4]), {"axis": 0}),
+        ("np_apply_over_axes", r([2, 3, 4]), {"axes": [0, 2]}),
+        ("np_polydiv", rr([5], [2]), {}),
+        ("np_polyfit", rr([6], [6]), {"deg": 2}),
+        ("np_roots", r([4]), {}),
+        ("np_block", rr([2, 2], [2, 2]), {}),
+    ]
+
+
 def all_cases():
-    return _fft_cases() + _lax_cases()
+    return _fft_cases() + _lax_cases() + _numpy_cases()

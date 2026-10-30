@@ -748,76 +748,84 @@ let optimizer_run op a b =
       done;
       Some (Tr.tree_leaves (o.OP.get_params !state))
 
+module RC = Ojax.Random.Core
+
+let default_random_run op p =
+  let k () = seed_key p in
+  let shape =
+    if List.mem_assoc "shape" (U.to_assoc p) then ints "shape" p else [||]
+  in
+  match op with
+  | "rd_uniform" -> Some [ RC.uniform (k ()) ~shape ~minval:(-1.0) ~maxval:3.0 ]
+  | "rd_normal" -> Some [ RC.normal (k ()) ~shape ]
+  | "rd_randint" -> Some [ RC.randint (k ()) ~shape ~minval:(-3) ~maxval:50 ]
+  | "rd_truncated_normal" ->
+      Some [ RC.truncated_normal (k ()) ~lower:(-1.0) ~upper:2.0 ~shape ]
+  | "rd_exponential" -> Some [ RC.exponential (k ()) ~shape ]
+  | "rd_cauchy" -> Some [ RC.cauchy (k ()) ~shape ]
+  | "rd_laplace" -> Some [ RC.laplace (k ()) ~shape ]
+  | "rd_logistic" -> Some [ RC.logistic (k ()) ~shape ]
+  | "rd_gumbel" -> Some [ RC.gumbel (k ()) ~shape ]
+  | "rd_bernoulli" -> Some [ RC.bernoulli (k ()) ~shape ~p:0.4 ]
+  | "rd_rademacher" -> Some [ RC.rademacher (k ()) ~shape ]
+  | "rd_gamma" -> Some [ RC.gamma (k ()) ~shape ~a:2.5 ]
+  | "rd_beta" -> Some [ RC.beta (k ()) ~shape ~a:2.0 ~b:3.0 ]
+  | "rd_chisquare" -> Some [ RC.chisquare (k ()) ~shape ~df:3.0 ]
+  | "rd_t" -> Some [ RC.t (k ()) ~shape ~df:4.0 ]
+  | "rd_f" -> Some [ RC.f (k ()) ~shape ~dfnum:3.0 ~dfden:5.0 ]
+  | "rd_lognormal" -> Some [ RC.lognormal (k ()) ~shape ~sigma:0.5 ]
+  | "rd_pareto" -> Some [ RC.pareto (k ()) ~shape ~b:2.0 ]
+  | "rd_rayleigh" -> Some [ RC.rayleigh (k ()) ~shape ~scale:1.5 ]
+  | "rd_wald" -> Some [ RC.wald (k ()) ~shape ~mean:1.5 ]
+  | "rd_geometric" -> Some [ RC.geometric (k ()) ~shape ~p:0.3 ]
+  | "rd_poisson" -> Some [ RC.poisson (k ()) ~shape ~lam:3.0 ]
+  | "rd_binomial" -> Some [ RC.binomial (k ()) ~shape ~count:10.0 ~prob:0.3 ]
+  | "rd_poisson_large" -> Some [ RC.poisson (k ()) ~shape ~lam:30.0 ]
+  | "rd_binomial_large" ->
+      Some [ RC.binomial (k ()) ~shape ~count:100.0 ~prob:0.3 ]
+  | "rd_binomial_flip" ->
+      Some [ RC.binomial (k ()) ~shape ~count:100.0 ~prob:0.7 ]
+  | "rd_permutation" -> Some [ RC.permutation (k ()) 6 ]
+  | "rd_choice" -> Some [ RC.choice (k ()) ~n:6 ~shape ~replace:true ]
+  | _ -> None
+
+let fft_run op params a =
+  match op with
+  | "fft" -> fft1 F.fft (a ()) params
+  | "ifft" -> fft1 F.ifft (a ()) params
+  | "rfft" -> fft1 F.rfft (a ()) params
+  | "irfft" -> fft1 F.irfft (a ()) params
+  | "hfft" -> fft1 F.hfft (a ()) params
+  | "ihfft" -> fft1 F.ihfft (a ()) params
+  | "fftn" -> fftnd F.fftn (a ()) params
+  | "ifftn" -> fftnd F.ifftn (a ()) params
+  | "rfftn" -> fftnd F.rfftn (a ()) params
+  | "irfftn" -> fftnd F.irfftn (a ()) params
+  | "fft2" -> [ F.fft2 ?norm:(opt_string "norm" params) (a ()) ]
+  | "ifft2" -> [ F.ifft2 ?norm:(opt_string "norm" params) (a ()) ]
+  | "rfft2" -> [ F.rfft2 ?norm:(opt_string "norm" params) (a ()) ]
+  | "irfft2" -> [ F.irfft2 ?norm:(opt_string "norm" params) (a ()) ]
+  | "fftshift" -> [ F.fftshift ?axes:(opt_ints "axes" params) (a ()) ]
+  | "ifftshift" -> [ F.ifftshift ?axes:(opt_ints "axes" params) (a ()) ]
+  | other -> failwith ("parity: unknown op " ^ other)
+
 let run op params get =
   let a () = get "a" in
   let b () = get "b" in
   let c () = get "c" in
-  match lax_extra_run op params a with
+  let runners =
+    [
+      (fun () -> default_random_run op params);
+      (fun () -> lax_extra_run op params a);
+      (fun () -> misc_scipy_run op params a b);
+      (fun () -> batched_run op params a b);
+      (fun () -> narrow_run op params a b);
+      (fun () -> optimizer_run op a b);
+      (fun () -> scipy_run op params a b c);
+      (fun () -> numpy_run op params a b c);
+      (fun () -> lax_run op params a b);
+    ]
+  in
+  match List.find_map (fun runner -> runner ()) runners with
   | Some out -> out
-  | None -> (
-      match misc_scipy_run op params a b with
-      | Some out -> out
-      | None -> (
-          match batched_run op params a b with
-          | Some out -> out
-          | None -> (
-              match narrow_run op params a b with
-              | Some out -> out
-              | None -> (
-                  match optimizer_run op a b with
-                  | Some out -> out
-                  | None -> (
-                      match scipy_run op params a b c with
-                      | Some out -> out
-                      | None -> (
-                          match numpy_run op params a b c with
-                          | Some out -> out
-                          | None -> (
-                              match lax_run op params a b with
-                              | Some out -> out
-                              | None -> (
-                                  match op with
-                                  | "fft" -> fft1 F.fft (a ()) params
-                                  | "ifft" -> fft1 F.ifft (a ()) params
-                                  | "rfft" -> fft1 F.rfft (a ()) params
-                                  | "irfft" -> fft1 F.irfft (a ()) params
-                                  | "hfft" -> fft1 F.hfft (a ()) params
-                                  | "ihfft" -> fft1 F.ihfft (a ()) params
-                                  | "fftn" -> fftnd F.fftn (a ()) params
-                                  | "ifftn" -> fftnd F.ifftn (a ()) params
-                                  | "rfftn" -> fftnd F.rfftn (a ()) params
-                                  | "irfftn" -> fftnd F.irfftn (a ()) params
-                                  | "fft2" ->
-                                      [
-                                        F.fft2 ?norm:(opt_string "norm" params)
-                                          (a ());
-                                      ]
-                                  | "ifft2" ->
-                                      [
-                                        F.ifft2 ?norm:(opt_string "norm" params)
-                                          (a ());
-                                      ]
-                                  | "rfft2" ->
-                                      [
-                                        F.rfft2 ?norm:(opt_string "norm" params)
-                                          (a ());
-                                      ]
-                                  | "irfft2" ->
-                                      [
-                                        F.irfft2
-                                          ?norm:(opt_string "norm" params)
-                                          (a ());
-                                      ]
-                                  | "fftshift" ->
-                                      [
-                                        F.fftshift
-                                          ?axes:(opt_ints "axes" params) (a ());
-                                      ]
-                                  | "ifftshift" ->
-                                      [
-                                        F.ifftshift
-                                          ?axes:(opt_ints "axes" params) (a ());
-                                      ]
-                                  | other ->
-                                      failwith ("parity: unknown op " ^ other)))
-                          ))))))
+  | None -> fft_run op params a

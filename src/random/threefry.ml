@@ -118,6 +118,13 @@ let split_nd key shape =
   done;
   of_u32 (Array.append shape [| 2 |]) out
 
+let bits64 key shape =
+  let hi, lo = Prng.iota_2x32_nd shape in
+  let k1 = geti key 0 and k2 = geti key 1 in
+  Array.init (prod shape) (fun i ->
+      let a, b = hash2x32 k1 k2 (geti hi i) (geti lo i) in
+      Int64.logor (Int64.shift_left (Int64.of_int a) 32) (Int64.of_int b))
+
 let bits_nd key bit_width shape =
   if bit_width <> 32 then
     failwith "threefry: only 32-bit random_bits supported (M3)";

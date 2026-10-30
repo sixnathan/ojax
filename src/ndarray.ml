@@ -146,6 +146,16 @@ let of_floats dtype shape floats =
   Array.iteri (fun i v -> write_float dtype data i v) floats;
   { dtype; shape = Array.copy shape; data }
 
+let of_int64s dtype shape values =
+  let n = size shape in
+  if Array.length values <> n then
+    invalid_arg "Ndarray.of_int64s: length mismatch";
+  match create_buffer dtype n with
+  | Int64_buf a as data ->
+      Array.iteri (fun i v -> Array1.unsafe_set a i v) values;
+      { dtype; shape = Array.copy shape; data }
+  | _ -> invalid_arg "Ndarray.of_int64s: not a 64-bit integer dtype"
+
 let of_complex dtype shape values =
   let n = size shape in
   if Array.length values <> n then

@@ -2668,7 +2668,11 @@ let prng_suite_for set_name =
 
 module RC = Ojax.Random.Core
 
-let random_core_fn op params operands : T.value list =
+let rec random_core_fn op params operands : T.value list =
+  RC.with_dtypes ~float_dtype:D.F32 ~int_dtype:D.I32 (fun () ->
+      random_core_fn_pinned op params operands)
+
+and random_core_fn_pinned op params operands : T.value list =
   let member name = U.member name params in
   let shape () = ia (member "shape") in
   let ip name = U.to_int (member name) in
@@ -2845,7 +2849,11 @@ let init_dist_of j =
   | "uniform" -> INIT.Uniform
   | s -> failwith ("initializers golden: unknown distribution " ^ s)
 
-let initializers_fn op params operands : T.value list =
+let rec initializers_fn op params operands : T.value list =
+  RC.with_dtypes ~float_dtype:D.F32 (fun () ->
+      initializers_fn_pinned op params operands)
+
+and initializers_fn_pinned op params operands : T.value list =
   let member name = U.member name params in
   let fp name = U.to_number (member name) in
   let shape () = ia (member "shape") in

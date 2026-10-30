@@ -7,3 +7,4 @@ val threefry_split : value -> int array -> value
 val threefry_fold_in : value -> value -> value
 val threefry_random_bits : value -> int -> int array -> value
 val install : unit -> unit
+val bits64 : Ndarray.t -> int array -> int64 array

@@ -1,6 +1,7 @@
 type t
 
 val of_floats : Dtype.t -> int array -> float array -> t
+val of_int64s : Dtype.t -> int array -> int64 array -> t
 val of_complex : Dtype.t -> int array -> Complex.t array -> t
 val dtype : t -> Dtype.t
 val shape : t -> int array

@@ -149,10 +149,10 @@ def _scipy_ops():
         "sl_convolution_matrix": lambda a, p: sl.convolution_matrix(a, p["n"], mode=p["mode"]),
         "sl_invhilbert": lambda a, p: sl.invhilbert(p["n"]),
         "sl_solve_sylvester": lambda a, b, c, p: sl.solve_sylvester(a + 4.0 * jnp.eye(a.shape[0], dtype=a.dtype), b + 4.0 * jnp.eye(b.shape[0], dtype=b.dtype), c),
-        "rnd_maxwell": lambda a, p: jr.maxwell(jr.key(p["seed"]), tuple(p["shape"]), dtype=jnp.float32),
-        "rnd_double_sided_maxwell": lambda a, p: jr.double_sided_maxwell(jr.key(p["seed"]), p["loc"], p["scale"], tuple(p["shape"]), dtype=jnp.float32),
-        "rnd_ball": lambda a, p: jr.ball(jr.key(p["seed"]), p["d"], p=p.get("p", 2), shape=tuple(p["shape"]), dtype=jnp.float32),
-        "rnd_multivariate_normal": lambda a, b, p: jr.multivariate_normal(jr.key(p["seed"]), a.astype(jnp.float32), (b @ b.T + 2.0 * jnp.eye(b.shape[0], dtype=b.dtype)).astype(jnp.float32), shape=tuple(p["shape"]), method=p["method"], dtype=jnp.float32),
+        "rnd_maxwell": lambda a, p: jr.maxwell(jr.key(p["seed"]), tuple(p["shape"])),
+        "rnd_double_sided_maxwell": lambda a, p: jr.double_sided_maxwell(jr.key(p["seed"]), p["loc"], p["scale"], tuple(p["shape"])),
+        "rnd_ball": lambda a, p: jr.ball(jr.key(p["seed"]), p["d"], p=p.get("p", 2), shape=tuple(p["shape"])),
+        "rnd_multivariate_normal": lambda a, b, p: jr.multivariate_normal(jr.key(p["seed"]), a, (b @ b.T + 2.0 * jnp.eye(b.shape[0], dtype=b.dtype)), shape=tuple(p["shape"]), method=p["method"]),
         "nn_swish": lambda a, p: jn.swish(a),
         "nn_hard_swish": lambda a, p: jn.hard_swish(a),
         "nn_logsumexp": lambda a, p: jn.logsumexp(a, axis=p["axis"]),
@@ -229,6 +229,42 @@ def _lax_extra_ops():
     }
 
 
+def _default_random_ops():
+    from jax import random as jr
+    k = lambda p: jr.key(p["seed"])
+    sh = lambda p: tuple(p["shape"])
+    return {
+        "rd_uniform": lambda a, p: jr.uniform(k(p), sh(p), minval=-1.0, maxval=3.0),
+        "rd_normal": lambda a, p: jr.normal(k(p), sh(p)),
+        "rd_randint": lambda a, p: jr.randint(k(p), sh(p), -3, 50),
+        "rd_truncated_normal": lambda a, p: jr.truncated_normal(k(p), -1.0, 2.0, sh(p)),
+        "rd_exponential": lambda a, p: jr.exponential(k(p), sh(p)),
+        "rd_cauchy": lambda a, p: jr.cauchy(k(p), sh(p)),
+        "rd_laplace": lambda a, p: jr.laplace(k(p), sh(p)),
+        "rd_logistic": lambda a, p: jr.logistic(k(p), sh(p)),
+        "rd_gumbel": lambda a, p: jr.gumbel(k(p), sh(p)),
+        "rd_bernoulli": lambda a, p: jr.bernoulli(k(p), 0.4, sh(p)),
+        "rd_rademacher": lambda a, p: jr.rademacher(k(p), sh(p)),
+        "rd_gamma": lambda a, p: jr.gamma(k(p), 2.5, sh(p)),
+        "rd_beta": lambda a, p: jr.beta(k(p), 2.0, 3.0, sh(p)),
+        "rd_chisquare": lambda a, p: jr.chisquare(k(p), 3.0, sh(p)),
+        "rd_t": lambda a, p: jr.t(k(p), 4.0, sh(p)),
+        "rd_f": lambda a, p: jr.f(k(p), 3.0, 5.0, sh(p)),
+        "rd_lognormal": lambda a, p: jr.lognormal(k(p), 0.5, sh(p)),
+        "rd_pareto": lambda a, p: jr.pareto(k(p), 2.0, sh(p)),
+        "rd_rayleigh": lambda a, p: jr.rayleigh(k(p), 1.5, sh(p)),
+        "rd_wald": lambda a, p: jr.wald(k(p), 1.5, sh(p)),
+        "rd_geometric": lambda a, p: jr.geometric(k(p), 0.3, sh(p)),
+        "rd_poisson": lambda a, p: jr.poisson(k(p), 3.0, sh(p)),
+        "rd_binomial": lambda a, p: jr.binomial(k(p), 10.0, 0.3, sh(p)),
+        "rd_poisson_large": lambda a, p: jr.poisson(k(p), 30.0, sh(p)),
+        "rd_binomial_large": lambda a, p: jr.binomial(k(p), 100.0, 0.3, sh(p)),
+        "rd_binomial_flip": lambda a, p: jr.binomial(k(p), 100.0, 0.7, sh(p)),
+        "rd_permutation": lambda a, p: jr.permutation(k(p), 6),
+        "rd_choice": lambda a, p: jr.choice(k(p), 6, sh(p)),
+    }
+
+
 def _in_range(a, name):
     return jnp.abs(a) if name.startswith("uint") else a
 
@@ -267,10 +303,6 @@ def _newton(f, x0):
 
 
 SINGLE_PRECISION_ONLY = {
-    "rnd_maxwell",
-    "rnd_double_sided_maxwell",
-    "rnd_ball",
-    "rnd_multivariate_normal",
     "nn_attention",
 }
 
@@ -283,6 +315,7 @@ OPS.update(_narrow_ops())
 OPS.update(_batched_ops())
 OPS.update(_misc_scipy_ops())
 OPS.update(_lax_extra_ops())
+OPS.update(_default_random_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -631,5 +664,10 @@ def _lax_extra_cases():
     ]
 
 
+def _default_random_cases():
+    ops = "uniform normal randint truncated_normal exponential cauchy laplace logistic gumbel bernoulli rademacher gamma beta chisquare t f lognormal pareto rayleigh wald geometric poisson poisson_large binomial binomial_large binomial_flip permutation choice"
+    return [("rd_" + o, _real_input([1]), {"seed": 11, "shape": [4]}) for o in ops.split()]
+
+
 def all_cases():
-    return _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

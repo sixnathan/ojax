@@ -1,5 +1,8 @@
 open Types
 
+val with_dtypes :
+  ?float_dtype:Dtype.t -> ?int_dtype:Dtype.t -> (unit -> 'a) -> 'a
+
 val default_prng_impl : unit -> Prng.prng_impl
 val resolve_prng_impl : string option -> Prng.prng_impl
 val key_impl : value -> string

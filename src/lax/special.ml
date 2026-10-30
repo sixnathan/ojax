@@ -77,7 +77,7 @@ let rec digamma x =
 let erf x = Float.erf x
 let erfc x = Float.erfc x
 
-let erf_inv x =
+let erf_inv_single x =
   let w = -.Float.log1p (-.(x *. x)) in
   if w < 5.0 then begin
     let w = w -. 2.5 in
@@ -596,3 +596,14 @@ let regularized_incomplete_beta dtype a b x =
     let result = continued_fraction *. factor in
     if converges_rapidly then result else 1.0 -. result
   end
+
+let erf_inv x =
+  let start = erf_inv_single x in
+  if (not (Float.is_finite start)) || Float.abs x >= 1.0 then start
+  else
+    let two_over_sqrt_pi = 1.1283791670955126 in
+    let refine y =
+      let residual = Float.erf y -. x in
+      y -. (residual /. (two_over_sqrt_pi *. Float.exp (-.(y *. y))))
+    in
+    refine (refine start)

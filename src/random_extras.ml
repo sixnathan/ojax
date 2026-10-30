@@ -58,7 +58,11 @@ let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") key ~mean ~cov
   let event = mean_shape.(rank - 1) in
   let batch = Array.sub mean_shape 0 (rank - 1) in
   let sh = Option.value shape_opt ~default:batch in
-  let z = C.normal key ~shape:(Array.append sh [| event |]) in
+  let float_dtype = NL.result_type [ mean; cov ] in
+  let z =
+    C.with_dtypes ~float_dtype (fun () ->
+        C.normal key ~shape:(Array.append sh [| event |]))
+  in
   let factor =
     match method_ with
     | "cholesky" -> Numpy.Linalg.cholesky cov

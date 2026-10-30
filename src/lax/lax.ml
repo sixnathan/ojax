@@ -1437,6 +1437,7 @@ let impl prim inputs =
       let primal =
         match Core.custom_rule id with
         | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } -> primal
+        | Core.Callback_rule { host; _ } -> host
         | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call"
       in
       List.map custom_output (primal (List.map (fun nd -> Concrete nd) inputs))

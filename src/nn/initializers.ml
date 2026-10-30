@@ -116,11 +116,71 @@ let kaiming_uniform = he_uniform
 let kaiming_normal = he_normal
 
 let orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
-  let _ = scale and _ = column_axis in
-  fun _key ~shape:_ ->
-    failwith "nn.initializers.orthogonal: requires jnp.linalg.qr (M5)"
+ fun key ~shape ->
+  let rank = Array.length shape in
+  if rank < 2 then
+    invalid_arg "orthogonal initializer requires at least a 2D shape";
+  let axis = if column_axis < 0 then column_axis + rank else column_axis in
+  let n_cols = shape.(axis) in
+  let n_rows = prod shape / n_cols in
+  let matrix_shape =
+    if n_rows < n_cols then [| n_cols; n_rows |] else [| n_rows; n_cols |]
+  in
+  let a = Random.Core.normal key ~shape:matrix_shape in
+  let q, r =
+    match Numpy.Linalg.qr a with
+    | [ q; r ] -> (q, r)
+    | _ -> failwith "orthogonal: qr arity"
+  in
+  let signs = C.bind1 Sign [ Numpy.Lax_numpy.diagonal r ] in
+  let qs = C.get_aval q in
+  let scaled =
+    C.bind1 Mul
+      [
+        q;
+        C.bind1
+          (Broadcast_in_dim { shape = qs.shape; dims = [| 1 |] })
+          [ signs ];
+      ]
+  in
+  let oriented =
+    if n_rows < n_cols then C.bind1 (Transpose [| 1; 0 |]) [ scaled ]
+    else scaled
+  in
+  let others =
+    Array.of_list (List.filteri (fun i _ -> i <> axis) (Array.to_list shape))
+  in
+  let reshaped =
+    C.bind1 (Reshape (Array.append others [| n_cols |])) [ oriented ]
+  in
+  let moved = Numpy.Lax_numpy.moveaxis [| rank - 1 |] [| axis |] reshaped in
+  let f = C.get_aval moved in
+  C.bind1 Mul
+    [
+      moved;
+      Concrete (Nd.of_floats f.dtype f.shape (Array.make (prod f.shape) scale));
+    ]
 
 let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
-  let _ = scale and _ = column_axis in
-  fun _key ~shape:_ ->
-    failwith "nn.initializers.delta_orthogonal: requires jnp.linalg.qr (M5)"
+ fun key ~shape ->
+  let rank = Array.length shape in
+  if rank < 3 || rank > 5 then
+    invalid_arg "Delta orthogonal initializer requires a 3D, 4D or 5D shape.";
+  if shape.(rank - 1) < shape.(rank - 2) then
+    invalid_arg "`fan_in` must be less or equal than `fan_out`. ";
+  let ortho =
+    orthogonal ~scale ~column_axis () key
+      ~shape:[| shape.(rank - 2); shape.(rank - 1) |]
+  in
+  let a = C.get_aval ortho in
+  let center = Array.sub shape 0 (rank - 2) in
+  let mid = Array.map (fun d -> (d - 1) / 2) center in
+  let cfg =
+    Array.init rank (fun i ->
+        if i < rank - 2 then (mid.(i), center.(i) - mid.(i) - 1, 0)
+        else (0, 0, 0))
+  in
+  let expanded =
+    C.bind1 (Reshape (Array.append (Array.make (rank - 2) 1) a.shape)) [ ortho ]
+  in
+  C.bind1 (Pad cfg) [ expanded; Concrete (Nd.of_floats a.dtype [||] [| 0.0 |]) ]

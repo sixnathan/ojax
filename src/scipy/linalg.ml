@@ -265,32 +265,25 @@ let hessenberg ?(calc_q = false) a =
     end
   end
 
-let expm ?(upper_triangular = false) a =
+let rec expm ?(upper_triangular = false) a =
   let a = to_inexact a in
   let sh = shape a in
   let nd = Array.length sh in
   if nd < 2 || sh.(nd - 1) <> sh.(nd - 2) then
     invalid_arg "expm: expected A to be a (batched) square matrix";
   if nd > 2 then
-    failwith "scipy.linalg.expm: batched inputs (ndim>2) unsupported in ojax";
-  let n = sh.(0) in
-  let dt = dtype a in
-  let ident = NL.eye ~dtype:dt n in
-  let sc co m = UF.multiply (scalar_of a co) m in
-  let dotp = TC.matmul in
-  let l1f = host_float (RED.amax (RED.sum ~axis:[| 0 |] (UF.abs a))) in
-  let is64 = dt = D.F64 || dt = D.Complex128 in
-  let maxnorm = if is64 then 5.371920351148152 else 3.925724783138660 in
-  let nsq =
-    if l1f <= 0.0 then 0
-    else max 0 (int_of_float (Float.floor (Float.log2 (l1f /. maxnorm))))
-  in
-  let max_squarings = 16 in
-  if nsq > max_squarings then AC.full_like a Float.nan
-  else begin
-    let a =
-      if nsq = 0 then a else UF.divide a (scalar_of a (2.0 ** float_of_int nsq))
-    in
+    List.hd
+      (Interpreters.Batching.vmap
+         (fun args -> [ expm ~upper_triangular (List.hd args) ])
+         [ Some 0 ] [ a ])
+  else
+    let n = sh.(0) in
+    let dt = dtype a in
+    let ident = NL.eye ~dtype:dt n in
+    let sc co m = UF.multiply (scalar_of a co) m in
+    let dotp = TC.matmul in
+    let is64 = dt = D.F64 || dt = D.Complex128 in
+    let maxnorm = if is64 then 5.371920351148152 else 3.925724783138660 in
     let conds =
       if is64 then
         [|
@@ -301,97 +294,164 @@ let expm ?(upper_triangular = false) a =
         |]
       else [| 4.258730016922831e-1; 1.880152677804762 |]
     in
-    let idx =
-      Array.fold_left (fun acc c -> if c <= l1f then acc + 1 else acc) 0 conds
-    in
-    let pade3 () =
-      let a2 = dotp a a in
-      let u = dotp a (UF.add (sc 1.0 a2) (sc 60.0 ident)) in
-      let v = UF.add (sc 12.0 a2) (sc 120.0 ident) in
-      (u, v)
-    in
-    let pade5 () =
-      let a2 = dotp a a in
-      let a4 = dotp a2 a2 in
-      let u =
-        dotp a (UF.add (sc 1.0 a4) (UF.add (sc 420.0 a2) (sc 15120.0 ident)))
+    let pades_for a =
+      let pade3 () =
+        let a2 = dotp a a in
+        let u = dotp a (UF.add (sc 1.0 a2) (sc 60.0 ident)) in
+        let v = UF.add (sc 12.0 a2) (sc 120.0 ident) in
+        (u, v)
       in
-      let v = UF.add (sc 30.0 a4) (UF.add (sc 3360.0 a2) (sc 30240.0 ident)) in
-      (u, v)
+      let pade5 () =
+        let a2 = dotp a a in
+        let a4 = dotp a2 a2 in
+        let u =
+          dotp a (UF.add (sc 1.0 a4) (UF.add (sc 420.0 a2) (sc 15120.0 ident)))
+        in
+        let v =
+          UF.add (sc 30.0 a4) (UF.add (sc 3360.0 a2) (sc 30240.0 ident))
+        in
+        (u, v)
+      in
+      let pade7 () =
+        let a2 = dotp a a in
+        let a4 = dotp a2 a2 in
+        let a6 = dotp a4 a2 in
+        let u =
+          dotp a
+            (UF.add (sc 1.0 a6)
+               (UF.add (sc 1512.0 a4)
+                  (UF.add (sc 277200.0 a2) (sc 8648640.0 ident))))
+        in
+        let v =
+          UF.add (sc 56.0 a6)
+            (UF.add (sc 25200.0 a4)
+               (UF.add (sc 1995840.0 a2) (sc 17297280.0 ident)))
+        in
+        (u, v)
+      in
+      let pade9 () =
+        let a2 = dotp a a in
+        let a4 = dotp a2 a2 in
+        let a6 = dotp a4 a2 in
+        let a8 = dotp a6 a2 in
+        let u =
+          dotp a
+            (UF.add (sc 1.0 a8)
+               (UF.add (sc 3960.0 a6)
+                  (UF.add (sc 2162160.0 a4)
+                     (UF.add (sc 302702400.0 a2) (sc 8821612800.0 ident)))))
+        in
+        let v =
+          UF.add (sc 90.0 a8)
+            (UF.add (sc 110880.0 a6)
+               (UF.add (sc 30270240.0 a4)
+                  (UF.add (sc 2075673600.0 a2) (sc 17643225600.0 ident))))
+        in
+        (u, v)
+      in
+      let pade13 () =
+        let a2 = dotp a a in
+        let a4 = dotp a2 a2 in
+        let a6 = dotp a4 a2 in
+        let u =
+          dotp a
+            (UF.add
+               (dotp a6
+                  (UF.add (sc 1.0 a6)
+                     (UF.add (sc 16380.0 a4) (sc 40840800.0 a2))))
+               (UF.add (sc 33522128640.0 a6)
+                  (UF.add (sc 10559470521600.0 a4)
+                     (UF.add (sc 1187353796428800.0 a2)
+                        (sc 32382376266240000.0 ident)))))
+        in
+        let v =
+          UF.add
+            (dotp a6
+               (UF.add (sc 182.0 a6)
+                  (UF.add (sc 960960.0 a4) (sc 1323241920.0 a2))))
+            (UF.add (sc 670442572800.0 a6)
+               (UF.add (sc 129060195264000.0 a4)
+                  (UF.add (sc 7771770303897600.0 a2)
+                     (sc 64764752532480000.0 ident))))
+        in
+        (u, v)
+      in
+      let pades =
+        if is64 then [| pade3; pade5; pade7; pade9; pade13 |]
+        else [| pade3; pade5; pade7 |]
+      in
+      pades
     in
-    let pade7 () =
-      let a2 = dotp a a in
-      let a4 = dotp a2 a2 in
-      let a6 = dotp a4 a2 in
-      let u =
-        dotp a
-          (UF.add (sc 1.0 a6)
-             (UF.add (sc 1512.0 a4)
-                (UF.add (sc 277200.0 a2) (sc 8648640.0 ident))))
+    let is_traced = match a with T.Tracer _ -> true | _ -> false in
+    if is_traced then begin
+      let module L = Lax_api in
+      let l1 = RED.amax (RED.sum ~axis:[| 0 |] (UF.abs a)) in
+      let real_dt = (Core.get_aval l1).T.dtype in
+      let const x = L.full [||] x real_dt in
+      let exact = L.floor (UF.log2 (L.div l1 (const maxnorm))) in
+      let nsq_v =
+        L.select (L.gt l1 (const 0.0)) (L.max exact (const 0.0)) (const 0.0)
       in
-      let v =
-        UF.add (sc 56.0 a6)
-          (UF.add (sc 25200.0 a4)
-             (UF.add (sc 1995840.0 a2) (sc 17297280.0 ident)))
+      let factor = L.pow (const 2.0) nsq_v in
+      let widen v = NL.astype (L.broadcast_in_dim v sh [||]) dt in
+      let scaled = UF.divide a (widen factor) in
+      let results = Array.map (fun f -> f ()) (pades_for scaled) in
+      let pick select_part =
+        let last = Array.length results - 1 in
+        let rec go i =
+          if i = last then select_part results.(i)
+          else
+            NL.where_
+              (widen_bool (L.lt l1 (const conds.(i))))
+              (select_part results.(i))
+              (go (i + 1))
+        and widen_bool c = L.broadcast_in_dim c sh [||] in
+        go 0
       in
-      (u, v)
-    in
-    let pade9 () =
-      let a2 = dotp a a in
-      let a4 = dotp a2 a2 in
-      let a6 = dotp a4 a2 in
-      let a8 = dotp a6 a2 in
-      let u =
-        dotp a
-          (UF.add (sc 1.0 a8)
-             (UF.add (sc 3960.0 a6)
-                (UF.add (sc 2162160.0 a4)
-                   (UF.add (sc 302702400.0 a2) (sc 8821612800.0 ident)))))
+      let u = pick fst and v = pick snd in
+      let p = UF.add u v and q = UF.add (UF.negative u) v in
+      let r = if upper_triangular then solve_triangular q p else LN.solve q p in
+      let max_squarings = 16 in
+      let rec loop r k =
+        if k = max_squarings then r
+        else
+          let now = L.lt (const (float_of_int k)) nsq_v in
+          loop (NL.where_ (L.broadcast_in_dim now sh [||]) (dotp r r) r) (k + 1)
       in
-      let v =
-        UF.add (sc 90.0 a8)
-          (UF.add (sc 110880.0 a6)
-             (UF.add (sc 30270240.0 a4)
-                (UF.add (sc 2075673600.0 a2) (sc 17643225600.0 ident))))
+      let out = loop r 0 in
+      let too_many = L.gt nsq_v (const (float_of_int max_squarings)) in
+      NL.where_
+        (L.broadcast_in_dim too_many sh [||])
+        (AC.full_like out Float.nan)
+        out
+    end
+    else
+      let l1f = host_float (RED.amax (RED.sum ~axis:[| 0 |] (UF.abs a))) in
+      let nsq =
+        if l1f <= 0.0 then 0
+        else max 0 (int_of_float (Float.floor (Float.log2 (l1f /. maxnorm))))
       in
-      (u, v)
-    in
-    let pade13 () =
-      let a2 = dotp a a in
-      let a4 = dotp a2 a2 in
-      let a6 = dotp a4 a2 in
-      let u =
-        dotp a
-          (UF.add
-             (dotp a6
-                (UF.add (sc 1.0 a6) (UF.add (sc 16380.0 a4) (sc 40840800.0 a2))))
-             (UF.add (sc 33522128640.0 a6)
-                (UF.add (sc 10559470521600.0 a4)
-                   (UF.add (sc 1187353796428800.0 a2)
-                      (sc 32382376266240000.0 ident)))))
-      in
-      let v =
-        UF.add
-          (dotp a6
-             (UF.add (sc 182.0 a6)
-                (UF.add (sc 960960.0 a4) (sc 1323241920.0 a2))))
-          (UF.add (sc 670442572800.0 a6)
-             (UF.add (sc 129060195264000.0 a4)
-                (UF.add (sc 7771770303897600.0 a2)
-                   (sc 64764752532480000.0 ident))))
-      in
-      (u, v)
-    in
-    let pades =
-      if is64 then [| pade3; pade5; pade7; pade9; pade13 |]
-      else [| pade3; pade5; pade7 |]
-    in
-    let u, v = pades.(idx) () in
-    let p = UF.add u v and q = UF.add (UF.negative u) v in
-    let r = if upper_triangular then solve_triangular q p else LN.solve q p in
-    let rec sq r k = if k = 0 then r else sq (dotp r r) (k - 1) in
-    sq r nsq
-  end
+      let max_squarings = 16 in
+      if nsq > max_squarings then AC.full_like a Float.nan
+      else begin
+        let a =
+          if nsq = 0 then a
+          else UF.divide a (scalar_of a (2.0 ** float_of_int nsq))
+        in
+        let idx =
+          Array.fold_left
+            (fun acc c -> if c <= l1f then acc + 1 else acc)
+            0 conds
+        in
+        let pades = pades_for a in
+        let u, v = pades.(idx) () in
+        let p = UF.add u v and q = UF.add (UF.negative u) v in
+        let r =
+          if upper_triangular then solve_triangular q p else LN.solve q p
+        in
+        let rec sq r k = if k = 0 then r else sq (dotp r r) (k - 1) in
+        sq r nsq
+      end
 
 let expm_frechet ?(compute_expm = true) a e =
   ignore compute_expm;

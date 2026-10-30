@@ -166,3 +166,5 @@ val cov :
 
 val corrcoef :
   ?y:Types.value -> ?rowvar:bool -> ?dtype:Dtype.t -> Types.value -> Types.value
+
+val argsort_values : Types.value -> Types.value

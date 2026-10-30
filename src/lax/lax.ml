@@ -837,18 +837,32 @@ let reduce_precision_bits64 mant_bits bits =
     let trunc = Int64.lognot (Int64.sub last 1L) in
     Int64.logand rounded trunc
 
+let limit_exponent exponent_bits x =
+  if (not (Float.is_finite x)) || x = 0.0 then x
+  else
+    let _, e = Float.frexp x in
+    let exponent = e - 1 in
+    let bias = (1 lsl (exponent_bits - 1)) - 1 in
+    if exponent > bias then Float.copy_sign Float.infinity x
+    else if exponent < 1 - bias then Float.copy_sign 0.0 x
+    else x
+
 let reduce_precision_f dt exponent_bits mantissa_bits x =
   match dt with
   | Dtype.F32 ->
       if exponent_bits < 8 then
-        failwith "lax: reduce_precision exponent reduction deferred (M5)"
+        limit_exponent exponent_bits
+          (Int32.float_of_bits
+             (reduce_precision_bits32 mantissa_bits (Int32.bits_of_float x)))
       else if not (Float.is_finite x) then x
       else
         Int32.float_of_bits
           (reduce_precision_bits32 mantissa_bits (Int32.bits_of_float x))
   | Dtype.F64 ->
       if exponent_bits < 11 then
-        failwith "lax: reduce_precision exponent reduction deferred (M5)"
+        limit_exponent exponent_bits
+          (Int64.float_of_bits
+             (reduce_precision_bits64 mantissa_bits (Int64.bits_of_float x)))
       else if not (Float.is_finite x) then x
       else
         Int64.float_of_bits
@@ -1257,8 +1271,7 @@ let rec impl_base prim inputs =
   | Empty2 dtype -> [ empty_impl dtype [||] ]
   | Composite cj -> composite_impl cj inputs
   | Dce_sink -> []
-  | After_all | Create_token ->
-      failwith "lax: token primitives are not represented in M1"
+  | After_all | Create_token -> [ Ndarray.of_floats Dtype.F32 [| 0 |] [||] ]
   | From_edtype _ ->
       failwith "lax: from_edtype (extended dtypes) deferred to M5"
   | Optimization_barrier -> inputs
@@ -2011,8 +2024,7 @@ let abstract_eval prim avals =
   | Empty2 dtype -> [ shaped [||] dtype false ]
   | Composite cj -> List.map aval_of_atom cj.jaxpr.outs
   | Dce_sink -> []
-  | After_all | Create_token ->
-      failwith "lax: token primitives have no shaped aval in M1"
+  | After_all | Create_token -> [ shaped [| 0 |] Dtype.F32 false ]
   | From_edtype _ ->
       failwith "lax: from_edtype (extended dtypes) deferred to M5"
   | Optimization_barrier -> avals

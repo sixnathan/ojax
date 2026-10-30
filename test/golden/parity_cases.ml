@@ -842,6 +842,67 @@ let array_random_run op p a b =
       Some (Ojax.Interpreters.Ad.grad f [ a () ])
   | _ -> None
 
+module ST = Ojax.Scipy.Stats.Stats_core
+module INI = Ojax.Nn.Initializers
+
+let gap_run op p a b =
+  let k () = seed_key p in
+  match op with
+  | "gp_qr_full" -> Some (LA.qr ~mode:"complete" (a ()))
+  | "gp_svd_hermitian" ->
+      let x = a () in
+      let sym = L.add x (L.transpose x [| 1; 0 |]) in
+      Some (LA.svd ~hermitian:true ~compute_uv:false sym)
+  | "gp_pinv_hermitian" ->
+      let x = a () in
+      Some [ LA.pinv ~hermitian:true (L.add x (L.transpose x [| 1; 0 |])) ]
+  | "gp_init_orthogonal" ->
+      Some
+        [
+          RC.with_dtypes ~float_dtype:Ojax.Dtype.F32 (fun () ->
+              INI.orthogonal () (k ()) ~shape:(ints "shape" p));
+        ]
+  | "gp_init_delta" ->
+      Some
+        [
+          RC.with_dtypes ~float_dtype:Ojax.Dtype.F32 (fun () ->
+              INI.delta_orthogonal () (k ()) ~shape:(ints "shape" p));
+        ]
+  | "gp_mode" ->
+      let x = NL.round (a ()) in
+      Some (pair (ST.mode ?keepdims:(opt_bool "keepdims" p) x))
+  | "gp_rankdata" ->
+      let x = a () in
+      let scaled = NL.round (L.mul x (L.full_like x 2.0)) in
+      Some [ ST.rankdata ~method_:(required_string "method" p) scaled ]
+  | "gp_rankdata_axis" ->
+      let x = a () in
+      let scaled = NL.round (L.mul x (L.full_like x 2.0)) in
+      Some
+        [
+          ST.rankdata
+            ~method_:(required_string "method" p)
+            ~axis:(int "axis" p) scaled;
+        ]
+  | "gp_wofz" ->
+      let z = L.complex (a ()) (b ()) in
+      Some [ Ojax.Scipy.Special.wofz z ]
+  | "gp_bernoulli" -> Some [ Ojax.Scipy.Special.bernoulli (int "n" p) ]
+  | "gp_expm_batched" -> Some [ Ojax.Scipy.Linalg.expm (a ()) ]
+  | "gp_reduce_precision" ->
+      let x = a () in
+      let scaled = L.mul x (L.full_like x (U.to_number (U.member "scale" p))) in
+      Some
+        [
+          L.reduce_precision scaled ~exponent_bits:(int "e" p)
+            ~mantissa_bits:(int "m" p);
+        ]
+  | "gp_clamp_jit" ->
+      let x = a () in
+      Some [ L.clamp (like x (-0.5)) x (like x 0.5) ]
+  | "gp_int_pow_neg" -> Some [ L.integer_pow (a ()) (-2) ]
+  | _ -> None
+
 let fft_run op params a =
   match op with
   | "fft" -> fft1 F.fft (a ()) params
@@ -868,6 +929,7 @@ let run op params get =
   let c () = get "c" in
   let runners =
     [
+      (fun () -> gap_run op params a b);
       (fun () -> array_random_run op params a b);
       (fun () -> default_random_run op params);
       (fun () -> lax_extra_run op params a);
@@ -913,4 +975,7 @@ let needs_concrete op =
       "np_unpackbits";
       "np_histogramdd";
       "sp_fresnel";
+      "gp_rankdata_axis";
+      "gp_rankdata";
+      "gp_bernoulli";
     ]

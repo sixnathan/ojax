@@ -73,8 +73,6 @@ let qr_impl full_matrices inputs =
       let m, n = dims2 a in
       let mn = min m n in
       let k = if full_matrices then m else mn in
-      if k > n then
-        failwith "linalg: qr full_matrices with m>n deferred (padding, M5 gap)";
       let ca = pack_cm a m n in
       let tau = Lp.alloc_f64 (max mn 1) in
       let _ = Lp.geqrf ~m ~n ~a:ca ~lda:m ~tau in
@@ -84,11 +82,17 @@ let qr_impl full_matrices inputs =
           r.((i * n) + j) <- ca.{i + (j * m)}
         done
       done;
-      let _ = Lp.orgqr ~m ~n:k ~k:mn ~a:ca ~lda:m ~tau in
+      let work = Lp.alloc_f64 (max (m * max k n) 1) in
+      for j = 0 to min n k - 1 do
+        for i = 0 to m - 1 do
+          work.{i + (j * m)} <- ca.{i + (j * m)}
+        done
+      done;
+      let _ = Lp.orgqr ~m ~n:k ~k:mn ~a:work ~lda:m ~tau in
       let q = Array.make (m * k) 0.0 in
       for i = 0 to m - 1 do
         for j = 0 to k - 1 do
-          q.((i * k) + j) <- ca.{i + (j * m)}
+          q.((i * k) + j) <- work.{i + (j * m)}
         done
       done;
       [ Ndarray.of_floats dt [| m; k |] q; Ndarray.of_floats dt [| k; n |] r ]

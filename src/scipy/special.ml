@@ -652,8 +652,95 @@ let zeta ?q x =
       let x, q = promote2 x q in
       bind1 T.Zeta [ x; q ]
 
-let wofz _z =
-  failwith "wofz: complex-valued output unsupported (no complex dtype until M5)"
+let wofz_terms = 64
+
+let wofz_constants =
+  lazy
+    (let n = wofz_terms in
+     let l = Float.sqrt (float_of_int n /. Float.sqrt 2.0) in
+     let m = 2 * n in
+     let m2 = 2 * m in
+     let pi = 4.0 *. Float.atan 1.0 in
+     let f k =
+       let theta = float_of_int k *. pi /. float_of_int m in
+       let t = l *. Float.tan (theta /. 2.0) in
+       Float.exp (-.(t *. t)) *. ((l *. l) +. (t *. t))
+     in
+     let coefficient j =
+       let total = ref 0.0 in
+       for k = -m + 1 to m - 1 do
+         let angle = 2.0 *. pi *. float_of_int (k * j) /. float_of_int m2 in
+         total := !total +. (f k *. Float.cos angle)
+       done;
+       !total /. float_of_int m2
+     in
+     (l, Array.init n (fun i -> coefficient (i + 1))))
+
+let wofz_upper (z : Complex.t) =
+  let open Complex in
+  let l, coefficients = Lazy.force wofz_constants in
+  let pi = 4.0 *. Float.atan 1.0 in
+  let iz = mul i z in
+  let cl = { re = l; im = 0.0 } in
+  let numerator = add cl iz and denominator = sub cl iz in
+  let w = div numerator denominator in
+  let poly = ref zero in
+  for j = wofz_terms - 1 downto 0 do
+    poly := add (mul !poly w) { re = coefficients.(j); im = 0.0 }
+  done;
+  add
+    (div (mul { re = 2.0; im = 0.0 } !poly) (mul denominator denominator))
+    (div { re = 1.0 /. Float.sqrt pi; im = 0.0 } denominator)
+
+let wofz_scalar (z : Complex.t) =
+  let open Complex in
+  if z.im >= 0.0 then wofz_upper z
+  else
+    let reflected = wofz_upper (neg z) in
+    sub (mul { re = 2.0; im = 0.0 } (exp (neg (mul z z)))) reflected
+
+let wofz z =
+  let a = Core.get_aval z in
+  let out_dt =
+    match a.Types.dtype with
+    | D.F64 | D.Complex128 -> D.Complex128
+    | _ -> D.Complex64
+  in
+  let host = function
+    | [ v ] ->
+        let nd =
+          match v with
+          | Types.Concrete n -> n
+          | Types.Device b -> Pjrt.Buffer.to_host b
+          | Types.Tracer _ -> invalid_arg "wofz: expected a concrete value"
+        in
+        let sh = Nd.shape nd in
+        let n = Array.fold_left ( * ) 1 sh in
+        let read i =
+          let idx = Array.make (Array.length sh) 0 in
+          let rem = ref i in
+          for d = Array.length sh - 1 downto 0 do
+            idx.(d) <- !rem mod sh.(d);
+            rem := !rem / sh.(d)
+          done;
+          match Nd.dtype nd with
+          | D.Complex64 | D.Complex128 -> Nd.get_c nd idx
+          | _ -> { Complex.re = Nd.get_f nd idx; im = 0.0 }
+        in
+        [
+          Types.Concrete
+            (Nd.of_complex out_dt sh
+               (Array.init n (fun i -> wofz_scalar (read i))));
+        ]
+    | _ -> invalid_arg "wofz: arity"
+  in
+  match z with
+  | Types.Tracer _ ->
+      List.hd
+        (Custom_derivatives.pure_callback host
+           ~result_avals:[ { a with Types.dtype = out_dt; weak_type = false } ]
+           [ z ])
+  | _ -> List.hd (host [ z ])
 
 let euler_gamma = 0.5772156649015329
 let eps_of v = match dtype v with D.F64 -> epsilon_float | _ -> 1.1920929e-7
@@ -1086,15 +1173,16 @@ let owens_t h a =
   let result = UF.multiply sign_a result in
   where_ nan_mask (full_like result Float.nan) result
 
-let bernoulli n =
+let rec bernoulli n =
   if n < 0 then invalid_arg "n must be a non-negative integer.";
   let dt = Dts.default_float_dtype () in
   let b3 = [| 1.0; -0.5; 1.0 /. 6.0 |] in
   if n < 3 then
     T.Concrete (Nd.of_floats dt [| n + 1 |] (Array.sub b3 0 (n + 1)))
+  else if n mod 2 <> 0 then
+    NL.concatenate
+      [ bernoulli (n - 1); T.Concrete (Nd.of_floats dt [| 1 |] [| 0.0 |]) ]
   else begin
-    if n mod 2 <> 0 then
-      failwith "bernoulli: only even n supported (odd-n assembly deferred)";
     let num_even = (n - 2) / 2 in
     let s v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
     let m = NL.arange ~start:4.0 ~step:2.0 ~dtype:dt (float_of_int (n + 1)) in

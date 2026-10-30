@@ -1242,3 +1242,15 @@ let corrcoef ?y ?(rowvar = true) ?dtype x =
     let c = binop T.Div c (expand_dims stddev [| 0 |]) in
     clip ~min:(-1.0) ~max:1.0 c
   end
+
+let argsort_values v =
+  let n = (shape v).(0) in
+  let dt = dtype v in
+  let iota = bind1 (T.Iota { dtype = dt; shape = [| n |]; dimension = 0 }) [] in
+  match
+    C.bind
+      (T.Sort { dimension = 0; is_stable = true; num_keys = 1 })
+      [ v; iota ]
+  with
+  | [ _; order ] -> order
+  | _ -> failwith "argsort_values: arity"

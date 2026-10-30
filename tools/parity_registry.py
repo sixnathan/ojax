@@ -247,6 +247,30 @@ def _array_random_ops():
     }
 
 
+def _gap_ops():
+    import jax.scipy as js
+    from jax.scipy import stats as st
+    from jax import nn as jn
+    from jax import random as jr
+    k = lambda p: jr.key(p["seed"])
+    return {
+        "gp_qr_full": lambda a, p: jnp.linalg.qr(a, mode="complete"),
+        "gp_svd_hermitian": lambda a, p: jnp.linalg.svd(a + a.T, hermitian=True, compute_uv=False),
+        "gp_pinv_hermitian": lambda a, p: jnp.linalg.pinv(a + a.T, hermitian=True),
+        "gp_init_orthogonal": lambda a, p: jn.initializers.orthogonal()(k(p), tuple(p["shape"]), jnp.float32),
+        "gp_init_delta": lambda a, p: jn.initializers.delta_orthogonal()(k(p), tuple(p["shape"]), jnp.float32),
+        "gp_mode": lambda a, p: tuple(st.mode(jnp.round(a), axis=p.get("axis", 0), keepdims=p.get("keepdims", False))),
+        "gp_rankdata": lambda a, p: st.rankdata(jnp.round(a * 2.0), method=p["method"]),
+        "gp_rankdata_axis": lambda a, p: st.rankdata(jnp.round(a * 2.0), method=p["method"], axis=p["axis"]),
+        "gp_wofz": lambda a, b, p: js.special.wofz(a + 1j * b),
+        "gp_bernoulli": lambda a, p: js.special.bernoulli(p["n"]),
+        "gp_expm_batched": lambda a, p: js.linalg.expm(a),
+        "gp_reduce_precision": lambda a, p: jax.lax.reduce_precision(a * p["scale"], p["e"], p["m"]),
+        "gp_clamp_jit": lambda a, p: jax.jit(lambda x: jax.lax.clamp(jnp.asarray(-0.5, x.dtype), x, jnp.asarray(0.5, x.dtype)))(a),
+        "gp_int_pow_neg": lambda a, p: jax.jit(lambda x: jax.lax.integer_pow(x, -2))(a),
+    }
+
+
 def _default_random_ops():
     from jax import random as jr
     k = lambda p: jr.key(p["seed"])
@@ -337,6 +361,7 @@ OPS.update(_misc_scipy_ops())
 OPS.update(_lax_extra_ops())
 OPS.update(_default_random_ops())
 OPS.update(_array_random_ops())
+OPS.update(_gap_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -711,5 +736,32 @@ def _array_random_cases():
     return out
 
 
+def _gap_cases():
+    r = _real_input
+    pos = lambda shape: {"a": {"kind": "positive", "shape": shape}}
+    out = [
+        ("gp_qr_full", r([4, 2]), {}),
+        ("gp_svd_hermitian", r([3, 3]), {}),
+        ("gp_pinv_hermitian", r([3, 3]), {}),
+        ("gp_init_orthogonal", r([1]), {"seed": 1, "shape": [4, 3]}),
+        ("gp_init_orthogonal", r([1]), {"seed": 2, "shape": [3, 4]}),
+        ("gp_init_delta", r([1]), {"seed": 3, "shape": [3, 2, 2]}),
+        ("gp_mode", r([7]), {}),
+        ("gp_mode", r([6, 2]), {"keepdims": True}),
+        ("gp_wofz", _two("real", [5], "real", [5]), {}),
+        ("gp_bernoulli", r([1]), {"n": 6}),
+        ("gp_bernoulli", r([1]), {"n": 7}),
+        ("gp_expm_batched", r([2, 3, 3]), {}),
+        ("gp_reduce_precision", r([4]), {"scale": 1.0, "e": 5, "m": 10}),
+        ("gp_reduce_precision", r([4]), {"scale": 1000.0, "e": 3, "m": 5}),
+        ("gp_clamp_jit", r([4]), {}),
+        ("gp_int_pow_neg", pos([4]), {}),
+    ]
+    for m in ["average", "min", "max", "dense", "ordinal"]:
+        out.append(("gp_rankdata", r([8]), {"method": m}))
+    out.append(("gp_rankdata_axis", r([2, 5]), {"method": "average", "axis": 1}))
+    return out
+
+
 def all_cases():
-    return _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

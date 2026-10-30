@@ -68,9 +68,8 @@ and svd_values a =
 
 and svd ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a =
   let a = to_inexact a in
-  if hermitian then
-    invalid_arg "jnp.linalg.svd: hermitian=True not supported in ojax";
-  if compute_uv then
+  if hermitian then svd_hermitian ~compute_uv a
+  else if compute_uv then
     let u, s, vh = svd_uv ~full_matrices a in
     [ u; s; vh ]
   else
@@ -81,6 +80,27 @@ and svd ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a =
     ]
 
 and svdvals x = svd_values (to_inexact x)
+
+and svd_hermitian ~compute_uv a =
+  let w, v = eigh a in
+  let rank = ndim a in
+  let magnitudes = UF.absolute w in
+  let order =
+    Sorting.argsort ~axis:(Some (rank - 2)) ~descending:true magnitudes
+  in
+  let sorted_s = IDX.take_along_axis ~axis:(rank - 2) magnitudes order in
+  if not compute_uv then [ sorted_s ]
+  else
+    let sorted_w = IDX.take_along_axis ~axis:(rank - 2) w order in
+    let expanded = NL.expand_dims order [| rank - 2 |] in
+    let columns = NL.broadcast_to expanded (shape v) in
+    let u = IDX.take_along_axis ~axis:(rank - 1) v columns in
+    let signs = UF.sign sorted_w in
+    let scaled =
+      UF.multiply u
+        (NL.broadcast_to (NL.expand_dims signs [| rank - 2 |]) (shape u))
+    in
+    [ u; sorted_s; hconj scaled ]
 
 and solve a b =
   let a = to_inexact a and b = to_inexact b in
@@ -186,8 +206,7 @@ and eigvalsh ?(uplo = "L") ?(symmetrize_input = true) a =
 
 and pinv ?rtol ?(hermitian = false) a =
   let a = to_inexact a in
-  if hermitian then
-    invalid_arg "jnp.linalg.pinv: hermitian=True not supported in ojax";
+  ignore hermitian;
   let arr = UF.conj a in
   let dt = dtype arr in
   let sa = shape arr in

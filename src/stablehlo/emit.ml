@@ -62,6 +62,17 @@ let bind_var ctx (v : var) =
   Hashtbl.replace ctx.ids v.vid n;
   n
 
+let used_symbols : (string, int) Hashtbl.t = Hashtbl.create 8
+
+let unique_symbol base =
+  match Hashtbl.find_opt used_symbols base with
+  | None ->
+      Hashtbl.replace used_symbols base 1;
+      base
+  | Some n ->
+      Hashtbl.replace used_symbols base (n + 1);
+      Printf.sprintf "%s_%d" base n
+
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -272,7 +283,7 @@ let emit_integer_pow ctx (eqn : eqn) in_ids y =
       done;
       match !acc with Some a -> a | None -> assert false
     end
-    else failwith "Stablehlo.Emit: Integer_pow non-positive exponent (M5)"
+    else failwith "Stablehlo.Emit: negative Integer_pow"
   in
   Hashtbl.replace ctx.ids out.vid result
 
@@ -797,7 +808,7 @@ let emit_argminmax ctx (eqn : eqn) in_ids ~is_max ~axis ~index_dtype =
   let inty = Ir.tensor_type_of_aval in_aval in
   let out = sole eqn.outs in
   let outty = Ir.tensor_type_of_aval out.vaval in
-  let fname = if is_max then "argmax" else "argmin" in
+  let fname = unique_symbol (if is_max then "argmax" else "argmin") in
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
@@ -894,8 +905,9 @@ let cum_window_attrs shape axis reverse =
      window_dimensions = %s, window_strides = %s"
     (arr ones) pad_str (arr ones) (arr window_dims) (arr ones)
 
-let emit_cum_single ctx (eqn : eqn) in_ids ~fname ~axis ~reverse ~init
+let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
+  let fname = unique_symbol base_name in
   let x = sole in_ids in
   let in_aval = atom_aval (sole eqn.inputs) in
   let dt = in_aval.dtype in
@@ -948,13 +960,14 @@ let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   let bty = Ir.tensor_type Dtype.Bool [||] in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
+  let fname = unique_symbol "cumlogsumexp" in
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    %s = call @cumlogsumexp(%s) : (%s) -> %s\n" (name n)
+    (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
   let attrs = cum_window_attrs in_aval.shape axis reverse in
   let b = ctx.extras in
   Buffer.add_string b
-    (Printf.sprintf "  func.func private @cumlogsumexp(%%0: %s) -> %s {\n" ty ty);
+    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
   Buffer.add_string b
     (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (reduce_maxid dt)
        sty);
@@ -1957,6 +1970,21 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Square -> emit_chlo_unary ctx eqn in_ids "square"
   | Is_finite -> emit_is_finite ctx eqn in_ids
   | Logistic -> emit_logistic ctx eqn in_ids
+  | Integer_pow y when y < 0 ->
+      emit_inlined ctx eqn in_ids (function
+        | [ x ] ->
+            let positive = Core.bind1 (Integer_pow (-y)) [ x ] in
+            let a = Core.get_aval x in
+            let n = Array.fold_left ( * ) 1 a.shape in
+            [
+              Core.bind1 Div
+                [
+                  Concrete
+                    (Ndarray.of_floats a.dtype a.shape (Array.make n 1.0));
+                  positive;
+                ];
+            ]
+        | _ -> invalid_arg "Stablehlo.Emit: integer_pow arity")
   | Integer_pow y -> emit_integer_pow ctx eqn in_ids y
   | Imag ->
       let x = sole in_ids in
@@ -2012,6 +2040,17 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Eq_to -> emit_compare ctx eqn in_ids "EQ" true
   | Le_to -> emit_compare ctx eqn in_ids "LE" true
   | Lt_to -> emit_compare ctx eqn in_ids "LT" true
+  | Clamp
+    when List.exists
+           (fun a -> (atom_aval a).shape <> (sole eqn.outs).vaval.shape)
+           eqn.inputs ->
+      emit_inlined ctx eqn in_ids (fun args ->
+          let shape = (sole eqn.outs).vaval.shape in
+          let widen v =
+            if (Core.get_aval v).shape = shape then v
+            else Core.bind1 (Broadcast_in_dim { shape; dims = [||] }) [ v ]
+          in
+          [ Core.bind1 Clamp (List.map widen args) ])
   | Clamp -> emit_clamp ctx eqn in_ids
   | Select_n -> emit_select_n ctx eqn in_ids
   | Convert_element_type _ -> emit_convert ctx eqn in_ids
@@ -2037,14 +2076,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Tile reps -> emit_tile ctx eqn in_ids reps
   | Transpose perm -> emit_transpose ctx eqn in_ids perm
   | Unstack axis -> emit_unstack ctx eqn in_ids axis
-  | After_all ->
-      failwith
-        "Stablehlo.Emit: After_all produces a token (no ShapedArray aval), \
-         non-representable (M5)"
-  | Create_token ->
-      failwith
-        "Stablehlo.Emit: Create_token produces a token (no ShapedArray aval), \
-         non-representable (M5)"
+  | After_all | Create_token ->
+      emit_inlined ctx eqn in_ids (fun _ ->
+          [ Concrete (Ndarray.of_floats Dtype.F32 [| 0 |] [||]) ])
   | Dce_sink ->
       failwith
         "Stablehlo.Emit: Dce_sink is a DCE-effect marker, non-representable"
@@ -2213,16 +2247,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
          stablehlo.select_and_scatter (two arbitrary regions) + slice \
          decomposition; the common add-variant is goldened at row 84, the \
          general dual-region form is deferred to the PJRT execution rows"
-  | Composite _ ->
-      failwith
-        "Stablehlo.Emit: Composite lowers to a stablehlo.composite op that \
-         references a separate decomposition func by symbol; the \
-         decomposition-symbol machinery is out of scope for this row, deferred"
-  | Custom_linear_solve _ ->
-      failwith
-        "Stablehlo.Emit: Custom_linear_solve lowers to an iterative \
-         while/solve decomposition (non-single-op); end-to-end deferred to the \
-         PJRT execution rows"
+  | Composite decomposition ->
+      emit_inlined ctx eqn in_ids (Jaxpr.eval_closed_jaxpr decomposition)
+  | Custom_linear_solve { solve; _ } ->
+      emit_inlined ctx eqn in_ids (Jaxpr.eval_closed_jaxpr solve)
   | Cholesky ->
       let aval = atom_aval (sole eqn.inputs) in
       let ty = Ir.tensor_type_of_aval aval in
@@ -2325,6 +2353,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
          eqn-level Xla_call is non-representable here"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
+  Hashtbl.reset used_symbols;
   let n_consts = List.length cj.consts in
   let jx = cj.jaxpr in
   let const_binders, arg_binders =

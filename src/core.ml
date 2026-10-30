@@ -115,6 +115,33 @@ let process_custom_jvp trace primal ~jvp args =
 let process_custom_vjp trace primal ~fwd ~bwd args =
   (interpreter_for trace).i_process_custom_vjp trace ~primal ~fwd ~bwd args
 
+type custom_rule =
+  | Jvp_rule of {
+      primal : value list -> value list;
+      jvp : value list -> value list -> value list * value list;
+    }
+  | Vjp_rule of {
+      primal : value list -> value list;
+      fwd : value list -> value list * value list;
+      bwd : value list -> value list -> value list;
+    }
+  | Linear_rule of {
+      forward : value list -> value list -> value list;
+      transpose : value list -> value list -> value list;
+    }
+
+let custom_rules : (int, custom_rule) Hashtbl.t = Hashtbl.create 16
+
+let register_custom_rule rule =
+  let id = fresh_id () in
+  Hashtbl.replace custom_rules id rule;
+  id
+
+let custom_rule id =
+  match Hashtbl.find_opt custom_rules id with
+  | Some rule -> rule
+  | None -> failwith "core: unknown custom derivative rule"
+
 let bind prim args =
   let top = find_top_trace args in
   let tracers = List.map (full_raise top) args in

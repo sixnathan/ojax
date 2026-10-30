@@ -663,6 +663,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "batching: vmap of linalg primitive deferred (M5 gap)"
+  | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
+      failwith "batching: custom rules handled by batch_process_primitive"
   | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :
@@ -797,6 +799,104 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   in
   (outs, out_bdims)
 
+let batched_custom_rules : (int * int, int) Hashtbl.t = Hashtbl.create 16
+let all_mapped l = List.map (fun _ -> Some 0) l
+let vmap_all f args = vmap_flat f (all_mapped args) args
+
+let split_at_n l n =
+  match Util.split_list l [ n ] with
+  | [ a; b ] -> (a, b)
+  | _ -> failwith "batching: custom rule arity"
+
+let batch_custom_rule id =
+  let primal_of p args = vmap_all p args in
+  match Core.custom_rule id with
+  | Core.Jvp_rule { primal; jvp } ->
+      Core.Jvp_rule
+        {
+          primal = primal_of primal;
+          jvp =
+            (fun ps ts ->
+              let n_out = ref 0 in
+              let n = List.length ps in
+              let out =
+                vmap_all
+                  (fun all ->
+                    let p, t = split_at_n all n in
+                    let po, to_ = jvp p t in
+                    n_out := List.length po;
+                    po @ to_)
+                  (ps @ ts)
+              in
+              split_at_n out !n_out);
+        }
+  | Core.Vjp_rule { primal; fwd; bwd } ->
+      Core.Vjp_rule
+        {
+          primal = primal_of primal;
+          fwd =
+            (fun ps ->
+              let n_out = ref 0 in
+              let out =
+                vmap_all
+                  (fun p ->
+                    let po, res = fwd p in
+                    n_out := List.length po;
+                    po @ res)
+                  ps
+              in
+              split_at_n out !n_out);
+          bwd =
+            (fun res cts ->
+              let n = List.length res in
+              vmap_all
+                (fun all ->
+                  let r, c = split_at_n all n in
+                  bwd r c)
+                (res @ cts));
+        }
+  | Core.Linear_rule { forward; transpose } ->
+      let lift g res xs =
+        let n = List.length res in
+        vmap_all
+          (fun all ->
+            let r, x = split_at_n all n in
+            g r x)
+          (res @ xs)
+      in
+      Core.Linear_rule { forward = lift forward; transpose = lift transpose }
+
+let batched_rule_id id axis_size =
+  match Hashtbl.find_opt batched_custom_rules (id, axis_size) with
+  | Some batched -> batched
+  | None ->
+      let batched = Core.register_custom_rule (batch_custom_rule id) in
+      Hashtbl.replace batched_custom_rules (id, axis_size) batched;
+      batched
+
+let custom_batch axis_size prim vals bdims =
+  let moved =
+    List.map2 (fun v b -> move_batch_axis axis_size b 0 v) vals bdims
+  in
+  let prim' =
+    match prim with
+    | Custom_jvp_call id -> Custom_jvp_call (batched_rule_id id axis_size)
+    | Custom_vjp_call id -> Custom_vjp_call (batched_rule_id id axis_size)
+    | Custom_lin { rule; n_res; out_avals } ->
+        Custom_lin
+          {
+            rule = batched_rule_id rule axis_size;
+            n_res;
+            out_avals =
+              List.map
+                (fun (a : aval) ->
+                  { a with shape = Array.append [| axis_size |] a.shape })
+                out_avals;
+          }
+    | _ -> failwith "batching: not a custom primitive"
+  in
+  Core.bind prim' moved
+
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
   let axis_size = axis_size_of trace in
@@ -814,6 +914,10 @@ let batch_process_primitive (trace : trace) (prim : primitive)
         scan_batch axis_size ~length ~reverse ~num_carry jaxpr vals bdims
       in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
+  | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
+        (custom_batch axis_size prim vals bdims)
   | Custom_linear_solve _ ->
       failwith
         "batching: vmap of custom_linear_solve needs the batched fixpoint (M2 \

@@ -922,6 +922,13 @@ let scatter_dnums = function
       dimension_numbers
   | _ -> failwith "lax: not a scatter primitive"
 
+let custom_output = function
+  | Concrete nd -> nd
+  | Device b -> Pjrt.Buffer.to_host b
+  | Tracer _ ->
+      failwith
+        "custom derivative rule closed over a tracer; pass it as an argument"
+
 let impl prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
@@ -1426,6 +1433,26 @@ let impl prim inputs =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_impl full_matrices compute_uv inputs
   | Tridiagonal { lower } -> Linalg.tridiagonal_impl lower inputs
+  | Custom_jvp_call id | Custom_vjp_call id ->
+      let primal =
+        match Core.custom_rule id with
+        | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } -> primal
+        | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call"
+      in
+      List.map custom_output (primal (List.map (fun nd -> Concrete nd) inputs))
+  | Custom_lin { rule; n_res; _ } -> (
+      match Core.custom_rule rule with
+      | Core.Linear_rule { forward; _ } ->
+          let args = List.map (fun nd -> Concrete nd) inputs in
+          let res, linear =
+            match Util.split_list args [ n_res ] with
+            | [ a; b ] -> (a, b)
+            | _ -> failwith "lax: custom_lin arity"
+          in
+          List.map custom_output (forward res linear)
+      | Core.Jvp_rule _ | Core.Vjp_rule _ ->
+          failwith
+            "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
@@ -1730,6 +1757,15 @@ let abstract_eval prim avals =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_aval full_matrices compute_uv avals
   | Tridiagonal _ -> Linalg.tridiagonal_aval avals
+  | Custom_jvp_call id | Custom_vjp_call id ->
+      let primal =
+        match Core.custom_rule id with
+        | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } -> primal
+        | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call"
+      in
+      let traced = Jaxpr.make_jaxpr avals primal in
+      List.map aval_of_atom traced.jaxpr.outs
+  | Custom_lin { out_avals; _ } -> out_avals
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let install () =

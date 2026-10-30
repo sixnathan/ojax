@@ -693,7 +693,13 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: linalg jvp deferred (M5 gap, forward-eval only)"
   | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
+  | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
+      failwith "ad: custom rules handled by jvp_process_primitive"
   | Xla_call _ -> failwith "ad: jvp of xla_call not supported in M1"
+
+let is_concrete_zero = function
+  | Concrete nd -> Ndarray.fold (fun acc x -> acc && x = 0.0) true nd
+  | Device _ | Tracer _ -> false
 
 let new_jvp_tracer trace primal tangent : tracer =
   {
@@ -843,6 +849,43 @@ let jvp_process_primitive trace prim args =
       let x = Core.bind prim primals in
       let x_dot = Core.bind prim tangents in
       List.map2 (fun po to_ -> Tracer (new_jvp_tracer trace po to_)) x x_dot
+  | Custom_jvp_call id -> (
+      match Core.custom_rule id with
+      | Core.Jvp_rule { jvp; _ } ->
+          let po, to_ = jvp primals tangents in
+          List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_
+      | Core.Vjp_rule _ | Core.Linear_rule _ ->
+          failwith "ad: custom_jvp_call with a non-jvp rule")
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Vjp_rule { fwd; _ } ->
+          let po, res = fwd primals in
+          let out_avals = List.map Core.get_aval po in
+          let to_ =
+            if List.for_all is_concrete_zero tangents then
+              List.map Ad_util.zeros_like_aval out_avals
+            else
+              Core.bind
+                (Custom_lin { rule = id; n_res = List.length res; out_avals })
+                (res @ tangents)
+          in
+          List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_
+      | Core.Jvp_rule _ | Core.Linear_rule _ ->
+          failwith "ad: custom_vjp_call with a non-vjp rule")
+  | Custom_lin { n_res; _ } ->
+      let res, linear =
+        match Util.split_list primals [ n_res ] with
+        | [ a; b ] -> (a, b)
+        | _ -> arity ()
+      in
+      let _, linear_t =
+        match Util.split_list tangents [ n_res ] with
+        | [ a; b ] -> (a, b)
+        | _ -> arity ()
+      in
+      let po = Core.bind prim (res @ linear) in
+      let to_ = Core.bind prim (res @ linear_t) in
+      List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_
   | _ ->
       let po, to_ = jvp_rule prim primals tangents in
       [ Tracer (new_jvp_tracer trace po to_) ]
@@ -1262,6 +1305,27 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           in
           None :: rest_cts
       | _ -> arity ())
+  | Custom_lin { rule; n_res; _ } ->
+      let transpose =
+        match Core.custom_rule rule with
+        | Core.Vjp_rule { bwd; _ } -> bwd
+        | Core.Linear_rule { transpose; _ } -> transpose
+        | Core.Jvp_rule _ -> failwith "ad: custom_lin with a jvp rule"
+      in
+      let res_tv, linear_tv =
+        match Util.split_list primals [ n_res ] with
+        | [ a; b ] -> (a, b)
+        | _ -> arity ()
+      in
+      let cts_out = transpose (List.map prim_val res_tv) cts in
+      let keep =
+        List.map2
+          (fun tv ct -> if is_undef tv then Some ct else None)
+          linear_tv cts_out
+      in
+      List.map (fun _ -> None) res_tv @ keep
+  | Custom_jvp_call _ | Custom_vjp_call _ ->
+      failwith "ad: custom call cannot appear in a linear program"
   | Custom_linear_solve { solve; transpose_solve } -> (
       match transpose_solve with
       | None ->

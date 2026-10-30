@@ -1673,6 +1673,27 @@ and emit_while ctx (eqn : eqn) in_ids (cond : closed_jaxpr)
   emit_region_returning ctx body.jaxpr;
   Buffer.add_string ctx.buf "    }\n"
 
+and emit_inlined ctx (eqn : eqn) in_ids f =
+  let traced = Jaxpr.make_jaxpr (List.map atom_aval eqn.inputs) f in
+  let jx = traced.jaxpr in
+  let const_binders, arg_binders =
+    match Util.split_list jx.in_binders [ List.length traced.consts ] with
+    | [ cb; ab ] -> (cb, ab)
+    | _ -> invalid_arg "Stablehlo.Emit: binder split"
+  in
+  List.iter2
+    (fun (v : var) nd -> emit_constant_at ctx (bind_var ctx v) nd)
+    const_binders traced.consts;
+  List.iter2
+    (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
+    arg_binders in_ids;
+  List.iter
+    (fun (e : eqn) -> emit_eqn ctx e (List.map (id_of_atom ctx) e.inputs))
+    jx.eqns;
+  List.iter2
+    (fun (v : var) atom -> Hashtbl.replace ctx.ids v.vid (id_of_atom ctx atom))
+    eqn.outs jx.outs
+
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
@@ -1976,6 +1997,26 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith
         "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
          host-interpreter only (M5 lax/linalg, XLA emission deferred)"
+  | Custom_jvp_call id | Custom_vjp_call id ->
+      let primal =
+        match Core.custom_rule id with
+        | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } -> primal
+        | Core.Linear_rule _ ->
+            invalid_arg "Stablehlo.Emit: linear rule has no primal call"
+      in
+      emit_inlined ctx eqn in_ids primal
+  | Custom_lin { rule; n_res; _ } -> (
+      match Core.custom_rule rule with
+      | Core.Linear_rule { forward; _ } ->
+          let inline args =
+            match Util.split_list args [ n_res ] with
+            | [ res; linear ] -> forward res linear
+            | _ -> invalid_arg "Stablehlo.Emit: custom_lin arity"
+          in
+          emit_inlined ctx eqn in_ids inline
+      | Core.Jvp_rule _ | Core.Vjp_rule _ ->
+          failwith
+            "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
   | Xla_call _ ->
       failwith
         "Stablehlo.Emit: a nested Xla_call must be inlined by the caller; the \

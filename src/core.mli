@@ -52,6 +52,23 @@ val process_custom_vjp :
   value list ->
   value list
 
+type custom_rule =
+  | Jvp_rule of {
+      primal : value list -> value list;
+      jvp : value list -> value list -> value list * value list;
+    }
+  | Vjp_rule of {
+      primal : value list -> value list;
+      fwd : value list -> value list * value list;
+      bwd : value list -> value list -> value list;
+    }
+  | Linear_rule of {
+      forward : value list -> value list -> value list;
+      transpose : value list -> value list -> value list;
+    }
+
+val register_custom_rule : custom_rule -> int
+val custom_rule : int -> custom_rule
 val bind : primitive -> value list -> value list
 val bind1 : primitive -> value list -> value
 val get_aval : value -> aval

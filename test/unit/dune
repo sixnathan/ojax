@@ -34,6 +34,7 @@
   test_batching
   test_api_util
   test_api
+  test_custom_derivatives
   test_numpy_lax_numpy
   test_numpy_reductions
   test_numpy_indexing

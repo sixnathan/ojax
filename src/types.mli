@@ -195,6 +195,9 @@ and primitive =
   | Zeta
   | Platform_index of string array option array
   | Xla_call of closed_jaxpr
+  | Custom_jvp_call of int
+  | Custom_vjp_call of int
+  | Custom_lin of { rule : int; n_res : int; out_avals : aval list }
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
   | Scan of {
       length : int;

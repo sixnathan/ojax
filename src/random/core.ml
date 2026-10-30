@@ -209,6 +209,10 @@ let randint k ~shape ~minval ~maxval =
   | D.I64 -> randint64 k ~shape ~minval ~maxval
   | _ -> randint_base k ~shape ~minval ~maxval
 
+let const_like_value v x =
+  let a = C.get_aval v in
+  const a.dtype a.shape x
+
 let uint32max = 4294967295.0
 
 let permutation k n =
@@ -536,14 +540,16 @@ let dirichlet k ~alpha ~shape =
 
 let lgamma_host x = scalar_f (C.bind1 Lgamma [ const (fdt ()) [||] x ])
 
-let poisson_rejection k ~shape ~lam =
+let poisson_rejection k ~shape ~lams =
   let n = prod shape in
-  let lam = f32 lam in
-  let log_lam = f32 (log lam) in
-  let b = f32 (0.931 +. (2.53 *. f32 (sqrt lam))) in
-  let a = f32 (-0.059 +. (0.02483 *. b)) in
-  let inv_alpha = f32 (1.1239 +. (1.1328 /. (b -. 3.4))) in
-  let v_r = f32 (0.9277 -. (3.6224 /. (b -. 2.0))) in
+  let lams = Array.map f32 lams in
+  let log_lam = Array.map (fun l -> f32 (log l)) lams in
+  let b = Array.map (fun l -> f32 (0.931 +. (2.53 *. f32 (sqrt l)))) lams in
+  let a = Array.map (fun bi -> f32 (-0.059 +. (0.02483 *. bi))) b in
+  let inv_alpha =
+    Array.map (fun bi -> f32 (1.1239 +. (1.1328 /. (bi -. 3.4)))) b
+  in
+  let v_r = Array.map (fun bi -> f32 (0.9277 -. (3.6224 /. (bi -. 2.0)))) b in
   let out = Array.make n (-1.0) in
   let accepted = Array.make n false in
   let key = ref k in
@@ -557,18 +563,23 @@ let poisson_rejection k ~shape ~lam =
       let vi = Nd.get_f v (unravel shape i) in
       let us = f32 (0.5 -. Float.abs ui) in
       let cand =
-        Float.floor (f32 ((((2.0 *. a /. us) +. b) *. ui) +. lam +. 0.43))
+        Float.floor
+          (f32 ((((2.0 *. a.(i) /. us) +. b.(i)) *. ui) +. lams.(i) +. 0.43))
       in
-      let s_ = f32 (log (vi *. inv_alpha /. ((a /. (us *. us)) +. b))) in
-      let t_ = f32 (-.lam +. (cand *. log_lam) -. lgamma_host (cand +. 1.0)) in
-      let accept1 = us >= 0.07 && vi <= v_r in
+      let s_ =
+        f32 (log (vi *. inv_alpha.(i) /. ((a.(i) /. (us *. us)) +. b.(i))))
+      in
+      let t_ =
+        f32 (-.lams.(i) +. (cand *. log_lam.(i)) -. lgamma_host (cand +. 1.0))
+      in
+      let accept1 = us >= 0.07 && vi <= v_r.(i) in
       let reject = cand < 0.0 || (us < 0.013 && vi > us) in
       let accept = accept1 || ((not reject) && s_ <= t_) in
       if accept then out.(i) <- cand;
       if accept then accepted.(i) <- true
     done
   done;
-  Concrete (Nd.of_floats (default_int ()) shape out)
+  out
 
 let stirling_tail x =
   let table =
@@ -591,16 +602,28 @@ let stirling_tail x =
     let sq = kp1 *. kp1 in
     ((1.0 /. 12.0) -. (((1.0 /. 360.0) -. (1.0 /. 1260.0 /. sq)) /. sq)) /. kp1
 
-let btrs k ~shape ~count ~prob =
+let btrs k ~shape ~counts ~probs =
   let n = prod shape in
-  let stddev = f32 (sqrt (count *. prob *. (1.0 -. prob))) in
-  let b = f32 (1.15 +. (2.53 *. stddev)) in
-  let a = f32 (-0.0873 +. (0.0248 *. b) +. (0.01 *. prob)) in
-  let c = f32 ((count *. prob) +. 0.5) in
-  let v_r = f32 (0.92 -. (4.2 /. b)) in
-  let r = f32 (prob /. (1.0 -. prob)) in
-  let alpha = f32 ((2.83 +. (5.1 /. b)) *. stddev) in
-  let m = Float.floor (f32 ((count +. 1.0) *. prob)) in
+  let stddev =
+    Array.mapi
+      (fun i c -> f32 (sqrt (c *. probs.(i) *. (1.0 -. probs.(i)))))
+      counts
+  in
+  let b = Array.map (fun d -> f32 (1.15 +. (2.53 *. d))) stddev in
+  let a =
+    Array.mapi
+      (fun i bi -> f32 (-0.0873 +. (0.0248 *. bi) +. (0.01 *. probs.(i))))
+      b
+  in
+  let c = Array.mapi (fun i ci -> f32 ((ci *. probs.(i)) +. 0.5)) counts in
+  let v_r = Array.map (fun bi -> f32 (0.92 -. (4.2 /. bi))) b in
+  let r = Array.map (fun p -> f32 (p /. (1.0 -. p))) probs in
+  let alpha =
+    Array.mapi (fun i bi -> f32 ((2.83 +. (5.1 /. bi)) *. stddev.(i))) b
+  in
+  let m =
+    Array.mapi (fun i ci -> Float.floor (f32 ((ci +. 1.0) *. probs.(i)))) counts
+  in
   let out = Array.make n (-1.0) in
   let accepted = Array.make n false in
   let key = ref k in
@@ -610,20 +633,25 @@ let btrs k ~shape ~count ~prob =
     let u = concrete (unif01 keys.(1) ~shape) in
     let v = concrete (unif01 keys.(2) ~shape) in
     for i = 0 to n - 1 do
+      let count = counts.(i) and mi = m.(i) and ri = r.(i) in
       let ui = f32 (Nd.get_f u (unravel shape i) -. 0.5) in
       let vi = Nd.get_f v (unravel shape i) in
       let us = f32 (0.5 -. Float.abs ui) in
-      let accept1 = us >= 0.07 && vi <= v_r in
-      let cand = Float.floor (f32 ((((2.0 *. a /. us) +. b) *. ui) +. c)) in
+      let accept1 = us >= 0.07 && vi <= v_r.(i) in
+      let cand =
+        Float.floor (f32 ((((2.0 *. a.(i) /. us) +. b.(i)) *. ui) +. c.(i)))
+      in
       let reject = cand < 0.0 || cand > count in
-      let logv = f32 (log (vi *. alpha /. ((a /. (us *. us)) +. b))) in
+      let logv =
+        f32 (log (vi *. alpha.(i) /. ((a.(i) /. (us *. us)) +. b.(i))))
+      in
       let ub =
-        ((m +. 0.5) *. log ((m +. 1.0) /. (r *. (count -. m +. 1.0))))
+        ((mi +. 0.5) *. log ((mi +. 1.0) /. (ri *. (count -. mi +. 1.0))))
         +. (count +. 1.0)
-           *. log ((count -. m +. 1.0) /. (count -. cand +. 1.0))
-        +. ((cand +. 0.5) *. log (r *. (count -. cand +. 1.0) /. (cand +. 1.0)))
-        +. stirling_tail m
-        +. stirling_tail (count -. m)
+           *. log ((count -. mi +. 1.0) /. (count -. cand +. 1.0))
+        +. ((cand +. 0.5) *. log (ri *. (count -. cand +. 1.0) /. (cand +. 1.0)))
+        +. stirling_tail mi
+        +. stirling_tail (count -. mi)
         -. stirling_tail cand
         -. stirling_tail (count -. cand)
       in
@@ -634,34 +662,62 @@ let btrs k ~shape ~count ~prob =
   done;
   out
 
-let poisson_single k ~shape ~lam =
+let poisson_knuth k ~shape ~lams =
   let n = prod shape in
-  if lam >= 10.0 then poisson_rejection k ~shape ~lam
-  else
-    let dt = default_int () in
-    if lam = 0.0 then Concrete (Nd.of_floats dt shape (Array.make n 0.0))
-    else begin
-      let k_arr = Array.make n 0 in
-      let logp = Array.make n 0.0 in
-      let neg_lam = f32 (-.lam) in
-      let key = ref k in
-      let active () = Array.exists (fun lp -> lp > neg_lam) logp in
-      while active () do
-        let sub = split_n !key 2 in
-        key := sub.(0);
-        let u = concrete (unif01 sub.(1) ~shape) in
-        for i = 0 to n - 1 do
-          if logp.(i) > neg_lam then k_arr.(i) <- k_arr.(i) + 1;
-          let ui = Nd.get_f u (unravel shape i) in
-          logp.(i) <- f32 (logp.(i) +. f32 (log ui))
-        done
-      done;
-      let out = Array.init n (fun i -> float_of_int (k_arr.(i) - 1)) in
-      Concrete (Nd.of_floats dt shape out)
-    end
+  let k_arr = Array.make n 0 in
+  let logp = Array.make n 0.0 in
+  let neg_lam = Array.map (fun l -> f32 (-.l)) lams in
+  let key = ref k in
+  let active () =
+    let any = ref false in
+    Array.iteri (fun i lp -> if lp > neg_lam.(i) then any := true) logp;
+    !any
+  in
+  while active () do
+    let sub = split_n !key 2 in
+    key := sub.(0);
+    let u = concrete (unif01 sub.(1) ~shape) in
+    for i = 0 to n - 1 do
+      if logp.(i) > neg_lam.(i) then k_arr.(i) <- k_arr.(i) + 1;
+      let ui = Nd.get_f u (unravel shape i) in
+      logp.(i) <- f32 (logp.(i) +. f32 (log ui))
+    done
+  done;
+  Array.map (fun c -> float_of_int (c - 1)) k_arr
+
+let poisson_arr k ~shape ~lams =
+  with_dtypes ~float_dtype:D.F32 (fun () ->
+      let use_knuth = Array.map (fun l -> l < 10.0) lams in
+      let any_knuth = Array.exists Fun.id use_knuth in
+      let any_rejection = Array.exists not use_knuth in
+      let knuth =
+        if any_knuth then
+          poisson_knuth k ~shape
+            ~lams:
+              (Array.mapi (fun i l -> if use_knuth.(i) then l else 0.0) lams)
+        else [||]
+      in
+      let rejection =
+        if any_rejection then
+          poisson_rejection k ~shape
+            ~lams:
+              (Array.mapi
+                 (fun i l -> if use_knuth.(i) then 100000.0 else l)
+                 lams)
+        else [||]
+      in
+      let out =
+        Array.mapi
+          (fun i l ->
+            if l = 0.0 then 0.0
+            else if use_knuth.(i) then knuth.(i)
+            else rejection.(i))
+          lams
+      in
+      Concrete (Nd.of_floats (default_int ()) shape out))
 
 let poisson k ~shape ~lam =
-  with_dtypes ~float_dtype:D.F32 (fun () -> poisson_single k ~shape ~lam)
+  poisson_arr k ~shape ~lams:(Array.make (prod shape) lam)
 
 let binomial_arr key ~shape ~counts ~probs =
   let n = prod shape in
@@ -670,37 +726,45 @@ let binomial_arr key ~shape ~counts ~probs =
         f32 (if probs.(i) < 0.5 then probs.(i) else 1.0 -. probs.(i)))
   in
   let cnt = Array.map (fun c -> f32 (Float.floor c)) counts in
-  if n > 0 && cnt.(0) *. q.(0) > 10.0 then
-    let samples = btrs key ~shape ~count:cnt.(0) ~prob:q.(0) in
-    Array.mapi
-      (fun i samp -> if probs.(i) < 0.5 then samp else cnt.(i) -. samp)
-      samples
-  else
-    let num_geom = Array.make n 0 in
-    let geom_sum = Array.make n 0.0 in
-    let log1mp = Array.map (fun qi -> f32 (log1p (-.qi))) q in
-    let key = ref key in
-    let active () =
-      let r = ref false in
-      for i = 0 to n - 1 do
-        if geom_sum.(i) <= cnt.(i) then r := true
-      done;
-      !r
-    in
-    while active () do
-      let sub = split_n !key 2 in
-      key := sub.(1);
-      let u = concrete (unif01 sub.(0) ~shape) in
-      for i = 0 to n - 1 do
-        if geom_sum.(i) <= cnt.(i) then num_geom.(i) <- num_geom.(i) + 1;
-        let ui = Nd.get_f u (unravel shape i) in
-        let geom = Float.ceil (f32 (f32 (log ui) /. log1mp.(i))) in
-        geom_sum.(i) <- f32 (geom_sum.(i) +. geom)
-      done
+  let use_inv = Array.mapi (fun i c -> c *. q.(i) <= 10.0) cnt in
+  let btrs_samples =
+    if Array.exists not use_inv then
+      btrs key ~shape
+        ~counts:(Array.mapi (fun i c -> if use_inv.(i) then 10000.0 else c) cnt)
+        ~probs:(Array.mapi (fun i p -> if use_inv.(i) then 0.5 else p) q)
+    else [||]
+  in
+  let cnt_inv = Array.mapi (fun i c -> if use_inv.(i) then c else 0.0) cnt in
+  let cnt_all = cnt in
+  let cnt = cnt_inv in
+  let num_geom = Array.make n 0 in
+  let geom_sum = Array.make n 0.0 in
+  let log1mp = Array.map (fun qi -> f32 (log1p (-.qi))) q in
+  let key = ref key in
+  let active () =
+    let r = ref false in
+    for i = 0 to n - 1 do
+      if geom_sum.(i) <= cnt.(i) then r := true
     done;
-    Array.init n (fun i ->
-        let samp = float_of_int (num_geom.(i) - 1) in
-        if probs.(i) < 0.5 then samp else cnt.(i) -. samp)
+    !r
+  in
+  while active () do
+    let sub = split_n !key 2 in
+    key := sub.(1);
+    let u = concrete (unif01 sub.(0) ~shape) in
+    for i = 0 to n - 1 do
+      if geom_sum.(i) <= cnt.(i) then num_geom.(i) <- num_geom.(i) + 1;
+      let ui = Nd.get_f u (unravel shape i) in
+      let geom = Float.ceil (f32 (f32 (log ui) /. log1mp.(i))) in
+      geom_sum.(i) <- f32 (geom_sum.(i) +. geom)
+    done
+  done;
+  Array.init n (fun i ->
+      let samp =
+        if use_inv.(i) then float_of_int (num_geom.(i) - 1)
+        else btrs_samples.(i)
+      in
+      if probs.(i) < 0.5 then samp else cnt_all.(i) -. samp)
 
 let binomial k ~shape ~count ~prob =
   let n = prod shape in
@@ -821,3 +885,125 @@ let binomial k ~shape ~count ~prob =
 
 let multinomial k ~p ~n_trials =
   via_host (fun k -> multinomial k ~p ~n_trials) k
+
+let bernoulli_prob k ~shape ~p =
+  let float_dtype = (C.get_aval p).dtype in
+  with_dtypes ~float_dtype (fun () ->
+      via_host (fun k -> e_lt (unif01 k ~shape) p) k)
+
+let uniform_range k ~shape ~minval ~maxval =
+  let dt = C.get_aval minval |> fun a -> a.dtype in
+  with_dtypes ~float_dtype:dt (fun () ->
+      let u = uniform k ~shape ~minval:0.0 ~maxval:1.0 in
+      let y = e_add (e_mul u (e_sub maxval minval)) minval in
+      e_max minval y)
+
+let value_floats v =
+  let nd = concrete v in
+  Array.of_list (List.rev (Nd.fold (fun acc x -> x :: acc) [] nd))
+
+let host_gamma ~log_space key alpha =
+  let a = C.get_aval alpha in
+  with_dtypes ~float_dtype:a.dtype (fun () ->
+      gamma_arr key ~shape:a.shape ~alphas:(value_floats alpha) ~log_space)
+
+let host_gamma_call ~log_space args =
+  match args with
+  | [ key; alpha ] ->
+      if is_tracer key || is_tracer alpha then
+        Custom_derivatives.pure_callback
+          (function
+            | [ k; al ] -> [ host_gamma ~log_space k al ]
+            | _ -> failwith "random/core: gamma callback arity")
+          ~result_avals:[ C.get_aval alpha ]
+          args
+      else [ C.with_eval_dynamic (fun () -> host_gamma ~log_space key alpha) ]
+  | _ -> failwith "random/core: gamma arity"
+
+let random_gamma_grad alpha sample =
+  let log_pdf =
+    e_sub
+      (e_sub
+         (e_mul (e_sub alpha (const_like_value alpha 1.0)) (e_log sample))
+         sample)
+      (C.bind1 Lgamma [ alpha ])
+  in
+  e_neg (e_div (C.bind1 Igamma_grad_a [ alpha; sample ]) (e_exp log_pdf))
+
+let gamma_value_rule =
+  Custom_derivatives.custom_jvp (host_gamma_call ~log_space:false)
+    ~jvp:(fun primals tangents ->
+      match (primals, tangents) with
+      | [ _; alpha ], [ _; ta ] ->
+          let out = host_gamma_call ~log_space:false primals in
+          let z = List.hd out in
+          (out, [ e_mul (random_gamma_grad alpha z) ta ])
+      | _ -> failwith "random/core: gamma jvp arity")
+
+let loggamma_value_rule =
+  Custom_derivatives.custom_jvp (host_gamma_call ~log_space:true)
+    ~jvp:(fun primals tangents ->
+      match (primals, tangents) with
+      | [ _; alpha ], [ _; ta ] ->
+          let out = host_gamma_call ~log_space:true primals in
+          let lz = List.hd out in
+          let z = e_exp lz in
+          (out, [ e_mul (e_div (random_gamma_grad alpha z) z) ta ])
+      | _ -> failwith "random/core: loggamma jvp arity")
+
+let broadcast_param v shape =
+  let a = C.get_aval v in
+  if a.shape = shape then v
+  else
+    let rank = Array.length shape and r = Array.length a.shape in
+    C.bind1
+      (Broadcast_in_dim { shape; dims = Array.init r (fun i -> rank - r + i) })
+      [ v ]
+
+let gamma_value k ~shape ~a =
+  List.hd (gamma_value_rule [ k; broadcast_param a shape ])
+
+let loggamma_value k ~shape ~a =
+  List.hd (loggamma_value_rule [ k; broadcast_param a shape ])
+
+let beta_value k ~shape ~a ~b =
+  let keys = split_n k 2 in
+  let la = loggamma_value keys.(0) ~shape ~a in
+  let lb = loggamma_value keys.(1) ~shape ~a:b in
+  let top = e_max la lb in
+  let ga = e_exp (e_sub la top) and gb = e_exp (e_sub lb top) in
+  e_div ga (e_add ga gb)
+
+let poisson_value k ~shape ~lam =
+  let host = function
+    | [ key; l ] -> [ poisson_arr key ~shape ~lams:(value_floats l) ]
+    | _ -> failwith "random/core: poisson arity"
+  in
+  let lam = broadcast_param lam shape in
+  let args = [ k; lam ] in
+  if is_tracer k || is_tracer lam then
+    List.hd
+      (Custom_derivatives.pure_callback host
+         ~result_avals:[ { shape; dtype = default_int (); weak_type = false } ]
+         args)
+  else List.hd (C.with_eval_dynamic (fun () -> host args))
+
+let bits_as k ~shape ~dtype =
+  let dtype = Dtypes.canonicalize_dtype dtype in
+  let host key =
+    match dtype with
+    | D.Uint64 ->
+        Concrete (Nd.of_int64s D.Uint64 shape (TF.bits64 (concrete key) shape))
+    | D.Uint32 -> PR.random_bits (wrap key) ~bit_width:32 ~shape
+    | D.Uint8 | D.Uint16 ->
+        let wide = concrete (PR.random_bits (wrap key) ~bit_width:32 ~shape) in
+        let modulus = if dtype = D.Uint8 then 256 else 65536 in
+        Concrete
+          (Nd.of_floats dtype shape
+             (Array.init (prod shape) (fun i ->
+                  float_of_int (geti wide i mod modulus))))
+    | _ -> invalid_arg "random.bits requires an unsigned integer dtype"
+  in
+  via_host host k
+
+let prng_key = key

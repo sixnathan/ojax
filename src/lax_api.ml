@@ -751,3 +751,38 @@ let pcast x ~dtype:_ = x
 
 let composite decomposition ~name:_ ~attrs:_ ~version:_ args =
   decomposition args
+
+let random_gamma_grad alpha sample =
+  let one = full_like alpha 1.0 in
+  let log_pdf =
+    sub (sub (mul (sub alpha one) (log sample)) sample) (b1 Lgamma [ alpha ])
+  in
+  neg (div (b1 Igamma_grad_a [ alpha; sample ]) (exp log_pdf))
+
+let rng_state = lazy (Stdlib.Random.State.make_self_init ())
+
+let rng_uniform lo hi out_shape =
+  let host = function
+    | [ a; c ] ->
+        let read v =
+          match v with
+          | Concrete nd -> Ndarray.get_f nd [||]
+          | Device d -> Ndarray.get_f (Pjrt.Buffer.to_host d) [||]
+          | Tracer _ -> invalid_arg "rng_uniform: expected concrete bounds"
+        in
+        let lo_v = read a and hi_v = read c in
+        let state = Lazy.force rng_state in
+        [
+          Concrete
+            (Ndarray.of_floats (dtype_of a) out_shape
+               (Array.init (product out_shape) (fun _ ->
+                    lo_v
+                    +. (Stdlib.Random.State.float state 1.0 *. (hi_v -. lo_v)))));
+        ]
+    | _ -> invalid_arg "rng_uniform: arity"
+  in
+  List.hd
+    (Custom_derivatives.pure_callback host
+       ~result_avals:
+         [ { shape = out_shape; dtype = dtype_of lo; weak_type = false } ]
+       [ lo; hi ])

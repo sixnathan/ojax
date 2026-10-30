@@ -55,3 +55,15 @@ val dirichlet : value -> alpha:value -> shape:int array -> value
 val poisson : value -> shape:int array -> lam:float -> value
 val binomial : value -> shape:int array -> count:float -> prob:float -> value
 val multinomial : value -> p:value -> n_trials:float -> value
+val bernoulli_prob : value -> shape:int array -> p:value -> value
+
+val uniform_range :
+  value -> shape:int array -> minval:value -> maxval:value -> value
+
+val random_gamma_grad : value -> value -> value
+val gamma_value : value -> shape:int array -> a:value -> value
+val loggamma_value : value -> shape:int array -> a:value -> value
+val beta_value : value -> shape:int array -> a:value -> b:value -> value
+val poisson_value : value -> shape:int array -> lam:value -> value
+val bits_as : value -> shape:int array -> dtype:Dtype.t -> value
+val prng_key : value -> value

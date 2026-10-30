@@ -789,6 +789,59 @@ let default_random_run op p =
   | "rd_choice" -> Some [ RC.choice (k ()) ~n:6 ~shape ~replace:true ]
   | _ -> None
 
+let array_random_run op p a b =
+  let k () = seed_key p in
+  match op with
+  | "ra_uniform" ->
+      let lo = a () in
+      let hi = L.add (L.add lo (L.abs (b ()))) (L.full_like lo 1.0) in
+      Some [ RC.uniform_range (k ()) ~shape:(shp lo) ~minval:lo ~maxval:hi ]
+  | "ra_bernoulli" ->
+      let pr = L.abs (L.sin (a ())) in
+      Some [ RC.bernoulli_prob (k ()) ~shape:(shp pr) ~p:pr ]
+  | "ra_gamma" -> Some [ RC.gamma_value (k ()) ~shape:(shp (a ())) ~a:(a ()) ]
+  | "ra_loggamma" ->
+      Some [ RC.loggamma_value (k ()) ~shape:(shp (a ())) ~a:(a ()) ]
+  | "ra_beta" ->
+      Some [ RC.beta_value (k ()) ~shape:(shp (a ())) ~a:(a ()) ~b:(b ()) ]
+  | "ra_poisson" ->
+      let lam = L.mul (a ()) (L.full_like (a ()) 8.0) in
+      Some [ RC.poisson_value (k ()) ~shape:(shp lam) ~lam ]
+  | "ra_bits" ->
+      Some
+        [
+          RC.bits_as (k ()) ~shape:(ints "shape" p)
+            ~dtype:
+              (match required_string "dtype" p with
+              | "uint8" -> Ojax.Dtype.Uint8
+              | "uint16" -> Ojax.Dtype.Uint16
+              | "uint32" -> Ojax.Dtype.Uint32
+              | _ -> Ojax.Dtype.Uint64);
+        ]
+  | "ra_gamma_grad" ->
+      let x = a () in
+      let z = L.add (L.mul x (L.full_like x 0.7)) (L.full_like x 0.2) in
+      Some [ L.random_gamma_grad x z ]
+  | "ra_grad_gamma" ->
+      let x = a () in
+      let f args =
+        let v = RC.gamma_value (k ()) ~shape:(shp x) ~a:(List.hd args) in
+        L.reduce_sum v [| 0 |]
+      in
+      Some (Ojax.Interpreters.Ad.grad f [ x ])
+  | "sp_fresnel_jit" ->
+      let f args =
+        let s, c = Ojax.Scipy.Special.fresnel (List.hd args) in
+        [ s; c ]
+      in
+      Some (Ojax.Api.jit_flat f [ a () ])
+  | "sp_fresnel_grad" ->
+      let f args =
+        L.reduce_sum (fst (Ojax.Scipy.Special.fresnel (List.hd args))) [| 0 |]
+      in
+      Some (Ojax.Interpreters.Ad.grad f [ a () ])
+  | _ -> None
+
 let fft_run op params a =
   match op with
   | "fft" -> fft1 F.fft (a ()) params
@@ -815,6 +868,7 @@ let run op params get =
   let c () = get "c" in
   let runners =
     [
+      (fun () -> array_random_run op params a b);
       (fun () -> default_random_run op params);
       (fun () -> lax_extra_run op params a);
       (fun () -> misc_scipy_run op params a b);

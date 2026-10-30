@@ -229,6 +229,24 @@ def _lax_extra_ops():
     }
 
 
+def _array_random_ops():
+    from jax import random as jr
+    k = lambda p: jr.key(p["seed"])
+    return {
+        "ra_uniform": lambda a, b, p: jr.uniform(k(p), a.shape, dtype=a.dtype, minval=a, maxval=a + jnp.abs(b) + 1.0),
+        "ra_bernoulli": lambda a, p: jr.bernoulli(k(p), jnp.abs(jnp.sin(a))),
+        "ra_gamma": lambda a, p: jr.gamma(k(p), a, dtype=a.dtype),
+        "ra_loggamma": lambda a, p: jr.loggamma(k(p), a, dtype=a.dtype),
+        "ra_beta": lambda a, b, p: jr.beta(k(p), a, b, dtype=a.dtype),
+        "ra_poisson": lambda a, p: jr.poisson(k(p), a * 8.0),
+        "ra_bits": lambda a, p: jr.bits(k(p), tuple(p["shape"]), dtype=jnp.dtype(p["dtype"])),
+        "ra_gamma_grad": lambda a, p: jax.lax.random_gamma_grad(a, a * 0.7 + 0.2),
+        "ra_grad_gamma": lambda a, p: jax.grad(lambda x: jnp.sum(jr.gamma(k(p), x, dtype=x.dtype)))(a),
+        "sp_fresnel_jit": lambda a, p: jax.jit(lambda x: jax.scipy.special.fresnel(x))(a),
+        "sp_fresnel_grad": lambda a, p: jax.grad(lambda x: jnp.sum(jax.scipy.special.fresnel(x)[0]))(a),
+    }
+
+
 def _default_random_ops():
     from jax import random as jr
     k = lambda p: jr.key(p["seed"])
@@ -303,6 +321,8 @@ def _newton(f, x0):
 
 
 SINGLE_PRECISION_ONLY = {
+    "ra_gamma_grad",
+    "ra_grad_gamma",
     "nn_attention",
 }
 
@@ -316,6 +336,7 @@ OPS.update(_batched_ops())
 OPS.update(_misc_scipy_ops())
 OPS.update(_lax_extra_ops())
 OPS.update(_default_random_ops())
+OPS.update(_array_random_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -669,5 +690,26 @@ def _default_random_cases():
     return [("rd_" + o, _real_input([1]), {"seed": 11, "shape": [4]}) for o in ops.split()]
 
 
+def _array_random_cases():
+    pos = lambda shape: {"a": {"kind": "positive", "shape": shape}}
+    r = _real_input
+    two_pos = {"a": {"kind": "positive", "shape": [3]}, "b": {"kind": "positive", "shape": [3]}}
+    out = [
+        ("ra_uniform", _two("real", [3], "real", [3]), {"seed": 3}),
+        ("ra_bernoulli", r([6]), {"seed": 4}),
+        ("ra_gamma", pos([3]), {"seed": 5}),
+        ("ra_loggamma", pos([3]), {"seed": 6}),
+        ("ra_beta", two_pos, {"seed": 7}),
+        ("ra_poisson", pos([6]), {"seed": 8}),
+        ("ra_gamma_grad", pos([3]), {}),
+        ("ra_grad_gamma", pos([3]), {"seed": 9}),
+        ("sp_fresnel_jit", r([4]), {}),
+        ("sp_fresnel_grad", r([4]), {}),
+    ]
+    for dt in ["uint8", "uint16", "uint32", "uint64"]:
+        out.append(("ra_bits", r([1]), {"seed": 10, "shape": [3], "dtype": dt}))
+    return out
+
+
 def all_cases():
-    return _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

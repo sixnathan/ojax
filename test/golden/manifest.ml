@@ -3379,10 +3379,11 @@ let npz_of_nd nd golden_dtype compare =
       let c = Array.init n (fun i -> Nd.get_c nd (flat_decode i sh)) in
       { Npz.dtype = golden_dtype; shape = sh; data = Npz.C c }
   | _ ->
-      let floats = read_nd nd in
       let data =
-        if compare = "exact" then Npz.I (Array.map Int64.of_float floats)
-        else Npz.F floats
+        if compare = "exact" then
+          let n = Array.fold_left ( * ) 1 sh in
+          Npz.I (Array.init n (fun i -> Nd.get_i64 nd (flat_decode i sh)))
+        else Npz.F (read_nd nd)
       in
       { Npz.dtype = golden_dtype; shape = sh; data }
 

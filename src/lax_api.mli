@@ -301,3 +301,5 @@ val composite :
   value list
 
 val fft : value -> fft_type:fft_kind -> fft_lengths:int array -> value
+val random_gamma_grad : value -> value -> value
+val rng_uniform : value -> value -> int array -> value

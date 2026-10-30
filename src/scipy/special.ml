@@ -1402,17 +1402,45 @@ let fresnel_scalar x =
   in
   if x < 0.0 then (-.s, -.c) else (s, c)
 
+let fresnel_host = function
+  | [ x ] ->
+      let nd =
+        match x with
+        | Types.Concrete a -> a
+        | Types.Device b -> Pjrt.Buffer.to_host b
+        | Types.Tracer _ -> invalid_arg "fresnel: expected a concrete value"
+      in
+      let dt = Ndarray.dtype nd in
+      [
+        Types.Concrete (Ndarray.map dt (fun v -> fst (fresnel_scalar v)) nd);
+        Types.Concrete (Ndarray.map dt (fun v -> snd (fresnel_scalar v)) nd);
+      ]
+  | _ -> invalid_arg "fresnel: arity"
+
+let fresnel_primal args =
+  match args with
+  | [ Types.Tracer t ] ->
+      Custom_derivatives.pure_callback fresnel_host
+        ~result_avals:[ t.Types.aval; t.Types.aval ]
+        args
+  | _ -> fresnel_host args
+
+let fresnel_rule =
+  Custom_derivatives.custom_jvp fresnel_primal ~jvp:(fun primals tangents ->
+      match (primals, tangents) with
+      | [ x ], [ t ] ->
+          let half_pi = 2.0 *. Float.atan 1.0 in
+          let phase =
+            Lax_api.mul (Lax_api.mul x x) (Lax_api.full_like x half_pi)
+          in
+          ( fresnel_primal primals,
+            [
+              Lax_api.mul (Lax_api.sin phase) t;
+              Lax_api.mul (Lax_api.cos phase) t;
+            ] )
+      | _ -> invalid_arg "fresnel: arity")
+
 let fresnel x =
-  let dt = dtype x in
-  let values () =
-    match x with
-    | Types.Concrete a ->
-        ( Types.Concrete (Ndarray.map dt (fun v -> fst (fresnel_scalar v)) a),
-          Types.Concrete (Ndarray.map dt (fun v -> snd (fresnel_scalar v)) a) )
-    | Types.Device b ->
-        let a = Pjrt.Buffer.to_host b in
-        ( Types.Concrete (Ndarray.map dt (fun v -> fst (fresnel_scalar v)) a),
-          Types.Concrete (Ndarray.map dt (fun v -> snd (fresnel_scalar v)) a) )
-    | Types.Tracer _ -> invalid_arg "fresnel: traced input is not supported yet"
-  in
-  values ()
+  match fresnel_rule [ x ] with
+  | [ s; c ] -> (s, c)
+  | _ -> invalid_arg "fresnel: arity"

@@ -883,3 +883,34 @@ let run op params get =
   match List.find_map (fun runner -> runner ()) runners with
   | Some out -> out
   | None -> fft_run op params a
+
+let needs_concrete op =
+  List.mem op
+    [
+      "np_nonzero";
+      "np_flatnonzero";
+      "np_argwhere";
+      "np_unique_values";
+      "np_unique_counts";
+      "np_unique_inverse";
+      "np_unique_all";
+      "np_unique_size";
+      "np_unique_axis";
+      "np_union1d";
+      "np_intersect1d";
+      "np_setdiff1d";
+      "np_setxor1d";
+      "np_bincount";
+      "np_compress";
+      "np_extract";
+      "np_delete";
+      "np_place";
+      "np_trim_zeros";
+      "np_frexp";
+      "np_polydiv";
+      "np_roots";
+      "np_packbits";
+      "np_unpackbits";
+      "np_histogramdd";
+      "sp_fresnel";
+    ]

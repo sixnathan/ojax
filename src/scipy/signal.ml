@@ -293,14 +293,18 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
   in
   let x = pad_tail (extend x) in
   let y = Option.map (fun v -> pad_tail (extend v)) y in
-  let win_sum = Numpy.Reductions.sum win in
+  let win_sum () = Numpy.Reductions.sum win in
   let host_scalar v =
     match v with
     | Concrete nd -> Ndarray.get_f nd [||]
-    | _ -> invalid_arg "spectral_helper: window must be concrete"
+    | Device d -> Ndarray.get_f (Pjrt.Buffer.to_host d) [||]
+    | Tracer _ -> invalid_arg "spectral_helper: window must be concrete"
   in
-  let sum_sq = host_scalar (Numpy.Reductions.sum (L.mul win win)) in
-  let total = host_scalar win_sum in
+  let sum_sq =
+    Core.with_eval_dynamic (fun () ->
+        host_scalar (Numpy.Reductions.sum (L.mul win win)))
+  in
+  let total = Core.with_eval_dynamic (fun () -> host_scalar (win_sum ())) in
   let scale =
     match scaling with
     | "density" -> 1.0 /. (fs *. sum_sq)
@@ -493,9 +497,10 @@ let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
   let host_sum v =
     match Numpy.Reductions.sum v with
     | Concrete nd -> Ndarray.get_f nd [||]
-    | _ -> invalid_arg "istft: window must be concrete"
+    | Device d -> Ndarray.get_f (Pjrt.Buffer.to_host d) [||]
+    | Tracer _ -> invalid_arg "istft: window must be concrete"
   in
-  let scale = host_sum win in
+  let scale = Core.with_eval_dynamic (fun () -> host_sum win) in
   let scaled =
     if is_complex cut then
       b1 Mul [ cut; NL.astype (L.full (shape cut) scale rdt) (dtype_of cut) ]

@@ -17,7 +17,7 @@ let element_literal nd idx =
       Ir.int_literal (Ndarray.get_i64 nd idx)
   | Dtype.Bool -> Ir.bool_literal (Ndarray.get_i64 nd idx <> 0L)
   | Dtype.Complex64 | Dtype.Complex128 ->
-      invalid_arg "Stablehlo.Emit: complex unsupported (row 96)"
+      Ir.complex_literal (Ndarray.dtype nd) (Ndarray.get_c nd idx)
 
 let all_literals nd =
   let shape = Ndarray.shape nd in
@@ -283,8 +283,7 @@ let compare_type_of dtype total_order =
   | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 -> "SIGNED"
   | Dtype.Bool | Dtype.Uint32 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 ->
       "UNSIGNED"
-  | Dtype.Complex64 | Dtype.Complex128 ->
-      invalid_arg "Stablehlo.Emit: complex unsupported (row 96)"
+  | Dtype.Complex64 | Dtype.Complex128 -> "FLOAT"
 
 let emit_compare ctx (eqn : eqn) in_ids dir total_order =
   let a, b = pair in_ids in
@@ -389,8 +388,7 @@ let zero_dense dt =
   | Dtype.Uint16 | Dtype.Uint64 ->
       Ir.int_literal 0L
   | Dtype.Bool -> Ir.bool_literal false
-  | Dtype.Complex64 | Dtype.Complex128 ->
-      invalid_arg "Stablehlo.Emit: complex unsupported (row 96)"
+  | Dtype.Complex64 | Dtype.Complex128 -> Ir.complex_literal dt Complex.zero
 
 let emit_convert ctx (eqn : eqn) in_ids =
   let x = sole in_ids in
@@ -724,8 +722,7 @@ let reduce_one dt =
     | Dtype.Uint16 | Dtype.Uint64 ->
         Ir.int_literal 1L
     | Dtype.Bool -> Ir.bool_literal true
-    | Dtype.Complex64 | Dtype.Complex128 ->
-        invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
+    | Dtype.Complex64 | Dtype.Complex128 -> Ir.complex_literal dt Complex.one)
 
 let reduce_allones dt =
   Ir.dense
@@ -1499,6 +1496,58 @@ let emit_sort_comparator ctx dt =
       Buffer.add_string ctx.buf
         (Printf.sprintf "      stablehlo.return %s : %s\n" (name p) bty)
 
+let emit_sort_multi ctx (eqn : eqn) in_ids ~dimension ~is_stable ~num_keys =
+  if num_keys <> 1 then
+    failwith "Stablehlo.Emit: sort with several keys runs on the host";
+  let inputs = List.map atom_aval eqn.inputs in
+  let bty = Ir.tensor_type Dtype.Bool [||] in
+  let group = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %%%d:%d = \"stablehlo.sort\"(%s) <{dimension = %d : i64, is_stable \
+        = %s}> ({\n"
+       group (List.length inputs)
+       (String.concat ", " (List.map name in_ids))
+       dimension
+       (if is_stable then "true" else "false"));
+  let args =
+    List.concat_map
+      (fun (a : aval) ->
+        let sty = Ir.tensor_type a.dtype [||] in
+        let x = fresh ctx in
+        let y = fresh ctx in
+        [ (x, sty); (y, sty) ])
+      inputs
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    ^bb0(%s):\n"
+       (String.concat ", "
+          (List.map (fun (id, ty) -> name id ^ ": " ^ ty) args)));
+  let key = List.hd inputs in
+  let x, _ = List.nth args 0 and y, _ = List.nth args 1 in
+  let sty = Ir.tensor_type key.dtype [||] in
+  let p = fresh ctx in
+  let compare_kind =
+    match key.dtype with
+    | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> "TOTALORDER"
+    | dt -> compare_type_of dt false
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "      %s = stablehlo.compare LT, %s, %s, %s : (%s, %s) -> %s\n\
+       \      stablehlo.return %s : %s\n"
+       (name p) (name x) (name y) compare_kind sty sty bty (name p) bty);
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s) -> (%s)\n"
+       (String.concat ", " (List.map Ir.tensor_type_of_aval inputs))
+       (String.concat ", "
+          (List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs)));
+  List.iteri
+    (fun i (v : var) ->
+      Hashtbl.replace ctx.ids v.vid
+        (alias_result (Printf.sprintf "%%%d#%d" group i)))
+    eqn.outs
+
 let emit_sort ctx (eqn : eqn) in_ids ~dimension ~is_stable =
   let x = sole in_ids in
   let in_aval = atom_aval (sole eqn.inputs) in
@@ -1848,6 +1897,12 @@ and emit_inlined ctx (eqn : eqn) in_ids f =
     eqn.outs jx.outs
 
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
+  try emit_eqn_unchecked ctx eqn in_ids
+  with Invalid_argument msg when msg = "Stablehlo.Emit: arity" ->
+    failwith
+      ("Stablehlo.Emit: arity in " ^ Pretty_printer.primitive_name eqn.prim)
+
+and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
   | Abs -> emit_stablehlo_unary ctx eqn in_ids "abs"
   | Cbrt -> emit_stablehlo_unary ctx eqn in_ids "cbrt"
@@ -1866,7 +1921,26 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Cosh -> emit_chlo_unary ctx eqn in_ids "cosh"
   | Copy -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
   | Exp2 -> emit_exp2 ctx eqn in_ids
-  | Conj -> failwith "Stablehlo.Emit: Conj requires complex dtype (M5)"
+  | Conj ->
+      let x = sole in_ids in
+      let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+      let aval = atom_aval (sole eqn.inputs) in
+      let part_dt =
+        match aval.dtype with Dtype.Complex128 -> Dtype.F64 | _ -> Dtype.F32
+      in
+      let partty = Ir.tensor_type part_dt aval.shape in
+      let re = fresh ctx and im = fresh ctx and negated = fresh ctx in
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.real %s : (%s) -> %s\n\
+           \    %s = stablehlo.imag %s : (%s) -> %s\n\
+           \    %s = stablehlo.negate %s : %s\n\
+           \    %s = stablehlo.complex %s, %s : %s\n"
+           (name re) (name x) inty partty (name im) (name x) inty partty
+           (name negated) (name im) partty (name n) (name re) (name negated)
+           inty)
   | Log -> emit_stablehlo_unary ctx eqn in_ids "log"
   | Log1p -> emit_stablehlo_unary ctx eqn in_ids "log_plus_one"
   | Neg -> emit_stablehlo_unary ctx eqn in_ids "negate"
@@ -1884,8 +1958,24 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Is_finite -> emit_is_finite ctx eqn in_ids
   | Logistic -> emit_logistic ctx eqn in_ids
   | Integer_pow y -> emit_integer_pow ctx eqn in_ids y
-  | Imag -> failwith "Stablehlo.Emit: Imag requires complex dtype (M5)"
-  | Real -> failwith "Stablehlo.Emit: Real requires complex dtype (M5)"
+  | Imag ->
+      let x = sole in_ids in
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.imag %s : (%s) -> %s\n" (name n)
+           (name x)
+           (Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)))
+           (Ir.tensor_type_of_aval out.vaval))
+  | Real ->
+      let x = sole in_ids in
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.real %s : (%s) -> %s\n" (name n)
+           (name x)
+           (Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)))
+           (Ir.tensor_type_of_aval out.vaval))
   | Add -> emit_stablehlo_binary ctx eqn in_ids "add"
   | And -> emit_stablehlo_binary ctx eqn in_ids "and"
   | Atan2 -> emit_stablehlo_binary ctx eqn in_ids "atan2"
@@ -1905,7 +1995,14 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Xor -> emit_stablehlo_binary ctx eqn in_ids "xor"
   | Mulhi -> emit_chlo_binary ctx eqn in_ids "mulhi"
   | Nextafter -> emit_chlo_binary ctx eqn in_ids "next_after"
-  | Complex -> failwith "Stablehlo.Emit: Complex requires complex dtype (M5)"
+  | Complex ->
+      let x, y = pair in_ids in
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.complex %s, %s : %s\n" (name n)
+           (name x) (name y)
+           (Ir.tensor_type_of_aval out.vaval))
   | Eq -> emit_compare ctx eqn in_ids "EQ" false
   | Ne -> emit_compare ctx eqn in_ids "NE" false
   | Ge -> emit_compare ctx eqn in_ids "GE" false
@@ -2031,8 +2128,10 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_select_and_gather_add ctx eqn in_ids ~select ~window
   | Select_and_scatter_add { select; window } ->
       emit_select_and_scatter_add ctx eqn in_ids ~select ~window
-  | Sort { dimension; is_stable; _ } ->
-      emit_sort ctx eqn in_ids ~dimension ~is_stable
+  | Sort { dimension; is_stable; num_keys } ->
+      if List.length in_ids = 1 then
+        emit_sort ctx eqn in_ids ~dimension ~is_stable
+      else emit_sort_multi ctx eqn in_ids ~dimension ~is_stable ~num_keys
   | Top_k { k; _ } -> emit_top_k ctx eqn in_ids k
   | Bessel_i1e -> emit_chlo_unary ctx eqn in_ids "bessel_i1e"
   | Digamma -> emit_chlo_unary ctx eqn in_ids "digamma"
@@ -2075,47 +2174,30 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
          the M4 dtype set (F32/F64/I32/I64/Bool/Uint32) and Ojax has no \
          abstract_eval for it, so it is non-representable (M5)"
   | Threefry2x32 ->
-      failwith
-        "Stablehlo.Emit: Threefry2x32 lowers on cpu to a stablehlo.while \
-         rolled loop (unrolled elsewhere) with private subfunctions \
-         (non-single-op decomposition); end-to-end deferred to the PJRT \
-         execution rows"
-  | Iota_2x32_shape _ ->
-      failwith
-        "Stablehlo.Emit: Iota_2x32_shape lowers via a uint64 iota + \
-         shift_right_logical + convert decomposition; uint64 is not in the M4 \
-         dtype set, non-representable (M5)"
-  | Random_bits _ ->
-      failwith
-        "Stablehlo.Emit: Random_bits lowers via mlir.lower_fun into the full \
-         threefry bit-generation decomposition (many stablehlo ops); \
-         non-single-op, end-to-end deferred to the PJRT execution rows"
+      emit_inlined ctx eqn in_ids (function
+        | [ k1; k2; c1; c2 ] -> Prng_lowering.threefry2x32 k1 k2 c1 c2
+        | _ -> invalid_arg "Stablehlo.Emit: threefry arity")
+  | Iota_2x32_shape shape ->
+      emit_inlined ctx eqn in_ids (fun _ ->
+          let hi, lo = Prng_lowering.iota_counters shape in
+          [ hi; lo ])
+  | Random_bits { bit_width = 32; shape } ->
+      emit_inlined ctx eqn in_ids (fun args ->
+          [ Prng_lowering.random_bits ~shape (List.hd args) ])
+  | Random_bits { shape; _ } ->
+      emit_inlined ctx eqn in_ids (fun args ->
+          [ Prng_lowering.random_bits64 ~shape (List.hd args) ])
   | Random_seed ->
-      failwith
-        "Stablehlo.Emit: Random_seed lowers via mlir.lower_fun into a \
-         shift/convert/and/concatenate decomposition plus a \
-         sdy.sharding_constraint; sharding machinery is out of scope \
-         (STRIP-ON-PORT), non-representable"
-  | Random_split _ ->
-      failwith
-        "Stablehlo.Emit: Random_split lowers via mlir.lower_fun into the \
-         threefry fold/split decomposition (many stablehlo ops); \
-         non-single-op, end-to-end deferred to the PJRT execution rows"
+      emit_inlined ctx eqn in_ids (fun args ->
+          [ Prng_lowering.random_seed (List.hd args) ])
+  | Random_split shape ->
+      emit_inlined ctx eqn in_ids (fun args ->
+          [ Prng_lowering.random_split ~shape (List.hd args) ])
   | Random_fold_in ->
-      failwith
-        "Stablehlo.Emit: Random_fold_in lowers via mlir.lower_fun into the \
-         threefry fold-in decomposition (many stablehlo ops); non-single-op, \
-         end-to-end deferred to the PJRT execution rows"
-  | Random_wrap ->
-      failwith
-        "Stablehlo.Emit: Random_wrap lowers to a sdy.sharding_constraint over \
-         the physical key array; sharding machinery is out of scope \
-         (STRIP-ON-PORT), non-representable"
-  | Random_unwrap ->
-      failwith
-        "Stablehlo.Emit: Random_unwrap lowers to a sdy.sharding_constraint \
-         over the physical key array; sharding machinery is out of scope \
-         (STRIP-ON-PORT), non-representable"
+      emit_inlined ctx eqn in_ids (function
+        | [ key; data ] -> [ Prng_lowering.fold_in key data ]
+        | _ -> invalid_arg "Stablehlo.Emit: fold_in arity")
+  | Random_wrap | Random_unwrap -> emit_inlined ctx eqn in_ids Fun.id
   | Cond { t; f } -> emit_cond ctx eqn in_ids f t
   | Reduce { jaxpr; dimensions } ->
       emit_reduce_general ctx eqn in_ids jaxpr dimensions
@@ -2141,16 +2223,79 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
         "Stablehlo.Emit: Custom_linear_solve lowers to an iterative \
          while/solve decomposition (non-single-op); end-to-end deferred to the \
          PJRT execution rows"
-  | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
-  | Schur _ | Svd _ | Tridiagonal _ ->
+  | Cholesky ->
+      let aval = atom_aval (sole eqn.inputs) in
+      let ty = Ir.tensor_type_of_aval aval in
+      let raw = fresh ctx in
+      let mask_id = fresh ctx in
+      let rank = Array.length aval.shape in
+      let rows = aval.shape.(rank - 2) and cols = aval.shape.(rank - 1) in
+      let total = Array.fold_left ( * ) 1 aval.shape in
+      let mask =
+        Ndarray.of_floats aval.dtype aval.shape
+          (Array.init total (fun i ->
+               let local = i mod (rows * cols) in
+               if local mod cols <= local / cols then 1.0 else 0.0))
+      in
+      emit_constant_at ctx mask_id mask;
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.cholesky %s, lower = true : %s\n\
+           \    %s = stablehlo.multiply %s, %s : %s\n"
+           (name raw)
+           (name (sole in_ids))
+           ty (name n) (name raw) (name mask_id) ty)
+  | Triangular_solve o ->
+      let a, b = pair in_ids in
+      let inputs = List.map atom_aval eqn.inputs in
+      let aty = Ir.tensor_type_of_aval (List.hd inputs) in
+      let bty = Ir.tensor_type_of_aval (List.nth inputs 1) in
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      let transpose =
+        match (o.transpose_a, o.conjugate_a) with
+        | false, false -> "NO_TRANSPOSE"
+        | true, false -> "TRANSPOSE"
+        | true, true -> "ADJOINT"
+        | false, true ->
+            failwith "Stablehlo.Emit: conjugate without transpose runs on host"
+      in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = \"stablehlo.triangular_solve\"(%s, %s) <{left_side = %b, \
+            lower = %b, transpose_a = #stablehlo<transpose %s>, unit_diagonal \
+            = %b}> : (%s, %s) -> %s\n"
+           (name n) (name a) (name b) o.left_side o.lower transpose
+           o.unit_diagonal aty bty bty)
+  | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
+  | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
+  | Tridiagonal _ ->
       failwith
         "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
          host-interpreter only (M5 lax/linalg, XLA emission deferred)"
   | Collective _ ->
       failwith "Stablehlo.Emit: collectives must be bound by an enclosing vmap"
-  | Fft _ ->
-      failwith "Stablehlo.Emit: complex buffers run on the host interpreter"
+  | Fft { fft_type; fft_lengths } ->
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      let kind =
+        match fft_type with
+        | Fft_forward -> "FFT"
+        | Fft_inverse -> "IFFT"
+        | Fft_real -> "RFFT"
+        | Fft_inverse_real -> "IRFFT"
+      in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.fft %s, type = %s, length = %s : (%s) -> %s\n"
+           (name n)
+           (name (sole in_ids))
+           kind
+           (Ir.int_array_attr fft_lengths)
+           (Ir.tensor_type_of_aval (atom_aval (List.hd eqn.inputs)))
+           (Ir.tensor_type_of_aval out.vaval))
   | Custom_jvp_call id | Custom_vjp_call id ->
       let primal =
         match Core.custom_rule id with

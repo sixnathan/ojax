@@ -192,6 +192,7 @@ let threefry_prng_impl : Prng.prng_impl =
     tag = "fry";
   }
 
+let () = Prng.bits64_hook := bits64
 let () = Prng.register_prng threefry_prng_impl
 
 let scalar_at v i =

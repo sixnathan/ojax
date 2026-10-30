@@ -28,9 +28,9 @@ let buffer_type (d : Dtype.t) : int =
   | Dtype.Uint16 -> 7
   | Dtype.Uint64 -> 9
   | Dtype.F16 -> 10
-  | Dtype.Bf16 -> 16
-  | Dtype.Complex64 | Dtype.Complex128 ->
-      invalid_arg "Pjrt.Abi: complex buffer type unsupported"
+  | Dtype.Bf16 -> 13
+  | Dtype.Complex64 -> 14
+  | Dtype.Complex128 -> 15
 
 let dtype_of_buffer_type (bt : int) : Dtype.t option =
   match bt with
@@ -38,6 +38,15 @@ let dtype_of_buffer_type (bt : int) : Dtype.t option =
   | 4 -> Some Dtype.I32
   | 5 -> Some Dtype.I64
   | 8 -> Some Dtype.Uint32
+  | 2 -> Some Dtype.I8
+  | 3 -> Some Dtype.I16
+  | 6 -> Some Dtype.Uint8
+  | 7 -> Some Dtype.Uint16
+  | 9 -> Some Dtype.Uint64
+  | 10 -> Some Dtype.F16
+  | 13 -> Some Dtype.Bf16
+  | 14 -> Some Dtype.Complex64
+  | 15 -> Some Dtype.Complex128
   | 11 -> Some Dtype.F32
   | 12 -> Some Dtype.F64
   | _ -> None

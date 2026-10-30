@@ -8,22 +8,16 @@ module LA = Numpy.Linalg
 type t = {
   dataset : value;
   weights : value;
-  neff : float;
+  neff : value;
   d : int;
   n : int;
-  factor : float;
+  factor : value;
   covariance : value;
   inv_cov : value;
 }
 
 let shape v = (Core.get_aval v).shape
 let dtype_of v = (Core.get_aval v).dtype
-
-let host_scalar v =
-  match v with
-  | Concrete nd -> Ndarray.get_f nd [||]
-  | Device b -> Ndarray.get_f (Pjrt.Buffer.to_host b) [||]
-  | Tracer _ -> invalid_arg "gaussian_kde: bandwidth requires concrete weights"
 
 let gaussian_kde ?(bw_method = "scott") ?weights dataset =
   let sh = shape dataset in
@@ -39,12 +33,15 @@ let gaussian_kde ?(bw_method = "scott") ?weights dataset =
   in
   let total = R.sum raw_weights in
   let w = U.divide raw_weights (L.broadcast_in_dim total [| n |] [||]) in
-  let neff = 1.0 /. host_scalar (R.sum (U.multiply w w)) in
+  let sum_sq = R.sum (U.multiply w w) in
+  let neff = L.div (L.full_like sum_sq 1.0) sum_sq in
   let dim = float_of_int d in
+  let exponent = L.full_like neff (-1.0 /. (dim +. 4.0)) in
   let factor =
     match bw_method with
-    | "scott" -> neff ** (-1.0 /. (dim +. 4.0))
-    | "silverman" -> (neff *. (dim +. 2.0) /. 4.0) ** (-1.0 /. (dim +. 4.0))
+    | "scott" -> L.pow neff exponent
+    | "silverman" ->
+        L.pow (L.mul neff (L.full_like neff ((dim +. 2.0) /. 4.0))) exponent
     | other ->
         invalid_arg ("`bw_method` should be 'scott' or 'silverman': " ^ other)
   in
@@ -54,9 +51,14 @@ let gaussian_kde ?(bw_method = "scott") ?weights dataset =
     U.multiply centered (NL.broadcast_to (NL.reshape w [| 1; n |]) sh)
   in
   let raw_cov = L.dot weighted (L.transpose centered [| 1; 0 |]) in
-  let denom = 1.0 -. host_scalar (R.sum (U.multiply w w)) in
-  let data_cov = L.div raw_cov (L.full_like raw_cov denom) in
-  let covariance = L.mul data_cov (L.full_like data_cov (factor *. factor)) in
+  let denom = L.sub (L.full_like sum_sq 1.0) sum_sq in
+  let data_cov =
+    L.div raw_cov (L.broadcast_in_dim denom (shape raw_cov) [||])
+  in
+  let covariance =
+    L.mul data_cov
+      (L.broadcast_in_dim (L.mul factor factor) (shape data_cov) [||])
+  in
   let inv_cov = LA.inv covariance in
   { dataset; weights = w; neff; d; n; factor; covariance; inv_cov }
 

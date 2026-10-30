@@ -230,6 +230,7 @@ let map_complex dtype f t =
 
 let canonicalize dtype t =
   match dtype with
+  | (Dtype.I64 | Dtype.Uint64) when t.dtype = dtype -> t
   | Dtype.Complex64 | Dtype.Complex128 ->
       map_complex dtype (round_complex dtype) t
   | _ -> map dtype (round_to dtype) t

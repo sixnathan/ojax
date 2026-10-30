@@ -4219,6 +4219,29 @@ let parity_run c inputs =
   let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
   Parity_cases.run c.op c.params get
 
+let parity_jit_run c inputs =
+  let names = List.map (fun (a : arg) -> a.name) c.args in
+  let values =
+    List.map
+      (fun name -> T.Concrete (nd_of_npz_any (find_member inputs name)))
+      names
+  in
+  let lookup args name =
+    let rec go ns vs =
+      match (ns, vs) with
+      | n :: _, v :: _ when n = name -> v
+      | _ :: nt, _ :: vt -> go nt vt
+      | _ -> failwith ("parity: missing input " ^ name)
+    in
+    go names args
+  in
+  let direct () = Parity_cases.run c.op c.params (lookup values) in
+  if Parity_cases.needs_concrete c.op then direct ()
+  else
+    Ojax.Api.jit_flat
+      (fun args -> Parity_cases.run c.op c.params (lookup args))
+      values
+
 let composed_suite_for ~run module_name set_name =
   let set_dir =
     Filename.concat (Filename.concat goldens_root module_name) set_name
@@ -4235,6 +4258,22 @@ let composed_suite_for ~run module_name set_name =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
   (module_name ^ ":" ^ set_name, coverage :: case_tests)
+
+let relabel name (_, tests) = (name, tests)
+
+let () =
+  at_exit (fun () ->
+      if Sys.getenv_opt "OJAX_BACKEND_STATS" <> None then begin
+        let compiled, fallbacks = Ojax.Backend.stats () in
+        Printf.eprintf "XLA compiled %d, host fallback %d\n" compiled
+          (List.length fallbacks);
+        let shorten s =
+          if String.length s > 110 then String.sub s 0 110 else s
+        in
+        List.iter
+          (fun r -> Printf.eprintf "FALLBACK %s\n" (shorten r))
+          (List.sort_uniq compare fallbacks)
+      end)
 
 let () =
   Ojax.Lax.install ();
@@ -4316,6 +4355,10 @@ let () =
       scipy_optimize_suite_for "x64_on";
       composed_suite_for ~run:parity_run "parity" "x64_off";
       composed_suite_for ~run:parity_run "parity" "x64_on";
+      relabel "parity_jit:x64_off"
+        (composed_suite_for ~run:parity_jit_run "parity" "x64_off");
+      relabel "parity_jit:x64_on"
+        (composed_suite_for ~run:parity_jit_run "parity" "x64_on");
       composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
       composed_suite_for ~run:vectorize_run "vectorize" "x64_on";
       composed_suite_for ~run:spatial_transform_run "spatial_transform"

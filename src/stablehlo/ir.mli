@@ -8,3 +8,4 @@ val bool_literal : bool -> string
 val dense : string -> string
 val int_array_attr : int array -> string
 val enum_attr : string -> string -> string
+val complex_literal : Dtype.t -> Complex.t -> string

@@ -259,6 +259,8 @@ let prim_name = function
   | Svd _ -> "svd"
   | Tridiagonal _ -> "tridiagonal"
 
+let primitive_name p = prim_name p
+
 let prim_params = function
   | Convert_element_type dt -> "[new_dtype=" ^ Dtype.short_name dt ^ "]"
   | Broadcast_in_dim { shape; dims } ->

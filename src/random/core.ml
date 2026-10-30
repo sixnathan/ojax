@@ -84,6 +84,20 @@ let bits k ~shape = PR.random_bits (wrap k) ~bit_width:32 ~shape
 
 let uniform_unit k ~shape =
   match fdt () with
+  | D.F64 when match k with Tracer _ -> true | _ -> false ->
+      let raw = PR.random_bits (wrap k) ~bit_width:64 ~shape in
+      let twelve =
+        Concrete (Nd.of_int64s D.Uint64 shape (Array.make (prod shape) 12L))
+      in
+      let exponent =
+        Concrete
+          (Nd.of_int64s D.Uint64 shape
+             (Array.make (prod shape) 0x3FF0000000000000L))
+      in
+      let mantissa =
+        C.bind1 Or [ C.bind1 Shift_right_logical [ raw; twelve ]; exponent ]
+      in
+      C.bind1 (Bitcast_convert_type D.F64) [ mantissa ]
   | D.F64 ->
       let raw = TF.bits64 (concrete (wrap k)) shape in
       let exponent = 0x3FF0000000000000L in
@@ -889,7 +903,7 @@ let multinomial k ~p ~n_trials =
 let bernoulli_prob k ~shape ~p =
   let float_dtype = (C.get_aval p).dtype in
   with_dtypes ~float_dtype (fun () ->
-      via_host (fun k -> e_lt (unif01 k ~shape) p) k)
+      e_lt (via_host (fun k -> unif01 k ~shape) k) p)
 
 let uniform_range k ~shape ~minval ~maxval =
   let dt = C.get_aval minval |> fun a -> a.dtype in
@@ -967,9 +981,22 @@ let loggamma_value k ~shape ~a =
   List.hd (loggamma_value_rule [ k; broadcast_param a shape ])
 
 let beta_value k ~shape ~a ~b =
-  let keys = split_n k 2 in
-  let la = loggamma_value keys.(0) ~shape ~a in
-  let lb = loggamma_value keys.(1) ~shape ~a:b in
+  let keys = split k 2 in
+  let pick i =
+    C.bind1 (Reshape [| 2 |])
+      [
+        C.bind1
+          (Slice
+             {
+               start_indices = [| i; 0 |];
+               limit_indices = [| i + 1; 2 |];
+               strides = None;
+             })
+          [ keys ];
+      ]
+  in
+  let la = loggamma_value (pick 0) ~shape ~a in
+  let lb = loggamma_value (pick 1) ~shape ~a:b in
   let top = e_max la lb in
   let ga = e_exp (e_sub la top) and gb = e_exp (e_sub lb top) in
   e_div ga (e_add ga gb)

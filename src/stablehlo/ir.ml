@@ -87,9 +87,24 @@ let stage2 dtype v =
     in
     sign ^ m ^ "E" ^ es
 
-let float_literal dtype v0 =
-  if not (is_f32 dtype || dtype = Dtype.F64) then
-    invalid_arg "Ir.float_literal: not a floating-point dtype";
+let narrow_literal dtype v =
+  let nan_bits, inf_bits =
+    match dtype with Dtype.F16 -> ("0x7E00", 0x7C00) | _ -> ("0x7FC0", 0x7F80)
+  in
+  match Float.classify_float v with
+  | FP_nan -> nan_bits
+  | FP_infinite ->
+      Printf.sprintf "0x%04X"
+        (if v < 0.0 then inf_bits lor 0x8000 else inf_bits)
+  | _ -> Printf.sprintf "%.17e" v
+
+let rec float_literal dtype v0 =
+  match dtype with
+  | Dtype.F16 | Dtype.Bf16 -> narrow_literal dtype v0
+  | Dtype.F32 | Dtype.F64 -> wide_literal dtype v0
+  | _ -> invalid_arg "Ir.float_literal: not a floating-point dtype"
+
+and wide_literal dtype v0 =
   let v = if is_f32 dtype then f32_round v0 else v0 in
   match Float.classify_float v with
   | FP_nan -> canonical_nan dtype
@@ -104,3 +119,9 @@ let int_array_attr xs =
   "[" ^ (Array.to_list xs |> List.map string_of_int |> String.concat ", ") ^ "]"
 
 let enum_attr kind value = Printf.sprintf "#stablehlo<%s %s>" kind value
+
+let complex_literal dtype (z : Complex.t) =
+  let part =
+    match dtype with Dtype.Complex128 -> Dtype.F64 | _ -> Dtype.F32
+  in
+  Printf.sprintf "(%s, %s)" (float_literal part z.re) (float_literal part z.im)

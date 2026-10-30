@@ -702,20 +702,43 @@ let beta_impl = function
   | _ -> failwith "lax: regularized_incomplete_beta expects 3 operands"
 
 let bitcast_impl new_dt operand =
-  let f =
-    match (Ndarray.dtype operand, new_dt) with
-    | Dtype.F32, Dtype.I32 -> fun x -> Int32.to_float (Int32.bits_of_float x)
-    | Dtype.I32, Dtype.F32 -> fun x -> Int32.float_of_bits (Int32.of_float x)
-    | Dtype.F64, Dtype.I64 -> fun x -> Int64.to_float (Int64.bits_of_float x)
-    | Dtype.I64, Dtype.F64 -> fun x -> Int64.float_of_bits (Int64.of_float x)
-    | a, b when a = b -> fun x -> x
-    | _ ->
-        failwith
-          "lax: bitcast_convert_type only supports same-width real reinterpret \
-           in M1"
+  let shape = Ndarray.shape operand in
+  let n = Utils.prod shape in
+  let word i = Ndarray.get_i64 operand (Utils.decode i shape) in
+  let value i = Ndarray.get_f operand (Utils.decode i shape) in
+  let as_wide =
+    match Ndarray.dtype operand with
+    | Dtype.F64 -> fun i -> Int64.bits_of_float (value i)
+    | Dtype.I64 | Dtype.Uint64 -> word
+    | _ -> fun _ -> 0L
   in
-  Ndarray.of_floats new_dt (Ndarray.shape operand)
-    (Array.map f (to_array operand))
+  let as_narrow =
+    match Ndarray.dtype operand with
+    | Dtype.F32 -> fun i -> Int32.bits_of_float (value i)
+    | Dtype.I32 | Dtype.Uint32 -> fun i -> Int64.to_int32 (word i)
+    | _ -> fun _ -> 0l
+  in
+  match (Ndarray.dtype operand, new_dt) with
+  | (Dtype.F64 | Dtype.I64 | Dtype.Uint64), Dtype.F64 ->
+      Ndarray.of_floats new_dt shape
+        (Array.init n (fun i -> Int64.float_of_bits (as_wide i)))
+  | (Dtype.F64 | Dtype.I64 | Dtype.Uint64), (Dtype.I64 | Dtype.Uint64) ->
+      Ndarray.of_int64s new_dt shape (Array.init n as_wide)
+  | (Dtype.F32 | Dtype.I32 | Dtype.Uint32), Dtype.F32 ->
+      Ndarray.of_floats new_dt shape
+        (Array.init n (fun i -> Int32.float_of_bits (as_narrow i)))
+  | (Dtype.F32 | Dtype.I32 | Dtype.Uint32), Dtype.I32 ->
+      Ndarray.of_floats new_dt shape
+        (Array.init n (fun i -> Int32.to_float (as_narrow i)))
+  | (Dtype.F32 | Dtype.I32 | Dtype.Uint32), Dtype.Uint32 ->
+      Ndarray.of_floats new_dt shape
+        (Array.init n (fun i ->
+             Int64.to_float
+               (Int64.logand (Int64.of_int32 (as_narrow i)) 0xFFFFFFFFL)))
+  | a, b when a = b -> operand
+  | _ ->
+      invalid_arg
+        "lax.bitcast_convert_type: operand and target must have the same width"
 
 let iota_impl dtype shape dimension =
   let n = Utils.prod shape in
@@ -1518,6 +1541,170 @@ and impl_by_parts prim inputs complex_dtype =
              { Complex.re = Ndarray.get_f r idx; im = Ndarray.get_f i idx })))
     res ims
 
+let is_wide_int = function Dtype.I64 | Dtype.Uint64 -> true | _ -> false
+
+let wide_int_parts nd =
+  let shape = Ndarray.shape nd in
+  let n = Utils.prod shape in
+  let read i = Ndarray.get_i64 nd (Utils.decode i shape) in
+  ( Ndarray.of_floats Dtype.F64 shape
+      (Array.init n (fun i -> Int64.to_float (Int64.shift_right (read i) 32))),
+    Ndarray.of_floats Dtype.F64 shape
+      (Array.init n (fun i ->
+           Int64.to_float (Int64.logand (read i) 0xFFFFFFFFL))) )
+
+let wide_int_join dtype hi lo =
+  let shape = Ndarray.shape hi in
+  let n = Utils.prod shape in
+  Ndarray.of_int64s dtype shape
+    (Array.init n (fun i ->
+         let idx = Utils.decode i shape in
+         Int64.logor
+           (Int64.shift_left (Int64.of_float (Ndarray.get_f hi idx)) 32)
+           (Int64.of_float (Ndarray.get_f lo idx))))
+
+let structural_only = function
+  | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Concatenate _ | Pad _
+  | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _ | Transpose _ | Unstack _
+  | Slice _ | Dynamic_slice _ | Dynamic_update_slice | Gather _ | Scatter _ ->
+      true
+  | _ -> false
+
+let wide_int_elementwise prim inputs =
+  let dt = match inputs with a :: _ -> Ndarray.dtype a | [] -> Dtype.I64 in
+  if not (List.for_all (fun nd -> Ndarray.dtype nd = dt) inputs) then None
+  else
+    let binary f =
+      match inputs with
+      | [ a; b ] ->
+          let shape = Ndarray.shape a in
+          let n = Utils.prod shape in
+          Some
+            [
+              Ndarray.of_int64s dt shape
+                (Array.init n (fun i ->
+                     let idx = Utils.decode i shape in
+                     f (Ndarray.get_i64 a idx) (Ndarray.get_i64 b idx)));
+            ]
+      | _ -> None
+    in
+    let unary f =
+      match inputs with
+      | [ a ] ->
+          let shape = Ndarray.shape a in
+          let n = Utils.prod shape in
+          Some
+            [
+              Ndarray.of_int64s dt shape
+                (Array.init n (fun i ->
+                     f (Ndarray.get_i64 a (Utils.decode i shape))));
+            ]
+      | _ -> None
+    in
+    let compare_with test =
+      match inputs with
+      | [ a; b ] ->
+          let shape = Ndarray.shape a in
+          let n = Utils.prod shape in
+          let cmp =
+            if dt = Dtype.Uint64 then Int64.unsigned_compare else Int64.compare
+          in
+          Some
+            [
+              Ndarray.of_floats Dtype.Bool shape
+                (Array.init n (fun i ->
+                     let idx = Utils.decode i shape in
+                     if
+                       test
+                         (cmp (Ndarray.get_i64 a idx) (Ndarray.get_i64 b idx))
+                     then 1.0
+                     else 0.0));
+            ]
+      | _ -> None
+    in
+    let shift_amount s = Int64.to_int s land 63 in
+    let unsigned = dt = Dtype.Uint64 in
+    match prim with
+    | Add -> binary Int64.add
+    | Sub -> binary Int64.sub
+    | Mul -> binary Int64.mul
+    | Neg -> unary Int64.neg
+    | And -> binary Int64.logand
+    | Or -> binary Int64.logor
+    | Xor -> binary Int64.logxor
+    | Not -> unary Int64.lognot
+    | Div ->
+        binary (fun x y ->
+            if y = 0L then -1L
+            else if unsigned then Int64.unsigned_div x y
+            else Int64.div x y)
+    | Rem ->
+        binary (fun x y ->
+            if y = 0L then x
+            else if unsigned then Int64.unsigned_rem x y
+            else Int64.rem x y)
+    | Max ->
+        binary (fun x y ->
+            let c =
+              if unsigned then Int64.unsigned_compare x y else Int64.compare x y
+            in
+            if c >= 0 then x else y)
+    | Min ->
+        binary (fun x y ->
+            let c =
+              if unsigned then Int64.unsigned_compare x y else Int64.compare x y
+            in
+            if c <= 0 then x else y)
+    | Shift_left ->
+        binary (fun x s ->
+            if Int64.unsigned_compare s 64L >= 0 then 0L
+            else Int64.shift_left x (shift_amount s))
+    | Shift_right_logical ->
+        binary (fun x s ->
+            if Int64.unsigned_compare s 64L >= 0 then 0L
+            else Int64.shift_right_logical x (shift_amount s))
+    | Shift_right_arithmetic ->
+        binary (fun x s ->
+            if unsigned then
+              if Int64.unsigned_compare s 64L >= 0 then 0L
+              else Int64.shift_right_logical x (shift_amount s)
+            else Int64.shift_right x (Stdlib.min (Int64.to_int s) 63))
+    | Eq -> compare_with (fun c -> c = 0)
+    | Ne -> compare_with (fun c -> c <> 0)
+    | Lt -> compare_with (fun c -> c < 0)
+    | Le -> compare_with (fun c -> c <= 0)
+    | Gt -> compare_with (fun c -> c > 0)
+    | Ge -> compare_with (fun c -> c >= 0)
+    | _ -> None
+
+let wide_data_positions prim inputs =
+  let n = List.length inputs in
+  match prim with
+  | Select_n -> List.init (n - 1) (fun i -> i + 1)
+  | Gather _ | Dynamic_slice _ -> [ 0 ]
+  | Scatter _ -> [ 0; 2 ]
+  | Dynamic_update_slice -> [ 0; 1 ]
+  | _ -> List.init n Fun.id
+
+let wide_data_operands prim inputs =
+  let positions = wide_data_positions prim inputs in
+  positions <> []
+  && List.for_all
+       (fun i -> is_wide_int (Ndarray.dtype (List.nth inputs i)))
+       positions
+
+let wide_int_by_parts prim inputs =
+  let positions = wide_data_positions prim inputs in
+  let split =
+    List.mapi
+      (fun i nd -> if List.mem i positions then wide_int_parts nd else (nd, nd))
+      inputs
+  in
+  let dt = Ndarray.dtype (List.nth inputs (List.hd positions)) in
+  let his = impl_base prim (List.map fst split) in
+  let los = impl_base prim (List.map snd split) in
+  List.map2 (wide_int_join dt) his los
+
 let acts_on_parts = function
   | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Concatenate _ | Pad _
   | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _ | Transpose _ | Unstack _
@@ -1649,19 +1836,27 @@ let stack_elements batch elements =
                Ndarray.get_f e i))
 
 let impl_core prim inputs =
-  let has_complex =
-    List.exists (fun nd -> is_complex_dtype (Ndarray.dtype nd)) inputs
-  in
-  match if has_complex then complex_elementwise prim inputs else None with
+  let wide = List.exists (fun nd -> is_wide_int (Ndarray.dtype nd)) inputs in
+  match if wide then wide_int_elementwise prim inputs else None with
   | Some results -> results
+  | None when wide && structural_only prim && wide_data_operands prim inputs ->
+      wide_int_by_parts prim inputs
   | None -> (
-      match
-        if acts_on_parts prim then
-          List.find_opt (fun nd -> is_complex_dtype (Ndarray.dtype nd)) inputs
-        else None
-      with
-      | Some witness -> impl_by_parts prim inputs (Ndarray.dtype witness)
-      | None -> impl_base prim inputs)
+      let has_complex =
+        List.exists (fun nd -> is_complex_dtype (Ndarray.dtype nd)) inputs
+      in
+      match if has_complex then complex_elementwise prim inputs else None with
+      | Some results -> results
+      | None -> (
+          match
+            if acts_on_parts prim then
+              List.find_opt
+                (fun nd -> is_complex_dtype (Ndarray.dtype nd))
+                inputs
+            else None
+          with
+          | Some witness -> impl_by_parts prim inputs (Ndarray.dtype witness)
+          | None -> impl_base prim inputs))
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
 

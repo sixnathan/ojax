@@ -21,3 +21,4 @@ val random_bits : value -> bit_width:int -> shape:int array -> value
 val random_wrap : value -> value
 val random_unwrap : value -> value
 val install : unit -> unit
+val bits64_hook : (Ndarray.t -> int array -> int64 array) ref

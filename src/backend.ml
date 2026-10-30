@@ -86,39 +86,21 @@ let xla_run exec args resident =
           ~finally:(fun () -> List.iter Pjrt.Buffer.destroy outs)
           (fun () -> List.map (fun b -> Concrete (Xla.to_host b)) outs))
 
-let is_host_dtype (a : aval) =
-  match a.dtype with
-  | Dtype.Complex64 | Dtype.Complex128 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
-  | Dtype.Uint16 | Dtype.Uint64 | Dtype.F16 | Dtype.Bf16 ->
-      true
-  | Dtype.F32 | Dtype.F64 | Dtype.I32 | Dtype.I64 | Dtype.Bool | Dtype.Uint32 ->
-      false
-
-let runs_on_host (cj : closed_jaxpr) =
-  let var_complex (v : var) = is_host_dtype v.vaval in
-  let atom_complex = function
-    | A_var v -> var_complex v
-    | A_lit nd ->
-        is_host_dtype
-          { shape = [||]; dtype = Ndarray.dtype nd; weak_type = false }
-    | DropVar a -> is_host_dtype a
-  in
-  List.exists var_complex cj.jaxpr.in_binders
-  || List.exists atom_complex cj.jaxpr.outs
-  || List.exists
-       (fun (e : eqn) ->
-         List.exists var_complex e.outs || List.exists atom_complex e.inputs)
-       cj.jaxpr.eqns
+let compiled_on_xla = ref 0
+let host_fallbacks : string list ref = ref []
+let stats () = (!compiled_on_xla, List.rev !host_fallbacks)
 
 let executor (cj : closed_jaxpr) : value list -> value list =
   if Lazy.force use_xla then
     let exec =
       lazy
-        (if runs_on_host cj then None
-         else
-           match Stablehlo.Emit.emit_closed_jaxpr cj with
-           | text -> Some (Xla.compile_text text)
-           | exception Failure _ -> None)
+        (match Stablehlo.Emit.emit_closed_jaxpr cj with
+        | text ->
+            incr compiled_on_xla;
+            Some (Xla.compile_text text)
+        | exception (Failure reason | Invalid_argument reason) ->
+            host_fallbacks := reason :: !host_fallbacks;
+            None)
     in
     fun args ->
       match Lazy.force exec with

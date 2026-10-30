@@ -18,8 +18,8 @@ let elt_bytes = function
   | Dtype.F32 | Dtype.I32 | Dtype.Uint32 -> 4
   | Dtype.Bool | Dtype.I8 | Dtype.Uint8 -> 1
   | Dtype.I16 | Dtype.Uint16 | Dtype.F16 | Dtype.Bf16 -> 2
-  | Dtype.Complex64 | Dtype.Complex128 ->
-      invalid_arg "Pjrt.Buffer: complex unsupported"
+  | Dtype.Complex64 -> 8
+  | Dtype.Complex128 -> 16
 
 let set_byte buf off b = Bigarray.Array1.set buf off (b land 0xff)
 
@@ -50,20 +50,65 @@ let get_i64 buf off =
   done;
   !r
 
-let encode buf off dtype v =
+let put_u16 buf off v =
+  set_byte buf off (v land 0xff);
+  set_byte buf (off + 1) ((v lsr 8) land 0xff)
+
+let get_u16 buf off =
+  Bigarray.Array1.get buf off lor (Bigarray.Array1.get buf (off + 1) lsl 8)
+
+let half_bits v =
+  let sign = if Float.sign_bit v then 0x8000 else 0 in
+  let m = Float.abs v in
+  if Float.is_nan v then 0x7e00
+  else if m = Float.infinity || m >= 65536.0 then sign lor 0x7c00
+  else if m = 0.0 then sign
+  else
+    let _, e = Float.frexp m in
+    let exp = e - 1 in
+    if exp < -14 then sign lor int_of_float (Float.ldexp m 24)
+    else
+      let fraction = int_of_float (Float.ldexp m (10 - exp)) - 1024 in
+      sign lor ((exp + 15) lsl 10) lor fraction
+
+let half_value bits =
+  let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
+  let exponent = (bits lsr 10) land 0x1f and fraction = bits land 0x3ff in
+  sign
+  *.
+  if exponent = 0 then Float.ldexp (float_of_int fraction) (-24)
+  else if exponent = 31 then if fraction = 0 then Float.infinity else Float.nan
+  else Float.ldexp (float_of_int (fraction + 1024)) (exponent - 25)
+
+let bfloat_bits v =
+  Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float v) 16)
+  land 0xffff
+
+let bfloat_value bits =
+  Int32.float_of_bits (Int32.shift_left (Int32.of_int bits) 16)
+
+let encode buf off dtype nd idx =
+  let v () = Ndarray.get_f nd idx in
   match dtype with
-  | Dtype.F32 -> put_i32 buf off (Int32.bits_of_float v)
-  | Dtype.F64 -> put_i64 buf off (Int64.bits_of_float v)
-  | Dtype.I32 -> put_i32 buf off (Int32.of_float v)
-  | Dtype.I64 -> put_i64 buf off (Int64.of_float v)
+  | Dtype.F32 -> put_i32 buf off (Int32.bits_of_float (v ()))
+  | Dtype.F64 -> put_i64 buf off (Int64.bits_of_float (v ()))
+  | Dtype.I32 -> put_i32 buf off (Int32.of_float (v ()))
+  | Dtype.I64 | Dtype.Uint64 -> put_i64 buf off (Ndarray.get_i64 nd idx)
   | Dtype.Uint32 ->
-      put_i32 buf off (Int32.of_int (int_of_float v land u32_mask))
-  | Dtype.Bool -> set_byte buf off (if v = 0.0 then 0 else 1)
-  | Dtype.I8 | Dtype.I16 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 | Dtype.F16
-  | Dtype.Bf16 ->
-      invalid_arg "Pjrt.Buffer: narrow dtypes run on the host interpreter"
-  | Dtype.Complex64 | Dtype.Complex128 ->
-      invalid_arg "Pjrt.Buffer: complex unsupported"
+      put_i32 buf off (Int32.of_int (int_of_float (v ()) land u32_mask))
+  | Dtype.Bool -> set_byte buf off (if v () = 0.0 then 0 else 1)
+  | Dtype.I8 | Dtype.Uint8 -> set_byte buf off (int_of_float (v ()) land 0xff)
+  | Dtype.I16 | Dtype.Uint16 -> put_u16 buf off (int_of_float (v ()) land 0xffff)
+  | Dtype.F16 -> put_u16 buf off (half_bits (v ()))
+  | Dtype.Bf16 -> put_u16 buf off (bfloat_bits (v ()))
+  | Dtype.Complex64 ->
+      let z = Ndarray.get_c nd idx in
+      put_i32 buf off (Int32.bits_of_float z.Complex.re);
+      put_i32 buf (off + 4) (Int32.bits_of_float z.Complex.im)
+  | Dtype.Complex128 ->
+      let z = Ndarray.get_c nd idx in
+      put_i64 buf off (Int64.bits_of_float z.Complex.re);
+      put_i64 buf (off + 8) (Int64.bits_of_float z.Complex.im)
 
 let decode buf off dtype =
   match dtype with
@@ -73,11 +118,18 @@ let decode buf off dtype =
   | Dtype.I64 -> Int64.to_float (get_i64 buf off)
   | Dtype.Uint32 -> float_of_int (Int32.to_int (get_i32 buf off) land u32_mask)
   | Dtype.Bool -> if Bigarray.Array1.get buf off = 0 then 0.0 else 1.0
-  | Dtype.I8 | Dtype.I16 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 | Dtype.F16
-  | Dtype.Bf16 ->
-      invalid_arg "Pjrt.Buffer: narrow dtypes run on the host interpreter"
-  | Dtype.Complex64 | Dtype.Complex128 ->
-      invalid_arg "Pjrt.Buffer: complex unsupported"
+  | Dtype.I8 ->
+      let b = Bigarray.Array1.get buf off in
+      float_of_int (if b >= 128 then b - 256 else b)
+  | Dtype.Uint8 -> float_of_int (Bigarray.Array1.get buf off)
+  | Dtype.I16 ->
+      let b = get_u16 buf off in
+      float_of_int (if b >= 32768 then b - 65536 else b)
+  | Dtype.Uint16 -> float_of_int (get_u16 buf off)
+  | Dtype.F16 -> half_value (get_u16 buf off)
+  | Dtype.Bf16 -> bfloat_value (get_u16 buf off)
+  | Dtype.Uint64 | Dtype.Complex64 | Dtype.Complex128 ->
+      invalid_arg "Pjrt.Buffer: decode through the wide paths"
 
 let unravel shape flat =
   let r = Array.length shape in
@@ -99,7 +151,7 @@ let of_host client nd =
   let esz = elt_bytes dtype in
   let buf = make_bytebuf (n * esz) in
   for i = 0 to n - 1 do
-    encode buf (i * esz) dtype (Ndarray.get_f nd (unravel shape i))
+    encode buf (i * esz) dtype nd (unravel shape i)
   done;
   of_host_ client buf (Abi.buffer_type dtype) shape
 
@@ -118,8 +170,29 @@ let to_host buffer =
   let esz = elt_bytes dtype in
   let buf = make_bytebuf (n * esz) in
   to_host_ buffer buf;
-  let floats = Array.init n (fun i -> decode buf (i * esz) dtype) in
-  Ndarray.of_floats dtype shape floats
+  match dtype with
+  | Dtype.I64 | Dtype.Uint64 ->
+      Ndarray.of_int64s dtype shape
+        (Array.init n (fun i -> get_i64 buf (i * esz)))
+  | Dtype.Complex64 ->
+      Ndarray.of_complex dtype shape
+        (Array.init n (fun i ->
+             let off = i * esz in
+             {
+               Complex.re = Int32.float_of_bits (get_i32 buf off);
+               im = Int32.float_of_bits (get_i32 buf (off + 4));
+             }))
+  | Dtype.Complex128 ->
+      Ndarray.of_complex dtype shape
+        (Array.init n (fun i ->
+             let off = i * esz in
+             {
+               Complex.re = Int64.float_of_bits (get_i64 buf off);
+               im = Int64.float_of_bits (get_i64 buf (off + 8));
+             }))
+  | _ ->
+      let floats = Array.init n (fun i -> decode buf (i * esz) dtype) in
+      Ndarray.of_floats dtype shape floats
 
 let dimensions buffer = dimensions_ buffer
 let element_type buffer = dtype_of_buffer buffer

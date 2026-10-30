@@ -140,6 +140,9 @@ let random_fold_in_impl key msg =
   done;
   of_u32 (Array.append ob [| 2 |]) out
 
+let bits64_hook : (Nd.t -> int array -> int64 array) ref =
+  ref (fun _ _ -> failwith "prng: 64-bit generator not installed")
+
 let random_bits_impl bit_width shape key =
   let impl = current_impl () in
   let bk = drop_last (Nd.shape key) in
@@ -163,6 +166,8 @@ let impl_rule prim inputs =
   | Random_seed, [ seeds ] -> [ random_seed_impl seeds ]
   | Random_split shape, [ key ] -> [ random_split_impl shape key ]
   | Random_fold_in, [ key; msg ] -> [ random_fold_in_impl key msg ]
+  | Random_bits { bit_width = 64; shape }, [ key ] ->
+      [ Nd.of_int64s Dtype.Uint64 shape (!bits64_hook key shape) ]
   | Random_bits { bit_width; shape }, [ key ] ->
       [ random_bits_impl bit_width shape key ]
   | Random_wrap, [ arr ] -> [ arr ]
@@ -180,9 +185,17 @@ let abstract_eval_rule prim avals =
   | Random_fold_in, [ ka; ma ] ->
       let ob = broadcast_shapes [ drop_last ka.shape; ma.shape ] in
       [ shaped (Array.append ob [| 2 |]) ]
+  | Random_bits { bit_width = 64; shape }, [ a ] ->
+      [
+        {
+          shape = Array.append (drop_last a.shape) shape;
+          dtype = Dtype.Uint64;
+          weak_type = false;
+        };
+      ]
   | Random_bits { bit_width; shape }, [ a ] ->
       if bit_width <> 32 then
-        failwith "prng: only 32-bit random_bits supported (M3)";
+        failwith "prng: only 32 and 64 bit random_bits supported";
       [ shaped (Array.append (drop_last a.shape) shape) ]
   | Random_wrap, [ a ] -> [ shaped a.shape ]
   | Random_unwrap, [ a ] -> [ shaped a.shape ]

@@ -713,6 +713,11 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "batching: handled by unstacking in batch_process_primitive"
+  | Fft _ -> (
+      match (vals, bdims) with
+      | [ x ], [ Some d ] -> (b1 prim [ moveaxis d 0 x ], Some 0)
+      | [ x ], [ None ] -> (b1 prim [ x ], None)
+      | _ -> failwith "batching: fft arity")
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       failwith "batching: custom rules handled by batch_process_primitive"
   | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"

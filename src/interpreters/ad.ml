@@ -548,7 +548,8 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           let po = b1 (Convert_element_type dt) [ x ] in
           let to_ =
             match dt with
-            | Dtype.F32 | Dtype.F64 -> b1 (Convert_element_type dt) [ tx ]
+            | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 ->
+                b1 (Convert_element_type dt) [ tx ]
             | _ -> zeros_like_value po
           in
           (po, to_)
@@ -1062,6 +1063,10 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _ | Eig _
   | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: this linalg primitive has no forward-mode rule"
+  | Fft _ -> (
+      match (primals, tangents) with
+      | [ x ], [ t ] -> (b1 prim [ x ], b1 prim [ t ])
+      | _ -> arity ())
   | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       failwith "ad: custom rules handled by jvp_process_primitive"
@@ -1321,7 +1326,7 @@ let linearize (f : value list -> value list) (primals : value list) :
   let jaxpr, consts, pvals_out =
     Partial_eval.partial_eval_flat f_jvp pvals_in
   in
-  let primal_pvals, _ = Util.split_half pvals_out in
+  let primal_pvals, tangent_pvals = Util.split_half pvals_out in
   let primals_out =
     List.map
       (fun pv ->
@@ -1330,7 +1335,20 @@ let linearize (f : value list -> value list) (primals : value list) :
         | None -> failwith "ad.linearize: primal output not known")
       primal_pvals
   in
-  let f_lin tangents = Jaxpr.eval_jaxpr jaxpr (consts @ tangents) in
+  let f_lin tangents =
+    let computed = ref (Jaxpr.eval_jaxpr jaxpr (consts @ tangents)) in
+    List.map
+      (fun pv ->
+        match pv.pv_const with
+        | Some c -> c
+        | None -> (
+            match !computed with
+            | v :: rest ->
+                computed := rest;
+                v
+            | [] -> failwith "ad.linearize: tangent output arity"))
+      tangent_pvals
+  in
   (primals_out, f_lin)
 
 type tval = Prim of value | Undef of aval
@@ -1890,6 +1908,71 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           in
           None :: rest_cts
       | _ -> arity ())
+  | Real ->
+      let t = ct1 () in
+      [ Some (b1 Complex [ t; zeros_like_value t ]) ]
+  | Imag ->
+      let t = ct1 () in
+      [ Some (b1 Complex [ zeros_like_value t; neg t ]) ]
+  | Complex -> (
+      let t = ct1 () in
+      match primals with
+      | [ x; y ] ->
+          let x_ct = if is_undef x then Some (b1 Real [ t ]) else None in
+          let y_ct = if is_undef y then Some (b1 Imag [ neg t ]) else None in
+          [ x_ct; y_ct ]
+      | _ -> arity ())
+  | Fft { fft_type; fft_lengths } -> (
+      let t = ct1 () in
+      let ndim = Array.length (Core.get_aval t).shape in
+      let m = (Core.get_aval t).shape.(ndim - 1) in
+      let n = fft_lengths.(Array.length fft_lengths - 1) in
+      let dt = (Core.get_aval t).dtype in
+      let hermitian_mask kept =
+        Array.init kept (fun i ->
+            if i = 0 || (n mod 2 = 0 && i = kept - 1) then 1.0 else 2.0)
+      in
+      let expanded values dtype =
+        let shape =
+          Array.append (Array.make (ndim - 1) 1) [| Array.length values |]
+        in
+        match dtype with
+        | Dtype.Complex64 | Dtype.Complex128 ->
+            Concrete
+              (Ndarray.of_complex dtype shape
+                 (Array.map (fun re -> { Complex.re; im = 0.0 }) values))
+        | _ -> Concrete (Ndarray.of_floats dtype shape values)
+      in
+      let length_product = Array.fold_left ( * ) 1 fft_lengths in
+      match fft_type with
+      | Fft_forward | Fft_inverse -> [ Some (b1 prim [ t ]) ]
+      | Fft_real ->
+          let mask = expanded (hermitian_mask m) dt in
+          let inner =
+            b1
+              (Fft { fft_type = Fft_inverse_real; fft_lengths })
+              [
+                b1 Div
+                  [
+                    b1 Conj [ t ];
+                    broadcast_to_matrix mask (Core.get_aval t).shape;
+                  ];
+              ]
+          in
+          [ Some (mul inner (const_like inner (float_of_int length_product))) ]
+      | Fft_inverse_real ->
+          let x = b1 (Fft { fft_type = Fft_real; fft_lengths }) [ t ] in
+          let xa = Core.get_aval x in
+          let kept = xa.shape.(Array.length xa.shape - 1) in
+          let mask =
+            expanded
+              (Array.map
+                 (fun v -> v /. float_of_int length_product)
+                 (hermitian_mask kept))
+              xa.dtype
+          in
+          [ Some (b1 Conj [ b1 Mul [ broadcast_to_matrix mask xa.shape; x ] ]) ]
+      )
   | Dot_general dims -> (
       match primals with
       | [ x; y ] when is_undef x && not (is_undef y) ->
@@ -2080,11 +2163,11 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           List.map (fun c -> Some c) ct_b)
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
-  | Expm1 | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
-  | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And
-  | Atan2 | Complex | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter
-  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-  | Argmax _ | Argmin _ | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _
+  | Expm1 | Floor | Integer_pow _ | Is_finite | Log1p | Logistic | Not
+  | Population_count | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And | Atan2
+  | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter | Or | Rem
+  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Argmax _
+  | Argmin _ | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _
   | Reduce_or _ | Reduce_prod _ | Reduce_xor _ | After_all
   | Bitcast_convert_type _ | Clamp | Composite _ | Create_token | Dce_sink
   | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general
@@ -2301,7 +2384,7 @@ let vjp (f : value list -> value list) (primals : value list) :
   let jaxpr, consts, pvals_out =
     Partial_eval.partial_eval_flat f_jvp pvals_in
   in
-  let primal_pvals, _ = Util.split_half pvals_out in
+  let primal_pvals, tangent_pvals = Util.split_half pvals_out in
   let primals_out =
     List.map
       (fun pv ->
@@ -2314,7 +2397,15 @@ let vjp (f : value list -> value list) (primals : value list) :
     List.map (fun c -> Prim c) consts
     @ List.map (fun x -> Undef (Core.get_aval x)) primals
   in
-  let f_vjp cts = eval_jaxpr_transposed jaxpr transpose_inputs cts in
+  let f_vjp cts =
+    let unknown_cts =
+      List.concat
+        (List.map2
+           (fun pv ct -> if Partial_eval.is_unknown pv then [ ct ] else [])
+           tangent_pvals cts)
+    in
+    eval_jaxpr_transposed jaxpr transpose_inputs unknown_cts
+  in
   (primals_out, f_vjp)
 
 let grad (f : value list -> value) (xs : value list) : value list =

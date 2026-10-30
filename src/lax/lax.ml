@@ -929,7 +929,7 @@ let custom_output = function
       failwith
         "custom derivative rule closed over a tracer; pass it as an argument"
 
-let impl prim inputs =
+let rec impl_base prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
   | Sin ->
@@ -1433,6 +1433,10 @@ let impl prim inputs =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_impl full_matrices compute_uv inputs
   | Tridiagonal { lower } -> Linalg.tridiagonal_impl lower inputs
+  | Fft { fft_type; fft_lengths } -> (
+      match inputs with
+      | [ x ] -> [ Fft.fft_impl fft_type fft_lengths x ]
+      | _ -> failwith "lax: fft expects one operand")
   | Custom_jvp_call id | Custom_vjp_call id ->
       let primal =
         match Core.custom_rule id with
@@ -1455,6 +1459,121 @@ let impl prim inputs =
           failwith
             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
+
+and complex_parts nd =
+  let dt = Ndarray.dtype nd in
+  let shape = Ndarray.shape nd in
+  let data = to_carray nd in
+  let base = complex_basetype dt in
+  ( Ndarray.of_floats base shape (Array.map (fun c -> c.Complex.re) data),
+    Ndarray.of_floats base shape (Array.map (fun c -> c.Complex.im) data) )
+
+and impl_by_parts prim inputs complex_dtype =
+  let re_inputs, im_inputs =
+    List.split
+      (List.map
+         (fun nd ->
+           if is_complex_dtype (Ndarray.dtype nd) then complex_parts nd
+           else (nd, nd))
+         inputs)
+  in
+  let res = impl_base prim re_inputs and ims = impl_base prim im_inputs in
+  List.map2
+    (fun r i ->
+      let shape = Ndarray.shape r in
+      let n = Array.fold_left ( * ) 1 shape in
+      Ndarray.of_complex complex_dtype shape
+        (Array.init n (fun k ->
+             let idx = Utils.decode k shape in
+             { Complex.re = Ndarray.get_f r idx; im = Ndarray.get_f i idx })))
+    res ims
+
+let acts_on_parts = function
+  | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Concatenate _ | Pad _
+  | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _ | Transpose _ | Unstack _
+  | Slice _ | Dynamic_slice _ | Dynamic_update_slice | Gather _ | Scatter _
+  | Reduce_sum _ | Cumsum _ | Neg | Add | Sub | Scatter_add _ | Scatter_sub _
+  | Reduce_window_sum _ ->
+      true
+  | _ -> false
+
+let complex_elementwise prim inputs =
+  let one = Complex.one in
+  let chain f = function
+    | [ a ] -> Some [ map_c (Ndarray.dtype a) f a ]
+    | _ -> None
+  in
+  let chain2 f = function
+    | [ a; b ] -> Some [ map2_c (Ndarray.dtype a) f a b ]
+    | _ -> None
+  in
+  let ccosh (z : Complex.t) =
+    {
+      Complex.re = Stdlib.cosh z.re *. Stdlib.cos z.im;
+      im = Stdlib.sinh z.re *. Stdlib.sin z.im;
+    }
+  in
+  let csinh (z : Complex.t) =
+    {
+      Complex.re = Stdlib.sinh z.re *. Stdlib.cos z.im;
+      im = Stdlib.cosh z.re *. Stdlib.sin z.im;
+    }
+  in
+  let compare_with test = function
+    | [ a; b ] ->
+        let ca = to_carray a and cb = to_carray b in
+        Some
+          [
+            Ndarray.of_floats Dtype.Bool (Ndarray.shape a)
+              (Array.init (Array.length ca) (fun i ->
+                   if test ca.(i) cb.(i) then 1.0 else 0.0));
+          ]
+    | _ -> None
+  in
+  match prim with
+  | Mul -> chain2 Complex.mul inputs
+  | Div -> chain2 Complex.div inputs
+  | Square -> chain (fun z -> Complex.mul z z) inputs
+  | Cosh -> chain ccosh inputs
+  | Sinh -> chain csinh inputs
+  | Tanh -> chain (fun z -> Complex.div (csinh z) (ccosh z)) inputs
+  | Tan -> chain (fun z -> Complex.div (csin z) (ccos z)) inputs
+  | Expm1 -> chain (fun z -> Complex.sub (Complex.exp z) one) inputs
+  | Log1p -> chain (fun z -> Complex.log (Complex.add z one)) inputs
+  | Rsqrt -> chain (fun z -> Complex.div one (Complex.sqrt z)) inputs
+  | Integer_pow y ->
+      chain
+        (fun z ->
+          let rec go acc i =
+            if i = 0 then acc else go (Complex.mul acc z) (i - 1)
+          in
+          if y >= 0 then go one y else Complex.div one (go one (-y)))
+        inputs
+  | Sign ->
+      chain
+        (fun z ->
+          let m = Complex.norm z in
+          if m = 0.0 then Complex.zero
+          else { Complex.re = z.re /. m; im = z.im /. m })
+        inputs
+  | Eq -> compare_with (fun a b -> a = b) inputs
+  | Ne -> compare_with (fun a b -> a <> b) inputs
+  | _ -> None
+
+let impl prim inputs =
+  let has_complex =
+    List.exists (fun nd -> is_complex_dtype (Ndarray.dtype nd)) inputs
+  in
+  match if has_complex then complex_elementwise prim inputs else None with
+  | Some results -> results
+  | None -> (
+      match
+        if acts_on_parts prim then
+          List.find_opt (fun nd -> is_complex_dtype (Ndarray.dtype nd)) inputs
+        else None
+      with
+      | Some witness -> impl_by_parts prim inputs (Ndarray.dtype witness)
+      | None -> impl_base prim inputs)
 
 let shaped shape dtype weak_type = { shape; dtype; weak_type }
 
@@ -1758,6 +1877,10 @@ let abstract_eval prim avals =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_aval full_matrices compute_uv avals
   | Tridiagonal _ -> Linalg.tridiagonal_aval avals
+  | Fft { fft_type; fft_lengths } -> (
+      match avals with
+      | [ a ] -> [ Fft.fft_aval fft_type fft_lengths a ]
+      | _ -> failwith "lax: fft expects one aval")
   | Custom_jvp_call id | Custom_vjp_call id -> (
       match Core.custom_rule id with
       | Core.Callback_rule { result_avals; _ } -> result_avals
@@ -1785,3 +1908,4 @@ let cumlogsumexp = Control_flow.Loops.cumlogsumexp
 let custom_linear_solve = Control_flow.Solves.custom_linear_solve
 
 module Linalg = Linalg
+module Fft = Fft

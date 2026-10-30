@@ -223,6 +223,7 @@ let prim_name = function
   | Zeta -> "zeta"
   | Platform_index _ -> "platform_index"
   | Xla_call _ -> "xla_call"
+  | Fft _ -> "fft"
   | Custom_jvp_call _ -> "custom_jvp_call"
   | Custom_vjp_call _ -> "custom_vjp_call"
   | Custom_lin _ -> "custom_lin"

@@ -4192,6 +4192,10 @@ let composed_check_case ~run ~set_dir ~x64 c () =
         ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
     paired
 
+let parity_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  Parity_cases.run c.op c.params get
+
 let composed_suite_for ~run module_name set_name =
   let set_dir =
     Filename.concat (Filename.concat goldens_root module_name) set_name
@@ -4287,6 +4291,8 @@ let () =
       scipy_cluster_vq_suite_for "x64_on";
       scipy_optimize_suite_for "x64_off";
       scipy_optimize_suite_for "x64_on";
+      composed_suite_for ~run:parity_run "parity" "x64_off";
+      composed_suite_for ~run:parity_run "parity" "x64_on";
       composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
       composed_suite_for ~run:vectorize_run "vectorize" "x64_on";
       composed_suite_for ~run:spatial_transform_run "spatial_transform"

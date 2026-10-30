@@ -2127,6 +2127,8 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith
         "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
          host-interpreter only (M5 lax/linalg, XLA emission deferred)"
+  | Fft _ ->
+      failwith "Stablehlo.Emit: complex buffers run on the host interpreter"
   | Custom_jvp_call id | Custom_vjp_call id ->
       let primal =
         match Core.custom_rule id with

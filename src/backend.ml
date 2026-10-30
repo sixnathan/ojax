@@ -86,13 +86,34 @@ let xla_run exec args resident =
           ~finally:(fun () -> List.iter Pjrt.Buffer.destroy outs)
           (fun () -> List.map (fun b -> Concrete (Xla.to_host b)) outs))
 
+let is_complex_aval (a : aval) =
+  match a.dtype with Dtype.Complex64 | Dtype.Complex128 -> true | _ -> false
+
+let touches_complex (cj : closed_jaxpr) =
+  let var_complex (v : var) = is_complex_aval v.vaval in
+  let atom_complex = function
+    | A_var v -> var_complex v
+    | A_lit nd ->
+        is_complex_aval
+          { shape = [||]; dtype = Ndarray.dtype nd; weak_type = false }
+    | DropVar a -> is_complex_aval a
+  in
+  List.exists var_complex cj.jaxpr.in_binders
+  || List.exists atom_complex cj.jaxpr.outs
+  || List.exists
+       (fun (e : eqn) ->
+         List.exists var_complex e.outs || List.exists atom_complex e.inputs)
+       cj.jaxpr.eqns
+
 let executor (cj : closed_jaxpr) : value list -> value list =
   if Lazy.force use_xla then
     let exec =
       lazy
-        (match Stablehlo.Emit.emit_closed_jaxpr cj with
-        | text -> Some (Xla.compile_text text)
-        | exception Failure _ -> None)
+        (if touches_complex cj then None
+         else
+           match Stablehlo.Emit.emit_closed_jaxpr cj with
+           | text -> Some (Xla.compile_text text)
+           | exception Failure _ -> None)
     in
     fun args ->
       match Lazy.force exec with

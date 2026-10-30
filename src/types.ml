@@ -195,6 +195,7 @@ and primitive =
   | Zeta
   | Platform_index of string array option array
   | Xla_call of closed_jaxpr
+  | Fft of { fft_type : fft_kind; fft_lengths : int array }
   | Custom_jvp_call of int
   | Custom_vjp_call of int
   | Custom_lin of { rule : int; n_res : int; out_avals : aval list }
@@ -281,6 +282,7 @@ and window_dims = {
 }
 
 and window_select = Wge | Wle
+and fft_kind = Fft_forward | Fft_inverse | Fft_real | Fft_inverse_real
 and var = { vid : int; vaval : aval }
 and atom = A_var of var | A_lit of Ndarray.t | DropVar of aval
 

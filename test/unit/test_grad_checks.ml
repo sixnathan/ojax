@@ -273,9 +273,49 @@ let svd_rule () =
         shape)
     [ [| 3; 3 |]; [| 3; 2 |]; [| 2; 3 |] ]
 
+let constant_output () =
+  let f a =
+    match a with
+    | [ x ] -> [ b1 Mul [ x; x ]; f64 [||] [| 7.0 |] ]
+    | _ -> Alcotest.fail "arity"
+  in
+  let x = f64 [||] [| 3.0 |] in
+  let outs, pull = Ad.vjp f [ x ] in
+  Alcotest.(check int) "outputs" 2 (List.length outs);
+  (match pull [ f64 [||] [| 1.0 |]; f64 [||] [| 1.0 |] ] with
+  | [ g ] ->
+      Alcotest.(check (float 1e-9))
+        "only the dependent output contributes" 6.0
+        (Ndarray.get_f (to_nd g) [||])
+  | _ -> Alcotest.fail "arity");
+  let _, lin = Ad.linearize f [ x ] in
+  match lin [ f64 [||] [| 1.0 |] ] with
+  | [ t0; t1 ] ->
+      Alcotest.(check (float 1e-9))
+        "tangent" 6.0
+        (Ndarray.get_f (to_nd t0) [||]);
+      Alcotest.(check (float 1e-9)) "zero" 0.0 (Ndarray.get_f (to_nd t1) [||])
+  | _ -> Alcotest.fail "arity"
+
+let fft_rules () =
+  let module N = Ojax.Numpy.Fft in
+  check_grad "rfft" (fun a -> b1 Real [ N.rfft a ]) [| 6 |];
+  check_grad "rfft odd" (fun a -> b1 Imag [ N.rfft a ]) [| 7 |];
+  check_grad "fft"
+    (fun a ->
+      b1 Real [ N.fft (b1 (Convert_element_type Dtype.Complex128) [ a ]) ])
+    [| 5 |];
+  check_grad "irfft"
+    (fun a -> N.irfft (b1 (Convert_element_type Dtype.Complex128) [ a ]))
+    [| 5 |];
+  check_grad "rfft2" (fun a -> b1 Real [ N.rfft2 a ]) [| 3; 4 |]
+
 let () =
   Alcotest.run "grad_checks"
     [
+      ("fft", [ Alcotest.test_case "transposes" `Quick fft_rules ]);
+      ( "outputs",
+        [ Alcotest.test_case "independent of input" `Quick constant_output ] );
       ( "linalg",
         [
           Alcotest.test_case "cholesky" `Quick cholesky_rule;

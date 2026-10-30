@@ -9,6 +9,13 @@ let element_type = function
   | Dtype.Uint32 -> "ui32"
   | Dtype.Complex64 -> "complex<f32>"
   | Dtype.Complex128 -> "complex<f64>"
+  | Dtype.I8 -> "i8"
+  | Dtype.I16 -> "i16"
+  | Dtype.Uint8 -> "ui8"
+  | Dtype.Uint16 -> "ui16"
+  | Dtype.Uint64 -> "ui64"
+  | Dtype.F16 -> "f16"
+  | Dtype.Bf16 -> "bf16"
 
 let tensor_type dtype shape =
   let elt = element_type dtype in

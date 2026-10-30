@@ -15,9 +15,9 @@ let f32s x = T.Concrete (Nd.of_floats D.F32 [||] [| x |])
 let default_float () = if Config.x64_enabled () then D.F64 else D.F32
 
 let to_inexact = function
-  | D.I32 | D.Bool | D.Uint32 -> D.F32
-  | D.I64 -> D.F64
-  | (D.F32 | D.F64 | D.Complex64 | D.Complex128) as d -> d
+  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 -> D.F32
+  | D.I64 | D.Uint64 -> D.F64
+  | (D.F32 | D.F64 | D.F16 | D.Bf16 | D.Complex64 | D.Complex128) as d -> d
 
 let promote_dtypes vs =
   let dt = to_inexact (NL.result_type vs) in

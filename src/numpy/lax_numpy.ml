@@ -234,11 +234,12 @@ type dtype_class =
   | Cbool
 
 let class_chain = function
-  | Cdtype D.F32 | Cdtype D.F64 | Floating ->
+  | Cdtype D.F32 | Cdtype D.F64 | Cdtype D.F16 | Cdtype D.Bf16 | Floating ->
       [ Floating; Inexact; Number; Generic ]
-  | Cdtype D.I32 | Cdtype D.I64 | Signedinteger ->
+  | Cdtype D.I32 | Cdtype D.I64 | Cdtype D.I8 | Cdtype D.I16 | Signedinteger ->
       [ Signedinteger; Integer; Number; Generic ]
-  | Cdtype D.Uint32 -> [ Integer; Number; Generic ]
+  | Cdtype D.Uint32 | Cdtype D.Uint8 | Cdtype D.Uint16 | Cdtype D.Uint64 ->
+      [ Integer; Number; Generic ]
   | Cdtype D.Complex64 | Cdtype D.Complex128 -> [ Inexact; Number; Generic ]
   | Cdtype D.Bool | Cbool -> [ Cbool; Generic ]
   | Integer -> [ Integer; Number; Generic ]

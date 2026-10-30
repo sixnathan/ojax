@@ -84,6 +84,8 @@ let elem_kind descr =
   | "u2" -> ("uint16", `Int (2, true))
   | "u4" -> ("uint32", `Int (4, true))
   | "u8" -> ("uint64", `Int (8, true))
+  | "f2" -> ("float16", `Half)
+  | "V2" -> ("bfloat16", `Bfloat)
   | "f4" -> ("float32", `Float 4)
   | "f8" -> ("float64", `Float 8)
   | "c8" -> ("complex64", `Complex 4)
@@ -102,6 +104,22 @@ let read_int b off width unsigned =
   | 8, _ -> Bytes.get_int64_le b off
   | _ -> failwith "npz: bad int width"
 
+let read_half b o =
+  let bits = Bytes.get_uint16_le b o in
+  let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
+  let exponent = (bits lsr 10) land 0x1f and fraction = bits land 0x3ff in
+  let magnitude =
+    if exponent = 0 then Float.ldexp (float_of_int fraction) (-24)
+    else if exponent = 31 then
+      if fraction = 0 then Float.infinity else Float.nan
+    else Float.ldexp (float_of_int (fraction + 1024)) (exponent - 25)
+  in
+  sign *. magnitude
+
+let read_bfloat b o =
+  let bits = Bytes.get_uint16_le b o in
+  Int32.float_of_bits (Int32.shift_left (Int32.of_int bits) 16)
+
 let read_f32 b off = Int32.float_of_bits (Bytes.get_int32_le b off)
 let read_f64 b off = Int64.float_of_bits (Bytes.get_int64_le b off)
 
@@ -112,6 +130,8 @@ let decode b start descr shape =
     match kind with
     | `Int (w, u) ->
         I (Array.init n (fun i -> read_int b (start + (i * w)) w u))
+    | `Half -> F (Array.init n (fun i -> read_half b (start + (i * 2))))
+    | `Bfloat -> F (Array.init n (fun i -> read_bfloat b (start + (i * 2))))
     | `Float 4 -> F (Array.init n (fun i -> read_f32 b (start + (i * 4))))
     | `Float 8 -> F (Array.init n (fun i -> read_f64 b (start + (i * 8))))
     | `Float _ -> failwith "npz: bad float width"

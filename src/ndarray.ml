@@ -13,11 +13,55 @@ type t = { dtype : Dtype.t; shape : int array; data : buffer }
 let uint32_mask = 0xFFFF_FFFF
 let f32_round v = Int32.float_of_bits (Int32.bits_of_float v)
 
+let round_significant ~bits ~min_exp ~max_exp v =
+  if v = 0.0 || not (Float.is_finite v) then v
+  else
+    let _, e = Float.frexp v in
+    let exp = e - 1 in
+    if exp > max_exp then Float.copy_sign Float.infinity v
+    else
+      let lowest = Stdlib.max (exp - bits + 1) (min_exp - bits + 1) in
+      let unit = Float.ldexp 1.0 lowest in
+      let q = v /. unit in
+      let r = Float.round q in
+      let tied = Float.abs (q -. Float.trunc q) = 0.5 in
+      let even =
+        if tied then
+          let t = Float.trunc q in
+          if Float.rem t 2.0 = 0.0 then t else r
+        else r
+      in
+      let out = even *. unit in
+      let _, e' = Float.frexp out in
+      if out <> 0.0 && e' - 1 > max_exp then Float.copy_sign Float.infinity v
+      else out
+
+let f16_round v = round_significant ~bits:11 ~min_exp:(-14) ~max_exp:15 v
+let bf16_round v = round_significant ~bits:8 ~min_exp:(-126) ~max_exp:127 v
+
+let wrap_int ~bits ~signed v =
+  let modulus = 1 lsl bits in
+  let raw = int_of_float v land (modulus - 1) in
+  if signed && raw >= modulus / 2 then raw - modulus else raw
+
+let two_64 = 18446744073709551616.0
+
+let uint64_to_float x =
+  let v = Int64.to_float x in
+  if v < 0.0 then v +. two_64 else v
+
+let uint64_of_float v =
+  if v >= 9223372036854775808.0 then Int64.of_float (v -. two_64)
+  else Int64.of_float v
+
 let create_buffer dtype n =
   match dtype with
-  | Dtype.F32 | Dtype.F64 -> Float_buf (Array1.create Float64 C_layout n)
-  | Dtype.I32 | Dtype.Uint32 -> Int32_buf (Array1.create Int32 C_layout n)
-  | Dtype.I64 -> Int64_buf (Array1.create Int64 C_layout n)
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+      Float_buf (Array1.create Float64 C_layout n)
+  | Dtype.I32 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8 | Dtype.Uint16
+    ->
+      Int32_buf (Array1.create Int32 C_layout n)
+  | Dtype.I64 | Dtype.Uint64 -> Int64_buf (Array1.create Int64 C_layout n)
   | Dtype.Bool -> Int8_buf (Array1.create Int8_signed C_layout n)
   | Dtype.Complex64 -> Complex64_buf (Array1.create Complex32 C_layout n)
   | Dtype.Complex128 -> Complex128_buf (Array1.create Complex64 C_layout n)
@@ -29,7 +73,9 @@ let read_float dtype data i =
       let v = Int32.to_int (Array1.unsafe_get a i) in
       if dtype = Dtype.Uint32 then float_of_int (v land uint32_mask)
       else float_of_int v
-  | Int64_buf a -> Int64.to_float (Array1.unsafe_get a i)
+  | Int64_buf a ->
+      let v = Array1.unsafe_get a i in
+      if dtype = Dtype.Uint64 then uint64_to_float v else Int64.to_float v
   | Int8_buf a -> float_of_int (Array1.unsafe_get a i)
   | Complex64_buf a -> (Array1.unsafe_get a i).Complex.re
   | Complex128_buf a -> (Array1.unsafe_get a i).Complex.re
@@ -39,12 +85,18 @@ let write_float dtype data i v =
   | Float_buf a -> Array1.unsafe_set a i v
   | Int32_buf a ->
       let stored =
-        if dtype = Dtype.Uint32 then
-          Int32.of_int (int_of_float v land uint32_mask)
-        else Int32.of_float v
+        match dtype with
+        | Dtype.Uint32 -> Int32.of_int (int_of_float v land uint32_mask)
+        | Dtype.I8 -> Int32.of_int (wrap_int ~bits:8 ~signed:true v)
+        | Dtype.I16 -> Int32.of_int (wrap_int ~bits:16 ~signed:true v)
+        | Dtype.Uint8 -> Int32.of_int (wrap_int ~bits:8 ~signed:false v)
+        | Dtype.Uint16 -> Int32.of_int (wrap_int ~bits:16 ~signed:false v)
+        | _ -> Int32.of_float v
       in
       Array1.unsafe_set a i stored
-  | Int64_buf a -> Array1.unsafe_set a i (Int64.of_float v)
+  | Int64_buf a ->
+      Array1.unsafe_set a i
+        (if dtype = Dtype.Uint64 then uint64_of_float v else Int64.of_float v)
   | Int8_buf a -> Array1.unsafe_set a i (if v = 0.0 then 0 else 1)
   | Complex64_buf a -> Array1.unsafe_set a i { Complex.re = v; im = 0.0 }
   | Complex128_buf a -> Array1.unsafe_set a i { Complex.re = v; im = 0.0 }
@@ -145,6 +197,13 @@ let round_to dtype v =
   | Dtype.Uint32 -> float_of_int (int_of_float v land uint32_mask)
   | Dtype.Bool -> if v = 0.0 then 0.0 else 1.0
   | Dtype.Complex64 | Dtype.Complex128 -> v
+  | Dtype.F16 -> f16_round v
+  | Dtype.Bf16 -> bf16_round v
+  | Dtype.I8 -> float_of_int (wrap_int ~bits:8 ~signed:true v)
+  | Dtype.I16 -> float_of_int (wrap_int ~bits:16 ~signed:true v)
+  | Dtype.Uint8 -> float_of_int (wrap_int ~bits:8 ~signed:false v)
+  | Dtype.Uint16 -> float_of_int (wrap_int ~bits:16 ~signed:false v)
+  | Dtype.Uint64 -> uint64_to_float (uint64_of_float v)
 
 let round_complex dtype (z : Complex.t) =
   match dtype with

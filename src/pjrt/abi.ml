@@ -22,6 +22,13 @@ let buffer_type (d : Dtype.t) : int =
   | Dtype.I64 -> 5
   | Dtype.Bool -> 1
   | Dtype.Uint32 -> 8
+  | Dtype.I8 -> 2
+  | Dtype.I16 -> 3
+  | Dtype.Uint8 -> 6
+  | Dtype.Uint16 -> 7
+  | Dtype.Uint64 -> 9
+  | Dtype.F16 -> 10
+  | Dtype.Bf16 -> 16
   | Dtype.Complex64 | Dtype.Complex128 ->
       invalid_arg "Pjrt.Abi: complex buffer type unsupported"
 

@@ -180,6 +180,22 @@ def _opt_run(name, a, b, p):
     return get(state)
 
 
+def _in_range(a, name):
+    return jnp.abs(a) if name.startswith("uint") else a
+
+
+def _narrow_ops():
+    def typed(name):
+        return jnp.dtype(jnp.bfloat16) if name == "bfloat16" else jnp.dtype(name)
+    return {
+        "dt_cast": lambda a, p: (_in_range(a, p["to"]) * 40.0).astype(typed(p["to"])),
+        "dt_wrap_add": lambda a, p: jnp.asarray(p["x"], typed(p["to"])) + jnp.asarray(p["y"], typed(p["to"])),
+        "dt_binary": lambda a, b, p: jnp.add((_in_range(a, p["x"]) * 5.0).astype(typed(p["x"])), (_in_range(b, p["y"]) * 5.0).astype(typed(p["y"]))),
+        "dt_float_ops": lambda a, p: jnp.sin(a.astype(typed(p["to"]))) * 2.0,
+        "dt_sum": lambda a, p: jnp.sum((_in_range(a, p["to"]) * 5.0).astype(typed(p["to"]))),
+    }
+
+
 def _binarize(a):
     return a > 0
 
@@ -214,6 +230,7 @@ OPS.update(_fft_ops())
 OPS.update(_lax_ops())
 OPS.update(_numpy_ops())
 OPS.update(_scipy_ops())
+OPS.update(_narrow_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -475,5 +492,39 @@ def _optimizer_cases():
     return out
 
 
+def _narrow_cases():
+    r = _real_input
+    rr = lambda: _two("real", [4], "real", [4])
+    names = ["int8", "int16", "uint8", "uint16", "float16", "bfloat16"]
+    out = []
+    for n in names:
+        out.append(("dt_cast", r([5]), {"to": n}))
+        out.append(("dt_sum", r([4]), {"to": n}))
+    out += [
+        ("dt_wrap_add", r([1]), {"to": "int8", "x": 120, "y": 100}),
+        ("dt_wrap_add", r([1]), {"to": "uint8", "x": 200, "y": 100}),
+        ("dt_wrap_add", r([1]), {"to": "int16", "x": 30000, "y": 10000}),
+        ("dt_wrap_add", r([1]), {"to": "uint16", "x": 60000, "y": 10000}),
+        ("dt_float_ops", r([4]), {"to": "float16"}),
+        ("dt_float_ops", r([4]), {"to": "bfloat16"}),
+    ]
+    for x, y in [
+        ("int8", "int16"),
+        ("int8", "uint8"),
+        ("uint8", "int16"),
+        ("uint16", "int16"),
+        ("uint8", "uint16"),
+        ("int8", "float16"),
+        ("float16", "bfloat16"),
+        ("float16", "float32"),
+        ("bfloat16", "float32"),
+        ("uint32", "int32"),
+        ("uint8", "float32"),
+        ("int32", "float16"),
+    ]:
+        out.append(("dt_binary", rr(), {"x": x, "y": y}))
+    return out
+
+
 def all_cases():
-    return _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases()
+    return _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases()

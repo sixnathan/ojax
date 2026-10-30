@@ -929,6 +929,27 @@ let custom_output = function
       failwith
         "custom derivative rule closed over a tracer; pass it as an argument"
 
+let is_float_source = function
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> true
+  | _ -> false
+
+let saturate_to dt v =
+  let clamp lo hi =
+    if Float.is_nan v then 0.0 else Float.min hi (Float.max lo (Float.trunc v))
+  in
+  match dt with
+  | Dtype.I8 -> clamp (-128.0) 127.0
+  | Dtype.I16 -> clamp (-32768.0) 32767.0
+  | Dtype.I32 -> clamp (-2147483648.0) 2147483647.0
+  | Dtype.I64 -> clamp (-9223372036854775808.0) 9223372036854774784.0
+  | Dtype.Uint8 -> clamp 0.0 255.0
+  | Dtype.Uint16 -> clamp 0.0 65535.0
+  | Dtype.Uint32 -> clamp 0.0 4294967295.0
+  | Dtype.Uint64 -> clamp 0.0 18446744073709549568.0
+  | Dtype.Bool | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      v
+
 let rec impl_base prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
@@ -1001,7 +1022,14 @@ let rec impl_base prim inputs =
       bin (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x > y)) a b) inputs
   | Select_n -> select_n_impl inputs
   | Convert_element_type dt ->
-      un (fun a -> Ndarray.map dt (fun x -> x) a) inputs
+      un
+        (fun a ->
+          let src = Ndarray.dtype a in
+          if is_complex_dtype src && is_complex_dtype dt then
+            map_c dt (fun z -> z) a
+          else if is_float_source src then Ndarray.map dt (saturate_to dt) a
+          else Ndarray.map dt (fun x -> x) a)
+        inputs
   | Broadcast_in_dim { shape; dims } ->
       un (broadcast_in_dim_impl shape dims) inputs
   | Reshape ns -> un (reshape_impl ns) inputs

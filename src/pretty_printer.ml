@@ -284,9 +284,11 @@ let lit_value nd =
   let scalar = [||] in
   match Ndarray.dtype nd with
   | Dtype.Bool -> if Ndarray.get_f nd scalar = 0.0 then "False" else "True"
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
+  | Dtype.Uint16 | Dtype.Uint64 ->
       Int64.to_string (Ndarray.get_i64 nd scalar)
-  | Dtype.F32 | Dtype.F64 -> python_repr_float (Ndarray.get_f nd scalar)
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+      python_repr_float (Ndarray.get_f nd scalar)
   | Dtype.Complex64 | Dtype.Complex128 ->
       let z = Ndarray.get_c nd scalar in
       let im = python_repr_float z.Complex.im in

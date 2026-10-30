@@ -25,9 +25,9 @@ let coeff_of v a = T.Concrete (Nd.of_floats (dtype v) [| Array.length a |] a)
 let where_ = NL.where_
 
 let to_inexact = function
-  | D.I32 | D.Bool | D.Uint32 -> D.F32
-  | D.I64 -> D.F64
-  | (D.F32 | D.F64 | D.Complex64 | D.Complex128) as d -> d
+  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 -> D.F32
+  | D.I64 | D.Uint64 -> D.F64
+  | (D.F32 | D.F64 | D.F16 | D.Bf16 | D.Complex64 | D.Complex128) as d -> d
 
 let promote_inexact vs =
   let dt = to_inexact (NL.result_type vs) in
@@ -46,8 +46,10 @@ let promote3 a b c =
   | _ -> assert false
 
 let is_integer_dtype = function
-  | D.I32 | D.I64 | D.Uint32 -> true
-  | D.F32 | D.F64 | D.Bool | D.Complex64 | D.Complex128 -> false
+  | D.I32 | D.I64 | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 | D.Uint64 ->
+      true
+  | D.F32 | D.F64 | D.F16 | D.Bf16 | D.Bool | D.Complex64 | D.Complex128 ->
+      false
 
 let gammaln x = bind1 T.Lgamma [ promote1 x ]
 

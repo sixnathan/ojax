@@ -172,6 +172,13 @@ module T = Ojax.Types
 module D = Ojax.Dtype
 
 let dtype_of_string = function
+  | "int8" -> D.I8
+  | "int16" -> D.I16
+  | "uint8" -> D.Uint8
+  | "uint16" -> D.Uint16
+  | "uint64" -> D.Uint64
+  | "float16" -> D.F16
+  | "bfloat16" -> D.Bf16
   | "float32" -> D.F32
   | "float64" -> D.F64
   | "int32" -> D.I32
@@ -191,6 +198,13 @@ let string_of_dtype = function
   | D.Uint32 -> "uint32"
   | D.Complex64 -> "complex64"
   | D.Complex128 -> "complex128"
+  | D.I8 -> "int8"
+  | D.I16 -> "int16"
+  | D.Uint8 -> "uint8"
+  | D.Uint16 -> "uint16"
+  | D.Uint64 -> "uint64"
+  | D.F16 -> "float16"
+  | D.Bf16 -> "bfloat16"
 
 let nd_of_npz (a : Npz.t) =
   let floats =

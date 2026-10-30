@@ -14,43 +14,89 @@ let canonicalize_dtype (d : Dtype.t) : Dtype.t =
     | Dtype.F64 -> Dtype.F32
     | Dtype.I64 -> Dtype.I32
     | Dtype.Complex128 -> Dtype.Complex64
+    | Dtype.Uint64 -> Dtype.Uint32
     | d -> d
 
 type node =
   | Bool
   | Weak_int
+  | U8
+  | U16
   | U32
+  | U64
+  | I8
+  | I16
   | I32
   | I64
   | Weak_float
+  | F16
+  | Bf16
   | F32
   | F64
   | Weak_complex
   | C64
   | C128
 
-let rank = function
-  | Bool -> 0
-  | Weak_int -> 1
-  | U32 -> 2
-  | I32 -> 3
-  | I64 -> 4
-  | Weak_float -> 5
-  | F32 -> 6
-  | F64 -> 7
-  | Weak_complex -> 8
-  | C64 -> 9
-  | C128 -> 10
+let parents = function
+  | Bool -> [ Weak_int ]
+  | Weak_int -> [ U8; I8 ]
+  | U8 -> [ I16; U16 ]
+  | U16 -> [ I32; U32 ]
+  | U32 -> [ I64; U64 ]
+  | U64 -> [ Weak_float ]
+  | I8 -> [ I16 ]
+  | I16 -> [ I32 ]
+  | I32 -> [ I64 ]
+  | I64 -> [ Weak_float ]
+  | Weak_float -> [ Weak_complex; F16; Bf16 ]
+  | F16 -> [ F32 ]
+  | Bf16 -> [ F32 ]
+  | F32 -> [ F64; C64 ]
+  | F64 -> [ C128 ]
+  | Weak_complex -> [ C64 ]
+  | C64 -> [ C128 ]
+  | C128 -> []
+
+let all_nodes =
+  [
+    Bool;
+    Weak_int;
+    U8;
+    U16;
+    U32;
+    U64;
+    I8;
+    I16;
+    I32;
+    I64;
+    Weak_float;
+    F16;
+    Bf16;
+    F32;
+    F64;
+    Weak_complex;
+    C64;
+    C128;
+  ]
+
+let rec uppers node = node :: List.concat_map uppers (parents node)
 
 let jax_type (d : Dtype.t) (weak : bool) : node =
   match (d, weak) with
   | Dtype.Bool, _ -> Bool
-  | (Dtype.I32 | Dtype.I64), true -> Weak_int
-  | (Dtype.F32 | Dtype.F64), true -> Weak_float
+  | (Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16), true -> Weak_int
+  | (Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16), true -> Weak_float
   | (Dtype.Complex64 | Dtype.Complex128), true -> Weak_complex
+  | Dtype.Uint8, _ -> U8
+  | Dtype.Uint16, _ -> U16
   | Dtype.Uint32, _ -> U32
+  | Dtype.Uint64, _ -> U64
+  | Dtype.I8, false -> I8
+  | Dtype.I16, false -> I16
   | Dtype.I32, false -> I32
   | Dtype.I64, false -> I64
+  | Dtype.F16, false -> F16
+  | Dtype.Bf16, false -> Bf16
   | Dtype.F32, false -> F32
   | Dtype.F64, false -> F64
   | Dtype.Complex64, false -> C64
@@ -58,9 +104,16 @@ let jax_type (d : Dtype.t) (weak : bool) : node =
 
 let dtype_of_node : node -> Dtype.t = function
   | Bool -> Dtype.Bool
+  | U8 -> Dtype.Uint8
+  | U16 -> Dtype.Uint16
   | U32 -> Dtype.Uint32
+  | U64 -> Dtype.Uint64
+  | I8 -> Dtype.I8
+  | I16 -> Dtype.I16
   | I32 -> Dtype.I32
   | I64 -> Dtype.I64
+  | F16 -> Dtype.F16
+  | Bf16 -> Dtype.Bf16
   | F32 -> Dtype.F32
   | F64 -> Dtype.F64
   | C64 -> Dtype.Complex64
@@ -73,42 +126,30 @@ let is_weak_node = function
   | Weak_int | Weak_float | Weak_complex -> true
   | _ -> false
 
-let is_complex_node = function Weak_complex | C64 | C128 -> true | _ -> false
-
-let real_projection = function
-  | Weak_complex -> Weak_float
-  | C64 -> F32
-  | C128 -> F64
-  | n -> n
-
-let max_by_rank = function
-  | [] -> invalid_arg "least_upper_bound: empty"
-  | n :: rest ->
-      List.fold_left (fun a b -> if rank b > rank a then b else a) n rest
-
 let least_upper_bound nodes =
-  let has = List.mem in
-  (if has U32 nodes then
-     let is_signed = function I32 | I64 | Weak_int -> true | _ -> false in
-     if List.exists is_signed nodes then
-       invalid_arg
-         "dtypes: uint32 promoted against a signed integer joins to int64 in \
-          jax (incomparable lattice edge); unsupported in this port");
-  if List.exists is_complex_node nodes then
-    let real_lub = max_by_rank (List.map real_projection nodes) in
-    if real_lub = F64 then C128
-    else if is_weak_node real_lub then Weak_complex
-    else C64
-  else max_by_rank nodes
+  let common =
+    List.filter
+      (fun candidate ->
+        List.for_all (fun n -> List.mem candidate (uppers n)) nodes)
+      all_nodes
+  in
+  match
+    List.filter
+      (fun candidate ->
+        List.for_all (fun other -> List.mem other (uppers candidate)) common)
+      common
+  with
+  | best :: _ -> best
+  | [] -> invalid_arg "dtypes: no unique least upper bound"
 
 let promote_types (a : Dtype.t) (b : Dtype.t) : Dtype.t =
   dtype_of_node (least_upper_bound [ jax_type a false; jax_type b false ])
 
 let default_of_kind (d : Dtype.t) : Dtype.t =
   match d with
-  | Dtype.F32 | Dtype.F64 -> default_float_dtype ()
-  | Dtype.I32 | Dtype.I64 -> default_int_dtype ()
-  | Dtype.Uint32 -> Dtype.Uint32
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 -> default_float_dtype ()
+  | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 -> default_int_dtype ()
+  | Dtype.Uint32 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 -> d
   | Dtype.Bool -> Dtype.Bool
   | Dtype.Complex64 | Dtype.Complex128 -> default_complex_dtype ()
 

@@ -10,9 +10,10 @@ let atom_aval = function
 
 let element_literal nd idx =
   match Ndarray.dtype nd with
-  | Dtype.F32 | Dtype.F64 ->
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
       Ir.float_literal (Ndarray.dtype nd) (Ndarray.get_f nd idx)
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
+  | Dtype.Uint16 | Dtype.Uint64 ->
       Ir.int_literal (Ndarray.get_i64 nd idx)
   | Dtype.Bool -> Ir.bool_literal (Ndarray.get_i64 nd idx <> 0L)
   | Dtype.Complex64 | Dtype.Complex128 ->
@@ -277,9 +278,11 @@ let emit_integer_pow ctx (eqn : eqn) in_ids y =
 
 let compare_type_of dtype total_order =
   match dtype with
-  | Dtype.F32 | Dtype.F64 -> if total_order then "TOTALORDER" else "FLOAT"
-  | Dtype.I32 | Dtype.I64 -> "SIGNED"
-  | Dtype.Bool | Dtype.Uint32 -> "UNSIGNED"
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+      if total_order then "TOTALORDER" else "FLOAT"
+  | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 -> "SIGNED"
+  | Dtype.Bool | Dtype.Uint32 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 ->
+      "UNSIGNED"
   | Dtype.Complex64 | Dtype.Complex128 ->
       invalid_arg "Stablehlo.Emit: complex unsupported (row 96)"
 
@@ -381,8 +384,10 @@ let emit_select_n ctx (eqn : eqn) in_ids =
 
 let zero_dense dt =
   match dt with
-  | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt 0.0
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 -> Ir.int_literal 0L
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 -> Ir.float_literal dt 0.0
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
+  | Dtype.Uint16 | Dtype.Uint64 ->
+      Ir.int_literal 0L
   | Dtype.Bool -> Ir.bool_literal false
   | Dtype.Complex64 | Dtype.Complex128 ->
       invalid_arg "Stablehlo.Emit: complex unsupported (row 96)"
@@ -714,8 +719,10 @@ let reduce_zero dt = Ir.dense (zero_dense dt)
 let reduce_one dt =
   Ir.dense
     (match dt with
-    | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt 1.0
-    | Dtype.I32 | Dtype.I64 | Dtype.Uint32 -> Ir.int_literal 1L
+    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 -> Ir.float_literal dt 1.0
+    | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
+    | Dtype.Uint16 | Dtype.Uint64 ->
+        Ir.int_literal 1L
     | Dtype.Bool -> Ir.bool_literal true
     | Dtype.Complex64 | Dtype.Complex128 ->
         invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
@@ -723,10 +730,13 @@ let reduce_one dt =
 let reduce_allones dt =
   Ir.dense
     (match dt with
-    | Dtype.I32 | Dtype.I64 -> Ir.int_literal (-1L)
+    | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 -> Ir.int_literal (-1L)
+    | Dtype.Uint8 -> Ir.int_literal 255L
+    | Dtype.Uint16 -> Ir.int_literal 65535L
+    | Dtype.Uint64 -> Ir.int_literal (-1L)
     | Dtype.Uint32 -> Ir.int_literal 4294967295L
     | Dtype.Bool -> Ir.bool_literal true
-    | Dtype.F32 | Dtype.F64 ->
+    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
         invalid_arg "Stablehlo.Emit: bitwise reduce on floating-point dtype"
     | Dtype.Complex64 | Dtype.Complex128 ->
         invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
@@ -734,10 +744,14 @@ let reduce_allones dt =
 let reduce_maxid dt =
   Ir.dense
     (match dt with
-    | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt neg_infinity
+    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+        Ir.float_literal dt neg_infinity
+    | Dtype.I8 -> Ir.int_literal (-128L)
+    | Dtype.I16 -> Ir.int_literal (-32768L)
     | Dtype.I32 -> Ir.int_literal (-2147483648L)
     | Dtype.I64 -> Ir.int_literal Int64.min_int
-    | Dtype.Uint32 -> Ir.int_literal 0L
+    | Dtype.Uint32 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 ->
+        Ir.int_literal 0L
     | Dtype.Bool -> Ir.bool_literal false
     | Dtype.Complex64 | Dtype.Complex128 ->
         invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
@@ -745,9 +759,15 @@ let reduce_maxid dt =
 let reduce_minid dt =
   Ir.dense
     (match dt with
-    | Dtype.F32 | Dtype.F64 -> Ir.float_literal dt infinity
+    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+        Ir.float_literal dt infinity
+    | Dtype.I8 -> Ir.int_literal 127L
+    | Dtype.I16 -> Ir.int_literal 32767L
     | Dtype.I32 -> Ir.int_literal 2147483647L
     | Dtype.I64 -> Ir.int_literal Int64.max_int
+    | Dtype.Uint8 -> Ir.int_literal 255L
+    | Dtype.Uint16 -> Ir.int_literal 65535L
+    | Dtype.Uint64 -> Ir.int_literal (-1L)
     | Dtype.Uint32 -> Ir.int_literal 4294967295L
     | Dtype.Bool -> Ir.bool_literal true
     | Dtype.Complex64 | Dtype.Complex128 ->

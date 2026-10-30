@@ -17,8 +17,9 @@ let zeros_like v = const_full (dtype v) (shape v) 0.0
 let to_inexact_dtype = function
   | D.F32 -> D.F32
   | D.F64 -> D.F64
-  | D.I32 | D.Bool | D.Uint32 -> D.F32
-  | D.I64 -> D.F64
+  | (D.F16 | D.Bf16) as narrow -> narrow
+  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 -> D.F32
+  | D.I64 | D.Uint64 -> D.F64
   | (D.Complex64 | D.Complex128) as c -> c
 
 let to_numeric_dtype = function D.Bool -> D.I32 | d -> d
@@ -351,8 +352,10 @@ let signbit x =
   let a = p1 (promote [ x ]) in
   let sh = shape a in
   match dtype a with
-  | D.I32 | D.I64 -> bind1 T.Lt [ a; zeros_like a ]
-  | D.Bool | D.Uint32 -> const_full D.Bool sh 0.0
+  | D.I32 | D.I64 | D.I8 | D.I16 -> bind1 T.Lt [ a; zeros_like a ]
+  | D.F16 | D.Bf16 -> bind1 T.Lt [ a; zeros_like a ]
+  | D.Bool | D.Uint32 | D.Uint8 | D.Uint16 | D.Uint64 ->
+      const_full D.Bool sh 0.0
   | D.Complex64 | D.Complex128 ->
       invalid_arg "signbit: complex dtype unsupported"
   | D.F32 ->

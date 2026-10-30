@@ -27,7 +27,10 @@ let identity_prod = 1.0
 
 let identity_max dt =
   match dt with
-  | D.F32 | D.F64 -> Float.neg_infinity
+  | D.F32 | D.F64 | D.F16 | D.Bf16 -> Float.neg_infinity
+  | D.I8 -> -128.0
+  | D.I16 -> -32768.0
+  | D.Uint8 | D.Uint16 | D.Uint64 -> 0.0
   | D.I32 -> -2147483648.0
   | D.I64 -> -9223372036854775808.0
   | D.Uint32 -> 0.0
@@ -37,7 +40,12 @@ let identity_max dt =
 
 let identity_min dt =
   match dt with
-  | D.F32 | D.F64 -> Float.infinity
+  | D.F32 | D.F64 | D.F16 | D.Bf16 -> Float.infinity
+  | D.I8 -> 127.0
+  | D.I16 -> 32767.0
+  | D.Uint8 -> 255.0
+  | D.Uint16 -> 65535.0
+  | D.Uint64 -> 18446744073709551615.0
   | D.I32 -> 2147483647.0
   | D.I64 -> 9223372036854775807.0
   | D.Uint32 -> 4294967295.0

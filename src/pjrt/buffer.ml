@@ -14,9 +14,10 @@ external destroy_ : t -> unit = "ojax_pjrt_buffer_destroy"
 let u32_mask = 0xFFFF_FFFF
 
 let elt_bytes = function
-  | Dtype.F64 | Dtype.I64 -> 8
+  | Dtype.F64 | Dtype.I64 | Dtype.Uint64 -> 8
   | Dtype.F32 | Dtype.I32 | Dtype.Uint32 -> 4
-  | Dtype.Bool -> 1
+  | Dtype.Bool | Dtype.I8 | Dtype.Uint8 -> 1
+  | Dtype.I16 | Dtype.Uint16 | Dtype.F16 | Dtype.Bf16 -> 2
   | Dtype.Complex64 | Dtype.Complex128 ->
       invalid_arg "Pjrt.Buffer: complex unsupported"
 
@@ -58,6 +59,9 @@ let encode buf off dtype v =
   | Dtype.Uint32 ->
       put_i32 buf off (Int32.of_int (int_of_float v land u32_mask))
   | Dtype.Bool -> set_byte buf off (if v = 0.0 then 0 else 1)
+  | Dtype.I8 | Dtype.I16 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 | Dtype.F16
+  | Dtype.Bf16 ->
+      invalid_arg "Pjrt.Buffer: narrow dtypes run on the host interpreter"
   | Dtype.Complex64 | Dtype.Complex128 ->
       invalid_arg "Pjrt.Buffer: complex unsupported"
 
@@ -69,6 +73,9 @@ let decode buf off dtype =
   | Dtype.I64 -> Int64.to_float (get_i64 buf off)
   | Dtype.Uint32 -> float_of_int (Int32.to_int (get_i32 buf off) land u32_mask)
   | Dtype.Bool -> if Bigarray.Array1.get buf off = 0 then 0.0 else 1.0
+  | Dtype.I8 | Dtype.I16 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 | Dtype.F16
+  | Dtype.Bf16 ->
+      invalid_arg "Pjrt.Buffer: narrow dtypes run on the host interpreter"
   | Dtype.Complex64 | Dtype.Complex128 ->
       invalid_arg "Pjrt.Buffer: complex unsupported"
 

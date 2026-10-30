@@ -21,8 +21,9 @@ let where3 c a b = NL.where_ c a b
 let to_inexact = function
   | D.F32 -> D.F32
   | D.F64 -> D.F64
-  | D.I32 | D.Bool | D.Uint32 -> D.F32
-  | D.I64 -> D.F64
+  | (D.F16 | D.Bf16) as narrow -> narrow
+  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 -> D.F32
+  | D.I64 | D.Uint64 -> D.F64
   | (D.Complex64 | D.Complex128) as c -> c
 
 let inexact v =

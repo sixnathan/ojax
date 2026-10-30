@@ -1104,6 +1104,31 @@ let custom_batch axis_size prim vals bdims =
   in
   Core.bind prim' moved
 
+let while_batch axis_size cond body vals bdims =
+  let aligned = List.map2 (align_to axis_size 0) vals bdims in
+  let avals = List.map Core.get_aval aligned in
+  let running state =
+    List.hd (vmap_all (fun s -> Jaxpr.eval_closed_jaxpr cond s) state)
+  in
+  let cond' =
+    Jaxpr.make_jaxpr avals (fun state ->
+        [ b1 (Reduce_or [| 0 |]) [ running state ] ])
+  in
+  let body' =
+    Jaxpr.make_jaxpr avals (fun state ->
+        let active = running state in
+        let next = vmap_all (fun s -> Jaxpr.eval_closed_jaxpr body s) state in
+        List.map2
+          (fun old fresh ->
+            let shape = (Core.get_aval fresh).shape in
+            let mask =
+              b1 (Broadcast_in_dim { shape; dims = [| 0 |] }) [ active ]
+            in
+            b1 Select_n [ mask; old; fresh ])
+          state next)
+  in
+  Core.bind (While { cond = cond'; body = body' }) aligned
+
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
   let axis_size = axis_size_of trace in
@@ -1115,6 +1140,10 @@ let batch_process_primitive (trace : trace) (prim : primitive)
         collective_batch trace axis_size kind axis_name vals bdims
       in
       [ Tracer (new_batch_tracer trace out out_bdim) ]
+  | While { cond; body } ->
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
+        (while_batch axis_size cond body vals bdims)
   | _ when unstacks_operands prim bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

@@ -642,6 +642,75 @@ let polygamma n x =
   let n, x = promote2 n x in
   bind1 T.Polygamma [ n; x ]
 
+let bernoulli_coefs =
+  [|
+    12.0;
+    -720.0;
+    30240.0;
+    -1209600.0;
+    47900160.0;
+    -1892437580.3183792;
+    74724249600.0;
+    -2950130727918.164;
+    116467828143500.67;
+    -4597978722407473.0;
+    1.8152105401943546e+17;
+    -7.166165256175667e+18;
+    2.82908877253043e+20;
+    -1.1168794925000445e+22;
+    4.4092635141854666e+23;
+    -1.7407074646225822e+25;
+  |]
+
+let zeta_series s a =
+  let lit v = scalar_of a v in
+  let count = if dtype a = D.F32 then 8 else 16 in
+  let big_n = lit (float_of_int count) in
+  let term k = UF.power (UF.add a (lit (float_of_int k))) (UF.negative s) in
+  let series =
+    List.fold_left
+      (fun acc k -> UF.add acc (term k))
+      (term 0)
+      (List.init (count - 1) (fun k -> k + 1))
+  in
+  let shifted = UF.add a big_n in
+  let integral =
+    UF.divide
+      (UF.power shifted (UF.subtract (lit 1.0) s))
+      (UF.subtract s (lit 1.0))
+  in
+  let t0 = UF.power shifted (UF.negative s) in
+  let ceiling =
+    lit (if dtype a = D.F32 then 3.4028234663852886e38 else Float.max_float)
+  in
+  let total = ref (lit 0.0) and running = ref (lit 1.0) in
+  for m = 0 to (2 * count) - 1 do
+    running :=
+      UF.multiply !running (UF.divide (UF.add s (lit (float_of_int m))) shifted);
+    if m mod 2 = 0 then
+      total :=
+        UF.add !total
+          (UF.divide
+             (UF.minimum !running ceiling)
+             (lit bernoulli_coefs.(m / 2)))
+  done;
+  UF.add (UF.add series integral) (UF.multiply t0 (UF.add (lit 0.5) !total))
+
+let zeta_custom =
+  lazy
+    (Custom_derivatives.custom_jvp
+       (fun args ->
+         match args with
+         | [ x; q ] -> [ bind1 T.Zeta [ x; q ] ]
+         | _ -> failwith "zeta: arity")
+       ~jvp:(fun primals tangents ->
+         Interpreters.Ad.jvp
+           (fun args ->
+             match args with
+             | [ x; q ] -> [ zeta_series x q ]
+             | _ -> failwith "zeta: arity")
+           primals tangents))
+
 let zeta ?q x =
   match q with
   | None ->
@@ -650,7 +719,7 @@ let zeta ?q x =
          Hurwitz Zeta function."
   | Some q ->
       let x, q = promote2 x q in
-      bind1 T.Zeta [ x; q ]
+      List.hd ((Lazy.force zeta_custom) [ x; q ])
 
 let wofz_terms = 64
 
@@ -747,13 +816,25 @@ let eps_of v = match dtype v with D.F64 -> epsilon_float | _ -> 1.1920929e-7
 let full_like v x = const_full (dtype v) (shape v) x
 
 let masked_iter ~maxiter ~cond ~body state0 =
-  let state = ref state0 in
-  for _ = 1 to maxiter do
-    let m = cond !state in
-    let nxt = body !state in
-    state := List.map2 (fun n o -> where_ m n o) nxt !state
-  done;
-  !state
+  let counter v = T.Concrete (Nd.of_floats D.I32 [||] [| float_of_int v |]) in
+  let looped =
+    Lax_api.while_loop
+      (fun st ->
+        match st with
+        | i :: state ->
+            UF.logical_and (UF.less i (counter maxiter)) (RED.any (cond state))
+        | [] -> failwith "masked_iter: empty state")
+      (fun st ->
+        match st with
+        | i :: state ->
+            let m = cond state in
+            let nxt = body state in
+            UF.add i (counter 1)
+            :: List.map2 (fun n o -> where_ m n o) nxt state
+        | [] -> failwith "masked_iter: empty state")
+      (counter 0 :: state0)
+  in
+  List.tl looped
 
 let softmax ?axis x =
   match axis with
@@ -1312,8 +1393,7 @@ let hyp1f1_asymptotic a b x =
        (UF.power x (UF.subtract a b)))
     serie
 
-let hyp1f1 a b x =
-  let a, b, x = promote3 a b x in
+let hyp1f1_value a b x =
   let s v = scalar_of x v in
   let result =
     where_
@@ -1325,6 +1405,88 @@ let hyp1f1 a b x =
   let ab = UF.logical_and (UF.equal a b) anz in
   let b0 = UF.logical_and (UF.equal b (s 0.0)) anz in
   where_ a0 (s 1.0) (where_ ab (UF.exp x) (where_ b0 (s Float.infinity) result))
+
+let hyp1f1_param_derivative shifted a b x =
+  let s v = scalar_of x v in
+  let precision = s (eps_of x) in
+  let one = s 1.0 in
+  let looped =
+    Lax_api.while_loop
+      (fun state ->
+        match state with
+        | [ serie; k; term ] ->
+            UF.logical_and
+              (UF.less k (s 250.0))
+              (UF.greater
+                 (UF.divide (UF.absolute term) (UF.absolute serie))
+                 precision)
+        | _ -> failwith "hyp1f1: arity")
+      (fun state ->
+        match state with
+        | [ serie; k; term ] ->
+            let serie = UF.add serie (UF.multiply term (shifted k)) in
+            let term =
+              UF.multiply term
+                (UF.divide
+                   (UF.multiply (UF.divide (UF.add a k) (UF.add b k)) x)
+                   (UF.add k one))
+            in
+            [ serie; UF.add k one; term ]
+        | _ -> failwith "hyp1f1: arity")
+      [ s 0.0; one; UF.multiply (UF.divide a b) x ]
+  in
+  List.hd looped
+
+let vectorize3 f args =
+  Numpy.Vectorize.vectorize
+    (fun scalars ->
+      match scalars with
+      | [ a; b; x ] -> f a b x
+      | _ -> failwith "hyp1f1: arity")
+    args
+
+let rec hyp1f1_custom =
+  lazy
+    (Custom_derivatives.custom_jvp
+       (fun args -> [ vectorize3 hyp1f1_value args ])
+       ~jvp:(fun primals tangents ->
+         match (primals, tangents) with
+         | [ a; b; x ], [ da; db; dx ] ->
+             let out = vectorize3 hyp1f1_value primals in
+             let wrt_a =
+               vectorize3
+                 (fun a b x ->
+                   hyp1f1_param_derivative
+                     (fun k -> UF.subtract (digamma (UF.add a k)) (digamma a))
+                     a b x)
+                 primals
+             in
+             let wrt_b =
+               vectorize3
+                 (fun a b x ->
+                   hyp1f1_param_derivative
+                     (fun k -> UF.subtract (digamma b) (digamma (UF.add b k)))
+                     a b x)
+                 primals
+             in
+             let one = scalar_of x 1.0 in
+             let wrt_x =
+               UF.multiply (UF.divide a b)
+                 (hyp1f1_apply (UF.add a one) (UF.add b one) x)
+             in
+             ( [ out ],
+               [
+                 UF.add
+                   (UF.add (UF.multiply wrt_a da) (UF.multiply wrt_b db))
+                   (UF.multiply wrt_x dx);
+               ] )
+         | _ -> failwith "hyp1f1: arity"))
+
+and hyp1f1_apply a b x = List.hd ((Lazy.force hyp1f1_custom) [ a; b; x ])
+
+let hyp1f1 a b x =
+  let a, b, x = promote3 a b x in
+  hyp1f1_apply a b x
 
 let expn2 x n =
   let s v = scalar_of x v in

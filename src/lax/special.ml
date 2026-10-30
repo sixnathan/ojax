@@ -29,49 +29,50 @@ let lanczos_coeffs =
     1.5056327351493116e-7;
   |]
 
-let half_log_2pi = 0.5 *. Float.log (2.0 *. pi)
+let log_sqrt_two_pi = 0.5 *. Float.log (2.0 *. pi)
+let log_g_half = Float.log (lanczos_g +. 0.5)
+let lanczos_log_t z = log_g_half +. Float.log1p (z /. (lanczos_g +. 0.5))
 
-let lgamma_lanczos zz =
-  let ag = ref lanczos_coeffs.(0) in
+let lgamma_positive z =
+  let x = ref lanczos_coeffs.(0) in
   for k = 1 to 8 do
-    ag := !ag +. (lanczos_coeffs.(k) /. (zz +. float_of_int k))
+    x := !x +. (lanczos_coeffs.(k) /. (z +. float_of_int k))
   done;
-  let t = zz +. lanczos_g +. 0.5 in
-  half_log_2pi +. ((zz +. 0.5) *. Float.log t) -. t +. Float.log !ag
+  let t = lanczos_g +. z +. 0.5 in
+  let log_t = lanczos_log_t z in
+  log_sqrt_two_pi +. ((z +. 0.5 -. (t /. log_t)) *. log_t) +. Float.log !x
 
 let lgamma x =
-  if x < 0.5 then
-    Float.log pi
-    -. Float.log (Float.abs (Float.sin (pi *. x)))
-    -. lgamma_lanczos (-.x)
-  else lgamma_lanczos (x -. 1.0)
+  if Float.is_nan x then x
+  else if Float.abs x = Float.infinity then Float.infinity
+  else if x < 0.5 then begin
+    let magnitude = Float.abs x in
+    let frac = magnitude -. Float.floor magnitude in
+    let reduced = if frac > 0.5 then 1.0 -. frac else frac in
+    let denom = Float.log (Float.sin (pi *. reduced)) in
+    let log_y = lgamma_positive (-.x) in
+    if Float.is_finite denom then Float.log pi -. denom -. log_y else -.denom
+  end
+  else lgamma_positive (x -. 1.0)
 
-let rec digamma x =
-  if x <= 0.0 && Float.equal (Float.rem x 1.0) 0.0 then Float.nan
-  else if x < 0.0 then digamma (1.0 -. x) -. (pi /. Float.tan (pi *. x))
+let digamma x =
+  if x <= 0.0 && Float.floor x = x then Float.nan
   else begin
-    let acc = ref 0.0 in
-    let y = ref x in
-    while !y < 6.0 do
-      acc := !acc -. (1.0 /. !y);
-      y := !y +. 1.0
+    let reflect = x < 0.5 in
+    let z = if reflect then -.x else x -. 1.0 in
+    let num = ref 0.0 and denom = ref lanczos_coeffs.(0) in
+    for k = 1 to 8 do
+      let d = z +. float_of_int k in
+      num := !num -. (lanczos_coeffs.(k) /. (d *. d));
+      denom := !denom +. (lanczos_coeffs.(k) /. d)
     done;
-    let f = 1.0 /. (!y *. !y) in
-    !acc +. Float.log !y
-    -. (1.0 /. (2.0 *. !y))
-    -. f
-       *. ((1.0 /. 12.0)
-          -. f
-             *. ((1.0 /. 120.0)
-                -. f
-                   *. ((1.0 /. 252.0)
-                      -. f
-                         *. ((1.0 /. 240.0)
-                            -. f
-                               *. ((1.0 /. 132.0)
-                                  -. f
-                                     *. ((691.0 /. 32760.0)
-                                        -. (f *. (1.0 /. 12.0))))))))
+    let t = lanczos_g +. z +. 0.5 in
+    let y = lanczos_log_t z +. (!num /. !denom) -. (lanczos_g /. t) in
+    if reflect then begin
+      let reduced = x +. Float.abs (Float.floor (x +. 0.5)) in
+      y -. (pi *. Float.cos (pi *. reduced) /. Float.sin (pi *. reduced))
+    end
+    else y
   end
 
 let erf x = Float.erf x

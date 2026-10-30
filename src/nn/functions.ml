@@ -220,3 +220,35 @@ let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
     NL.astype (softmax ~axis:(-1) single) (Core.get_aval key).T.dtype
   in
   squeeze_back (E.einsum "BNTS,BSNH->BTNH" [ probs; lift value ])
+
+let as_float x =
+  match dtype x with
+  | D.Bool | D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32
+  | D.Uint64 ->
+      NL.astype x (Dtypes.default_float_dtype ())
+  | _ -> x
+
+let as_int_if_bool x =
+  if dtype x = D.Bool then
+    NL.astype x (if Config.x64_enabled () then D.I64 else D.I32)
+  else x
+
+let relu x = relu (as_int_if_bool x)
+let hard_tanh x = hard_tanh (as_int_if_bool x)
+let relu6 x = relu6 (as_float x)
+let leaky_relu ?negative_slope x = leaky_relu ?negative_slope (as_float x)
+let elu ?alpha x = elu ?alpha (as_float x)
+let celu ?alpha x = celu ?alpha (as_float x)
+let selu x = selu (as_float x)
+let hard_sigmoid x = hard_sigmoid (as_float x)
+let hard_silu x = hard_silu (as_float x)
+let sparse_plus x = sparse_plus (as_float x)
+let sparse_sigmoid x = sparse_sigmoid (as_float x)
+let as_inexact_dtype x = NL.astype x (Dtypes.to_inexact_dtype (dtype x))
+let squareplus ?b x = squareplus ?b (as_inexact_dtype x)
+let soft_sign x = soft_sign (if dtype x = D.Bool then as_float x else x)
+let softplus x = softplus (if dtype x = D.Bool then as_float x else x)
+let log1mexp x = log1mexp (if dtype x = D.Bool then as_float x else x)
+
+let logmeanexp ?axis ?keepdims x =
+  logmeanexp ?axis ?keepdims (as_inexact_dtype x)

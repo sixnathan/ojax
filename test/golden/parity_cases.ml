@@ -1245,6 +1245,113 @@ let tracer_batch_run op params a b =
       Some [ Ojax.Random.Threefry.threefry_seed seed ]
   | _ -> None
 
+let library_sweep op v =
+  let module NF = Ojax.Nn.Functions in
+  let module SP = Ojax.Scipy.Special in
+  let module St = Ojax.Scipy.Stats in
+  let lit x reference = L.full [||] x (dt_of reference) in
+  let u () = NF.sigmoid v in
+  let q () =
+    let s = NF.softplus v in
+    UF.add s (L.full_like s 0.1)
+  in
+  let q1 () =
+    let p = q () in
+    UF.add p (L.full_like p 1.0)
+  in
+  match op with
+  | "sw_nn_relu" -> Some (NF.relu v)
+  | "sw_nn_relu6" -> Some (NF.relu6 v)
+  | "sw_nn_softplus" -> Some (NF.softplus v)
+  | "sw_nn_sparse_plus" -> Some (NF.sparse_plus v)
+  | "sw_nn_soft_sign" -> Some (NF.soft_sign v)
+  | "sw_nn_sigmoid" -> Some (NF.sigmoid v)
+  | "sw_nn_sparse_sigmoid" -> Some (NF.sparse_sigmoid v)
+  | "sw_nn_silu" -> Some (NF.silu v)
+  | "sw_nn_log_sigmoid" -> Some (NF.log_sigmoid v)
+  | "sw_nn_hard_tanh" -> Some (NF.hard_tanh v)
+  | "sw_nn_hard_sigmoid" -> Some (NF.hard_sigmoid v)
+  | "sw_nn_hard_silu" -> Some (NF.hard_silu v)
+  | "sw_nn_selu" -> Some (NF.selu v)
+  | "sw_nn_elu" -> Some (NF.elu v)
+  | "sw_nn_celu" -> Some (NF.celu v)
+  | "sw_nn_leaky_relu" -> Some (NF.leaky_relu v)
+  | "sw_nn_squareplus" -> Some (NF.squareplus v)
+  | "sw_nn_gelu" -> Some (NF.gelu v)
+  | "sw_nn_gelu_exact" -> Some (NF.gelu ~approximate:false v)
+  | "sw_nn_glu" -> Some (NF.glu ~axis:0 (L.slice_in_dim ~axis:0 v 0 2))
+  | "sw_nn_softmax" -> Some (NF.softmax v)
+  | "sw_nn_log_softmax" -> Some (NF.log_softmax v)
+  | "sw_nn_standardize" -> Some (NF.standardize v)
+  | "sw_nn_logmeanexp" -> Some (NF.logmeanexp ~axis:[| 0 |] v)
+  | "sw_nn_log1mexp" -> Some (NF.log1mexp (q ()))
+  | "sw_sp_gammaln" -> Some (SP.gammaln v)
+  | "sw_sp_gammasgn" -> Some (SP.gammasgn v)
+  | "sw_sp_digamma" -> Some (SP.digamma v)
+  | "sw_sp_gamma" -> Some (SP.gamma v)
+  | "sw_sp_betaln" -> Some (SP.betaln (q ()) (q1 ()))
+  | "sw_sp_erf" -> Some (SP.erf v)
+  | "sw_sp_erfc" -> Some (SP.erfc v)
+  | "sw_sp_erfinv" ->
+      let p = u () in
+      Some (SP.erfinv (UF.subtract (UF.multiply (lit 2.0 p) p) (lit 1.0 p)))
+  | "sw_sp_erfcx" -> Some (SP.erfcx v)
+  | "sw_sp_dawsn" -> Some (SP.dawsn v)
+  | "sw_sp_expit" -> Some (SP.expit v)
+  | "sw_sp_logit" -> Some (SP.logit (u ()))
+  | "sw_sp_xlogy" -> Some (SP.xlogy v (q ()))
+  | "sw_sp_xlog1py" -> Some (SP.xlog1py v (q ()))
+  | "sw_sp_entr" -> Some (SP.entr (q ()))
+  | "sw_sp_boxcox" -> Some (SP.boxcox (q ()) (lit 0.5 (q ())))
+  | "sw_sp_boxcox1p" -> Some (SP.boxcox1p (q ()) (lit 0.5 (q ())))
+  | "sw_sp_rel_entr" -> Some (SP.rel_entr (q ()) (q1 ()))
+  | "sw_sp_kl_div" -> Some (SP.kl_div (q ()) (q1 ()))
+  | "sw_sp_i0" -> Some (SP.i0 v)
+  | "sw_sp_i0e" -> Some (SP.i0e v)
+  | "sw_sp_i1" -> Some (SP.i1 v)
+  | "sw_sp_i1e" -> Some (SP.i1e v)
+  | "sw_sp_ndtr" -> Some (SP.ndtr v)
+  | "sw_sp_ndtri" -> Some (SP.ndtri (u ()))
+  | "sw_sp_log_ndtr" -> Some (SP.log_ndtr v)
+  | "sw_sp_polygamma" ->
+      Some
+        (SP.polygamma
+           (T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| 1.0 |]))
+           (q ()))
+  | "sw_sp_zeta" -> Some (SP.zeta ~q:(q ()) (q1 ()))
+  | "sw_sp_poch" -> Some (SP.poch (q ()) (lit 2.0 (q ())))
+  | "sw_sp_spence" -> Some (SP.spence (q ()))
+  | "sw_sp_owens_t" -> Some (SP.owens_t v (q ()))
+  | "sw_sp_betainc" -> Some (SP.betainc (q ()) (q1 ()) (u ()))
+  | "sw_sp_gammainc" -> Some (SP.gammainc (q ()) (q ()))
+  | "sw_sp_gammaincc" -> Some (SP.gammaincc (q ()) (q ()))
+  | "sw_sp_hyp1f1" -> Some (SP.hyp1f1 (q ()) (q1 ()) (u ()))
+  | "sw_st_norm_logpdf" -> Some (St.Norm.logpdf v)
+  | "sw_st_norm_pdf" -> Some (St.Norm.pdf v)
+  | "sw_st_norm_cdf" -> Some (St.Norm.cdf v)
+  | "sw_st_norm_logcdf" -> Some (St.Norm.logcdf v)
+  | "sw_st_norm_ppf" -> Some (St.Norm.ppf (u ()))
+  | "sw_st_norm_sf" -> Some (St.Norm.sf v)
+  | "sw_st_norm_logsf" -> Some (St.Norm.logsf v)
+  | "sw_st_norm_isf" -> Some (St.Norm.isf (u ()))
+  | "sw_st_expon_logpdf" -> Some (St.Expon.logpdf (q ()))
+  | "sw_st_expon_cdf" -> Some (St.Expon.cdf (q ()))
+  | "sw_st_gamma_logpdf" -> Some (St.Gamma.logpdf (q ()) (lit 2.0 (q ())))
+  | "sw_st_gamma_cdf" -> Some (St.Gamma.cdf (q ()) (lit 2.0 (q ())))
+  | "sw_st_beta_logpdf" ->
+      Some (St.Beta.logpdf (u ()) (lit 2.0 (u ())) (lit 3.0 (u ())))
+  | "sw_st_beta_cdf" ->
+      Some (St.Beta.cdf (u ()) (lit 2.0 (u ())) (lit 3.0 (u ())))
+  | "sw_st_laplace_logpdf" -> Some (St.Laplace.logpdf v)
+  | "sw_st_laplace_cdf" -> Some (St.Laplace.cdf v)
+  | "sw_st_logistic_logpdf" -> Some (St.Logistic.logpdf v)
+  | "sw_st_logistic_cdf" -> Some (St.Logistic.cdf v)
+  | "sw_st_cauchy_logpdf" -> Some (St.Cauchy.logpdf v)
+  | "sw_st_cauchy_cdf" -> Some (St.Cauchy.cdf v)
+  | "sw_st_chi2_logpdf" -> Some (St.Chi2.logpdf (q ()) (lit 3.0 (q ())))
+  | "sw_st_pareto_logpdf" -> Some (St.Pareto.logpdf (q1 ()) (lit 2.0 (q ())))
+  | _ -> None
+
 let dtype_sweep_run op a =
   let module AC = Ojax.Numpy.Array_creation in
   let module PO = Ojax.Numpy.Polynomial in
@@ -1312,6 +1419,24 @@ let dtype_sweep_run op a =
   | "sw_isfinite" -> one UF.isfinite
   | "sw_isinf" -> one UF.isinf
   | "sw_round" -> one (NL.round ~decimals:1)
+  | "sw_bitwise_and" ->
+      one (fun v -> UF.bitwise_and v (NL.flip ~axis:[| 0 |] v))
+  | "sw_bitwise_or" -> one (fun v -> UF.bitwise_or v (NL.flip ~axis:[| 0 |] v))
+  | "sw_bitwise_xor" ->
+      one (fun v -> UF.bitwise_xor v (NL.flip ~axis:[| 0 |] v))
+  | "sw_bitwise_not" -> one UF.bitwise_not
+  | "sw_left_shift" -> one (fun v -> UF.left_shift v (AC.ones_like v))
+  | "sw_right_shift" -> one (fun v -> UF.right_shift v (AC.ones_like v))
+  | "sw_remainder" ->
+      one (fun v ->
+          UF.remainder v (UF.add (NL.flip ~axis:[| 0 |] v) (AC.ones_like v)))
+  | "sw_floor_divide" ->
+      one (fun v ->
+          UF.floor_divide v (UF.add (NL.flip ~axis:[| 0 |] v) (AC.ones_like v)))
+  | "sw_power_self" ->
+      one (fun v -> UF.power v (UF.add (AC.ones_like v) (AC.ones_like v)))
+  | "sw_gcd" -> one (fun v -> NL.gcd v (NL.flip ~axis:[| 0 |] v))
+  | "sw_lcm" -> one (fun v -> NL.lcm v (NL.flip ~axis:[| 0 |] v))
   | "sw_floor_div_self" ->
       one (fun v ->
           let v = as_float v in
@@ -1376,9 +1501,11 @@ let dtype_sweep_run op a =
   | "sw_ifft" -> one (FFT.ifft ~axis:0)
   | "sw_tril" -> one (fun v -> NL.tril v)
   | "sw_diag" -> one (fun v -> NL.diag v)
-  | _ ->
+  | _ -> (
       ignore cell;
-      None
+      match library_sweep op (a ()) with
+      | Some out -> Some [ out ]
+      | None -> None)
 
 let fft_run op params a =
   match op with
@@ -1525,7 +1652,29 @@ let transform_sweep_run op a =
   end
   else None
 
-let run op params get =
+let compares_at_single_precision op =
+  let name =
+    match String.index_opt op '_' with
+    | Some i -> String.sub op (i + 1) (String.length op - i - 1)
+    | None -> op
+  in
+  List.mem name [ "sp_owens_t"; "st_norm_ppf"; "st_norm_isf" ]
+
+let rec run op params get =
+  if compares_at_single_precision op && dt_of (get "a") <> Ojax.Dtype.F64 then
+    let narrow =
+      if dt_of (get "a") = Ojax.Dtype.F16 then Ojax.Dtype.F16
+      else Ojax.Dtype.F32
+    in
+    List.map
+      (fun v ->
+        match dt_of v with
+        | Ojax.Dtype.F64 | Ojax.Dtype.F32 -> NL.astype v narrow
+        | _ -> v)
+      (run_cases op params get)
+  else run_cases op params get
+
+and run_cases op params get =
   let a () = get "a" in
   let b () = get "b" in
   let c () = get "c" in

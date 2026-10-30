@@ -655,6 +655,10 @@ let reducer_jvp_ref :
 
 let reducer_jvp j p t = !reducer_jvp_ref j p t
 
+let concrete_all_zero = function
+  | Concrete nd -> Ndarray.fold (fun acc x -> acc && x = 0.0) true nd
+  | Device _ | Tracer _ -> false
+
 let jvp_rule prim (primals : value list) (tangents : value list) : value * value
     =
   match prim with
@@ -718,9 +722,11 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       | [ x; y ], [ tx; ty ] ->
           let po = b1 Pow [ x; y ] in
           let one = ones_like_value y in
-          let dx = mul (mul y (b1 Pow [ x; sub y one ])) tx in
-          let dy = mul (mul (b1 Log [ x ]) po) ty in
-          (po, add dx dy)
+          let dx () = mul (mul y (b1 Pow [ x; sub y one ])) tx in
+          let dy () = mul (mul (b1 Log [ x ]) po) ty in
+          if concrete_all_zero ty then (po, dx ())
+          else if concrete_all_zero tx then (po, dy ())
+          else (po, add (dx ()) (dy ()))
       | _ -> arity ())
   | Abs -> (
       match (primals, tangents) with
@@ -1168,6 +1174,12 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       match (primals, tangents) with
       | [ x ], [ tx ] -> (b1 Lgamma [ x ], mul (b1 Digamma [ x ]) tx)
       | _ -> arity ())
+  | Zeta -> (
+      match (primals, tangents) with
+      | [ x; q ], [ _; tq ] ->
+          let raised = add x (const_like x 1.0) in
+          (b1 Zeta [ x; q ], mul tq (mul (neg x) (b1 Zeta [ raised; q ])))
+      | _ -> arity ())
   | Digamma -> (
       match (primals, tangents) with
       | [ x ], [ tx ] ->
@@ -1301,8 +1313,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       match (primals, tangents) with
       | [ x ], [ t ] -> cumulative_jvp ~axis ~reverse x t logaddexp_step
       | _ -> arity ())
-  | Igamma_grad_a | Zeta ->
-      failwith "ad: primitive has no jvp rule (matches jax)"
+  | Igamma_grad_a -> failwith "ad: primitive has no jvp rule (matches jax)"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32

@@ -444,6 +444,99 @@ def _tracer_batch_ops():
     }
 
 
+def _library_sweep():
+    nn = jax.nn
+    sp = jax.scipy.special
+    st = jax.scipy.stats
+    u = lambda a: nn.sigmoid(jnp.asarray(a))
+    q = lambda a: nn.softplus(jnp.asarray(a)) + 0.1
+    table = {
+        "nn_relu": nn.relu,
+        "nn_relu6": nn.relu6,
+        "nn_softplus": nn.softplus,
+        "nn_sparse_plus": nn.sparse_plus,
+        "nn_soft_sign": nn.soft_sign,
+        "nn_sigmoid": nn.sigmoid,
+        "nn_sparse_sigmoid": nn.sparse_sigmoid,
+        "nn_silu": nn.silu,
+        "nn_log_sigmoid": nn.log_sigmoid,
+        "nn_hard_tanh": nn.hard_tanh,
+        "nn_hard_sigmoid": nn.hard_sigmoid,
+        "nn_hard_silu": nn.hard_silu,
+        "nn_selu": nn.selu,
+        "nn_elu": nn.elu,
+        "nn_celu": nn.celu,
+        "nn_leaky_relu": nn.leaky_relu,
+        "nn_squareplus": nn.squareplus,
+        "nn_gelu": nn.gelu,
+        "nn_gelu_exact": lambda a: nn.gelu(a, approximate=False),
+        "nn_glu": lambda a: nn.glu(a[:2], axis=0),
+        "nn_softmax": nn.softmax,
+        "nn_log_softmax": nn.log_softmax,
+        "nn_standardize": nn.standardize,
+        "nn_logmeanexp": lambda a: nn.logmeanexp(a, axis=0),
+        "nn_log1mexp": lambda a: nn.log1mexp(q(a)),
+        "sp_gammaln": sp.gammaln,
+        "sp_gammasgn": sp.gammasgn,
+        "sp_digamma": sp.digamma,
+        "sp_gamma": sp.gamma,
+        "sp_betaln": lambda a: sp.betaln(q(a), q(a) + 1.0),
+        "sp_erf": sp.erf,
+        "sp_erfc": sp.erfc,
+        "sp_erfinv": lambda a: sp.erfinv(2.0 * u(a) - 1.0),
+        "sp_erfcx": sp.erfcx,
+        "sp_dawsn": sp.dawsn,
+        "sp_expit": sp.expit,
+        "sp_logit": lambda a: sp.logit(u(a)),
+        "sp_xlogy": lambda a: sp.xlogy(a, q(a)),
+        "sp_xlog1py": lambda a: sp.xlog1py(a, q(a)),
+        "sp_entr": lambda a: sp.entr(q(a)),
+        "sp_boxcox": lambda a: sp.boxcox(q(a), 0.5),
+        "sp_boxcox1p": lambda a: sp.boxcox1p(q(a), 0.5),
+        "sp_rel_entr": lambda a: sp.rel_entr(q(a), q(a) + 1.0),
+        "sp_kl_div": lambda a: sp.kl_div(q(a), q(a) + 1.0),
+        "sp_i0": sp.i0,
+        "sp_i0e": sp.i0e,
+        "sp_i1": sp.i1,
+        "sp_i1e": sp.i1e,
+        "sp_ndtr": sp.ndtr,
+        "sp_ndtri": lambda a: sp.ndtri(u(a)),
+        "sp_log_ndtr": sp.log_ndtr,
+        "sp_polygamma": lambda a: sp.polygamma(1, q(a)),
+        "sp_zeta": lambda a: sp.zeta(q(a) + 1.0, q(a)),
+        "sp_poch": lambda a: sp.poch(q(a), 2.0),
+        "sp_spence": lambda a: sp.spence(q(a)),
+        "sp_owens_t": lambda a: sp.owens_t(a, q(a)),
+        "sp_betainc": lambda a: sp.betainc(q(a), q(a) + 1.0, u(a)),
+        "sp_gammainc": lambda a: sp.gammainc(q(a), q(a)),
+        "sp_gammaincc": lambda a: sp.gammaincc(q(a), q(a)),
+        "sp_hyp1f1": lambda a: sp.hyp1f1(q(a), q(a) + 1.0, u(a)),
+        "st_norm_logpdf": st.norm.logpdf,
+        "st_norm_pdf": st.norm.pdf,
+        "st_norm_cdf": st.norm.cdf,
+        "st_norm_logcdf": st.norm.logcdf,
+        "st_norm_ppf": lambda a: st.norm.ppf(u(a)),
+        "st_norm_sf": st.norm.sf,
+        "st_norm_logsf": st.norm.logsf,
+        "st_norm_isf": lambda a: st.norm.isf(u(a)),
+        "st_expon_logpdf": lambda a: st.expon.logpdf(q(a)),
+        "st_expon_cdf": lambda a: st.expon.cdf(q(a)),
+        "st_gamma_logpdf": lambda a: st.gamma.logpdf(q(a), 2.0),
+        "st_gamma_cdf": lambda a: st.gamma.cdf(q(a), 2.0),
+        "st_beta_logpdf": lambda a: st.beta.logpdf(u(a), 2.0, 3.0),
+        "st_beta_cdf": lambda a: st.beta.cdf(u(a), 2.0, 3.0),
+        "st_laplace_logpdf": st.laplace.logpdf,
+        "st_laplace_cdf": st.laplace.cdf,
+        "st_logistic_logpdf": st.logistic.logpdf,
+        "st_logistic_cdf": st.logistic.cdf,
+        "st_cauchy_logpdf": st.cauchy.logpdf,
+        "st_cauchy_cdf": st.cauchy.cdf,
+        "st_chi2_logpdf": lambda a: st.chi2.logpdf(q(a), 3.0),
+        "st_pareto_logpdf": lambda a: st.pareto.logpdf(q(a) + 1.0, 2.0),
+    }
+    return table
+
+
 def _dtype_sweep_ops():
     n = jnp
     un = {
@@ -497,6 +590,17 @@ def _dtype_sweep_ops():
         "isfinite": lambda a: n.isfinite(a),
         "isinf": lambda a: n.isinf(a),
         "round": lambda a: n.round(a, 1),
+        "bitwise_and": lambda a: n.bitwise_and(a, a[::-1]),
+        "bitwise_or": lambda a: n.bitwise_or(a, a[::-1]),
+        "bitwise_xor": lambda a: n.bitwise_xor(a, a[::-1]),
+        "bitwise_not": lambda a: n.bitwise_not(a),
+        "left_shift": lambda a: n.left_shift(a, n.ones_like(a)),
+        "right_shift": lambda a: n.right_shift(a, n.ones_like(a)),
+        "remainder": lambda a: n.remainder(a, a[::-1] + n.ones_like(a)),
+        "floor_divide": lambda a: n.floor_divide(a, a[::-1] + n.ones_like(a)),
+        "power_self": lambda a: n.power(a, n.ones_like(a) + n.ones_like(a)),
+        "gcd": lambda a: n.gcd(a, a[::-1]),
+        "lcm": lambda a: n.lcm(a, a[::-1]),
         "floor_div_self": lambda a: (lambda x: x / (x + 2.0))(n.asarray(a)),
         "linspace_end": lambda a: n.linspace(a[0], a[1], 4),
         "geomspace": lambda a: (lambda x: n.geomspace(x[0] + 2.0, x[1] + 3.0, 3))(n.asarray(a)),
@@ -535,6 +639,7 @@ def _dtype_sweep_ops():
         "tril": lambda a: n.tril(a),
         "diag": lambda a: n.diag(a),
     }
+    un.update(_library_sweep())
     return {"sw_" + k: (lambda f: lambda a, p: f(a))(v) for k, v in un.items()}
 
 
@@ -574,11 +679,16 @@ def _set_output_tol(entry, value):
 
 def _lpmn_tol(entry, dtype):
     if dtype == "float64":
-        _set_output_tol(entry, 1e-13)
-    return "derivative recurrence cancels terms, so jit-compiled jax differs from eager evaluation in the last bits"
+        _set_output_tol(entry, 1e-15 * 100.0)
+    return "transcendental_ulp"
 
 
-LOOSE_TOLERANCE = {"sx_lpmn": _lpmn_tol}
+def _beta_tol(entry, dtype):
+    _set_output_tol(entry, 1e-15 * 100.0) if dtype == "float64" else None
+    return "transcendental_ulp"
+
+
+LOOSE_TOLERANCE = {"sx_lpmn": _lpmn_tol, "swg_st_beta_cdf": _beta_tol, "swv_st_beta_logpdf": _beta_tol}
 
 
 def _default_random_ops():
@@ -1230,10 +1340,25 @@ def _tracer_batch_cases():
     ]
 
 
+def compares_at_single_precision(op, arrays):
+    name = op.split("_", 1)[1] if "_" in op else op
+    if name not in ("sp_owens_t", "st_norm_ppf", "st_norm_isf"):
+        return False
+    return "a" in arrays and arrays["a"].dtype != np.float64
+
+
+def _real_only(op):
+    name = op.split("_", 1)[1]
+    library = name.startswith(("nn_", "sp_", "st_"))
+    return library and name != "nn_sigmoid"
+
+
 def _dtype_sweep_cases():
     out = []
     sample = jnp.ones((3, 3), dtype=jnp.complex64) * (1.0 + 0.5j)
     for op, fn in _dtype_sweep_ops().items():
+        if _real_only(op):
+            continue
         try:
             fn(sample, {})
         except (TypeError, NotImplementedError, ValueError):
@@ -1249,6 +1374,8 @@ def _extended_sweep_cases():
         spec = {"a": {"kind": "typed", "dtype": dt, "shape": [3, 3]}}
         sample = jnp.ones((3, 3), dtype=dt)
         for op, fn in base.items():
+            if op.startswith("sw_st_") and dt in ("bool", "float16"):
+                continue
             try:
                 fn(sample, {})
             except (TypeError, NotImplementedError, ValueError):
@@ -1260,9 +1387,13 @@ def _extended_sweep_cases():
     batch = jnp.stack([real3, real3 + 1.0])
     for op, fn in transforms.items():
         kinds = [("real", real3), ("complex", complex3)]
+        if _real_only(op):
+            kinds = kinds[:1]
         shape = [3, 3]
         if op.startswith("swv_"):
             kinds = [("real", batch), ("complex", batch * (1.0 + 0.5j))]
+            if _real_only(op):
+                kinds = kinds[:1]
             shape = [2, 3, 3]
         for kind, sample in kinds:
             try:

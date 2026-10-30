@@ -53,7 +53,9 @@ let popcount_bits nbits x =
 let not_f dt x =
   match dt with
   | Dtype.Bool -> if x = 0.0 then 1.0 else 0.0
-  | Dtype.I32 | Dtype.I64 -> Int64.to_float (Int64.lognot (Int64.of_float x))
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 ->
+      Int64.to_float (Int64.lognot (Int64.of_float x))
   | _ -> failwith "lax: not requires a boolean or integer operand"
 
 let uint32_mask_i64 = 0xFFFFFFFFL
@@ -80,7 +82,8 @@ let mul_f dt x y =
 let and_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 && y <> 0.0 then 1.0 else 0.0
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 ->
       Int64.to_float (Int64.logand (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: and requires a boolean or integer operand"
 
@@ -121,22 +124,26 @@ let mulhi_f dt x y =
 let or_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 || y <> 0.0 then 1.0 else 0.0
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 ->
       Int64.to_float (Int64.logor (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: or requires a boolean or integer operand"
 
 let xor_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 <> (y <> 0.0) then 1.0 else 0.0
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 ->
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 ->
       Int64.to_float (Int64.logxor (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: xor requires a boolean or integer operand"
 
 let rem_f dt x y =
   match dt with
-  | Dtype.F32 | Dtype.F64 -> Float.rem x y
-  | Dtype.I32 | Dtype.I64 ->
-      Int64.to_float (Int64.rem (Int64.of_float x) (Int64.of_float y))
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> Float.rem x y
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 | Dtype.Uint64 ->
+      if y = 0.0 then x
+      else Int64.to_float (Int64.rem (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: rem requires an integer or float operand"
 
 let shift_left_f dt x y =
@@ -157,6 +164,12 @@ let shift_right_logical_f dt x y =
       let u = Int64.logand (Int64.of_float x) 0xFFFFFFFFL in
       Int64.to_float (Int64.shift_right_logical u s)
   | Dtype.I64 -> Int64.to_float (Int64.shift_right_logical (Int64.of_float x) s)
+  | Dtype.I8 | Dtype.Uint8 ->
+      Int64.to_float
+        (Int64.shift_right_logical (Int64.logand (Int64.of_float x) 0xFFL) s)
+  | Dtype.I16 | Dtype.Uint16 ->
+      Int64.to_float
+        (Int64.shift_right_logical (Int64.logand (Int64.of_float x) 0xFFFFL) s)
   | _ -> failwith "lax: shift_right_logical requires an integer operand"
 
 let f64_nextafter x y =
@@ -1041,7 +1054,18 @@ let rec impl_base prim inputs =
         (fun a b ->
           Ndarray.map2 (Ndarray.dtype a) (mul_f (Ndarray.dtype a)) a b)
         inputs
-  | Div -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) ( /. ) a b) inputs
+  | Div ->
+      bin
+        (fun a b ->
+          let dt = Ndarray.dtype a in
+          match dt with
+          | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.Uint8 | Dtype.Uint16
+          | Dtype.Uint32 ->
+              Ndarray.map2 dt
+                (fun x y -> if y = 0.0 then -1.0 else Float.trunc (x /. y))
+                a b
+          | _ -> Ndarray.map2 dt ( /. ) a b)
+        inputs
   | Max -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.max a b) inputs
   | Min -> bin (fun a b -> Ndarray.map2 (Ndarray.dtype a) Float.min a b) inputs
   | Pow ->
@@ -1886,6 +1910,11 @@ let complex_elementwise prim inputs =
   match prim with
   | Mul -> chain2 Complex.mul inputs
   | Div -> chain2 Complex.div inputs
+  | Logistic ->
+      chain
+        (fun z ->
+          Complex.div one (Complex.add one (Complex.exp (Complex.neg z))))
+        inputs
   | Asin -> chain casin inputs
   | Acos -> chain cacos inputs
   | Atan -> chain catan inputs

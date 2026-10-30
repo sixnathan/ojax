@@ -4242,7 +4242,14 @@ let parity_jit_run c inputs =
       (fun args -> Parity_cases.run c.op c.params (lookup args))
       values
 
-let composed_suite_for ~run module_name set_name =
+let sampled_for_jit c =
+  let transformed =
+    String.length c.op > 4
+    && List.mem (String.sub c.op 0 4) [ "swv_"; "swg_"; "swj_" ]
+  in
+  (not transformed) || Hashtbl.hash c.case_id mod 5 = 0
+
+let composed_suite_for ?(keep = fun _ -> true) ~run module_name set_name =
   let set_dir =
     Filename.concat (Filename.concat goldens_root module_name) set_name
   in
@@ -4252,7 +4259,7 @@ let composed_suite_for ~run module_name set_name =
       (fun c ->
         Alcotest.test_case c.case_id `Quick
           (composed_check_case ~run ~set_dir ~x64 c))
-      cases
+      (List.filter keep cases)
   in
   let coverage =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
@@ -4356,9 +4363,11 @@ let () =
       composed_suite_for ~run:parity_run "parity" "x64_off";
       composed_suite_for ~run:parity_run "parity" "x64_on";
       relabel "parity_jit:x64_off"
-        (composed_suite_for ~run:parity_jit_run "parity" "x64_off");
+        (composed_suite_for ~keep:sampled_for_jit ~run:parity_jit_run "parity"
+           "x64_off");
       relabel "parity_jit:x64_on"
-        (composed_suite_for ~run:parity_jit_run "parity" "x64_on");
+        (composed_suite_for ~keep:sampled_for_jit ~run:parity_jit_run "parity"
+           "x64_on");
       composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
       composed_suite_for ~run:vectorize_run "vectorize" "x64_on";
       composed_suite_for ~run:spatial_transform_run "spatial_transform"

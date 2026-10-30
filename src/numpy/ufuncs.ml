@@ -180,7 +180,10 @@ let spacing x =
   let is_zero = bind1 T.Eq [ result; zeros_like result ] in
   bind1 T.Select_n [ is_zero; result; filled ]
 
-let is_integer = function D.I32 | D.I64 -> true | _ -> false
+let is_integer = function
+  | D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
+      true
+  | _ -> false
 
 let is_inexact = function
   | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true

@@ -1237,6 +1237,17 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _ | Eig _
   | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: this linalg primitive has no forward-mode rule"
+  | Collective { kind; _ } -> (
+      match (kind, primals, tangents) with
+      | (Psum | Pbroadcast _ | Ppermute _ | All_gather _), [ x ], [ t ] ->
+          (b1 prim [ x ], b1 prim [ t ])
+      | Axis_index, [], [] ->
+          let v = b1 prim [] in
+          (v, zeros_like_value v)
+      | (Pmax | Pmin), [ x ], [ _ ] ->
+          let v = b1 prim [ x ] in
+          (v, zeros_like_value v)
+      | _ -> arity ())
   | Fft _ -> (
       match (primals, tangents) with
       | [ x ], [ t ] -> (b1 prim [ x ], b1 prim [ t ])
@@ -1451,6 +1462,9 @@ let jvp_process_primitive trace prim args =
                 (res @ tangents)
           in
           List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_
+      | Core.Callback_rule { result_avals = []; _ } ->
+          ignore (Core.bind prim primals);
+          []
       | Core.Callback_rule _ ->
           invalid_arg
             "Pure callbacks do not support JVP. Please use `jax.custom_jvp` to \
@@ -2126,6 +2140,24 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           in
           None :: rest_cts
       | _ -> arity ())
+  | Collective { kind; axis_name } -> (
+      match kind with
+      | Psum -> [ Some (b1 prim [ ct1 () ]) ]
+      | Ppermute pairs ->
+          [
+            Some
+              (b1
+                 (Collective
+                    {
+                      kind =
+                        Ppermute
+                          (Array.map (fun (src, dst) -> (dst, src)) pairs);
+                      axis_name;
+                    })
+                 [ ct1 () ]);
+          ]
+      | Pmax | Pmin | Pbroadcast _ | All_gather _ | Axis_index ->
+          failwith "ad: this collective has no transpose rule")
   | Real ->
       let t = ct1 () in
       [ Some (b1 Complex [ t; zeros_like_value t ]) ]

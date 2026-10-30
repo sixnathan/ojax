@@ -1461,6 +1461,8 @@ let rec impl_base prim inputs =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_impl full_matrices compute_uv inputs
   | Tridiagonal { lower } -> Linalg.tridiagonal_impl lower inputs
+  | Collective { axis_name; _ } ->
+      invalid_arg ("unbound axis name: " ^ axis_name)
   | Fft { fft_type; fft_lengths } -> (
       match inputs with
       | [ x ] -> [ Fft.fft_impl fft_type fft_lengths x ]
@@ -1905,6 +1907,20 @@ let abstract_eval prim avals =
   | Svd { full_matrices; compute_uv } ->
       Linalg.svd_aval full_matrices compute_uv avals
   | Tridiagonal _ -> Linalg.tridiagonal_aval avals
+  | Collective { kind; _ } -> (
+      match (kind, avals) with
+      | (Psum | Pmax | Pmin | Pbroadcast _ | Ppermute _), [ a ] -> [ a ]
+      | All_gather { axis; size }, [ a ] ->
+          let n = Array.length a.shape in
+          let shape =
+            Array.init (n + 1) (fun i ->
+                if i < axis then a.shape.(i)
+                else if i = axis then size
+                else a.shape.(i - 1))
+          in
+          [ { a with shape } ]
+      | Axis_index, _ -> [ shaped [||] Dtype.I32 false ]
+      | _ -> failwith "lax: collective arity")
   | Fft { fft_type; fft_lengths } -> (
       match avals with
       | [ a ] -> [ Fft.fft_aval fft_type fft_lengths a ]

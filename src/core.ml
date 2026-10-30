@@ -146,8 +146,18 @@ let custom_rule id =
   | Some rule -> rule
   | None -> failwith "core: unknown custom derivative rule"
 
+let named_axis_trace : (string -> trace option) ref = ref (fun _ -> None)
+
 let bind prim args =
   let top = find_top_trace args in
+  let top =
+    match prim with
+    | Collective { axis_name; _ } -> (
+        match !named_axis_trace axis_name with
+        | Some named when named.level > top.level -> named
+        | _ -> top)
+    | _ -> top
+  in
   let tracers = List.map (full_raise top) args in
   let outs = process_primitive top prim tracers in
   List.map full_lower outs

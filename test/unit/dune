@@ -36,6 +36,7 @@
   test_api_util
   test_api
   test_api_transforms
+  test_parallel
   test_example_libraries
   test_custom_derivatives
   test_grad_checks

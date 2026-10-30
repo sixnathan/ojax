@@ -2147,6 +2147,8 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith
         "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
          host-interpreter only (M5 lax/linalg, XLA emission deferred)"
+  | Collective _ ->
+      failwith "Stablehlo.Emit: collectives must be bound by an enclosing vmap"
   | Fft _ ->
       failwith "Stablehlo.Emit: complex buffers run on the host interpreter"
   | Custom_jvp_call id | Custom_vjp_call id ->

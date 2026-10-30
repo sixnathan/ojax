@@ -713,6 +713,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "batching: handled by unstacking in batch_process_primitive"
+  | Collective _ ->
+      failwith "batching: collectives handled by batch_process_primitive"
   | Fft _ -> (
       match (vals, bdims) with
       | [ x ], [ Some d ] -> (b1 prim [ moveaxis d 0 x ], Some 0)
@@ -763,8 +765,22 @@ let vmap_rule_multi (axis_size : int) (prim : primitive) (vals : value list)
   | Top_k { k; axis }, [ x ], [ b ] -> top_k_batch k axis x b
   | _ -> failwith "batching: expected a multi-output primitive"
 
-let vmap_flat (f : value list -> value list) (in_axes : int option list)
-    (args : value list) : value list =
+let named_axes : (string * trace * int) list ref = ref []
+
+let find_axis name =
+  match List.find_opt (fun (n, _, _) -> n = name) !named_axes with
+  | Some entry -> entry
+  | None -> invalid_arg ("unbound axis name: " ^ name)
+
+let () =
+  Core.named_axis_trace :=
+    fun name ->
+      List.find_map
+        (fun (n, t, _) -> if n = name then Some t else None)
+        !named_axes
+
+let vmap_flat ?axis_name (f : value list -> value list)
+    (in_axes : int option list) (args : value list) : value list =
   let axis_size =
     let rec find axes vals =
       match (axes, vals) with
@@ -783,15 +799,66 @@ let vmap_flat (f : value list -> value list) (in_axes : int option list)
             | None -> x)
           args in_axes
       in
-      let outs = f tracers_in in
+      let saved = !named_axes in
+      (match axis_name with
+      | Some name -> named_axes := (name, main, axis_size) :: saved
+      | None -> ());
+      let outs =
+        Fun.protect
+          ~finally:(fun () -> named_axes := saved)
+          (fun () -> f tracers_in)
+      in
       let vals_bdims =
         List.map (fun o -> to_batch_info main (Core.full_raise main o)) outs
       in
       List.map (fun (v, bdim) -> move_batch_axis axis_size bdim 0 v) vals_bdims)
 
-let vmap (f : value list -> value list) (in_axes : int option list) :
+let vmap ?axis_name (f : value list -> value list) (in_axes : int option list) :
     value list -> value list =
- fun args -> vmap_flat f in_axes args
+ fun args -> vmap_flat ?axis_name f in_axes args
+
+let collective_batch trace axis_size kind axis_name vals bdims =
+  let bound =
+    List.exists
+      (fun (n, t, _) -> n = axis_name && t.level = trace.level)
+      !named_axes
+  in
+  match (kind, vals, bdims) with
+  | Axis_index, [], [] ->
+      if bound then
+        ( b1
+            (Iota { dtype = Dtype.I32; shape = [| axis_size |]; dimension = 0 })
+            [],
+          Some 0 )
+      else (b1 (Collective { kind; axis_name }) [], None)
+  | _, [ v ], [ b ] when not bound ->
+      (b1 (Collective { kind; axis_name }) [ v ], b)
+  | Psum, [ v ], [ Some d ] -> (b1 (Reduce_sum [| d |]) [ v ], None)
+  | Psum, [ v ], [ None ] ->
+      let a = Core.get_aval v in
+      let n = Array.fold_left ( * ) 1 a.shape in
+      let scale =
+        Concrete
+          (Ndarray.of_floats a.dtype a.shape
+             (Array.make n (float_of_int axis_size)))
+      in
+      (b1 Mul [ v; scale ], None)
+  | Pmax, [ v ], [ Some d ] -> (b1 (Reduce_max [| d |]) [ v ], None)
+  | Pmin, [ v ], [ Some d ] -> (b1 (Reduce_min [| d |]) [ v ], None)
+  | (Pmax | Pmin), [ v ], [ None ] -> (v, None)
+  | All_gather { axis; _ }, [ v ], [ b ] ->
+      (move_batch_axis axis_size b axis v, None)
+  | Pbroadcast source, [ v ], [ Some d ] ->
+      (List.nth (Core.bind (Unstack d) [ v ]) source, None)
+  | Pbroadcast _, [ v ], [ None ] -> (v, None)
+  | Ppermute pairs, [ v ], [ b ] ->
+      let moved = move_batch_axis axis_size b 0 v in
+      let rows = Array.of_list (Core.bind (Unstack 0) [ moved ]) in
+      let zero = Ad_util.zeros_like_aval (Core.get_aval rows.(0)) in
+      let out = Array.make axis_size zero in
+      Array.iter (fun (src, dst) -> out.(dst) <- rows.(src)) pairs;
+      (b1 (Stack 0) (Array.to_list out), Some 0)
+  | _ -> failwith "batching: collective arity"
 
 let cond_batch (axis_size : int) (t : closed_jaxpr) (f : closed_jaxpr)
     (vals : value list) (bdims : int option list) : value list * int option list
@@ -1004,6 +1071,11 @@ let batch_process_primitive (trace : trace) (prim : primitive)
   let pairs = List.map (to_batch_info trace) args in
   let vals = List.map fst pairs and bdims = List.map snd pairs in
   match prim with
+  | Collective { kind; axis_name } ->
+      let out, out_bdim =
+        collective_batch trace axis_size kind axis_name vals bdims
+      in
+      [ Tracer (new_batch_tracer trace out out_bdim) ]
   | _ when unstacks_operands prim bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

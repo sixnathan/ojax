@@ -195,6 +195,7 @@ and primitive =
   | Zeta
   | Platform_index of string array option array
   | Xla_call of closed_jaxpr
+  | Collective of { kind : collective_kind; axis_name : string }
   | Fft of { fft_type : fft_kind; fft_lengths : int array }
   | Custom_jvp_call of int
   | Custom_vjp_call of int
@@ -282,6 +283,16 @@ and window_dims = {
 }
 
 and window_select = Wge | Wle
+
+and collective_kind =
+  | Psum
+  | Pmax
+  | Pmin
+  | All_gather of { axis : int; size : int }
+  | Axis_index
+  | Pbroadcast of int
+  | Ppermute of (int * int) array
+
 and fft_kind = Fft_forward | Fft_inverse | Fft_real | Fft_inverse_real
 and var = { vid : int; vaval : aval }
 and atom = A_var of var | A_lit of Ndarray.t | DropVar of aval

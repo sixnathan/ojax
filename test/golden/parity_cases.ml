@@ -1400,6 +1400,95 @@ let fft_run op params a =
   | "ifftshift" -> [ F.ifftshift ?axes:(opt_ints "axes" params) (a ()) ]
   | other -> failwith ("parity: unknown op " ^ other)
 
+let special_batch_run op params a =
+  let module SP = Ojax.Scipy.Special in
+  let float_p k = U.to_float (U.member k params) in
+  let int_p k = U.to_int (U.member k params) in
+  let abc () =
+    Array.of_list (List.map U.to_float (U.to_list (U.member "abc" params)))
+  in
+  let ints k =
+    let values = List.map U.to_int (U.to_list (U.member k params)) in
+    T.Concrete
+      (Ojax.Ndarray.of_floats
+         (if Ojax.Config.x64_enabled () then Ojax.Dtype.I64 else Ojax.Dtype.I32)
+         [| List.length values |]
+         (Array.of_list (List.map float_of_int values)))
+  in
+  let scaled v k = UF.multiply v (L.full_like v (float_p k)) in
+  match op with
+  | "sx_expi" -> Some [ SP.expi (scaled (a ()) "scale") ]
+  | "sx_exp1" -> Some [ SP.exp1 (scaled (UF.absolute (a ())) "scale") ]
+  | "sx_expn" ->
+      let x = scaled (UF.absolute (a ())) "scale" in
+      Some [ SP.expn (L.full [||] (float_p "n") (dt_of x)) x ]
+  | "sx_expn_grad" ->
+      let x = scaled (UF.absolute (a ())) "scale" in
+      let x = UF.add x (L.full_like x 0.1) in
+      let order = L.full [||] (float_p "n") (dt_of x) in
+      Some
+        (Ojax.Interpreters.Batching.vmap
+           (fun args ->
+             Ojax.Interpreters.Ad.grad
+               (fun inner -> SP.expn order (List.hd inner))
+               args)
+           [ Some 0 ] [ x ])
+  | "sx_expi_grad" ->
+      let x = scaled (a ()) "scale" in
+      let x = UF.add x (L.full_like x 0.5) in
+      Some
+        (Ojax.Interpreters.Batching.vmap
+           (fun args ->
+             Ojax.Interpreters.Ad.grad
+               (fun inner -> SP.expi (List.hd inner))
+               args)
+           [ Some 0 ] [ x ])
+  | "sx_hyp2f1" ->
+      let v = a () in
+      let t = abc () in
+      let full x = L.full_like v x in
+      let z = UF.multiply (full (float_p "scale")) (UF.tanh v) in
+      Some [ SP.hyp2f1 (full t.(0)) (full t.(1)) (full t.(2)) z ]
+  | "sx_hyp2f1_grad" ->
+      let v = a () in
+      let t = abc () in
+      let z = UF.multiply (L.full_like v 0.5) (UF.tanh v) in
+      let lit x = L.full [||] x (dt_of v) in
+      Some
+        (Ojax.Interpreters.Batching.vmap
+           (fun args ->
+             Ojax.Interpreters.Ad.grad
+               (fun inner ->
+                 SP.hyp2f1 (lit t.(0)) (lit t.(1)) (lit t.(2)) (List.hd inner))
+               args)
+           [ Some 0 ] [ z ])
+  | "sx_lpmn" ->
+      let l = int_p "l" in
+      Some (SP.lpmn l l (UF.tanh (a ())))
+  | "sx_lpmn_values" ->
+      let l = int_p "l" in
+      Some
+        [
+          SP.lpmn_values l l
+            (UF.tanh (a ()))
+            (U.to_bool (U.member "norm" params));
+        ]
+  | "sx_sph" ->
+      let v = a () in
+      let phi =
+        UF.add (UF.multiply v (L.full_like v 0.5)) (L.full_like v 0.2)
+      in
+      let out =
+        SP.sph_harm_y ~n_max:(int_p "n_max") (ints "n") (ints "m")
+          (UF.absolute v) phi
+      in
+      Some
+        [
+          (if dt_of v = Ojax.Dtype.F32 then NL.astype out Ojax.Dtype.Complex64
+           else out);
+        ]
+  | _ -> None
+
 let transform_sweep_run op a =
   let prefixed p =
     String.length op > String.length p && String.sub op 0 (String.length p) = p
@@ -1442,6 +1531,7 @@ let run op params get =
   let c () = get "c" in
   let runners =
     [
+      (fun () -> special_batch_run op params a);
       (fun () -> transform_sweep_run op a);
       (fun () -> dtype_sweep_run op a);
       (fun () -> tracer_batch_run op params a b);

@@ -1330,54 +1330,131 @@ let expn2 x n =
   let s v = scalar_of x v in
   let big = s 1.44115188075855872e17 in
   let machep = s (eps_of x) in
-  let one = s 1.0 in
-  let two = s 2.0 in
-  let init =
-    [
-      one;
-      one;
-      x;
-      one;
-      UF.add x n;
-      UF.divide one (UF.add x n);
-      s Float.infinity;
-      s 0.0;
-    ]
+  let one = s 1.0 and two = s 2.0 and zero = s 0.0 in
+  let looped =
+    Lax_api.while_loop
+      (fun state ->
+        match state with
+        | k :: t :: _ ->
+            UF.logical_and
+              (UF.greater x (UF.multiply k zero))
+              (UF.greater t machep)
+        | _ -> failwith "expn: arity")
+      (fun state ->
+        match state with
+        | [ k; _; r; ans; pkm2; qkm2; pkm1; qkm1 ] ->
+            let k = UF.add k one in
+            let odd = UF.equal (UF.remainder k two) one in
+            let yk = where_ odd one x in
+            let xk =
+              where_ odd
+                (UF.add n (UF.divide (UF.subtract k one) two))
+                (UF.divide k two)
+            in
+            let pk = UF.add (UF.multiply pkm1 yk) (UF.multiply pkm2 xk) in
+            let qk = UF.add (UF.multiply qkm1 yk) (UF.multiply qkm2 xk) in
+            let nz = UF.not_equal qk zero in
+            let r' = where_ nz (UF.divide pk qk) r in
+            let t =
+              where_ nz (UF.absolute (UF.divide (UF.subtract ans r') r')) one
+            in
+            let ans = where_ nz r' ans in
+            let is_big = UF.greater (UF.absolute pk) big in
+            let scale v = where_ is_big (UF.divide v big) v in
+            [ k; t; r'; ans; scale pkm1; scale qkm1; scale pk; scale qk ]
+        | _ -> failwith "expn: arity")
+      [
+        one;
+        s Float.infinity;
+        zero;
+        UF.divide one (UF.add x n);
+        one;
+        x;
+        one;
+        UF.add x n;
+      ]
   in
-  let cond st =
-    match st with
-    | [ _; _; _; _; _; _; t; _ ] ->
-        UF.logical_and (UF.greater x (s 0.0)) (UF.greater t machep)
-    | _ -> assert false
-  in
-  let body st =
-    match st with
-    | [ k; pkm2; qkm2; pkm1; qkm1; ans; _t; r ] ->
-        let k = UF.add k one in
-        let odd = UF.equal (UF.remainder k two) one in
-        let yk = where_ odd one x in
-        let xk =
-          where_ odd
-            (UF.add n (UF.divide (UF.subtract k one) two))
-            (UF.divide k two)
-        in
-        let pk = UF.add (UF.multiply pkm1 yk) (UF.multiply pkm2 xk) in
-        let qk = UF.add (UF.multiply qkm1 yk) (UF.multiply qkm2 xk) in
-        let nz = UF.not_equal qk (s 0.0) in
-        let r' = where_ nz (UF.divide pk qk) r in
-        let t' = where_ nz (UF.abs (UF.divide (UF.subtract ans r') r')) one in
-        let ans' = where_ nz r' ans in
-        let big_m = UF.greater (UF.abs pk) big in
-        let db u = where_ big_m (UF.divide u big) u in
-        [ k; db pkm1; db qkm1; db pk; db qk; ans'; t'; r' ]
-    | _ -> assert false
-  in
-  match masked_iter ~maxiter:500 ~cond ~body init with
-  | [ _; _; _; _; _; ans; _; _ ] -> UF.multiply ans (UF.exp (UF.negative x))
-  | _ -> assert false
+  UF.multiply (List.nth looped 3) (UF.exp (UF.negative x))
 
-let expn n x =
-  let n, x = promote2 n x in
+let expn1 x n =
+  let s v = scalar_of x v in
+  let one = s 1.0 and zero = s 0.0 in
+  let machep = s (eps_of x) in
+  let psi0 = UF.subtract (UF.negative (s 0.5772156649015329)) (UF.log x) in
+  let psi_state =
+    Lax_api.while_loop
+      (fun state ->
+        match state with [ i; _ ] -> UF.less i n | _ -> failwith "expn: arity")
+      (fun state ->
+        match state with
+        | [ i; psi ] -> [ UF.add i one; UF.add psi (UF.divide one i) ]
+        | _ -> failwith "expn: arity")
+      [ one; psi0 ]
+  in
+  let psi = List.nth psi_state 1 in
+  let n1 = where_ (UF.equal n one) (UF.add one one) n in
+  let z = UF.negative x in
+  let looped =
+    Lax_api.while_loop
+      (fun state ->
+        match state with
+        | [ _; _; _; _; t ] ->
+            UF.logical_and (UF.greater x zero) (UF.greater t machep)
+        | _ -> failwith "expn: arity")
+      (fun state ->
+        match state with
+        | [ xk; yk; pk; ans; _ ] ->
+            let xk = UF.add xk one in
+            let yk = UF.multiply yk (UF.divide z xk) in
+            let pk = UF.add pk one in
+            let ans =
+              UF.add ans (where_ (UF.not_equal pk zero) (UF.divide yk pk) zero)
+            in
+            let t =
+              where_ (UF.not_equal ans zero)
+                (UF.absolute (UF.divide yk ans))
+                one
+            in
+            [ xk; yk; pk; ans; t ]
+        | _ -> failwith "expn: arity")
+      [
+        zero;
+        one;
+        UF.subtract one n;
+        where_ (UF.equal n one) zero (UF.divide one (UF.subtract one n1));
+        s Float.infinity;
+      ]
+  in
+  let ans = List.nth looped 3 in
+  UF.subtract
+    (UF.divide
+       (UF.multiply (UF.power z (UF.subtract n one)) psi)
+       (UF.exp (gammaln n)))
+    ans
+
+let expn3 x n =
+  let s v = scalar_of x v in
+  let one = s 1.0 in
+  let xk = UF.add x n in
+  let yk = UF.divide one (UF.multiply xk xk) in
+  let t = n in
+  let ans =
+    UF.multiply yk
+      (UF.multiply t
+         (UF.add
+            (UF.subtract
+               (UF.multiply (UF.multiply (s 6.0) x) x)
+               (UF.multiply (UF.multiply (s 8.0) t) x))
+            (UF.multiply t t)))
+  in
+  let ans =
+    UF.multiply yk
+      (UF.add ans (UF.multiply t (UF.subtract t (UF.multiply (s 2.0) x))))
+  in
+  let ans = UF.multiply yk (UF.add ans t) in
+  UF.divide (UF.multiply (UF.add ans one) (UF.exp (UF.negative x))) xk
+
+let expn_scalar n x =
   let s v = scalar_of x v in
   let one = s 1.0 in
   let n1 = where_ (UF.equal n one) (UF.add n n) n in
@@ -1389,41 +1466,771 @@ let expn n x =
   let cond3 =
     UF.logical_and (UF.equal n (s 0.0)) (UF.greater_equal x (s 0.0))
   in
+  let cond4 = UF.greater_equal n (s 5000.0) in
   let cond5 = UF.greater x one in
+  let branch =
+    where_ cond4 (expn3 x n) (where_ cond5 (expn2 x n) (expn1 x n))
+  in
   where_ cond0 (s Float.nan)
     (where_ cond1 (s Float.infinity)
        (where_ cond2 (UF.divide one n1)
-          (where_ cond3
-             (UF.divide (UF.exp (UF.negative x)) x)
-             (where_ cond5 (expn2 x n) (s Float.nan)))))
+          (where_ cond3 (UF.divide (UF.exp (UF.negative x)) x) branch)))
+
+let expn_array n x =
+  Numpy.Vectorize.vectorize
+    (fun args ->
+      match args with
+      | [ n; x ] -> expn_scalar n x
+      | _ -> failwith "expn: arity")
+    [ n; x ]
+
+let rec expn_custom =
+  lazy
+    (Custom_derivatives.custom_jvp
+       (fun args ->
+         match args with
+         | [ n; x ] -> [ expn_array n x ]
+         | _ -> failwith "expn: arity")
+       ~jvp:(fun primals tangents ->
+         match (primals, tangents) with
+         | [ n; x ], [ _; dx ] ->
+             let lower = expn_apply (UF.subtract n (scalar_of n 1.0)) x in
+             ([ expn_array n x ], [ UF.multiply (UF.negative dx) lower ])
+         | _ -> failwith "expn: arity"))
+
+and expn_apply n x = List.hd ((Lazy.force expn_custom) [ n; x ])
+
+let expn n x =
+  let n, x = promote2 n x in
+  (match dtype x with
+  | D.Complex64 | D.Complex128 ->
+      invalid_arg "expn does not support complex-valued inputs."
+  | _ -> ());
+  expn_apply n x
 
 let exp1 x =
   let x = promote1 x in
   expn (scalar_of x 1.0) x
 
-let hyp2f1 _a _b _c _x =
-  failwith
-    "hyp2f1: unsupported (digamma-transform + data-dependent masked fori \
-     recurrence deferred)"
+module LA = Lax_api
 
-let expi _x =
-  failwith
-    "expi: unsupported (Cephes 7-interval piecewise coefficient tables \
-     deferred)"
+let sp_eps v =
+  match dtype v with
+  | D.F64 | D.Complex128 -> epsilon_float
+  | D.F16 -> 0.0009765625
+  | D.Bf16 -> 0.0078125
+  | _ -> 1.1920928955078125e-07
 
-let lpmn _m _n _z =
-  failwith
-    "lpmn: unsupported (associated-Legendre recurrence needs fancy .at[] \
-     scatter, deferred)"
+let sp_c v x = scalar_of v x
+let ( +! ) = UF.add
+let ( -! ) = UF.subtract
+let ( *! ) = UF.multiply
+let ( /! ) = UF.divide
+let sp_and = UF.logical_and
+let sp_or = UF.logical_or
+let sp_not = UF.logical_not
+let sp_lt = UF.less
+let sp_le = UF.less_equal
+let sp_gt = UF.greater
+let sp_ge = UF.greater_equal
+let sp_eq = UF.equal
+let sp_ne = UF.not_equal
+let sp_abs = UF.absolute
+let sp_round v = NL.round v
+let sp_is_integral c = sp_eq (UF.remainder c (sp_c c 1.0)) (sp_c c 0.0)
 
-let lpmn_values _m _n _z _is_normalized =
-  failwith
-    "lpmn_values: unsupported (associated-Legendre recurrence needs fancy \
-     .at[] scatter, deferred)"
+let hyp2f1_terminal a b c x =
+  let eps = sp_eps x *. 50.0 in
+  let ib = sp_round b in
+  let mask =
+    sp_and (sp_lt b a)
+      (sp_and
+         (sp_lt (sp_abs (b -! ib)) (sp_c x eps))
+         (sp_not
+            (sp_and (sp_is_integral c)
+               (sp_and (sp_le c (sp_c c 0.0)) (sp_gt c b)))))
+  in
+  let a' = where_ mask b a and b' = where_ mask a b in
+  let a' = sp_abs a' in
+  let upper = a' +! sp_c a' 1.0 in
+  let result =
+    LA.while_loop
+      (fun state ->
+        match state with
+        | [ i; _; _ ] -> sp_lt i upper
+        | _ -> failwith "hyp2f1: arity")
+      (fun state ->
+        match state with
+        | [ i; serie; term ] ->
+            let term =
+              term
+              *! (UF.negative (a' -! i +! sp_c i 1.0)
+                 /! (c +! i -! sp_c i 1.0)
+                 *! (b' +! i -! sp_c i 1.0)
+                 /! i *! x)
+            in
+            [ i +! sp_c i 1.0; serie +! term; term ]
+        | _ -> failwith "hyp2f1: arity")
+      [ sp_c a' 1.0; sp_c x 1.0; sp_c x 1.0 ]
+  in
+  List.nth result 1
 
-let sph_harm_y ?diff_n:_ ?n_max:_ _n _m _theta _phi =
-  failwith
-    "sph_harm_y: complex-valued output unsupported (no complex dtype until M5)"
+let hyp2f1_serie a b c x =
+  let rtol = sp_eps x in
+  let result =
+    LA.while_loop
+      (fun state ->
+        match state with
+        | [ serie; k; term ] ->
+            sp_and
+              (sp_lt k (sp_c k 250.0))
+              (sp_gt (sp_abs term) (sp_c x rtol *! sp_abs serie))
+        | _ -> failwith "hyp2f1: arity")
+      (fun state ->
+        match state with
+        | [ serie; k; term ] ->
+            let serie = serie +! term in
+            let one = sp_c k 1.0 in
+            let term =
+              term
+              *! ((a +! k -! one)
+                 *! (b +! k -! one)
+                 /! (c +! k -! one)
+                 /! k *! x)
+            in
+            [ serie; k +! one; term ]
+        | _ -> failwith "hyp2f1: arity")
+      [ sp_c x 0.0; sp_c x 1.0; sp_c x 1.0 ]
+  in
+  List.hd result
+
+let hyp2f1_digamma_transform a b c x =
+  let rtol = sp_eps x in
+  let d = c -! a -! b in
+  let one = sp_c x 1.0 and zero = sp_c x 0.0 and two = sp_c x 2.0 in
+  let s = one -! x in
+  let rd = sp_round d in
+  let nonneg = sp_ge rd zero in
+  let e = where_ nonneg d (UF.negative d) in
+  let d1 = where_ nonneg d zero in
+  let d2 = where_ nonneg zero d in
+  let ard = NL.astype (where_ nonneg rd (UF.negative rd)) D.I32 in
+  let ax = UF.log s in
+  let y =
+    digamma one
+    +! digamma (one +! e)
+    -! digamma (a +! d1)
+    -! digamma (b +! d1)
+    -! ax
+  in
+  let y = y /! gamma (e +! one) in
+  let p = (a +! d1) *! (b +! d1) *! s /! gamma (e +! two) in
+  let looped =
+    LA.while_loop
+      (fun state ->
+        match state with
+        | [ _; q; t; y ] ->
+            sp_and
+              (sp_lt t (sp_c t 250.0))
+              (sp_ge (sp_abs q) (sp_c x rtol *! sp_abs y))
+        | _ -> failwith "hyp2f1: arity")
+      (fun state ->
+        match state with
+        | [ p; _; t; y ] ->
+            let r =
+              digamma (one +! t)
+              +! digamma (one +! t +! e)
+              -! digamma (a +! t +! d1)
+              -! digamma (b +! t +! d1)
+              -! ax
+            in
+            let q = p *! r in
+            let y = y +! q in
+            let p = p *! (s *! (a +! t +! d1) /! (t +! one)) in
+            let p = p *! ((b +! t +! d1) /! (t +! one +! e)) in
+            [ p; q; t +! one; y ]
+        | _ -> failwith "hyp2f1: arity")
+      [ p; y; one; y ]
+  in
+  let y = List.nth looped 3 in
+  let compute_sum y =
+    let int_one = NL.astype one D.I32 in
+    let finite =
+      LA.while_loop
+        (fun state ->
+          match state with
+          | [ i; _; _; _ ] -> sp_lt i ard
+          | _ -> failwith "hyp2f1: arity")
+        (fun state ->
+          match state with
+          | [ i; p; t; y1 ] ->
+              let r = one -! e +! t in
+              let p = p *! (s *! (a +! t +! d2) *! (b +! t +! d2) /! r) in
+              let t = t +! one in
+              let p = p /! t in
+              [ i +! int_one; p; t; y1 +! p ]
+          | _ -> failwith "hyp2f1: arity")
+        [ int_one; one; zero; one ]
+    in
+    let y1 = List.nth finite 3 in
+    let pc = gamma c in
+    let y1 = y1 *! (gamma e *! pc /! (gamma (a +! d1) *! gamma (b +! d1))) in
+    let y = y *! (pc /! (gamma (a +! d2) *! gamma (b +! d2))) in
+    let odd = sp_ne (UF.bitwise_and ard int_one) (NL.astype zero D.I32) in
+    let y = where_ odd (UF.negative y) y in
+    let q = UF.power s rd in
+    where_ (sp_gt rd zero) ((y *! q) +! y1) (y +! (y1 *! q))
+  in
+  where_ (sp_eq rd zero) (y *! gamma c /! (gamma a *! gamma b)) (compute_sum y)
+
+let hyp2f1_terminal_or_serie a b c x =
+  let eps = sp_c x (sp_eps x *. 50.0) in
+  let zero = sp_c x 0.0 in
+  let d = c -! a -! b in
+  let ia = sp_round a and ib = sp_round b and id = sp_round d in
+  let neg_int v r = sp_and (sp_le v zero) (sp_lt (sp_abs (v -! r)) eps) in
+  let either = sp_or (neg_int a ia) (neg_int b ib) in
+  let idx v = T.Concrete (Nd.of_floats D.I32 [||] [| v |]) in
+  let index =
+    where_
+      (sp_and (sp_gt x (sp_c x 0.9)) (sp_not either))
+      (where_ (sp_ge (sp_abs (d -! id)) eps) (idx 0.0) (idx 1.0))
+      (where_ either (idx 2.0) (idx 0.0))
+  in
+  LA.select_n index
+    [
+      hyp2f1_serie a b c x;
+      hyp2f1_digamma_transform a b c x;
+      hyp2f1_terminal a b c x;
+    ]
+
+let hyp2f1_scalar a b c x =
+  let eps = sp_c x (sp_eps x *. 50.0) in
+  let zero = sp_c x 0.0 and one = sp_c x 1.0 in
+  let d = c -! a -! b in
+  let s = one -! x in
+  let ca = c -! a and cb = c -! b in
+  let id = sp_round d in
+  let idx v = T.Concrete (Nd.of_floats D.I32 [||] [| v |]) in
+  let index =
+    where_
+      (sp_or (sp_eq x zero)
+         (sp_and (sp_or (sp_eq a zero) (sp_eq b zero)) (sp_ne c zero)))
+      (idx 0.0)
+      (where_
+         (sp_or (sp_eq c zero) (sp_and (sp_lt c zero) (sp_is_integral c)))
+         (idx 1.0)
+         (where_
+            (sp_and
+               (sp_le d (sp_c x (-1.0)))
+               (sp_not (sp_and (sp_ge (sp_abs (d -! id)) eps) (sp_lt s zero))))
+            (idx 2.0)
+            (where_
+               (sp_and (sp_le d zero) (sp_eq x one))
+               (idx 1.0)
+               (where_
+                  (sp_and (sp_lt x one) (sp_eq b c))
+                  (idx 3.0)
+                  (where_
+                     (sp_and (sp_lt x one) (sp_eq a c))
+                     (idx 4.0)
+                     (where_ (sp_gt x one) (idx 1.0)
+                        (where_ (sp_eq x one) (idx 5.0) (idx 6.0))))))))
+  in
+  LA.select_n index
+    [
+      one;
+      sp_c x Float.infinity;
+      UF.power s d *! hyp2f1_terminal_or_serie ca cb c x;
+      UF.power s (UF.negative a);
+      UF.power s (UF.negative b);
+      gamma c *! gamma d /! (gamma ca *! gamma cb);
+      hyp2f1_terminal_or_serie a b c x;
+    ]
+
+let hyp2f1_promote args = promote_inexact args
+
+let vectorize4 f args =
+  Numpy.Vectorize.vectorize
+    (fun scalars ->
+      match scalars with
+      | [ a; b; c; x ] -> f a b c x
+      | _ -> failwith "hyp2f1: arity")
+    args
+
+let hyp2f1_param_derivative shifted a b c x =
+  let precision = sp_c x (sp_eps x) in
+  let result =
+    LA.while_loop
+      (fun state ->
+        match state with
+        | [ serie; k; term ] ->
+            sp_and
+              (sp_lt k (sp_c k 250.0))
+              (sp_gt (sp_abs term /! sp_abs serie) precision)
+        | _ -> failwith "hyp2f1: arity")
+      (fun state ->
+        match state with
+        | [ serie; k; term ] ->
+            let serie = serie +! (term *! shifted k) in
+            let one = sp_c k 1.0 in
+            let term =
+              term *! ((a +! k) *! (b +! k) /! (c +! k) /! (k +! one) *! x)
+            in
+            [ serie; k +! one; term ]
+        | _ -> failwith "hyp2f1: arity")
+      [ sp_c x 0.0; sp_c x 1.0; a *! b /! c *! x ]
+  in
+  List.hd result
+
+let rec hyp2f1_custom =
+  lazy
+    (Custom_derivatives.custom_jvp
+       (fun args -> [ vectorize4 hyp2f1_scalar args ])
+       ~jvp:(fun primals tangents ->
+         match (primals, tangents) with
+         | [ a; b; c; x ], [ da; db; dc; dx ] ->
+             let out = vectorize4 hyp2f1_scalar primals in
+             let wrt_a =
+               vectorize4
+                 (fun a b c x ->
+                   hyp2f1_param_derivative
+                     (fun k -> digamma (a +! k) -! digamma a)
+                     a b c x)
+                 primals
+             in
+             let wrt_b =
+               vectorize4
+                 (fun a b c x ->
+                   hyp2f1_param_derivative
+                     (fun k -> digamma (b +! k) -! digamma b)
+                     a b c x)
+                 primals
+             in
+             let wrt_c =
+               vectorize4
+                 (fun a b c x ->
+                   hyp2f1_param_derivative
+                     (fun k -> digamma c -! digamma (c +! k))
+                     a b c x)
+                 primals
+             in
+             let one = sp_c x 1.0 in
+             let wrt_x =
+               a *! b /! c *! hyp2f1_apply (a +! one) (b +! one) (c +! one) x
+             in
+             ( [ out ],
+               [
+                 (wrt_a *! da) +! (wrt_b *! db) +! (wrt_c *! dc) +! (wrt_x *! dx);
+               ] )
+         | _ -> failwith "hyp2f1: arity"))
+
+and hyp2f1_apply a b c x = List.hd ((Lazy.force hyp2f1_custom) [ a; b; c; x ])
+
+let hyp2f1 a b c x =
+  match hyp2f1_promote [ a; b; c; x ] with
+  | [ a; b; c; x ] -> hyp2f1_apply a b c x
+  | _ -> failwith "hyp2f1: arity"
+
+let expint_tables =
+  [|
+    ( [|
+        -5.350447357812543;
+        218.50491688166133;
+        -4176.572384826693;
+        55411.76756393557;
+        -331338.13311781443;
+        1592627.1633849454;
+      |],
+      [|
+        1.0;
+        -52.505479591128626;
+        1259.6161867867906;
+        -17565.495819735348;
+        149306.2117002726;
+        -729494.9239640528;
+        1592627.1633849454;
+      |] );
+    ( [|
+        0.019818085032596897;
+        -1.2716456259849176;
+        -2.0881603356812284;
+        2.7555445091879367;
+        -0.44095070487016;
+        0.046656238059358916;
+        -0.0015450426796734852;
+        7.059980605299618e-05;
+      |],
+      [|
+        1.0;
+        1.4764986709149215;
+        0.5629177174822436;
+        0.16990178978793072;
+        0.02291647179034212;
+        0.0044501504397287525;
+        0.00017274396122065214;
+        3.953167195549672e-05;
+      |] );
+    ( [|
+        -1.3732153758712087;
+        -0.7084559133740839;
+        1.580806855547941;
+        -0.2601500427425623;
+        0.029946746941137137;
+        -0.001038086040188744;
+        4.371064420753005e-05;
+        2.141783679522603e-06;
+      |],
+      [|
+        1.0;
+        0.8585231423622028;
+        0.4483285822873995;
+        0.07687932158124476;
+        0.024498682410218877;
+        0.0008832165941927797;
+        0.00045909522995113536;
+        -4.729848351866523e-06;
+        2.66519553739071e-06;
+      |] );
+    ( [|
+        -2.1069346016919166;
+        1.7327338696646881;
+        -0.2423619178935842;
+        0.02322724180937566;
+        0.00023728804404931798;
+        -8.343219561192553e-05;
+        1.3634087956052505e-05;
+        -3.655412321999254e-07;
+        1.4649417339759612e-08;
+        6.17640786371036e-10;
+      |],
+      [|
+        1.0;
+        -0.2298062239901678;
+        0.11050770414740378;
+        -0.015665429666307924;
+        0.002761106850817353;
+        -0.00020891480122840484;
+        1.7085289388076754e-05;
+        -4.4593117963566865e-07;
+        1.3946349303538475e-08;
+        6.150865933977338e-10;
+      |] );
+    ( [|
+        -0.24581193676740204;
+        -0.14833822533220778;
+        0.07248291795735552;
+        -0.013483156873809405;
+        0.001342775069788637;
+        -7.942465637159712e-05;
+        2.644179518984236e-06;
+        -4.239473659313765e-08;
+      |],
+      [|
+        1.0;
+        -0.10442259084438711;
+        -0.26764531281014026;
+        0.09695000254621984;
+        -0.01601745692712991;
+        0.001496414899205908;
+        -8.462452563778485e-05;
+        2.7289384034767266e-06;
+        -4.239462431819542e-08;
+      |] );
+    ( [|
+        0.12125611181054567;
+        -0.5823133179043894;
+        0.2348887314557017;
+        -0.030400343181132484;
+        0.0015100821468651906;
+        -2.5231370954995714e-05;
+      |],
+      [|
+        1.0;
+        -1.002252150365854;
+        0.2928709694872224;
+        -0.03337004338674008;
+        0.0015605448811273888;
+        -2.5231370936032347e-05;
+      |] );
+    ( [|
+        -0.7657847078286127;
+        0.6886192415566705;
+        -0.2132598113545206;
+        0.033461075523841935;
+        -0.003076541477344756;
+        0.00017471193164549074;
+        -6.1037116822741705e-06;
+        1.218032765428652e-07;
+        -1.0860761027932903e-09;
+      |],
+      [|
+        1.0;
+        -1.8888028686623086;
+        1.066691687211409;
+        -0.27519159823063805;
+        0.039308526882338234;
+        -0.003414684558602365;
+        0.00018668443707035555;
+        -6.345146083130515e-06;
+        1.239754287483207e-07;
+        -1.0860761027931265e-09;
+      |] );
+  |]
+
+let expint_tail index x =
+  let one = sp_c x 1.0 in
+  let w = one /! x in
+  let a, b = expint_tables.(index) in
+  let f = Poly.polyval (coeff_of x a) w /! Poly.polyval (coeff_of x b) w in
+  UF.exp x *! w *! ((w *! f) +! one)
+
+let expint_head x =
+  let a, b = expint_tables.(0) in
+  let f = Poly.polyval (coeff_of x a) x /! Poly.polyval (coeff_of x b) x in
+  (x *! f) +! sp_c x 0.5772156649015329 +! UF.log x
+
+let expi_primal x =
+  let in_range low high =
+    sp_and (sp_lt (sp_c x low) x) (sp_le x (sp_c x high))
+  in
+  let positive =
+    where_ (in_range 0.0 2.0) (expint_head x)
+      (where_ (in_range 2.0 4.0) (expint_tail 1 x)
+         (where_ (in_range 4.0 8.0) (expint_tail 2 x)
+            (where_ (in_range 8.0 16.0) (expint_tail 3 x)
+               (where_ (in_range 16.0 32.0) (expint_tail 4 x)
+                  (where_ (in_range 32.0 64.0) (expint_tail 5 x)
+                     (expint_tail 6 x))))))
+  in
+  where_ (sp_lt x (sp_c x 0.0)) (UF.negative (exp1 (UF.negative x))) positive
+
+let expi_custom =
+  lazy
+    (Custom_derivatives.custom_jvp
+       (fun args -> [ expi_primal (List.hd args) ])
+       ~jvp:(fun primals tangents ->
+         let x = List.hd primals and dx = List.hd tangents in
+         ([ expi_primal x ], [ UF.exp x /! x *! dx ])))
+
+let expi x =
+  let x = promote1 x in
+  (match dtype x with
+  | D.Complex64 | D.Complex128 ->
+      invalid_arg "expi does not support complex-valued inputs."
+  | _ -> ());
+  List.hd ((Lazy.force expi_custom) [ x ])
+
+let legendre_table ~normalized l_max x =
+  let n = l_max + 1 in
+  let zeros = AC.zeros_like x in
+  let table = Array.make_matrix n n zeros in
+  let lit v = sp_c x v in
+  let q v =
+    if dtype x = D.F32 then Int32.float_of_bits (Int32.bits_of_float v) else v
+  in
+  let wide = Config.x64_enabled () in
+  let initial =
+    if not normalized then 1.0
+    else if wide then 0.5 /. Float.sqrt Float.pi
+    else q (0.5 /. q (Float.sqrt Float.pi))
+  in
+  let initial_value =
+    const_full (if wide then D.F64 else dtype x) [||] initial
+  in
+  table.(0).(0) <- NL.broadcast_to (lit initial) (shape x);
+  let root = UF.sqrt (lit 1.0 -! (x *! x)) in
+  let factor = ref 1.0 and power = ref (AC.ones_like x) in
+  for l = 1 to l_max do
+    let a = float_of_int l in
+    let step =
+      if normalized then -.q (Float.sqrt (q (1.0 +. q (0.5 /. a))))
+      else 1.0 -. (2.0 *. a)
+    in
+    factor := q (!factor *. step);
+    power := !power *! root;
+    table.(l).(l) <-
+      NL.astype (initial_value *! (lit !factor *! !power)) (dtype x)
+  done;
+  for m = 0 to l_max - 1 do
+    let fm = float_of_int m in
+    let coeff =
+      if normalized then q (Float.sqrt ((2.0 *. fm) +. 3.0))
+      else (2.0 *. fm) +. 1.0
+    in
+    table.(m).(m + 1) <- lit coeff *! x *! table.(m).(m)
+  done;
+  for offset = 2 to l_max do
+    for m = 0 to l_max - offset do
+      let l = m + offset in
+      let fl = float_of_int l and fm = float_of_int m in
+      let d0, d1 =
+        if normalized then begin
+          let c0 = fl *. fl and c1 = fm *. fm in
+          let c2 = 2.0 *. fl and c3 = (fl -. 1.0) *. (fl -. 1.0) in
+          ( q (Float.sqrt (q (((4.0 *. c0) -. 1.0) /. (c0 -. c1)))),
+            q
+              (Float.sqrt
+                 (q
+                    (q ((c2 +. 1.0) *. (c3 -. c1))
+                    /. q ((c2 -. 3.0) *. (c0 -. c1))))) )
+        end
+        else
+          (((2.0 *. fl) -. 1.0) /. (fl -. fm), (fl +. fm -. 1.0) /. (fl -. fm))
+      in
+      table.(m).(l) <-
+        (lit d0 *! (table.(m).(l - 1) *! x)) -! (lit d1 *! table.(m).(l - 2))
+    done
+  done;
+  table
+
+let stack_table table =
+  NL.stack
+    (Array.to_list (Array.map (fun row -> NL.stack (Array.to_list row)) table))
+
+let legendre_derivatives l_max x p =
+  let n = l_max + 1 in
+  let zeros = AC.zeros_like x in
+  let lit v = sp_c x v in
+  let at_l_minus m l = if l = 0 then zeros else p.(m).(l - 1) in
+  let up2 m l = if m + 2 > l_max then zeros else at_l_minus (m + 2) l in
+  let down2 =
+    Array.init n (fun m ->
+        Array.init n (fun l -> if m < 2 then zeros else at_l_minus (m - 2) l))
+  in
+  for l = 1 to n - 2 do
+    let fl = float_of_int l in
+    down2.(1).(l + 1) <- lit (-1.0 /. ((fl +. 1.0) *. fl)) *! p.(1).(l)
+  done;
+  for l = 2 to n - 2 do
+    let fl = float_of_int l in
+    down2.(0).(l + 1) <-
+      lit (1.0 /. ((fl +. 2.0) *. (fl +. 1.0) *. fl *. (fl -. 1.0)))
+      *! p.(2).(l)
+  done;
+  let derivative =
+    Array.init n (fun m ->
+        Array.init n (fun l ->
+            if m > l then (
+              let fl = float_of_int l and fm = float_of_int m in
+              ignore (fl, fm);
+              zeros)
+            else begin
+              let fl = float_of_int l and fm = float_of_int m in
+              let b0 = fl +. fm in
+              let minus_one =
+                if m = 1 then zeros
+                else begin
+                  let a0 = -0.5 /. (fm -. 1.0) in
+                  let c0 = a0 *. (b0 -. 2.0) *. (b0 -. 1.0) in
+                  (lit a0 *! at_l_minus m l) +! (lit c0 *! down2.(m).(l))
+                end
+              in
+              let d0 = -0.5 /. (fm +. 1.0) in
+              let e0 = d0 *. b0 *. (b0 +. 1.0) in
+              let plus_one =
+                (lit d0 *! up2 m l) +! (lit e0 *! at_l_minus m l)
+              in
+              let f0 = b0 *. (fl -. fm +. 1.0) /. 2.0 in
+              (lit f0 *! minus_one) -! (lit 0.5 *! plus_one)
+            end))
+  in
+  if n > 1 then begin
+    let scale = lit 0.5 /! UF.sqrt (lit 1.0 -! (x *! x)) in
+    for l = 0 to n - 1 do
+      let fl = float_of_int l in
+      let g0 = lit ((fl +. 1.0) *. fl) *! p.(0).(l) in
+      let g0 = if n > 2 then g0 -! p.(2).(l) else g0 in
+      derivative.(1).(l) <- (if l = 0 then zeros else scale *! g0)
+    done
+  end;
+  derivative
+
+let check_lpmn m n z =
+  (match dtype z with
+  | D.F32 | D.F64 -> ()
+  | d ->
+      invalid_arg
+        (Printf.sprintf
+           "z.dtype=%s is not supported, see docstring for supported types."
+           (D.short_name d)));
+  if Array.length (shape z) <> 1 then invalid_arg "z must be a 1D array.";
+  if m <> n then invalid_arg "Computations for m!=n are not yet supported."
+
+let lpmn m n z =
+  check_lpmn m n z;
+  let p = legendre_table ~normalized:false n z in
+  [ stack_table p; stack_table (legendre_derivatives n z p) ]
+
+let lpmn_values m n z is_normalized =
+  check_lpmn m n z;
+  stack_table (legendre_table ~normalized:is_normalized n z)
+
+let sph_harm_y ?diff_n ?n_max n m theta phi =
+  if diff_n <> None then
+    invalid_arg
+      "The 'diff_n' argument to jax.scipy.special.sph_harm_y is not supported.";
+  let theta = promote1 theta and phi = promote1 phi in
+  let theta =
+    if Array.length (shape theta) = 0 then NL.reshape theta [| 1 |] else theta
+  in
+  let n_max =
+    match n_max with
+    | Some v -> v
+    | None -> (
+        match RED.amax n with
+        | T.Concrete nd -> int_of_float (Nd.get_f nd [||])
+        | T.Device b -> int_of_float (Nd.get_f (Pjrt.Buffer.to_host b) [||])
+        | T.Tracer _ ->
+            invalid_arg
+              "The `n_max` argument of `jnp.scipy.special.sph_harm` must be \
+               statically specified to use `sph_harm` within JAX \
+               transformations.")
+  in
+  let cube =
+    stack_table (legendre_table ~normalized:true n_max (UF.cos theta))
+  in
+  let count = (shape theta).(0) in
+  let abs_m = sp_abs m in
+  let limit v =
+    let top =
+      T.Concrete (Nd.of_floats (dtype v) [||] [| float_of_int n_max |])
+    in
+    let low = T.Concrete (Nd.of_floats (dtype v) [||] [| 0.0 |]) in
+    UF.minimum (UF.maximum v low) top
+  in
+  let rows = limit abs_m and cols = limit n in
+  let lanes = NL.arange ~dtype:(dtype rows) (float_of_int count) in
+  let side v =
+    T.Concrete (Nd.of_floats (dtype rows) [||] [| float_of_int v |])
+  in
+  let linear =
+    (((rows *! side (n_max + 1)) +! NL.astype cols (dtype rows)) *! side count)
+    +! lanes
+  in
+  let value =
+    Numpy.Indexing.take ~axis:0
+      (NL.reshape cube [| (n_max + 1) * (n_max + 1) * count |])
+      linear
+  in
+  let dt = dtype value in
+  let angle = NL.astype abs_m dt *! phi in
+  let harmonics =
+    bind1 T.Complex [ value *! UF.cos angle; value *! UF.sin angle ]
+  in
+  let two = T.Concrete (Nd.of_floats (dtype abs_m) [||] [| 2.0 |]) in
+  let odd =
+    sp_eq (UF.remainder abs_m two)
+      (T.Concrete (Nd.of_floats (dtype abs_m) [||] [| 1.0 |]))
+  in
+  let sign_dt = Dts.to_inexact_dtype (dtype abs_m) in
+  let sign =
+    where_ odd (const_full sign_dt [||] (-1.0)) (const_full sign_dt [||] 1.0)
+  in
+  let negative_order = sign *! UF.conj harmonics in
+  where_
+    (sp_lt m (T.Concrete (Nd.of_floats (dtype m) [||] [| 0.0 |])))
+    negative_order harmonics
 
 let fresnel_scalar x =
   let pi = 4.0 *. Float.atan 1.0 in

@@ -112,6 +112,8 @@ def gen_set(cases, x64, outdir):
             "compare": compare,
             "tol": tol,
         }
+        if c["op"] in registry.LOOSE_TOLERANCE:
+            reason = registry.LOOSE_TOLERANCE[c["op"]](entry, c["dtype"])
         if reason is not None:
             entry["tol_reason"] = reason
         manifest_cases.append(entry)

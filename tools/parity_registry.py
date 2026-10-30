@@ -538,6 +538,49 @@ def _dtype_sweep_ops():
     return {"sw_" + k: (lambda f: lambda a, p: f(a))(v) for k, v in un.items()}
 
 
+def _special_batch_ops():
+    sp = jax.scipy.special
+
+    def h2(a, p):
+        args = [jnp.full(a.shape, v) for v in p["abc"]]
+        return sp.hyp2f1(args[0], args[1], args[2], p["scale"] * jnp.tanh(a))
+
+    def sph(a, p):
+        n = jnp.array(p["n"])
+        m = jnp.array(p["m"])
+        out = sp.sph_harm_y(n, m, jnp.abs(a), a * 0.5 + 0.2, n_max=p["n_max"])
+        return out.astype(jnp.complex64) if a.dtype == np.float32 else out
+
+    return {
+        "sx_expi": lambda a, p: sp.expi(a * p["scale"]),
+        "sx_expi_grad": lambda a, p: jax.vmap(jax.grad(sp.expi))(a * p["scale"] + 0.5),
+        "sx_hyp2f1": h2,
+        "sx_hyp2f1_grad": lambda a, p: jax.vmap(jax.grad(lambda x: sp.hyp2f1(p["abc"][0], p["abc"][1], p["abc"][2], x)))(0.5 * jnp.tanh(a)),
+        "sx_lpmn": lambda a, p: tuple(sp.lpmn(p["l"], p["l"], jnp.tanh(a))),
+        "sx_lpmn_values": lambda a, p: sp.lpmn_values(p["l"], p["l"], jnp.tanh(a), p["norm"]),
+        "sx_sph": sph,
+        "sx_expn": lambda a, p: sp.expn(p["n"], jnp.abs(a) * p["scale"]),
+        "sx_exp1": lambda a, p: sp.exp1(jnp.abs(a) * p["scale"]),
+        "sx_expn_grad": lambda a, p: jax.vmap(jax.grad(lambda x: sp.expn(p["n"], x)))(jnp.abs(a) * p["scale"] + 0.1),
+    }
+
+
+def _set_output_tol(entry, value):
+    for out in entry["outputs"]:
+        if out["compare"] == "allclose":
+            out["tol"] = {"atol": value, "rtol": value}
+    entry["tol"] = {"atol": value, "rtol": value}
+
+
+def _lpmn_tol(entry, dtype):
+    if dtype == "float64":
+        _set_output_tol(entry, 1e-13)
+    return "derivative recurrence cancels terms, so jit-compiled jax differs from eager evaluation in the last bits"
+
+
+LOOSE_TOLERANCE = {"sx_lpmn": _lpmn_tol}
+
+
 def _default_random_ops():
     from jax import random as jr
     k = lambda p: jr.key(p["seed"])
@@ -635,6 +678,7 @@ OPS.update(_linalg_batch_ops())
 OPS.update(_surface_batch_ops())
 OPS.update(_tracer_batch_ops())
 OPS.update(_dtype_sweep_ops())
+OPS.update(_special_batch_ops())
 
 
 def _transform_sweep_ops():
@@ -656,6 +700,10 @@ for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_mome
 
 def _complex_input(shape):
     return {"a": {"kind": "complex", "shape": shape}}
+
+
+def _positive_input(shape):
+    return {"a": {"kind": "positive", "shape": shape}}
 
 
 def _real_input(shape):
@@ -1228,5 +1276,30 @@ def _extended_sweep_cases():
     return out
 
 
+def _special_batch_cases():
+    r = _real_input
+    out = []
+    for scale in [0.5, 2.0, 6.0, 12.0, 30.0, 60.0, 100.0]:
+        out.append(("sx_expi", r([6]), {"scale": scale}))
+    out.append(("sx_expi_grad", _positive_input([4]), {"scale": 1.5}))
+    for scale in [0.2, 1.0, 5.0]:
+        out.append(("sx_exp1", r([5]), {"scale": scale}))
+        for n in [0.0, 1.0, 2.0, 3.0, 6000.0]:
+            out.append(("sx_expn", r([5]), {"n": n, "scale": scale}))
+    for n in [1.0, 3.0]:
+        out.append(("sx_expn_grad", r([3]), {"n": n, "scale": 0.3}))
+    for abc in [[0.5, 1.5, 2.5], [1.0, 2.0, 3.5], [-2.0, 1.5, 3.0], [-3.0, -2.0, 1.5], [1.5, 2.5, 5.0], [0.25, 0.75, 1.0], [2.0, 3.0, 5.0], [2.5, 1.5, 1.5]]:
+        for scale in [0.5, 0.95]:
+            out.append(("sx_hyp2f1", r([4]), {"abc": abc, "scale": scale}))
+        out.append(("sx_hyp2f1_grad", r([3]), {"abc": abc}))
+    for l in [0, 1, 2, 3, 5]:
+        out.append(("sx_lpmn", r([4]), {"l": l}))
+        out.append(("sx_lpmn_values", r([4]), {"l": l, "norm": False}))
+        out.append(("sx_lpmn_values", r([4]), {"l": l, "norm": True}))
+    out.append(("sx_sph", r([4]), {"n": [0, 1, 2, 3], "m": [0, 1, -1, 2], "n_max": 3}))
+    out.append(("sx_sph", r([3]), {"n": [4, 4, 2], "m": [-3, 4, 0], "n_max": 5}))
+    return out
+
+
 def all_cases():
-    return _extended_sweep_cases() + _dtype_sweep_cases() + _tracer_batch_cases() + _surface_batch_cases() + _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _special_batch_cases() + _extended_sweep_cases() + _dtype_sweep_cases() + _tracer_batch_cases() + _surface_batch_cases() + _linalg_batch_cases() + _complex_grad_cases() + _complex_linalg_cases() + _gap_cases() + _array_random_cases() + _default_random_cases() + _lax_extra_cases() + _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

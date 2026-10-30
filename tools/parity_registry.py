@@ -203,6 +203,26 @@ def _batched_ops():
     }
 
 
+def _misc_scipy_ops():
+    import jax.scipy as js
+    from jax.scipy.interpolate import RegularGridInterpolator as RGI
+    from jax.scipy.stats import gaussian_kde
+    def kde(a, p):
+        return gaussian_kde(a, bw_method=p.get("bw", "scott"))
+    return {
+        "sg_stft": lambda a, p: js.signal.stft(a, nperseg=p["nperseg"], noverlap=p.get("noverlap"), boundary=p.get("boundary", "zeros"), padded=p.get("padded", True)),
+        "sg_csd": lambda a, b, p: js.signal.csd(a, b, nperseg=p["nperseg"], average=p.get("average", "mean")),
+        "sg_welch": lambda a, p: js.signal.welch(a, nperseg=p["nperseg"], detrend=p.get("detrend", "constant"), scaling=p.get("scaling", "density"), average=p.get("average", "mean")),
+        "sg_istft": lambda a, p: js.signal.istft(a, nperseg=p["nperseg"]),
+        "ip_linear": lambda a, b, p: RGI((jnp.arange(a.shape[0], dtype=a.dtype), jnp.arange(a.shape[1], dtype=a.dtype)), a)(b),
+        "ip_nearest": lambda a, b, p: RGI((jnp.arange(a.shape[0], dtype=a.dtype), jnp.arange(a.shape[1], dtype=a.dtype)), a, method="nearest")(b),
+        "kde_evaluate": lambda a, b, p: kde(a, p).evaluate(b),
+        "kde_logpdf": lambda a, b, p: kde(a, p).logpdf(b),
+        "kde_box": lambda a, p: kde(a, p).integrate_box_1d(p["lo"], p["hi"]),
+        "sp_fresnel": lambda a, p: tuple(js.special.fresnel(a * p.get("scale", 1.0))),
+    }
+
+
 def _in_range(a, name):
     return jnp.abs(a) if name.startswith("uint") else a
 
@@ -255,6 +275,7 @@ OPS.update(_numpy_ops())
 OPS.update(_scipy_ops())
 OPS.update(_narrow_ops())
 OPS.update(_batched_ops())
+OPS.update(_misc_scipy_ops())
 for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
     OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
@@ -570,5 +591,31 @@ def _batched_cases():
     return out
 
 
+def _misc_scipy_cases():
+    r = _real_input
+    rr = lambda sa, sb: _two("real", sa, "real", sb)
+    return [
+        ("sg_stft", r([32]), {"nperseg": 8}),
+        ("sg_stft", r([32]), {"nperseg": 8, "noverlap": 6}),
+        ("sg_stft", r([2, 32]), {"nperseg": 8}),
+        ("sg_stft", r([30]), {"nperseg": 8, "boundary": None, "padded": False}),
+        ("sg_csd", rr([32], [32]), {"nperseg": 8}),
+        ("sg_csd", rr([32], [32]), {"nperseg": 8, "average": "median"}),
+        ("sg_welch", r([32]), {"nperseg": 8}),
+        ("sg_welch", r([32]), {"nperseg": 8, "scaling": "spectrum"}),
+        ("sg_welch", r([32]), {"nperseg": 8, "average": "median"}),
+        ("sg_welch", r([2, 32]), {"nperseg": 8, "detrend": "linear"}),
+        ("sg_istft", _complex_input([5, 9]), {"nperseg": 8}),
+        ("ip_linear", rr([3, 4], [5, 2]), {}),
+        ("ip_nearest", rr([3, 4], [5, 2]), {}),
+        ("kde_evaluate", rr([2, 6], [2, 3]), {}),
+        ("kde_evaluate", rr([2, 6], [2, 3]), {"bw": "silverman"}),
+        ("kde_logpdf", rr([2, 6], [2, 3]), {}),
+        ("kde_box", r([1, 8]), {"lo": -1.0, "hi": 1.0}),
+        ("sp_fresnel", r([8]), {}),
+        ("sp_fresnel", r([8]), {"scale": 6.0}),
+    ]
+
+
 def all_cases():
-    return _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()
+    return _misc_scipy_cases() + _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases() + _narrow_cases() + _batched_cases()

@@ -1336,3 +1336,83 @@ let lpmn_values _m _n _z _is_normalized =
 let sph_harm_y ?diff_n:_ ?n_max:_ _n _m _theta _phi =
   failwith
     "sph_harm_y: complex-valued output unsupported (no complex dtype until M5)"
+
+let fresnel_scalar x =
+  let pi = 4.0 *. Float.atan 1.0 in
+  let half_pi = pi /. 2.0 in
+  let t = Float.abs x in
+  let s, c =
+    if t = 0.0 then (0.0, 0.0)
+    else if Float.is_integer t && t > 1e15 then (0.5, 0.5)
+    else if t = Float.infinity then (0.5, 0.5)
+    else if t < 1.5 then begin
+      let sum_c = ref t and sum_s = ref 0.0 in
+      let sign = ref 1.0 and term = ref t in
+      let fact = ref (half_pi *. t *. t) in
+      let odd = ref true in
+      let k = ref 1 in
+      let continue_ = ref true in
+      while !continue_ && !k < 200 do
+        term := !term *. !fact /. float_of_int !k;
+        let contribution = !term /. float_of_int ((2 * !k) + 1) in
+        if !odd then sum_s := !sum_s +. (!sign *. contribution)
+        else begin
+          sign := -. !sign;
+          sum_c := !sum_c +. (!sign *. contribution)
+        end;
+        if
+          Float.abs contribution
+          < 1e-17 *. (Float.abs !sum_c +. Float.abs !sum_s)
+        then continue_ := false;
+        odd := not !odd;
+        incr k
+      done;
+      (!sum_s, !sum_c)
+    end
+    else begin
+      let z = { Complex.re = 1.0; im = -.pi *. t *. t } in
+      let b = ref z in
+      let c_ = ref { Complex.re = 1.0 /. 1e-300; im = 0.0 } in
+      let d = ref (Complex.div Complex.one !b) in
+      let h = ref !d in
+      let n = ref (-1.0) in
+      let k = ref 2 in
+      let continue_ = ref true in
+      while !continue_ && !k < 500 do
+        n := !n +. 2.0;
+        let a = -. !n *. (!n +. 1.0) in
+        b := Complex.add !b { Complex.re = 4.0; im = 0.0 };
+        let ca = { Complex.re = a; im = 0.0 } in
+        d := Complex.div Complex.one (Complex.add (Complex.mul ca !d) !b);
+        c_ := Complex.add !b (Complex.div ca !c_);
+        let del = Complex.mul !c_ !d in
+        h := Complex.mul !h del;
+        if Complex.norm (Complex.sub del Complex.one) < 1e-16 then
+          continue_ := false;
+        incr k
+      done;
+      let scaled = Complex.mul !h { Complex.re = t; im = -.t } in
+      let phase = half_pi *. t *. t in
+      let w = Complex.mul { Complex.re = cos phase; im = sin phase } scaled in
+      let cs =
+        Complex.mul { Complex.re = 0.5; im = 0.5 } (Complex.sub Complex.one w)
+      in
+      (cs.Complex.im, cs.Complex.re)
+    end
+  in
+  if x < 0.0 then (-.s, -.c) else (s, c)
+
+let fresnel x =
+  let dt = dtype x in
+  let values () =
+    match x with
+    | Types.Concrete a ->
+        ( Types.Concrete (Ndarray.map dt (fun v -> fst (fresnel_scalar v)) a),
+          Types.Concrete (Ndarray.map dt (fun v -> snd (fresnel_scalar v)) a) )
+    | Types.Device b ->
+        let a = Pjrt.Buffer.to_host b in
+        ( Types.Concrete (Ndarray.map dt (fun v -> fst (fresnel_scalar v)) a),
+          Types.Concrete (Ndarray.map dt (fun v -> snd (fresnel_scalar v)) a) )
+    | Types.Tracer _ -> invalid_arg "fresnel: traced input is not supported yet"
+  in
+  values ()

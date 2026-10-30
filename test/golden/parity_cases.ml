@@ -652,6 +652,80 @@ let batched_run op p a b =
         ]
   | _ -> None
 
+module IP = Ojax.Scipy.Interpolate
+module KD = Ojax.Scipy.Stats.Kde
+
+let grid_of v =
+  let sh = shp v in
+  let dt = dt_of v in
+  let axis size =
+    T.Concrete
+      (Ojax.Ndarray.of_floats dt [| size |] (Array.init size float_of_int))
+  in
+  [ axis sh.(0); axis sh.(1) ]
+
+let triple (x, y, z) = [ x; y; z ]
+
+let misc_scipy_run op p a b =
+  let kde v = KD.gaussian_kde ?bw_method:(opt_string "bw" p) v in
+  let boundary_of () =
+    match U.member "boundary" p with
+    | `Null when List.mem_assoc "boundary" (U.to_assoc p) -> Some None
+    | `Null -> None
+    | v -> Some (Some (U.to_string v))
+  in
+  match op with
+  | "sg_stft" ->
+      Some
+        (triple
+           (SG.stft ~nperseg:(int "nperseg" p) ?noverlap:(opt_int "noverlap" p)
+              ?boundary:(boundary_of ()) ?padded:(opt_bool "padded" p) (a ())))
+  | "sg_csd" ->
+      Some
+        (pair
+           (SG.csd ~nperseg:(int "nperseg" p) ?average:(opt_string "average" p)
+              (a ())
+              (Some (b ()))))
+  | "sg_welch" ->
+      Some
+        (pair
+           (SG.welch ~nperseg:(int "nperseg" p)
+              ?detrend:(Option.map Option.some (opt_string "detrend" p))
+              ?scaling:(opt_string "scaling" p)
+              ?average:(opt_string "average" p) (a ())))
+  | "sg_istft" -> Some (pair (SG.istft ~nperseg:(int "nperseg" p) (a ())))
+  | "ip_linear" ->
+      Some
+        [
+          IP.evaluate
+            (IP.regular_grid_interpolator (grid_of (a ())) (a ()))
+            (b ());
+        ]
+  | "ip_nearest" ->
+      Some
+        [
+          IP.evaluate
+            (IP.regular_grid_interpolator ~method_:"nearest"
+               (grid_of (a ()))
+               (a ()))
+            (b ());
+        ]
+  | "kde_evaluate" -> Some [ KD.evaluate (kde (a ())) (b ()) ]
+  | "kde_logpdf" -> Some [ KD.logpdf (kde (a ())) (b ()) ]
+  | "kde_box" ->
+      Some
+        [
+          KD.integrate_box_1d
+            (kde (a ()))
+            (U.to_number (U.member "lo" p))
+            (U.to_number (U.member "hi" p));
+        ]
+  | "sp_fresnel" ->
+      let x = a () in
+      let factor = Option.value (opt_number "scale" p) ~default:1.0 in
+      Some (pair (Ojax.Scipy.Special.fresnel (L.mul x (L.full_like x factor))))
+  | _ -> None
+
 let optimizer_run op a b =
   match optimizer_of op with
   | None -> None
@@ -668,57 +742,67 @@ let run op params get =
   let a () = get "a" in
   let b () = get "b" in
   let c () = get "c" in
-  match batched_run op params a b with
+  match misc_scipy_run op params a b with
   | Some out -> out
   | None -> (
-      match narrow_run op params a b with
+      match batched_run op params a b with
       | Some out -> out
       | None -> (
-          match optimizer_run op a b with
+          match narrow_run op params a b with
           | Some out -> out
           | None -> (
-              match scipy_run op params a b c with
+              match optimizer_run op a b with
               | Some out -> out
               | None -> (
-                  match numpy_run op params a b c with
+                  match scipy_run op params a b c with
                   | Some out -> out
                   | None -> (
-                      match lax_run op params a b with
+                      match numpy_run op params a b c with
                       | Some out -> out
                       | None -> (
-                          match op with
-                          | "fft" -> fft1 F.fft (a ()) params
-                          | "ifft" -> fft1 F.ifft (a ()) params
-                          | "rfft" -> fft1 F.rfft (a ()) params
-                          | "irfft" -> fft1 F.irfft (a ()) params
-                          | "hfft" -> fft1 F.hfft (a ()) params
-                          | "ihfft" -> fft1 F.ihfft (a ()) params
-                          | "fftn" -> fftnd F.fftn (a ()) params
-                          | "ifftn" -> fftnd F.ifftn (a ()) params
-                          | "rfftn" -> fftnd F.rfftn (a ()) params
-                          | "irfftn" -> fftnd F.irfftn (a ()) params
-                          | "fft2" ->
-                              [ F.fft2 ?norm:(opt_string "norm" params) (a ()) ]
-                          | "ifft2" ->
-                              [
-                                F.ifft2 ?norm:(opt_string "norm" params) (a ());
-                              ]
-                          | "rfft2" ->
-                              [
-                                F.rfft2 ?norm:(opt_string "norm" params) (a ());
-                              ]
-                          | "irfft2" ->
-                              [
-                                F.irfft2 ?norm:(opt_string "norm" params) (a ());
-                              ]
-                          | "fftshift" ->
-                              [
-                                F.fftshift ?axes:(opt_ints "axes" params) (a ());
-                              ]
-                          | "ifftshift" ->
-                              [
-                                F.ifftshift ?axes:(opt_ints "axes" params)
-                                  (a ());
-                              ]
-                          | other -> failwith ("parity: unknown op " ^ other))))
-              )))
+                          match lax_run op params a b with
+                          | Some out -> out
+                          | None -> (
+                              match op with
+                              | "fft" -> fft1 F.fft (a ()) params
+                              | "ifft" -> fft1 F.ifft (a ()) params
+                              | "rfft" -> fft1 F.rfft (a ()) params
+                              | "irfft" -> fft1 F.irfft (a ()) params
+                              | "hfft" -> fft1 F.hfft (a ()) params
+                              | "ihfft" -> fft1 F.ihfft (a ()) params
+                              | "fftn" -> fftnd F.fftn (a ()) params
+                              | "ifftn" -> fftnd F.ifftn (a ()) params
+                              | "rfftn" -> fftnd F.rfftn (a ()) params
+                              | "irfftn" -> fftnd F.irfftn (a ()) params
+                              | "fft2" ->
+                                  [
+                                    F.fft2 ?norm:(opt_string "norm" params)
+                                      (a ());
+                                  ]
+                              | "ifft2" ->
+                                  [
+                                    F.ifft2 ?norm:(opt_string "norm" params)
+                                      (a ());
+                                  ]
+                              | "rfft2" ->
+                                  [
+                                    F.rfft2 ?norm:(opt_string "norm" params)
+                                      (a ());
+                                  ]
+                              | "irfft2" ->
+                                  [
+                                    F.irfft2 ?norm:(opt_string "norm" params)
+                                      (a ());
+                                  ]
+                              | "fftshift" ->
+                                  [
+                                    F.fftshift ?axes:(opt_ints "axes" params)
+                                      (a ());
+                                  ]
+                              | "ifftshift" ->
+                                  [
+                                    F.ifftshift ?axes:(opt_ints "axes" params)
+                                      (a ());
+                                  ]
+                              | other -> failwith ("parity: unknown op " ^ other)
+                              )))))))

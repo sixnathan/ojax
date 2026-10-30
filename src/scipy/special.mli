@@ -62,3 +62,5 @@ val sph_harm_y :
   Types.value ->
   Types.value ->
   Types.value
+
+val fresnel : Types.value -> Types.value * Types.value

@@ -174,3 +174,367 @@ let detrend ?(axis = -1) ?(type_ = "linear") data =
       let out = NL.reshape (b1 Sub [ rows; fit ]) moved_shape in
       NL.moveaxis [| 0 |] [| axis |] out
   | _ -> invalid_arg "Trend type must be 'linear' or 'constant'."
+
+let pi = 4.0 *. Float.atan 1.0
+
+let hann dt n =
+  Concrete
+    (Ndarray.of_floats dt [| n |]
+       (Array.init n (fun i ->
+            if n = 1 then 1.0
+            else
+              let v = sin (pi *. float_of_int i /. float_of_int n) in
+              v *. v)))
+
+let real_part_dtype = function
+  | Dtype.Complex128 | Dtype.F64 -> Dtype.F64
+  | _ -> Dtype.F32
+
+let complex_dtype_of = function
+  | Dtype.F64 | Dtype.Complex128 -> Dtype.Complex128
+  | _ -> Dtype.Complex64
+
+let is_complex v =
+  match dtype_of v with
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let pad_edges mode x n =
+  let last = rank x - 1 in
+  let size = (shape x).(last) in
+  let zero () = L.full [||] 0.0 (dtype_of x) in
+  let cfg = Array.make (rank x) (0, 0, 0) in
+  cfg.(last) <- (n, n, 0);
+  match mode with
+  | "zeros" -> L.pad x (zero ()) cfg
+  | "constant" ->
+      let first = L.slice_in_dim ~axis:last x 0 1 in
+      let final = L.slice_in_dim ~axis:last x (size - 1) size in
+      let repeat v = L.concatenate (List.init n (fun _ -> v)) last in
+      if n = 0 then x else L.concatenate [ repeat first; x; repeat final ] last
+  | "even" | "odd" ->
+      if n = 0 then x
+      else
+        let left = L.rev (L.slice_in_dim ~axis:last x 1 (n + 1)) [| last |] in
+        let right =
+          L.rev
+            (L.slice_in_dim ~axis:last x (size - n - 1) (size - 1))
+            [| last |]
+        in
+        if mode = "even" then L.concatenate [ left; x; right ] last
+        else
+          let edge lo =
+            let v = L.slice_in_dim ~axis:last x lo (lo + 1) in
+            let twice = L.mul v (L.full_like v 2.0) in
+            NL.broadcast_to twice
+              (Array.mapi (fun d s -> if d = last then n else s) (shape x))
+          in
+          L.concatenate
+            [ b1 Sub [ edge 0; left ]; x; b1 Sub [ edge (size - 1); right ] ]
+            last
+  | other -> invalid_arg ("Unknown boundary option '" ^ other ^ "'")
+
+let segments x ~nperseg ~nstep =
+  let last = rank x - 1 in
+  let size = (shape x).(last) in
+  let count = if size < nperseg then 0 else ((size - nperseg) / nstep) + 1 in
+  L.stack
+    (List.init count (fun k ->
+         L.slice_in_dim ~axis:last x (k * nstep) ((k * nstep) + nperseg)))
+    last
+
+let window_on x win =
+  let sh = shape x in
+  let n = Array.length sh in
+  L.mul x (L.broadcast_in_dim win sh [| n - 1 |])
+
+let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
+    ~return_onesided ~scaling ~axis ~mode ~boundary ~padded x =
+  let x = inexact x in
+  let axis = if axis < 0 then axis + rank x else axis in
+  let x = NL.moveaxis [| axis |] [| rank x - 1 |] x in
+  let y =
+    Option.map
+      (fun v ->
+        let v = inexact v in
+        NL.moveaxis [| axis |] [| rank v - 1 |] v)
+      y
+  in
+  let dt = dtype_of x in
+  let rdt = real_part_dtype dt in
+  let input_len = (shape x).(rank x - 1) in
+  let nperseg = Stdlib.min (Option.value nperseg ~default:256) input_len in
+  let win =
+    match window with Some w -> NL.astype w rdt | None -> hann rdt nperseg
+  in
+  let noverlap = Option.value noverlap ~default:(nperseg / 2) in
+  let nfft = Option.value nfft ~default:nperseg in
+  if nfft < nperseg then
+    invalid_arg "nfft must be greater than or equal to nperseg.";
+  if noverlap >= nperseg then invalid_arg "noverlap must be less than nperseg.";
+  let nstep = nperseg - noverlap in
+  let extend v =
+    match boundary with
+    | Some mode -> pad_edges mode v (nperseg / 2)
+    | None -> v
+  in
+  let pad_tail v =
+    if not padded then v
+    else
+      let size = (shape v).(rank v - 1) in
+      let extra =
+        ((-(size - nperseg) mod nstep) + nstep) mod nstep mod nperseg
+      in
+      if extra = 0 then v
+      else
+        let cfg = Array.make (rank v) (0, 0, 0) in
+        cfg.(rank v - 1) <- (0, extra, 0);
+        L.pad v (L.full [||] 0.0 (dtype_of v)) cfg
+  in
+  let x = pad_tail (extend x) in
+  let y = Option.map (fun v -> pad_tail (extend v)) y in
+  let win_sum = Numpy.Reductions.sum win in
+  let host_scalar v =
+    match v with
+    | Concrete nd -> Ndarray.get_f nd [||]
+    | _ -> invalid_arg "spectral_helper: window must be concrete"
+  in
+  let sum_sq = host_scalar (Numpy.Reductions.sum (L.mul win win)) in
+  let total = host_scalar win_sum in
+  let scale =
+    match scaling with
+    | "density" -> 1.0 /. (fs *. sum_sq)
+    | "spectrum" -> 1.0 /. (total *. total)
+    | other -> invalid_arg ("Unknown scaling: " ^ other)
+  in
+  let scale = if mode = "stft" then sqrt scale else scale in
+  let onesided =
+    return_onesided
+    && (not (is_complex x))
+    && not (match y with Some v -> is_complex v | None -> false)
+  in
+  let transform v =
+    let segs = segments v ~nperseg ~nstep in
+    let segs =
+      match detrend_type with
+      | None -> segs
+      | Some t -> detrend ~axis:(-1) ~type_:t segs
+    in
+    let windowed = window_on segs win in
+    if onesided then Numpy.Fft.rfft ~n:nfft windowed
+    else Numpy.Fft.fft ~n:nfft (NL.astype windowed (complex_dtype_of dt))
+  in
+  let result =
+    match y with
+    | Some v -> b1 Mul [ b1 Conj [ transform x ]; transform v ]
+    | None ->
+        let r = transform x in
+        if mode = "psd" then b1 Mul [ b1 Conj [ r ]; r ] else r
+  in
+  let scale_array v factor =
+    let cdt = complex_dtype_of dt in
+    let n = Array.fold_left ( * ) 1 (shape v) in
+    b1 Mul
+      [
+        v;
+        Concrete
+          (Ndarray.of_complex cdt (shape v)
+             (Array.make n { Complex.re = factor; im = 0.0 }));
+      ]
+  in
+  let result = scale_array result scale in
+  let result =
+    if onesided && mode = "psd" then begin
+      let sh = shape result in
+      let n_freq = sh.(Array.length sh - 1) in
+      let cdt = complex_dtype_of dt in
+      let lanes = Array.fold_left ( * ) 1 sh / Stdlib.max n_freq 1 in
+      let mask =
+        Concrete
+          (Ndarray.of_complex cdt sh
+             (Array.init (lanes * n_freq) (fun k ->
+                  let f = k mod n_freq in
+                  let doubled = f > 0 && (nfft mod 2 = 1 || f < n_freq - 1) in
+                  { Complex.re = (if doubled then 2.0 else 1.0); im = 0.0 })))
+      in
+      b1 Mul [ result; mask ]
+    end
+    else result
+  in
+  let freqs =
+    if onesided then Numpy.Fft.rfftfreq ~d:(1.0 /. fs) ~dtype:rdt nfft
+    else Numpy.Fft.fftfreq ~d:(1.0 /. fs) ~dtype:rdt nfft
+  in
+  let processed_len = (shape x).(rank x - 1) in
+  let n_times = ((processed_len - nperseg) / nstep) + 1 in
+  let shift =
+    if boundary <> None then float_of_int (nperseg / 2) /. fs else 0.0
+  in
+  let time =
+    Concrete
+      (Ndarray.of_floats rdt [| n_times |]
+         (Array.init n_times (fun k ->
+              ((float_of_int (nperseg / 2) +. float_of_int (k * nstep)) /. fs)
+              -. shift)))
+  in
+  let result =
+    if y = None && mode <> "stft" then b1 Real [ result ] else result
+  in
+  (freqs, time, result)
+
+let stft ?(fs = 1.0) ?window ?(nperseg = 256) ?noverlap ?nfft
+    ?detrend:detrend_type ?(return_onesided = true) ?(boundary = Some "zeros")
+    ?(padded = true) ?(axis = -1) x =
+  let f, t, z =
+    spectral_helper ~fs ~window ~nperseg:(Some nperseg) ~noverlap ~nfft
+      ~detrend_type ~return_onesided ~scaling:"spectrum" ~axis ~mode:"stft"
+      ~boundary ~padded x
+  in
+  (f, t, NL.swapaxes (-1) (-2) z)
+
+let csd ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft
+    ?(detrend = Some "constant") ?(return_onesided = true)
+    ?(scaling = "density") ?(axis = -1) ?(average = "mean") x y =
+  let freqs, _, pxy =
+    spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft
+      ~detrend_type:detrend ~return_onesided ~scaling ~axis ~mode:"psd"
+      ~boundary:None ~padded:false x
+  in
+  let swapped = NL.swapaxes (-1) (-2) pxy in
+  let last = rank swapped - 1 in
+  let n = (shape swapped).(last) in
+  let averaged =
+    if n <= 1 then L.squeeze swapped [| last |]
+    else
+      match average with
+      | "mean" -> Numpy.Reductions.mean ~axis:[| last |] swapped
+      | "median" ->
+          let bias =
+            let total = ref 1.0 in
+            let k = ref 2 in
+            while !k < n do
+              total :=
+                !total
+                +. (1.0 /. float_of_int (!k + 1))
+                -. (1.0 /. float_of_int !k);
+              k := !k + 2
+            done;
+            !total
+          in
+          let med =
+            if is_complex swapped then
+              b1 Complex
+                [
+                  Numpy.Reductions.median ~axis:last (b1 Real [ swapped ]);
+                  Numpy.Reductions.median ~axis:last (b1 Imag [ swapped ]);
+                ]
+            else Numpy.Reductions.median ~axis:last swapped
+          in
+          b1 Div
+            [
+              med;
+              NL.astype
+                (L.full (shape med) bias (real_part_dtype (dtype_of med)))
+                (dtype_of med);
+            ]
+      | other -> invalid_arg ("average must be 'median' or 'mean', got " ^ other)
+  in
+  (freqs, averaged)
+
+let welch ?fs ?window ?nperseg ?noverlap ?nfft ?detrend ?return_onesided
+    ?scaling ?axis ?average x =
+  let freqs, pxx =
+    csd ?fs ?window ?nperseg ?noverlap ?nfft ?detrend ?return_onesided ?scaling
+      ?axis ?average x None
+  in
+  (freqs, if is_complex pxx then b1 Real [ pxx ] else pxx)
+
+let overlap_and_add x step =
+  let sh = shape x in
+  let n = Array.length sh in
+  let frames = sh.(n - 2) and seg = sh.(n - 1) in
+  let out_len = (step * (frames - 1)) + seg in
+  let zero = L.full [||] 0.0 (dtype_of x) in
+  let shifted k piece =
+    let cfg = Array.make (n - 1) (0, 0, 0) in
+    cfg.(n - 2) <- (k * step, out_len - seg - (k * step), 0);
+    L.pad piece zero cfg
+  in
+  match List.mapi shifted (L.unstack x (n - 2)) with
+  | first :: rest -> List.fold_left L.add first rest
+  | [] -> invalid_arg "overlap_and_add: no frames"
+
+let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
+    ?(boundary = true) zxx =
+  let rankz = rank zxx in
+  if rankz < 2 then invalid_arg "Input stft must be at least 2d!";
+  let freq_len = (shape zxx).(rankz - 2) in
+  let default_seg = if input_onesided then 2 * (freq_len - 1) else freq_len in
+  let nperseg = Option.value nperseg ~default:default_seg in
+  let nfft =
+    Option.value nfft
+      ~default:
+        (if input_onesided && nperseg = default_seg + 1 then default_seg + 1
+         else nperseg)
+  in
+  let noverlap = Option.value noverlap ~default:(nperseg / 2) in
+  let nstep = nperseg - noverlap in
+  let rdt = real_part_dtype (dtype_of zxx) in
+  let win =
+    match window with Some w -> NL.astype w rdt | None -> hann rdt nperseg
+  in
+  let frames = NL.swapaxes (-1) (-2) (NL.astype zxx (complex_dtype_of rdt)) in
+  let time_domain =
+    if input_onesided then Numpy.Fft.irfft ~n:nfft frames
+    else Numpy.Fft.ifft ~n:nfft frames
+  in
+  let last = rank time_domain - 1 in
+  let cut = L.slice_in_dim ~axis:last time_domain 0 nperseg in
+  let host_sum v =
+    match Numpy.Reductions.sum v with
+    | Concrete nd -> Ndarray.get_f nd [||]
+    | _ -> invalid_arg "istft: window must be concrete"
+  in
+  let scale = host_sum win in
+  let scaled =
+    if is_complex cut then
+      b1 Mul [ cut; NL.astype (L.full (shape cut) scale rdt) (dtype_of cut) ]
+    else L.mul cut (L.full_like cut scale)
+  in
+  let windowed =
+    b1 Mul
+      [
+        scaled;
+        NL.astype
+          (L.broadcast_in_dim win (shape scaled) [| rank scaled - 1 |])
+          (dtype_of scaled);
+      ]
+  in
+  let x = overlap_and_add windowed nstep in
+  let n_frames = (shape cut).(last - 1) in
+  let win_sq = L.mul win win in
+  let stacked = L.stack (List.init n_frames (fun _ -> win_sq)) 0 in
+  let norm = overlap_and_add stacked nstep in
+  let trim v =
+    if boundary then
+      let d = rank v - 1 in
+      let size = (shape v).(d) in
+      L.slice_in_dim ~axis:d v (nperseg / 2) (size - (nperseg / 2))
+    else v
+  in
+  let x = trim x and norm = trim norm in
+  let safe =
+    L.select (L.gt norm (L.full_like norm 1e-10)) norm (L.full_like norm 1.0)
+  in
+  let broadcast_norm = L.broadcast_in_dim safe (shape x) [| rank x - 1 |] in
+  let out =
+    if is_complex x then b1 Div [ x; NL.astype broadcast_norm (dtype_of x) ]
+    else L.div x broadcast_norm
+  in
+  let count = (shape out).(rank out - 1) in
+  let time =
+    Concrete
+      (Ndarray.of_floats rdt [| count |]
+         (Array.init count (fun i -> float_of_int i /. fs)))
+  in
+  (time, out)

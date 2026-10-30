@@ -81,9 +81,35 @@ let while_impl (cond : closed_jaxpr) (body : closed_jaxpr) (inputs : value list)
 let while_loop (cond_fun : value list -> value)
     (body_fun : value list -> value list) (init : value list) : value list =
   let avals = List.map Core.get_aval init in
-  let cond = Jaxpr.make_jaxpr avals (fun vs -> [ cond_fun vs ]) in
-  let body = Jaxpr.make_jaxpr avals body_fun in
-  Core.bind (While { cond; body }) init
+  let cond, hoisted_c =
+    Jaxpr.make_jaxpr_hoisted avals (fun vs -> [ cond_fun vs ])
+  in
+  let body, hoisted_b = Jaxpr.make_jaxpr_hoisted avals body_fun in
+  if hoisted_c = [] && hoisted_b = [] then Core.bind (While { cond; body }) init
+  else
+    let n = List.length init in
+    let n_c = List.length hoisted_c in
+    let hoisted = hoisted_c @ hoisted_b in
+    let all_avals = avals @ List.map Core.get_aval hoisted in
+    let split args =
+      match Util.split_list args [ n; n_c ] with
+      | [ c; h_c; h_b ] -> (c, h_c, h_b)
+      | _ -> failwith "while_loop: arity"
+    in
+    let cond' =
+      Jaxpr.make_jaxpr all_avals (fun args ->
+          let c, h_c, _ = split args in
+          Jaxpr.eval_closed_jaxpr cond (c @ h_c))
+    in
+    let body' =
+      Jaxpr.make_jaxpr all_avals (fun args ->
+          let c, h_c, h_b = split args in
+          Jaxpr.eval_closed_jaxpr body (c @ h_b) @ h_c @ h_b)
+    in
+    let outs =
+      Core.bind (While { cond = cond'; body = body' }) (init @ hoisted)
+    in
+    fst (split_at outs n)
 
 let logaddexp a b =
   let m = Float.max a b in
@@ -124,18 +150,50 @@ let cumred_impl ~axis ~reverse ~combine (nd : Ndarray.t) : Ndarray.t =
   done;
   out
 
-let scan ?(reverse = false) (body : value list -> value list)
+let scan ?length ?(reverse = false) (body : value list -> value list)
     (init : value list) (xs : value list) : value list =
   let num_carry = List.length init in
   let length =
-    match xs with
-    | x :: _ -> (Core.get_aval x).shape.(0)
-    | [] -> failwith "loops: scan requires at least one xs input (M2)"
+    match (length, xs) with
+    | Some n, _ -> n
+    | None, x :: _ -> (Core.get_aval x).shape.(0)
+    | None, [] ->
+        invalid_arg "scan got no values to scan over and `length` not provided."
   in
   let carry_avals = List.map Core.get_aval init in
   let x_slice_avals = List.map (fun x -> mapped_leading (Core.get_aval x)) xs in
-  let jaxpr = Jaxpr.make_jaxpr (carry_avals @ x_slice_avals) body in
-  Core.bind (Scan { length; reverse; num_carry; jaxpr }) (init @ xs)
+  let jaxpr, hoisted =
+    Jaxpr.make_jaxpr_hoisted (carry_avals @ x_slice_avals) body
+  in
+  if hoisted = [] then
+    Core.bind (Scan { length; reverse; num_carry; jaxpr }) (init @ xs)
+  else
+    let n_hoisted = List.length hoisted in
+    let hoisted_avals = List.map Core.get_aval hoisted in
+    let lifted =
+      Jaxpr.make_jaxpr
+        (carry_avals @ hoisted_avals @ x_slice_avals)
+        (fun args ->
+          let c, r = split_at args num_carry in
+          let h, x = split_at r n_hoisted in
+          let c', ys =
+            split_at (Jaxpr.eval_closed_jaxpr jaxpr (c @ x @ h)) num_carry
+          in
+          c' @ h @ ys)
+    in
+    let outs =
+      Core.bind
+        (Scan
+           {
+             length;
+             reverse;
+             num_carry = num_carry + n_hoisted;
+             jaxpr = lifted;
+           })
+        (init @ hoisted @ xs)
+    in
+    let c, r = split_at outs num_carry in
+    c @ snd (split_at r n_hoisted)
 
 let cumsum ?(axis = 0) ?(reverse = false) (operand : value) : value =
   Core.bind1 (Cumsum { axis; reverse }) [ operand ]

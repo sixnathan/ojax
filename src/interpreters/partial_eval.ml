@@ -32,6 +32,42 @@ let instantiate_const trace (t : tracer) : tracer =
   | Some c ->
       new_pe_tracer trace (partial_val_unknown t.aval) (Some (ConstRecipe c))
 
+let record_unknown trace prim (tracers : tracer list) : value list =
+  let tracers_in = List.map (instantiate_const trace) tracers in
+  let avals_in = List.map (fun (t : tracer) -> t.aval) tracers_in in
+  let avals_out = Core.rules.abstract_eval prim avals_in in
+  let out_tracers =
+    List.map
+      (fun a -> new_pe_tracer trace (partial_val_unknown a) None)
+      avals_out
+  in
+  let out_refs = List.map (fun t -> ref (Some t)) out_tracers in
+  let recipe =
+    EqnRecipe
+      {
+        er_prim = prim;
+        er_inputs = tracers_in;
+        er_avals_out = avals_out;
+        er_out = out_refs;
+      }
+  in
+  List.iter
+    (fun t -> match t.payload with PE p -> p.recipe <- Some recipe | _ -> ())
+    out_tracers;
+  List.map (fun t -> Tracer t) out_tracers
+
+let scan_rule :
+    (trace ->
+    length:int ->
+    reverse:bool ->
+    num_carry:int ->
+    closed_jaxpr ->
+    tracer list ->
+    value list)
+    ref =
+  ref (fun _ ~length:_ ~reverse:_ ~num_carry:_ _ _ ->
+      failwith "partial_eval: scan rule not installed")
+
 let process_primitive trace prim (args : value list) : value list =
   let tracers = List.map as_tracer args in
   let pvals = List.map pe_pval tracers in
@@ -46,29 +82,10 @@ let process_primitive trace prim (args : value list) : value list =
     in
     Core.bind prim consts
   else
-    let tracers_in = List.map (instantiate_const trace) tracers in
-    let avals_in = List.map (fun (t : tracer) -> t.aval) tracers_in in
-    let avals_out = Core.rules.abstract_eval prim avals_in in
-    let out_tracers =
-      List.map
-        (fun a -> new_pe_tracer trace (partial_val_unknown a) None)
-        avals_out
-    in
-    let out_refs = List.map (fun t -> ref (Some t)) out_tracers in
-    let recipe =
-      EqnRecipe
-        {
-          er_prim = prim;
-          er_inputs = tracers_in;
-          er_avals_out = avals_out;
-          er_out = out_refs;
-        }
-    in
-    List.iter
-      (fun t ->
-        match t.payload with PE p -> p.recipe <- Some recipe | _ -> ())
-      out_tracers;
-    List.map (fun t -> Tracer t) out_tracers
+    match prim with
+    | Scan { length; reverse; num_carry; jaxpr } ->
+        !scan_rule trace ~length ~reverse ~num_carry jaxpr tracers
+    | _ -> record_unknown trace prim tracers
 
 let full_lower_pe v =
   match v with
@@ -253,3 +270,176 @@ let partial_eval_flat (f : value list -> value list)
       let unk_out = List.filter (fun t -> is_unknown (pe_pval t)) tracers_out in
       let jaxpr, consts = tracers_to_jaxpr unk_in unk_out in
       (jaxpr, consts, pvals_out))
+
+let mapped_leading (a : aval) =
+  { a with shape = Array.sub a.shape 1 (Array.length a.shape - 1) }
+
+let split_at l n =
+  match Util.split_list l [ n ] with
+  | [ a; b ] -> (a, b)
+  | _ -> failwith "partial_eval: scan arity"
+
+let select flags l = List.filteri (fun i _ -> List.nth flags i) l
+
+let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
+    (tracers : tracer list) : value list =
+  let carry, xs = split_at tracers num_carry in
+  let unk (t : tracer) = is_unknown (pe_pval t) in
+  let xs_unk = List.map unk xs in
+  let carry_avals = List.map (fun (t : tracer) -> t.aval) carry in
+  let x_avals = List.map (fun (t : tracer) -> mapped_leading t.aval) xs in
+  let n_ys = List.length body.jaxpr.outs - num_carry in
+  let split_known flags l = (select (List.map not flags) l, select flags l) in
+  let partial carry_unk known_args =
+    let rest = ref known_args in
+    let next aval unknown =
+      if unknown then partial_val_unknown aval
+      else
+        match !rest with
+        | v :: tl ->
+            rest := tl;
+            partial_val_known v
+        | [] -> failwith "partial_eval: scan known arity"
+    in
+    let carry_pv = List.map2 next carry_avals carry_unk in
+    let x_pv = List.map2 next x_avals xs_unk in
+    partial_eval_flat
+      (fun args -> Jaxpr.eval_closed_jaxpr body args)
+      (carry_pv @ x_pv)
+  in
+  let known_avals carry_unk =
+    fst (split_known carry_unk carry_avals) @ fst (split_known xs_unk x_avals)
+  in
+  let rec fixpoint carry_unk =
+    let observed = ref carry_unk in
+    let _ =
+      Jaxpr.make_jaxpr (known_avals carry_unk) (fun known_args ->
+          let _, _, pvals_out = partial carry_unk known_args in
+          let carry_out, _ = split_at pvals_out num_carry in
+          observed :=
+            List.map2 (fun u p -> u || is_unknown p) carry_unk carry_out;
+          [])
+    in
+    if !observed = carry_unk then carry_unk else fixpoint !observed
+  in
+  let carry_unk = fixpoint (List.map unk carry) in
+  let unknown_jaxpr = ref None in
+  let residual_avals = ref [] in
+  let known_body =
+    Jaxpr.make_jaxpr (known_avals carry_unk) (fun known_args ->
+        let jx, consts, pvals_out = partial carry_unk known_args in
+        let carry_out, ys_out = split_at pvals_out num_carry in
+        let known_value p =
+          match p.pv_const with
+          | Some c -> c
+          | None -> failwith "partial_eval: expected a known scan output"
+        in
+        let forced =
+          List.concat
+            (List.map2
+               (fun u p -> if u && is_known p then [ known_value p ] else [])
+               carry_unk carry_out)
+        in
+        let known_carry =
+          List.filteri (fun i _ -> not (List.nth carry_unk i)) carry_out
+        in
+        let known_ys = List.filter is_known ys_out in
+        let residuals = consts @ forced in
+        residual_avals := List.map Core.get_aval residuals;
+        unknown_jaxpr := Some (jx, List.length consts, carry_out, ys_out);
+        List.map known_value known_carry
+        @ List.map known_value known_ys
+        @ residuals)
+  in
+  let jx, n_consts, carry_out_pv, ys_out_pv =
+    match !unknown_jaxpr with
+    | Some r -> r
+    | None -> failwith "partial_eval: scan body was not traced"
+  in
+  let value_of (t : tracer) =
+    match (pe_pval t).pv_const with
+    | Some c -> c
+    | None -> failwith "partial_eval: expected a known scan input"
+  in
+  let known_carry, unk_carry = split_known carry_unk carry in
+  let known_xs, unk_xs = split_known xs_unk xs in
+  let n_known_carry = List.length known_carry in
+  let known_results =
+    Core.bind
+      (Scan { length; reverse; num_carry = n_known_carry; jaxpr = known_body })
+      (List.map value_of known_carry @ List.map value_of known_xs)
+  in
+  let known_carry_out, r1 = split_at known_results n_known_carry in
+  let n_known_ys = List.length (List.filter is_known ys_out_pv) in
+  let known_ys_out, residual_out = split_at r1 n_known_ys in
+  let unk_carry_avals = List.map (fun (t : tracer) -> t.aval) unk_carry in
+  let unk_x_avals =
+    List.map (fun (t : tracer) -> mapped_leading t.aval) unk_xs
+  in
+  let n_unk_carry = List.length unk_carry in
+  let n_unk_x = List.length unk_xs in
+  let unknown_body =
+    Jaxpr.make_jaxpr
+      (unk_carry_avals @ unk_x_avals @ !residual_avals)
+      (fun args ->
+        let c, r = split_at args n_unk_carry in
+        let x, res = split_at r n_unk_x in
+        let const_res, forced_res = split_at res n_consts in
+        let inner = Jaxpr.eval_jaxpr jx (const_res @ c @ x) in
+        let rest = ref inner in
+        let forced = ref forced_res in
+        let take_inner () =
+          match !rest with
+          | v :: tl ->
+              rest := tl;
+              v
+          | [] -> failwith "partial_eval: scan unknown output arity"
+        in
+        let carry_out =
+          List.concat
+            (List.map2
+               (fun u p ->
+                 if not u then []
+                 else if is_unknown p then [ take_inner () ]
+                 else
+                   match !forced with
+                   | v :: tl ->
+                       forced := tl;
+                       [ v ]
+                   | [] -> failwith "partial_eval: scan forced arity")
+               carry_unk carry_out_pv)
+        in
+        let ys =
+          List.filter_map
+            (fun p -> if is_unknown p then Some (take_inner ()) else None)
+            ys_out_pv
+        in
+        carry_out @ ys)
+  in
+  let raise_known v = as_tracer (Core.full_raise trace v) in
+  let unknown_results =
+    record_unknown trace
+      (Scan { length; reverse; num_carry = n_unk_carry; jaxpr = unknown_body })
+      (unk_carry @ unk_xs @ List.map raise_known residual_out)
+  in
+  let unk_carry_out, unk_ys_out = split_at unknown_results n_unk_carry in
+  let weave flags known unknown =
+    let k = ref known and u = ref unknown in
+    List.map
+      (fun is_unknown ->
+        let source = if is_unknown then u else k in
+        match !source with
+        | v :: tl ->
+            source := tl;
+            v
+        | [] -> failwith "partial_eval: scan output arity")
+      flags
+  in
+  let carry_results = weave carry_unk known_carry_out unk_carry_out in
+  let ys_results =
+    weave (List.map is_unknown ys_out_pv) known_ys_out unk_ys_out
+  in
+  ignore n_ys;
+  carry_results @ ys_results
+
+let () = scan_rule := scan_partial_eval

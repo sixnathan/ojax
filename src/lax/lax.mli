@@ -14,6 +14,7 @@ val cond :
 val platform_index : platforms:string array option array -> value
 
 val scan :
+  ?length:int ->
   ?reverse:bool ->
   (value list -> value list) ->
   value list ->

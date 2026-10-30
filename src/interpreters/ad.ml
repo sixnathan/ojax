@@ -1359,7 +1359,88 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | Xla_call _ ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
-  | Scan _ -> failwith "ad: scan transpose is a standing M2 limitation"
+  | Scan { length; reverse; num_carry; jaxpr } ->
+      let split_at l n =
+        match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
+      in
+      let slice (a : aval) =
+        { a with shape = Array.sub a.shape 1 (Array.length a.shape - 1) }
+      in
+      let carry_tv, xs_tv = split_at primals num_carry in
+      let ct_carry, ct_ys = split_at cts num_carry in
+      let residuals =
+        List.filter_map
+          (fun tv -> if is_undef tv then None else Some (prim_val tv))
+          xs_tv
+      in
+      let n_ct = List.length cts in
+      let const_tvals = List.map (fun c -> Prim (Concrete c)) jaxpr.consts in
+      let carry_undef =
+        List.filteri
+          (fun i _ ->
+            i >= List.length const_tvals
+            && i < List.length const_tvals + num_carry)
+          jaxpr.jaxpr.in_binders
+        |> List.map (fun (v : var) -> Undef v.vaval)
+      in
+      let x_binders =
+        List.filteri
+          (fun i _ -> i >= List.length const_tvals + num_carry)
+          jaxpr.jaxpr.in_binders
+      in
+      let transposed_body =
+        Jaxpr.make_jaxpr
+          (List.map Core.get_aval ct_carry
+          @ List.map (fun c -> slice (Core.get_aval c)) ct_ys
+          @ List.map (fun r -> slice (Core.get_aval r)) residuals)
+          (fun args ->
+            let body_cts, res = split_at args n_ct in
+            let rest = ref res in
+            let x_tvals =
+              List.map2
+                (fun tv (v : var) ->
+                  if is_undef tv then Undef v.vaval
+                  else
+                    match !rest with
+                    | r :: tl ->
+                        rest := tl;
+                        Prim r
+                    | [] -> arity ())
+                xs_tv x_binders
+            in
+            eval_jaxpr_transposed jaxpr.jaxpr
+              (const_tvals @ carry_undef @ x_tvals)
+              body_cts)
+      in
+      let outs =
+        Core.bind
+          (Scan
+             {
+               length;
+               reverse = not reverse;
+               num_carry;
+               jaxpr = transposed_body;
+             })
+          (ct_carry @ ct_ys @ residuals)
+      in
+      let carry_out, xs_out = split_at outs num_carry in
+      let remaining = ref xs_out in
+      let xs_cts =
+        List.map
+          (fun tv ->
+            if is_undef tv then
+              match !remaining with
+              | c :: tl ->
+                  remaining := tl;
+                  Some c
+              | [] -> None
+            else None)
+          xs_tv
+      in
+      List.map2
+        (fun tv c -> if is_undef tv then Some c else None)
+        carry_tv carry_out
+      @ xs_cts
   | While _ ->
       failwith
         "ad: reverse-mode differentiation does not work for lax.while_loop"

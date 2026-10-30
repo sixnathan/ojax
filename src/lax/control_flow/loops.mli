@@ -11,6 +11,7 @@ val scan_impl :
   value list
 
 val scan :
+  ?length:int ->
   ?reverse:bool ->
   (value list -> value list) ->
   value list ->

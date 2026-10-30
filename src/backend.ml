@@ -39,10 +39,8 @@ module Xla = struct
 
   let of_host nd = Pjrt.Buffer.of_host (Lazy.force client) nd
   let to_host buf = Pjrt.Buffer.to_host buf
-
-  let compile cj =
-    Pjrt.Executable.compile (Lazy.force client)
-      (Stablehlo.Emit.emit_closed_jaxpr cj)
+  let compile_text text = Pjrt.Executable.compile (Lazy.force client) text
+  let compile cj = compile_text (Stablehlo.Emit.emit_closed_jaxpr cj)
 
   let execute exec bufs =
     Array.to_list (Pjrt.Executable.execute exec (Array.of_list bufs))
@@ -90,11 +88,17 @@ let xla_run exec args resident =
 
 let executor (cj : closed_jaxpr) : value list -> value list =
   if Lazy.force use_xla then
-    let exec = lazy (Xla.compile cj) in
+    let exec =
+      lazy
+        (match Stablehlo.Emit.emit_closed_jaxpr cj with
+        | text -> Some (Xla.compile_text text)
+        | exception Failure _ -> None)
+    in
     fun args ->
-      if List.for_all is_hostable args then
-        xla_run (Lazy.force exec) args (List.exists is_device args)
-      else Jaxpr.eval_closed_jaxpr cj args
+      match Lazy.force exec with
+      | Some compiled when List.for_all is_hostable args ->
+          xla_run compiled args (List.exists is_device args)
+      | Some _ | None -> Jaxpr.eval_closed_jaxpr cj args
   else fun args -> Jaxpr.eval_closed_jaxpr cj args
 
 let of_host_value v =

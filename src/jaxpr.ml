@@ -176,21 +176,61 @@ let inline_literals (jx : jaxpr) (consts : value list) : jaxpr * Ndarray.t list
   in
   (new_jaxpr, const_nds)
 
+let same_hoisted a b =
+  match (a, b) with Tracer x, Tracer y -> x.id = y.id | _ -> a == b
+
+let dedup_hoisted (hoisted : (var * value) list) =
+  let kept = ref [] in
+  let subst : (int, var) Hashtbl.t = Hashtbl.create 8 in
+  List.iter
+    (fun ((var : var), v) ->
+      match List.find_opt (fun (_, v') -> same_hoisted v v') !kept with
+      | Some (first, _) -> Hashtbl.replace subst var.vid first
+      | None -> kept := (var, v) :: !kept)
+    hoisted;
+  (List.rev !kept, subst)
+
+let substitute_vars subst (jx : jaxpr) =
+  let on_atom = function
+    | A_var v as a -> (
+        match Hashtbl.find_opt subst v.vid with
+        | Some first -> A_var first
+        | None -> a)
+    | a -> a
+  in
+  {
+    jx with
+    eqns =
+      List.map
+        (fun (e : eqn) -> { e with inputs = List.map on_atom e.inputs })
+        jx.eqns;
+    outs = List.map on_atom jx.outs;
+  }
+
 let build builder (in_tracers : tracer list) (out_tracers : tracer list) :
-    jaxpr * Ndarray.t list =
+    jaxpr * Ndarray.t list * value list =
   let constvals = List.rev builder.jb_constvals in
-  let constvars = List.map fst constvals in
-  let in_binders = constvars @ List.map (getvar builder) in_tracers in
+  let concrete, hoisted =
+    List.partition
+      (fun (_, v) -> match v with Concrete _ -> true | _ -> false)
+      constvals
+  in
+  let hoisted, subst = dedup_hoisted hoisted in
+  let in_binders =
+    List.map fst concrete
+    @ List.map (getvar builder) in_tracers
+    @ List.map fst hoisted
+  in
   let outs = List.map (fun t -> A_var (getvar builder t)) out_tracers in
   let eqns = List.rev builder.jb_eqns in
-  let jx = { in_binders; eqns; outs } in
+  let jx = substitute_vars subst { in_binders; eqns; outs } in
   typecheck_jaxpr jx;
-  let jx, consts = inline_literals jx (List.map snd constvals) in
+  let jx, consts = inline_literals jx (List.map snd concrete) in
   typecheck_jaxpr jx;
-  (jx, consts)
+  (jx, consts, List.map snd hoisted)
 
-let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
-    closed_jaxpr =
+let make_jaxpr_hoisted (in_avals : aval list) (f : value list -> value list) :
+    closed_jaxpr * value list =
   let builder =
     {
       jb_eqns = [];
@@ -209,5 +249,11 @@ let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
           let out_tracers =
             List.map (fun v -> as_tracer (Core.full_raise main v)) outs
           in
-          let jx, consts = build builder in_tracers out_tracers in
-          { jid = Core.fresh_id (); jaxpr = jx; consts }))
+          let jx, consts, hoisted = build builder in_tracers out_tracers in
+          ({ jid = Core.fresh_id (); jaxpr = jx; consts }, hoisted)))
+
+let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
+    closed_jaxpr =
+  match make_jaxpr_hoisted in_avals f with
+  | closed, [] -> closed
+  | _ -> invalid_arg "make_jaxpr: function closed over a tracer"

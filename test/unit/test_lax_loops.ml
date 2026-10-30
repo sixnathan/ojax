@@ -96,20 +96,6 @@ let test_vmap () =
       approx "vmap ys" (read ys) [| 1.0; 3.0; 6.0; 10.0; 30.0; 60.0 |]
   | _ -> Alcotest.fail "scan vmap arity"
 
-let test_transpose_deferred () =
-  let wrapped inputs =
-    match inputs with
-    | [ i; x ] -> [ List.hd (Lax.scan cumsum [ i ] [ x ]) ]
-    | _ -> assert false
-  in
-  match
-    Ad.grad
-      (fun ops -> List.hd (wrapped ops))
-      [ sc 0.0; f32 [| 4 |] [| 1.; 2.; 3.; 4. |] ]
-  with
-  | _ -> Alcotest.fail "expected scan transpose to be deferred"
-  | exception Failure _ -> ()
-
 let wdouble_cond l =
   match l with [ v ] -> b1 T.Lt [ v; sc 8.0 ] | _ -> assert false
 
@@ -165,7 +151,6 @@ let () =
           Alcotest.test_case "eval_reverse" `Quick test_eval_reverse;
           Alcotest.test_case "jvp" `Quick test_jvp;
           Alcotest.test_case "vmap" `Quick test_vmap;
-          Alcotest.test_case "transpose_deferred" `Quick test_transpose_deferred;
         ] );
       ( "while",
         [

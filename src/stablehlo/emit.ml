@@ -61,12 +61,24 @@ let bind_var ctx (v : var) =
   Hashtbl.replace ctx.ids v.vid n;
   n
 
+let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
+let next_alias = ref (-1)
+
+let alias_result text =
+  let id = !next_alias in
+  decr next_alias;
+  Hashtbl.replace result_aliases id text;
+  id
+
+let name n =
+  if n < 0 then Hashtbl.find result_aliases n else "%" ^ string_of_int n
+
 let ssa_of_var ctx (v : var) =
   match Hashtbl.find_opt ctx.names v.vid with
   | Some s -> s
   | None -> (
       match Hashtbl.find_opt ctx.ids v.vid with
-      | Some n -> "%" ^ string_of_int n
+      | Some n -> name n
       | None -> invalid_arg "Stablehlo.Emit: unbound variable")
 
 let emit_constant_at ctx n nd =
@@ -74,8 +86,6 @@ let emit_constant_at ctx n nd =
     (Printf.sprintf "    %%%d = stablehlo.constant %s : %s\n" n
        (Ir.dense (dense_body nd))
        (Ir.tensor_type (Ndarray.dtype nd) (Ndarray.shape nd)))
-
-let name n = "%" ^ string_of_int n
 
 let capture ctx f =
   let saved = ctx.buf in
@@ -1563,30 +1573,79 @@ and map_binders ctx (jx : jaxpr) target_ids =
     (fun (v : var) tid -> Hashtbl.replace ctx.ids v.vid tid)
     jx.in_binders target_ids
 
+and bind_results ctx (outs : var list) =
+  match outs with
+  | [ out ] ->
+      let n = bind_var ctx out in
+      name n
+  | _ ->
+      let group = fresh ctx in
+      List.iteri
+        (fun i (v : var) ->
+          Hashtbl.replace ctx.ids v.vid
+            (alias_result (Printf.sprintf "%%%d#%d" group i)))
+        outs;
+      Printf.sprintf "%%%d:%d" group (List.length outs)
+
+and enter_region ctx (cj : closed_jaxpr) target_ids =
+  let n_consts = List.length cj.consts in
+  let const_binders, arg_binders =
+    match Util.split_list cj.jaxpr.in_binders [ n_consts ] with
+    | [ cb; ab ] -> (cb, ab)
+    | _ -> invalid_arg "Stablehlo.Emit: region binder split"
+  in
+  List.iter2
+    (fun (v : var) tid -> Hashtbl.replace ctx.ids v.vid tid)
+    arg_binders target_ids;
+  List.iter2
+    (fun (v : var) nd ->
+      let n = bind_var ctx v in
+      let text = capture ctx (fun () -> emit_constant_at ctx n nd) in
+      Buffer.add_string ctx.buf (reindent 2 text))
+    const_binders cj.consts
+
 and emit_cond ctx (eqn : eqn) in_ids branch_f branch_t =
-  let index_id, operand_ids =
+  let pred_id, operand_ids =
     match in_ids with
     | i :: r -> (i, r)
     | [] -> invalid_arg "Stablehlo.Emit: cond arity"
   in
-  let out = sole eqn.outs in
-  let n = bind_var ctx out in
+  let pred_aval = atom_aval (List.hd eqn.inputs) in
+  let index_id =
+    match pred_aval.dtype with
+    | Dtype.Bool ->
+        let c = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    %s = stablehlo.convert %s : (%s) -> %s\n"
+             (name c) (name pred_id)
+             (Ir.tensor_type_of_aval pred_aval)
+             (Ir.tensor_type Dtype.I32 [||]));
+        c
+    | _ -> pred_id
+  in
+  let result = bind_results ctx eqn.outs in
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" (name n)
+    (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" result
        (name index_id));
   let start = ctx.next in
   let emit_branch (cj : closed_jaxpr) =
     ctx.next <- start;
-    map_binders ctx cj.jaxpr operand_ids;
+    enter_region ctx cj operand_ids;
     emit_region_returning ctx cj.jaxpr
   in
   emit_branch branch_f;
   Buffer.add_string ctx.buf "    }, {\n";
   emit_branch branch_t;
+  let out_types =
+    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+  in
+  let out_type =
+    match out_types with [ t ] -> t | ts -> "(" ^ String.concat ", " ts ^ ")"
+  in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    }) : (%s) -> %s\n"
-       (Ir.tensor_type_of_aval (atom_aval (List.hd eqn.inputs)))
-       (Ir.tensor_type_of_aval out.vaval))
+       (Ir.tensor_type Dtype.I32 [||])
+       out_type)
 
 and emit_reduce_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr) dims =
   let op_id, init_id = pair in_ids in
@@ -1648,8 +1707,7 @@ and emit_reduce_window_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr)
 
 and emit_while ctx (eqn : eqn) in_ids (cond : closed_jaxpr)
     (body : closed_jaxpr) =
-  let out = sole eqn.outs in
-  let n = bind_var ctx out in
+  let result = bind_results ctx eqn.outs in
   let carry_ids = List.map (fun _ -> fresh ctx) in_ids in
   let carry_tys =
     List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
@@ -1660,18 +1718,93 @@ and emit_while ctx (eqn : eqn) in_ids (cond : closed_jaxpr)
       carry_ids in_ids
   in
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    %s = stablehlo.while(%s) : %s\n" (name n)
+    (Printf.sprintf "    %s = stablehlo.while(%s) : %s\n" result
        (String.concat ", " header_pairs)
        (String.concat ", " carry_tys));
   let start = ctx.next in
-  map_binders ctx cond.jaxpr carry_ids;
-  Buffer.add_string ctx.buf "    cond {\n";
-  emit_region_returning ctx cond.jaxpr;
+  enter_region_later ctx cond carry_ids "    cond {\n";
   Buffer.add_string ctx.buf "    } do {\n";
   ctx.next <- start;
-  map_binders ctx body.jaxpr carry_ids;
+  enter_region ctx body carry_ids;
   emit_region_returning ctx body.jaxpr;
   Buffer.add_string ctx.buf "    }\n"
+
+and enter_region_later ctx cj target_ids header =
+  Buffer.add_string ctx.buf header;
+  enter_region ctx cj target_ids;
+  emit_region_returning ctx cj.jaxpr
+
+and scan_as_while ~length ~reverse ~num_carry (body : closed_jaxpr) args =
+  let b1 = Core.bind1 in
+  let split_at l n =
+    match Util.split_list l [ n ] with
+    | [ a; b ] -> (a, b)
+    | _ -> invalid_arg "Stablehlo.Emit: scan arity"
+  in
+  let index_scalar i =
+    Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
+  in
+  let carry, xs = split_at args num_carry in
+  let body_outs = List.map atom_aval body.jaxpr.outs in
+  let _, y_avals = split_at body_outs num_carry in
+  let zero_stack (a : aval) =
+    let zero = Concrete (Ndarray.of_floats a.dtype [||] [| 0.0 |]) in
+    b1
+      (Broadcast_in_dim
+         { shape = Array.append [| length |] a.shape; dims = [||] })
+      [ zero ]
+  in
+  let ys0 = List.map zero_stack y_avals in
+  let state0 = (index_scalar 0 :: carry) @ ys0 @ xs in
+  let avals = List.map Core.get_aval state0 in
+  let n_ys = List.length ys0 in
+  let unpack state =
+    match state with
+    | i :: rest ->
+        let c, r = split_at rest num_carry in
+        let ys, x = split_at r n_ys in
+        (i, c, ys, x)
+    | [] -> invalid_arg "Stablehlo.Emit: scan state"
+  in
+  let cond =
+    Jaxpr.make_jaxpr avals (fun state ->
+        [ b1 Lt [ List.hd state; index_scalar length ] ])
+  in
+  let step =
+    Jaxpr.make_jaxpr avals (fun state ->
+        let i, c, ys, x = unpack state in
+        let position =
+          if reverse then b1 Sub [ index_scalar (length - 1); i ] else i
+        in
+        let starts rank =
+          position :: List.init (rank - 1) (fun _ -> index_scalar 0)
+        in
+        let slice_of v =
+          let a = Core.get_aval v in
+          let rank = Array.length a.shape in
+          let sizes = Array.mapi (fun d s -> if d = 0 then 1 else s) a.shape in
+          let sliced =
+            b1 (Dynamic_slice { slice_sizes = sizes }) (v :: starts rank)
+          in
+          b1 (Squeeze [| 0 |]) [ sliced ]
+        in
+        let outs = Jaxpr.eval_closed_jaxpr body (c @ List.map slice_of x) in
+        let c', y = split_at outs num_carry in
+        let update stack v =
+          let a = Core.get_aval stack in
+          let rank = Array.length a.shape in
+          let piece =
+            b1
+              (Reshape (Array.mapi (fun d s -> if d = 0 then 1 else s) a.shape))
+              [ v ]
+          in
+          b1 Dynamic_update_slice (stack :: piece :: starts rank)
+        in
+        (b1 Add [ i; index_scalar 1 ] :: c') @ List.map2 update ys y @ x)
+  in
+  let final = Core.bind (While { cond; body = step }) state0 in
+  let _, c, ys, _ = unpack final in
+  c @ ys
 
 and emit_inlined ctx (eqn : eqn) in_ids f =
   let traced = Jaxpr.make_jaxpr (List.map atom_aval eqn.inputs) f in
@@ -1969,12 +2102,9 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   | Reduce_window { reducer; window } ->
       emit_reduce_window_general ctx eqn in_ids reducer window
   | While { cond; body } -> emit_while ctx eqn in_ids cond body
-  | Scan _ ->
-      failwith
-        "Stablehlo.Emit: Scan lowers to a counted stablehlo.while over sliced \
-         xs plus three private helper functions (@dynamic_index_in_dim, \
-         @closed_call, @dynamic_update_index_in_dim); non-single-op \
-         decomposition, end-to-end deferred to the PJRT execution rows"
+  | Scan { length; reverse; num_carry; jaxpr } ->
+      emit_inlined ctx eqn in_ids
+        (scan_as_while ~length ~reverse ~num_carry jaxpr)
   | Select_and_scatter _ ->
       failwith
         "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \

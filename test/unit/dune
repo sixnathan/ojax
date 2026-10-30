@@ -26,6 +26,7 @@
   test_lax_special
   test_lax_conditionals
   test_lax_loops
+  test_scan_grad
   test_lax_cumulatives
   test_lax_solves
   test_jaxpr

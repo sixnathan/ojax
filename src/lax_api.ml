@@ -321,8 +321,12 @@ let reduce_window x init computation ~window_dimensions ~window_strides
       window_dilation = Option.value window_dilation ~default:ones;
     }
   in
-  let reducer = reducer_jaxpr (dtype_of x) computation in
-  b1 (Reduce_window { reducer; window }) [ x; init ]
+  if computation == add then b1 (Reduce_window_sum window) [ x ]
+  else if computation == max then b1 (Reduce_window_max window) [ x ]
+  else if computation == min then b1 (Reduce_window_min window) [ x ]
+  else
+    let reducer = reducer_jaxpr (dtype_of x) computation in
+    b1 (Reduce_window { reducer; window }) [ x; init ]
 
 let argmax x ~axis ~index_dtype = b1 (Argmax { axis; index_dtype }) [ x ]
 let argmin x ~axis ~index_dtype = b1 (Argmin { axis; index_dtype }) [ x ]

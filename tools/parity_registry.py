@@ -160,6 +160,26 @@ def _scipy_ops():
     }
 
 
+def _opt_run(name, a, b, p):
+    from jax.example_libraries import optimizers as opt
+    make = {
+        "sgd": lambda: opt.sgd(0.1),
+        "momentum": lambda: opt.momentum(0.1, 0.9),
+        "nesterov": lambda: opt.nesterov(0.1, 0.9),
+        "adagrad": lambda: opt.adagrad(0.1),
+        "rmsprop": lambda: opt.rmsprop(0.1),
+        "rmsprop_momentum": lambda: opt.rmsprop_momentum(0.1),
+        "adam": lambda: opt.adam(0.1),
+        "adamax": lambda: opt.adamax(0.1),
+        "sm3": lambda: opt.sm3(0.1),
+    }[name]
+    init, update, get = make()
+    state = init(a)
+    for i in range(3):
+        state = update(i, b, state)
+    return get(state)
+
+
 def _binarize(a):
     return a > 0
 
@@ -194,6 +214,8 @@ OPS.update(_fft_ops())
 OPS.update(_lax_ops())
 OPS.update(_numpy_ops())
 OPS.update(_scipy_ops())
+for _name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
+    OPS["opt_" + _name] = (lambda n: lambda a, b, p: _opt_run(n, a, b, p))(_name)
 
 
 def _complex_input(shape):
@@ -445,5 +467,13 @@ def _scipy_cases():
     return out
 
 
+def _optimizer_cases():
+    out = []
+    for name in ["sgd", "momentum", "nesterov", "adagrad", "rmsprop", "rmsprop_momentum", "adam", "adamax", "sm3"]:
+        out.append(("opt_" + name, _two("real", [3], "positive", [3]), {}))
+        out.append(("opt_" + name, _two("real", [2, 2], "positive", [2, 2]), {}))
+    return out
+
+
 def all_cases():
-    return _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases()
+    return _fft_cases() + _lax_cases() + _numpy_cases() + _scipy_cases() + _optimizer_cases()

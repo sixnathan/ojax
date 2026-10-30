@@ -528,36 +528,70 @@ let scipy_run op p a b c =
         [ NN.dot_product_attention ~query:(a ()) ~key:(b ()) ~value:(c ()) () ]
   | _ -> None
 
+module OP = Ojax.Example_libraries.Optimizers
+
+let optimizer_of name =
+  let lr = OP.constant 0.1 in
+  match name with
+  | "opt_sgd" -> Some (OP.sgd lr)
+  | "opt_momentum" -> Some (OP.momentum lr ~mass:0.9)
+  | "opt_nesterov" -> Some (OP.nesterov lr ~mass:0.9)
+  | "opt_adagrad" -> Some (OP.adagrad lr)
+  | "opt_rmsprop" -> Some (OP.rmsprop lr)
+  | "opt_rmsprop_momentum" -> Some (OP.rmsprop_momentum lr)
+  | "opt_adam" -> Some (OP.adam lr)
+  | "opt_adamax" -> Some (OP.adamax lr)
+  | "opt_sm3" -> Some (OP.sm3 lr)
+  | _ -> None
+
+let optimizer_run op a b =
+  match optimizer_of op with
+  | None -> None
+  | Some o ->
+      let module Tr = Ojax.Tree_util in
+      let grads = Tr.Leaf (b ()) in
+      let state = ref (o.OP.init (Tr.Leaf (a ()))) in
+      for i = 0 to 2 do
+        state := o.OP.update i grads !state
+      done;
+      Some (Tr.tree_leaves (o.OP.get_params !state))
+
 let run op params get =
   let a () = get "a" in
   let b () = get "b" in
   let c () = get "c" in
-  match scipy_run op params a b c with
+  match optimizer_run op a b with
   | Some out -> out
   | None -> (
-      match numpy_run op params a b c with
+      match scipy_run op params a b c with
       | Some out -> out
       | None -> (
-          match lax_run op params a b with
+          match numpy_run op params a b c with
           | Some out -> out
           | None -> (
-              match op with
-              | "fft" -> fft1 F.fft (a ()) params
-              | "ifft" -> fft1 F.ifft (a ()) params
-              | "rfft" -> fft1 F.rfft (a ()) params
-              | "irfft" -> fft1 F.irfft (a ()) params
-              | "hfft" -> fft1 F.hfft (a ()) params
-              | "ihfft" -> fft1 F.ihfft (a ()) params
-              | "fftn" -> fftnd F.fftn (a ()) params
-              | "ifftn" -> fftnd F.ifftn (a ()) params
-              | "rfftn" -> fftnd F.rfftn (a ()) params
-              | "irfftn" -> fftnd F.irfftn (a ()) params
-              | "fft2" -> [ F.fft2 ?norm:(opt_string "norm" params) (a ()) ]
-              | "ifft2" -> [ F.ifft2 ?norm:(opt_string "norm" params) (a ()) ]
-              | "rfft2" -> [ F.rfft2 ?norm:(opt_string "norm" params) (a ()) ]
-              | "irfft2" -> [ F.irfft2 ?norm:(opt_string "norm" params) (a ()) ]
-              | "fftshift" ->
-                  [ F.fftshift ?axes:(opt_ints "axes" params) (a ()) ]
-              | "ifftshift" ->
-                  [ F.ifftshift ?axes:(opt_ints "axes" params) (a ()) ]
-              | other -> failwith ("parity: unknown op " ^ other))))
+              match lax_run op params a b with
+              | Some out -> out
+              | None -> (
+                  match op with
+                  | "fft" -> fft1 F.fft (a ()) params
+                  | "ifft" -> fft1 F.ifft (a ()) params
+                  | "rfft" -> fft1 F.rfft (a ()) params
+                  | "irfft" -> fft1 F.irfft (a ()) params
+                  | "hfft" -> fft1 F.hfft (a ()) params
+                  | "ihfft" -> fft1 F.ihfft (a ()) params
+                  | "fftn" -> fftnd F.fftn (a ()) params
+                  | "ifftn" -> fftnd F.ifftn (a ()) params
+                  | "rfftn" -> fftnd F.rfftn (a ()) params
+                  | "irfftn" -> fftnd F.irfftn (a ()) params
+                  | "fft2" -> [ F.fft2 ?norm:(opt_string "norm" params) (a ()) ]
+                  | "ifft2" ->
+                      [ F.ifft2 ?norm:(opt_string "norm" params) (a ()) ]
+                  | "rfft2" ->
+                      [ F.rfft2 ?norm:(opt_string "norm" params) (a ()) ]
+                  | "irfft2" ->
+                      [ F.irfft2 ?norm:(opt_string "norm" params) (a ()) ]
+                  | "fftshift" ->
+                      [ F.fftshift ?axes:(opt_ints "axes" params) (a ()) ]
+                  | "ifftshift" ->
+                      [ F.ifftshift ?axes:(opt_ints "axes" params) (a ()) ]
+                  | other -> failwith ("parity: unknown op " ^ other)))))

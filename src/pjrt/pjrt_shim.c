@@ -1,5 +1,8 @@
 #include <dlfcn.h>
+#include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
 
@@ -222,18 +225,29 @@ static struct custom_operations ojax_pjrt_client_ops = {
 struct ojax_pjrt_buffer {
   const PJRT_Api *api;
   PJRT_Buffer *buffer;
+  atomic_int *shares;
 };
 
 #define Ojax_buffer_val(v) ((struct ojax_pjrt_buffer *)Data_custom_val(v))
 
+static PJRT_Error *ojax_pjrt_buffer_release(const PJRT_Api *api,
+                                            PJRT_Buffer *buffer,
+                                            atomic_int *shares) {
+  if (shares != NULL) {
+    if (atomic_fetch_sub(shares, 1) > 1) return NULL;
+    free(shares);
+  }
+  PJRT_Buffer_Destroy_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_Buffer_Destroy_Args_STRUCT_SIZE;
+  a.buffer = buffer;
+  return api->PJRT_Buffer_Destroy(&a);
+}
+
 static void ojax_pjrt_buffer_finalize(value v_buffer) {
   struct ojax_pjrt_buffer *b = Ojax_buffer_val(v_buffer);
   if (b->buffer != NULL) {
-    PJRT_Buffer_Destroy_Args a;
-    memset(&a, 0, sizeof a);
-    a.struct_size = PJRT_Buffer_Destroy_Args_STRUCT_SIZE;
-    a.buffer = b->buffer;
-    PJRT_Error *err = b->api->PJRT_Buffer_Destroy(&a);
+    PJRT_Error *err = ojax_pjrt_buffer_release(b->api, b->buffer, b->shares);
     if (err != NULL) {
       PJRT_Error_Destroy_Args da;
       memset(&da, 0, sizeof da);
@@ -404,6 +418,7 @@ CAMLprim value ojax_pjrt_buffer_from_host(value v_client, value v_data,
   struct ojax_pjrt_buffer *b = Ojax_buffer_val(v_buffer);
   b->api = api;
   b->buffer = a.buffer;
+  b->shares = NULL;
   CAMLreturn(v_buffer);
 }
 
@@ -471,13 +486,11 @@ CAMLprim value ojax_pjrt_buffer_destroy(value v_buffer) {
   if (b->buffer != NULL) {
     const PJRT_Api *api = b->api;
     PJRT_Buffer *buffer = b->buffer;
+    atomic_int *shares = b->shares;
     b->buffer = NULL;
-    PJRT_Buffer_Destroy_Args a;
-    memset(&a, 0, sizeof a);
-    a.struct_size = PJRT_Buffer_Destroy_Args_STRUCT_SIZE;
-    a.buffer = buffer;
+    b->shares = NULL;
     caml_release_runtime_system();
-    PJRT_Error *err = api->PJRT_Buffer_Destroy(&a);
+    PJRT_Error *err = ojax_pjrt_buffer_release(api, buffer, shares);
     caml_acquire_runtime_system();
     ojax_pjrt_check(api, err);
   }
@@ -726,8 +739,529 @@ CAMLprim value ojax_pjrt_execute(value v_exec, value v_args) {
     struct ojax_pjrt_buffer *ob = Ojax_buffer_val(v_buf);
     ob->api = api;
     ob->buffer = outputs[i];
+    ob->shares = NULL;
     Store_field(v_out, i, v_buf);
   }
   caml_stat_free(outputs);
   CAMLreturn(v_out);
+}
+
+CAMLprim value ojax_ffi_dlopen(value v_path) {
+  CAMLparam1(v_path);
+  void *handle = dlopen(String_val(v_path), RTLD_NOW | RTLD_LOCAL);
+  if (handle == NULL) {
+    char errbuf[512];
+    const char *e = dlerror();
+    snprintf(errbuf, sizeof errbuf, "dlopen failed: %s", e ? e : "unknown");
+    ojax_pjrt_raise(errbuf);
+  }
+  CAMLreturn(caml_copy_nativeint((intnat)handle));
+}
+
+CAMLprim value ojax_ffi_dlsym(value v_handle, value v_name) {
+  CAMLparam2(v_handle, v_name);
+  dlerror();
+  void *sym = dlsym((void *)Nativeint_val(v_handle), String_val(v_name));
+  if (sym == NULL) {
+    char errbuf[512];
+    const char *e = dlerror();
+    snprintf(errbuf, sizeof errbuf, "dlsym %s failed: %s", String_val(v_name),
+             e ? e : "symbol is NULL");
+    ojax_pjrt_raise(errbuf);
+  }
+  CAMLreturn(caml_copy_nativeint((intnat)sym));
+}
+
+typedef struct {
+  size_t struct_size;
+  PJRT_Extension_Base *extension_start;
+  const char *type_name;
+  size_t type_name_size;
+  int64_t type_id;
+  const void *const *type_info;
+} ojax_pjrt_ffi_type_args;
+
+typedef struct {
+  size_t struct_size;
+  const char *target_name;
+  size_t target_name_size;
+  void *handler;
+  const char *platform_name;
+  size_t platform_name_size;
+  int traits;
+} ojax_pjrt_ffi_handler_args;
+
+typedef struct {
+  PJRT_Extension_Base base;
+  PJRT_Error *(*type_register)(ojax_pjrt_ffi_type_args *);
+  PJRT_Error *(*user_data_add)(void *);
+  PJRT_Error *(*register_handler)(ojax_pjrt_ffi_handler_args *);
+} ojax_pjrt_ffi_extension;
+
+_Static_assert(offsetof(ojax_pjrt_ffi_type_args, type_info) + sizeof(void *) ==
+                   48,
+               "PJRT_FFI_Type_Register_Args size drift");
+_Static_assert(offsetof(ojax_pjrt_ffi_handler_args, traits) + sizeof(int) == 52,
+               "PJRT_FFI_Register_Handler_Args size drift");
+
+static const ojax_pjrt_ffi_extension *ojax_pjrt_find_ffi(const PJRT_Api *api) {
+  for (PJRT_Extension_Base *e = api->extension_start; e != NULL; e = e->next)
+    if (e->type == PJRT_Extension_Type_FFI)
+      return (const ojax_pjrt_ffi_extension *)e;
+  ojax_pjrt_raise("PJRT plugin does not provide the FFI extension");
+  return NULL;
+}
+
+CAMLprim value ojax_pjrt_ffi_register_handler(value v_plugin, value v_name,
+                                              value v_platform,
+                                              value v_handler) {
+  CAMLparam4(v_plugin, v_name, v_platform, v_handler);
+  struct ojax_pjrt_plugin *p = Ojax_plugin_val(v_plugin);
+  if (p->api == NULL) ojax_pjrt_raise("register_handler on closed plugin");
+  const ojax_pjrt_ffi_extension *ext = ojax_pjrt_find_ffi(p->api);
+  ojax_pjrt_ffi_handler_args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = 52;
+  a.target_name = String_val(v_name);
+  a.target_name_size = caml_string_length(v_name);
+  a.handler = (void *)Nativeint_val(v_handler);
+  a.platform_name = String_val(v_platform);
+  a.platform_name_size = caml_string_length(v_platform);
+  ojax_pjrt_check(p->api, ext->register_handler(&a));
+  CAMLreturn(Val_unit);
+}
+
+typedef struct {
+  size_t struct_size;
+  void *extension_start;
+  void (*deleter)(void *);
+} ojax_xla_ffi_type_info;
+
+CAMLprim value ojax_pjrt_ffi_register_type(value v_plugin, value v_name,
+                                           value v_type_id, value v_type_info) {
+  CAMLparam4(v_plugin, v_name, v_type_id, v_type_info);
+  struct ojax_pjrt_plugin *p = Ojax_plugin_val(v_plugin);
+  if (p->api == NULL) ojax_pjrt_raise("register_type on closed plugin");
+  const ojax_pjrt_ffi_extension *ext = ojax_pjrt_find_ffi(p->api);
+  int64_t *type_id = (int64_t *)Nativeint_val(v_type_id);
+  const ojax_xla_ffi_type_info *info =
+      (const ojax_xla_ffi_type_info *)Nativeint_val(v_type_info);
+  const void *pjrt_info[3] = {info != NULL ? (const void *)info->deleter : NULL,
+                              NULL, NULL};
+  ojax_pjrt_ffi_type_args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = sizeof a;
+  a.type_name = String_val(v_name);
+  a.type_name_size = caml_string_length(v_name);
+  a.type_id = *type_id;
+  a.type_info = pjrt_info;
+  ojax_pjrt_check(p->api, ext->type_register(&a));
+  *type_id = a.type_id;
+  CAMLreturn(Val_unit);
+}
+
+typedef struct {
+  int32_t device_type;
+  int32_t device_id;
+} ojax_dl_device;
+
+typedef struct {
+  uint8_t code;
+  uint8_t bits;
+  uint16_t lanes;
+} ojax_dl_data_type;
+
+typedef struct {
+  void *data;
+  ojax_dl_device device;
+  int32_t ndim;
+  ojax_dl_data_type dtype;
+  int64_t *shape;
+  int64_t *strides;
+  uint64_t byte_offset;
+} ojax_dl_tensor;
+
+typedef struct ojax_dl_managed_tensor {
+  ojax_dl_tensor dl_tensor;
+  void *manager_ctx;
+  void (*deleter)(struct ojax_dl_managed_tensor *);
+} ojax_dl_managed_tensor;
+
+struct ojax_dlpack_holder {
+  ojax_dl_managed_tensor tensor;
+  const PJRT_Api *api;
+  PJRT_Buffer *buffer;
+  atomic_int *shares;
+  int64_t dims[];
+};
+
+static void ojax_dlpack_holder_delete(ojax_dl_managed_tensor *t) {
+  struct ojax_dlpack_holder *h = (struct ojax_dlpack_holder *)t->manager_ctx;
+  PJRT_Buffer_DecreaseExternalReferenceCount_Args d;
+  memset(&d, 0, sizeof d);
+  d.struct_size = PJRT_Buffer_DecreaseExternalReferenceCount_Args_STRUCT_SIZE;
+  d.buffer = h->buffer;
+  PJRT_Error *err = h->api->PJRT_Buffer_DecreaseExternalReferenceCount(&d);
+  PJRT_Error *rerr = ojax_pjrt_buffer_release(h->api, h->buffer, h->shares);
+  PJRT_Error *errs[2] = {err, rerr};
+  for (int i = 0; i < 2; i++) {
+    if (errs[i] != NULL) {
+      PJRT_Error_Destroy_Args da;
+      memset(&da, 0, sizeof da);
+      da.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+      da.error = errs[i];
+      h->api->PJRT_Error_Destroy(&da);
+    }
+  }
+  free(h);
+}
+
+static int ojax_dlpack_of_buffer_type(PJRT_Buffer_Type t, uint8_t *code,
+                                      uint8_t *bits) {
+  switch (t) {
+    case PJRT_Buffer_Type_PRED: *code = 6; *bits = 8; return 1;
+    case PJRT_Buffer_Type_S8: *code = 0; *bits = 8; return 1;
+    case PJRT_Buffer_Type_S16: *code = 0; *bits = 16; return 1;
+    case PJRT_Buffer_Type_S32: *code = 0; *bits = 32; return 1;
+    case PJRT_Buffer_Type_S64: *code = 0; *bits = 64; return 1;
+    case PJRT_Buffer_Type_U8: *code = 1; *bits = 8; return 1;
+    case PJRT_Buffer_Type_U16: *code = 1; *bits = 16; return 1;
+    case PJRT_Buffer_Type_U32: *code = 1; *bits = 32; return 1;
+    case PJRT_Buffer_Type_U64: *code = 1; *bits = 64; return 1;
+    case PJRT_Buffer_Type_F16: *code = 2; *bits = 16; return 1;
+    case PJRT_Buffer_Type_F32: *code = 2; *bits = 32; return 1;
+    case PJRT_Buffer_Type_F64: *code = 2; *bits = 64; return 1;
+    case PJRT_Buffer_Type_BF16: *code = 4; *bits = 16; return 1;
+    case PJRT_Buffer_Type_C64: *code = 5; *bits = 64; return 1;
+    case PJRT_Buffer_Type_C128: *code = 5; *bits = 128; return 1;
+    default: return 0;
+  }
+}
+
+CAMLprim value ojax_pjrt_buffer_unsafe_pointer(value v_buffer) {
+  CAMLparam1(v_buffer);
+  struct ojax_pjrt_buffer *b = Ojax_buffer_val(v_buffer);
+  if (b->buffer == NULL) ojax_pjrt_raise("unsafe_pointer on destroyed buffer");
+  PJRT_Buffer_UnsafePointer_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_Buffer_UnsafePointer_Args_STRUCT_SIZE;
+  a.buffer = b->buffer;
+  ojax_pjrt_check(b->api, b->api->PJRT_Buffer_UnsafePointer(&a));
+  CAMLreturn(caml_copy_nativeint((intnat)a.buffer_pointer));
+}
+
+CAMLprim value ojax_pjrt_buffer_to_dlpack(value v_buffer) {
+  CAMLparam1(v_buffer);
+  struct ojax_pjrt_buffer *b = Ojax_buffer_val(v_buffer);
+  if (b->buffer == NULL) ojax_pjrt_raise("to_dlpack on destroyed buffer");
+  const PJRT_Api *api = b->api;
+
+  PJRT_Buffer_ReadyEvent_Args ra;
+  memset(&ra, 0, sizeof ra);
+  ra.struct_size = PJRT_Buffer_ReadyEvent_Args_STRUCT_SIZE;
+  ra.buffer = b->buffer;
+  ojax_pjrt_check(api, api->PJRT_Buffer_ReadyEvent(&ra));
+  caml_release_runtime_system();
+  PJRT_Error *awaited = ojax_pjrt_await(api, ra.event);
+  caml_acquire_runtime_system();
+  ojax_pjrt_check(api, awaited);
+
+  PJRT_Buffer_ElementType_Args ta;
+  memset(&ta, 0, sizeof ta);
+  ta.struct_size = PJRT_Buffer_ElementType_Args_STRUCT_SIZE;
+  ta.buffer = b->buffer;
+  ojax_pjrt_check(api, api->PJRT_Buffer_ElementType(&ta));
+  uint8_t code = 0, bits = 0;
+  if (!ojax_dlpack_of_buffer_type(ta.type, &code, &bits))
+    ojax_pjrt_raise("to_dlpack: unsupported element type");
+
+  PJRT_Buffer_Dimensions_Args da;
+  memset(&da, 0, sizeof da);
+  da.struct_size = PJRT_Buffer_Dimensions_Args_STRUCT_SIZE;
+  da.buffer = b->buffer;
+  ojax_pjrt_check(api, api->PJRT_Buffer_Dimensions(&da));
+
+  PJRT_Buffer_UnsafePointer_Args pa;
+  memset(&pa, 0, sizeof pa);
+  pa.struct_size = PJRT_Buffer_UnsafePointer_Args_STRUCT_SIZE;
+  pa.buffer = b->buffer;
+  ojax_pjrt_check(api, api->PJRT_Buffer_UnsafePointer(&pa));
+
+  PJRT_Buffer_IncreaseExternalReferenceCount_Args ia;
+  memset(&ia, 0, sizeof ia);
+  ia.struct_size = PJRT_Buffer_IncreaseExternalReferenceCount_Args_STRUCT_SIZE;
+  ia.buffer = b->buffer;
+  ojax_pjrt_check(api, api->PJRT_Buffer_IncreaseExternalReferenceCount(&ia));
+
+  size_t nd = da.num_dims;
+  struct ojax_dlpack_holder *h =
+      malloc(sizeof *h + (2 * nd + 1) * sizeof(int64_t));
+  if (h == NULL) ojax_pjrt_raise("to_dlpack: out of memory");
+  if (b->shares == NULL) {
+    b->shares = malloc(sizeof(atomic_int));
+    if (b->shares == NULL) ojax_pjrt_raise("to_dlpack: out of memory");
+    atomic_init(b->shares, 1);
+  }
+  atomic_fetch_add(b->shares, 1);
+  h->api = api;
+  h->buffer = b->buffer;
+  h->shares = b->shares;
+  int64_t stride = 1;
+  for (size_t i = nd; i > 0; i--) {
+    h->dims[i - 1] = da.dims[i - 1];
+    h->dims[nd + i - 1] = stride;
+    stride *= da.dims[i - 1];
+  }
+  memset(&h->tensor, 0, sizeof h->tensor);
+  h->tensor.dl_tensor.data = (void *)pa.buffer_pointer;
+  h->tensor.dl_tensor.device.device_type = 1;
+  h->tensor.dl_tensor.device.device_id = 0;
+  h->tensor.dl_tensor.ndim = (int32_t)nd;
+  h->tensor.dl_tensor.dtype.code = code;
+  h->tensor.dl_tensor.dtype.bits = bits;
+  h->tensor.dl_tensor.dtype.lanes = 1;
+  h->tensor.dl_tensor.shape = h->dims;
+  h->tensor.dl_tensor.strides = nd > 0 ? h->dims + nd : NULL;
+  h->tensor.dl_tensor.byte_offset = 0;
+  h->tensor.manager_ctx = h;
+  h->tensor.deleter = ojax_dlpack_holder_delete;
+  CAMLreturn(caml_copy_nativeint((intnat)&h->tensor));
+}
+
+CAMLprim value ojax_pjrt_dlpack_delete(value v_ptr) {
+  CAMLparam1(v_ptr);
+  ojax_dl_managed_tensor *t = (ojax_dl_managed_tensor *)Nativeint_val(v_ptr);
+  if (t != NULL && t->deleter != NULL) t->deleter(t);
+  CAMLreturn(Val_unit);
+}
+
+static int ojax_dlpack_to_buffer_type(ojax_dl_data_type d, PJRT_Buffer_Type *out,
+                                      char *errbuf, size_t n) {
+  if (d.lanes != 1) {
+    snprintf(errbuf, n,
+             "UNIMPLEMENTED: DLPack types with lanes != 1 not implemented, got "
+             "%d",
+             d.lanes);
+    return 0;
+  }
+  const char *kind = NULL;
+  switch (d.code) {
+    case 6:
+      if (d.bits == 8) {
+        *out = PJRT_Buffer_Type_PRED;
+        return 1;
+      }
+      snprintf(errbuf, n,
+               "UNIMPLEMENTED: Only 8-bit DLPack booleans are supported, got "
+               "%d bits",
+               d.bits);
+      return 0;
+    case 0:
+      kind = "integer";
+      if (d.bits == 8) *out = PJRT_Buffer_Type_S8;
+      else if (d.bits == 16) *out = PJRT_Buffer_Type_S16;
+      else if (d.bits == 32) *out = PJRT_Buffer_Type_S32;
+      else if (d.bits == 64) *out = PJRT_Buffer_Type_S64;
+      else break;
+      return 1;
+    case 1:
+      kind = "unsigned integer";
+      if (d.bits == 8) *out = PJRT_Buffer_Type_U8;
+      else if (d.bits == 16) *out = PJRT_Buffer_Type_U16;
+      else if (d.bits == 32) *out = PJRT_Buffer_Type_U32;
+      else if (d.bits == 64) *out = PJRT_Buffer_Type_U64;
+      else break;
+      return 1;
+    case 2:
+      kind = "float";
+      if (d.bits == 16) *out = PJRT_Buffer_Type_F16;
+      else if (d.bits == 32) *out = PJRT_Buffer_Type_F32;
+      else if (d.bits == 64) *out = PJRT_Buffer_Type_F64;
+      else break;
+      return 1;
+    case 4:
+      kind = "bfloat";
+      if (d.bits == 16) *out = PJRT_Buffer_Type_BF16;
+      else break;
+      return 1;
+    case 5:
+      kind = "complex";
+      if (d.bits == 64) *out = PJRT_Buffer_Type_C64;
+      else if (d.bits == 128) *out = PJRT_Buffer_Type_C128;
+      else break;
+      return 1;
+    default:
+      snprintf(errbuf, n, "UNIMPLEMENTED: Unknown or invalid DLPack type code %d",
+               d.code);
+      return 0;
+  }
+  snprintf(errbuf, n,
+           "UNIMPLEMENTED: Invalid or unsupported DLPack %s width: %d bits",
+           kind, d.bits);
+  return 0;
+}
+
+static void ojax_dlpack_view_deleted(void *ptr, void *arg) {
+  (void)ptr;
+  ojax_dl_managed_tensor *t = (ojax_dl_managed_tensor *)arg;
+  if (t->deleter != NULL) t->deleter(t);
+}
+
+static int ojax_dlpack_layout(const ojax_dl_tensor *t, int *dense_row_major,
+                              int64_t *byte_strides, int elt_bytes,
+                              char *errbuf, size_t n) {
+  int nd = t->ndim;
+  *dense_row_major = 1;
+  if (t->strides == NULL) {
+    int64_t s = elt_bytes;
+    for (int i = nd - 1; i >= 0; i--) {
+      byte_strides[i] = s;
+      s *= t->shape[i];
+    }
+    return 1;
+  }
+  int empty = 0;
+  for (int i = 0; i < nd; i++) {
+    if (t->shape[i] == 0) empty = 1;
+    byte_strides[i] = t->strides[i] * elt_bytes;
+  }
+  if (empty) return 1;
+  int order[nd > 0 ? nd : 1];
+  for (int i = 0; i < nd; i++) order[i] = i;
+  for (int i = 1; i < nd; i++) {
+    int x = order[i];
+    int j = i;
+    while (j > 0) {
+      int y = order[j - 1];
+      int before = t->strides[x] < t->strides[y] ||
+                   (t->strides[x] == t->strides[y] && y < x);
+      if (!before) break;
+      order[j] = y;
+      j--;
+    }
+    order[j] = x;
+  }
+  int64_t stride = 1;
+  int compact = 1;
+  for (int i = 0; i < nd; i++) {
+    int d = order[i];
+    if (t->shape[d] > 1 && t->strides[d] != stride) compact = 0;
+    stride *= t->shape[d];
+  }
+  if (!compact) {
+    int off = snprintf(errbuf, n,
+                       "UNIMPLEMENTED: Only DLPack tensors with trivial "
+                       "(compact) striding are supported; i.e., tensors whose "
+                       "striding represents a transposition of the underlying "
+                       "buffer but not broadcasting. Dimensions were: [");
+    for (int i = 0; i < nd && (size_t)off < n; i++)
+      off += snprintf(errbuf + off, n - off, "%s%lld", i ? "," : "",
+                      (long long)t->shape[i]);
+    if ((size_t)off < n) off += snprintf(errbuf + off, n - off, "], strides were [");
+    for (int i = 0; i < nd && (size_t)off < n; i++)
+      off += snprintf(errbuf + off, n - off, "%s%lld", i ? "," : "",
+                      (long long)t->strides[i]);
+    if ((size_t)off < n) snprintf(errbuf + off, n - off, "].");
+    return 0;
+  }
+  int64_t expected = 1;
+  for (int i = nd - 1; i >= 0; i--) {
+    byte_strides[i] = t->strides[i] * elt_bytes;
+    if (t->shape[i] > 1 && t->strides[i] != expected) *dense_row_major = 0;
+    expected *= t->shape[i];
+  }
+  return 1;
+}
+
+#define OJAX_DLPACK_COPY_NEVER 0
+#define OJAX_DLPACK_COPY_ALWAYS 1
+
+CAMLprim value ojax_pjrt_buffer_of_dlpack(value v_client, value v_ptr,
+                                          value v_copy) {
+  CAMLparam3(v_client, v_ptr, v_copy);
+  CAMLlocal1(v_buffer);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  if (c->client == NULL) ojax_pjrt_raise("of_dlpack on closed client");
+  const PJRT_Api *api = c->api;
+  ojax_dl_managed_tensor *m = (ojax_dl_managed_tensor *)Nativeint_val(v_ptr);
+  const ojax_dl_tensor *t = &m->dl_tensor;
+  int copy = Int_val(v_copy);
+  char errbuf[1024];
+  errbuf[0] = '\0';
+
+  PJRT_Buffer_Type btype = PJRT_Buffer_Type_INVALID;
+  if (!ojax_dlpack_to_buffer_type(t->dtype, &btype, errbuf, sizeof errbuf))
+    ojax_pjrt_raise(errbuf);
+  int elt_bytes = t->dtype.bits / 8;
+  int nd = t->ndim;
+  int64_t byte_strides[nd > 0 ? nd : 1];
+  int row_major = 1;
+  if (!ojax_dlpack_layout(t, &row_major, byte_strides, elt_bytes, errbuf,
+                          sizeof errbuf))
+    ojax_pjrt_raise(errbuf);
+  char *data = (char *)t->data + t->byte_offset;
+  int aligned = ((uintptr_t)data % 64) == 0;
+  if (copy == OJAX_DLPACK_COPY_NEVER && !aligned)
+    ojax_pjrt_raise(
+        "ojax.dlpack.value_error:Specified input which requires a copy since "
+        "the source data buffer is not aligned to 64 bytes.  However "
+        "copy=False. Set copy=True or copy=None to perform the requested "
+        "operation.");
+  if (copy == OJAX_DLPACK_COPY_NEVER && !row_major)
+    ojax_pjrt_raise(
+        "ojax.dlpack.value_error:from_dlpack cannot view a transposed tensor "
+        "without a copy in ojax. Set copy=True or copy=None to perform the "
+        "requested operation.");
+
+  PJRT_Buffer *buffer = NULL;
+  size_t nbytes = (size_t)elt_bytes;
+  for (int i = 0; i < nd; i++) nbytes *= (size_t)t->shape[i];
+
+  if (copy != OJAX_DLPACK_COPY_ALWAYS && aligned && row_major) {
+    PJRT_Client_CreateViewOfDeviceBuffer_Args a;
+    memset(&a, 0, sizeof a);
+    a.struct_size = PJRT_Client_CreateViewOfDeviceBuffer_Args_STRUCT_SIZE;
+    a.client = c->client;
+    a.device_buffer_ptr = data;
+    a.dims = t->shape;
+    a.num_dims = (size_t)nd;
+    a.element_type = btype;
+    a.layout = NULL;
+    a.device = c->device;
+    a.on_delete_callback = ojax_dlpack_view_deleted;
+    a.on_delete_callback_arg = m;
+    ojax_pjrt_check(api, api->PJRT_Client_CreateViewOfDeviceBuffer(&a));
+    buffer = a.buffer;
+  } else {
+    PJRT_Client_BufferFromHostBuffer_Args a;
+    memset(&a, 0, sizeof a);
+    a.struct_size = PJRT_Client_BufferFromHostBuffer_Args_STRUCT_SIZE;
+    a.client = c->client;
+    a.data = data;
+    a.type = btype;
+    a.dims = t->shape;
+    a.num_dims = (size_t)nd;
+    a.byte_strides = byte_strides;
+    a.num_byte_strides = (size_t)nd;
+    a.host_buffer_semantics = PJRT_HostBufferSemantics_kImmutableOnlyDuringCall;
+    a.device = c->device;
+    caml_release_runtime_system();
+    PJRT_Error *err = api->PJRT_Client_BufferFromHostBuffer(&a);
+    PJRT_Error *awaited = NULL;
+    if (err == NULL) awaited = ojax_pjrt_await(api, a.done_with_host_buffer);
+    caml_acquire_runtime_system();
+    ojax_pjrt_check(api, err);
+    ojax_pjrt_check(api, awaited);
+    buffer = a.buffer;
+    if (m->deleter != NULL) m->deleter(m);
+  }
+
+  v_buffer = caml_alloc_custom_mem(&ojax_pjrt_buffer_ops,
+                                   sizeof(struct ojax_pjrt_buffer),
+                                   (mlsize_t)nbytes);
+  struct ojax_pjrt_buffer *b = Ojax_buffer_val(v_buffer);
+  b->api = api;
+  b->buffer = buffer;
+  b->shares = NULL;
+  CAMLreturn(v_buffer);
 }

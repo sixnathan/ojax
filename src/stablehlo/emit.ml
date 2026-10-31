@@ -1702,6 +1702,134 @@ let emit_rng_uniform ctx (eqn : eqn) in_ids =
        (name n) (name a) (name b) (name c) aty bty shty
        (Ir.tensor_type_of_aval out.vaval))
 
+let mlir_string s =
+  let b = Buffer.create (String.length s + 2) in
+  Buffer.add_char b '"';
+  String.iter
+    (fun c ->
+      match c with
+      | '"' -> Buffer.add_string b "\\\""
+      | '\\' -> Buffer.add_string b "\\\\"
+      | c when Char.code c < 32 || Char.code c >= 127 ->
+          Buffer.add_string b (Printf.sprintf "\\%02x" (Char.code c))
+      | c -> Buffer.add_char b c)
+    s;
+  Buffer.add_char b '"';
+  Buffer.contents b
+
+let ffi_attr_key k =
+  let ident =
+    k <> ""
+    && String.for_all
+         (fun c ->
+           (c >= 'a' && c <= 'z')
+           || (c >= 'A' && c <= 'Z')
+           || (c >= '0' && c <= '9')
+           || c = '_')
+         k
+    && not (k.[0] >= '0' && k.[0] <= '9')
+  in
+  if ident then k else mlir_string k
+
+let rec ffi_attr_text = function
+  | Ffi_bool b -> Ir.bool_literal b
+  | Ffi_int n -> Printf.sprintf "%Ld : i64" n
+  | Ffi_float f -> Ir.float_literal Dtype.F64 f ^ " : f64"
+  | Ffi_string s -> mlir_string s
+  | Ffi_dtype d -> Ir.element_type d
+  | Ffi_seq l -> "[" ^ String.concat ", " (List.map ffi_attr_text l) ^ "]"
+  | Ffi_dict kvs -> ffi_attr_dict kvs
+  | Ffi_array nd ->
+      let dt = Ndarray.dtype nd and shape = Ndarray.shape nd in
+      if Array.length shape = 0 then
+        let lit = element_literal nd [||] in
+        if dt = Dtype.Bool then lit
+        else Printf.sprintf "%s : %s" lit (Ir.element_type dt)
+      else
+        Printf.sprintf "%s : %s"
+          (Ir.dense (dense_body nd))
+          (Ir.tensor_type dt shape)
+
+and ffi_attr_dict kvs =
+  let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) kvs in
+  "{"
+  ^ String.concat ", "
+      (List.map
+         (fun (k, v) ->
+           Printf.sprintf "%s = %s" (ffi_attr_key k) (ffi_attr_text v))
+         sorted)
+  ^ "}"
+
+let ffi_layout_text layout =
+  let n = Array.length layout in
+  let body =
+    if n = 0 then ""
+    else
+      "["
+      ^ String.concat ", " (Array.to_list (Array.map string_of_int layout))
+      ^ "]"
+  in
+  Printf.sprintf "dense<%s> : tensor<%dxindex>" body n
+
+let emit_ffi_call ctx (eqn : eqn) in_ids (c : ffi_call) =
+  let operand_types =
+    List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) eqn.inputs
+  in
+  let result_types =
+    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+  in
+  let attrs =
+    [
+      (if c.ffi_api_version < 4 then
+         Some (Printf.sprintf "api_version = %d : i32" c.ffi_api_version)
+       else None);
+      Some
+        (Printf.sprintf "backend_config = %s"
+           (mlir_string (Option.value c.ffi_legacy_backend_config ~default:"")));
+      (if c.ffi_has_side_effect then Some "has_side_effect = true" else None);
+      (if c.ffi_api_version >= 4 then
+         Some ("mhlo.backend_config = " ^ ffi_attr_dict c.ffi_attributes)
+       else None);
+      Some
+        (Printf.sprintf "operand_layouts = [%s]"
+           (String.concat ", " (List.map ffi_layout_text c.ffi_input_layouts)));
+      (if c.ffi_aliases = [] then None
+       else
+         Some
+           (Printf.sprintf "output_operand_aliases = [%s]"
+              (String.concat ", "
+                 (List.map
+                    (fun (input, output) ->
+                      Printf.sprintf
+                        "#stablehlo.output_operand_alias<output_tuple_indices \
+                         = [%s], operand_index = %d, operand_tuple_indices = \
+                         []>"
+                        (if List.length result_types > 1 then
+                           string_of_int output
+                         else "")
+                        input)
+                    c.ffi_aliases))));
+      Some
+        (Printf.sprintf "result_layouts = [%s]"
+           (String.concat ", " (List.map ffi_layout_text c.ffi_output_layouts)));
+    ]
+  in
+  let lhs =
+    match List.map (fun v -> name (bind_var ctx v)) eqn.outs with
+    | [] -> ""
+    | names -> String.concat ", " names ^ " = "
+  in
+  let results =
+    match result_types with [ t ] -> t | l -> "(" ^ String.concat ", " l ^ ")"
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %sstablehlo.custom_call @%s(%s) {%s} : (%s) -> %s\n"
+       lhs c.ffi_target
+       (String.concat ", " (List.map name in_ids))
+       (String.concat ", " (List.filter_map Fun.id attrs))
+       (String.concat ", " operand_types)
+       results)
+
 let rec emit_region_returning ctx (jx : jaxpr) =
   let s =
     capture ctx (fun () ->
@@ -2139,6 +2267,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       | [ _; b ] -> Hashtbl.replace ctx.ids (sole eqn.outs).vid b
       | _ -> invalid_arg "Stablehlo.Emit: tie arity")
   | Empty _ -> emit_empty ctx eqn
+  | Ffi_call c -> emit_ffi_call ctx eqn in_ids c
   | Platform_index platforms -> emit_platform_index ctx eqn platforms
   | Broadcast_in_dim { dims; _ } -> emit_broadcast_in_dim ctx eqn in_ids dims
   | Concatenate dim -> emit_concatenate ctx eqn in_ids dim

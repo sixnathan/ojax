@@ -16,3 +16,4 @@ type t =
   | Bf16
 
 val short_name : t -> string
+val numpy_name : t -> string

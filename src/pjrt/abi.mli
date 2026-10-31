@@ -2,6 +2,10 @@ exception Error of string
 
 type plugin
 
+val ffi_dlopen : string -> nativeint
+val ffi_dlsym : nativeint -> string -> nativeint
+val ffi_register_handler : plugin -> string -> string -> nativeint -> unit
+val ffi_register_type : plugin -> string -> nativeint -> nativeint -> unit
 val pjrt_api_major : int
 val pjrt_api_minor : int
 val pjrt_api_struct_size : int

@@ -172,6 +172,7 @@ let prim_name = function
   | Reduce_prod _ -> "reduce_prod"
   | Reduce_xor _ -> "reduce_xor"
   | After_all -> "after_all"
+  | Ffi_call _ -> "ffi_call"
   | Bitcast_convert_type _ -> "bitcast_convert_type"
   | Clamp -> "clamp"
   | Composite _ -> "composite"

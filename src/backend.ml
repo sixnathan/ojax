@@ -32,11 +32,12 @@ module Xla = struct
   type buffer = Pjrt.Buffer.t
   type compiled = Pjrt.Executable.t
 
-  let client =
+  let plugin =
     lazy
       (let path = Pjrt.Discover.preflight () in
-       Pjrt.Client.create (Pjrt.Abi.open_plugin path))
+       Pjrt.Abi.open_plugin path)
 
+  let client = lazy (Pjrt.Client.create (Lazy.force plugin))
   let of_host nd = Pjrt.Buffer.of_host (Lazy.force client) nd
   let to_host buf = Pjrt.Buffer.to_host buf
   let compile_text text = Pjrt.Executable.compile (Lazy.force client) text
@@ -118,6 +119,21 @@ let run_text text args =
   else
     failwith
       "Running an exported module needs the PJRT plugin; set OJAX_PJRT_PLUGIN"
+
+let xla_plugin () = Lazy.force Xla.plugin
+let xla_client () = Lazy.force Xla.client
+let forced_cache : (string, Pjrt.Executable.t) Hashtbl.t = Hashtbl.create 16
+
+let run_text_forced text args =
+  let exec =
+    match Hashtbl.find_opt forced_cache text with
+    | Some e -> e
+    | None ->
+        let e = Xla.compile_text text in
+        Hashtbl.replace forced_cache text e;
+        e
+  in
+  xla_run exec args false
 
 let of_host_value v =
   if Lazy.force use_xla then

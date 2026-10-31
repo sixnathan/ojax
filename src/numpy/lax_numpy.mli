@@ -168,3 +168,6 @@ val corrcoef :
   ?y:Types.value -> ?rowvar:bool -> ?dtype:Dtype.t -> Types.value -> Types.value
 
 val argsort_values : Types.value -> Types.value
+
+val from_dlpack :
+  ?device:Dlpack.placement -> ?copy:bool -> Dlpack.external_array -> Types.value

@@ -1296,6 +1296,7 @@ let rec impl_base prim inputs =
   | Composite cj -> composite_impl cj inputs
   | Dce_sink -> []
   | After_all | Create_token -> [ Ndarray.of_floats Dtype.F32 [| 0 |] [||] ]
+  | Ffi_call _ -> !Core.ffi_impl prim inputs
   | From_edtype _ ->
       failwith "lax: from_edtype (extended dtypes) deferred to M5"
   | Optimization_barrier -> inputs
@@ -2196,6 +2197,7 @@ let abstract_eval prim avals =
   | Composite cj -> List.map aval_of_atom cj.jaxpr.outs
   | Dce_sink -> []
   | After_all | Create_token -> [ shaped [| 0 |] Dtype.F32 false ]
+  | Ffi_call c -> c.ffi_result_avals
   | From_edtype _ ->
       failwith "lax: from_edtype (extended dtypes) deferred to M5"
   | Optimization_barrier -> avals

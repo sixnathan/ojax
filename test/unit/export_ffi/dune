@@ -1,0 +1,13 @@
+(rule
+ (targets ffi_target.so)
+ (deps ffi_target.c)
+ (action
+  (run %{cc} -shared -fPIC -O1 -o %{targets} %{deps})))
+
+(test
+ (name test_export_ffi)
+ (foreign_stubs
+  (language c)
+  (names dlpack_stubs))
+ (libraries ojax alcotest)
+ (deps ffi_target.so))

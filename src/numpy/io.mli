@@ -6,7 +6,8 @@ val load_npz : string -> (string * Types.value) list
 val frombuffer :
   ?dtype:Dtype.t -> ?count:int -> ?offset:int -> string -> Types.value
 
-val fromstring : ?dtype:Dtype.t -> ?sep:string -> string -> Types.value
+val fromstring :
+  ?dtype:Dtype.t -> ?count:int -> ?sep:string -> string -> Types.value
 
 val fromfile :
   ?dtype:Dtype.t ->

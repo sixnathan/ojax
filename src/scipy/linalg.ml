@@ -36,7 +36,7 @@ let iota_idx n = NL.arange ~dtype:D.I32 (float_of_int n)
 let cholesky ?(lower = false) a =
   let a = to_inexact a in
   let a = if lower then a else hconj a in
-  let l = LL.cholesky a in
+  let l = LL.cholesky ~symmetrize_input:false a in
   if lower then l else hconj l
 
 let cho_factor ?(lower = false) a = (cholesky ~lower a, lower)
@@ -70,7 +70,10 @@ let lu ?(permute_l = false) a =
   let perm_row = NL.expand_dims permutation [| 0 |] in
   let iota = NL.arange ~dtype:(dtype permutation) (float_of_int m) in
   let iota_col = NL.expand_dims iota [| 1 |] in
-  let p = NL.astype (UF.equal perm_row iota_col) dt in
+  let real_dt =
+    match dt with D.Complex64 -> D.F32 | D.Complex128 -> D.F64 | d -> d
+  in
+  let p = NL.astype (UF.equal perm_row iota_col) real_dt in
   let kcols = iota_idx k in
   let l_lower = IDX.take ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
   let l = UF.add l_lower (NL.eye ~m:k ~dtype:dt m) in
@@ -464,7 +467,7 @@ let hessenberg ?(calc_q = false) a =
     end
   end
 
-let rec expm ?(upper_triangular = false) a =
+let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
   let a = to_inexact a in
   let sh = shape a in
   let nd = Array.length sh in
@@ -473,7 +476,7 @@ let rec expm ?(upper_triangular = false) a =
   if nd > 2 then
     List.hd
       (Interpreters.Batching.vmap
-         (fun args -> [ expm ~upper_triangular (List.hd args) ])
+         (fun args -> [ expm ~upper_triangular ~max_squarings (List.hd args) ])
          [ Some 0 ] [ a ])
   else
     let n = sh.(0) in
@@ -610,7 +613,6 @@ let rec expm ?(upper_triangular = false) a =
       let u = pick fst and v = pick snd in
       let p = UF.add u v and q = UF.add (UF.negative u) v in
       let r = if upper_triangular then solve_triangular q p else LN.solve q p in
-      let max_squarings = 16 in
       let rec loop r k =
         if k = max_squarings then r
         else
@@ -630,7 +632,6 @@ let rec expm ?(upper_triangular = false) a =
         if l1f <= 0.0 then 0
         else max 0 (int_of_float (Float.floor (Float.log2 (l1f /. maxnorm))))
       in
-      let max_squarings = 16 in
       if nsq > max_squarings then AC.full_like a Float.nan
       else begin
         let a =
@@ -764,24 +765,313 @@ let funm ?(disp = true) a _func =
      Schur-form conversion over the complex Schur machinery deferred with row \
      99)"
 
-let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range d e =
-  let d = to_inexact d and e = to_inexact e in
-  let n = (shape d).(0) in
-  let lo, hi =
-    match (select, select_range) with
-    | "a", _ -> (0, n - 1)
-    | "i", Some (l, h) -> (int_of_float l, int_of_float h)
-    | "i", None -> invalid_arg "eigh_tridiagonal: select='i' needs select_range"
-    | _ ->
-        invalid_arg
-          "eigh_tridiagonal: select must be 'a' or 'i'; 'v' has a data \
-           dependent output size"
+let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
+  let module L = Lax_api in
+  let n = (shape alpha).(0) and k = (shape eigvals).(0) in
+  let idt = D.I32 in
+  let int_const sh v = L.full sh (float_of_int v) idt in
+  let real_const dt v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
+  let eps =
+    if base_dtype = D.F32 then 1.1920928955078125e-07 else epsilon_float
   in
-  let t =
-    if n <= 1 then NL.diag d
-    else UF.add (NL.diag d) (UF.add (NL.diag ~k:1 e) (NL.diag ~k:(-1) e))
+  let as_solve v = NL.astype v solve_dtype in
+  let pad_low v = NL.pad v [| (1, 0) |] 0.0 in
+  let pad_high v = NL.pad v [| (0, 1) |] 0.0 in
+  let dl =
+    pad_low (if is_complex_dt (dtype beta) then UF.conj beta else beta)
   in
-  let v, w = LL.eigh ~lower:true t in
-  let w = Lax_api.slice_in_dim ~axis:0 w lo (hi + 1) in
-  if eigvals_only then [ w ]
-  else [ w; Lax_api.slice_in_dim ~axis:1 v lo (hi + 1) ]
+  let du = pad_high beta in
+  let gap =
+    UF.subtract (L.slice_in_dim eigvals 1 k) (L.slice_in_dim eigvals 0 (k - 1))
+  in
+  let first = L.index_in_dim ~keepdims:false eigvals 0 in
+  let last = L.index_in_dim ~keepdims:false eigvals (k - 1) in
+  let t_norm = UF.maximum (UF.abs first) (UF.abs last) in
+  let gaptol = UF.multiply (UF.sqrt (real_const base_dtype eps)) t_norm in
+  let close = UF.less gap gaptol in
+  let left_close = pad_low close in
+  let right_close = pad_high close in
+  let start_mask = UF.logical_and (UF.logical_not left_close) right_close in
+  let end_mask = UF.logical_and left_close (UF.logical_not right_close) in
+  let max_clusters = (k / 2) + 1 in
+  let positions mask =
+    let values =
+      Numpy.Extras.flatnonzero ~size:max_clusters ~fill_value:0 mask
+    in
+    NL.astype values idt
+  in
+  let starts = positions start_mask in
+  let ends = L.add (positions end_mask) (int_const [| max_clusters |] 1) in
+  let num_clusters = NL.astype (RED.sum start_mask) idt in
+  let arange_k = NL.arange ~dtype:idt (float_of_int k) in
+  let raw =
+    Random.Core.with_dtypes ~float_dtype:base_dtype (fun () ->
+        Random.Core.normal key ~shape:[| k; n |])
+  in
+  let v0 = as_solve raw in
+  let v0 =
+    UF.divide v0
+      (as_solve (LN.vector_norm ~axis:(Some [| -1 |]) ~keepdims:true v0))
+  in
+  let solve_dt_of v = as_solve v in
+  let orthogonalize ev =
+    let cluster i ev =
+      let index arr = L.dynamic_index_in_dim ~keepdims:false arr i in
+      let start = index starts and stop = index ends in
+      let c = L.sub stop start in
+      let padded =
+        L.pad ev
+          (T.Concrete (Nd.of_floats (dtype ev) [||] [| 0.0 |]))
+          [| (0, k, 0); (0, 0, 0) |]
+      in
+      let block =
+        L.dynamic_slice padded [ start; int_const [||] 0 ] [| k; n |]
+      in
+      let mask =
+        NL.astype
+          (UF.less arange_k (L.broadcast_in_dim c [| k |] [||]))
+          (dtype ev)
+      in
+      let column = NL.reshape mask [| k; 1 |] in
+      let masked = UF.multiply block column in
+      let q = fst (LL.qr ~full_matrices:false (NL.transpose masked)) in
+      let qt = UF.multiply (NL.transpose q) column in
+      let big = AC.zeros ~dtype:(dtype ev) [| 2 * k; n |] in
+      let updated = L.dynamic_update_slice big qt [ start; int_const [||] 0 ] in
+      let update_full = L.slice_in_dim updated 0 k in
+      let in_cluster =
+        UF.logical_and
+          (UF.greater_equal arange_k (L.broadcast_in_dim start [| k |] [||]))
+          (UF.less arange_k (L.broadcast_in_dim stop [| k |] [||]))
+      in
+      NL.where_ (NL.reshape in_cluster [| k; 1 |]) update_full ev
+    in
+    match
+      L.fori_loop (int_const [||] 0) num_clusters
+        (fun i state -> [ cluster i (List.hd state) ])
+        [ ev ]
+    with
+    | [ out ] -> out
+    | _ -> failwith "eigh_tridiagonal: arity"
+  in
+  let solve_row v_row shift =
+    let d =
+      solve_dt_of (UF.subtract alpha (L.broadcast_in_dim shift [| n |] [||]))
+    in
+    let out =
+      LL.tridiagonal_solve ~perturb_singular:true (solve_dt_of dl) d
+        (solve_dt_of du)
+        (NL.reshape v_row [| n; 1 |])
+    in
+    NL.reshape out [| n |]
+  in
+  let step state =
+    match state with
+    | [ i; v; nrm; _ ] ->
+        let rows =
+          List.init k (fun j ->
+              solve_row
+                (L.index_in_dim ~keepdims:false v j)
+                (L.index_in_dim ~keepdims:false eigvals j))
+        in
+        let v_new = NL.stack rows in
+        let nrm_new =
+          LN.vector_norm ~axis:(Some [| -1 |]) ~keepdims:true v_new
+        in
+        let v_new = UF.divide v_new (as_solve nrm_new) in
+        let nrm_new = NL.reshape nrm_new [| k |] in
+        [ L.add i (int_const [||] 1); orthogonalize v_new; nrm_new; nrm ]
+    | _ -> failwith "eigh_tridiagonal: state"
+  in
+  let keep_going state =
+    match state with
+    | [ i; _; nrm; old ] ->
+        UF.logical_and
+          (UF.less i (int_const [||] 5))
+          (RED.any
+             (UF.greater_equal nrm
+                (UF.multiply (real_const base_dtype 1.1) old)))
+    | _ -> failwith "eigh_tridiagonal: state"
+  in
+  let result =
+    L.while_loop keep_going step
+      [
+        int_const [||] 0;
+        v0;
+        AC.ones ~dtype:base_dtype [| k |];
+        AC.zeros ~dtype:base_dtype [| k |];
+      ]
+  in
+  List.nth result 1
+
+let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
+    ?key d e =
+  let module L = Lax_api in
+  let alpha = d and beta = e in
+  if dtype alpha <> dtype beta then
+    raise
+      (Errors.jax_type_error
+         (Printf.sprintf
+            "diagonal and off-diagonal values must have same dtype, got %s and \
+             %s"
+            (D.short_name (dtype alpha))
+            (D.short_name (dtype beta))));
+  (match dtype alpha with
+  | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> ()
+  | dt ->
+      raise
+        (Errors.jax_type_error
+           ("Only float32 and float64 inputs are supported as inputs to \
+             jax.scipy.linalg.eigh_tridiagonal, got " ^ D.short_name dt)));
+  let n = (shape alpha).(0) in
+  let solve_dtype = dtype alpha in
+  let is_complex = is_complex_dt solve_dtype in
+  if n <= 1 then begin
+    let real_alpha = UF.real alpha in
+    if eigvals_only then [ real_alpha ]
+    else [ real_alpha; NL.eye ~dtype:solve_dtype n ]
+  end
+  else begin
+    let alpha_real = if is_complex then UF.real alpha else alpha in
+    let beta_sq, beta_abs =
+      if is_complex then
+        let sq = UF.real (UF.multiply beta (UF.conj beta)) in
+        (sq, UF.sqrt sq)
+      else (UF.square beta, UF.abs beta)
+    in
+    let base_dtype = dtype alpha_real in
+    let single = base_dtype = D.F32 in
+    let eps, tiny, largest, nmant =
+      if single then
+        ( 1.1920928955078125e-07,
+          1.1754943508222875e-38,
+          3.4028234663852886e38,
+          23 )
+      else (epsilon_float, 2.2250738585072014e-308, Float.max_float, 52)
+    in
+    let round v =
+      if single then Int32.float_of_bits (Int32.bits_of_float v) else v
+    in
+    let c v = T.Concrete (Nd.of_floats base_dtype [||] [| v |]) in
+    let m = (shape beta_abs).(0) in
+    let row_sum =
+      NL.concatenate
+        [
+          L.slice_in_dim beta_abs 0 1;
+          UF.add
+            (L.slice_in_dim beta_abs 0 (m - 1))
+            (L.slice_in_dim beta_abs 1 m);
+          L.slice_in_dim beta_abs (m - 1) m;
+        ]
+    in
+    let lambda_max = RED.amax (UF.add alpha_real row_sum) in
+    let lambda_min = RED.amin (UF.subtract alpha_real row_sum) in
+    let t_norm = UF.maximum (UF.abs lambda_min) (UF.abs lambda_max) in
+    let safemin =
+      Float.max (round (1.0 /. largest)) (round (round (1.0 +. eps) *. tiny))
+    in
+    let pivmin =
+      UF.multiply (c safemin) (UF.maximum (c 1.0) (RED.amax beta_sq))
+    in
+    let beta0 = L.index_in_dim ~keepdims:false beta_abs 0 in
+    let alpha0_perturbation = UF.square (UF.multiply (c eps) beta0) in
+    let abs_tol = UF.multiply (c eps) t_norm in
+    let abs_tol =
+      match tol with Some t -> UF.maximum (c t) abs_tol | None -> abs_tol
+    in
+    let max_it = nmant + 1 in
+    let target_counts =
+      match (select, select_range) with
+      | "a", _ -> NL.arange ~dtype:D.I32 (float_of_int n)
+      | "i", None ->
+          invalid_arg "for select='i', select_range must be specified."
+      | "i", Some (l, h) ->
+          if l > h then invalid_arg "Got empty index range in select_range.";
+          NL.arange ~dtype:D.I32 ~start:l (h +. 1.0)
+      | "v", _ ->
+          failwith "eigh_tridiagonal(..., select='v') is not implemented"
+      | _ -> invalid_arg "'select must have a value in {'a', 'i', 'v'}."
+    in
+    let k = (shape target_counts).(0) in
+    let fudge = 2.1 in
+    let norm_slack =
+      UF.multiply
+        (c (round (round (float_of_int n *. round fudge) *. eps)))
+        t_norm
+    in
+    let lower =
+      UF.subtract
+        (UF.subtract lambda_min norm_slack)
+        (UF.multiply (c (round (2.0 *. fudge))) pivmin)
+    in
+    let upper =
+      UF.add
+        (UF.add lambda_max norm_slack)
+        (UF.multiply (c (round fudge)) pivmin)
+    in
+    let spread v = L.broadcast_in_dim v [| k |] [||] in
+    let lower = spread lower and upper = spread upper in
+    let mid = UF.multiply (c 0.5) (UF.add upper lower) in
+    let pivmin = spread pivmin in
+    let alpha0_perturbation = spread alpha0_perturbation in
+    let at v i = L.index_in_dim ~keepdims:false v i in
+    let int_full v = L.full [| k |] (float_of_int v) D.I32 in
+    let sturm x =
+      let a0 = spread (at alpha_real 0) in
+      let q = UF.subtract a0 x in
+      let count = NL.where_ (UF.less q (c 0.0)) (int_full 1) (int_full 0) in
+      let q = NL.where_ (UF.equal a0 x) alpha0_perturbation q in
+      let state = ref (q, count) in
+      for i = 1 to n - 1 do
+        let q, count = !state in
+        let q =
+          UF.subtract
+            (UF.subtract
+               (spread (at alpha_real i))
+               (UF.divide (spread (at beta_sq (i - 1))) q))
+            x
+        in
+        let low = UF.less_equal q pivmin in
+        let count = NL.where_ low (L.add count (int_full 1)) count in
+        let q = NL.where_ low (UF.minimum q (UF.negative pivmin)) q in
+        state := (q, count)
+      done;
+      snd !state
+    in
+    let cond state =
+      match state with
+      | [ i; lo; _; hi ] ->
+          UF.logical_and
+            (L.lt i (L.full [||] (float_of_int max_it) D.I32))
+            (L.lt abs_tol (RED.amax (UF.subtract hi lo)))
+      | _ -> failwith "eigh_tridiagonal: state"
+    in
+    let body state =
+      match state with
+      | [ i; lo; mid; hi ] ->
+          let counts = sturm mid in
+          let lo = NL.where_ (UF.less_equal counts target_counts) mid lo in
+          let hi = NL.where_ (UF.greater counts target_counts) mid hi in
+          [
+            L.add i (L.full [||] 1.0 D.I32);
+            lo;
+            UF.multiply (c 0.5) (UF.add lo hi);
+            hi;
+          ]
+      | _ -> failwith "eigh_tridiagonal: state"
+    in
+    let final =
+      L.while_loop cond body [ L.full [||] 0.0 D.I32; lower; mid; upper ]
+    in
+    let eigvals = List.nth final 2 in
+    if eigvals_only then [ eigvals ]
+    else
+      let key =
+        match key with Some k -> k | None -> Random.Core.key (i32_scalar 42)
+      in
+      let vectors =
+        tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha_real beta
+          eigvals
+      in
+      [ eigvals; NL.transpose vectors ]
+  end

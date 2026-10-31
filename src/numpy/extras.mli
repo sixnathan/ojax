@@ -26,11 +26,33 @@ val unique :
   value ->
   value list
 
-val union1d : value -> value -> value
-val intersect1d : value -> value -> value
-val setdiff1d : value -> value -> value
-val setxor1d : value -> value -> value
-val bincount : ?weights:value -> ?length:int -> value -> value
+val union1d : ?size:int -> ?fill_value:float -> value -> value -> value
+
+val intersect1d :
+  ?assume_unique:bool ->
+  ?size:int ->
+  ?fill_value:float ->
+  value ->
+  value ->
+  value
+
+val setdiff1d :
+  ?assume_unique:bool ->
+  ?size:int ->
+  ?fill_value:float ->
+  value ->
+  value ->
+  value
+
+val setxor1d :
+  ?assume_unique:bool ->
+  ?size:int ->
+  ?fill_value:float ->
+  value ->
+  value ->
+  value
+
+val bincount : ?weights:value -> ?minlength:int -> ?length:int -> value -> value
 val histogram_bin_edges : ?bins:int -> ?range:float * float -> value -> value
 
 val histogram :
@@ -75,8 +97,11 @@ val interp :
 
 val gradient : ?spacing:float -> ?axis:int list -> value -> value list
 val choose : ?mode:string -> value -> value list -> value
-val compress : ?axis:int -> value -> value -> value
-val extract : value -> value -> value
+
+val compress :
+  ?axis:int -> ?size:int -> ?fill_value:float -> value -> value -> value
+
+val extract : ?size:int -> ?fill_value:float -> value -> value -> value
 val delete : ?axis:int -> value -> int list -> value
 val insert : ?axis:int -> value -> int -> value -> value
 val place : value -> value -> value -> value
@@ -86,8 +111,11 @@ val tril_indices : ?k:int -> ?m:int -> int -> value * value
 val triu_indices : ?k:int -> ?m:int -> int -> value * value
 val tril_indices_from : ?k:int -> value -> value * value
 val triu_indices_from : ?k:int -> value -> value * value
-val mask_indices : ?k:int -> int -> (value -> int -> value) -> value * value
-val trim_zeros : ?trim:string -> value -> value
+
+val mask_indices :
+  ?k:int -> ?size:int -> int -> (value -> int -> value) -> value * value
+
+val trim_zeros : ?trim:string -> ?axis:int list -> value -> value
 val sort_complex : value -> value
 val bitwise_count : value -> value
 val frexp : value -> value * value
@@ -100,12 +128,12 @@ type nested = Item of value | Group of nested list
 
 val block : nested -> value
 val promote_types : Dtype.t -> Dtype.t -> Dtype.t
-val can_cast : Dtype.t -> Dtype.t -> bool
+val can_cast : ?casting:string -> Dtype.t -> Dtype.t -> bool
 val shape_of : value -> int array
-val size : value -> int
+val size : ?axis:int -> value -> int
 val ndim : value -> int
-val polydiv : value -> value -> value * value
-val polyfit : ?rcond:float -> value -> value -> int -> value
+val polydiv : ?trim_leading_zeros:bool -> value -> value -> value * value
+val polyfit : ?rcond:float -> ?w:value -> value -> value -> int -> value
 val roots : ?strip_zeros:bool -> value -> value
 val fromfunction : (value list -> 'a) -> int array -> dtype:Dtype.t -> 'a
 val pi : float

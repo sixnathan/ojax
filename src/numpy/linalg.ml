@@ -53,8 +53,7 @@ let symmetrize x = UF.divide (UF.add x (hconj x)) (const (dtype x) 2.0)
 
 let rec cholesky ?(upper = false) ?(symmetrize_input = true) a =
   let a = to_inexact a in
-  let a = if symmetrize_input then symmetrize a else a in
-  let l = LL.cholesky a in
+  let l = LL.cholesky ~symmetrize_input a in
   if upper then hconj l else l
 
 and svd_uv ~full_matrices a =
@@ -151,48 +150,90 @@ and slogdet ?(method_ = "lu") a =
   let na = Array.length sa in
   let n = sa.(na - 1) in
   let dt = dtype a in
-  let lu, piv, _perm = LL.lu a in
-  let diag = NL.diagonal ~axis1:(-2) ~axis2:(-1) lu in
-  let zero = const dt 0.0 in
-  let is_zero = RED.any ~axis:[| -1 |] (UF.equal diag zero) in
-  let iota = NL.arange ~dtype:(dtype piv) (float_of_int n) in
-  let swaps = RED.count_nonzero ~axis:[| -1 |] (UF.not_equal piv iota) in
-  if dt = D.Complex64 || dt = D.Complex128 then begin
-    let magnitude = UF.abs diag in
-    let rdt = dtype magnitude in
-    let safe =
-      NL.where_ (UF.equal magnitude (const rdt 0.0)) (const rdt 1.0) magnitude
-    in
-    let unit = UF.divide diag (NL.astype safe dt) in
-    let swap_count = NL.astype swaps rdt in
-    let half = UF.floor (UF.divide swap_count (const rdt 2.0)) in
-    let odd = UF.subtract swap_count (UF.multiply (const rdt 2.0) half) in
-    let parity_sign =
-      UF.subtract (const rdt 1.0) (UF.multiply (const rdt 2.0) odd)
-    in
-    let phase =
-      UF.multiply (RED.prod ~axis:[| -1 |] unit) (NL.astype parity_sign dt)
-    in
-    let logdet = RED.sum ~axis:[| -1 |] (UF.log magnitude) in
-    ( NL.where_ is_zero (const dt 0.0) phase,
-      NL.where_ is_zero (const rdt neg_infinity) logdet )
+  if n = 1 || n = 2 then begin
+    let d = if n = 1 then matrix_cell a 0 0 else det_2x2 a in
+    let magnitude = UF.abs d in
+    let log_abs = UF.log magnitude in
+    if dt = D.Complex64 || dt = D.Complex128 then
+      let rdt = dtype magnitude in
+      let zero = UF.equal magnitude (const rdt 0.0) in
+      let safe = NL.where_ zero (const rdt 1.0) magnitude in
+      (NL.where_ zero (const dt 0.0) (UF.divide d (NL.astype safe dt)), log_abs)
+    else (UF.sign d, log_abs)
   end
   else
-    let neg = RED.count_nonzero ~axis:[| -1 |] (UF.less diag zero) in
-    let parity = UF.add (NL.astype swaps dt) (NL.astype neg dt) in
-    let two = const dt 2.0 in
-    let half = UF.floor (UF.divide parity two) in
-    let pmod = UF.subtract parity (UF.multiply two half) in
-    let sgn = UF.subtract (const dt 1.0) (UF.multiply two pmod) in
-    let logdet = RED.sum ~axis:[| -1 |] (UF.log (UF.abs diag)) in
-    let sign = NL.where_ is_zero (const dt 0.0) sgn in
-    let logabsdet = NL.where_ is_zero (const dt neg_infinity) logdet in
-    (sign, logabsdet)
+    let lu, piv, _perm = LL.lu a in
+    let diag = NL.diagonal ~axis1:(-2) ~axis2:(-1) lu in
+    let zero = const dt 0.0 in
+    let is_zero = RED.any ~axis:[| -1 |] (UF.equal diag zero) in
+    let iota = NL.arange ~dtype:(dtype piv) (float_of_int n) in
+    let swaps = RED.count_nonzero ~axis:[| -1 |] (UF.not_equal piv iota) in
+    if dt = D.Complex64 || dt = D.Complex128 then begin
+      let magnitude = UF.abs diag in
+      let rdt = dtype magnitude in
+      let safe =
+        NL.where_ (UF.equal magnitude (const rdt 0.0)) (const rdt 1.0) magnitude
+      in
+      let unit = UF.divide diag (NL.astype safe dt) in
+      let swap_count = NL.astype swaps rdt in
+      let half = UF.floor (UF.divide swap_count (const rdt 2.0)) in
+      let odd = UF.subtract swap_count (UF.multiply (const rdt 2.0) half) in
+      let parity_sign =
+        UF.subtract (const rdt 1.0) (UF.multiply (const rdt 2.0) odd)
+      in
+      let phase =
+        UF.multiply (RED.prod ~axis:[| -1 |] unit) (NL.astype parity_sign dt)
+      in
+      let logdet = RED.sum ~axis:[| -1 |] (UF.log magnitude) in
+      ( NL.where_ is_zero (const dt 0.0) phase,
+        NL.where_ is_zero (const rdt neg_infinity) logdet )
+    end
+    else
+      let neg = RED.count_nonzero ~axis:[| -1 |] (UF.less diag zero) in
+      let parity = UF.add (NL.astype swaps dt) (NL.astype neg dt) in
+      let two = const dt 2.0 in
+      let half = UF.floor (UF.divide parity two) in
+      let pmod = UF.subtract parity (UF.multiply two half) in
+      let sgn = UF.subtract (const dt 1.0) (UF.multiply two pmod) in
+      let logdet = RED.sum ~axis:[| -1 |] (UF.log (UF.abs diag)) in
+      let sign = NL.where_ is_zero (const dt 0.0) sgn in
+      let logabsdet = NL.where_ is_zero (const dt neg_infinity) logdet in
+      (sign, logabsdet)
 
 and det a =
   let a = to_inexact a in
-  let sign, logdet = slogdet a in
-  UF.multiply sign (NL.astype (UF.exp logdet) (dtype sign))
+  let sa = shape a in
+  let na = Array.length sa in
+  if na >= 2 && sa.(na - 1) = 2 && sa.(na - 2) = 2 then det_2x2 a
+  else if na >= 2 && sa.(na - 1) = 3 && sa.(na - 2) = 3 then begin
+    let e i j = matrix_cell a i j in
+    let product x y z = UF.multiply (UF.multiply x y) z in
+    let plus =
+      UF.add
+        (UF.add
+           (product (e 0 0) (e 1 1) (e 2 2))
+           (product (e 0 1) (e 1 2) (e 2 0)))
+        (product (e 0 2) (e 1 0) (e 2 1))
+    in
+    UF.subtract
+      (UF.subtract
+         (UF.subtract plus (product (e 0 2) (e 1 1) (e 2 0)))
+         (product (e 0 0) (e 1 2) (e 2 1)))
+      (product (e 0 1) (e 1 0) (e 2 2))
+  end
+  else
+    let sign, logdet = slogdet a in
+    UF.multiply sign (NL.astype (UF.exp logdet) (dtype sign))
+
+and matrix_cell a i j =
+  let na = ndim a in
+  Lax_api.index_in_dim ~axis:(na - 2) ~keepdims:false
+    (Lax_api.index_in_dim ~axis:(na - 1) ~keepdims:false a j)
+    i
+
+and det_2x2 a =
+  let e i j = matrix_cell a i j in
+  UF.subtract (UF.multiply (e 0 0) (e 1 1)) (UF.multiply (e 0 1) (e 1 0))
 
 and eig a =
   let a = to_inexact a in
@@ -218,15 +259,21 @@ and eigh ?(uplo = "L") ?(symmetrize_input = true) a =
     | _ -> invalid_arg "UPLO must be one of None, 'L', or 'U'"
   in
   let a = to_inexact a in
-  let a = if symmetrize_input then symmetrize a else a in
-  let v, w = LL.eigh ~lower a in
+  let v, w = LL.eigh ~lower ~symmetrize_input a in
   (w, v)
 
 and eigvalsh ?(uplo = "L") ?(symmetrize_input = true) a =
   let w, _ = eigh ~uplo ~symmetrize_input a in
   w
 
-and pinv ?rtol ?(hermitian = false) a =
+and pinv ?rtol ?(hermitian = false) ?rcond a =
+  let rtol =
+    match (rcond, rtol) with
+    | Some _, Some _ ->
+        invalid_arg "pinv: only one of rtol and rcond may be specified."
+    | Some r, None -> Some r
+    | None, r -> r
+  in
   let a = to_inexact a in
   ignore hermitian;
   let arr = UF.conj a in
@@ -282,7 +329,14 @@ and matrix_power a p =
     end
   end
 
-and matrix_rank ?rtol ?(hermitian = false) a =
+and matrix_rank ?rtol ?(hermitian = false) ?tol a =
+  let rtol =
+    match (tol, rtol) with
+    | Some _, Some _ ->
+        invalid_arg "matrix_rank: only one of tol or rtol may be specified."
+    | Some t, None -> Some t
+    | None, r -> r
+  in
   let a = to_inexact a in
   let s = if hermitian then UF.abs (svdvals a) else svdvals a in
   let sa = shape a in
@@ -446,7 +500,7 @@ and qr ?(mode = "reduced") a =
     let q, r = LL.qr ~full_matrices a in
     if mode = "r" then [ r ] else [ q; r ]
 
-and lstsq ?rcond a b =
+and lstsq ?rcond ?(numpy_resid = false) a b =
   let a = to_inexact a and b = to_inexact b in
   let b_vec = ndim b = 1 in
   let bm = if b_vec then NL.reshape b [| (shape b).(0); 1 |] else b in
@@ -455,6 +509,7 @@ and lstsq ?rcond a b =
   let dt = dtype a in
   let rcond =
     match rcond with
+    | Some r when r < 0.0 -> const dt (eps_of dt)
     | Some r -> const dt r
     | None -> const dt (eps_of dt *. float_of_int (max n m))
   in
@@ -474,8 +529,21 @@ and lstsq ?rcond a b =
     TC.matmul (UF.conj (matrix_transpose_v vt)) (UF.multiply s_inv_col utb)
   in
   let b_est = TC.matmul a x in
-  let resid =
+  let full_resid () =
     UF.power (norm ~axis:(Aint 0) (UF.subtract bm b_est)) (const dt 2.0)
+  in
+  let resid =
+    if numpy_resid then
+      let concrete_rank =
+        match rank with
+        | T.Concrete nd -> Nd.get_i64 nd [||]
+        | T.Device b -> Nd.get_i64 (Pjrt.Buffer.to_host b) [||]
+        | T.Tracer _ -> invalid_arg "lstsq: numpy_resid needs a concrete rank"
+      in
+      if Int64.to_int concrete_rank < n || m <= n then
+        T.Concrete (Nd.of_floats dt [| 0 |] [||])
+      else full_resid ()
+    else full_resid ()
   in
   let x = if b_vec then NL.ravel x else x in
   (x, resid, rank, s)

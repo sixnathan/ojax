@@ -43,6 +43,7 @@ val custom_linear_solve :
 
 module Linalg = Linalg
 module Special = Special
+module Slicing = Slicing
 module Fft = Fft
 
 val complex_bilinear :

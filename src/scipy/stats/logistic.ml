@@ -5,7 +5,7 @@ module SP = Special
 open DU
 
 let promote3 x loc scale =
-  match promote [ x; loc; scale ] with
+  match promote_complex [ x; loc; scale ] with
   | [ x; loc; scale ] -> (x, loc, scale)
   | _ -> assert false
 

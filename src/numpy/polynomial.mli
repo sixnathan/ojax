@@ -4,4 +4,6 @@ val polysub : Types.value -> Types.value -> Types.value
 val polyint : ?m:int -> ?k:Types.value -> Types.value -> Types.value
 val polyder : ?m:int -> Types.value -> Types.value
 val poly : Types.value -> Types.value
-val polymul : Types.value -> Types.value -> Types.value
+
+val polymul :
+  ?trim_leading_zeros:bool -> Types.value -> Types.value -> Types.value

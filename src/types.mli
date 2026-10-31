@@ -239,8 +239,12 @@ and primitive =
       conjugate_a : bool;
       unit_diagonal : bool;
     }
-  | Tridiagonal_solve
-  | Eig of { compute_left : bool; compute_right : bool }
+  | Tridiagonal_solve of { perturb_singular : bool }
+  | Eig of {
+      compute_left : bool;
+      compute_right : bool;
+      enable_eigvec_derivs : bool;
+    }
   | Eigh of { lower : bool }
   | Hessenberg
   | Schur of { compute_vectors : bool }

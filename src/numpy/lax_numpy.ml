@@ -116,7 +116,25 @@ let reshape v sh =
   let resolved = Array.map (fun d -> if d = -1 then total / known else d) sh in
   bind1 (T.Reshape resolved) [ v ]
 
-let ravel v = reshape v [| size v |]
+let reverse_axes v = Array.init (ndim v) (fun i -> ndim v - 1 - i)
+
+let reshape ?(order = "C") v sh =
+  match order with
+  | "C" -> reshape v sh
+  | "F" ->
+      let flipped = Array.of_list (List.rev (Array.to_list sh)) in
+      let c_order = bind1 (T.Transpose (reverse_axes v)) [ v ] in
+      let out = reshape c_order flipped in
+      bind1 (T.Transpose (reverse_axes out)) [ out ]
+  | "A" -> failwith "The 'A' order option is not supported by jnp.reshape."
+  | o -> invalid_arg ("Unrecognized order " ^ o)
+
+let ravel ?(order = "C") v =
+  match order with
+  | "C" -> reshape v [| size v |]
+  | "F" -> reshape (bind1 (T.Transpose (reverse_axes v)) [ v ]) [| size v |]
+  | "A" -> failwith "The 'A' order option is not supported by jnp.ravel."
+  | o -> invalid_arg ("Unrecognized order " ^ o)
 
 let rot90 ?(k = 1) ?(axes = (0, 1)) v =
   let n = ndim v in
@@ -166,13 +184,36 @@ let slice_axis v axis lo hi =
     (T.Slice { start_indices = start; limit_indices = limit; strides = None })
     [ v ]
 
-let diff ?(n = 1) ?(axis = -1) v =
+let diff ?(n = 1) ?(axis = -1) ?prepend ?append v =
   if n = 0 then v
   else begin
     if n < 0 then invalid_arg "diff: order must be non-negative";
     let nd = ndim v in
     if nd = 0 then invalid_arg "diff requires at least one dimension";
     let axis = canonicalize_axis axis nd in
+    let edge w =
+      if ndim w = 0 then begin
+        let sh = Array.copy (shape v) in
+        sh.(axis) <- 1;
+        bind1 (T.Broadcast_in_dim { shape = sh; dims = [||] }) [ w ]
+      end
+      else w
+    in
+    let parts =
+      Option.to_list (Option.map edge prepend)
+      @ [ v ]
+      @ Option.to_list (Option.map edge append)
+    in
+    let v =
+      match parts with
+      | [ only ] -> only
+      | _ ->
+          let dt =
+            fst
+              (Dtypes.result_type (List.map (fun w -> (dtype w, false)) parts))
+          in
+          bind1 (T.Concatenate axis) (List.map (fun w -> convert w dt) parts)
+    in
     let bool_dtype = is_bool (dtype v) in
     let step acc =
       let d = (shape acc).(axis) in
@@ -184,10 +225,17 @@ let diff ?(n = 1) ?(axis = -1) v =
     loop v n
   end
 
-let ediff1d v =
+let ediff1d ?to_end ?to_begin v =
   let a = ravel v in
   let d = (shape a).(0) in
-  bind1 T.Sub [ slice_axis a 0 1 d; slice_axis a 0 0 (d - 1) ]
+  let body = bind1 T.Sub [ slice_axis a 0 1 d; slice_axis a 0 0 (d - 1) ] in
+  let extra w = ravel (convert w (dtype a)) in
+  let parts =
+    Option.to_list (Option.map extra to_begin)
+    @ [ body ]
+    @ Option.to_list (Option.map extra to_end)
+  in
+  match parts with [ only ] -> only | _ -> bind1 (T.Concatenate 0) parts
 
 let is_complex_dtype = function
   | D.Complex64 | D.Complex128 -> true
@@ -361,7 +409,9 @@ let where_ c x y =
   bind1 T.Select_n [ cb; yb; xb ]
 
 let finfo_max = function
-  | D.F64 -> Float.max_float
+  | D.F64 | D.Complex128 -> Float.max_float
+  | D.F16 -> 65504.0
+  | D.Bf16 -> 3.3895313892515355e+38
   | _ -> 3.4028234663852886e+38
 
 let isposinf v = bind1 T.Eq [ v; full (dtype v) (shape v) Float.infinity ]
@@ -379,6 +429,11 @@ let nan_to_num ?(nan = 0.0) ?posinf ?neginf x =
     where_ (isneginf out) (scalar dt nv) out
   end
 
+let real_dtype_of = function
+  | D.Complex64 -> D.F32
+  | D.Complex128 -> D.F64
+  | d -> d
+
 let isclose ?(rtol = 1e-5) ?(atol = 1e-8) ?(equal_nan = false) a b =
   let dt0, _ =
     Dtypes.result_type
@@ -391,7 +446,17 @@ let isclose ?(rtol = 1e-5) ?(atol = 1e-8) ?(equal_nan = false) a b =
   let sh = broadcast_shapes (shape a) (shape b) in
   let a = broadcast_to (convert a dt) sh in
   let b = broadcast_to (convert b dt) sh in
-  let rt = full dt sh rtol and at = full dt sh atol in
+  let rdt = real_dtype_of dt in
+  let rt = full rdt sh rtol and at = full rdt sh atol in
+  let finite v =
+    if rdt = dt then bind1 T.Is_finite [ v ]
+    else
+      bind1 T.And
+        [
+          bind1 T.Is_finite [ bind1 T.Real [ v ] ];
+          bind1 T.Is_finite [ bind1 T.Imag [ v ] ];
+        ]
+  in
   let in_range =
     bind1 T.Le
       [
@@ -400,8 +465,7 @@ let isclose ?(rtol = 1e-5) ?(atol = 1e-8) ?(equal_nan = false) a b =
       ]
   in
   let out =
-    bind1 T.Or
-      [ bind1 T.Eq [ a; b ]; bind1 T.And [ bind1 T.Is_finite [ b ]; in_range ] ]
+    bind1 T.Or [ bind1 T.Eq [ a; b ]; bind1 T.And [ finite b; in_range ] ]
   in
   if equal_nan then bind1 T.Or [ out; bind1 T.And [ isnan a; isnan b ] ]
   else out
@@ -412,6 +476,12 @@ let allclose ?rtol ?atol ?equal_nan a b =
   bind1 (T.Reduce_and (Array.init n (fun i -> i))) [ c ]
 
 let clip ?min ?max arr =
+  (match dtype arr with
+  | D.Complex64 | D.Complex128 ->
+      invalid_arg
+        "Clip received a complex value either through the input or the min/max \
+         keywords. Complex values have no ordering and cannot be clipped."
+  | _ -> ());
   let fractional = function
     | Some m -> not (Float.is_integer m)
     | None -> false
@@ -421,6 +491,8 @@ let clip ?min ?max arr =
       (is_integral (dtype arr) || is_bool (dtype arr))
       && (fractional min || fractional max)
     then convert arr (Dtypes.default_float_dtype ())
+    else if is_bool (dtype arr) && (min <> None || max <> None) then
+      convert arr (Dtypes.default_int_dtype ())
     else arr
   in
   let dt = dtype arr in
@@ -431,17 +503,20 @@ let clip ?min ?max arr =
 
 let rec round ?(decimals = 0) v =
   let dt = dtype v in
-  if is_integral dt || is_bool dt then v
+  if is_bool dt then
+    invalid_arg "jnp.round: data type bool not compatible with finfo";
+  if is_integral dt then v
   else if dt = D.Complex64 || dt = D.Complex128 then
     bind1 T.Complex
       [
         round ~decimals (bind1 T.Real [ v ]);
         round ~decimals (bind1 T.Imag [ v ]);
       ]
-  else if decimals = 0 then bind1 T.Round [ v ]
+  else if decimals = 0 then bind1 T.Round_nearest_even [ v ]
   else begin
     let factor = full dt (shape v) (10.0 ** float_of_int decimals) in
-    bind1 T.Div [ bind1 T.Round [ bind1 T.Mul [ v; factor ] ]; factor ]
+    bind1 T.Div
+      [ bind1 T.Round_nearest_even [ bind1 T.Mul [ v; factor ] ]; factor ]
   end
 
 let around ?decimals v = round ?decimals v
@@ -561,7 +636,10 @@ let unravel_index indices dims =
 let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
   let nd = ndim p in
   let axis = canonicalize_axis axis nd in
-  let dt = to_inexact_dtype (dtype p) in
+  let dt =
+    if is_bool (dtype p) then Dtypes.default_float_dtype ()
+    else to_inexact_dtype (dtype p)
+  in
   let p = convert p dt in
   let size = (shape p).(axis) in
   if size = 0 then p
@@ -624,7 +702,7 @@ let hsplit v s =
 
 let dsplit v s = do_split ~array_split:false ~axis:2 v s
 
-let select condlist choicelist =
+let select ?default condlist choicelist =
   let k = List.length condlist in
   if k = 0 then invalid_arg "select: condlist must be non-empty";
   if List.length choicelist <> k then
@@ -638,8 +716,16 @@ let select condlist choicelist =
       (T.Argmax { axis = 0; index_dtype = Dtypes.default_int_dtype () })
       [ stacked ]
   in
-  let dt = result_type choicelist in
-  let default_v = scalar dt 0.0 in
+  let default_v =
+    match default with
+    | Some d -> d
+    | None -> scalar (result_type choicelist) 0.0
+  in
+  let dt =
+    match default with
+    | Some d -> result_type (d :: choicelist)
+    | None -> result_type choicelist
+  in
   let cases = List.map (fun v -> convert v dt) (default_v :: choicelist) in
   bind1 T.Select_n (broadcast_arrays (idx :: cases))
 
@@ -651,7 +737,11 @@ let promote_values vs =
   let dt = result_type vs in
   List.map (fun v -> convert v dt) vs
 
-let astype v dt = convert v dt
+let astype v dt =
+  match (dtype v, dt) with
+  | (D.Complex64 | D.Complex128), D.Bool -> bind1 T.Ne [ v; zeros_like v ]
+  | _ -> convert v dt
+
 let copy v = bind1 T.Copy [ v ]
 let atleast_1d v = if ndim v >= 1 then v else expand_dims v [| 0 |]
 
@@ -668,33 +758,42 @@ let atleast_3d v =
   | 2 -> expand_dims v [| 2 |]
   | _ -> v
 
-let concatenate ?(axis = 0) arrays =
+let with_dtype dt arrays =
+  match dt with
+  | None -> promote_values arrays
+  | Some d ->
+      let d = Dtypes.canonicalize_dtype d in
+      List.map (fun v -> convert v d) arrays
+
+let concatenate ?(axis = 0) ?dtype:dt arrays =
   match arrays with
   | [] -> invalid_arg "concatenate: need at least one array"
   | first :: _ ->
       let ax = canonicalize_axis axis (ndim first) in
-      bind1 (T.Concatenate ax) (promote_values arrays)
+      bind1 (T.Concatenate ax) (with_dtype dt arrays)
 
 let concat ?(axis = 0) arrays = concatenate ~axis arrays
 
-let stack ?(axis = 0) arrays =
+let stack ?(axis = 0) ?dtype:dt arrays =
   match arrays with
   | [] -> invalid_arg "stack: need at least one array"
   | first :: _ ->
       let ax = canonicalize_axis axis (ndim first + 1) in
-      bind1 (T.Stack ax) (promote_values arrays)
+      bind1 (T.Stack ax) (with_dtype dt arrays)
 
 let unstack ?(axis = 0) v =
   bind (T.Unstack (canonicalize_axis axis (ndim v))) [ v ]
 
-let vstack arrays = concatenate ~axis:0 (List.map atleast_2d arrays)
+let vstack ?dtype:dt arrays =
+  concatenate ~axis:0 ?dtype:dt (List.map atleast_2d arrays)
 
-let hstack arrays =
+let hstack ?dtype:dt arrays =
   let arrs = List.map atleast_1d arrays in
   let ax = if ndim (List.hd arrs) = 1 then 0 else 1 in
-  concatenate ~axis:ax arrs
+  concatenate ~axis:ax ?dtype:dt arrs
 
-let dstack arrays = concatenate ~axis:2 (List.map atleast_3d arrays)
+let dstack ?dtype:dt arrays =
+  concatenate ~axis:2 ?dtype:dt (List.map atleast_3d arrays)
 
 let column_stack arrays =
   let prep v = if ndim v < 2 then transpose (atleast_2d v) else v in
@@ -712,11 +811,288 @@ let tile v reps =
   in
   bind1 (T.Tile reps) [ v ]
 
-let pad v pad_width cval =
+let rec repeat ?axis ?total_repeat_length a repeats =
+  match total_repeat_length with
+  | Some total -> repeat_to_total ?axis a repeats total
+  | None -> repeat_scalar ?axis a repeats
+
+and repeat_to_total ?axis a repeats total =
+  let a, ax =
+    match axis with
+    | None -> (ravel a, 0)
+    | Some x -> (a, canonicalize_axis x (ndim a))
+  in
+  let full = repeat_scalar ~axis:ax a repeats in
+  let n = (shape full).(ax) in
+  if total = 0 then begin
+    let sh = Array.copy (shape a) in
+    sh.(ax) <- 0;
+    const_full (dtype a) sh 0.0
+  end
+  else if (shape a).(ax) = 0 then a
+  else if total <= n then slice_axis full ax 0 total
+  else begin
+    let last = slice_axis full ax (n - 1) n in
+    let tail = repeat_scalar ~axis:ax last (total - n) in
+    bind1 (T.Concatenate ax) [ full; tail ]
+  end
+
+and repeat_scalar ?axis a repeats =
+  let a, ax =
+    match axis with
+    | None -> (ravel a, 0)
+    | Some x -> (a, canonicalize_axis x (ndim a))
+  in
+  let ish = shape a in
+  let nd = Array.length ish in
+  let aux_axis = ax + 1 in
+  let aux_shape =
+    Array.init (nd + 1) (fun i ->
+        if i < aux_axis then ish.(i)
+        else if i = aux_axis then repeats
+        else ish.(i - 1))
+  in
+  let dims = Array.init nd (fun i -> if i < aux_axis then i else i + 1) in
+  let bc = bind1 (T.Broadcast_in_dim { shape = aux_shape; dims }) [ a ] in
+  let result_shape = Array.copy ish in
+  result_shape.(ax) <- ish.(ax) * repeats;
+  reshape bc result_shape
+
+let pad_constant v pad_width cval =
   let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
   bind1 (T.Pad cfg) [ v; scalar (dtype v) cval ]
 
+let no_padding_on_empty (lo, hi) mode =
+  if lo > 0 || hi > 0 then
+    invalid_arg (Printf.sprintf "Cannot apply '%s' padding to empty axis" mode)
+
+let pad_wrap v pad_width =
+  let out = ref v in
+  Array.iteri
+    (fun i (lo, hi) ->
+      let size_i = (shape !out).(i) in
+      if size_i = 0 then no_padding_on_empty (lo, hi) "wrap"
+      else begin
+        let array = !out in
+        let left_repeats = lo / size_i and left_rem = lo mod size_i in
+        let right_repeats = hi / size_i and right_rem = hi mod size_i in
+        let total = left_repeats + right_repeats + 1 in
+        let parts =
+          (if left_rem > 0 then
+             [ slice_axis array i (size_i - left_rem) size_i ]
+           else [])
+          @ List.init total (fun _ -> array)
+          @ if right_rem > 0 then [ slice_axis array i 0 right_rem ] else []
+        in
+        out := bind1 (T.Concatenate i) parts
+      end)
+    pad_width;
+  !out
+
+let pad_symmetric_or_reflect v pad_width mode reflect_type =
+  let two_times_minus edge x = bind1 T.Sub [ bind1 T.Add [ edge; edge ]; x ] in
+  let out = ref v in
+  Array.iteri
+    (fun i (lo, hi) ->
+      let axis_size = (shape !out).(i) in
+      if axis_size = 0 then no_padding_on_empty (lo, hi) mode
+      else if lo <> 0 || hi <> 0 then begin
+        let offset = if mode = "reflect" && axis_size > 1 then 1 else 0 in
+        let build array padding before =
+          let array = ref array in
+          let current = ref padding in
+          let d () = (shape !array).(i) in
+          let edge =
+            ref
+              (if before then slice_axis !array i 0 1
+               else slice_axis !array i (d () - 1) (d ()))
+          in
+          while !current > 0 do
+            let curr_pad = min !current (axis_size - offset) in
+            current := !current - curr_pad;
+            let n = d () in
+            let x =
+              if before then slice_axis !array i offset (offset + curr_pad)
+              else
+                let stop =
+                  if mode = "symmetric" || axis_size = 1 then n else n - 1
+                in
+                slice_axis !array i (n - (curr_pad + offset)) stop
+            in
+            let x = bind1 (T.Rev [| i |]) [ x ] in
+            let x =
+              if reflect_type = "odd" then begin
+                let broadcast_edge =
+                  bind1
+                    (T.Broadcast_in_dim
+                       { shape = shape x; dims = Array.init (ndim x) Fun.id })
+                    [ !edge ]
+                in
+                let y = two_times_minus broadcast_edge x in
+                if axis_size > 1 then begin
+                  let m = (shape y).(i) in
+                  edge :=
+                    if before then slice_axis y i 0 1
+                    else slice_axis y i (m - 1) m
+                end;
+                y
+              end
+              else x
+            in
+            array :=
+              bind1 (T.Concatenate i)
+                (if before then [ x; !array ] else [ !array; x ])
+          done;
+          !array
+        in
+        out := build (build !out lo true) hi false
+      end)
+    pad_width;
+  !out
+
+let pad_edge v pad_width =
+  let out = ref v in
+  Array.iteri
+    (fun i (lo, hi) ->
+      let n = (shape !out).(i) in
+      if n = 0 then no_padding_on_empty (lo, hi) "edge"
+      else begin
+        let before = repeat ~axis:i (slice_axis !out i 0 1) lo in
+        let after = repeat ~axis:i (slice_axis !out i (n - 1) n) hi in
+        out := bind1 (T.Concatenate i) [ before; !out; after ]
+      end)
+    pad_width;
+  !out
+
+let pad_linear_ramp v pad_width end_values =
+  let out = ref v in
+  Array.iteri
+    (fun i (lo, hi) ->
+      let array = !out in
+      let dt = dtype array in
+      let n = (shape array).(i) in
+      let start_lo, start_hi = end_values.(i) in
+      let ramp edge start count =
+        let sh = Array.copy (shape array) in
+        sh.(i) <- count;
+        let fractions =
+          Array.init count (fun k ->
+              float_of_int k /. float_of_int (Stdlib.max count 1))
+        in
+        let compute_dt =
+          if is_integral dt || is_bool dt then Dtypes.default_float_dtype ()
+          else dt
+        in
+        let frac =
+          bind1
+            (T.Broadcast_in_dim { shape = sh; dims = [| i |] })
+            [ T.Concrete (Nd.of_floats compute_dt [| count |] fractions) ]
+        in
+        let e =
+          bind1
+            (T.Broadcast_in_dim
+               { shape = sh; dims = Array.init (ndim array) Fun.id })
+            [ convert edge compute_dt ]
+        in
+        let s = full compute_dt sh start in
+        let value =
+          bind1 T.Add [ s; bind1 T.Mul [ bind1 T.Sub [ e; s ]; frac ] ]
+        in
+        convert value dt
+      in
+      let before = ramp (slice_axis array i 0 1) start_lo lo in
+      let after =
+        bind1 (T.Rev [| i |])
+          [ ramp (slice_axis array i (n - 1) n) start_hi hi ]
+      in
+      out := bind1 (T.Concatenate i) [ before; array; after ])
+    pad_width;
+  !out
+
+let pad_stats v pad_width stat_length stat_func =
+  let out = ref v in
+  Array.iteri
+    (fun i (lo, hi) ->
+      let array = !out in
+      let stat_before, stat_after =
+        match stat_length with
+        | None ->
+            let s = stat_func array i in
+            (s, s)
+        | Some lengths ->
+            let n = (shape array).(i) in
+            let lb, la = lengths.(i) in
+            if lb = 0 || la = 0 then
+              invalid_arg "stat_length of 0 yields no value for padding";
+            let lb = min lb n and la = min la n in
+            ( stat_func (slice_axis array i 0 lb) i,
+              stat_func (slice_axis array i (n - la) n) i )
+      in
+      let fit s =
+        let s =
+          if is_integral (dtype array) && not (is_integral (dtype s)) then
+            bind1 T.Round_nearest_even [ s ]
+          else s
+        in
+        convert s (dtype array)
+      in
+      let before = repeat ~axis:i (fit stat_before) lo in
+      let after = repeat ~axis:i (fit stat_after) hi in
+      out := bind1 (T.Concatenate i) [ before; array; after ])
+    pad_width;
+  !out
+
+let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
+    pad_width constant_values =
+  if ndim v = 0 then v
+  else begin
+    if Array.length pad_width <> ndim v then
+      invalid_arg
+        (Printf.sprintf "Expected pad_width to have %d pairs; got %d" (ndim v)
+           (Array.length pad_width));
+    Array.iter
+      (fun (lo, hi) ->
+        if lo < 0 || hi < 0 then
+          invalid_arg "index can't contain negative values")
+      pad_width;
+    let keep_stat f a axis = f a axis in
+    match mode with
+    | "constant" -> pad_constant v pad_width constant_values
+    | "wrap" -> pad_wrap v pad_width
+    | "symmetric" | "reflect" ->
+        pad_symmetric_or_reflect v pad_width mode reflect_type
+    | "edge" -> pad_edge v pad_width
+    | "linear_ramp" ->
+        let ends =
+          match end_values with
+          | Some e -> e
+          | None -> Array.make (ndim v) (0.0, 0.0)
+        in
+        pad_linear_ramp v pad_width ends
+    | "maximum" ->
+        pad_stats v pad_width stat_length
+          (keep_stat (fun a axis ->
+               Reductions.amax ~axis:[| axis |] ~keepdims:true a))
+    | "minimum" ->
+        pad_stats v pad_width stat_length
+          (keep_stat (fun a axis ->
+               Reductions.amin ~axis:[| axis |] ~keepdims:true a))
+    | "mean" ->
+        pad_stats v pad_width stat_length
+          (keep_stat (fun a axis ->
+               Reductions.mean ~axis:[| axis |] ~keepdims:true a))
+    | "median" ->
+        pad_stats v pad_width stat_length
+          (keep_stat (fun a axis -> Reductions.median ~axis ~keepdims:true a))
+    | "empty" -> pad_constant v pad_width 0.0
+    | m ->
+        failwith
+          (Printf.sprintf "Unimplemented padding mode '%s' for np.pad." m)
+  end
+
 let i0 v =
+  if is_complex_dtype (dtype v) then
+    invalid_arg "Unsupported input type to jax.numpy.i0: complex";
   let v = convert v (to_inexact_dtype (dtype v)) in
   let ax = bind1 T.Abs [ v ] in
   bind1 T.Mul [ bind1 T.Exp [ ax ]; bind1 T.Bessel_i0e [ ax ] ]
@@ -832,6 +1208,10 @@ let append ?axis arr values =
   | Some ax -> concatenate ~axis:ax [ arr; values ]
 
 let argmax ?axis ?(keepdims = false) a =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise (Errors.jax_type_error "argmax does not accept complex input.")
+  | _ -> ());
   let orig_nd = ndim a in
   let a2, ax, dims =
     match axis with
@@ -966,7 +1346,7 @@ let diag ?(k = 0) v =
   match Array.length s with
   | 1 ->
       let n = s.(0) + abs k in
-      let padded = pad v [| (max 0 (-k), max 0 k) |] 0.0 in
+      let padded = pad_constant v [| (max 0 (-k), max 0 k) |] 0.0 in
       let mask = eye ~k ~dtype:D.Bool n in
       let col =
         bind1
@@ -1015,27 +1395,6 @@ let vander ?n ?(increasing = false) x =
   in
   bind1 T.Pow [ xcol; expo ]
 
-let repeat ?axis a repeats =
-  let a, ax =
-    match axis with
-    | None -> (ravel a, 0)
-    | Some x -> (a, canonicalize_axis x (ndim a))
-  in
-  let ish = shape a in
-  let nd = Array.length ish in
-  let aux_axis = ax + 1 in
-  let aux_shape =
-    Array.init (nd + 1) (fun i ->
-        if i < aux_axis then ish.(i)
-        else if i = aux_axis then repeats
-        else ish.(i - 1))
-  in
-  let dims = Array.init nd (fun i -> if i < aux_axis then i else i + 1) in
-  let bc = bind1 (T.Broadcast_in_dim { shape = aux_shape; dims }) [ a ] in
-  let result_shape = Array.copy ish in
-  result_shape.(ax) <- ish.(ax) * repeats;
-  reshape bc result_shape
-
 let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
   let y = convert y (to_inexact_dtype (dtype y)) in
   let nd = ndim y in
@@ -1080,6 +1439,10 @@ let all_over ?axis ?(keepdims = false) v =
 let scalar_at v i = squeeze (slice_axis v 0 i (i + 1))
 
 let argmin ?axis ?(keepdims = false) a =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise (Errors.jax_type_error "argmin does not accept complex input.")
+  | _ -> ());
   let orig_nd = ndim a in
   let a2, ax, dims =
     match axis with
@@ -1096,6 +1459,10 @@ let argmin ?axis ?(keepdims = false) a =
   if keepdims then expand_dims r dims else r
 
 let nanargmax ?axis ?(keepdims = false) a =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise (Errors.jax_type_error "nanargmax does not accept complex input.")
+  | _ -> ());
   if not (is_inexact (dtype a)) then argmax ?axis ~keepdims a
   else begin
     let nan_mask = isnan a in
@@ -1106,6 +1473,10 @@ let nanargmax ?axis ?(keepdims = false) a =
   end
 
 let nanargmin ?axis ?(keepdims = false) a =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise (Errors.jax_type_error "nanargmin does not accept complex input.")
+  | _ -> ());
   if not (is_inexact (dtype a)) then argmin ?axis ~keepdims a
   else begin
     let nan_mask = isnan a in
@@ -1149,6 +1520,11 @@ let rollaxis ?(start = 0) axis a =
   let start = if start > axis then start - 1 else start in
   moveaxis [| axis |] [| start |] a
 
+let abs_of v =
+  match dtype v with
+  | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> v
+  | _ -> bind1 T.Abs [ v ]
+
 let gcd x1 x2 =
   let x1, x2 =
     match promote_values [ x1; x2 ] with
@@ -1178,7 +1554,7 @@ let gcd x1 x2 =
         [ where_ lt t2 t1; where_ lt t1 t2 ]
     | _ -> assert false
   in
-  let init = [ bind1 T.Abs [ x1 ]; bind1 T.Abs [ x2 ] ] in
+  let init = [ abs_of x1; abs_of x2 ] in
   List.hd (Lax.while_loop cond body init)
 
 let lcm x1 x2 =
@@ -1187,7 +1563,7 @@ let lcm x1 x2 =
     | [ a; b ] -> (a, b)
     | _ -> assert false
   in
-  let x1 = bind1 T.Abs [ x1 ] and x2 = bind1 T.Abs [ x2 ] in
+  let x1 = abs_of x1 and x2 = abs_of x2 in
   if not (is_integral (dtype x1)) then
     invalid_arg "Arguments to jax.numpy.lcm must be integers.";
   let d = gcd x1 x2 in
@@ -1196,11 +1572,35 @@ let lcm x1 x2 =
   let prod = mul2 x1 (binop T.Div x2 dsafe) in
   where_ is_zero (zeros_like prod) prod
 
-let searchsorted ?(side = "left") a v =
+let check_search_method = function
+  | "scan" | "scan_unrolled" | "sort" | "compare_all" -> ()
+  | m ->
+      invalid_arg
+        ("method must be one of ['scan', 'scan_unrolled', 'sort', \
+          'compare_all']; got " ^ m)
+
+let gather_1d a indices =
+  let sh = shape indices in
+  let dnums =
+    {
+      T.offset_dims = [||];
+      collapsed_slice_dims = [| 0 |];
+      start_index_map = [| 0 |];
+      g_operand_batching_dims = [||];
+      g_start_indices_batching_dims = [||];
+    }
+  in
+  bind1
+    (T.Gather { dimension_numbers = dnums; slice_sizes = [| 1 |] })
+    [ a; reshape indices (Array.append sh [| 1 |]) ]
+
+let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
   if ndim a <> 1 then invalid_arg "a should be 1-dimensional";
+  check_search_method method_;
   let a, v =
     match promote_values [ a; v ] with [ a; v ] -> (a, v) | _ -> assert false
   in
+  let a = match sorter with Some s -> gather_1d a s | None -> a in
   let na = (shape a).(0) in
   let vsh = shape v in
   let out_shape = Array.append [| na |] vsh in
@@ -1216,7 +1616,8 @@ let searchsorted ?(side = "left") a v =
   in
   bind1 (T.Reduce_sum [| 0 |]) [ convert cmp D.I32 ]
 
-let digitize ?(right = false) x bins =
+let digitize ?(right = false) ?(method_ = "scan") x bins =
+  check_search_method method_;
   if ndim bins <> 1 then
     invalid_arg "digitize: bins must be a 1-dimensional array";
   let nb = (shape bins).(0) in
@@ -1237,7 +1638,7 @@ let digitize ?(right = false) x bins =
 
 let dtype_of = dtype
 
-let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?dtype m =
+let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   let dt_common =
     match y with
     | None -> dtype_of m
@@ -1264,9 +1665,89 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?dtype m =
   let dt = dtype_of x in
   let nvars = (shape x).(0) and nobs = (shape x).(1) in
   let ddof = match ddof with Some d -> d | None -> if bias then 0 else 1 in
-  let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
-  let avg = bind1 T.Div [ sum1; full dt [| nvars |] (float_of_int nobs) ] in
+  let check_weights name w =
+    if ndim w > 1 then
+      failwith (Printf.sprintf "cannot handle multidimensional %s" name);
+    if (shape w).(0) <> nobs then
+      failwith (Printf.sprintf "incompatible numbers of samples and %s" name)
+  in
+  Option.iter (check_weights "fweights") fweights;
+  Option.iter (check_weights "aweights") aweights;
+  (match fweights with
+  | Some f when not (is_integral (dtype_of f)) ->
+      raise (Errors.jax_type_error "fweights must be integer.")
+  | _ -> ());
+  let magnitude w =
+    match dtype_of w with
+    | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> w
+    | _ -> bind1 T.Abs [ w ]
+  in
+  let f_abs = Option.map magnitude fweights in
+  let a_abs = Option.map magnitude aweights in
+  let as_dt w = convert w dt in
+  let w =
+    match (f_abs, a_abs) with
+    | None, None -> None
+    | Some f, None -> Some (as_dt f)
+    | None, Some a -> Some (as_dt a)
+    | Some f, Some a -> Some (bind1 T.Mul [ as_dt f; as_dt a ])
+  in
+  let sum_all v = bind1 (T.Reduce_sum (Array.init (ndim v) Fun.id)) [ v ] in
+  let divisor_of shape_out =
+    match w with
+    | None -> full dt shape_out (float_of_int (nobs - ddof))
+    | Some wv ->
+        let w_sum = sum_all wv in
+        let f =
+          if ddof = 0 then w_sum
+          else
+            let d = scalar dt (float_of_int ddof) in
+            match a_abs with
+            | None -> bind1 T.Sub [ w_sum; d ]
+            | Some a ->
+                bind1 T.Sub
+                  [
+                    w_sum;
+                    bind1 T.Div
+                      [
+                        bind1 T.Mul [ d; sum_all (bind1 T.Mul [ wv; as_dt a ]) ];
+                        w_sum;
+                      ];
+                  ]
+        in
+        bind1 (T.Broadcast_in_dim { shape = shape_out; dims = [||] }) [ f ]
+  in
+  let avg =
+    match w with
+    | None ->
+        let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
+        bind1 T.Div [ sum1; full dt [| nvars |] (float_of_int nobs) ]
+    | Some wv ->
+        let wb =
+          bind1 (T.Broadcast_in_dim { shape = shape x; dims = [| 1 |] }) [ wv ]
+        in
+        let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ bind1 T.Mul [ x; wb ] ] in
+        bind1 T.Div
+          [
+            sum1;
+            bind1
+              (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
+              [ sum_all wv ];
+          ]
+  in
   let xc = sub2 x (expand_dims avg [| 1 |]) in
+  let xw =
+    match w with
+    | None -> xc
+    | Some wv ->
+        bind1 T.Mul
+          [
+            xc;
+            bind1
+              (T.Broadcast_in_dim { shape = shape xc; dims = [| 1 |] })
+              [ wv ];
+          ]
+  in
   let prod =
     bind1
       (T.Dot_general
@@ -1279,14 +1760,11 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?dtype m =
       [
         xc;
         (match dt with
-        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xc ]
-        | _ -> xc);
+        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xw ]
+        | _ -> xw);
       ]
   in
-  let res =
-    bind1 T.Div [ prod; full dt (shape prod) (float_of_int (nobs - ddof)) ]
-  in
-  squeeze res
+  squeeze (bind1 T.Div [ prod; divisor_of (shape prod) ])
 
 let corrcoef ?y ?(rowvar = true) ?dtype x =
   let c = cov ?y ~rowvar ?dtype x in

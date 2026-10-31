@@ -46,7 +46,11 @@ let logcdf ?loc ?scale x =
 
 let ppf ?loc ?scale q =
   let loc, scale = defaults loc scale in
-  let q, loc, scale = promote3 q loc scale in
+  let q, loc, scale =
+    match promote_complex [ q; loc; scale ] with
+    | [ q; loc; scale ] -> (q, loc, scale)
+    | _ -> assert false
+  in
   let bad =
     UF.logical_or
       (UF.logical_or (UF.isnan q) (UF.less q (sc q 0.0)))

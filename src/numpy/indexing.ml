@@ -45,7 +45,7 @@ let wrap_negative indices axis_size =
     (bind1 T.Add [ indices; full idt ish (float_of_int axis_size) ])
     indices
 
-let take ?axis ?mode a indices =
+let take ?axis ?mode ?fill_value a indices =
   let a, axis_idx =
     match axis with
     | None -> (NL.ravel a, 0)
@@ -59,8 +59,8 @@ let take ?axis ?mode a indices =
     match mode with
     | Some "clip" -> indices
     | Some "wrap" ->
-        let idt = dtype indices and ish = shape indices in
-        bind1 T.Rem [ indices; full idt ish (float_of_int axis_size) ]
+        Ufuncs.mod_ indices (full (dtype indices) [||] (float_of_int axis_size))
+    | Some "raise" -> failwith "The 'raise' mode to jnp.take is not supported."
     | None | Some "fill" -> wrap_negative indices axis_size
     | Some m -> invalid_arg ("take: unsupported mode " ^ m)
   in
@@ -82,11 +82,15 @@ let take ?axis ?mode a indices =
     }
   in
   let gather_indices = NL.reshape indices (Array.append ish [| 1 |]) in
-  bind1
-    (T.Gather { dimension_numbers = dnums; slice_sizes })
-    [ a; gather_indices ]
+  match mode with
+  | None | Some "fill" ->
+      Lax.Slicing.gather_fill ?fill_value a gather_indices dnums slice_sizes
+  | _ ->
+      bind1
+        (T.Gather { dimension_numbers = dnums; slice_sizes })
+        [ a; gather_indices ]
 
-let take_along_axis ?(axis = -1) a indices =
+let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
   let rank = ndim a in
   if rank <> ndim indices then
     invalid_arg "take_along_axis: arr and indices must have the same ndim";
@@ -97,7 +101,10 @@ let take_along_axis ?(axis = -1) a indices =
   let arr_shape = Array.copy ash in
   arr_shape.(axis_int) <- 1;
   let out_shape = broadcast_shapes idx_shape arr_shape in
-  let indices = wrap_negative indices axis_size in
+  let indices =
+    if mode = Some "promise_in_bounds" then indices
+    else wrap_negative indices axis_size
+  in
   let index_dims =
     List.filter
       (fun i -> i = axis_int || idx_shape.(i) <> 1)
@@ -157,9 +164,15 @@ let take_along_axis ?(axis = -1) a indices =
       g_start_indices_batching_dims = asc !idx_batch;
     }
   in
-  bind1
-    (T.Gather { dimension_numbers = dnums; slice_sizes = asc !slice_sizes })
-    [ a; gather_indices ]
+  match mode with
+  | None | Some "fill" ->
+      Lax.Slicing.gather_fill ?fill_value a gather_indices dnums
+        (asc !slice_sizes)
+  | Some ("clip" | "promise_in_bounds") ->
+      bind1
+        (T.Gather { dimension_numbers = dnums; slice_sizes = asc !slice_sizes })
+        [ a; gather_indices ]
+  | Some m -> invalid_arg ("Unknown gather mode \"" ^ m ^ "\"")
 
 let tile_to_size v n =
   let m = size v in
@@ -214,7 +227,7 @@ let put ?mode a ind v =
       [ a; scatter_indices; vv ]
   end
 
-let put_along_axis ?axis arr indices values =
+let put_along_axis ?axis ?mode arr indices values =
   let arr, indices, values, axis, orig_shape =
     match axis with
     | None ->
@@ -240,6 +253,13 @@ let put_along_axis ?axis arr indices values =
   in
   let scatter_indices = NL.concatenate ~axis:rank coords in
   let dnums = identity_scatter_dims rank in
+  let scatter_indices =
+    match mode with
+    | Some "clip" ->
+        Lax.Slicing.clamp_scatter_indices arr scatter_indices values_b dnums
+    | None | Some ("fill" | "drop" | "promise_in_bounds") -> scatter_indices
+    | Some m -> invalid_arg ("Unknown scatter mode \"" ^ m ^ "\"")
+  in
   let result =
     bind1
       (T.Scatter { dimension_numbers = dnums; unique_indices = false })

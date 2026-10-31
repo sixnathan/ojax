@@ -65,7 +65,9 @@
   test_numpy_vectorize
   test_scipy_spatial_transform
   test_scipy_optimize
-  test_lax_nn_surface)
+  test_lax_nn_surface
+  test_hardening
+  test_hardening_options)
  (libraries ojax alcotest yojson unix)
  (deps
   (env_var OJAX_PJRT_GPU_PLUGIN)

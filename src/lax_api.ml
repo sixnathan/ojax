@@ -112,13 +112,17 @@ let nextafter = lift2 Nextafter
 let population_count x = b1 Population_count [ x ]
 let pow = lift2 Pow
 let real x = b1 Real [ x ]
-let reciprocal x = b1 Div [ filled (dtype_of x) (shape x) 1.0; x ]
+let reciprocal x = b1 (Integer_pow (-1)) [ x ]
 let rem = lift2 Rem
 
-let round ?(rounding_method = Lax_config.Away_from_zero) x =
+type rounding_method = Lax_config.rounding_method =
+  | Away_from_zero
+  | To_nearest_even
+
+let round ?(rounding_method = Away_from_zero) x =
   match rounding_method with
-  | Lax_config.Away_from_zero -> b1 Round [ x ]
-  | Lax_config.To_nearest_even -> b1 Round_nearest_even [ x ]
+  | Away_from_zero -> b1 Round [ x ]
+  | To_nearest_even -> b1 Round_nearest_even [ x ]
 
 let stage x = Core.full_raise (Core.find_top_trace [ x ]) x
 
@@ -594,18 +598,24 @@ let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
       else if out = lhs then b1 prim [ x; y ]
       else dot_accumulate prim x y out
 
-let dot ?precision ?preferred_element_type x y =
+let dot ?precision ?preferred_element_type ?dimension_numbers x y =
   let nx = ndim x and ny = ndim y in
-  if nx = 0 || ny = 0 then mul x y
-  else
-    dot_with ?precision ?preferred_element_type
-      {
-        lhs_contract = [| nx - 1 |];
-        rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
-        lhs_batch = [||];
-        rhs_batch = [||];
-      }
-      x y
+  match dimension_numbers with
+  | Some ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)) ->
+      dot_with ?precision ?preferred_element_type
+        { lhs_contract; rhs_contract; lhs_batch; rhs_batch }
+        x y
+  | None ->
+      if nx = 0 || ny = 0 then mul x y
+      else
+        dot_with ?precision ?preferred_element_type
+          {
+            lhs_contract = [| nx - 1 |];
+            rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
+            lhs_batch = [||];
+            rhs_batch = [||];
+          }
+          x y
 
 let dot_general ?precision ?preferred_element_type x y ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch =
@@ -774,7 +784,7 @@ let cummin = Lax.cummin
 let cumlogsumexp = Lax.cumlogsumexp
 let custom_linear_solve = Lax.custom_linear_solve
 
-let map f xs =
+let map_scan f xs =
   Lax.scan
     (fun args ->
       let n_x = List.length xs in
@@ -802,6 +812,31 @@ let rec switch index branches operands =
         first
         (fun ops -> switch (sub i (index_scalar 1)) rest ops)
         operands
+
+let map ?batch_size f xs =
+  match batch_size with
+  | None -> map_scan f xs
+  | Some size when size <= 0 -> invalid_arg "map: batch_size must be positive"
+  | Some size ->
+      let total =
+        match xs with
+        | [] -> invalid_arg "map: no input"
+        | x :: _ -> (shape x).(0)
+      in
+      let rec chunks start =
+        if start >= total then []
+        else
+          let stop = Stdlib.min total (start + size) in
+          let slices = List.map (fun x -> slice_in_dim x start stop) xs in
+          Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) slices
+          :: chunks stop
+      in
+      let parts = chunks 0 in
+      List.mapi
+        (fun i _ ->
+          let column = List.map (fun part -> List.nth part i) parts in
+          match column with [ only ] -> only | _ -> concatenate column 0)
+        (List.hd parts)
 
 let fori_loop lower upper body init =
   let n_init = List.length init in
@@ -852,21 +887,25 @@ let platform_dependent ?default ?cuda ~cpu () =
            "platform_dependent: no branch for platform %s and no default"
            platform)
 
-let associative_scan ?(axis = 0) fn xs =
+let associative_scan ?(axis = 0) ?(reverse = false) fn xs =
   let n = ndim xs in
   let axis = canon_axis n axis in
+  let xs = if reverse then b1 (Rev [| axis |]) [ xs ] else xs in
   let pieces = unstack xs axis in
-  match pieces with
-  | [] -> xs
-  | first :: rest ->
-      let _, reversed =
-        List.fold_left
-          (fun (acc, out) x ->
-            let v = fn acc x in
-            (v, v :: out))
-          (first, [ first ]) rest
-      in
-      stack (List.rev reversed) axis
+  let out =
+    match pieces with
+    | [] -> xs
+    | first :: rest ->
+        let _, reversed =
+          List.fold_left
+            (fun (acc, out) x ->
+              let v = fn acc x in
+              (v, v :: out))
+            (first, [ first ]) rest
+        in
+        stack (List.rev reversed) axis
+  in
+  if reverse then b1 (Rev [| axis |]) [ out ] else out
 
 let shape_as_value x =
   let sh = shape x in

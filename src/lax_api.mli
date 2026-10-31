@@ -50,6 +50,11 @@ val pow : value -> value -> value
 val real : value -> value
 val reciprocal : value -> value
 val rem : value -> value -> value
+
+type rounding_method = Lax_config.rounding_method =
+  | Away_from_zero
+  | To_nearest_even
+
 val round : ?rounding_method:Lax_config.rounding_method -> value -> value
 val stage : value -> value
 val rsqrt : ?accuracy:Lax_config.accuracy -> value -> value
@@ -200,6 +205,7 @@ val top_k : ?axis:int -> value -> int -> value * value
 val dot :
   ?precision:Lax_config.precision ->
   ?preferred_element_type:Dtype.t ->
+  ?dimension_numbers:(int array * int array) * (int array * int array) ->
   value ->
   value ->
   value
@@ -291,7 +297,8 @@ val custom_linear_solve :
   ((value list -> value list) -> value list -> value list) ->
   value list
 
-val map : (value list -> value list) -> value list -> value list
+val map :
+  ?batch_size:int -> (value list -> value list) -> value list -> value list
 
 val switch :
   value -> (value list -> value list) list -> value list -> value list
@@ -313,7 +320,9 @@ val custom_root :
 val platform_dependent :
   ?default:(unit -> 'b) -> ?cuda:(unit -> 'b) -> cpu:(unit -> 'b) -> unit -> 'b
 
-val associative_scan : ?axis:int -> (value -> value -> value) -> value -> value
+val associative_scan :
+  ?axis:int -> ?reverse:bool -> (value -> value -> value) -> value -> value
+
 val shape_as_value : value -> value
 val index_take : value -> value list -> int array -> value
 

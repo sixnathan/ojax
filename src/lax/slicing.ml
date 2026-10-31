@@ -252,3 +252,104 @@ let scatter_combiner = function
   | Scatter_min _ -> Float.min
   | Scatter_max _ -> Float.max
   | _ -> failwith "lax: not a scatter primitive"
+
+let default_gather_fill dt sh =
+  let n = Array.fold_left ( * ) 1 sh in
+  match dt with
+  | d when Dtypes.issubdtype d `Inexact ->
+      Ndarray.of_floats dt sh (Array.make n Float.nan)
+  | Dtype.I64 -> Ndarray.of_int64s dt sh (Array.make n Int64.min_int)
+  | Dtype.Uint64 -> Ndarray.of_int64s dt sh (Array.make n (-1L))
+  | Dtype.Bool -> Ndarray.of_floats dt sh (Array.make n 1.0)
+  | Dtype.I8 -> Ndarray.of_floats dt sh (Array.make n (-128.0))
+  | Dtype.I16 -> Ndarray.of_floats dt sh (Array.make n (-32768.0))
+  | Dtype.I32 -> Ndarray.of_floats dt sh (Array.make n (-2147483648.0))
+  | Dtype.Uint8 -> Ndarray.of_floats dt sh (Array.make n 255.0)
+  | Dtype.Uint16 -> Ndarray.of_floats dt sh (Array.make n 65535.0)
+  | Dtype.Uint32 -> Ndarray.of_floats dt sh (Array.make n 4294967295.0)
+  | d when Dtypes.issubdtype d `Signed ->
+      Ndarray.of_floats dt sh (Array.make n (Dtypes.iinfo d).imin)
+  | d -> Ndarray.of_floats dt sh (Array.make n (Dtypes.iinfo d).imax)
+
+let gather_fill ?fill_value operand indices (gd : gather_dims) slice_sizes =
+  let bind1 = Core.bind1 in
+  let aval = Core.get_aval in
+  let op_shape = (aval operand).shape and op_dt = (aval operand).dtype in
+  let idx_aval = aval indices in
+  let idt = idx_aval.dtype and ish = idx_aval.shape in
+  let batch = Array.length ish - 1 in
+  let upper =
+    Array.map
+      (fun o -> float_of_int (op_shape.(o) - slice_sizes.(o)))
+      gd.start_index_map
+  in
+  let bound = Concrete (Ndarray.of_floats idt [| Array.length upper |] upper) in
+  let bound =
+    bind1 (Broadcast_in_dim { shape = ish; dims = [| batch |] }) [ bound ]
+  in
+  let zero =
+    Concrete
+      (Ndarray.of_floats idt ish (Array.make (Array.fold_left ( * ) 1 ish) 0.0))
+  in
+  let mask =
+    bind1 And [ bind1 Ge [ indices; zero ]; bind1 Le [ indices; bound ] ]
+  in
+  let mask = bind1 (Reduce_and [| batch |]) [ mask ] in
+  let gathered =
+    bind1 (Gather { dimension_numbers = gd; slice_sizes }) [ operand; indices ]
+  in
+  let out_shape = (aval gathered).shape in
+  let batch_dims =
+    Array.of_list
+      (List.filter
+         (fun d -> not (Array.exists (fun o -> o = d) gd.offset_dims))
+         (List.init (Array.length out_shape) Fun.id))
+  in
+  let mask =
+    bind1 (Broadcast_in_dim { shape = out_shape; dims = batch_dims }) [ mask ]
+  in
+  let fill =
+    match fill_value with
+    | Some f ->
+        Concrete
+          (Ndarray.of_floats op_dt out_shape
+             (Array.make (Array.fold_left ( * ) 1 out_shape) f))
+    | None -> Concrete (default_gather_fill op_dt out_shape)
+  in
+  bind1 Select_n [ mask; fill; gathered ]
+
+let clamp_scatter_indices operand indices updates (sd : scatter_dims) =
+  let bind1 = Core.bind1 in
+  let aval = Core.get_aval in
+  let op_shape = (aval operand).shape in
+  let upd_shape = (aval updates).shape in
+  let rank = Array.length op_shape in
+  let idt = (aval indices).dtype and ish = (aval indices).shape in
+  let slice_sizes = Array.make rank 1 in
+  let pos = ref 0 in
+  for i = 0 to rank - 1 do
+    if
+      not
+        (Array.exists (fun d -> d = i) sd.inserted_window_dims
+        || Array.exists (fun d -> d = i) sd.s_operand_batching_dims)
+    then begin
+      slice_sizes.(i) <- upd_shape.(sd.update_window_dims.(!pos));
+      incr pos
+    end
+  done;
+  let upper =
+    Array.map
+      (fun o -> float_of_int (op_shape.(o) - slice_sizes.(o)))
+      sd.scatter_dims_to_operand_dims
+  in
+  let bound = Concrete (Ndarray.of_floats idt [| Array.length upper |] upper) in
+  let bound =
+    bind1
+      (Broadcast_in_dim { shape = ish; dims = [| Array.length ish - 1 |] })
+      [ bound ]
+  in
+  let zero =
+    Concrete
+      (Ndarray.of_floats idt ish (Array.make (Array.fold_left ( * ) 1 ish) 0.0))
+  in
+  bind1 Clamp [ zero; indices; bound ]

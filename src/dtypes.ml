@@ -382,7 +382,9 @@ let lattice_result_type (args : (Dtype.t * bool) list) : Dtype.t * bool =
 
 let result_type (args : (Dtype.t * bool) list) : Dtype.t * bool =
   let d, w = lattice_result_type args in
-  ((if w then default_of_kind d else d), w)
+  let d = if w then default_of_kind d else d in
+  let widened = not (List.exists (fun (a, _) -> a = d) args) in
+  ((if widened then canonicalize_dtype d else d), w)
 
 type finfo = {
   bits : int;

@@ -64,7 +64,10 @@ let reads_numpy () =
   Alcotest.(check bool) "dtype" true (Nd.dtype a = D.F32);
   Alcotest.(check (array int)) "shape" [| 2; 2 |] (Nd.shape a);
   Alcotest.(check (float 0.0)) "cell" (-3.25) (Nd.get_f a [| 1; 0 |]);
-  let i = load_fixture "i64" in
+  let i =
+    Ojax.Config.with_value Ojax.Config.enable_x64 true (fun () ->
+        load_fixture "i64")
+  in
   Alcotest.(check int64) "wide int" 1099511627776L (Nd.get_i64 i [| 2 |]);
   let c = load_fixture "c64" in
   Alcotest.(check (float 0.0)) "imag" (-3.0) (Nd.get_c c [| 1 |]).Complex.im;
@@ -76,13 +79,17 @@ let reads_numpy () =
   Alcotest.(check (float 0.0)) "u8" 255.0 (Nd.get_f u [| 0 |])
 
 let writes_numpy_bytes () =
-  List.iter
-    (fun name ->
-      let path = temp ".npy" in
-      let source = load_fixture name in
-      IO.save path (T.Concrete source);
-      Alcotest.(check string) name (Hashtbl.find np_fixture name) (read path))
-    [ "f32"; "i64"; "c64"; "b1"; "u8"; "scalar" ]
+  Ojax.Config.with_value Ojax.Config.enable_x64 true (fun () ->
+      List.iter
+        (fun name ->
+          let path = temp ".npy" in
+          let source = load_fixture name in
+          IO.save path (T.Concrete source);
+          Alcotest.(check string)
+            name
+            (Hashtbl.find np_fixture name)
+            (read path))
+        [ "f32"; "i64"; "c64"; "b1"; "u8"; "scalar" ])
 
 let npz_round_trip () =
   let path = temp ".npz" in

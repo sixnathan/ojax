@@ -1,5 +1,9 @@
 type t
 
+val half_of_bits : int -> float
+val bits_of_half : float -> int
+val bfloat_of_bits : int -> float
+val bits_of_bfloat : float -> int
 val of_floats : Dtype.t -> int array -> float array -> t
 val of_int64s : Dtype.t -> int array -> int64 array -> t
 val of_complex : Dtype.t -> int array -> Complex.t array -> t
@@ -8,6 +12,7 @@ val shape : t -> int array
 val get_f : t -> int array -> float
 val set_f : t -> int array -> float -> unit
 val get_i64 : t -> int array -> int64
+val to_int64s : t -> int64 array
 val get_c : t -> int array -> Complex.t
 val set_c : t -> int array -> Complex.t -> unit
 val map : Dtype.t -> (float -> float) -> t -> t

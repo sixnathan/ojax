@@ -40,7 +40,9 @@ val schur : ?output:string -> Types.value -> Types.value list
 val block_diag : Types.value list -> Types.value
 val toeplitz : ?r:Types.value -> Types.value -> Types.value
 val hessenberg : ?calc_q:bool -> Types.value -> Types.value list
-val expm : ?upper_triangular:bool -> Types.value -> Types.value
+
+val expm :
+  ?upper_triangular:bool -> ?max_squarings:int -> Types.value -> Types.value
 
 val expm_frechet :
   ?compute_expm:bool -> Types.value -> Types.value -> Types.value list
@@ -61,6 +63,8 @@ val eigh_tridiagonal :
   ?eigvals_only:bool ->
   ?select:string ->
   ?select_range:float * float ->
+  ?tol:float ->
+  ?key:Types.value ->
   Types.value ->
   Types.value ->
   Types.value list

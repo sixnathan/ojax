@@ -9,7 +9,9 @@ val lu_pivots_to_permutation_impl : int -> Ndarray.t list -> Ndarray.t list
 val triangular_solve_impl :
   bool -> bool -> bool -> bool -> bool -> Ndarray.t list -> Ndarray.t list
 
-val tridiagonal_solve_impl : Ndarray.t list -> Ndarray.t list
+val tridiagonal_solve_impl :
+  perturb_singular:bool -> Ndarray.t list -> Ndarray.t list
+
 val eigh_impl : bool -> Ndarray.t list -> Ndarray.t list
 val eig_impl : bool -> bool -> Ndarray.t list -> Ndarray.t list
 val hessenberg_impl : Ndarray.t list -> Ndarray.t list
@@ -31,7 +33,7 @@ val hessenberg_aval : aval list -> aval list
 val schur_aval : bool -> aval list -> aval list
 val svd_aval : bool -> bool -> aval list -> aval list
 val tridiagonal_aval : aval list -> aval list
-val cholesky : value -> value
+val cholesky : ?symmetrize_input:bool -> value -> value
 val lu : value -> value * value * value
 val qr : ?full_matrices:bool -> value -> value * value
 val householder_product : value -> value -> value
@@ -47,18 +49,21 @@ val triangular_solve :
   value ->
   value
 
-val tridiagonal_solve : value -> value -> value -> value -> value
+val tridiagonal_solve :
+  ?perturb_singular:bool -> value -> value -> value -> value -> value
 
 val eig :
   ?implementation:Lax_config.eig_implementation ->
   ?compute_left_eigenvectors:bool ->
   ?compute_right_eigenvectors:bool ->
+  ?enable_eigvec_derivs:bool ->
   value ->
   value list
 
 val eigh :
   ?implementation:Lax_config.eigh_implementation ->
   ?lower:bool ->
+  ?symmetrize_input:bool ->
   value ->
   value * value
 

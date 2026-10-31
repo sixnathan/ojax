@@ -419,7 +419,13 @@ let igamma dtype a x =
   else if x_is_infinity then 1.0
   else begin
     let ax = (a *. Float.log x) -. x -. lgamma a in
-    if ax < -.Float.log (finfo_max dtype) then 0.0
+    if ax < -.Float.log (finfo_max dtype) then begin
+      let ax = Float.exp ax in
+      if x >= 1.0 && x > a then
+        let z = x +. (1.0 -. a) +. 1.0 in
+        1.0 -. ((x +. 1.0) /. (z *. x) *. ax)
+      else ax /. a
+    end
     else begin
       let ax = Float.exp ax in
       if x >= 1.0 && x > a then 1.0 -. igammac_cf_value dtype ax x a
@@ -482,7 +488,19 @@ let bernoulli_coefs =
     -134196726836183700385281186201600000000.0 /. 7709321041217.0;
   |]
 
-let zeta dtype s a =
+let rec zeta dtype s a =
+  let s_is_integer = Float.is_integer s in
+  let nonpositive_integer_a = a <= 0.0 && Float.floor a = a in
+  if s = 1.0 then Float.infinity
+  else if Float.is_nan s || Float.abs s = Float.infinity then Float.nan
+  else if nonpositive_integer_a then
+    if s_is_integer && Float.rem s 2.0 = 0.0 then Float.infinity else Float.nan
+  else if s < 1.0 then Float.nan
+  else if a <= 0.0 && not s_is_integer then Float.nan
+  else if Float.is_nan a || a = Float.infinity then Float.nan
+  else zeta_series dtype s a
+
+and zeta_series dtype s a =
   let n = match dtype with Dtype.F32 -> 8 | _ -> 16 in
   let big = finfo_max dtype in
   let series = ref 0.0 in
@@ -600,7 +618,9 @@ let regularized_incomplete_beta dtype a b x =
 
 let erf_inv x =
   let start = erf_inv_single x in
-  if (not (Float.is_finite start)) || Float.abs x >= 1.0 then start
+  if Float.abs x = 1.0 then Float.copy_sign Float.infinity x
+  else if Float.abs x > 1.0 then Float.nan
+  else if not (Float.is_finite start) then start
   else
     let two_over_sqrt_pi = 1.1283791670955126 in
     let refine y =

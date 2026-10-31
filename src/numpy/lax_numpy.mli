@@ -20,14 +20,24 @@ val matrix_transpose : Types.value -> Types.value
 val flip : ?axis:int array -> Types.value -> Types.value
 val fliplr : Types.value -> Types.value
 val flipud : Types.value -> Types.value
-val reshape : Types.value -> int array -> Types.value
-val ravel : Types.value -> Types.value
+val reshape : ?order:string -> Types.value -> int array -> Types.value
+val ravel : ?order:string -> Types.value -> Types.value
 val rot90 : ?k:int -> ?axes:int * int -> Types.value -> Types.value
 val trunc : Types.value -> Types.value
 val fmin : Types.value -> Types.value -> Types.value
 val fmax : Types.value -> Types.value -> Types.value
-val diff : ?n:int -> ?axis:int -> Types.value -> Types.value
-val ediff1d : Types.value -> Types.value
+
+val diff :
+  ?n:int ->
+  ?axis:int ->
+  ?prepend:Types.value ->
+  ?append:Types.value ->
+  Types.value ->
+  Types.value
+
+val ediff1d :
+  ?to_end:Types.value -> ?to_begin:Types.value -> Types.value -> Types.value
+
 val angle : ?deg:bool -> Types.value -> Types.value
 val iscomplex : Types.value -> Types.value
 val isreal : Types.value -> Types.value
@@ -83,22 +93,35 @@ val array_split : ?axis:int -> Types.value -> sections -> Types.value list
 val vsplit : Types.value -> sections -> Types.value list
 val hsplit : Types.value -> sections -> Types.value list
 val dsplit : Types.value -> sections -> Types.value list
-val select : Types.value list -> Types.value list -> Types.value
+
+val select :
+  ?default:Types.value -> Types.value list -> Types.value list -> Types.value
+
 val astype : Types.value -> Dtype.t -> Types.value
 val copy : Types.value -> Types.value
 val atleast_1d : Types.value -> Types.value
 val atleast_2d : Types.value -> Types.value
 val atleast_3d : Types.value -> Types.value
-val concatenate : ?axis:int -> Types.value list -> Types.value
+val concatenate : ?axis:int -> ?dtype:Dtype.t -> Types.value list -> Types.value
 val concat : ?axis:int -> Types.value list -> Types.value
-val stack : ?axis:int -> Types.value list -> Types.value
+val stack : ?axis:int -> ?dtype:Dtype.t -> Types.value list -> Types.value
 val unstack : ?axis:int -> Types.value -> Types.value list
-val vstack : Types.value list -> Types.value
-val hstack : Types.value list -> Types.value
-val dstack : Types.value list -> Types.value
+val vstack : ?dtype:Dtype.t -> Types.value list -> Types.value
+val hstack : ?dtype:Dtype.t -> Types.value list -> Types.value
+val dstack : ?dtype:Dtype.t -> Types.value list -> Types.value
 val column_stack : Types.value list -> Types.value
 val tile : Types.value -> int array -> Types.value
-val pad : Types.value -> (int * int) array -> float -> Types.value
+
+val pad :
+  ?mode:string ->
+  ?stat_length:(int * int) array ->
+  ?end_values:(float * float) array ->
+  ?reflect_type:string ->
+  Types.value ->
+  (int * int) array ->
+  float ->
+  Types.value
+
 val i0 : Types.value -> Types.value
 val array_equal : ?equal_nan:bool -> Types.value -> Types.value -> Types.value
 val array_equiv : Types.value -> Types.value -> Types.value
@@ -135,7 +158,9 @@ val diagonal :
 val diag_indices : ?ndim:int -> int -> Types.value list
 val diag_indices_from : Types.value -> Types.value list
 val kron : Types.value -> Types.value -> Types.value
-val repeat : ?axis:int -> Types.value -> int -> Types.value
+
+val repeat :
+  ?axis:int -> ?total_repeat_length:int -> Types.value -> int -> Types.value
 
 val trace :
   ?offset:int ->
@@ -159,14 +184,25 @@ val roll : ?axis:int array -> Types.value -> int array -> Types.value
 val rollaxis : ?start:int -> int -> Types.value -> Types.value
 val gcd : Types.value -> Types.value -> Types.value
 val lcm : Types.value -> Types.value -> Types.value
-val searchsorted : ?side:string -> Types.value -> Types.value -> Types.value
-val digitize : ?right:bool -> Types.value -> Types.value -> Types.value
+
+val searchsorted :
+  ?side:string ->
+  ?sorter:Types.value ->
+  ?method_:string ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val digitize :
+  ?right:bool -> ?method_:string -> Types.value -> Types.value -> Types.value
 
 val cov :
   ?y:Types.value ->
   ?rowvar:bool ->
   ?bias:bool ->
   ?ddof:int ->
+  ?fweights:Types.value ->
+  ?aweights:Types.value ->
   ?dtype:Dtype.t ->
   Types.value ->
   Types.value

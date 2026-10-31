@@ -63,10 +63,46 @@ let is_integer_dtype = function
   | D.Complex128 ->
       false
 
-let gammaln x = bind1 T.Lgamma [ promote1 x ]
+let is_complex_dtype = function
+  | D.Complex64 | D.Complex128 -> true
+  | _ -> false
+
+let reject_complex name v =
+  if is_complex_dtype (dtype v) then
+    raise
+      (Errors.jax_type_error
+         (name ^ " does not support complex-valued inputs."))
+
+let real_only name x =
+  let x = promote1 x in
+  reject_complex name x;
+  x
+
+let real_only2 name a b =
+  let a, b = promote2 a b in
+  reject_complex name a;
+  (a, b)
+
+let real_only3 name a b c =
+  let a, b, c = promote3 a b c in
+  reject_complex name a;
+  (a, b, c)
+
+let single_or_double x =
+  match dtype x with
+  | D.F32 | D.F64 -> ()
+  | d ->
+      raise
+        (Errors.jax_type_error
+           (Printf.sprintf
+              "x.dtype=%s is not supported, see docstring for supported types."
+              (D.short_name d)))
+
+let lgamma_real name x = bind1 T.Lgamma [ real_only name x ]
+let gammaln x = lgamma_real "gammaln" x
 
 let gammasgn x =
-  let x = promote1 x in
+  let x = real_only "gammasgn" x in
   let zero = scalar_of x 0.0 in
   let floor_x = UF.floor x in
   let x_neg = UF.less x zero in
@@ -83,14 +119,124 @@ let gammasgn x =
   where_ cond_nan (scalar_of x Float.nan)
     (where_ cond_neg (scalar_of x (-1.0)) (scalar_of x 1.0))
 
+let lanczos_g = 7.0
+
+let lanczos_coeffs =
+  [|
+    0.99999999999980993;
+    676.5203681218851;
+    -1259.1392167224028;
+    771.32342877765313;
+    -176.61502916214059;
+    12.507343278686905;
+    -0.13857109526572012;
+    9.9843695780195716e-6;
+    1.5056327351493116e-7;
+  |]
+
+let complex_of_parts z re im = NL.astype (bind1 T.Complex [ re; im ]) (dtype z)
+
+let complex_nan z =
+  let real_dt = if dtype z = D.Complex128 then D.F64 else D.F32 in
+  let nan = const_full real_dt [||] Float.nan in
+  complex_of_parts z nan nan
+
+let complex_loggamma z =
+  let s v = scalar_of z v in
+  let needs_reflection = UF.less (UF.real z) (scalar_of (UF.real z) 0.5) in
+  let z_lanczos = where_ needs_reflection (UF.subtract (s 1.0) z) z in
+  let zz = UF.subtract z_lanczos (s 1.0) in
+  let ag = ref (s lanczos_coeffs.(0)) in
+  for k = 1 to 8 do
+    ag :=
+      UF.add !ag
+        (UF.divide (s lanczos_coeffs.(k)) (UF.add zz (s (float_of_int k))))
+  done;
+  let t = UF.add zz (s (lanczos_g +. 0.5)) in
+  let log_gamma_lanczos =
+    UF.add
+      (UF.subtract
+         (UF.add
+            (s (0.5 *. Float.log (2.0 *. Float.pi)))
+            (UF.multiply (UF.add zz (s 0.5)) (UF.log t)))
+         t)
+      (UF.log !ag)
+  in
+  let z_safe = where_ needs_reflection z (AC.full_like z 0.5) in
+  let reflected =
+    UF.subtract
+      (UF.subtract
+         (UF.log (s Float.pi))
+         (UF.log (UF.sin (UF.multiply (s Float.pi) z_safe))))
+      log_gamma_lanczos
+  in
+  where_ needs_reflection reflected log_gamma_lanczos
+
+let complex_pole_or_nan z =
+  let re = UF.real z in
+  let is_pole =
+    UF.logical_and
+      (UF.logical_and
+         (UF.equal (UF.imag z) (scalar_of re 0.0))
+         (UF.equal re (UF.floor re)))
+      (UF.less_equal re (scalar_of re 0.0))
+  in
+  UF.logical_or is_pole (UF.isnan z)
+
+let complex_gamma z =
+  let safe = complex_pole_or_nan z in
+  let z_safe = where_ safe (AC.ones_like z) z in
+  where_ safe (complex_nan z) (UF.exp (complex_loggamma z_safe))
+
+let complex_loggamma_scipy z =
+  let safe = complex_pole_or_nan z in
+  let z_safe = where_ safe (AC.ones_like z) z in
+  let re = UF.real z_safe in
+  let n =
+    NL.astype
+      (UF.maximum (scalar_of re 0.0)
+         (UF.ceil (UF.subtract (scalar_of re 0.5) re)))
+      (Dts.default_int_dtype ())
+  in
+  let idt = Dts.default_int_dtype () in
+  let result =
+    Lax_api.while_loop
+      (fun state ->
+        match state with
+        | [ k; _ ] -> RED.any (UF.less k n)
+        | _ -> failwith "loggamma: state")
+      (fun state ->
+        match state with
+        | [ k; sum_log ] ->
+            let mask = UF.less k n in
+            let shifted = UF.add z_safe (NL.astype k (dtype z)) in
+            let zk = where_ mask shifted (AC.ones_like z_safe) in
+            [
+              UF.add k (const_full idt [||] 1.0);
+              UF.add sum_log (where_ mask (UF.log zk) (AC.zeros_like sum_log));
+            ]
+        | _ -> failwith "loggamma: state")
+      [ const_full idt [||] 0.0; AC.zeros_like z_safe ]
+  in
+  let sum_log = List.nth result 1 in
+  let res =
+    UF.subtract
+      (complex_loggamma (UF.add z_safe (NL.astype n (dtype z))))
+      sum_log
+  in
+  where_ safe (complex_nan z) res
+
 let loggamma x =
   let x = promote1 x in
-  let res = bind1 T.Lgamma [ x ] in
-  where_ (UF.greater x (scalar_of x 0.0)) res (scalar_of x Float.nan)
+  if is_complex_dtype (dtype x) then complex_loggamma_scipy x
+  else
+    let res = bind1 T.Lgamma [ x ] in
+    where_ (UF.greater x (scalar_of x 0.0)) res (scalar_of x Float.nan)
 
 let gamma x =
   let x = promote1 x in
-  UF.multiply (gammasgn x) (UF.exp (bind1 T.Lgamma [ x ]))
+  if is_complex_dtype (dtype x) then complex_gamma x
+  else UF.multiply (gammasgn x) (UF.exp (bind1 T.Lgamma [ x ]))
 
 let algdiv a b =
   let c0 = 0.833333333333333e-01
@@ -179,17 +325,17 @@ let rec comb ?(repetition = false) n_ k_ =
     where_ cond result (scalar_of n 0.0)
 
 let beta a b =
-  let a, b = promote2 a b in
+  let a, b = real_only2 "beta" a b in
   let sign =
     UF.multiply (UF.multiply (gammasgn a) (gammasgn b)) (gammasgn (UF.add a b))
   in
   UF.multiply sign (UF.exp (betaln a b))
 
 let betainc a b x =
-  let a, b, x = promote3 a b x in
+  let a, b, x = real_only3 "betainc" a b x in
   bind1 T.Regularized_incomplete_beta [ a; b; x ]
 
-let digamma x = bind1 T.Digamma [ promote1 x ]
+let digamma x = bind1 T.Digamma [ real_only "digamma" x ]
 
 let gammainc a x =
   let a, x = promote2 a x in
@@ -201,7 +347,7 @@ let gammaincc a x =
 
 let erf x = bind1 T.Erf [ promote1 x ]
 let erfc x = bind1 T.Erfc [ promote1 x ]
-let erfinv x = bind1 T.Erf_inv [ promote1 x ]
+let erfinv x = bind1 T.Erf_inv [ real_only "erfinv" x ]
 let expit x = bind1 T.Logistic [ promote1 x ]
 
 let logit x =
@@ -227,7 +373,7 @@ let xlog1py x y =
 let xlogx x = xlogy x x
 
 let entr x =
-  let x = promote1 x in
+  let x = real_only "entr" x in
   where_
     (UF.less x (scalar_of x 0.0))
     (scalar_of x Float.neg_infinity)
@@ -268,7 +414,7 @@ let multigammaln a d =
   UF.add res constant
 
 let rel_entr p q =
-  let p, q = promote2 p q in
+  let p, q = real_only2 "rel_entr" p q in
   let zero = scalar_of p 0.0 in
   let both = UF.logical_and (UF.greater p zero) (UF.greater q zero) in
   let one_zero = UF.logical_and (UF.equal p zero) (UF.greater_equal q zero) in
@@ -278,7 +424,7 @@ let rel_entr p q =
   where_ both log_val (where_ one_zero zero (scalar_of p Float.infinity))
 
 let kl_div p q =
-  let p, q = promote2 p q in
+  let p, q = real_only2 "kl_div" p q in
   UF.add (UF.subtract (rel_entr p q) p) q
 
 let i0e x = bind1 T.Bessel_i0e [ promote1 x ]
@@ -325,11 +471,6 @@ let erfcx_impl x nterms =
   in
   let asymp = erfcx_asymptotic x nterms in
   where_ large asymp direct
-
-let erfcx x =
-  let x = promote1 x in
-  let nterms = match dtype x with D.F64 -> 9 | _ -> 5 in
-  erfcx_impl x nterms
 
 let dawsn_an =
   [|
@@ -410,7 +551,7 @@ let dawsn_cd =
   |]
 
 let dawsn x =
-  let x = promote1 x in
+  let x = real_only "dawsn" x in
   let an = coeff_of x dawsn_an
   and ad = coeff_of x dawsn_ad
   and bn = coeff_of x dawsn_bn
@@ -477,7 +618,9 @@ let ndtr_core x =
   in
   UF.multiply (scalar_of x 0.5) y
 
-let ndtr x = ndtr_core (promote1 x)
+let ndtr x =
+  single_or_double x;
+  ndtr_core x
 
 let ndtri_p0 =
   [|
@@ -554,7 +697,7 @@ let ndtri_q2 =
   |]
 
 let ndtri p =
-  let p = promote1 p in
+  single_or_double p;
   let p0 = coeff_of p ndtri_p0
   and q0 = coeff_of p ndtri_q0
   and p1 = coeff_of p ndtri_p1
@@ -633,7 +776,7 @@ let log_ndtr_lower x series_order =
 let log_ndtr ?(series_order = 3) x =
   if series_order < 0 then invalid_arg "series_order must be non-negative.";
   if series_order > 30 then invalid_arg "series_order must be <= 30.";
-  let x = promote1 x in
+  single_or_double x;
   let lower, upper =
     match dtype x with D.F64 -> (-20.0, 8.0) | _ -> (-10.0, 5.0)
   in
@@ -651,7 +794,7 @@ let log_ndtr ?(series_order = 3) x =
 let polygamma n x =
   if not (is_integer_dtype (dtype n)) then
     invalid_arg "Argument `n` to polygamma must be of integer type.";
-  let n, x = promote2 n x in
+  let n, x = real_only2 "polygamma" n x in
   bind1 T.Polygamma [ n; x ]
 
 let bernoulli_coefs =
@@ -784,7 +927,7 @@ let wofz z =
   let a = Core.get_aval z in
   let out_dt =
     match a.Types.dtype with
-    | D.F64 | D.Complex128 -> D.Complex128
+    | D.F64 | D.Complex128 | D.I64 | D.Uint64 -> D.Complex128
     | _ -> D.Complex64
   in
   let host = function
@@ -823,8 +966,24 @@ let wofz z =
            [ z ])
   | _ -> List.hd (host [ z ])
 
+let erfcx x =
+  let x = promote1 x in
+  if is_complex_dtype (dtype x) then
+    let re = UF.real x and im = UF.imag x in
+    wofz (complex_of_parts x (UF.negative im) re)
+  else
+    let nterms = match dtype x with D.F64 -> 9 | _ -> 5 in
+    erfcx_impl x nterms
+
 let euler_gamma = 0.5772156649015329
-let eps_of v = match dtype v with D.F64 -> epsilon_float | _ -> 1.1920929e-7
+
+let eps_of v =
+  match dtype v with
+  | D.F64 | D.Complex128 -> epsilon_float
+  | D.F16 -> 0.0009765625
+  | D.Bf16 -> 0.0078125
+  | _ -> 1.1920928955078125e-07
+
 let full_like v x = const_full (dtype v) (shape v) x
 
 let masked_iter ~maxiter ~cond ~body state0 =
@@ -848,7 +1007,12 @@ let masked_iter ~maxiter ~cond ~body state0 =
   in
   List.tl looped
 
+let reject_bool x =
+  if dtype x = D.Bool then
+    raise (Errors.jax_type_error "sub does not accept dtype bool.")
+
 let softmax ?axis x =
+  reject_bool x;
   match axis with
   | Some ax -> NN.softmax ~axis:ax x
   | None ->
@@ -856,6 +1020,7 @@ let softmax ?axis x =
       NL.reshape (NN.softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
 
 let log_softmax ?axis x =
+  reject_bool x;
   match axis with
   | Some ax -> NN.log_softmax ~axis:ax x
   | None ->
@@ -863,7 +1028,7 @@ let log_softmax ?axis x =
       NL.reshape (NN.log_softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
 
 let poch z m =
-  let z, m = promote2 z m in
+  let z, m = real_only2 "poch" z m in
   where_
     (UF.equal m (scalar_of m 0.0))
     (scalar_of z 1.0)
@@ -1141,7 +1306,7 @@ let sici_approx x =
   (si, ci)
 
 let sici x =
-  let x = promote1 x in
+  let x = real_only "sici" x in
   let s v = scalar_of x v in
   let x_abs = UF.abs x in
   let si_series, ci_series = sici_series x_abs in
@@ -1195,6 +1360,10 @@ let coeff_f64 a = T.Concrete (Nd.of_floats D.F64 [| Array.length a |] a)
 
 let owens_t_quadrature h a =
   let ndim = Array.length (shape a) in
+  let coeff_f64 v =
+    T.Concrete
+      (Nd.of_floats (Dts.default_float_dtype ()) [| Array.length v |] v)
+  in
   let quad_pts =
     NL.expand_dims (coeff_f64 owens_t_quad_pts) (Array.init ndim (fun i -> i))
   in
@@ -1213,11 +1382,11 @@ let owens_t_quadrature h a =
 
 let owens_t h a =
   let h, a = promote2 h a in
-  let s v = scalar_of h v in
   let sign_a = UF.sign a in
-  let nan_mask = UF.logical_or (UF.isnan a) (UF.isnan h) in
   let h = UF.abs h in
   let abs_a = UF.abs a in
+  let s v = scalar_of h v in
+  let nan_mask = UF.logical_or (UF.isnan a) (UF.isnan h) in
   let root_2 = sqrt 2.0 in
   let h_normed = UF.divide h (s root_2) in
   let le1 = UF.less_equal abs_a (s 1.0) in
@@ -1497,7 +1666,7 @@ let rec hyp1f1_custom =
 and hyp1f1_apply a b x = List.hd ((Lazy.force hyp1f1_custom) [ a; b; x ])
 
 let hyp1f1 a b x =
-  let a, b, x = promote3 a b x in
+  let a, b, x = real_only3 "hyp1f1" a b x in
   hyp1f1_apply a b x
 
 let expn2 x n =
@@ -1683,7 +1852,7 @@ let expn n x =
   expn_apply n x
 
 let exp1 x =
-  let x = promote1 x in
+  let x = real_only "exp1" x in
   expn (scalar_of x 1.0) x
 
 module LA = Lax_api
@@ -2189,7 +2358,7 @@ let expi_custom =
          ([ expi_primal x ], [ UF.exp x /! x *! dx ])))
 
 let expi x =
-  let x = promote1 x in
+  let x = real_only "expi" x in
   (match dtype x with
   | D.Complex64 | D.Complex128 ->
       invalid_arg "expi does not support complex-valued inputs."
@@ -2511,6 +2680,9 @@ let fresnel_rule =
       | _ -> invalid_arg "fresnel: arity")
 
 let fresnel x =
+  let x = promote1 x in
+  if is_complex_dtype (dtype x) then
+    failwith "Support for complex-valued inputs is not implemented yet.";
   match fresnel_rule [ x ] with
   | [ s; c ] -> (s, c)
   | _ -> invalid_arg "fresnel: arity"

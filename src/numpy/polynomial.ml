@@ -160,7 +160,8 @@ let poly seq =
 
 let trim_front v =
   match v with
-  | T.Tracer _ -> v
+  | T.Tracer _ ->
+      invalid_arg "polymul: trim_leading_zeros needs a concrete array"
   | _ ->
       let n = (shape v).(0) in
       let nd =

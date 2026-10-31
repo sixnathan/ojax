@@ -964,7 +964,14 @@ let erfcx x =
     erfcx_impl x nterms
 
 let euler_gamma = 0.5772156649015329
-let eps_of v = match dtype v with D.F64 -> epsilon_float | _ -> 1.1920929e-7
+
+let eps_of v =
+  match dtype v with
+  | D.F64 | D.Complex128 -> epsilon_float
+  | D.F16 -> 0.0009765625
+  | D.Bf16 -> 0.0078125
+  | _ -> 1.1920928955078125e-07
+
 let full_like v x = const_full (dtype v) (shape v) x
 
 let masked_iter ~maxiter ~cond ~body state0 =

@@ -1,5 +1,6 @@
 #include <dlfcn.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
 
@@ -52,6 +53,22 @@ static void ojax_pjrt_raise(const char *msg) {
     caml_raise_with_string(*exn, msg);
 }
 
+static void ojax_disable_fast_min_max(void) {
+  const char *flag = "--xla_cpu_enable_fast_min_max=false";
+  const char *current = getenv("XLA_FLAGS");
+  if (current == NULL) {
+    setenv("XLA_FLAGS", flag, 1);
+  } else if (strstr(current, "xla_cpu_enable_fast_min_max") == NULL) {
+    size_t n = strlen(current) + strlen(flag) + 2;
+    char *joined = malloc(n);
+    if (joined != NULL) {
+      snprintf(joined, n, "%s %s", current, flag);
+      setenv("XLA_FLAGS", joined, 1);
+      free(joined);
+    }
+  }
+}
+
 CAMLprim value ojax_pjrt_open(value v_path) {
   CAMLparam1(v_path);
   CAMLlocal1(v_plugin);
@@ -60,6 +77,7 @@ CAMLprim value ojax_pjrt_open(value v_path) {
   errbuf[0] = '\0';
   void *handle = NULL;
   const PJRT_Api *api = NULL;
+  ojax_disable_fast_min_max();
   caml_release_runtime_system();
   handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
   if (handle == NULL) {

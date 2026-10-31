@@ -252,6 +252,13 @@ let check_operands prim args =
           | _ -> false)
         "subtypes of complexfloating, float32, float64"
   | Round | Round_nearest_even -> check "round" is_float_dtype floating
+  | Cholesky | Lu | Qr _ | Eig _ | Eigh _ | Svd _ | Schur _ | Hessenberg
+  | Triangular_solve _ | Tridiagonal _ | Tridiagonal_solve _ ->
+      check "linalg"
+        (function
+          | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> true
+          | _ -> false)
+        "float32, float64, complex64, complex128"
   | Rem -> check "rem" (fun d -> not_bool d && not_complex d) real_numeric
   | Lt -> check "lt" not_complex real
   | Gt -> check "gt" not_complex real

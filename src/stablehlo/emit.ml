@@ -197,6 +197,43 @@ let pair = function
   | [ a; b ] -> (a, b)
   | _ -> invalid_arg "Stablehlo.Emit: arity"
 
+let emit_complex_pick ctx (eqn : eqn) a b ~direction =
+  let out = sole eqn.outs in
+  let cty = Ir.tensor_type_of_aval out.vaval in
+  let rdt =
+    match out.vaval.dtype with Dtype.Complex128 -> Dtype.F64 | _ -> Dtype.F32
+  in
+  let rty = Ir.tensor_type rdt out.vaval.shape in
+  let bty = Ir.tensor_type Dtype.Bool out.vaval.shape in
+  let unary op v =
+    let n = fresh ctx in
+    Stdlib.Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.%s %s : (%s) -> %s\n" (name n) op
+         (name v) cty rty);
+    n
+  in
+  let compare dir x y =
+    let n = fresh ctx in
+    Stdlib.Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = stablehlo.compare %s, %s, %s, FLOAT : (%s, %s) -> %s\n"
+         (name n) dir (name x) (name y) rty rty bty);
+    n
+  in
+  let ra = unary "real" a and rb = unary "real" b in
+  let ia = unary "imag" a and ib = unary "imag" b in
+  let same = compare "EQ" ra rb in
+  let by_real = compare direction ra rb in
+  let by_imag = compare direction ia ib in
+  let pick = fresh ctx in
+  Stdlib.Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.select %s, %s, %s : %s, %s\n"
+       (name pick) (name same) (name by_imag) (name by_real) bty bty);
+  let n = bind_var ctx out in
+  Stdlib.Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.select %s, %s, %s : %s, %s\n" (name n)
+       (name pick) (name a) (name b) bty cty)
+
 let emit_stablehlo_binary ctx (eqn : eqn) in_ids op =
   let a, b = pair in_ids in
   let out = sole eqn.outs in
@@ -450,6 +487,19 @@ let emit_convert ctx (eqn : eqn) in_ids =
   let in_dt = in_aval.dtype in
   let out_dt = out.vaval.dtype in
   let oty = Ir.tensor_type_of_aval out.vaval in
+  let x, in_dt, in_aval =
+    match (in_dt, out_dt) with
+    | (Dtype.Complex64 | Dtype.Complex128), Dtype.Bool ->
+        let rdt = if in_dt = Dtype.Complex128 then Dtype.F64 else Dtype.F32 in
+        let re = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    %s = stablehlo.real %s : (%s) -> %s\n" (name re)
+             (name x)
+             (Ir.tensor_type_of_aval in_aval)
+             (Ir.tensor_type rdt in_aval.shape));
+        (re, rdt, { in_aval with dtype = rdt })
+    | _ -> (x, in_dt, in_aval)
+  in
   if out_dt = Dtype.Bool && in_dt <> Dtype.Bool then begin
     let inty = Ir.tensor_type_of_aval in_aval in
     let sty = Ir.tensor_type in_dt [||] in
@@ -783,8 +833,8 @@ let reduce_allones dt =
     | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 -> Ir.int_literal (-1L)
     | Dtype.Uint8 -> Ir.int_literal 255L
     | Dtype.Uint16 -> Ir.int_literal 65535L
-    | Dtype.Uint64 -> Ir.int_literal (-1L)
     | Dtype.Uint32 -> Ir.int_literal 4294967295L
+    | Dtype.Uint64 -> "18446744073709551615"
     | Dtype.Bool -> Ir.bool_literal true
     | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
         invalid_arg "Stablehlo.Emit: bitwise reduce on floating-point dtype"
@@ -815,13 +865,20 @@ let reduce_minid dt =
     | Dtype.I16 -> Ir.int_literal 32767L
     | Dtype.I32 -> Ir.int_literal 2147483647L
     | Dtype.I64 -> Ir.int_literal Int64.max_int
+    | Dtype.Uint64 -> "18446744073709551615"
     | Dtype.Uint8 -> Ir.int_literal 255L
     | Dtype.Uint16 -> Ir.int_literal 65535L
-    | Dtype.Uint64 -> Ir.int_literal (-1L)
     | Dtype.Uint32 -> Ir.int_literal 4294967295L
     | Dtype.Bool -> Ir.bool_literal true
     | Dtype.Complex64 | Dtype.Complex128 ->
         invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
+
+let emit_min_max ctx (eqn : eqn) in_ids ~op ~direction =
+  match (sole eqn.outs).vaval.dtype with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      let a, b = pair in_ids in
+      emit_complex_pick ctx eqn a b ~direction
+  | _ -> emit_stablehlo_binary ctx eqn in_ids op
 
 let emit_reduce ctx (eqn : eqn) in_ids axes op init =
   let x = sole in_ids in
@@ -1495,7 +1552,7 @@ let emit_sort_comparator ctx dt =
   Buffer.add_string ctx.buf
     (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name x) sty (name y) sty);
   match dt with
-  | Dtype.F32 | Dtype.F64 ->
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 ->
       let canon operand =
         let c0 = fresh ctx in
         Buffer.add_string ctx.buf
@@ -2006,6 +2063,24 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Cosh -> emit_chlo_unary ctx eqn in_ids "cosh"
   | Copy -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
   | Exp2 -> emit_exp2 ctx eqn in_ids
+  | Conj
+    when match (atom_aval (sole eqn.inputs)).dtype with
+         | Dtype.F32 | Dtype.F64 -> true
+         | _ -> false ->
+      let x = sole in_ids in
+      let aval = atom_aval (sole eqn.inputs) in
+      let partty = Ir.tensor_type aval.dtype aval.shape in
+      let im = fresh ctx in
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.constant %s : %s\n\
+           \    %s = stablehlo.complex %s, %s : %s\n"
+           (name im)
+           (Ir.dense (Ir.float_literal aval.dtype 0.0))
+           partty (name n) (name x) (name im)
+           (Ir.tensor_type_of_aval out.vaval))
   | Conj ->
       let x = sole in_ids in
       let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
@@ -2086,8 +2161,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | And -> emit_stablehlo_binary ctx eqn in_ids "and"
   | Atan2 -> emit_stablehlo_binary ctx eqn in_ids "atan2"
   | Div -> emit_stablehlo_binary ctx eqn in_ids "divide"
-  | Max -> emit_stablehlo_binary ctx eqn in_ids "maximum"
-  | Min -> emit_stablehlo_binary ctx eqn in_ids "minimum"
+  | Max -> emit_min_max ctx eqn in_ids ~op:"maximum" ~direction:"GT"
+  | Min -> emit_min_max ctx eqn in_ids ~op:"minimum" ~direction:"LT"
   | Mul -> emit_stablehlo_binary ctx eqn in_ids "multiply"
   | Or -> emit_stablehlo_binary ctx eqn in_ids "or"
   | Pow -> emit_stablehlo_binary ctx eqn in_ids "power"

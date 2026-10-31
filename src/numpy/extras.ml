@@ -51,6 +51,17 @@ let nonzero_mask a =
   | Dtype.Bool -> a
   | _ -> U.not_equal a (scalar_like a 0.0)
 
+let is_complex_value v =
+  match dtype_of v with
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let real_of_complex v =
+  match dtype_of v with
+  | Dtype.Complex128 -> Dtype.F64
+  | Dtype.Complex64 -> Dtype.F32
+  | d -> d
+
 let strides_of sh =
   let n = Array.length sh in
   let s = Array.make n 1 in
@@ -65,7 +76,7 @@ let nonzero ?size ?(fill_value = 0) a =
   let strides = strides_of sh in
   match size with
   | None ->
-      let data = flat_floats (host "nonzero" a) in
+      let data = flat_floats (host "nonzero" (nonzero_mask a)) in
       let hits =
         List.filter
           (fun i -> data.(i) <> 0.0)
@@ -216,8 +227,10 @@ let traced_unique ?axis ~size ?fill_value a =
   in
   { values; indices; inverse; counts }
 
-let unique_full ?axis ?size ?fill_value a =
+let rec unique_full ?axis ?size ?fill_value a =
   match size with
+  | _ when is_complex_value a && axis = None ->
+      unique_complex ?size ?fill_value a
   | Some size when size_of a > 0 -> traced_unique ?axis ~size ?fill_value a
   | _ ->
       let fill_value = Option.value fill_value ~default:0.0 in
@@ -306,6 +319,24 @@ let unique_full ?axis ?size ?fill_value a =
           | Some _ -> ints_value idt [| rows |] inverse);
         counts = ints_value idt [| out_rows |] (pad_or_cut counts_arr 0);
       }
+
+and unique_complex ?size ?fill_value a =
+  let n = size_of a in
+  let source = flat a in
+  let parts =
+    NL.stack ~axis:1
+      [
+        NL.astype (U.real source) (real_of_complex a);
+        NL.astype (U.imag source) (real_of_complex a);
+      ]
+  in
+  let r = unique_full ~axis:0 ?size parts in
+  ignore fill_value;
+  let rows = (shape r.values).(0) in
+  let column j = L.index_in_dim ~axis:1 ~keepdims:false r.values j in
+  let values = NL.astype (L.complex (column 0) (column 1)) (dtype_of a) in
+  ignore (n, rows);
+  { r with values; inverse = NL.reshape r.inverse (shape a) }
 
 let unique_values ?size ?fill_value a = (unique_full ?size ?fill_value a).values
 
@@ -942,7 +973,8 @@ let sort_complex a =
   let nd = host "sort_complex" a in
   let dt =
     match Ndarray.dtype nd with
-    | Dtype.Complex128 | Dtype.F64 -> Dtype.Complex128
+    | Dtype.Complex128 | Dtype.F64 | Dtype.I64 | Dtype.Uint64 ->
+        Dtype.Complex128
     | _ -> Dtype.Complex64
   in
   let sh = Ndarray.shape nd in
@@ -956,14 +988,28 @@ let sort_complex a =
   in
   Array.stable_sort
     (fun (x : Complex.t) (y : Complex.t) ->
-      let c = compare x.re y.re in
-      if c <> 0 then c else compare x.im y.im)
+      let order p q =
+        if Float.is_nan p then if Float.is_nan q then 0 else 1
+        else if Float.is_nan q then -1
+        else compare p q
+      in
+      let c = order x.re y.re in
+      if c <> 0 then c else order x.im y.im)
     values;
   Concrete (Ndarray.of_complex dt sh values)
 
 let bitwise_count a = NL.astype (L.population_count (U.absolute a)) (dtype_of a)
 
+let reject_complex name x =
+  match dtype_of x with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      raise
+        (Errors.jax_type_error
+           (name ^ " does not support complex-valued inputs"))
+  | _ -> ()
+
 let frexp x =
+  reject_complex "frexp" x;
   let x = as_inexact x in
   let nd = host "frexp" x in
   let data = flat_floats nd in
@@ -977,6 +1023,7 @@ let frexp x =
     ints_value Dtype.I32 (shape x) exponent )
 
 let ldexp x exponent =
+  reject_complex "ldexp" x;
   let x = as_inexact x in
   let two = L.full (shape x) 2.0 (dtype_of x) in
   U.multiply x (U.power two (NL.astype exponent (dtype_of x)))

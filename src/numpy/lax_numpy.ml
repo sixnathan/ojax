@@ -391,7 +391,9 @@ let where_ c x y =
   bind1 T.Select_n [ cb; yb; xb ]
 
 let finfo_max = function
-  | D.F64 -> Float.max_float
+  | D.F64 | D.Complex128 -> Float.max_float
+  | D.F16 -> 65504.0
+  | D.Bf16 -> 3.3895313892515355e+38
   | _ -> 3.4028234663852886e+38
 
 let isposinf v = bind1 T.Eq [ v; full (dtype v) (shape v) Float.infinity ]
@@ -409,6 +411,11 @@ let nan_to_num ?(nan = 0.0) ?posinf ?neginf x =
     where_ (isneginf out) (scalar dt nv) out
   end
 
+let real_dtype_of = function
+  | D.Complex64 -> D.F32
+  | D.Complex128 -> D.F64
+  | d -> d
+
 let isclose ?(rtol = 1e-5) ?(atol = 1e-8) ?(equal_nan = false) a b =
   let dt0, _ =
     Dtypes.result_type
@@ -421,7 +428,17 @@ let isclose ?(rtol = 1e-5) ?(atol = 1e-8) ?(equal_nan = false) a b =
   let sh = broadcast_shapes (shape a) (shape b) in
   let a = broadcast_to (convert a dt) sh in
   let b = broadcast_to (convert b dt) sh in
-  let rt = full dt sh rtol and at = full dt sh atol in
+  let rdt = real_dtype_of dt in
+  let rt = full rdt sh rtol and at = full rdt sh atol in
+  let finite v =
+    if rdt = dt then bind1 T.Is_finite [ v ]
+    else
+      bind1 T.And
+        [
+          bind1 T.Is_finite [ bind1 T.Real [ v ] ];
+          bind1 T.Is_finite [ bind1 T.Imag [ v ] ];
+        ]
+  in
   let in_range =
     bind1 T.Le
       [
@@ -430,8 +447,7 @@ let isclose ?(rtol = 1e-5) ?(atol = 1e-8) ?(equal_nan = false) a b =
       ]
   in
   let out =
-    bind1 T.Or
-      [ bind1 T.Eq [ a; b ]; bind1 T.And [ bind1 T.Is_finite [ b ]; in_range ] ]
+    bind1 T.Or [ bind1 T.Eq [ a; b ]; bind1 T.And [ finite b; in_range ] ]
   in
   if equal_nan then bind1 T.Or [ out; bind1 T.And [ isnan a; isnan b ] ]
   else out
@@ -457,6 +473,8 @@ let clip ?min ?max arr =
       (is_integral (dtype arr) || is_bool (dtype arr))
       && (fractional min || fractional max)
     then convert arr (Dtypes.default_float_dtype ())
+    else if is_bool (dtype arr) && (min <> None || max <> None) then
+      convert arr (Dtypes.default_int_dtype ())
     else arr
   in
   let dt = dtype arr in
@@ -467,7 +485,9 @@ let clip ?min ?max arr =
 
 let rec round ?(decimals = 0) v =
   let dt = dtype v in
-  if is_integral dt || is_bool dt then v
+  if is_bool dt then
+    invalid_arg "jnp.round: data type bool not compatible with finfo";
+  if is_integral dt then v
   else if dt = D.Complex64 || dt = D.Complex128 then
     bind1 T.Complex
       [
@@ -598,7 +618,10 @@ let unravel_index indices dims =
 let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
   let nd = ndim p in
   let axis = canonicalize_axis axis nd in
-  let dt = to_inexact_dtype (dtype p) in
+  let dt =
+    if is_bool (dtype p) then Dtypes.default_float_dtype ()
+    else to_inexact_dtype (dtype p)
+  in
   let p = convert p dt in
   let size = (shape p).(axis) in
   if size = 0 then p
@@ -696,7 +719,11 @@ let promote_values vs =
   let dt = result_type vs in
   List.map (fun v -> convert v dt) vs
 
-let astype v dt = convert v dt
+let astype v dt =
+  match (dtype v, dt) with
+  | (D.Complex64 | D.Complex128), D.Bool -> bind1 T.Ne [ v; zeros_like v ]
+  | _ -> convert v dt
+
 let copy v = bind1 T.Copy [ v ]
 let atleast_1d v = if ndim v >= 1 then v else expand_dims v [| 0 |]
 
@@ -1046,6 +1073,8 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
   end
 
 let i0 v =
+  if is_complex_dtype (dtype v) then
+    invalid_arg "Unsupported input type to jax.numpy.i0: complex";
   let v = convert v (to_inexact_dtype (dtype v)) in
   let ax = bind1 T.Abs [ v ] in
   bind1 T.Mul [ bind1 T.Exp [ ax ]; bind1 T.Bessel_i0e [ ax ] ]
@@ -1161,6 +1190,10 @@ let append ?axis arr values =
   | Some ax -> concatenate ~axis:ax [ arr; values ]
 
 let argmax ?axis ?(keepdims = false) a =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise (Errors.jax_type_error "argmax does not accept complex input.")
+  | _ -> ());
   let orig_nd = ndim a in
   let a2, ax, dims =
     match axis with
@@ -1388,6 +1421,10 @@ let all_over ?axis ?(keepdims = false) v =
 let scalar_at v i = squeeze (slice_axis v 0 i (i + 1))
 
 let argmin ?axis ?(keepdims = false) a =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise (Errors.jax_type_error "argmin does not accept complex input.")
+  | _ -> ());
   let orig_nd = ndim a in
   let a2, ax, dims =
     match axis with
@@ -1404,6 +1441,10 @@ let argmin ?axis ?(keepdims = false) a =
   if keepdims then expand_dims r dims else r
 
 let nanargmax ?axis ?(keepdims = false) a =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise (Errors.jax_type_error "nanargmax does not accept complex input.")
+  | _ -> ());
   if not (is_inexact (dtype a)) then argmax ?axis ~keepdims a
   else begin
     let nan_mask = isnan a in
@@ -1414,6 +1455,10 @@ let nanargmax ?axis ?(keepdims = false) a =
   end
 
 let nanargmin ?axis ?(keepdims = false) a =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise (Errors.jax_type_error "nanargmin does not accept complex input.")
+  | _ -> ());
   if not (is_inexact (dtype a)) then argmin ?axis ~keepdims a
   else begin
     let nan_mask = isnan a in

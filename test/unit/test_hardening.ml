@@ -11,7 +11,11 @@ module N = Nn.Functions
 module LL = Lax.Linalg
 module Ad = Interpreters.Ad
 
-let () = Lax.install ()
+let () =
+  Lax.install ();
+  Random.Prng.install ();
+  Random.Threefry.install ()
+
 let f16 v = T.Concrete (Nd.of_floats D.F16 [| Array.length v |] v)
 let f32 v = T.Concrete (Nd.of_floats D.F32 [| Array.length v |] v)
 let f64 v = T.Concrete (Nd.of_floats D.F64 [| Array.length v |] v)
@@ -594,6 +598,126 @@ let complex_primitives () =
   raises "fabs complex" (fun () -> UF.fabs c);
   raises "isposinf complex" (fun () -> UF.isposinf c)
 
+let special_edges () =
+  let f = f32 in
+  let inf = Float.infinity and nan = Float.nan in
+  reals "igamma" ~tol:1e-5 D.F32 [| nan; 1.0; 1.0; 1.0 |]
+    (S.gammainc (f [| 0.0; 0.0; 0.5; 10.0 |]) (f [| 0.5; 1.0; 1e4; 1e4 |]));
+  reals "zeta domain" ~tol:1e-5 D.F32
+    [| inf; inf; inf; nan; nan; nan; nan; 1.644934 |]
+    (S.zeta
+       ~q:(f [| nan; 0.0; -1.0; -1.0; 0.0; inf; 2.0; 1.0 |])
+       (f [| 1.0; 0.0; 2.0; 3.0; 1.5; 1.5; -1.0; 2.0 |]));
+  reals "polygamma at inf" ~tol:0.0 D.F32 [| nan |]
+    (S.polygamma
+       (T.Concrete (Nd.of_floats D.I32 [| 1 |] [| 1.0 |]))
+       (f [| inf |]));
+  reals "expn float16" ~tol:1e-3 D.F16 [| 0.05704 |]
+    (S.expn (f16 [| 0.5 |]) (f16 [| 2.0 |]))
+
+let compiled_paths () =
+  let jit1 g x = List.hd (Api.jit_flat (fun a -> [ g (List.hd a) ]) [ x ]) in
+  let nan = Float.nan in
+  reals "jit max keeps nan" ~tol:0.0 D.F32 [| nan |]
+    (List.hd
+       (Api.jit_flat
+          (fun a -> [ Numpy.Reductions.max (List.hd a) ])
+          [ f32 [| 1.0; nan |] ]));
+  reals "jit minimum keeps nan" ~tol:0.0 D.F32 [| 0.0; nan |]
+    (jit1 (fun x -> UF.minimum x (f32 [| 0.0; 0.0 |])) (f32 [| 1.0; nan |]));
+  let c = c64 [| (1.0, 1.0); (2.0, -1.0); (0.0, 0.5); (0.0, 0.0) |] in
+  complexes "jit complex minimum with a constant" D.Complex64
+    [| (1.0, 1.0); (2.0, -1.0); (0.0, 0.5); (0.0, 0.0) |]
+    (jit1
+       (fun z ->
+         UF.minimum z (T.Concrete (Nd.of_floats D.Complex64 [||] [| 6.0 |])))
+       c);
+  complexes "jit complex maximum" D.Complex64
+    [| (1.0, 1.0); (2.0, -1.0); (1.0, 0.0); (1.0, 0.0) |]
+    (jit1
+       (fun z ->
+         UF.maximum z (T.Concrete (Nd.of_floats D.Complex64 [||] [| 1.0 |])))
+       c);
+  reals "jit all reads real parts" ~tol:0.0 D.Bool [| 0.0 |]
+    (jit1 (fun z -> Numpy.Reductions.all z) c);
+  reals "jit sort float16" ~tol:0.0 D.F16 [| 1.0; 2.0; nan |]
+    (jit1 (fun x -> Numpy.Sorting.sort x) (f16 [| 2.0; nan; 1.0 |]));
+  Config.with_value Config.enable_x64 true (fun () ->
+      let u = T.Concrete (Nd.of_int64s D.Uint64 [| 3 |] [| 3L; 1L; 5L |]) in
+      Alcotest.(check int64)
+        "jit u64 min" 1L
+        (Nd.get_i64 (host (jit1 (fun x -> Numpy.Reductions.min x) u)) [||]);
+      Alcotest.(check int64)
+        "jit u64 ptp" 4L
+        (Nd.get_i64 (host (jit1 (fun x -> Numpy.Reductions.ptp x) u)) [||]))
+
+let numpy_bugs () =
+  let inf = Float.infinity and nan = Float.nan in
+  reals "sort puts nan last" ~tol:0.0 D.F32
+    [| Float.neg_infinity; 1.0; 2.0; nan |]
+    (Numpy.Sorting.sort (f32 [| 2.0; nan; 1.0; Float.neg_infinity |]));
+  complexes "sort_complex puts nan last" ~tol:0.0 D.Complex64
+    [| (-1.0, 0.0); (1.0, 0.0); (nan, 0.0) |]
+    (Numpy.Extras.sort_complex (f32 [| nan; 1.0; -1.0 |]));
+  let c = c64 [| (1.0, 1.0); (2.0, -1.0); (0.0, 0.5); (0.0, 0.0) |] in
+  (match Numpy.Extras.nonzero c with
+  | [ i ] ->
+      reals "nonzero sees imaginary parts" ~tol:0.0 D.I32 [| 0.0; 1.0; 2.0 |] i
+  | _ -> Alcotest.fail "nonzero arity");
+  reals "all on complex" ~tol:0.0 D.Bool [| 0.0 |] (Numpy.Reductions.all c);
+  reals "any on complex" ~tol:0.0 D.Bool [| 1.0 |] (Numpy.Reductions.any c);
+  (match
+     Numpy.Extras.unique
+       (c64 [| (1.0, 1.0); (1.0, -1.0); (1.0, 1.0); (0.0, 0.0) |])
+   with
+  | [ u ] ->
+      complexes "unique on complex" ~tol:0.0 D.Complex64
+        [| (0.0, 0.0); (1.0, -1.0); (1.0, 1.0) |]
+        u
+  | _ -> Alcotest.fail "unique arity");
+  reals "clip widens bool" ~tol:0.0 D.I32 [| 1.0; 0.0 |]
+    (NL.clip ~min:0.0 ~max:2.0 (bools [| 1.0; 0.0 |]));
+  reals "nan_to_num float16" ~tol:0.0 D.F16 [| 65504.0; -65504.0 |]
+    (NL.nan_to_num (f16 [| inf; Float.neg_infinity |]));
+  reals "isclose on complex" ~tol:0.0 D.Bool [| 1.0; 1.0; 1.0; 1.0 |]
+    (NL.isclose c c);
+  raises "argmax complex" (fun () -> NL.argmax c);
+  raises "round bool" (fun () -> NL.round (bools [| 1.0 |]));
+  raises "cholesky float16" (fun () ->
+      Numpy.Linalg.cholesky
+        (T.Concrete (Nd.of_floats D.F16 [| 1; 1 |] [| 1.0 |])))
+
+let jit_conj_of_real () =
+  complexes "jit conj of a float" ~tol:0.0 D.Complex64
+    [| (1.5, 0.0); (-2.0, 0.0) |]
+    (List.hd
+       (Api.jit_flat
+          (fun a -> [ Lax_api.conj (List.hd a) ])
+          [ f32 [| 1.5; -2.0 |] ]))
+
+let closed_form_det () =
+  let m sh v = T.Concrete (Nd.of_floats D.F32 sh v) in
+  Alcotest.(check (float 0.0))
+    "det 2x2 is exact on singular input" 0.0
+    (Nd.get_f
+       (host (Numpy.Linalg.det (m [| 2; 2 |] [| 1.; 2.; 3.; 6. |])))
+       [||]);
+  Alcotest.(check (float 0.0))
+    "det 3x3 is exact on singular input" 0.0
+    (Nd.get_f
+       (host
+          (Numpy.Linalg.det
+             (m [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |])))
+       [||]);
+  let s, l =
+    Numpy.Linalg.slogdet
+      (T.Concrete (Nd.of_floats D.F16 [| 2; 2 |] [| 4.; 1.; 2.; 3. |]))
+  in
+  Alcotest.(check (float 0.0)) "slogdet sign" 1.0 (Nd.get_f (host s) [||]);
+  Alcotest.(check (float 1e-3))
+    "slogdet log" (Float.log 10.0)
+    (Nd.get_f (host l) [||])
+
 let () =
   Alcotest.run "hardening"
     [
@@ -623,5 +747,10 @@ let () =
           Alcotest.test_case "narrow floats" `Quick narrow_floats;
           Alcotest.test_case "rounding" `Quick rounding;
           Alcotest.test_case "complex primitives" `Quick complex_primitives;
+          Alcotest.test_case "special edges" `Quick special_edges;
+          Alcotest.test_case "compiled paths" `Quick compiled_paths;
+          Alcotest.test_case "numpy bugs" `Quick numpy_bugs;
+          Alcotest.test_case "closed form det" `Quick closed_form_det;
+          Alcotest.test_case "jit conj of a float" `Quick jit_conj_of_real;
         ] );
     ]

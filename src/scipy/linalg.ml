@@ -70,7 +70,10 @@ let lu ?(permute_l = false) a =
   let perm_row = NL.expand_dims permutation [| 0 |] in
   let iota = NL.arange ~dtype:(dtype permutation) (float_of_int m) in
   let iota_col = NL.expand_dims iota [| 1 |] in
-  let p = NL.astype (UF.equal perm_row iota_col) dt in
+  let real_dt =
+    match dt with D.Complex64 -> D.F32 | D.Complex128 -> D.F64 | d -> d
+  in
+  let p = NL.astype (UF.equal perm_row iota_col) real_dt in
   let kcols = iota_idx k in
   let l_lower = IDX.take ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
   let l = UF.add l_lower (NL.eye ~m:k ~dtype:dt m) in

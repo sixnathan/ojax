@@ -977,7 +977,11 @@ let sort_impl dimension num_keys operands =
         else
           let ka = arrs.(ki) in
           let vi = ka.(base + (i * stride)) and vj = ka.(base + (j * stride)) in
-          if vi < vj then -1 else if vi > vj then 1 else go (ki + 1)
+          if Float.is_nan vi then if Float.is_nan vj then go (ki + 1) else 1
+          else if Float.is_nan vj then -1
+          else if vi < vj then -1
+          else if vi > vj then 1
+          else go (ki + 1)
       in
       go 0
     in
@@ -1118,8 +1122,7 @@ let convert_impl dt a =
     let parts = to_carray a in
     Ndarray.of_floats dt sh
       (Array.map
-         (fun (z : Complex.t) ->
-           if z.re <> 0.0 || z.im <> 0.0 then 1.0 else 0.0)
+         (fun (z : Complex.t) -> if z.re <> 0.0 then 1.0 else 0.0)
          parts)
   else if is_int_dtype src && is_int_dtype dt then
     of_ints (Array.map (wrap_int_to dt) (Ndarray.to_int64s a))

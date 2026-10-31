@@ -1079,6 +1079,35 @@ let auto_explicit () =
        (S.auto_axes ~out_sharding:[] (unary Fun.id)
           [ T.Leaf (f32 [||] [| 3.0 |]) ]))
 
+let abstract_context_mesh () =
+  let q = S.abstract_mesh [ 4 ] [ "q" ] in
+  let psum_q =
+    S.shard_map ~in_specs:[ [ S.Named "q" ] ] ~out_specs:[ [] ]
+      (unary (fun a -> P.psum a ~axis_name:"q"))
+  in
+  raises_with "abstract needs named arrays" "with a `NamedSharding` as input"
+    (fun () -> S.use_abstract_mesh q (fun () -> psum_q [ T.Leaf (arange 8) ]));
+  let concrete = S.make_mesh ~axis_types:[ S.Auto ] [ 4 ] [ "q" ] in
+  let placed =
+    leaf
+      (S.device_put
+         (T.Leaf (arange 8))
+         (S.named_sharding concrete [ S.Named "q" ]))
+  in
+  let out = leaf (S.use_abstract_mesh q (fun () -> psum_q [ T.Leaf placed ])) in
+  values "abstract mesh with named input" [| 12.; 16. |] out;
+  check_spec "abstract mesh spec" "P()" out;
+  let x = on_i (arange 8) in
+  Alcotest.(check (array (pair int int)))
+    "global shard index"
+    [| (6, 8) |]
+    (List.nth (S.global_shards x) 3).index;
+  values "addressable data" [| 6.; 7. |] (S.addressable_data x 3);
+  Alcotest.(check bool) "committed" true (S.is_committed x);
+  Alcotest.(check bool)
+    "uncommitted" false
+    (S.is_committed (leaf (Api.device_put (T.Leaf (arange 8)))))
+
 let device_orders () =
   let devices = S.local_devices () in
   let reversed =
@@ -1362,6 +1391,7 @@ let () =
           case "shard_map jit" shard_map_jit;
           case "shard_map ad" shard_map_ad;
           case "pmap" pmap_real;
+          case "abstract context" abstract_context_mesh;
           case "device orders" device_orders;
           case "fallback and transforms" host_fallback_and_transforms;
         ] );

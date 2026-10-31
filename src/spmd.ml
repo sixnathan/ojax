@@ -268,6 +268,13 @@ let addressable_shards v =
       ]
   | Tracer _ -> invalid_arg "addressable_shards: expected a concrete array"
 
+let global_shards = addressable_shards
+let addressable_data v i = (List.nth (addressable_shards v) i).data
+
+let is_committed = function
+  | Device (PB.Placed _) -> true
+  | Device (PB.Single _) | Concrete _ | Tracer _ -> false
+
 let host_array = function
   | Concrete nd -> nd
   | Device b -> PB.to_host b
@@ -378,12 +385,26 @@ let update_axis_types a updates =
         a.abstract_axis_names a.abstract_axis_types;
   }
 
-let context_mesh () =
+let context_mesh args =
   match (!concrete_context, !abstract_context) with
-  | Some m, _ when mesh_size m > 0 && m.axis_names <> [] -> m
-  | _, Some a when a.abstract_axis_names <> [] ->
-      make_mesh ~axis_types:a.abstract_axis_types a.abstract_axis_sizes
-        a.abstract_axis_names
+  | Some m, _ when m.axis_names <> [] -> m
+  | _, Some a when a.abstract_axis_names <> [] -> (
+      let pairs = List.combine a.abstract_axis_names a.abstract_axis_sizes in
+      let from_arg =
+        List.find_map
+          (function
+            | Device (PB.Placed { layout = PB.Named n; _ })
+              when n.mesh_axes = pairs ->
+                Some (mesh_of_named n)
+            | _ -> None)
+          args
+      in
+      match from_arg with
+      | Some m -> m
+      | None ->
+          invalid_arg
+            "Please pass `jax.Array`s with a `NamedSharding` as input to \
+             `shard_map` when passing `AbstractMesh` to the mesh argument.")
   | _ ->
       invalid_arg
         "The context mesh cannot be empty. Use `jax.set_mesh(mesh)` to enter \
@@ -707,7 +728,8 @@ let shard_map ?mesh ?axis_names ?in_specs ~out_specs f args =
             || ctx.abstract_axis_sizes <> m.axis_sizes) ->
       invalid_arg "The context mesh should match the mesh passed to shard_map"
   | _ -> ());
-  let mesh = match mesh with Some m -> m | None -> context_mesh () in
+  let flat, tree = flatten_tree_args args in
+  let mesh = match mesh with Some m -> m | None -> context_mesh flat in
   let manual =
     match axis_names with Some names -> names | None -> mesh.axis_names
   in
@@ -721,7 +743,6 @@ let shard_map ?mesh ?axis_names ?in_specs ~out_specs f args =
              (String.concat ", " manual)
              (String.concat ", " mesh.axis_names)))
     manual;
-  let flat, tree = flatten_tree_args args in
   check_manual_refs "out_specs" manual out_specs;
   let in_specs =
     match in_specs with

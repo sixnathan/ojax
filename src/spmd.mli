@@ -72,6 +72,9 @@ val devices_indices_map : t -> int array -> (device * (int * int) array) list
 val shard_shape : t -> int array -> int array
 val single_shard_value : Pjrt.Buffer.raw -> value
 val addressable_shards : value -> shard list
+val global_shards : value -> shard list
+val addressable_data : value -> int -> value
+val is_committed : value -> bool
 val host_array : value -> Ndarray.t
 val same_placement : value -> t -> bool
 val device_put : value Tree_util.t -> t -> value Tree_util.t
@@ -88,7 +91,7 @@ val with_abstract_context : abstract_mesh -> (unit -> 'a) -> 'a
 val update_axis_types :
   abstract_mesh -> (string * axis_type) list -> abstract_mesh
 
-val context_mesh : unit -> mesh
+val context_mesh : value list -> mesh
 
 val shard_map :
   ?mesh:mesh ->

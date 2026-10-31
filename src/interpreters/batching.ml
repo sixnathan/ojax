@@ -756,6 +756,10 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       | _ -> failwith "batching: fft arity")
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       failwith "batching: custom rules handled by batch_process_primitive"
+  | Checkpoint_name _ -> (
+      match (vals, bdims) with
+      | [ x ], [ d ] -> (b1 prim [ x ], d)
+      | _ -> failwith "batching: checkpoint_name arity")
   | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :
@@ -1009,8 +1013,62 @@ let split_at_n l n =
   | [ a; b ] -> (a, b)
   | _ -> failwith "batching: custom rule arity"
 
+let vmap_keeping_symbolic_zeros f args =
+  let inner_aval (a : aval) =
+    { a with shape = Array.sub a.shape 1 (Array.length a.shape - 1) }
+  in
+  let is_zero = List.map Ad_util.is_symbolic_zero args in
+  let mapped = List.filter (fun v -> not (Ad_util.is_symbolic_zero v)) args in
+  let out_zero = ref [] in
+  let rebuild given =
+    let rest = ref given in
+    List.map2
+      (fun zero arg ->
+        if zero then
+          Ad_util.symbolic_zero_of_aval (inner_aval (Core.get_aval arg))
+        else
+          match !rest with
+          | v :: tl ->
+              rest := tl;
+              v
+          | [] -> failwith "batching: custom rule arity")
+      is_zero args
+  in
+  let outs =
+    vmap_all
+      (fun given ->
+        let outs = f (rebuild given) in
+        out_zero := List.map Ad_util.is_symbolic_zero outs;
+        outs)
+      mapped
+  in
+  List.map2
+    (fun zero o ->
+      if zero then Ad_util.symbolic_zero_of_aval (Core.get_aval o) else o)
+    !out_zero outs
+
 let batch_custom_rule id =
   let primal_of p args = vmap_all p args in
+  let vmap_pairs f args =
+    let n_out = ref 0 in
+    let out =
+      vmap_keeping_symbolic_zeros
+        (fun given ->
+          let a, b = f given in
+          n_out := List.length a;
+          a @ b)
+        args
+    in
+    split_at_n out !n_out
+  in
+  let lift g res xs =
+    let n = List.length res in
+    vmap_keeping_symbolic_zeros
+      (fun all ->
+        let r, x = split_at_n all n in
+        g r x)
+      (res @ xs)
+  in
   match Core.custom_rule id with
   | Core.Jvp_rule { primal; jvp } ->
       Core.Jvp_rule
@@ -1018,53 +1076,25 @@ let batch_custom_rule id =
           primal = primal_of primal;
           jvp =
             (fun ps ts ->
-              let n_out = ref 0 in
               let n = List.length ps in
-              let out =
-                vmap_all
-                  (fun all ->
-                    let p, t = split_at_n all n in
-                    let po, to_ = jvp p t in
-                    n_out := List.length po;
-                    po @ to_)
-                  (ps @ ts)
-              in
-              split_at_n out !n_out);
+              vmap_pairs
+                (fun all ->
+                  let p, t = split_at_n all n in
+                  jvp p t)
+                (ps @ ts));
         }
-  | Core.Vjp_rule { primal; fwd; bwd } ->
+  | Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed } ->
       Core.Vjp_rule
         {
           primal = primal_of primal;
-          fwd =
-            (fun ps ->
-              let n_out = ref 0 in
-              let out =
-                vmap_all
-                  (fun p ->
-                    let po, res = fwd p in
-                    n_out := List.length po;
-                    po @ res)
-                  ps
-              in
-              split_at_n out !n_out);
-          bwd =
-            (fun res cts ->
-              let n = List.length res in
-              vmap_all
-                (fun all ->
-                  let r, c = split_at_n all n in
-                  bwd r c)
-                (res @ cts));
+          fwd = vmap_pairs fwd;
+          bwd = lift bwd;
+          fwd_perturbed =
+            Option.map
+              (fun rule perturbed -> vmap_pairs (rule perturbed))
+              fwd_perturbed;
         }
   | Core.Linear_rule { forward; transpose; res_differentiable } ->
-      let lift g res xs =
-        let n = List.length res in
-        vmap_all
-          (fun all ->
-            let r, x = split_at_n all n in
-            g r x)
-          (res @ xs)
-      in
       Core.Linear_rule
         {
           forward = lift forward;

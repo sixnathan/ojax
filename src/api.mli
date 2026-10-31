@@ -55,6 +55,19 @@ val value_and_grad_argnums :
   value Tree_util.t list ->
   value * value Tree_util.t list * value Tree_util.t
 
+type fwd_bwd_residuals
+
+val residual_values : fwd_bwd_residuals -> value list
+
+val fwd_and_bwd :
+  ?has_aux:bool ->
+  ?jitted:bool ->
+  argnums:int list ->
+  (value Tree_util.t list -> value Tree_util.t) ->
+  (value Tree_util.t list ->
+  value Tree_util.t * fwd_bwd_residuals * value Tree_util.t)
+  * (fwd_bwd_residuals -> value Tree_util.t -> value Tree_util.t list)
+
 val jacfwd :
   ?argnums:int ->
   (value Tree_util.t list -> value Tree_util.t) ->
@@ -84,14 +97,29 @@ val eval_shape :
   value Tree_util.t list ->
   aval Tree_util.t
 
+val eval_shape_structs :
+  (value Tree_util.t list -> value Tree_util.t) ->
+  Shape_dtype_struct.t Tree_util.t list ->
+  Shape_dtype_struct.t Tree_util.t
+
 val linear_transpose :
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t ->
   value Tree_util.t list
 
-val checkpoint : (value list -> value list) -> value list -> value list
-val remat : (value list -> value list) -> value list -> value list
+val checkpoint :
+  ?policy:Checkpoint.policy ->
+  (value list -> value list) ->
+  value list ->
+  value list
+
+val remat :
+  ?policy:Checkpoint.policy ->
+  (value list -> value list) ->
+  value list ->
+  value list
+
 val named_call : 'a -> 'a
 val named_scope : string -> (unit -> 'a) -> 'a
 val device_get : value Tree_util.t -> value Tree_util.t

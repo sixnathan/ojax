@@ -13,6 +13,29 @@ val custom_vjp :
   value list ->
   value list
 
+type symbolic_zero = { aval : aval }
+type tangent = Symbolic_zero of symbolic_zero | Tangent of value
+type custom_vjp_primal = { value : value; perturbed : bool }
+
+val symbolic_zero_from_primal_value : value -> symbolic_zero
+val instantiate_tangent : tangent -> value
+
+val custom_vjp_primal_tree_values :
+  custom_vjp_primal Tree_util.t -> value Tree_util.t
+
+val custom_jvp_symbolic :
+  (value list -> value list) ->
+  jvp:(value list -> tangent list -> value list * tangent list) ->
+  value list ->
+  value list
+
+val custom_vjp_symbolic :
+  (value list -> value list) ->
+  fwd:(custom_vjp_primal list -> value list * value list) ->
+  bwd:(value list -> tangent list -> tangent option list) ->
+  value list ->
+  value list
+
 val custom_gradient :
   (value list -> value list * (value list -> value list)) ->
   value list ->

@@ -60,6 +60,7 @@ let interpreter_for trace =
 let eval_trace = { level = 0; kind = KEval; global_data = GNone }
 let trace_stack : trace list ref = ref [ eval_trace ]
 let dynamic_trace : trace option ref = ref None
+let current_level () = List.length !trace_stack - 1
 
 let with_new_main kind global_data f =
   let level = List.length !trace_stack in
@@ -124,6 +125,8 @@ type custom_rule =
       primal : value list -> value list;
       fwd : value list -> value list * value list;
       bwd : value list -> value list -> value list;
+      fwd_perturbed :
+        (bool list -> value list -> value list * value list) option;
     }
   | Linear_rule of {
       forward : value list -> value list -> value list;

@@ -1548,6 +1548,7 @@ let rec impl_base prim inputs =
       | Core.Jvp_rule _ | Core.Vjp_rule _ | Core.Callback_rule _ ->
           failwith
             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
+  | Checkpoint_name _ -> inputs
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 and complex_parts nd =
@@ -1601,9 +1602,10 @@ let wide_int_join dtype hi lo =
            (Int64.of_float (Ndarray.get_f lo idx))))
 
 let structural_only = function
-  | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Concatenate _ | Pad _
-  | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _ | Transpose _ | Unstack _
-  | Slice _ | Dynamic_slice _ | Dynamic_update_slice | Gather _ | Scatter _ ->
+  | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Checkpoint_name _
+  | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _
+  | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _ | Dynamic_update_slice
+  | Gather _ | Scatter _ ->
       true
   | _ -> false
 
@@ -1743,11 +1745,11 @@ let wide_int_by_parts prim inputs =
   List.map2 (wide_int_join dt) his los
 
 let acts_on_parts = function
-  | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Concatenate _ | Pad _
-  | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _ | Transpose _ | Unstack _
-  | Slice _ | Dynamic_slice _ | Dynamic_update_slice | Gather _ | Scatter _
-  | Reduce_sum _ | Cumsum _ | Neg | Add | Sub | Scatter_add _ | Scatter_sub _
-  | Reduce_window_sum _ | Round ->
+  | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Checkpoint_name _
+  | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _
+  | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _ | Dynamic_update_slice
+  | Gather _ | Scatter _ | Reduce_sum _ | Cumsum _ | Neg | Add | Sub
+  | Scatter_add _ | Scatter_sub _ | Reduce_window_sum _ | Round ->
       true
   | _ -> false
 
@@ -2369,6 +2371,7 @@ let abstract_eval prim avals =
           List.map aval_of_atom traced.jaxpr.outs
       | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call")
   | Custom_lin { out_avals; _ } -> out_avals
+  | Checkpoint_name _ -> avals
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let impl prim inputs =

@@ -228,6 +228,7 @@ let prim_name = function
   | Custom_jvp_call _ -> "custom_jvp_call"
   | Custom_vjp_call _ -> "custom_vjp_call"
   | Custom_lin _ -> "custom_lin"
+  | Checkpoint_name _ -> "name"
   | Cond _ -> "cond"
   | Scan _ -> "scan"
   | While _ -> "while"

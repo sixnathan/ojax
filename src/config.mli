@@ -41,3 +41,4 @@ val export_calling_convention_version : int flag
 val platforms : string flag
 val platform_resolver : (unit -> string) ref
 val current_platform : unit -> string
+val num_cpu_devices : int flag

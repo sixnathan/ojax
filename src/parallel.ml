@@ -2,17 +2,22 @@ open Types
 module B = Interpreters.Batching
 module L = Lax_api
 
+let bound_axis_size axis_name =
+  match B.find_axis axis_name with
+  | _, _, size -> size
+  | exception Invalid_argument msg -> (
+      match List.assoc_opt axis_name !Core.mesh_axes with
+      | Some size -> size
+      | None -> invalid_arg msg)
+
 let collective kind axis_name v =
-  ignore (B.find_axis axis_name);
+  ignore (bound_axis_size axis_name);
   Core.bind1 (Collective { kind; axis_name }) [ v ]
 
 let psum v ~axis_name = collective Psum axis_name v
 let pmax v ~axis_name = collective Pmax axis_name v
 let pmin v ~axis_name = collective Pmin axis_name v
-
-let axis_size ~axis_name =
-  let _, _, size = B.find_axis axis_name in
-  size
+let axis_size ~axis_name = bound_axis_size axis_name
 
 let pmean v ~axis_name =
   let total = psum v ~axis_name in
@@ -29,7 +34,7 @@ let ppermute v ~axis_name ~perm =
   collective (Ppermute (Array.of_list perm)) axis_name v
 
 let axis_index ~axis_name =
-  ignore (B.find_axis axis_name);
+  ignore (bound_axis_size axis_name);
   Core.bind1 (Collective { kind = Axis_index; axis_name }) []
 
 let chunk_of v ~axis ~index ~size = L.dynamic_slice_in_dim ~axis v index size

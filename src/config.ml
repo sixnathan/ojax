@@ -184,3 +184,4 @@ let platforms =
 
 let platform_resolver = ref (fun () -> "cpu")
 let current_platform () = !platform_resolver ()
+let num_cpu_devices = make "jax_num_cpu_devices" (-1)

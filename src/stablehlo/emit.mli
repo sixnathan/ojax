@@ -1,1 +1,9 @@
-val emit_closed_jaxpr : Types.closed_jaxpr -> string
+type partition = {
+  pt_mesh : (string * int) list;
+  pt_devices : int array;
+  pt_in : string list array list;
+  pt_out : string list array option list;
+}
+
+val emit_closed_jaxpr : ?partition:partition -> Types.closed_jaxpr -> string
+val shard_mesh_seen : unit -> ((string * int) list * int array) option

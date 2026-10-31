@@ -84,3 +84,26 @@ val bind : primitive -> value list -> value list
 val bind1 : primitive -> value list -> value
 val get_aval : value -> aval
 val divide_shape_sizes : int array -> int array -> int
+
+type shard_rule = {
+  sr_mesh : (string * int) list;
+  sr_devices : int array;
+  sr_manual : string list;
+  sr_in : string list array list;
+  sr_out : string list array list;
+  sr_body : closed_jaxpr;
+}
+
+type constraint_rule = {
+  cr_mesh : (string * int) list;
+  cr_devices : int array;
+  cr_spec : string list array;
+}
+
+val shard_rule : int -> shard_rule option
+val constraint_rule : int -> constraint_rule option
+val register_shard_rule : int -> shard_rule -> unit
+val register_constraint_rule : int -> constraint_rule -> unit
+val mesh_axes : (string * int) list ref
+val with_mesh_axes : (string * int) list -> (unit -> 'a) -> 'a
+val placed_eval : (primitive -> value list -> value list option) ref

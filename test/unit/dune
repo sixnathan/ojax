@@ -42,6 +42,7 @@
   test_runtime_flags
   test_numpy_io
   test_parallel
+  test_sharding
   test_example_libraries
   test_custom_derivatives
   test_autodiff_api

@@ -8,3 +8,10 @@ val put :
 
 val put_along_axis :
   ?axis:int -> Types.value -> Types.value -> Types.value -> Types.value
+
+type dslice =
+  | Full
+  | Dslice of { start : Types.value; size : int; stride : int }
+
+val ds : ?size:int -> ?stride:int -> Types.value option -> dslice
+val dslice_index : Types.value -> dslice list -> Types.value

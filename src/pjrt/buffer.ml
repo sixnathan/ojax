@@ -1,25 +1,49 @@
-type t
+type raw
+
+type named = {
+  mesh_axes : (string * int) list;
+  mesh_devices : int array;
+  spec : string list array;
+}
+
+type layout = On_device of int | Named of named | Tiled
+
+type shard = {
+  device : int;
+  index : (int * int) array;
+  replica_id : int;
+  data : raw;
+}
+
+type placed = {
+  global_shape : int array;
+  dtype : Dtype.t;
+  shards : shard array;
+  layout : layout;
+}
+
+type t = Single of raw | Placed of placed
 
 type bytebuf =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-external of_host_ : Client.t -> bytebuf -> int -> int array -> t
+external of_host_ : Client.t -> bytebuf -> int -> int array -> int -> raw
   = "ojax_pjrt_buffer_from_host"
 
-external to_host_ : t -> bytebuf -> unit = "ojax_pjrt_buffer_to_host"
-external element_type_ : t -> int = "ojax_pjrt_buffer_element_type"
-external dimensions_ : t -> int array = "ojax_pjrt_buffer_dimensions"
-external destroy_ : t -> unit = "ojax_pjrt_buffer_destroy"
-external to_dlpack : t -> nativeint = "ojax_pjrt_buffer_to_dlpack"
+external to_host_ : raw -> bytebuf -> unit = "ojax_pjrt_buffer_to_host"
+external element_type_ : raw -> int = "ojax_pjrt_buffer_element_type"
+external dimensions_ : raw -> int array = "ojax_pjrt_buffer_dimensions"
+external destroy_ : raw -> unit = "ojax_pjrt_buffer_destroy"
+external device_ : raw -> int = "ojax_pjrt_buffer_device"
+external to_dlpack_ : raw -> nativeint = "ojax_pjrt_buffer_to_dlpack"
 
-external of_dlpack : Client.t -> nativeint -> int -> t
+external of_dlpack_ : Client.t -> nativeint -> int -> raw
   = "ojax_pjrt_buffer_of_dlpack"
 
 external dlpack_delete : nativeint -> unit = "ojax_pjrt_dlpack_delete"
-external unsafe_pointer : t -> nativeint = "ojax_pjrt_buffer_unsafe_pointer"
-external belongs_to_ : t -> Client.t -> bool = "ojax_pjrt_buffer_belongs_to"
+external unsafe_pointer_ : raw -> nativeint = "ojax_pjrt_buffer_unsafe_pointer"
+external belongs_to_ : raw -> Client.t -> bool = "ojax_pjrt_buffer_belongs_to"
 
-let belongs_to buffer client = belongs_to_ buffer client
 let u32_mask = 0xFFFF_FFFF
 
 let elt_bytes = function
@@ -181,7 +205,7 @@ let unravel shape flat =
 let make_bytebuf n =
   Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n
 
-let of_host client nd =
+let host_bytes nd =
   let dtype = Ndarray.dtype nd in
   let shape = Ndarray.shape nd in
   let n = Array.fold_left ( * ) 1 shape in
@@ -190,23 +214,25 @@ let of_host client nd =
   for i = 0 to n - 1 do
     encode buf (i * esz) dtype nd (unravel shape i)
   done;
-  of_host_ client buf (Abi.buffer_type dtype) shape
+  buf
 
-let dtype_of_buffer buffer =
-  let bt = element_type_ buffer in
+let of_host client nd =
+  Single
+    (of_host_ client (host_bytes nd)
+       (Abi.buffer_type (Ndarray.dtype nd))
+       (Ndarray.shape nd) (-1))
+
+let dtype_of_raw raw =
+  let bt = element_type_ raw in
   match Abi.dtype_of_buffer_type bt with
   | Some d -> d
   | None ->
       failwith
         (Printf.sprintf "Ojax.Pjrt.Buffer: unsupported PJRT_Buffer_Type %d" bt)
 
-let to_host buffer =
-  let dtype = dtype_of_buffer buffer in
-  let shape = dimensions_ buffer in
+let host_of_bytes dtype shape buf =
   let n = Array.fold_left ( * ) 1 shape in
   let esz = elt_bytes dtype in
-  let buf = make_bytebuf (n * esz) in
-  to_host_ buffer buf;
   match dtype with
   | Dtype.I64 | Dtype.Uint64 ->
       Ndarray.of_int64s dtype shape
@@ -231,6 +257,103 @@ let to_host buffer =
       let floats = Array.init n (fun i -> decode buf (i * esz) dtype) in
       Ndarray.of_floats dtype shape floats
 
-let dimensions buffer = dimensions_ buffer
-let element_type buffer = dtype_of_buffer buffer
-let destroy buffer = destroy_ buffer
+let raw_bytes raw =
+  let dtype = dtype_of_raw raw in
+  let shape = dimensions_ raw in
+  let n = Array.fold_left ( * ) 1 shape in
+  let buf = make_bytebuf (n * elt_bytes dtype) in
+  to_host_ raw buf;
+  buf
+
+let strides shape =
+  let r = Array.length shape in
+  let out = Array.make r 1 in
+  for i = r - 2 downto 0 do
+    out.(i) <- out.(i + 1) * shape.(i + 1)
+  done;
+  out
+
+let iter_region shape index f =
+  let r = Array.length shape in
+  let st = strides shape in
+  let extent = Array.map (fun (lo, hi) -> hi - lo) index in
+  let count = Array.fold_left ( * ) 1 extent in
+  for k = 0 to count - 1 do
+    let local = unravel extent k in
+    let global = ref 0 in
+    for d = 0 to r - 1 do
+      global := !global + ((fst index.(d) + local.(d)) * st.(d))
+    done;
+    f k !global
+  done
+
+let blit src src_off dst dst_off n =
+  Bigarray.Array1.blit
+    (Bigarray.Array1.sub src src_off n)
+    (Bigarray.Array1.sub dst dst_off n)
+
+let placed_to_host p =
+  let esz = elt_bytes p.dtype in
+  let n = Array.fold_left ( * ) 1 p.global_shape in
+  let out = make_bytebuf (n * esz) in
+  Array.iter
+    (fun s ->
+      if s.replica_id = 0 then
+        let local = raw_bytes s.data in
+        iter_region p.global_shape s.index (fun k global ->
+            blit local (k * esz) out (global * esz) esz))
+    p.shards;
+  host_of_bytes p.dtype p.global_shape out
+
+let to_host = function
+  | Single raw ->
+      host_of_bytes (dtype_of_raw raw) (dimensions_ raw) (raw_bytes raw)
+  | Placed p -> placed_to_host p
+
+let dimensions = function
+  | Single raw -> dimensions_ raw
+  | Placed p -> p.global_shape
+
+let element_type = function
+  | Single raw -> dtype_of_raw raw
+  | Placed p -> p.dtype
+
+let destroy = function
+  | Single raw -> destroy_ raw
+  | Placed p -> Array.iter (fun s -> destroy_ s.data) p.shards
+
+let raw_dimensions raw = dimensions_ raw
+let raw_device raw = device_ raw
+
+let raw_to_host raw =
+  host_of_bytes (dtype_of_raw raw) (dimensions_ raw) (raw_bytes raw)
+
+let shards_of_host client nd placements =
+  let dtype = Ndarray.dtype nd in
+  let shape = Ndarray.shape nd in
+  let esz = elt_bytes dtype in
+  let whole = host_bytes nd in
+  Array.map
+    (fun (index, device) ->
+      let extent = Array.map (fun (lo, hi) -> hi - lo) index in
+      let count = Array.fold_left ( * ) 1 extent in
+      let local = make_bytebuf (count * esz) in
+      iter_region shape index (fun k global ->
+          blit whole (global * esz) local (k * esz) esz);
+      of_host_ client local (Abi.buffer_type dtype) extent device)
+    placements
+
+let single_raw = function
+  | Single raw -> raw
+  | Placed { shards = [| s |]; _ } -> s.data
+  | Placed _ ->
+      invalid_arg "Pjrt.Buffer: a sharded array has many device buffers"
+
+let to_dlpack buffer = to_dlpack_ (single_raw buffer)
+let of_dlpack client pointer mode = Single (of_dlpack_ client pointer mode)
+let unsafe_pointer buffer = unsafe_pointer_ (single_raw buffer)
+
+let belongs_to buffer client =
+  match buffer with
+  | Single raw -> belongs_to_ raw client
+  | Placed p -> belongs_to_ p.shards.(0).data client

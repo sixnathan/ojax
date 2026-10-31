@@ -805,7 +805,8 @@ let default_backend = Backend.default_backend
 
 let clear_caches () =
   Hashtbl.reset compiled;
-  Ad_util.clear_symbolic_zeros ()
+  Ad_util.clear_symbolic_zeros ();
+  Backend.clear_placed_programs ()
 
 let disable_jit thunk = Config.with_value Config.disable_jit true thunk
 let enable_checks v thunk = Config.with_value Config.enable_checks v thunk
@@ -860,16 +861,8 @@ let array_garbage_collection_guard v thunk =
 
 let ensure_compile_time_eval thunk = Core.with_eval_dynamic thunk
 
-let pmap f args =
-  let flat, _ = Tree.tree_flatten (Tree.Tuple args) in
-  (match flat with
-  | v :: _ ->
-      let shape = (Core.get_aval v).shape in
-      if Array.length shape = 0 || shape.(0) > device_count () then
-        invalid_arg
-          "pmap got more replicas than the number of available devices"
-  | [] -> invalid_arg "pmap requires at least one argument");
-  vmap f (List.map (fun _ -> Some 0) args) args
+let pmap ?axis_name ?in_axes ?out_axes f args =
+  Spmd.pmap ?axis_name ?in_axes ?out_axes f args
 
 let pure_callback host_fun ~result_avals args =
   Custom_derivatives.pure_callback host_fun ~result_avals args

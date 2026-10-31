@@ -6,6 +6,7 @@ module D = Dtype
 module X = Interpreters
 
 let () = Lax.install ()
+let () = Config.set Config.num_cpu_devices 2
 let aval ?(weak = false) dtype shape = { shape; dtype; weak_type = weak }
 let f32a = aval D.F32
 let i32a = aval D.I32

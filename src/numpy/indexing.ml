@@ -246,3 +246,54 @@ let put_along_axis ?axis arr indices values =
       [ arr; scatter_indices; values_b ]
   in
   match orig_shape with Some s -> NL.reshape result s | None -> result
+
+type dslice = Full | Dslice of { start : T.value; size : int; stride : int }
+
+let ds ?size ?(stride = 1) start =
+  if stride < 0 then invalid_arg "`stride` must be >= 0.";
+  match (start, size) with
+  | None, _ -> Full
+  | Some start, Some size -> Dslice { start; size; stride }
+  | Some count, None ->
+      let size =
+        match count with
+        | T.Tracer _ ->
+            invalid_arg "ds: a one-argument slice needs a static size"
+        | T.Concrete nd -> int_of_float (Nd.get_f nd [||])
+        | T.Device b -> int_of_float (Nd.get_f (Pjrt.Buffer.to_host b) [||])
+      in
+      Dslice
+        { start = T.Concrete (Nd.of_floats D.I32 [||] [| 0.0 |]); size; stride }
+
+let dslice_start start extent =
+  let dtype = (C.get_aval start).dtype in
+  let zero = Lax_api.full [||] 0.0 dtype in
+  Lax_api.select (Lax_api.lt start zero)
+    (Lax_api.add start (Lax_api.full [||] (float_of_int extent) dtype))
+    start
+
+let dslice_index x slices =
+  List.fold_left
+    (fun (acc, axis) slice ->
+      match slice with
+      | Full -> (acc, axis + 1)
+      | Dslice { start; size; stride } ->
+          let extent = (C.get_aval acc).shape.(axis) in
+          let begin_at = dslice_start start extent in
+          let out =
+            if stride = 1 then
+              Lax_api.dynamic_slice_in_dim ~axis acc begin_at size
+            else
+              Lax_api.concatenate
+                (List.init size (fun k ->
+                     let dtype = (C.get_aval begin_at).dtype in
+                     let at =
+                       Lax_api.add begin_at
+                         (Lax_api.full [||] (float_of_int (k * stride)) dtype)
+                     in
+                     Lax_api.dynamic_slice_in_dim ~axis acc at 1))
+                axis
+          in
+          (out, axis + 1))
+    (x, 0) slices
+  |> fst

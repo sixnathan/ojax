@@ -54,11 +54,14 @@ let sharding () =
   let x = Tree.Leaf (f32 [||] [| 3.0 |]) in
   ignore (Sharding.device_put x s);
   (match
-     Sharding.shard_map
-       (fun a -> List.length a)
-       ~mesh ~in_specs:[ spec ] ~out_specs:[ spec ] [ 1 ]
+     Sharding.shard_map ~mesh ~in_specs:[ [] ] ~out_specs:[ [] ]
+       (fun a -> List.hd a)
+       [ x ]
    with
-  | 1 -> ()
+  | Tree.Leaf out ->
+      Alcotest.(check (float 1e-6))
+        "shard_map" 3.0
+        (Ndarray.get_f (nd out) [||])
   | _ -> Alcotest.fail "shard_map");
   match
     Sharding.device_put x

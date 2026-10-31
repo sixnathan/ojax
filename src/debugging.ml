@@ -56,5 +56,17 @@ let default_breakpoint values =
 let breakpoint_handler = ref default_breakpoint
 let set_breakpoint_handler f = breakpoint_handler := f
 let breakpoint args = callback (fun values -> !breakpoint_handler values) args
-let inspect_array_sharding _ ~callback:_ = ()
-let visualize_array_sharding _ = ()
+
+let inspect_array_sharding v ~callback =
+  match v with
+  | Tracer _ -> ()
+  | Concrete _ | Device _ ->
+      callback (Spmd.sharding_to_string (Spmd.array_sharding v))
+
+let visualize_sharding ?scale ?min_width ?max_width shape sharding =
+  print_string
+    (Spmd.visualize_sharding_string ?scale ?min_width ?max_width shape sharding)
+
+let visualize_array_sharding ?scale ?min_width ?max_width v =
+  visualize_sharding ?scale ?min_width ?max_width (Core.get_aval v).shape
+    (Spmd.array_sharding v)

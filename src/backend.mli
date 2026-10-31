@@ -36,3 +36,48 @@ val device_kind : unit -> string
 val has_visible_nvidia_gpu : unit -> bool
 val gpu_ready : unit -> bool
 val value_device : Types.value -> string option
+
+type plan = {
+  mesh : (string * int) list;
+  devices : int array;
+  arg_specs : string list array list;
+  out_specs : string list array option list;
+}
+
+val local_devices : unit -> Pjrt.Client.device array
+val multi_device_available : unit -> bool
+val platform : unit -> string
+
+val place_named :
+  Ndarray.t ->
+  mesh:(string * int) list ->
+  devices:int array ->
+  spec:string list array ->
+  Types.value
+
+val place_on : Ndarray.t -> int -> Types.value
+
+val placed_of :
+  shape:int array ->
+  dtype:Dtype.t ->
+  devices:int array ->
+  indices:(int * int) array array ->
+  layout:Pjrt.Buffer.layout ->
+  Pjrt.Buffer.raw array ->
+  Types.value
+
+val named_index :
+  shape:int array ->
+  mesh:(string * int) list ->
+  spec:string list array ->
+  int ->
+  (int * int) array
+
+val check_divisible :
+  shape:int array -> mesh:(string * int) list -> spec:string list array -> unit
+
+val run_plan :
+  Types.closed_jaxpr -> plan -> Types.value list -> Types.value list option
+
+val client : unit -> Pjrt.Client.t
+val clear_placed_programs : unit -> unit

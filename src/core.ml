@@ -199,6 +199,43 @@ let check_f16_reduction axes = function
       | _ -> ())
   | _ -> ()
 
+type shard_rule = {
+  sr_mesh : (string * int) list;
+  sr_devices : int array;
+  sr_manual : string list;
+  sr_in : string list array list;
+  sr_out : string list array list;
+  sr_body : closed_jaxpr;
+}
+
+type constraint_rule = {
+  cr_mesh : (string * int) list;
+  cr_devices : int array;
+  cr_spec : string list array;
+}
+
+let shard_rules : (int, shard_rule) Hashtbl.t = Hashtbl.create 8
+let constraint_rules : (int, constraint_rule) Hashtbl.t = Hashtbl.create 8
+let shard_rule id = Hashtbl.find_opt shard_rules id
+let constraint_rule id = Hashtbl.find_opt constraint_rules id
+let register_shard_rule id rule = Hashtbl.replace shard_rules id rule
+let register_constraint_rule id rule = Hashtbl.replace constraint_rules id rule
+let mesh_axes : (string * int) list ref = ref []
+
+let with_mesh_axes axes thunk =
+  let saved = !mesh_axes in
+  mesh_axes := axes @ saved;
+  Fun.protect ~finally:(fun () -> mesh_axes := saved) thunk
+
+let placed_eval : (primitive -> value list -> value list option) ref =
+  ref (fun _ _ -> None)
+
+let is_placed = function Device (Pjrt.Buffer.Placed _) -> true | _ -> false
+
+let placed_dispatch (top : trace) prim args =
+  if top.kind = KEval && List.exists is_placed args then !placed_eval prim args
+  else None
+
 let dispatch prim args =
   let top = find_top_trace args in
   let top =
@@ -209,9 +246,12 @@ let dispatch prim args =
         | _ -> top)
     | _ -> top
   in
-  let tracers = List.map (full_raise top) args in
-  let outs = process_primitive top prim tracers in
-  List.map full_lower outs
+  match placed_dispatch top prim args with
+  | Some outs -> outs
+  | None ->
+      let tracers = List.map (full_raise top) args in
+      let outs = process_primitive top prim tracers in
+      List.map full_lower outs
 
 let bind prim args =
   (match prim with

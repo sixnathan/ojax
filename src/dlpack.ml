@@ -94,6 +94,8 @@ let check_hardware_id id =
 
 let buffer_of_value v =
   match v with
+  | Device (Pjrt.Buffer.Placed { shards; _ }) when Array.length shards > 1 ->
+      invalid_arg "to_dlpack requires an array on a single device"
   | Device b when Pjrt.Buffer.belongs_to b (Backend.xla_client ()) -> b
   | Device b ->
       Pjrt.Buffer.of_host (Backend.xla_client ()) (Pjrt.Buffer.to_host b)

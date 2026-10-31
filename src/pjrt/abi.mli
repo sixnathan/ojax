@@ -14,5 +14,6 @@ val api_version : plugin -> int * int
 val struct_size : plugin -> int
 val close : plugin -> unit
 val maxrss_bytes : unit -> int
+val library_loadable : string -> bool
 val buffer_type : Dtype.t -> int
 val dtype_of_buffer_type : int -> Dtype.t option

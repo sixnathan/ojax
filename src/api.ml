@@ -791,9 +791,9 @@ let named_call f = f
 let named_scope _name f = f ()
 let device_get = to_host
 let block_until_ready x = x
-let devices () = [ "cpu:0" ]
+let devices ?backend () = Backend.devices ?backend ()
 let local_devices = devices
-let device_count () = 1
+let device_count ?backend () = List.length (devices ?backend ())
 let local_device_count = device_count
 let process_count () = 1
 let process_index () = 0
@@ -801,7 +801,7 @@ let process_indices () = [ 0 ]
 let host_count = process_count
 let host_id = process_index
 let host_ids = process_indices
-let default_backend () = "cpu"
+let default_backend = Backend.default_backend
 
 let clear_caches () =
   Hashtbl.reset compiled;

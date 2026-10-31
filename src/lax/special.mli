@@ -1,3 +1,10 @@
+val finfo_eps : Dtype.t -> float
+val finfo_max : Dtype.t -> float
+val finfo_tiny : Dtype.t -> float
+val i0e_coeffs_a32 : float array
+val i0e_coeffs_b32 : float array
+val i0e_coeffs_a64 : float array
+val i0e_coeffs_b64 : float array
 val lgamma : float -> float
 val digamma : float -> float
 val erf : float -> float

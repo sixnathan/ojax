@@ -152,6 +152,16 @@ let emit_stablehlo_unary ctx (eqn : eqn) in_ids op =
     (Printf.sprintf "    %s = stablehlo.%s %s : %s\n" (name n) op (name x)
        signature)
 
+let scalar_literal dt v =
+  match dt with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      Ir.complex_literal dt { Complex.re = v; im = 0.0 }
+  | _ -> Ir.float_literal dt v
+
+let is_complex_dtype = function
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
 let is_unsigned_dtype = function
   | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint32
   | Dtype.Uint64 ->
@@ -239,7 +249,7 @@ let emit_exp2 ctx (eqn : eqn) in_ids =
   let c = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
-       (Ir.dense (Ir.float_literal dt (Float.log 2.0)))
+       (Ir.dense (scalar_literal dt (Float.log 2.0)))
        sty);
   let b = fresh ctx in
   Buffer.add_string ctx.buf
@@ -271,7 +281,7 @@ let emit_logistic ctx (eqn : eqn) in_ids =
   let dt = out.vaval.dtype in
   let xty = Ir.tensor_type_of_aval out.vaval in
   let sty = Ir.tensor_type dt [||] in
-  let one = Ir.dense (Ir.float_literal dt 1.0) in
+  let one = Ir.dense (scalar_literal dt 1.0) in
   let ng = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.negate %s : %s\n" (name ng) (name x) xty);
@@ -372,11 +382,6 @@ let emit_clamp ctx (eqn : eqn) in_ids =
     | _ -> invalid_arg "Stablehlo.Emit: clamp arity"
   in
   let out = sole eqn.outs in
-  List.iter
-    (fun a ->
-      if (atom_aval a).shape <> out.vaval.shape then
-        failwith "Stablehlo.Emit: scalar-bound clamp (broadcast) deferred")
-    eqn.inputs;
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.clamp %s, %s, %s : %s\n" (name n)
@@ -522,9 +527,22 @@ let emit_opt_barrier ctx (eqn : eqn) in_ids =
         (Printf.sprintf "    %s = stablehlo.optimization_barrier %s : %s\n"
            (name n) (name x)
            (Ir.tensor_type_of_aval out.vaval))
-  | _ ->
-      failwith
-        "Stablehlo.Emit: optimization_barrier multi-result grouped SSA deferred"
+  | outs, _ ->
+      let group = fresh ctx in
+      let types =
+        String.concat ", "
+          (List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) outs)
+      in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %%%d:%d = stablehlo.optimization_barrier %s : %s\n"
+           group (List.length outs)
+           (String.concat ", " (List.map name in_ids))
+           types);
+      List.iteri
+        (fun i (v : var) ->
+          Hashtbl.replace ctx.ids v.vid
+            (alias_result (Printf.sprintf "%%%d#%d" group i)))
+        outs
 
 let emit_reduce_precision ctx (eqn : eqn) in_ids exponent_bits mantissa_bits =
   let x = sole in_ids in
@@ -552,27 +570,31 @@ let emit_empty ctx (eqn : eqn) =
        "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
        (name n) (name c) sty oty)
 
-let platform_cpu_index platforms =
+let platform_branch_index platforms =
+  let current = Config.current_platform () in
   let n = Array.length platforms in
-  let rec find_cpu i =
+  let rec find_named i =
     if i >= n then find_default 0
     else
       match platforms.(i) with
-      | Some names when Array.exists (fun p -> p = "cpu") names -> i
-      | _ -> find_cpu (i + 1)
+      | Some names when Array.exists (fun p -> p = current) names -> i
+      | _ -> find_named (i + 1)
   and find_default i =
     if i >= n then
-      failwith "Stablehlo.Emit: platform_index has no cpu or default branch"
+      failwith
+        (Printf.sprintf
+           "Stablehlo.Emit: platform_index has no %s or default branch" current)
     else match platforms.(i) with None -> i | Some _ -> find_default (i + 1)
   in
-  find_cpu 0
+  find_named 0
 
 let emit_platform_index ctx (eqn : eqn) platforms =
   let out = sole eqn.outs in
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name n)
-       (Ir.dense (Ir.int_literal (Int64.of_int (platform_cpu_index platforms))))
+       (Ir.dense
+          (Ir.int_literal (Int64.of_int (platform_branch_index platforms))))
        (Ir.tensor_type_of_aval out.vaval))
 
 let emit_broadcast_in_dim ctx (eqn : eqn) in_ids dims =
@@ -844,7 +866,7 @@ let reduce_maxid dt =
     | Dtype.Bool -> Ir.bool_literal false
     | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
     | Dtype.Complex64 | Dtype.Complex128 ->
-        invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
+        Ir.complex_literal dt { Complex.re = neg_infinity; im = 0.0 })
 
 let reduce_minid dt =
   Ir.dense
@@ -869,7 +891,7 @@ let reduce_minid dt =
     | Dtype.Bool -> Ir.bool_literal true
     | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
     | Dtype.Complex64 | Dtype.Complex128 ->
-        invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
+        Ir.complex_literal dt { Complex.re = infinity; im = 0.0 })
 
 let emit_reduce ctx (eqn : eqn) in_ids axes op init =
   let x = sole in_ids in
@@ -2198,7 +2220,16 @@ and scan_as_while ~length ~reverse ~num_carry (body : closed_jaxpr) args =
   c @ ys
 
 and emit_inlined ctx (eqn : eqn) in_ids f =
-  let traced = Jaxpr.make_jaxpr (List.map atom_aval eqn.inputs) f in
+  emit_traced ctx (List.map atom_aval eqn.inputs) in_ids eqn.outs f
+
+and emit_traced ctx avals in_ids outs f =
+  List.iter2
+    (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
+    outs
+    (emit_traced_ids ctx avals in_ids f)
+
+and emit_traced_ids ctx avals in_ids f =
+  let traced = Jaxpr.make_jaxpr avals f in
   let jx = traced.jaxpr in
   let const_binders, arg_binders =
     match Util.split_list jx.in_binders [ List.length traced.consts ] with
@@ -2214,9 +2245,19 @@ and emit_inlined ctx (eqn : eqn) in_ids f =
   List.iter
     (fun (e : eqn) -> emit_eqn ctx e (List.map (id_of_atom ctx) e.inputs))
     jx.eqns;
-  List.iter2
-    (fun (v : var) atom -> Hashtbl.replace ctx.ids v.vid (id_of_atom ctx atom))
-    eqn.outs jx.outs
+  List.map (id_of_atom ctx) jx.outs
+
+and emit_eigh_call ctx input ~lower ~vectors ~values =
+  let group = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %%%d:2 = stablehlo.custom_call @Eigh(%s) {api_version = 1 : i32, \
+        backend_config = \"%d,1,100,1e-30\"} : (%s) -> (%s, %s)\n"
+       group (name input)
+       (if lower then 1 else 0)
+       vectors vectors values);
+  ( alias_result (Printf.sprintf "%%%d#0" group),
+    alias_result (Printf.sprintf "%%%d#1" group) )
 
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   try emit_eqn_unchecked ctx eqn in_ids
@@ -2326,6 +2367,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | And -> emit_stablehlo_binary ctx eqn in_ids "and"
   | Atan2 -> emit_stablehlo_binary ctx eqn in_ids "atan2"
   | Div -> emit_stablehlo_binary ctx eqn in_ids "divide"
+  | (Max | Min) when is_complex_dtype (atom_aval (List.hd eqn.inputs)).dtype ->
+      emit_inlined ctx eqn in_ids
+        (Native_lowering.complex_minmax ~is_max:(eqn.prim = Max))
   | Max -> emit_stablehlo_binary ctx eqn in_ids "maximum"
   | Min -> emit_stablehlo_binary ctx eqn in_ids "minimum"
   | Mul -> emit_stablehlo_binary ctx eqn in_ids "multiply"
@@ -2369,6 +2413,21 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             else Core.bind1 (Broadcast_in_dim { shape; dims = [||] }) [ v ]
           in
           [ Core.bind1 Clamp (List.map widen args) ])
+  | Clamp
+    when List.exists
+           (fun a -> (atom_aval a).shape <> (sole eqn.outs).vaval.shape)
+           eqn.inputs ->
+      let target = (sole eqn.outs).vaval.shape in
+      emit_inlined ctx eqn in_ids (fun args ->
+          Core.bind Clamp
+            (List.map
+               (fun a ->
+                 if (Core.get_aval a).shape = target then a
+                 else
+                   Core.bind1
+                     (Broadcast_in_dim { shape = target; dims = [||] })
+                     [ a ])
+               args))
   | Clamp -> emit_clamp ctx eqn in_ids
   | Select_n -> emit_select_n ctx eqn in_ids
   | Convert_element_type _ -> emit_convert ctx eqn in_ids
@@ -2408,6 +2467,12 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | To_edtype _ ->
       failwith "Stablehlo.Emit: To_edtype (extended dtypes) deferred to M5"
   | Reduce_sum axes -> emit_reduce ctx eqn in_ids axes "add" reduce_zero
+  | Reduce_max axes when is_complex_dtype (atom_aval (sole eqn.inputs)).dtype ->
+      emit_inlined ctx eqn in_ids
+        (Native_lowering.complex_reduce ~is_max:true ~axes)
+  | Reduce_min axes when is_complex_dtype (atom_aval (sole eqn.inputs)).dtype ->
+      emit_inlined ctx eqn in_ids
+        (Native_lowering.complex_reduce ~is_max:false ~axes)
   | Reduce_max axes -> emit_reduce ctx eqn in_ids axes "maximum" reduce_maxid
   | Reduce_min axes -> emit_reduce ctx eqn in_ids axes "minimum" reduce_minid
   | Reduce_prod axes -> emit_reduce ctx eqn in_ids axes "multiply" reduce_one
@@ -2451,6 +2516,23 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_scatter ctx eqn in_ids dimension_numbers (Some "minimum")
   | Scatter_max { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "maximum")
+  | Dot_general dd
+    when (atom_aval (List.hd eqn.inputs)).dtype = Dtype.Complex64
+         && Config.current_platform () = "cuda" ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a; b ] ->
+            let dot x y = Core.bind1 (Dot_general dd) [ x; y ] in
+            let real v = Core.bind1 Real [ v ]
+            and imag v = Core.bind1 Imag [ v ] in
+            let ar = real a and ai = imag a and br = real b and bi = imag b in
+            [
+              Core.bind1 Complex
+                [
+                  Core.bind1 Sub [ dot ar br; dot ai bi ];
+                  Core.bind1 Add [ dot ar bi; dot ai br ];
+                ];
+            ]
+        | _ -> invalid_arg "Stablehlo.Emit: dot_general arity")
   | Dot_general dd -> emit_dot_general ctx eqn in_ids dd
   | Conv_general_dilated
       {
@@ -2481,6 +2563,11 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_select_and_gather_add ctx eqn in_ids ~select ~window
   | Select_and_scatter_add { select; window } ->
       emit_select_and_scatter_add ctx eqn in_ids ~select ~window
+  | Sort { dimension; is_stable; num_keys }
+    when List.exists (fun a -> is_complex_dtype (atom_aval a).dtype) eqn.inputs
+    ->
+      emit_inlined ctx eqn in_ids
+        (Native_lowering.complex_sort ~dimension ~is_stable ~num_keys)
   | Sort { dimension; is_stable; num_keys } ->
       if List.length in_ids = 1 then
         emit_sort ctx eqn in_ids ~dimension ~is_stable
@@ -2494,31 +2581,12 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Lgamma -> emit_chlo_unary ctx eqn in_ids "lgamma"
   | Polygamma -> emit_chlo_binary ctx eqn in_ids "polygamma"
   | Zeta -> emit_chlo_binary ctx eqn in_ids "zeta"
-  | Bessel_i0e ->
-      failwith
-        "Stablehlo.Emit: Bessel_i0e has no native chlo op; jax lowers it via a \
-         lower_fun Cephes decomposition into many stablehlo ops \
-         (non-single-op), end-to-end decomposition deferred"
-  | Igamma ->
-      failwith
-        "Stablehlo.Emit: Igamma has no native chlo op; jax lowers it via a \
-         lower_fun decomposition into many stablehlo ops (non-single-op), \
-         end-to-end decomposition deferred"
-  | Igamma_grad_a ->
-      failwith
-        "Stablehlo.Emit: Igamma_grad_a has no native chlo op; jax lowers it \
-         via a lower_fun decomposition into many stablehlo ops \
-         (non-single-op), end-to-end decomposition deferred"
-  | Igammac ->
-      failwith
-        "Stablehlo.Emit: Igammac has no native chlo op; jax lowers it via a \
-         lower_fun decomposition into many stablehlo ops (non-single-op), \
-         end-to-end decomposition deferred"
+  | Bessel_i0e -> emit_inlined ctx eqn in_ids Native_lowering.bessel_i0e
+  | Igamma -> emit_inlined ctx eqn in_ids Native_lowering.igamma
+  | Igamma_grad_a -> emit_inlined ctx eqn in_ids Native_lowering.igamma_grad_a
+  | Igammac -> emit_inlined ctx eqn in_ids Native_lowering.igammac
   | Regularized_incomplete_beta ->
-      failwith
-        "Stablehlo.Emit: Regularized_incomplete_beta has no native chlo op; \
-         jax lowers it via a lower_fun decomposition into many stablehlo ops \
-         (non-single-op), end-to-end decomposition deferred"
+      emit_inlined ctx eqn in_ids Native_lowering.betainc
   | Rng_uniform -> emit_rng_uniform ctx eqn in_ids
   | Rng_bit_generator ->
       failwith
@@ -2594,6 +2662,16 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (name raw)
            (name (sole in_ids))
            ty (name n) (name raw) (name mask_id) ty)
+  | Triangular_solve ({ transpose_a = false; conjugate_a = true; _ } as o) ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a; b ] ->
+            let a =
+              if is_complex_dtype (Core.get_aval a).dtype then
+                Core.bind1 Conj [ a ]
+              else a
+            in
+            Core.bind (Triangular_solve { o with conjugate_a = false }) [ a; b ]
+        | _ -> invalid_arg "Stablehlo.Emit: triangular_solve arity")
   | Triangular_solve o ->
       let a, b = pair in_ids in
       let inputs = List.map atom_aval eqn.inputs in
@@ -2606,8 +2684,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | false, false -> "NO_TRANSPOSE"
         | true, false -> "TRANSPOSE"
         | true, true -> "ADJOINT"
-        | false, true ->
-            failwith "Stablehlo.Emit: conjugate without transpose runs on host"
+        | false, true -> invalid_arg "Stablehlo.Emit: conjugate lowered above"
       in
       Buffer.add_string ctx.buf
         (Printf.sprintf
@@ -2616,12 +2693,91 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             = %b}> : (%s, %s) -> %s\n"
            (name n) (name a) (name b) o.left_side o.lower transpose
            o.unit_diagonal aty bty bty)
-  | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
-  | Tridiagonal _ ->
+  | Householder_product ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let n = bind_var ctx (sole eqn.outs) in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.custom_call \
+            @ProductOfElementaryHouseholderReflectors(%s) {api_version = 1 : \
+            i32} : (%s) -> %s\n"
+           (name n)
+           (String.concat ", " (List.map name in_ids))
+           (String.concat ", " (List.map Ir.tensor_type_of_aval inputs))
+           (Ir.tensor_type_of_aval (sole eqn.outs).vaval))
+  | Lu ->
+      if Config.current_platform () = "cpu" then
+        failwith
+          "Stablehlo.Emit: lu on cpu uses LAPACK getrf, whose rounding the \
+           unblocked jax lowering does not reproduce";
+      emit_inlined ctx eqn in_ids Native_lowering.lu
+  | Lu_pivots_to_permutation permutation_size ->
+      emit_inlined ctx eqn in_ids
+        (Native_lowering.lu_pivots_to_permutation ~permutation_size)
+  | Qr full_matrices ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      if Array.exists (fun d -> d = 0) a.shape then
+        failwith "Stablehlo.Emit: an empty qr runs on the host";
+      let taus =
+        {
+          a with
+          shape =
+            Array.append
+              (Array.sub a.shape 0 (rank - 2))
+              [| min a.shape.(rank - 2) a.shape.(rank - 1) |];
+        }
+      in
+      let group = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %%%d:2 = stablehlo.custom_call @Qr(%s) {api_version = 1 : i32} \
+            : (%s) -> (%s, %s)\n"
+           group
+           (name (sole in_ids))
+           (Ir.tensor_type_of_aval a) (Ir.tensor_type_of_aval a)
+           (Ir.tensor_type_of_aval taus));
+      emit_traced ctx [ a; taus ]
+        [
+          alias_result (Printf.sprintf "%%%d#0" group);
+          alias_result (Printf.sprintf "%%%d#1" group);
+        ]
+        eqn.outs
+        (Native_lowering.qr_from_factors ~full_matrices)
+  | Tridiagonal_solve ->
+      if Config.current_platform () = "cpu" then
+        failwith
+          "Stablehlo.Emit: tridiagonal_solve on cpu uses LAPACK gtsv with \
+           pivoting, which the unpivoted jax lowering cannot match";
+      emit_inlined ctx eqn in_ids Native_lowering.tridiagonal_solve
+  | Eigh { lower } ->
+      if Config.current_platform () = "cpu" then
+        failwith
+          "Stablehlo.Emit: eigh on cpu uses LAPACK syevd, whose eigenvector \
+           signs the Jacobi expansion does not reproduce";
+      let a = atom_aval (sole eqn.inputs) in
+      let v, w =
+        match eqn.outs with
+        | [ v; w ] -> (v, w)
+        | _ -> invalid_arg "Stablehlo.Emit: eigh arity"
+      in
+      let vectors = Ir.tensor_type_of_aval v.vaval in
+      let values = Ir.tensor_type_of_aval w.vaval in
+      let input = sole in_ids in
+      let v1, _ = emit_eigh_call ctx input ~lower ~vectors ~values in
+      emit_traced ctx [ a; v.vaval ] [ input; v1 ] [ v; w ]
+        (Native_lowering.eigh_refined ~lower)
+  | Svd { full_matrices; compute_uv } ->
+      if Config.current_platform () = "cpu" then
+        failwith
+          "Stablehlo.Emit: svd on cpu uses LAPACK gesdd, whose singular vector \
+           signs the qdwh expansion does not reproduce";
+      emit_inlined ctx eqn in_ids
+        (Native_lowering.svd ~full_matrices ~compute_uv)
+  | Eig _ | Hessenberg | Schur _ | Tridiagonal _ ->
       failwith
-        "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
-         host-interpreter only (M5 lax/linalg, XLA emission deferred)"
+        "Stablehlo.Emit: eig, hessenberg, schur and tridiagonal have no \
+         StableHLO lowering in jax; they run on the host through LAPACK"
   | Collective _ ->
       failwith "Stablehlo.Emit: collectives must be bound by an enclosing vmap"
   | Fft { fft_type; fft_lengths } ->
@@ -2670,6 +2826,27 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         "Stablehlo.Emit: a nested Xla_call must be inlined by the caller; the \
          top-level compiled jaxpr body is @main (emitter core row 75), an \
          eqn-level Xla_call is non-representable here"
+
+let qualify_nested_calls ~depth text =
+  let level = ref depth in
+  String.split_on_char '\n' text
+  |> List.map (fun line ->
+      let qualified =
+        match String.index_opt line '=' with
+        | Some i
+          when !level > 1
+               && i + 7 <= String.length line
+               && String.sub line (i + 1) 6 = " call " ->
+            String.sub line 0 (i + 1)
+            ^ " func.call "
+            ^ String.sub line (i + 7) (String.length line - i - 7)
+        | _ -> line
+      in
+      String.iter
+        (function '{' -> incr level | '}' -> decr level | _ -> ())
+        line;
+      qualified)
+  |> String.concat "\n"
 
 let emit_closed_jaxpr (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
@@ -2721,5 +2898,5 @@ let emit_closed_jaxpr (cj : closed_jaxpr) : string =
     "module {\n  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
     (String.concat ", " params)
     (String.concat ", " out_types)
-    (Buffer.contents ctx.buf)
-    (Buffer.contents ctx.extras)
+    (qualify_nested_calls ~depth:1 (Buffer.contents ctx.buf))
+    (qualify_nested_calls ~depth:0 (Buffer.contents ctx.extras))

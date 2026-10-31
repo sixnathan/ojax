@@ -9,3 +9,4 @@ val to_dlpack : t -> nativeint
 val of_dlpack : Client.t -> nativeint -> int -> t
 val dlpack_delete : nativeint -> unit
 val unsafe_pointer : t -> nativeint
+val belongs_to : t -> Client.t -> bool

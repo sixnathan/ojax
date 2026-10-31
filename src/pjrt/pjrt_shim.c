@@ -138,6 +138,13 @@ CAMLprim value ojax_pjrt_close(value v_plugin) {
   CAMLreturn(Val_unit);
 }
 
+CAMLprim value ojax_pjrt_library_loadable(value v_name) {
+  CAMLparam1(v_name);
+  void *handle = dlopen(String_val(v_name), RTLD_LAZY | RTLD_LOCAL);
+  if (handle != NULL) dlclose(handle);
+  CAMLreturn(Val_bool(handle != NULL));
+}
+
 CAMLprim value ojax_pjrt_maxrss(value v_unit) {
   CAMLparam1(v_unit);
   struct rusage ru;
@@ -188,6 +195,7 @@ struct ojax_pjrt_client {
   const PJRT_Api *api;
   PJRT_Client *client;
   PJRT_Device *device;
+  int num_devices;
 };
 
 #define Ojax_client_val(v) ((struct ojax_pjrt_client *)Data_custom_val(v))
@@ -286,12 +294,60 @@ static void ojax_pjrt_client_drain_destroy(const PJRT_Api *api,
   }
 }
 
-CAMLprim value ojax_pjrt_client_create(value v_plugin) {
-  CAMLparam1(v_plugin);
+static size_t ojax_pjrt_fill_options(value v_options, PJRT_NamedValue *out) {
+  size_t n = (size_t)Wosize_val(v_options);
+  for (size_t i = 0; i < n; i++) {
+    value v_pair = Field(v_options, i);
+    value v_opt = Field(v_pair, 1);
+    PJRT_NamedValue *nv = &out[i];
+    memset(nv, 0, sizeof *nv);
+    nv->struct_size = PJRT_NamedValue_STRUCT_SIZE;
+    nv->name = caml_stat_strdup(String_val(Field(v_pair, 0)));
+    nv->name_size = caml_string_length(Field(v_pair, 0));
+    nv->value_size = 1;
+    switch (Tag_val(v_opt)) {
+      case 0:
+        nv->type = PJRT_NamedValue_kString;
+        nv->string_value = caml_stat_strdup(String_val(Field(v_opt, 0)));
+        nv->value_size = caml_string_length(Field(v_opt, 0));
+        break;
+      case 1:
+        nv->type = PJRT_NamedValue_kInt64;
+        nv->int64_value = Int64_val(Field(v_opt, 0));
+        break;
+      case 2:
+        nv->type = PJRT_NamedValue_kFloat;
+        nv->float_value = (float)Double_val(Field(v_opt, 0));
+        break;
+      default:
+        nv->type = PJRT_NamedValue_kBool;
+        nv->bool_value = Bool_val(Field(v_opt, 0));
+        break;
+    }
+  }
+  return n;
+}
+
+static void ojax_pjrt_free_options(PJRT_NamedValue *opts, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    caml_stat_free((void *)opts[i].name);
+    if (opts[i].type == PJRT_NamedValue_kString)
+      caml_stat_free((void *)opts[i].string_value);
+  }
+  caml_stat_free(opts);
+}
+
+CAMLprim value ojax_pjrt_client_create(value v_plugin, value v_options) {
+  CAMLparam2(v_plugin, v_options);
   CAMLlocal1(v_client);
   struct ojax_pjrt_plugin *p = Ojax_plugin_val(v_plugin);
   if (p->api == NULL) ojax_pjrt_raise("client_create on closed plugin");
   const PJRT_Api *api = p->api;
+  size_t num_options = (size_t)Wosize_val(v_options);
+  PJRT_NamedValue *options =
+      caml_stat_alloc((num_options > 0 ? num_options : 1) *
+                      sizeof(PJRT_NamedValue));
+  ojax_pjrt_fill_options(v_options, options);
 
   PJRT_Plugin_Initialize_Args ia;
   memset(&ia, 0, sizeof ia);
@@ -299,6 +355,8 @@ CAMLprim value ojax_pjrt_client_create(value v_plugin) {
   PJRT_Client_Create_Args ca;
   memset(&ca, 0, sizeof ca);
   ca.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+  ca.create_options = options;
+  ca.num_options = num_options;
   PJRT_Client_AddressableDevices_Args da;
   memset(&da, 0, sizeof da);
   da.struct_size = PJRT_Client_AddressableDevices_Args_STRUCT_SIZE;
@@ -315,6 +373,7 @@ CAMLprim value ojax_pjrt_client_create(value v_plugin) {
     }
   }
   caml_acquire_runtime_system();
+  ojax_pjrt_free_options(options, num_options);
   ojax_pjrt_check(api, err);
   ojax_pjrt_check(api, cerr);
   if (derr != NULL) {
@@ -332,7 +391,58 @@ CAMLprim value ojax_pjrt_client_create(value v_plugin) {
   c->api = api;
   c->client = ca.client;
   c->device = da.addressable_devices[0];
+  c->num_devices = (int)da.num_addressable_devices;
   CAMLreturn(v_client);
+}
+
+CAMLprim value ojax_pjrt_client_platform_name(value v_client) {
+  CAMLparam1(v_client);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  if (c->client == NULL) ojax_pjrt_raise("platform_name on closed client");
+  PJRT_Client_PlatformName_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_Client_PlatformName_Args_STRUCT_SIZE;
+  a.client = c->client;
+  ojax_pjrt_check(c->api, c->api->PJRT_Client_PlatformName(&a));
+  CAMLreturn(caml_alloc_initialized_string(a.platform_name_size,
+                                           a.platform_name));
+}
+
+CAMLprim value ojax_pjrt_client_platform_version(value v_client) {
+  CAMLparam1(v_client);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  if (c->client == NULL) ojax_pjrt_raise("platform_version on closed client");
+  PJRT_Client_PlatformVersion_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_Client_PlatformVersion_Args_STRUCT_SIZE;
+  a.client = c->client;
+  ojax_pjrt_check(c->api, c->api->PJRT_Client_PlatformVersion(&a));
+  CAMLreturn(caml_alloc_initialized_string(a.platform_version_size,
+                                           a.platform_version));
+}
+
+CAMLprim value ojax_pjrt_client_device_count(value v_client) {
+  CAMLparam1(v_client);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  if (c->client == NULL) ojax_pjrt_raise("device_count on closed client");
+  CAMLreturn(Val_int(c->num_devices));
+}
+
+CAMLprim value ojax_pjrt_client_device_kind(value v_client) {
+  CAMLparam1(v_client);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  if (c->client == NULL) ojax_pjrt_raise("device_kind on closed client");
+  PJRT_Device_GetDescription_Args g;
+  memset(&g, 0, sizeof g);
+  g.struct_size = PJRT_Device_GetDescription_Args_STRUCT_SIZE;
+  g.device = c->device;
+  ojax_pjrt_check(c->api, c->api->PJRT_Device_GetDescription(&g));
+  PJRT_DeviceDescription_Kind_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_DeviceDescription_Kind_Args_STRUCT_SIZE;
+  a.device_description = g.device_description;
+  ojax_pjrt_check(c->api, c->api->PJRT_DeviceDescription_Kind(&a));
+  CAMLreturn(caml_alloc_initialized_string(a.device_kind_size, a.device_kind));
 }
 
 CAMLprim value ojax_pjrt_client_destroy(value v_client) {
@@ -447,6 +557,13 @@ CAMLprim value ojax_pjrt_buffer_to_host(value v_buffer, value v_dst) {
   ojax_pjrt_check(api, err);
   ojax_pjrt_check(api, awaited);
   CAMLreturn(Val_unit);
+}
+
+CAMLprim value ojax_pjrt_buffer_belongs_to(value v_buffer, value v_client) {
+  CAMLparam2(v_buffer, v_client);
+  struct ojax_pjrt_buffer *b = Ojax_buffer_val(v_buffer);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  CAMLreturn(Val_bool(b->api == c->api));
 }
 
 CAMLprim value ojax_pjrt_buffer_element_type(value v_buffer) {

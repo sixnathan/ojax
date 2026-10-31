@@ -38,3 +38,6 @@ val log : string -> unit
 val set_log_sink : (string -> unit) -> string -> unit
 val trace_context : unit -> (string * string) list
 val export_calling_convention_version : int flag
+val platforms : string flag
+val platform_resolver : (unit -> string) ref
+val current_platform : unit -> string

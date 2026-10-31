@@ -24,7 +24,7 @@ let disabled_check_of_string s =
 
 let minimum_supported_calling_convention_version = 9
 let maximum_supported_calling_convention_version = 10
-let default_export_platform () = "cpu"
+let default_export_platform () = Config.current_platform ()
 
 type exported = {
   fun_name : string;
@@ -599,18 +599,19 @@ let python_tuple l =
   | [ x ] -> "('" ^ x ^ "',)"
   | l -> "(" ^ String.concat ", " (List.map (fun x -> "'" ^ x ^ "'") l) ^ ")"
 
-let current_platforms = [ "cpu" ]
+let current_platforms () = [ Config.current_platform () ]
 
 let check_platform e =
   if
     (not (List.mem Platform_check e.disabled_safety_checks))
-    && not (List.exists (fun p -> List.mem p e.platforms) current_platforms)
+    && not
+         (List.exists (fun p -> List.mem p e.platforms) (current_platforms ()))
   then
     invalid_arg
       (Printf.sprintf
          "Function '%s' was exported for platforms '%s' but it is used on '%s'."
          e.fun_name (python_tuple e.platforms)
-         (python_tuple current_platforms))
+         (python_tuple (current_platforms ())))
 
 let arg_descriptors in_tree =
   let paths =

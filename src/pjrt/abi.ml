@@ -18,6 +18,8 @@ external ffi_register_handler : plugin -> string -> string -> nativeint -> unit
 external ffi_register_type : plugin -> string -> nativeint -> nativeint -> unit
   = "ojax_pjrt_ffi_register_type"
 
+external library_loadable : string -> bool = "ojax_pjrt_library_loadable"
+
 let pjrt_api_major = 0
 let pjrt_api_minor = 81
 let pjrt_api_struct_size = 984

@@ -1,12 +1,16 @@
 exception Error of string
 
 let env_var = "OJAX_PJRT_PLUGIN"
+let gpu_env_var = "OJAX_PJRT_GPU_PLUGIN"
 
 let pinned_sha256 =
   [
     "a30b08a486bf4e80c64940ef70035ca2339f4a9badfc07cae2aab9901ed9d979";
     "5c4ceb9f9b96562fe264ab55f6caa7a5e686a060fd53c55b0c39093100aca130";
   ]
+
+let pinned_gpu_sha256 =
+  [ "bf07d68eafbf05fd25a5f8f692e57178755a5c33b80bc9779897ab2ee8b9d0e8" ]
 
 let pjrt_api_minor = 81
 let mask = 0xFFFFFFFF
@@ -167,43 +171,44 @@ let sha256_file path =
     ~finally:(fun () -> close_in_noerr ic)
     (fun () -> sha256_hex (In_channel.input_all ic))
 
-let validate_path = function
+let validate_named name = function
   | None ->
       raise
         (Error
            (Printf.sprintf
               "%s is not set; point it at an absolute path to the pinned PJRT \
                plugin"
-              env_var))
+              name))
   | Some "" ->
       raise
         (Error
-           (Printf.sprintf "%s is set but empty; expected an absolute path"
-              env_var))
+           (Printf.sprintf "%s is set but empty; expected an absolute path" name))
   | Some path ->
       if Filename.is_relative path then
         raise
           (Error
-             (Printf.sprintf "%s must be an absolute path, got: %s" env_var path))
+             (Printf.sprintf "%s must be an absolute path, got: %s" name path))
       else path
 
+let validate_path = validate_named env_var
 let resolve () = validate_path (Sys.getenv_opt env_var)
 
-let verify_at path =
+let verify_against pins path =
   if not (Sys.file_exists path) then
     raise (Error (Printf.sprintf "PJRT plugin not found: %s" path));
   if Sys.is_directory path then
     raise (Error (Printf.sprintf "PJRT plugin path is a directory: %s" path));
   let actual = sha256_file path in
-  if not (List.mem actual pinned_sha256) then
+  if not (List.mem actual pins) then
     raise
       (Error
          (Printf.sprintf
             "PJRT plugin sha256 mismatch at %s: expected one of %s, got %s" path
-            (String.concat ", " pinned_sha256)
-            actual));
+            (String.concat ", " pins) actual));
   path
 
+let verify_at = verify_against pinned_sha256
+let verify_gpu_at = verify_against pinned_gpu_sha256
 let cached = ref None
 
 let preflight () =
@@ -212,4 +217,17 @@ let preflight () =
   | None ->
       let p = verify_at (resolve ()) in
       cached := Some p;
+      p
+
+let gpu_configured () = Sys.getenv_opt gpu_env_var <> None
+let gpu_cached = ref None
+
+let gpu_preflight () =
+  match !gpu_cached with
+  | Some p -> p
+  | None ->
+      let p =
+        verify_gpu_at (validate_named gpu_env_var (Sys.getenv_opt gpu_env_var))
+      in
+      gpu_cached := Some p;
       p

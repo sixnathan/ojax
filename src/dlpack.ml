@@ -94,7 +94,9 @@ let check_hardware_id id =
 
 let buffer_of_value v =
   match v with
-  | Device b -> b
+  | Device b when Pjrt.Buffer.belongs_to b (Backend.xla_client ()) -> b
+  | Device b ->
+      Pjrt.Buffer.of_host (Backend.xla_client ()) (Pjrt.Buffer.to_host b)
   | Concrete nd -> Pjrt.Buffer.of_host (Backend.xla_client ()) nd
   | Tracer _ ->
       invalid_arg "Argument to to_dlpack must be a jax.Array, got a tracer"

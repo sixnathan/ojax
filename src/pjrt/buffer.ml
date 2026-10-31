@@ -17,7 +17,9 @@ external of_dlpack : Client.t -> nativeint -> int -> t
 
 external dlpack_delete : nativeint -> unit = "ojax_pjrt_dlpack_delete"
 external unsafe_pointer : t -> nativeint = "ojax_pjrt_buffer_unsafe_pointer"
+external belongs_to_ : t -> Client.t -> bool = "ojax_pjrt_buffer_belongs_to"
 
+let belongs_to buffer client = belongs_to_ buffer client
 let u32_mask = 0xFFFF_FFFF
 
 let elt_bytes = function

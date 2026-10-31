@@ -62,3 +62,17 @@ pjrt_api_major = 0
 pjrt_api_minor = 83
 struct_size_bytes = 1000
 abi_note = minor bumps only append fields, so the minor 81 header remains valid
+
+[plugin.linux-arm64-cuda13]
+provider = PyPI jax-cuda13-pjrt
+version = 0.10.2
+wheel_url = https://files.pythonhosted.org/packages/3f/2a/756474bf57cf8cdf200f4120813d0c8db7463c7301d6f394c4ede4737b1f/jax_cuda13_pjrt-0.10.2-py3-none-manylinux_2_27_aarch64.whl
+wheel_sha256 = b28f4940d09405ece084e50c91634f4bb1d43a8497b9d734f40007ee07281aec
+wheel_bytes = 119860632
+member_path = jax_plugins/xla_cuda13/xla_cuda_plugin.so
+plugin_sha256 = bf07d68eafbf05fd25a5f8f692e57178755a5c33b80bc9779897ab2ee8b9d0e8
+plugin_bytes = 392159232
+exported_symbol = GetPjrtApi
+runtime_env_var = OJAX_PJRT_GPU_PLUGIN
+runtime_requires = libcudnn.so.9 on LD_LIBRARY_PATH, from PyPI nvidia-cudnn-cu13 9.27.0.42 (aarch64 wheel sha256 41b3aae756032ed13b1fcac39c79330cfc5434059d0c5251914e0f6ce582c7ea)
+verified_device = NVIDIA GB10, driver 580.173.02, CUDA 13.0, platform version cuda 13000

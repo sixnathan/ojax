@@ -177,3 +177,10 @@ let trace_context () =
 
 let export_calling_convention_version =
   make "jax_export_calling_convention_version" 10
+
+let platforms =
+  make "jax_platforms"
+    (Option.value (Sys.getenv_opt "OJAX_PLATFORMS") ~default:"")
+
+let platform_resolver = ref (fun () -> "cpu")
+let current_platform () = !platform_resolver ()

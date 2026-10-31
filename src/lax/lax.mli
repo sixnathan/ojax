@@ -42,6 +42,7 @@ val custom_linear_solve :
   value list
 
 module Linalg = Linalg
+module Special = Special
 module Fft = Fft
 
 val complex_bilinear :

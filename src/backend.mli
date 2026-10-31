@@ -27,3 +27,12 @@ val run_text_forced : string -> Types.value list -> Types.value list
 val xla_plugin : unit -> Pjrt.Abi.plugin
 val xla_client : unit -> Pjrt.Client.t
 val stats : unit -> int * string list
+val current_platform : unit -> string
+val default_backend : unit -> string
+val devices : ?backend:string -> unit -> string list
+val with_platform : string -> (unit -> 'a) -> 'a
+val platform_version : unit -> string
+val device_kind : unit -> string
+val has_visible_nvidia_gpu : unit -> bool
+val gpu_ready : unit -> bool
+val value_device : Types.value -> string option

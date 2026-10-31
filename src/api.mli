@@ -129,10 +129,10 @@ val named_call : 'a -> 'a
 val named_scope : string -> (unit -> 'a) -> 'a
 val device_get : value Tree_util.t -> value Tree_util.t
 val block_until_ready : 'a -> 'a
-val devices : unit -> string list
-val local_devices : unit -> string list
-val device_count : unit -> int
-val local_device_count : unit -> int
+val devices : ?backend:string -> unit -> string list
+val local_devices : ?backend:string -> unit -> string list
+val device_count : ?backend:string -> unit -> int
+val local_device_count : ?backend:string -> unit -> int
 val process_count : unit -> int
 val process_index : unit -> int
 val process_indices : unit -> int list

@@ -62,13 +62,34 @@ let trace_stack : trace list ref = ref [ eval_trace ]
 let dynamic_trace : trace option ref = ref None
 let current_level () = List.length !trace_stack - 1
 
-let with_new_main kind global_data f =
+let enter_main weak kind global_data f =
   let level = List.length !trace_stack in
   let main = { level; kind; global_data } in
+  Weak.set weak 0 (Some main);
   trace_stack := main :: !trace_stack;
   Fun.protect
     ~finally:(fun () -> trace_stack := List.tl !trace_stack)
     (fun () -> f main)
+
+let trace_kind_name = function
+  | KEval -> "EvalTrace"
+  | KJVP -> "JVPTrace"
+  | KBatch -> "BatchTrace"
+  | KJaxpr -> "DynamicJaxprTrace"
+  | KPE -> "JaxprTrace"
+
+let leak_checked = function KJaxpr | KBatch -> true | _ -> false
+
+let with_new_main kind global_data f =
+  let weak = Weak.create 1 in
+  let result = enter_main weak kind global_data f in
+  if Config.value Config.check_tracer_leaks && leak_checked kind then (
+    Gc.full_major ();
+    if Weak.check weak 0 then
+      failwith
+        (Printf.sprintf "Leaked trace %s. A tracer outlived its transformation."
+           (trace_kind_name kind)));
+  result
 
 let new_dynamic main f =
   let prev = !dynamic_trace in
@@ -153,7 +174,28 @@ let custom_rule id =
 let with_eval_dynamic thunk = new_dynamic eval_trace thunk
 let named_axis_trace : (string -> trace option) ref = ref (fun _ -> None)
 
-let bind prim args =
+let check_f16_reduction axes = function
+  | [ v ] -> (
+      let shape, dtype =
+        match v with
+        | Concrete a -> (Ndarray.shape a, Ndarray.dtype a)
+        | Tracer t -> (t.aval.shape, t.aval.dtype)
+        | Device b -> (Pjrt.Buffer.dimensions b, Pjrt.Buffer.element_type b)
+      in
+      match dtype with
+      | (Dtype.F16 | Dtype.Bf16)
+        when Array.exists (fun axis -> shape.(axis) <> 1) axes ->
+          invalid_arg
+            (Printf.sprintf
+               "reduce_sum on operand %s[%s] is not allowed when \
+                jax_allow_f16_reductions=False."
+               (if dtype = Dtype.F16 then "f16" else "bf16")
+               (String.concat ","
+                  (List.map string_of_int (Array.to_list shape))))
+      | _ -> ())
+  | _ -> ()
+
+let dispatch prim args =
   let top = find_top_trace args in
   let top =
     match prim with
@@ -166,6 +208,14 @@ let bind prim args =
   let tracers = List.map (full_raise top) args in
   let outs = process_primitive top prim tracers in
   List.map full_lower outs
+
+let bind prim args =
+  (match prim with
+  | Reduce_sum axes when not (Config.value Config.allow_f16_reductions) ->
+      check_f16_reduction axes args
+  | _ -> ());
+  if Key_reuse.idle () then dispatch prim args
+  else Key_reuse.apply prim args (fun () -> dispatch prim args)
 
 let bind1 prim args =
   match bind prim args with
@@ -189,6 +239,9 @@ let as_concrete = function
   | Tracer _ -> failwith "eval: expected a concrete value"
 
 let eval_process_primitive _trace prim args =
+  (match prim with
+  | Dot_general _ -> Config.check_matmul_preset_on_cpu ()
+  | _ -> ());
   let inputs = List.map as_concrete args in
   let results = rules.impl prim inputs in
   List.map
@@ -206,3 +259,23 @@ let eval_interpreter =
   }
 
 let () = register_interpreter KEval eval_interpreter
+
+let divide_shape_sizes s1 s2 =
+  let size = Array.fold_left ( * ) 1 in
+  let sz1 = size s1 and sz2 = size s2 in
+  if sz1 = sz2 then 1
+  else
+    let tuple s =
+      match Array.to_list s with
+      | [ d ] -> Printf.sprintf "(%d,)" d
+      | ds -> "(" ^ String.concat ", " (List.map string_of_int ds) ^ ")"
+    in
+    let r = sz1 mod sz2 in
+    if r <> 0 then
+      raise
+        (Errors.Inconclusive_dimension_operation
+           (Printf.sprintf
+              "Cannot divide evenly the sizes of shapes %s and %s. The \
+               remainder %d should be 0."
+              (tuple s1) (tuple s2) r));
+    sz1 / sz2

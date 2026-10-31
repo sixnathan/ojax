@@ -69,10 +69,25 @@ let resolve_prng_impl = function
 
 let key_impl _keys = TF.threefry_prng_impl.PR.name
 let key_dtype _impl_spec = D.Uint32
-let key seed = PR.random_seed seed
-let key_data keys = unwrap keys
-let wrap_key_data data = wrap data
-let clone k = k
+
+let copy_nd nd =
+  let shape = Nd.shape nd in
+  let n = prod shape in
+  Nd.of_floats (Nd.dtype nd) shape
+    (Array.init n (fun i -> Nd.get_f nd (unravel shape i)))
+
+let raw_copy = function
+  | Concrete nd -> Concrete (copy_nd nd)
+  | Device b -> Concrete (copy_nd (Pjrt.Buffer.to_host b))
+  | Tracer _ as v -> C.bind1 Copy [ v ]
+
+let key seed = Key_reuse.mark_typed (PR.random_seed seed)
+let key_data keys = Key_reuse.suspended (fun () -> raw_copy (unwrap keys))
+
+let wrap_key_data data =
+  Key_reuse.mark_typed (Key_reuse.suspended (fun () -> raw_copy (wrap data)))
+
+let clone k = Key_reuse.mark_typed (Key_reuse.suspended (fun () -> raw_copy k))
 
 let fold_in k data =
   unwrap
@@ -84,7 +99,9 @@ let bits k ~shape = PR.random_bits (wrap k) ~bit_width:32 ~shape
 
 let uniform_unit k ~shape =
   match fdt () with
-  | D.F64 when match k with Tracer _ -> true | _ -> false ->
+  | D.F64
+    when (match k with Tracer _ -> true | _ -> false)
+         || not (Config.value Config.threefry_partitionable) ->
       let raw = PR.random_bits (wrap k) ~bit_width:64 ~shape in
       let twelve =
         Concrete (Nd.of_int64s D.Uint64 shape (Array.make (prod shape) 12L))
@@ -1033,4 +1050,134 @@ let bits_as k ~shape ~dtype =
   in
   via_host host k
 
-let prng_key = key
+let is_key = Key_reuse.is_typed
+
+let legacy_message =
+  "Legacy uint32 key array passed as key to jax.random function. Please create \
+   keys using jax.random.key(). If use of a raw key array was intended, set \
+   jax_legacy_prng_key=\"allow\"."
+
+let check_prng_key k =
+  if Key_reuse.known_raw k then
+    match Config.value Config.legacy_prng_key with
+    | "error" -> invalid_arg legacy_message
+    | "warn" -> Config.log legacy_message
+    | _ ->
+        if Config.value Config.enable_custom_prng then
+          Config.log
+            "Raw arrays as random keys to jax.random functions are deprecated. \
+             Assuming valid threefry2x32 key for now."
+
+let sampler ?(name = "jit-compiled function") k thunk =
+  check_prng_key k;
+  Key_reuse.consume name k;
+  Key_reuse.suspended thunk
+
+let upgrade_keys out =
+  if Config.value Config.enable_custom_prng && not (Key_reuse.is_typed out) then
+    Key_reuse.mark_typed out
+  else out
+
+let key_impl k =
+  check_prng_key k;
+  key_impl k
+
+let key_data k =
+  check_prng_key k;
+  key_data k
+
+let clone k =
+  check_prng_key k;
+  clone k
+
+let split k num =
+  check_prng_key k;
+  upgrade_keys (split k num)
+
+let fold_in k data =
+  check_prng_key k;
+  upgrade_keys (fold_in k data)
+
+let prng_key seed =
+  let raw = PR.random_seed seed in
+  if Config.value Config.enable_custom_prng then Key_reuse.mark_typed raw
+  else raw
+
+let bits k ~shape = sampler ~name:"random_bits" k (fun () -> bits k ~shape)
+
+let randint k ~shape ~minval ~maxval =
+  sampler k (fun () -> randint k ~shape ~minval ~maxval)
+
+let uniform k ~shape ~minval ~maxval =
+  sampler k (fun () -> uniform k ~shape ~minval ~maxval)
+
+let normal k ~shape = sampler k (fun () -> normal k ~shape)
+
+let truncated_normal k ~lower ~upper ~shape =
+  sampler k (fun () -> truncated_normal k ~lower ~upper ~shape)
+
+let permutation k x0 = sampler k (fun () -> permutation k x0)
+
+let choice k ~n ~shape ~replace =
+  sampler k (fun () -> choice k ~n ~shape ~replace)
+
+let exponential k ~shape = sampler k (fun () -> exponential k ~shape)
+let cauchy k ~shape = sampler k (fun () -> cauchy k ~shape)
+let laplace k ~shape = sampler k (fun () -> laplace k ~shape)
+let logistic k ~shape = sampler k (fun () -> logistic k ~shape)
+let gumbel k ~shape = sampler k (fun () -> gumbel k ~shape)
+let pareto k ~shape ~b = sampler k (fun () -> pareto k ~shape ~b)
+let rayleigh k ~shape ~scale = sampler k (fun () -> rayleigh k ~shape ~scale)
+
+let weibull_min k ~shape ~scale ~concentration =
+  sampler k (fun () -> weibull_min k ~shape ~scale ~concentration)
+
+let lognormal k ~shape ~sigma = sampler k (fun () -> lognormal k ~shape ~sigma)
+
+let triangular k ~shape ~left ~mode ~right =
+  sampler k (fun () -> triangular k ~shape ~left ~mode ~right)
+
+let wald k ~shape ~mean = sampler k (fun () -> wald k ~shape ~mean)
+let geometric k ~shape ~p = sampler k (fun () -> geometric k ~shape ~p)
+let bernoulli k ~shape ~p = sampler k (fun () -> bernoulli k ~shape ~p)
+let rademacher k ~shape = sampler k (fun () -> rademacher k ~shape)
+
+let categorical k ~logits ~axis =
+  sampler k (fun () -> categorical k ~logits ~axis)
+
+let gamma k ~shape ~a = sampler k (fun () -> gamma k ~shape ~a)
+let loggamma k ~shape ~a = sampler k (fun () -> loggamma k ~shape ~a)
+let beta k ~shape ~a ~b = sampler k (fun () -> beta k ~shape ~a ~b)
+let chisquare k ~shape ~df = sampler k (fun () -> chisquare k ~shape ~df)
+let t k ~shape ~df = sampler k (fun () -> t k ~shape ~df)
+let f k ~shape ~dfnum ~dfden = sampler k (fun () -> f k ~shape ~dfnum ~dfden)
+
+let generalized_normal k ~shape ~p =
+  sampler k (fun () -> generalized_normal k ~shape ~p)
+
+let dirichlet k ~alpha ~shape = sampler k (fun () -> dirichlet k ~alpha ~shape)
+let poisson k ~shape ~lam = sampler k (fun () -> poisson k ~shape ~lam)
+
+let binomial k ~shape ~count ~prob =
+  sampler k (fun () -> binomial k ~shape ~count ~prob)
+
+let multinomial k ~p ~n_trials =
+  sampler k (fun () -> multinomial k ~p ~n_trials)
+
+let bernoulli_prob k ~shape ~p =
+  sampler k (fun () -> bernoulli_prob k ~shape ~p)
+
+let uniform_range k ~shape ~minval ~maxval =
+  sampler k (fun () -> uniform_range k ~shape ~minval ~maxval)
+
+let gamma_value k ~shape ~a = sampler k (fun () -> gamma_value k ~shape ~a)
+
+let loggamma_value k ~shape ~a =
+  sampler k (fun () -> loggamma_value k ~shape ~a)
+
+let beta_value k ~shape ~a ~b = sampler k (fun () -> beta_value k ~shape ~a ~b)
+
+let poisson_value k ~shape ~lam =
+  sampler k (fun () -> poisson_value k ~shape ~lam)
+
+let bits_as k ~shape ~dtype = sampler k (fun () -> bits_as k ~shape ~dtype)

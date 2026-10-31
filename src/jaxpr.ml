@@ -3,10 +3,34 @@ open Types
 let aval_of_ndarray nd =
   { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
 
-let atom_aval env = function
+let var_names (jx : jaxpr) =
+  let names = Hashtbl.create 16 in
+  let counter = ref 0 in
+  let bind (v : var) =
+    if not (Hashtbl.mem names v.vid) then (
+      Hashtbl.replace names v.vid (Pretty_printer.encode_var !counter);
+      incr counter)
+  in
+  let bind_atom = function A_var v -> bind v | A_lit _ | DropVar _ -> () in
+  List.iter bind jx.in_binders;
+  List.iter
+    (fun (e : eqn) ->
+      List.iter bind e.outs;
+      List.iter bind_atom e.inputs)
+    jx.eqns;
+  List.iter bind_atom jx.outs;
+  names
+
+let jaxpr_type_error names (v : var) message =
+  let name =
+    Option.value (Hashtbl.find_opt names v.vid) ~default:(string_of_int v.vid)
+  in
+  raise (Errors.Jaxpr_type_error (Printf.sprintf message name))
+
+let atom_aval names env = function
   | A_var v ->
       if Hashtbl.mem env v.vid then v.vaval
-      else invalid_arg "typecheck: unbound variable"
+      else jaxpr_type_error names v "Variable '%s' not defined"
   | A_lit nd -> aval_of_ndarray nd
   | DropVar a -> a
 
@@ -15,25 +39,36 @@ let avals_equal (a : aval) (b : aval) =
 
 let typecheck_jaxpr (jx : jaxpr) : unit =
   let env : (int, unit) Hashtbl.t = Hashtbl.create 16 in
+  let names = var_names jx in
   let bind (v : var) =
-    if Hashtbl.mem env v.vid then invalid_arg "typecheck: variable bound twice";
+    if Hashtbl.mem env v.vid then
+      jaxpr_type_error names v "Variable '%s' already bound";
     Hashtbl.replace env v.vid ()
   in
   List.iter bind jx.in_binders;
   List.iter
     (fun (e : eqn) ->
-      let in_types = List.map (atom_aval env) e.inputs in
+      let in_types = List.map (atom_aval names env) e.inputs in
       let out_types = Core.rules.abstract_eval e.prim in_types in
       List.iter2
         (fun (b : var) t ->
           if not (avals_equal t b.vaval) then
-            invalid_arg "typecheck: output type mismatch")
+            raise
+              (Errors.Jaxpr_type_error
+                 (Printf.sprintf
+                    "Value for variable '%s' inconsistently typed as %s for \
+                     let-binder of type %s"
+                    (Option.value
+                       (Hashtbl.find_opt names b.vid)
+                       ~default:(string_of_int b.vid))
+                    (Pretty_printer.aval_short t)
+                    (Pretty_printer.aval_short b.vaval))))
         e.outs out_types;
       List.iter bind e.outs)
     jx.eqns;
-  List.iter (fun a -> ignore (atom_aval env a)) jx.outs
+  List.iter (fun a -> ignore (atom_aval names env a)) jx.outs
 
-let eval_jaxpr (jx : jaxpr) (args : value list) : value list =
+let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
   let env : (int, value) Hashtbl.t = Hashtbl.create 16 in
   let read = function
     | A_var v -> Hashtbl.find env v.vid
@@ -50,6 +85,7 @@ let eval_jaxpr (jx : jaxpr) (args : value list) : value list =
     jx.eqns;
   List.map read jx.outs
 
+let eval_jaxpr jx args = Key_reuse.suspended (fun () -> eval_jaxpr_body jx args)
 let jaxpr_as_fun (jx : jaxpr) args = eval_jaxpr jx args
 
 let eval_closed_jaxpr (cj : closed_jaxpr) (args : value list) : value list =

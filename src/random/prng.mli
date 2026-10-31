@@ -22,3 +22,5 @@ val random_wrap : value -> value
 val random_unwrap : value -> value
 val install : unit -> unit
 val bits64_hook : (Ndarray.t -> int array -> int64 array) ref
+val legacy_split_hook : (value -> int array -> value) ref
+val legacy_bits_hook : (value -> int -> int array -> value) ref

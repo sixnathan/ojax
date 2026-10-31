@@ -16,6 +16,9 @@ exception Tracer_integer_conversion_error of string
 exception Tracer_bool_conversion_error of string
 exception Unexpected_tracer_error of string
 exception Key_reuse_error of string
+exception Inconclusive_dimension_operation of string
+exception Jax_runtime_error of string
+exception Jaxpr_type_error of string
 
 let error_page = "https://docs.jax.dev/en/latest/errors.html"
 let module_name = "jax.errors"

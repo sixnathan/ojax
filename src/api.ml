@@ -40,6 +40,7 @@ let compile (cj : closed_jaxpr) : value list -> value list =
   match Hashtbl.find_opt compiled cj.jid with
   | Some executable -> executable
   | None ->
+      if Config.value Config.enable_checks then Jaxpr.typecheck_jaxpr cj.jaxpr;
       let executable = Backend.executor cj in
       Hashtbl.replace compiled cj.jid executable;
       executable
@@ -59,26 +60,129 @@ let run_with_refs cj cells args =
       results
   | _ -> failwith "jit: output arity"
 
+let context_key () =
+  String.concat ","
+    (List.map (fun (k, v) -> k ^ "=" ^ v) (Config.trace_context ()))
+
+type seen_key = {
+  seen_context : (string * string) list;
+  seen_avals : aval list;
+  seen_tree : string;
+}
+
+let current_seen avals tree =
+  {
+    seen_context = Config.trace_context ();
+    seen_avals = avals;
+    seen_tree = tree;
+  }
+
+let diff_context now before =
+  let changed =
+    List.filter_map
+      (fun (name, value) ->
+        match List.assoc_opt name before with
+        | Some old when old <> value ->
+            Some
+              (Printf.sprintf "  * %s differs: now %s and before %s" name value
+                 old)
+        | _ -> None)
+      now
+  in
+  match changed with
+  | [] -> None
+  | lines ->
+      Some
+        ("Tracing context doesn't match, e.g. due to config or context manager."
+       :: lines)
+
+let diff_types now before =
+  let lines =
+    List.concat
+      (List.mapi
+         (fun i (a : aval) ->
+           match List.nth_opt before i with
+           | Some (b : aval) when b <> a ->
+               [
+                 Printf.sprintf "  * at args[%d], now %s and before %s" i
+                   (Pretty_printer.aval_short a)
+                   (Pretty_printer.aval_short b);
+               ]
+           | _ -> [])
+         now)
+  in
+  match lines with [] -> None | _ -> Some ("different input types:" :: lines)
+
+let explain_miss seen (current : seen_key) =
+  if Config.value Config.explain_cache_misses then
+    let header = "TRACING CACHE MISS at <ocaml>:" in
+    let body =
+      match seen with
+      | [] -> [ "  never seen function:"; "    <fun>" ]
+      | last :: _ ->
+          let diff =
+            match diff_context current.seen_context last.seen_context with
+            | Some lines -> lines
+            | None ->
+                if current.seen_tree <> last.seen_tree then
+                  [ "different input pytree:" ]
+                else
+                  Option.value
+                    (diff_types current.seen_avals last.seen_avals)
+                    ~default:[ "cache miss explanation unavailable" ]
+          in
+          "  for <fun>"
+          :: "  all previously seen cache keys differ. For the closest \
+              previous key:"
+          :: List.map (fun line -> "  " ^ line) diff
+    in
+    Config.log (String.concat "\n" (header :: body))
+
+let timed_trace thunk =
+  let start = Sys.time () in
+  let result = thunk () in
+  Monitoring.record_event_duration_secs
+    ~kwargs:[ ("fun_name", Monitoring.Text "<fun>") ]
+    "/jax/core/compile/jaxpr_trace_duration"
+    (Sys.time () -. start);
+  result
+
 let jit_flat (f : value list -> value list) : value list -> value list =
-  let cache : (string, closed_jaxpr * Ref_state.cell list) Hashtbl.t =
+  let cache :
+      ( string,
+        closed_jaxpr * Ref_state.cell list * Key_reuse.signature )
+      Hashtbl.t =
     Hashtbl.create 8
   in
+  let seen = ref [] in
   fun args ->
     if Config.value Config.disable_jit then f args
     else
       let avals = List.map Core.get_aval args in
-      let key = aval_key avals in
-      let cj, cells =
+      let kinds = Key_reuse.arg_kinds args in
+      let key =
+        aval_key avals ^ "#" ^ Key_reuse.kinds_key kinds ^ "#" ^ context_key ()
+      in
+      let cj, cells, signature =
         match Hashtbl.find_opt cache key with
         | Some entry -> entry
         | None ->
             if Config.value Config.no_tracing then
               failwith "jit tracing is disabled by no_tracing";
-            let entry = trace_for_jit avals f in
+            let current = current_seen avals "" in
+            explain_miss !seen current;
+            seen := current :: !seen;
+            let signature = Key_reuse.new_signature () in
+            let cj, cells =
+              timed_trace (fun () ->
+                  trace_for_jit avals (Key_reuse.instrument signature kinds f))
+            in
+            let entry = (cj, cells, signature) in
             Hashtbl.replace cache key entry;
             entry
       in
-      run_with_refs cj cells args
+      Key_reuse.call_with_signature signature args (fun () ->
+          run_with_refs cj cells args)
 
 type out_slot = Known of value | Unknown
 
@@ -88,6 +192,7 @@ let stage (f : value list -> value list) (args : value list) :
     List.map (fun a -> Pe.partial_val_unknown (Core.get_aval a)) args
   in
   let jaxpr, consts, pvals_out = Pe.partial_eval_flat f pvals_in in
+  if Config.value Config.enable_checks then Jaxpr.typecheck_jaxpr jaxpr;
   let plan =
     List.map
       (fun pv -> match pv.pv_const with Some c -> Known c | None -> Unknown)
@@ -130,36 +235,57 @@ let make_jaxpr (f : value Tree.t list -> value Tree.t)
 let jit (f : value Tree.t list -> value Tree.t) :
     value Tree.t list -> value Tree.t =
   let cache :
-      (string, closed_jaxpr * Ref_state.cell list * Tree.treedef) Hashtbl.t =
+      ( string,
+        closed_jaxpr * Ref_state.cell list * Tree.treedef * Key_reuse.signature
+      )
+      Hashtbl.t =
     Hashtbl.create 8
   in
+  let seen = ref [] in
   fun args ->
     if Config.value Config.disable_jit then f args
     else
       let flat_args, in_tree = flatten_args args in
       let avals = List.map Core.get_aval flat_args in
-      let key = aval_key avals ^ "#" ^ treedef_key in_tree in
-      let cj, cells, out_tree =
+      let kinds = Key_reuse.arg_kinds flat_args in
+      let tree_text = treedef_key in_tree in
+      let key =
+        aval_key avals ^ "#" ^ tree_text ^ "#" ^ Key_reuse.kinds_key kinds ^ "#"
+        ^ context_key ()
+      in
+      let cj, cells, out_tree, signature =
         match Hashtbl.find_opt cache key with
         | Some entry -> entry
         | None ->
             let flat_fun, out_tree_get = Api_util.flatten_fun f in_tree in
+            if Config.value Config.no_tracing then
+              failwith "jit tracing is disabled by no_tracing";
+            let current = current_seen avals tree_text in
+            explain_miss !seen current;
+            seen := current :: !seen;
+            let signature = Key_reuse.new_signature () in
             let cj, cells =
-              if Config.value Config.no_tracing then
-                failwith "jit tracing is disabled by no_tracing";
-              trace_for_jit avals (Linear_util.call_wrapped flat_fun)
+              timed_trace (fun () ->
+                  trace_for_jit avals
+                    (Key_reuse.instrument signature kinds
+                       (Linear_util.call_wrapped flat_fun)))
             in
-            let entry = (cj, cells, out_tree_get ()) in
+            let entry = (cj, cells, out_tree_get (), signature) in
             Hashtbl.replace cache key entry;
             entry
       in
-      Tree.tree_unflatten out_tree (run_with_refs cj cells flat_args)
+      Tree.tree_unflatten out_tree
+        (Key_reuse.call_with_signature signature flat_args (fun () ->
+             run_with_refs cj cells flat_args))
+
+let keep_key_kind source moved =
+  if Key_reuse.is_typed source then Key_reuse.mark_typed moved else moved
 
 let device_put (x : value Tree.t) : value Tree.t =
-  Tree.tree_map Backend.of_host_value x
+  Tree.tree_map (fun v -> keep_key_kind v (Backend.of_host_value v)) x
 
 let to_host (x : value Tree.t) : value Tree.t =
-  Tree.tree_map Backend.to_host_value x
+  Tree.tree_map (fun v -> keep_key_kind v (Backend.to_host_value v)) x
 
 let float0 = Dtypes.float0
 let scalar_type_of v = Dtypes.scalar_type_of (Core.get_aval v).dtype
@@ -682,6 +808,56 @@ let clear_caches () =
   Ad_util.clear_symbolic_zeros ()
 
 let disable_jit thunk = Config.with_value Config.disable_jit true thunk
+let enable_checks v thunk = Config.with_value Config.enable_checks v thunk
+let debug_key_reuse v thunk = Config.with_value Config.debug_key_reuse v thunk
+
+let check_tracer_leaks v thunk =
+  Config.with_value Config.check_tracer_leaks v thunk
+
+let checking_leaks thunk = check_tracer_leaks true thunk
+
+let explain_cache_misses v thunk =
+  Config.with_value Config.explain_cache_misses v thunk
+
+let enable_custom_prng ?(new_val = true) thunk =
+  Config.with_value Config.enable_custom_prng new_val thunk
+
+let softmax_custom_jvp v thunk =
+  Config.with_value Config.softmax_custom_jvp v thunk
+
+let threefry_partitionable v thunk =
+  Config.with_value Config.threefry_partitionable v thunk
+
+let allow_f16_reductions v thunk =
+  Config.with_value Config.allow_f16_reductions v thunk
+
+let thread_guard v thunk = Config.with_value Config.thread_guard v thunk
+
+let jax2tf_associative_scan_reductions v thunk =
+  Config.with_value Config.jax2tf_associative_scan_reductions v thunk
+
+let numpy_dtype_promotion v thunk =
+  Config.with_value Config.numpy_dtype_promotion v thunk
+
+let legacy_prng_key v thunk = Config.with_value Config.legacy_prng_key v thunk
+
+let default_matmul_precision v thunk =
+  Config.with_value Config.default_matmul_precision (Some v) thunk
+
+let transfer_guard = Config.with_transfer_guard
+
+let transfer_guard_host_to_device v thunk =
+  Config.with_value Config.transfer_guard_host_to_device (Some v) thunk
+
+let transfer_guard_device_to_device v thunk =
+  Config.with_value Config.transfer_guard_device_to_device (Some v) thunk
+
+let transfer_guard_device_to_host v thunk =
+  Config.with_value Config.transfer_guard_device_to_host (Some v) thunk
+
+let array_garbage_collection_guard v thunk =
+  Config.with_value Config.array_garbage_collection_guard (Some v) thunk
+
 let ensure_compile_time_eval thunk = Core.with_eval_dynamic thunk
 
 let pmap f args =

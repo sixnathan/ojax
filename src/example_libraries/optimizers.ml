@@ -223,3 +223,61 @@ let clip_grads grad_tree max_norm =
       ignore rank;
       mul g (L.broadcast_in_dim factor (Core.get_aval g).shape [||]))
     grad_tree
+
+type optimizer_state = {
+  packed_state : value list list;
+  tree_def : Tree.treedef;
+  subtree_defs : Tree.treedef list;
+}
+
+type join_point = Join_point of value Tree.t
+
+let optimizer_state_of state =
+  let states_flat, tree_def = Tree.tree_flatten state in
+  let subtrees =
+    List.map
+      (fun leaf ->
+        Tree.tree_flatten (Tree.Tuple (List.map (fun x -> Tree.Leaf x) leaf)))
+      states_flat
+  in
+  {
+    packed_state = List.map fst subtrees;
+    tree_def;
+    subtree_defs = List.map snd subtrees;
+  }
+
+let leaf_state_of opt_state =
+  Tree.tree_unflatten opt_state.tree_def opt_state.packed_state
+
+let optimizer_state_leaves opt_state = List.concat opt_state.packed_state
+
+let unpack_optimizer_state opt_state =
+  let sentinels =
+    List.map2
+      (fun def leaves -> Join_point (Tree.tree_unflatten def leaves))
+      opt_state.subtree_defs opt_state.packed_state
+  in
+  Tree.tree_unflatten opt_state.tree_def sentinels
+
+let pack_optimizer_state marked =
+  let sentinels, tree_def = Tree.tree_flatten marked in
+  let subtrees =
+    List.map (fun (Join_point subtree) -> Tree.tree_flatten subtree) sentinels
+  in
+  {
+    packed_state = List.map fst subtrees;
+    tree_def;
+    subtree_defs = List.map snd subtrees;
+  }
+
+let make_schedule = function
+  | `Schedule schedule -> schedule
+  | `Scalar step_size -> constant step_size
+  | `Value v -> (
+      if Array.length (Core.get_aval v).shape <> 0 then
+        invalid_arg "make_schedule: expected a scalar or a schedule";
+      match v with
+      | Concrete nd -> constant (Ndarray.get_f nd [||])
+      | Device b -> constant (Ndarray.get_f (Pjrt.Buffer.to_host b) [||])
+      | Tracer _ ->
+          invalid_arg "make_schedule: a traced step size is not supported")

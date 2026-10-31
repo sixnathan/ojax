@@ -6,6 +6,7 @@ val with_dtypes :
 val default_prng_impl : unit -> Prng.prng_impl
 val resolve_prng_impl : string option -> Prng.prng_impl
 val key_impl : value -> string
+val is_key : value -> bool
 val key_dtype : string option -> Dtype.t
 val key : value -> value
 val key_data : value -> value

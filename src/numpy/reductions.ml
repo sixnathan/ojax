@@ -93,7 +93,12 @@ let keepdims_shape orig axes =
 
 let reduce_axes prim ?(keepdims = false) axes v =
   let orig = shape v in
-  let r = bind1 (prim axes) [ v ] in
+  let r =
+    match (prim axes, dtype v) with
+    | (T.Reduce_sum _ as reducer), ((D.F16 | D.Bf16) as narrow) ->
+        convert (bind1 reducer [ convert v D.F32 ]) narrow
+    | reducer, _ -> bind1 reducer [ v ]
+  in
   if keepdims then reshape r (keepdims_shape orig axes) else r
 
 let axis_count v axes =

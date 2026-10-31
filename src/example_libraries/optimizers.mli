@@ -10,6 +10,23 @@ type optimizer = {
   get_params : leaf_state Tree_util.t -> value Tree_util.t;
 }
 
+type optimizer_state = {
+  packed_state : value list list;
+  tree_def : Tree_util.treedef;
+  subtree_defs : Tree_util.treedef list;
+}
+
+type join_point = Join_point of value Tree_util.t
+
+val optimizer_state_of : leaf_state Tree_util.t -> optimizer_state
+val leaf_state_of : optimizer_state -> leaf_state Tree_util.t
+val optimizer_state_leaves : optimizer_state -> value list
+val unpack_optimizer_state : optimizer_state -> join_point Tree_util.t
+val pack_optimizer_state : join_point Tree_util.t -> optimizer_state
+
+val make_schedule :
+  [ `Scalar of float | `Value of value | `Schedule of schedule ] -> schedule
+
 val constant : float -> schedule
 val exponential_decay : float -> int -> float -> schedule
 val inverse_time_decay : ?staircase:bool -> float -> int -> float -> schedule

@@ -69,7 +69,7 @@ let sharding () =
 
 let monitoring () =
   let events = ref [] in
-  Monitoring.register_event_listener (fun e -> events := e :: !events);
+  Monitoring.register_event_listener (fun e _ -> events := e :: !events);
   Monitoring.record_event "compile";
   Alcotest.(check (list string)) "event" [ "compile" ] !events;
   Monitoring.clear_event_listeners ();

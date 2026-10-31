@@ -304,3 +304,51 @@ let threefry_random_bits key bit_width shape =
   match Core.bind Threefry2x32 [ key1; key2; c1; c2 ] with
   | [ b1; b2 ] -> Core.bind1 Xor [ b1; b2 ]
   | _ -> failwith "threefry: random_bits arity"
+
+let single_key name key =
+  if Array.length (Core.get_aval key).shape <> 1 then
+    invalid_arg
+      (name ^ ": jax_threefry_partitionable=False takes a single key here")
+
+let u32_iota n =
+  Core.bind1 (Iota { dtype = Dtype.Uint32; shape = [| n |]; dimension = 0 }) []
+
+let threefry_split_original key shape =
+  single_key "random_split" key;
+  let num = prod shape in
+  Core.bind1
+    (Reshape (Array.append shape [| 2 |]))
+    [ threefry_2x32 key (u32_iota (num * 2)) ]
+
+let threefry_random_bits_original key bit_width shape =
+  single_key "random_bits" key;
+  let size = prod shape in
+  match bit_width with
+  | 32 -> Core.bind1 (Reshape shape) [ threefry_2x32 key (u32_iota size) ]
+  | 64 ->
+      let bits = threefry_2x32 key (u32_iota (2 * size)) in
+      let wide start =
+        Core.bind1 (Convert_element_type Dtype.Uint64)
+          [
+            Core.bind1
+              (Slice
+                 {
+                   start_indices = [| start |];
+                   limit_indices = [| start + size |];
+                   strides = None;
+                 })
+              [ bits ];
+          ]
+      in
+      let shift =
+        Concrete
+          (Ndarray.of_int64s Dtype.Uint64 [| size |] (Array.make size 32L))
+      in
+      let joined =
+        Core.bind1 Or [ Core.bind1 Shift_left [ wide 0; shift ]; wide size ]
+      in
+      Core.bind1 (Reshape shape) [ joined ]
+  | _ -> failwith "threefry: only 32 and 64 bit random_bits supported"
+
+let () = Prng.legacy_split_hook := threefry_split_original
+let () = Prng.legacy_bits_hook := threefry_random_bits_original

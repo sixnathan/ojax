@@ -136,7 +136,36 @@ let all_nodes =
     C128;
   ]
 
-let rec uppers node = node :: List.concat_map uppers (parents node)
+let strict_parents = function
+  | Weak_int ->
+      [ Weak_float; U2; U4; U8; U16; U32; U64; I2; I4; I8; I16; I32; I64 ]
+  | Weak_float ->
+      [
+        Weak_complex;
+        F4_e2m1fn;
+        F6_e2m3fn;
+        F6_e3m2fn;
+        F8_e3m4;
+        F8_e4m3;
+        F8_e4m3b11fnuz;
+        F8_e4m3fn;
+        F8_e4m3fnuz;
+        F8_e5m2;
+        F8_e5m2fnuz;
+        F8_e8m0fnu;
+        F16;
+        Bf16;
+        F32;
+        F64;
+      ]
+  | Weak_complex -> [ C64; C128 ]
+  | _ -> []
+
+let is_strict () = Config.value Config.numpy_dtype_promotion = "strict"
+
+let rec uppers node =
+  let next = if is_strict () then strict_parents node else parents node in
+  node :: List.concat_map uppers next
 
 let strong_node : Dtype.t -> node = function
   | Dtype.Bool -> Bool
@@ -254,7 +283,13 @@ let promotion_message nodes =
       names width
   in
   let has group = List.exists (fun n -> List.mem n group) nodes in
-  if
+  if is_strict () then
+    Printf.sprintf
+      "Input dtypes %s have no available implicit dtype promotion path when \
+       jax_numpy_dtype_promotion=strict. Try explicitly casting inputs to the \
+       desired output type, or set jax_numpy_dtype_promotion=standard."
+      names
+  else if
     has
       [
         F8_e3m4;
@@ -332,7 +367,7 @@ let lattice_result_type (args : (Dtype.t * bool) list) : Dtype.t * bool =
       in
       let out_dtype, out_weak =
         if all_same && not all_weak then (List.hd dtypes, false)
-        else if all_weak then
+        else if all_weak && not (is_strict ()) then
           let r =
             least_upper_bound (List.map (fun d -> jax_type d false) dtypes)
           in

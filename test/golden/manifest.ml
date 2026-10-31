@@ -205,6 +205,7 @@ let string_of_dtype = function
   | D.Uint64 -> "uint64"
   | D.F16 -> "float16"
   | D.Bf16 -> "bfloat16"
+  | d -> D.numpy_name d
 
 let nd_of_npz (a : Npz.t) =
   let floats =

@@ -32,12 +32,17 @@ val vjp :
   value Tree_util.t list ->
   value Tree_util.t * (value Tree_util.t -> value Tree_util.t list)
 
+val float0 : Dtype.t
+val scalar_type_of : value -> Dtypes.scalar_type
+
 val grad :
+  ?allow_int:bool ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t
 
 val value_and_grad :
+  ?allow_int:bool ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t * value Tree_util.t

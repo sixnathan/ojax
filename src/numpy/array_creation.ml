@@ -19,7 +19,10 @@ let convert v dt =
   if dtype_of v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
 
 let is_inexact = function
-  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
+  | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
+  | D.F8_e5m2fnuz | D.F8_e8m0fnu | D.F32 | D.F64 | D.Complex64 | D.Complex128 ->
+      true
   | _ -> false
 
 let to_inexact = Dtypes.to_inexact_dtype

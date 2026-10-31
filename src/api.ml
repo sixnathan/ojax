@@ -143,13 +143,41 @@ let device_put (x : value Tree.t) : value Tree.t =
 let to_host (x : value Tree.t) : value Tree.t =
   Tree.tree_map Backend.to_host_value x
 
+let float0 = Dtypes.float0
+let scalar_type_of v = Dtypes.scalar_type_of (Core.get_aval v).dtype
+let is_integral_dtype dt = dt = Dtype.Bool || Dtypes.issubdtype dt `Integer
+
+let float0_like v =
+  let shape = (Core.get_aval v).shape in
+  let n = Array.fold_left ( * ) 1 shape in
+  Concrete (Ndarray.of_floats Dtypes.float0 shape (Array.make n 0.0))
+
+let tangent_of_float0 primal tangent =
+  let pd = (Core.get_aval primal).dtype in
+  if (Core.get_aval tangent).dtype <> Dtypes.float0 then tangent
+  else if is_integral_dtype pd then Ad_util.zeros_like_value primal
+  else
+    invalid_arg
+      (Printf.sprintf
+         "primal and tangent arguments to jax.jvp do not match; dtypes must be \
+          equal, or in case of int/bool primal dtype the tangent dtype must be \
+          float0.Got primal dtype %s and so expected tangent dtype %s, but got \
+          tangent dtype float0 instead."
+         (Dtype.numpy_name pd) (Dtype.numpy_name pd))
+
+let float0_for_integral primal tangent =
+  if is_integral_dtype (Core.get_aval primal).dtype then float0_like primal
+  else tangent
+
 let jvp (f : value Tree.t list -> value Tree.t) (primals : value Tree.t list)
     (tangents : value Tree.t list) : value Tree.t * value Tree.t =
   let pf, in_tree = flatten_args primals in
   let tf, _ = flatten_args tangents in
+  let tf = List.map2 tangent_of_float0 pf tf in
   let flat_fun, out_tree = Api_util.flatten_fun f in_tree in
   let po, to_ = Ad.jvp (Linear_util.call_wrapped flat_fun) pf tf in
   let ot = out_tree () in
+  let to_ = List.map2 float0_for_integral po to_ in
   (Tree.tree_unflatten ot po, Tree.tree_unflatten ot to_)
 
 let linearize (f : value Tree.t list -> value Tree.t)
@@ -173,19 +201,40 @@ let vjp (f : value Tree.t list -> value Tree.t) (primals : value Tree.t list) :
   let ot = out_tree () in
   let out = Tree.tree_unflatten ot outs in
   let vjp_fn (cotangent : value Tree.t) : value Tree.t list =
-    let gs = f_vjp (Tree.tree_leaves cotangent) in
+    let cts = List.map2 tangent_of_float0 outs (Tree.tree_leaves cotangent) in
+    let gs = List.map2 float0_for_integral pf (f_vjp cts) in
     match Tree.tree_unflatten in_tree gs with
     | Tree.Tuple xs | Tree.List xs -> xs
     | other -> [ other ]
   in
   (out, vjp_fn)
 
-let value_and_grad (f : value Tree.t list -> value Tree.t)
+let check_grad_input allow_int v =
+  let dt = (Core.get_aval v).dtype in
+  if is_integral_dtype dt then
+    begin if not allow_int then
+      invalid_arg
+        (Printf.sprintf
+           "grad requires real- or complex-valued inputs (input dtype that is \
+            a sub-dtype of np.inexact), but got %s. If you want to use \
+            Boolean- or integer-valued inputs, use vjp or set allow_int to \
+            True."
+           (Dtype.numpy_name dt))
+    end
+  else if not (Dtypes.issubdtype dt `Inexact) then
+    invalid_arg
+      (Printf.sprintf
+         "grad requires numerical-valued inputs (input dtype that is a \
+          sub-dtype of np.bool_ or np.number), but got %s."
+         (Dtype.numpy_name dt))
+
+let value_and_grad ?(allow_int = false) (f : value Tree.t list -> value Tree.t)
     (args : value Tree.t list) : value Tree.t * value Tree.t =
   match args with
   | [] -> failwith "value_and_grad: no arguments"
   | x0 :: rest ->
       let flat0, tree0 = Tree.tree_flatten x0 in
+      List.iter (check_grad_input allow_int) flat0;
       let flat_f (flat0' : value list) : value list =
         let x0' = Tree.tree_unflatten tree0 flat0' in
         match f (x0' :: rest) with
@@ -204,12 +253,14 @@ let value_and_grad (f : value Tree.t list -> value Tree.t)
              "Gradient only defined for scalar-output functions. Output had \
               shape: %s."
              (aval_key [ Core.get_aval y ]));
-      let g = f_vjp [ ones_like_value y ] in
+      let g =
+        List.map2 float0_for_integral flat0 (f_vjp [ ones_like_value y ])
+      in
       (Tree.Leaf y, Tree.tree_unflatten tree0 g)
 
-let grad (f : value Tree.t list -> value Tree.t) (args : value Tree.t list) :
-    value Tree.t =
-  snd (value_and_grad f args)
+let grad ?allow_int (f : value Tree.t list -> value Tree.t)
+    (args : value Tree.t list) : value Tree.t =
+  snd (value_and_grad ?allow_int f args)
 
 let vmap (f : value Tree.t list -> value Tree.t) (in_axes : int option list)
     (args : value Tree.t list) : value Tree.t =

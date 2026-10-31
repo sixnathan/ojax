@@ -31,6 +31,22 @@ let buffer_type (d : Dtype.t) : int =
   | Dtype.Bf16 -> 13
   | Dtype.Complex64 -> 14
   | Dtype.Complex128 -> 15
+  | Dtype.F8_e5m2 -> 16
+  | Dtype.F8_e4m3fn -> 17
+  | Dtype.F8_e4m3b11fnuz -> 18
+  | Dtype.F8_e5m2fnuz -> 19
+  | Dtype.F8_e4m3fnuz -> 20
+  | Dtype.I4 -> 21
+  | Dtype.Uint4 -> 22
+  | Dtype.I2 -> 24
+  | Dtype.Uint2 -> 25
+  | Dtype.F8_e4m3 -> 26
+  | Dtype.F8_e3m4 -> 27
+  | Dtype.F8_e8m0fnu -> 28
+  | Dtype.F4_e2m1fn -> 29
+  | (Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.Float0) as d ->
+      invalid_arg
+        (Printf.sprintf "PJRT has no buffer type for %s" (Dtype.numpy_name d))
 
 let dtype_of_buffer_type (bt : int) : Dtype.t option =
   match bt with
@@ -49,4 +65,17 @@ let dtype_of_buffer_type (bt : int) : Dtype.t option =
   | 15 -> Some Dtype.Complex128
   | 11 -> Some Dtype.F32
   | 12 -> Some Dtype.F64
+  | 16 -> Some Dtype.F8_e5m2
+  | 17 -> Some Dtype.F8_e4m3fn
+  | 18 -> Some Dtype.F8_e4m3b11fnuz
+  | 19 -> Some Dtype.F8_e5m2fnuz
+  | 20 -> Some Dtype.F8_e4m3fnuz
+  | 21 -> Some Dtype.I4
+  | 22 -> Some Dtype.Uint4
+  | 24 -> Some Dtype.I2
+  | 25 -> Some Dtype.Uint2
+  | 26 -> Some Dtype.F8_e4m3
+  | 27 -> Some Dtype.F8_e3m4
+  | 28 -> Some Dtype.F8_e8m0fnu
+  | 29 -> Some Dtype.F4_e2m1fn
   | _ -> None

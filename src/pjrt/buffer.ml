@@ -16,7 +16,12 @@ let u32_mask = 0xFFFF_FFFF
 let elt_bytes = function
   | Dtype.F64 | Dtype.I64 | Dtype.Uint64 -> 8
   | Dtype.F32 | Dtype.I32 | Dtype.Uint32 -> 4
-  | Dtype.Bool | Dtype.I8 | Dtype.Uint8 -> 1
+  | Dtype.Bool | Dtype.I8 | Dtype.Uint8 | Dtype.I2 | Dtype.I4 | Dtype.Uint2
+  | Dtype.Uint4 | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn
+  | Dtype.F8_e3m4 | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn
+  | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
+      1
+  | Dtype.Float0 -> 0
   | Dtype.I16 | Dtype.Uint16 | Dtype.F16 | Dtype.Bf16 -> 2
   | Dtype.Complex64 -> 8
   | Dtype.Complex128 -> 16
@@ -97,10 +102,17 @@ let encode buf off dtype nd idx =
   | Dtype.Uint32 ->
       put_i32 buf off (Int32.of_int (int_of_float (v ()) land u32_mask))
   | Dtype.Bool -> set_byte buf off (if v () = 0.0 then 0 else 1)
-  | Dtype.I8 | Dtype.Uint8 -> set_byte buf off (int_of_float (v ()) land 0xff)
+  | Dtype.I8 | Dtype.Uint8 | Dtype.I2 | Dtype.I4 | Dtype.Uint2 | Dtype.Uint4 ->
+      set_byte buf off (int_of_float (v ()) land 0xff)
   | Dtype.I16 | Dtype.Uint16 -> put_u16 buf off (int_of_float (v ()) land 0xffff)
   | Dtype.F16 -> put_u16 buf off (half_bits (v ()))
   | Dtype.Bf16 -> put_u16 buf off (bfloat_bits (v ()))
+  | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4
+  | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz
+  | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
+      set_byte buf off
+        (Float_format.encode (Option.get (Float_format.of_dtype dtype)) (v ()))
+  | Dtype.Float0 -> ()
   | Dtype.Complex64 ->
       let z = Ndarray.get_c nd idx in
       put_i32 buf off (Int32.bits_of_float z.Complex.re);
@@ -109,6 +121,11 @@ let encode buf off dtype nd idx =
       let z = Ndarray.get_c nd idx in
       put_i64 buf off (Int64.bits_of_float z.Complex.re);
       put_i64 buf (off + 8) (Int64.bits_of_float z.Complex.im)
+
+let narrow_int buf off bits signed =
+  let raw = Bigarray.Array1.get buf off land ((1 lsl bits) - 1) in
+  float_of_int
+    (if signed && raw >= 1 lsl (bits - 1) then raw - (1 lsl bits) else raw)
 
 let decode buf off dtype =
   match dtype with
@@ -128,6 +145,17 @@ let decode buf off dtype =
   | Dtype.Uint16 -> float_of_int (get_u16 buf off)
   | Dtype.F16 -> half_value (get_u16 buf off)
   | Dtype.Bf16 -> bfloat_value (get_u16 buf off)
+  | Dtype.I2 -> narrow_int buf off 2 true
+  | Dtype.I4 -> narrow_int buf off 4 true
+  | Dtype.Uint2 -> narrow_int buf off 2 false
+  | Dtype.Uint4 -> narrow_int buf off 4 false
+  | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4
+  | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz
+  | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
+      Float_format.decode
+        (Option.get (Float_format.of_dtype dtype))
+        (Bigarray.Array1.get buf off)
+  | Dtype.Float0 -> 0.0
   | Dtype.Uint64 | Dtype.Complex64 | Dtype.Complex128 ->
       invalid_arg "Pjrt.Buffer: decode through the wide paths"
 

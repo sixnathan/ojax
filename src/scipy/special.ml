@@ -25,9 +25,17 @@ let coeff_of v a = T.Concrete (Nd.of_floats (dtype v) [| Array.length a |] a)
 let where_ = NL.where_
 
 let to_inexact = function
-  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 -> D.F32
+  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.I4 | D.Uint8 | D.Uint16
+  | D.Uint4 ->
+      D.F32
+  | (D.I2 | D.Uint2) as narrow -> narrow
+  | D.Float0 -> invalid_arg "float0 has no inexact dtype"
   | D.I64 | D.Uint64 -> D.F64
-  | (D.F32 | D.F64 | D.F16 | D.Bf16 | D.Complex64 | D.Complex128) as d -> d
+  | ( D.F32 | D.F64 | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn
+    | D.F8_e3m4 | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz
+    | D.F8_e5m2 | D.F8_e5m2fnuz | D.F8_e8m0fnu | D.Complex64 | D.Complex128 ) as
+    d ->
+      d
 
 let promote_inexact vs =
   let dt = to_inexact (NL.result_type vs) in
@@ -46,9 +54,13 @@ let promote3 a b c =
   | _ -> assert false
 
 let is_integer_dtype = function
-  | D.I32 | D.I64 | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 | D.Uint64 ->
+  | D.I32 | D.I64 | D.Uint32 | D.I8 | D.I16 | D.I2 | D.I4 | D.Uint8 | D.Uint16
+  | D.Uint2 | D.Uint4 | D.Uint64 ->
       true
-  | D.F32 | D.F64 | D.F16 | D.Bf16 | D.Bool | D.Complex64 | D.Complex128 ->
+  | D.F32 | D.F64 | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn
+  | D.F8_e3m4 | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz
+  | D.F8_e5m2 | D.F8_e5m2fnuz | D.F8_e8m0fnu | D.Float0 | D.Bool | D.Complex64
+  | D.Complex128 ->
       false
 
 let gammaln x = bind1 T.Lgamma [ promote1 x ]
@@ -1681,6 +1693,7 @@ let sp_eps v =
   | D.F64 | D.Complex128 -> epsilon_float
   | D.F16 -> 0.0009765625
   | D.Bf16 -> 0.0078125
+  | d when Option.is_some (Float_format.of_dtype d) -> (Dtypes.finfo d).eps
   | _ -> 1.1920928955078125e-07
 
 let sp_c v x = scalar_of v x

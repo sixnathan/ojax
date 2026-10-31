@@ -1022,7 +1022,7 @@ let bits_as k ~shape ~dtype =
     | D.Uint64 ->
         Concrete (Nd.of_int64s D.Uint64 shape (TF.bits64 (concrete key) shape))
     | D.Uint32 -> PR.random_bits (wrap key) ~bit_width:32 ~shape
-    | D.Uint8 | D.Uint16 ->
+    | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 ->
         let wide = concrete (PR.random_bits (wrap key) ~bit_width:32 ~shape) in
         let modulus = if dtype = D.Uint8 then 256 else 65536 in
         Concrete

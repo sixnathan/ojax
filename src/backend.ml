@@ -220,6 +220,24 @@ let run_text text args =
     failwith
       "Running an exported module needs the PJRT plugin; set OJAX_PJRT_PLUGIN"
 
+let xla_plugin () = Lazy.force Xla.plugin
+let xla_client () = Lazy.force Xla.client
+let forced_cache : (string, Pjrt.Executable.t) Hashtbl.t = Hashtbl.create 16
+
+let run_text_forced text args =
+  let exec =
+    match Hashtbl.find_opt forced_cache text with
+    | Some e -> e
+    | None ->
+        let e =
+          try Xla.compile_text text
+          with Pjrt.Abi.Error reason -> runtime_error reason
+        in
+        Hashtbl.replace forced_cache text e;
+        e
+  in
+  xla_run exec args false
+
 let of_host_value v =
   (match v with
   | Concrete nd -> guard_host_to_device ~explicit:true nd

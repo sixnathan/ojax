@@ -10,6 +10,13 @@ external to_host_ : t -> bytebuf -> unit = "ojax_pjrt_buffer_to_host"
 external element_type_ : t -> int = "ojax_pjrt_buffer_element_type"
 external dimensions_ : t -> int array = "ojax_pjrt_buffer_dimensions"
 external destroy_ : t -> unit = "ojax_pjrt_buffer_destroy"
+external to_dlpack : t -> nativeint = "ojax_pjrt_buffer_to_dlpack"
+
+external of_dlpack : Client.t -> nativeint -> int -> t
+  = "ojax_pjrt_buffer_of_dlpack"
+
+external dlpack_delete : nativeint -> unit = "ojax_pjrt_dlpack_delete"
+external unsafe_pointer : t -> nativeint = "ojax_pjrt_buffer_unsafe_pointer"
 
 let u32_mask = 0xFFFF_FFFF
 

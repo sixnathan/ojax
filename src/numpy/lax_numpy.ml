@@ -1320,3 +1320,5 @@ let argsort_values v =
   with
   | [ _; order ] -> order
   | _ -> failwith "argsort_values: arity"
+
+let from_dlpack ?device ?copy x = Dlpack.from_dlpack ?device ?copy x

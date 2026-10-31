@@ -172,6 +172,10 @@ let custom_rule id =
   | None -> failwith "core: unknown custom derivative rule"
 
 let with_eval_dynamic thunk = new_dynamic eval_trace thunk
+
+let ffi_impl : (primitive -> Ndarray.t list -> Ndarray.t list) ref =
+  ref (fun _ _ -> failwith "ffi_call needs the Ffi module to be linked")
+
 let named_axis_trace : (string -> trace option) ref = ref (fun _ -> None)
 
 let check_f16_reduction axes = function

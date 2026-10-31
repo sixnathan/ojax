@@ -37,3 +37,4 @@ val array_garbage_collection_guard : string option flag
 val log : string -> unit
 val set_log_sink : (string -> unit) -> string -> unit
 val trace_context : unit -> (string * string) list
+val export_calling_convention_version : int flag

@@ -78,6 +78,7 @@ type custom_rule =
 val register_custom_rule : custom_rule -> int
 val custom_rule : int -> custom_rule
 val with_eval_dynamic : (unit -> 'a) -> 'a
+val ffi_impl : (primitive -> Ndarray.t list -> Ndarray.t list) ref
 val named_axis_trace : (string -> trace option) ref
 val bind : primitive -> value list -> value list
 val bind1 : primitive -> value list -> value

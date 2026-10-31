@@ -23,4 +23,7 @@ val executor :
 val of_host_value : Types.value -> Types.value
 val to_host_value : Types.value -> Types.value
 val run_text : string -> Types.value list -> Types.value list
+val run_text_forced : string -> Types.value list -> Types.value list
+val xla_plugin : unit -> Pjrt.Abi.plugin
+val xla_client : unit -> Pjrt.Client.t
 val stats : unit -> int * string list

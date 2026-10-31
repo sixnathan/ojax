@@ -9,6 +9,14 @@ external api_version : plugin -> int * int = "ojax_pjrt_api_version"
 external struct_size : plugin -> int = "ojax_pjrt_struct_size"
 external close : plugin -> unit = "ojax_pjrt_close"
 external maxrss_bytes : unit -> int = "ojax_pjrt_maxrss"
+external ffi_dlopen : string -> nativeint = "ojax_ffi_dlopen"
+external ffi_dlsym : nativeint -> string -> nativeint = "ojax_ffi_dlsym"
+
+external ffi_register_handler : plugin -> string -> string -> nativeint -> unit
+  = "ojax_pjrt_ffi_register_handler"
+
+external ffi_register_type : plugin -> string -> nativeint -> nativeint -> unit
+  = "ojax_pjrt_ffi_register_type"
 
 let pjrt_api_major = 0
 let pjrt_api_minor = 81

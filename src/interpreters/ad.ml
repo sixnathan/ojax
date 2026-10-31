@@ -1386,6 +1386,14 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       | [ x ], [ tx ] -> (b1 prim [ x ], tx)
       | _ -> arity ())
   | Xla_call _ -> failwith "ad: jvp of xla_call not supported in M1"
+  | Ffi_call _ -> failwith "ad: ffi_call jvp handled by jvp_process_primitive"
+
+let ffi_not_differentiable (c : ffi_call) =
+  invalid_arg
+    (Printf.sprintf
+       "The FFI call to `%s` cannot be differentiated. You can use \
+        `jax.custom_jvp` or `jax.custom_jvp` to add support."
+       c.ffi_target)
 
 let is_concrete_zero = function
   | Concrete nd -> Ndarray.fold (fun acc x -> acc && x = 0.0) true nd
@@ -1457,6 +1465,15 @@ let carry_zero_fixpoint trace_body flags =
 
 let jvp_process_with_tangents trace prim primals tangents =
   match prim with
+  | Ffi_call c ->
+      if List.for_all is_concrete_zero tangents then
+        List.map
+          (fun po ->
+            Tracer
+              (new_jvp_tracer trace po
+                 (Ad_util.zeros_like_aval (Core.get_aval po))))
+          (Core.bind prim primals)
+      else ffi_not_differentiable c
   | Split _ | Unstack _ | Optimization_barrier ->
       let pos = Core.bind prim primals in
       let tos = Core.bind prim tangents in
@@ -2609,6 +2626,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       List.map (fun _ -> None) res_tv @ keep
   | Custom_jvp_call _ | Custom_vjp_call _ ->
       failwith "ad: custom call cannot appear in a linear program"
+  | Ffi_call c -> ffi_not_differentiable c
   | Custom_linear_solve { solve; transpose_solve } -> (
       match transpose_solve with
       | None ->

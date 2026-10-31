@@ -174,3 +174,6 @@ let trace_context () =
     (softmax_custom_jvp.name, py_bool softmax_custom_jvp.value);
     (threefry_partitionable.name, py_bool threefry_partitionable.value);
   ]
+
+let export_calling_convention_version =
+  make "jax_export_calling_convention_version" 10

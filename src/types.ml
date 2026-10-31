@@ -246,6 +246,30 @@ and primitive =
   | Schur of { compute_vectors : bool }
   | Svd of { full_matrices : bool; compute_uv : bool; gesvd : bool }
   | Tridiagonal of { lower : bool }
+  | Ffi_call of ffi_call
+
+and ffi_call = {
+  ffi_target : string;
+  ffi_result_avals : aval list;
+  ffi_vmap_method : string option;
+  ffi_has_side_effect : bool;
+  ffi_input_layouts : int array list;
+  ffi_output_layouts : int array list;
+  ffi_aliases : (int * int) list;
+  ffi_api_version : int;
+  ffi_legacy_backend_config : string option;
+  ffi_attributes : (string * ffi_attr) list;
+}
+
+and ffi_attr =
+  | Ffi_bool of bool
+  | Ffi_int of int64
+  | Ffi_float of float
+  | Ffi_string of string
+  | Ffi_array of Ndarray.t
+  | Ffi_dict of (string * ffi_attr) list
+  | Ffi_seq of ffi_attr list
+  | Ffi_dtype of Dtype.t
 
 and dot_dims = {
   lhs_contract : int array;

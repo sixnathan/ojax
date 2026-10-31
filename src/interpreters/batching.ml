@@ -761,6 +761,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       | [ x ], [ d ] -> (b1 prim [ x ], d)
       | _ -> failwith "batching: checkpoint_name arity")
   | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
+  | Ffi_call _ -> failwith "batching: ffi_call handled by ffi_batch"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :
     value list * int option list =
@@ -1159,6 +1160,68 @@ let while_batch axis_size cond body vals bdims =
   in
   Core.bind (While { cond = cond'; body = body' }) aligned
 
+let ffi_shift_layout layout =
+  let n = Array.length layout in
+  Array.init (n + 1) (fun i -> if i = n then 0 else layout.(i) + 1)
+
+let ffi_batch axis_size (c : ffi_call) vals bdims =
+  let moved =
+    List.map2
+      (fun v b -> match b with None -> v | Some d -> moveaxis d 0 v)
+      vals bdims
+  in
+  let batched_result_avals =
+    List.map
+      (fun (a : aval) -> { a with shape = insert_size a.shape 0 axis_size })
+      c.ffi_result_avals
+  in
+  let with_layouts inputs =
+    Ffi_call
+      {
+        c with
+        ffi_result_avals = batched_result_avals;
+        ffi_input_layouts = inputs;
+        ffi_output_layouts = List.map ffi_shift_layout c.ffi_output_layouts;
+      }
+  in
+  match c.ffi_vmap_method with
+  | Some ("sequential" | "sequential_unrolled") ->
+      unstacked_batch axis_size (Ffi_call c) moved
+        (List.map (Option.map (fun _ -> 0)) bdims)
+  | Some "legacy_vectorized" ->
+      let inputs =
+        List.map2
+          (fun layout b -> if b = None then layout else ffi_shift_layout layout)
+          c.ffi_input_layouts bdims
+      in
+      Core.bind (with_layouts inputs) moved
+  | Some (("expand_dims" | "broadcast_all") as m) ->
+      let size = if m = "broadcast_all" then axis_size else 1 in
+      let broadcast v b =
+        if b <> None then v
+        else
+          let a = Core.get_aval v in
+          b1
+            (Broadcast_in_dim
+               {
+                 shape = insert_size a.shape 0 size;
+                 dims = Array.init (Array.length a.shape) (fun i -> i + 1);
+               })
+            [ v ]
+      in
+      Core.bind
+        (with_layouts (List.map ffi_shift_layout c.ffi_input_layouts))
+        (List.map2 broadcast moved bdims)
+  | _ ->
+      failwith
+        (Printf.sprintf
+           "vmap is only supported for the ffi_call primitive when vmap_method \
+            is one of 'sequential', 'sequential_unrolled', 'expand_dims', \
+            'broadcast_all', or 'legacy_vectorized'. Got vmap_method=%s."
+           (match c.ffi_vmap_method with
+           | None -> "None"
+           | Some m -> "'" ^ m ^ "'"))
+
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
   let axis_size = axis_size_of trace in
@@ -1174,6 +1237,10 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
         (while_batch axis_size cond body vals bdims)
+  | Ffi_call c ->
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
+        (ffi_batch axis_size c vals bdims)
   | _ when unstacks_operands prim bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

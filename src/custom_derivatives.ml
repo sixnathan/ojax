@@ -32,10 +32,7 @@ let internal_of_tangent = function
   | Symbolic_zero { aval } -> Ad_util.symbolic_zero_of_aval aval
   | Tangent v -> v
 
-let aval_str (a : aval) =
-  Printf.sprintf "%s[%s]" (Dtype.short_name a.dtype)
-    (String.concat "," (Array.to_list (Array.map string_of_int a.shape)))
-
+let aval_str = Ref_state.aval_string
 let same_type (a : aval) (b : aval) = a.shape = b.shape && a.dtype = b.dtype
 
 let custom_jvp_symbolic primal ~jvp =

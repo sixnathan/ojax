@@ -264,7 +264,7 @@ let bwd_outputs () =
         let aval = Shape_dtype_struct.make [| 2 |] Dtype.F32 in
         [ Some (Cd.Symbolic_zero { aval }) ])
   in
-  raises_with "bad symbolic" "had shape/dtype f32[2]" (fun () ->
+  raises_with "bad symbolic" "had shape/dtype float32[2]" (fun () ->
       grad_of (plus_x bad) (scalar 2.0));
   let wrong =
     with_bwd (fun _ _ -> [ Some (Cd.Tangent (vec [| 1.0; 2.0 |])) ])

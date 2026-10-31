@@ -40,6 +40,7 @@
   test_runtime_surface
   test_numpy_io
   test_parallel
+  test_sharding
   test_example_libraries
   test_custom_derivatives
   test_grad_checks

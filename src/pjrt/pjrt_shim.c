@@ -185,6 +185,8 @@ struct ojax_pjrt_client {
   const PJRT_Api *api;
   PJRT_Client *client;
   PJRT_Device *device;
+  PJRT_Device *const *devices;
+  size_t num_devices;
 };
 
 #define Ojax_client_val(v) ((struct ojax_pjrt_client *)Data_custom_val(v))
@@ -206,6 +208,8 @@ static void ojax_pjrt_client_finalize(value v_client) {
     }
     c->client = NULL;
     c->device = NULL;
+    c->devices = NULL;
+    c->num_devices = 0;
   }
 }
 
@@ -272,8 +276,8 @@ static void ojax_pjrt_client_drain_destroy(const PJRT_Api *api,
   }
 }
 
-CAMLprim value ojax_pjrt_client_create(value v_plugin) {
-  CAMLparam1(v_plugin);
+CAMLprim value ojax_pjrt_client_create(value v_plugin, value v_cpu_devices) {
+  CAMLparam2(v_plugin, v_cpu_devices);
   CAMLlocal1(v_client);
   struct ojax_pjrt_plugin *p = Ojax_plugin_val(v_plugin);
   if (p->api == NULL) ojax_pjrt_raise("client_create on closed plugin");
@@ -285,6 +289,19 @@ CAMLprim value ojax_pjrt_client_create(value v_plugin) {
   PJRT_Client_Create_Args ca;
   memset(&ca, 0, sizeof ca);
   ca.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+  static const char cpu_count_name[] = "cpu_device_count";
+  PJRT_NamedValue cpu_count;
+  memset(&cpu_count, 0, sizeof cpu_count);
+  cpu_count.struct_size = PJRT_NamedValue_STRUCT_SIZE;
+  cpu_count.name = cpu_count_name;
+  cpu_count.name_size = sizeof(cpu_count_name) - 1;
+  cpu_count.type = PJRT_NamedValue_kInt64;
+  cpu_count.int64_value = (int64_t)Long_val(v_cpu_devices);
+  cpu_count.value_size = 1;
+  if (Long_val(v_cpu_devices) > 0) {
+    ca.create_options = &cpu_count;
+    ca.num_options = 1;
+  }
   PJRT_Client_AddressableDevices_Args da;
   memset(&da, 0, sizeof da);
   da.struct_size = PJRT_Client_AddressableDevices_Args_STRUCT_SIZE;
@@ -318,7 +335,83 @@ CAMLprim value ojax_pjrt_client_create(value v_plugin) {
   c->api = api;
   c->client = ca.client;
   c->device = da.addressable_devices[0];
+  c->devices = da.addressable_devices;
+  c->num_devices = da.num_addressable_devices;
   CAMLreturn(v_client);
+}
+
+CAMLprim value ojax_pjrt_client_platform(value v_client) {
+  CAMLparam1(v_client);
+  CAMLlocal1(v_name);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  if (c->client == NULL) ojax_pjrt_raise("platform on closed client");
+  PJRT_Client_PlatformName_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_Client_PlatformName_Args_STRUCT_SIZE;
+  a.client = c->client;
+  ojax_pjrt_check(c->api, c->api->PJRT_Client_PlatformName(&a));
+  v_name = caml_alloc_initialized_string(a.platform_name_size, a.platform_name);
+  CAMLreturn(v_name);
+}
+
+static const PJRT_DeviceDescription *ojax_pjrt_description(
+    const PJRT_Api *api, PJRT_Device *device) {
+  PJRT_Device_GetDescription_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_Device_GetDescription_Args_STRUCT_SIZE;
+  a.device = device;
+  ojax_pjrt_check(api, api->PJRT_Device_GetDescription(&a));
+  return a.device_description;
+}
+
+static int ojax_pjrt_device_id(const PJRT_Api *api, PJRT_Device *device) {
+  PJRT_DeviceDescription_Id_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_DeviceDescription_Id_Args_STRUCT_SIZE;
+  a.device_description = (PJRT_DeviceDescription *)ojax_pjrt_description(api, device);
+  ojax_pjrt_check(api, api->PJRT_DeviceDescription_Id(&a));
+  return a.id;
+}
+
+CAMLprim value ojax_pjrt_client_devices(value v_client) {
+  CAMLparam1(v_client);
+  CAMLlocal3(v_out, v_entry, v_kind);
+  struct ojax_pjrt_client *c = Ojax_client_val(v_client);
+  if (c->client == NULL) ojax_pjrt_raise("devices on closed client");
+  const PJRT_Api *api = c->api;
+  v_out = caml_alloc((mlsize_t)c->num_devices, 0);
+  for (size_t i = 0; i < c->num_devices; i++) {
+    const PJRT_DeviceDescription *d = ojax_pjrt_description(api, c->devices[i]);
+    PJRT_DeviceDescription_Id_Args ia;
+    memset(&ia, 0, sizeof ia);
+    ia.struct_size = PJRT_DeviceDescription_Id_Args_STRUCT_SIZE;
+    ia.device_description = (PJRT_DeviceDescription *)d;
+    ojax_pjrt_check(api, api->PJRT_DeviceDescription_Id(&ia));
+    PJRT_DeviceDescription_ProcessIndex_Args pa;
+    memset(&pa, 0, sizeof pa);
+    pa.struct_size = PJRT_DeviceDescription_ProcessIndex_Args_STRUCT_SIZE;
+    pa.device_description = (PJRT_DeviceDescription *)d;
+    ojax_pjrt_check(api, api->PJRT_DeviceDescription_ProcessIndex(&pa));
+    PJRT_DeviceDescription_Kind_Args ka;
+    memset(&ka, 0, sizeof ka);
+    ka.struct_size = PJRT_DeviceDescription_Kind_Args_STRUCT_SIZE;
+    ka.device_description = (PJRT_DeviceDescription *)d;
+    ojax_pjrt_check(api, api->PJRT_DeviceDescription_Kind(&ka));
+    v_kind = caml_alloc_initialized_string(ka.device_kind_size, ka.device_kind);
+    v_entry = caml_alloc_tuple(3);
+    Store_field(v_entry, 0, Val_int(ia.id));
+    Store_field(v_entry, 1, Val_int(pa.process_index));
+    Store_field(v_entry, 2, v_kind);
+    Store_field(v_out, i, v_entry);
+  }
+  CAMLreturn(v_out);
+}
+
+static PJRT_Device *ojax_pjrt_find_device(struct ojax_pjrt_client *c, int id) {
+  for (size_t i = 0; i < c->num_devices; i++)
+    if (ojax_pjrt_device_id(c->api, c->devices[i]) == id) return c->devices[i];
+  ojax_pjrt_raise("unknown PJRT device id");
+  return NULL;
 }
 
 CAMLprim value ojax_pjrt_client_destroy(value v_client) {
@@ -329,6 +422,8 @@ CAMLprim value ojax_pjrt_client_destroy(value v_client) {
     PJRT_Client *client = c->client;
     c->client = NULL;
     c->device = NULL;
+    c->devices = NULL;
+    c->num_devices = 0;
     PJRT_Client_Destroy_Args a;
     memset(&a, 0, sizeof a);
     a.struct_size = PJRT_Client_Destroy_Args_STRUCT_SIZE;
@@ -342,14 +437,17 @@ CAMLprim value ojax_pjrt_client_destroy(value v_client) {
 }
 
 CAMLprim value ojax_pjrt_buffer_from_host(value v_client, value v_data,
-                                          value v_type, value v_dims) {
-  CAMLparam4(v_client, v_data, v_type, v_dims);
+                                          value v_type, value v_dims,
+                                          value v_device) {
+  CAMLparam5(v_client, v_data, v_type, v_dims, v_device);
   CAMLlocal1(v_buffer);
   struct ojax_pjrt_client *c = Ojax_client_val(v_client);
   if (c->client == NULL) ojax_pjrt_raise("buffer_from_host on closed client");
   const PJRT_Api *api = c->api;
   PJRT_Client *client = c->client;
-  PJRT_Device *device = c->device;
+  PJRT_Device *device = Long_val(v_device) < 0
+                            ? c->device
+                            : ojax_pjrt_find_device(c, Long_val(v_device));
   const void *data = Caml_ba_data_val(v_data);
   uintnat nbytes = caml_ba_byte_size(Caml_ba_array_val(v_data));
   int btype = Int_val(v_type);
@@ -482,6 +580,18 @@ CAMLprim value ojax_pjrt_buffer_destroy(value v_buffer) {
     ojax_pjrt_check(api, err);
   }
   CAMLreturn(Val_unit);
+}
+
+CAMLprim value ojax_pjrt_buffer_device(value v_buffer) {
+  CAMLparam1(v_buffer);
+  struct ojax_pjrt_buffer *b = Ojax_buffer_val(v_buffer);
+  if (b->buffer == NULL) ojax_pjrt_raise("device on destroyed buffer");
+  PJRT_Buffer_Device_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_Buffer_Device_Args_STRUCT_SIZE;
+  a.buffer = b->buffer;
+  ojax_pjrt_check(b->api, b->api->PJRT_Buffer_Device(&a));
+  CAMLreturn(Val_int(ojax_pjrt_device_id(b->api, a.device)));
 }
 
 struct ojax_pjrt_executable {
@@ -729,5 +839,187 @@ CAMLprim value ojax_pjrt_execute(value v_exec, value v_args) {
     Store_field(v_out, i, v_buf);
   }
   caml_stat_free(outputs);
+  CAMLreturn(v_out);
+}
+
+CAMLprim value ojax_pjrt_executable_optimized(value v_exec) {
+  CAMLparam1(v_exec);
+  CAMLlocal1(v_out);
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  if (e->executable == NULL) ojax_pjrt_raise("optimized on destroyed executable");
+  const PJRT_Api *api = e->api;
+  PJRT_LoadedExecutable_GetExecutable_Args ga;
+  memset(&ga, 0, sizeof ga);
+  ga.struct_size = PJRT_LoadedExecutable_GetExecutable_Args_STRUCT_SIZE;
+  ga.loaded_executable = e->executable;
+  ojax_pjrt_check(api, api->PJRT_LoadedExecutable_GetExecutable(&ga));
+  PJRT_Program program;
+  memset(&program, 0, sizeof program);
+  program.struct_size = PJRT_Program_STRUCT_SIZE;
+  PJRT_Executable_OptimizedProgram_Args oa;
+  memset(&oa, 0, sizeof oa);
+  oa.struct_size = PJRT_Executable_OptimizedProgram_Args_STRUCT_SIZE;
+  oa.executable = ga.executable;
+  oa.program = &program;
+  PJRT_Error *err = api->PJRT_Executable_OptimizedProgram(&oa);
+  char *code = NULL;
+  if (err == NULL) {
+    code = caml_stat_alloc(program.code_size > 0 ? program.code_size : 1);
+    program.code = code;
+    err = api->PJRT_Executable_OptimizedProgram(&oa);
+  }
+  PJRT_Executable_Destroy_Args da;
+  memset(&da, 0, sizeof da);
+  da.struct_size = PJRT_Executable_Destroy_Args_STRUCT_SIZE;
+  da.executable = ga.executable;
+  PJRT_Error *derr = api->PJRT_Executable_Destroy(&da);
+  if (derr != NULL) {
+    PJRT_Error_Destroy_Args de;
+    memset(&de, 0, sizeof de);
+    de.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+    de.error = derr;
+    api->PJRT_Error_Destroy(&de);
+  }
+  if (err != NULL) {
+    if (code != NULL) caml_stat_free(code);
+    ojax_pjrt_check(api, err);
+  }
+  v_out = caml_alloc_initialized_string(program.code_size, code);
+  caml_stat_free(code);
+  CAMLreturn(v_out);
+}
+
+CAMLprim value ojax_pjrt_execute_devices(value v_exec, value v_lists) {
+  CAMLparam2(v_exec, v_lists);
+  CAMLlocal3(v_out, v_row, v_buf);
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  if (e->executable == NULL) ojax_pjrt_raise("execute on destroyed executable");
+  const PJRT_Api *api = e->api;
+  size_t num_devices = Wosize_val(v_lists);
+  if (num_devices == 0) ojax_pjrt_raise("execute needs at least one device");
+  size_t num_args = Wosize_val(Field(v_lists, 0));
+  size_t num_outputs = (size_t)e->num_outputs;
+  size_t arg_cells = num_args > 0 ? num_args : 1;
+  size_t out_cells = num_outputs > 0 ? num_outputs : 1;
+  PJRT_Buffer **arg_store =
+      caml_stat_alloc(num_devices * arg_cells * sizeof(PJRT_Buffer *));
+  PJRT_Buffer **out_store =
+      caml_stat_alloc(num_devices * out_cells * sizeof(PJRT_Buffer *));
+  PJRT_Buffer *const **arg_lists =
+      caml_stat_alloc(num_devices * sizeof(PJRT_Buffer *const *));
+  PJRT_Buffer ***out_lists =
+      caml_stat_alloc(num_devices * sizeof(PJRT_Buffer **));
+  PJRT_Event **events = caml_stat_alloc(num_devices * sizeof(PJRT_Event *));
+  const char *bad = NULL;
+  for (size_t d = 0; d < num_devices; d++) {
+    value row = Field(v_lists, d);
+    if (Wosize_val(row) != num_args) bad = "execute argument lists differ";
+    for (size_t i = 0; bad == NULL && i < num_args; i++) {
+      struct ojax_pjrt_buffer *b = Ojax_buffer_val(Field(row, i));
+      if (b->buffer == NULL) bad = "execute given destroyed input buffer";
+      arg_store[d * arg_cells + i] = b->buffer;
+    }
+    for (size_t i = 0; i < out_cells; i++) out_store[d * out_cells + i] = NULL;
+    arg_lists[d] = arg_store + d * arg_cells;
+    out_lists[d] = out_store + d * out_cells;
+    events[d] = NULL;
+  }
+  if (bad != NULL) {
+    caml_stat_free(arg_store);
+    caml_stat_free(out_store);
+    caml_stat_free(arg_lists);
+    caml_stat_free(out_lists);
+    caml_stat_free(events);
+    ojax_pjrt_raise(bad);
+  }
+
+  PJRT_ExecuteOptions opts;
+  memset(&opts, 0, sizeof opts);
+  opts.struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
+  PJRT_LoadedExecutable_Execute_Args a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
+  a.executable = e->executable;
+  a.options = &opts;
+  a.argument_lists = arg_lists;
+  a.num_devices = num_devices;
+  a.num_args = num_args;
+  a.output_lists = out_lists;
+  a.device_complete_events = events;
+  a.execute_device = NULL;
+
+  caml_release_runtime_system();
+  PJRT_Error *err = api->PJRT_LoadedExecutable_Execute(&a);
+  PJRT_Error *awaited = NULL;
+  if (err == NULL) {
+    for (size_t d = 0; d < num_devices; d++) {
+      PJRT_Error *one = ojax_pjrt_await(api, events[d]);
+      if (one != NULL && awaited == NULL)
+        awaited = one;
+      else if (one != NULL) {
+        PJRT_Error_Destroy_Args de;
+        memset(&de, 0, sizeof de);
+        de.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+        de.error = one;
+        api->PJRT_Error_Destroy(&de);
+      }
+    }
+  }
+  caml_acquire_runtime_system();
+  caml_stat_free(arg_store);
+  caml_stat_free(arg_lists);
+  caml_stat_free(out_lists);
+  caml_stat_free(events);
+  if (err != NULL || awaited != NULL) {
+    for (size_t i = 0; i < num_devices * out_cells; i++) {
+      if (out_store[i] != NULL) {
+        PJRT_Buffer_Destroy_Args bd;
+        memset(&bd, 0, sizeof bd);
+        bd.struct_size = PJRT_Buffer_Destroy_Args_STRUCT_SIZE;
+        bd.buffer = out_store[i];
+        PJRT_Error *be = api->PJRT_Buffer_Destroy(&bd);
+        if (be != NULL) {
+          PJRT_Error_Destroy_Args de;
+          memset(&de, 0, sizeof de);
+          de.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+          de.error = be;
+          api->PJRT_Error_Destroy(&de);
+        }
+      }
+    }
+    caml_stat_free(out_store);
+    ojax_pjrt_check(api, err);
+    ojax_pjrt_check(api, awaited);
+  }
+
+  v_out = caml_alloc(num_devices, 0);
+  for (size_t d = 0; d < num_devices; d++) {
+    v_row = caml_alloc(num_outputs, 0);
+    Store_field(v_out, d, v_row);
+    for (size_t i = 0; i < num_outputs; i++) {
+      mlsize_t nbytes = 0;
+      PJRT_Buffer_OnDeviceSizeInBytes_Args sa;
+      memset(&sa, 0, sizeof sa);
+      sa.struct_size = PJRT_Buffer_OnDeviceSizeInBytes_Args_STRUCT_SIZE;
+      sa.buffer = out_store[d * out_cells + i];
+      PJRT_Error *serr = api->PJRT_Buffer_OnDeviceSizeInBytes(&sa);
+      if (serr == NULL) {
+        nbytes = (mlsize_t)sa.on_device_size_in_bytes;
+      } else {
+        PJRT_Error_Destroy_Args de;
+        memset(&de, 0, sizeof de);
+        de.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+        de.error = serr;
+        api->PJRT_Error_Destroy(&de);
+      }
+      v_buf = caml_alloc_custom_mem(&ojax_pjrt_buffer_ops,
+                                    sizeof(struct ojax_pjrt_buffer), nbytes);
+      struct ojax_pjrt_buffer *ob = Ojax_buffer_val(v_buf);
+      ob->api = api;
+      ob->buffer = out_store[d * out_cells + i];
+      Store_field(v_row, i, v_buf);
+    }
+  }
+  caml_stat_free(out_store);
   CAMLreturn(v_out);
 }

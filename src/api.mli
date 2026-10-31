@@ -112,6 +112,9 @@ val disable_jit : (unit -> 'a) -> 'a
 val ensure_compile_time_eval : (unit -> 'a) -> 'a
 
 val pmap :
+  ?axis_name:string ->
+  ?in_axes:int option list ->
+  ?out_axes:int ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t

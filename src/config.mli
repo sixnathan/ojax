@@ -13,3 +13,4 @@ val log_compiles : bool flag
 val no_tracing : bool flag
 val no_execution : bool flag
 val numpy_rank_promotion : string flag
+val num_cpu_devices : int flag

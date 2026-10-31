@@ -1702,6 +1702,210 @@ let emit_rng_uniform ctx (eqn : eqn) in_ids =
        (name n) (name a) (name b) (name c) aty bty shty
        (Ir.tensor_type_of_aval out.vaval))
 
+type partition = {
+  pt_mesh : (string * int) list;
+  pt_devices : int array;
+  pt_in : string list array list;
+  pt_out : string list array option list;
+}
+
+let active_mesh : (string * int) list option ref = ref None
+let manual_axes : string list ref = ref []
+let seen_mesh : ((string * int) list * int array) option ref = ref None
+let channel = ref 0
+
+let note_mesh mesh devices =
+  match !seen_mesh with
+  | None -> seen_mesh := Some (mesh, devices)
+  | Some (m, d) when m = mesh && d = devices -> ()
+  | Some _ -> failwith "Stablehlo.Emit: a program can only use one device mesh"
+
+let shard_mesh_seen () = !seen_mesh
+
+let sdy_sharding_body spec =
+  let dim axes =
+    "{" ^ String.concat ", " (List.map (Printf.sprintf "\"%s\"") axes) ^ "}"
+  in
+  "<@mesh, [" ^ String.concat ", " (Array.to_list (Array.map dim spec)) ^ "]>"
+
+let sdy_sharding spec = "#sdy.sharding" ^ sdy_sharding_body spec
+
+let sdy_mesh mesh =
+  Printf.sprintf "  sdy.mesh @mesh = <[%s]>\n"
+    (String.concat ", "
+       (List.map (fun (n, s) -> Printf.sprintf "\"%s\"=%d" n s) mesh))
+
+let list_index x l =
+  let rec go i = function
+    | [] -> invalid_arg "Stablehlo.Emit: unknown mesh axis"
+    | y :: _ when y = x -> i
+    | _ :: rest -> go (i + 1) rest
+  in
+  go 0 l
+
+let collective_groups mesh axis =
+  let sizes = List.map snd mesh in
+  let total = List.fold_left ( * ) 1 sizes in
+  let position = list_index axis (List.map fst mesh) in
+  let stride =
+    List.fold_left ( * ) 1 (List.filteri (fun i _ -> i > position) sizes)
+  in
+  let size = List.nth sizes position in
+  List.filter_map
+    (fun p ->
+      if p / stride mod size = 0 then
+        Some (List.init size (fun k -> p + (k * stride)))
+      else None)
+    (List.init total Fun.id)
+
+let dense_i64_matrix rows =
+  let n = List.length rows in
+  let m = match rows with r :: _ -> List.length r | [] -> 0 in
+  Printf.sprintf "dense<[%s]> : tensor<%dx%dxi64>"
+    (String.concat ", "
+       (List.map
+          (fun r -> "[" ^ String.concat ", " (List.map string_of_int r) ^ "]")
+          rows))
+    n m
+
+let next_channel () =
+  incr channel;
+  Printf.sprintf "#stablehlo.channel_handle<handle = %d, type = 1>" !channel
+
+let collective_mesh axis_name =
+  match !active_mesh with
+  | Some mesh
+    when List.mem axis_name !manual_axes && List.mem_assoc axis_name mesh ->
+      mesh
+  | _ ->
+      failwith "Stablehlo.Emit: collectives must be bound by an enclosing vmap"
+
+let emit_all_reduce ctx (eqn : eqn) in_ids op mesh axis_name =
+  let in_aval = atom_aval (List.hd eqn.inputs) in
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  let scalar = Ir.tensor_type in_aval.dtype [||] in
+  let a = fresh ctx and b = fresh ctx and c = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = \"stablehlo.all_reduce\"(%s) <{channel_handle = %s, \
+        replica_groups = %s, use_global_device_ids}> ({\n\
+       \    ^bb0(%s: %s, %s: %s):\n\
+       \      %s = stablehlo.%s %s, %s : %s\n\
+       \      stablehlo.return %s : %s\n\
+       \    }) : (%s) -> %s\n"
+       (name n)
+       (name (sole in_ids))
+       (next_channel ())
+       (dense_i64_matrix (collective_groups mesh axis_name))
+       (name a) scalar (name b) scalar (name c) op (name a) (name b) scalar
+       (name c) scalar
+       (Ir.tensor_type_of_aval in_aval)
+       (Ir.tensor_type_of_aval in_aval))
+
+let emit_all_gather ctx in_id (in_aval : aval) axis size mesh axis_name =
+  let rank = Array.length in_aval.shape in
+  let expanded_shape =
+    Array.init (rank + 1) (fun i ->
+        if i < axis then in_aval.shape.(i)
+        else if i = axis then 1
+        else in_aval.shape.(i - 1))
+  in
+  let gathered_shape =
+    Array.mapi (fun i d -> if i = axis then size else d) expanded_shape
+  in
+  let expanded = fresh ctx in
+  let gathered = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.reshape %s : (%s) -> %s\n\
+       \    %s = \"stablehlo.all_gather\"(%s) <{all_gather_dim = %d : i64, \
+        channel_handle = %s, replica_groups = %s, use_global_device_ids}> : \
+        (%s) -> %s\n"
+       (name expanded) (name in_id)
+       (Ir.tensor_type_of_aval in_aval)
+       (Ir.tensor_type in_aval.dtype expanded_shape)
+       (name gathered) (name expanded) axis (next_channel ())
+       (dense_i64_matrix (collective_groups mesh axis_name))
+       (Ir.tensor_type in_aval.dtype expanded_shape)
+       (Ir.tensor_type in_aval.dtype gathered_shape));
+  (gathered, gathered_shape)
+
+let emit_pbroadcast ctx (eqn : eqn) in_ids source size mesh axis_name =
+  let in_aval = atom_aval (List.hd eqn.inputs) in
+  let gathered, shape =
+    emit_all_gather ctx (sole in_ids) in_aval 0 size mesh axis_name
+  in
+  let ranges =
+    String.concat ", "
+      (Array.to_list
+         (Array.mapi
+            (fun i d ->
+              if i = 0 then Printf.sprintf "%d:%d" source (source + 1)
+              else Printf.sprintf "0:%d" d)
+            shape))
+  in
+  let sliced = fresh ctx in
+  let piece = Array.mapi (fun i d -> if i = 0 then 1 else d) shape in
+  let n = bind_var ctx (sole eqn.outs) in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.slice %s [%s] : (%s) -> %s\n\
+       \    %s = stablehlo.reshape %s : (%s) -> %s\n"
+       (name sliced) (name gathered) ranges
+       (Ir.tensor_type in_aval.dtype shape)
+       (Ir.tensor_type in_aval.dtype piece)
+       (name n) (name sliced)
+       (Ir.tensor_type in_aval.dtype piece)
+       (Ir.tensor_type_of_aval in_aval))
+
+let emit_ppermute ctx (eqn : eqn) in_ids pairs mesh axis_name =
+  let in_aval = atom_aval (List.hd eqn.inputs) in
+  let n = bind_var ctx (sole eqn.outs) in
+  let rows =
+    List.concat_map
+      (fun group ->
+        let group = Array.of_list group in
+        List.map
+          (fun (src, dst) -> [ group.(src); group.(dst) ])
+          (Array.to_list pairs))
+      (collective_groups mesh axis_name)
+  in
+  let ty = Ir.tensor_type_of_aval in_aval in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = \"stablehlo.collective_permute\"(%s) <{channel_handle = %s, \
+        source_target_pairs = %s}> : (%s) -> %s\n"
+       (name n)
+       (name (sole in_ids))
+       (next_channel ()) (dense_i64_matrix rows) ty ty)
+
+let emit_axis_index ctx (eqn : eqn) mesh axis_name =
+  let sizes = List.map snd mesh in
+  let position = list_index axis_name (List.map fst mesh) in
+  let stride =
+    List.fold_left ( * ) 1 (List.filteri (fun i _ -> i > position) sizes)
+  in
+  let size = List.nth sizes position in
+  let n = bind_var ctx (sole eqn.outs) in
+  let pid = fresh ctx
+  and as_int = fresh ctx
+  and stride_c = fresh ctx
+  and size_c = fresh ctx
+  and div = fresh ctx in
+  let i32 = Ir.tensor_type Dtype.I32 [||] in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.partition_id : tensor<ui32>\n\
+       \    %s = stablehlo.convert %s : (tensor<ui32>) -> %s\n\
+       \    %s = stablehlo.constant dense<%d> : %s\n\
+       \    %s = stablehlo.constant dense<%d> : %s\n\
+       \    %s = stablehlo.divide %s, %s : %s\n\
+       \    %s = stablehlo.remainder %s, %s : %s\n"
+       (name pid) (name as_int) (name pid) i32 (name stride_c) stride i32
+       (name size_c) size i32 (name div) (name as_int) (name stride_c) i32
+       (name n) (name div) (name size_c) i32)
+
 let rec emit_region_returning ctx (jx : jaxpr) =
   let s =
     capture ctx (fun () ->
@@ -1978,6 +2182,90 @@ and emit_inlined ctx (eqn : eqn) in_ids f =
   List.iter2
     (fun (v : var) atom -> Hashtbl.replace ctx.ids v.vid (id_of_atom ctx atom))
     eqn.outs jx.outs
+
+and placed_call ctx (eqn : eqn) in_ids id =
+  let usable mesh devices =
+    note_mesh mesh devices;
+    !active_mesh = Some mesh
+  in
+  match (Core.shard_rule id, Core.constraint_rule id) with
+  | Some rule, _ when !manual_axes = [] && usable rule.sr_mesh rule.sr_devices
+    ->
+      emit_manual_computation ctx eqn in_ids rule;
+      true
+  | _, Some rule when !manual_axes = [] && usable rule.cr_mesh rule.cr_devices
+    ->
+      let in_aval = atom_aval (List.hd eqn.inputs) in
+      let n = bind_var ctx (sole eqn.outs) in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = sdy.sharding_constraint %s %s : %s\n" (name n)
+           (name (sole in_ids))
+           (sdy_sharding_body rule.cr_spec)
+           (Ir.tensor_type_of_aval in_aval));
+      true
+  | _ -> false
+
+and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
+  let body = rule.sr_body in
+  let n_consts = List.length body.consts in
+  let arg_binders =
+    match Util.split_list body.jaxpr.in_binders [ n_consts ] with
+    | [ _; ab ] -> ab
+    | _ -> invalid_arg "Stablehlo.Emit: shard_map binder split"
+  in
+  let targets = List.map (fun _ -> fresh ctx) arg_binders in
+  let header = bind_results ctx eqn.outs in
+  let shardings specs =
+    "[" ^ String.concat ", " (List.map sdy_sharding_body specs) ^ "]"
+  in
+  let params =
+    List.map2
+      (fun tid (v : var) ->
+        Printf.sprintf "%s: %s" (name tid) (Ir.tensor_type_of_aval v.vaval))
+      targets arg_binders
+  in
+  let out_types =
+    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+  in
+  let in_types =
+    List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) eqn.inputs
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = sdy.manual_computation(%s) in_shardings=%s out_shardings=%s \
+        manual_axes={%s} (%s) {\n"
+       header
+       (String.concat ", " (List.map name in_ids))
+       (shardings rule.sr_in) (shardings rule.sr_out)
+       (String.concat ", " (List.map (Printf.sprintf "\"%s\"") rule.sr_manual))
+       (String.concat ", " params));
+  let saved = !manual_axes in
+  manual_axes := rule.sr_manual;
+  Fun.protect
+    ~finally:(fun () -> manual_axes := saved)
+    (fun () ->
+      enter_region ctx body targets;
+      let text =
+        capture ctx (fun () ->
+            List.iter
+              (fun (e : eqn) ->
+                emit_eqn ctx e (List.map (id_of_atom ctx) e.inputs))
+              body.jaxpr.eqns;
+            let outs = List.map (ssa_of_atom ctx) body.jaxpr.outs in
+            let otys =
+              List.map
+                (fun a -> Ir.tensor_type_of_aval (atom_aval a))
+                body.jaxpr.outs
+            in
+            Buffer.add_string ctx.buf
+              (Printf.sprintf "    sdy.return %s : %s\n"
+                 (String.concat ", " outs) (String.concat ", " otys)))
+      in
+      Buffer.add_string ctx.buf (reindent 2 text));
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    } : (%s) -> (%s)\n"
+       (String.concat ", " in_types)
+       (String.concat ", " out_types))
 
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   try emit_eqn_unchecked ctx eqn in_ids
@@ -2379,8 +2667,24 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith
         "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \
          host-interpreter only (M5 lax/linalg, XLA emission deferred)"
-  | Collective _ ->
-      failwith "Stablehlo.Emit: collectives must be bound by an enclosing vmap"
+  | Collective { kind; axis_name } -> (
+      let mesh = collective_mesh axis_name in
+      match kind with
+      | Psum -> emit_all_reduce ctx eqn in_ids "add" mesh axis_name
+      | Pmax -> emit_all_reduce ctx eqn in_ids "maximum" mesh axis_name
+      | Pmin -> emit_all_reduce ctx eqn in_ids "minimum" mesh axis_name
+      | All_gather { axis; size } ->
+          let in_aval = atom_aval (List.hd eqn.inputs) in
+          let gathered, _ =
+            emit_all_gather ctx (sole in_ids) in_aval axis size mesh axis_name
+          in
+          Hashtbl.replace ctx.ids (sole eqn.outs).vid gathered
+      | Pbroadcast source ->
+          emit_pbroadcast ctx eqn in_ids source
+            (List.assoc axis_name mesh)
+            mesh axis_name
+      | Ppermute pairs -> emit_ppermute ctx eqn in_ids pairs mesh axis_name
+      | Axis_index -> emit_axis_index ctx eqn mesh axis_name)
   | Fft { fft_type; fft_lengths } ->
       let out = sole eqn.outs in
       let n = bind_var ctx out in
@@ -2400,6 +2704,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (Ir.int_array_attr fft_lengths)
            (Ir.tensor_type_of_aval (atom_aval (List.hd eqn.inputs)))
            (Ir.tensor_type_of_aval out.vaval))
+  | Custom_jvp_call id when placed_call ctx eqn in_ids id -> ()
   | Custom_jvp_call id | Custom_vjp_call id ->
       let primal =
         match Core.custom_rule id with
@@ -2428,8 +2733,12 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
          top-level compiled jaxpr body is @main (emitter core row 75), an \
          eqn-level Xla_call is non-representable here"
 
-let emit_closed_jaxpr (cj : closed_jaxpr) : string =
+let emit_closed_jaxpr ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
+  seen_mesh := None;
+  channel := 0;
+  manual_axes := [];
+  active_mesh := Option.map (fun p -> p.pt_mesh) partition;
   let n_consts = List.length cj.consts in
   let jx = cj.jaxpr in
   let const_binders, arg_binders =
@@ -2446,13 +2755,23 @@ let emit_closed_jaxpr (cj : closed_jaxpr) : string =
       next = 0;
     }
   in
+  let in_specs =
+    match partition with
+    | Some p -> List.map Option.some p.pt_in
+    | None -> List.map (fun _ -> None) arg_binders
+  in
+  let attribute = function
+    | Some spec -> Printf.sprintf " {sdy.sharding = %s}" (sdy_sharding spec)
+    | None -> ""
+  in
   let params =
-    List.map
-      (fun (v : var) ->
-        Printf.sprintf "%s: %s"
+    List.map2
+      (fun (v : var) spec ->
+        Printf.sprintf "%s: %s%s"
           ("%" ^ string_of_int (bind_var ctx v))
-          (Ir.tensor_type_of_aval v.vaval))
-      arg_binders
+          (Ir.tensor_type_of_aval v.vaval)
+          (attribute spec))
+      arg_binders in_specs
   in
   List.iter2
     (fun (v : var) nd ->
@@ -2474,9 +2793,16 @@ let emit_closed_jaxpr (cj : closed_jaxpr) : string =
       (Printf.sprintf "    return %s : %s\n"
          (String.concat ", " out_names)
          (String.concat ", " out_types));
+  let out_attributes =
+    match partition with
+    | Some { pt_out; _ } when pt_out <> [] ->
+        List.map2 (fun ty spec -> ty ^ attribute spec) out_types pt_out
+    | _ -> out_types
+  in
   Printf.sprintf
-    "module {\n  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
+    "module {\n%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
+    (match partition with Some p -> sdy_mesh p.pt_mesh | None -> "")
     (String.concat ", " params)
-    (String.concat ", " out_types)
+    (String.concat ", " out_attributes)
     (Buffer.contents ctx.buf)
     (Buffer.contents ctx.extras)

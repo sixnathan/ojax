@@ -470,9 +470,16 @@ let named_call f = f
 let named_scope _name f = f ()
 let device_get = to_host
 let block_until_ready x = x
-let devices () = [ "cpu:0" ]
+
+let devices () =
+  Array.to_list
+    (Array.map
+       (fun (d : Pjrt.Client.device) ->
+         Printf.sprintf "%s:%d" (Backend.platform ()) d.id)
+       (Backend.local_devices ()))
+
 let local_devices = devices
-let device_count () = 1
+let device_count () = Array.length (Backend.local_devices ())
 let local_device_count = device_count
 let process_count () = 1
 let process_index () = 0
@@ -481,20 +488,16 @@ let host_count = process_count
 let host_id = process_index
 let host_ids = process_indices
 let default_backend () = "cpu"
-let clear_caches () = Hashtbl.reset compiled
+
+let clear_caches () =
+  Hashtbl.reset compiled;
+  Backend.clear_placed_programs ()
+
 let disable_jit thunk = Config.with_value Config.disable_jit true thunk
 let ensure_compile_time_eval thunk = Core.with_eval_dynamic thunk
 
-let pmap f args =
-  let flat, _ = Tree.tree_flatten (Tree.Tuple args) in
-  (match flat with
-  | v :: _ ->
-      let shape = (Core.get_aval v).shape in
-      if Array.length shape = 0 || shape.(0) > device_count () then
-        invalid_arg
-          "pmap got more replicas than the number of available devices"
-  | [] -> invalid_arg "pmap requires at least one argument");
-  vmap f (List.map (fun _ -> Some 0) args) args
+let pmap ?axis_name ?in_axes ?out_axes f args =
+  Spmd.pmap ?axis_name ?in_axes ?out_axes f args
 
 let pure_callback host_fun ~result_avals args =
   Custom_derivatives.pure_callback host_fun ~result_avals args

@@ -19,3 +19,4 @@ let log_compiles = make "jax_log_compiles" false
 let no_tracing = make "jax_no_tracing" false
 let no_execution = make "jax_no_execution" false
 let numpy_rank_promotion = make "jax_numpy_rank_promotion" "allow"
+let num_cpu_devices = make "jax_num_cpu_devices" (-1)

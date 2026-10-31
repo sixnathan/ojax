@@ -157,7 +157,7 @@ let filter_singleton operand names other_shape other_names =
   in
   (operand, string_of_chars (List.map (fun i -> names.[i]) kept_axes))
 
-let einsum_pair lhs rhs lhs_names rhs_names result =
+let einsum_pair ?precision ?preferred lhs rhs lhs_names rhs_names result =
   let lhs, lhs_names = filter_singleton lhs lhs_names (shape rhs) rhs_names in
   let rhs, rhs_names = filter_singleton rhs rhs_names (shape lhs) lhs_names in
   let lhs_counts = counts_of lhs_names and rhs_counts = counts_of rhs_names in
@@ -201,15 +201,8 @@ let einsum_pair lhs rhs lhs_names rhs_names result =
   let rem_rhs = removechars rhs_names deleted in
   let names_rl = batch_str ^ rem_rhs ^ rem_lhs in
   let dg lc rc lb rb x y =
-    C.bind1
-      (T.Dot_general
-         {
-           lhs_contract = lc;
-           rhs_contract = rc;
-           lhs_batch = lb;
-           rhs_batch = rb;
-         })
-      [ x; y ]
+    Lax_api.dot_general ?precision ?preferred_element_type:preferred x y
+      ~lhs_contract:lc ~rhs_contract:rc ~lhs_batch:lb ~rhs_batch:rb
   in
   let operand, names =
     if names_rl = result then
@@ -285,18 +278,44 @@ let expand_ellipsis inputs output operands =
     in
     (new_inputs, new_output, operands)
 
-let rec contract inputs operands result =
-  match (operands, inputs) with
-  | [ op ], [ n0 ] -> einsum_single op n0 result
-  | [ a; b ], [ na; nb ] -> einsum_pair a b na nb result
-  | a :: b :: rest, na :: nb :: rest_names ->
-      let later = result :: rest_names in
-      let needed c = List.exists (fun t -> String.contains t c) later in
-      let kept = string_of_chars (List.filter needed (distinct (na ^ nb))) in
-      contract (kept :: rest_names) (einsum_pair a b na nb kept :: rest) result
-  | _ -> invalid_arg "einsum: operand and subscript counts differ"
+let contract ?precision ?preferred optimize inputs operands result =
+  if List.length inputs <> List.length operands then
+    invalid_arg "einsum: operand and subscript counts differ";
+  let spec = String.concat "," inputs ^ "->" ^ result in
+  let _, info =
+    Einsum_paths.contract_path ~optimize spec (List.map shape operands)
+  in
+  let take positions items =
+    ( List.map (List.nth items) positions,
+      List.filteri (fun i _ -> not (List.mem i positions)) items )
+  in
+  let final =
+    List.fold_left
+      (fun ops (step : Einsum_paths.contraction) ->
+        let picked, rest = take step.positions ops in
+        let input_str, result_names = split_arrow step.einsum_str in
+        let names = String.split_on_char ',' input_str in
+        let out = Option.value result_names ~default:"" in
+        let merged =
+          match (picked, names) with
+          | [ op ], [ n0 ] -> einsum_single op n0 out
+          | [ l; r ], [ nl; nr ] ->
+              einsum_pair ?precision ?preferred l r nl nr out
+          | _ ->
+              failwith
+                "jax.numpy.einsum does not support simultaneous contraction of \
+                 3 or more operands. Typically this means you've passed an \
+                 unsupported path to the einsum optimize parameter."
+        in
+        rest @ [ merged ])
+      operands info.contraction_list
+  in
+  match final with
+  | [ out ] -> out
+  | _ -> invalid_arg "einsum: path did not contract every operand"
 
-let einsum subscripts operands =
+let einsum ?(optimize = Einsum_paths.Auto) ?precision ?preferred_element_type
+    subscripts operands =
   let s = String.concat "" (String.split_on_char ' ' subscripts) in
   let input_part, output_opt = split_arrow s in
   let inputs = String.split_on_char ',' input_part in
@@ -308,4 +327,11 @@ let einsum subscripts operands =
   in
   let pdt = NL.result_type operands in
   let operands = List.map (fun v -> astype v pdt) operands in
-  contract inputs operands result
+  let out =
+    contract ?precision ?preferred:preferred_element_type optimize inputs
+      operands result
+  in
+  astype out (Option.value preferred_element_type ~default:pdt)
+
+let einsum_path ?optimize subscripts operands =
+  Einsum_paths.contract_path ?optimize subscripts (List.map shape operands)

@@ -13,11 +13,9 @@ let pref preferred vs =
 
 let astype v dt = if dtype v = dt then v else NL.astype v dt
 
-let dot_general lc rc lb rb a b =
-  C.bind1
-    (T.Dot_general
-       { lhs_contract = lc; rhs_contract = rc; lhs_batch = lb; rhs_batch = rb })
-    [ a; b ]
+let dot_general ?precision lc rc lb rb a b =
+  Lax_api.dot_general ?precision a b ~lhs_contract:lc ~rhs_contract:rc
+    ~lhs_batch:lb ~rhs_batch:rb
 
 let bcast_binop prim a b =
   let dt = NL.result_type [ a; b ] in
@@ -26,7 +24,7 @@ let bcast_binop prim a b =
   let b = NL.broadcast_to (astype b dt) sh in
   C.bind1 prim [ a; b ]
 
-let dot ?preferred a b =
+let dot ?precision ?preferred a b =
   let pdt = pref preferred [ a; b ] in
   let a = astype a pdt and b = astype b pdt in
   let na = ndim a and nb = ndim b in
@@ -35,17 +33,17 @@ let dot ?preferred a b =
     else if nb = 1 then ([| na - 1 |], [| 0 |])
     else ([| na - 1 |], [| nb - 2 |])
   in
-  dot_general lc rc [||] [||] a b
+  dot_general ?precision lc rc [||] [||] a b
 
-let matmul ?preferred a b =
+let matmul ?precision ?preferred a b =
   let pdt = pref preferred [ a; b ] in
   let a = astype a pdt and b = astype b pdt in
   let na = ndim a and nb = ndim b in
   if na < 1 || nb < 1 then
     invalid_arg "matmul: inputs must have ndim at least 1";
-  if na = 1 && nb = 1 then dot_general [| 0 |] [| 0 |] [||] [||] a b
-  else if na = 1 then dot_general [| 0 |] [| nb - 2 |] [||] [||] a b
-  else if nb = 1 then dot_general [| na - 1 |] [| 0 |] [||] [||] a b
+  if na = 1 && nb = 1 then dot_general ?precision [| 0 |] [| 0 |] [||] [||] a b
+  else if na = 1 then dot_general ?precision [| 0 |] [| nb - 2 |] [||] [||] a b
+  else if nb = 1 then dot_general ?precision [| na - 1 |] [| 0 |] [||] [||] a b
   else begin
     let sa = shape a and sb = shape b in
     let a_batch = Array.sub sa 0 (na - 2) in
@@ -59,7 +57,7 @@ let matmul ?preferred a b =
       NL.broadcast_to b (Array.append bc [| sb.(nb - 2); sb.(nb - 1) |])
     in
     let idb = Array.init nbat Fun.id in
-    dot_general [| nbat + 1 |] [| nbat |] idb idb a' b'
+    dot_general ?precision [| nbat + 1 |] [| nbat |] idb idb a' b'
   end
 
 let matvec x1 x2 =
@@ -74,26 +72,35 @@ let vecmat x1 x2 =
   let r = matmul x1e x2 in
   NL.squeeze ~axis:[| ndim r - 2 |] r
 
-let vdot ?preferred a b =
+let vdot ?precision ?preferred a b =
   let a =
     match (C.get_aval a).T.dtype with
     | D.Complex64 | D.Complex128 -> C.bind1 T.Conj [ a ]
     | _ -> a
   in
-  dot ?preferred (NL.ravel a) (NL.ravel b)
+  dot ?precision ?preferred (NL.ravel a) (NL.ravel b)
 
-let vecdot ?(axis = -1) ?preferred x1 x2 =
+let vecdot ?(axis = -1) ?precision ?preferred x1 x2 =
   let pdt = pref preferred [ x1; x2 ] in
   let x1 = NL.moveaxis [| axis |] [| ndim x1 - 1 |] x1 in
   let x2 = NL.moveaxis [| axis |] [| ndim x2 - 1 |] x2 in
-  let prod = bcast_binop T.Mul (astype x1 pdt) (astype x2 pdt) in
-  C.bind1 (T.Reduce_sum [| ndim prod - 1 |]) [ prod ]
+  match precision with
+  | Some _ ->
+      let sh = NL.broadcast_shapes_n [ shape x1; shape x2 ] in
+      let a = NL.broadcast_to (astype x1 pdt) sh in
+      let b = NL.broadcast_to (astype x2 pdt) sh in
+      let last = Array.length sh - 1 in
+      let batch = Array.init last Fun.id in
+      dot_general ?precision [| last |] [| last |] batch batch a b
+  | None ->
+      let prod = bcast_binop T.Mul (astype x1 pdt) (astype x2 pdt) in
+      C.bind1 (T.Reduce_sum [| ndim prod - 1 |]) [ prod ]
 
 type td_axes = Ax_int of int | Ax_pair of int array * int array
 
 let canon i n = if i < 0 then i + n else i
 
-let tensordot ?preferred ?(axes = Ax_int 2) a b =
+let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
   let pdt = pref preferred [ a; b ] in
   let a = astype a pdt and b = astype b pdt in
   let na = ndim a and nb = ndim b in
@@ -109,14 +116,14 @@ let tensordot ?preferred ?(axes = Ax_int 2) a b =
         ( Array.map (fun i -> canon i na) ax1,
           Array.map (fun i -> canon i nb) ax2 )
   in
-  dot_general lc rc [||] [||] a b
+  dot_general ?precision lc rc [||] [||] a b
 
-let inner ?preferred a b =
+let inner ?precision ?preferred a b =
   if ndim a = 0 || ndim b = 0 then begin
     let pdt = pref preferred [ a; b ] in
     bcast_binop T.Mul (astype a pdt) (astype b pdt)
   end
-  else tensordot ?preferred ~axes:(Ax_pair ([| -1 |], [| -1 |])) a b
+  else tensordot ?precision ?preferred ~axes:(Ax_pair ([| -1 |], [| -1 |])) a b
 
 let outer a b =
   let pdt = pref None [ a; b ] in

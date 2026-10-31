@@ -618,9 +618,9 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Neg | Sin | Cos | Exp | Log | Tanh | Abs | Sign | Acos | Acosh | Asin
   | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Conj | Copy | Cosh | Exp2 | Expm1
   | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
-  | Population_count | Real | Round | Rsqrt | Sinh | Sqrt | Square | Tan
-  | Bitcast_convert_type _ | Reduce_precision _ | Bessel_i0e | Bessel_i1e
-  | Digamma | Erf | Erf_inv | Erfc | Lgamma ->
+  | Population_count | Real | Round | Round_nearest_even | Rsqrt | Sinh | Sqrt
+  | Square | Tan | Bitcast_convert_type _ | Reduce_precision _ | Bessel_i0e
+  | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Lgamma ->
       un ()
   | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta
   | Regularized_incomplete_beta ->

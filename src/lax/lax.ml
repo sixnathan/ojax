@@ -238,6 +238,11 @@ let nextafter_f dt x y =
 let integer_pow_f y x = Float.pow x (float_of_int y)
 let logistic_f x = 1.0 /. (1.0 +. Float.exp (-.x))
 let rsqrt_f x = 1.0 /. Float.sqrt x
+
+let round_nearest_even_f x =
+  let r = Float.round x in
+  if Float.abs (x -. r) = 0.5 then 2.0 *. Float.round (x /. 2.0) else r
+
 let square_f x = x *. x
 let un f = function [ a ] -> [ f a ] | _ -> failwith "lax: expected 1 operand"
 
@@ -1257,6 +1262,8 @@ let rec impl_base prim inputs =
           else a)
         inputs
   | Round -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.round a) inputs
+  | Round_nearest_even ->
+      un (fun a -> Ndarray.map (Ndarray.dtype a) round_nearest_even_f a) inputs
   | Rsqrt -> un (fun a -> Ndarray.map (Ndarray.dtype a) rsqrt_f a) inputs
   | Sinh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.sinh a) inputs
   | Sqrt ->
@@ -1638,8 +1645,8 @@ let rec impl_base prim inputs =
   | Eigh { lower } -> Linalg.eigh_impl lower inputs
   | Hessenberg -> Linalg.hessenberg_impl inputs
   | Schur { compute_vectors } -> Linalg.schur_impl compute_vectors inputs
-  | Svd { full_matrices; compute_uv } ->
-      Linalg.svd_impl full_matrices compute_uv inputs
+  | Svd { full_matrices; compute_uv; gesvd } ->
+      Linalg.svd_impl ~gesvd full_matrices compute_uv inputs
   | Tridiagonal { lower } -> Linalg.tridiagonal_impl lower inputs
   | Collective { axis_name; _ } ->
       invalid_arg ("unbound axis name: " ^ axis_name)
@@ -1869,7 +1876,8 @@ let acts_on_parts = function
   | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _
   | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _ | Dynamic_update_slice
   | Gather _ | Scatter _ | Reduce_sum _ | Cumsum _ | Neg | Add | Sub
-  | Scatter_add _ | Scatter_sub _ | Reduce_window_sum _ | Round ->
+  | Scatter_add _ | Scatter_sub _ | Reduce_window_sum _ | Round
+  | Round_nearest_even ->
       true
   | _ -> false
 
@@ -2184,9 +2192,9 @@ let abstract_eval prim avals =
   match prim with
   | Neg | Sin | Cos | Exp | Log | Tanh | Sign | Acos | Acosh | Asin | Asinh
   | Atan | Atanh | Cbrt | Ceil | Clz | Copy | Cosh | Exp2 | Expm1 | Floor
-  | Integer_pow _ | Log1p | Logistic | Not | Population_count | Round | Rsqrt
-  | Sinh | Sqrt | Square | Tan | Bessel_i0e | Bessel_i1e | Digamma | Erf
-  | Erf_inv | Erfc | Lgamma ->
+  | Integer_pow _ | Log1p | Logistic | Not | Population_count | Round
+  | Round_nearest_even | Rsqrt | Sinh | Sqrt | Square | Tan | Bessel_i0e
+  | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Lgamma ->
       un_aval (fun a -> a) avals
   | Abs | Real | Imag ->
       un_aval
@@ -2462,7 +2470,7 @@ let abstract_eval prim avals =
   | Eigh _ -> Linalg.eigh_aval avals
   | Hessenberg -> Linalg.hessenberg_aval avals
   | Schur { compute_vectors } -> Linalg.schur_aval compute_vectors avals
-  | Svd { full_matrices; compute_uv } ->
+  | Svd { full_matrices; compute_uv; _ } ->
       Linalg.svd_aval full_matrices compute_uv avals
   | Tridiagonal _ -> Linalg.tridiagonal_aval avals
   | Collective { kind; _ } -> (

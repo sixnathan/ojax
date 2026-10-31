@@ -479,7 +479,9 @@ let svd_jvp ~full_matrices ~compute_uv a t =
     failwith
       "Singular value decomposition JVP not implemented for full matrices";
   let thin =
-    Core.bind (Svd { full_matrices = false; compute_uv = true }) [ a ]
+    Core.bind
+      (Svd { full_matrices = false; compute_uv = true; gesvd = false })
+      [ a ]
   in
   match thin with
   | [ u; s; vt ] ->
@@ -981,10 +983,10 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           let po = b1 Is_finite [ x ] in
           (po, zeros_like_value po)
       | _ -> arity ())
-  | Round -> (
+  | (Round | Round_nearest_even) as prim -> (
       match (primals, tangents) with
       | [ x ], [ _ ] ->
-          let po = b1 Round [ x ] in
+          let po = b1 prim [ x ] in
           (po, zeros_like_value po)
       | _ -> arity ())
   | Not -> (
@@ -1492,7 +1494,7 @@ let jvp_process_with_tangents trace prim primals tangents =
           let po, to_ = lu_jvp a t in
           List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
       | _ -> arity ())
-  | Svd { full_matrices; compute_uv } -> (
+  | Svd { full_matrices; compute_uv; _ } -> (
       match (primals, tangents) with
       | [ a ], [ t ] ->
           let po, to_ = svd_jvp ~full_matrices ~compute_uv a t in
@@ -2623,10 +2625,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Integer_pow _ | Is_finite | Log1p | Logistic | Not
-  | Population_count | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And | Atan2
-  | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter | Or | Rem
-  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Argmax _
-  | Argmin _ | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _
+  | Population_count | Round | Round_nearest_even | Rsqrt | Sinh | Sqrt | Square
+  | Tan | And | Atan2 | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter
+  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
+  | Argmax _ | Argmin _ | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _
   | Reduce_or _ | Reduce_prod _ | Reduce_xor _ | After_all
   | Bitcast_convert_type _ | Clamp | Composite _ | Create_token | Dce_sink
   | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general

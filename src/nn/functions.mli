@@ -26,7 +26,31 @@ val standardize : ?axis:int -> ?epsilon:float -> Types.value -> Types.value
 val logmeanexp : ?axis:int array -> ?keepdims:bool -> Types.value -> Types.value
 val one_hot : ?axis:int -> num_classes:int -> Types.value -> Types.value
 
+type block_scale_dtype = Float4_e2m1fn | Float8_e4m3fn | Float8_e8m0fnu
+
+type block_scale_config = {
+  mode : string;
+  block_size : int;
+  data_type : block_scale_dtype;
+  scale_type : block_scale_dtype;
+  global_scale : Types.value option;
+  infer_only : bool;
+}
+
+val get_scaled_dot_general_config :
+  ?global_scale:Types.value -> string -> block_scale_config
+
+val scaled_matmul :
+  ?preferred_element_type:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
 val scaled_dot_general :
+  ?preferred_element_type:Dtype.t ->
+  ?configs:block_scale_config list ->
   lhs_contract:int array ->
   rhs_contract:int array ->
   lhs_batch:int array ->

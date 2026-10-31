@@ -95,6 +95,12 @@ external zungqr_ : int array -> f64 -> f64 -> int = "ojax_lapack_zungqr"
 external zgesdd_ : int array -> f64 -> f64 -> f64 -> f64 -> int
   = "ojax_lapack_zgesdd"
 
+external gesvd_ : int array -> f64 -> f64 -> f64 -> f64 -> int
+  = "ojax_lapack_gesvd"
+
+external zgesvd_ : int array -> f64 -> f64 -> f64 -> f64 -> int
+  = "ojax_lapack_zgesvd"
+
 external zheevd_ : int array -> f64 -> f64 -> int = "ojax_lapack_zheevd"
 
 external zgeev_ : int array -> f64 -> f64 -> f64 -> f64 -> int
@@ -121,6 +127,14 @@ let zungqr ~m ~n ~k ~a ~lda ~tau =
 let zgesdd ~jobz ~m ~n ~a ~lda ~s ~u ~ldu ~vt ~ldvt =
   guard "zgesdd";
   zgesdd_ [| Char.code jobz; m; n; lda; ldu; ldvt |] a s u vt
+
+let gesvd ~jobz ~m ~n ~a ~lda ~s ~u ~ldu ~vt ~ldvt =
+  guard "gesvd";
+  gesvd_ [| Char.code jobz; m; n; lda; ldu; ldvt |] a s u vt
+
+let zgesvd ~jobz ~m ~n ~a ~lda ~s ~u ~ldu ~vt ~ldvt =
+  guard "zgesvd";
+  zgesvd_ [| Char.code jobz; m; n; lda; ldu; ldvt |] a s u vt
 
 let zheevd ~jobz ~uplo ~n ~a ~lda ~w =
   guard "zheevd";

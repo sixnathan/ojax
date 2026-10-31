@@ -24,3 +24,13 @@ val psum_scatter :
   ?scatter_dimension:int -> ?tiled:bool -> value -> axis_name:string -> value
 
 val pshuffle : value -> axis_name:string -> perm:int list -> value
+
+val ragged_all_to_all :
+  value ->
+  value ->
+  value ->
+  value ->
+  value ->
+  value ->
+  axis_name:string ->
+  value

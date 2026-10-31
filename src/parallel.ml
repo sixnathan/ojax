@@ -114,3 +114,60 @@ let pshuffle x ~axis_name ~perm =
   if sorted <> List.init (List.length perm) Fun.id then
     invalid_arg "`perm` does not represent a permutation";
   ppermute x ~axis_name ~perm:(List.mapi (fun i src -> (src, i)) perm)
+
+let ragged_all_to_all operand output input_offsets send_sizes output_offsets
+    recv_sizes ~axis_name =
+  let check name v =
+    let aval = Core.get_aval v in
+    if not (Dtypes.issubdtype aval.dtype `Integer) then
+      invalid_arg
+        (Printf.sprintf "ragged_all_to_all %s must be integer type." name);
+    if Array.length aval.shape <> 1 || aval.shape.(0) < 1 then
+      invalid_arg
+        (Printf.sprintf
+           "ragged_all_to_all %s must be rank 1 with positive dimension size"
+           name)
+  in
+  check "input_offsets" input_offsets;
+  check "send_sizes" send_sizes;
+  check "output_offsets" output_offsets;
+  check "recv_sizes" recv_sizes;
+  (try ignore (B.find_axis axis_name)
+   with Invalid_argument _ ->
+     failwith
+       "ragged_all_to_all must be used within a mapped context like vmap or \
+        shard_map.");
+  let n = axis_size ~axis_name in
+  let slots = (Core.get_aval input_offsets).shape.(0) in
+  if slots mod n <> 0 then
+    invalid_arg
+      "ragged_all_to_all offsets length must be divisible by the size of the \
+       mapped axis";
+  let per_device = slots / n in
+  let i32 v = L.convert_element_type v Dtype.I32 in
+  let exchange v =
+    tiled_all_to_all (i32 v) ~axis_name ~split_axis:0 ~concat_axis:0
+  in
+  let received_at = exchange output_offsets in
+  let source_at = exchange input_offsets in
+  let recv = i32 recv_sizes in
+  let gathered = all_gather operand ~axis_name in
+  let out_shape = (Core.get_aval output).shape in
+  let rows = out_shape.(0) in
+  let positions = L.iota Dtype.I32 rows in
+  let across v = L.broadcast v [| rows |] in
+  let dt = (Core.get_aval output).dtype in
+  let scalar v i = L.index_in_dim ~axis:0 ~keepdims:false v i in
+  List.fold_left
+    (fun result i ->
+      let start = across (scalar received_at i) in
+      let stop = L.add start (across (scalar recv i)) in
+      let mask = L.bitwise_and (L.le start positions) (L.lt positions stop) in
+      let wide = L.broadcast_in_dim mask out_shape [| 0 |] in
+      let from_row =
+        L.add (L.sub positions start) (across (scalar source_at i))
+      in
+      let sender = scalar gathered (i / per_device) in
+      let taken = Numpy.Indexing.take ~axis:0 ~mode:"clip" sender from_row in
+      L.select wide (L.convert_element_type taken dt) result)
+    output (List.init slots Fun.id)

@@ -14,7 +14,7 @@ val eigh_impl : bool -> Ndarray.t list -> Ndarray.t list
 val eig_impl : bool -> bool -> Ndarray.t list -> Ndarray.t list
 val hessenberg_impl : Ndarray.t list -> Ndarray.t list
 val schur_impl : bool -> Ndarray.t list -> Ndarray.t list
-val svd_impl : bool -> bool -> Ndarray.t list -> Ndarray.t list
+val svd_impl : ?gesvd:bool -> bool -> bool -> Ndarray.t list -> Ndarray.t list
 val tridiagonal_impl : bool -> Ndarray.t list -> Ndarray.t list
 val geqrf_impl : Ndarray.t -> Ndarray.t list
 val geqp3_impl : Ndarray.t -> Ndarray.t list
@@ -50,13 +50,26 @@ val triangular_solve :
 val tridiagonal_solve : value -> value -> value -> value -> value
 
 val eig :
+  ?implementation:Lax_config.eig_implementation ->
   ?compute_left_eigenvectors:bool ->
   ?compute_right_eigenvectors:bool ->
   value ->
   value list
 
-val eigh : ?lower:bool -> value -> value * value
+val eigh :
+  ?implementation:Lax_config.eigh_implementation ->
+  ?lower:bool ->
+  value ->
+  value * value
+
 val hessenberg : value -> value * value
 val schur : ?compute_schur_vectors:bool -> value -> value list
-val svd : ?full_matrices:bool -> ?compute_uv:bool -> value -> value list
+
+val svd :
+  ?algorithm:Lax_config.svd_algorithm ->
+  ?full_matrices:bool ->
+  ?compute_uv:bool ->
+  value ->
+  value list
+
 val tridiagonal : ?lower:bool -> value -> value * value * value * value

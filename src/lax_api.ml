@@ -51,18 +51,36 @@ let bitwise_and = lift2 And
 let bitwise_not x = b1 Not [ x ]
 let bitwise_or = lift2 Or
 let bitwise_xor = lift2 Xor
-let cbrt x = b1 Cbrt [ x ]
+
+let cbrt ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Cbrt [ x ]
+
 let ceil x = b1 Ceil [ x ]
 let clz x = b1 Clz [ x ]
 let complex = lift2 Complex
 let conj x = b1 Conj [ x ]
-let cos x = b1 Cos [ x ]
+
+let cos ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Cos [ x ]
+
 let cosh x = b1 Cosh [ x ]
 let div = lift2 Div
 let eq = lift2 Eq
-let exp x = b1 Exp [ x ]
-let exp2 x = b1 Exp2 [ x ]
-let expm1 x = b1 Expm1 [ x ]
+
+let exp ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Exp [ x ]
+
+let exp2 ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Exp2 [ x ]
+
+let expm1 ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Expm1 [ x ]
+
 let floor x = b1 Floor [ x ]
 let ge = lift2 Ge
 let gt = lift2 Gt
@@ -70,9 +88,19 @@ let imag x = b1 Imag [ x ]
 let integer_pow x y = b1 (Integer_pow y) [ x ]
 let is_finite x = b1 Is_finite [ x ]
 let le = lift2 Le
-let log x = b1 Log [ x ]
-let log1p x = b1 Log1p [ x ]
-let logistic x = b1 Logistic [ x ]
+
+let log ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Log [ x ]
+
+let log1p ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Log1p [ x ]
+
+let logistic ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Logistic [ x ]
+
 let lt = lift2 Lt
 let max = lift2 Max
 let min = lift2 Min
@@ -86,19 +114,44 @@ let pow = lift2 Pow
 let real x = b1 Real [ x ]
 let reciprocal x = b1 Div [ filled (dtype_of x) (shape x) 1.0; x ]
 let rem = lift2 Rem
-let round x = b1 Round [ x ]
-let rsqrt x = b1 Rsqrt [ x ]
+
+let round ?(rounding_method = Lax_config.Away_from_zero) x =
+  match rounding_method with
+  | Lax_config.Away_from_zero -> b1 Round [ x ]
+  | Lax_config.To_nearest_even -> b1 Round_nearest_even [ x ]
+
+let stage x = Core.full_raise (Core.find_top_trace [ x ]) x
+
+let rsqrt ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Rsqrt [ x ]
+
 let shift_left = lift2 Shift_left
 let shift_right_arithmetic = lift2 Shift_right_arithmetic
 let shift_right_logical = lift2 Shift_right_logical
 let sign x = b1 Sign [ x ]
-let sin x = b1 Sin [ x ]
+
+let sin ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Sin [ x ]
+
 let sinh x = b1 Sinh [ x ]
-let sqrt x = b1 Sqrt [ x ]
+
+let sqrt ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Sqrt [ x ]
+
 let square x = b1 Square [ x ]
 let sub = lift2 Sub
-let tan x = b1 Tan [ x ]
-let tanh x = b1 Tanh [ x ]
+
+let tan ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Tan [ x ]
+
+let tanh ?accuracy x =
+  ignore (accuracy : Lax_config.accuracy option);
+  b1 Tanh [ x ]
+
 let betainc a b x = b1 Regularized_incomplete_beta [ a; b; x ]
 let stop_gradient = Custom_derivatives.stop_gradient
 let optimization_barrier xs = Core.bind Optimization_barrier xs
@@ -268,25 +321,121 @@ let dynamic_update_index_in_dim ?(axis = 0) x update index =
   in
   dynamic_update_slice_in_dim ~axis x update index
 
-let gather x indices dimension_numbers slice_sizes =
-  b1 (Gather { dimension_numbers; slice_sizes }) [ x; indices ]
+let index_upper_bound indices dims window =
+  let idx_shape = shape indices in
+  let bound =
+    Concrete
+      (Ndarray.of_floats (dtype_of indices)
+         [| Array.length dims |]
+         (Array.map (fun d -> float_of_int window.(d)) dims))
+  in
+  b1
+    (Broadcast_in_dim
+       { shape = idx_shape; dims = [| Array.length idx_shape - 1 |] })
+    [ bound ]
 
-let scatter ?(unique_indices = false) x indices updates dimension_numbers =
+let clamp_indices indices dims window =
+  b1 Clamp
+    [
+      filled (dtype_of indices) (shape indices) 0.0;
+      indices;
+      index_upper_bound indices dims window;
+    ]
+
+let gather_default_fill dt =
+  if Dtypes.issubdtype dt `Inexact then Float.nan
+  else if dt = Dtype.Bool then 1.0
+  else if Dtypes.issubdtype dt `Signed then (Dtypes.iinfo dt).imin
+  else (Dtypes.iinfo dt).imax
+
+let gather ?(mode = Lax_config.Promise_in_bounds) ?fill_value x indices
+    dimension_numbers slice_sizes =
+  let window = Array.mapi (fun d size -> size - slice_sizes.(d)) (shape x) in
+  let dims = dimension_numbers.start_index_map in
+  let run indices =
+    b1 (Gather { dimension_numbers; slice_sizes }) [ x; indices ]
+  in
+  match mode with
+  | Lax_config.Promise_in_bounds -> run indices
+  | Lax_config.Clip -> run (clamp_indices indices dims window)
+  | Lax_config.One_hot ->
+      invalid_arg "gather: GatherScatterMode.ONE_HOT is not supported"
+  | Lax_config.Fill_or_drop ->
+      let fill =
+        match fill_value with
+        | Some f -> f
+        | None -> gather_default_fill (dtype_of x)
+      in
+      let gathered = run indices in
+      let out_shape = shape gathered in
+      let idx_shape = shape indices in
+      let batch_rank = Array.length idx_shape - 1 in
+      let in_bounds =
+        b1 And
+          [
+            b1 Ge [ indices; filled (dtype_of indices) idx_shape 0.0 ];
+            b1 Le [ indices; index_upper_bound indices dims window ];
+          ]
+      in
+      let mask = b1 (Reduce_and [| batch_rank |]) [ in_bounds ] in
+      let batch_dims =
+        List.filter
+          (fun d -> not (Array.mem d dimension_numbers.offset_dims))
+          (List.init (Array.length out_shape) Fun.id)
+      in
+      let wide =
+        b1
+          (Broadcast_in_dim
+             { shape = out_shape; dims = Array.of_list batch_dims })
+          [ mask ]
+      in
+      select wide gathered (filled (dtype_of gathered) out_shape fill)
+
+let scatter_indices mode x indices updates (dn : scatter_dims) =
+  match mode with
+  | Some Lax_config.Clip ->
+      let pos = ref 0 in
+      let window =
+        Array.mapi
+          (fun d size ->
+            if
+              Array.mem d dn.inserted_window_dims
+              || Array.mem d dn.s_operand_batching_dims
+            then size - 1
+            else begin
+              let extent = (shape updates).(dn.update_window_dims.(!pos)) in
+              incr pos;
+              size - extent
+            end)
+          (shape x)
+      in
+      clamp_indices indices dn.scatter_dims_to_operand_dims window
+  | _ -> indices
+
+let scatter ?mode ?(unique_indices = false) x indices updates dimension_numbers
+    =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter { dimension_numbers; unique_indices }) [ x; indices; updates ]
 
-let scatter_add x indices updates dimension_numbers =
+let scatter_add ?mode x indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_add { dimension_numbers }) [ x; indices; updates ]
 
-let scatter_sub x indices updates dimension_numbers =
+let scatter_sub ?mode x indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_sub { dimension_numbers }) [ x; indices; updates ]
 
-let scatter_mul ?(unique_indices = false) x indices updates dimension_numbers =
+let scatter_mul ?mode ?(unique_indices = false) x indices updates
+    dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_mul { dimension_numbers; unique_indices }) [ x; indices; updates ]
 
-let scatter_min x indices updates dimension_numbers =
+let scatter_min ?mode x indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_min { dimension_numbers }) [ x; indices; updates ]
 
-let scatter_max x indices updates dimension_numbers =
+let scatter_max ?mode x indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_max { dimension_numbers }) [ x; indices; updates ]
 
 let reduce_sum x axes = b1 (Reduce_sum axes) [ x ]
@@ -349,22 +498,120 @@ let top_k ?(axis = -1) x k =
   | [ values; indices ] -> (values, indices)
   | _ -> failwith "top_k: arity"
 
-let dot x y =
+let dtype_bits = Dtypes.itemsize_bits
+
+let convert_to dt v =
+  if dtype_of v = dt then v else b1 (Convert_element_type dt) [ v ]
+
+let preset_supported_on_cpu = function
+  | Lax_config.Preset_default | Lax_config.F16_f16_f16 | Lax_config.F32_f32_f32
+  | Lax_config.F64_f64_f64 | Lax_config.Bf16_bf16_f32
+  | Lax_config.Bf16_bf16_f32_x3 | Lax_config.Bf16_bf16_f32_x6 ->
+      true
+  | _ -> false
+
+let preset_input_types = function
+  | Lax_config.Preset_default -> None
+  | Lax_config.F16_f16_f16 -> Some [ Dtype.F16 ]
+  | Lax_config.Bf16_bf16_f32 -> Some [ Dtype.Bf16; Dtype.F32 ]
+  | Lax_config.F64_f64_f64 -> Some [ Dtype.F64 ]
+  | _ -> Some [ Dtype.F32 ]
+
+let preset_output_types preset lhs rhs =
+  match preset with
+  | Lax_config.Preset_default -> None
+  | Lax_config.F16_f16_f16 -> Some [ Dtype.F16 ]
+  | Lax_config.Bf16_bf16_f32 ->
+      if Dtypes.promote_types lhs rhs = Dtype.Bf16 then
+        Some [ Dtype.F32; Dtype.Bf16 ]
+      else Some [ Dtype.F32 ]
+  | Lax_config.F64_f64_f64 -> Some [ Dtype.F64 ]
+  | _ -> Some [ Dtype.F32 ]
+
+let pick_supported dt = function
+  | None -> dt
+  | Some targets -> if List.mem dt targets then dt else List.hd targets
+
+let precision_rank dt =
+  let float_rank complex component =
+    let info = Dtypes.finfo component in
+    let _, overflow_exponent = Float.frexp info.fmax in
+    (complex, overflow_exponent, info.nmant, info.bits)
+  in
+  match dt with
+  | Dtype.Bool -> (0, -1, -1, 8)
+  | Dtype.Complex64 -> float_rank 1 Dtype.F32
+  | Dtype.Complex128 -> float_rank 1 Dtype.F64
+  | _ when Dtypes.issubdtype dt `Floating -> float_rank 0 dt
+  | _ when Dtypes.issubdtype dt `Signed -> (0, -1, -1, (2 * dtype_bits dt) + 1)
+  | _ -> (0, -1, -1, 2 * dtype_bits dt)
+
+let dot_accumulate prim x y acc =
+  let dx = dtype_of x in
+  if dx <> dtype_of y || precision_rank acc >= precision_rank dx then
+    b1 prim [ convert_to acc x; convert_to acc y ]
+  else convert_to acc (b1 prim [ x; y ])
+
+let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
+  let prim = Dot_general dn in
+  let lhs = dtype_of x and rhs = dtype_of y in
+  let result = if lhs = rhs then lhs else Dtypes.promote_types lhs rhs in
+  let has_algorithm =
+    match precision with
+    | Some (Lax_config.Algorithm _ | Lax_config.Preset _) -> true
+    | _ -> false
+  in
+  (match preferred_element_type with
+  | Some p
+    when (not has_algorithm)
+         && (not (Dtypes.issubdtype result `Floating))
+         && dtype_bits p < dtype_bits result ->
+      invalid_arg
+        (Printf.sprintf
+           "`preferred_element_type` must not be narrower than the original \
+            type, got preferred_element_type of %s for result type of %s."
+           (Dtype.short_name p) (Dtype.short_name result))
+  | _ -> ());
+  let out = Option.value preferred_element_type ~default:result in
+  match precision with
+  | Some (Lax_config.Algorithm _) ->
+      invalid_arg
+        "The precision DotAlgorithm is not supported by dot_general on CPU"
+  | Some (Lax_config.Preset preset) when not (preset_supported_on_cpu preset) ->
+      invalid_arg
+        (Printf.sprintf
+           "The precision '%s' is not supported by dot_general on CPU"
+           (Lax_config.dot_algorithm_preset_name preset))
+  | Some (Lax_config.Preset preset) ->
+      let inputs = preset_input_types preset in
+      let lhs_t = pick_supported lhs inputs in
+      let rhs_t = pick_supported rhs inputs in
+      let acc = pick_supported out (preset_output_types preset lhs_t rhs_t) in
+      convert_to out
+        (dot_accumulate prim (convert_to lhs_t x) (convert_to rhs_t y) acc)
+  | _ ->
+      if lhs <> rhs then b1 prim [ convert_to out x; convert_to out y ]
+      else if out = lhs then b1 prim [ x; y ]
+      else dot_accumulate prim x y out
+
+let dot ?precision ?preferred_element_type x y =
   let nx = ndim x and ny = ndim y in
   if nx = 0 || ny = 0 then mul x y
   else
-    b1
-      (Dot_general
-         {
-           lhs_contract = [| nx - 1 |];
-           rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
-           lhs_batch = [||];
-           rhs_batch = [||];
-         })
-      [ x; y ]
+    dot_with ?precision ?preferred_element_type
+      {
+        lhs_contract = [| nx - 1 |];
+        rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
+        lhs_batch = [||];
+        rhs_batch = [||];
+      }
+      x y
 
-let dot_general x y ~lhs_contract ~rhs_contract ~lhs_batch ~rhs_batch =
-  b1 (Dot_general { lhs_contract; rhs_contract; lhs_batch; rhs_batch }) [ x; y ]
+let dot_general ?precision ?preferred_element_type x y ~lhs_contract
+    ~rhs_contract ~lhs_batch ~rhs_batch =
+  dot_with ?precision ?preferred_element_type
+    { lhs_contract; rhs_contract; lhs_batch; rhs_batch }
+    x y
 
 let batch_matmul x y =
   let n = ndim x in
@@ -639,7 +886,24 @@ let index_take x indices axes =
   ignore n_axes;
   stack picked 0
 
-let fft x ~fft_type ~fft_lengths = b1 (Fft { fft_type; fft_lengths }) [ x ]
+let fft x ~fft_type ~fft_lengths =
+  let dt = dtype_of x in
+  let is_complex = Dtypes.issubdtype dt `Complex in
+  let target =
+    match fft_type with
+    | Lax_config.Fft_real ->
+        if is_complex then
+          invalid_arg "only real valued inputs supported for rfft";
+        Dtypes.to_inexact_dtype dt
+    | _ ->
+        if is_complex then dt
+        else if Dtypes.to_inexact_dtype dt = Dtype.F64 then Dtype.Complex128
+        else Dtype.Complex64
+  in
+  let x = convert_to target x in
+  if Array.length fft_lengths = 0 then x
+  else b1 (Fft { fft_type; fft_lengths }) [ x ]
+
 let dilate_dim d rate = if d = 0 then 0 else 1 + (rate * (d - 1))
 
 let reduce_window_shape_tuple operand_shape window_dimensions window_strides

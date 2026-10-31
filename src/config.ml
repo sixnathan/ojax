@@ -19,3 +19,10 @@ let log_compiles = make "jax_log_compiles" false
 let no_tracing = make "jax_no_tracing" false
 let no_execution = make "jax_no_execution" false
 let numpy_rank_promotion = make "jax_numpy_rank_promotion" "allow"
+
+let platforms =
+  make "jax_platforms"
+    (Option.value (Sys.getenv_opt "OJAX_PLATFORMS") ~default:"")
+
+let platform_resolver = ref (fun () -> "cpu")
+let current_platform () = !platform_resolver ()

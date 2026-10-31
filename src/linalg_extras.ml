@@ -288,7 +288,7 @@ let qdwh ?(is_hermitian = false) ?(max_iterations = 10) ?eps x =
   in
   let start = List.length qr_list + List.length chol_list in
   let idx v = L.full [||] (float_of_int v) D.I32 in
-  let fixed = (2.0, 3.0, 1.0 /. 3.0) in
+  let fixed = (3.0 -. (1.0 /. 3.0), 3.0, 1.0 /. 3.0) in
   let final =
     L.while_loop
       (fun state ->

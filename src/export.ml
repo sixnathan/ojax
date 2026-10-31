@@ -13,7 +13,7 @@ let export f avals =
     mlir_module = Stages.as_text lowered;
     in_avals = lowered.Stages.in_avals;
     out_avals = lowered.Stages.out_avals;
-    platforms = [ "cpu" ];
+    platforms = [ Config.current_platform () ];
   }
 
 let aval_to_string (a : aval) =

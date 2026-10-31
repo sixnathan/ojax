@@ -9,6 +9,7 @@ external api_version : plugin -> int * int = "ojax_pjrt_api_version"
 external struct_size : plugin -> int = "ojax_pjrt_struct_size"
 external close : plugin -> unit = "ojax_pjrt_close"
 external maxrss_bytes : unit -> int = "ojax_pjrt_maxrss"
+external library_loadable : string -> bool = "ojax_pjrt_library_loadable"
 
 let pjrt_api_major = 0
 let pjrt_api_minor = 81

@@ -594,9 +594,16 @@ let custom_root f initial_guess solve tangent_solve =
   in
   Custom_derivatives.custom_jvp primal ~jvp (initial_guess @ hoisted)
 
-let platform_dependent ?default ~cpu () =
-  ignore default;
-  cpu ()
+let platform_dependent ?default ?cuda ~cpu () =
+  match (Config.current_platform (), cuda, default) with
+  | "cpu", _, _ -> cpu ()
+  | "cuda", Some branch, _ -> branch ()
+  | _, _, Some branch -> branch ()
+  | platform, _, None ->
+      invalid_arg
+        (Printf.sprintf
+           "platform_dependent: no branch for platform %s and no default"
+           platform)
 
 let associative_scan ?(axis = 0) fn xs =
   let n = ndim xs in

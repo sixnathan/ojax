@@ -763,19 +763,23 @@ let iota_impl dtype shape dimension =
 let empty_impl dtype shape =
   Ndarray.of_floats dtype shape (Array.make (Utils.prod shape) 0.0)
 
-let platform_cpu_index (platforms : string array option array) : int =
+let platform_branch_index (platforms : string array option array) : int =
+  let current = Config.current_platform () in
   let n = Array.length platforms in
-  let rec find_cpu i =
+  let rec find_named i =
     if i >= n then find_default 0
     else
       match platforms.(i) with
-      | Some names when Array.exists (fun p -> p = "cpu") names -> i
-      | _ -> find_cpu (i + 1)
+      | Some names when Array.exists (fun p -> p = current) names -> i
+      | _ -> find_named (i + 1)
   and find_default i =
-    if i >= n then failwith "lax: platform_index has no cpu or default branch"
+    if i >= n then
+      failwith
+        (Printf.sprintf "lax: platform_index has no %s or default branch"
+           current)
     else match platforms.(i) with None -> i | Some _ -> find_default (i + 1)
   in
-  find_cpu 0
+  find_named 0
 
 let composite_impl (cj : closed_jaxpr) inputs =
   let outs =
@@ -1444,7 +1448,7 @@ let rec impl_base prim inputs =
   | Platform_index platforms ->
       [
         Ndarray.of_floats Dtype.I32 [||]
-          [| float_of_int (platform_cpu_index platforms) |];
+          [| float_of_int (platform_branch_index platforms) |];
       ]
   | Cond { t; f } -> (
       match inputs with
@@ -2429,6 +2433,7 @@ let cumlogsumexp = Control_flow.Loops.cumlogsumexp
 let custom_linear_solve = Control_flow.Solves.custom_linear_solve
 
 module Linalg = Linalg
+module Special = Special
 module Fft = Fft
 
 let complex_bilinear = Utils.complex_bilinear

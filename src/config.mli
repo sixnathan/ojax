@@ -13,3 +13,6 @@ val log_compiles : bool flag
 val no_tracing : bool flag
 val no_execution : bool flag
 val numpy_rank_promotion : string flag
+val platforms : string flag
+val platform_resolver : (unit -> string) ref
+val current_platform : unit -> string

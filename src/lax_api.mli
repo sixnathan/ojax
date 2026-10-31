@@ -254,7 +254,9 @@ val custom_root :
   ((value list -> value list) -> value list -> value list) ->
   value list
 
-val platform_dependent : ?default:'a -> cpu:(unit -> 'b) -> unit -> 'b
+val platform_dependent :
+  ?default:(unit -> 'b) -> ?cuda:(unit -> 'b) -> cpu:(unit -> 'b) -> unit -> 'b
+
 val associative_scan : ?axis:int -> (value -> value -> value) -> value -> value
 val shape_as_value : value -> value
 val index_take : value -> value list -> int array -> value

@@ -53,6 +53,7 @@
   test_stablehlo_ir
   test_stablehlo_emit
   test_backend
+  test_backend_native
   test_linalg_lapack
   test_lax_linalg
   test_scipy_linalg
@@ -62,5 +63,6 @@
   test_scipy_optimize)
  (libraries ojax alcotest yojson unix)
  (deps
+  (env_var OJAX_PJRT_GPU_PLUGIN)
   (file %{project_root}/spec/stablehlo_ir.cases.json)
   (file %{project_root}/spec/stablehlo_emit.cases.json)))

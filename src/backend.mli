@@ -19,3 +19,12 @@ val of_host_value : Types.value -> Types.value
 val to_host_value : Types.value -> Types.value
 val run_text : string -> Types.value list -> Types.value list
 val stats : unit -> int * string list
+val current_platform : unit -> string
+val default_backend : unit -> string
+val devices : ?backend:string -> unit -> string list
+val with_platform : string -> (unit -> 'a) -> 'a
+val platform_version : unit -> string
+val device_kind : unit -> string
+val has_visible_nvidia_gpu : unit -> bool
+val gpu_ready : unit -> bool
+val value_device : Types.value -> string option

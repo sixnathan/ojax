@@ -1,14 +1,35 @@
-type 'a flag = { name : string; mutable value : 'a }
+type 'a flag = { name : string; mutable value : 'a; validate : 'a -> unit }
 
-let make name value = { name; value }
+let make ?(validate = ignore) name value = { name; value; validate }
 let value flag = flag.value
 let name flag = flag.name
-let set flag v = flag.value <- v
+
+let set flag v =
+  flag.validate v;
+  flag.value <- v
 
 let with_value flag v thunk =
+  flag.validate v;
   let prev = flag.value in
   flag.value <- v;
   Fun.protect ~finally:(fun () -> flag.value <- prev) thunk
+
+let py_list values =
+  "[" ^ String.concat ", " (List.map (Printf.sprintf "'%s'") values) ^ "]"
+
+let optional_enum values = function
+  | None -> ()
+  | Some v ->
+      if not (List.mem v values) then
+        invalid_arg
+          (Printf.sprintf
+             "new enum value must be None or in %s, got %s of type <class \
+              'str'>."
+             (py_list values) v)
+
+let enum_class class_name values v =
+  if not (List.mem v values) then
+    invalid_arg (Printf.sprintf "'%s' is not a valid %s" v class_name)
 
 let enable_x64 = make "jax_enable_x64" false
 let x64_enabled () = enable_x64.value
@@ -19,3 +40,137 @@ let log_compiles = make "jax_log_compiles" false
 let no_tracing = make "jax_no_tracing" false
 let no_execution = make "jax_no_execution" false
 let numpy_rank_promotion = make "jax_numpy_rank_promotion" "allow"
+let enable_checks = make "jax_enable_checks" false
+let debug_key_reuse = make "jax_debug_key_reuse" false
+let check_tracer_leaks = make "jax_check_tracer_leaks" false
+let explain_cache_misses = make "jax_explain_cache_misses" false
+let enable_custom_prng = make "jax_enable_custom_prng" false
+let softmax_custom_jvp = make "jax_softmax_custom_jvp" false
+let threefry_partitionable = make "jax_threefry_partitionable" true
+let allow_f16_reductions = make "jax_allow_f16_reductions" true
+let thread_guard = make "jax_thread_guard" false
+
+let jax2tf_associative_scan_reductions =
+  make "jax2tf_associative_scan_reductions" false
+
+let numpy_dtype_promotion =
+  make
+    ~validate:(enum_class "NumpyDtypePromotion" [ "standard"; "strict" ])
+    "jax_numpy_dtype_promotion" "standard"
+
+let legacy_prng_key =
+  make
+    ~validate:(enum_class "LegacyPrngKeyState" [ "allow"; "warn"; "error" ])
+    "jax_legacy_prng_key" "allow"
+
+let matmul_levels =
+  [
+    ("default", "DEFAULT");
+    ("high", "HIGH");
+    ("highest", "HIGHEST");
+    ("bfloat16", "DEFAULT");
+    ("tensorfloat32", "HIGH");
+    ("float32", "HIGHEST");
+  ]
+
+let matmul_presets =
+  [
+    "ANY_F8_ANY_F8_F32";
+    "ANY_F8_ANY_F8_F32_FAST_ACCUM";
+    "ANY_F8_ANY_F8_ANY";
+    "ANY_F8_ANY_F8_ANY_FAST_ACCUM";
+    "F16_F16_F16";
+    "F16_F16_F32";
+    "BF16_BF16_BF16";
+    "BF16_BF16_F32";
+    "BF16_BF16_F32_X3";
+    "BF16_BF16_F32_X6";
+    "BF16_BF16_F32_X9";
+    "TF32_TF32_F32";
+    "TF32_TF32_F32_X3";
+    "F32_F32_F32";
+    "F64_F64_F64";
+  ]
+
+let default_matmul_precision =
+  make
+    ~validate:(optional_enum (List.map fst matmul_levels @ matmul_presets))
+    "jax_default_matmul_precision" None
+
+let matmul_level () =
+  match default_matmul_precision.value with
+  | None -> None
+  | Some name -> (
+      match List.assoc_opt name matmul_levels with
+      | Some level -> Some level
+      | None -> Some "DEFAULT")
+
+let matmul_preset () =
+  match default_matmul_precision.value with
+  | Some name when List.mem name matmul_presets -> Some name
+  | _ -> None
+
+let cpu_matmul_presets =
+  [
+    "F16_F16_F16";
+    "F32_F32_F32";
+    "F64_F64_F64";
+    "BF16_BF16_F32";
+    "BF16_BF16_F32_X3";
+    "BF16_BF16_F32_X6";
+  ]
+
+let check_matmul_preset_on_cpu () =
+  match matmul_preset () with
+  | Some name when not (List.mem name cpu_matmul_presets) ->
+      invalid_arg
+        (Printf.sprintf
+           "The precision '%s' is not supported by dot_general on CPU" name)
+  | _ -> ()
+
+let guard_levels =
+  [ "allow"; "log"; "disallow"; "log_explicit"; "disallow_explicit" ]
+
+let transfer_flag name = make ~validate:(optional_enum guard_levels) name None
+
+let transfer_guard_host_to_device =
+  transfer_flag "jax_transfer_guard_host_to_device"
+
+let transfer_guard_device_to_device =
+  transfer_flag "jax_transfer_guard_device_to_device"
+
+let transfer_guard_device_to_host =
+  transfer_flag "jax_transfer_guard_device_to_host"
+
+let with_transfer_guard level thunk =
+  with_value transfer_guard_host_to_device (Some level) (fun () ->
+      with_value transfer_guard_device_to_device (Some level) (fun () ->
+          with_value transfer_guard_device_to_host (Some level) thunk))
+
+let array_garbage_collection_guard =
+  make
+    ~validate:(optional_enum [ "allow"; "log"; "fatal" ])
+    "jax_array_garbage_collection_guard" None
+
+let log_sink : (string -> unit) ref = ref prerr_endline
+let log message = !log_sink message
+
+let set_log_sink sink =
+  let prev = !log_sink in
+  log_sink := sink;
+  prev
+
+let py_bool b = if b then "True" else "False"
+let py_opt = function None -> "None" | Some s -> s
+
+let trace_context () =
+  [
+    (enable_x64.name, py_bool enable_x64.value);
+    (debug_key_reuse.name, py_bool debug_key_reuse.value);
+    (numpy_dtype_promotion.name, numpy_dtype_promotion.value);
+    (numpy_rank_promotion.name, numpy_rank_promotion.value);
+    (default_matmul_precision.name, py_opt default_matmul_precision.value);
+    (allow_f16_reductions.name, py_bool allow_f16_reductions.value);
+    (softmax_custom_jvp.name, py_bool softmax_custom_jvp.value);
+    (threefry_partitionable.name, py_bool threefry_partitionable.value);
+  ]

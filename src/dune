@@ -2,6 +2,7 @@
 
 (library
  (name ojax)
+ (libraries unix)
  (foreign_stubs
   (language c)
   (names pjrt_shim lapack_shim)

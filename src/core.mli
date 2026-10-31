@@ -79,3 +79,4 @@ val named_axis_trace : (string -> trace option) ref
 val bind : primitive -> value list -> value list
 val bind1 : primitive -> value list -> value
 val get_aval : value -> aval
+val divide_shape_sizes : int array -> int array -> int

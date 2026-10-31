@@ -34,7 +34,52 @@ let compile_options_proto =
   Stdlib.Buffer.add_string b executable_build_options_proto;
   Stdlib.Buffer.contents b
 
-let compile client code = compile_ client code compile_options_proto
+type compiler_option =
+  | Option_string of string
+  | Option_bool of bool
+  | Option_int of int
+  | Option_float of float
+
+let option_override_proto opt =
+  let b = Stdlib.Buffer.create 8 in
+  (match opt with
+  | Option_string s ->
+      add_tag b 1 2;
+      add_varint b (String.length s);
+      Stdlib.Buffer.add_string b s
+  | Option_bool v ->
+      add_tag b 2 0;
+      add_varint b (if v then 1 else 0)
+  | Option_int v ->
+      add_tag b 3 0;
+      add_varint b v
+  | Option_float v ->
+      add_tag b 4 1;
+      Stdlib.Buffer.add_int64_le b (Int64.bits_of_float v));
+  Stdlib.Buffer.contents b
+
+let env_override_entry (key, opt) =
+  let body = option_override_proto opt in
+  let entry = Stdlib.Buffer.create 16 in
+  add_tag entry 1 2;
+  add_varint entry (String.length key);
+  Stdlib.Buffer.add_string entry key;
+  add_tag entry 2 2;
+  add_varint entry (String.length body);
+  Stdlib.Buffer.add_string entry body;
+  let out = Stdlib.Buffer.create 16 in
+  add_tag out 7 2;
+  add_varint out (Stdlib.Buffer.length entry);
+  Stdlib.Buffer.add_buffer out entry;
+  Stdlib.Buffer.contents out
+
+let compile ?(options = []) client code =
+  let proto =
+    compile_options_proto
+    ^ String.concat "" (List.map env_override_entry options)
+  in
+  compile_ client code proto
+
 let execute exec args = execute_ exec args
 let num_outputs exec = num_outputs_ exec
 let destroy exec = destroy_ exec

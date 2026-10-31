@@ -1214,10 +1214,21 @@ let dot_dims_str (dd : dot_dims) =
         (Ir.int_array_attr dd.rhs_batch)
     else ""
   in
-  Printf.sprintf "%scontracting_dims = %s x %s, precision = [DEFAULT, DEFAULT]"
-    batch
+  let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+  Printf.sprintf "%scontracting_dims = %s x %s, precision = [%s, %s]" batch
     (Ir.int_array_attr dd.lhs_contract)
     (Ir.int_array_attr dd.rhs_contract)
+    level level
+
+let dot_preset_info = function
+  | "F16_F16_F16" -> ("f16", "f16", "f16", 1, [ Dtype.F16 ], Dtype.F16)
+  | "F32_F32_F32" -> ("f32", "f32", "f32", 1, [ Dtype.F32 ], Dtype.F32)
+  | "F64_F64_F64" -> ("f64", "f64", "f64", 1, [ Dtype.F64 ], Dtype.F64)
+  | "BF16_BF16_F32" ->
+      ("bf16", "bf16", "f32", 1, [ Dtype.Bf16; Dtype.F32 ], Dtype.F32)
+  | "BF16_BF16_F32_X3" -> ("bf16", "bf16", "f32", 3, [ Dtype.F32 ], Dtype.F32)
+  | "BF16_BF16_F32_X6" -> ("bf16", "bf16", "f32", 6, [ Dtype.F32 ], Dtype.F32)
+  | other -> invalid_arg ("Stablehlo.Emit: dot preset " ^ other)
 
 let emit_dot_general ctx (eqn : eqn) in_ids dd =
   let a, b = pair in_ids in
@@ -1229,12 +1240,58 @@ let emit_dot_general ctx (eqn : eqn) in_ids dd =
     | _ -> invalid_arg "Stablehlo.Emit: dot_general arity"
   in
   let out = sole eqn.outs in
-  let n = bind_var ctx out in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = stablehlo.dot_general %s, %s, %s : (%s, %s) -> %s\n" (name n)
-       (name a) (name b) (dot_dims_str dd) la lb
-       (Ir.tensor_type_of_aval out.vaval))
+  Config.check_matmul_preset_on_cpu ();
+  match Config.matmul_preset () with
+  | None ->
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.dot_general %s, %s, %s : (%s, %s) -> %s\n"
+           (name n) (name a) (name b) (dot_dims_str dd) la lb
+           (Ir.tensor_type_of_aval out.vaval))
+  | Some preset ->
+      let attr_l, attr_r, attr_acc, ops, supported, acc =
+        dot_preset_info preset
+      in
+      let retyped (v : aval) dtype = Ir.tensor_type_of_aval { v with dtype } in
+      let convert_input id (v : aval) =
+        if List.mem v.dtype supported then (id, v.dtype)
+        else
+          let target = List.hd supported in
+          let c = fresh ctx in
+          Buffer.add_string ctx.buf
+            (Printf.sprintf "    %s = stablehlo.convert %s : (%s) -> %s\n"
+               (name c) (name id) (Ir.tensor_type_of_aval v) (retyped v target));
+          (c, target)
+      in
+      let aval_l, aval_r =
+        match eqn.inputs with
+        | [ l; r ] -> (atom_aval l, atom_aval r)
+        | _ -> invalid_arg "Stablehlo.Emit: dot_general arity"
+      in
+      let a', dt_l = convert_input a aval_l in
+      let b', dt_r = convert_input b aval_r in
+      let acc_dtype = acc in
+      let dot_id =
+        if acc_dtype = out.vaval.dtype then bind_var ctx out else fresh ctx
+      in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.dot_general %s, %s, %s, algorithm = \
+            <lhs_precision_type = %s, rhs_precision_type = %s, \
+            accumulation_type = %s, lhs_component_count = 1, \
+            rhs_component_count = 1, num_primitive_operations = %d, \
+            allow_imprecise_accumulation = false> : (%s, %s) -> %s\n"
+           (name dot_id) (name a') (name b') (dot_dims_str dd) attr_l attr_r
+           attr_acc ops (retyped aval_l dt_l) (retyped aval_r dt_r)
+           (retyped out.vaval acc_dtype));
+      if acc_dtype <> out.vaval.dtype then
+        let n = bind_var ctx out in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    %s = stablehlo.convert %s : (%s) -> %s\n"
+             (name n) (name dot_id)
+             (retyped out.vaval acc_dtype)
+             (Ir.tensor_type_of_aval out.vaval))
 
 let conv_spec_str spec l0 l1 =
   let ndim = Array.length spec in
@@ -1275,19 +1332,20 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
       (conv_spec_str dn.out_spec "b" "f")
   in
   let n = bind_var ctx out in
+  let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
   Buffer.add_string ctx.buf
     (Printf.sprintf
        "    %s = stablehlo.convolution(%s, %s) dim_numbers = %s, window = \
         {stride = %s, pad = %s, lhs_dilate = %s, rhs_dilate = %s, reverse = \
         %s} {batch_group_count = %d : i64, feature_group_count = %d : i64, \
-        precision_config = [#stablehlo<precision DEFAULT>, \
-        #stablehlo<precision DEFAULT>]} : (%s, %s) -> %s\n"
+        precision_config = [#stablehlo<precision %s>, #stablehlo<precision \
+        %s>]} : (%s, %s) -> %s\n"
        (name n) (name a) (name b) dim_numbers
        (Ir.int_array_attr window_strides)
        (pad_pairs_str padding)
        (Ir.int_array_attr lhs_dilation)
        (Ir.int_array_attr rhs_dilation)
-       reverse batch_group_count feature_group_count la lb
+       reverse batch_group_count feature_group_count level level la lb
        (Ir.tensor_type_of_aval out.vaval))
 
 let pad_dense_str padding =

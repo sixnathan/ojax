@@ -236,11 +236,36 @@ let iota_2x32_shape shape =
     | _ -> failwith "prng: iota_2x32_shape arity"
 
 let random_seed seed = Core.bind1 Random_seed [ seed ]
-let random_split key shape = Core.bind1 (Random_split shape) [ key ]
+
+let legacy_split_hook : (value -> int array -> value) ref =
+  ref (fun _ _ -> failwith "prng: original threefry split not installed")
+
+let legacy_bits_hook : (value -> int -> int array -> value) ref =
+  ref (fun _ _ _ -> failwith "prng: original threefry bits not installed")
+
+let random_split key shape =
+  if Config.value Config.threefry_partitionable then
+    Core.bind1 (Random_split shape) [ key ]
+  else
+    List.hd
+      (Key_reuse.apply (Random_split shape) [ key ] (fun () ->
+           [ Key_reuse.suspended (fun () -> !legacy_split_hook key shape) ]))
+
 let random_fold_in key msg = Core.bind1 Random_fold_in [ key; msg ]
 
 let random_bits key ~bit_width ~shape =
-  Core.bind1 (Random_bits { bit_width; shape }) [ key ]
+  if Config.value Config.threefry_partitionable then
+    Core.bind1 (Random_bits { bit_width; shape }) [ key ]
+  else
+    List.hd
+      (Key_reuse.apply
+         (Random_bits { bit_width; shape })
+         [ key ]
+         (fun () ->
+           [
+             Key_reuse.suspended (fun () ->
+                 !legacy_bits_hook key bit_width shape);
+           ]))
 
 let random_wrap arr = Core.bind1 Random_wrap [ arr ]
 let random_unwrap key = Core.bind1 Random_unwrap [ key ]

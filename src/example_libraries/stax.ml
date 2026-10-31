@@ -143,6 +143,232 @@ let general_conv ?strides ?(padding = L.Valid) ?(w_init = glorot)
 
 let conv = general_conv
 
+let char_index spec c =
+  match String.index_opt spec c with
+  | Some i -> i
+  | None -> invalid_arg ("stax: dimension spec " ^ spec ^ " lacks a role")
+
+let general_conv_transpose ?strides ?(padding = L.Valid) ?w_init ?b_init
+    ((lhs_spec, rhs_spec, out_spec) as dimension_numbers) out_chan filter_shape
+    =
+  let k = Array.length filter_shape in
+  let strides = Option.value strides ~default:(Array.make k 1) in
+  let dn = L.conv_dimension_numbers dimension_numbers in
+  let w_init =
+    match w_init with
+    | Some f -> f
+    | None ->
+        let init =
+          Nn.Initializers.glorot_normal ~in_axis:(char_index rhs_spec 'I')
+            ~out_axis:(char_index rhs_spec 'O') ()
+        in
+        fun key shape -> init key ~shape
+  in
+  let b_init =
+    match b_init with
+    | Some f -> f
+    | None ->
+        let init = Nn.Initializers.normal ~stddev:1e-6 () in
+        fun key shape -> init key ~shape
+  in
+  let bias_shape =
+    Array.init (String.length out_spec) (fun i ->
+        if out_spec.[i] = 'C' then out_chan else 1)
+  in
+  {
+    init =
+      (fun rng input_shape ->
+        let filter_index = ref 0 in
+        let kernel_shape =
+          Array.init (String.length rhs_spec) (fun i ->
+              match rhs_spec.[i] with
+              | 'O' -> out_chan
+              | 'I' -> input_shape.(char_index lhs_spec 'C')
+              | _ ->
+                  let d = filter_shape.(!filter_index) in
+                  incr filter_index;
+                  d)
+        in
+        let output_shape =
+          L.conv_transpose_shape_tuple input_shape kernel_shape strides padding
+            dn
+        in
+        let k1, k2 = split2 rng in
+        let w = w_init k1 kernel_shape in
+        let b = b_init k2 bias_shape in
+        (output_shape, Tree.Tuple [ Tree.Leaf w; Tree.Leaf b ]));
+    apply =
+      (fun ?rng:_ params x ->
+        match params with
+        | Tree.Tuple [ Tree.Leaf w; Tree.Leaf b ] ->
+            let out =
+              L.conv_transpose ~dimension_numbers:dn x w ~strides padding
+            in
+            let sh = (Core.get_aval out).shape in
+            let dims = Array.init (Array.length sh) Fun.id in
+            L.add out (L.broadcast_in_dim b sh dims)
+        | _ -> invalid_arg "conv_transpose: bad parameters");
+  }
+
+let conv1d_transpose ?strides ?padding ?w_init ?b_init out_chan filter_shape =
+  general_conv_transpose ?strides ?padding ?w_init ?b_init ("NHC", "HIO", "NHC")
+    out_chan filter_shape
+
+let conv_transpose ?strides ?padding ?w_init ?b_init out_chan filter_shape =
+  general_conv_transpose ?strides ?padding ?w_init ?b_init
+    ("NHWC", "HWIO", "NHWC") out_chan filter_shape
+
+type io_shape = Shape of int array | Shapes of io_shape list
+type io_value = Value of value | Values of io_value list
+
+type net = {
+  net_init : value -> io_shape -> io_shape * value Tree.t;
+  net_apply : ?rng:value -> value Tree.t -> io_value -> io_value;
+}
+
+let of_layer (layer : layer) =
+  {
+    net_init =
+      (fun rng shape ->
+        match shape with
+        | Shape s ->
+            let out, params = layer.init rng s in
+            (Shape out, params)
+        | Shapes _ -> invalid_arg "stax: layer expects a single input shape");
+    net_apply =
+      (fun ?rng params x ->
+        match x with
+        | Value v -> Value (layer.apply ?rng params v)
+        | Values _ -> invalid_arg "stax: layer expects a single input");
+  }
+
+let fan_out num =
+  {
+    net_init =
+      (fun _ shape -> (Shapes (List.init num (fun _ -> shape)), Tree.Tuple []));
+    net_apply = (fun ?rng:_ _ x -> Values (List.init num (fun _ -> x)));
+  }
+
+let input_values = function
+  | Values vs ->
+      List.map
+        (function
+          | Value v -> v | Values _ -> invalid_arg "stax: nested fan-in input")
+        vs
+  | Value _ -> invalid_arg "stax: fan-in expects several inputs"
+
+let input_shapes = function
+  | Shapes ss ->
+      List.map
+        (function
+          | Shape s -> s | Shapes _ -> invalid_arg "stax: nested fan-in shape")
+        ss
+  | Shape _ -> invalid_arg "stax: fan-in expects several shapes"
+
+let fan_in_sum =
+  {
+    net_init =
+      (fun _ shapes -> (Shape (List.hd (input_shapes shapes)), Tree.Tuple []));
+    net_apply =
+      (fun ?rng:_ _ x ->
+        match input_values x with
+        | first :: rest -> Value (List.fold_left L.add first rest)
+        | [] -> invalid_arg "stax: fan-in of nothing");
+  }
+
+let fan_in_concat ?(axis = -1) () =
+  let wrap_axis rank =
+    let r = axis mod rank in
+    if r < 0 then r + rank else r
+  in
+  {
+    net_init =
+      (fun _ shapes ->
+        let shapes = input_shapes shapes in
+        let first = List.hd shapes in
+        let ax = wrap_axis (Array.length first) in
+        let out = Array.copy first in
+        out.(ax) <- List.fold_left (fun acc s -> acc + s.(ax)) 0 shapes;
+        (Shape out, Tree.Tuple []));
+    net_apply =
+      (fun ?rng:_ _ x ->
+        let vs = input_values x in
+        let rank = Array.length (Core.get_aval (List.hd vs)).shape in
+        Value (Core.bind1 (Concatenate (wrap_axis rank)) vs));
+  }
+
+let split_n key n =
+  let keys = Random.Core.split key n in
+  List.init n (fun i -> L.index_in_dim ~keepdims:false keys i)
+
+let split_opt rng n =
+  match rng with
+  | Some key -> List.map Option.some (split_n key n)
+  | None -> List.init n (fun _ -> None)
+
+let param_list = function
+  | Tree.Tuple ps -> ps
+  | _ -> invalid_arg "stax: expected a sequence of parameters"
+
+let serial_net nets =
+  {
+    net_init =
+      (fun rng input_shape ->
+        let _, shape, params_rev =
+          List.fold_left
+            (fun (key, shape, acc) net ->
+              let next, layer_key = split2 key in
+              let out_shape, p = net.net_init layer_key shape in
+              (next, out_shape, p :: acc))
+            (rng, input_shape, []) nets
+        in
+        (shape, Tree.Tuple (List.rev params_rev)));
+    net_apply =
+      (fun ?rng params x ->
+        let rngs = split_opt rng (List.length nets) in
+        let rec go x nets ps rngs =
+          match (nets, ps, rngs) with
+          | net :: nets, p :: ps, r :: rngs ->
+              go (net.net_apply ?rng:r p x) nets ps rngs
+          | _ -> x
+        in
+        go x nets (param_list params) rngs);
+  }
+
+let parallel nets =
+  let n = List.length nets in
+  {
+    net_init =
+      (fun rng input_shape ->
+        let shapes =
+          match input_shape with
+          | Shapes ss -> ss
+          | Shape _ -> invalid_arg "stax: parallel expects several shapes"
+        in
+        let rec go nets keys shapes =
+          match (nets, keys, shapes) with
+          | net :: nets, key :: keys, s :: shapes ->
+              net.net_init key s :: go nets keys shapes
+          | _ -> []
+        in
+        let results = go nets (split_n rng n) shapes in
+        (Shapes (List.map fst results), Tree.Tuple (List.map snd results)));
+    net_apply =
+      (fun ?rng params x ->
+        let xs =
+          match x with
+          | Values vs -> vs
+          | Value _ -> invalid_arg "stax: parallel expects several inputs"
+        in
+        let rec go nets ps xs rngs =
+          match (nets, ps, xs, rngs) with
+          | net :: nets, p :: ps, v :: xs, r :: rngs ->
+              net.net_apply ?rng:r p v :: go nets ps xs rngs
+          | _ -> []
+        in
+        Values (go nets (param_list params) xs (split_opt rng n)));
+  }
+
 let pool_layer ~reducer ~init_value ?(normalize = false) ?strides
     ?(padding = L.Valid) window_shape =
   let k = Array.length window_shape in

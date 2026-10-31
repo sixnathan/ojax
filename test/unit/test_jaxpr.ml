@@ -81,7 +81,7 @@ let test_typecheck_bad () =
   let bad = { jx with T.eqns = [ bad_eqn ] } in
   match J.typecheck_jaxpr bad with
   | () -> Alcotest.fail "typecheck: expected failure"
-  | exception Invalid_argument _ -> ()
+  | exception Ojax.Errors.Jaxpr_type_error _ -> ()
 
 let () =
   Ojax.Lax.install ();

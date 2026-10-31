@@ -121,11 +121,29 @@ let glu ?(axis = -1) x =
   | [ x1; x2 ] -> UF.multiply x1 (sigmoid x2)
   | _ -> invalid_arg "glu: split did not produce two halves"
 
-let softmax ?(axis = -1) x =
-  let ax = [| canon_axis (Array.length (shape x)) axis |] in
+let softmax_body ~stop ax x =
   let x_max = RED.max ~axis:ax ~keepdims:true x in
+  let x_max = if stop then Custom_derivatives.stop_gradient x_max else x_max in
   let unnormalized = UF.exp (UF.subtract x x_max) in
   UF.divide unnormalized (RED.sum ~axis:ax ~keepdims:true unnormalized)
+
+let softmax ?(axis = -1) x =
+  let ax = [| canon_axis (Array.length (shape x)) axis |] in
+  if Config.value Config.softmax_custom_jvp then
+    let primal = function
+      | [ a ] -> [ softmax_body ~stop:false ax a ]
+      | _ -> invalid_arg "softmax: arity"
+    in
+    let jvp primals tangents =
+      match (primals, tangents) with
+      | [ a ], [ a_dot ] ->
+          let y = softmax_body ~stop:false ax a in
+          let inner = RED.sum ~axis:ax ~keepdims:true (UF.multiply y a_dot) in
+          ([ y ], [ UF.multiply y (UF.subtract a_dot inner) ])
+      | _ -> invalid_arg "softmax: arity"
+    in
+    List.hd (Custom_derivatives.custom_jvp primal ~jvp [ x ])
+  else softmax_body ~stop:true ax x
 
 let log_softmax ?(axis = -1) x =
   let ax = [| canon_axis (Array.length (shape x)) axis |] in

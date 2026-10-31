@@ -88,7 +88,39 @@ let all_nodes =
     C128;
   ]
 
-let rec uppers node = node :: List.concat_map uppers (parents node)
+let strict_parents = function
+  | Weak_int -> [ Weak_float; U8; U16; U32; U64; I8; I16; I32; I64 ]
+  | Weak_float -> [ Weak_complex; F16; Bf16; F32; F64 ]
+  | Weak_complex -> [ C64; C128 ]
+  | _ -> []
+
+let is_strict () = Config.value Config.numpy_dtype_promotion = "strict"
+
+let rec uppers node =
+  let next = if is_strict () then strict_parents node else parents node in
+  node :: List.concat_map uppers next
+
+exception Type_promotion_error of string
+
+let node_name = function
+  | Bool -> "'bool'"
+  | U8 -> "'uint8'"
+  | U16 -> "'uint16'"
+  | U32 -> "'uint32'"
+  | U64 -> "'uint64'"
+  | I8 -> "'int8'"
+  | I16 -> "'int16'"
+  | I32 -> "'int32'"
+  | I64 -> "'int64'"
+  | F16 -> "'float16'"
+  | Bf16 -> "'bfloat16'"
+  | F32 -> "'float32'"
+  | F64 -> "'float64'"
+  | C64 -> "'complex64'"
+  | C128 -> "'complex128'"
+  | Weak_int -> "\"<class 'int'>\""
+  | Weak_float -> "\"<class 'float'>\""
+  | Weak_complex -> "\"<class 'complex'>\""
 
 let jax_type (d : Dtype.t) (weak : bool) : node =
   match (d, weak) with
@@ -149,6 +181,15 @@ let least_upper_bound nodes =
       common
   with
   | best :: _ -> best
+  | [] when is_strict () ->
+      raise
+        (Type_promotion_error
+           (Printf.sprintf
+              "Input dtypes (%s) have no available implicit dtype promotion \
+               path when jax_numpy_dtype_promotion=strict. Try explicitly \
+               casting inputs to the desired output type, or set \
+               jax_numpy_dtype_promotion=standard."
+              (String.concat ", " (List.map node_name nodes))))
   | [] -> invalid_arg "dtypes: no unique least upper bound"
 
 let promote_types (a : Dtype.t) (b : Dtype.t) : Dtype.t =
@@ -177,7 +218,7 @@ let lattice_result_type (args : (Dtype.t * bool) list) : Dtype.t * bool =
       in
       let out_dtype, out_weak =
         if all_same && not all_weak then (List.hd dtypes, false)
-        else if all_weak then
+        else if all_weak && not (is_strict ()) then
           let r =
             least_upper_bound (List.map (fun d -> jax_type d false) dtypes)
           in

@@ -14,7 +14,12 @@ module Interpreter :
 module Xla :
   S with type buffer = Pjrt.Buffer.t and type compiled = Pjrt.Executable.t
 
-val executor : Types.closed_jaxpr -> Types.value list -> Types.value list
+val executor :
+  ?options:(string * Pjrt.Executable.compiler_option) list ->
+  Types.closed_jaxpr ->
+  Types.value list ->
+  Types.value list
+
 val of_host_value : Types.value -> Types.value
 val to_host_value : Types.value -> Types.value
 val run_text : string -> Types.value list -> Types.value list

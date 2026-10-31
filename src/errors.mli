@@ -16,6 +16,9 @@ exception Tracer_integer_conversion_error of string
 exception Tracer_bool_conversion_error of string
 exception Unexpected_tracer_error of string
 exception Key_reuse_error of string
+exception Inconclusive_dimension_operation of string
+exception Jax_runtime_error of string
+exception Jaxpr_type_error of string
 
 val jax_type_error : string -> exn
 val jax_index_error : string -> exn

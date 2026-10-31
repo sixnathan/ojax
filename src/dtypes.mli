@@ -1,3 +1,5 @@
+exception Type_promotion_error of string
+
 val default_int_dtype : unit -> Dtype.t
 val default_float_dtype : unit -> Dtype.t
 val canonicalize_dtype : Dtype.t -> Dtype.t

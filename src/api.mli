@@ -109,6 +109,25 @@ val host_ids : unit -> int list
 val default_backend : unit -> string
 val clear_caches : unit -> unit
 val disable_jit : (unit -> 'a) -> 'a
+val enable_checks : bool -> (unit -> 'a) -> 'a
+val debug_key_reuse : bool -> (unit -> 'a) -> 'a
+val check_tracer_leaks : bool -> (unit -> 'a) -> 'a
+val checking_leaks : (unit -> 'a) -> 'a
+val explain_cache_misses : bool -> (unit -> 'a) -> 'a
+val enable_custom_prng : ?new_val:bool -> (unit -> 'a) -> 'a
+val softmax_custom_jvp : bool -> (unit -> 'a) -> 'a
+val threefry_partitionable : bool -> (unit -> 'a) -> 'a
+val allow_f16_reductions : bool -> (unit -> 'a) -> 'a
+val thread_guard : bool -> (unit -> 'a) -> 'a
+val jax2tf_associative_scan_reductions : bool -> (unit -> 'a) -> 'a
+val numpy_dtype_promotion : string -> (unit -> 'a) -> 'a
+val legacy_prng_key : string -> (unit -> 'a) -> 'a
+val default_matmul_precision : string -> (unit -> 'a) -> 'a
+val transfer_guard : string -> (unit -> 'a) -> 'a
+val transfer_guard_host_to_device : string -> (unit -> 'a) -> 'a
+val transfer_guard_device_to_device : string -> (unit -> 'a) -> 'a
+val transfer_guard_device_to_host : string -> (unit -> 'a) -> 'a
+val array_garbage_collection_guard : string -> (unit -> 'a) -> 'a
 val ensure_compile_time_eval : (unit -> 'a) -> 'a
 
 val pmap :

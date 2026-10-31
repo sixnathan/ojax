@@ -836,12 +836,13 @@ let triangular_solve ?(left_side = false) ?(lower = false)
 let tridiagonal_solve dl d du b = Core.bind1 Tridiagonal_solve [ dl; d; du; b ]
 
 let eig ?(compute_left_eigenvectors = true) ?(compute_right_eigenvectors = true)
-    x =
+    ?(enable_eigvec_derivs = false) x =
   Core.bind
     (Eig
        {
          compute_left = compute_left_eigenvectors;
          compute_right = compute_right_eigenvectors;
+         enable_eigvec_derivs;
        })
     [ x ]
 

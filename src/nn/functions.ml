@@ -191,7 +191,7 @@ let scaled_dot_general ~lhs_contract ~rhs_contract ~lhs_batch ~rhs_batch a b =
 
 let swish = silu
 let hard_swish = hard_silu
-let tanh x = Core.bind1 T.Tanh [ x ]
+let tanh x = Core.bind1 T.Tanh [ inexact x ]
 
 let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
   let module E = Numpy.Einsum in
@@ -242,13 +242,14 @@ let celu ?alpha x = celu ?alpha (as_float x)
 let selu x = selu (as_float x)
 let hard_sigmoid x = hard_sigmoid (as_float x)
 let hard_silu x = hard_silu (as_float x)
+let hard_swish = hard_silu
 let sparse_plus x = sparse_plus (as_float x)
 let sparse_sigmoid x = sparse_sigmoid (as_float x)
 let as_inexact_dtype x = NL.astype x (Dtypes.to_inexact_dtype (dtype x))
 let squareplus ?b x = squareplus ?b (as_inexact_dtype x)
 let soft_sign x = soft_sign (if dtype x = D.Bool then as_float x else x)
 let softplus x = softplus (if dtype x = D.Bool then as_float x else x)
-let log1mexp x = log1mexp (if dtype x = D.Bool then as_float x else x)
+let mish x = mish (if dtype x = D.Bool then as_float x else x)
 
 let logmeanexp ?axis ?keepdims x =
   logmeanexp ?axis ?keepdims (as_inexact_dtype x)

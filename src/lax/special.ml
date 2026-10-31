@@ -416,7 +416,7 @@ let igamma dtype a x =
   let domain_error = x < 0.0 || a < 0.0 || (a_is_zero && x_is_zero) || is_nan in
   if domain_error then Float.nan
   else if x_is_zero then 0.0
-  else if x_is_infinity then 1.0
+  else if x_is_infinity || a_is_zero then 1.0
   else begin
     let ax = (a *. Float.log x) -. x -. lgamma a in
     if ax < -.Float.log (finfo_max dtype) then 0.0
@@ -600,7 +600,9 @@ let regularized_incomplete_beta dtype a b x =
 
 let erf_inv x =
   let start = erf_inv_single x in
-  if (not (Float.is_finite start)) || Float.abs x >= 1.0 then start
+  if Float.abs x = 1.0 then Float.copy_sign Float.infinity x
+  else if Float.abs x > 1.0 then Float.nan
+  else if not (Float.is_finite start) then start
   else
     let two_over_sqrt_pi = 1.1283791670955126 in
     let refine y =

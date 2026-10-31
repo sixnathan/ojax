@@ -19,6 +19,8 @@ let dot_general lc rc lb rb a b =
        { lhs_contract = lc; rhs_contract = rc; lhs_batch = lb; rhs_batch = rb })
     [ a; b ]
 
+let mul_prim dt = if dt = D.Bool then T.And else T.Mul
+
 let bcast_binop prim a b =
   let dt = NL.result_type [ a; b ] in
   let sh = NL.broadcast_shapes_n [ shape a; shape b ] in
@@ -86,7 +88,7 @@ let vecdot ?(axis = -1) ?preferred x1 x2 =
   let pdt = pref preferred [ x1; x2 ] in
   let x1 = NL.moveaxis [| axis |] [| ndim x1 - 1 |] x1 in
   let x2 = NL.moveaxis [| axis |] [| ndim x2 - 1 |] x2 in
-  let prod = bcast_binop T.Mul (astype x1 pdt) (astype x2 pdt) in
+  let prod = bcast_binop (mul_prim pdt) (astype x1 pdt) (astype x2 pdt) in
   C.bind1 (T.Reduce_sum [| ndim prod - 1 |]) [ prod ]
 
 type td_axes = Ax_int of int | Ax_pair of int array * int array
@@ -114,7 +116,7 @@ let tensordot ?preferred ?(axes = Ax_int 2) a b =
 let inner ?preferred a b =
   if ndim a = 0 || ndim b = 0 then begin
     let pdt = pref preferred [ a; b ] in
-    bcast_binop T.Mul (astype a pdt) (astype b pdt)
+    bcast_binop (mul_prim pdt) (astype a pdt) (astype b pdt)
   end
   else tensordot ?preferred ~axes:(Ax_pair ([| -1 |], [| -1 |])) a b
 
@@ -123,4 +125,4 @@ let outer a b =
   let a = NL.ravel (astype a pdt) and b = NL.ravel (astype b pdt) in
   let a2 = NL.expand_dims a [| 1 |] in
   let b2 = NL.expand_dims b [| 0 |] in
-  bcast_binop T.Mul a2 b2
+  bcast_binop (mul_prim pdt) a2 b2

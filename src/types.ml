@@ -87,6 +87,7 @@ and primitive =
   | Population_count
   | Real
   | Round
+  | Round_nearest_even
   | Rsqrt
   | Sinh
   | Sqrt
@@ -238,7 +239,11 @@ and primitive =
       unit_diagonal : bool;
     }
   | Tridiagonal_solve
-  | Eig of { compute_left : bool; compute_right : bool }
+  | Eig of {
+      compute_left : bool;
+      compute_right : bool;
+      enable_eigvec_derivs : bool;
+    }
   | Eigh of { lower : bool }
   | Hessenberg
   | Schur of { compute_vectors : bool }

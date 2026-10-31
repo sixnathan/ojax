@@ -394,6 +394,12 @@ let allclose ?rtol ?atol ?equal_nan a b =
   bind1 (T.Reduce_and (Array.init n (fun i -> i))) [ c ]
 
 let clip ?min ?max arr =
+  (match dtype arr with
+  | D.Complex64 | D.Complex128 ->
+      invalid_arg
+        "Clip received a complex value either through the input or the min/max \
+         keywords. Complex values have no ordering and cannot be clipped."
+  | _ -> ());
   let fractional = function
     | Some m -> not (Float.is_integer m)
     | None -> false
@@ -420,10 +426,11 @@ let rec round ?(decimals = 0) v =
         round ~decimals (bind1 T.Real [ v ]);
         round ~decimals (bind1 T.Imag [ v ]);
       ]
-  else if decimals = 0 then bind1 T.Round [ v ]
+  else if decimals = 0 then bind1 T.Round_nearest_even [ v ]
   else begin
     let factor = full dt (shape v) (10.0 ** float_of_int decimals) in
-    bind1 T.Div [ bind1 T.Round [ bind1 T.Mul [ v; factor ] ]; factor ]
+    bind1 T.Div
+      [ bind1 T.Round_nearest_even [ bind1 T.Mul [ v; factor ] ]; factor ]
   end
 
 let around ?decimals v = round ?decimals v
@@ -1131,6 +1138,11 @@ let rollaxis ?(start = 0) axis a =
   let start = if start > axis then start - 1 else start in
   moveaxis [| axis |] [| start |] a
 
+let abs_of v =
+  match dtype v with
+  | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> v
+  | _ -> bind1 T.Abs [ v ]
+
 let gcd x1 x2 =
   let x1, x2 =
     match promote_values [ x1; x2 ] with
@@ -1160,7 +1172,7 @@ let gcd x1 x2 =
         [ where_ lt t2 t1; where_ lt t1 t2 ]
     | _ -> assert false
   in
-  let init = [ bind1 T.Abs [ x1 ]; bind1 T.Abs [ x2 ] ] in
+  let init = [ abs_of x1; abs_of x2 ] in
   List.hd (Lax.while_loop cond body init)
 
 let lcm x1 x2 =
@@ -1169,7 +1181,7 @@ let lcm x1 x2 =
     | [ a; b ] -> (a, b)
     | _ -> assert false
   in
-  let x1 = bind1 T.Abs [ x1 ] and x2 = bind1 T.Abs [ x2 ] in
+  let x1 = abs_of x1 and x2 = abs_of x2 in
   if not (is_integral (dtype x1)) then
     invalid_arg "Arguments to jax.numpy.lcm must be integers.";
   let d = gcd x1 x2 in

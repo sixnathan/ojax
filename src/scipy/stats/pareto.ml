@@ -56,7 +56,11 @@ let sf ?loc ?scale x b =
 
 let ppf ?loc ?scale q b =
   let loc, scale = defaults loc scale in
-  let q, b, loc, scale = promote4 q b loc scale in
+  let q, b, loc, scale =
+    match promote_complex [ q; b; loc; scale ] with
+    | [ q; b; loc; scale ] -> (q, b, loc, scale)
+    | _ -> assert false
+  in
   let one = sc q 1.0 in
   let ppf_val =
     UF.add loc

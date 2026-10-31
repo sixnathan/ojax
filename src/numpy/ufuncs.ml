@@ -85,16 +85,23 @@ let p1 = function [ a ] -> a | _ -> assert false
 let p2 = function [ a; b ] -> (a, b) | _ -> assert false
 let unary_inexact prim x = bind1 prim [ p1 (promote_inexact [ x ]) ]
 let unary_promote prim x = bind1 prim [ p1 (promote [ x ]) ]
-let fabs x = unary_inexact T.Abs x
+
+let fabs x =
+  (match dtype x with
+  | D.Complex64 | D.Complex128 ->
+      raise
+        (Errors.jax_type_error "ufunc 'fabs' does not support complex dtypes")
+  | _ -> ());
+  unary_inexact T.Abs x
+
+let is_float_or_complex = function
+  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | _ -> false
 
 let floor x =
-  match dtype x with
-  | D.I32 | D.I64 | D.Bool -> x
-  | _ -> unary_inexact T.Floor x
+  if is_float_or_complex (dtype x) then unary_inexact T.Floor x else x
 
-let ceil x =
-  match dtype x with D.I32 | D.I64 | D.Bool -> x | _ -> unary_inexact T.Ceil x
-
+let ceil x = if is_float_or_complex (dtype x) then unary_inexact T.Ceil x else x
 let exp x = unary_inexact T.Exp x
 let expm1 x = unary_inexact T.Expm1 x
 let log x = unary_inexact T.Log x
@@ -152,7 +159,16 @@ let nextafter x y = binary_inexact T.Nextafter x y
 
 let comparison prim x y =
   let a, b = p2 (promote [ x; y ]) in
-  bind1 prim [ a; b ]
+  match (prim, dtype a) with
+  | (T.Lt | T.Gt | T.Le | T.Ge), (D.Complex64 | D.Complex128) ->
+      let re v = bind1 T.Real [ v ] and im v = bind1 T.Imag [ v ] in
+      bind1 T.Select_n
+        [
+          bind1 T.Eq [ re a; re b ];
+          bind1 prim [ re a; re b ];
+          bind1 prim [ im a; im b ];
+        ]
+  | _ -> bind1 prim [ a; b ]
 
 let equal x y = comparison T.Eq x y
 let not_equal x y = comparison T.Ne x y
@@ -188,17 +204,20 @@ let smallest_subnormal = function
 let spacing x =
   let a = p1 (promote_inexact [ x ]) in
   let dt = dtype a and sh = shape a in
-  let below = bind1 T.Lt [ a; zeros_like a ] in
-  let pos_inf = const_full dt sh infinity in
-  let neg_inf = const_full dt sh neg_infinity in
-  let toward = bind1 T.Select_n [ below; pos_inf; neg_inf ] in
-  let result = bind1 T.Sub [ bind1 T.Nextafter [ a; toward ]; a ] in
-  let sss = smallest_subnormal dt in
-  let filled =
-    bind1 T.Select_n [ below; const_full dt sh sss; const_full dt sh (-.sss) ]
-  in
-  let is_zero = bind1 T.Eq [ result; zeros_like result ] in
-  bind1 T.Select_n [ is_zero; result; filled ]
+  if dt = D.F16 then
+    bind1 T.Sub [ bind1 T.Nextafter [ a; const_full dt sh infinity ]; a ]
+  else
+    let below = bind1 T.Lt [ a; zeros_like a ] in
+    let pos_inf = const_full dt sh infinity in
+    let neg_inf = const_full dt sh neg_infinity in
+    let toward = bind1 T.Select_n [ below; pos_inf; neg_inf ] in
+    let result = bind1 T.Sub [ bind1 T.Nextafter [ a; toward ]; a ] in
+    let sss = smallest_subnormal dt in
+    let filled =
+      bind1 T.Select_n [ below; const_full dt sh sss; const_full dt sh (-.sss) ]
+    in
+    let is_zero = bind1 T.Eq [ result; zeros_like result ] in
+    bind1 T.Select_n [ is_zero; result; filled ]
 
 let is_integer = function
   | D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
@@ -210,7 +229,12 @@ let is_inexact = function
   | _ -> false
 
 let where c a b = bind1 T.Select_n [ c; b; a ]
-let absolute x = if dtype x = D.Bool then x else bind1 T.Abs [ x ]
+
+let absolute x =
+  match dtype x with
+  | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> x
+  | _ -> bind1 T.Abs [ x ]
+
 let abs = absolute
 let acos = arccos
 let acosh = arccosh
@@ -232,15 +256,20 @@ let radians = deg2rad
 let degrees = rad2deg
 let exp2 x = unary_inexact T.Exp2 x
 
-let log2 x =
+let log_over base x =
   let a = p1 (promote_inexact [ x ]) in
-  bind1 T.Div
-    [ bind1 T.Log [ a ]; const_full (dtype a) (shape a) (Float.log 2.0) ]
+  let log_x = bind1 T.Log [ a ] in
+  let log_base part =
+    bind1 T.Div [ part; const_full (dtype part) (shape part) (Float.log base) ]
+  in
+  match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      bind1 T.Complex
+        [ log_base (bind1 T.Real [ log_x ]); log_base (bind1 T.Imag [ log_x ]) ]
+  | _ -> log_base log_x
 
-let log10 x =
-  let a = p1 (promote_inexact [ x ]) in
-  bind1 T.Mul
-    [ bind1 T.Log [ a ]; const_full (dtype a) (shape a) 0.4342944819032518 ]
+let log2 x = log_over 2.0 x
+let log10 x = log_over 10.0 x
 
 let reciprocal x =
   let a = p1 (promote_inexact [ x ]) in
@@ -260,7 +289,10 @@ let less_equal x y = comparison T.Le x y
 
 let right_shift x y =
   let a, b = p2 (promote_numeric [ x; y ]) in
-  bind1 T.Shift_right_arithmetic [ a; b ]
+  match dtype a with
+  | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
+      bind1 T.Shift_right_logical [ a; b ]
+  | _ -> bind1 T.Shift_right_arithmetic [ a; b ]
 
 let bitwise_right_shift = right_shift
 
@@ -280,7 +312,15 @@ let pow_int_int x1 x2 =
   in
   loop 6 acc0 x1 x2
 
-let power x1 x2 =
+let concrete_integer_exponent x2 =
+  match x2 with
+  | T.Concrete nd
+    when Ndarray.shape nd = [||]
+         && (is_integer (Ndarray.dtype nd) || Ndarray.dtype nd = D.Bool) ->
+      Some (Int64.to_int (Ndarray.get_i64 nd [||]))
+  | _ -> None
+
+let power_general x1 x2 =
   let sh = broadcast_shapes (shape x1) (shape x2) in
   let x1 = broadcast_to x1 sh and x2 = broadcast_to x2 sh in
   let d1 = dtype x1 and d2 = dtype x2 in
@@ -288,6 +328,11 @@ let power x1 x2 =
   if is_integer (dtype a) || dtype a = D.Bool then pow_int_int a b
   else if is_inexact d1 && is_integer d2 then bind1 T.Pow [ x1; x2 ]
   else bind1 T.Pow [ a; b ]
+
+let power x1 x2 =
+  match concrete_integer_exponent x2 with
+  | Some y -> bind1 (T.Integer_pow y) [ p1 (promote_numeric [ x1 ]) ]
+  | None -> power_general x1 x2
 
 let pow = power
 
@@ -308,10 +353,15 @@ let float_divmod x1 x2 =
   let div2 = where ind (bind1 T.Sub [ div; one ]) div in
   (bind1 T.Round [ div2 ], m2)
 
+let is_unsigned = function
+  | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> true
+  | _ -> false
+
 let floor_divide x1 x2 =
   let a, b = p2 (promote_numeric [ x1; x2 ]) in
   let dt = dtype a and sh = shape a in
-  if is_integer dt then begin
+  if is_unsigned dt then bind1 T.Div [ a; b ]
+  else if is_integer dt then begin
     let q = bind1 T.Div [ a; b ] in
     let sel =
       bind1 T.And
@@ -380,7 +430,12 @@ let signbit x =
   let sh = shape a in
   match dtype a with
   | D.I32 | D.I64 | D.I8 | D.I16 -> bind1 T.Lt [ a; zeros_like a ]
-  | D.F16 | D.Bf16 -> bind1 T.Lt [ a; zeros_like a ]
+  | D.F16 ->
+      let i = bind1 (T.Bitcast_convert_type D.I16) [ a ] in
+      bind1 T.Lt [ i; zeros_like i ]
+  | D.Bf16 ->
+      let i = bind1 (T.Bitcast_convert_type D.I16) [ a ] in
+      bind1 T.Lt [ i; zeros_like i ]
   | D.Bool | D.Uint32 | D.Uint8 | D.Uint16 | D.Uint64 ->
       const_full D.Bool sh 0.0
   | D.Complex64 | D.Complex128 ->
@@ -400,26 +455,41 @@ let copysign x1 x2 =
 
 let isfinite x =
   match dtype x with
-  | D.F32 | D.F64 -> bind1 T.Is_finite [ x ]
+  | D.F16 | D.Bf16 | D.F32 | D.F64 -> bind1 T.Is_finite [ x ]
+  | D.Complex64 | D.Complex128 ->
+      bind1 T.And
+        [
+          bind1 T.Is_finite [ bind1 T.Real [ x ] ];
+          bind1 T.Is_finite [ bind1 T.Imag [ x ] ];
+        ]
   | _ -> const_full D.Bool (shape x) 1.0
 
 let isinf x =
+  let of_real v =
+    bind1 T.Eq [ bind1 T.Abs [ v ]; const_full (dtype v) (shape v) infinity ]
+  in
   match dtype x with
-  | D.F32 | D.F64 ->
-      bind1 T.Eq [ bind1 T.Abs [ x ]; const_full (dtype x) (shape x) infinity ]
+  | D.F16 | D.Bf16 | D.F32 | D.F64 -> of_real x
+  | D.Complex64 | D.Complex128 ->
+      bind1 T.Or [ of_real (bind1 T.Real [ x ]); of_real (bind1 T.Imag [ x ]) ]
   | _ -> const_full D.Bool (shape x) 0.0
 
 let isnan x = bind1 T.Ne [ x; x ]
 
 let isposinf x =
   match dtype x with
-  | D.F32 | D.F64 -> bind1 T.Eq [ x; const_full (dtype x) (shape x) infinity ]
+  | D.F16 | D.Bf16 | D.F32 | D.F64 ->
+      bind1 T.Eq [ x; const_full (dtype x) (shape x) infinity ]
+  | D.Complex64 | D.Complex128 ->
+      invalid_arg "isposinf/isneginf are not well defined for complex types"
   | _ -> const_full D.Bool (shape x) 0.0
 
 let isneginf x =
   match dtype x with
-  | D.F32 | D.F64 ->
+  | D.F16 | D.Bf16 | D.F32 | D.F64 ->
       bind1 T.Eq [ x; const_full (dtype x) (shape x) neg_infinity ]
+  | D.Complex64 | D.Complex128 ->
+      invalid_arg "isposinf/isneginf are not well defined for complex types"
   | _ -> const_full D.Bool (shape x) 0.0
 
 let heaviside x1 x2 =
@@ -432,6 +502,12 @@ let heaviside x1 x2 =
 
 let hypot x1 x2 =
   let a0, b0 = p2 (promote_inexact [ x1; x2 ]) in
+  (match dtype a0 with
+  | D.Complex64 | D.Complex128 ->
+      invalid_arg
+        "jnp.hypot is not well defined for complex-valued inputs. Please \
+         convert to real values first, such as by using abs(x)"
+  | _ -> ());
   let dt = dtype a0 and sh = shape a0 in
   let a = bind1 T.Abs [ a0 ] and b = bind1 T.Abs [ b0 ] in
   let idx_inf = bind1 T.Or [ isposinf a; isposinf b ] in
@@ -456,43 +532,89 @@ let sinc x =
   where eq_zero (const_full dt sh 1.0)
     (bind1 T.Div [ bind1 T.Sin [ safe ]; safe ])
 
+let wrap_between x half =
+  let sh = shape x in
+  let two_half = const_full (dtype x) sh (2.0 *. half) in
+  let half_v = const_full (dtype x) sh half in
+  let rem = bind1 T.Rem [ bind1 T.Add [ x; half_v ]; two_half ] in
+  let zero = const_full (dtype x) sh 0.0 in
+  let rem =
+    where (bind1 T.Lt [ rem; zero ]) (bind1 T.Add [ rem; two_half ]) rem
+  in
+  bind1 T.Sub [ rem; half_v ]
+
+let is_complex v =
+  match dtype v with D.Complex64 | D.Complex128 -> true | _ -> false
+
 let logaddexp x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in
   let amax = bind1 T.Max [ a; b ] in
-  let delta = bind1 T.Sub [ a; b ] in
-  let normal =
-    bind1 T.Add
-      [
-        amax;
-        bind1 T.Log1p [ bind1 T.Exp [ bind1 T.Neg [ bind1 T.Abs [ delta ] ] ] ];
-      ]
-  in
-  where (bind1 T.Ne [ delta; delta ]) (bind1 T.Add [ a; b ]) normal
+  if is_complex a then begin
+    let two = const_full (dtype a) (shape a) 2.0 in
+    let delta =
+      bind1 T.Sub [ bind1 T.Add [ a; b ]; bind1 T.Mul [ amax; two ] ]
+    in
+    let out = bind1 T.Add [ amax; bind1 T.Log1p [ bind1 T.Exp [ delta ] ] ] in
+    bind1 T.Complex
+      [ bind1 T.Real [ out ]; wrap_between (bind1 T.Imag [ out ]) Float.pi ]
+  end
+  else
+    let delta = bind1 T.Sub [ a; b ] in
+    let normal =
+      bind1 T.Add
+        [
+          amax;
+          bind1 T.Log1p
+            [ bind1 T.Exp [ bind1 T.Neg [ bind1 T.Abs [ delta ] ] ] ];
+        ]
+    in
+    where (bind1 T.Ne [ delta; delta ]) (bind1 T.Add [ a; b ]) normal
 
 let logaddexp2 x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in
   let dt = dtype a and sh = shape a in
   let amax = bind1 T.Max [ a; b ] in
   let invln2 = const_full dt sh (1.0 /. Float.log 2.0) in
-  let delta = bind1 T.Sub [ a; b ] in
-  let normal =
-    bind1 T.Add
+  if is_complex a then begin
+    let two = const_full dt sh 2.0 in
+    let delta =
+      bind1 T.Sub [ bind1 T.Add [ a; b ]; bind1 T.Mul [ amax; two ] ]
+    in
+    let out =
+      bind1 T.Add
+        [
+          amax; bind1 T.Mul [ invln2; bind1 T.Log1p [ bind1 T.Exp2 [ delta ] ] ];
+        ]
+    in
+    bind1 T.Complex
       [
-        amax;
-        bind1 T.Mul
-          [
-            invln2;
-            bind1 T.Log1p
-              [ bind1 T.Exp2 [ bind1 T.Neg [ bind1 T.Abs [ delta ] ] ] ];
-          ];
+        bind1 T.Real [ out ];
+        wrap_between (bind1 T.Imag [ out ]) (Float.pi /. Float.log 2.0);
       ]
-  in
-  where (bind1 T.Ne [ delta; delta ]) (bind1 T.Add [ a; b ]) normal
+  end
+  else
+    let delta = bind1 T.Sub [ a; b ] in
+    let normal =
+      bind1 T.Add
+        [
+          amax;
+          bind1 T.Mul
+            [
+              invln2;
+              bind1 T.Log1p
+                [ bind1 T.Exp2 [ bind1 T.Neg [ bind1 T.Abs [ delta ] ] ] ];
+            ];
+        ]
+    in
+    where (bind1 T.Ne [ delta; delta ]) (bind1 T.Add [ a; b ]) normal
 
 let rint x =
   match dtype x with
-  | D.I32 | D.I64 | D.Bool -> convert x (Dtypes.default_float_dtype ())
-  | _ -> bind1 T.Round [ x ]
+  | D.F16 | D.Bf16 | D.F32 | D.F64 -> bind1 T.Round_nearest_even [ x ]
+  | D.Complex64 | D.Complex128 ->
+      let part p = bind1 T.Round_nearest_even [ bind1 p [ x ] ] in
+      bind1 T.Complex [ part T.Real; part T.Imag ]
+  | _ -> convert x (Dtypes.default_float_dtype ())
 
 let is_complex_dtype = function
   | D.Complex64 | D.Complex128 -> true

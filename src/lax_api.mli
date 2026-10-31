@@ -50,7 +50,10 @@ val pow : value -> value -> value
 val real : value -> value
 val reciprocal : value -> value
 val rem : value -> value -> value
-val round : value -> value
+
+type rounding_method = Away_from_zero | To_nearest_even
+
+val round : ?rounding_method:rounding_method -> value -> value
 val rsqrt : value -> value
 val shift_left : value -> value -> value
 val shift_right_arithmetic : value -> value -> value

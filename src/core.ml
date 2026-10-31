@@ -150,7 +150,117 @@ let custom_rule id =
 let with_eval_dynamic thunk = new_dynamic eval_trace thunk
 let named_axis_trace : (string -> trace option) ref = ref (fun _ -> None)
 
+let rejected_dtype name dt classes =
+  raise
+    (Errors.jax_type_error
+       (Printf.sprintf "%s does not accept dtype %s. Accepted dtypes are %s."
+          name (Dtype.short_name dt) classes))
+
+let is_float_dtype = function
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> true
+  | _ -> false
+
+let is_complex_dtype = function
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let check_operands prim args =
+  let check name accepted classes =
+    match args with
+    | [] -> ()
+    | first :: _ ->
+        let dt =
+          match first with
+          | Concrete a -> Ndarray.dtype a
+          | Tracer t -> t.aval.dtype
+          | Device b -> Pjrt.Buffer.element_type b
+        in
+        if not (accepted dt) then rejected_dtype name dt classes
+  in
+  let floating = "subtypes of floating" in
+  let inexact = "subtypes of floating, complexfloating" in
+  let numeric = "subtypes of floating, complexfloating, integer" in
+  let real = "subtypes of floating, integer, bool" in
+  let real_numeric = "subtypes of floating, integer" in
+  let is_inexact d = is_float_dtype d || is_complex_dtype d in
+  let not_bool d = d <> Dtype.Bool in
+  let not_complex d = not (is_complex_dtype d) in
+  match prim with
+  | Lgamma -> check "lgamma" is_float_dtype floating
+  | Digamma -> check "digamma" is_float_dtype floating
+  | Erf -> check "erf" is_float_dtype floating
+  | Erfc -> check "erfc" is_float_dtype floating
+  | Erf_inv -> check "erf_inv" is_float_dtype floating
+  | Bessel_i0e -> check "bessel_i0e" is_float_dtype floating
+  | Bessel_i1e -> check "bessel_i1e" is_float_dtype floating
+  | Igamma -> check "igamma" is_float_dtype floating
+  | Igammac -> check "igammac" is_float_dtype floating
+  | Zeta -> check "zeta" is_float_dtype floating
+  | Polygamma -> check "polygamma" is_float_dtype floating
+  | Cbrt -> check "cbrt" is_float_dtype floating
+  | Floor -> check "floor" is_float_dtype floating
+  | Ceil -> check "ceil" is_float_dtype floating
+  | Is_finite -> check "is_finite" is_float_dtype floating
+  | Nextafter -> check "nextafter" is_float_dtype floating
+  | Exp -> check "exp" is_inexact inexact
+  | Log -> check "log" is_inexact inexact
+  | Sin -> check "sin" is_inexact inexact
+  | Cos -> check "cos" is_inexact inexact
+  | Tan -> check "tan" is_inexact inexact
+  | Acos -> check "acos" is_inexact inexact
+  | Asin -> check "asin" is_inexact inexact
+  | Atan -> check "atan" is_inexact inexact
+  | Sinh -> check "sinh" is_inexact inexact
+  | Cosh -> check "cosh" is_inexact inexact
+  | Tanh -> check "tanh" is_inexact inexact
+  | Asinh -> check "asinh" is_inexact inexact
+  | Acosh -> check "acosh" is_inexact inexact
+  | Atanh -> check "atanh" is_inexact inexact
+  | Sqrt -> check "sqrt" is_inexact inexact
+  | Rsqrt -> check "rsqrt" is_inexact inexact
+  | Logistic -> check "logistic" is_inexact inexact
+  | Expm1 -> check "expm1" is_inexact inexact
+  | Log1p -> check "log1p" is_inexact inexact
+  | Exp2 -> check "exp2" is_inexact inexact
+  | Pow -> check "pow" is_inexact inexact
+  | Neg -> check "neg" not_bool numeric
+  | Sign -> check "sign" not_bool numeric
+  | Abs ->
+      check "abs"
+        (function
+          | Dtype.Bool | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32
+          | Dtype.Uint64 ->
+              false
+          | _ -> true)
+        "subtypes of signedinteger, complexfloating, floating"
+  | Square -> check "square" not_bool numeric
+  | Sub -> check "sub" not_bool numeric
+  | Add -> check "add" not_bool numeric
+  | Mul -> check "mul" not_bool numeric
+  | Div -> check "div" not_bool numeric
+  | Atan2 -> check "atan2" is_inexact inexact
+  | Integer_pow y ->
+      check "integer_pow"
+        (fun d -> not_bool d && (y >= 0 || is_inexact d))
+        (if y >= 0 then numeric else inexact)
+  | Real -> check "real" is_complex_dtype "subtypes of complexfloating"
+  | Imag -> check "imag" is_complex_dtype "subtypes of complexfloating"
+  | Conj ->
+      check "conj"
+        (function
+          | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> true
+          | _ -> false)
+        "subtypes of complexfloating, float32, float64"
+  | Round | Round_nearest_even -> check "round" is_float_dtype floating
+  | Rem -> check "rem" (fun d -> not_bool d && not_complex d) real_numeric
+  | Lt -> check "lt" not_complex real
+  | Gt -> check "gt" not_complex real
+  | Le -> check "le" not_complex real
+  | Ge -> check "ge" not_complex real
+  | _ -> ()
+
 let bind prim args =
+  check_operands prim args;
   let top = find_top_trace args in
   let top =
     match prim with
@@ -186,6 +296,8 @@ let as_concrete = function
   | Tracer _ -> failwith "eval: expected a concrete value"
 
 let eval_process_primitive _trace prim args =
+  if Config.value Config.no_execution then
+    failwith "JAX tried to execute a primitive, but no_execution is set";
   let inputs = List.map as_concrete args in
   let results = rules.impl prim inputs in
   List.map

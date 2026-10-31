@@ -52,6 +52,7 @@ val tridiagonal_solve : value -> value -> value -> value -> value
 val eig :
   ?compute_left_eigenvectors:bool ->
   ?compute_right_eigenvectors:bool ->
+  ?enable_eigvec_derivs:bool ->
   value ->
   value list
 

@@ -84,9 +84,16 @@ let nextafter = lift2 Nextafter
 let population_count x = b1 Population_count [ x ]
 let pow = lift2 Pow
 let real x = b1 Real [ x ]
-let reciprocal x = b1 Div [ filled (dtype_of x) (shape x) 1.0; x ]
+let reciprocal x = b1 (Integer_pow (-1)) [ x ]
 let rem = lift2 Rem
-let round x = b1 Round [ x ]
+
+type rounding_method = Away_from_zero | To_nearest_even
+
+let round ?(rounding_method = Away_from_zero) x =
+  match rounding_method with
+  | Away_from_zero -> b1 Round [ x ]
+  | To_nearest_even -> b1 Round_nearest_even [ x ]
+
 let rsqrt x = b1 Rsqrt [ x ]
 let shift_left = lift2 Shift_left
 let shift_right_arithmetic = lift2 Shift_right_arithmetic

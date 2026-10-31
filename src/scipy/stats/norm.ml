@@ -2,6 +2,7 @@ module DU = Dist_util
 module UF = Numpy.Ufuncs
 module NL = Numpy.Lax_numpy
 module SP = Special
+module T = Types
 open DU
 
 let promote3 x loc scale =
@@ -14,7 +15,11 @@ let defaults loc scale =
 
 let logpdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  let x, loc, scale = promote3 x loc scale in
+  let x, loc, scale =
+    match promote_complex [ x; loc; scale ] with
+    | [ x; loc; scale ] -> (x, loc, scale)
+    | _ -> assert false
+  in
   let scale_sqrd = UF.square scale in
   let log_normalizer =
     UF.log (UF.multiply (sc x (2.0 *. Float.pi)) scale_sqrd)
@@ -38,8 +43,9 @@ let logcdf ?loc ?scale x =
 
 let ppf ?loc ?scale q =
   let loc, scale = defaults loc scale in
-  let q, loc, scale = promote3 q loc scale in
-  NL.astype (UF.add (UF.multiply (SP.ndtri q) scale) loc) (default_float ())
+  let n = SP.ndtri q in
+  let scale = NL.astype scale (dtype n) and loc = NL.astype loc (dtype n) in
+  NL.astype (UF.add (UF.multiply n scale) loc) (default_float ())
 
 let sf ?loc ?scale x =
   let loc, scale = defaults loc scale in
@@ -53,5 +59,9 @@ let logsf ?loc ?scale x =
 
 let isf ?loc ?scale q =
   let loc, scale = defaults loc scale in
-  let q, loc, scale = promote3 q loc scale in
-  ppf ~loc ~scale (UF.subtract (sc q 1.0) q)
+  let one =
+    T.Concrete
+      (Ndarray.of_floats (dtype q) (shape q)
+         (Array.make (Array.fold_left ( * ) 1 (shape q)) 1.0))
+  in
+  ppf ~loc ~scale (Lax_api.sub one q)

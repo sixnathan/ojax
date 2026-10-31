@@ -412,6 +412,17 @@ let solve_general a b =
         ~conjugate_a:false ~unit_diagonal:false lu y
   | _ -> failwith "ad: lu arity"
 
+let balanced_tangent po x y tx ty =
+  let one = ones_like_value po in
+  let zero = sub one one in
+  let two = add one one in
+  let balanced a b =
+    div
+      (b1 Select_n [ b1 Eq [ a; po ]; zero; one ])
+      (b1 Select_n [ b1 Eq [ b; po ]; one; two ])
+  in
+  add (mul tx (balanced x y)) (mul ty (balanced y x))
+
 let eig_vec_jvp w v da =
   let shape = (Core.get_aval v).shape in
   let ndim = Array.length shape in
@@ -440,8 +451,17 @@ let eig_vec_jvp w v da =
   in
   (dw, add u (mul v (broadcast_to_matrix (expand_col c) shape)))
 
-let eig_jvp ~compute_left ~compute_right a t =
-  let outs = Core.bind (Eig { compute_left; compute_right = true }) [ a ] in
+let eig_jvp ~compute_left ~compute_right ~enable_eigvec_derivs a t =
+  if (compute_left || compute_right) && not enable_eigvec_derivs then
+    failwith
+      "Derivatives of non-symmetric eigenvectors are only valid under \
+       assumptions on the input that JAX cannot check. Pass \
+       enable_eigvec_derivs=true to lax.linalg.eig to opt in.";
+  let outs =
+    Core.bind
+      (Eig { compute_left; compute_right = true; enable_eigvec_derivs })
+      [ a ]
+  in
   let w = List.hd outs and vr = List.nth outs (List.length outs - 1) in
   let da = like_dtype vr t in
   if not (compute_left || compute_right) then
@@ -710,12 +730,14 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Max -> (
       match (primals, tangents) with
       | [ x; y ], [ tx; ty ] ->
-          (b1 Max [ x; y ], b1 Select_n [ b1 Gt [ x; y ]; ty; tx ])
+          let po = b1 Max [ x; y ] in
+          (po, balanced_tangent po x y tx ty)
       | _ -> arity ())
   | Min -> (
       match (primals, tangents) with
       | [ x; y ], [ tx; ty ] ->
-          (b1 Min [ x; y ], b1 Select_n [ b1 Lt [ x; y ]; ty; tx ])
+          let po = b1 Min [ x; y ] in
+          (po, balanced_tangent po x y tx ty)
       | _ -> arity ())
   | Pow -> (
       match (primals, tangents) with
@@ -964,6 +986,12 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       match (primals, tangents) with
       | [ x ], [ _ ] ->
           let po = b1 Is_finite [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Round_nearest_even -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 Round_nearest_even [ x ] in
           (po, zeros_like_value po)
       | _ -> arity ())
   | Round -> (
@@ -1435,10 +1463,12 @@ let jvp_process_primitive trace prim args =
           let po, to_ = top_k_jvp ~k ~axis x t in
           List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
       | _ -> arity ())
-  | Eig { compute_left; compute_right } -> (
+  | Eig { compute_left; compute_right; enable_eigvec_derivs } -> (
       match (primals, tangents) with
       | [ a ], [ t ] ->
-          let po, to_ = eig_jvp ~compute_left ~compute_right a t in
+          let po, to_ =
+            eig_jvp ~compute_left ~compute_right ~enable_eigvec_derivs a t
+          in
           List.map2 (fun p d -> Tracer (new_jvp_tracer trace p d)) po to_
       | _ -> arity ())
   | Eigh { lower } -> (
@@ -2536,10 +2566,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Integer_pow _ | Is_finite | Log1p | Logistic | Not
-  | Population_count | Round | Rsqrt | Sinh | Sqrt | Square | Tan | And | Atan2
-  | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter | Or | Rem
-  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Argmax _
-  | Argmin _ | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _
+  | Population_count | Round | Round_nearest_even | Rsqrt | Sinh | Sqrt | Square
+  | Tan | And | Atan2 | Eq_to | Ge | Le | Le_to | Lt_to | Mulhi | Ne | Nextafter
+  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
+  | Argmax _ | Argmin _ | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _
   | Reduce_or _ | Reduce_prod _ | Reduce_xor _ | After_all
   | Bitcast_convert_type _ | Clamp | Composite _ | Create_token | Dce_sink
   | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general

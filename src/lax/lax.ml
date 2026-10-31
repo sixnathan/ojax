@@ -17,13 +17,22 @@ let bool_of b = if b then 1.0 else 0.0
 let exp2_f x = Float.pow 2.0 x
 
 let clz_nbits = function
-  | Dtype.I32 -> 32
-  | Dtype.I64 -> 64
+  | Dtype.I8 | Dtype.Uint8 -> 8
+  | Dtype.I16 | Dtype.Uint16 -> 16
+  | Dtype.I32 | Dtype.Uint32 -> 32
+  | Dtype.I64 | Dtype.Uint64 -> 64
   | _ -> failwith "lax: clz requires an integer operand"
 
+let low_bits nbits m =
+  if nbits >= 64 then m
+  else Int64.logand m (Int64.sub (Int64.shift_left 1L nbits) 1L)
+
+let sign_extended nbits m =
+  let unused = 64 - nbits in
+  Int64.shift_right (Int64.shift_left m unused) unused
+
 let clz_bits nbits x =
-  let m = Int64.of_float x in
-  let m = if nbits = 32 then Int64.logand m 0xFFFFFFFFL else m in
+  let m = low_bits nbits (Int64.of_float x) in
   if Int64.equal m 0L then float_of_int nbits
   else
     let rec loop k =
@@ -35,13 +44,14 @@ let clz_bits nbits x =
     loop (nbits - 1)
 
 let int_nbits = function
-  | Dtype.I32 -> 32
-  | Dtype.I64 -> 64
+  | Dtype.I8 | Dtype.Uint8 -> 8
+  | Dtype.I16 | Dtype.Uint16 -> 16
+  | Dtype.I32 | Dtype.Uint32 -> 32
+  | Dtype.I64 | Dtype.Uint64 -> 64
   | _ -> failwith "lax: integer operand required"
 
 let popcount_bits nbits x =
-  let m = Int64.of_float x in
-  let m = if nbits = 32 then Int64.logand m 0xFFFFFFFFL else m in
+  let m = low_bits nbits (Int64.of_float x) in
   let rec loop k acc =
     if k >= nbits then acc
     else
@@ -77,6 +87,15 @@ let mul_f dt x y =
   match dt with
   | Dtype.Uint32 ->
       uint32_wrap (Int64.mul (Int64.of_float x) (Int64.of_float y))
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.Uint8 | Dtype.Uint16 ->
+      let nbits = int_nbits dt in
+      let low =
+        low_bits nbits (Int64.mul (Int64.of_float x) (Int64.of_float y))
+      in
+      Int64.to_float
+        (match dt with
+        | Dtype.Uint8 | Dtype.Uint16 -> low
+        | _ -> sign_extended nbits low)
   | _ -> x *. y
 
 let and_f dt x y =
@@ -146,31 +165,38 @@ let rem_f dt x y =
       else Int64.to_float (Int64.rem (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: rem requires an integer or float operand"
 
-let shift_left_f dt x y =
-  let s = int_of_float y in
-  match dt with
-  | Dtype.Uint32 ->
-      Int64.to_float
-        (Int64.logand (Int64.shift_left (Int64.of_float x) s) uint32_mask_i64)
-  | _ -> Int64.to_float (Int64.shift_left (Int64.of_float x) s)
+let shift_amount nbits y =
+  let s = Int64.of_float y in
+  if Int64.compare s 0L < 0 || Int64.compare s (Int64.of_int nbits) >= 0 then
+    None
+  else Some (Int64.to_int s)
 
-let shift_right_arithmetic_f x y =
-  Int64.to_float (Int64.shift_right (Int64.of_float x) (int_of_float y))
+let shift_result dt nbits m =
+  let low = low_bits nbits m in
+  Int64.to_float
+    (match dt with
+    | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 -> sign_extended nbits low
+    | _ -> low)
+
+let shift_left_f dt x y =
+  let nbits = int_nbits dt in
+  match shift_amount nbits y with
+  | None -> 0.0
+  | Some s -> shift_result dt nbits (Int64.shift_left (Int64.of_float x) s)
+
+let shift_right_arithmetic_f dt x y =
+  let nbits = int_nbits dt in
+  let signed = sign_extended nbits (low_bits nbits (Int64.of_float x)) in
+  let s = match shift_amount nbits y with None -> nbits - 1 | Some s -> s in
+  shift_result dt nbits (Int64.shift_right signed s)
 
 let shift_right_logical_f dt x y =
-  let s = int_of_float y in
-  match dt with
-  | Dtype.I32 | Dtype.Uint32 ->
-      let u = Int64.logand (Int64.of_float x) 0xFFFFFFFFL in
-      Int64.to_float (Int64.shift_right_logical u s)
-  | Dtype.I64 -> Int64.to_float (Int64.shift_right_logical (Int64.of_float x) s)
-  | Dtype.I8 | Dtype.Uint8 ->
-      Int64.to_float
-        (Int64.shift_right_logical (Int64.logand (Int64.of_float x) 0xFFL) s)
-  | Dtype.I16 | Dtype.Uint16 ->
-      Int64.to_float
-        (Int64.shift_right_logical (Int64.logand (Int64.of_float x) 0xFFFFL) s)
-  | _ -> failwith "lax: shift_right_logical requires an integer operand"
+  let nbits = int_nbits dt in
+  match shift_amount nbits y with
+  | None -> 0.0
+  | Some s ->
+      shift_result dt nbits
+        (Int64.shift_right_logical (low_bits nbits (Int64.of_float x)) s)
 
 let f64_nextafter x y =
   if x <> x || y <> y then Float.nan
@@ -198,10 +224,32 @@ let f32_nextafter x y =
   else if y > x then f32_next_up x
   else f32_next_down x
 
+let narrow_nextafter ~precision ~min_exp x y =
+  if x <> x || y <> y then Float.nan
+  else if x = y then y
+  else
+    let smallest = Float.ldexp 1.0 (min_exp - precision + 1) in
+    if x = 0.0 then Float.copy_sign smallest y
+    else if Float.abs x = Float.infinity then
+      Float.copy_sign (Float.ldexp 1.0 (-min_exp + 2) -. 0.0) x
+      *. (1.0 -. Float.ldexp 1.0 (-precision))
+    else
+      let _, e = Float.frexp x in
+      let exponent = e - 1 in
+      let ulp = Float.ldexp 1.0 (Stdlib.max exponent min_exp - precision + 1) in
+      let away = y > x = (x > 0.0) in
+      let at_power =
+        Float.abs x = Float.ldexp 1.0 exponent && exponent > min_exp
+      in
+      let step = if (not away) && at_power then ulp /. 2.0 else ulp in
+      if y > x then x +. step else x -. step
+
 let nextafter_f dt x y =
   match dt with
   | Dtype.F32 -> f32_nextafter x y
   | Dtype.F64 -> f64_nextafter x y
+  | Dtype.F16 -> narrow_nextafter ~precision:11 ~min_exp:(-14) x y
+  | Dtype.Bf16 -> narrow_nextafter ~precision:8 ~min_exp:(-126) x y
   | _ -> failwith "lax: nextafter requires a float operand"
 
 let integer_pow_f y x = Float.pow x (float_of_int y)
@@ -749,6 +797,24 @@ let bitcast_impl new_dt operand =
              Int64.to_float
                (Int64.logand (Int64.of_int32 (as_narrow i)) 0xFFFFFFFFL)))
   | a, b when a = b -> operand
+  | ( (Dtype.F16 | Dtype.Bf16 | Dtype.I16 | Dtype.Uint16),
+      (Dtype.F16 | Dtype.Bf16 | Dtype.I16 | Dtype.Uint16) ) ->
+      let bits i =
+        let v = value i in
+        match Ndarray.dtype operand with
+        | Dtype.F16 -> Ndarray.bits_of_half v
+        | Dtype.Bf16 -> Ndarray.bits_of_bfloat v
+        | _ -> int_of_float v land 0xFFFF
+      in
+      Ndarray.of_floats new_dt shape
+        (Array.init n (fun i ->
+             let b = bits i in
+             match new_dt with
+             | Dtype.F16 -> Ndarray.half_of_bits b
+             | Dtype.Bf16 -> Ndarray.bfloat_of_bits b
+             | Dtype.I16 ->
+                 float_of_int (if b >= 0x8000 then b - 0x10000 else b)
+             | _ -> float_of_int b))
   | _ ->
       invalid_arg
         "lax.bitcast_convert_type: operand and target must have the same width"
@@ -983,6 +1049,34 @@ let is_float_source = function
   | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> true
   | _ -> false
 
+let to_wide_int dt v =
+  if Float.is_nan v then 0L
+  else
+    match dt with
+    | Dtype.I64 ->
+        if v >= 9223372036854775808.0 then Int64.max_int
+        else if v <= -9223372036854775808.0 then Int64.min_int
+        else Int64.of_float v
+    | _ ->
+        if v <= 0.0 then 0L
+        else if v >= 18446744073709551616.0 then -1L
+        else if v >= 9223372036854775808.0 then
+          Int64.of_float (v -. 18446744073709551616.0)
+        else Int64.of_float v
+
+let is_int_dtype = function
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 | Dtype.Uint64 ->
+      true
+  | _ -> false
+
+let wrap_int_to dt m =
+  let nbits = int_nbits dt in
+  let low = low_bits nbits m in
+  match dt with
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 -> sign_extended nbits low
+  | _ -> low
+
 let saturate_to dt v =
   let clamp lo hi =
     if Float.is_nan v then 0.0 else Float.min hi (Float.max lo (Float.trunc v))
@@ -999,6 +1093,43 @@ let saturate_to dt v =
   | Dtype.Bool | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64
   | Dtype.Complex64 | Dtype.Complex128 ->
       v
+
+let convert_impl dt a =
+  let src = Ndarray.dtype a in
+  let sh = Ndarray.shape a in
+  let n = Array.fold_left ( * ) 1 sh in
+  let of_ints values =
+    match dt with
+    | Dtype.I64 | Dtype.Uint64 -> Ndarray.of_int64s dt sh values
+    | _ -> Ndarray.of_floats dt sh (Array.map Int64.to_float values)
+  in
+  let reals () =
+    let out = Array.make n 0.0 and i = ref 0 in
+    ignore
+      (Ndarray.fold
+         (fun () v ->
+           out.(!i) <- v;
+           incr i)
+         () a);
+    out
+  in
+  if is_complex_dtype src && is_complex_dtype dt then map_c dt (fun z -> z) a
+  else if is_complex_dtype src && dt = Dtype.Bool then
+    let parts = to_carray a in
+    Ndarray.of_floats dt sh
+      (Array.map
+         (fun (z : Complex.t) ->
+           if z.re <> 0.0 || z.im <> 0.0 then 1.0 else 0.0)
+         parts)
+  else if is_int_dtype src && is_int_dtype dt then
+    of_ints (Array.map (wrap_int_to dt) (Ndarray.to_int64s a))
+  else if
+    (dt = Dtype.I64 || dt = Dtype.Uint64)
+    && (is_float_source src || is_complex_dtype src)
+  then of_ints (Array.map (to_wide_int dt) (reals ()))
+  else if is_float_source src || is_complex_dtype src then
+    Ndarray.map dt (saturate_to dt) a
+  else Ndarray.map dt (fun x -> x) a
 
 let rec impl_base prim inputs =
   match prim with
@@ -1082,15 +1213,7 @@ let rec impl_base prim inputs =
   | Gt ->
       bin (fun a b -> Ndarray.map2 Bool (fun x y -> bool_of (x > y)) a b) inputs
   | Select_n -> select_n_impl inputs
-  | Convert_element_type dt ->
-      un
-        (fun a ->
-          let src = Ndarray.dtype a in
-          if is_complex_dtype src && is_complex_dtype dt then
-            map_c dt (fun z -> z) a
-          else if is_float_source src then Ndarray.map dt (saturate_to dt) a
-          else Ndarray.map dt (fun x -> x) a)
-        inputs
+  | Convert_element_type dt -> un (convert_impl dt) inputs
   | Broadcast_in_dim { shape; dims } ->
       un (broadcast_in_dim_impl shape dims) inputs
   | Reshape ns -> un (reshape_impl ns) inputs
@@ -1144,7 +1267,30 @@ let rec impl_base prim inputs =
           else Ndarray.map (complex_basetype dt) (fun _ -> 0.0) a)
         inputs
   | Integer_pow y ->
-      un (fun a -> Ndarray.map (Ndarray.dtype a) (integer_pow_f y) a) inputs
+      un
+        (fun a ->
+          let dt = Ndarray.dtype a in
+          if is_int_dtype dt then
+            let rec power acc base e =
+              if e = 0 then acc
+              else
+                power
+                  (if e land 1 = 1 then Int64.mul acc base else acc)
+                  (Int64.mul base base) (e lsr 1)
+            in
+            let values =
+              Array.map
+                (fun m -> wrap_int_to dt (power 1L m y))
+                (Ndarray.to_int64s a)
+            in
+            match dt with
+            | Dtype.I64 | Dtype.Uint64 ->
+                Ndarray.of_int64s dt (Ndarray.shape a) values
+            | _ ->
+                Ndarray.of_floats dt (Ndarray.shape a)
+                  (Array.map Int64.to_float values)
+          else Ndarray.map dt (integer_pow_f y) a)
+        inputs
   | Is_finite ->
       un
         (fun a -> Ndarray.map Bool (fun x -> bool_of (Float.is_finite x)) a)
@@ -1171,6 +1317,17 @@ let rec impl_base prim inputs =
           else a)
         inputs
   | Round -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.round a) inputs
+  | Round_nearest_even ->
+      un
+        (fun a ->
+          Ndarray.map (Ndarray.dtype a)
+            (fun v ->
+              let r = Float.round v in
+              if Float.abs (v -. Float.trunc v) = 0.5 then
+                Float.copy_sign (2.0 *. Float.round (v /. 2.0)) v
+              else Float.copy_sign r v)
+            a)
+        inputs
   | Rsqrt -> un (fun a -> Ndarray.map (Ndarray.dtype a) rsqrt_f a) inputs
   | Sinh -> un (fun a -> Ndarray.map (Ndarray.dtype a) Float.sinh a) inputs
   | Sqrt ->
@@ -1241,7 +1398,9 @@ let rec impl_base prim inputs =
         inputs
   | Shift_right_arithmetic ->
       bin
-        (fun a b -> Ndarray.map2 (Ndarray.dtype a) shift_right_arithmetic_f a b)
+        (fun a b ->
+          let dt = Ndarray.dtype a in
+          Ndarray.map2 dt (shift_right_arithmetic_f dt) a b)
         inputs
   | Shift_right_logical ->
       bin
@@ -1513,7 +1672,7 @@ let rec impl_base prim inputs =
       Linalg.triangular_solve_impl left_side lower transpose_a conjugate_a
         unit_diagonal inputs
   | Tridiagonal_solve -> Linalg.tridiagonal_solve_impl inputs
-  | Eig { compute_left; compute_right } ->
+  | Eig { compute_left; compute_right; _ } ->
       Linalg.eig_impl compute_left compute_right inputs
   | Eigh { lower } -> Linalg.eigh_impl lower inputs
   | Hessenberg -> Linalg.hessenberg_impl inputs
@@ -1702,10 +1861,8 @@ let wide_int_elementwise prim inputs =
             else Int64.shift_right_logical x (shift_amount s))
     | Shift_right_arithmetic ->
         binary (fun x s ->
-            if unsigned then
-              if Int64.unsigned_compare s 64L >= 0 then 0L
-              else Int64.shift_right_logical x (shift_amount s)
-            else Int64.shift_right x (Stdlib.min (Int64.to_int s) 63))
+            if Int64.unsigned_compare s 64L >= 0 then Int64.shift_right x 63
+            else Int64.shift_right x (shift_amount s))
     | Eq -> compare_with (fun c -> c = 0)
     | Ne -> compare_with (fun c -> c <> 0)
     | Lt -> compare_with (fun c -> c < 0)
@@ -1747,9 +1904,45 @@ let acts_on_parts = function
   | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _ | Transpose _ | Unstack _
   | Slice _ | Dynamic_slice _ | Dynamic_update_slice | Gather _ | Scatter _
   | Reduce_sum _ | Cumsum _ | Neg | Add | Sub | Scatter_add _ | Scatter_sub _
-  | Reduce_window_sum _ | Round ->
+  | Reduce_window_sum _ | Round | Round_nearest_even ->
       true
   | _ -> false
+
+let complex_divide (lhs : Complex.t) (rhs : Complex.t) =
+  let inf = Float.infinity in
+  let a = lhs.re and b = lhs.im and c = rhs.re and d = rhs.im in
+  let re, im =
+    if Float.abs c < Float.abs d then
+      let ratio = c /. d in
+      let denom = d +. (c *. ratio) in
+      (((a *. ratio) +. b) /. denom, ((b *. ratio) -. a) /. denom)
+    else
+      let ratio = d /. c in
+      let denom = c +. (d *. ratio) in
+      ((a +. (b *. ratio)) /. denom, (b -. (a *. ratio)) /. denom)
+  in
+  if not (Float.is_nan re && Float.is_nan im) then { Complex.re; im }
+  else
+    let finite = Float.is_finite in
+    let is_inf v = Float.abs v = inf in
+    let flag v = Float.copy_sign (if is_inf v then 1.0 else 0.0) v in
+    if ((not (Float.is_nan a)) || not (Float.is_nan b)) && c = 0.0 && d = 0.0
+    then
+      let scale = Float.copy_sign inf c in
+      { Complex.re = scale *. a; im = scale *. b }
+    else if (is_inf a || is_inf b) && finite c && finite d then
+      let fa = flag a and fb = flag b in
+      {
+        Complex.re = inf *. ((fa *. c) +. (fb *. d));
+        im = inf *. ((fb *. c) -. (fa *. d));
+      }
+    else if finite a && finite b && (is_inf c || is_inf d) then
+      let fc = flag c and fd = flag d in
+      {
+        Complex.re = 0.0 *. ((fc *. a) +. (fd *. b));
+        im = 0.0 *. ((fc *. b) -. (fd *. a));
+      }
+    else { Complex.re; im }
 
 let complex_order (a : Complex.t) (b : Complex.t) =
   match Float.compare a.re b.re with 0 -> Float.compare a.im b.im | c -> c
@@ -1882,10 +2075,13 @@ let complex_elementwise prim inputs =
   let half_pi = cz (Float.pi /. 2.0) 0.0 in
   let half = cz 0.5 0.0 in
   let cacos z = Complex.sub half_pi (casin z) in
-  let catan z =
-    Complex.mul (cz 0.0 0.5)
-      (Complex.log
-         (Complex.div (Complex.add Complex.i z) (Complex.sub Complex.i z)))
+  let catan (z : Complex.t) =
+    if z.re = 0.0 && Float.abs z.im = 1.0 then
+      cz z.re (Float.copy_sign Float.infinity z.im)
+    else
+      Complex.mul (cz 0.0 0.5)
+        (Complex.log
+           (Complex.div (Complex.add Complex.i z) (Complex.sub Complex.i z)))
   in
   let casinh z =
     Complex.log
@@ -1898,18 +2094,42 @@ let complex_elementwise prim inputs =
             (Complex.sqrt (Complex.add z one))
             (Complex.sqrt (Complex.sub z one))))
   in
-  let catanh z =
-    Complex.mul half
-      (Complex.log (Complex.div (Complex.add one z) (Complex.sub one z)))
+  let catanh (z : Complex.t) =
+    if z.im = 0.0 && Float.abs z.re = 1.0 then
+      cz (Float.copy_sign Float.infinity z.re) z.im
+    else
+      Complex.mul half
+        (Complex.log (Complex.div (Complex.add one z) (Complex.sub one z)))
   in
-  let pick keep a b = if keep (complex_order a b) then a else b in
+  let pick keep (a : Complex.t) (b : Complex.t) =
+    let keeps =
+      if a.re <> b.re then
+        a.re = a.re && b.re = b.re && keep (compare a.re b.re)
+      else keep (compare a.im b.im) && a.im = a.im && b.im = b.im
+    in
+    if keeps then a else b
+  in
   let reduce_with combine identity axes = function
     | [ a ] -> Some [ complex_reduce combine identity axes a ]
     | _ -> None
   in
   match prim with
   | Mul -> chain2 Complex.mul inputs
-  | Div -> chain2 Complex.div inputs
+  | Div -> chain2 complex_divide inputs
+  | Atan2 ->
+      let i = { Complex.re = 0.0; im = 1.0 } in
+      chain2
+        (fun x y ->
+          let numerator = Complex.add y (Complex.mul i x) in
+          let root =
+            Complex.sqrt (Complex.add (Complex.mul y y) (Complex.mul x x))
+          in
+          Complex.mul (Complex.neg i)
+            (Complex.log (complex_divide numerator root)))
+        inputs
+  | Exp2 ->
+      let ln2 = { Complex.re = Float.log 2.0; im = 0.0 } in
+      chain (fun z -> Complex.exp (Complex.mul z ln2)) inputs
   | Logistic ->
       chain
         (fun z ->
@@ -1941,14 +2161,14 @@ let complex_elementwise prim inputs =
   | Tan -> chain (fun z -> Complex.div (csin z) (ccos z)) inputs
   | Expm1 -> chain (fun z -> Complex.sub (Complex.exp z) one) inputs
   | Log1p -> chain (fun z -> Complex.log (Complex.add z one)) inputs
-  | Rsqrt -> chain (fun z -> Complex.div one (Complex.sqrt z)) inputs
+  | Rsqrt -> chain (fun z -> complex_divide one (Complex.sqrt z)) inputs
   | Integer_pow y ->
       chain
         (fun z ->
           let rec go acc i =
             if i = 0 then acc else go (Complex.mul acc z) (i - 1)
           in
-          if y >= 0 then go one y else Complex.div one (go one (-y)))
+          if y >= 0 then go one y else complex_divide one (go one (-y)))
         inputs
   | Sign ->
       chain
@@ -2062,9 +2282,9 @@ let abstract_eval prim avals =
   match prim with
   | Neg | Sin | Cos | Exp | Log | Tanh | Sign | Acos | Acosh | Asin | Asinh
   | Atan | Atanh | Cbrt | Ceil | Clz | Copy | Cosh | Exp2 | Expm1 | Floor
-  | Integer_pow _ | Log1p | Logistic | Not | Population_count | Round | Rsqrt
-  | Sinh | Sqrt | Square | Tan | Bessel_i0e | Bessel_i1e | Digamma | Erf
-  | Erf_inv | Erfc | Lgamma ->
+  | Integer_pow _ | Log1p | Logistic | Not | Population_count | Round
+  | Round_nearest_even | Rsqrt | Sinh | Sqrt | Square | Tan | Bessel_i0e
+  | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Lgamma ->
       un_aval (fun a -> a) avals
   | Abs | Real | Imag ->
       un_aval
@@ -2335,7 +2555,7 @@ let abstract_eval prim avals =
       Linalg.lu_pivots_to_permutation_aval permutation_size avals
   | Triangular_solve _ -> Linalg.triangular_solve_aval avals
   | Tridiagonal_solve -> Linalg.tridiagonal_solve_aval avals
-  | Eig { compute_left; compute_right } ->
+  | Eig { compute_left; compute_right; _ } ->
       Linalg.eig_aval compute_left compute_right avals
   | Eigh _ -> Linalg.eigh_aval avals
   | Hessenberg -> Linalg.hessenberg_aval avals

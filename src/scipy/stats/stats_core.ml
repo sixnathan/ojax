@@ -12,7 +12,7 @@ let invert_permutation i =
   IX.put base i vals
 
 let sem ?(axis = 0) ?(ddof = 1) a =
-  let b = match promote_dtypes [ a ] with [ b ] -> b | _ -> assert false in
+  let b = match promote_complex [ a ] with [ b ] -> b | _ -> assert false in
   let size = (shape b).(axis) in
   let denom = sc b (Float.sqrt (float_of_int size)) in
   UF.divide (RD.std ~axis:[| axis |] ~ddof b) denom

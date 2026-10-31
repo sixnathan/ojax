@@ -39,6 +39,36 @@ let round_significant ~bits ~min_exp ~max_exp v =
 let f16_round v = round_significant ~bits:11 ~min_exp:(-14) ~max_exp:15 v
 let bf16_round v = round_significant ~bits:8 ~min_exp:(-126) ~max_exp:127 v
 
+let half_of_bits bits =
+  let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
+  let exponent = (bits lsr 10) land 0x1F and mantissa = bits land 0x3FF in
+  let magnitude =
+    if exponent = 0x1F then if mantissa = 0 then Float.infinity else Float.nan
+    else if exponent = 0 then Float.ldexp (float_of_int mantissa) (-24)
+    else Float.ldexp (float_of_int (mantissa + 1024)) (exponent - 25)
+  in
+  Float.copy_sign magnitude sign
+
+let bits_of_half v =
+  let sign = if Float.sign_bit v then 0x8000 else 0 in
+  if Float.is_nan v then sign lor 0x7E00
+  else if Float.abs v = Float.infinity then sign lor 0x7C00
+  else if v = 0.0 then sign
+  else
+    let fraction, e = Float.frexp (Float.abs v) in
+    let exponent = e - 1 in
+    if exponent >= -14 then
+      let mantissa = int_of_float (Float.ldexp fraction 11) - 1024 in
+      sign lor ((exponent + 15) lsl 10) lor mantissa
+    else sign lor int_of_float (Float.ldexp (Float.abs v) 24)
+
+let bfloat_of_bits bits =
+  Int32.float_of_bits (Int32.shift_left (Int32.of_int bits) 16)
+
+let bits_of_bfloat v =
+  Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float v) 16)
+  land 0xFFFF
+
 let wrap_int ~bits ~signed v =
   let modulus = 1 lsl bits in
   let raw = int_of_float v land (modulus - 1) in
@@ -99,7 +129,7 @@ let write_float dtype data i v =
         | Dtype.I16 -> Int32.of_int (wrap_int ~bits:16 ~signed:true v)
         | Dtype.Uint8 -> Int32.of_int (wrap_int ~bits:8 ~signed:false v)
         | Dtype.Uint16 -> Int32.of_int (wrap_int ~bits:16 ~signed:false v)
-        | _ -> Int32.of_float v
+        | _ -> Int32.of_int (wrap_int ~bits:32 ~signed:true v)
       in
       Array1.unsafe_set a i stored
   | Int64_buf a ->
@@ -235,6 +265,10 @@ let map_complex dtype f t =
     write_complex data i (f (read_complex t.data i))
   done;
   { dtype; shape = Array.copy t.shape; data }
+
+let to_int64s t =
+  let n = Array.fold_left ( * ) 1 t.shape in
+  Array.init n (fun i -> read_int64 t.dtype t.data i)
 
 let canonicalize dtype t =
   match dtype with

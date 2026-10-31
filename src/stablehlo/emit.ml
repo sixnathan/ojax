@@ -2032,6 +2032,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Not -> emit_stablehlo_unary ctx eqn in_ids "not"
   | Population_count -> emit_stablehlo_unary ctx eqn in_ids "popcnt"
   | Round -> emit_stablehlo_unary ctx eqn in_ids "round_nearest_afz"
+  | Round_nearest_even ->
+      emit_stablehlo_unary ctx eqn in_ids "round_nearest_even"
   | Rsqrt -> emit_stablehlo_unary ctx eqn in_ids "rsqrt"
   | Sign when is_unsigned_dtype (atom_aval (sole eqn.inputs)).dtype ->
       emit_unsigned_sign ctx eqn in_ids

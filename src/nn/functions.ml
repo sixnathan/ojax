@@ -184,10 +184,100 @@ let one_hot ?(axis = -1) ~num_classes x =
   in
   NL.astype (UF.equal lhs rhs) (Dtypes.default_float_dtype ())
 
-let scaled_dot_general ~lhs_contract ~rhs_contract ~lhs_batch ~rhs_batch a b =
-  bind1
-    (T.Dot_general { lhs_contract; rhs_contract; lhs_batch; rhs_batch })
-    [ a; b ]
+type block_scale_dtype = Float4_e2m1fn | Float8_e4m3fn | Float8_e8m0fnu
+
+type block_scale_config = {
+  mode : string;
+  block_size : int;
+  data_type : block_scale_dtype;
+  scale_type : block_scale_dtype;
+  global_scale : Types.value option;
+  infer_only : bool;
+}
+
+let get_scaled_dot_general_config ?global_scale mode =
+  match mode with
+  | "nvfp4" ->
+      let scale =
+        match global_scale with
+        | Some s -> s
+        | None -> const_full D.F32 [| 1 |] 1.0
+      in
+      {
+        mode;
+        block_size = 16;
+        data_type = Float4_e2m1fn;
+        scale_type = Float8_e4m3fn;
+        global_scale = Some scale;
+        infer_only = false;
+      }
+  | "mxfp8" ->
+      {
+        mode;
+        block_size = 32;
+        data_type = Float8_e4m3fn;
+        scale_type = Float8_e8m0fnu;
+        global_scale = None;
+        infer_only = false;
+      }
+  | other -> invalid_arg (Printf.sprintf "Unsupported mode: %s" other)
+
+let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
+    ~rhs_contract ~lhs_batch ~rhs_batch a b =
+  (match configs with
+  | Some (_ : block_scale_config list) ->
+      (match preferred_element_type with
+      | D.F32 | D.Bf16 | D.F16 -> ()
+      | _ ->
+          invalid_arg "Only support preferred_element_type in (f32, bf16, f16)");
+      failwith
+        "MLIR translation rule for primitive 'scaled_matmul' not found for \
+         platform cpu"
+  | None -> ());
+  Lax_api.dot_general ~preferred_element_type a b ~lhs_contract ~rhs_contract
+    ~lhs_batch ~rhs_batch
+
+let scaled_matmul ?(preferred_element_type = D.F32) lhs rhs lhs_scales
+    rhs_scales =
+  let dims v = shape v in
+  if
+    List.exists
+      (fun v -> Array.length (dims v) <> 3)
+      [ lhs; rhs; lhs_scales; rhs_scales ]
+  then
+    invalid_arg "scaled_matmul requires all inputs to be 3-dimensional arrays";
+  let sa = dims lhs and sb = dims rhs in
+  if sa.(2) <> sb.(2) || sa.(0) <> sb.(0) then
+    invalid_arg
+      "scaled_matmul requires inputs a and b to have matching batch (B) and \
+       contract (K) dimensions";
+  let ssa = dims lhs_scales and ssb = dims rhs_scales in
+  if ssa.(2) <> ssb.(2) || ssa.(0) <> ssb.(0) then
+    invalid_arg
+      "scaled_matmul requires scales to have matching batch (B) and contract \
+       (K) dimensions";
+  if ssa.(1) <> sa.(1) || ssb.(1) <> sb.(1) then
+    invalid_arg
+      "scaled_matmul requires scales to match non-contract dimensions of inputs";
+  let k = sa.(2) in
+  if ssa.(2) = 0 || k mod ssa.(2) <> 0 then
+    invalid_arg "scaled_matmul requires K to be divisible by the scale blocks";
+  let block = k / ssa.(2) in
+  let scaled operand scales =
+    let sh = dims scales in
+    let wide =
+      Lax_api.broadcast_in_dim scales
+        [| sh.(0); sh.(1); sh.(2); block |]
+        [| 0; 1; 2 |]
+    in
+    let repeated = Lax_api.reshape wide [| sh.(0); sh.(1); k |] in
+    UF.multiply (NL.astype operand D.F32) (NL.astype repeated D.F32)
+  in
+  let product =
+    Numpy.Einsum.einsum "BMK,BNK->BMN"
+      [ scaled lhs lhs_scales; scaled rhs rhs_scales ]
+  in
+  NL.astype product preferred_element_type
 
 let swish = silu
 let hard_swish = hard_silu

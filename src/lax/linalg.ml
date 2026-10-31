@@ -138,7 +138,8 @@ let z_eigh lower a =
       (Array.init n (fun i -> w.{i}));
   ]
 
-let z_svd full_matrices compute_uv a =
+let z_svd gesvd full_matrices compute_uv a =
+  let driver = if gesvd then Lp.zgesvd else Lp.zgesdd in
   let dt = Ndarray.dtype a in
   let sh = Ndarray.shape a in
   let m = sh.(0) and n = sh.(1) in
@@ -152,7 +153,7 @@ let z_svd full_matrices compute_uv a =
     let vrows = if full_matrices then n else mn in
     let u = Lp.alloc_f64 (2 * m * ucols) in
     let vt = Lp.alloc_f64 (2 * vrows * n) in
-    let _ = Lp.zgesdd ~jobz ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:m ~vt ~ldvt:vrows in
+    let _ = driver ~jobz ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:m ~vt ~ldvt:vrows in
     [
       Ndarray.of_complex dt [| m; ucols |] (zunpack u m ucols);
       real (Array.init mn (fun i -> s.{i}));
@@ -161,7 +162,7 @@ let z_svd full_matrices compute_uv a =
   end
   else begin
     let u = Lp.alloc_f64 2 and vt = Lp.alloc_f64 2 in
-    let _ = Lp.zgesdd ~jobz:'N' ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:1 ~vt ~ldvt:1 in
+    let _ = driver ~jobz:'N' ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:1 ~vt ~ldvt:1 in
     [ real (Array.init mn (fun i -> s.{i})) ]
   end
 
@@ -654,9 +655,10 @@ let schur_impl compute_vectors inputs =
       else [ t ]
   | _ -> failwith "linalg: schur expects one operand"
 
-let svd_impl full_matrices compute_uv inputs =
+let svd_impl ?(gesvd = false) full_matrices compute_uv inputs =
+  let driver = if gesvd then Lp.gesvd else Lp.gesdd in
   match inputs with
-  | [ a ] when is_complex_nd a -> z_svd full_matrices compute_uv a
+  | [ a ] when is_complex_nd a -> z_svd gesvd full_matrices compute_uv a
   | [ a ] ->
       let dt = Ndarray.dtype a in
       let rdt = real_basetype dt in
@@ -670,9 +672,7 @@ let svd_impl full_matrices compute_uv inputs =
         let vrows = if full_matrices then n else mn in
         let u = Lp.alloc_f64 (m * ucols) in
         let vt = Lp.alloc_f64 (vrows * n) in
-        let _ =
-          Lp.gesdd ~jobz ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:m ~vt ~ldvt:vrows
-        in
+        let _ = driver ~jobz ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:m ~vt ~ldvt:vrows in
         [
           Ndarray.of_floats dt [| m; ucols |] (unpack_cm u m ucols);
           Ndarray.of_floats rdt [| mn |] (to_farray s mn);
@@ -681,9 +681,7 @@ let svd_impl full_matrices compute_uv inputs =
       end
       else begin
         let u = Lp.alloc_f64 1 and vt = Lp.alloc_f64 1 in
-        let _ =
-          Lp.gesdd ~jobz:'N' ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:1 ~vt ~ldvt:1
-        in
+        let _ = driver ~jobz:'N' ~m ~n ~a:ca ~lda:m ~s ~u ~ldu:1 ~vt ~ldvt:1 in
         [ Ndarray.of_floats rdt [| mn |] (to_farray s mn) ]
       end
   | _ -> failwith "linalg: svd expects one operand"
@@ -835,8 +833,12 @@ let triangular_solve ?(left_side = false) ?(lower = false)
 
 let tridiagonal_solve dl d du b = Core.bind1 Tridiagonal_solve [ dl; d; du; b ]
 
-let eig ?(compute_left_eigenvectors = true) ?(compute_right_eigenvectors = true)
-    x =
+let eig ?implementation ?(compute_left_eigenvectors = true)
+    ?(compute_right_eigenvectors = true) x =
+  (match implementation with
+  | None | Some Lax_config.Lapack -> ()
+  | Some (Lax_config.Cusolver | Lax_config.Magma) ->
+      invalid_arg "Only the lapack implementation is supported on CPU.");
   Core.bind
     (Eig
        {
@@ -845,7 +847,13 @@ let eig ?(compute_left_eigenvectors = true) ?(compute_right_eigenvectors = true)
        })
     [ x ]
 
-let eigh ?(lower = true) x =
+let eigh ?implementation ?(lower = true) x =
+  (match implementation with
+  | None | Some Lax_config.Eigh_qr -> ()
+  | Some Lax_config.Eigh_jacobi ->
+      failwith "Jacobi implementation is not supported on CPU"
+  | Some Lax_config.Eigh_qdwh ->
+      failwith "QDWH implementation is only supported on TPU");
   match Core.bind (Eigh { lower }) [ x ] with
   | [ v; w ] -> (v, w)
   | _ -> failwith "linalg: eigh arity"
@@ -858,8 +866,19 @@ let hessenberg x =
 let schur ?(compute_schur_vectors = true) x =
   Core.bind (Schur { compute_vectors = compute_schur_vectors }) [ x ]
 
-let svd ?(full_matrices = true) ?(compute_uv = true) x =
-  Core.bind (Svd { full_matrices; compute_uv }) [ x ]
+let svd ?algorithm ?(full_matrices = true) ?(compute_uv = true) x =
+  let gesvd =
+    match algorithm with
+    | None
+    | Some Lax_config.Svd_default
+    | Some Lax_config.Svd_divide_and_conquer ->
+        false
+    | Some Lax_config.Svd_qr -> true
+    | Some Lax_config.Svd_jacobi | Some Lax_config.Svd_polar ->
+        failwith
+          "The SVD Jacobi and Polar algorithms are not implemented on CPU."
+  in
+  Core.bind (Svd { full_matrices; compute_uv; gesvd }) [ x ]
 
 let tridiagonal ?(lower = true) x =
   match Core.bind (Tridiagonal { lower }) [ x ] with

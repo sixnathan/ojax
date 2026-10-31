@@ -131,6 +131,7 @@ let prim_name = function
   | Population_count -> "population_count"
   | Real -> "real"
   | Round -> "round"
+  | Round_nearest_even -> "round_nearest_even"
   | Rsqrt -> "rsqrt"
   | Sinh -> "sinh"
   | Sqrt -> "sqrt"

@@ -74,6 +74,32 @@ val zgetrf : m:int -> n:int -> a:f64 -> lda:int -> ipiv:i32 -> int
 val zgeqrf : m:int -> n:int -> a:f64 -> lda:int -> tau:f64 -> int
 val zungqr : m:int -> n:int -> k:int -> a:f64 -> lda:int -> tau:f64 -> int
 
+val gesvd :
+  jobz:char ->
+  m:int ->
+  n:int ->
+  a:f64 ->
+  lda:int ->
+  s:f64 ->
+  u:f64 ->
+  ldu:int ->
+  vt:f64 ->
+  ldvt:int ->
+  int
+
+val zgesvd :
+  jobz:char ->
+  m:int ->
+  n:int ->
+  a:f64 ->
+  lda:int ->
+  s:f64 ->
+  u:f64 ->
+  ldu:int ->
+  vt:f64 ->
+  ldvt:int ->
+  int
+
 val zgesdd :
   jobz:char ->
   m:int ->

@@ -477,6 +477,11 @@ static void (*p_zungqr_)(LI *, LI *, LI *, void *, LI *, void *, void *, LI *,
 static void (*p_zgesdd_)(char *, LI *, LI *, void *, LI *, double *, void *,
                          LI *, void *, LI *, void *, LI *, double *, LI *,
                          LI *);
+static void (*p_dgesvd_)(char *, char *, LI *, LI *, double *, LI *, double *,
+                         double *, LI *, double *, LI *, double *, LI *, LI *);
+static void (*p_zgesvd_)(char *, char *, LI *, LI *, void *, LI *, double *,
+                         void *, LI *, void *, LI *, void *, LI *, double *,
+                         LI *);
 static void (*p_zheevd_)(char *, char *, LI *, void *, LI *, double *, void *,
                          LI *, double *, LI *, LI *, LI *, LI *);
 static void (*p_zgeev_)(char *, char *, LI *, void *, LI *, void *, void *,
@@ -504,6 +509,8 @@ static void (*p_zgeqp3_)(LI *, LI *, void *, LI *, LI *, void *, void *, LI *,
 #define zgeqrf_ p_zgeqrf_
 #define zungqr_ p_zungqr_
 #define zgesdd_ p_zgesdd_
+#define dgesvd_ p_dgesvd_
+#define zgesvd_ p_zgesvd_
 #define zheevd_ p_zheevd_
 #define zgeev_ p_zgeev_
 #define ztrtrs_ p_ztrtrs_
@@ -609,6 +616,50 @@ CAMLprim value ojax_lapack_zgesdd(value v_ip, value v_a, value v_s, value v_u,
   free(work);
   free(rwork);
   free(iwork);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_gesvd(value v_ip, value v_a, value v_s, value v_u,
+                                 value v_vt) {
+  CAMLparam5(v_ip, v_a, v_s, v_u, v_vt);
+  Z_RESOLVE(dgesvd_);
+  char jobu = (char)IP(v_ip, 0), jobvt = jobu;
+  __LAPACK_int m = IP(v_ip, 1), n = IP(v_ip, 2), lda = IP(v_ip, 3);
+  __LAPACK_int ldu = IP(v_ip, 4), ldvt = IP(v_ip, 5), info = 0, lwork = -1;
+  double query = 0.0;
+  dgesvd_(&jobu, &jobvt, &m, &n, D(v_a), &lda, D(v_s), D(v_u), &ldu, D(v_vt),
+          &ldvt, &query, &lwork, &info);
+  lwork = (__LAPACK_int)query;
+  if (lwork < 1) lwork = 1;
+  double *work = malloc(sizeof(double) * (size_t)lwork);
+  if (!work) caml_failwith("ojax linalg: gesvd workspace alloc failed");
+  dgesvd_(&jobu, &jobvt, &m, &n, D(v_a), &lda, D(v_s), D(v_u), &ldu, D(v_vt),
+          &ldvt, work, &lwork, &info);
+  free(work);
+  CAMLreturn(Val_int((int)info));
+}
+
+CAMLprim value ojax_lapack_zgesvd(value v_ip, value v_a, value v_s, value v_u,
+                                  value v_vt) {
+  CAMLparam5(v_ip, v_a, v_s, v_u, v_vt);
+  Z_RESOLVE(zgesvd_);
+  char jobu = (char)IP(v_ip, 0), jobvt = jobu;
+  __LAPACK_int m = IP(v_ip, 1), n = IP(v_ip, 2), lda = IP(v_ip, 3);
+  __LAPACK_int ldu = IP(v_ip, 4), ldvt = IP(v_ip, 5), info = 0, lwork = -1;
+  __LAPACK_int mn = m < n ? m : n;
+  double query[2] = {0.0, 0.0};
+  double *rwork = malloc(sizeof(double) * (5 * (size_t)mn + 16));
+  if (!rwork) caml_failwith("ojax linalg: zgesvd workspace alloc failed");
+  zgesvd_(&jobu, &jobvt, &m, &n, Z_ARG(D(v_a)), &lda, D(v_s), Z_ARG(D(v_u)),
+          &ldu, Z_ARG(D(v_vt)), &ldvt, Z_ARG(query), &lwork, rwork, &info);
+  lwork = (__LAPACK_int)query[0];
+  if (lwork < 1) lwork = 1;
+  double *work = malloc(sizeof(double) * 2 * (size_t)lwork);
+  if (!work) caml_failwith("ojax linalg: zgesvd workspace alloc failed");
+  zgesvd_(&jobu, &jobvt, &m, &n, Z_ARG(D(v_a)), &lda, D(v_s), Z_ARG(D(v_u)),
+          &ldu, Z_ARG(D(v_vt)), &ldvt, Z_ARG(work), &lwork, rwork, &info);
+  free(work);
+  free(rwork);
   CAMLreturn(Val_int((int)info));
 }
 

@@ -15,18 +15,18 @@ val bitwise_and : value -> value -> value
 val bitwise_not : value -> value
 val bitwise_or : value -> value -> value
 val bitwise_xor : value -> value -> value
-val cbrt : value -> value
+val cbrt : ?accuracy:Lax_config.accuracy -> value -> value
 val ceil : value -> value
 val clz : value -> value
 val complex : value -> value -> value
 val conj : value -> value
-val cos : value -> value
+val cos : ?accuracy:Lax_config.accuracy -> value -> value
 val cosh : value -> value
 val div : value -> value -> value
 val eq : value -> value -> value
-val exp : value -> value
-val exp2 : value -> value
-val expm1 : value -> value
+val exp : ?accuracy:Lax_config.accuracy -> value -> value
+val exp2 : ?accuracy:Lax_config.accuracy -> value -> value
+val expm1 : ?accuracy:Lax_config.accuracy -> value -> value
 val floor : value -> value
 val ge : value -> value -> value
 val gt : value -> value -> value
@@ -34,9 +34,9 @@ val imag : value -> value
 val integer_pow : value -> int -> value
 val is_finite : value -> value
 val le : value -> value -> value
-val log : value -> value
-val log1p : value -> value
-val logistic : value -> value
+val log : ?accuracy:Lax_config.accuracy -> value -> value
+val log1p : ?accuracy:Lax_config.accuracy -> value -> value
+val logistic : ?accuracy:Lax_config.accuracy -> value -> value
 val lt : value -> value -> value
 val max : value -> value -> value
 val min : value -> value -> value
@@ -50,19 +50,20 @@ val pow : value -> value -> value
 val real : value -> value
 val reciprocal : value -> value
 val rem : value -> value -> value
-val round : value -> value
-val rsqrt : value -> value
+val round : ?rounding_method:Lax_config.rounding_method -> value -> value
+val stage : value -> value
+val rsqrt : ?accuracy:Lax_config.accuracy -> value -> value
 val shift_left : value -> value -> value
 val shift_right_arithmetic : value -> value -> value
 val shift_right_logical : value -> value -> value
 val sign : value -> value
-val sin : value -> value
+val sin : ?accuracy:Lax_config.accuracy -> value -> value
 val sinh : value -> value
-val sqrt : value -> value
+val sqrt : ?accuracy:Lax_config.accuracy -> value -> value
 val square : value -> value
 val sub : value -> value -> value
-val tan : value -> value
-val tanh : value -> value
+val tan : ?accuracy:Lax_config.accuracy -> value -> value
+val tanh : ?accuracy:Lax_config.accuracy -> value -> value
 val betainc : value -> value -> value -> value
 val stop_gradient : value -> value
 val optimization_barrier : value list -> value list
@@ -105,19 +106,66 @@ val dynamic_index_in_dim :
 
 val dynamic_update_slice_in_dim : ?axis:int -> value -> value -> value -> value
 val dynamic_update_index_in_dim : ?axis:int -> value -> value -> value -> value
-val gather : value -> value -> gather_dims -> int array -> value
+
+val gather :
+  ?mode:Lax_config.gather_scatter_mode ->
+  ?fill_value:float ->
+  value ->
+  value ->
+  gather_dims ->
+  int array ->
+  value
 
 val scatter :
-  ?unique_indices:bool -> value -> value -> value -> scatter_dims -> value
+  ?mode:Lax_config.gather_scatter_mode ->
+  ?unique_indices:bool ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
 
-val scatter_add : value -> value -> value -> scatter_dims -> value
-val scatter_sub : value -> value -> value -> scatter_dims -> value
+val scatter_add :
+  ?mode:Lax_config.gather_scatter_mode ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
+
+val scatter_sub :
+  ?mode:Lax_config.gather_scatter_mode ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
 
 val scatter_mul :
-  ?unique_indices:bool -> value -> value -> value -> scatter_dims -> value
+  ?mode:Lax_config.gather_scatter_mode ->
+  ?unique_indices:bool ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
 
-val scatter_min : value -> value -> value -> scatter_dims -> value
-val scatter_max : value -> value -> value -> scatter_dims -> value
+val scatter_min :
+  ?mode:Lax_config.gather_scatter_mode ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
+
+val scatter_max :
+  ?mode:Lax_config.gather_scatter_mode ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
+
 val reduce_sum : value -> int array -> value
 val reduce_prod : value -> int array -> value
 val reduce_max : value -> int array -> value
@@ -148,9 +196,17 @@ val sort_key_val :
   ?dimension:int -> ?is_stable:bool -> value -> value -> value * value
 
 val top_k : ?axis:int -> value -> int -> value * value
-val dot : value -> value -> value
+
+val dot :
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
+  value ->
+  value ->
+  value
 
 val dot_general :
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
   value ->
   value ->
   lhs_contract:int array ->
@@ -300,6 +356,8 @@ val composite :
   value list ->
   value list
 
-val fft : value -> fft_type:fft_kind -> fft_lengths:int array -> value
+val fft :
+  value -> fft_type:Lax_config.fft_type -> fft_lengths:int array -> value
+
 val random_gamma_grad : value -> value -> value
 val rng_uniform : value -> value -> int array -> value

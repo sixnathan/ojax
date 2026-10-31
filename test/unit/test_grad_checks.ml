@@ -245,7 +245,9 @@ let lu_rule () =
 
 let svd_rule () =
   let run a =
-    Core.bind (Svd { full_matrices = false; compute_uv = true }) [ a ]
+    Core.bind
+      (Svd { full_matrices = false; compute_uv = true; gesvd = false })
+      [ a ]
   in
   List.iter
     (fun shape ->

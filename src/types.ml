@@ -87,6 +87,7 @@ and primitive =
   | Population_count
   | Real
   | Round
+  | Round_nearest_even
   | Rsqrt
   | Sinh
   | Sqrt
@@ -242,7 +243,7 @@ and primitive =
   | Eigh of { lower : bool }
   | Hessenberg
   | Schur of { compute_vectors : bool }
-  | Svd of { full_matrices : bool; compute_uv : bool }
+  | Svd of { full_matrices : bool; compute_uv : bool; gesvd : bool }
   | Tridiagonal of { lower : bool }
 
 and dot_dims = {

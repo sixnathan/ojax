@@ -44,24 +44,41 @@ let compile (cj : closed_jaxpr) : value list -> value list =
       Hashtbl.replace compiled cj.jid executable;
       executable
 
+let trace_for_jit avals f =
+  match Jaxpr.make_jaxpr_stateful avals f with
+  | closed, [], cells -> (closed, cells)
+  | _ -> invalid_arg "make_jaxpr: function closed over a tracer"
+
+let run_with_refs cj cells args =
+  let state = List.map Ref_state.read cells in
+  let outs = (compile cj) (args @ state) in
+  let n_out = List.length outs - List.length cells in
+  match Util.split_list outs [ n_out ] with
+  | [ results; finals ] ->
+      List.iter2 Ref_state.write cells finals;
+      results
+  | _ -> failwith "jit: output arity"
+
 let jit_flat (f : value list -> value list) : value list -> value list =
-  let cache : (string, closed_jaxpr) Hashtbl.t = Hashtbl.create 8 in
+  let cache : (string, closed_jaxpr * Ref_state.cell list) Hashtbl.t =
+    Hashtbl.create 8
+  in
   fun args ->
     if Config.value Config.disable_jit then f args
     else
       let avals = List.map Core.get_aval args in
       let key = aval_key avals in
-      let cj =
+      let cj, cells =
         match Hashtbl.find_opt cache key with
-        | Some cj -> cj
+        | Some entry -> entry
         | None ->
             if Config.value Config.no_tracing then
               failwith "jit tracing is disabled by no_tracing";
-            let cj = Jaxpr.make_jaxpr avals f in
-            Hashtbl.replace cache key cj;
-            cj
+            let entry = trace_for_jit avals f in
+            Hashtbl.replace cache key entry;
+            entry
       in
-      (compile cj) args
+      run_with_refs cj cells args
 
 type out_slot = Known of value | Unknown
 
@@ -112,7 +129,8 @@ let make_jaxpr (f : value Tree.t list -> value Tree.t)
 
 let jit (f : value Tree.t list -> value Tree.t) :
     value Tree.t list -> value Tree.t =
-  let cache : (string, closed_jaxpr * Tree.treedef) Hashtbl.t =
+  let cache :
+      (string, closed_jaxpr * Ref_state.cell list * Tree.treedef) Hashtbl.t =
     Hashtbl.create 8
   in
   fun args ->
@@ -121,21 +139,21 @@ let jit (f : value Tree.t list -> value Tree.t) :
       let flat_args, in_tree = flatten_args args in
       let avals = List.map Core.get_aval flat_args in
       let key = aval_key avals ^ "#" ^ treedef_key in_tree in
-      let cj, out_tree =
+      let cj, cells, out_tree =
         match Hashtbl.find_opt cache key with
         | Some entry -> entry
         | None ->
             let flat_fun, out_tree_get = Api_util.flatten_fun f in_tree in
-            let cj =
+            let cj, cells =
               if Config.value Config.no_tracing then
                 failwith "jit tracing is disabled by no_tracing";
-              Jaxpr.make_jaxpr avals (Linear_util.call_wrapped flat_fun)
+              trace_for_jit avals (Linear_util.call_wrapped flat_fun)
             in
-            let ot = out_tree_get () in
-            Hashtbl.replace cache key (cj, ot);
-            (cj, ot)
+            let entry = (cj, cells, out_tree_get ()) in
+            Hashtbl.replace cache key entry;
+            entry
       in
-      Tree.tree_unflatten out_tree ((compile cj) flat_args)
+      Tree.tree_unflatten out_tree (run_with_refs cj cells flat_args)
 
 let device_put (x : value Tree.t) : value Tree.t =
   Tree.tree_map Backend.of_host_value x
@@ -314,7 +332,7 @@ let value_and_grad_argnums ?(has_aux = false) ~argnums f args =
     if has_aux then
       match result with
       | Tree.Tuple [ y; a ] ->
-          aux := a;
+          aux := Tree.tree_map Ad.aux_primal a;
           [ leaf y ]
       | _ -> invalid_arg "has_aux requires a (value, aux) tuple"
     else [ leaf result ]
@@ -333,6 +351,142 @@ let value_and_grad_argnums ?(has_aux = false) ~argnums f args =
     | _ -> failwith "value_and_grad: gradient split"
   in
   (y, grads, !aux)
+
+type fwd_bwd_residuals = {
+  residual_values : value list;
+  backward : value list -> value list;
+  selected_def : Tree.treedef;
+  out_def : Tree.treedef;
+}
+
+let residual_values r = r.residual_values
+
+let split_prefix l n =
+  match Util.split_list l [ n ] with
+  | [ a; b ] -> (a, b)
+  | _ -> invalid_arg "fwd_and_bwd: arity"
+
+type fwd_stage = {
+  stage_out_def : Tree.treedef;
+  stage_aux_def : Tree.treedef;
+  stage_selected_def : Tree.treedef;
+  n_out : int;
+  n_residuals : int;
+  stage_backward : value list -> value list -> value list;
+}
+
+let fwd_and_bwd ?(has_aux = false) ?(jitted = true) ~argnums f =
+  let stage_call args stage =
+    let selected, rebuild = split_args argnums args in
+    let leaves, selected_def = Tree.tree_flatten (Tree.Tuple selected) in
+    let out_def = ref Tree.Null_def and aux_def = ref Tree.Null_def in
+    let aux_leaves = ref [] in
+    let body inner =
+      let parts =
+        match Tree.tree_unflatten selected_def inner with
+        | Tree.Tuple xs -> xs
+        | _ -> failwith "fwd_and_bwd: argument split"
+      in
+      let result = f (rebuild parts) in
+      let primal =
+        if has_aux then
+          match result with
+          | Tree.Tuple [ y; a ] ->
+              let a_leaves, a_def = Tree.tree_flatten a in
+              aux_leaves := List.map Ad.aux_primal a_leaves;
+              aux_def := a_def;
+              y
+          | _ -> invalid_arg "has_aux requires a (value, aux) tuple"
+        else result
+      in
+      let out, def = Tree.tree_flatten primal in
+      out_def := def;
+      out
+    in
+    let outs, residuals, backward = Ad.vjp_staged body leaves in
+    stage :=
+      Some
+        {
+          stage_out_def = !out_def;
+          stage_aux_def = !aux_def;
+          stage_selected_def = selected_def;
+          n_out = List.length outs;
+          n_residuals = List.length residuals;
+          stage_backward = backward;
+        };
+    outs @ residuals @ !aux_leaves
+  in
+  let finish entry outs back =
+    let results, rest = split_prefix outs entry.n_out in
+    let residuals, aux = split_prefix rest entry.n_residuals in
+    ( Tree.tree_unflatten entry.stage_out_def results,
+      {
+        residual_values = residuals;
+        backward = back residuals;
+        selected_def = entry.stage_selected_def;
+        out_def = entry.stage_out_def;
+      },
+      Tree.tree_unflatten entry.stage_aux_def aux )
+  in
+  let direct args =
+    let stage = ref None in
+    let outs = stage_call args stage in
+    match !stage with
+    | Some entry -> finish entry outs entry.stage_backward
+    | None -> failwith "fwd_and_bwd: stage"
+  in
+  let cache = Hashtbl.create 4 in
+  let via_jit args =
+    let flat, in_tree = flatten_args args in
+    let avals = List.map Core.get_aval flat in
+    let key = aval_key avals ^ "#" ^ treedef_key in_tree in
+    let cj, cells, entry, back =
+      match Hashtbl.find_opt cache key with
+      | Some cached -> cached
+      | None ->
+          if Config.value Config.no_tracing then
+            failwith "jit tracing is disabled by no_tracing";
+          let stage = ref None in
+          let cj, cells =
+            trace_for_jit avals (fun inner ->
+                match Tree.tree_unflatten in_tree inner with
+                | Tree.Tuple xs -> stage_call xs stage
+                | _ -> failwith "fwd_and_bwd: argument split")
+          in
+          let entry =
+            match !stage with
+            | Some entry -> entry
+            | None -> failwith "fwd_and_bwd: stage"
+          in
+          let compiled_back =
+            jit_flat (fun all ->
+                let residuals, cts = split_prefix all entry.n_residuals in
+                entry.stage_backward residuals cts)
+          in
+          let back residuals cts = compiled_back (residuals @ cts) in
+          let cached = (cj, cells, entry, back) in
+          Hashtbl.replace cache key cached;
+          cached
+    in
+    finish entry (run_with_refs cj cells flat) back
+  in
+  let fwd args =
+    if jitted && not (Config.value Config.disable_jit) then via_jit args
+    else direct args
+  in
+  let bwd residuals cotangent =
+    let cts, def = Tree.tree_flatten cotangent in
+    if def <> residuals.out_def then
+      invalid_arg
+        "unexpected tree structure. The argument to a VJP function must match \
+         the pytree structure of the differentiated function";
+    match
+      Tree.tree_unflatten residuals.selected_def (residuals.backward cts)
+    with
+    | Tree.Tuple xs -> xs
+    | _ -> failwith "fwd_and_bwd: gradient split"
+  in
+  (fwd, bwd)
 
 let basis (a : aval) =
   let n = Array.fold_left ( * ) 1 a.shape in
@@ -471,6 +625,26 @@ let eval_shape f args =
   in
   Tree.tree_unflatten (out_tree ()) out_avals
 
+let eval_shape_structs f structs =
+  let flat, in_tree = Tree.tree_flatten (Tree.Tuple structs) in
+  let avals = List.map Shape_dtype_struct.traced_aval flat in
+  let flat_fun, out_tree = Api_util.flatten_fun f in_tree in
+  let closed, _ =
+    Jaxpr.make_jaxpr_hoisted avals (Linear_util.call_wrapped flat_fun)
+  in
+  Tree.tree_unflatten (out_tree ())
+    (List.map
+       (function
+         | A_var v -> v.vaval
+         | A_lit nd ->
+             {
+               shape = Ndarray.shape nd;
+               dtype = Ndarray.dtype nd;
+               weak_type = false;
+             }
+         | DropVar a -> a)
+       closed.jaxpr.outs)
+
 let linear_transpose f primals =
   let leaves, in_def = Tree.tree_flatten (Tree.Tuple primals) in
   let zeros = List.map (fun v -> zeros_for (Core.get_aval v)) leaves in
@@ -485,38 +659,8 @@ let linear_transpose f primals =
     | Tree.Tuple xs -> xs
     | _ -> failwith "linear_transpose: result split"
 
-let checkpoint f =
-  let linear =
-    Core.register_custom_rule
-      (Core.Linear_rule
-         {
-           forward = (fun res ts -> snd (Ad.jvp f res ts));
-           transpose =
-             (fun res cts ->
-               let _, pull = Ad.vjp f res in
-               pull cts);
-           res_differentiable = true;
-         })
-  in
-  let id =
-    Core.register_custom_rule
-      (Core.Jvp_rule
-         {
-           primal = f;
-           jvp =
-             (fun primals tangents ->
-               let outs = f primals in
-               let out_avals = List.map Core.get_aval outs in
-               ( outs,
-                 Core.bind
-                   (Custom_lin
-                      { rule = linear; n_res = List.length primals; out_avals })
-                   (primals @ tangents) ));
-         })
-  in
-  fun args -> Core.bind (Custom_jvp_call id) args
-
-let remat = checkpoint
+let checkpoint ?policy f = Checkpoint.checkpoint ?policy f
+let remat ?policy f = Checkpoint.checkpoint ?policy f
 let named_call f = f
 let named_scope _name f = f ()
 let device_get = to_host
@@ -532,7 +676,11 @@ let host_count = process_count
 let host_id = process_index
 let host_ids = process_indices
 let default_backend () = "cpu"
-let clear_caches () = Hashtbl.reset compiled
+
+let clear_caches () =
+  Hashtbl.reset compiled;
+  Ad_util.clear_symbolic_zeros ()
+
 let disable_jit thunk = Config.with_value Config.disable_jit true thunk
 let ensure_compile_time_eval thunk = Core.with_eval_dynamic thunk
 

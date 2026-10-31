@@ -229,8 +229,9 @@ let build builder (in_tracers : tracer list) (out_tracers : tracer list) :
   typecheck_jaxpr jx;
   (jx, consts, List.map snd hoisted)
 
-let make_jaxpr_hoisted (in_avals : aval list) (f : value list -> value list) :
-    closed_jaxpr * value list =
+let trace_with_refs mode_of (in_avals : aval list)
+    (f : value list -> value list) :
+    closed_jaxpr * value list * Ref_state.cell list =
   let builder =
     {
       jb_eqns = [];
@@ -245,12 +246,41 @@ let make_jaxpr_hoisted (in_avals : aval list) (f : value list -> value list) :
           let in_tracers =
             List.map (fun a -> new_arg builder main a) in_avals
           in
-          let outs = f (List.map (fun t -> Tracer t) in_tracers) in
-          let out_tracers =
-            List.map (fun v -> as_tracer (Core.full_raise main v)) outs
+          let lifted_tracers = ref [] in
+          let new_lifted aval =
+            let t = new_arg builder main aval in
+            lifted_tracers := t :: !lifted_tracers;
+            Tracer t
           in
-          let jx, consts, hoisted = build builder in_tracers out_tracers in
-          ({ jid = Core.fresh_id (); jaxpr = jx; consts }, hoisted)))
+          Ref_state.with_scope (mode_of new_lifted) (fun scope ->
+              let outs = f (List.map (fun t -> Tracer t) in_tracers) in
+              let cells = Ref_state.lifted scope in
+              let out_tracers =
+                List.map
+                  (fun v -> as_tracer (Core.full_raise main v))
+                  (outs @ Ref_state.contents cells)
+              in
+              let jx, consts, hoisted =
+                build builder
+                  (in_tracers @ List.rev !lifted_tracers)
+                  out_tracers
+              in
+              ({ jid = Core.fresh_id (); jaxpr = jx; consts }, hoisted, cells))))
+
+let make_jaxpr_hoisted in_avals f =
+  let closed, hoisted, _ =
+    trace_with_refs (fun _ -> Ref_state.Bare) in_avals f
+  in
+  (closed, hoisted)
+
+let make_jaxpr_stateful in_avals f =
+  trace_with_refs (fun lift -> Ref_state.Lift lift) in_avals f
+
+let make_jaxpr_forbidding_refs ~message in_avals f =
+  let closed, hoisted, _ =
+    trace_with_refs (fun _ -> Ref_state.Forbid message) in_avals f
+  in
+  (closed, hoisted)
 
 let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
     closed_jaxpr =

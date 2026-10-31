@@ -24,9 +24,11 @@ type key_entry =
   | Dict_key of string
   | Sequence_key of int
   | Flattened_index_key of int
+  | Get_attr_key of string
 
 type key_path = key_entry list
 
+val register_attribute_keys : string -> string list -> unit
 val tree_leaves_with_path : 'a t -> (key_path * 'a) list
 val tree_flatten_with_path : 'a t -> (key_path * 'a) list * treedef
 val tree_map_with_path : (key_path -> 'a -> 'b) -> 'a t -> 'b t
@@ -39,6 +41,7 @@ val treedef_children : treedef -> treedef list
 val treedef_is_leaf : treedef -> bool
 val treedef_tuple : treedef list -> treedef
 val flatten_one_level : 'a t -> 'a t list
+val flatten_one_level_with_keys : 'a t -> (key_entry * 'a t) list
 val is_tree_node : 'a t -> bool
 val all_leaves : 'a t list -> bool
 val tree_broadcast : 'a t -> 'b t -> 'a t

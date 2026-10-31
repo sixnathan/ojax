@@ -30,6 +30,7 @@ type interpreter = {
 }
 
 val register_interpreter : trace_kind -> interpreter -> unit
+val current_level : unit -> int
 val with_new_main : trace_kind -> global_data -> (trace -> 'a) -> 'a
 val new_dynamic : trace -> (unit -> 'a) -> 'a
 val find_top_trace : value list -> trace
@@ -61,6 +62,8 @@ type custom_rule =
       primal : value list -> value list;
       fwd : value list -> value list * value list;
       bwd : value list -> value list -> value list;
+      fwd_perturbed :
+        (bool list -> value list -> value list * value list) option;
     }
   | Linear_rule of {
       forward : value list -> value list -> value list;

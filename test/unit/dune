@@ -43,6 +43,7 @@
   test_parallel
   test_example_libraries
   test_custom_derivatives
+  test_autodiff_api
   test_grad_checks
   test_numpy_lax_numpy
   test_numpy_reductions

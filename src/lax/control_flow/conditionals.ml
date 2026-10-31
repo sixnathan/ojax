@@ -1,12 +1,39 @@
 open Types
 
-let cond (pred : value) (true_fun : value list -> value list)
+let rec cond (pred : value) (true_fun : value list -> value list)
     (false_fun : value list -> value list) (operands : value list) : value list
     =
   let avals = List.map Core.get_aval operands in
-  let t, hoisted_t = Jaxpr.make_jaxpr_hoisted avals true_fun in
-  let f, hoisted_f = Jaxpr.make_jaxpr_hoisted avals false_fun in
-  if hoisted_t = [] && hoisted_f = [] then
+  let t, hoisted_t, cells_t = Jaxpr.make_jaxpr_stateful avals true_fun in
+  let f, hoisted_f, cells_f = Jaxpr.make_jaxpr_stateful avals false_fun in
+  let cells =
+    cells_t
+    @ List.filter
+        (fun (c : Ref_state.cell) -> not (List.memq c cells_t))
+        cells_f
+  in
+  if cells <> [] then begin
+    let n = List.length operands in
+    let stateful branch args =
+      match Util.split_list args [ n ] with
+      | [ ops; state ] ->
+          Ref_state.pin cells state;
+          let outs = branch ops in
+          outs @ Ref_state.contents cells
+      | _ -> failwith "cond: arity"
+    in
+    let outs =
+      cond pred (stateful true_fun) (stateful false_fun)
+        (operands @ List.map Ref_state.read cells)
+    in
+    let n_out = List.length outs - List.length cells in
+    match Util.split_list outs [ n_out ] with
+    | [ results; finals ] ->
+        List.iter2 Ref_state.write cells finals;
+        results
+    | _ -> failwith "cond: arity"
+  end
+  else if hoisted_t = [] && hoisted_f = [] then
     Core.bind (Cond { t; f }) (pred :: operands)
   else
     let n = List.length operands in

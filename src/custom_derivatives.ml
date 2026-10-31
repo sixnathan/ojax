@@ -5,8 +5,127 @@ let custom_jvp primal ~jvp =
   fun args -> Core.bind (Custom_jvp_call id) args
 
 let custom_vjp primal ~fwd ~bwd =
-  let id = Core.register_custom_rule (Core.Vjp_rule { primal; fwd; bwd }) in
+  let id =
+    Core.register_custom_rule
+      (Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed = None })
+  in
   fun args -> Core.bind (Custom_vjp_call id) args
+
+type symbolic_zero = { aval : aval }
+type tangent = Symbolic_zero of symbolic_zero | Tangent of value
+type custom_vjp_primal = { value : value; perturbed : bool }
+
+let symbolic_zero_from_primal_value v = { aval = Core.get_aval v }
+
+let instantiate_tangent = function
+  | Symbolic_zero { aval } -> Ad_util.zeros_like_aval aval
+  | Tangent v -> v
+
+let custom_vjp_primal_tree_values tree =
+  Tree_util.tree_map (fun p -> p.value) tree
+
+let tangent_of_internal t =
+  if Ad_util.is_symbolic_zero t then Symbolic_zero { aval = Core.get_aval t }
+  else Tangent t
+
+let internal_of_tangent = function
+  | Symbolic_zero { aval } -> Ad_util.symbolic_zero_of_aval aval
+  | Tangent v -> v
+
+let aval_str = Ref_state.aval_string
+let same_type (a : aval) (b : aval) = a.shape = b.shape && a.dtype = b.dtype
+
+let custom_jvp_symbolic primal ~jvp =
+  let rule primals tangents =
+    let po, to_ = jvp primals (List.map tangent_of_internal tangents) in
+    if List.compare_lengths po to_ <> 0 then
+      invalid_arg
+        "Custom JVP rule must produce primal and tangent outputs with equal \
+         container (pytree) structures";
+    let check p t =
+      let expected = Core.get_aval p in
+      let got =
+        match t with
+        | Symbolic_zero { aval } -> aval
+        | Tangent v -> Core.get_aval v
+      in
+      if not (same_type expected got) then
+        raise
+          (Errors.Jax_type_error
+             (Printf.sprintf
+                "Custom JVP rule must produce primal and tangent outputs with \
+                 corresponding shapes and dtypes. Expected %s (tangent type of \
+                 %s) but got %s."
+                (aval_str expected) (aval_str expected) (aval_str got)))
+    in
+    List.iter2 check po to_;
+    (po, List.map internal_of_tangent to_)
+  in
+  custom_jvp primal ~jvp:rule
+
+let bwd_output index (input : aval) = function
+  | None -> Ad_util.symbolic_zero_of_aval input
+  | Some (Symbolic_zero { aval }) ->
+      if not (same_type aval input) then
+        invalid_arg
+          (Printf.sprintf
+             "Custom VJP bwd rule produced a SymbolicZero with a shape/dtype \
+              that does not match the corresponding input tangent shape/dtype: \
+              at output[%d] the SymbolicZero had shape/dtype %s while the \
+              corresponding input had shape/dtype %s. Consider just returning \
+              a None here instead of a SymbolicZero object."
+             index (aval_str aval) (aval_str input));
+      Ad_util.symbolic_zero_of_aval aval
+  | Some (Tangent v) ->
+      let got = Core.get_aval v in
+      if not (same_type got input) then
+        invalid_arg
+          (Printf.sprintf
+             "Custom VJP bwd rule must produce an output with the same type as \
+              the args tuple of the primal function, but at output[%d] the bwd \
+              rule produced an output of type %s corresponding to an input of \
+              type %s"
+             index (aval_str got) (aval_str input));
+      v
+
+let custom_vjp_symbolic primal ~fwd ~bwd =
+  let rules : (aval list, int) Hashtbl.t = Hashtbl.create 4 in
+  let rule_for avals =
+    match Hashtbl.find_opt rules avals with
+    | Some id -> id
+    | None ->
+        let fwd_perturbed perturbed primals =
+          fwd
+            (List.map2
+               (fun value perturbed -> { value; perturbed })
+               primals perturbed)
+        in
+        let rule_bwd res cts =
+          let outs = bwd res (List.map tangent_of_internal cts) in
+          if List.compare_lengths outs avals <> 0 then
+            invalid_arg
+              "Custom VJP bwd rule must produce an output with the same \
+               container (pytree) structure as the args tuple of the primal \
+               function";
+          List.mapi
+            (fun i (out, input) -> bwd_output i input out)
+            (List.combine outs avals)
+        in
+        let id =
+          Core.register_custom_rule
+            (Core.Vjp_rule
+               {
+                 primal;
+                 fwd = fwd_perturbed (List.map (fun _ -> true) avals);
+                 bwd = rule_bwd;
+                 fwd_perturbed = Some fwd_perturbed;
+               })
+        in
+        Hashtbl.replace rules avals id;
+        id
+  in
+  fun args ->
+    Core.bind (Custom_vjp_call (rule_for (List.map Core.get_aval args))) args
 
 let custom_gradient f =
   let pullbacks = Hashtbl.create 16 in
@@ -70,10 +189,7 @@ let stop_gradient =
            primal = Fun.id;
            jvp =
              (fun primals _ ->
-               ( primals,
-                 List.map
-                   (fun v -> Ad_util.zeros_like_aval (Core.get_aval v))
-                   primals ));
+               (primals, List.map Ad_util.symbolic_zero_like_value primals));
          })
   in
   fun v -> Core.bind1 (Custom_jvp_call id) [ v ]

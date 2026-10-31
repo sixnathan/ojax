@@ -83,8 +83,19 @@ type key_entry =
   | Dict_key of string
   | Sequence_key of int
   | Flattened_index_key of int
+  | Get_attr_key of string
 
 type key_path = key_entry list
+
+let attribute_keys : (string, string list) Hashtbl.t = Hashtbl.create 8
+
+let register_attribute_keys name fields =
+  Hashtbl.replace attribute_keys name fields
+
+let custom_child_key name i =
+  match Hashtbl.find_opt attribute_keys name with
+  | Some fields when i < List.length fields -> Get_attr_key (List.nth fields i)
+  | _ -> Flattened_index_key i
 
 let rec tree_flatten_with_path_from prefix tree =
   match tree with
@@ -95,11 +106,11 @@ let rec tree_flatten_with_path_from prefix tree =
         (List.mapi
            (fun i c -> tree_flatten_with_path_from (Sequence_key i :: prefix) c)
            children)
-  | Custom (_, _, children) ->
+  | Custom (name, _, children) ->
       List.concat
         (List.mapi
            (fun i c ->
-             tree_flatten_with_path_from (Flattened_index_key i :: prefix) c)
+             tree_flatten_with_path_from (custom_child_key name i :: prefix) c)
            children)
   | Dict kvs ->
       List.concat_map
@@ -121,7 +132,8 @@ let keystr path =
        (function
          | Dict_key k -> "['" ^ k ^ "']"
          | Sequence_key i -> "[" ^ string_of_int i ^ "]"
-         | Flattened_index_key i -> "[<flat index " ^ string_of_int i ^ ">]")
+         | Flattened_index_key i -> "[<flat index " ^ string_of_int i ^ ">]"
+         | Get_attr_key name -> "." ^ name)
        path)
 
 let tree_reduce f init tree = List.fold_left f init (tree_leaves tree)
@@ -154,6 +166,13 @@ let flatten_one_level = function
   | Null -> []
   | List c | Tuple c | Custom (_, _, c) -> c
   | Dict kvs -> List.map snd (sort_dict kvs)
+
+let flatten_one_level_with_keys = function
+  | Leaf _ -> invalid_arg "can't tree-flatten type: leaf"
+  | Null -> []
+  | List c | Tuple c -> List.mapi (fun i x -> (Sequence_key i, x)) c
+  | Custom (name, _, c) -> List.mapi (fun i x -> (custom_child_key name i, x)) c
+  | Dict kvs -> List.map (fun (k, x) -> (Dict_key k, x)) (sort_dict kvs)
 
 let is_tree_node = function Leaf _ -> false | _ -> true
 

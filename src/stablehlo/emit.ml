@@ -2057,7 +2057,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Atan -> emit_chlo_unary ctx eqn in_ids "atan"
   | Atanh -> emit_chlo_unary ctx eqn in_ids "atanh"
   | Cosh -> emit_chlo_unary ctx eqn in_ids "cosh"
-  | Copy -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
+  | Copy | Checkpoint_name _ ->
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
   | Exp2 -> emit_exp2 ctx eqn in_ids
   | Conj ->
       let x = sole in_ids in

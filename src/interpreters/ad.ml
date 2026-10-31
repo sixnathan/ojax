@@ -1,12 +1,27 @@
 open Types
 
 let b1 = Core.bind1
-let add a b = b1 Add [ a; b ]
-let sub a b = b1 Sub [ a; b ]
-let mul a b = b1 Mul [ a; b ]
-let div a b = b1 Div [ a; b ]
-let neg a = b1 Neg [ a ]
-let zeros_like_value = Ad_util.zeros_like_value
+let is_zero = Ad_util.is_symbolic_zero
+let zeros_like_value = Ad_util.symbolic_zero_like_value
+let same_shape a b = (Core.get_aval a).shape = (Core.get_aval b).shape
+
+let add a b =
+  if is_zero a && same_shape a b then b
+  else if is_zero b && same_shape a b then a
+  else b1 Add [ a; b ]
+
+let neg a = if is_zero a then a else b1 Neg [ a ]
+
+let sub a b =
+  if is_zero b && same_shape a b then a
+  else if is_zero a && same_shape a b then neg b
+  else b1 Sub [ a; b ]
+
+let mul a b =
+  if (is_zero a || is_zero b) && same_shape a b then if is_zero a then a else b
+  else b1 Mul [ a; b ]
+
+let div a b = if is_zero a && same_shape a b then a else b1 Div [ a; b ]
 
 let ones_like_aval a =
   let n = Array.fold_left ( * ) 1 a.shape in
@@ -659,6 +674,11 @@ let concrete_all_zero = function
   | Concrete nd -> Ndarray.fold (fun acc x -> acc && x = 0.0) true nd
   | Device _ | Tracer _ -> false
 
+let bilinear_jvp prim x y tx ty =
+  let po = b1 prim [ x; y ] in
+  let term t args = if is_zero t then zeros_like_value po else b1 prim args in
+  (po, add (term tx [ tx; y ]) (term ty [ x; ty ]))
+
 let jvp_rule prim (primals : value list) (tangents : value list) : value * value
     =
   match prim with
@@ -689,7 +709,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       | _ -> arity ())
   | Cos -> (
       match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Cos [ x ], mul (neg (b1 Sin [ x ])) tx)
+      | [ x ], [ tx ] -> (b1 Cos [ x ], neg (mul (b1 Sin [ x ]) tx))
       | _ -> arity ())
   | Exp -> (
       match (primals, tangents) with
@@ -808,15 +828,11 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       | _ -> arity ())
   | Dot_general dd -> (
       match (primals, tangents) with
-      | [ x; y ], [ tx; ty ] ->
-          ( b1 (Dot_general dd) [ x; y ],
-            add (b1 (Dot_general dd) [ tx; y ]) (b1 (Dot_general dd) [ x; ty ])
-          )
+      | [ x; y ], [ tx; ty ] -> bilinear_jvp prim x y tx ty
       | _ -> arity ())
   | Conv_general_dilated _ -> (
       match (primals, tangents) with
-      | [ x; y ], [ tx; ty ] ->
-          (b1 prim [ x; y ], add (b1 prim [ tx; y ]) (b1 prim [ x; ty ]))
+      | [ x; y ], [ tx; ty ] -> bilinear_jvp prim x y tx ty
       | _ -> arity ())
   | Asin -> (
       match (primals, tangents) with
@@ -1363,6 +1379,10 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       failwith "ad: custom rules handled by jvp_process_primitive"
+  | Checkpoint_name _ -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> (b1 prim [ x ], tx)
+      | _ -> arity ())
   | Xla_call _ -> failwith "ad: jvp of xla_call not supported in M1"
 
 let is_concrete_zero = function
@@ -1405,21 +1425,35 @@ let jvp (f : value list -> value list) (primals : value list)
       in
       List.split pairs)
 
-let cond_tangent_branch jvp_f (branch : closed_jaxpr) (op_avals : aval list) :
-    closed_jaxpr =
+let restore_symbolic_zeros zero_flags (tangents : value list) =
+  List.map2
+    (fun zero t -> if zero then Ad_util.symbolic_zero_like_value t else t)
+    zero_flags tangents
+
+let cond_tangent_branch jvp_f (branch : closed_jaxpr) (op_avals : aval list)
+    (op_zero : bool list) : closed_jaxpr =
   let n = List.length op_avals in
   Jaxpr.make_jaxpr (op_avals @ op_avals) (fun args ->
       match Util.split_list args [ n ] with
       | [ prim_ops; tan_ops ] ->
           let _, tans =
-            jvp_f (fun a -> Jaxpr.eval_closed_jaxpr branch a) prim_ops tan_ops
+            jvp_f
+              (fun a -> Jaxpr.eval_closed_jaxpr branch a)
+              prim_ops
+              (restore_symbolic_zeros op_zero tan_ops)
           in
           tans
       | _ -> failwith "ad: cond tangent branch split")
 
-let jvp_process_primitive trace prim args =
-  let pairs = List.map (as_jvp trace) args in
-  let primals = List.map fst pairs and tangents = List.map snd pairs in
+let carry_zero_fixpoint trace_body flags =
+  let rec go flags =
+    let observed = ref flags in
+    let traced = trace_body flags observed in
+    if !observed = flags then (flags, traced) else go !observed
+  in
+  go flags
+
+let jvp_process_with_tangents trace prim primals tangents =
   match prim with
   | Split _ | Unstack _ | Optimization_barrier ->
       let pos = Core.bind prim primals in
@@ -1481,7 +1515,9 @@ let jvp_process_primitive trace prim args =
       let x_slice_avals =
         List.map (fun x -> mapped_leading (Core.get_aval x)) xs
       in
-      let new_body =
+      let x_zero = List.map Ad_util.is_symbolic_zero xs_t in
+      let ys_zero = ref [] in
+      let trace_body carry_zero observed =
         Jaxpr.make_jaxpr
           (carry_avals @ carry_avals @ x_slice_avals @ x_slice_avals)
           (fun args ->
@@ -1489,11 +1525,24 @@ let jvp_process_primitive trace prim args =
             let tc, r2 = split2 r1 nc in
             let px, tx = split2 r2 nx in
             let po, to_ =
-              jvp (fun a -> Jaxpr.eval_closed_jaxpr jaxpr a) (pc @ px) (tc @ tx)
+              jvp
+                (fun a -> Jaxpr.eval_closed_jaxpr jaxpr a)
+                (pc @ px)
+                (restore_symbolic_zeros carry_zero tc
+                @ restore_symbolic_zeros x_zero tx)
             in
             let pc', py = split2 po nc in
             let tc', ty = split2 to_ nc in
+            observed :=
+              List.map2
+                (fun z t -> z && Ad_util.is_symbolic_zero t)
+                carry_zero tc';
+            ys_zero := List.map Ad_util.is_symbolic_zero ty;
             pc' @ tc' @ py @ ty)
+      in
+      let carry_zero, new_body =
+        carry_zero_fixpoint trace_body
+          (List.map Ad_util.is_symbolic_zero carry_t)
       in
       let new_operands = carry @ carry_t @ xs @ xs_t in
       let out =
@@ -1505,7 +1554,10 @@ let jvp_process_primitive trace prim args =
       let tcarry, r2 = split2 r1 nc in
       let pys, tys = split2 r2 num_ys in
       let primal_outs = pcarry @ pys in
-      let tangent_outs = tcarry @ tys in
+      let tangent_outs =
+        restore_symbolic_zeros carry_zero tcarry
+        @ restore_symbolic_zeros !ys_zero tys
+      in
       List.map2
         (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
         primal_outs tangent_outs
@@ -1515,11 +1567,24 @@ let jvp_process_primitive trace prim args =
       in
       let nc = List.length primals in
       let carry_avals = List.map Core.get_aval primals in
-      let new_body =
+      let trace_body carry_zero observed =
         Jaxpr.make_jaxpr (carry_avals @ carry_avals) (fun args ->
             let pc, tc = split2 args nc in
-            let po, to_ = jvp (fun a -> Jaxpr.eval_closed_jaxpr body a) pc tc in
+            let po, to_ =
+              jvp
+                (fun a -> Jaxpr.eval_closed_jaxpr body a)
+                pc
+                (restore_symbolic_zeros carry_zero tc)
+            in
+            observed :=
+              List.map2
+                (fun z t -> z && Ad_util.is_symbolic_zero t)
+                carry_zero to_;
             po @ to_)
+      in
+      let carry_zero, new_body =
+        carry_zero_fixpoint trace_body
+          (List.map Ad_util.is_symbolic_zero tangents)
       in
       let new_cond =
         Jaxpr.make_jaxpr (carry_avals @ carry_avals) (fun args ->
@@ -1534,14 +1599,16 @@ let jvp_process_primitive trace prim args =
       let pcarry, tcarry = split2 out nc in
       List.map2
         (fun po to_ -> Tracer (new_jvp_tracer trace po to_))
-        pcarry tcarry
+        pcarry
+        (restore_symbolic_zeros carry_zero tcarry)
   | Cond { t; f } -> (
       match (primals, tangents) with
       | pred :: prim_ops, _ :: tan_ops ->
           let op_avals = List.map Core.get_aval prim_ops in
           let primal_outs = Core.bind (Cond { t; f }) primals in
-          let t_tan = cond_tangent_branch jvp t op_avals in
-          let f_tan = cond_tangent_branch jvp f op_avals in
+          let op_zero = List.map Ad_util.is_symbolic_zero tan_ops in
+          let t_tan = cond_tangent_branch jvp t op_avals op_zero in
+          let f_tan = cond_tangent_branch jvp f op_avals op_zero in
           let tangent_outs =
             Core.bind
               (Cond { t = t_tan; f = f_tan })
@@ -1558,14 +1625,23 @@ let jvp_process_primitive trace prim args =
   | Custom_jvp_call id -> (
       match Core.custom_rule id with
       | Core.Jvp_rule { jvp; _ } ->
-          let po, to_ = jvp primals tangents in
+          let po, to_ = jvp (List.map Core.full_lower primals) tangents in
           List.map2 (fun p t -> Tracer (new_jvp_tracer trace p t)) po to_
       | Core.Vjp_rule _ | Core.Linear_rule _ | Core.Callback_rule _ ->
           failwith "ad: custom_jvp_call with a non-jvp rule")
   | Custom_vjp_call id -> (
       match Core.custom_rule id with
-      | Core.Vjp_rule { fwd; _ } ->
-          let po, res = fwd primals in
+      | Core.Vjp_rule { fwd; fwd_perturbed; _ } ->
+          let primals = List.map Core.full_lower primals in
+          let po, res =
+            match fwd_perturbed with
+            | None -> fwd primals
+            | Some rule ->
+                let perturbed =
+                  List.map (fun t -> not (Ad_util.is_symbolic_zero t)) tangents
+                in
+                rule perturbed primals
+          in
           let out_avals = List.map Core.get_aval po in
           let to_ =
             if List.for_all is_concrete_zero tangents then
@@ -1608,11 +1684,23 @@ let jvp_process_primitive trace prim args =
       let po, to_ = jvp_rule prim primals tangents in
       [ Tracer (new_jvp_tracer trace po to_) ]
 
+let jvp_process_primitive trace prim args =
+  let pairs = List.map (as_jvp trace) args in
+  let primals = List.map fst pairs and tangents = List.map snd pairs in
+  if List.for_all Ad_util.is_symbolic_zero tangents then Core.bind prim primals
+  else jvp_process_with_tangents trace prim primals tangents
+
+let jvp_full_lower = function
+  | Tracer { payload = JVP { primal; tangent }; _ }
+    when Ad_util.is_symbolic_zero tangent ->
+      Core.full_lower primal
+  | v -> v
+
 let interpreter : Core.interpreter =
   {
     i_pure = jvp_pure;
     i_lift = jvp_pure;
-    i_full_lower = (fun v -> v);
+    i_full_lower = jvp_full_lower;
     i_process_primitive = jvp_process_primitive;
     i_process_custom_jvp =
       (fun _ ~primal:_ ~jvp:_ _ ->
@@ -2676,6 +2764,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
             Some (b1 Tridiagonal_solve [ dl_t; d; du_t; ct1 () ]);
           ]
       | _ -> failwith "ad: tridiagonal_solve is linear only in its right side")
+  | Checkpoint_name _ -> [ Some (ct1 ()) ]
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
   | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: nonlinear linalg primitive has no transpose rule"
@@ -2711,11 +2800,11 @@ and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     | Some c ->
         Hashtbl.remove ct_env v.vid;
         c
-    | None -> Ad_util.zeros_like_aval v.vaval
+    | None -> Ad_util.symbolic_zero_of_aval v.vaval
   in
   let write_ct atom ct =
     match atom with
-    | A_var v -> (
+    | A_var v when not (Ad_util.is_symbolic_zero ct) -> (
         match Hashtbl.find_opt ct_env v.vid with
         | Some c -> Hashtbl.replace ct_env v.vid (Ad_util.add_jaxvals c ct)
         | None -> Hashtbl.replace ct_env v.vid ct)
@@ -2727,11 +2816,12 @@ and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
       let primals_in = List.map read_primal e.inputs in
       if List.exists is_undef primals_in then begin
         let cts_in = List.map read_ct e.outs in
-        let cts_out = transpose_rule e.prim cts_in primals_in in
-        List.iter2
-          (fun atom cto ->
-            match cto with Some ct -> write_ct atom ct | None -> ())
-          e.inputs cts_out
+        if not (List.for_all Ad_util.is_symbolic_zero cts_in) then
+          let cts_out = transpose_rule e.prim cts_in primals_in in
+          List.iter2
+            (fun atom cto ->
+              match cto with Some ct -> write_ct atom ct | None -> ())
+            e.inputs cts_out
       end)
     (List.rev jx.eqns);
   List.fold_right2
@@ -2739,8 +2829,8 @@ and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
       match tv with Undef _ -> read_ct v :: acc | Prim _ -> acc)
     jx.in_binders args []
 
-let vjp (f : value list -> value list) (primals : value list) :
-    value list * (value list -> value list) =
+let vjp_staged (f : value list -> value list) (primals : value list) :
+    value list * value list * (value list -> value list -> value list) =
   let pvals_in =
     List.map Partial_eval.partial_val_known primals
     @ List.map
@@ -2764,11 +2854,9 @@ let vjp (f : value list -> value list) (primals : value list) :
         | None -> failwith "ad.vjp: primal output not known")
       primal_pvals
   in
-  let transpose_inputs =
-    List.map (fun c -> Prim c) consts
-    @ List.map (fun x -> Undef (Core.get_aval x)) primals
-  in
-  let f_vjp cts =
+  let undefined = List.map (fun x -> Undef (Core.get_aval x)) primals in
+  let backward residuals cts =
+    let transpose_inputs = List.map (fun c -> Prim c) residuals @ undefined in
     let unknown_cts =
       List.concat
         (List.map2
@@ -2777,7 +2865,17 @@ let vjp (f : value list -> value list) (primals : value list) :
     in
     eval_jaxpr_transposed jaxpr transpose_inputs unknown_cts
   in
-  (primals_out, f_vjp)
+  (primals_out, consts, backward)
+
+let vjp f primals =
+  let primals_out, residuals, backward = vjp_staged f primals in
+  (primals_out, backward residuals)
+
+let aux_primal = function
+  | Tracer { trace = { kind = KJVP; level; _ }; payload = JVP { primal; _ }; _ }
+    when level = Core.current_level () ->
+      Core.full_lower primal
+  | v -> v
 
 let grad (f : value list -> value) (xs : value list) : value list =
   let primals_out, f_vjp = vjp (fun args -> [ f args ]) xs in

@@ -287,10 +287,15 @@ let lit_value nd =
   let scalar = [||] in
   match Ndarray.dtype nd with
   | Dtype.Bool -> if Ndarray.get_f nd scalar = 0.0 then "False" else "True"
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
-  | Dtype.Uint16 | Dtype.Uint64 ->
+  | Dtype.Float0 -> "(b'',)"
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.I2
+  | Dtype.I4 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4
+  | Dtype.Uint64 ->
       Int64.to_string (Ndarray.get_i64 nd scalar)
-  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+  | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+  | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+  | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
       python_repr_float (Ndarray.get_f nd scalar)
   | Dtype.Complex64 | Dtype.Complex128 ->
       let z = Ndarray.get_c nd scalar in

@@ -27,10 +27,16 @@ let identity_prod = 1.0
 
 let identity_max dt =
   match dt with
-  | D.F32 | D.F64 | D.F16 | D.Bf16 -> Float.neg_infinity
+  | D.F32 | D.F64 | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn
+  | D.F8_e3m4 | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz
+  | D.F8_e5m2 | D.F8_e5m2fnuz | D.F8_e8m0fnu ->
+      Dtypes.max_identity dt
+  | D.I2 -> -2.0
+  | D.I4 -> -8.0
+  | D.Float0 -> invalid_arg "segment: float0 has no max identity"
   | D.I8 -> -128.0
   | D.I16 -> -32768.0
-  | D.Uint8 | D.Uint16 | D.Uint64 -> 0.0
+  | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint64 -> 0.0
   | D.I32 -> -2147483648.0
   | D.I64 -> -9223372036854775808.0
   | D.Uint32 -> 0.0
@@ -40,7 +46,15 @@ let identity_max dt =
 
 let identity_min dt =
   match dt with
-  | D.F32 | D.F64 | D.F16 | D.Bf16 -> Float.infinity
+  | D.F32 | D.F64 | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn
+  | D.F8_e3m4 | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz
+  | D.F8_e5m2 | D.F8_e5m2fnuz | D.F8_e8m0fnu ->
+      Dtypes.min_identity dt
+  | D.I2 -> 1.0
+  | D.I4 -> 7.0
+  | D.Uint2 -> 3.0
+  | D.Uint4 -> 15.0
+  | D.Float0 -> invalid_arg "segment: float0 has no min identity"
   | D.I8 -> 127.0
   | D.I16 -> 32767.0
   | D.Uint8 -> 255.0

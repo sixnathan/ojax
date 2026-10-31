@@ -70,7 +70,7 @@ let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
 let rng_bit_generator ?(dtype = D.Uint32) ?(algorithm = Rng_default) key
     out_shape =
   (match dtype with
-  | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> ()
+  | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint32 | D.Uint64 -> ()
   | _ -> invalid_arg "rng_bit_generator: unsupported dtype");
   let key_aval = aval key in
   let wide = Stablehlo.Ir.tensor_type D.Uint64 [| 2 |] in

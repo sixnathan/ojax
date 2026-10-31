@@ -1103,7 +1103,10 @@ let render_element o nd idx =
         (render_float o z.Complex.re)
         (if z.Complex.im < 0.0 then "-" else "+")
         im
-  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 ->
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn
+  | Dtype.F8_e3m4 | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn
+  | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu
+  | Dtype.F32 | Dtype.F64 ->
       render_float o (Ndarray.get_f nd idx)
   | _ -> Int64.to_string (Ndarray.get_i64 nd idx)
 

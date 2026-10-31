@@ -17,8 +17,15 @@ let zeros_like v = const_full (dtype v) (shape v) 0.0
 let to_inexact_dtype = function
   | D.F32 -> D.F32
   | D.F64 -> D.F64
-  | (D.F16 | D.Bf16) as narrow -> narrow
-  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 -> D.F32
+  | ( D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
+    | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
+    | D.F8_e5m2fnuz | D.F8_e8m0fnu ) as narrow ->
+      narrow
+  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.I4 | D.Uint8 | D.Uint16
+  | D.Uint4 ->
+      D.F32
+  | (D.I2 | D.Uint2) as narrow -> narrow
+  | D.Float0 -> invalid_arg "float0 has no inexact dtype"
   | D.I64 | D.Uint64 -> D.F64
   | (D.Complex64 | D.Complex128) as c -> c
 
@@ -187,6 +194,9 @@ let smallest_subnormal = function
 
 let spacing x =
   let a = p1 (promote_inexact [ x ]) in
+  if
+    Dtypes.issubdtype (dtype a) `Floating && Dtypes.itemsize_bits (dtype a) < 16
+  then failwith "jax.numpy.signbit only supports 16, 32, and 64-bit types.";
   let dt = dtype a and sh = shape a in
   let below = bind1 T.Lt [ a; zeros_like a ] in
   let pos_inf = const_full dt sh infinity in
@@ -201,12 +211,16 @@ let spacing x =
   bind1 T.Select_n [ is_zero; result; filled ]
 
 let is_integer = function
-  | D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
+  | D.I8 | D.I16 | D.I2 | D.I4 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint2
+  | D.Uint4 | D.Uint32 | D.Uint64 ->
       true
   | _ -> false
 
 let is_inexact = function
-  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
+  | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
+  | D.F8_e5m2fnuz | D.F8_e8m0fnu | D.F32 | D.F64 | D.Complex64 | D.Complex128 ->
+      true
   | _ -> false
 
 let where c a b = bind1 T.Select_n [ c; b; a ]
@@ -311,7 +325,8 @@ let float_divmod x1 x2 =
 let floor_divide x1 x2 =
   let a, b = p2 (promote_numeric [ x1; x2 ]) in
   let dt = dtype a and sh = shape a in
-  if is_integer dt then begin
+  if Dtypes.issubdtype dt `Unsigned then bind1 T.Div [ a; b ]
+  else if is_integer dt then begin
     let q = bind1 T.Div [ a; b ] in
     let sel =
       bind1 T.And
@@ -379,9 +394,14 @@ let signbit x =
   let a = p1 (promote [ x ]) in
   let sh = shape a in
   match dtype a with
-  | D.I32 | D.I64 | D.I8 | D.I16 -> bind1 T.Lt [ a; zeros_like a ]
+  | D.I32 | D.I64 | D.I8 | D.I16 | D.I2 | D.I4 -> bind1 T.Lt [ a; zeros_like a ]
   | D.F16 | D.Bf16 -> bind1 T.Lt [ a; zeros_like a ]
-  | D.Bool | D.Uint32 | D.Uint8 | D.Uint16 | D.Uint64 ->
+  | D.Float0 -> invalid_arg "signbit does not accept float0"
+  | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4 | D.F8_e4m3
+  | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2 | D.F8_e5m2fnuz
+  | D.F8_e8m0fnu ->
+      failwith "jax.numpy.signbit only supports 16, 32, and 64-bit types."
+  | D.Bool | D.Uint32 | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint64 ->
       const_full D.Bool sh 0.0
   | D.Complex64 | D.Complex128 ->
       invalid_arg "signbit: complex dtype unsupported"
@@ -399,28 +419,25 @@ let copysign x1 x2 =
   where (signbit b) (bind1 T.Neg [ bind1 T.Abs [ a ] ]) (bind1 T.Abs [ a ])
 
 let isfinite x =
-  match dtype x with
-  | D.F32 | D.F64 -> bind1 T.Is_finite [ x ]
-  | _ -> const_full D.Bool (shape x) 1.0
+  if Dtypes.issubdtype (dtype x) `Floating then bind1 T.Is_finite [ x ]
+  else const_full D.Bool (shape x) 1.0
 
 let isinf x =
-  match dtype x with
-  | D.F32 | D.F64 ->
-      bind1 T.Eq [ bind1 T.Abs [ x ]; const_full (dtype x) (shape x) infinity ]
-  | _ -> const_full D.Bool (shape x) 0.0
+  if Dtypes.issubdtype (dtype x) `Floating then
+    bind1 T.Eq [ bind1 T.Abs [ x ]; const_full (dtype x) (shape x) infinity ]
+  else const_full D.Bool (shape x) 0.0
 
 let isnan x = bind1 T.Ne [ x; x ]
 
 let isposinf x =
-  match dtype x with
-  | D.F32 | D.F64 -> bind1 T.Eq [ x; const_full (dtype x) (shape x) infinity ]
-  | _ -> const_full D.Bool (shape x) 0.0
+  if Dtypes.issubdtype (dtype x) `Floating then
+    bind1 T.Eq [ x; const_full (dtype x) (shape x) infinity ]
+  else const_full D.Bool (shape x) 0.0
 
 let isneginf x =
-  match dtype x with
-  | D.F32 | D.F64 ->
-      bind1 T.Eq [ x; const_full (dtype x) (shape x) neg_infinity ]
-  | _ -> const_full D.Bool (shape x) 0.0
+  if Dtypes.issubdtype (dtype x) `Floating then
+    bind1 T.Eq [ x; const_full (dtype x) (shape x) neg_infinity ]
+  else const_full D.Bool (shape x) 0.0
 
 let heaviside x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in

@@ -18,9 +18,13 @@ let const_full dt sh x =
 let scalar dt x = const_full dt [||] x
 
 let is_integer = function
-  | D.I32 | D.I64 | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 | D.Uint64 ->
+  | D.I32 | D.I64 | D.Uint32 | D.I8 | D.I16 | D.I2 | D.I4 | D.Uint8 | D.Uint16
+  | D.Uint2 | D.Uint4 | D.Uint64 ->
       true
-  | D.F32 | D.F64 | D.F16 | D.Bf16 | D.Bool | D.Complex64 | D.Complex128 ->
+  | D.F32 | D.F64 | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn
+  | D.F8_e3m4 | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz
+  | D.F8_e5m2 | D.F8_e5m2fnuz | D.F8_e8m0fnu | D.Float0 | D.Bool | D.Complex64
+  | D.Complex128 ->
       false
 
 let round_half_away a = if is_integer (dtype a) then a else bind1 T.Round [ a ]

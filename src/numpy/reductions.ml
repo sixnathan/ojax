@@ -39,14 +39,24 @@ let broadcast_to v sh =
   end
 
 let is_inexact = function
-  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
+  | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
+  | D.F8_e5m2fnuz | D.F8_e8m0fnu | D.F32 | D.F64 | D.Complex64 | D.Complex128 ->
+      true
   | _ -> false
 
 let to_inexact_dtype = function
   | D.F32 -> D.F32
   | D.F64 -> D.F64
-  | (D.F16 | D.Bf16) as narrow -> narrow
-  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.Uint8 | D.Uint16 -> D.F32
+  | ( D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
+    | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
+    | D.F8_e5m2fnuz | D.F8_e8m0fnu ) as narrow ->
+      narrow
+  | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.I4 | D.Uint8 | D.Uint16
+  | D.Uint4 ->
+      D.F32
+  | (D.I2 | D.Uint2) as narrow -> narrow
+  | D.Float0 -> invalid_arg "float0 has no inexact dtype"
   | D.I64 | D.Uint64 -> D.F64
   | (D.Complex64 | D.Complex128) as c -> c
 
@@ -59,10 +69,16 @@ let promote_integer_dtype dt =
   | D.Bool -> di
   | D.I32 -> if di = D.I64 then D.I64 else D.I32
   | D.I64 -> D.I64
-  | D.I8 | D.I16 -> if di = D.I64 then D.I64 else D.I32
-  | D.Uint8 | D.Uint16 | D.Uint32 -> if di = D.I64 then D.Uint64 else D.Uint32
+  | D.I8 | D.I16 | D.I2 | D.I4 -> if di = D.I64 then D.I64 else D.I32
+  | D.Float0 -> invalid_arg "float0 has no reduction dtype"
+  | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint32 ->
+      if di = D.I64 then D.Uint64 else D.Uint32
   | D.Uint64 -> D.Uint64
-  | (D.F32 | D.F64 | D.F16 | D.Bf16 | D.Complex64 | D.Complex128) as f -> f
+  | ( D.F32 | D.F64 | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn
+    | D.F8_e3m4 | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz
+    | D.F8_e5m2 | D.F8_e5m2fnuz | D.F8_e8m0fnu | D.Complex64 | D.Complex128 ) as
+    f ->
+      f
 
 let all_axes v = Array.init (ndim v) (fun i -> i)
 

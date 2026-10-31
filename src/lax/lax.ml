@@ -17,8 +17,12 @@ let bool_of b = if b then 1.0 else 0.0
 let exp2_f x = Float.pow 2.0 x
 
 let clz_nbits = function
-  | Dtype.I32 -> 32
-  | Dtype.I64 -> 64
+  | Dtype.I2 | Dtype.Uint2 -> 2
+  | Dtype.I4 | Dtype.Uint4 -> 4
+  | Dtype.I8 | Dtype.Uint8 -> 8
+  | Dtype.I16 | Dtype.Uint16 -> 16
+  | Dtype.I32 | Dtype.Uint32 -> 32
+  | Dtype.I64 | Dtype.Uint64 -> 64
   | _ -> failwith "lax: clz requires an integer operand"
 
 let clz_bits nbits x =
@@ -35,8 +39,13 @@ let clz_bits nbits x =
     loop (nbits - 1)
 
 let int_nbits = function
-  | Dtype.I32 -> 32
-  | Dtype.I64 -> 64
+  | Dtype.I2 | Dtype.Uint2 -> 2
+  | Dtype.Uint4 -> 4
+  | Dtype.I4 -> 8
+  | Dtype.I8 | Dtype.Uint8 -> 8
+  | Dtype.I16 | Dtype.Uint16 -> 16
+  | Dtype.I32 | Dtype.Uint32 -> 32
+  | Dtype.I64 | Dtype.Uint64 -> 64
   | _ -> failwith "lax: integer operand required"
 
 let popcount_bits nbits x =
@@ -53,8 +62,8 @@ let popcount_bits nbits x =
 let not_f dt x =
   match dt with
   | Dtype.Bool -> if x = 0.0 then 1.0 else 0.0
-  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
-  | Dtype.Uint32 ->
+  | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 | Dtype.I32 | Dtype.I64
+  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint32 ->
       Int64.to_float (Int64.lognot (Int64.of_float x))
   | _ -> failwith "lax: not requires a boolean or integer operand"
 
@@ -82,8 +91,8 @@ let mul_f dt x y =
 let and_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 && y <> 0.0 then 1.0 else 0.0
-  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
-  | Dtype.Uint32 ->
+  | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 | Dtype.I32 | Dtype.I64
+  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint32 ->
       Int64.to_float (Int64.logand (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: and requires a boolean or integer operand"
 
@@ -124,24 +133,29 @@ let mulhi_f dt x y =
 let or_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 || y <> 0.0 then 1.0 else 0.0
-  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
-  | Dtype.Uint32 ->
+  | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 | Dtype.I32 | Dtype.I64
+  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint32 ->
       Int64.to_float (Int64.logor (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: or requires a boolean or integer operand"
 
 let xor_f dt x y =
   match dt with
   | Dtype.Bool -> if x <> 0.0 <> (y <> 0.0) then 1.0 else 0.0
-  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
-  | Dtype.Uint32 ->
+  | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 | Dtype.I32 | Dtype.I64
+  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint32 ->
       Int64.to_float (Int64.logxor (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: xor requires a boolean or integer operand"
 
 let rem_f dt x y =
   match dt with
-  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> Float.rem x y
-  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
-  | Dtype.Uint32 | Dtype.Uint64 ->
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn
+  | Dtype.F8_e3m4 | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn
+  | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu
+  | Dtype.F32 | Dtype.F64 ->
+      Float.rem x y
+  | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 | Dtype.I32 | Dtype.I64
+  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint32
+  | Dtype.Uint64 ->
       if y = 0.0 then x
       else Int64.to_float (Int64.rem (Int64.of_float x) (Int64.of_float y))
   | _ -> failwith "lax: rem requires an integer or float operand"
@@ -157,6 +171,15 @@ let shift_left_f dt x y =
 let shift_right_arithmetic_f x y =
   Int64.to_float (Int64.shift_right (Int64.of_float x) (int_of_float y))
 
+let shift_right_arithmetic_dt dt x y =
+  let signed =
+    match dt with
+    | Dtype.Uint2 -> if x >= 2.0 then x -. 4.0 else x
+    | Dtype.Uint4 -> if x >= 8.0 then x -. 16.0 else x
+    | _ -> x
+  in
+  shift_right_arithmetic_f signed y
+
 let shift_right_logical_f dt x y =
   let s = int_of_float y in
   match dt with
@@ -170,6 +193,12 @@ let shift_right_logical_f dt x y =
   | Dtype.I16 | Dtype.Uint16 ->
       Int64.to_float
         (Int64.shift_right_logical (Int64.logand (Int64.of_float x) 0xFFFFL) s)
+  | Dtype.I2 | Dtype.Uint2 ->
+      Int64.to_float
+        (Int64.shift_right_logical (Int64.logand (Int64.of_float x) 0x3L) s)
+  | Dtype.I4 | Dtype.Uint4 ->
+      Int64.to_float
+        (Int64.shift_right_logical (Int64.logand (Int64.of_float x) 0xFL) s)
   | _ -> failwith "lax: shift_right_logical requires an integer operand"
 
 let f64_nextafter x y =
@@ -202,6 +231,8 @@ let nextafter_f dt x y =
   match dt with
   | Dtype.F32 -> f32_nextafter x y
   | Dtype.F64 -> f64_nextafter x y
+  | d when Option.is_some (Float_format.of_dtype d) ->
+      Float_format.next_after (Option.get (Float_format.of_dtype d)) x y
   | _ -> failwith "lax: nextafter requires a float operand"
 
 let integer_pow_f y x = Float.pow x (float_of_int y)
@@ -283,7 +314,13 @@ let broadcast_in_dim_impl shape dims a =
 
 let reshape_impl ns a = Ndarray.of_floats (Ndarray.dtype a) ns (to_array a)
 
+let small_step dt =
+  match Float_format.of_dtype dt with
+  | Some f -> Float_format.round f
+  | None -> Fun.id
+
 let reduce_sum_impl axes a =
+  let step = small_step (Ndarray.dtype a) in
   let os = Ndarray.shape a in
   let out_shape = Utils.reduce_shape os axes in
   let out_str = Utils.strides out_shape in
@@ -291,7 +328,7 @@ let reduce_sum_impl axes a =
   let is_red = Array.make ndim false in
   Array.iter (fun ax -> is_red.(ax) <- true) axes;
   let src = to_array a in
-  let out = Array.make (Utils.prod out_shape) 0.0 in
+  let out = Array.make (Utils.prod out_shape) (step 0.0) in
   for flat = 0 to Array.length src - 1 do
     let oidx = Utils.decode flat os in
     let of_ = ref 0 and k = ref 0 in
@@ -301,7 +338,7 @@ let reduce_sum_impl axes a =
         incr k
       end
     done;
-    out.(!of_) <- out.(!of_) +. src.(flat)
+    out.(!of_) <- step (out.(!of_) +. src.(flat))
   done;
   Ndarray.of_floats (Ndarray.dtype a) out_shape out
 
@@ -635,6 +672,7 @@ let unstack_impl axis operand =
       Ndarray.of_floats dt out_shape out)
 
 let reduce_op_impl combine identity axes a =
+  let step = small_step (Ndarray.dtype a) in
   let os = Ndarray.shape a in
   let out_shape = Utils.reduce_shape os axes in
   let out_str = Utils.strides out_shape in
@@ -652,9 +690,15 @@ let reduce_op_impl combine identity axes a =
         incr k
       end
     done;
-    out.(!of_) <- combine out.(!of_) src.(flat)
+    out.(!of_) <- step (combine out.(!of_) src.(flat))
   done;
   Ndarray.of_floats (Ndarray.dtype a) out_shape out
+
+let small_identity pick a =
+  let dt = Ndarray.dtype a in
+  match Float_format.of_dtype dt with
+  | Some f -> Float_format.round f (pick dt)
+  | None -> if pick Dtype.F64 > 0.0 then infinity else neg_infinity
 
 let and_identity = function Dtype.Bool -> 1.0 | _ -> -1.0
 
@@ -685,7 +729,10 @@ let argminmax_impl is_max axis index_dtype operand =
     let best = ref av.(!base) and best_i = ref 0 in
     for i = 1 to n - 1 do
       let v = av.(!base + (i * str.(axis))) in
-      let pick = (if is_max then v > !best else v < !best) || v <> v in
+      let pick =
+        Ndarray.dtype operand <> Dtype.F8_e8m0fnu
+        && ((if is_max then v > !best else v < !best) || v <> v)
+      in
       if pick then begin
         best := v;
         best_i := i
@@ -713,6 +760,25 @@ let beta_impl = function
       in
       [ Ndarray.of_floats dt (Ndarray.shape xv) out ]
   | _ -> failwith "lax: regularized_incomplete_beta expects 3 operands"
+
+let small_bit_width = function
+  | Dtype.I2 | Dtype.Uint2 -> Some 2
+  | Dtype.I4 | Dtype.Uint4 | Dtype.F4_e2m1fn -> Some 4
+  | Dtype.I8 | Dtype.Uint8 | Dtype.F8_e3m4 | Dtype.F8_e4m3
+  | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+  | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
+      Some 8
+  | _ -> None
+
+let small_to_bits dt v =
+  match Float_format.of_dtype dt with
+  | Some f -> Float_format.encode f v
+  | None -> int_of_float v land ((1 lsl Option.get (small_bit_width dt)) - 1)
+
+let small_of_bits dt bits =
+  match Float_format.of_dtype dt with
+  | Some f -> Float_format.decode f bits
+  | None -> float_of_int bits
 
 let bitcast_impl new_dt operand =
   let shape = Ndarray.shape operand in
@@ -749,6 +815,10 @@ let bitcast_impl new_dt operand =
              Int64.to_float
                (Int64.logand (Int64.of_int32 (as_narrow i)) 0xFFFFFFFFL)))
   | a, b when a = b -> operand
+  | a, b when small_bit_width a <> None && small_bit_width a = small_bit_width b
+    ->
+      let raw = Array.init n (fun i -> small_to_bits a (value i)) in
+      Ndarray.of_floats new_dt shape (Array.map (small_of_bits b) raw)
   | _ ->
       invalid_arg
         "lax.bitcast_convert_type: operand and target must have the same width"
@@ -860,7 +930,7 @@ let limit_exponent exponent_bits x =
     else if exponent < 1 - bias then Float.copy_sign 0.0 x
     else x
 
-let reduce_precision_f dt exponent_bits mantissa_bits x =
+let rec reduce_precision_f dt exponent_bits mantissa_bits x =
   match dt with
   | Dtype.F32 ->
       if exponent_bits < 8 then
@@ -880,6 +950,10 @@ let reduce_precision_f dt exponent_bits mantissa_bits x =
       else
         Int64.float_of_bits
           (reduce_precision_bits64 mantissa_bits (Int64.bits_of_float x))
+  | d when Option.is_some (Float_format.of_dtype d) ->
+      Float_format.round
+        (Option.get (Float_format.of_dtype d))
+        (reduce_precision_f Dtype.F64 exponent_bits mantissa_bits x)
   | _ -> failwith "lax: reduce_precision requires a floating-point operand"
 
 let line_base os str dimension lidx =
@@ -980,7 +1054,11 @@ let custom_output = function
         "custom derivative rule closed over a tracer; pass it as an argument"
 
 let is_float_source = function
-  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> true
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn
+  | Dtype.F8_e3m4 | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn
+  | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu
+  | Dtype.F32 | Dtype.F64 ->
+      true
   | _ -> false
 
 let saturate_to dt v =
@@ -994,10 +1072,18 @@ let saturate_to dt v =
   | Dtype.I64 -> clamp (-9223372036854775808.0) 9223372036854774784.0
   | Dtype.Uint8 -> clamp 0.0 255.0
   | Dtype.Uint16 -> clamp 0.0 65535.0
+  | Dtype.I2 -> clamp (-2.0) 1.0
+  | Dtype.I4 -> clamp (-8.0) 7.0
+  | Dtype.Uint2 -> clamp 0.0 3.0
+  | Dtype.Uint4 -> clamp 0.0 15.0
+  | Dtype.Float0 -> 0.0
   | Dtype.Uint32 -> clamp 0.0 4294967295.0
   | Dtype.Uint64 -> clamp 0.0 18446744073709549568.0
-  | Dtype.Bool | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64
-  | Dtype.Complex64 | Dtype.Complex128 ->
+  | Dtype.Bool | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn
+  | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz
+  | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz
+  | Dtype.F8_e8m0fnu | Dtype.F32 | Dtype.F64 | Dtype.Complex64
+  | Dtype.Complex128 ->
       v
 
 let rec impl_base prim inputs =
@@ -1059,8 +1145,8 @@ let rec impl_base prim inputs =
         (fun a b ->
           let dt = Ndarray.dtype a in
           match dt with
-          | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.Uint8 | Dtype.Uint16
-          | Dtype.Uint32 ->
+          | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 | Dtype.I32 | Dtype.Uint8
+          | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint32 ->
               Ndarray.map2 dt
                 (fun x y -> if y = 0.0 then -1.0 else Float.trunc (x /. y))
                 a b
@@ -1241,7 +1327,10 @@ let rec impl_base prim inputs =
         inputs
   | Shift_right_arithmetic ->
       bin
-        (fun a b -> Ndarray.map2 (Ndarray.dtype a) shift_right_arithmetic_f a b)
+        (fun a b ->
+          Ndarray.map2 (Ndarray.dtype a)
+            (shift_right_arithmetic_dt (Ndarray.dtype a))
+            a b)
         inputs
   | Shift_right_logical ->
       bin
@@ -1270,8 +1359,16 @@ let rec impl_base prim inputs =
       match inputs with
       | [ a ] -> unstack_impl axis a
       | _ -> failwith "lax: unstack expects 1 operand")
-  | Reduce_max axes -> un (reduce_op_impl Float.max neg_infinity axes) inputs
-  | Reduce_min axes -> un (reduce_op_impl Float.min infinity axes) inputs
+  | Reduce_max axes ->
+      un
+        (fun a ->
+          reduce_op_impl Float.max (small_identity Dtypes.max_identity a) axes a)
+        inputs
+  | Reduce_min axes ->
+      un
+        (fun a ->
+          reduce_op_impl Float.min (small_identity Dtypes.min_identity a) axes a)
+        inputs
   | Reduce_prod axes -> un (reduce_op_impl ( *. ) 1.0 axes) inputs
   | Reduce_and axes -> un (reduce_and_impl axes) inputs
   | Reduce_or axes -> un (reduce_or_impl axes) inputs
@@ -1476,16 +1573,39 @@ let rec impl_base prim inputs =
         | Tracer _ -> failwith "lax: while produced a tracer"
         | Device _ -> failwith "lax: while produced a tracer")
   | Cumsum { axis; reverse } ->
-      un (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:( +. )) inputs
+      un
+        (fun a ->
+          if Ndarray.dtype a = Dtype.F8_e8m0fnu then
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+          else
+            let step = small_step (Ndarray.dtype a) in
+            Control_flow.Loops.cumred_impl ~axis ~reverse
+              ~combine:(fun x y -> step (x +. y))
+              a)
+        inputs
   | Cumprod { axis; reverse } ->
-      un (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:( *. )) inputs
+      un
+        (fun a ->
+          let step = small_step (Ndarray.dtype a) in
+          Control_flow.Loops.cumred_impl ~axis ~reverse
+            ~combine:(fun x y -> step (x *. y))
+            a)
+        inputs
   | Cummax { axis; reverse } ->
       un
-        (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.max)
+        (fun a ->
+          if Ndarray.dtype a = Dtype.F8_e8m0fnu then
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+          else
+            Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.max a)
         inputs
   | Cummin { axis; reverse } ->
       un
-        (Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.min)
+        (fun a ->
+          if Ndarray.dtype a = Dtype.F8_e8m0fnu then
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+          else
+            Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.min a)
         inputs
   | Cumlogsumexp { axis; reverse } ->
       un

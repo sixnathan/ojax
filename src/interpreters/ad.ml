@@ -787,10 +787,9 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       | [ x ], [ tx ] ->
           let po = b1 (Convert_element_type dt) [ x ] in
           let to_ =
-            match dt with
-            | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 ->
-                b1 (Convert_element_type dt) [ tx ]
-            | _ -> zeros_like_value po
+            if Dtypes.issubdtype dt `Inexact then
+              b1 (Convert_element_type dt) [ tx ]
+            else zeros_like_value po
           in
           (po, to_)
       | _ -> arity ())

@@ -4,6 +4,8 @@ val canonicalize_dtype : Dtype.t -> Dtype.t
 val promote_types : Dtype.t -> Dtype.t -> Dtype.t
 val result_type : (Dtype.t * bool) list -> Dtype.t * bool
 
+exception Type_promotion_error of string
+
 type finfo = {
   bits : int;
   eps : float;
@@ -34,8 +36,20 @@ val issubdtype :
   | `Integer
   | `Number
   | `Signed
-  | `Unsigned ] ->
+  | `Unsigned
+  | `Extended
+  | `Prng_key ] ->
   bool
 
+val supports_inf : Dtype.t -> bool
+val max_identity : Dtype.t -> float
+val min_identity : Dtype.t -> float
+val float0 : Dtype.t
+val bfloat16 : Dtype.t
+val itemsize_bits : Dtype.t -> int
+
+type scalar_type = Scalar_bool | Scalar_int | Scalar_float | Scalar_complex
+
+val scalar_type_of : Dtype.t -> scalar_type
 val isdtype : Dtype.t -> string -> bool
 val to_inexact_dtype : Dtype.t -> Dtype.t

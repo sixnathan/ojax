@@ -32,11 +32,8 @@ module Xla = struct
   type buffer = Pjrt.Buffer.t
   type compiled = Pjrt.Executable.t
 
-  let client =
-    lazy
-      (let path = Pjrt.Discover.preflight () in
-       Pjrt.Client.create (Pjrt.Abi.open_plugin path))
-
+  let plugin = lazy (Pjrt.Abi.open_plugin (Pjrt.Discover.preflight ()))
+  let client = lazy (Pjrt.Client.create (Lazy.force plugin))
   let of_host nd = Pjrt.Buffer.of_host (Lazy.force client) nd
   let to_host buf = Pjrt.Buffer.to_host buf
   let compile_text text = Pjrt.Executable.compile (Lazy.force client) text
@@ -90,11 +87,21 @@ let compiled_on_xla = ref 0
 let host_fallbacks : string list ref = ref []
 let stats () = (!compiled_on_xla, List.rev !host_fallbacks)
 
+let mentions_unsupported_type text =
+  let n = String.length text in
+  let rec scan i =
+    i + 3 <= n && (String.sub text i 3 = "f6E" || scan (i + 1))
+  in
+  scan 0
+
 let executor (cj : closed_jaxpr) : value list -> value list =
   if Lazy.force use_xla then (
     let exec =
       lazy
         (match Stablehlo.Emit.emit_closed_jaxpr cj with
+        | text when mentions_unsupported_type text ->
+            host_fallbacks := "f6 dtypes have no XLA type" :: !host_fallbacks;
+            None
         | text ->
             incr compiled_on_xla;
             Some (Xla.compile_text text)

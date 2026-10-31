@@ -10,14 +10,19 @@ let atom_aval = function
 
 let element_literal nd idx =
   match Ndarray.dtype nd with
-  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+  | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+  | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+  | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
       Ir.float_literal (Ndarray.dtype nd) (Ndarray.get_f nd idx)
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
-  | Dtype.Uint16 | Dtype.Uint64 ->
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.I2
+  | Dtype.I4 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4
+  | Dtype.Uint64 ->
       Ir.int_literal (Ndarray.get_i64 nd idx)
   | Dtype.Bool -> Ir.bool_literal (Ndarray.get_i64 nd idx <> 0L)
   | Dtype.Complex64 | Dtype.Complex128 ->
       Ir.complex_literal (Ndarray.dtype nd) (Ndarray.get_c nd idx)
+  | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
 
 let all_literals nd =
   let shape = Ndarray.shape nd in
@@ -148,12 +153,15 @@ let emit_stablehlo_unary ctx (eqn : eqn) in_ids op =
        signature)
 
 let is_unsigned_dtype = function
-  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 -> true
+  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint32
+  | Dtype.Uint64 ->
+      true
   | _ -> false
 
 let is_integer_like = function
-  | Dtype.Bool | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8
-  | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 ->
+  | Dtype.Bool | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 | Dtype.I32
+  | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4
+  | Dtype.Uint32 | Dtype.Uint64 ->
       true
   | _ -> false
 
@@ -331,12 +339,18 @@ let emit_integer_pow ctx (eqn : eqn) in_ids y =
 
 let compare_type_of dtype total_order =
   match dtype with
-  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+  | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+  | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+  | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
       if total_order then "TOTALORDER" else "FLOAT"
-  | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 -> "SIGNED"
-  | Dtype.Bool | Dtype.Uint32 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 ->
+  | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 ->
+      "SIGNED"
+  | Dtype.Bool | Dtype.Uint32 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2
+  | Dtype.Uint4 | Dtype.Uint64 ->
       "UNSIGNED"
   | Dtype.Complex64 | Dtype.Complex128 -> "FLOAT"
+  | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
 
 let emit_compare ctx (eqn : eqn) in_ids dir total_order =
   let a, b = pair in_ids in
@@ -436,12 +450,18 @@ let emit_select_n ctx (eqn : eqn) in_ids =
 
 let zero_dense dt =
   match dt with
-  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 -> Ir.float_literal dt 0.0
-  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
-  | Dtype.Uint16 | Dtype.Uint64 ->
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+  | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+  | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+  | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
+      Ir.float_literal dt 0.0
+  | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.I2
+  | Dtype.I4 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4
+  | Dtype.Uint64 ->
       Ir.int_literal 0L
   | Dtype.Bool -> Ir.bool_literal false
   | Dtype.Complex64 | Dtype.Complex128 -> Ir.complex_literal dt Complex.zero
+  | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
 
 let emit_convert ctx (eqn : eqn) in_ids =
   let x = sole in_ids in
@@ -770,23 +790,36 @@ let reduce_zero dt = Ir.dense (zero_dense dt)
 let reduce_one dt =
   Ir.dense
     (match dt with
-    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 -> Ir.float_literal dt 1.0
-    | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8
-    | Dtype.Uint16 | Dtype.Uint64 ->
+    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+    | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+    | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+    | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
+        Ir.float_literal dt 1.0
+    | Dtype.I32 | Dtype.I64 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.I2
+    | Dtype.I4 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4
+    | Dtype.Uint64 ->
         Ir.int_literal 1L
     | Dtype.Bool -> Ir.bool_literal true
-    | Dtype.Complex64 | Dtype.Complex128 -> Ir.complex_literal dt Complex.one)
+    | Dtype.Complex64 | Dtype.Complex128 -> Ir.complex_literal dt Complex.one
+    | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type")
 
 let reduce_allones dt =
   Ir.dense
     (match dt with
-    | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 -> Ir.int_literal (-1L)
+    | Dtype.I32 | Dtype.I64 | Dtype.I8 | Dtype.I16 | Dtype.I2 | Dtype.I4 ->
+        Ir.int_literal (-1L)
+    | Dtype.Uint2 -> Ir.int_literal 3L
+    | Dtype.Uint4 -> Ir.int_literal 15L
     | Dtype.Uint8 -> Ir.int_literal 255L
     | Dtype.Uint16 -> Ir.int_literal 65535L
     | Dtype.Uint64 -> Ir.int_literal (-1L)
     | Dtype.Uint32 -> Ir.int_literal 4294967295L
     | Dtype.Bool -> Ir.bool_literal true
-    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+    | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
+    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+    | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+    | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+    | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
         invalid_arg "Stablehlo.Emit: bitwise reduce on floating-point dtype"
     | Dtype.Complex64 | Dtype.Complex128 ->
         invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
@@ -794,32 +827,47 @@ let reduce_allones dt =
 let reduce_maxid dt =
   Ir.dense
     (match dt with
-    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
-        Ir.float_literal dt neg_infinity
+    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+    | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+    | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+    | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
+        Ir.float_literal dt (Dtypes.max_identity dt)
+    | Dtype.I2 -> Ir.int_literal (-2L)
+    | Dtype.I4 -> Ir.int_literal (-8L)
     | Dtype.I8 -> Ir.int_literal (-128L)
     | Dtype.I16 -> Ir.int_literal (-32768L)
     | Dtype.I32 -> Ir.int_literal (-2147483648L)
     | Dtype.I64 -> Ir.int_literal Int64.min_int
-    | Dtype.Uint32 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint64 ->
+    | Dtype.Uint32 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint2 | Dtype.Uint4
+    | Dtype.Uint64 ->
         Ir.int_literal 0L
     | Dtype.Bool -> Ir.bool_literal false
+    | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
     | Dtype.Complex64 | Dtype.Complex128 ->
         invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
 
 let reduce_minid dt =
   Ir.dense
     (match dt with
-    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
-        Ir.float_literal dt infinity
+    | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+    | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+    | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+    | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
+        Ir.float_literal dt (Dtypes.min_identity dt)
+    | Dtype.I2 -> Ir.int_literal 1L
+    | Dtype.I4 -> Ir.int_literal 7L
     | Dtype.I8 -> Ir.int_literal 127L
     | Dtype.I16 -> Ir.int_literal 32767L
     | Dtype.I32 -> Ir.int_literal 2147483647L
     | Dtype.I64 -> Ir.int_literal Int64.max_int
+    | Dtype.Uint2 -> Ir.int_literal 3L
+    | Dtype.Uint4 -> Ir.int_literal 15L
     | Dtype.Uint8 -> Ir.int_literal 255L
     | Dtype.Uint16 -> Ir.int_literal 65535L
     | Dtype.Uint64 -> Ir.int_literal (-1L)
     | Dtype.Uint32 -> Ir.int_literal 4294967295L
     | Dtype.Bool -> Ir.bool_literal true
+    | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
     | Dtype.Complex64 | Dtype.Complex128 ->
         invalid_arg "Stablehlo.Emit: complex unsupported (row 96)")
 
@@ -1495,7 +1543,7 @@ let emit_sort_comparator ctx dt =
   Buffer.add_string ctx.buf
     (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name x) sty (name y) sty);
   match dt with
-  | Dtype.F32 | Dtype.F64 ->
+  | d when d <> Dtype.F4_e2m1fn && Dtypes.issubdtype d `Floating ->
       let canon operand =
         let c0 = fresh ctx in
         Buffer.add_string ctx.buf
@@ -1604,7 +1652,12 @@ let emit_sort_multi ctx (eqn : eqn) in_ids ~dimension ~is_stable ~num_keys =
     let sty = Ir.tensor_type key.dtype [||] in
     let cmp =
       match key.dtype with
-      | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> "TOTALORDER"
+      | Dtype.F4_e2m1fn -> "FLOAT"
+      | Dtype.F16 | Dtype.Bf16 | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn
+      | Dtype.F8_e3m4 | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn
+      | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu
+      | Dtype.F32 | Dtype.F64 ->
+          "TOTALORDER"
       | dt -> compare_type_of dt false
     in
     let lt = compare_op "LT" x y sty cmp in

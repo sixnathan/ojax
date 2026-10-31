@@ -200,6 +200,7 @@ let npz_of_ndarray nd : Npz.t =
     | Dt.Uint64 -> "uint64"
     | Dt.F16 -> "float16"
     | Dt.Bf16 -> "bfloat16"
+    | d -> Dt.numpy_name d
   in
   let data =
     match dtype with

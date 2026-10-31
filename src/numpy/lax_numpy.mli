@@ -1,6 +1,10 @@
 type dtype_class =
   | Cdtype of Dtype.t
   | Signedinteger
+  | Unsignedinteger
+  | Complexfloating
+  | Extended
+  | Prng_key_class
   | Integer
   | Floating
   | Inexact
@@ -30,6 +34,9 @@ val isreal : Types.value -> Types.value
 val iscomplexobj : Types.value -> bool
 val isrealobj : Types.value -> bool
 val isscalar : Types.value -> bool
+val complexfloating : dtype_class
+val unsignedinteger : dtype_class
+val extended : dtype_class
 val issubdtype : dtype_class -> dtype_class -> bool
 val result_type : Types.value list -> Dtype.t
 val convolve : ?mode:string -> Types.value -> Types.value -> Types.value

@@ -21,26 +21,7 @@ let aval_to_string (a : aval) =
   ^ String.concat "," (Array.to_list (Array.map string_of_int a.shape))
 
 let dtype_of_name name =
-  let all =
-    [
-      Dtype.F16;
-      Dtype.Bf16;
-      Dtype.F32;
-      Dtype.F64;
-      Dtype.I8;
-      Dtype.I16;
-      Dtype.I32;
-      Dtype.I64;
-      Dtype.Uint8;
-      Dtype.Uint16;
-      Dtype.Uint32;
-      Dtype.Uint64;
-      Dtype.Bool;
-      Dtype.Complex64;
-      Dtype.Complex128;
-    ]
-  in
-  match List.find_opt (fun d -> Dtype.short_name d = name) all with
+  match List.find_opt (fun d -> Dtype.short_name d = name) Dtype.all with
   | Some d -> d
   | None -> invalid_arg ("deserialize: unknown dtype " ^ name)
 

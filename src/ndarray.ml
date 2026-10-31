@@ -56,13 +56,16 @@ let uint64_of_float v =
 
 let create_buffer dtype n =
   match dtype with
-  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 ->
+  | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
+  | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
+  | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
+  | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
       Float_buf (Array1.create Float64 C_layout n)
   | Dtype.I32 | Dtype.Uint32 | Dtype.I8 | Dtype.I16 | Dtype.Uint8 | Dtype.Uint16
-    ->
+  | Dtype.I2 | Dtype.I4 | Dtype.Uint2 | Dtype.Uint4 ->
       Int32_buf (Array1.create Int32 C_layout n)
   | Dtype.I64 | Dtype.Uint64 -> Int64_buf (Array1.create Int64 C_layout n)
-  | Dtype.Bool -> Int8_buf (Array1.create Int8_signed C_layout n)
+  | Dtype.Bool | Dtype.Float0 -> Int8_buf (Array1.create Int8_signed C_layout n)
   | Dtype.Complex64 -> Complex64_buf (Array1.create Complex32 C_layout n)
   | Dtype.Complex128 -> Complex128_buf (Array1.create Complex64 C_layout n)
 
@@ -88,7 +91,10 @@ let write_float dtype data i v =
         | Dtype.F32 -> Int32.float_of_bits (Int32.bits_of_float v)
         | Dtype.F16 -> f16_round v
         | Dtype.Bf16 -> bf16_round v
-        | _ -> v
+        | d -> (
+            match Float_format.of_dtype d with
+            | Some f -> Float_format.round f v
+            | None -> v)
       in
       Array1.unsafe_set a i stored
   | Int32_buf a ->
@@ -99,13 +105,18 @@ let write_float dtype data i v =
         | Dtype.I16 -> Int32.of_int (wrap_int ~bits:16 ~signed:true v)
         | Dtype.Uint8 -> Int32.of_int (wrap_int ~bits:8 ~signed:false v)
         | Dtype.Uint16 -> Int32.of_int (wrap_int ~bits:16 ~signed:false v)
+        | Dtype.I2 -> Int32.of_int (wrap_int ~bits:2 ~signed:true v)
+        | Dtype.I4 -> Int32.of_int (wrap_int ~bits:4 ~signed:true v)
+        | Dtype.Uint2 -> Int32.of_int (wrap_int ~bits:2 ~signed:false v)
+        | Dtype.Uint4 -> Int32.of_int (wrap_int ~bits:4 ~signed:false v)
         | _ -> Int32.of_float v
       in
       Array1.unsafe_set a i stored
   | Int64_buf a ->
       Array1.unsafe_set a i
         (if dtype = Dtype.Uint64 then uint64_of_float v else Int64.of_float v)
-  | Int8_buf a -> Array1.unsafe_set a i (if v = 0.0 then 0 else 1)
+  | Int8_buf a ->
+      Array1.unsafe_set a i (if v = 0.0 || dtype = Dtype.Float0 then 0 else 1)
   | Complex64_buf a -> Array1.unsafe_set a i { Complex.re = v; im = 0.0 }
   | Complex128_buf a -> Array1.unsafe_set a i { Complex.re = v; im = 0.0 }
 
@@ -222,6 +233,15 @@ let round_to dtype v =
   | Dtype.Uint8 -> float_of_int (wrap_int ~bits:8 ~signed:false v)
   | Dtype.Uint16 -> float_of_int (wrap_int ~bits:16 ~signed:false v)
   | Dtype.Uint64 -> uint64_to_float (uint64_of_float v)
+  | Dtype.I2 -> float_of_int (wrap_int ~bits:2 ~signed:true v)
+  | Dtype.I4 -> float_of_int (wrap_int ~bits:4 ~signed:true v)
+  | Dtype.Uint2 -> float_of_int (wrap_int ~bits:2 ~signed:false v)
+  | Dtype.Uint4 -> float_of_int (wrap_int ~bits:4 ~signed:false v)
+  | Dtype.Float0 -> 0.0
+  | ( Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4
+    | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz
+    | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ) as d ->
+      Float_format.round (Option.get (Float_format.of_dtype d)) v
 
 let round_complex dtype (z : Complex.t) =
   match dtype with

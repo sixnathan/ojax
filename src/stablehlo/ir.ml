@@ -16,6 +16,22 @@ let element_type = function
   | Dtype.Uint64 -> "ui64"
   | Dtype.F16 -> "f16"
   | Dtype.Bf16 -> "bf16"
+  | Dtype.I2 -> "i2"
+  | Dtype.I4 -> "i4"
+  | Dtype.Uint2 -> "ui2"
+  | Dtype.Uint4 -> "ui4"
+  | Dtype.F4_e2m1fn -> "f4E2M1FN"
+  | Dtype.F6_e2m3fn -> "f6E2M3FN"
+  | Dtype.F6_e3m2fn -> "f6E3M2FN"
+  | Dtype.F8_e3m4 -> "f8E3M4"
+  | Dtype.F8_e4m3 -> "f8E4M3"
+  | Dtype.F8_e4m3b11fnuz -> "f8E4M3B11FNUZ"
+  | Dtype.F8_e4m3fn -> "f8E4M3FN"
+  | Dtype.F8_e4m3fnuz -> "f8E4M3FNUZ"
+  | Dtype.F8_e5m2 -> "f8E5M2"
+  | Dtype.F8_e5m2fnuz -> "f8E5M2FNUZ"
+  | Dtype.F8_e8m0fnu -> "f8E8M0FNU"
+  | Dtype.Float0 -> invalid_arg "Ir.element_type: float0 has no stablehlo type"
 
 let tensor_type dtype shape =
   let elt = element_type dtype in
@@ -98,11 +114,111 @@ let narrow_literal dtype v =
         (if v < 0.0 then inf_bits lor 0x8000 else inf_bits)
   | _ -> Printf.sprintf "%.17e" v
 
+let big_of_int n =
+  let rec limbs n = if n = 0 then [] else (n land 0xffff) :: limbs (n lsr 16) in
+  limbs n
+
+let big_mul_small big k =
+  let rec go carry = function
+    | [] -> if carry = 0 then [] else big_of_int carry
+    | limb :: rest ->
+        let p = (limb * k) + carry in
+        (p land 0xffff) :: go (p lsr 16) rest
+  in
+  go 0 big
+
+let big_div_small big k =
+  let rem = ref 0 in
+  let quotient =
+    List.fold_left
+      (fun acc limb ->
+        let cur = (!rem lsl 16) lor limb in
+        rem := cur mod k;
+        (cur / k) :: acc)
+      [] (List.rev big)
+  in
+  let rec trim = function 0 :: rest -> trim rest | l -> l in
+  (List.rev (trim (List.rev quotient)), !rem)
+
+let big_active_bits big =
+  match List.rev big with
+  | [] -> 0
+  | top :: rest ->
+      let rec width n = if n = 0 then 0 else 1 + width (n lsr 1) in
+      width top + (16 * List.length rest)
+
+let rec big_pow_mul big k n =
+  if n = 0 then big else big_pow_mul (big_mul_small big k) k (n - 1)
+
+let rec big_digits big exp acc =
+  if big = [] then (acc, exp)
+  else
+    let q, d = big_div_small big 10 in
+    if acc = [] && d = 0 then big_digits q (exp + 1) acc
+    else big_digits q exp (d :: acc)
+
+let shortest_binary v =
+  let frac, e = Float.frexp v in
+  let rec strip m e = if m land 1 = 0 then strip (m / 2) (e + 1) else (m, e) in
+  strip (int_of_float (Float.ldexp frac 53)) (e - 53)
+
+let round_digits digits exp precision =
+  let n = List.length digits in
+  if n <= precision then (digits, exp)
+  else
+    let kept = List.filteri (fun i _ -> i < precision) digits in
+    let at_length out = (out, exp + n - List.length out) in
+    if List.nth digits precision < 5 then
+      let rec trim = function 0 :: rest -> trim rest | l -> l in
+      at_length (List.rev (trim (List.rev kept)))
+    else
+      let rec carry = function
+        | [] -> None
+        | 9 :: rest -> carry rest
+        | d :: rest -> Some ((d + 1) :: rest)
+      in
+      match carry (List.rev kept) with
+      | Some rest -> at_length (List.rev rest)
+      | None -> ([ 1 ], exp + n)
+
+let scientific_digits v =
+  let m, e = shortest_binary v in
+  let big, exp10 =
+    if e >= 0 then (big_pow_mul (big_of_int m) 2 e, 0)
+    else (big_pow_mul (big_of_int m) 5 (-e), e)
+  in
+  let required = ((6 * 196) + 58) / 59 in
+  let bits = big_active_bits big in
+  let tens = if bits > required then (bits - required) * 59 / 196 else 0 in
+  let rec drop big k =
+    if k = 0 then big else drop (fst (big_div_small big 10)) (k - 1)
+  in
+  let digits, exp = big_digits (drop big tens) (exp10 + tens) [] in
+  round_digits digits exp 6
+
+let small_finite_text v =
+  let sign = if Float.sign_bit v then "-" else "" in
+  if v = 0.0 then sign ^ "0.000000e+00"
+  else
+    let digits, exp = scientific_digits (Float.abs v) in
+    let text = String.concat "" (List.map string_of_int digits) in
+    let sci = exp + String.length text - 1 in
+    let padded = text ^ String.make (7 - String.length text) '0' in
+    Printf.sprintf "%s%c.%se%+03d" sign padded.[0] (String.sub padded 1 6) sci
+
+let small_literal f v0 =
+  let v = Float_format.round f v0 in
+  if Float.is_finite v then small_finite_text v
+  else Printf.sprintf "0x%02X" (Float_format.encode f v)
+
 let rec float_literal dtype v0 =
   match dtype with
   | Dtype.F16 | Dtype.Bf16 -> narrow_literal dtype v0
   | Dtype.F32 | Dtype.F64 -> wide_literal dtype v0
-  | _ -> invalid_arg "Ir.float_literal: not a floating-point dtype"
+  | d -> (
+      match Float_format.of_dtype d with
+      | Some f -> small_literal f v0
+      | None -> invalid_arg "Ir.float_literal: not a floating-point dtype")
 
 and wide_literal dtype v0 =
   let v = if is_f32 dtype then f32_round v0 else v0 in

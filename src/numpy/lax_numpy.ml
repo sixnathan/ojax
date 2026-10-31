@@ -23,11 +23,15 @@ let zeros_like v = const_full (dtype v) (shape v) 0.0
 let bind1 = C.bind1
 
 let is_inexact = function
-  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
+  | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
+  | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
+  | D.F8_e5m2fnuz | D.F8_e8m0fnu | D.F32 | D.F64 | D.Complex64 | D.Complex128 ->
+      true
   | _ -> false
 
 let is_integral = function
-  | D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
+  | D.I8 | D.I16 | D.I2 | D.I4 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint2
+  | D.Uint4 | D.Uint32 | D.Uint64 ->
       true
   | _ -> false
 
@@ -232,6 +236,10 @@ let result_type vs =
 type dtype_class =
   | Cdtype of D.t
   | Signedinteger
+  | Unsignedinteger
+  | Complexfloating
+  | Extended
+  | Prng_key_class
   | Integer
   | Floating
   | Inexact
@@ -240,19 +248,29 @@ type dtype_class =
   | Cbool
 
 let class_chain = function
-  | Cdtype D.F32 | Cdtype D.F64 | Cdtype D.F16 | Cdtype D.Bf16 | Floating ->
-      [ Floating; Inexact; Number; Generic ]
-  | Cdtype D.I32 | Cdtype D.I64 | Cdtype D.I8 | Cdtype D.I16 | Signedinteger ->
-      [ Signedinteger; Integer; Number; Generic ]
-  | Cdtype D.Uint32 | Cdtype D.Uint8 | Cdtype D.Uint16 | Cdtype D.Uint64 ->
-      [ Integer; Number; Generic ]
-  | Cdtype D.Complex64 | Cdtype D.Complex128 -> [ Inexact; Number; Generic ]
   | Cdtype D.Bool | Cbool -> [ Cbool; Generic ]
+  | Cdtype D.Float0 -> [ Generic ]
+  | Cdtype d when Dtypes.issubdtype d `Signed ->
+      [ Signedinteger; Integer; Number; Generic ]
+  | Cdtype d when Dtypes.issubdtype d `Unsigned ->
+      [ Unsignedinteger; Integer; Number; Generic ]
+  | Cdtype d when Dtypes.issubdtype d `Floating ->
+      [ Floating; Inexact; Number; Generic ]
+  | Cdtype _ -> [ Complexfloating; Inexact; Number; Generic ]
+  | Signedinteger -> [ Signedinteger; Integer; Number; Generic ]
+  | Unsignedinteger -> [ Unsignedinteger; Integer; Number; Generic ]
+  | Floating -> [ Floating; Inexact; Number; Generic ]
+  | Complexfloating -> [ Complexfloating; Inexact; Number; Generic ]
   | Integer -> [ Integer; Number; Generic ]
   | Inexact -> [ Inexact; Number; Generic ]
   | Number -> [ Number; Generic ]
   | Generic -> [ Generic ]
+  | Extended -> [ Extended; Generic ]
+  | Prng_key_class -> [ Prng_key_class; Extended; Generic ]
 
+let complexfloating = Complexfloating
+let unsignedinteger = Unsignedinteger
+let extended = Extended
 let issubdtype a b = a = b || List.mem b (class_chain a)
 
 let conv1d ~mode ~flip_kernel ~reverse_out a v =
@@ -918,7 +936,7 @@ let trace ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) ?dtype a =
       let wide = Config.x64_enabled () in
       convert masked
         (match dt_in with
-        | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
+        | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint32 | D.Uint64 ->
             if wide then D.Uint64 else D.Uint32
         | _ -> if wide then D.I64 else D.I32)
   in

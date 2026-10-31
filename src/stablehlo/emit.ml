@@ -2376,7 +2376,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (name n) (name a) (name b) o.left_side o.lower transpose
            o.unit_diagonal aty bty bty)
   | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
+  | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
   | Tridiagonal _ ->
       failwith
         "Stablehlo.Emit: linalg primitives lower to LAPACK custom_calls; \

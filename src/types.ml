@@ -238,7 +238,7 @@ and primitive =
       conjugate_a : bool;
       unit_diagonal : bool;
     }
-  | Tridiagonal_solve
+  | Tridiagonal_solve of { perturb_singular : bool }
   | Eig of {
       compute_left : bool;
       compute_right : bool;

@@ -342,41 +342,85 @@ let of_float_list dt xs =
   let arr = Array.of_list xs in
   Concrete (Ndarray.of_floats dt [| Array.length arr |] arr)
 
-let union1d a b =
+let sized_result dt values ~size ~fill_value =
+  match size with
+  | None -> of_float_list dt values
+  | Some n ->
+      let count = List.length values in
+      let kept = List.filteri (fun i _ -> i < n) values in
+      let fill =
+        match (fill_value, kept) with
+        | Some f, _ -> f
+        | None, [] -> 0.0
+        | None, _ -> List.fold_left Float.min Float.infinity kept
+      in
+      of_float_list dt (kept @ List.init (max 0 (n - count)) (fun _ -> fill))
+
+let union1d ?size ?fill_value a b =
   let a, b = same_dtype a b in
   let xs =
     List.sort_uniq compare_with_nan
       (sorted_unique_floats "union1d" a @ sorted_unique_floats "union1d" b)
   in
-  of_float_list (dtype_of a) xs
+  sized_result (dtype_of a) xs ~size ~fill_value
 
-let intersect1d a b =
-  let a, b = same_dtype a b in
-  let ys = sorted_unique_floats "intersect1d" b in
-  of_float_list (dtype_of a)
-    (List.filter
-       (fun x -> List.exists (fun y -> compare_with_nan x y = 0) ys)
-       (sorted_unique_floats "intersect1d" a))
+let flat_float_list name v = Array.to_list (flat_floats (host name v))
 
-let setdiff1d a b =
+let intersect1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in
-  let ys = sorted_unique_floats "setdiff1d" b in
-  of_float_list (dtype_of a)
+  let xs =
+    if assume_unique then
+      let sorted =
+        List.sort compare_with_nan
+          (flat_float_list "intersect1d" a @ flat_float_list "intersect1d" b)
+      in
+      let rec adjacent = function
+        | p :: (q :: _ as rest) ->
+            if compare_with_nan p q = 0 then p :: adjacent rest
+            else adjacent rest
+        | _ -> []
+      in
+      adjacent sorted
+    else
+      let ys = sorted_unique_floats "intersect1d" b in
+      List.filter
+        (fun x -> List.exists (fun y -> compare_with_nan x y = 0) ys)
+        (sorted_unique_floats "intersect1d" a)
+  in
+  sized_result (dtype_of a) xs ~size ~fill_value
+
+let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
+  let a, b = same_dtype a b in
+  let ys = flat_float_list "setdiff1d" b in
+  let source =
+    if assume_unique then flat_float_list "setdiff1d" a
+    else sorted_unique_floats "setdiff1d" a
+  in
+  let fill = Some (Option.value fill_value ~default:0.0) in
+  sized_result (dtype_of a)
     (List.filter
        (fun x -> not (List.exists (fun y -> compare_with_nan x y = 0) ys))
-       (sorted_unique_floats "setdiff1d" a))
+       source)
+    ~size ~fill_value:fill
 
-let setxor1d a b =
+let setxor1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in
-  let xs = sorted_unique_floats "setxor1d" a in
-  let ys = sorted_unique_floats "setxor1d" b in
-  let only p q =
-    List.filter
-      (fun x -> not (List.exists (fun y -> compare_with_nan x y = 0) q))
-      p
+  let values v =
+    if assume_unique then flat_float_list "setxor1d" v
+    else sorted_unique_floats "setxor1d" v
   in
-  of_float_list (dtype_of a)
-    (List.sort compare_with_nan (only xs ys @ only ys xs))
+  let sorted = List.sort compare_with_nan (values a @ values b) in
+  let rec singles = function
+    | p :: q :: rest when compare_with_nan p q = 0 ->
+        let rec drop = function
+          | r :: tl when compare_with_nan p r = 0 -> drop tl
+          | tl -> tl
+        in
+        singles (drop rest)
+    | p :: rest -> p :: singles rest
+    | [] -> []
+  in
+  sized_result (dtype_of a) (singles sorted) ~size ~fill_value
 
 let sum_at n data ids =
   let m = size_of ids in
@@ -392,13 +436,27 @@ let sum_at n data ids =
   in
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims
 
-let bincount ?weights ?length x =
+let bincount ?weights ?(minlength = 0) ?length x =
+  let x =
+    if dtype_of x = Dtype.Bool then L.convert_element_type x Dtype.I32 else x
+  in
+  (match dtype_of x with
+  | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 | Dtype.Uint64 ->
+      ()
+  | d ->
+      raise
+        (Errors.jax_type_error
+           ("x argument to bincount must have an integer type; got "
+          ^ Dtype.short_name d)));
   let n =
     match length with
     | Some l -> l
     | None ->
         let data = flat_floats (host "bincount" x) in
-        1 + int_of_float (Array.fold_left Float.max (-1.0) data)
+        Stdlib.max minlength
+          (if Array.length data = 0 then 0
+           else 1 + int_of_float (Array.fold_left Float.max 0.0 data))
   in
   let x = flat x in
   let weights =
@@ -406,7 +464,14 @@ let bincount ?weights ?length x =
     | Some w -> flat w
     | None -> AC.ones ~dtype:(default_int ()) [| size_of x |]
   in
-  sum_at n weights x
+  let idt = dtype_of x in
+  let zero = AC.zeros ~dtype:idt (shape x) in
+  let clipped = U.maximum x zero in
+  let in_range = U.less clipped (L.full (shape x) (float_of_int n) idt) in
+  let kept = NL.where_ in_range weights (AC.zeros_like weights) in
+  let safe = NL.where_ in_range clipped zero in
+  if n = 0 then AC.zeros ~dtype:(dtype_of weights) [| 0 |]
+  else sum_at n kept safe
 
 let histogram_bin_edges ?(bins = 10) ?range a =
   let a = as_inexact (flat a) in
@@ -667,21 +732,45 @@ let choose ?(mode = "raise") a choices =
   let expanded = NL.expand_dims idx [| 0 |] in
   L.squeeze (I.take_along_axis ~axis:0 stacked expanded) [| 0 |]
 
-let compress ?axis condition a =
+let compress ?axis ?size ?(fill_value = 0.0) condition a =
+  if rank condition <> 1 then invalid_arg "condition must be a 1D array";
   let cond = flat_floats (host "compress" condition) in
-  let kept =
-    List.filter
-      (fun i -> cond.(i) <> 0.0)
-      (List.init (Array.length cond) Fun.id)
+  let source, ax =
+    match axis with Some ax -> (a, canon (rank a) ax) | None -> (flat a, 0)
   in
-  let indices =
-    ints_value (default_int ()) [| List.length kept |] (Array.of_list kept)
+  let extent = (shape source).(ax) in
+  let usable = min extent (Array.length cond) in
+  let kept = List.filter (fun i -> cond.(i) <> 0.0) (List.init usable Fun.id) in
+  (match size with
+  | None ->
+      for i = usable to Array.length cond - 1 do
+        if cond.(i) <> 0.0 then
+          invalid_arg "condition contains entries that are out of bounds"
+      done
+  | Some n ->
+      if n < 0 || n > extent then
+        invalid_arg
+          "size must be positive and not greater than the size of the array \
+           axis");
+  let index_of list =
+    ints_value (default_int ()) [| List.length list |] (Array.of_list list)
   in
-  match axis with
-  | Some ax -> I.take ~axis:ax a indices
-  | None -> I.take ~axis:0 (flat a) indices
+  match size with
+  | None -> I.take ~mode:"clip" ~axis:ax source (index_of kept)
+  | Some n ->
+      let taken = List.filteri (fun i _ -> i < n) kept in
+      let found = I.take ~mode:"clip" ~axis:ax source (index_of taken) in
+      let missing = n - List.length taken in
+      if missing = 0 then found
+      else begin
+        let sh = Array.copy (shape source) in
+        sh.(ax) <- missing;
+        NL.concatenate ~axis:ax
+          [ found; L.full sh fill_value (dtype_of source) ]
+      end
 
-let extract condition a = compress (flat condition) (flat a)
+let extract ?size ?fill_value condition a =
+  compress ?size ?fill_value (flat condition) (flat a)
 
 let delete ?axis a obj =
   let a, ax =
@@ -809,25 +898,45 @@ let triu_indices_from ?k a =
   if Array.length sh <> 2 then invalid_arg "input array must be 2-d";
   triu_indices ?k ~m:sh.(1) sh.(0)
 
-let mask_indices ?(k = 0) n mask_func =
+let mask_indices ?(k = 0) ?size n mask_func =
   let ones = AC.ones ~dtype:(default_int ()) [| n; n |] in
-  match nonzero (mask_func ones k) with
+  match nonzero ?size (mask_func ones k) with
   | [ a; b ] -> (a, b)
   | _ -> failwith "mask_indices: arity"
 
-let trim_zeros ?(trim = "fb") a =
-  let data = flat_floats (host "trim_zeros" a) in
-  let n = Array.length data in
-  let first = ref 0 and last = ref n in
-  if String.contains trim 'f' then
-    while !first < n && data.(!first) = 0.0 do
-      incr first
-    done;
-  if String.contains trim 'b' then
-    while !last > !first && data.(!last - 1) = 0.0 do
-      decr last
-    done;
-  L.slice_in_dim a !first !last
+let trim_zeros ?(trim = "fb") ?axis a =
+  let lowered = String.lowercase_ascii trim in
+  let front = String.contains lowered 'f'
+  and back = String.contains lowered 'b' in
+  let axes =
+    match axis with
+    | None -> List.init (rank a) Fun.id
+    | Some ax -> List.map (canon (rank a)) ax
+  in
+  if axes = [] || not (front || back) then a
+  else
+    List.fold_left
+      (fun acc ax ->
+        let others =
+          Array.of_list
+            (List.filter (fun i -> i <> ax) (List.init (rank a) Fun.id))
+        in
+        let mask = flat_floats (host "trim_zeros" (R.any ~axis:others a)) in
+        let n = Array.length mask in
+        let first = ref 0 and last = ref n in
+        while !first < n && mask.(!first) = 0.0 do
+          incr first
+        done;
+        if !first = n then L.slice_in_dim ~axis:ax acc 0 0
+        else begin
+          while !last > 0 && mask.(!last - 1) = 0.0 do
+            decr last
+          done;
+          let start = if front then !first else 0 in
+          let stop = if back then !last else n in
+          L.slice_in_dim ~axis:ax acc start stop
+        end)
+      a axes
 
 let sort_complex a =
   let nd = host "sort_complex" a in
@@ -929,17 +1038,83 @@ let block tree =
   go 0 tree
 
 let promote_types a b = Dtypes.promote_types a b
-let can_cast a b = Dtypes.promote_types a b = b
+
+let can_cast ?(casting = "safe") a b =
+  let kind = function
+    | Dtype.Bool -> 0
+    | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 -> 1
+    | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 -> 2
+    | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 -> 3
+    | Dtype.Complex64 | Dtype.Complex128 -> 4
+  in
+  let bits = function
+    | Dtype.Bool -> 1
+    | Dtype.Uint8 | Dtype.I8 -> 8
+    | Dtype.Uint16 | Dtype.I16 | Dtype.F16 | Dtype.Bf16 -> 16
+    | Dtype.Uint32 | Dtype.I32 | Dtype.F32 -> 32
+    | Dtype.Uint64 | Dtype.I64 | Dtype.F64 | Dtype.Complex64 -> 64
+    | Dtype.Complex128 -> 128
+  in
+  let mantissa = function
+    | Dtype.F16 -> 11
+    | Dtype.Bf16 -> 8
+    | Dtype.F32 -> 24
+    | Dtype.F64 -> 53
+    | Dtype.Complex64 -> 24
+    | Dtype.Complex128 -> 53
+    | _ -> 0
+  in
+  let safe () =
+    if a = b then true
+    else
+      match (kind a, kind b) with
+      | 0, _ -> true
+      | ka, kb when ka = kb -> bits a <= bits b
+      | 1, 2 -> bits a < bits b
+      | (1 | 2), (3 | 4) ->
+          let needed = if kind a = 2 then bits a - 1 else bits a in
+          mantissa b >= needed || (bits a <= 8 && mantissa b >= 8)
+      | 3, 4 -> mantissa a <= mantissa b
+      | _ -> false
+  in
+  match casting with
+  | "no" | "equiv" -> a = b
+  | "safe" -> safe ()
+  | "same_kind" -> safe () || kind a <= kind b
+  | "unsafe" -> true
+  | c -> invalid_arg ("can_cast: unknown casting " ^ c)
+
 let shape_of = shape
-let size = size_of
+
+let size ?axis a =
+  match axis with None -> size_of a | Some ax -> (shape a).(canon (rank a) ax)
+
 let ndim = rank
 
-let polydiv u v =
+let polydiv ?(trim_leading_zeros = false) u v =
   let u = as_inexact u and v = as_inexact v in
   let lu = size_of u and lv = size_of v in
-  if lu < lv then (AC.zeros ~dtype:(dtype_of u) [| 1 |], u)
+  let dt = dtype_of u in
+  let tolerance =
+    match dt with
+    | Dtype.F64 -> 1.4901161193847656e-08
+    | _ -> 0.00034526698300124393
+  in
+  let trimmed r =
+    if not trim_leading_zeros then r
+    else begin
+      let start = ref 0 in
+      while !start < Array.length r && Float.abs r.(!start) < tolerance do
+        incr start
+      done;
+      Array.sub r !start (Array.length r - !start)
+    end
+  in
+  let to_value a = Concrete (Ndarray.of_floats dt [| Array.length a |] a) in
+  if lu < lv then
+    let udata = flat_floats (host "polydiv" u) in
+    (AC.zeros ~dtype:dt [| 1 |], to_value (trimmed udata))
   else
-    let dt = dtype_of u in
     let udata = flat_floats (host "polydiv" u) in
     let vdata = flat_floats (host "polydiv" v) in
     let q = Array.make (lu - lv + 1) 0.0 in
@@ -950,21 +1125,26 @@ let polydiv u v =
         r.(k + j) <- r.(k + j) -. (q.(k) *. vdata.(j))
       done
     done;
-    let tolerance =
-      match dt with
-      | Dtype.F64 -> 1.4901161193847656e-08
-      | _ -> 0.00034526698300124393
-    in
-    let cleaned =
-      Array.map (fun x -> if Float.abs x < tolerance then 0.0 else x) r
-    in
-    ( Concrete (Ndarray.of_floats dt [| Array.length q |] q),
-      Concrete (Ndarray.of_floats dt [| lu |] cleaned) )
+    (to_value q, to_value (trimmed r))
 
-let polyfit ?rcond x y deg =
+let polyfit ?rcond ?w x y deg =
   let x = as_inexact x and y = as_inexact y in
   let order = deg + 1 in
   let lhs = NL.vander ~n:order x in
+  let lhs, y =
+    match w with
+    | None -> (lhs, y)
+    | Some weights ->
+        let weights = as_inexact weights in
+        if rank weights <> 1 then
+          raise (Errors.jax_type_error "expected a 1-d array for weights");
+        if (shape weights).(0) <> (shape y).(0) then
+          raise
+            (Errors.jax_type_error "expected w and y to have the same length");
+        let column = NL.reshape weights [| (shape weights).(0); 1 |] in
+        ( U.multiply lhs column,
+          U.multiply y (if rank y = 2 then column else weights) )
+  in
   let eps =
     match dtype_of x with
     | Dtype.F64 -> 2.220446049250313e-16

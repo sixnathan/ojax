@@ -216,9 +216,15 @@ let tridiagonal_rule () =
   let d = f64 [| 3 |] [| 5.; 6.; 7. |] in
   let du = f64 [| 3 |] [| 1.; 2.; 0. |] in
   let b = f64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  check_grad "b" (fun x -> b1 Tridiagonal_solve [ dl; d; du; x ]) [| 3; 2 |];
+  check_grad "b"
+    (fun x ->
+      b1 (Tridiagonal_solve { perturb_singular = false }) [ dl; d; du; x ])
+    [| 3; 2 |];
   check_grad "d"
-    (fun x -> b1 Tridiagonal_solve [ dl; b1 Add [ d; x ]; du; b ])
+    (fun x ->
+      b1
+        (Tridiagonal_solve { perturb_singular = false })
+        [ dl; b1 Add [ d; x ]; du; b ])
     [| 3 |]
 
 let eigh_rule () =

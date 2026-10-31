@@ -158,8 +158,39 @@ let poly seq =
     !a
   end
 
-let polymul a1 a2 =
+let trim_front v =
+  match v with
+  | T.Tracer _ -> v
+  | _ ->
+      let n = (shape v).(0) in
+      let nd =
+        match v with
+        | T.Concrete nd -> nd
+        | T.Device b -> Pjrt.Buffer.to_host b
+        | T.Tracer _ -> assert false
+      in
+      let rec first i =
+        if i < n && Nd.get_c nd [| i |] = Complex.zero then first (i + 1) else i
+      in
+      let start = first 0 in
+      if start = 0 then v
+      else
+        bind1
+          (T.Slice
+             {
+               start_indices = [| start |];
+               limit_indices = [| n |];
+               strides = None;
+             })
+          [ v ]
+
+let polymul ?(trim_leading_zeros = false) a1 a2 =
   let a1, a2 = two (promote_dtypes_inexact [ a1; a2 ]) in
+  let a1, a2 =
+    if trim_leading_zeros && ((shape a1).(0) > 1 || (shape a2).(0) > 1) then
+      (trim_front a1, trim_front a2)
+    else (a1, a2)
+  in
   let a1 =
     if (shape a1).(0) = 0 then const_full (dtype a2) [| 1 |] 0.0 else a1
   in

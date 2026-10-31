@@ -744,7 +744,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | While _
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
+  | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "batching: handled by unstacking in batch_process_primitive"
   | Collective _ ->
@@ -964,7 +964,7 @@ let unstacks_operands prim (bdims : int option list) =
       | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
       | Random_bits _ | Random_wrap | Random_unwrap | While _ | Cholesky
       | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-      | Triangular_solve _ | Tridiagonal_solve | Eig _ | Eigh _ | Hessenberg
+      | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
       | Schur _ | Svd _ | Tridiagonal _ | Custom_linear_solve _ ),
       _ ) ->
       true

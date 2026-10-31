@@ -251,7 +251,7 @@ let prim_name = function
   | Lu_pivots_to_permutation _ -> "lu_pivots_to_permutation"
   | Qr _ -> "qr"
   | Triangular_solve _ -> "triangular_solve"
-  | Tridiagonal_solve -> "tridiagonal_solve"
+  | Tridiagonal_solve _ -> "tridiagonal_solve"
   | Eig _ -> "eig"
   | Eigh _ -> "eigh"
   | Hessenberg -> "hessenberg"

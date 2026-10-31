@@ -103,7 +103,7 @@ let leslie f s =
   matrix_of n n (fun i j ->
       if i = 0 then at f j else if i = j + 1 then at s j else zero)
 
-let dft ?scale n =
+let dft ?scale ?dtype:requested n =
   let pi = 4.0 *. Float.atan 1.0 in
   let denom =
     match scale with
@@ -115,9 +115,12 @@ let dft ?scale n =
           ("scale must be None, 'sqrtn', or 'n'; " ^ other ^ " is not valid.")
   in
   let dt =
-    match Dtypes.default_float_dtype () with
-    | Dtype.F64 -> Dtype.Complex128
-    | _ -> Dtype.Complex64
+    match requested with
+    | Some d -> Dtypes.canonicalize_dtype d
+    | None -> (
+        match Dtypes.default_float_dtype () with
+        | Dtype.F64 -> Dtype.Complex128
+        | _ -> Dtype.Complex64)
   in
   Concrete
     (Ndarray.of_complex dt [| n; n |]
@@ -182,15 +185,22 @@ let helmert ?(full = false) n =
   if full then float_matrix n n entry
   else float_matrix (n - 1) n (fun i j -> entry (i + 1) j)
 
-let hadamard n =
+let hadamard ?dtype:requested n =
   if n <= 0 || n land (n - 1) <> 0 then
     invalid_arg "n must be a positive power of 2 for this implementation";
   let popcount x =
     let rec go x acc = if x = 0 then acc else go (x lsr 1) (acc + (x land 1)) in
     go x 0
   in
-  int_matrix n n (fun i j ->
-      if popcount (i land j) mod 2 = 0 then 1.0 else -1.0)
+  let dt =
+    match requested with
+    | Some d -> Dtypes.canonicalize_dtype d
+    | None -> Dtypes.default_int_dtype ()
+  in
+  Concrete
+    (Ndarray.of_floats dt [| n; n |]
+       (Array.init (n * n) (fun k ->
+            if popcount (k / n land (k mod n)) mod 2 = 0 then 1.0 else -1.0)))
 
 let convolution_matrix ?(mode = "full") a n =
   if n <= 0 then invalid_arg "n must be a positive integer";

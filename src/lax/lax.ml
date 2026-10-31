@@ -1671,7 +1671,8 @@ let rec impl_base prim inputs =
       { left_side; lower; transpose_a; conjugate_a; unit_diagonal } ->
       Linalg.triangular_solve_impl left_side lower transpose_a conjugate_a
         unit_diagonal inputs
-  | Tridiagonal_solve -> Linalg.tridiagonal_solve_impl inputs
+  | Tridiagonal_solve { perturb_singular } ->
+      Linalg.tridiagonal_solve_impl ~perturb_singular inputs
   | Eig { compute_left; compute_right; _ } ->
       Linalg.eig_impl compute_left compute_right inputs
   | Eigh { lower } -> Linalg.eigh_impl lower inputs
@@ -2188,7 +2189,7 @@ let linalg_core_ranks = function
   | Householder_product -> Some [ 2; 1 ]
   | Lu_pivots_to_permutation _ -> Some [ 1 ]
   | Triangular_solve _ -> Some [ 2; 2 ]
-  | Tridiagonal_solve -> Some [ 1; 1; 1; 2 ]
+  | Tridiagonal_solve _ -> Some [ 1; 1; 1; 2 ]
   | _ -> None
 
 let batch_prefix ranks shapes =
@@ -2554,7 +2555,7 @@ let abstract_eval prim avals =
   | Lu_pivots_to_permutation permutation_size ->
       Linalg.lu_pivots_to_permutation_aval permutation_size avals
   | Triangular_solve _ -> Linalg.triangular_solve_aval avals
-  | Tridiagonal_solve -> Linalg.tridiagonal_solve_aval avals
+  | Tridiagonal_solve _ -> Linalg.tridiagonal_solve_aval avals
   | Eig { compute_left; compute_right; _ } ->
       Linalg.eig_aval compute_left compute_right avals
   | Eigh _ -> Linalg.eigh_aval avals
@@ -2649,6 +2650,7 @@ let cumlogsumexp = Control_flow.Loops.cumlogsumexp
 let custom_linear_solve = Control_flow.Solves.custom_linear_solve
 
 module Linalg = Linalg
+module Slicing = Slicing
 module Fft = Fft
 
 let complex_bilinear = Utils.complex_bilinear

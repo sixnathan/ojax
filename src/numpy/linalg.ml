@@ -53,8 +53,7 @@ let symmetrize x = UF.divide (UF.add x (hconj x)) (const (dtype x) 2.0)
 
 let rec cholesky ?(upper = false) ?(symmetrize_input = true) a =
   let a = to_inexact a in
-  let a = if symmetrize_input then symmetrize a else a in
-  let l = LL.cholesky a in
+  let l = LL.cholesky ~symmetrize_input a in
   if upper then hconj l else l
 
 and svd_uv ~full_matrices a =
@@ -218,15 +217,21 @@ and eigh ?(uplo = "L") ?(symmetrize_input = true) a =
     | _ -> invalid_arg "UPLO must be one of None, 'L', or 'U'"
   in
   let a = to_inexact a in
-  let a = if symmetrize_input then symmetrize a else a in
-  let v, w = LL.eigh ~lower a in
+  let v, w = LL.eigh ~lower ~symmetrize_input a in
   (w, v)
 
 and eigvalsh ?(uplo = "L") ?(symmetrize_input = true) a =
   let w, _ = eigh ~uplo ~symmetrize_input a in
   w
 
-and pinv ?rtol ?(hermitian = false) a =
+and pinv ?rtol ?(hermitian = false) ?rcond a =
+  let rtol =
+    match (rcond, rtol) with
+    | Some _, Some _ ->
+        invalid_arg "pinv: only one of rtol and rcond may be specified."
+    | Some r, None -> Some r
+    | None, r -> r
+  in
   let a = to_inexact a in
   ignore hermitian;
   let arr = UF.conj a in
@@ -282,7 +287,14 @@ and matrix_power a p =
     end
   end
 
-and matrix_rank ?rtol ?(hermitian = false) a =
+and matrix_rank ?rtol ?(hermitian = false) ?tol a =
+  let rtol =
+    match (tol, rtol) with
+    | Some _, Some _ ->
+        invalid_arg "matrix_rank: only one of tol or rtol may be specified."
+    | Some t, None -> Some t
+    | None, r -> r
+  in
   let a = to_inexact a in
   let s = if hermitian then UF.abs (svdvals a) else svdvals a in
   let sa = shape a in
@@ -446,7 +458,7 @@ and qr ?(mode = "reduced") a =
     let q, r = LL.qr ~full_matrices a in
     if mode = "r" then [ r ] else [ q; r ]
 
-and lstsq ?rcond a b =
+and lstsq ?rcond ?(numpy_resid = false) a b =
   let a = to_inexact a and b = to_inexact b in
   let b_vec = ndim b = 1 in
   let bm = if b_vec then NL.reshape b [| (shape b).(0); 1 |] else b in
@@ -455,6 +467,7 @@ and lstsq ?rcond a b =
   let dt = dtype a in
   let rcond =
     match rcond with
+    | Some r when r < 0.0 -> const dt (eps_of dt)
     | Some r -> const dt r
     | None -> const dt (eps_of dt *. float_of_int (max n m))
   in
@@ -474,8 +487,21 @@ and lstsq ?rcond a b =
     TC.matmul (UF.conj (matrix_transpose_v vt)) (UF.multiply s_inv_col utb)
   in
   let b_est = TC.matmul a x in
-  let resid =
+  let full_resid () =
     UF.power (norm ~axis:(Aint 0) (UF.subtract bm b_est)) (const dt 2.0)
+  in
+  let resid =
+    if numpy_resid then
+      let concrete_rank =
+        match rank with
+        | T.Concrete nd -> Nd.get_i64 nd [||]
+        | T.Device b -> Nd.get_i64 (Pjrt.Buffer.to_host b) [||]
+        | T.Tracer _ -> invalid_arg "lstsq: numpy_resid needs a concrete rank"
+      in
+      if Int64.to_int concrete_rank < n || m <= n then
+        T.Concrete (Nd.of_floats dt [| 0 |] [||])
+      else full_resid ()
+    else full_resid ()
   in
   let x = if b_vec then NL.ravel x else x in
   (x, resid, rank, s)

@@ -95,50 +95,167 @@ let check_where name = function
           (Printf.sprintf "jnp.%s: where must be None or a boolean array." name);
       Some w
 
-let sum ?axis ?(keepdims = false) a =
+let upcast_f16 = function D.F16 | D.Bf16 -> D.F32 | d -> d
+
+let init_value dt v =
+  match dt with
+  | D.Bool -> if v = 0.0 then 0.0 else 1.0
+  | (D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64)
+    when Float.abs v = Float.infinity ->
+      let f = Dtypes.iinfo dt in
+      if v < 0.0 then f.imin else f.imax
+  | _ -> v
+
+let init_array dt sh v =
+  match (dt, v) with
+  | D.I64, v when v = Float.neg_infinity ->
+      T.Concrete
+        (Nd.of_int64s dt sh
+           (Array.make (Array.fold_left ( * ) 1 sh) Int64.min_int))
+  | D.I64, v when v = Float.infinity ->
+      T.Concrete
+        (Nd.of_int64s dt sh
+           (Array.make (Array.fold_left ( * ) 1 sh) Int64.max_int))
+  | D.Uint64, v when v = Float.infinity ->
+      T.Concrete
+        (Nd.of_int64s dt sh (Array.make (Array.fold_left ( * ) 1 sh) (-1L)))
+  | D.Uint64, v when v = Float.neg_infinity -> const_full dt sh 0.0
+  | _ -> const_full dt sh (init_value dt v)
+
+let reduction ~name ~prim ~bool_prim ~combine ~bool_combine ~init ~has_identity
+    ~upcast ~promote_integers ?dtype:dt ?axis ?(keepdims = false) ?initial
+    ?where:mask a =
+  let mask = check_where name mask in
+  (match (initial, has_identity, mask) with
+  | None, false, Some _ ->
+      invalid_arg
+        (Printf.sprintf
+           "reduction operation %s does not have an identity, so to use a \
+            where mask one has to specify 'initial'"
+           name)
+  | _ -> ());
   let axes = resolve_axes a axis in
-  let n =
-    if dtype a = D.Bool then convert a (Dtypes.default_int_dtype ()) else a
+  if
+    initial = None && (not has_identity)
+    && Array.exists (fun i -> (shape a).(i) < 1) axes
+  then
+    invalid_arg
+      (Printf.sprintf
+         "zero-size array to reduction operation %s which has no identity" name);
+  let result_dtype =
+    match dt with
+    | Some d -> Dtypes.canonicalize_dtype d
+    | None ->
+        if promote_integers then promote_integer_dtype (dtype a) else dtype a
   in
-  let rt = promote_integer_dtype (dtype n) in
-  reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes (convert n rt)
-
-let prod ?axis ?(keepdims = false) a =
-  let axes = resolve_axes a axis in
-  let n =
-    if dtype a = D.Bool then convert a (Dtypes.default_int_dtype ()) else a
+  let computation =
+    if upcast && dt = None then upcast_f16 result_dtype else result_dtype
   in
-  let rt = promote_integer_dtype (dtype n) in
-  reduce_axes (fun ax -> T.Reduce_prod ax) ~keepdims axes (convert n rt)
+  let a = convert a computation in
+  let filled =
+    match mask with
+    | None -> a
+    | Some m ->
+        let m = broadcast_to m (shape a) in
+        where m a (init_array computation (shape a) init)
+  in
+  let is_bool = computation = D.Bool in
+  let chosen = if is_bool then bool_prim else prim in
+  let out = bind1 (chosen axes) [ filled ] in
+  let out =
+    match initial with
+    | None -> out
+    | Some i ->
+        if shape i <> [||] then
+          invalid_arg
+            (Printf.sprintf
+               "initial value must be a scalar. Got array of rank %d" (ndim i));
+        let i = broadcast_to (convert i computation) (shape out) in
+        bind1 (if is_bool then bool_combine else combine) [ i; out ]
+  in
+  let out =
+    if keepdims then reshape out (keepdims_shape (shape a) axes) else out
+  in
+  convert out result_dtype
 
-let max ?axis ?(keepdims = false) a =
-  reduce_axes (fun ax -> T.Reduce_max ax) ~keepdims (resolve_axes a axis) a
+let sum ?dtype:dt ?axis ?keepdims ?initial ?where:mask
+    ?(promote_integers = true) a =
+  reduction ~name:"sum"
+    ~prim:(fun ax -> T.Reduce_sum ax)
+    ~bool_prim:(fun ax -> T.Reduce_or ax)
+    ~combine:T.Add ~bool_combine:T.Or ~init:0.0 ~has_identity:true ~upcast:true
+    ~promote_integers ?dtype:dt ?axis ?keepdims ?initial ?where:mask a
 
-let min ?axis ?(keepdims = false) a =
-  reduce_axes (fun ax -> T.Reduce_min ax) ~keepdims (resolve_axes a axis) a
+let prod ?dtype:dt ?axis ?keepdims ?initial ?where:mask
+    ?(promote_integers = true) a =
+  reduction ~name:"prod"
+    ~prim:(fun ax -> T.Reduce_prod ax)
+    ~bool_prim:(fun ax -> T.Reduce_and ax)
+    ~combine:T.Mul ~bool_combine:T.And ~init:1.0 ~has_identity:true ~upcast:true
+    ~promote_integers ?dtype:dt ?axis ?keepdims ?initial ?where:mask a
+
+let max ?axis ?keepdims ?initial ?where:mask a =
+  reduction ~name:"max"
+    ~prim:(fun ax -> T.Reduce_max ax)
+    ~bool_prim:(fun ax -> T.Reduce_or ax)
+    ~combine:T.Max ~bool_combine:T.Or ~init:Float.neg_infinity
+    ~has_identity:false ~upcast:false ~promote_integers:false ?axis ?keepdims
+    ?initial ?where:mask a
+
+let min ?axis ?keepdims ?initial ?where:mask a =
+  reduction ~name:"min"
+    ~prim:(fun ax -> T.Reduce_min ax)
+    ~bool_prim:(fun ax -> T.Reduce_and ax)
+    ~combine:T.Min ~bool_combine:T.And ~init:Float.infinity ~has_identity:false
+    ~upcast:false ~promote_integers:false ?axis ?keepdims ?initial ?where:mask a
 
 let amax = max
 let amin = min
 
-let all ?axis ?(keepdims = false) a =
-  reduce_axes
-    (fun ax -> T.Reduce_and ax)
-    ~keepdims (resolve_axes a axis) (to_bool a)
+let all ?axis ?keepdims ?where:mask a =
+  reduction ~name:"all"
+    ~prim:(fun ax -> T.Reduce_and ax)
+    ~bool_prim:(fun ax -> T.Reduce_and ax)
+    ~combine:T.And ~bool_combine:T.And ~init:1.0 ~has_identity:true
+    ~upcast:false ~promote_integers:false ?axis ?keepdims ?where:mask
+    (to_bool a)
 
-let any ?axis ?(keepdims = false) a =
-  reduce_axes
-    (fun ax -> T.Reduce_or ax)
-    ~keepdims (resolve_axes a axis) (to_bool a)
+let any ?axis ?keepdims ?where:mask a =
+  reduction ~name:"any"
+    ~prim:(fun ax -> T.Reduce_or ax)
+    ~bool_prim:(fun ax -> T.Reduce_or ax)
+    ~combine:T.Or ~bool_combine:T.Or ~init:0.0 ~has_identity:true ~upcast:false
+    ~promote_integers:false ?axis ?keepdims ?where:mask (to_bool a)
 
-let mean_over cdt axes ?(keepdims = false) a =
-  let s = reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes a in
-  let n = float_of_int (axis_count a axes) in
-  bind1 T.Div [ s; const_full cdt (shape s) n ]
+let count_over ?axis ?(keepdims = false) ?where:mask a cdt =
+  match mask with
+  | Some m -> sum ?axis ~keepdims ~dtype:cdt (broadcast_to m (shape a))
+  | None ->
+      let axes = resolve_axes a axis in
+      let n = float_of_int (axis_count a axes) in
+      let sh =
+        if keepdims then keepdims_shape (shape a) axes
+        else
+          Array.of_list
+            (List.filteri
+               (fun i _ -> not (mem_axis axes i))
+               (Array.to_list (shape a)))
+      in
+      const_full cdt sh n
 
-let mean ?axis ?(keepdims = false) a =
-  let axes = resolve_axes a axis in
-  let cdt = to_inexact_dtype (dtype a) in
-  mean_over cdt axes ~keepdims (convert a cdt)
+let mean ?dtype:dt ?axis ?keepdims ?where:mask a =
+  let mask = check_where "mean" mask in
+  let result_dtype =
+    match dt with
+    | Some d -> Dtypes.canonicalize_dtype d
+    | None -> to_inexact_dtype (dtype a)
+  in
+  let computation = upcast_f16 result_dtype in
+  let normalizer = count_over ?axis ?keepdims ?where:mask a computation in
+  convert
+    (bind1 T.Div
+       [ sum ?axis ?keepdims ?where:mask ~dtype:computation a; normalizer ])
+    result_dtype
 
 let is_complex_dtype = function
   | D.Complex64 | D.Complex128 -> true
@@ -154,20 +271,62 @@ let squared_magnitude cdt centered =
     bind1 T.Real [ bind1 T.Mul [ centered; bind1 T.Conj [ centered ] ] ]
   else bind1 T.Square [ centered ]
 
-let var ?axis ?(keepdims = false) ?(ddof = 0) a =
-  let axes = resolve_axes a axis in
-  let cdt = to_inexact_dtype (dtype a) in
-  let rdt = real_of_dtype cdt in
-  let af = convert a cdt in
-  let m = broadcast_to (mean_over cdt axes ~keepdims:true af) (shape af) in
-  let centered = squared_magnitude cdt (bind1 T.Sub [ af; m ]) in
-  let s = reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes centered in
-  let n = axis_count a axes - ddof in
-  if n > 0 then bind1 T.Div [ s; const_full rdt (shape s) (float_of_int n) ]
-  else const_full rdt (shape s) Float.nan
+let var_promote a_dtype dt =
+  match dt with
+  | Some d ->
+      if is_complex_dtype a_dtype && not (is_complex_dtype d) then
+        invalid_arg
+          "jax.numpy.var does not yet support real dtype parameters when \
+           computing the variance of an array of complex values.";
+      (upcast_f16 d, d)
+  | None ->
+      if not (is_inexact a_dtype) then
+        let d = to_inexact_dtype a_dtype in
+        (upcast_f16 d, d)
+      else (upcast_f16 a_dtype, real_of_dtype a_dtype)
 
-let std ?axis ?(keepdims = false) ?(ddof = 0) a =
-  bind1 T.Sqrt [ var ?axis ~keepdims ~ddof a ]
+let correction_of ddof correction =
+  match (correction, ddof) with
+  | None, d -> float_of_int (Option.value d ~default:0)
+  | Some c, (None | Some 0) -> c
+  | Some _, Some _ ->
+      invalid_arg "ddof and correction can't be provided simultaneously."
+
+let var ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
+  let mask = check_where "var" mask in
+  let correction = correction_of ddof correction in
+  let dt = Option.map Dtypes.canonicalize_dtype dt in
+  let computation, result_dtype = var_promote (dtype a) dt in
+  let af = convert a computation in
+  let m =
+    match a_mean with
+    | Some m -> convert m computation
+    | None -> mean ?axis ~dtype:computation ~keepdims:true ?where:mask af
+  in
+  let m = broadcast_to m (shape af) in
+  let centered = squared_magnitude computation (bind1 T.Sub [ af; m ]) in
+  let rdt = real_of_dtype computation in
+  let normalizer = count_over ?axis ?keepdims ?where:mask af rdt in
+  let normalizer =
+    bind1 T.Sub [ normalizer; const_full rdt (shape normalizer) correction ]
+  in
+  let total = sum ?axis ~dtype:rdt ?keepdims ?where:mask centered in
+  let result = convert (bind1 T.Div [ total; normalizer ]) result_dtype in
+  where
+    (bind1 T.Gt [ normalizer; const_full rdt (shape normalizer) 0.0 ])
+    result
+    (const_full (dtype result) (shape result) Float.nan)
+
+let std ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
+  let dt = Option.map Dtypes.canonicalize_dtype dt in
+  (match dt with
+  | Some d when not (is_inexact d) ->
+      invalid_arg "dtype argument to jnp.std must be inexact"
+  | _ -> ());
+  bind1 T.Sqrt
+    [
+      var ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a;
+    ]
 
 let ptp ?axis ?(keepdims = false) a =
   bind1 T.Sub [ amax ?axis ~keepdims a; amin ?axis ~keepdims a ]
@@ -175,106 +334,130 @@ let ptp ?axis ?(keepdims = false) a =
 let count_nonzero ?axis ?(keepdims = false) a =
   sum ?axis ~keepdims (bind1 T.Ne [ a; zeros_like a ])
 
-let average ?axis ?(keepdims = false) ?weights a =
+let average_with_sum ?axis ?(keepdims = false) ?weights a =
   match weights with
-  | None -> mean ?axis ~keepdims (to_inexact a)
+  | None ->
+      let a = to_inexact a in
+      let avg = mean ?axis ~keepdims a in
+      let axes = resolve_axes a axis in
+      ( avg,
+        const_full (dtype avg) (shape avg) (float_of_int (axis_count a axes)) )
   | Some w ->
       let rt, _ = Dtypes.result_type [ (dtype a, weak a); (dtype w, weak w) ] in
       let cdt = to_inexact_dtype rt in
-      let sh = shape a in
-      let a2 = convert a cdt and w2 = broadcast_to (convert w cdt) sh in
-      let num =
-        reduce_axes
-          (fun ax -> T.Reduce_sum ax)
-          ~keepdims (resolve_axes a axis)
-          (bind1 T.Mul [ a2; w2 ])
+      let axes = resolve_axes a axis in
+      let a2 = convert a cdt and w2 = convert w cdt in
+      let w2 =
+        if shape w2 = shape a2 then w2
+        else begin
+          if axis = None then
+            invalid_arg
+              "Axis must be specified when shapes of a and weights differ.";
+          if shape w2 <> Array.map (fun i -> (shape a2).(i)) axes then
+            invalid_arg
+              "Shape of weights must be consistent with shape of a along \
+               specified axis.";
+          bind1 (T.Broadcast_in_dim { shape = shape a2; dims = axes }) [ w2 ]
+        end
       in
-      let den =
-        reduce_axes
-          (fun ax -> T.Reduce_sum ax)
-          ~keepdims (resolve_axes a axis) w2
-      in
-      bind1 T.Div [ num; den ]
+      let total = sum ?axis ~keepdims w2 in
+      ( bind1 T.Div [ sum ?axis ~keepdims (bind1 T.Mul [ a2; w2 ]); total ],
+        total )
 
-let nan_reduce ~reduce ~init ~nan_if_all_nan ?axis ?(keepdims = false) a =
-  if not (is_inexact (dtype a)) then reduce ?axis ?keepdims:(Some keepdims) a
+let average ?axis ?keepdims ?weights a =
+  fst (average_with_sum ?axis ?keepdims ?weights a)
+
+let average_returned ?axis ?keepdims ?weights a =
+  let avg, total = average_with_sum ?axis ?keepdims ?weights a in
+  (avg, broadcast_to total (shape avg))
+
+let nan_reduce ~reduce ~init ~nan_if_all_nan ?axis ?keepdims a =
+  if not (is_inexact (dtype a)) then reduce ?axis ?keepdims a
   else begin
-    let filled = where (isnan a) (const_full (dtype a) (shape a) init) a in
-    let out = reduce ?axis ?keepdims:(Some keepdims) filled in
+    let filled = where (isnan a) (init_array (dtype a) (shape a) init) a in
+    let out = reduce ?axis ?keepdims filled in
     if nan_if_all_nan then
-      let allnan = all ?axis ~keepdims (isnan a) in
+      let allnan = all ?axis ?keepdims (isnan a) in
       where allnan (const_full (dtype out) (shape out) Float.nan) out
     else out
   end
 
-let nansum ?axis ?(keepdims = false) a =
-  nan_reduce ~reduce:sum ~init:0.0 ~nan_if_all_nan:false ?axis ~keepdims a
+let nansum ?dtype:dt ?axis ?keepdims ?initial ?where:mask a =
+  nan_reduce
+    ~reduce:(fun ?axis ?keepdims v ->
+      sum ?dtype:dt ?axis ?keepdims ?initial ?where:mask v)
+    ~init:0.0 ~nan_if_all_nan:false ?axis ?keepdims a
 
-let nanprod ?axis ?(keepdims = false) a =
-  nan_reduce ~reduce:prod ~init:1.0 ~nan_if_all_nan:false ?axis ~keepdims a
+let nanprod ?dtype:dt ?axis ?keepdims ?initial ?where:mask a =
+  nan_reduce
+    ~reduce:(fun ?axis ?keepdims v ->
+      prod ?dtype:dt ?axis ?keepdims ?initial ?where:mask v)
+    ~init:1.0 ~nan_if_all_nan:false ?axis ?keepdims a
 
-let nanmax ?axis ?(keepdims = false) a =
-  nan_reduce ~reduce:amax ~init:neg_infinity ~nan_if_all_nan:true ?axis
-    ~keepdims a
+let nanmax ?axis ?keepdims ?initial ?where:mask a =
+  nan_reduce
+    ~reduce:(fun ?axis ?keepdims v ->
+      amax ?axis ?keepdims ?initial ?where:mask v)
+    ~init:Float.neg_infinity ~nan_if_all_nan:true ?axis ?keepdims a
 
-let nanmin ?axis ?(keepdims = false) a =
-  nan_reduce ~reduce:amin ~init:infinity ~nan_if_all_nan:true ?axis ~keepdims a
+let nanmin ?axis ?keepdims ?initial ?where:mask a =
+  nan_reduce
+    ~reduce:(fun ?axis ?keepdims v ->
+      amin ?axis ?keepdims ?initial ?where:mask v)
+    ~init:Float.infinity ~nan_if_all_nan:true ?axis ?keepdims a
 
-let nanmean ?axis ?(keepdims = false) a =
-  if not (is_inexact (dtype a)) then mean ?axis ~keepdims a
+let nanmean ?dtype:dt ?axis ?keepdims ?where:mask a =
+  if not (is_inexact (dtype a)) then
+    mean ?dtype:dt ?axis ?keepdims ?where:mask a
   else begin
-    let axes = resolve_axes a axis in
-    let cdt = to_inexact_dtype (dtype a) in
-    let notnan = bind1 T.Not [ isnan a ] in
-    let normalizer =
-      reduce_axes
-        (fun ax -> T.Reduce_sum ax)
-        ~keepdims axes (convert notnan cdt)
+    let cdt =
+      match dt with
+      | Some d -> Dtypes.canonicalize_dtype d
+      | None -> to_inexact_dtype (dtype a)
     in
-    bind1 T.Div [ nansum ?axis ~keepdims a; normalizer ]
+    let notnan = bind1 T.Not [ isnan a ] in
+    let normalizer = sum ~dtype:cdt ?axis ?keepdims ?where:mask notnan in
+    bind1 T.Div [ nansum ~dtype:cdt ?axis ?keepdims ?where:mask a; normalizer ]
   end
 
-let nanvar ?axis ?(keepdims = false) ?(ddof = 0) a =
-  let axes = resolve_axes a axis in
-  let cdt = to_inexact_dtype (dtype a) in
-  let rdt = real_of_dtype cdt in
-  let af = convert a cdt in
-  let m = broadcast_to (nanmean ~axis:axes ~keepdims:true af) (shape af) in
+let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
+  let mask = check_where "nanvar" mask in
+  let dt = Option.map Dtypes.canonicalize_dtype dt in
+  let computation, result_dtype = var_promote (dtype a) dt in
+  let af = convert a computation in
+  let rdt = real_of_dtype computation in
+  let m =
+    match a_mean with
+    | Some m -> convert m computation
+    | None -> nanmean ~dtype:computation ?axis ~keepdims:true ?where:mask af
+  in
+  let m = broadcast_to m (shape af) in
   let centered =
-    where (isnan af) (const_full cdt (shape af) 0.0) (bind1 T.Sub [ af; m ])
+    where (isnan af)
+      (const_full computation (shape af) 0.0)
+      (bind1 T.Sub [ af; m ])
   in
-  let centered = squared_magnitude cdt centered in
+  let centered = squared_magnitude computation centered in
   let notnan = bind1 T.Not [ isnan af ] in
-  let count =
-    reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes (convert notnan rdt)
-  in
+  let count = sum ~dtype:rdt ?axis ?keepdims ?where:mask notnan in
   let nz =
     bind1 T.Sub [ count; const_full rdt (shape count) (float_of_int ddof) ]
   in
-  let mask = bind1 T.Le [ nz; const_full rdt (shape nz) 0.0 ] in
-  let result =
-    reduce_axes (fun ax -> T.Reduce_sum ax) ~keepdims axes centered
-  in
-  let result = where mask (const_full rdt (shape result) Float.nan) result in
-  let divisor = where mask (const_full rdt (shape nz) 1.0) nz in
-  bind1 T.Div [ result; divisor ]
+  let bad = bind1 T.Le [ nz; const_full rdt (shape nz) 0.0 ] in
+  let result = sum ~dtype:rdt ?axis ?keepdims ?where:mask centered in
+  let result = where bad (const_full rdt (shape result) Float.nan) result in
+  let divisor = where bad (const_full rdt (shape nz) 1.0) nz in
+  convert (bind1 T.Div [ result; divisor ]) result_dtype
 
-let nanstd ?axis ?(keepdims = false) ?(ddof = 0) a =
-  bind1 T.Sqrt [ nanvar ?axis ~keepdims ~ddof a ]
+let nanstd ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a =
+  bind1 T.Sqrt
+    [ nanvar ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a ]
 
-let cumsum ?axis a =
+let cumulative ~fill ~promote ~make ?dtype:dt ?axis a =
   let a, ax =
     match axis with
     | None -> (ravel a, 0)
-    | Some ax -> (a, canonicalize_axis ax (ndim a))
-  in
-  let rt = if dtype a = D.Bool then Dtypes.default_int_dtype () else dtype a in
-  bind1 (T.Cumsum { axis = ax; reverse = false }) [ convert a rt ]
-
-let cum ?(fill = None) mk_prim ?axis a =
-  let a, ax =
-    match axis with
-    | None -> (ravel a, 0)
+    | Some _ when ndim a = 0 -> (ravel a, 0)
     | Some ax -> (a, canonicalize_axis ax (ndim a))
   in
   let a =
@@ -283,21 +466,40 @@ let cum ?(fill = None) mk_prim ?axis a =
         where (isnan a) (const_full (dtype a) (shape a) fv) a
     | _ -> a
   in
-  let rt = if dtype a = D.Bool then Dtypes.default_int_dtype () else dtype a in
-  bind1 (mk_prim ax) [ convert a rt ]
+  let a, result, computation =
+    match dt with
+    | None ->
+        let r =
+          if promote || dtype a = D.Bool then promote_integer_dtype (dtype a)
+          else dtype a
+        in
+        (a, r, r)
+    | Some D.Bool ->
+        let a =
+          if dtype a = D.Bool then a else bind1 T.Ne [ a; zeros_like a ]
+        in
+        (a, D.Bool, promote_integer_dtype D.Bool)
+    | Some d ->
+        let d = Dtypes.canonicalize_dtype d in
+        (a, d, d)
+  in
+  convert (bind1 (make ax) [ convert a computation ]) result
 
-let cumprod ?axis a =
-  cum (fun ax -> T.Cumprod { axis = ax; reverse = false }) ?axis a
+let cumsum_make ax = T.Cumsum { axis = ax; reverse = false }
+let cumprod_make ax = T.Cumprod { axis = ax; reverse = false }
 
-let nancumsum ?axis a =
-  cum ~fill:(Some 0.0)
-    (fun ax -> T.Cumsum { axis = ax; reverse = false })
-    ?axis a
+let cumsum ?dtype:dt ?axis a =
+  cumulative ~fill:None ~promote:false ~make:cumsum_make ?dtype:dt ?axis a
 
-let nancumprod ?axis a =
-  cum ~fill:(Some 1.0)
-    (fun ax -> T.Cumprod { axis = ax; reverse = false })
-    ?axis a
+let cumprod ?dtype:dt ?axis a =
+  cumulative ~fill:None ~promote:false ~make:cumprod_make ?dtype:dt ?axis a
+
+let nancumsum ?dtype:dt ?axis a =
+  cumulative ~fill:(Some 0.0) ~promote:false ~make:cumsum_make ?dtype:dt ?axis a
+
+let nancumprod ?dtype:dt ?axis a =
+  cumulative ~fill:(Some 1.0) ~promote:false ~make:cumprod_make ?dtype:dt ?axis
+    a
 
 let cum_api_axis kind x axis =
   if ndim x = 0 then
@@ -318,10 +520,12 @@ let cum_api_axis kind x axis =
       0
   | Some ax -> canonicalize_axis ax (ndim x)
 
-let cumulative_sum ?axis ?(include_initial = false) x =
+let cumulative_sum ?dtype:dt ?axis ?(include_initial = false) x =
   let ax = cum_api_axis "sum" x axis in
-  let rt = promote_integer_dtype (dtype x) in
-  let out = bind1 (T.Cumsum { axis = ax; reverse = false }) [ convert x rt ] in
+  let out =
+    cumulative ~fill:None ~promote:true ~make:cumsum_make ?dtype:dt ~axis:ax x
+  in
+  let rt = dtype out in
   if include_initial then begin
     let zsh = Array.copy (shape x) in
     zsh.(ax) <- 1;
@@ -329,10 +533,12 @@ let cumulative_sum ?axis ?(include_initial = false) x =
   end
   else out
 
-let cumulative_prod ?axis ?(include_initial = false) x =
+let cumulative_prod ?dtype:dt ?axis ?(include_initial = false) x =
   let ax = cum_api_axis "product" x axis in
-  let rt = if dtype x = D.Bool then Dtypes.default_int_dtype () else dtype x in
-  let out = bind1 (T.Cumprod { axis = ax; reverse = false }) [ convert x rt ] in
+  let out =
+    cumulative ~fill:None ~promote:false ~make:cumprod_make ?dtype:dt ~axis:ax x
+  in
+  let rt = dtype out in
   if include_initial then begin
     let osh = Array.copy (shape x) in
     osh.(ax) <- 1;

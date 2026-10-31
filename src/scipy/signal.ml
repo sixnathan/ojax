@@ -105,11 +105,41 @@ let fftconvolve_unbatched in1 in2 mode =
   let limit = Array.map2 ( + ) start out_shape in
   L.slice conv start limit
 
-let fftconvolve ?(mode = "full") in1 in2 =
+let fftconvolve ?(mode = "full") ?axes in1 in2 =
   if rank in1 <> rank in2 then
     invalid_arg "in1 and in2 should have the same dimensionality";
+  if not (List.mem mode [ "same"; "full"; "valid" ]) then
+    invalid_arg "mode must be one of ['same', 'full', 'valid']";
   let in1, in2 = promote in1 in2 in
-  fftconvolve_unbatched in1 in2 mode
+  match axes with
+  | None -> fftconvolve_unbatched in1 in2 mode
+  | Some axes ->
+      let n = rank in1 in
+      let axes = List.map (fun a -> if a < 0 then a + n else a) axes in
+      let mapped =
+        List.filter (fun i -> not (List.mem i axes)) (List.init n Fun.id)
+      in
+      List.iter
+        (fun i ->
+          if (shape in1).(i) <> (shape in2).(i) then
+            invalid_arg "mapped axes must have same shape")
+        mapped;
+      let rec apply mapped in1 in2 =
+        match mapped with
+        | [] -> fftconvolve_unbatched in1 in2 mode
+        | ax :: rest ->
+            let later = List.map (fun i -> if i > ax then i - 1 else i) rest in
+            let results =
+              Interpreters.Batching.vmap
+                (fun args ->
+                  match args with
+                  | [ a; b ] -> [ apply later a b ]
+                  | _ -> failwith "fftconvolve: arity")
+                [ Some ax; Some ax ] [ in1; in2 ]
+            in
+            NL.moveaxis [| 0 |] [| ax |] (List.hd results)
+      in
+      apply mapped in1 in2
 
 let convolve ?(mode = "full") ?(method_ = "auto") in1 in2 =
   match method_ with
@@ -118,7 +148,13 @@ let convolve ?(mode = "full") ?(method_ = "auto") in1 in2 =
   | other ->
       invalid_arg ("Got method=" ^ other ^ "; expected auto, fft, or direct.")
 
-let convolve2d ?(mode = "full") in1 in2 =
+let check_boundary name boundary fillvalue =
+  if boundary <> "fill" || fillvalue <> 0.0 then
+    failwith (name ^ "() only supports boundary='fill', fillvalue=0")
+
+let convolve2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0) in1 in2
+    =
+  check_boundary "convolve2d" boundary fillvalue;
   if rank in1 <> 2 || rank in2 <> 2 then
     invalid_arg "convolve2d() only supports 2-dimensional inputs.";
   convolve_nd in1 in2 mode
@@ -126,7 +162,9 @@ let convolve2d ?(mode = "full") in1 in2 =
 let correlate ?(mode = "full") ?method_ in1 in2 =
   convolve ~mode ?method_ in1 (flip_all (conj_if_complex in2))
 
-let correlate2d ?(mode = "full") in1 in2 =
+let correlate2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0) in1 in2
+    =
+  check_boundary "correlate2d" boundary fillvalue;
   if rank in1 <> 2 || rank in2 <> 2 then
     invalid_arg "correlate2d() only supports 2-dimensional inputs.";
   let s1 = shape in1 and s2 = shape in2 in
@@ -145,7 +183,7 @@ let correlate2d ?(mode = "full") in1 in2 =
         conj_if_complex (convolve_nd (flip_all in2) (conj_if_complex in1) mode)
       else flipped_first ()
 
-let detrend ?(axis = -1) ?(type_ = "linear") data =
+let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
   let data = inexact data in
   match type_ with
   | "constant" ->
@@ -162,16 +200,32 @@ let detrend ?(axis = -1) ?(type_ = "linear") data =
       let n = moved_shape.(0) in
       let rows = NL.reshape moved [| n; -1 |] in
       let dt = dtype_of data in
-      let design =
-        Concrete
-          (Ndarray.of_floats dt [| n; 2 |]
-             (Array.init (2 * n) (fun i ->
-                  if i mod 2 = 0 then 1.0
-                  else float_of_int ((i / 2) + 1) /. float_of_int n)))
+      let bounds = List.sort_uniq compare ((0 :: bp) @ [ n ]) in
+      if List.hd bounds < 0 || List.nth bounds (List.length bounds - 1) > n then
+        invalid_arg
+          "Breakpoints must be non-negative and less than length of data along \
+           given axis.";
+      let rec segments = function
+        | lo :: (hi :: _ as rest) -> (lo, hi) :: segments rest
+        | _ -> []
       in
-      let coef, _, _, _ = Numpy.Linalg.lstsq design rows in
-      let fit = L.dot design coef in
-      let out = NL.reshape (b1 Sub [ rows; fit ]) moved_shape in
+      let cleaned =
+        List.map
+          (fun (lo, hi) ->
+            let npts = hi - lo in
+            let design =
+              Concrete
+                (Ndarray.of_floats dt [| npts; 2 |]
+                   (Array.init (2 * npts) (fun i ->
+                        if i mod 2 = 0 then 1.0
+                        else float_of_int ((i / 2) + 1) /. float_of_int npts)))
+            in
+            let part = L.slice_in_dim rows lo hi in
+            let coef, _, _, _ = Numpy.Linalg.lstsq design part in
+            b1 Sub [ part; L.dot design coef ])
+          (segments bounds)
+      in
+      let out = NL.reshape (NL.concatenate ~axis:0 cleaned) moved_shape in
       NL.moveaxis [| 0 |] [| axis |] out
   | _ -> invalid_arg "Trend type must be 'linear' or 'constant'."
 
@@ -469,9 +523,18 @@ let overlap_and_add x step =
   | [] -> invalid_arg "overlap_and_add: no frames"
 
 let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
-    ?(boundary = true) zxx =
+    ?(boundary = true) ?(time_axis = -1) ?(freq_axis = -2) zxx =
   let rankz = rank zxx in
   if rankz < 2 then invalid_arg "Input stft must be at least 2d!";
+  let canon a = if a < 0 then a + rankz else a in
+  if canon freq_axis = canon time_axis then
+    invalid_arg "Must specify differing time and frequency axes!";
+  let zxx =
+    NL.moveaxis
+      [| canon freq_axis; canon time_axis |]
+      [| rankz - 2; rankz - 1 |]
+      zxx
+  in
   let freq_len = (shape zxx).(rankz - 2) in
   let default_seg = if input_onesided then 2 * (freq_len - 1) else freq_len in
   let nperseg = Option.value nperseg ~default:default_seg in

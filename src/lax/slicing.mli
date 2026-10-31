@@ -22,3 +22,14 @@ val scatter_impl :
   Ndarray.t
 
 val scatter_combiner : Types.primitive -> float -> float -> float
+
+val gather_fill :
+  ?fill_value:float ->
+  Types.value ->
+  Types.value ->
+  Types.gather_dims ->
+  int array ->
+  Types.value
+
+val clamp_scatter_indices :
+  Types.value -> Types.value -> Types.value -> Types.scatter_dims -> Types.value

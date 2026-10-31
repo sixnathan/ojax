@@ -1364,7 +1364,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
           in
           (ans, add from_a from_b)
       | _ -> arity ())
-  | Tridiagonal_solve -> (
+  | Tridiagonal_solve _ -> (
       match (primals, tangents) with
       | [ dl; d; du; b ], [ tdl; td; tdu; tb ] ->
           let ans = b1 prim [ dl; d; du; b ] in
@@ -2678,7 +2678,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                  ~unit_diagonal:o.unit_diagonal (prim_val a) (ct1 ()));
           ]
       | _ -> failwith "ad: triangular_solve is linear only in its right side")
-  | Tridiagonal_solve -> (
+  | Tridiagonal_solve { perturb_singular } -> (
       match primals with
       | [ dl; d; du; b ]
         when is_undef b && not (is_undef dl || is_undef d || is_undef du) ->
@@ -2704,7 +2704,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
             None;
             None;
             None;
-            Some (b1 Tridiagonal_solve [ dl_t; d; du_t; ct1 () ]);
+            Some
+              (b1
+                 (Tridiagonal_solve { perturb_singular })
+                 [ dl_t; d; du_t; ct1 () ]);
           ]
       | _ -> failwith "ad: tridiagonal_solve is linear only in its right side")
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _

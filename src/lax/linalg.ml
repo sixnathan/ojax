@@ -501,42 +501,178 @@ let triangular_solve_impl left_side lower transpose_a conjugate_a unit_diagonal
       end
   | _ -> failwith "linalg: triangular_solve expects two operands"
 
-let tridiagonal_solve_impl inputs =
+let tridiagonal_cell nd i j =
+  if Array.length (Ndarray.shape nd) >= 2 then Ndarray.get_c nd [| i; j |]
+  else Ndarray.get_c nd [| i |]
+
+let tridiagonal_solve_impl ~perturb_singular inputs =
   match inputs with
   | [ dl; d; du; b ] ->
       let dt = Ndarray.dtype b in
       let m = (Ndarray.shape d).(0) in
       let bshape = Ndarray.shape b in
       let kcols = if Array.length bshape >= 2 then bshape.(1) else 1 in
-      let dlv i = Ndarray.get_f dl [| i |] in
-      let dv i = Ndarray.get_f d [| i |] in
-      let duv i = Ndarray.get_f du [| i |] in
-      let bv i j = Ndarray.get_f b [| i; j |] in
-      let cp = Array.make m 0.0 in
-      let dp = Array.make (m * kcols) 0.0 in
-      cp.(0) <- duv 0 /. dv 0;
-      for j = 0 to kcols - 1 do
-        dp.(j) <- bv 0 j /. dv 0
+      let single = dt = Dtype.F32 || dt = Dtype.Complex64 in
+      let round_part v =
+        if single then Int32.float_of_bits (Int32.bits_of_float v) else v
+      in
+      let round (z : Complex.t) =
+        { Complex.re = round_part z.re; im = round_part z.im }
+      in
+      let is_complex = dt = Dtype.Complex64 || dt = Dtype.Complex128 in
+      let ( *! ) x y = round (Complex.mul x y) in
+      let ( /! ) x y =
+        if is_complex then round (Complex.div x y)
+        else
+          { Complex.re = round_part (x.Complex.re /. y.Complex.re); im = 0.0 }
+      in
+      let ( -! ) x y = round (Complex.sub x y) in
+      let fused x f y =
+        if is_complex then x -! (f *! y)
+        else
+          let re =
+            if single then
+              round_part (x.Complex.re -. (f.Complex.re *. y.Complex.re))
+            else Float.fma (-.f.Complex.re) y.Complex.re x.Complex.re
+          in
+          { Complex.re; im = 0.0 }
+      in
+      let cabs (z : Complex.t) =
+        if is_complex then round_part (Complex.norm z) else Float.abs z.re
+      in
+      let zero = Complex.zero in
+      let get nd i = Ndarray.get_c nd [| i |] in
+      let a = Array.init m (get d) in
+      let upper =
+        Array.init m (fun i -> if i < m - 1 then get du i else zero)
+      in
+      let second = Array.make m zero in
+      let lower =
+        Array.init m (fun i -> if i < m - 1 then get dl (i + 1) else zero)
+      in
+      let x =
+        Array.init kcols (fun j ->
+            Array.init m (fun i -> tridiagonal_cell b i j))
+      in
+      let singular = ref false in
+      let swap_rows k =
+        Array.iter
+          (fun col ->
+            let tmp = col.(k) in
+            col.(k) <- col.(k + 1);
+            col.(k + 1) <- tmp)
+          x
+      in
+      let scale1 = ref (round_part (cabs a.(0) +. cabs upper.(0))) in
+      for k = 0 to m - 2 do
+        let sub = lower.(k) in
+        let swap =
+          if perturb_singular then begin
+            let scale2 =
+              round_part
+                (round_part (cabs sub +. cabs a.(k + 1))
+                +. if k < m - 2 then cabs upper.(k + 1) else 0.0)
+            in
+            let piv1 =
+              if a.(k) = zero then 0.0 else round_part (cabs a.(k) /. !scale1)
+            in
+            if sub = zero then begin
+              scale1 := scale2;
+              false
+            end
+            else begin
+              let piv2 = round_part (cabs sub /. scale2) in
+              let swapping = not (piv2 <= piv1) in
+              if not swapping then scale1 := scale2;
+              swapping
+            end
+          end
+          else cabs a.(k) < cabs sub
+        in
+        if not swap then
+          begin if a.(k) = zero then
+            begin if sub <> zero then singular := true
+            end
+          else begin
+            let factor = sub /! a.(k) in
+            a.(k + 1) <- fused a.(k + 1) factor upper.(k);
+            Array.iter
+              (fun col -> col.(k + 1) <- fused col.(k + 1) factor col.(k))
+              x
+          end
+          end
+        else begin
+          let factor = a.(k) /! sub in
+          let next_a = a.(k + 1) in
+          a.(k) <- sub;
+          a.(k + 1) <- fused upper.(k) factor next_a;
+          upper.(k) <- next_a;
+          if k < m - 2 then begin
+            second.(k) <- upper.(k + 1);
+            upper.(k + 1) <- fused zero factor second.(k)
+          end;
+          swap_rows k;
+          Array.iter
+            (fun col -> col.(k + 1) <- fused col.(k + 1) factor col.(k))
+            x
+        end
       done;
-      for i = 1 to m - 1 do
-        let den = dv i -. (dlv i *. cp.(i - 1)) in
-        cp.(i) <- (if i < m - 1 then duv i else 0.0) /. den;
-        for j = 0 to kcols - 1 do
-          dp.((i * kcols) + j) <-
-            (bv i j -. (dlv i *. dp.(((i - 1) * kcols) + j))) /. den
-        done
-      done;
-      let x = Array.make (m * kcols) 0.0 in
-      for j = 0 to kcols - 1 do
-        x.(((m - 1) * kcols) + j) <- dp.(((m - 1) * kcols) + j)
-      done;
-      for i = m - 2 downto 0 do
-        for j = 0 to kcols - 1 do
-          x.((i * kcols) + j) <-
-            dp.((i * kcols) + j) -. (cp.(i) *. x.(((i + 1) * kcols) + j))
-        done
-      done;
-      [ Ndarray.of_floats dt bshape x ]
+      let tol =
+        if not perturb_singular then 0.0
+        else begin
+          let largest = ref 0.0 in
+          for k = 0 to m - 1 do
+            largest :=
+              Float.max !largest
+                (Float.max
+                   (cabs a.(k))
+                   (Float.max (cabs upper.(k)) (cabs second.(k))))
+          done;
+          let eps, tiny =
+            if single then (1.1920928955078125e-07, 1.1754943508222875e-38)
+            else (2.220446049250313e-16, 2.2250738585072014e-308)
+          in
+          let t = round_part (eps *. !largest) in
+          if t = 0.0 then tiny else t
+        end
+      in
+      if not perturb_singular then
+        Array.iter (fun p -> if p = zero then singular := true) a;
+      let pivot k =
+        if perturb_singular && cabs a.(k) < tol then
+          if is_complex then begin
+            let m = cabs a.(k) in
+            if m = 0.0 then { Complex.re = tol; im = 0.0 }
+            else Complex.mul a.(k) { Complex.re = tol /. m; im = 0.0 }
+          end
+          else { Complex.re = Float.copy_sign tol a.(k).re; im = 0.0 }
+        else a.(k)
+      in
+      Array.iter
+        (fun col ->
+          for k = m - 1 downto 0 do
+            let v = ref col.(k) in
+            if k + 1 < m then v := fused !v upper.(k) col.(k + 1);
+            if k + 2 < m then v := fused !v second.(k) col.(k + 2);
+            col.(k) <- !v /! pivot k
+          done)
+        x;
+      let nan_cell =
+        { Complex.re = Float.nan; im = (if is_complex then Float.nan else 0.0) }
+      in
+      let at i j = if !singular then nan_cell else x.(j).(i) in
+      let n_cells = m * kcols in
+      if is_complex then
+        [
+          Ndarray.of_complex dt bshape
+            (Array.init n_cells (fun f -> at (f / kcols) (f mod kcols)));
+        ]
+      else
+        [
+          Ndarray.of_floats dt bshape
+            (Array.init n_cells (fun f ->
+                 (at (f / kcols) (f mod kcols)).Complex.re));
+        ]
   | _ -> failwith "linalg: tridiagonal_solve expects four operands"
 
 let to_complex_dtype = function
@@ -809,7 +945,27 @@ let tridiagonal_aval = function
       ]
   | _ -> failwith "linalg: tridiagonal expects one aval"
 
-let cholesky x = Core.bind1 Cholesky [ x ]
+let symmetrize x =
+  let aval = Core.get_aval x in
+  let rank = Array.length aval.shape in
+  let perm =
+    Array.init rank (fun i ->
+        if i = rank - 1 then rank - 2 else if i = rank - 2 then rank - 1 else i)
+  in
+  let flipped = Core.bind1 (Transpose perm) [ x ] in
+  let flipped =
+    match aval.dtype with
+    | Dtype.Complex64 | Dtype.Complex128 -> Core.bind1 Conj [ flipped ]
+    | _ -> flipped
+  in
+  let n = Array.fold_left ( * ) 1 aval.shape in
+  let half =
+    Concrete (Ndarray.of_floats aval.dtype aval.shape (Array.make n 2.0))
+  in
+  Core.bind1 Div [ Core.bind1 Add [ x; flipped ]; half ]
+
+let cholesky ?(symmetrize_input = true) x =
+  Core.bind1 Cholesky [ (if symmetrize_input then symmetrize x else x) ]
 
 let lu x =
   match Core.bind Lu [ x ] with
@@ -833,7 +989,8 @@ let triangular_solve ?(left_side = false) ?(lower = false)
        { left_side; lower; transpose_a; conjugate_a; unit_diagonal })
     [ a; b ]
 
-let tridiagonal_solve dl d du b = Core.bind1 Tridiagonal_solve [ dl; d; du; b ]
+let tridiagonal_solve ?(perturb_singular = false) dl d du b =
+  Core.bind1 (Tridiagonal_solve { perturb_singular }) [ dl; d; du; b ]
 
 let eig ?(compute_left_eigenvectors = true) ?(compute_right_eigenvectors = true)
     ?(enable_eigvec_derivs = false) x =
@@ -846,7 +1003,8 @@ let eig ?(compute_left_eigenvectors = true) ?(compute_right_eigenvectors = true)
        })
     [ x ]
 
-let eigh ?(lower = true) x =
+let eigh ?(lower = true) ?(symmetrize_input = true) x =
+  let x = if symmetrize_input then symmetrize x else x in
   match Core.bind (Eigh { lower }) [ x ] with
   | [ v; w ] -> (v, w)
   | _ -> failwith "linalg: eigh arity"

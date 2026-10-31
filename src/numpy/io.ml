@@ -697,7 +697,7 @@ let frombuffer ?(dtype = D.F64) ?(count = -1) ?(offset = 0) data =
   in
   T.Concrete (decode dtype [| n |] data offset)
 
-let fromstring ?(dtype = D.F64) ?(sep = " ") text =
+let fromstring ?(dtype = D.F64) ?(count = -1) ?(sep = " ") text =
   let parts =
     if String.trim sep = "" then
       String.split_on_char ' '
@@ -711,6 +711,12 @@ let fromstring ?(dtype = D.F64) ?(sep = " ") text =
       parts
   in
   let arr = Array.of_list values in
+  let arr =
+    if count < 0 then arr
+    else if count > Array.length arr then
+      invalid_arg "string is smaller than requested size"
+    else Array.sub arr 0 count
+  in
   T.Concrete (Nd.of_floats dtype [| Array.length arr |] arr)
 
 let fromfile ?(dtype = D.F64) ?(count = -1) ?(sep = "") ?(offset = 0) path =

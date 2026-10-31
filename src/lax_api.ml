@@ -275,25 +275,47 @@ let dynamic_update_index_in_dim ?(axis = 0) x update index =
   in
   dynamic_update_slice_in_dim ~axis x update index
 
-let gather x indices dimension_numbers slice_sizes =
-  b1 (Gather { dimension_numbers; slice_sizes }) [ x; indices ]
+let gather ?(mode = "clip") ?fill_value x indices dimension_numbers slice_sizes
+    =
+  match mode with
+  | "fill" | "drop" ->
+      Lax.Slicing.gather_fill ?fill_value x indices dimension_numbers
+        slice_sizes
+  | "clip" | "promise_in_bounds" ->
+      b1 (Gather { dimension_numbers; slice_sizes }) [ x; indices ]
+  | m -> invalid_arg ("Unknown gather mode \"" ^ m ^ "\"")
 
-let scatter ?(unique_indices = false) x indices updates dimension_numbers =
+let scatter_indices mode x indices updates dimension_numbers =
+  match mode with
+  | "clip" ->
+      Lax.Slicing.clamp_scatter_indices x indices updates dimension_numbers
+  | "fill" | "drop" | "promise_in_bounds" -> indices
+  | m -> invalid_arg ("Unknown scatter mode \"" ^ m ^ "\"")
+
+let scatter ?(unique_indices = false) ?(mode = "fill") x indices updates
+    dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter { dimension_numbers; unique_indices }) [ x; indices; updates ]
 
-let scatter_add x indices updates dimension_numbers =
+let scatter_add ?(mode = "fill") x indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_add { dimension_numbers }) [ x; indices; updates ]
 
-let scatter_sub x indices updates dimension_numbers =
+let scatter_sub ?(mode = "fill") x indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_sub { dimension_numbers }) [ x; indices; updates ]
 
-let scatter_mul ?(unique_indices = false) x indices updates dimension_numbers =
+let scatter_mul ?(unique_indices = false) ?(mode = "fill") x indices updates
+    dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_mul { dimension_numbers; unique_indices }) [ x; indices; updates ]
 
-let scatter_min x indices updates dimension_numbers =
+let scatter_min ?(mode = "fill") x indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_min { dimension_numbers }) [ x; indices; updates ]
 
-let scatter_max x indices updates dimension_numbers =
+let scatter_max ?(mode = "fill") x indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
   b1 (Scatter_max { dimension_numbers }) [ x; indices; updates ]
 
 let reduce_sum x axes = b1 (Reduce_sum axes) [ x ]
@@ -356,19 +378,25 @@ let top_k ?(axis = -1) x k =
   | [ values; indices ] -> (values, indices)
   | _ -> failwith "top_k: arity"
 
-let dot x y =
+let dot ?dimension_numbers x y =
   let nx = ndim x and ny = ndim y in
-  if nx = 0 || ny = 0 then mul x y
-  else
-    b1
-      (Dot_general
-         {
-           lhs_contract = [| nx - 1 |];
-           rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
-           lhs_batch = [||];
-           rhs_batch = [||];
-         })
-      [ x; y ]
+  match dimension_numbers with
+  | Some ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)) ->
+      b1
+        (Dot_general { lhs_contract; rhs_contract; lhs_batch; rhs_batch })
+        [ x; y ]
+  | None ->
+      if nx = 0 || ny = 0 then mul x y
+      else
+        b1
+          (Dot_general
+             {
+               lhs_contract = [| nx - 1 |];
+               rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
+               lhs_batch = [||];
+               rhs_batch = [||];
+             })
+          [ x; y ]
 
 let dot_general x y ~lhs_contract ~rhs_contract ~lhs_batch ~rhs_batch =
   b1 (Dot_general { lhs_contract; rhs_contract; lhs_batch; rhs_batch }) [ x; y ]
@@ -534,7 +562,7 @@ let cummin = Lax.cummin
 let cumlogsumexp = Lax.cumlogsumexp
 let custom_linear_solve = Lax.custom_linear_solve
 
-let map f xs =
+let map_scan f xs =
   Lax.scan
     (fun args ->
       let n_x = List.length xs in
@@ -562,6 +590,31 @@ let rec switch index branches operands =
         first
         (fun ops -> switch (sub i (index_scalar 1)) rest ops)
         operands
+
+let map ?batch_size f xs =
+  match batch_size with
+  | None -> map_scan f xs
+  | Some size when size <= 0 -> invalid_arg "map: batch_size must be positive"
+  | Some size ->
+      let total =
+        match xs with
+        | [] -> invalid_arg "map: no input"
+        | x :: _ -> (shape x).(0)
+      in
+      let rec chunks start =
+        if start >= total then []
+        else
+          let stop = Stdlib.min total (start + size) in
+          let slices = List.map (fun x -> slice_in_dim x start stop) xs in
+          Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) slices
+          :: chunks stop
+      in
+      let parts = chunks 0 in
+      List.mapi
+        (fun i _ ->
+          let column = List.map (fun part -> List.nth part i) parts in
+          match column with [ only ] -> only | _ -> concatenate column 0)
+        (List.hd parts)
 
 let fori_loop lower upper body init =
   let n_init = List.length init in
@@ -605,21 +658,25 @@ let platform_dependent ?default ~cpu () =
   ignore default;
   cpu ()
 
-let associative_scan ?(axis = 0) fn xs =
+let associative_scan ?(axis = 0) ?(reverse = false) fn xs =
   let n = ndim xs in
   let axis = canon_axis n axis in
+  let xs = if reverse then b1 (Rev [| axis |]) [ xs ] else xs in
   let pieces = unstack xs axis in
-  match pieces with
-  | [] -> xs
-  | first :: rest ->
-      let _, reversed =
-        List.fold_left
-          (fun (acc, out) x ->
-            let v = fn acc x in
-            (v, v :: out))
-          (first, [ first ]) rest
-      in
-      stack (List.rev reversed) axis
+  let out =
+    match pieces with
+    | [] -> xs
+    | first :: rest ->
+        let _, reversed =
+          List.fold_left
+            (fun (acc, out) x ->
+              let v = fn acc x in
+              (v, v :: out))
+            (first, [ first ]) rest
+        in
+        stack (List.rev reversed) axis
+  in
+  if reverse then b1 (Rev [| axis |]) [ out ] else out
 
 let shape_as_value x =
   let sh = shape x in

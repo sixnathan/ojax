@@ -28,11 +28,21 @@ val eigh :
 val eigvalsh :
   ?uplo:string -> ?symmetrize_input:bool -> Types.value -> Types.value
 
-val pinv : ?rtol:Types.value -> ?hermitian:bool -> Types.value -> Types.value
+val pinv :
+  ?rtol:Types.value ->
+  ?hermitian:bool ->
+  ?rcond:Types.value ->
+  Types.value ->
+  Types.value
+
 val matrix_power : Types.value -> int -> Types.value
 
 val matrix_rank :
-  ?rtol:Types.value -> ?hermitian:bool -> Types.value -> Types.value
+  ?rtol:Types.value ->
+  ?hermitian:bool ->
+  ?tol:Types.value ->
+  Types.value ->
+  Types.value
 
 val vector_norm :
   ?axis:int array option ->
@@ -50,6 +60,7 @@ val qr : ?mode:string -> Types.value -> Types.value list
 
 val lstsq :
   ?rcond:float ->
+  ?numpy_resid:bool ->
   Types.value ->
   Types.value ->
   Types.value * Types.value * Types.value * Types.value

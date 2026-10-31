@@ -20,11 +20,28 @@ val leaky_relu : ?negative_slope:float -> Types.value -> Types.value
 val squareplus : ?b:float -> Types.value -> Types.value
 val gelu : ?approximate:bool -> Types.value -> Types.value
 val glu : ?axis:int -> Types.value -> Types.value
-val softmax : ?axis:int -> Types.value -> Types.value
-val log_softmax : ?axis:int -> Types.value -> Types.value
-val standardize : ?axis:int -> ?epsilon:float -> Types.value -> Types.value
-val logmeanexp : ?axis:int array -> ?keepdims:bool -> Types.value -> Types.value
-val one_hot : ?axis:int -> num_classes:int -> Types.value -> Types.value
+val softmax : ?axis:int -> ?where:Types.value -> Types.value -> Types.value
+val log_softmax : ?axis:int -> ?where:Types.value -> Types.value -> Types.value
+
+val standardize :
+  ?axis:int ->
+  ?mean:Types.value ->
+  ?variance:Types.value ->
+  ?epsilon:float ->
+  ?where:Types.value ->
+  ?algorithm:string ->
+  Types.value ->
+  Types.value
+
+val logmeanexp :
+  ?axis:int array ->
+  ?keepdims:bool ->
+  ?where:Types.value ->
+  Types.value ->
+  Types.value
+
+val one_hot :
+  ?axis:int -> ?dtype:Dtype.t -> num_classes:int -> Types.value -> Types.value
 
 val scaled_dot_general :
   lhs_contract:int array ->

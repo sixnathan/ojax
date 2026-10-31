@@ -108,19 +108,46 @@ val dynamic_index_in_dim :
 
 val dynamic_update_slice_in_dim : ?axis:int -> value -> value -> value -> value
 val dynamic_update_index_in_dim : ?axis:int -> value -> value -> value -> value
-val gather : value -> value -> gather_dims -> int array -> value
+
+val gather :
+  ?mode:string ->
+  ?fill_value:float ->
+  value ->
+  value ->
+  gather_dims ->
+  int array ->
+  value
 
 val scatter :
-  ?unique_indices:bool -> value -> value -> value -> scatter_dims -> value
+  ?unique_indices:bool ->
+  ?mode:string ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
 
-val scatter_add : value -> value -> value -> scatter_dims -> value
-val scatter_sub : value -> value -> value -> scatter_dims -> value
+val scatter_add :
+  ?mode:string -> value -> value -> value -> scatter_dims -> value
+
+val scatter_sub :
+  ?mode:string -> value -> value -> value -> scatter_dims -> value
 
 val scatter_mul :
-  ?unique_indices:bool -> value -> value -> value -> scatter_dims -> value
+  ?unique_indices:bool ->
+  ?mode:string ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
 
-val scatter_min : value -> value -> value -> scatter_dims -> value
-val scatter_max : value -> value -> value -> scatter_dims -> value
+val scatter_min :
+  ?mode:string -> value -> value -> value -> scatter_dims -> value
+
+val scatter_max :
+  ?mode:string -> value -> value -> value -> scatter_dims -> value
+
 val reduce_sum : value -> int array -> value
 val reduce_prod : value -> int array -> value
 val reduce_max : value -> int array -> value
@@ -151,7 +178,12 @@ val sort_key_val :
   ?dimension:int -> ?is_stable:bool -> value -> value -> value * value
 
 val top_k : ?axis:int -> value -> int -> value * value
-val dot : value -> value -> value
+
+val dot :
+  ?dimension_numbers:(int array * int array) * (int array * int array) ->
+  value ->
+  value ->
+  value
 
 val dot_general :
   value ->
@@ -238,7 +270,8 @@ val custom_linear_solve :
   ((value list -> value list) -> value list -> value list) ->
   value list
 
-val map : (value list -> value list) -> value list -> value list
+val map :
+  ?batch_size:int -> (value list -> value list) -> value list -> value list
 
 val switch :
   value -> (value list -> value list) list -> value list -> value list
@@ -258,7 +291,10 @@ val custom_root :
   value list
 
 val platform_dependent : ?default:'a -> cpu:(unit -> 'b) -> unit -> 'b
-val associative_scan : ?axis:int -> (value -> value -> value) -> value -> value
+
+val associative_scan :
+  ?axis:int -> ?reverse:bool -> (value -> value -> value) -> value -> value
+
 val shape_as_value : value -> value
 val index_take : value -> value list -> int array -> value
 

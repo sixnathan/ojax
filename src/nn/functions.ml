@@ -121,58 +121,110 @@ let glu ?(axis = -1) x =
   | [ x1; x2 ] -> UF.multiply x1 (sigmoid x2)
   | _ -> invalid_arg "glu: split did not produce two halves"
 
-let softmax ?(axis = -1) x =
-  let ax = [| canon_axis (Array.length (shape x)) axis |] in
-  let x_max = RED.max ~axis:ax ~keepdims:true x in
-  let unnormalized = UF.exp (UF.subtract x x_max) in
-  UF.divide unnormalized (RED.sum ~axis:ax ~keepdims:true unnormalized)
+let masked_max ax mask x =
+  match mask with
+  | None -> RED.max ~axis:ax ~keepdims:true x
+  | Some m ->
+      RED.max ~axis:ax ~keepdims:true ~where:m
+        ~initial:(const_full (dtype x) [||] Float.neg_infinity)
+        x
 
-let log_softmax ?(axis = -1) x =
+let softmax ?(axis = -1) ?where:mask x =
   let ax = [| canon_axis (Array.length (shape x)) axis |] in
-  let x_max = RED.max ~axis:ax ~keepdims:true x in
-  let shifted = UF.subtract x x_max in
-  let lse = UF.log (RED.sum ~axis:ax ~keepdims:true (UF.exp shifted)) in
-  UF.subtract shifted lse
-
-let standardize ?(axis = -1) ?(epsilon = 1e-5) x =
-  let ax = [| canon_axis (Array.length (shape x)) axis |] in
-  let mean = RED.mean ~axis:ax ~keepdims:true x in
-  let variance =
-    UF.subtract
-      (RED.mean ~axis:ax ~keepdims:true (UF.square x))
-      (UF.square mean)
+  let x_max = masked_max ax mask x in
+  let x_safe =
+    match mask with
+    | None -> x
+    | Some m -> where3 m x (scalar_like x Float.neg_infinity)
   in
-  let variance = NL.clip ~min:0.0 variance in
+  let unnormalized = UF.exp (UF.subtract x_safe x_max) in
+  let result =
+    UF.divide unnormalized
+      (RED.sum ~axis:ax ~keepdims:true ?where:mask unnormalized)
+  in
+  match mask with
+  | None -> result
+  | Some m -> where3 m result (scalar_like result 0.0)
+
+let log_softmax ?(axis = -1) ?where:mask x =
+  let ax = [| canon_axis (Array.length (shape x)) axis |] in
+  let x_max = masked_max ax mask x in
+  let x_safe =
+    match mask with
+    | None -> x
+    | Some m -> where3 m x (scalar_like x Float.neg_infinity)
+  in
+  let shifted = UF.subtract x_safe x_max in
+  let lse =
+    UF.log (RED.sum ~axis:ax ~keepdims:true ?where:mask (UF.exp shifted))
+  in
+  let result = UF.subtract shifted lse in
+  match mask with
+  | None -> result
+  | Some m -> where3 m result (scalar_like result Float.neg_infinity)
+
+let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
+    ?(algorithm = "fast") x =
+  let ax = [| canon_axis (Array.length (shape x)) axis |] in
+  let mean =
+    match mean with
+    | Some m -> m
+    | None -> RED.mean ~axis:ax ~keepdims:true ?where:mask x
+  in
+  let variance =
+    match variance with
+    | Some v -> v
+    | None -> (
+        match algorithm with
+        | "stable" ->
+            RED.mean ~axis:ax ~keepdims:true ?where:mask
+              (UF.square (UF.subtract x mean))
+        | "fast" ->
+            NL.clip ~min:0.0
+              (UF.subtract
+                 (RED.mean ~axis:ax ~keepdims:true ?where:mask (UF.square x))
+                 (UF.square mean))
+        | a ->
+            invalid_arg
+              ("Unknown algorithm '" ^ a ^ "'. Expected 'fast' or 'stable'."))
+  in
   UF.multiply (UF.subtract x mean)
     (bind1 T.Rsqrt [ UF.add variance (scalar_like variance epsilon) ])
 
-let logsumexp ?axis ?(keepdims = false) x =
+let logsumexp ?axis ?(keepdims = false) ?where:mask x =
   let ndim = Array.length (shape x) in
   let dims =
     match axis with
     | None -> Array.init ndim (fun i -> i)
     | Some a -> Array.map (canon_axis ndim) a
   in
-  let amax = RED.max ~axis:dims ~keepdims:true x in
+  let amax = masked_max dims mask x in
   let amax = where3 (UF.isfinite amax) amax (scalar_like amax 0.0) in
   let shifted = UF.subtract x amax in
-  let sumexp = RED.sum ~axis:dims ~keepdims:true (UF.exp shifted) in
+  let sumexp = RED.sum ~axis:dims ~keepdims:true ?where:mask (UF.exp shifted) in
   let out = UF.add (UF.log sumexp) amax in
   if keepdims then out else NL.squeeze ~axis:dims out
 
-let logmeanexp ?axis ?(keepdims = false) x =
+let logmeanexp ?axis ?(keepdims = false) ?where:mask x =
   let ndim = Array.length (shape x) in
   let dims =
     match axis with
     | None -> Array.init ndim (fun i -> i)
     | Some a -> Array.map (canon_axis ndim) a
   in
-  let lse = logsumexp ?axis ~keepdims x in
-  let n = Array.fold_left (fun acc d -> acc * (shape x).(d)) 1 dims in
-  UF.subtract lse
-    (const_full (dtype lse) (shape lse) (Float.log (float_of_int n)))
+  let lse = logsumexp ?axis ~keepdims ?where:mask x in
+  match mask with
+  | Some m ->
+      UF.subtract lse
+        (UF.log
+           (RED.sum ~axis:dims ~keepdims ~dtype:(dtype lse)
+              (NL.broadcast_to m (shape x))))
+  | None ->
+      let n = Array.fold_left (fun acc d -> acc * (shape x).(d)) 1 dims in
+      UF.subtract lse
+        (const_full (dtype lse) (shape lse) (Float.log (float_of_int n)))
 
-let one_hot ?(axis = -1) ~num_classes x =
+let one_hot ?(axis = -1) ?dtype:dt ~num_classes x =
   let ndim = Array.length (shape x) in
   let pos = if axis < 0 then axis + ndim + 1 else axis in
   let rhs_shape =
@@ -182,7 +234,8 @@ let one_hot ?(axis = -1) ~num_classes x =
   let rhs =
     bind1 (T.Iota { dtype = dtype x; shape = rhs_shape; dimension = pos }) []
   in
-  NL.astype (UF.equal lhs rhs) (Dtypes.default_float_dtype ())
+  NL.astype (UF.equal lhs rhs)
+    (match dt with Some d -> d | None -> Dtypes.default_float_dtype ())
 
 let scaled_dot_general ~lhs_contract ~rhs_contract ~lhs_batch ~rhs_batch a b =
   bind1
@@ -251,5 +304,5 @@ let soft_sign x = soft_sign (if dtype x = D.Bool then as_float x else x)
 let softplus x = softplus (if dtype x = D.Bool then as_float x else x)
 let mish x = mish (if dtype x = D.Bool then as_float x else x)
 
-let logmeanexp ?axis ?keepdims x =
-  logmeanexp ?axis ?keepdims (as_inexact_dtype x)
+let logmeanexp ?axis ?keepdims ?where:mask x =
+  logmeanexp ?axis ?keepdims ?where:mask (as_inexact_dtype x)

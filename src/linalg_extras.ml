@@ -214,7 +214,7 @@ let use_cholesky u (a_minus_e, c, e) =
       (UF.multiply (const_like u c) (L.dot (hconj u) u))
       (NL.eye ~dtype:dt big_n)
   in
-  let y = LL.cholesky x in
+  let y = LL.cholesky ~symmetrize_input:false x in
   let z =
     UF.conj
       (LL.triangular_solve ~left_side:true ~lower:true ~conjugate_a:true y

@@ -1,6 +1,13 @@
 (test
  (name manifest)
- (modules npz compare exact_floor numpy_products parity_cases manifest)
+ (modules
+  npz
+  compare
+  exact_floor
+  numpy_products
+  narrow_dtypes
+  parity_cases
+  manifest)
  (libraries alcotest yojson ojax)
  (preprocess
   (action

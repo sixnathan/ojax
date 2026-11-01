@@ -3489,11 +3489,6 @@ let raw_patterns =
       0x3ff0000000000000L;
     ]
   in
-  let signed bits =
-    List.init (1 lsl bits) (fun i ->
-        Int64.of_int
-          (if i >= 1 lsl (bits - 1) then (i - (1 lsl bits)) land 255 else i))
-  in
   [
     ("float32", 4, f32);
     ("float64", 8, f64);
@@ -3510,8 +3505,8 @@ let raw_patterns =
     ("uint32", 4, [ 0L; 1L; 0xffffffffL; 0x80000000L; 0x7fffffffL; 0x01000001L ]);
     ("int64", 8, [ 0L; -1L; Int64.min_int; Int64.max_int; 0x20000000000001L ]);
     ("uint64", 8, [ 0L; -1L; Int64.min_int; Int64.max_int; 0x20000000000001L ]);
-    ("int2", 1, signed 2);
-    ("int4", 1, signed 4);
+    ("int2", 1, all_words 4);
+    ("int4", 1, all_words 16);
     ("uint2", 1, all_words 4);
     ("uint4", 1, all_words 16);
     ("float4_e2m1fn", 1, all_words 16);
@@ -3746,6 +3741,7 @@ let nd_of_npz_any (a : Npz.t) =
   match a.Npz.data with
   | Npz.C c -> Nd.of_complex dt a.Npz.shape c
   | Npz.F f -> Nd.of_floats dt a.Npz.shape f
+  | Npz.I i when dt = D.I64 || dt = D.Uint64 -> Nd.of_int64s dt a.Npz.shape i
   | Npz.I i -> Nd.of_floats dt a.Npz.shape (Array.map Int64.to_float i)
 
 let gauge_of_output op oname rank =
@@ -4801,6 +4797,73 @@ let dtypes_suite_for set_name =
   in
   (module_, tests @ computed)
 
+let rec npz_files dir =
+  Sys.readdir dir |> Array.to_list
+  |> List.concat_map (fun entry ->
+      let path = Filename.concat dir entry in
+      if Sys.is_directory path then npz_files path
+      else if Filename.check_suffix entry ".npz" then [ path ]
+      else [])
+
+let raw_golden_arrays () =
+  let checked = ref 0 in
+  List.iter
+    (fun path ->
+      List.iter
+        (fun (member, (a : Npz.t)) ->
+          incr checked;
+          let back = Npz.raw_of_nd (nd_of_npz_any a) in
+          if back <> a.raw then
+            Alcotest.failf "%s %s: %s does not round trip" path member
+              a.raw.raw_dtype)
+        (Npz.read path))
+    (npz_files goldens_root);
+  if !checked < 30000 then Alcotest.failf "only %d golden arrays found" !checked
+
+let narrow_dtype_rows () =
+  let run op v =
+    match op with
+    | "put" -> List.hd (Ojax.Api.jit_flat (fun args -> args) [ v ])
+    | "neg" -> UF.negative v
+    | "add" -> UF.add v v
+    | "to_f32" -> NL.astype v D.F32
+    | other -> failwith ("narrow dtypes: " ^ other)
+  in
+  List.iter
+    (fun (name, op, source_dtype, input, result_dtype, want) ->
+      let shape dt hex =
+        [| (String.length hex / 2 / if dt = "float32" then 4 else 1) |]
+      in
+      let v =
+        T.Concrete
+          (Parity_cases.nd_of_hex source_dtype (shape source_dtype input) input)
+      in
+      let target = Option.get (D.of_numpy_name name) in
+      let nd =
+        concrete (if op = "from_f32" then NL.astype v target else run op v)
+      in
+      let compare =
+        if String.contains name 'i' && not (String.contains name 'f') then
+          "exact"
+        else "allclose"
+      in
+      let expected =
+        {
+          (npz_of_nd
+             (Parity_cases.nd_of_hex result_dtype (shape result_dtype want) want)
+             result_dtype
+             (if result_dtype = "float32" then "allclose" else compare))
+          with
+          raw = (raw_row result_dtype want).raw;
+        }
+      in
+      let compare = if result_dtype = "float32" then "allclose" else compare in
+      Compare.check
+        ~name:(name ^ ":" ^ op)
+        ~compare ~atol:0.0 ~rtol:0.0 ~expected
+        ~actual:(npz_of_nd nd result_dtype compare))
+    Narrow_dtypes.rows
+
 let numpy_product_rows () =
   List.iter
     (fun (case, x64, dtype, input, numpy, jax) ->
@@ -4953,6 +5016,11 @@ let () =
                raw_jax_nan_operations;
              Alcotest.test_case "jax nan literals" `Quick raw_jax_nan_literals;
            ] );
+         ( "raw_arrays",
+           [ Alcotest.test_case "every golden array" `Quick raw_golden_arrays ]
+         );
+         ( "narrow_dtypes",
+           [ Alcotest.test_case "against jax" `Quick narrow_dtype_rows ] );
          ( "numpy_product_jax",
            [
              Alcotest.test_case "ojax matmul against jax" `Quick

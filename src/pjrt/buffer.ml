@@ -119,8 +119,10 @@ let encode buf off dtype nd idx =
   | Dtype.Uint32 ->
       put_i32 buf off (Int32.of_int (int_of_float (v ()) land u32_mask))
   | Dtype.Bool -> set_byte buf off (if v () = 0.0 then 0 else 1)
-  | Dtype.I8 | Dtype.Uint8 | Dtype.I2 | Dtype.I4 | Dtype.Uint2 | Dtype.Uint4 ->
+  | Dtype.I8 | Dtype.Uint8 | Dtype.Uint2 | Dtype.Uint4 ->
       set_byte buf off (int_of_float (v ()) land 0xff)
+  | Dtype.I2 -> set_byte buf off (int_of_float (v ()) land 0x3)
+  | Dtype.I4 -> set_byte buf off (int_of_float (v ()) land 0xf)
   | Dtype.I16 | Dtype.Uint16 -> put_u16 buf off (int_of_float (v ()) land 0xffff)
   | Dtype.F16 -> put_u16 buf off (half_bits (v ()))
   | Dtype.Bf16 -> put_u16 buf off (Ndarray.bits_of_bfloat (v ()))

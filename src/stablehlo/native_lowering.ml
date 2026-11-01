@@ -375,11 +375,15 @@ let jnp_floor_divide : (value -> value -> value) ref =
 let lentz ~num_iterations ~small ~threshold ~numerator ~denominator =
   let weak_int x =
     Concrete
-      (Ndarray.as_weak (Ndarray.of_floats Dtype.I32 [||] [| float_of_int x |]))
+      (Ndarray.as_weak
+         (Ndarray.of_floats
+            (Dtypes.default_int_dtype ())
+            [||]
+            [| float_of_int x |]))
   in
   let cond = function
     | iteration :: unconverged :: _ ->
-        let remain = L.lt iteration (int32 num_iterations) in
+        let remain = L.lt iteration (weak_int num_iterations) in
         remain &&: unconverged
     | _ -> invalid_arg "Native_lowering: lentz state"
   in
@@ -480,7 +484,8 @@ let betainc_impl dt = function
         let int_like c =
           L.broadcast_in_dim
             (Concrete
-               (Ndarray.as_weak (Ndarray.of_floats Dtype.I32 [||] [| c |])))
+               (Ndarray.as_weak
+                  (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| c |])))
             target [||]
         in
         let two_i = int_like 2.0 in

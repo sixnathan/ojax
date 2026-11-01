@@ -585,9 +585,9 @@ let update_jaxpr prim dt =
 let scatter_params ?(sorted = false) ?update d unique =
   [
     ("dimension_numbers", Plain (scatter_numbers d));
-    ("indices_are_sorted", Plain (py_bool sorted));
+    ("indices_are_sorted", Plain (py_bool (sorted || d.s_sorted_unique)));
     ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
-    ("unique_indices", Plain (py_bool unique));
+    ("unique_indices", Plain (py_bool (unique || d.s_sorted_unique)));
     ("update_consts", Plain "()");
     ( "update_jaxpr",
       match update with
@@ -658,8 +658,15 @@ let jax_params (e : eqn) =
             (Printf.sprintf "((%s, %s), (%s, %s))" (py_list d.lhs_contract)
                (py_list d.rhs_contract) (py_list d.lhs_batch)
                (py_list d.rhs_batch)) );
-        ("preferred_element_type", Plain (dn (out_dtype ())));
       ]
+      @ (match d.dot_precision with
+        | Some (l, r) ->
+            [
+              ( "precision",
+                Plain (Printf.sprintf "(Precision.%s, Precision.%s)" l r) );
+            ]
+        | None -> [])
+      @ [ ("preferred_element_type", Plain (dn (out_dtype ()))) ]
   | Iota { dtype; shape; dimension } ->
       [
         ("dimension", Plain (string_of_int dimension));
@@ -1144,7 +1151,12 @@ and pp_eqn ctx (e : eqn) =
         | None -> [])
     | _ -> []
   in
-  let lhs = pp_binders ctx e.outs in
+  let binders =
+    match (e.prim, e.outs) with
+    | Svd _, [ u; s; v ] -> [ s; u; v ]
+    | _ -> e.outs
+  in
+  let lhs = pp_binders ctx binders in
   let params = pp_params ctx (name_param @ jax_params e) in
   let rhs =
     Layout.Concat

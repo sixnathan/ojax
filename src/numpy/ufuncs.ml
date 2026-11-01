@@ -390,8 +390,7 @@ let concrete_integer_exponent x2 =
   | _ -> None
 
 let power_general x1 x2 =
-  let sh = broadcast_shapes (shape x1) (shape x2) in
-  let x1 = broadcast_to x1 sh and x2 = broadcast_to x2 sh in
+  let x1, x2 = p2 (promote_shapes [ x1; x2 ]) in
   let d1 = dtype x1 and d2 = dtype x2 in
   let a, b = p2 (promote_numeric [ x1; x2 ]) in
   if is_integer (dtype a) || dtype a = D.Bool then pow_int_int a b

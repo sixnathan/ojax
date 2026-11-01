@@ -132,6 +132,7 @@ let companion a =
       scatter_dims_to_operand_dims = [| 0 |];
       s_operand_batching_dims = [||];
       s_scatter_indices_batching_dims = [||];
+      s_sorted_unique = false;
     }
   in
   let indices = Concrete (Ndarray.of_floats Dtype.I32 [| 1 |] [| 0.0 |]) in
@@ -454,6 +455,7 @@ let sylvester_triangular_scan r s f =
               scatter_dims_to_operand_dims = [| 0 |];
               s_operand_batching_dims = [||];
               s_scatter_indices_batching_dims = [||];
+              s_sorted_unique = false;
             };
         ]
     | _ -> invalid_arg "solve_sylvester: arity"

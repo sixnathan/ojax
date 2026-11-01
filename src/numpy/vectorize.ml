@@ -146,29 +146,44 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
     Array.exists (function T.Tracer _ -> true | _ -> false) dyn_arr
   in
   if traced then begin
-    let flat =
+    let nb = Array.length broadcast_shape in
+    let pieces =
       Array.to_list
         (Array.mapi
            (fun idx v ->
              let sh = shape_of v in
-             let core_shape =
-               Array.sub sh (Array.length sh - ncs.(idx)) ncs.(idx)
+             let noncore = Array.sub sh 0 (Array.length sh - ncs.(idx)) in
+             let filled =
+               Array.append (Array.make (nb - Array.length noncore) 1) noncore
              in
-             let target = Array.append broadcast_shape core_shape in
-             LN.reshape (LN.broadcast_to v target)
-               (Array.append [| bsize |] core_shape))
+             let squeeze_axes =
+               List.filter
+                 (fun i -> noncore.(i) = 1)
+                 (List.init (Array.length noncore) Fun.id)
+             in
+             let squeezed =
+               if squeeze_axes = [] then v
+               else LN.squeeze ~axis:(Array.of_list squeeze_axes) v
+             in
+             (filled, squeezed))
            dyn_arr)
     in
-    let out =
-      List.hd
-        (Interpreters.Batching.vmap
-           (fun slices -> [ call_full slices ])
-           (List.map (fun _ -> Some 0) flat)
-           flat)
-    in
-    let out_sh = shape_of out in
-    let per_item = Array.sub out_sh 1 (Array.length out_sh - 1) in
-    LN.reshape out (Array.append broadcast_shape per_item)
+    let filled = List.map fst pieces and squeezed = List.map snd pieces in
+    let func = ref (fun xs -> [ call_full xs ]) and expand = ref [] in
+    for pos = nb - 1 downto 0 do
+      let in_axes =
+        List.map (fun s -> if s.(pos) = 1 then None else Some 0) filled
+      in
+      if List.for_all Option.is_none in_axes then expand := pos :: !expand
+      else begin
+        let inner = !func in
+        func := fun xs -> Interpreters.Batching.vmap inner in_axes xs
+      end
+    done;
+    let result = List.hd (!func squeezed) in
+    match !expand with
+    | [] -> result
+    | dims -> LN.expand_dims result (Array.of_list dims)
   end
   else
     let concretes = Array.map concrete dyn_arr in

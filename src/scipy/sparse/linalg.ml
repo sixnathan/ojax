@@ -245,6 +245,7 @@ let scatter_at mat k update ~window ~inserted =
       scatter_dims_to_operand_dims = [| inserted |];
       s_operand_batching_dims = [||];
       s_scatter_indices_batching_dims = [||];
+      s_sorted_unique = false;
     }
 
 let i32_lit v = T.Concrete (Nd.of_floats D.I32 [||] [| float_of_int v |])

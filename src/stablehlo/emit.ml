@@ -1122,9 +1122,11 @@ let cum_window_attrs shape axis reverse =
      window_dimensions = %s, window_strides = %s"
     (arr ones) pad_str (arr ones) (arr window_dims) (arr ones)
 
+let cum_symbols : (string * string * int * bool, string) Hashtbl.t =
+  Hashtbl.create 8
+
 let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
-  let fname = unique_symbol base_name in
   let x = sole in_ids in
   let in_aval = atom_aval (sole eqn.inputs) in
   let dt = in_aval.dtype in
@@ -1132,9 +1134,16 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
   let sty = Ir.tensor_type dt [||] in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
+  let key = (base_name, ty, axis, reverse) in
+  let cached = Hashtbl.find_opt cum_symbols key in
+  let fname =
+    match cached with Some f -> f | None -> unique_symbol base_name
+  in
+  Hashtbl.replace cum_symbols key fname;
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
+  if cached = None then begin
   let attrs = cum_window_attrs in_aval.shape axis reverse in
   let b = ctx.extras in
   Buffer.add_string b
@@ -1167,6 +1176,7 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
   end;
   Buffer.add_string b "  }\n"
+  end
 
 let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   let x = sole in_ids in
@@ -1295,7 +1305,8 @@ let gather_dnums_attr (d : gather_dims) index_vector_dim =
         dim_field "operand_batching_dims" d.g_operand_batching_dims;
         dim_field "start_indices_batching_dims" d.g_start_indices_batching_dims;
         dim_field "start_index_map" d.start_index_map;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.gather<" ^ String.concat ", " parts ^ ">"
@@ -1310,7 +1321,8 @@ let scatter_dnums_attr (d : scatter_dims) index_vector_dim =
         dim_field "scatter_indices_batching_dims"
           d.s_scatter_indices_batching_dims;
         dim_field "scatter_dims_to_operand_dims" d.scatter_dims_to_operand_dims;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.scatter<" ^ String.concat ", " parts ^ ">"
@@ -4050,6 +4062,7 @@ let emitting () = !emission_depth > 0
 
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
+  Hashtbl.reset cum_symbols;
   Hashtbl.reset call_symbols;
   symbol_counter := 0;
   seen_mesh := None;

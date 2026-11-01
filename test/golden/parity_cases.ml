@@ -1755,11 +1755,6 @@ let needs_concrete op =
       "np_compress";
       "np_extract";
       "np_delete";
-      "np_place";
       "np_trim_zeros";
-      "np_frexp";
-      "np_polydiv";
       "np_roots";
-      "np_packbits";
-      "np_unpackbits";
     ]

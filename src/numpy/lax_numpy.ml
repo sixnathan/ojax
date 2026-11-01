@@ -1807,13 +1807,12 @@ let vander ?n ?(increasing = false) x =
   let io = bind1 (T.Iota { dtype = dt; shape = [| nn |]; dimension = 0 }) [] in
   let io =
     if increasing then io
-    else bind1 T.Sub [ full dt [| nn |] (float_of_int (nn - 1)); io ]
+    else bind1 T.Sub [ scalar dt (float_of_int (nn - 1)); io ]
   in
   let lift v sh dims = bind1 (T.Broadcast_in_dim { shape = sh; dims }) [ v ] in
-  let full_shape = [| len; nn |] in
-  let xcol = lift (lift x [| len; 1 |] [| 0 |]) full_shape [| 0; 1 |] in
-  let expo = lift (lift io [| 1; nn |] [| 1 |]) full_shape [| 0; 1 |] in
-  bind1 T.Pow [ xcol; expo ]
+  let xcol = lift x [| len; 1 |] [| 0 |] in
+  let expo = lift io [| 1; nn |] [| 1 |] in
+  Ufuncs.power xcol expo
 
 let vander ?n ?increasing p0 =
   Jnp_util.jit1 "vander"

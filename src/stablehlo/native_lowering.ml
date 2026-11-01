@@ -1159,11 +1159,12 @@ let lapack_eigen_values_real = function
   | _ -> invalid_arg "Native_lowering: geev arity"
 
 let lapack_eig ~real ~compute_left ~compute_right outs =
-  let outs = if real then lapack_eigen_values_real outs else outs in
-  match lapack_guarded outs with
-  | [ w; vl; vr ] ->
-      (w :: (if compute_left then [ vl ] else []))
-      @ if compute_right then [ vr ] else []
+  match if real then lapack_eigen_values_real outs else outs with
+  | [ w; vl; vr; info ] ->
+      lapack_guarded
+        ((w :: (if compute_left then [ vl ] else []))
+        @ (if compute_right then [ vr ] else [])
+        @ [ info ])
   | _ -> invalid_arg "Native_lowering: geev arity"
 
 let lapack_schur ~compute_vectors outs =

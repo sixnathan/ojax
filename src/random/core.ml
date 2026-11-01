@@ -1173,7 +1173,7 @@ let key_impl k =
 let key_data k =
   check_prng_key k;
   match k with
-  | Tracer _ when Key_reuse.known_raw k -> unwrap (wrap k)
+  | Tracer _ when not (Key_reuse.is_typed k) -> unwrap (wrap (unwrap k))
   | _ -> key_data k
 
 let clone k =

@@ -126,7 +126,7 @@ let cases =
              [|
                { Complex.re = 1.; im = 2. };
                { Complex.re = 1.; im = -1. };
-               { Complex.re = nan; im = 0. };
+               { Complex.re = Int64.float_of_bits 0x7FF8000000000000L; im = 0. };
                { Complex.re = -3.; im = 4. };
                { Complex.re = infinity; im = 0. };
              |]);
@@ -162,7 +162,17 @@ let cases =
           let m, e = E.frexp x in
           [ m; e ]),
       [
-        f32 [| 8 |] [| 0.; -0.; 1.5; -3.; infinity; neg_infinity; nan; 1e-40 |];
+        f32 [| 8 |]
+          [|
+            0.;
+            -0.;
+            1.5;
+            -3.;
+            infinity;
+            neg_infinity;
+            Int64.float_of_bits 0x7FF8000000000000L;
+            1e-40;
+          |];
       ] );
   ]
 
@@ -174,12 +184,17 @@ let array_of_json j =
   let shape =
     Array.of_list (List.map JU.to_int (JU.to_list (JU.member "shape" j)))
   in
-  let dt = D.Complex64 in
-  let shape_total = Array.fold_left ( * ) 1 shape in
-  ignore shape_total;
-  T.Concrete
-    (Ojax.Ndarray.of_complex dt shape
-       (Array.of_list (List.map2 (fun r i -> { Complex.re = r; im = i }) re im)))
+  match JU.to_string (JU.member "dtype" j) with
+  | "float32" ->
+      T.Concrete (Ojax.Ndarray.of_floats D.F32 shape (Array.of_list re))
+  | "float64" ->
+      T.Concrete (Ojax.Ndarray.of_floats D.F64 shape (Array.of_list re))
+  | name ->
+      let dt = if name = "complex128" then D.Complex128 else D.Complex64 in
+      T.Concrete
+        (Ojax.Ndarray.of_complex dt shape
+           (Array.of_list
+              (List.map2 (fun r i -> { Complex.re = r; im = i }) re im)))
 
 let tridiagonal_fuzz path =
   let cases = JU.to_list (Yojson.Safe.from_file path) in
@@ -206,7 +221,10 @@ let tridiagonal_fuzz path =
     cases;
   Printf.printf "tridiagonal perturbed: %d of %d identical\n" !same !total
 
-let specials = [| 0.0; -0.0; 1.0; -1.0; infinity; neg_infinity; nan; 1e30 |]
+let quiet_nan = Int64.float_of_bits 0x7FF8000000000000L
+
+let specials =
+  [| 0.0; -0.0; 1.0; -1.0; infinity; neg_infinity; quiet_nan; 1e30 |]
 
 let grid dt =
   let n = Array.length specials in

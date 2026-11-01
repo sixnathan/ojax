@@ -143,7 +143,11 @@ and primitive =
   | Optimization_barrier
   | Ragged_dot_general
   | Reduce_precision of { exponent_bits : int; mantissa_bits : int }
-  | Rng_bit_generator
+  | Rng_bit_generator of {
+      rbg_shape : int array;
+      rbg_dtype : Dtype.t;
+      rbg_algorithm : string;
+    }
   | Rng_uniform
   | Sort of { dimension : int; is_stable : bool; num_keys : int }
   | Tie
@@ -234,6 +238,10 @@ and primitive =
   | Lu
   | Lu_pivots_to_permutation of int
   | Qr of bool
+  | Qr_pivoted of bool
+  | Geqrf
+  | Geqp3
+  | Ormqr of { ormqr_left : bool; ormqr_transpose : bool }
   | Triangular_solve of {
       left_side : bool;
       lower : bool;

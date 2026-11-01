@@ -376,59 +376,26 @@ let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
 let rng_bit_generator ?(dtype = D.Uint32) ?(algorithm = Rng_default) key
     out_shape =
   (match dtype with
-  | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint32 | D.Uint64 -> ()
-  | _ -> invalid_arg "rng_bit_generator: unsupported dtype");
+  | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> ()
+  | d ->
+      raise
+        (Invalid_argument
+           (Printf.sprintf "rng_bit_generator: unsupported dtype %s"
+              (D.numpy_name d))));
   let key_aval = aval key in
-  let wide = Stablehlo.Ir.tensor_type D.Uint64 [| 2 |] in
-  let vals_ty = Stablehlo.Ir.tensor_type dtype out_shape in
-  let key_ty = Stablehlo.Ir.tensor_type key_aval.T.dtype key_aval.T.shape in
-  let attr =
+  (match (key_aval.T.dtype, key_aval.T.shape) with
+  | D.Uint32, [| 4 |] | D.Uint64, [| 2 |] -> ()
+  | _ -> invalid_arg "rng_bit_generator: key must be u32[4] or u64[2]");
+  let rbg_algorithm =
     match algorithm with
     | Rng_default -> "DEFAULT"
     | Three_fry -> "THREE_FRY"
     | Philox -> "PHILOX"
   in
-  let narrow =
-    match (key_aval.T.dtype, key_aval.T.shape) with
-    | D.Uint32, [| 4 |] -> true
-    | D.Uint64, [| 2 |] -> false
-    | _ -> invalid_arg "rng_bit_generator: key must be u32[4] or u64[2]"
-  in
-  let pair = Stablehlo.Ir.tensor_type D.Uint32 [| 2; 2 |] in
-  let pre =
-    if narrow then
-      Printf.sprintf
-        "    %%r = stablehlo.reshape %%arg0 : (%s) -> %s\n\
-        \    %%k = stablehlo.bitcast_convert %%r : (%s) -> %s\n"
-        key_ty pair pair wide
-    else ""
-  in
-  let input = if narrow then "%k" else "%arg0" in
-  let post =
-    if narrow then
-      Printf.sprintf
-        "    %%b = stablehlo.bitcast_convert %%o : (%s) -> %s\n\
-        \    %%ok = stablehlo.reshape %%b : (%s) -> %s\n"
-        wide pair pair key_ty
-    else ""
-  in
-  let result = if narrow then "%ok" else "%o" in
-  let text =
-    Printf.sprintf
-      "module {\n\
-      \  func.func public @main(%%arg0: %s) -> (%s, %s) {\n\
-       %s    %%o, %%v = \"stablehlo.rng_bit_generator\"(%s) <{rng_algorithm = \
-       #stablehlo<rng_algorithm %s>}> : (%s) -> (%s, %s)\n\
-       %s    return %s, %%v : %s, %s\n\
-      \  }\n\
-       }\n"
-      key_ty key_ty vals_ty pre input attr wide wide vals_ty post result key_ty
-      vals_ty
-  in
   match
-    Custom_derivatives.pure_callback
-      (fun args -> Backend.run_text text args)
-      ~result_avals:[ key_aval; { key_aval with T.shape = out_shape; dtype } ]
+    Core.bind
+      (T.Rng_bit_generator
+         { rbg_shape = out_shape; rbg_dtype = dtype; rbg_algorithm })
       [ key ]
   with
   | [ next_key; values ] -> (next_key, values)

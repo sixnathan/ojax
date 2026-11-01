@@ -1928,6 +1928,52 @@ let emit_rng_uniform ctx (eqn : eqn) in_ids =
        (name n) (name a) (name b) (name c) aty bty shty
        (Ir.tensor_type_of_aval out.vaval))
 
+let emit_rng_bit_generator ctx (eqn : eqn) in_ids algorithm =
+  let key = atom_aval (sole eqn.inputs) in
+  let key_id = sole in_ids in
+  let out_key, out_vals =
+    match eqn.outs with
+    | [ a; b ] -> (a, b)
+    | _ -> invalid_arg "Stablehlo.Emit: rng_bit_generator arity"
+  in
+  let wide = Ir.tensor_type Dtype.Uint64 [| 2 |] in
+  let pair = Ir.tensor_type Dtype.Uint32 [| 2; 2 |] in
+  let key_ty = Ir.tensor_type_of_aval key in
+  let narrow = key.dtype = Dtype.Uint32 in
+  let state =
+    if narrow then begin
+      let r = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name r)
+           (name key_id) key_ty pair);
+      let k = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.bitcast_convert %s : (%s) -> %s\n"
+           (name k) (name r) pair wide);
+      k
+    end
+    else key_id
+  in
+  let next = fresh ctx in
+  let vals = bind_var ctx out_vals in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s, %s = stablehlo.rng_bit_generator %s, algorithm = %s : (%s) -> \
+        (%s, %s)\n"
+       (name next) (name vals) (name state) algorithm wide wide
+       (Ir.tensor_type_of_aval out_vals.vaval));
+  if narrow then begin
+    let b = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.bitcast_convert %s : (%s) -> %s\n"
+         (name b) (name next) wide pair);
+    let ok = bind_var ctx out_key in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name ok)
+         (name b) pair key_ty)
+  end
+  else Hashtbl.replace ctx.ids out_key.vid next
+
 let mlir_string s =
   let b = Buffer.create (String.length s + 2) in
   Buffer.add_char b '"';
@@ -1990,6 +2036,7 @@ let ffi_layout_text layout =
   let n = Array.length layout in
   let body =
     if n = 0 then ""
+    else if n = 1 then string_of_int layout.(0)
     else
       "["
       ^ String.concat ", " (Array.to_list (Array.map string_of_int layout))
@@ -2008,12 +2055,59 @@ let lapack_prec dt =
   | Dtype.Complex128 -> 'z'
   | _ -> failwith "Stablehlo.Emit: LAPACK has no routine for this dtype"
 
-let lapack_layout rank ~batch =
-  if rank <= batch then Array.init rank Fun.id
-  else
+let lapack_layout rank ~max_rank =
+  if rank = max_rank && rank >= 2 then
     Array.append
-      (Array.init (rank - batch) (fun i -> batch + i))
-      (Array.init batch Fun.id)
+      [| rank - 2; rank - 1 |]
+      (Array.init (rank - 2) (fun i -> rank - 3 - i))
+  else Array.init rank (fun i -> rank - 1 - i)
+
+let sdy_factor_name i =
+  if i < 17 then String.make 1 (Char.chr (Char.code 'i' + i))
+  else Printf.sprintf "z_%d" (i - 17)
+
+let sdy_lapack_rule ~batch in_avals out_avals =
+  let sizes = ref [] and count = ref 0 in
+  let factor size =
+    let i = !count in
+    incr count;
+    sizes := size :: !sizes;
+    i
+  in
+  let batch_factors = ref None in
+  let mapping (a : aval) =
+    let rank = Array.length a.shape in
+    let leading =
+      if batch > 0 && rank >= batch then begin
+        match !batch_factors with
+        | Some f -> f
+        | None ->
+            let f = List.init batch (fun d -> factor a.shape.(d)) in
+            batch_factors := Some f;
+            f
+      end
+      else []
+    in
+    let first = List.length leading in
+    let rest =
+      List.init (rank - first) (fun d -> factor a.shape.(first + d))
+    in
+    "["
+    ^ String.concat ", " (List.map sdy_factor_name (leading @ rest))
+    ^ "]"
+  in
+  let side avals =
+    "(" ^ String.concat ", " (List.map mapping avals) ^ ")"
+  in
+  let lhs = side in_avals in
+  let rhs = side out_avals in
+  let factors =
+    List.mapi
+      (fun i size -> Printf.sprintf "%s=%d" (sdy_factor_name i) size)
+      (List.rev !sizes)
+  in
+  Printf.sprintf "#sdy.op_sharding_rule<%s->%s {%s}, custom>" lhs rhs
+    (String.concat ", " factors)
 
 let lapack_aval shape dtype = { shape; dtype; weak_type = false }
 
@@ -2025,18 +2119,19 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
     | Some name -> name
     | None -> Printf.sprintf "lapack_%c%s_ffi" (lapack_prec first.dtype) base
   in
-  let batch =
+  let max_rank =
     List.fold_left
-      (fun acc (a : aval) -> max acc (Array.length a.shape - 2))
+      (fun acc (a : aval) -> max acc (Array.length a.shape))
       0 in_avals
   in
+  let batch = max_rank - 2 in
   let group = fresh ctx in
   let n = List.length out_avals in
   let layouts avals =
     String.concat ", "
       (List.map
          (fun (a : aval) ->
-           ffi_layout_text (lapack_layout (Array.length a.shape) ~batch))
+           ffi_layout_text (lapack_layout (Array.length a.shape) ~max_rank))
          avals)
   in
   let alias_text =
@@ -2060,13 +2155,14 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
     (Printf.sprintf
        "    %%%d%s = stablehlo.custom_call @%s(%s) {backend_config = \"\", \
         mhlo.backend_config = {%s}, mhlo.frontend_attributes = {num_batch_dims \
-        = \"%d\"}, operand_layouts = [%s]%s, result_layouts = [%s]} : (%s) -> \
-        %s\n"
+        = \"%d\"}, operand_layouts = [%s]%s, result_layouts = [%s], \
+        sdy.sharding_rule = %s} : (%s) -> %s\n"
        group
        (if n > 1 then Printf.sprintf ":%d" n else "")
        target
        (String.concat ", " (List.map name in_ids))
        config batch (layouts in_avals) alias_text (layouts out_avals)
+       (sdy_lapack_rule ~batch in_avals out_avals)
        (types in_avals)
        (if n > 1 then "(" ^ types out_avals ^ ")" else types out_avals));
   if n = 1 then [ group ]
@@ -3216,12 +3312,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Regularized_incomplete_beta ->
       emit_inlined ctx eqn in_ids Native_lowering.betainc
   | Rng_uniform -> emit_rng_uniform ctx eqn in_ids
-  | Rng_bit_generator ->
-      failwith
-        "Stablehlo.Emit: Rng_bit_generator lowers via a u32[4] -> u64[2] \
-         bitcast_convert into stablehlo.rng_bit_generator; uint64 is not in \
-         the M4 dtype set (F32/F64/I32/I64/Bool/Uint32) and Ojax has no \
-         abstract_eval for it, so it is non-representable (M5)"
+  | Rng_bit_generator { rbg_algorithm; _ } ->
+      emit_rng_bit_generator ctx eqn in_ids rbg_algorithm
   | Threefry2x32 ->
       emit_inlined ctx eqn in_ids (function
         | [ k1; k2; c1; c2 ] -> Prng_lowering.threefry2x32 k1 k2 c1 c2
@@ -3357,6 +3449,62 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx [ a; taus ] ids eqn.outs
         (Native_lowering.qr_from_factors ~full_matrices)
+  | Qr_pivoted full_matrices ->
+      if Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape then
+        failwith "Stablehlo.Emit: an empty qr runs on the host";
+      emit_inlined ctx eqn in_ids (function
+        | [ a ] -> Native_lowering.qr_pivoted ~full_matrices a
+        | _ -> invalid_arg "Stablehlo.Emit: qr arity")
+  | Geqrf when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      let taus =
+        lapack_aval
+          (Array.append
+             (Array.sub a.shape 0 (rank - 2))
+             [| min a.shape.(rank - 2) a.shape.(rank - 1) |])
+          a.dtype
+      in
+      let ids =
+        emit_lapack_call ctx ~base:"geqrf" ~config:""
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] [ a; taus ]
+      in
+      List.iter2
+        (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
+        eqn.outs ids
+  | Geqp3 when lapack_ffi () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let a = List.hd inputs and jpvt = List.nth inputs 1 in
+      let rank = Array.length a.shape in
+      let taus =
+        lapack_aval
+          (Array.append
+             (Array.sub a.shape 0 (rank - 2))
+             [| min a.shape.(rank - 2) a.shape.(rank - 1) |])
+          a.dtype
+      in
+      let ids =
+        emit_lapack_call ctx ~base:"geqp3" ~config:""
+          ~aliases:[ (0, 0); (1, 1) ]
+          in_ids inputs [ a; jpvt; taus ]
+      in
+      List.iter2
+        (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
+        eqn.outs ids
+  | Ormqr { ormqr_left; ormqr_transpose } when lapack_ffi () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let a = List.hd inputs and c = List.nth inputs 2 in
+      let base = if is_complex_dtype a.dtype then "unmqr" else "ormqr" in
+      let ids =
+        emit_lapack_call ctx ~base
+          ~config:
+            (Printf.sprintf "left = %b, transpose = %b" ormqr_left
+               ormqr_transpose)
+          ~aliases:[ (2, 0) ]
+          in_ids inputs [ c ]
+      in
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid (List.hd ids)
   | Tridiagonal_solve { perturb_singular = true } when lapack_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let b = List.nth inputs 3 in
@@ -3621,6 +3769,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Lu_pivots_to_permutation permutation_size ->
       emit_inlined ctx eqn in_ids
         (Native_lowering.lu_pivots_to_permutation ~permutation_size)
+  | Geqrf | Geqp3 | Ormqr _ ->
+      failwith "Stablehlo.Emit: this LAPACK target needs the scipy library"
   | Qr full_matrices ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in

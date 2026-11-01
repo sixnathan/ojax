@@ -1569,8 +1569,9 @@ let rec impl_base prim inputs =
       | _ -> failwith "lax: top_k expects 1 operand")
   | Ragged_dot_general ->
       failwith "lax: ragged_dot_general deferred (needs group_sizes machinery)"
-  | Rng_bit_generator | Rng_uniform ->
-      failwith "lax: rng primitives deferred to M3 (PRNG)"
+  | Rng_bit_generator _ ->
+      failwith "lax: rng_bit_generator runs through the compiled backend"
+  | Rng_uniform -> failwith "lax: rng primitives deferred to M3 (PRNG)"
   | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
   | Slice { start_indices; limit_indices; strides } ->
       un (Slicing.slice_impl start_indices limit_indices strides) inputs
@@ -1804,6 +1805,17 @@ let rec impl_base prim inputs =
   | Cholesky -> Linalg.cholesky_impl inputs
   | Lu -> Linalg.lu_impl inputs
   | Qr full_matrices -> Linalg.qr_impl full_matrices inputs
+  | Qr_pivoted full_matrices -> Linalg.qr_pivoted_impl full_matrices inputs
+  | Geqrf -> Linalg.geqrf_impl (List.hd inputs)
+  | Geqp3 -> (
+      match inputs with
+      | [ a; jpvt ] -> Linalg.geqp3_impl a jpvt
+      | _ -> failwith "linalg: geqp3 expects two operands")
+  | Ormqr { ormqr_left; ormqr_transpose } -> (
+      match inputs with
+      | [ a; taus; c ] ->
+          Linalg.ormqr_impl ~left:ormqr_left ~transpose:ormqr_transpose a taus c
+      | _ -> failwith "linalg: ormqr expects three operands")
   | Householder_product -> Linalg.householder_product_impl inputs
   | Lu_pivots_to_permutation permutation_size ->
       Linalg.lu_pivots_to_permutation_impl permutation_size inputs
@@ -2326,10 +2338,11 @@ let complex_elementwise prim inputs =
   | _ -> None
 
 let linalg_core_ranks = function
-  | Cholesky | Lu | Qr _ | Eigh _ | Eig _ | Hessenberg | Schur _ | Svd _
-  | Tridiagonal _ ->
+  | Cholesky | Lu | Qr _ | Qr_pivoted _ | Geqrf | Eigh _ | Eig _ | Hessenberg
+  | Schur _ | Svd _ | Tridiagonal _ ->
       Some [ 2 ]
-  | Householder_product -> Some [ 2; 1 ]
+  | Householder_product | Geqp3 -> Some [ 2; 1 ]
+  | Ormqr _ -> Some [ 2; 1; 2 ]
   | Lu_pivots_to_permutation _ -> Some [ 1 ]
   | Triangular_solve _ -> Some [ 2; 2 ]
   | Tridiagonal_solve _ -> Some [ 1; 1; 1; 2 ]
@@ -2596,8 +2609,15 @@ let abstract_eval prim avals =
       | _ -> failwith "lax: top_k expects 1 operand")
   | Ragged_dot_general ->
       failwith "lax: ragged_dot_general deferred (needs group_sizes machinery)"
-  | Rng_bit_generator | Rng_uniform ->
-      failwith "lax: rng primitives deferred to M3 (PRNG)"
+  | Rng_bit_generator { rbg_shape; rbg_dtype; _ } -> (
+      match avals with
+      | [ key ] ->
+          [
+            { key with weak_type = key.weak_type };
+            { shape = rbg_shape; dtype = rbg_dtype; weak_type = false };
+          ]
+      | _ -> failwith "lax: rng_bit_generator expects 1 operand")
+  | Rng_uniform -> failwith "lax: rng primitives deferred to M3 (PRNG)"
   | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
   | Slice { start_indices; limit_indices; strides } ->
       un_aval
@@ -2726,6 +2746,10 @@ let abstract_eval prim avals =
   | Cholesky -> Linalg.cholesky_aval avals
   | Lu -> Linalg.lu_aval avals
   | Qr full_matrices -> Linalg.qr_aval full_matrices avals
+  | Qr_pivoted full_matrices -> Linalg.qr_pivoted_aval full_matrices avals
+  | Geqrf -> Linalg.geqrf_aval avals
+  | Geqp3 -> Linalg.geqp3_aval avals
+  | Ormqr { ormqr_left; _ } -> Linalg.ormqr_aval ~left:ormqr_left avals
   | Householder_product -> Linalg.householder_product_aval avals
   | Lu_pivots_to_permutation permutation_size ->
       Linalg.lu_pivots_to_permutation_aval permutation_size avals

@@ -1325,13 +1325,14 @@ let diag_indices_from arr =
 
 let tri ?m ?(k = 0) ~dtype n =
   let m = Option.value m ~default:n in
+  let int_dt = Dtypes.default_int_dtype () in
   let i =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 0 }) []
+    bind1 (T.Iota { dtype = int_dt; shape = [| n; m |]; dimension = 0 }) []
   in
+  let ik = bind1 T.Add [ i; scalar int_dt (float_of_int k) ] in
   let j =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
+    bind1 (T.Iota { dtype = int_dt; shape = [| n; m |]; dimension = 1 }) []
   in
-  let ik = bind1 T.Add [ i; scalar D.I32 (float_of_int k) ] in
   convert (bind1 T.Ge [ ik; j ]) dtype
 
 let tril ?(k = 0) m =
@@ -1342,7 +1343,15 @@ let tril ?(k = 0) m =
     (function
       | [ m ] ->
           let mask = tri ~m:s.(nd - 1) ~k ~dtype:D.Bool s.(nd - 2) in
-          where_ mask m (scalar (dtype m) 0.0)
+          let which =
+            if nd = 2 then mask
+            else
+              bind1
+                (T.Broadcast_in_dim { shape = s; dims = [| nd - 2; nd - 1 |] })
+                [ mask ]
+          in
+          let zeros = full (dtype m) s 0.0 in
+          bind1 T.Select_n [ which; zeros; m ]
       | _ -> invalid_arg "tril: arity")
     [ m ]
 
@@ -1354,7 +1363,15 @@ let triu ?(k = 0) m =
     (function
       | [ m ] ->
           let mask = tri ~m:s.(nd - 1) ~k:(k - 1) ~dtype:D.Bool s.(nd - 2) in
-          where_ mask (scalar (dtype m) 0.0) m
+          let which =
+            if nd = 2 then mask
+            else
+              bind1
+                (T.Broadcast_in_dim { shape = s; dims = [| nd - 2; nd - 1 |] })
+                [ mask ]
+          in
+          let zeros = full (dtype m) s 0.0 in
+          bind1 T.Select_n [ which; m; zeros ]
       | _ -> invalid_arg "triu: arity")
     [ m ]
 

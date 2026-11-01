@@ -725,10 +725,9 @@ let thin_qr_jvp q r dx =
   let dr = matmul dr_in r in
   (dq, dr)
 
-let qr_jvp ~full_matrices x dx =
-  let outs = Core.bind (Qr full_matrices) [ x ] in
+let qr_tangents ~full_matrices x dx outs =
   match outs with
-  | [ q; r ] ->
+  | q :: r :: _ ->
       let sh = shape_of x and rk = ndim_of x in
       let m = sh.(rk - 2) and n = sh.(rk - 1) in
       if m < n then begin
@@ -743,14 +742,42 @@ let qr_jvp ~full_matrices x dx =
         let a2 = matmul hq dx2 in
         let dr2 = ladd a1 a2 in
         let dr = b1 (Concatenate (ndim_of dr1 - 1)) [ dr1; dr2 ] in
-        (outs, [ dq; dr ])
+        [ dq; dr ]
       end
       else if full_matrices && m <> n then
         failwith "Unimplemented case of QR decomposition derivative"
       else
         let dq, dr = thin_qr_jvp q r dx in
-        (outs, [ dq; dr ])
+        [ dq; dr ]
   | _ -> failwith "ad: qr arity"
+
+let qr_jvp ~full_matrices x dx =
+  let outs = Core.bind (Qr full_matrices) [ x ] in
+  (outs, qr_tangents ~full_matrices x dx outs)
+
+let qr_pivoted_jvp ~full_matrices x dx =
+  let outs = Core.bind (Qr_pivoted full_matrices) [ x ] in
+  let p = List.nth outs 2 in
+  let sh = shape_of x in
+  if Array.length sh <> 2 then
+    failwith "Unimplemented case of pivoted QR decomposition derivative";
+  let columns =
+    b1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = [| 0 |];
+               collapsed_slice_dims = [| 1 |];
+               start_index_map = [| 1 |];
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+             };
+           slice_sizes = [| sh.(0); 1 |];
+         })
+      [ dx; lreshape [| sh.(1); 1 |] p ]
+  in
+  (outs, qr_tangents ~full_matrices x columns outs @ [ p2tz p ])
 
 let lu_jvp_inner lu a_dot permutation =
   let sh = shape_of a_dot in
@@ -1625,7 +1652,7 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
           Lax_other.logaddexp a b)
   | Igamma_grad_a -> failwith "ad: primitive has no jvp rule (matches jax)"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
-  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
+  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
@@ -1663,6 +1690,9 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
   | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _ | Eig _
   | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: this linalg primitive has no forward-mode rule"
+  | Geqrf -> failwith "Differentiation rule for 'geqrf' not implemented"
+  | Geqp3 -> failwith "Differentiation rule for 'geqp3' not implemented"
+  | Ormqr _ -> failwith "Differentiation rule for 'ormqr' not implemented"
   | Collective { kind; _ } -> (
       match (kind, primals, tangents) with
       | (Psum | Pbroadcast _ | Ppermute _ | All_gather _), [ x ], [ t ] ->
@@ -1884,6 +1914,10 @@ let jvp_pairs prim primals tangents =
   | Qr full_matrices -> (
       match (primals, tangents) with
       | [ a ], [ t ] -> qr_jvp ~full_matrices a t
+      | _ -> arity ())
+  | Qr_pivoted full_matrices -> (
+      match (primals, tangents) with
+      | [ a ], [ t ] -> qr_pivoted_jvp ~full_matrices a t
       | _ -> arity ())
   | Lu -> (
       match (primals, tangents) with
@@ -3619,7 +3653,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Reduce_or _ | Reduce_prod _ | Reduce_xor _ | After_all
   | Bitcast_convert_type _ | Clamp | Composite _ | Create_token | Dce_sink
   | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general
-  | Rng_bit_generator | Rng_uniform | Sort _ | To_edtype _ | Top_k _
+  | Rng_bit_generator _ | Rng_uniform | Sort _ | To_edtype _ | Top_k _
   | Scatter_min _ | Scatter_max _ | Reduce_window _ | Reduce_window_max _
   | Reduce_window_min _ | Select_and_scatter _ | Bessel_i0e | Bessel_i1e
   | Digamma | Erf | Erf_inv | Erfc | Igamma | Igamma_grad_a | Igammac | Lgamma
@@ -3760,7 +3794,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Xla_call c -> xla_call_transpose c cts primals
   | Stop_gradient -> failwith "ad: stop_gradient has no transpose rule"
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
+  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Eig _ | Eigh _ | Hessenberg
+  | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: nonlinear linalg primitive has no transpose rule"
 
 and xla_call_transpose (c : closed_jaxpr) cts primals =

@@ -191,6 +191,13 @@ let top_k_results line =
     | _ -> None
   else None
 
+let rng_bit_generator_results line =
+  if contains "stablehlo.rng_bit_generator " line then
+    match tokens_of line with
+    | state :: output :: _ -> Some (state, output)
+    | _ -> None
+  else None
+
 let rec nearest_while lines i =
   if i < 0 then None
   else if contains "stablehlo.while(" lines.(i) then Some i
@@ -215,12 +222,17 @@ let rec number lines region st =
           st := bind_named region !st values "values";
           st := bind_named region !st indices "indices"
       | None -> (
-          match definition_of lines.(i) with
-          | Some (tok, rhs) -> (
-              match constant_base rhs with
-              | Some base -> st := bind_named region !st tok base
-              | None -> st := bind_numbered region !st tok)
-          | None -> ())
+          match rng_bit_generator_results lines.(i) with
+          | Some (state, output) ->
+              st := bind_named region !st state "output_state";
+              st := bind_named region !st output "output"
+          | None -> (
+              match definition_of lines.(i) with
+              | Some (tok, rhs) -> (
+                  match constant_base rhs with
+                  | Some base -> st := bind_named region !st tok base
+                  | None -> st := bind_numbered region !st tok)
+              | None -> ()))
   done;
   let finished = !st in
   List.iter

@@ -365,7 +365,8 @@ let check_operands prim args =
           | _ -> false)
         "subtypes of complexfloating, float32, float64"
   | Round | Round_nearest_even -> check "round" is_float_dtype floating
-  | Cholesky | Lu | Qr _ | Eig _ | Eigh _ | Svd _ | Schur _ | Hessenberg
+  | Cholesky | Lu | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Eig _ | Eigh _ | Svd _
+  | Schur _ | Hessenberg
   | Triangular_solve _ | Tridiagonal _ | Tridiagonal_solve _ ->
       check "linalg"
         (function

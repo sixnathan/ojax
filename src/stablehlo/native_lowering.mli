@@ -16,6 +16,7 @@ val complex_sort :
 val lu : value list -> value list
 val lu_pivots_to_permutation : permutation_size:int -> value list -> value list
 val tridiagonal_solve : value list -> value list
+val qr_pivoted : full_matrices:bool -> Types.value -> Types.value list
 val qr_from_factors : full_matrices:bool -> value list -> value list
 val svd : full_matrices:bool -> compute_uv:bool -> value list -> value list
 val eigh_refined : lower:bool -> value list -> value list

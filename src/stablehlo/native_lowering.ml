@@ -769,17 +769,30 @@ let tridiagonal_solve args =
       batched tridiagonal_solve_core 1 args
   | [] -> invalid_arg "Native_lowering: tridiagonal arity"
 
-let triu_mask shape_ =
-  let rank = Array.length shape_ in
-  let rows = shape_.(rank - 2) and cols = shape_.(rank - 1) in
-  let total = Array.fold_left ( * ) 1 shape_ in
-  Concrete
-    (Ndarray.of_floats Dtype.Bool shape_
-       (Array.init total (fun i ->
-            let local = i mod (rows * cols) in
-            if local mod cols >= local / cols then 1.0 else 0.0)))
-
-let triu x = select (triu_mask (shape x)) x (like x 0.0)
+let triu x =
+  let dims = shape x in
+  let rank = Array.length dims in
+  let core = Array.sub dims (rank - 2) 2 in
+  let int_dt = Dtypes.default_int_dtype () in
+  let iota dimension =
+    Core.bind1 (Iota { dtype = int_dt; shape = core; dimension }) []
+  in
+  let rows = iota 0 in
+  let shifted =
+    L.add rows (Concrete (Ndarray.of_floats int_dt [||] [| -1.0 |]))
+  in
+  let cols = iota 1 in
+  let mask = Core.bind1 Ge [ shifted; cols ] in
+  let mask =
+    if rank = 2 then mask
+    else
+      Core.bind1
+        (Broadcast_in_dim
+           { shape = dims; dims = [| rank - 2; rank - 1 |] })
+        [ mask ]
+  in
+  let zero = like x 0.0 in
+  select mask zero x
 
 let qr_from_factors ~full_matrices = function
   | [ r; taus ] ->
@@ -801,8 +814,43 @@ let qr_from_factors ~full_matrices = function
               if d = rank - 1 then (0, m - n, 0) else (0, 0, 0))
         in
         [ product (L.pad r (L.full [||] 0.0 (dtype r)) pads); triu r ]
-      else [ product r; triu (cut_to n n r) ]
+      else
+        let q = product r in
+        [ q; triu (cut_to n n r) ]
   | _ -> invalid_arg "Native_lowering: qr arity"
+
+let qr_pivoted ~full_matrices a =
+  let dims = shape a in
+  let rank = Array.length dims in
+  let batch = Array.sub dims 0 (rank - 2) in
+  let m = dims.(rank - 2) and n = dims.(rank - 1) in
+  let jpvt = L.full (Array.append batch [| n |]) 0.0 Dtype.I32 in
+  match Core.bind Geqp3 [ a; jpvt ] with
+  | [ r; p; taus ] ->
+      let p = L.sub p (L.full (shape p) 1.0 Dtype.I32) in
+      let cut_to rows cols v =
+        let starts = Array.make rank 0 in
+        let limits = Array.copy dims in
+        limits.(rank - 2) <- rows;
+        limits.(rank - 1) <- cols;
+        L.slice v starts limits
+      in
+      let product v = Core.bind1 Householder_product [ v; taus ] in
+      if m < n then
+        let q = product (cut_to m m r) in
+        [ q; triu r; p ]
+      else if full_matrices then begin
+        let pads =
+          Array.init rank (fun d ->
+              if d = rank - 1 then (0, m - n, 0) else (0, 0, 0))
+        in
+        let q = product (L.pad r (L.full [||] 0.0 (dtype r)) pads) in
+        [ q; triu r; p ]
+      end
+      else
+        let q = product r in
+        [ q; triu (cut_to n n r); p ]
+  | _ -> invalid_arg "Native_lowering: geqp3 arity"
 
 let adjoint a =
   let rank = Array.length (shape a) in

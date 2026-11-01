@@ -187,7 +187,7 @@ let prim_name = function
   | Optimization_barrier -> "optimization_barrier"
   | Ragged_dot_general -> "ragged_dot_general"
   | Reduce_precision _ -> "reduce_precision"
-  | Rng_bit_generator -> "rng_bit_generator"
+  | Rng_bit_generator _ -> "rng_bit_generator"
   | Rng_uniform -> "rng_uniform"
   | Sort _ -> "sort"
   | Tie -> "tie"
@@ -253,7 +253,10 @@ let prim_name = function
   | Householder_product -> "householder_product"
   | Lu -> "lu"
   | Lu_pivots_to_permutation _ -> "lu_pivots_to_permutation"
-  | Qr _ -> "qr"
+  | Qr _ | Qr_pivoted _ -> "qr"
+  | Geqrf -> "geqrf"
+  | Geqp3 -> "geqp3"
+  | Ormqr _ -> "ormqr"
   | Triangular_solve _ -> "triangular_solve"
   | Tridiagonal_solve _ -> "tridiagonal_solve"
   | Eig _ -> "eig"
@@ -710,6 +713,25 @@ let jax_params (e : eqn) =
         ("full_matrices", Plain (py_bool full));
         ("pivoting", Plain "False");
         ("use_magma", Plain "None");
+      ]
+  | Qr_pivoted full ->
+      [
+        ("full_matrices", Plain (py_bool full));
+        ("pivoting", Plain "True");
+        ("use_magma", Plain "None");
+      ]
+  | Geqp3 -> [ ("use_magma", Plain "None") ]
+  | Ormqr { ormqr_left; ormqr_transpose } ->
+      [
+        ("left", Plain (py_bool ormqr_left));
+        ("transpose", Plain (py_bool ormqr_transpose));
+      ]
+  | Rng_bit_generator { rbg_shape; rbg_dtype; rbg_algorithm } ->
+      [
+        ("algorithm", Plain (if rbg_algorithm = "DEFAULT" then "RNG_DEFAULT" else "RNG_" ^ rbg_algorithm));
+        ("dtype", Plain (Dtype.numpy_name rbg_dtype));
+        ("out_sharding", Plain "None");
+        ("shape", Plain (py_ints rbg_shape));
       ]
   | Eigh { lower } ->
       [

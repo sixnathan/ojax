@@ -187,7 +187,7 @@ let geqrf_impl a =
           [ of_cm dt c ca m n; of_vec dt c tau k ]);
     }
 
-let geqp3_impl a =
+let geqp3_impl a jpvt_in =
   let dt = Ndarray.dtype a in
   let c = is_complex_dtype dt in
   let m, n = dims2 a in
@@ -200,7 +200,7 @@ let geqp3_impl a =
           let tau = alloc kind c k in
           let jpvt = Lp.alloc_i32 (max n 1) in
           for i = 0 to n - 1 do
-            jpvt.{i} <- 0l
+            jpvt.{i} <- Int64.to_int32 (Ndarray.get_i64 jpvt_in [| i |])
           done;
           let _ =
             if c then Lp.zgeqp3 ~m ~n ~a:ca ~lda:m ~jpvt ~tau
@@ -237,6 +237,40 @@ let householder_product_impl inputs =
               [ of_cm dt c ca m n ]);
         }
   | _ -> failwith "linalg: householder_product expects two operands"
+
+let qr_pivoted_impl full_matrices inputs =
+  match inputs with
+  | [ a ] -> (
+      let dt = Ndarray.dtype a in
+      let c = is_complex_dtype dt in
+      let m, n = dims2 a in
+      let mn = min m n in
+      let k = if full_matrices then m else mn in
+      let zeros = Ndarray.of_floats Dtype.I32 [| n |] (Array.make n 0.0) in
+      match geqp3_impl a zeros with
+      | [ h; jpvt; taus ] ->
+          let r =
+            make dt [| k; n |] (fun f ->
+                let i = f / max n 1 and j = f mod max n 1 in
+                if j >= i && i < m then cell h [| i; j |] else Complex.zero)
+          in
+          let base =
+            make dt [| m; k |] (fun f ->
+                let i = f / max k 1 and j = f mod max k 1 in
+                if j < n then cell h [| i; j |] else Complex.zero)
+          in
+          ignore c;
+          let q =
+            List.hd (householder_product_impl [ base; taus ])
+          in
+          let p =
+            Ndarray.of_floats Dtype.I32 [| n |]
+              (Array.init n (fun i ->
+                   Int64.to_float (Ndarray.get_i64 jpvt [| i |]) -. 1.0))
+          in
+          [ q; r; p ]
+      | _ -> failwith "linalg: geqp3 arity")
+  | _ -> failwith "linalg: qr expects one operand"
 
 let ormqr_impl ~left ~transpose a taus c_in =
   let dt = Ndarray.dtype a in
@@ -665,6 +699,59 @@ let qr_aval full_matrices avals =
       let k = if full_matrices then m else min m n in
       [ { a with shape = [| m; k |] }; { a with shape = [| k; n |] } ]
   | _ -> failwith "linalg: qr expects one aval"
+
+let qr_pivoted_aval full_matrices avals =
+  match avals with
+  | [ a ] ->
+      let m = a.shape.(0) and n = a.shape.(1) in
+      let k = if full_matrices then m else min m n in
+      [
+        { a with shape = [| m; k |] };
+        { a with shape = [| k; n |] };
+        { a with shape = [| n |]; dtype = Dtype.I32 };
+      ]
+  | _ -> failwith "linalg: qr expects one aval"
+
+let geqrf_aval avals =
+  match avals with
+  | [ a ] ->
+      [ a; { a with shape = [| min a.shape.(0) a.shape.(1) |] } ]
+  | _ -> failwith "linalg: geqrf expects one aval"
+
+let geqp3_aval avals =
+  match avals with
+  | [ a; jpvt ] ->
+      [ a; jpvt; { a with shape = [| min a.shape.(0) a.shape.(1) |] } ]
+  | _ -> failwith "linalg: geqp3 expects two avals"
+
+let ormqr_aval ~left avals =
+  match avals with
+  | [ a; _; c ] ->
+      let m = a.shape.(0) in
+      let shape_text (s : int array) =
+        match s with
+        | [| x |] -> Printf.sprintf "(%d,)" x
+        | _ ->
+            "("
+            ^ String.concat ", "
+                (Array.to_list (Array.map string_of_int s))
+            ^ ")"
+      in
+      if left && c.shape.(0) <> m then
+        invalid_arg
+          (Printf.sprintf
+             "ormqr with left=True expects c to have the same number of rows \
+              as the Householder matrix a. Got a shape %s and c shape %s."
+             (shape_text a.shape) (shape_text c.shape));
+      if (not left) && c.shape.(1) <> m then
+        invalid_arg
+          (Printf.sprintf
+             "ormqr with left=False expects c to have the same number of \
+              columns as the Householder matrix a has rows. Got a shape %s and \
+              c shape %s."
+             (shape_text a.shape) (shape_text c.shape));
+      [ c ]
+  | _ -> failwith "linalg: ormqr expects three avals"
 
 let householder_product_aval avals =
   match avals with

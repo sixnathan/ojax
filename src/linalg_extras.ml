@@ -23,101 +23,24 @@ let real_dtype v =
 let const_like v x = L.full [||] x (dtype v)
 let hconj x = UF.conj (NL.matrix_transpose x)
 
-let host = function
-  | T.Concrete nd -> nd
-  | T.Device b -> Pjrt.Buffer.to_host b
-  | _ -> failwith "linalg_extras: callback received a tracer"
-
-let on_host f ~result_avals a =
-  Custom_derivatives.pure_callback
-    (fun args -> List.map (fun nd -> T.Concrete nd) (f (host (List.hd args))))
-    ~result_avals [ a ]
-
 let vmap_matrix f a =
   List.hd
     (Interpreters.Batching.vmap
        (fun args -> [ f (List.hd args) ])
        [ Some 0 ] [ a ])
 
-let rec geqrf a =
-  let sh = shape a in
-  if Array.length sh > 2 then
-    let outs =
-      Interpreters.Batching.vmap
-        (fun args ->
-          let r, t = geqrf (List.hd args) in
-          [ r; t ])
-        [ Some 0 ] [ a ]
-    in
-    (List.nth outs 0, List.nth outs 1)
-  else
-    let k = min sh.(0) sh.(1) in
-    match
-      on_host LL.geqrf_impl
-        ~result_avals:[ aval a; { (aval a) with T.shape = [| k |] } ]
-        a
-    with
-    | [ r; t ] -> (r, t)
-    | _ -> failwith "geqrf: arity"
+let geqrf a =
+  match Core.bind T.Geqrf [ a ] with
+  | [ r; t ] -> (r, t)
+  | _ -> failwith "geqrf: arity"
 
-let rec geqp3 a =
-  let sh = shape a in
-  if Array.length sh > 2 then
-    let outs =
-      Interpreters.Batching.vmap
-        (fun args ->
-          let r, p, t = geqp3 (List.hd args) in
-          [ r; p; t ])
-        [ Some 0 ] [ a ]
-    in
-    (List.nth outs 0, List.nth outs 1, List.nth outs 2)
-  else
-    let n = sh.(1) in
-    let k = min sh.(0) n in
-    match
-      on_host LL.geqp3_impl
-        ~result_avals:
-          [
-            aval a;
-            { (aval a) with T.shape = [| n |]; dtype = D.I32 };
-            { (aval a) with T.shape = [| k |] };
-          ]
-        a
-    with
-    | [ r; p; t ] -> (r, p, t)
-    | _ -> failwith "geqp3: arity"
+let geqp3 a jpvt =
+  match Core.bind T.Geqp3 [ a; jpvt ] with
+  | [ r; p; t ] -> (r, p, t)
+  | _ -> failwith "geqp3: arity"
 
-let rec ormqr ?(left = true) ?(transpose = false) a taus c =
-  if Array.length (shape a) > 2 then
-    List.hd
-      (Interpreters.Batching.vmap
-         (fun args ->
-           match args with
-           | [ a; t; c ] -> [ ormqr ~left ~transpose a t c ]
-           | _ -> failwith "ormqr: arity")
-         [ Some 0; Some 0; Some 0 ] [ a; taus; c ])
-  else begin
-    let m = (shape a).(0) in
-    if left && (shape c).(0) <> m then
-      invalid_arg
-        "ormqr with left=True expects c to have the same number of rows as the \
-         Householder matrix a";
-    if (not left) && (shape c).(1) <> m then
-      invalid_arg
-        "ormqr with left=False expects c to have the same number of columns as \
-         the Householder matrix a has rows";
-    List.hd
-      (Custom_derivatives.pure_callback
-         (fun args ->
-           match List.map host args with
-           | [ a; t; c ] ->
-               List.map
-                 (fun nd -> T.Concrete nd)
-                 (LL.ormqr_impl ~left ~transpose a t c)
-           | _ -> failwith "ormqr: arity")
-         ~result_avals:[ aval c ]
-         [ a; taus; c ])
-  end
+let ormqr ?(left = true) ?(transpose = false) a taus c =
+  Core.bind1 (T.Ormqr { ormqr_left = left; ormqr_transpose = transpose }) [ a; taus; c ]
 
 let rec cholesky_update r w =
   if Array.length (shape r) > 2 then

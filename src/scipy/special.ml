@@ -2625,8 +2625,11 @@ let rec hyp2f1_apply a b c x =
                  (function
                    | [ a; b; c; x ] ->
                        a *! b /! c
-                       *! hyp2f1_apply (add_lit a 1.0) (add_lit b 1.0)
-                            (add_lit c 1.0) x
+                       *! hyp2f1_apply
+                            (a +! py_float 1.0)
+                            (b +! py_float 1.0)
+                            (c +! py_float 1.0)
+                            x
                    | _ -> assert false)
                  primals
              in

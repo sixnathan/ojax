@@ -926,20 +926,31 @@ let piecewise_body x conds funcs =
     NL.argmax ~axis:0
       (RED.cumsum ~axis:0 (NL.concatenate ~axis:0 [ lead; condlist ]))
   in
-  let branches =
-    List.map
-      (fun f ops ->
-        match ops with
-        | [ v ] -> [ NL.astype (f v) dt ]
-        | _ -> invalid_arg "piecewise: arity")
-      funcs
-  in
-  List.hd
-    (vectorize_scalar
-       (function
-         | [ i; v ] -> L.switch i branches [ v ]
-         | _ -> invalid_arg "piecewise: arity")
-       [ indices; x ])
+  if ndim indices = 0 then
+    let branches =
+      List.map
+        (fun f ops ->
+          match ops with
+          | [ v ] -> [ NL.astype (f v) dt ]
+          | _ -> invalid_arg "piecewise: arity")
+        funcs
+    in
+    List.hd (L.switch indices branches [ x ])
+  else
+    let outs =
+      List.mapi
+        (fun i f ->
+          let pred = L.eq indices (int_full (dtype indices) i) in
+          let safe = L.select pred x (L.stop_gradient x) in
+          List.hd
+            (vectorize_scalar
+               (function
+                 | [ v ] -> [ NL.astype (f v) dt ]
+                 | _ -> invalid_arg "piecewise: arity")
+               [ safe ]))
+        funcs
+    in
+    L.select_n indices outs
 
 let piecewise x conds funcs =
   match funcs with

@@ -98,7 +98,7 @@ let take ?axis ?mode ?fill_value a indices =
         (T.Gather { dimension_numbers = dnums; slice_sizes })
         [ a; gather_indices ]
 
-let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
+let take_along_axis_body ~axis ?mode ?fill_value a indices =
   let rank = ndim a in
   if rank <> ndim indices then
     invalid_arg "take_along_axis: arr and indices must have the same ndim";
@@ -109,9 +109,24 @@ let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
   let arr_shape = Array.copy ash in
   arr_shape.(axis_int) <- 1;
   let out_shape = broadcast_shapes idx_shape arr_shape in
+  if axis_size = 0 then full (dtype a) out_shape 0.0
+  else
+  let wrap = mode <> Some "promise_in_bounds" in
   let indices =
-    if mode = Some "promise_in_bounds" then indices
-    else wrap_negative indices axis_size
+    if not wrap then indices
+    else begin
+      let index_dtype = if axis_size > 2147483647 then D.I64 else D.I32 in
+      let indices =
+        if dtype indices = index_dtype then indices
+        else bind1 (T.Convert_element_type index_dtype) [ indices ]
+      in
+      let negative = bind1 T.Lt [ indices; full index_dtype [||] 0.0 ] in
+      let shifted =
+        bind1 T.Add
+          [ indices; full index_dtype [||] (float_of_int axis_size) ]
+      in
+      bind1 T.Select_n [ negative; indices; shifted ]
+    end
   in
   let index_dims =
     List.filter
@@ -182,6 +197,15 @@ let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
         (T.Gather { dimension_numbers = dnums; slice_sizes = asc !slice_sizes })
         [ a; gather_indices ]
   | Some m -> invalid_arg ("Unknown gather mode \"" ^ m ^ "\"")
+
+let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
+  Jnp_util.jit1 "take_along_axis"
+    ~key:
+      (Digest.to_hex (Digest.string (Marshal.to_string (axis, mode, fill_value) [])))
+    (function
+      | [ a; indices ] -> take_along_axis_body ~axis ?mode ?fill_value a indices
+      | _ -> invalid_arg "take_along_axis: arity")
+    [ a; indices ]
 
 let tile_to_size v n =
   let m = size v in

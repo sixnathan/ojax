@@ -825,6 +825,53 @@ let eager_jit :
     ref =
   ref (fun _ _ f args -> f args)
 
+let known_copies : (int, closed_jaxpr) Hashtbl.t = Hashtbl.create 16
+
+let rec known_copy (c : closed_jaxpr) =
+  match Hashtbl.find_opt known_copies c.jid with
+  | Some copy -> copy
+  | None ->
+      let vars = Hashtbl.create 16 in
+      let fresh (v : var) =
+        match Hashtbl.find_opt vars v.vid with
+        | Some f -> f
+        | None ->
+            let f = { v with vid = Core.fresh_id () } in
+            Hashtbl.replace vars v.vid f;
+            f
+      in
+      let atom = function A_var v -> A_var (fresh v) | a -> a in
+      let in_binders = List.map fresh c.jaxpr.in_binders in
+      let eqns =
+        List.map
+          (fun (e : eqn) ->
+            let prim =
+              match e.prim with
+              | Xla_call inner -> Xla_call (known_copy inner)
+              | p -> p
+            in
+            let inputs = List.map atom e.inputs in
+            { e with prim; inputs; outs = List.map fresh e.outs })
+          c.jaxpr.eqns
+      in
+      let copy =
+        {
+          c with
+          jid = Core.fresh_id ();
+          jaxpr = { in_binders; eqns; outs = List.map atom c.jaxpr.outs };
+        }
+      in
+      Pretty_printer.register_call_name copy.jid (Pretty_printer.call_name c.jid);
+      Core.inherit_inline ~from:c.jid copy.jid;
+      Hashtbl.replace known_copies c.jid copy;
+      copy
+
+let in_linearize_scope args =
+  match !Core.linearize_scope with
+  | Some scope ->
+      !Core.dynamic_trace == scope && (Core.find_top_trace args).kind <> KPE
+  | None -> false
+
 let named_jit ~name ?(key = "") f args =
   if not (Core.top_is_staging args) then !eager_jit name key f args
   else
@@ -841,7 +888,11 @@ let named_jit ~name ?(key = "") f args =
               Some c
           | _ -> None)
     in
-    match closed with Some c -> Core.bind (Xla_call c) args | None -> f args
+    match closed with
+    | Some c ->
+        let c = if in_linearize_scope args then known_copy c else c in
+        Core.bind (Xla_call c) args
+    | None -> f args
 
 let copy_call_name ~(source : closed_jaxpr) (target : closed_jaxpr) =
   if Pretty_printer.has_call_name source.jid then

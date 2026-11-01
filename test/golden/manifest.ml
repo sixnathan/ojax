@@ -4139,15 +4139,15 @@ let pbool k p = match U.member k p with `Null -> false | v -> U.to_bool v
 
 let vec_cross3 = function
   | [ a; b ] ->
-      let fa = read_nd (concrete a) and fb = read_nd (concrete b) in
-      let dt = Nd.dtype (concrete a) in
-      T.Concrete
-        (Nd.of_floats dt [| 3 |]
-           [|
-             (fa.(1) *. fb.(2)) -. (fa.(2) *. fb.(1));
-             (fa.(2) *. fb.(0)) -. (fa.(0) *. fb.(2));
-             (fa.(0) *. fb.(1)) -. (fa.(1) *. fb.(0));
-           |])
+      let at v i =
+        NL.squeeze ~axis:[| 0 |] (Ojax.Lax_api.slice_in_dim ~axis:0 v i (i + 1))
+      in
+      let minor i j =
+        UF.subtract
+          (UF.multiply (at a i) (at b j))
+          (UF.multiply (at a j) (at b i))
+      in
+      NL.stack [ minor 1 2; minor 2 0; minor 0 1 ]
   | _ -> assert false
 
 let vectorize_run c inputs =

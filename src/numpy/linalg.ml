@@ -251,19 +251,61 @@ and solve_body a b =
   let k = sb.(nb - 1) in
   let a = NL.broadcast_to a (Array.append batch [| m; m |]) in
   let bmat = NL.broadcast_to bmat (Array.append batch [| m; k |]) in
-  let lu, _piv, perm = LL.lu a in
+  let lu, _piv, perm = LL.lu (Lax_api.stop_gradient a) in
   let rank = Array.length batch + 2 in
-  let x0 =
-    if rank = 2 then IDX.take_index ~axis:0 bmat perm
-    else
-      let expanded = NL.expand_dims perm [| -1 |] in
-      IDX.take_along_axis ~axis:(rank - 2) bmat
-        (NL.broadcast_to expanded (Array.append batch [| m; k |]))
+  let lu_solve lu perm rhs =
+    let x0 =
+      if rank = 2 then IDX.take_index ~axis:0 rhs perm
+      else
+        let expanded = NL.expand_dims perm [| -1 |] in
+        IDX.take_along_axis ~axis:(rank - 2) rhs
+          (NL.broadcast_to expanded (Array.append batch [| m; k |]))
+    in
+    let x1 =
+      LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x0
+    in
+    LL.triangular_solve ~left_side:true ~lower:false lu x1
   in
-  let x1 =
-    LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x0
+  let matvec_tangent da x =
+    if rank = 2 then
+      let row_major = Core.bind1 (T.Transpose [| 1; 0 |]) [ x ] in
+      Lax_api.dot_general da row_major ~lhs_contract:[| 1 |]
+        ~rhs_contract:[| 1 |] ~lhs_batch:[||] ~rhs_batch:[||]
+    else TC.matmul da x
   in
-  let x2 = LL.triangular_solve ~left_side:true ~lower:false lu x1 in
+  let solved =
+    Custom_derivatives.custom_jvp_symbolic
+      (function
+        | [ _; b; lu; perm ] -> [ lu_solve lu perm b ]
+        | _ -> invalid_arg "solve: arity")
+      ~jvp:(fun primals tangents ->
+        match (primals, tangents) with
+        | [ _; b; lu; perm ], [ da; db; _; _ ] ->
+            let x = lu_solve lu perm b in
+            let lifted =
+              match (da, db) with
+              | ( Custom_derivatives.Symbolic_zero _,
+                  Custom_derivatives.Symbolic_zero _ ) ->
+                  None
+              | ( Custom_derivatives.Symbolic_zero _,
+                  Custom_derivatives.Tangent db ) ->
+                  Some db
+              | ( Custom_derivatives.Tangent da,
+                  Custom_derivatives.Symbolic_zero _ ) ->
+                  Some (UF.negative (matvec_tangent da x))
+              | Custom_derivatives.Tangent da, Custom_derivatives.Tangent db ->
+                  Some (UF.add db (UF.negative (matvec_tangent da x)))
+            in
+            ( [ x ],
+              [
+                (match lifted with
+                | Some rhs -> Custom_derivatives.Tangent (lu_solve lu perm rhs)
+                | None -> Custom_derivatives.Tangent (Lax_api.full_like x 0.0));
+              ] )
+        | _ -> invalid_arg "solve: arity")
+      [ a; bmat; lu; perm ]
+  in
+  let x2 = List.hd solved in
   if b_vec then NL.reshape x2 (Array.append batch [| m |]) else x2
 
 and inv_body a =
@@ -578,9 +620,6 @@ and norm_body ?(ord = Onone) ?(axis = Anone) ?(keepdims = false) x =
       vector_norm ~axis:(Some [| canon_axis a nd |]) ~keepdims ~ord x
   | Apair (r, c) -> matrix_norm_impl x ord r c keepdims
 
-and matrix_norm ?(keepdims = false) ?(ord = Ofro) x =
-  norm ~ord ~axis:(Apair (-2, -1)) ~keepdims (to_inexact x)
-
 and matrix_transpose x = matrix_transpose_v x
 
 and raw_qr a =
@@ -757,11 +796,6 @@ and tensorsolve ?axes a b =
   let x = solve a2 (NL.ravel b) in
   NL.reshape x out_shape
 
-and multi_dot arrs =
-  match arrs with
-  | [] | [ _ ] -> invalid_arg "multi_dot requires at least two arrays"
-  | first :: rest -> List.fold_left (fun acc m -> TC.matmul acc m) first rest
-
 and cond_body ?(p = Onone) x =
   let arr = to_inexact x in
   let nd = ndim arr in
@@ -915,6 +949,20 @@ let norm ?ord ?axis ?keepdims a0 =
       match (opts, vals) with
       | [], [ a0 ] -> norm ?ord ?axis ?keepdims a0
       | _ -> assert false)
+
+let matrix_norm ?(keepdims = false) ?(ord = Ofro) x =
+  norm ~ord ~axis:(Apair (-2, -1)) ~keepdims x
+
+let multi_dot arrs =
+  (match arrs with
+  | [] | [ _ ] -> invalid_arg "multi_dot requires at least two arrays"
+  | _ -> ());
+  let letter i = String.make 1 (Char.chr (Char.code 'a' + i)) in
+  let term i arr =
+    let left = letter i and right = letter (i + 1) in
+    if ndim arr = 1 then if i = 0 then right else left else left ^ right
+  in
+  Einsum.einsum (String.concat "," (List.mapi term arrs)) arrs
 
 let qr ?mode a0 =
   Eager_jit.many "numpy.linalg.qr" mode [] [ a0 ] (fun opts vals ->

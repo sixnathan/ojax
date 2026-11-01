@@ -14,4 +14,4 @@ val helmert : ?full:bool -> int -> value
 val hadamard : ?dtype:Dtype.t -> int -> value
 val convolution_matrix : ?mode:string -> value -> int -> value
 val invhilbert : int -> value
-val solve_sylvester : value -> value -> value -> value
+val solve_sylvester : ?tol:float -> value -> value -> value -> value

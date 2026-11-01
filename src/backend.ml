@@ -1130,15 +1130,25 @@ let build_region name f avals =
 let inline_call_cache : (region_key, closed_jaxpr option) Hashtbl.t =
   Hashtbl.create 512
 
-let stage_inline_call key name f avals =
+let stage_inline_call ~inline key name f avals =
   match Hashtbl.find_opt inline_call_cache key with
   | Some c -> c
   | None ->
       let c =
         match Jaxpr.make_jaxpr_hoisted avals f with
         | c, [] ->
-            Pretty_printer.register_call_name c.jid name;
-            Core.mark_inline_call c.jid;
+            let short =
+              match String.rindex_opt name '.' with
+              | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+              | None -> name
+            in
+            Pretty_printer.register_call_name c.jid short;
+            let wraps_one_call =
+              match c.jaxpr.eqns with
+              | [ { prim = Xla_call _; _ } ] -> true
+              | _ -> false
+            in
+            if inline || wraps_one_call then Core.mark_inline_call c.jid;
             Some c
         | _ -> None
         | exception error when eager_rejection error -> None
@@ -1146,7 +1156,7 @@ let stage_inline_call key name f avals =
       Hashtbl.replace inline_call_cache key c;
       c
 
-let rec jitted_keyed (name, statics) f args =
+let rec jitted_keyed ?(inline = true) (name, statics) f args =
   match (Core.find_top_trace args).kind with
   | (KJVP | KBatch | KPE)
     when not
@@ -1163,7 +1173,7 @@ let rec jitted_keyed (name, statics) f args =
           rk_context = Config.trace_context ();
         }
       in
-      match stage_inline_call key name f avals with
+      match stage_inline_call ~inline key name f avals with
       | Some c -> Core.bind (Xla_call c) args
       | None -> f args)
   | _ -> jitted_eval (name, statics) f args

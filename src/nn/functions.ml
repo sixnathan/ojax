@@ -231,13 +231,22 @@ let glu ?(axis = -1) x =
   | [ x1; x2 ] -> UF.multiply x1 (sigmoid x2)
   | _ -> invalid_arg "glu: split did not produce two halves"
 
+let numpy_negative_infinity x =
+  let dt = dtype x in
+  let value =
+    match dt with
+    | D.I32 -> -2147483648.0
+    | D.I64 -> -9223372036854775808.0
+    | D.Bool | D.I8 | D.I16 | D.Uint8 | D.Uint16 | D.Uint32 -> 0.0
+    | D.Uint64 -> 9223372036854775808.0
+    | _ -> Float.neg_infinity
+  in
+  const_full dt [||] value
+
 let masked_max ax mask x =
-  match mask with
-  | None -> RED.max ~axis:ax ~keepdims:true x
-  | Some m ->
-      RED.max ~axis:ax ~keepdims:true ~where:m
-        ~initial:(const_full (dtype x) [||] Float.neg_infinity)
-        x
+  RED.max ~axis:ax ~keepdims:true ?where:mask
+    ~initial:(Numpy.Jnp_util.py_float Float.neg_infinity)
+    x
 
 let softmax_body ~stop ax mask x =
   let x_max = masked_max ax mask x in
@@ -278,13 +287,17 @@ let softmax ?(axis = -1) ?where:mask x =
 
 let log_softmax ?(axis = -1) ?where:mask x =
   let ax = [| canon_axis (Array.length (shape x)) axis |] in
-  let x_max = masked_max ax mask x in
+  let x_max =
+    RED.max ~axis:ax ~keepdims:true ?where:mask
+      ~initial:(numpy_negative_infinity x)
+      x
+  in
   let x_safe =
     match mask with
     | None -> x
     | Some m -> where3 m x (scalar_like x Float.neg_infinity)
   in
-  let shifted = UF.subtract x_safe x_max in
+  let shifted = UF.subtract x_safe (Custom_derivatives.stop_gradient x_max) in
   let lse =
     UF.log (RED.sum ~axis:ax ~keepdims:true ?where:mask (UF.exp shifted))
   in
@@ -330,23 +343,26 @@ let logsumexp ?axis ?(keepdims = false) ?where:mask x =
     | Some a -> Array.map (canon_axis ndim) a
   in
   let x =
-    match mask with Some m -> where3 m x (Numpy.Jnp_util.py_int 0) | None -> x
+    match mask with None -> x | Some m -> where3 m x (Numpy.Jnp_util.py_int 0)
   in
   let amax =
     RED.max ~axis:dims ~keepdims ?where:mask
-      ~initial:(const_full (dtype x) [||] Float.neg_infinity)
-      x
+      ~initial:(Numpy.Jnp_util.py_float Float.neg_infinity)
+      (UF.real x)
   in
   let amax =
     Custom_derivatives.stop_gradient
-      (bind1 T.Select_n
-         [ UF.isfinite amax; const_full (dtype amax) (shape amax) 0.0; amax ])
+      (Lax_api.select (UF.isfinite amax) amax (Lax_api.full_like amax 0.0))
   in
-  let amax_with_dims = if keepdims then amax else NL.expand_dims amax dims in
-  let exp_a = bind1 T.Exp [ bind1 T.Sub [ x; amax_with_dims ] ] in
+  let with_dims = if keepdims then amax else Lax_api.expand_dims amax dims in
+  let exp_a = bind1 T.Exp [ bind1 T.Sub [ x; with_dims ] ] in
   let sumexp = RED.sum ~axis:dims ~keepdims ?where:mask exp_a in
   let _sign = bind1 T.Sign [ sumexp ] in
-  let sumexp = bind1 T.Abs [ sumexp ] in
+  let sumexp =
+    match dtype sumexp with
+    | D.Complex64 | D.Complex128 -> sumexp
+    | _ -> UF.abs sumexp
+  in
   bind1 T.Add [ bind1 T.Log [ sumexp ]; amax ]
 
 let logmeanexp ?axis ?(keepdims = false) ?where:mask x =
@@ -364,9 +380,9 @@ let logmeanexp ?axis ?(keepdims = false) ?where:mask x =
           (NL.broadcast_to m (shape x))
     | None ->
         let n = Array.fold_left (fun acc d -> acc * (shape x).(d)) 1 dims in
-        T.Concrete (Ndarray.of_floats (dtype lse) [||] [| float_of_int n |])
+        const_full (dtype lse) [||] (float_of_int n)
   in
-  bind1 T.Sub [ lse; bind1 T.Log [ count ] ]
+  UF.subtract lse (UF.log count)
 
 let one_hot ?(axis = -1) ?dtype:dt ~num_classes x =
   let ndim = Array.length (shape x) in
@@ -568,24 +584,9 @@ let log_sigmoid a0 =
   Eager_jit.one "nn.functions.log_sigmoid" () [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> log_sigmoid a0 | _ -> assert false)
 
-let elu ?alpha a0 =
-  Eager_jit.one "nn.functions.elu" alpha [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with [], [ a0 ] -> elu ?alpha a0 | _ -> assert false)
-
-let leaky_relu ?negative_slope a0 =
-  Eager_jit.one "nn.functions.leaky_relu" negative_slope [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> leaky_relu ?negative_slope a0
-      | _ -> assert false)
-
 let hard_tanh a0 =
   Eager_jit.one "nn.functions.hard_tanh" () [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> hard_tanh a0 | _ -> assert false)
-
-let celu ?alpha a0 =
-  Eager_jit.one "nn.functions.celu" alpha [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with [], [ a0 ] -> celu ?alpha a0 | _ -> assert false)
 
 let selu a0 =
   Eager_jit.one "nn.functions.selu" () [] [ a0 ] (fun opts vals ->
@@ -641,10 +642,4 @@ let one_hot ?axis ?dtype ~num_classes a1 =
     (axis, dtype, num_classes) [] [ a1 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a1 ] -> one_hot ?axis ?dtype ~num_classes a1
-      | _ -> assert false)
-
-let softmax ?axis ?where a0 =
-  Eager_jit.one "nn.functions.softmax" axis [ where ] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [ where ], [ a0 ] -> softmax ?axis ?where a0
       | _ -> assert false)

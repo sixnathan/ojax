@@ -50,15 +50,25 @@ let trace_for_jit avals f =
   | closed, [], cells -> (closed, cells)
   | _ -> invalid_arg "make_jaxpr: function closed over a tracer"
 
+let staged_under_transform cells args =
+  cells = []
+  && (not (Config.value Config.no_execution))
+  &&
+  match (Core.find_top_trace args).kind with
+  | KJVP | KBatch | KPE -> true
+  | KEval | KJaxpr -> false
+
 let run_with_refs cj cells args =
-  let state = List.map Ref_state.read cells in
-  let outs = (compile cj) (args @ state) in
-  let n_out = List.length outs - List.length cells in
-  match Util.split_list outs [ n_out ] with
-  | [ results; finals ] ->
-      List.iter2 Ref_state.write cells finals;
-      results
-  | _ -> failwith "jit: output arity"
+  if staged_under_transform cells args then Core.bind (Xla_call cj) args
+  else
+    let state = List.map Ref_state.read cells in
+    let outs = (compile cj) (args @ state) in
+    let n_out = List.length outs - List.length cells in
+    match Util.split_list outs [ n_out ] with
+    | [ results; finals ] ->
+        List.iter2 Ref_state.write cells finals;
+        results
+    | _ -> failwith "jit: output arity"
 
 let context_key () =
   String.concat ","

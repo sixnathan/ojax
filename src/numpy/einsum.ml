@@ -323,13 +323,16 @@ let einsum ?(optimize = Einsum_paths.Auto) ?precision ?preferred_element_type
   let result =
     match output_opt with Some o -> o | None -> implicit_output inputs
   in
-  let pdt = NL.result_type operands in
-  let operands = List.map (fun v -> astype v pdt) operands in
-  let out =
-    contract ?precision ?preferred:preferred_element_type optimize inputs
-      operands result
-  in
-  astype out (Option.value preferred_element_type ~default:pdt)
+  Eager_jit.one "numpy.einsum._einsum"
+    (optimize, precision, preferred_element_type, inputs, result) [] operands
+    (fun _ operands ->
+      let pdt = NL.result_type operands in
+      let operands = List.map (fun v -> astype v pdt) operands in
+      let out =
+        contract ?precision ?preferred:preferred_element_type optimize inputs
+          operands result
+      in
+      astype out (Option.value preferred_element_type ~default:pdt))
 
 let einsum_path ?optimize subscripts operands =
   Einsum_paths.contract_path ?optimize subscripts (List.map shape operands)

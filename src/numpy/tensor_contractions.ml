@@ -36,29 +36,79 @@ let dot ?precision ?preferred a b =
   dot_general ?precision lc rc [||] [||] a b
 
 let matmul ?precision ?preferred a b =
-  let pdt = pref preferred [ a; b ] in
-  let a = astype a pdt and b = astype b pdt in
-  let na = ndim a and nb = ndim b in
-  if na < 1 || nb < 1 then
-    invalid_arg "matmul: inputs must have ndim at least 1";
-  if na = 1 && nb = 1 then dot_general ?precision [| 0 |] [| 0 |] [||] [||] a b
-  else if na = 1 then dot_general ?precision [| 0 |] [| nb - 2 |] [||] [||] a b
-  else if nb = 1 then dot_general ?precision [| na - 1 |] [| 0 |] [||] [||] a b
-  else begin
-    let sa = shape a and sb = shape b in
-    let a_batch = Array.sub sa 0 (na - 2) in
-    let b_batch = Array.sub sb 0 (nb - 2) in
-    let bc = NL.broadcast_shapes_n [ a_batch; b_batch ] in
-    let nbat = Array.length bc in
-    let a' =
-      NL.broadcast_to a (Array.append bc [| sa.(na - 2); sa.(na - 1) |])
-    in
-    let b' =
-      NL.broadcast_to b (Array.append bc [| sb.(nb - 2); sb.(nb - 1) |])
-    in
-    let idb = Array.init nbat Fun.id in
-    dot_general ?precision [| nbat + 1 |] [| nbat |] idb idb a' b'
-  end
+  Eager_jit.one "numpy.tensor_contractions.matmul" (precision, preferred) []
+    [ a; b ] (fun _ vals ->
+      let a, b = match vals with [ a; b ] -> (a, b) | _ -> assert false in
+      let pdt = pref preferred [ a; b ] in
+      let a = astype a pdt and b = astype b pdt in
+      let na = ndim a and nb = ndim b in
+      if na < 1 || nb < 1 then
+        invalid_arg "matmul: inputs must have ndim at least 1";
+      let a_is_mat = na > 1 and b_is_mat = nb > 1 in
+      let batch_of sh is_mat =
+        if is_mat then Array.to_list (Array.sub sh 0 (Array.length sh - 2))
+        else []
+      in
+      let a_dims = batch_of (shape a) a_is_mat
+      and b_dims = batch_of (shape b) b_is_mat in
+      let num_batch = max (List.length a_dims) (List.length b_dims) in
+      let pad dims =
+        List.init (num_batch - List.length dims) (fun _ -> None)
+        @ List.map Option.some dims
+      in
+      let a_squeeze = ref []
+      and b_squeeze = ref []
+      and both_squeeze = ref []
+      and a_batch = ref []
+      and b_batch = ref []
+      and idx_batch = ref []
+      and idx_a = ref []
+      and idx_b = ref [] in
+      let len r = List.length !r in
+      let push r v = r := !r @ [ v ] in
+      List.iteri
+        (fun i pair ->
+          match pair with
+          | None, _ -> push idx_b i
+          | _, None -> push idx_a i
+          | Some 1, Some 1 ->
+              push a_squeeze (len idx_batch + len idx_a + len a_squeeze);
+              push b_squeeze (len idx_batch + len idx_b + len b_squeeze);
+              push both_squeeze i
+          | Some 1, Some _ ->
+              push idx_b i;
+              push a_squeeze (len idx_batch + len idx_a + len a_squeeze)
+          | Some _, Some 1 ->
+              push idx_a i;
+              push b_squeeze (len idx_batch + len idx_b + len b_squeeze)
+          | Some ba, Some bb when ba = bb ->
+              push a_batch (len idx_batch + len idx_a);
+              push b_batch (len idx_batch + len idx_b);
+              push idx_batch i
+          | Some _, Some _ ->
+              invalid_arg "Incompatible types for matmul arguments")
+        (List.combine (pad a_dims) (pad b_dims));
+      if a_is_mat then push idx_a num_batch;
+      if b_is_mat then push idx_b (num_batch + if a_is_mat then 1 else 0);
+      let order = !idx_batch @ !idx_a @ !idx_b in
+      let perm =
+        Array.of_list
+          (List.map snd
+             (List.sort compare (List.mapi (fun pos v -> (v, pos)) order)))
+      in
+      let squeezed v axes =
+        if axes = [] then v else NL.squeeze ~axis:(Array.of_list axes) v
+      in
+      let a = squeezed a !a_squeeze and b = squeezed b !b_squeeze in
+      let out =
+        dot_general ?precision
+          [| ndim a - 1 |]
+          [| (ndim b - 1 - if b_is_mat then 1 else 0) |]
+          (Array.of_list !a_batch) (Array.of_list !b_batch) a b
+      in
+      let result = C.bind1 (T.Transpose perm) [ out ] in
+      if !both_squeeze = [] then result
+      else NL.expand_dims result (Array.of_list !both_squeeze))
 
 let matvec x1 x2 =
   let n2 = ndim x2 in

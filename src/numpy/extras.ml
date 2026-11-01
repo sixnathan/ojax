@@ -669,17 +669,13 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
     if density then begin
       let core = NL.astype core (dtype_of (as_inexact sample)) in
       let total = R.sum core in
-      let scaled = U.divide core (L.broadcast_in_dim total (shape core) [||]) in
+      let scaled = U.divide core total in
       List.fold_left
         (fun acc (i, e) ->
           let widths = NL.diff e in
           let sh = Array.make n_dims 1 in
           sh.(i) <- size_of widths;
-          let expanded = NL.reshape widths sh in
-          let broad =
-            L.broadcast_in_dim expanded (shape acc) (Array.init n_dims Fun.id)
-          in
-          U.divide acc broad)
+          U.divide acc (NL.reshape widths sh))
         scaled
         (List.mapi (fun i e -> (i, e)) edges)
     end
@@ -1328,8 +1324,7 @@ let polyfit ?rcond ?w x y deg =
     match rcond with Some r -> r | None -> float_of_int (size_of x) *. eps
   in
   let scale = U.sqrt (R.sum ~axis:[| 0 |] (U.multiply lhs lhs)) in
-  let broad = L.broadcast_in_dim scale (shape lhs) [| 1 |] in
-  let scaled = U.divide lhs broad in
+  let scaled = U.divide lhs (L.broadcast_in_dim scale [| 1; order |] [| 1 |]) in
   let c, _, _, _ = Linalg.lstsq ~rcond scaled y in
   let scale_c =
     if rank c = 2 then L.broadcast_in_dim scale (shape c) [| 0 |] else scale
@@ -1344,18 +1339,21 @@ let polyfit ?rcond ?w a0 a1 a2 =
       | _ -> assert false)
 
 let roots_of_coefficients p =
-  let dt = dtype_of p in
-  let n = (shape p).(0) in
-  let d = n - 1 in
-  let tail = L.slice_in_dim ~axis:0 p 1 n in
-  let lead = L.slice_in_dim ~axis:0 p 0 1 in
-  let row = L.neg (U.divide tail lead) in
-  let top = NL.reshape row [| 1; d |] in
-  let companion =
-    if d = 1 then top
-    else NL.concatenate ~axis:0 [ top; NL.eye ~m:d ~dtype:dt (d - 1) ]
-  in
-  Linalg.eigvals companion
+  Eager_jit.one "numpy.extras._roots_no_zeros" () [] [ p ] (fun _ vals ->
+      let p = List.hd vals in
+      let dt = dtype_of p in
+      let n = (shape p).(0) in
+      let d = n - 1 in
+      let ones = L.full [| d - 1 |] 1.0 dt in
+      let companion = NL.diag ~k:(-1) ones in
+      let tail = L.slice_in_dim ~axis:0 p 1 n in
+      let lead = L.index_in_dim ~axis:0 ~keepdims:false p 0 in
+      let row = U.divide (U.negative tail) lead in
+      let companion =
+        L.dynamic_update_index_in_dim ~axis:0 companion row
+          (Core.splat Dtype.I32 [||] 0.0)
+      in
+      Linalg.eigvals companion)
 
 let roots ?(strip_zeros = true) p =
   let p = as_inexact p in
@@ -1381,22 +1379,8 @@ let roots ?(strip_zeros = true) p =
     while !lead < n && not (nonzero !lead) do
       incr lead
     done;
-    let trail = ref n in
-    while !trail > !lead && not (nonzero (!trail - 1)) do
-      decr trail
-    done;
-    let zero_roots = n - !trail in
-    let zeros =
-      Concrete
-        (Ndarray.of_complex complex_dt [| zero_roots |]
-           (Array.make zero_roots Complex.zero))
-    in
-    if !trail - !lead < 2 then zeros
-    else
-      let values =
-        roots_of_coefficients (L.slice_in_dim ~axis:0 p !lead !trail)
-      in
-      if zero_roots = 0 then values else NL.concatenate [ values; zeros ]
+    if n - !lead < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
+    else roots_of_coefficients (L.slice_in_dim ~axis:0 p !lead n)
   end
 
 let fromfunction f shape_ ~dtype =

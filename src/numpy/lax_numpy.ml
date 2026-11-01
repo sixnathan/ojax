@@ -2295,9 +2295,12 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   let avg, w_sum =
     match w with
     | None ->
-        let summed = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
+        let wide = match dt with D.F16 | D.Bf16 -> D.F32 | d -> d in
+        let summed = bind1 (T.Reduce_sum [| 1 |]) [ convert x wide ] in
         let count = scalar dt (float_of_int nobs) in
-        let mean = bind1 T.Div [ summed; count ] in
+        let mean =
+          convert (bind1 T.Div [ summed; scalar wide (float_of_int nobs) ]) dt
+        in
         ( mean,
           bind1
             (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })

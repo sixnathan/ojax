@@ -56,6 +56,7 @@ let promote_inexact v =
   astype v (if is_inexact dt then dt else dfloat ())
 
 let scalar x = Concrete (Nd.of_floats (dfloat ()) [||] [| x |])
+let py_int = Numpy.Jnp_util.py_int
 let add_s v k = UF.add v (scalar k)
 let sub_s v k = UF.subtract v (scalar k)
 let mul_s v k = UF.multiply v (scalar k)
@@ -95,19 +96,16 @@ let apply_kernel k x =
 let normalize weights sample_f input_size =
   let total = RED.sum ~axis:[| 0 |] ~keepdims:true weights in
   let threshold = 1000.0 *. eps_f32 in
-  let safe = NL.where_ (UF.not_equal total (scalar 0.0)) total (scalar 1.0) in
-  let weights =
-    NL.where_
-      (UF.greater (UF.abs total) (scalar threshold))
-      (UF.divide weights safe) (scalar 0.0)
-  in
+  let keep = UF.greater (UF.abs total) (scalar threshold) in
+  let safe = NL.where_ (UF.not_equal total (scalar 0.0)) total (py_int 1) in
+  let weights = NL.where_ keep (UF.divide weights safe) (py_int 0) in
   let bound = float_of_int input_size -. 0.5 in
   let inside =
     UF.logical_and
       (UF.greater_equal sample_f (scalar (-0.5)))
       (UF.less_equal sample_f (scalar bound))
   in
-  NL.where_ (NL.expand_dims inside [| 0 |]) weights (scalar 0.0)
+  NL.where_ (NL.expand_dims inside [| 0 |]) weights (py_int 0)
 
 let compute_weight_mat ~input_size ~output_size ~scale ~translation ~kernel
     ~antialias ~edge_padding ~radius =
@@ -117,7 +115,9 @@ let compute_weight_mat ~input_size ~output_size ~scale ~translation ~kernel
       "image/scale: edge_padding (cubic-pytorch without antialias) is not \
        supported";
   let inv_scale = 1.0 /. scale in
-  let kernel_scale = if antialias then Float.max inv_scale 1.0 else 1.0 in
+  let kernel_scale =
+    if antialias then UF.maximum (scalar inv_scale) (scalar 1.0) else scalar 1.0
+  in
   let sample_f =
     sub_s
       (sub_s
@@ -151,14 +151,9 @@ let compute_weight_mat ~input_size ~output_size ~scale ~translation ~kernel
                (NL.expand_dims sample_f [| 0 |])
                (NL.expand_dims expanded [| 1 |]))
         in
-        apply_kernel kernel (div_s x kernel_scale)
+        apply_kernel kernel (UF.divide x kernel_scale)
   in
   normalize weights sample_f input_size
-
-let contract_axis a d w =
-  let n = ndim a in
-  let r = TC.tensordot ~axes:(TC.Ax_pair ([| d |], [| 0 |])) a w in
-  NL.moveaxis [| n - 1 |] [| d |] r
 
 let scale_and_translate_internal image ~output_shape ~spatial_dims ~scale
     ~translation ~kernel ~antialias =
@@ -167,19 +162,33 @@ let scale_and_translate_internal image ~output_shape ~spatial_dims ~scale
     let input_shape = shape image in
     let dt = dtype image in
     let nd = Array.length output_shape in
-    let result = ref image in
-    Array.iteri
-      (fun i d0 ->
-        let d = if d0 < 0 then d0 + nd else d0 in
-        let w =
-          compute_weight_mat ~input_size:input_shape.(d)
-            ~output_size:output_shape.(d) ~scale:scale.(i)
-            ~translation:translation.(i) ~kernel ~antialias ~edge_padding:false
-            ~radius:0
-        in
-        result := contract_axis !result d (astype w dt))
-      spatial_dims;
-    !result
+    let letter i = String.make 1 (Char.chr (Char.code 'a' + i)) in
+    let out_indices = Array.init nd letter in
+    let weights =
+      Array.to_list
+        (Array.mapi
+           (fun i d0 ->
+             let d = if d0 < 0 then d0 + nd else d0 in
+             let w =
+               compute_weight_mat ~input_size:input_shape.(d)
+                 ~output_size:output_shape.(d) ~scale:scale.(i)
+                 ~translation:translation.(i) ~kernel ~antialias
+                 ~edge_padding:false ~radius:0
+             in
+             out_indices.(d) <- letter (nd + i);
+             (astype w dt, letter d ^ letter (nd + i)))
+           spatial_dims)
+    in
+    let in_term = String.concat "" (List.init nd letter) in
+    let subscripts =
+      String.concat "," (in_term :: List.map snd weights)
+      ^ "->"
+      ^ String.concat "" (Array.to_list out_indices)
+    in
+    Numpy.Einsum.einsum
+      ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest)
+      subscripts
+      (image :: List.map fst weights)
   end
 
 let resolve_kernel method_ antialias =

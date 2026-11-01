@@ -1800,8 +1800,7 @@ let spence x =
            (Printf.sprintf
               "x.dtype=%s is not supported, see docstring for supported types."
               (D.short_name d))));
-  Eager_jit.one "scipy.special.spence" () [] [ x ] (fun _ vals ->
-      match vals with [ x ] -> spence_body x | _ -> assert false)
+  spence_body x
 
 let euler_gamma = 0.5772156649015329
 
@@ -2441,40 +2440,50 @@ let hyp2f1_digamma_transform a b c x =
   let ard = NL.astype (where_ (ge_ rd 0.0) rd (neg_ rd)) D.I32 in
   let ax = UF.log s in
   let dg v = digamma v in
-  let y =
-    dg (scalar_of e 1.0)
-    +! dg (lit_add 1.0 e)
-    -! dg (a +! d1)
-    -! dg (b +! d1)
-    -! ax
-  in
+  let y0 = NL.astype (dg (JU.py_float 1.0)) (dtype e) in
+  let y1 = dg (lit_add 1.0 e) in
+  let y = y0 +! y1 in
+  let y2 = dg (a +! d1) in
+  let y = y -! y2 in
+  let y3 = dg (b +! d1) in
+  let y = y -! y3 in
+  let y = y -! ax in
   let y = y /! gamma (add_lit e 1.0) in
-  let p = (a +! d1) *! (b +! d1) *! s /! gamma (add_lit e 2.0) in
+  let p0 = (a +! d1) *! (b +! d1) in
+  let p0 = p0 *! s in
+  let p = p0 /! gamma (add_lit e 2.0) in
   let looped =
     L.while_loop
       (function
-        | [ _; q; t; y ] ->
-            sp_and (lt_ t 250.0)
-              (UF.greater_equal (UF.abs q) (rtol *! UF.abs y))
+        | [ _; _; _; _; _; _; q; _; _; t; y ] ->
+            let keep = lt_ t 250.0 in
+            let aq = UF.abs q in
+            sp_and keep (UF.greater_equal aq (rtol *! UF.abs y))
         | _ -> assert false)
       (function
-        | [ p; _; t; y ] ->
-            let r =
-              dg (lit_add 1.0 t)
-              +! dg (lit_add 1.0 t +! e)
-              -! dg (a +! t +! d1)
-              -! dg (b +! t +! d1)
-              -! ax
-            in
+        | [ a; ax; b; d1; e; p; _; _; s; t; y ] ->
+            let r0 = dg (lit_add 1.0 t) in
+            let r1 = dg (lit_add 1.0 t +! e) in
+            let r = r0 +! r1 in
+            let r2 = dg (a +! t +! d1) in
+            let r = r -! r2 in
+            let r3 = dg (b +! t +! d1) in
+            let r = r -! r3 in
+            let r = r -! ax in
             let q = p *! r in
             let y = y +! q in
-            let p = p *! (s *! (a +! t +! d1) /! add_lit t 1.0) in
-            let p = p *! ((b +! t +! d1) /! (add_lit t 1.0 +! e)) in
-            [ p; q; add_lit t 1.0; y ]
+            let f0 = s *! (a +! t +! d1) in
+            let f0 = f0 /! add_lit t 1.0 in
+            let p = p *! f0 in
+            let f1 = b +! t +! d1 in
+            let f1 = f1 /! (add_lit t 1.0 +! e) in
+            let p = p *! f1 in
+            let t = add_lit t 1.0 in
+            [ a; ax; b; d1; e; p; q; r; s; t; y ]
         | _ -> assert false)
-      [ p; y; scalar_of x 1.0; y ]
+      [ a; ax; b; d1; e; p; y; scalar_of x 0.0; s; scalar_of x 1.0; y ]
   in
-  let y = List.nth looped 3 in
+  let y = List.nth looped 10 in
   let compute_sum y =
     let y1_init = scalar_of x 1.0 in
     let t0 = scalar_of x 0.0 in
@@ -2483,24 +2492,45 @@ let hyp2f1_digamma_transform a b c x =
       L.fori_loop (int_full D.I32 1) ard
         (fun _ state ->
           match state with
-          | [ p; t; y1 ] ->
-              let r = add_lit (lit_sub 1.0 e) 0.0 +! t in
-              let p = p *! (s *! (a +! t +! d2) *! (b +! t +! d2) /! r) in
+          | [ a; b; d2; e; p; s; t; y1 ] ->
+              let r = lit_sub 1.0 e +! t in
+              let f = s *! (a +! t +! d2) in
+              let f = f *! (b +! t +! d2) in
+              let f = f /! r in
+              let p = p *! f in
               let t = add_lit t 1.0 in
               let p = p /! t in
-              [ p; t; y1 +! p ]
+              let y1 = y1 +! p in
+              [ a; b; d2; e; p; s; t; y1 ]
           | _ -> assert false)
-        [ p0; t0; y1_init ]
+        [ a; b; d2; e; p0; s; t0; y1_init ]
     in
-    let y1 = List.nth looped 2 in
+    let y1 = List.nth looped 7 in
     let p = gamma c in
-    let y1 = y1 *! (gamma e *! p /! (gamma (a +! d1) *! gamma (b +! d1))) in
-    let y = y *! (p /! (gamma (a +! d2) *! gamma (b +! d2))) in
+    let g_e = gamma e in
+    let top = g_e *! p in
+    let g_a = gamma (a +! d1) in
+    let g_b = gamma (b +! d1) in
+    let bottom = g_a *! g_b in
+    let y1 = y1 *! (top /! bottom) in
+    let g_a2 = gamma (a +! d2) in
+    let g_b2 = gamma (b +! d2) in
+    let bottom2 = g_a2 *! g_b2 in
+    let y = y *! (p /! bottom2) in
     let y = where_ (ne_ (band ard (int_full D.I32 1)) 0.0) (neg_ y) y in
     let q = UF.power s rd in
-    where_ (gt_ rd 0.0) ((y *! q) +! y1) (y +! (y1 *! q))
+    let when_pos = (y *! q) +! y1 in
+    let when_neg = y +! (y1 *! q) in
+    where_ (gt_ rd 0.0) when_pos when_neg
   in
-  where_ (eq_ rd 0.0) (y *! gamma c /! (gamma a *! gamma b)) (compute_sum y)
+  let g_c = gamma c in
+  let top = y *! g_c in
+  let g_a = gamma a in
+  let g_b = gamma b in
+  let bottom = g_a *! g_b in
+  let at_zero = top /! bottom in
+  let summed = compute_sum y in
+  where_ (eq_ rd 0.0) at_zero summed
 
 let hyp2f1_terminal_or_serie a b c x =
   let eps = eps50 x in
@@ -2516,12 +2546,10 @@ let hyp2f1_terminal_or_serie a b c x =
       (where_ (UF.greater_equal (UF.abs (d -! id)) eps) (py_int 0) (py_int 1))
       (where_ either (py_int 2) (py_int 0))
   in
-  L.select_n index
-    [
-      hyp2f1_serie a b c x;
-      hyp2f1_digamma_transform a b c x;
-      hyp2f1_terminal a b c x;
-    ]
+  let serie = hyp2f1_serie a b c x in
+  let digamma_branch = hyp2f1_digamma_transform a b c x in
+  let terminal = hyp2f1_terminal a b c x in
+  L.select_n index [ serie; digamma_branch; terminal ]
 
 let hyp2f1_value a b c x =
   let a, b, c, x =
@@ -2558,16 +2586,24 @@ let hyp2f1_value a b c x =
                      (where_ (gt_ x 1.0) (py_int 1)
                         (where_ (eq_ x 1.0) (py_int 5) (py_int 6))))))))
   in
-  L.select_n index
-    [
-      scalar_of x 1.0;
-      scalar_of x Float.infinity;
-      UF.power s d *! hyp2f1_terminal_or_serie ca cb c x;
-      UF.power s (neg_ a);
-      UF.power s (neg_ b);
-      gamma c *! gamma d /! (gamma ca *! gamma cb);
-      hyp2f1_terminal_or_serie a b c x;
-    ]
+  let one = scalar_of x 1.0 in
+  let inf = scalar_of x Float.infinity in
+  let pow_d = UF.power s d in
+  let first = hyp2f1_terminal_or_serie ca cb c x in
+  let branch2 = pow_d *! first in
+  let neg_a = neg_ a in
+  let branch3 = UF.power s neg_a in
+  let neg_b = neg_ b in
+  let branch4 = UF.power s neg_b in
+  let gc = gamma c in
+  let gd = gamma d in
+  let top = gc *! gd in
+  let gca = gamma ca in
+  let gcb = gamma cb in
+  let bottom = gca *! gcb in
+  let branch5 = top /! bottom in
+  let branch6 = hyp2f1_terminal_or_serie a b c x in
+  L.select_n index [ one; inf; branch2; branch3; branch4; branch5; branch6 ]
 
 let vectorize4 f =
   vectorize_scalar (function

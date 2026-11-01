@@ -303,3 +303,27 @@ let set x idx y =
         [ x'; ix.gather_indices; y' ]
     in
     C.convert_like ~weak:x_aval.weak_type out x_aval.dtype
+
+let set_stepped x ~start ~step y =
+  let sh = shape x in
+  let dt = index_dtype sh in
+  let n = max 0 (((sh.(0) - start - 1) / step) + 1) in
+  let positions =
+    UF.add (const dt start) (UF.multiply (const dt step) (L.iota dt n))
+  in
+  C.bind1
+    (T.Scatter
+       {
+         dimension_numbers =
+           {
+             update_window_dims = [||];
+             inserted_window_dims = [| 0 |];
+             scatter_dims_to_operand_dims = [| 0 |];
+             s_operand_batching_dims = [||];
+             s_scatter_indices_batching_dims = [||];
+             s_sorted_unique = true;
+             s_clip = false;
+           };
+         unique_indices = true;
+       })
+    [ x; L.expand_dims positions [| 1 |]; y ]

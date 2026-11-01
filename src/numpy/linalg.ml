@@ -535,6 +535,7 @@ and matrix_norm_impl x ord r c keepdims =
       if o = 1.0 then begin
         let c = if (not keepdims) && c > r then c - 1 else c in
         RED.amax ~axis:[| c |] ~keepdims
+          ~initial:(Jnp_util.py_int 0)
           (RED.sum ~axis:[| r |] ~keepdims (abs_x ()))
       end
       else if o = -1.0 then begin
@@ -545,6 +546,7 @@ and matrix_norm_impl x ord r c keepdims =
       else if o = infinity then begin
         let r = if (not keepdims) && r > c then r - 1 else r in
         RED.amax ~axis:[| r |] ~keepdims
+          ~initial:(Jnp_util.py_int 0)
           (RED.sum ~axis:[| c |] ~keepdims (abs_x ()))
       end
       else if o = neg_infinity then begin
@@ -556,7 +558,8 @@ and matrix_norm_impl x ord r c keepdims =
         let x2 = NL.moveaxis [| r; c |] [| nd - 2; nd - 1 |] x in
         let s = svdvals x2 in
         let y =
-          if o = 2.0 then RED.amax ~axis:[| -1 |] s
+          if o = 2.0 then
+            RED.amax ~axis:[| -1 |] ~initial:(Jnp_util.py_int 0) s
           else RED.amin ~axis:[| -1 |] s
         in
         if keepdims then NL.expand_dims y [| r; c |] else y

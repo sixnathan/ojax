@@ -129,7 +129,7 @@ let staged x =
     NL.where_
       (U.greater x (T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 0.0 |])))
       x
-      (T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 1.0 |]))
+      (Ojax.Numpy.Jnp_util.py_float 1.0)
   in
   let start = U.add a b in
   let three = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 3.0 |]) in

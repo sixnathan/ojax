@@ -760,6 +760,28 @@ let emit_reshape ctx (eqn : eqn) in_ids =
        (name x) inty
        (Ir.tensor_type_of_aval out.vaval))
 
+let emit_reshape_perm ctx (eqn : eqn) in_ids dimensions =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let inty = Ir.tensor_type_of_aval in_aval in
+  let mid =
+    Ir.tensor_type_of_aval
+      { in_aval with shape = Array.map (fun d -> in_aval.shape.(d)) dimensions }
+  in
+  let t = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.transpose %s, dims = [%s] : (%s) -> %s\n" (name t)
+       (name x)
+       (String.concat ", " (Array.to_list (Array.map string_of_int dimensions)))
+       inty mid);
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name n)
+       (name t) mid
+       (Ir.tensor_type_of_aval out.vaval))
+
 let emit_rev ctx (eqn : eqn) in_ids dims =
   let x = sole in_ids in
   let out = sole eqn.outs in
@@ -3271,6 +3293,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Iota { dimension; _ } -> emit_iota ctx eqn dimension
   | Pad config -> emit_pad ctx eqn in_ids config
   | Reshape _ -> emit_reshape ctx eqn in_ids
+  | Reshape_perm { dimensions; _ } ->
+      emit_reshape_perm ctx eqn in_ids dimensions
   | Squeeze _ -> emit_reshape ctx eqn in_ids
   | Rev dims -> emit_rev ctx eqn in_ids dims
   | Split { sizes; axis } -> emit_split ctx eqn in_ids axis sizes
@@ -3965,6 +3989,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             (List.assoc axis_name mesh)
             mesh axis_name
       | Ppermute pairs -> emit_ppermute ctx eqn in_ids pairs mesh axis_name
+      | All_to_all _ | Reduce_scatter _ ->
+          failwith "Stablehlo.Emit: this collective runs under vmap only"
       | Axis_index -> emit_axis_index ctx eqn mesh axis_name)
   | Fft { fft_type; fft_lengths } ->
       let out = sole eqn.outs in

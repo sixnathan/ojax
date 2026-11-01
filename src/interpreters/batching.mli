@@ -28,3 +28,4 @@ val vmap_out :
   value list
 
 val find_axis : string -> string * trace * int
+val take_on_axis : (value -> int array -> int -> value) ref

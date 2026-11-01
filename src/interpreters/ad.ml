@@ -1143,9 +1143,9 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
           Some (out, maybe_broadcast shape t)
       | false, true -> Some (out, maybe_broadcast shape xdot)
       | false, false -> Some (out, b1 prim [ xdot; ydot ]))
-  | Add_any | Neg | Real | Imag | Complex | Conj | Squeeze _ | Reshape _ | Rev _
-  | Transpose _ | Reduce_sum _ | Stack _ | Concatenate _ | Pad _ | Copy
-  | Reduce_precision _ | Tile _ ->
+  | Add_any | Neg | Real | Imag | Complex | Conj | Squeeze _ | Reshape _
+  | Reshape_perm _ | Rev _ | Transpose _ | Reduce_sum _ | Stack _
+  | Concatenate _ | Pad _ | Copy | Reduce_precision _ | Tile _ ->
       linear ()
   | Stop_gradient ->
       let x = arg1 primals in
@@ -1695,7 +1695,10 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
   | Ormqr _ -> failwith "Differentiation rule for 'ormqr' not implemented"
   | Collective { kind; _ } -> (
       match (kind, primals, tangents) with
-      | (Psum | Pbroadcast _ | Ppermute _ | All_gather _), [ x ], [ t ] ->
+      | ( ( Psum | Pbroadcast _ | Ppermute _ | All_gather _ | All_to_all _
+          | Reduce_scatter _ ),
+          [ x ],
+          [ t ] ) ->
           (b1 prim [ x ], b1 prim [ t ])
       | Axis_index, [], [] ->
           let v = b1 prim [] in
@@ -3207,6 +3210,20 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       match primals with
       | [ x ] -> [ Some (lreshape (in_aval x).shape ct) ]
       | _ -> arity ())
+  | Reshape_perm { dimensions; _ } -> (
+      let ct = ct1 () in
+      match primals with
+      | [ x ] ->
+          let shape = (in_aval x).shape in
+          let n = Array.length dimensions in
+          let inverse = Array.make n 0 in
+          Array.iteri (fun i d -> inverse.(d) <- i) dimensions;
+          [
+            Some
+              (b1 (Transpose inverse)
+                 [ lreshape (Array.map (fun d -> shape.(d)) dimensions) ct ]);
+          ]
+      | _ -> arity ())
   | Reduce_sum axes -> (
       let ct = ct1 () in
       match primals with
@@ -3269,15 +3286,18 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
             match strides with Some s -> s | None -> Array.make n 1
           in
           let ct_shape = (Core.get_aval ct).shape in
+          let unit_strides = Array.for_all (fun s -> s = 1) strides in
           let cfg =
-            Array.init n (fun i ->
-                let s = strides.(i) in
-                let out_d = ct_shape.(i) in
-                let real_limit =
-                  start_indices.(i)
-                  + if out_d = 0 then 0 else 1 + ((out_d - 1) * s)
-                in
-                (start_indices.(i), os.(i) - real_limit, s - 1))
+            Np_ints.mark_triples
+              (fun _ j -> j = 1 || (j = 2 && not unit_strides))
+              (Array.init n (fun i ->
+                   let s = strides.(i) in
+                   let out_d = ct_shape.(i) in
+                   let real_limit =
+                     start_indices.(i)
+                     + if out_d = 0 then 0 else 1 + ((out_d - 1) * s)
+                   in
+                   (start_indices.(i), os.(i) - real_limit, s - 1)))
           in
           [ Some (b1 (Pad cfg) [ ct; scalar_const ct 0.0 ]) ]
       | _ -> arity ())
@@ -3520,7 +3540,25 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                     })
                  [ ct1 () ]);
           ]
-      | Pmax | Pmin | Pbroadcast _ | All_gather _ | Axis_index ->
+      | All_to_all { split_axis; concat_axis; size } ->
+          [
+            Some
+              (b1
+                 (Collective
+                    {
+                      kind =
+                        All_to_all
+                          {
+                            split_axis = concat_axis;
+                            concat_axis = split_axis;
+                            size;
+                          };
+                      axis_name;
+                    })
+                 [ ct1 () ]);
+          ]
+      | Pmax | Pmin | Pbroadcast _ | All_gather _ | Axis_index
+      | Reduce_scatter _ ->
           failwith "ad: this collective has no transpose rule")
   | Real ->
       let t = ct1 () in

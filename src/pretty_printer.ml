@@ -106,7 +106,7 @@ let prim_name = function
   | Select_n -> "select_n"
   | Convert_element_type _ -> "convert_element_type"
   | Broadcast_in_dim _ -> "broadcast_in_dim"
-  | Reshape _ -> "reshape"
+  | Reshape _ | Reshape_perm _ -> "reshape"
   | Reduce_sum _ -> "reduce_sum"
   | Dot_general _ -> "dot_general"
   | Acos -> "acos"
@@ -274,6 +274,9 @@ let prim_params = function
       "[broadcast_dimensions=" ^ int_tuple dims ^ " shape=" ^ int_tuple shape
       ^ "]"
   | Reshape ns -> "[new_sizes=" ^ int_tuple ns ^ "]"
+  | Reshape_perm { new_sizes; dimensions } ->
+      "[new_sizes=" ^ int_tuple new_sizes ^ ",dimensions="
+      ^ int_tuple dimensions ^ "]"
   | Reduce_sum axes -> "[axes=" ^ int_tuple axes ^ "]"
   | Dot_general dd -> "[dimension_numbers=" ^ dot_dims_str dd ^ "]"
   | Integer_pow y -> "[y=" ^ string_of_int y ^ "]"
@@ -519,8 +522,15 @@ let py_platforms platforms =
   | _ -> "(" ^ String.concat ", " items ^ ")"
 
 let py_triples a =
+  let item i j v =
+    if Np_ints.triple_marked a i j then Printf.sprintf "np.int64(%d)" v
+    else string_of_int v
+  in
   py_tuple
-    (Array.to_list (Array.map (fun (x, y, z) -> py_ints [| x; y; z |]) a))
+    (Array.to_list
+       (Array.mapi
+          (fun i (x, y, z) -> py_tuple [ item i 0 x; item i 1 y; item i 2 z ])
+          a))
 
 let gather_numbers (d : gather_dims) =
   Printf.sprintf
@@ -598,6 +608,12 @@ let jax_params (e : eqn) =
       [
         ("dimensions", Plain "None");
         ("new_sizes", Plain (py_ints ns));
+        ("sharding", Plain "None");
+      ]
+  | Reshape_perm { new_sizes; dimensions } ->
+      [
+        ("dimensions", Plain (py_ints dimensions));
+        ("new_sizes", Plain (py_ints new_sizes));
         ("sharding", Plain "None");
       ]
   | Transpose perm -> [ ("permutation", Plain (py_ints perm)) ]

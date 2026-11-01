@@ -269,6 +269,34 @@ let broadcast_rule (axis_size : int) (shape : int array) (dims : int array)
       ( b1 (Broadcast_in_dim { shape = new_shape; dims = new_dims }) [ x ],
         Some 0 )
 
+let reshape_perm (x : value) (new_sizes : int array) (dimensions : int array) :
+    value =
+  b1 (Reshape_perm { new_sizes; dimensions }) [ x ]
+
+let reshape_axis_into (src : int) (dst : int) (x : value) : value =
+  let shape = (Core.get_aval x).shape in
+  let n = Array.length shape in
+  let rest = List.filter (fun i -> i <> src) (List.init n Fun.id) in
+  let perm =
+    List.filteri (fun i _ -> i < dst) rest
+    @ (src :: List.filteri (fun i _ -> i >= dst) rest)
+  in
+  let new_shape = Array.of_list (List.map (fun i -> shape.(i)) rest) in
+  new_shape.(dst) <- new_shape.(dst) * shape.(src);
+  reshape_perm x new_shape (Array.of_list perm)
+
+let reshape_axis_out_of (src : int) (size1 : int) (x : value) : value =
+  let shape = (Core.get_aval x).shape in
+  let new_shape =
+    Array.concat
+      [
+        Array.sub shape 0 src;
+        [| size1; shape.(src) / size1 |];
+        Array.sub shape (src + 1) (Array.length shape - src - 1);
+      ]
+  in
+  b1 (Reshape new_shape) [ x ]
+
 let convert_rule (dt : Dtype.t) (x : value) (bdim : int option) :
     value * int option =
   (b1 (Convert_element_type dt) [ x ], bdim)
@@ -276,8 +304,11 @@ let convert_rule (dt : Dtype.t) (x : value) (bdim : int option) :
 let insert_pad_cfg (cfg : (int * int * int) array) (idx : int)
     (v : int * int * int) : (int * int * int) array =
   let n = Array.length cfg in
-  Array.init (n + 1) (fun i ->
-      if i < idx then cfg.(i) else if i = idx then v else cfg.(i - 1))
+  Np_ints.mark_triples
+    (fun i j ->
+      i <> idx && Np_ints.triple_marked cfg (if i < idx then i else i - 1) j)
+    (Array.init (n + 1) (fun i ->
+         if i < idx then cfg.(i) else if i = idx then v else cfg.(i - 1)))
 
 let concatenate_batch (axis_size : int) (dim : int) (vals : value list)
     (bdims : int option list) : value * int option =
@@ -420,7 +451,7 @@ let reduce_axes_batch (make : int array -> primitive) (axes : int array)
   | None -> (b1 (make axes) [ x ], None)
   | Some d ->
       let new_axes =
-        Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes
+        Np_ints.mark (Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes)
       in
       let shift =
         Array.fold_left (fun acc ax -> if ax < d then acc + 1 else acc) 0 axes
@@ -745,6 +776,21 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       match (vals, bdims) with
       | [ x ], [ b ] -> reduce_sum_rule axes x b
       | _ -> failwith "batching: expected 1 operand")
+  | Reshape_perm { new_sizes; dimensions } -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] -> (
+          match b with
+          | None -> (b1 prim [ x ], None)
+          | Some _ ->
+              let x = move_batch_axis axis_size b 0 x in
+              ( reshape_perm x
+                  (insert_size new_sizes 0 axis_size)
+                  (Np_ints.mark_where
+                     (fun i -> i > 0)
+                     (Array.append [| 0 |]
+                        (Array.map (fun d -> d + 1) dimensions))),
+                Some 0 ))
+      | _ -> failwith "batching: expected 1 operand")
   | Reshape ns -> (
       match (vals, bdims) with
       | [ x ], [ b ] -> reshape_rule axis_size ns x b
@@ -861,9 +907,19 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       failwith "batching: handled by unstacking in batch_process_primitive"
   | Collective _ ->
       failwith "batching: collectives handled by batch_process_primitive"
-  | Fft _ -> (
+  | Fft { fft_type; fft_lengths } -> (
       match (vals, bdims) with
-      | [ x ], [ Some d ] -> (b1 prim [ moveaxis d 0 x ], Some 0)
+      | [ x ], [ Some d ] ->
+          let key =
+            String.concat ","
+              (Array.to_list (Array.map string_of_int fft_lengths))
+            ^ string_of_int (Hashtbl.hash fft_type)
+          in
+          ( List.hd
+              (Jaxpr.named_jit ~name:"fft" ~key
+                 (fun args -> [ b1 prim args ])
+                 [ moveaxis d 0 x ]),
+            Some 0 )
       | [ x ], [ None ] -> (b1 prim [ x ], None)
       | _ -> failwith "batching: fft arity")
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
@@ -875,6 +931,132 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Xla_call _ ->
       failwith "batching: xla_call handled by batch_process_primitive"
   | Ffi_call _ -> failwith "batching: ffi_call handled by ffi_batch"
+
+let conv_batch (prim : primitive) (vals : value list) (bdims : int option list)
+    : value * int option =
+  match (prim, vals, bdims) with
+  | Conv_general_dilated c, [ lhs; rhs ], [ lb; rb ] -> (
+      let dn = c.dimension_numbers in
+      let bind_conv ~feature ~batch l r =
+        b1
+          (Conv_general_dilated
+             { c with feature_group_count = feature; batch_group_count = batch })
+          [ l; r ]
+      in
+      let shape v = (Core.get_aval v).shape in
+      match (lb, rb) with
+      | None, None -> (b1 prim vals, None)
+      | Some l, Some r ->
+          let size = (shape lhs).(l) in
+          let new_lhs, feature, batch =
+            if c.batch_group_count > 1 then
+              ( reshape_axis_into l dn.lhs_spec.(0) lhs,
+                c.feature_group_count,
+                c.batch_group_count * size )
+            else
+              ( reshape_axis_into l dn.lhs_spec.(1) lhs,
+                c.feature_group_count * size,
+                c.batch_group_count )
+          in
+          let new_rhs = reshape_axis_into r dn.rhs_spec.(0) rhs in
+          let out = bind_conv ~feature ~batch new_lhs new_rhs in
+          (reshape_axis_out_of dn.out_spec.(1) size out, Some dn.out_spec.(1))
+      | Some l, None ->
+          let size = (shape lhs).(l) in
+          if c.batch_group_count = 1 then
+            let new_lhs = reshape_axis_into l dn.lhs_spec.(0) lhs in
+            let out =
+              bind_conv ~feature:c.feature_group_count ~batch:1 new_lhs rhs
+            in
+            (reshape_axis_out_of dn.out_spec.(0) size out, Some dn.out_spec.(0))
+          else
+            let s0 = dn.lhs_spec.(0) in
+            let new_lhs =
+              reshape_axis_out_of
+                (s0 + if l <= s0 then 1 else 0)
+                c.batch_group_count lhs
+            in
+            let new_lhs =
+              reshape_axis_into (l + if s0 < l then 1 else 0) (s0 + 1) new_lhs
+            in
+            let new_lhs = reshape_axis_into s0 s0 new_lhs in
+            let out =
+              bind_conv ~feature:c.feature_group_count
+                ~batch:c.batch_group_count new_lhs rhs
+            in
+            (reshape_axis_out_of dn.out_spec.(0) size out, Some dn.out_spec.(0))
+      | None, Some r ->
+          let size = (shape rhs).(r) in
+          if c.feature_group_count = 1 && c.batch_group_count = 1 then
+            let new_rhs = reshape_axis_into r dn.rhs_spec.(0) rhs in
+            let out = bind_conv ~feature:1 ~batch:1 lhs new_rhs in
+            (reshape_axis_out_of dn.out_spec.(1) size out, Some dn.out_spec.(1))
+          else
+            let group_count =
+              if c.feature_group_count > 1 then c.feature_group_count
+              else c.batch_group_count
+            in
+            let s0 = dn.rhs_spec.(0) in
+            let new_rhs =
+              reshape_axis_out_of
+                (s0 + if r <= s0 then 1 else 0)
+                group_count rhs
+            in
+            let new_rhs =
+              reshape_axis_into (r + if s0 < r then 1 else 0) (s0 + 1) new_rhs
+            in
+            let new_rhs = reshape_axis_into s0 s0 new_rhs in
+            let out =
+              bind_conv ~feature:c.feature_group_count
+                ~batch:c.batch_group_count lhs new_rhs
+            in
+            let o1 = dn.out_spec.(1) in
+            let out = reshape_axis_out_of o1 group_count out in
+            let out = reshape_axis_out_of (o1 + 1) size out in
+            (reshape_axis_into o1 (o1 + 1) out, Some o1))
+  | _ -> failwith "batching: conv arity"
+
+let window_insert (w : window_dims) (at : int) : window_dims =
+  let ins a v =
+    Array.concat
+      [ Array.sub a 0 at; [| v |]; Array.sub a at (Array.length a - at) ]
+  in
+  {
+    window_dimensions = ins w.window_dimensions 1;
+    window_strides = ins w.window_strides 1;
+    w_padding = ins w.w_padding (0, 0);
+    base_dilation = ins w.base_dilation 1;
+    window_dilation = ins w.window_dilation 1;
+  }
+
+let window_batch (axis_size : int) (prim : primitive) (vals : value list)
+    (bdims : int option list) : value * int option =
+  match (prim, vals, bdims) with
+  | ( (Reduce_window_max _ | Reduce_window_min _ | Reduce_window_sum _),
+      [ _ ],
+      [ None ] ) ->
+      (b1 prim vals, None)
+  | Reduce_window_max w, [ x ], [ Some d ] ->
+      (b1 (Reduce_window_max (window_insert w d)) [ x ], Some d)
+  | Reduce_window_min w, [ x ], [ Some d ] ->
+      (b1 (Reduce_window_min (window_insert w d)) [ x ], Some d)
+  | Reduce_window_sum w, [ x ], [ Some d ] ->
+      (b1 (Reduce_window_sum (window_insert w d)) [ x ], Some d)
+  | Select_and_gather_add { select; window }, [ t; x ], [ tb; xb ] ->
+      let t = bdim_at_front axis_size t tb in
+      let x = bdim_at_front axis_size x xb in
+      ( b1
+          (Select_and_gather_add { select; window = window_insert window 0 })
+          [ t; x ],
+        Some 0 )
+  | Select_and_scatter_add { select; window }, [ s; o ], [ sb; ob ] ->
+      let s = bdim_at_front axis_size s sb in
+      let o = bdim_at_front axis_size o ob in
+      ( b1
+          (Select_and_scatter_add { select; window = window_insert window 0 })
+          [ s; o ],
+        Some 0 )
+  | _ -> failwith "batching: window arity"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :
     value list * int option list =
@@ -888,7 +1070,28 @@ let sort_batch (axis_size : int) (dimension : int) (is_stable : bool)
     | Some (Some d) -> d
     | _ -> 0
   in
-  let aligned = List.map2 (align_to axis_size dst) vals bdims in
+  let prototype =
+    List.find_map
+      (fun (v, b) -> if b <> None then Some (Core.get_aval v).shape else None)
+      (List.combine vals bdims)
+    |> Option.get
+  in
+  let aligned =
+    List.map2
+      (fun v b ->
+        match b with
+        | Some s -> moveaxis s dst v
+        | None ->
+            let dims =
+              List.filter
+                (fun i -> i <> dst)
+                (List.init (Array.length prototype) Fun.id)
+            in
+            b1
+              (Broadcast_in_dim { shape = prototype; dims = Array.of_list dims })
+              [ v ])
+      vals bdims
+  in
   let new_dimension = if dst <= dimension then dimension + 1 else dimension in
   let outs =
     Core.bind (Sort { dimension = new_dimension; is_stable; num_keys }) aligned
@@ -973,6 +1176,9 @@ let vmap ?axis_name (f : value list -> value list) (in_axes : int option list) :
     value list -> value list =
  fun args -> vmap_flat ?axis_name f in_axes args
 
+let take_on_axis : (value -> int array -> int -> value) ref =
+  ref (fun _ _ _ -> failwith "batching: take not installed")
+
 let collective_batch trace axis_size kind axis_name vals bdims =
   let bound =
     List.exists
@@ -987,8 +1193,134 @@ let collective_batch trace axis_size kind axis_name vals bdims =
             [],
           Some 0 )
       else (b1 (Collective { kind; axis_name }) [], None)
+  | All_to_all { split_axis; concat_axis; size }, [ v ], [ Some d ]
+    when not bound ->
+      ( b1
+          (Collective
+             {
+               kind =
+                 All_to_all
+                   {
+                     split_axis = (split_axis + if d <= split_axis then 1 else 0);
+                     concat_axis =
+                       (concat_axis + if d <= concat_axis then 1 else 0);
+                     size;
+                   };
+               axis_name;
+             })
+          [ v ],
+        Some d )
+  | Reduce_scatter { scatter_dimension; size; tiled }, [ v ], [ Some d ]
+    when not bound ->
+      let before = d <= scatter_dimension in
+      ( b1
+          (Collective
+             {
+               kind =
+                 Reduce_scatter
+                   {
+                     scatter_dimension =
+                       (scatter_dimension + if before then 1 else 0);
+                     size;
+                     tiled;
+                   };
+               axis_name;
+             })
+          [ v ],
+        Some (if before || tiled then d else d + 1) )
   | _, [ v ], [ b ] when not bound ->
       (b1 (Collective { kind; axis_name }) [ v ], b)
+  | All_to_all { split_axis; concat_axis; _ }, [ v ], [ b ] ->
+      let v, d =
+        match b with
+        | Some d -> (v, d)
+        | None ->
+            let a = Core.get_aval v in
+            ( b1
+                (Broadcast_in_dim
+                   {
+                     shape = insert_size a.shape 0 axis_size;
+                     dims = Array.init (Array.length a.shape) (fun i -> i + 1);
+                   })
+                [ v ],
+              0 )
+      in
+      let shape_of x = (Core.get_aval x).shape in
+      let splitaxis axis x =
+        let s = shape_of x in
+        b1
+          (Reshape
+             (Array.concat
+                [
+                  Array.sub s 0 axis;
+                  [| axis_size; s.(axis) / axis_size |];
+                  Array.sub s (axis + 1) (Array.length s - axis - 1);
+                ]))
+          [ x ]
+      in
+      let foldaxis axis x =
+        let s = shape_of x in
+        b1
+          (Reshape
+             (Array.concat
+                [
+                  Array.sub s 0 axis;
+                  [| s.(axis) * s.(axis + 1) |];
+                  Array.sub s (axis + 2) (Array.length s - axis - 2);
+                ]))
+          [ x ]
+      in
+      let move src dst x =
+        let n = Array.length (shape_of x) in
+        let rest = List.filter (fun i -> i <> src) (List.init n Fun.id) in
+        let perm =
+          List.filteri (fun i _ -> i < dst) rest
+          @ (src :: List.filteri (fun i _ -> i >= dst) rest)
+        in
+        b1 (Transpose (Array.of_list perm)) [ x ]
+      in
+      if split_axis = concat_axis then begin
+        let axis = split_axis + if d <= split_axis then 1 else 0 in
+        let split = splitaxis axis v in
+        let d2 = d + if axis <= d then 1 else 0 in
+        let n = Array.length (shape_of split) in
+        let perm = Array.init n Fun.id in
+        perm.(d2) <- axis;
+        perm.(axis) <- d2;
+        (foldaxis axis (b1 (Transpose perm) [ split ]), Some d)
+      end
+      else
+        let concat = foldaxis concat_axis (move d concat_axis v) in
+        (splitaxis split_axis concat, Some split_axis)
+  | Reduce_scatter { scatter_dimension; tiled; _ }, [ v ], [ b ] ->
+      let y =
+        match b with
+        | None ->
+            let a = Core.get_aval v in
+            b1 Mul
+              [
+                v;
+                Concrete
+                  (Ndarray.of_floats a.dtype [||] [| float_of_int axis_size |]);
+              ]
+        | Some d -> b1 (Reduce_sum [| d |]) [ v ]
+      in
+      let y =
+        if tiled then
+          let s = (Core.get_aval y).shape in
+          b1
+            (Reshape
+               (Array.concat
+                  [
+                    Array.sub s 0 scatter_dimension;
+                    [| axis_size; s.(scatter_dimension) / axis_size |];
+                    Array.sub s (scatter_dimension + 1)
+                      (Array.length s - scatter_dimension - 1);
+                  ]))
+            [ y ]
+        else y
+      in
+      (y, Some scatter_dimension)
   | Psum, [ v ], [ Some d ] -> (b1 (Reduce_sum [| d |]) [ v ], None)
   | Psum, [ v ], [ None ] ->
       let a = Core.get_aval v in
@@ -1007,13 +1339,11 @@ let collective_batch trace axis_size kind axis_name vals bdims =
   | Pbroadcast source, [ v ], [ Some d ] ->
       (List.nth (Core.bind (Unstack d) [ v ]) source, None)
   | Pbroadcast _, [ v ], [ None ] -> (v, None)
-  | Ppermute pairs, [ v ], [ b ] ->
-      let moved = move_batch_axis axis_size b 0 v in
-      let rows = Array.of_list (Core.bind (Unstack 0) [ moved ]) in
-      let zero = Ad_util.zeros_like_aval (Core.get_aval rows.(0)) in
-      let out = Array.make axis_size zero in
-      Array.iter (fun (src, dst) -> out.(dst) <- rows.(src)) pairs;
-      (b1 (Stack 0) (Array.to_list out), Some 0)
+  | Ppermute _, [ v ], [ None ] -> (v, None)
+  | Ppermute pairs, [ v ], [ Some d ] ->
+      let indices = Array.make axis_size 0 in
+      Array.iter (fun (src, dst) -> indices.(dst) <- src) pairs;
+      (!take_on_axis v indices d, Some d)
   | _ -> failwith "batching: collective arity"
 
 let stop_gradient_rule =
@@ -1221,16 +1551,11 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
 let unstacks_operands prim (bdims : int option list) =
   let any_batched = List.exists (fun b -> b <> None) in
   match (prim, bdims) with
-  | Triangular_solve _, [ None; _ ] -> false
   | Custom_linear_solve _, _ -> false
-  | ( ( Conv_general_dilated _ | Reduce_window _ | Reduce_window_max _
-      | Reduce_window_min _ | Reduce_window_sum _ | Select_and_gather_add _
-      | Select_and_scatter _ | Select_and_scatter_add _ | Threefry2x32
+  | ( ( Reduce_window _ | Select_and_scatter _ | Threefry2x32
       | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-      | Random_bits _ | Random_wrap | Random_unwrap | While _ | Cholesky
-      | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-      | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
-      | Schur _ | Svd _ | Tridiagonal _ | Rng_bit_generator _ ),
+      | Random_bits _ | Random_wrap | Random_unwrap | While _
+      | Rng_bit_generator _ ),
       _ ) ->
       true
   | Custom_vjp_call id, _ -> (
@@ -1766,7 +2091,32 @@ let triangular_solve_batch prim vals bdims =
       let out = b1 prim [ x; b1 (Reshape flat) [ y ] ] in
       (b1 (Reshape s) [ out ], Some (if left_side then n - 1 else n - 2))
   | _, [ x; y ], [ None; None ] -> (b1 prim [ x; y ], None)
+  | _, [ x; y ], [ bx; by ] ->
+      let size = (Core.get_aval x).shape.(Option.get bx) in
+      let x = bdim_at_front size x bx in
+      let y = bdim_at_front size y by in
+      (b1 prim [ x; y ], Some 0)
   | _ -> failwith "batching: triangular_solve arity"
+
+let tridiagonal_solve_batch axis_size prim vals bdims =
+  match (vals, bdims) with
+  | [ dl; d; du; b ], [ None; None; None; None ] ->
+      (b1 prim [ dl; d; du; b ], None)
+  | [ dl; d; du; b ], [ None; None; None; Some bb ] ->
+      let n = Array.length (Core.get_aval b).shape in
+      let b = moveaxis bb (n - 2) b in
+      let s = (Core.get_aval b).shape in
+      let flat =
+        Array.append
+          (Array.sub s 0 (n - 3))
+          [| s.(n - 3); s.(n - 2) * s.(n - 1) |]
+      in
+      let out = b1 prim [ dl; d; du; b1 (Reshape flat) [ b ] ] in
+      (b1 (Reshape s) [ out ], Some (n - 2))
+  | [ dl; d; du; b ], [ a0; a1; a2; a3 ] ->
+      let front = bdim_at_front axis_size in
+      (b1 prim [ front dl a0; front d a1; front du a2; front b a3 ], Some 0)
+  | _ -> failwith "batching: tridiagonal_solve arity"
 
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
@@ -1797,10 +2147,29 @@ let batch_process_primitive (trace : trace) (prim : primitive)
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
         (custom_linear_solve_batch axis_size solve transpose_solve num_consts
            vals bdims)
-  | Triangular_solve _ when not (unstacks_operands prim bdims) ->
+  | Triangular_solve _ ->
       let out, b = triangular_solve_batch prim vals bdims in
       [ Tracer (new_batch_tracer trace out b) ]
-  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ ->
+  | Tridiagonal_solve _ ->
+      let out, b = tridiagonal_solve_batch axis_size prim vals bdims in
+      [ Tracer (new_batch_tracer trace out b) ]
+  | Conv_general_dilated _ ->
+      let out, b = conv_batch prim vals bdims in
+      [ Tracer (new_batch_tracer trace out b) ]
+  | Reduce_window_max _ | Reduce_window_min _ | Reduce_window_sum _
+  | Select_and_gather_add _ | Select_and_scatter_add _ ->
+      let out, b = window_batch axis_size prim vals bdims in
+      [ Tracer (new_batch_tracer trace out b) ]
+  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Cholesky | Householder_product | Lu
+  | Lu_pivots_to_permutation _ | Qr _ | Eig _ | Eigh _ | Hessenberg | Schur _
+  | Svd _ | Tridiagonal _
+    when List.for_all (fun b -> b = None) bdims ->
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o None))
+        (Core.bind prim vals)
+  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Cholesky | Householder_product | Lu
+  | Lu_pivots_to_permutation _ | Qr _ | Eig _ | Eigh _ | Hessenberg | Schur _
+  | Svd _ | Tridiagonal _ ->
       let args = List.map2 (bdim_at_front axis_size) vals bdims in
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

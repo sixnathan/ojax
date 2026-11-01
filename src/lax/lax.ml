@@ -1317,6 +1317,8 @@ let rec impl_base prim inputs =
           if Ndarray.weak a then Ndarray.as_weak r else r)
         inputs
   | Reshape ns -> un (reshape_impl ns) inputs
+  | Reshape_perm { new_sizes; dimensions } ->
+      un (fun a -> reshape_impl new_sizes (transpose_impl dimensions a)) inputs
   | Reduce_sum axes ->
       un
         (fun a ->
@@ -1927,10 +1929,10 @@ let wide_int_join dtype hi lo =
            (Int64.of_float (Ndarray.get_f lo idx))))
 
 let structural_only = function
-  | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Checkpoint_name _
-  | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _
-  | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _ | Dynamic_update_slice
-  | Gather _ | Scatter _ ->
+  | Select_n | Broadcast_in_dim _ | Reshape _ | Reshape_perm _ | Copy
+  | Checkpoint_name _ | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _
+  | Stack _ | Tile _ | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _
+  | Dynamic_update_slice | Gather _ | Scatter _ ->
       true
   | _ -> false
 
@@ -2068,12 +2070,12 @@ let wide_int_by_parts prim inputs =
   List.map2 (wide_int_join dt) his los
 
 let acts_on_parts = function
-  | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Checkpoint_name _
-  | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _
-  | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _ | Dynamic_update_slice
-  | Gather _ | Scatter _ | Reduce_sum _ | Cumsum _ | Neg | Add | Add_any | Sub
-  | Scatter_add _ | Scatter_sub _ | Reduce_window_sum _ | Round
-  | Round_nearest_even ->
+  | Select_n | Broadcast_in_dim _ | Reshape _ | Reshape_perm _ | Copy
+  | Checkpoint_name _ | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _
+  | Stack _ | Tile _ | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _
+  | Dynamic_update_slice | Gather _ | Scatter _ | Reduce_sum _ | Cumsum _ | Neg
+  | Add | Add_any | Sub | Scatter_add _ | Scatter_sub _ | Reduce_window_sum _
+  | Round | Round_nearest_even ->
       true
   | _ -> false
 
@@ -2506,6 +2508,8 @@ let abstract_eval prim avals =
   | Broadcast_in_dim { shape; _ } ->
       un_aval (fun a -> shaped shape a.dtype a.weak_type) avals
   | Reshape ns -> un_aval (fun a -> shaped ns a.dtype a.weak_type) avals
+  | Reshape_perm { new_sizes; _ } ->
+      un_aval (fun a -> shaped new_sizes a.dtype a.weak_type) avals
   | Reduce_sum axes ->
       un_aval
         (fun a -> shaped (Utils.reduce_shape a.shape axes) a.dtype a.weak_type)
@@ -2779,6 +2783,20 @@ let abstract_eval prim avals =
   | Collective { kind; _ } -> (
       match (kind, avals) with
       | (Psum | Pmax | Pmin | Pbroadcast _ | Ppermute _), [ a ] -> [ a ]
+      | All_to_all { split_axis; concat_axis; size }, [ a ] ->
+          let shape = Array.copy a.shape in
+          shape.(split_axis) <- shape.(split_axis) / size;
+          shape.(concat_axis) <- shape.(concat_axis) * size;
+          [ { a with shape } ]
+      | Reduce_scatter { scatter_dimension; size; tiled }, [ a ] ->
+          let shape =
+            if tiled then
+              Array.mapi
+                (fun i d -> if i = scatter_dimension then d / size else d)
+                a.shape
+            else Utils.squeeze_shape [| scatter_dimension |] a.shape
+          in
+          [ { a with shape } ]
       | All_gather { axis; size }, [ a ] ->
           let n = Array.length a.shape in
           let shape =

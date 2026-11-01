@@ -62,8 +62,44 @@ let tiled_all_to_all x ~axis_name ~split_axis ~concat_axis =
   in
   L.concatenate pieces concat_axis
 
+let on_vmap_axis axis_name =
+  match B.find_axis axis_name with
+  | _ -> true
+  | exception Invalid_argument _ -> false
+
 let all_to_all ?(tiled = false) x ~axis_name ~split_axis ~concat_axis =
-  if tiled then tiled_all_to_all x ~axis_name ~split_axis ~concat_axis
+  if on_vmap_axis axis_name then begin
+    let size = axis_size ~axis_name in
+    let sh = (Core.get_aval x).shape in
+    let bind x split_axis concat_axis =
+      collective (All_to_all { split_axis; concat_axis; size }) axis_name x
+    in
+    if tiled then begin
+      if sh.(split_axis) mod size <> 0 then
+        invalid_arg
+          (Printf.sprintf
+             "The size of all_to_all split_axis (%d) has to be divisible by \
+              the size of the named axis %s (%d)"
+             sh.(split_axis) axis_name size);
+      bind x split_axis concat_axis
+    end
+    else begin
+      if size <> sh.(split_axis) then
+        invalid_arg
+          (Printf.sprintf
+             "all_to_all requires the size of the mapped axis axis_name to \
+              equal x.shape[split_axis], but they are %d and %d respectively."
+             size sh.(split_axis));
+      if split_axis = concat_axis then bind x split_axis concat_axis
+      else
+        let concat, split =
+          if split_axis < concat_axis then (concat_axis + 1, split_axis)
+          else (concat_axis, split_axis + 1)
+        in
+        L.squeeze (bind (L.expand_dims x [| concat |]) split concat) [| split |]
+    end
+  end
+  else if tiled then tiled_all_to_all x ~axis_name ~split_axis ~concat_axis
   else begin
     let n = axis_size ~axis_name in
     let sh = (Core.get_aval x).shape in
@@ -93,26 +129,37 @@ let pswapaxes x ~axis_name ~axis =
 let psum_scatter ?(scatter_dimension = 0) ?(tiled = false) x ~axis_name =
   let n = axis_size ~axis_name in
   let sh = (Core.get_aval x).shape in
-  let summed = psum x ~axis_name in
-  let me = axis_index ~axis_name in
-  if tiled then begin
-    if sh.(scatter_dimension) mod n <> 0 then
-      invalid_arg "psum_scatter: scatter_dimension must divide by the axis size";
-    let size = sh.(scatter_dimension) / n in
-    let start =
-      L.mul me (L.full [||] (float_of_int size) (Core.get_aval me).dtype)
-    in
-    chunk_of summed ~axis:scatter_dimension ~index:start ~size
-  end
-  else begin
-    if sh.(scatter_dimension) <> n then
-      invalid_arg
-        "psum_scatter: scatter_dimension must equal the axis size when not \
-         tiled";
-    L.squeeze
-      (chunk_of summed ~axis:scatter_dimension ~index:me ~size:1)
-      [| scatter_dimension |]
-  end
+  if
+    on_vmap_axis axis_name
+    &&
+    if tiled then sh.(scatter_dimension) mod n = 0
+    else sh.(scatter_dimension) = n
+  then
+    collective
+      (Reduce_scatter { scatter_dimension; size = n; tiled })
+      axis_name x
+  else
+    let summed = psum x ~axis_name in
+    let me = axis_index ~axis_name in
+    if tiled then begin
+      if sh.(scatter_dimension) mod n <> 0 then
+        invalid_arg
+          "psum_scatter: scatter_dimension must divide by the axis size";
+      let size = sh.(scatter_dimension) / n in
+      let start =
+        L.mul me (L.full [||] (float_of_int size) (Core.get_aval me).dtype)
+      in
+      chunk_of summed ~axis:scatter_dimension ~index:start ~size
+    end
+    else begin
+      if sh.(scatter_dimension) <> n then
+        invalid_arg
+          "psum_scatter: scatter_dimension must equal the axis size when not \
+           tiled";
+      L.squeeze
+        (chunk_of summed ~axis:scatter_dimension ~index:me ~size:1)
+        [| scatter_dimension |]
+    end
 
 let pshuffle x ~axis_name ~perm =
   let sorted = List.sort compare perm in

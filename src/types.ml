@@ -71,6 +71,7 @@ and primitive =
   | Convert_element_type of Dtype.t
   | Broadcast_in_dim of { shape : int array; dims : int array }
   | Reshape of int array
+  | Reshape_perm of { new_sizes : int array; dimensions : int array }
   | Reduce_sum of int array
   | Dot_general of dot_dims
   | Acos
@@ -351,6 +352,8 @@ and collective_kind =
   | Axis_index
   | Pbroadcast of int
   | Ppermute of (int * int) array
+  | All_to_all of { split_axis : int; concat_axis : int; size : int }
+  | Reduce_scatter of { scatter_dimension : int; size : int; tiled : bool }
 
 and fft_kind = Fft_forward | Fft_inverse | Fft_real | Fft_inverse_real
 and var = { vid : int; vaval : aval }

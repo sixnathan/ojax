@@ -2044,63 +2044,86 @@ let rec jvp_pairs prim primals tangents =
       let tcarry, r = split2 r (List.length init_dot) in
       let pys, tys = split2 r (List.length !ys_nz) in
       (pcarry @ pys, restore carry_nz pcarry tcarry @ restore !ys_nz pys tys)
-  | While { cond_nconsts; body_nconsts; cond; body }
-    when cond_nconsts + body_nconsts > 0 ->
-      let n = cond_nconsts + body_nconsts in
-      let cond, body =
-        Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body
-          (List.map Core.get_aval primals)
-      in
-      let drop = List.filteri (fun i _ -> i >= n) in
-      let p, t =
-        jvp_pairs
-          (While { cond_nconsts = 0; body_nconsts = 0; cond; body })
-          primals tangents
-      in
-      (drop p, drop t)
-  | While { cond; body; _ } ->
+  | While { cond_nconsts; body_nconsts; cond; body } ->
       let split2 l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
-      let nc = List.length primals in
-      let carry_avals = List.map Core.get_aval primals in
-      let trace_body carry_zero observed =
-        Jaxpr.make_jaxpr (carry_avals @ carry_avals) (fun args ->
-            let pc, tc = split2 args nc in
+      let keep flags l =
+        List.concat (List.map2 (fun f v -> if f then [ v ] else []) flags l)
+      in
+      let restore flags ps ts =
+        let rest = ref ts in
+        List.map2
+          (fun f p ->
+            if f then
+              begin match !rest with
+              | t :: tl ->
+                  rest := tl;
+                  t
+              | [] -> arity ()
+              end
+            else p2tz p)
+          flags ps
+      in
+      let nz l = List.map (fun t -> not (is_zero t)) l in
+      let cconst, r = split2 primals cond_nconsts in
+      let bconst, init = split2 r body_nconsts in
+      let _, r = split2 tangents cond_nconsts in
+      let bconst_t, init_t = split2 r body_nconsts in
+      let bconst_nz = nz bconst_t in
+      let bconst_avals = List.map Core.get_aval bconst in
+      let carry_avals = List.map Core.get_aval init in
+      let n_carry = List.length init in
+      let trace_body carry_nz observed =
+        Jaxpr.make_jaxpr
+          (bconst_avals
+          @ keep bconst_nz bconst_avals
+          @ carry_avals @ keep carry_nz carry_avals)
+          (fun args ->
+            let pb, r = split2 args body_nconsts in
+            let tb, r = split2 r (List.length (keep bconst_nz bconst_avals)) in
+            let pc, tc = split2 r n_carry in
             let po, to_ =
               jvp
                 (fun a -> Jaxpr.eval_closed_jaxpr body a)
-                pc
-                (restore_symbolic_zeros carry_zero tc)
+                (pb @ pc)
+                (restore bconst_nz pb tb @ restore carry_nz pc tc)
             in
-            observed :=
-              List.map2
-                (fun z t -> z && Ad_util.is_symbolic_zero t)
-                carry_zero to_;
-            po @ to_)
+            observed := List.map2 ( || ) carry_nz (nz to_);
+            po @ keep carry_nz (List.map instantiate_traced to_))
       in
-      let carry_zero, new_body =
-        carry_zero_fixpoint trace_body
-          (List.map Ad_util.is_symbolic_zero tangents)
-      in
+      let carry_nz, new_body = carry_zero_fixpoint trace_body (nz init_t) in
+      let init_dot = keep carry_nz (List.map instantiate_traced init_t) in
+      let bconst_dot = keep bconst_nz bconst_t in
       let new_cond =
-        Jaxpr.make_jaxpr (carry_avals @ carry_avals) (fun args ->
-            let pc, _ = split2 args nc in
-            Jaxpr.eval_closed_jaxpr cond pc)
+        {
+          cond with
+          jid = Core.fresh_id ();
+          jaxpr =
+            {
+              cond.jaxpr with
+              in_binders =
+                cond.jaxpr.in_binders
+                @ List.map
+                    (fun v ->
+                      { vid = Core.fresh_id (); vaval = Core.get_aval v })
+                    init_dot;
+            };
+        }
       in
       let out =
         Core.bind
           (While
              {
-               cond_nconsts = 0;
-               body_nconsts = 0;
+               cond_nconsts;
+               body_nconsts = body_nconsts + List.length bconst_dot;
                cond = new_cond;
                body = new_body;
              })
-          (primals @ tangents)
+          (cconst @ bconst @ bconst_dot @ init @ init_dot)
       in
-      let pcarry, tcarry = split2 out nc in
-      (pcarry, restore_symbolic_zeros carry_zero tcarry)
+      let pcarry, tcarry = split2 out n_carry in
+      (pcarry, restore carry_nz pcarry tcarry)
   | Cond { branches; platforms } -> (
       match (primals, tangents) with
       | pred :: prim_ops, _ :: tan_ops ->

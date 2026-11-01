@@ -1152,7 +1152,8 @@ let pad_body ?(mode = "constant") ?stat_length ?end_values
 let pad_key mode pad_width stat_length end_values reflect_type =
   Digest.to_hex
     (Digest.string
-       (Marshal.to_string (mode, pad_width, stat_length, end_values, reflect_type)
+       (Marshal.to_string
+          (mode, pad_width, stat_length, end_values, reflect_type)
           []))
 
 let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
@@ -1172,7 +1173,9 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
       (function
         | [ v; cval ] ->
             let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
-            let cval = C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v) in
+            let cval =
+              C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v)
+            in
             bind1 (T.Pad cfg) [ v; cval ]
         | _ -> invalid_arg "pad: arity")
       [ v; literal ]
@@ -1223,10 +1226,7 @@ let arange ?(start = 0.0) ?step ~dtype stop =
       in
       convert
         (bind1 T.Add
-           [
-             scalar working start;
-             bind1 T.Mul [ scalar working step; idx ];
-           ])
+           [ scalar working start; bind1 T.Mul [ scalar working step; idx ] ])
         dtype
   | None ->
       let size = max 0 (int_of_float (ceil (stop -. start))) in
@@ -1238,8 +1238,12 @@ let arange ?(start = 0.0) ?step ~dtype stop =
 let eye ?m ?(k = 0) ~dtype n =
   let m = Option.value m ~default:n in
   let idt = Dtypes.default_int_dtype () in
-  let i = bind1 (T.Iota { dtype = idt; shape = [| n; m |]; dimension = 0 }) [] in
-  let j = bind1 (T.Iota { dtype = idt; shape = [| n; m |]; dimension = 1 }) [] in
+  let i =
+    bind1 (T.Iota { dtype = idt; shape = [| n; m |]; dimension = 0 }) []
+  in
+  let j =
+    bind1 (T.Iota { dtype = idt; shape = [| n; m |]; dimension = 1 }) []
+  in
   let ik = bind1 T.Add [ i; C.splat idt [||] (float_of_int k) ] in
   convert (bind1 T.Eq [ ik; j ]) dtype
 

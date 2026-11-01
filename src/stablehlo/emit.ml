@@ -2720,7 +2720,9 @@ and scan_unrolled ~length ~reverse ~num_carry ~num_hoisted ~unroll
         | [] -> invalid_arg "Stablehlo.Emit: scan state"
       end
     in
-    let carry, ys = if remainder > 0 then inner remainder carry xs_rem else (carry, []) in
+    let carry, ys =
+      if remainder > 0 then inner remainder carry xs_rem else (carry, [])
+    in
     carry @ consts @ ys
   end
 

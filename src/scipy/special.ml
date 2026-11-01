@@ -1553,7 +1553,7 @@ let log_ndtr_asymptotic_series x series_order =
 let log_ndtr_lower x series_order =
   let x2 = L.square x in
   let log_scale =
-    (neg_ (scalar_of x 0.5) *! x2)
+    (scalar_of x (-0.5) *! x2)
     -! L.log (neg_ x)
     -! scalar_of x (0.5 *. log (2.0 *. Float.pi))
   in

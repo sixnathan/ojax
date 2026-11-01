@@ -189,7 +189,9 @@ let seed_wide_dtype dt =
 let seed_words seed =
   let a = Core.get_aval seed in
   let convert v = b1 (Convert_element_type u32) [ v ] in
-  let high = convert (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ]) in
+  let high =
+    convert (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ])
+  in
   let wide = seed_wide_dtype a.dtype in
   let widened =
     if wide = a.dtype then seed else b1 (Convert_element_type wide) [ seed ]
@@ -204,7 +206,9 @@ let random_seed seed =
       b1 (Broadcast_in_dim { shape = [| 1 |]; dims = [||] }) [ v ]
     in
     let word v = expand (b1 (Convert_element_type u32) [ v ]) in
-    let high = word (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ]) in
+    let high =
+      word (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ])
+    in
     let wide = seed_wide_dtype a.dtype in
     let widened =
       if wide = a.dtype then seed else b1 (Convert_element_type wide) [ seed ]

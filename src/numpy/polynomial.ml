@@ -111,8 +111,7 @@ let polyint ?(m = 1) ?k p =
     in
     let grid = UF.subtract grid_a grid_b in
     let coeff =
-      bind1
-        (T.Rev [| 0 |])
+      bind1 (T.Rev [| 0 |])
         [ R.prod ~axis:[| 0 |] (UF.maximum (scalar dt 1.0) grid) ]
     in
     UF.true_divide (NL.concatenate [ p; k ]) coeff

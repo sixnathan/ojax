@@ -210,7 +210,7 @@ let dft ?scale ?dtype:requested n =
       let factor =
         Concrete
           (Ndarray.of_complex dt [||]
-             [| { Complex.re = -0.0; im = -2.0 *. pi } |])
+             [| { Complex.re = 0.0; im = -2.0 *. pi } |])
       in
       let scaled = b1 Mul [ factor; i ] in
       let j = row a in

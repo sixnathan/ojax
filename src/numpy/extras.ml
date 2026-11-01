@@ -813,23 +813,23 @@ let gradient ?spacing ?axis a =
           | _ -> invalid_arg "gradient: arity")
         [ a ]
   | Some spacing ->
-  Jnp_util.jit "gradient" ~key
-    (function
-      | [ a; spacing ] ->
-          let aval v = Core.get_aval v in
-          let dt, is_weak =
-            Dtypes.result_type
-              [
-                ((aval a).dtype, (aval a).weak_type);
-                ((aval spacing).dtype, (aval spacing).weak_type);
-              ]
-          in
-          let target = Dtypes.to_inexact_dtype dt in
-          let a = Core.convert_like ~weak:is_weak a target in
-          let h = Core.convert_like ~weak:is_weak spacing target in
-          List.map (fun ax -> gradient_along_axis a h ax) axes
-      | _ -> invalid_arg "gradient: arity")
-    [ a; Jnp_util.py_float spacing ]
+      Jnp_util.jit "gradient" ~key
+        (function
+          | [ a; spacing ] ->
+              let aval v = Core.get_aval v in
+              let dt, is_weak =
+                Dtypes.result_type
+                  [
+                    ((aval a).dtype, (aval a).weak_type);
+                    ((aval spacing).dtype, (aval spacing).weak_type);
+                  ]
+              in
+              let target = Dtypes.to_inexact_dtype dt in
+              let a = Core.convert_like ~weak:is_weak a target in
+              let h = Core.convert_like ~weak:is_weak spacing target in
+              List.map (fun ax -> gradient_along_axis a h ax) axes
+          | _ -> invalid_arg "gradient: arity")
+        [ a; Jnp_util.py_float spacing ]
 
 let choose ?(mode = "raise") a choices =
   let idx =

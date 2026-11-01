@@ -104,7 +104,10 @@ let fftconvolve_unbatched in1 in2 mode =
   let start = Array.map2 (fun f o -> (f - o) / 2) full_shape out_shape in
   let index i =
     Concrete
-      (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
+      (Ndarray.of_floats
+         (Dtypes.default_int_dtype ())
+         [||]
+         [| float_of_int i |])
   in
   b1
     (Dynamic_slice { slice_sizes = out_shape })

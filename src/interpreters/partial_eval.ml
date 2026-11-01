@@ -297,8 +297,8 @@ let split_at l n =
 
 let select flags l = List.filteri (fun i _ -> List.nth flags i) l
 
-let scan_partial_eval trace ~length ~reverse ~num_carry ~unroll (body : closed_jaxpr)
-    (tracers : tracer list) : value list =
+let scan_partial_eval trace ~length ~reverse ~num_carry ~unroll
+    (body : closed_jaxpr) (tracers : tracer list) : value list =
   let carry, xs = split_at tracers num_carry in
   let unk (t : tracer) = is_unknown (pe_pval t) in
   let xs_unk = List.map unk xs in

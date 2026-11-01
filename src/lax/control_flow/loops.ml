@@ -178,8 +178,9 @@ let cumred_impl ~axis ~reverse ~combine (nd : Ndarray.t) : Ndarray.t =
   done;
   out
 
-let rec scan ?length ?(reverse = false) ?(unroll = 1) (body : value list -> value list)
-    (init : value list) (xs : value list) : value list =
+let rec scan ?length ?(reverse = false) ?(unroll = 1)
+    (body : value list -> value list) (init : value list) (xs : value list) :
+    value list =
   let num_carry = List.length init in
   let length =
     match (length, xs) with
@@ -203,7 +204,9 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1) (body : value list -> valu
       next @ Ref_state.contents cells @ ys
     in
     let outs =
-      scan ~length ~reverse ~unroll stateful (init @ List.map Ref_state.read cells) xs
+      scan ~length ~reverse ~unroll stateful
+        (init @ List.map Ref_state.read cells)
+        xs
     in
     let carry, rest = split_at outs num_carry in
     let finals, ys = split_at rest n_state in

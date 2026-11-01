@@ -8,51 +8,56 @@ type range = Step of float * float * float | Count of float * float * int
 let default_float () = if Config.x64_enabled () then D.F64 else D.F32
 let default_int () = if Config.x64_enabled () then D.I64 else D.I32
 
-let all_integral ranges =
-  List.for_all
-    (function
-      | Count _ -> false
-      | Step (a, b, c) ->
-          Float.is_integer a && Float.is_integer b && Float.is_integer c)
-    ranges
+let is_integral_range = function
+  | Count _ -> false
+  | Step (a, b, c) ->
+      Float.is_integer a && Float.is_integer b && Float.is_integer c
 
-let axis_values dt = function
-  | Step (start, stop, step) ->
-      let n =
-        Stdlib.max 0 (int_of_float (Float.ceil ((stop -. start) /. step)))
+let promote_grids arrays =
+  match arrays with
+  | [] -> []
+  | first :: rest ->
+      let dt =
+        List.fold_left
+          (fun acc v -> Dtypes.promote_types acc (Core.get_aval v).T.dtype)
+          (Core.get_aval first).T.dtype rest
       in
-      T.Concrete
-        (Nd.of_floats dt [| n |]
-           (Array.init n (fun i -> start +. (float_of_int i *. step))))
+      List.map (fun v -> NL.astype v dt) arrays
+
+let literal x =
+  if Float.is_integer x then Jnp_util.py_int (int_of_float x)
+  else Jnp_util.py_float x
+
+let axis_values = function
+  | Step (start, stop, step) as r ->
+      let dtype =
+        if is_integral_range r then default_int () else default_float ()
+      in
+      NL.arange ~start ~step ~dtype stop
   | Count (start, stop, n) ->
-      let gap =
-        if n > 1 then (stop -. start) /. float_of_int (n - 1) else 0.0
-      in
-      T.Concrete
-        (Nd.of_floats dt [| n |]
-           (Array.init n (fun i -> start +. (float_of_int i *. gap))))
-
-let range_dtype ranges =
-  if all_integral ranges then default_int () else default_float ()
+      Array_creation.linspace_v ~num:n (literal start) (literal stop)
 
 let mgrid ranges =
-  let dt = range_dtype ranges in
   match ranges with
-  | [] -> T.Concrete (Nd.of_floats dt [| 0 |] [||])
-  | [ only ] -> axis_values dt only
+  | [] -> T.Concrete (Nd.of_floats (default_int ()) [| 0 |] [||])
+  | [ only ] -> axis_values only
   | _ ->
-      let axes = List.map (axis_values dt) ranges in
+      let axes = promote_grids (List.map axis_values ranges) in
       NL.stack (NL.meshgrid ~indexing:"ij" axes)
 
 let ogrid ranges =
-  let dt = range_dtype ranges in
   let rank = List.length ranges in
   List.mapi
-    (fun i r ->
-      let v = axis_values dt r in
+    (fun i v ->
       let n = (Core.get_aval v).T.shape.(0) in
-      NL.reshape v (Array.init rank (fun d -> if d = i then n else 1)))
-    ranges
+      Core.bind1
+        (T.Broadcast_in_dim
+           {
+             shape = Array.init rank (fun d -> if d = i then n else 1);
+             dims = [| i |];
+           })
+        [ v ])
+    (promote_grids (List.map axis_values ranges))
 
 let promote_all arrays =
   let dt =

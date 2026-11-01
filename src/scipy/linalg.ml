@@ -271,6 +271,117 @@ let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
   let r = NL.triu (Lax_api.slice h starts limits) in
   match perm with None -> [ cq; r ] | Some p -> [ cq; r; p ]
 
+let rsf2csf_2d t z =
+  let module L = Lax_api in
+  let widest =
+    dtype t = D.F64
+    || dtype z = D.F64
+    || dtype t = D.Complex128
+    || dtype z = D.Complex128
+  in
+  let cdt = if widest then D.Complex128 else D.Complex64 in
+  let t = NL.astype t cdt and z = NL.astype z cdt in
+  let rdt = if widest then D.F64 else D.F32 in
+  let eps = if widest then epsilon_float else 1.1920928955078125e-07 in
+  let n = (shape t).(0) in
+  if n = 1 then (t, z)
+  else
+    let index v =
+      T.Concrete
+        (Ndarray.as_weak
+           (Nd.of_floats
+              (Dtypes.default_int_dtype ())
+              [||]
+              [| float_of_int v |]))
+    in
+    let pred m = L.sub m (index 1) in
+    let update m t z =
+      let start_row = pred m in
+      let start_col = pred m in
+      let vals = LN.eigvals (L.dynamic_slice t [ start_row; start_col ] [| 2; 2 |]) in
+      let mu = UF.subtract vals (IDX.dynamic_at2 t m m) in
+      let first () =
+        C.bind1
+          (T.Squeeze [| 0 |])
+          [
+            C.bind1
+              (T.Slice
+                 {
+                   start_indices = [| 0 |];
+                   limit_indices = [| 1 |];
+                   strides = None;
+                 })
+              [ mu ];
+          ]
+      in
+      let array_of a b =
+        let a = L.broadcast_in_dim a [| 1 |] [||] in
+        let b = L.broadcast_in_dim b [| 1 |] [||] in
+        L.concatenate [ a; b ] 0
+      in
+      let mu0 = first () in
+      let sub = IDX.dynamic_at2 t m (pred m) in
+      let pair = array_of mu0 sub in
+      let r = NL.astype (LN.norm pair) cdt in
+      let c = UF.divide (first ()) r in
+      let s = UF.divide (IDX.dynamic_at2 t m (pred m)) r in
+      let c_conj = UF.conj c in
+      let s_neg = UF.negative s in
+      let row v = L.broadcast_in_dim v [| 1; 2 |] [| 1 |] in
+      let row0 = row (array_of c_conj s) in
+      let row1 = row (array_of s_neg c) in
+      let g = L.concatenate [ row0; row1 ] 0 in
+      let g_h () = L.transpose (UF.conj g) [| 1; 0 |] in
+      let zero = Numpy.Jnp_util.py_int 0 in
+      let rows = L.dynamic_slice_in_dim ~axis:0 t (pred m) 2 in
+      let col_mask = UF.greater_equal (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n)) (pred m) in
+      let masked = NL.where_ col_mask rows zero in
+      let g_dot = L.dot_typed g masked in
+      let rows_new = NL.where_ (UF.logical_not col_mask) rows g_dot in
+      let t = L.dynamic_update_slice_in_dim ~axis:0 t rows_new (pred m) in
+      let cols = L.dynamic_slice_in_dim ~axis:1 t (pred m) 2 in
+      let row_mask =
+        UF.less
+          (NL.expand_dims (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n)) [| 1 |])
+          (L.add m (index 1))
+      in
+      let masked = NL.where_ row_mask cols zero in
+      let dot_gh = L.dot_typed masked (g_h ()) in
+      let cols_new = NL.where_ (UF.logical_not row_mask) cols dot_gh in
+      let t = L.dynamic_update_slice_in_dim ~axis:1 t cols_new (pred m) in
+      let zcols = L.dynamic_slice_in_dim ~axis:1 z (pred m) 2 in
+      let z_new = L.dot_typed zcols (g_h ()) in
+      let z = L.dynamic_update_slice_in_dim ~axis:1 z z_new (pred m) in
+      [ t; z ]
+    in
+    let iter i = function
+      | [ t; z ] -> (
+          let m = L.sub (index n) i in
+          let lhs = UF.abs (IDX.dynamic_at2 t m (pred m)) in
+          let left = pred m in
+          let right = pred m in
+          let d0 = UF.abs (IDX.dynamic_at2 t left right) in
+          let d1 = UF.abs (IDX.dynamic_at2 t m m) in
+          let threshold = UF.multiply (C.splat rdt [||] eps) (UF.add d0 d1) in
+          match
+            L.cond (UF.greater lhs threshold)
+              (function
+                | [ m; t; z ] -> update m t z
+                | _ -> failwith "rsf2csf: arity")
+              (function
+                | [ _; t; z ] -> [ t; z ] | _ -> failwith "rsf2csf: arity")
+              [ m; t; z ]
+          with
+          | [ t; z ] ->
+              let col = pred m in
+              [ IDX.set_at2 t m col (C.splat cdt [||] 0.0); z ]
+          | _ -> failwith "rsf2csf: arity")
+      | _ -> failwith "rsf2csf: arity"
+    in
+    match L.fori_loop (index 1) (index n) iter [ t; z ] with
+    | [ t; z ] -> (t, z)
+    | _ -> failwith "rsf2csf: arity"
+
 let rec rsf2csf t z =
   let st = shape t and sz = shape z in
   let nd = Array.length st in
@@ -292,92 +403,18 @@ let rec rsf2csf t z =
         [ Some 0; Some 0 ] [ t; z ]
     in
     (List.nth outs 0, List.nth outs 1)
-  else begin
-    let module L = Lax_api in
-    let widest =
-      dtype t = D.F64
-      || dtype z = D.F64
-      || dtype t = D.Complex128
-      || dtype z = D.Complex128
-    in
-    let cdt = if widest then D.Complex128 else D.Complex64 in
-    let t = NL.astype t cdt and z = NL.astype z cdt in
-    let rdt = if widest then D.F64 else D.F32 in
-    let eps = if widest then epsilon_float else 1.1920928955078125e-07 in
-    let n = st.(0) in
-    let idx v = T.Concrete (Nd.of_floats D.I32 [||] [| float_of_int v |]) in
-    let at x i j = L.reshape (L.slice x [| i; j |] [| i + 1; j + 1 |]) [||] in
-    let update m tv zv =
-      let mu0 =
-        let vals =
-          LN.eigvals (L.slice tv [| m - 1; m - 1 |] [| m + 1; m + 1 |])
-        in
-        UF.subtract (L.index_in_dim ~axis:0 ~keepdims:false vals 0) (at tv m m)
-      in
-      let sub = at tv m (m - 1) in
-      let magnitude v =
-        let a = UF.abs v in
-        UF.multiply a a
-      in
-      let r = NL.astype (L.sqrt (UF.add (magnitude mu0) (magnitude sub))) cdt in
-      let c = UF.divide mu0 r and s = UF.divide sub r in
-      let entry v = L.reshape v [| 1 |] in
-      let g =
-        L.reshape
-          (L.concatenate
-             [ entry (L.conj c); entry s; entry (L.neg s); entry c ]
-             0)
-          [| 2; 2 |]
-      in
-      let g_h = L.conj (NL.matrix_transpose g) in
-      let rows = L.slice_in_dim ~axis:0 tv (m - 1) (m + 1) in
-      let kept = L.slice_in_dim ~axis:1 rows 0 (m - 1) in
-      let moved = L.dot_typed g (L.slice_in_dim ~axis:1 rows (m - 1) n) in
-      let tv =
-        L.dynamic_update_slice tv
-          (L.concatenate [ kept; moved ] 1)
-          [ idx (m - 1); idx 0 ]
-      in
-      let cols = L.slice_in_dim ~axis:1 tv (m - 1) (m + 1) in
-      let moved = L.dot_typed (L.slice_in_dim ~axis:0 cols 0 (m + 1)) g_h in
-      let kept = L.slice_in_dim ~axis:0 cols (m + 1) n in
-      let tv =
-        L.dynamic_update_slice tv
-          (L.concatenate [ moved; kept ] 0)
-          [ idx 0; idx (m - 1) ]
-      in
-      let zcols = L.slice_in_dim ~axis:1 zv (m - 1) (m + 1) in
-      let zv =
-        L.dynamic_update_slice zv (L.dot_typed zcols g_h) [ idx 0; idx (m - 1) ]
-      in
-      [ tv; zv ]
-    in
-    let rec go i tv zv =
-      if i >= n then (tv, zv)
-      else
-        let m = n - i in
-        let threshold =
-          UF.multiply (L.full [||] eps rdt)
-            (UF.add (UF.abs (at tv (m - 1) (m - 1))) (UF.abs (at tv m m)))
-        in
-        match
-          L.cond
-            (L.gt (UF.abs (at tv m (m - 1))) threshold)
-            (fun args ->
-              match args with
-              | [ a; b ] -> update m a b
-              | _ -> failwith "rsf2csf: arity")
-            Fun.id [ tv; zv ]
-        with
-        | [ tv; zv ] ->
-            let zero = L.full [| 1; 1 |] 0.0 cdt in
-            go (i + 1)
-              (L.dynamic_update_slice tv zero [ idx m; idx (m - 1) ])
-              zv
-        | _ -> failwith "rsf2csf: arity"
-    in
-    if n = 1 then (t, z) else go 1 t z
-  end
+  else
+    match
+      Numpy.Jnp_util.jit "_rsf2csf_2d"
+        (function
+          | [ t; z ] ->
+              let a, b = rsf2csf_2d t z in
+              [ a; b ]
+          | _ -> failwith "rsf2csf: arity")
+        [ t; z ]
+    with
+    | [ a; b ] -> (a, b)
+    | _ -> failwith "rsf2csf: arity"
 
 let rsf2csf a0 a1 =
   Eager_jit.pair ~jit:"rsf2csf" "scipy.linalg.rsf2csf" () [] [ a0; a1 ]

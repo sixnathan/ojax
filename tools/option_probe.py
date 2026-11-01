@@ -9,6 +9,13 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 def rows():
     import jax.numpy as jnp
     import numpy as np
+    from jax._src.lax import linalg as lax_linalg
+
+    import jax
+
+    def _debug_callback(x):
+        jax.debug.callback(lambda v: None, x)
+        return x + 1.0
 
     a9 = np.array([3.0, 1.0, 2.0, 3.0, 0.0, -1.0, 1.0, 5.0, 0.0], np.float32)
     b6 = np.array([1.0, 7.0, 2.0, 9.0, 0.0, 3.0], np.float32)
@@ -38,6 +45,14 @@ def rows():
         ("bincount_length", lambda x: jnp.bincount(x, length=5), [ints8]),
         ("bincount_weights", lambda x, w: jnp.bincount(x, weights=w, length=9), [ints8, np.arange(8.0, dtype=np.float32)]),
         ("roots_nostrip", lambda x: jnp.roots(x, strip_zeros=False), [np.array([1.0, -3.0, 2.0], np.float32)]),
+        ("sort_complex", lambda x: jnp.sort_complex(x), [np.array([1 + 2j, 1 - 1j, complex(np.nan, 0), -3 + 4j, complex(np.inf, 0)], np.complex64)]),
+        ("hessenberg_1", lambda x: tuple(lax_linalg.hessenberg(x)), [np.array([[3.0]], np.float32)]),
+        (
+            "pure_callback",
+            lambda x: jax.pure_callback(lambda v: np.asarray(v) + 1.0, jax.ShapeDtypeStruct(x.shape, x.dtype), x) * 2.0,
+            [np.array([1.0, 2.0, 3.0], np.float32)],
+        ),
+        ("debug_callback", _debug_callback, [np.array([1.0, 2.0, 3.0], np.float32)]),
         ("frexp_edges", lambda x: tuple(jnp.frexp(x)), [np.array([0.0, -0.0, 1.5, -3.0, np.inf, -np.inf, np.nan, 1e-40], np.float32)]),
     ]
 
@@ -55,9 +70,59 @@ def as_bits(v):
     return row
 
 
+def complex_edges(probe, out):
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    subprocess.run([probe, "complex", out], check=True)
+    ours = {}
+    for row in map(json.loads, open(out, encoding="utf-8")):
+        ours[row["key"]] = row
+    specials = np.array([0.0, -0.0, 1.0, -1.0, np.inf, -np.inf, np.nan, 1e30])
+    unary = dict(
+        negative=jnp.negative, absolute=jnp.abs, sign=jnp.sign, sqrt=jnp.sqrt, exp=jnp.exp, log=jnp.log,
+        log2=jnp.log2, log10=jnp.log10, log1p=jnp.log1p, expm1=jnp.expm1, sin=jnp.sin, cos=jnp.cos,
+        tan=jnp.tan, sinh=jnp.sinh, cosh=jnp.cosh, tanh=jnp.tanh, arcsin=jnp.arcsin, arccos=jnp.arccos,
+        arctan=jnp.arctan, arcsinh=jnp.arcsinh, arccosh=jnp.arccosh, arctanh=jnp.arctanh, square=jnp.square,
+        conj=jnp.conj, real=jnp.real, imag=jnp.imag, angle=jnp.angle, isnan=jnp.isnan, isinf=jnp.isinf,
+        isfinite=jnp.isfinite, reciprocal=jnp.reciprocal,
+    )
+    binary = dict(add=jnp.add, subtract=jnp.subtract, multiply=jnp.multiply, divide=jnp.true_divide, power=jnp.power)
+    total = same = 0
+    bad = {}
+    for dtype, label, x64 in ((np.complex64, "c64", False), (np.complex128, "c128", True)):
+        jax.config.update("jax_enable_x64", x64)
+        grid = np.array([complex(a, b) for a in specials for b in specials], dtype)
+        n = grid.size
+        left = np.repeat(grid, n)
+        right = np.tile(grid, n)
+        for set_name, table, args in (("u", unary, (grid,)), ("b", binary, (left, right))):
+            for name, fn in table.items():
+                for mode, run in (("eager", fn), ("jit", jax.jit(fn))):
+                    key = "/".join((set_name, name, mode, label))
+                    ref = as_bits(run(*args))
+                    mine = ours.get(key, {})
+                    total += 1
+                    if mine.get("row") == ref:
+                        same += 1
+                    else:
+                        count = None
+                        if "row" in mine and len(mine["row"]["bits"]) == len(ref["bits"]):
+                            count = sum(a != b for a, b in zip(mine["row"]["bits"], ref["bits"]))
+                        bad[key] = count if count is not None else mine.get("error", "shape or dtype")[:120] if "row" not in mine else (mine["row"]["dtype"], ref["dtype"])
+    jax.config.update("jax_enable_x64", False)
+    for key, count in bad.items():
+        print(key, count)
+    print("complex edges:", same, "of", total, "identical")
+
+
 def main():
     import jax
 
+    if sys.argv[1] == "complex":
+        complex_edges(sys.argv[2], sys.argv[3])
+        return
     probe, out = sys.argv[1], sys.argv[2]
     subprocess.run([probe, out], check=True)
     ours = {row["case"]: row for row in map(json.loads, open(out, encoding="utf-8"))}

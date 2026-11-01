@@ -4,9 +4,12 @@
 #include <string.h>
 
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
+#include <caml/callback.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/threads.h>
 
 #include "lapack_shim.h"
 
@@ -472,6 +475,78 @@ ENTER(h_tridiagonal_perturbed)
   return NULL;
 }
 
+static size_t ffi_elt_bytes(int dtype) {
+  switch (dtype) {
+    case 1:
+    case 2:
+    case 6:
+      return 1;
+    case 3:
+    case 7:
+    case 10:
+    case 16:
+      return 2;
+    case 4:
+    case 8:
+    case 11:
+      return 4;
+    case 15:
+    case 5:
+    case 9:
+    case 12:
+      return 8;
+    case 18:
+      return 16;
+    default:
+      return 0;
+  }
+}
+
+static value host_view(const Buffer *b) {
+  CAMLparam0();
+  CAMLlocal3(item, dims, data);
+  int64_t count = 1;
+  dims = caml_alloc(b->rank, 0);
+  for (int64_t d = 0; d < b->rank; d++) {
+    Store_field(dims, d, Val_long(b->dims[d]));
+    count *= b->dims[d];
+  }
+  intnat size = (intnat)(count * (int64_t)ffi_elt_bytes(b->dtype));
+  data = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL,
+                            1, b->data, size);
+  item = caml_alloc_tuple(3);
+  Store_field(item, 0, Val_int(b->dtype));
+  Store_field(item, 1, dims);
+  Store_field(item, 2, data);
+  CAMLreturn(item);
+}
+
+static void dispatch_host_callback(Frame *f, uint64_t index) {
+  CAMLparam0();
+  CAMLlocal2(args, rets);
+  const value *fn = caml_named_value("ojax_host_callback");
+  args = caml_alloc(f->args.size, 0);
+  for (int64_t i = 0; i < f->args.size; i++)
+    Store_field(args, i, host_view(ARG(i)));
+  rets = caml_alloc(f->rets.size, 0);
+  for (int64_t i = 0; i < f->rets.size; i++)
+    Store_field(rets, i, host_view(RET(i)));
+  if (fn != NULL)
+    (void)caml_callback3_exn(*fn, Val_long((intnat)index), args, rets);
+  CAMLreturn0;
+}
+
+ENTER(h_host_callback)
+  const Scalar *s = attr(f, "index");
+  uint64_t index = s ? *(uint64_t *)s->value : 0;
+  int registered = caml_c_thread_register();
+  caml_acquire_runtime_system();
+  dispatch_host_callback(f, index);
+  caml_release_runtime_system();
+  if (registered) caml_c_thread_unregister();
+  return NULL;
+}
+
 CAMLprim value ojax_lapack_ffi_handler(value v_name) {
   CAMLparam1(v_name);
   CAMLlocal1(result);
@@ -484,7 +559,8 @@ CAMLprim value ojax_lapack_ffi_handler(value v_name) {
                {"gesdd", h_gesdd}, {"gesvd", h_gesvd}, {"syevd", h_syevd},
                {"geev", h_geev},   {"gees", h_gees},   {"gehrd", h_gehrd},
                {"sytrd", h_sytrd}, {"trsm", h_trsm},   {"gtsv", h_gtsv},
-               {"tridiagonal_perturbed", h_tridiagonal_perturbed}};
+               {"tridiagonal_perturbed", h_tridiagonal_perturbed},
+               {"host_callback", h_host_callback}};
   for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
     if (strcmp(table[i].name, name) == 0) {
       result = caml_copy_nativeint((intnat)table[i].fn);

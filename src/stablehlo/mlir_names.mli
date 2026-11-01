@@ -6,3 +6,4 @@ val render :
   string
 
 val hoist_constants : string -> string
+val renumber_callbacks : string -> string

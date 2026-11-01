@@ -438,6 +438,40 @@ let splat_index_layouts line =
   go 0;
   Buffer.contents b
 
+let renumber_callbacks text =
+  let key = "mhlo.backend_config = {index = " in
+  let k = String.length key in
+  let seen = Hashtbl.create 4 in
+  let line_of line =
+    if not (contains "@xla_ffi_python_cpu_callback(" line) then line
+    else
+      let n = String.length line in
+      let rec find i =
+        if i + k > n then None
+        else if String.sub line i k = key then Some (i + k)
+        else find (i + 1)
+      in
+      match find 0 with
+      | None -> line
+      | Some start ->
+          let stop = ref start in
+          while !stop < n && line.[!stop] >= '0' && line.[!stop] <= '9' do
+            incr stop
+          done;
+          let id = String.sub line start (!stop - start) in
+          let index =
+            match Hashtbl.find_opt seen id with
+            | Some i -> i
+            | None ->
+                let i = Hashtbl.length seen in
+                Hashtbl.replace seen id i;
+                i
+          in
+          String.sub line 0 start ^ string_of_int index
+          ^ String.sub line !stop (n - !stop)
+  in
+  String.concat "\n" (List.map line_of (String.split_on_char '\n' text))
+
 let constant_of line =
   let t = String.trim line in
   if contains "stablehlo.constant " t then

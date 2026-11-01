@@ -363,6 +363,67 @@ let to_input = function
   | Concrete nd -> (Xla.of_host nd, true)
   | Tracer _ -> failwith "Backend: xla execution requires concrete arguments"
 
+let callback_failure : exn option ref = ref None
+
+let dtype_of_ffi = function
+  | 1 -> Dtype.Bool
+  | 2 -> Dtype.I8
+  | 3 -> Dtype.I16
+  | 4 -> Dtype.I32
+  | 5 -> Dtype.I64
+  | 6 -> Dtype.Uint8
+  | 7 -> Dtype.Uint16
+  | 8 -> Dtype.Uint32
+  | 9 -> Dtype.Uint64
+  | 10 -> Dtype.F16
+  | 11 -> Dtype.F32
+  | 12 -> Dtype.F64
+  | 15 -> Dtype.Complex64
+  | 16 -> Dtype.Bf16
+  | 18 -> Dtype.Complex128
+  | code -> failwith (Printf.sprintf "host callback: dtype code %d" code)
+
+let dispatch_host_callback id args rets =
+  try
+    let host, _ =
+      match Core.custom_rule id with
+      | Core.Callback_rule { host; result_avals } -> (host, result_avals)
+      | _ -> failwith "host callback: not a callback rule"
+    in
+    let inputs =
+      Array.to_list
+        (Array.map
+           (fun (code, dims, data) ->
+             Concrete (Pjrt.Buffer.host_of_bytes (dtype_of_ffi code) dims data))
+           args)
+    in
+    let outputs = host inputs in
+    List.iteri
+      (fun i out ->
+        let code, _, target = rets.(i) in
+        let nd =
+          match out with
+          | Concrete nd -> nd
+          | Device b -> Pjrt.Buffer.to_host b
+          | Tracer _ -> failwith "host callback: tracer result"
+        in
+        let nd = Ndarray.canonicalize (dtype_of_ffi code) nd in
+        Bigarray.Array1.blit (Pjrt.Buffer.host_bytes nd) target)
+      outputs
+  with error ->
+    if !callback_failure = None then callback_failure := Some error
+
+let () =
+  ignore (Thread.self ());
+  Callback.register "ojax_host_callback" dispatch_host_callback
+
+let raise_callback_failure () =
+  match !callback_failure with
+  | Some error ->
+      callback_failure := None;
+      raise error
+  | None -> ()
+
 let xla_run exec args resident =
   let inputs = List.map to_input args in
   Fun.protect
@@ -373,6 +434,7 @@ let xla_run exec args resident =
         try Xla.execute exec (List.map fst inputs)
         with Pjrt.Abi.Error reason -> runtime_error reason
       in
+      raise_callback_failure ();
       if resident then List.map track_device outs
       else
         Fun.protect

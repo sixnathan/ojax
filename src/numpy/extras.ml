@@ -1289,33 +1289,19 @@ let trim_zeros ?(trim = "fb") ?axis a =
       a axes
 
 let sort_complex a =
-  let nd = host "sort_complex" a in
-  let dt =
-    match Ndarray.dtype nd with
+  let out_dt =
+    match dtype_of a with
     | Dtype.Complex128 | Dtype.F64 | Dtype.I64 | Dtype.Uint64 ->
         Dtype.Complex128
     | _ -> Dtype.Complex64
   in
-  let sh = Ndarray.shape nd in
-  if Array.length sh <> 1 then
-    invalid_arg "sort_complex supports one dimensional input";
-  let values =
-    Array.init sh.(0) (fun i ->
-        match Ndarray.dtype nd with
-        | Dtype.Complex64 | Dtype.Complex128 -> Ndarray.get_c nd [| i |]
-        | _ -> { Complex.re = Ndarray.get_f nd [| i |]; im = 0.0 })
+  let sorted =
+    Core.bind1
+      (Sort { dimension = rank a - 1; is_stable = true; num_keys = 1 })
+      [ a ]
   in
-  Array.stable_sort
-    (fun (x : Complex.t) (y : Complex.t) ->
-      let order p q =
-        if Float.is_nan p then if Float.is_nan q then 0 else 1
-        else if Float.is_nan q then -1
-        else compare p q
-      in
-      let c = order x.re y.re in
-      if c <> 0 then c else order x.im y.im)
-    values;
-  Concrete (Ndarray.of_complex dt sh values)
+  if dtype_of sorted = out_dt then sorted
+  else L.convert_element_type sorted out_dt
 
 let bitwise_count a = NL.astype (L.population_count (U.absolute a)) (dtype_of a)
 

@@ -2290,6 +2290,70 @@ let dense_i64_matrix rows =
           rows))
     n m
 
+let callback_seen = ref false
+let default_layout rank = Array.init rank (fun i -> rank - 1 - i)
+
+let emit_host_callback ctx (eqn : eqn) in_ids id =
+  if (not (lapack_ffi ())) || !active_mesh <> None then
+    failwith "Stablehlo.Emit: callbacks run on the host interpreter";
+  callback_seen := true;
+  let in_avals = List.map atom_aval eqn.inputs in
+  let out_avals = List.map (fun (v : var) -> v.vaval) eqn.outs in
+  let layouts avals =
+    String.concat ", "
+      (List.map
+         (fun (a : aval) ->
+           ffi_layout_text (default_layout (Array.length a.shape)))
+         avals)
+  in
+  let types avals =
+    String.concat ", " (List.map Ir.tensor_type_of_aval avals)
+  in
+  let per_value =
+    let n = max 1 (List.length out_avals) in
+    String.concat ", " (List.init n (fun _ -> "<@maximal_mesh_0, []>"))
+  in
+  let results =
+    match out_avals with
+    | [] -> "()"
+    | [ a ] -> Ir.tensor_type_of_aval a
+    | avals -> "(" ^ types avals ^ ")"
+  in
+  let attrs =
+    Printf.sprintf
+      "{backend_config = \"\", %smhlo.backend_config = {index = %d : ui64}, \
+       operand_layouts = [%s], result_layouts = [%s], sdy.sharding = \
+       #sdy.sharding_per_value<[%s]>} : (%s) -> %s\n"
+      (if out_avals = [] then "has_side_effect = true, " else "")
+      id (layouts in_avals) (layouts out_avals) per_value (types in_avals)
+      results
+  in
+  let args = String.concat ", " (List.map name in_ids) in
+  match eqn.outs with
+  | [] ->
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    stablehlo.custom_call @xla_ffi_python_cpu_callback(%s) %s" args
+           attrs)
+  | [ only ] ->
+      let n = bind_var ctx only in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.custom_call @xla_ffi_python_cpu_callback(%s) %s"
+           (name n) args attrs)
+  | outs ->
+      let group = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %%%d:%d = stablehlo.custom_call \
+            @xla_ffi_python_cpu_callback(%s) %s"
+           group (List.length outs) args attrs);
+      List.iteri
+        (fun i (v : var) ->
+          Hashtbl.replace ctx.ids v.vid
+            (alias_result (Printf.sprintf "%%%d#%d" group i)))
+        outs
+
 let next_channel () =
   incr channel;
   Printf.sprintf "#stablehlo.channel_handle<handle = %d, type = 1>" !channel
@@ -3630,8 +3694,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
       let n = a.shape.(rank - 1) in
-      if n < 2 then
-        failwith "Stablehlo.Emit: a small hessenberg runs on the host";
+      if n < 1 then
+        failwith "Stablehlo.Emit: an empty hessenberg runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let taus = lapack_aval (Array.append batch [| n - 1 |]) a.dtype in
       let info = lapack_aval batch Dtype.I32 in
@@ -3881,8 +3945,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             (emit_closed_inline ctx c in_ids)
       | None -> (
           match Core.custom_rule id with
-          | Core.Callback_rule _ ->
-              failwith "Stablehlo.Emit: callbacks run on the host interpreter"
+          | Core.Callback_rule _ -> emit_host_callback ctx eqn in_ids id
           | _ -> invalid_arg "Stablehlo.Emit: linear rule has no primal call"))
   | Custom_lin { rule; n_res; _ } -> (
       match Core.custom_rule rule with
@@ -3928,6 +3991,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset call_symbols;
   symbol_counter := 0;
   seen_mesh := None;
+  callback_seen := false;
   channel := 0;
   manual_axes := [];
   active_mesh := Option.map (fun p -> p.pt_mesh) partition;
@@ -3994,7 +4058,13 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   in
   Printf.sprintf
     "module {\n%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
-    (match partition with Some p -> sdy_mesh p.pt_mesh | None -> "")
+    (match partition with
+    | Some p -> sdy_mesh p.pt_mesh
+    | None ->
+        if !callback_seen then
+          "  sdy.mesh @maximal_mesh_0 = <[], device_ids=[0]> {stablehlo.mesh = \
+           {axes = [], device_ids = dense<0> : tensor<1xi64>}}\n"
+        else "")
     (String.concat ", " params)
     (String.concat ", " out_attributes)
     (qualify_nested_calls ~depth:1 (Buffer.contents ctx.buf))
@@ -4015,7 +4085,7 @@ let lower ~name cj =
     kept;
   }
 
-let emit_jax_text ~name cj = (lower ~name cj).text
+let emit_jax_text ~name cj = Mlir_names.renumber_callbacks (lower ~name cj).text
 
 let emit_export_text ~name ~uses_shape_polymorphism cj =
   let pruned, kept = Dce.prune_unused_inputs cj in

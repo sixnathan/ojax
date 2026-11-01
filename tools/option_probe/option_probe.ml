@@ -118,6 +118,45 @@ let cases =
     ( "roots_nostrip",
       one (fun x -> [ E.roots ~strip_zeros:false x ]),
       [ f32 [| 3 |] [| 1.; -3.; 2. |] ] );
+    ( "sort_complex",
+      one (fun x -> [ E.sort_complex x ]),
+      [
+        T.Concrete
+          (Ojax.Ndarray.of_complex D.Complex64 [| 5 |]
+             [|
+               { Complex.re = 1.; im = 2. };
+               { Complex.re = 1.; im = -1. };
+               { Complex.re = nan; im = 0. };
+               { Complex.re = -3.; im = 4. };
+               { Complex.re = infinity; im = 0. };
+             |]);
+      ] );
+    ( "hessenberg_1",
+      one (fun x -> Ojax.Core.bind Hessenberg [ x ]),
+      [ f32 [| 1; 1 |] [| 3. |] ] );
+    ( "pure_callback",
+      one (fun x ->
+          let aval = Ojax.Core.get_aval x in
+          let out =
+            Ojax.Custom_derivatives.pure_callback
+              (function
+                | [ T.Concrete nd ] ->
+                    [
+                      T.Concrete (Ojax.Ndarray.map D.F32 (fun v -> v +. 1.0) nd);
+                    ]
+                | _ -> failwith "arity")
+              ~result_avals:[ aval ] [ x ]
+          in
+          [
+            U.multiply (List.hd out)
+              (T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 2.0 |]));
+          ]),
+      [ f32 [| 3 |] [| 1.; 2.; 3. |] ] );
+    ( "debug_callback",
+      one (fun x ->
+          Ojax.Debugging.callback (fun _ -> ()) [ x ];
+          [ U.add x (T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 1.0 |])) ]),
+      [ f32 [| 3 |] [| 1.; 2.; 3. |] ] );
     ( "frexp_edges",
       one (fun x ->
           let m, e = E.frexp x in
@@ -127,7 +166,161 @@ let cases =
       ] );
   ]
 
+module JU = Yojson.Safe.Util
+
+let array_of_json j =
+  let re = List.map JU.to_number (JU.to_list (JU.member "re" j)) in
+  let im = List.map JU.to_number (JU.to_list (JU.member "im" j)) in
+  let shape =
+    Array.of_list (List.map JU.to_int (JU.to_list (JU.member "shape" j)))
+  in
+  let dt = D.Complex64 in
+  let shape_total = Array.fold_left ( * ) 1 shape in
+  ignore shape_total;
+  T.Concrete
+    (Ojax.Ndarray.of_complex dt shape
+       (Array.of_list (List.map2 (fun r i -> { Complex.re = r; im = i }) re im)))
+
+let tridiagonal_fuzz path =
+  let cases = JU.to_list (Yojson.Safe.from_file path) in
+  let total = ref 0 and same = ref 0 in
+  Ojax.Config.with_value Ojax.Config.enable_x64 true @@ fun () ->
+  List.iteri
+    (fun i case ->
+      let get n = array_of_json (JU.member n case) in
+      let dl = get "dl" and d = get "d" and du = get "du" and b = get "b" in
+      let wanted = List.map JU.to_string (JU.to_list (JU.member "x" case)) in
+      let x =
+        Ojax.Lax.Linalg.tridiagonal_solve ~perturb_singular:true dl d du b
+      in
+      let got =
+        match Ojax.Backend.to_host_value x with
+        | T.Concrete nd -> bits_of nd
+        | _ -> failwith "host"
+      in
+      incr total;
+      if got = wanted then incr same
+      else
+        Printf.printf "case %d differs\n  jax  %s\n  ojax %s\n" i
+          (String.concat " " wanted) (String.concat " " got))
+    cases;
+  Printf.printf "tridiagonal perturbed: %d of %d identical\n" !same !total
+
+let specials = [| 0.0; -0.0; 1.0; -1.0; infinity; neg_infinity; nan; 1e30 |]
+
+let grid dt =
+  let n = Array.length specials in
+  T.Concrete
+    (Ojax.Ndarray.of_complex dt
+       [| n * n |]
+       (Array.init (n * n) (fun i ->
+            { Complex.re = specials.(i / n); im = specials.(i mod n) })))
+
+let complex_unary =
+  [
+    ("negative", U.negative);
+    ("absolute", U.absolute);
+    ("sign", U.sign);
+    ("sqrt", U.sqrt);
+    ("exp", U.exp);
+    ("log", U.log);
+    ("log2", U.log2);
+    ("log10", U.log10);
+    ("log1p", U.log1p);
+    ("expm1", U.expm1);
+    ("sin", U.sin);
+    ("cos", U.cos);
+    ("tan", U.tan);
+    ("sinh", U.sinh);
+    ("cosh", U.cosh);
+    ("tanh", U.tanh);
+    ("arcsin", U.arcsin);
+    ("arccos", U.arccos);
+    ("arctan", U.arctan);
+    ("arcsinh", U.arcsinh);
+    ("arccosh", U.arccosh);
+    ("arctanh", U.arctanh);
+    ("square", U.square);
+    ("conj", U.conj);
+    ("real", U.real);
+    ("imag", U.imag);
+    ("angle", fun v -> Ojax.Numpy.Lax_numpy.angle v);
+    ("isnan", U.isnan);
+    ("isinf", U.isinf);
+    ("isfinite", U.isfinite);
+    ("reciprocal", U.reciprocal);
+  ]
+
+let complex_binary =
+  [
+    ("add", U.add);
+    ("subtract", U.subtract);
+    ("multiply", U.multiply);
+    ("divide", U.true_divide);
+    ("power", U.power);
+  ]
+
+let complex_edges out =
+  let oc = open_out out in
+  let write set name mode dtype f =
+    let row =
+      try
+        let v = f () in
+        [ ("row", value_row v) ]
+      with e -> [ ("error", `String (Printexc.to_string e)) ]
+    in
+    Yojson.Safe.to_channel oc
+      (`Assoc
+         (("key", `String (String.concat "/" [ set; name; mode; dtype ])) :: row));
+    output_char oc '\n'
+  in
+  List.iter
+    (fun (dt, label, x64) ->
+      Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+          let g = grid dt in
+          let aval = Ojax.Core.get_aval g in
+          List.iter
+            (fun (name, f) ->
+              write "u" name "eager" label (fun () -> f g);
+              write "u" name "jit" label (fun () ->
+                  let cj =
+                    Ojax.Jaxpr.make_jaxpr [ aval ] (function
+                      | [ x ] -> [ f x ]
+                      | _ -> failwith "arity")
+                  in
+                  List.hd (Ojax.Jaxpr.eval_closed_jaxpr cj [ g ])))
+            complex_unary;
+          let n = Array.length specials * Array.length specials in
+          let left =
+            Ojax.Numpy.Lax_numpy.reshape
+              (Ojax.Numpy.Lax_numpy.repeat ~axis:0 g n)
+              [| n * n |]
+          in
+          let right = Ojax.Numpy.Lax_numpy.tile g [| n |] in
+          let la = Ojax.Core.get_aval left in
+          List.iter
+            (fun (name, f) ->
+              write "b" name "eager" label (fun () -> f left right);
+              write "b" name "jit" label (fun () ->
+                  let cj =
+                    Ojax.Jaxpr.make_jaxpr [ la; la ] (function
+                      | [ x; y ] -> [ f x y ]
+                      | _ -> failwith "arity")
+                  in
+                  List.hd (Ojax.Jaxpr.eval_closed_jaxpr cj [ left; right ])))
+            complex_binary))
+    [ (D.Complex64, "c64", false); (D.Complex128, "c128", true) ];
+  close_out oc
+
 let () =
+  if Sys.argv.(1) = "tri" then begin
+    tridiagonal_fuzz Sys.argv.(2);
+    exit 0
+  end;
+  if Sys.argv.(1) = "complex" then begin
+    complex_edges Sys.argv.(2);
+    exit 0
+  end;
   let oc = open_out Sys.argv.(1) in
   List.iter
     (fun (name, f, args) ->

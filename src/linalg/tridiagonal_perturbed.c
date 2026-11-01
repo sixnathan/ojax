@@ -23,7 +23,7 @@ static float complex divide_c(float complex numerator, float complex divisor) {
     float ratio = d / c;
     float denominator = fmaf(d, ratio, c);
     re = fmaf(b, ratio, a) / denominator;
-    im = fmaf(-a, ratio, b) / denominator;
+    im = fmaf(a, -ratio, b) / denominator;
   }
   if (isnan(re) && isnan(im)) {
     if (c == 0.0f && d == 0.0f && (!isnan(a) || !isnan(b))) {
@@ -142,7 +142,7 @@ static float complex divide_c(float complex numerator, float complex divisor) {
           u1[k] = diag[k + 1];                                                 \
           if (k < n - 2) {                                                     \
             u2[k] = super[k + 1];                                              \
-            u1[k + 1] = -factor * super[k + 1];                                \
+            u1[k + 1] = factor * -super[k + 1];                                \
           }                                                                    \
           for (int j = 0; j < k_rhs; j++) {                                    \
             SCALAR product = factor * rhs[k + 1 + j * n];                      \

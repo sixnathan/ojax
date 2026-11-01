@@ -126,6 +126,85 @@ let normalised_indices ~extent indices =
   let normalised = Core.bind1 Select_n [ negative; indices; shifted ] in
   L.broadcast_in_dim normalised [| size_of indices; 1 |] [| 0 |]
 
+let normalize_index idx extent =
+  let dt = dtype_of idx in
+  match dt with
+  | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 -> idx
+  | _ ->
+      let negative = Core.bind1 Lt [ idx; Core.splat dt [||] 0.0 ] in
+      let shifted =
+        Core.bind1 Add [ idx; Core.splat dt [||] (float_of_int extent) ]
+      in
+      Core.bind1 Select_n [ negative; idx; shifted ]
+
+let expand_last v =
+  let sh = shape v in
+  L.broadcast_in_dim v
+    (Array.append sh [| 1 |])
+    (Array.init (Array.length sh) Fun.id)
+
+let index_array ~extents idxs =
+  let normal = List.map2 normalize_index idxs extents in
+  let normal = NL.broadcast_arrays normal in
+  match List.map expand_last normal with
+  | [ only ] -> only
+  | parts -> Core.bind1 (Concatenate (rank (List.hd parts) - 1)) parts
+
+let at_update ?(axis = 0) build x idxs y =
+  let xa = Core.get_aval x and ya = Core.get_aval y in
+  let k = List.length idxs in
+  let sh = xa.shape in
+  let extents = List.init k (fun j -> sh.(axis + j)) in
+  let indices = index_array ~extents idxs in
+  let idx_shape =
+    let s = shape indices in
+    Array.sub s 0 (Array.length s - 1)
+  in
+  let m = Array.length idx_shape in
+  let trailing = Array.sub sh (axis + k) (Array.length sh - axis - k) in
+  let slice_shape =
+    Array.concat [ Array.sub sh 0 axis; idx_shape; trailing ]
+  in
+  let dt, weak =
+    Dtypes.result_type
+      [ (xa.dtype, xa.weak_type); (ya.dtype, ya.weak_type) ]
+  in
+  let x' = Core.convert_like ~weak x dt in
+  let y' = Core.convert_like ~weak y dt in
+  let y' = NL.broadcast_to y' slice_shape in
+  let dims =
+    {
+      update_window_dims =
+        Array.append
+          (Array.init axis Fun.id)
+          (Array.init (Array.length trailing) (fun i -> axis + m + i));
+      inserted_window_dims = Array.init k (fun j -> axis + j);
+      scatter_dims_to_operand_dims = Array.init k (fun j -> axis + j);
+      s_operand_batching_dims = [||];
+      s_scatter_indices_batching_dims = [||];
+      s_sorted_unique = false;
+    }
+  in
+  let out = build x' indices y' dims in
+  Core.convert_like ~weak:xa.weak_type out xa.dtype
+
+let at_set ?axis x idxs y =
+  at_update ?axis (fun a i u d -> L.scatter a i u d) x idxs y
+
+let at_add ?axis x idxs y =
+  at_update ?axis (fun a i u d -> L.scatter_add a i u d) x idxs y
+
+let array_of_values vs =
+  let lift v =
+    let sh = shape v in
+    L.broadcast_in_dim v
+      (Array.append [| 1 |] sh)
+      (Array.init (Array.length sh) (fun i -> i + 1))
+  in
+  match List.map lift vs with
+  | [ only ] -> only
+  | parts -> Core.bind1 (Concatenate 0) parts
+
 let bincount_length length weights x =
   let wdt = dtype_of weights in
   let operand = L.full [| length |] 0.0 wdt in
@@ -172,8 +251,7 @@ let nonzero ?size ?fill_value a =
               (Concrete
                  (Ndarray.of_floats fdt [||] [| float_of_int strides.(d) |]))
           in
-          U.remainder quotient
-            (Concrete (Ndarray.of_floats fdt [||] [| float_of_int sh.(d) |])))
+          U.remainder quotient (Jnp_util.py_int sh.(d)))
     in
     match fill_value with
     | None -> out
@@ -181,12 +259,7 @@ let nonzero ?size ?fill_value a =
         let idx = NL.arange ~dtype:(default_int ()) (float_of_int k) in
         let fill_mask = U.greater_equal idx (count ()) in
         List.map
-          (fun entry ->
-            NL.where_ fill_mask
-              (Concrete
-                 (Ndarray.of_floats (dtype_of entry) [||]
-                    [| float_of_int fill |]))
-              entry)
+          (fun entry -> NL.where_ fill_mask (Jnp_util.py_int fill) entry)
           out
   end
 
@@ -830,6 +903,35 @@ let histogram_edges ?weights ?(density = false) a edges =
 
 let ravel_multi_index ?(mode = "raise") ?(order = "C") coords dims =
   let n = Array.length dims in
+  let dt =
+    fst
+      (Dtypes.result_type
+         ((default_int (), true)
+         :: List.map
+              (fun c ->
+                let a = Core.get_aval c in
+                (a.dtype, a.weak_type))
+              coords))
+  in
+  let check c d =
+    let values = flat_floats (host "ravel_multi_index" c) in
+    if Array.exists (fun v -> v < 0.0 || v >= float_of_int d) values then
+      invalid_arg "invalid entry in coordinates array"
+  in
+  let coords =
+    match mode with
+    | "raise" ->
+        List.iteri (fun i c -> check c dims.(i)) coords;
+        coords
+    | "clip" ->
+        List.mapi
+          (fun i c -> NL.clip ~min:0.0 ~max:(float_of_int (dims.(i) - 1)) c)
+          coords
+    | "wrap" ->
+        List.mapi (fun i c -> U.remainder c (Jnp_util.py_int dims.(i))) coords
+    | "ignore" -> coords
+    | other -> invalid_arg ("invalid mode=" ^ other)
+  in
   let strides =
     match order with
     | "C" -> strides_of dims
@@ -839,25 +941,17 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") coords dims =
           s.(d) <- s.(d - 1) * dims.(d - 1)
         done;
         s
-    | other -> invalid_arg ("Unrecognized order=" ^ other)
+    | other -> invalid_arg ("invalid order=" ^ other)
   in
-  let clip c d =
-    match mode with
-    | "clip" -> NL.clip ~min:0.0 ~max:(float_of_int (d - 1)) c
-    | "wrap" -> U.remainder c (L.full (shape c) (float_of_int d) (dtype_of c))
-    | "raise" -> c
-    | other -> invalid_arg ("invalid mode=" ^ other)
+  let start = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+  let _, result =
+    List.fold_left
+      (fun (i, acc) c ->
+        let term = U.multiply (NL.astype c dt) (Jnp_util.py_int strides.(i)) in
+        (i + 1, U.add acc term))
+      (0, start) coords
   in
-  let parts =
-    List.mapi
-      (fun i c ->
-        let c = clip c dims.(i) in
-        U.multiply c (L.full (shape c) (float_of_int strides.(i)) (dtype_of c)))
-      coords
-  in
-  match parts with
-  | [] -> invalid_arg "ravel_multi_index needs coordinates"
-  | first :: rest -> List.fold_left U.add first rest
+  result
 
 let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
   let n_dims = (shape sample).(1) in
@@ -1063,18 +1157,51 @@ let gradient ?spacing ?axis a =
         [ a; Jnp_util.py_float spacing ]
 
 let choose ?(mode = "raise") a choices =
-  let idx =
+  let n = List.length choices in
+  let arr =
     match mode with
-    | "clip" | "raise" ->
-        NL.clip ~min:0.0 ~max:(float_of_int (List.length choices - 1)) a
-    | "wrap" ->
-        U.remainder a
-          (L.full (shape a) (float_of_int (List.length choices)) (dtype_of a))
+    | "raise" ->
+        let values = flat_floats (host "choose" a) in
+        if Array.exists (fun v -> v < 0.0 || v >= float_of_int n) values then
+          invalid_arg "invalid entry in choice array";
+        a
+    | "wrap" -> U.remainder a (Jnp_util.py_int n)
+    | "clip" -> NL.clip ~min:0.0 ~max:(float_of_int (n - 1)) a
     | other -> invalid_arg ("invalid mode=" ^ other)
   in
-  let stacked = NL.stack ~axis:0 choices in
-  let expanded = NL.expand_dims idx [| 0 |] in
-  L.squeeze (I.take_along_axis ~axis:0 stacked expanded) [| 0 |]
+  match NL.broadcast_arrays (arr :: choices) with
+  | [] -> invalid_arg "choose: arity"
+  | arr :: choices ->
+      let sh = shape arr in
+      let r = Array.length sh in
+      let stacked = array_of_values choices in
+      let dt = default_int () in
+      let grids =
+        List.init r (fun i ->
+            let idx =
+              Core.bind1
+                (Iota { dtype = dt; shape = [| sh.(i) |]; dimension = 0 })
+                []
+            in
+            let s = Array.init r (fun d -> if d = i then sh.(i) else 1) in
+            if r = 1 then idx else L.broadcast_in_dim idx s [| i |])
+      in
+      let extents = n :: Array.to_list sh in
+      let indices = index_array ~extents (arr :: grids) in
+      Core.bind1
+        (Gather
+           {
+             dimension_numbers =
+               {
+                 offset_dims = [||];
+                 collapsed_slice_dims = Array.init (r + 1) Fun.id;
+                 start_index_map = Array.init (r + 1) Fun.id;
+                 g_operand_batching_dims = [||];
+                 g_start_indices_batching_dims = [||];
+               };
+             slice_sizes = Array.make (r + 1) 1;
+           })
+        [ stacked; indices ]
 
 let compress ?axis ?size ?(fill_value = 0.0) condition a =
   let condition = Jaxpr.stage_constant condition in
@@ -1170,75 +1297,167 @@ let delete_array ?axis a obj =
   let values = flat_floats (host "delete" obj) in
   delete ?axis a (Array.to_list (Array.map int_of_float values))
 
+let tile_to_size vals n =
+  let m = size_of vals in
+  let vals =
+    if m < n then
+      NL.tile vals
+        [| int_of_float (Float.ceil (float_of_int n /. float_of_int m)) |]
+    else vals
+  in
+  if size_of vals > n then L.slice vals [| 0 |] [| n |] else vals
+
 let insert ?axis a position values =
   let a, ax =
     match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
   in
-  let n = (shape a).(ax) in
-  let position = if position < 0 then position + n else position in
-  let target = Array.copy (shape a) in
-  let count =
-    if rank values = rank a then (shape values).(ax)
-    else if rank values = 0 then 1
-    else if rank values = 1 && rank a = 1 then size_of values
-    else 1
+  let ndim = rank a in
+  let dt = dtype_of a in
+  let values =
+    let v = if dtype_of values = dt then values else NL.astype values dt in
+    if rank v >= ndim then v
+    else
+      let lead = ndim - rank v in
+      L.broadcast_in_dim v
+        (Array.append (Array.make lead 1) (shape v))
+        (Array.init (rank v) (fun i -> i + lead))
   in
-  target.(ax) <- count;
-  let values = NL.astype values (dtype_of a) in
-  let piece =
-    if rank values = 0 then L.broadcast_in_dim values target [||]
-    else if rank values = rank a then values
-    else NL.broadcast_to values target
+  let index =
+    let raveled = NL.reshape (Jnp_util.py_int position) [| 1 |] in
+    L.squeeze raveled [| 0 |]
   in
-  NL.concatenate ~axis:ax
-    [
-      L.slice_in_dim ~axis:ax a 0 position;
-      piece;
-      L.slice_in_dim ~axis:ax a position n;
-    ]
+  let values =
+    if ax = 0 then values else NL.moveaxis [| 0 |] [| ax |] values
+  in
+  let n_insert = (shape values).(ax) in
+  let indices = L.broadcast_in_dim index [| n_insert |] [||] in
+  let n_input = (shape a).(ax) in
+  let out_shape = Array.copy (shape a) in
+  out_shape.(ax) <- n_input + n_insert;
+  let out = L.full out_shape 0.0 dt in
+  let indices =
+    NL.where_
+      (U.less indices (Jnp_util.py_int 0))
+      (U.add indices (Jnp_util.py_int n_input))
+      indices
+  in
+  let indices = NL.clip ~min:0.0 ~max:(float_of_int n_input) indices in
+  let order = Sorting.argsort ~axis:(Some 0) indices in
+  let values_ind =
+    at_add indices [ order ] (NL.arange ~dtype:(dtype_of indices) (float_of_int n_insert))
+  in
+  let arr_mask =
+    at_set
+      (L.full [| n_input + n_insert |] 1.0 Dtype.Bool)
+      [ values_ind ]
+      (Concrete (Ndarray.of_floats Dtype.Bool [||] [| 0.0 |]))
+  in
+  let arr_ind = List.hd (nonzero ~size:n_input arr_mask) in
+  let out = at_set ~axis:ax out [ values_ind ] values in
+  at_set ~axis:ax out [ arr_ind ] a
 
 let place a mask values =
-  let vals = flat values in
+  let vals = NL.ravel values in
   if size_of a <> size_of mask then
     invalid_arg "place: arr and mask must be the same size";
   if size_of vals = 0 then invalid_arg "Cannot place values from an empty array";
   if size_of a = 0 then a
   else begin
     let n = size_of mask in
-    let indices = List.hd (nonzero ~size:n ~fill_value:n (flat mask)) in
-    let vals =
-      if size_of vals = n then vals
-      else if size_of vals > n then L.slice vals [| 0 |] [| n |]
-      else
-        let repeats =
-          int_of_float
-            (Float.ceil (float_of_int n /. float_of_int (size_of vals)))
-        in
-        let tiled = NL.tile vals [| repeats |] in
-        if size_of tiled > n then L.slice tiled [| 0 |] [| n |] else tiled
-    in
-    let vals =
-      if dtype_of vals = dtype_of a then vals else NL.astype vals (dtype_of a)
-    in
-    let wrapped = normalised_indices ~extent:n indices in
-    let updated = L.scatter (flat a) wrapped vals scatter_dims_1d in
-    NL.reshape updated (shape a)
+    let indices = List.hd (nonzero ~size:n ~fill_value:n (NL.ravel mask)) in
+    let vals = tile_to_size vals n in
+    NL.reshape (at_set (NL.ravel a) [ indices ] vals) (shape a)
   end
+
+let vectorize_scalar f args =
+  let shapes = List.map shape args in
+  let broadcast = NL.broadcast_shapes_n shapes in
+  let r = Array.length broadcast in
+  let filled =
+    List.map
+      (fun s -> Array.append (Array.make (r - Array.length s) 1) s)
+      shapes
+  in
+  let squeezed =
+    List.map
+      (fun a ->
+        let s = shape a in
+        let axes =
+          List.filter (fun i -> s.(i) = 1) (List.init (Array.length s) Fun.id)
+        in
+        if axes = [] then a else NL.squeeze ~axis:(Array.of_list axes) a)
+      args
+  in
+  let func = ref f and expand = ref [] in
+  for pos = r - 1 downto 0 do
+    let in_axes =
+      List.map (fun s -> if s.(pos) = 1 then None else Some 0) filled
+    in
+    if List.for_all Option.is_none in_axes then expand := pos :: !expand
+    else begin
+      let inner = !func in
+      func := fun xs -> Interpreters.Batching.vmap inner in_axes xs
+    end
+  done;
+  let out = !func squeezed in
+  match !expand with
+  | [] -> out
+  | dims -> List.map (fun v -> NL.expand_dims v (Array.of_list dims)) out
+
+let piecewise_counter = ref 0
 
 let piecewise x condlist funclist =
   let n_cond = List.length condlist in
   let n_fun = List.length funclist in
   if n_fun <> n_cond && n_fun <> n_cond + 1 then
     invalid_arg "with N condition(s), either N or N+1 functions are expected";
-  let default_fun =
-    if n_fun = n_cond + 1 then List.nth funclist n_cond
-    else fun v -> L.full_like v 0.0
+  let leading, callables =
+    if n_fun = n_cond + 1 then
+      ( None,
+        List.nth funclist n_cond
+        :: List.filteri (fun i _ -> i < n_cond) funclist )
+    else (Some (Jnp_util.py_int 0), funclist)
   in
-  let base = default_fun x in
-  List.fold_left2
-    (fun acc cond f -> NL.where_ cond (NL.astype (f x) (dtype_of acc)) acc)
-    base condlist
-    (List.filteri (fun i _ -> i < n_cond) funclist)
+  let conds = array_of_values condlist in
+  incr piecewise_counter;
+  let key = "piecewise" ^ string_of_int !piecewise_counter in
+  Jnp_util.jit1 "_piecewise" ~key
+    (fun args ->
+      let x, conds, const =
+        match args with
+        | [ x; c ] -> (x, c, None)
+        | [ x; c; k ] -> (x, c, Some k)
+        | _ -> invalid_arg "piecewise: arity"
+      in
+      let dt = dtype_of x in
+      let lead =
+        let sh = shape conds in
+        let first =
+          L.slice conds (Array.make (Array.length sh) 0)
+            (Array.mapi (fun d e -> if d = 0 then 1 else e) sh)
+        in
+        L.full (shape first) 0.0 (dtype_of first)
+      in
+      let indices =
+        NL.argmax ~axis:0 (R.cumsum ~axis:0 (NL.concatenate ~axis:0 [ lead; conds ]))
+      in
+      let of_fun f ops =
+        match ops with
+        | [ v ] -> [ NL.astype (f v) dt ]
+        | _ -> invalid_arg "piecewise: arity"
+      in
+      let branches =
+        (match const with
+        | Some c -> [ (fun _ -> [ NL.astype (NL.copy c) dt ]) ]
+        | None -> [])
+        @ List.map of_fun callables
+      in
+      let switch = function
+        | [ i; v ] -> L.switch i branches [ v ]
+        | _ -> invalid_arg "piecewise: arity"
+      in
+      List.hd (vectorize_scalar switch [ indices; x ]))
+    ([ x; conds ] @ Option.to_list leading)
 
 let fill_diagonal ?(wrap = false) a value =
   if wrap then invalid_arg "wrap=True is not implemented, must use wrap=False";
@@ -1247,49 +1466,44 @@ let fill_diagonal ?(wrap = false) a value =
   let is_2d = Array.length sh = 2 in
   if (not is_2d) && Array.exists (fun d -> d <> sh.(0)) sh then
     invalid_arg "All dimensions of input must be of equal length";
-  let total = size_of a in
-  let step =
-    if is_2d then sh.(1) + 1 else Array.fold_left ( + ) 0 (strides_of sh)
+  let n = Array.fold_left Stdlib.min sh.(0) sh in
+  let idx =
+    Core.bind1 (Iota { dtype = default_int (); shape = [| n |]; dimension = 0 }) []
   in
-  let end_ = if is_2d then Stdlib.min total (sh.(1) * sh.(1)) else total in
-  let vs = flat (NL.astype value (dtype_of a)) in
-  let n_v = size_of vs in
-  let flat_a = flat a in
-  let rec loop acc i k =
-    if i >= end_ then acc
-    else
-      let v = L.index_in_dim ~keepdims:true vs (k mod n_v) in
-      loop (L.dynamic_update_slice acc v [ int_scalar i ]) (i + step) (k + 1)
-  in
-  NL.reshape (loop flat_a 0 0) sh
+  let v = if rank value = 0 then value else tile_to_size (NL.ravel value) n in
+  let v = if dtype_of v = dtype_of a then v else NL.astype v (dtype_of a) in
+  at_set a (List.init (Array.length sh) (fun _ -> idx)) v
 
-let index_pairs keep n m =
-  let pairs = ref [] in
-  for i = n - 1 downto 0 do
-    for j = m - 1 downto 0 do
-      if keep i j then pairs := (i, j) :: !pairs
-    done
-  done;
-  let arr = Array.of_list !pairs in
-  let dt = default_int () in
-  let count = Array.length arr in
-  ( ints_value dt [| count |] (Array.map fst arr),
-    ints_value dt [| count |] (Array.map snd arr) )
+let rec triu_size n m k =
+  if k < 0 then (n * m) - triu_size m n (1 - k)
+  else if k >= m then 0
+  else
+    let mk = Stdlib.min n (m - k) in
+    (mk * (mk + 1) / 2) + (mk * (m - k - mk))
+
+let nonzero_pair v ~size =
+  match nonzero ~size v with
+  | [ i; j ] -> (i, j)
+  | _ -> failwith "tri indices: arity"
 
 let tril_indices ?(k = 0) ?m n =
-  index_pairs (fun i j -> j - i <= k) n (Option.value m ~default:n)
+  let m = Option.value m ~default:n in
+  let ones = L.full [| n; m |] 1.0 (default_float ()) in
+  nonzero_pair (NL.tril ~k ones) ~size:(triu_size m n (-k))
 
 let triu_indices ?(k = 0) ?m n =
-  index_pairs (fun i j -> j - i >= k) n (Option.value m ~default:n)
+  let m = Option.value m ~default:n in
+  let ones = L.full [| n; m |] 1.0 (default_float ()) in
+  nonzero_pair (NL.triu ~k ones) ~size:(triu_size n m k)
 
 let tril_indices_from ?k a =
   let sh = shape a in
-  if Array.length sh <> 2 then invalid_arg "input array must be 2-d";
+  if Array.length sh <> 2 then invalid_arg "Only 2-D inputs are accepted";
   tril_indices ?k ~m:sh.(1) sh.(0)
 
 let triu_indices_from ?k a =
   let sh = shape a in
-  if Array.length sh <> 2 then invalid_arg "input array must be 2-d";
+  if Array.length sh <> 2 then invalid_arg "Only 2-D inputs are accepted";
   triu_indices ?k ~m:sh.(1) sh.(0)
 
 let mask_indices ?(k = 0) ?size n mask_func =
@@ -1448,11 +1662,26 @@ let frexp x =
   | [ m; e ] -> (m, e)
   | _ -> invalid_arg "frexp: arity"
 
-let ldexp x exponent =
-  reject_complex "ldexp" x;
-  let x = as_inexact x in
-  let two = L.full (shape x) 2.0 (dtype_of x) in
-  U.multiply x (U.power two (NL.astype exponent (dtype_of x)))
+let ldexp x1 x2 =
+  reject_complex "ldexp" x1;
+  (match dtype_of x2 with
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
+  | Dtype.Complex128 ->
+      invalid_arg "ldexp not supported for input types"
+  | _ -> ());
+  let x1 = as_inexact x1 in
+  let dt = dtype_of x1 in
+  let x2 = L.convert_element_type x2 dt in
+  let m, e = frexp x1 in
+  let e = NL.astype (U.add (NL.astype e dt) x2) dt in
+  let positive () = U.greater e (Jnp_util.py_int 0) in
+  let cond = positive () in
+  let m = Jnp_util.where cond (U.multiply m (Jnp_util.py_int 2)) m in
+  let cond = positive () in
+  let e = Jnp_util.where cond (U.subtract e (Jnp_util.py_int 1)) e in
+  let scaled = U.multiply m (U.power (Jnp_util.py_float 2.0) (NL.astype e dt)) in
+  let special = U.bitwise_or (U.isinf x1) (U.equal x1 (Jnp_util.py_int 0)) in
+  Jnp_util.where special x1 scaled
 
 let ldexp a0 a1 =
   Eager_jit.one ~jit:"ldexp" "numpy.extras.ldexp" () [] [ a0; a1 ]
@@ -1468,25 +1697,17 @@ let argpartition ?(axis = -1) a kth =
 let apply_along_axis f axis arr =
   let n = rank arr in
   let axis = canon n axis in
-  let moved = NL.moveaxis [| axis |] [| n - 1 |] arr in
-  let rec wrap depth g =
-    if depth = 0 then g
-    else
-      wrap (depth - 1) (fun x ->
-          List.hd
-            (Interpreters.Batching.vmap
-               (fun xs -> [ g (List.hd xs) ])
-               [ Some 0 ] [ x ]))
-  in
-  let result = (wrap (n - 1) f) moved in
-  let rn = rank result in
-  let produced = rn - (n - 1) in
-  if produced = 0 then result
-  else
-    NL.moveaxis
-      (Array.init produced (fun i -> n - 1 + i))
-      (Array.init produced (fun i -> axis + i))
-      result
+  let func = ref (fun xs -> [ f (List.hd xs) ]) in
+  for i = 1 to n - axis - 1 do
+    let inner = !func in
+    func :=
+      fun xs -> Interpreters.Batching.vmap_flat ~out_axis:(-1) inner [ Some i ] xs
+  done;
+  for _ = 1 to axis do
+    let inner = !func in
+    func := fun xs -> Interpreters.Batching.vmap inner [ Some 0 ] xs
+  done;
+  List.hd (!func [ arr ])
 
 let apply_over_axes f a axes =
   List.fold_left
@@ -1499,23 +1720,40 @@ let apply_over_axes f a axes =
 type nested = Item of value | Group of nested list
 
 let block tree =
-  let rec depth = function
-    | Item _ -> 0
-    | Group [] -> 1
-    | Group (h :: _) -> 1 + depth h
+  let rec leaves = function
+    | Item v -> [ v ]
+    | Group items -> List.concat_map leaves items
   in
-  let d = depth tree in
-  let rec go level = function
-    | Item v -> v
-    | Group items ->
-        let parts = List.map (go (level + 1)) items in
-        let target =
-          List.fold_left (fun m v -> Stdlib.max m (rank v)) (d - level) parts
-        in
-        let lifted = List.map (fun v -> L.broadcast_to_rank v target) parts in
-        NL.concatenate ~axis:(level - d) lifted
+  let rec shape_key = function
+    | Item _ -> "i"
+    | Group items -> "[" ^ String.concat "," (List.map shape_key items) ^ "]"
   in
-  go 0 tree
+  Jnp_util.jit1 "block" ~key:(shape_key tree)
+    (fun args ->
+      let remaining = ref args in
+      let rec go = function
+        | Item _ ->
+            let v = List.hd !remaining in
+            remaining := List.tl !remaining;
+            (v, 1)
+        | Group [] -> invalid_arg "jax.numpy.block does not allow empty list arguments"
+        | Group items ->
+            let parts = List.map go items in
+            let depth = snd (List.hd parts) in
+            if List.exists (fun (_, d) -> d <> depth) parts then
+              invalid_arg "Mismatched list depths in jax.numpy.block";
+            let target =
+              List.fold_left
+                (fun m (v, _) -> Stdlib.max m (rank v))
+                depth parts
+            in
+            let lifted =
+              List.map (fun (v, _) -> L.broadcast_to_rank v target) parts
+            in
+            (NL.concatenate ~axis:(-depth) lifted, depth + 1)
+      in
+      fst (go tree))
+    (leaves tree)
 
 let promote_types a b = Dtypes.promote_types a b
 
@@ -1568,31 +1806,29 @@ let polydiv ?(trim_leading_zeros = false) u v =
   let dt = dtype_of u in
   let b1 = Core.bind1 in
   let scalar x = L.full [||] x dt in
-  let index k =
-    Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int k |])
-  in
-  let scale = b1 Types.Div [ scalar 1.0; L.index_in_dim ~keepdims:false v 0 ] in
+  let scale = b1 Types.Div [ scalar 1.0; NL.index_at v 0 ] in
   let q = ref (AC.zeros ~dtype:dt [| Stdlib.max (lu - lv + 1) 1 |]) in
   let r = ref u in
+  let start k =
+    L.broadcast_in_dim (Jnp_util.py_int k) [| 1 |] [||]
+  in
+  let dims ~window =
+    {
+      update_window_dims = (if window then [| 0 |] else [||]);
+      inserted_window_dims = (if window then [||] else [| 0 |]);
+      scatter_dims_to_operand_dims = [| 0 |];
+      s_operand_batching_dims = [||];
+      s_scatter_indices_batching_dims = [||];
+      s_sorted_unique = true;
+    }
+  in
   for k = 0 to lu - lv do
-    let d = b1 Types.Mul [ scale; L.index_in_dim ~keepdims:false !r k ] in
-    q :=
-      b1 Types.Dynamic_update_slice
-        [ !q; L.broadcast_in_dim d [| 1 |] [||]; index k ];
+    let d = b1 Types.Mul [ scale; NL.index_at !r k ] in
+    let at = start k in
+    q := L.scatter !q at d (dims ~window:false);
     let delta = b1 Types.Mul [ b1 Types.Neg [ d ]; v ] in
-    let window =
-      b1
-        (Types.Slice
-           {
-             start_indices = [| k |];
-             limit_indices = [| k + lv |];
-             strides = None;
-           })
-        [ !r ]
-    in
-    r :=
-      b1 Types.Dynamic_update_slice
-        [ !r; b1 Types.Add [ window; delta ]; index k ]
+    let at = start k in
+    r := L.scatter_add !r at delta (dims ~window:true)
   done;
   if not trim_leading_zeros then (!q, !r)
   else begin

@@ -310,13 +310,10 @@ let numpy_run op p a b c =
   | "np_gradient" -> Some (E.gradient ?spacing:(opt_number "spacing" p) (a ()))
   | "np_gradient_axis" -> Some (E.gradient ?axis:(opt_ints "axis" p) (a ()))
   | "np_choose" ->
-      let two = like (nonneg (a ())) 2.0 in
-      Some
-        [
-          E.choose ~mode:"clip"
-            (UF.remainder (nonneg (a ())) two)
-            [ b (); L.neg (b ()) ];
-        ]
+      let x = nonneg (a ()) in
+      let picks = UF.remainder x (Ojax.Numpy.Jnp_util.py_int 2) in
+      let y = b () in
+      Some [ E.choose ~mode:"clip" picks [ y; UF.negative y ] ]
   | "np_compress" ->
       let bools =
         Array.of_list

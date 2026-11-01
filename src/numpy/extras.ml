@@ -140,8 +140,7 @@ let normalize_index idx extent =
 
 let expand_last v =
   let sh = shape v in
-  L.broadcast_in_dim v
-    (Array.append sh [| 1 |])
+  L.broadcast_in_dim v (Array.append sh [| 1 |])
     (Array.init (Array.length sh) Fun.id)
 
 let index_dtype extents =
@@ -172,12 +171,9 @@ let at_update ?(axis = 0) build x idxs y =
   in
   let m = Array.length idx_shape in
   let trailing = Array.sub sh (axis + k) (Array.length sh - axis - k) in
-  let slice_shape =
-    Array.concat [ Array.sub sh 0 axis; idx_shape; trailing ]
-  in
+  let slice_shape = Array.concat [ Array.sub sh 0 axis; idx_shape; trailing ] in
   let dt, weak =
-    Dtypes.result_type
-      [ (xa.dtype, xa.weak_type); (ya.dtype, ya.weak_type) ]
+    Dtypes.result_type [ (xa.dtype, xa.weak_type); (ya.dtype, ya.weak_type) ]
   in
   let x' = Core.convert_like ~weak x dt in
   let y' = Core.convert_like ~weak y dt in
@@ -185,8 +181,7 @@ let at_update ?(axis = 0) build x idxs y =
   let dims =
     {
       update_window_dims =
-        Array.append
-          (Array.init axis Fun.id)
+        Array.append (Array.init axis Fun.id)
           (Array.init (Array.length trailing) (fun i -> axis + m + i));
       inserted_window_dims = Array.init k (fun j -> axis + j);
       scatter_dims_to_operand_dims = Array.init k (fun j -> axis + j);
@@ -207,8 +202,7 @@ let at_add ?axis x idxs y =
 let array_of_values vs =
   let lift v =
     let sh = shape v in
-    L.broadcast_in_dim v
-      (Array.append [| 1 |] sh)
+    L.broadcast_in_dim v (Array.append [| 1 |] sh)
       (Array.init (Array.length sh) (fun i -> i + 1))
   in
   match List.map lift vs with
@@ -315,8 +309,7 @@ let leading_slice v start stop =
     (Slice
        {
          start_indices = Array.mapi (fun i _ -> if i = 0 then start else 0) sh;
-         limit_indices =
-           Array.mapi (fun i d -> if i = 0 then stop else d) sh;
+         limit_indices = Array.mapi (fun i d -> if i = 0 then stop else d) sh;
          strides = None;
        })
     [ v ]
@@ -343,7 +336,9 @@ let unique_sorted_mask ar axis equal_nan =
     ~key:(Printf.sprintf "%d,%b" axis equal_nan)
     (function
       | [ ar ] ->
-          let aux = if axis = 0 then ar else NL.moveaxis [| axis |] [| 0 |] ar in
+          let aux =
+            if axis = 0 then ar else NL.moveaxis [| axis |] [| 0 |] ar
+          in
           let aux =
             if is_complex_value aux then
               NL.where_ (U.isnan aux) (scalar_like aux Float.nan) aux
@@ -364,8 +359,10 @@ let unique_sorted_mask ar axis equal_nan =
           let ones = L.full [| rows |] 1.0 Dtype.Bool in
           let tail = leading_slice aux 1 rows in
           let head = leading_slice aux 0 (rows - 1) in
-          let inexact = Dtypes.isdtype (dtype_of aux) "numeric"
-            && not (Dtypes.isdtype (dtype_of aux) "integral") in
+          let inexact =
+            Dtypes.isdtype (dtype_of aux) "numeric"
+            && not (Dtypes.isdtype (dtype_of aux) "integral")
+          in
           let differs =
             if inexact && equal_nan then
               let ne = L.ne tail head in
@@ -374,13 +371,19 @@ let unique_sorted_mask ar axis equal_nan =
             else L.ne tail head
           in
           let any_diff =
-            R.any ~axis:(Array.init (Array.length sh - 1) (fun i -> i + 1)) differs
+            R.any
+              ~axis:(Array.init (Array.length sh - 1) (fun i -> i + 1))
+              differs
           in
           [ aux; at_leading_slice_set ones 1 any_diff; perm ]
       | _ -> invalid_arg "unique: arity")
     [ ar ]
 
-type unique_flags = { want_index : bool; want_inverse : bool; want_counts : bool }
+type unique_flags = {
+  want_index : bool;
+  want_inverse : bool;
+  want_counts : bool;
+}
 
 let no_unique_flags =
   { want_index = false; want_inverse = false; want_counts = false }
@@ -412,8 +415,7 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
         let valid =
           let extra = rank result - 1 in
           if extra = 0 then valid
-          else
-            NL.expand_dims valid (Array.init extra (fun i -> i + 1))
+          else NL.expand_dims valid (Array.init extra (fun i -> i + 1))
         in
         NL.where_ valid result
           (Concrete (Ndarray.of_floats (dtype_of result) [||] [| fv |]))
@@ -937,7 +939,8 @@ let histogram_bin_edges ?(bins = 10) ?range a =
   let pair =
     match range with
     | Some (l, h) ->
-        Jaxpr.stage_constant (Concrete (Ndarray.of_floats dt [| 2 |] [| l; h |]))
+        Jaxpr.stage_constant
+          (Concrete (Ndarray.of_floats dt [| 2 |] [| l; h |]))
     | None ->
         let low = R.min a in
         let high = R.max a in
@@ -1084,9 +1087,7 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
         let idx = NL.searchsorted ~side:"right" e c in
         let c = column i in
         let at_end = U.equal c (NL.index_at e (-1)) in
-        let idx =
-          NL.where_ at_end (U.subtract idx (Jnp_util.py_int 1)) idx
-        in
+        let idx = NL.where_ at_end (U.subtract idx (Jnp_util.py_int 1)) idx in
         (idx, e))
   in
   let idxs = List.map fst per_dim and edges = List.map snd per_dim in
@@ -1106,9 +1107,7 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
     if density then begin
       let core = NL.astype core (dtype_of sample) in
       let core = U.divide core (R.sum core) in
-      List.fold_left
-        (fun acc norm -> U.divide acc norm)
-        core (NL.ix_ dedges)
+      List.fold_left (fun acc norm -> U.divide acc norm) core (NL.ix_ dedges)
     end
     else core
   in
@@ -1136,10 +1135,7 @@ let interp_body ?left ?right ?period x xp fp =
         let p = U.absolute p in
         let x = U.remainder x p in
         let xp = U.remainder xp p in
-        let xp, fp =
-          match L.sort_key_val xp fp with
-          | k, v -> (k, v)
-        in
+        let xp, fp = match L.sort_key_val xp fp with k, v -> (k, v) in
         let n = size_of xp in
         let last = plain_slice xp (n - 1) n in
         let last = U.subtract last p in
@@ -1183,9 +1179,7 @@ let interp_body ?left ?right ?period x xp fp =
   let f =
     NL.where_ dx0 fp_r (U.add fp_s (U.multiply (U.divide delta safe) df))
   in
-  let left_arr =
-    match left with None -> NL.index_at fp 0 | Some v -> v
-  in
+  let left_arr = match left with None -> NL.index_at fp 0 | Some v -> v in
   let f =
     if period = None then NL.where_ (U.less x (NL.index_at xp 0)) left_arr f
     else f
@@ -1442,9 +1436,7 @@ let insert ?axis a position values =
     let raveled = NL.reshape (Jnp_util.py_int position) [| 1 |] in
     L.squeeze raveled [| 0 |]
   in
-  let values =
-    if ax = 0 then values else NL.moveaxis [| 0 |] [| ax |] values
-  in
+  let values = if ax = 0 then values else NL.moveaxis [| 0 |] [| ax |] values in
   let n_insert = (shape values).(ax) in
   let indices = L.broadcast_in_dim index [| n_insert |] [||] in
   let n_input = (shape a).(ax) in
@@ -1460,7 +1452,8 @@ let insert ?axis a position values =
   let indices = NL.clip ~min:0.0 ~max:(float_of_int n_input) indices in
   let order = Sorting.argsort ~axis:(Some 0) indices in
   let values_ind =
-    at_add indices [ order ] (NL.arange ~dtype:(dtype_of indices) (float_of_int n_insert))
+    at_add indices [ order ]
+      (NL.arange ~dtype:(dtype_of indices) (float_of_int n_insert))
   in
   let arr_mask =
     at_set
@@ -1549,13 +1542,15 @@ let piecewise x condlist funclist =
       let lead =
         let sh = shape conds in
         let first =
-          L.slice conds (Array.make (Array.length sh) 0)
+          L.slice conds
+            (Array.make (Array.length sh) 0)
             (Array.mapi (fun d e -> if d = 0 then 1 else e) sh)
         in
         L.full (shape first) 0.0 (dtype_of first)
       in
       let indices =
-        NL.argmax ~axis:0 (R.cumsum ~axis:0 (NL.concatenate ~axis:0 [ lead; conds ]))
+        NL.argmax ~axis:0
+          (R.cumsum ~axis:0 (NL.concatenate ~axis:0 [ lead; conds ]))
       in
       let of_fun f ops =
         match ops with
@@ -1564,8 +1559,8 @@ let piecewise x condlist funclist =
       in
       let branches =
         (match const with
-        | Some c -> [ (fun _ -> [ NL.astype (NL.copy c) dt ]) ]
-        | None -> [])
+          | Some c -> [ (fun _ -> [ NL.astype (NL.copy c) dt ]) ]
+          | None -> [])
         @ List.map of_fun callables
       in
       let switch = function
@@ -1584,7 +1579,9 @@ let fill_diagonal ?(wrap = false) a value =
     invalid_arg "All dimensions of input must be of equal length";
   let n = Array.fold_left Stdlib.min sh.(0) sh in
   let idx =
-    Core.bind1 (Iota { dtype = default_int (); shape = [| n |]; dimension = 0 }) []
+    Core.bind1
+      (Iota { dtype = default_int (); shape = [| n |]; dimension = 0 })
+      []
   in
   let v = if rank value = 0 then value else tile_to_size (NL.ravel value) n in
   let v = if dtype_of v = dtype_of a then v else NL.astype v (dtype_of a) in
@@ -1795,7 +1792,9 @@ let ldexp x1 x2 =
   let m = Jnp_util.where cond (U.multiply m (Jnp_util.py_int 2)) m in
   let cond = positive () in
   let e = Jnp_util.where cond (U.subtract e (Jnp_util.py_int 1)) e in
-  let scaled = U.multiply m (U.power (Jnp_util.py_float 2.0) (NL.astype e dt)) in
+  let scaled =
+    U.multiply m (U.power (Jnp_util.py_float 2.0) (NL.astype e dt))
+  in
   let special = U.bitwise_or (U.isinf x1) (U.equal x1 (Jnp_util.py_int 0)) in
   Jnp_util.where special x1 scaled
 
@@ -1817,7 +1816,8 @@ let apply_along_axis f axis arr =
   for i = 1 to n - axis - 1 do
     let inner = !func in
     func :=
-      fun xs -> Interpreters.Batching.vmap_flat ~out_axis:(-1) inner [ Some i ] xs
+      fun xs ->
+        Interpreters.Batching.vmap_flat ~out_axis:(-1) inner [ Some i ] xs
   done;
   for _ = 1 to axis do
     let inner = !func in
@@ -1852,16 +1852,15 @@ let block tree =
             let v = List.hd !remaining in
             remaining := List.tl !remaining;
             (v, 1)
-        | Group [] -> invalid_arg "jax.numpy.block does not allow empty list arguments"
+        | Group [] ->
+            invalid_arg "jax.numpy.block does not allow empty list arguments"
         | Group items ->
             let parts = List.map go items in
             let depth = snd (List.hd parts) in
             if List.exists (fun (_, d) -> d <> depth) parts then
               invalid_arg "Mismatched list depths in jax.numpy.block";
             let target =
-              List.fold_left
-                (fun m (v, _) -> Stdlib.max m (rank v))
-                depth parts
+              List.fold_left (fun m (v, _) -> Stdlib.max m (rank v)) depth parts
             in
             let lifted =
               List.map (fun (v, _) -> L.broadcast_to_rank v target) parts

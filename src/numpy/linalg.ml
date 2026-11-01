@@ -13,7 +13,6 @@ type ord = Onone | Ofro | Onuc | Onum of float
 type norm_axis = Anone | Aint of int | Apair of int * int
 
 let highest = Lax_config.precision_of_level Lax_config.Precision_highest
-
 let get_aval = C.get_aval
 let shape v = (get_aval v).T.shape
 let dtype v = (get_aval v).T.dtype
@@ -733,7 +732,9 @@ and lstsq_body ~rcond ~numpy_resid a b =
   let s_inv_col = NL.expand_dims s_inv [| ndim s_inv |] in
   let utb = TC.matmul ~precision:highest (UF.conj (matrix_transpose_v u)) bm in
   let x =
-    TC.matmul ~precision:highest (UF.conj (matrix_transpose_v vt)) (UF.multiply s_inv_col utb)
+    TC.matmul ~precision:highest
+      (UF.conj (matrix_transpose_v vt))
+      (UF.multiply s_inv_col utb)
   in
   let b_est = TC.matmul ~precision:highest a x in
   let full_resid () =

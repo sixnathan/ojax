@@ -107,7 +107,9 @@ let lexsort ?axis keys =
   | [] -> invalid_arg "need sequence of keys with len > 0 in lexsort"
   | _ ->
       let key =
-        "list," ^ string_of_int (List.length keys) ^ ","
+        "list,"
+        ^ string_of_int (List.length keys)
+        ^ ","
         ^ Option.fold ~none:"" ~some:string_of_int axis
       in
       Jnp_util.jit1 "lexsort" ~key (fun ks -> lexsort_impl ?axis ks) keys
@@ -128,7 +130,8 @@ let lexsort_array ?axis keys =
             bind1 (T.Squeeze [| 0 |])
               [
                 bind1
-                  (T.Slice { start_indices = start; limit_indices = limit; strides })
+                  (T.Slice
+                     { start_indices = start; limit_indices = limit; strides })
                   [ arr ];
               ]
           in

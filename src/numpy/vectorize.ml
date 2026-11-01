@@ -154,9 +154,7 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
              let sh = shape_of v in
              let noncore = Array.sub sh 0 (Array.length sh - ncs.(idx)) in
              let filled =
-               Array.append
-                 (Array.make (nb - Array.length noncore) 1)
-                 noncore
+               Array.append (Array.make (nb - Array.length noncore) 1) noncore
              in
              let squeeze_axes =
                List.filter

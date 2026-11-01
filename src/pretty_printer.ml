@@ -588,8 +588,7 @@ let scatter_params ?update d unique =
     ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
     ("unique_indices", Plain (py_bool (unique || d.s_sorted_unique)));
     ("update_consts", Plain "()");
-    ( "update_jaxpr",
-      match update with Some c -> Sub c | None -> Plain "None" );
+    ("update_jaxpr", match update with Some c -> Sub c | None -> Plain "None");
   ]
 
 let window_params (w : window_dims) =

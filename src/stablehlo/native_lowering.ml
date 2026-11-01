@@ -694,7 +694,9 @@ let rewriting_index i n =
   let strong =
     if is_weak i then Core.bind1 (Convert_element_type (dtype i)) [ i ] else i
   in
-  let shifted = Core.bind1 Add [ strong; scalar_like_index i (float_of_int n) ] in
+  let shifted =
+    Core.bind1 Add [ strong; scalar_like_index i (float_of_int n) ]
+  in
   Core.bind1 Select_n [ negative; i; shifted ]
 
 let scatter_index i n =
@@ -767,8 +769,7 @@ let lu_pivots_to_permutation ~permutation_size = function
           | _ -> invalid_arg "Native_lowering: pivots state"
         in
         [
-          List.hd
-            (L.fori_loop (int32 0) (int32 k) body [ permutation; swaps ]);
+          List.hd (L.fori_loop (int32 0) (int32 k) body [ permutation; swaps ]);
         ]
   | _ -> invalid_arg "Native_lowering: pivots arity"
 

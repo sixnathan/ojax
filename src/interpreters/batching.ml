@@ -338,8 +338,7 @@ let pad_batch (cfg : (int * int * int) array) (vals : value list)
       let mask = b1 (Pad cfg2) [ keep; off ] in
       let fill =
         b1
-          (Broadcast_in_dim
-             { shape = (Core.get_aval x).shape; dims = [| d |] })
+          (Broadcast_in_dim { shape = (Core.get_aval x).shape; dims = [| d |] })
           [ pv ]
       in
       (b1 Select_n [ mask; fill; x ], Some d)

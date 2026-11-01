@@ -194,7 +194,9 @@ let poly seq =
         NL.concatenate
           [
             one;
-            bind1 (T.Broadcast_in_dim { shape = [| 1 |]; dims = [||] }) [ negated ];
+            bind1
+              (T.Broadcast_in_dim { shape = [| 1 |]; dims = [||] })
+              [ negated ];
           ]
       in
       a := NL.convolve ~mode:"full" !a kernel

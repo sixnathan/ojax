@@ -14,3 +14,5 @@ val mark_gather_fill : 'a -> string -> float option -> 'a
 val gather_fill_of : 'a -> (string * float option) option
 val mark_gather_clip : sorted:bool -> 'a -> 'a
 val gather_clip_of : 'a -> bool option
+val mark_gather_flags : sorted:bool -> unique:bool -> 'a -> 'a
+val gather_flags_of : 'a -> (bool * bool) option

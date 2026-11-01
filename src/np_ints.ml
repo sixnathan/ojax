@@ -77,3 +77,17 @@ let gather_clip_of prim =
   List.find_map
     (fun (other, sorted) -> if other == o then Some sorted else None)
     (Hashtbl.find_all clip_gathers (Hashtbl.hash o))
+
+let gather_flags : (int, Obj.t * bool * bool) Hashtbl.t = Hashtbl.create 16
+
+let mark_gather_flags ~sorted ~unique prim =
+  let o = Obj.repr prim in
+  Hashtbl.add gather_flags (Hashtbl.hash o) (o, sorted, unique);
+  prim
+
+let gather_flags_of prim =
+  let o = Obj.repr prim in
+  List.find_map
+    (fun (other, sorted, unique) ->
+      if other == o then Some (sorted, unique) else None)
+    (Hashtbl.find_all gather_flags (Hashtbl.hash o))

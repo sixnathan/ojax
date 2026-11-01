@@ -4281,6 +4281,10 @@ let parity_run c inputs =
   let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
   Parity_cases.run c.op c.params get
 
+let coverage_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  Coverage_cases.run c.op c.params get
+
 let parity_jit_run c inputs =
   let names = List.map (fun (a : arg) -> a.name) c.args in
   let values =
@@ -4380,6 +4384,19 @@ let composed_suite_for ?(keep = fun _ -> true) ~run module_name set_name =
   in
   (module_name ^ ":" ^ set_name, coverage :: case_tests)
 
+let coverage_suites =
+  List.filter_map
+    (fun set_name ->
+      let manifest =
+        Filename.concat
+          (Filename.concat (Filename.concat goldens_root "coverage") set_name)
+          "manifest.json"
+      in
+      if Sys.file_exists manifest then
+        Some (composed_suite_for ~run:coverage_run "coverage" set_name)
+      else None)
+    [ "x64_off"; "x64_on" ]
+
 let parity_jit_suite_for set_name =
   let set_dir =
     Filename.concat (Filename.concat goldens_root "parity") set_name
@@ -4441,91 +4458,92 @@ let () =
   Ojax.Random.Threefry.install ();
   Alcotest.run "goldens"
     (List.map attributed
-       [
-         suite_for "dtypes" "x64_off";
-         suite_for "dtypes" "x64_on";
-         lax_suite_for "x64_off";
-         lax_suite_for "x64_on";
-         jaxpr_suite_for "x64_off";
-         jaxpr_suite_for "x64_on";
-         ad_suite_for "x64_off";
-         ad_suite_for "x64_on";
-         batch_suite_for "x64_off";
-         batch_suite_for "x64_on";
-         api_suite_for "x64_off";
-         api_suite_for "x64_on";
-         cond_suite_for "x64_off";
-         cond_suite_for "x64_on";
-         loops_suite_for "x64_off";
-         loops_suite_for "x64_on";
-         solves_suite_for "x64_off";
-         solves_suite_for "x64_on";
-         numpy_suite_for "x64_off";
-         numpy_suite_for "x64_on";
-         ufuncs_suite_for "x64_off";
-         ufuncs_suite_for "x64_on";
-         reductions_suite_for "x64_off";
-         reductions_suite_for "x64_on";
-         indexing_suite_for "x64_off";
-         indexing_suite_for "x64_on";
-         array_methods_suite_for "x64_off";
-         array_methods_suite_for "x64_on";
-         creation_suite_for "x64_off";
-         creation_suite_for "x64_on";
-         contractions_suite_for "x64_off";
-         contractions_suite_for "x64_on";
-         setops_suite_for "x64_off";
-         setops_suite_for "x64_on";
-         polynomial_suite_for "x64_off";
-         polynomial_suite_for "x64_on";
-         prng_suite_for "x64_off";
-         prng_suite_for "x64_on";
-         random_core_suite_for "x64_off";
-         random_core_suite_for "x64_on";
-         nn_suite_for "x64_off";
-         nn_suite_for "x64_on";
-         initializers_suite_for "x64_off";
-         initializers_suite_for "x64_on";
-         segment_suite_for "x64_off";
-         segment_suite_for "x64_on";
-         special_suite_for "x64_off";
-         special_suite_for "x64_on";
-         image_suite_for "x64_off";
-         image_suite_for "x64_on";
-         scipy_special_suite_for "x64_off";
-         scipy_special_suite_for "x64_on";
-         scipy_stats_suite_for "x64_off";
-         scipy_stats_suite_for "x64_on";
-         scipy_integrate_suite_for "x64_off";
-         scipy_integrate_suite_for "x64_on";
-         scipy_ndimage_suite_for "x64_off";
-         scipy_ndimage_suite_for "x64_on";
-         complex_suite_for "x64_off";
-         complex_suite_for "x64_on";
-         linalg_suite_for "x64_off";
-         linalg_suite_for "x64_on";
-         numpy_linalg_suite_for "x64_off";
-         numpy_linalg_suite_for "x64_on";
-         scipy_linalg_suite_for "x64_off";
-         scipy_linalg_suite_for "x64_on";
-         scipy_sparse_linalg_suite_for "x64_off";
-         scipy_sparse_linalg_suite_for "x64_on";
-         scipy_cluster_vq_suite_for "x64_off";
-         scipy_cluster_vq_suite_for "x64_on";
-         scipy_optimize_suite_for "x64_off";
-         scipy_optimize_suite_for "x64_on";
-         composed_suite_for ~run:parity_run "parity" "x64_off";
-         composed_suite_for ~run:parity_run "parity" "x64_on";
-         parity_jit_suite_for "x64_off";
-         parity_jit_suite_for "x64_on";
-         composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
-         composed_suite_for ~run:vectorize_run "vectorize" "x64_on";
-         composed_suite_for ~run:spatial_transform_run "spatial_transform"
-           "x64_off";
-         composed_suite_for ~run:spatial_transform_run "spatial_transform"
-           "x64_on";
-         ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
-       ]
+       (coverage_suites
+       @ [
+           suite_for "dtypes" "x64_off";
+           suite_for "dtypes" "x64_on";
+           lax_suite_for "x64_off";
+           lax_suite_for "x64_on";
+           jaxpr_suite_for "x64_off";
+           jaxpr_suite_for "x64_on";
+           ad_suite_for "x64_off";
+           ad_suite_for "x64_on";
+           batch_suite_for "x64_off";
+           batch_suite_for "x64_on";
+           api_suite_for "x64_off";
+           api_suite_for "x64_on";
+           cond_suite_for "x64_off";
+           cond_suite_for "x64_on";
+           loops_suite_for "x64_off";
+           loops_suite_for "x64_on";
+           solves_suite_for "x64_off";
+           solves_suite_for "x64_on";
+           numpy_suite_for "x64_off";
+           numpy_suite_for "x64_on";
+           ufuncs_suite_for "x64_off";
+           ufuncs_suite_for "x64_on";
+           reductions_suite_for "x64_off";
+           reductions_suite_for "x64_on";
+           indexing_suite_for "x64_off";
+           indexing_suite_for "x64_on";
+           array_methods_suite_for "x64_off";
+           array_methods_suite_for "x64_on";
+           creation_suite_for "x64_off";
+           creation_suite_for "x64_on";
+           contractions_suite_for "x64_off";
+           contractions_suite_for "x64_on";
+           setops_suite_for "x64_off";
+           setops_suite_for "x64_on";
+           polynomial_suite_for "x64_off";
+           polynomial_suite_for "x64_on";
+           prng_suite_for "x64_off";
+           prng_suite_for "x64_on";
+           random_core_suite_for "x64_off";
+           random_core_suite_for "x64_on";
+           nn_suite_for "x64_off";
+           nn_suite_for "x64_on";
+           initializers_suite_for "x64_off";
+           initializers_suite_for "x64_on";
+           segment_suite_for "x64_off";
+           segment_suite_for "x64_on";
+           special_suite_for "x64_off";
+           special_suite_for "x64_on";
+           image_suite_for "x64_off";
+           image_suite_for "x64_on";
+           scipy_special_suite_for "x64_off";
+           scipy_special_suite_for "x64_on";
+           scipy_stats_suite_for "x64_off";
+           scipy_stats_suite_for "x64_on";
+           scipy_integrate_suite_for "x64_off";
+           scipy_integrate_suite_for "x64_on";
+           scipy_ndimage_suite_for "x64_off";
+           scipy_ndimage_suite_for "x64_on";
+           complex_suite_for "x64_off";
+           complex_suite_for "x64_on";
+           linalg_suite_for "x64_off";
+           linalg_suite_for "x64_on";
+           numpy_linalg_suite_for "x64_off";
+           numpy_linalg_suite_for "x64_on";
+           scipy_linalg_suite_for "x64_off";
+           scipy_linalg_suite_for "x64_on";
+           scipy_sparse_linalg_suite_for "x64_off";
+           scipy_sparse_linalg_suite_for "x64_on";
+           scipy_cluster_vq_suite_for "x64_off";
+           scipy_cluster_vq_suite_for "x64_on";
+           scipy_optimize_suite_for "x64_off";
+           scipy_optimize_suite_for "x64_on";
+           composed_suite_for ~run:parity_run "parity" "x64_off";
+           composed_suite_for ~run:parity_run "parity" "x64_on";
+           parity_jit_suite_for "x64_off";
+           parity_jit_suite_for "x64_on";
+           composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
+           composed_suite_for ~run:vectorize_run "vectorize" "x64_on";
+           composed_suite_for ~run:spatial_transform_run "spatial_transform"
+             "x64_off";
+           composed_suite_for ~run:spatial_transform_run "spatial_transform"
+             "x64_on";
+           ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
+         ])
     @ [
         ( "exact_ratchet",
           [

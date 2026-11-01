@@ -307,7 +307,12 @@ let gather_fill_expanded ?fill_value operand indices (gd : gather_dims)
          (List.init (Array.length out_shape) Fun.id))
   in
   let mask =
-    bind1 (Broadcast_in_dim { shape = out_shape; dims = batch_dims }) [ mask ]
+    if
+      (aval mask).shape = out_shape
+      && batch_dims = Array.init (Array.length out_shape) Fun.id
+    then mask
+    else
+      bind1 (Broadcast_in_dim { shape = out_shape; dims = batch_dims }) [ mask ]
   in
   let fill =
     match fill_value with
@@ -335,12 +340,14 @@ let fill_repr ?fill_value dt =
       | d when Dtypes.issubdtype d `Signed -> of_float (Dtypes.iinfo d).imin
       | d -> of_float (Dtypes.iinfo d).imax)
 
-let gather_fill ?fill_value operand indices (gd : gather_dims) slice_sizes =
+let gather_fill ?(flag = Fun.id) ?fill_value operand indices (gd : gather_dims)
+    slice_sizes =
   let dt = (Core.get_aval operand).dtype in
   Core.bind1
-    (Np_ints.mark_gather_fill
-       (Gather { dimension_numbers = gd; slice_sizes })
-       (fill_repr ?fill_value dt) fill_value)
+    (flag
+       (Np_ints.mark_gather_fill
+          (Gather { dimension_numbers = gd; slice_sizes })
+          (fill_repr ?fill_value dt) fill_value))
     [ operand; indices ]
 
 let gather_fill_lowered prim operand indices =
@@ -397,7 +404,13 @@ let gather_fill_lowered prim operand indices =
   let mask = bind1 And [ ge; bind1 Le [ indices; bound ] ] in
   let mask = bind1 (Reduce_and [| batch |]) [ mask ] in
   let gathered =
-    bind1 (Gather { dimension_numbers = gd; slice_sizes }) [ operand; indices ]
+    let inner = Gather { dimension_numbers = gd; slice_sizes } in
+    let inner =
+      match Np_ints.gather_flags_of prim with
+      | Some (sorted, unique) -> Np_ints.mark_gather_flags ~sorted ~unique inner
+      | None -> inner
+    in
+    bind1 inner [ operand; indices ]
   in
   let out_shape = (aval gathered).shape in
   let batch_dims =
@@ -407,7 +420,12 @@ let gather_fill_lowered prim operand indices =
          (List.init (Array.length out_shape) Fun.id))
   in
   let mask =
-    bind1 (Broadcast_in_dim { shape = out_shape; dims = batch_dims }) [ mask ]
+    if
+      (aval mask).shape = out_shape
+      && batch_dims = Array.init (Array.length out_shape) Fun.id
+    then mask
+    else
+      bind1 (Broadcast_in_dim { shape = out_shape; dims = batch_dims }) [ mask ]
   in
   let fill =
     match fill_value with

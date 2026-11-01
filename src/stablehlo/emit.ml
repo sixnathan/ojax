@@ -1494,7 +1494,9 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
         indices_are_sorted = %b, slice_sizes = %s}> : (%s, %s) -> %s\n"
        (name n) (name op_id) (name idx_id)
        (gather_dnums_attr dnums ivd)
-       (dnums.g_sorted_unique || Np_ints.gather_clip_of eqn.prim = Some true)
+       (dnums.g_sorted_unique
+       || Np_ints.gather_clip_of eqn.prim = Some true
+       || Option.fold ~none:false ~some:fst (Np_ints.gather_flags_of eqn.prim))
        (array_i64 slice_sizes)
        (Ir.tensor_type_of_aval op_av)
        (Ir.tensor_type_of_aval idx_av)

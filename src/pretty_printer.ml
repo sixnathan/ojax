@@ -766,12 +766,17 @@ let jax_params (e : eqn) =
       let fill = Np_ints.gather_fill_of p in
       let clip = Np_ints.gather_clip_of p in
       let sorted = clip = Some true in
+      let flag_sorted, flag_unique =
+        Option.value (Np_ints.gather_flags_of p) ~default:(false, false)
+      in
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ( "fill_value",
           Plain (match fill with Some (r, _) -> r | None -> "None") );
         ( "indices_are_sorted",
-          Plain (py_bool (sorted || dimension_numbers.g_sorted_unique)) );
+          Plain
+            (py_bool
+               (sorted || flag_sorted || dimension_numbers.g_sorted_unique)) );
         ( "mode",
           Plain
             (if fill <> None then "GatherScatterMode.FILL_OR_DROP"
@@ -779,7 +784,9 @@ let jax_params (e : eqn) =
              else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
         ( "unique_indices",
-          Plain (py_bool (sorted || dimension_numbers.g_sorted_unique)) );
+          Plain
+            (py_bool
+               (sorted || flag_unique || dimension_numbers.g_sorted_unique)) );
       ]
   | Scatter { dimension_numbers; unique_indices } as p ->
       scatter_params ~sorted:(Np_ints.scatter_marked p) dimension_numbers
@@ -1333,6 +1340,18 @@ let rec mark_keys keys (jx : jaxpr) =
           List.iter2
             (fun (out : var) input -> if is_key input then mark out)
             e.outs carry
+      | Scan { jaxpr = c; _ } ->
+          let binders =
+            List.filteri
+              (fun i _ -> i >= List.length c.consts)
+              c.jaxpr.in_binders
+          in
+          if List.length binders = List.length e.inputs then begin
+            List.iter2
+              (fun (b : var) input -> if is_key input then mark b)
+              binders e.inputs;
+            mark_keys keys c.jaxpr
+          end
       | _ -> ())
     jx.eqns
 

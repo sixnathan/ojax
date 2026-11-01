@@ -66,7 +66,7 @@ let traced_debug n =
     arg_names = Some (List.init n (Printf.sprintf "xs[%d]"));
   }
 
-let parity_case oc ~set case =
+let parity_case ?(run = Parity_cases.run_cases) oc ~set case =
   let names =
     List.map
       (fun a -> U.to_string (U.member "name" a))
@@ -90,8 +90,7 @@ let parity_case oc ~set case =
       Ojax.Jaxpr.with_trace_debug
         (traced_debug (List.length avals))
         (fun () ->
-          Ojax.Jaxpr.make_jaxpr avals (fun args ->
-              Parity_cases.run_cases op params (lookup args))))
+          Ojax.Jaxpr.make_jaxpr avals (fun args -> run op params (lookup args))))
 
 let f32 shape : T.aval = { shape; dtype = D.F32; weak_type = false }
 let of_dtype dtype shape : T.aval = { shape; dtype; weak_type = false }
@@ -211,6 +210,18 @@ let () =
               if in_shard ~shard ~shards i then
                 parity_case oc ~set:("parity/" ^ set) case)
             (cases_of manifest);
+          let coverage =
+            Filename.concat
+              (Filename.concat (Filename.concat goldens "coverage") set)
+              "manifest.json"
+          in
+          if Sys.file_exists coverage then
+            List.iteri
+              (fun i case ->
+                if in_shard ~shard ~shards i then
+                  parity_case ~run:Coverage_cases.run oc
+                    ~set:("coverage/" ^ set) case)
+              (cases_of coverage);
           if shard = 0 then
             List.iter
               (fun (case, avals, f) ->

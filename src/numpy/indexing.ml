@@ -44,7 +44,8 @@ let wrap_negative indices axis_size =
     (bind1 T.Add [ indices; full idt [||] (float_of_int axis_size) ])
     indices
 
-let take ?axis ?mode ?fill_value a indices =
+let take ?axis ?mode ?fill_value ?(unique_indices = false)
+    ?(indices_are_sorted = false) a indices =
   let a, axis_idx =
     match axis with
     | None -> (NL.ravel a, 0)
@@ -90,12 +91,24 @@ let take ?axis ?mode ?fill_value a indices =
          })
       [ indices ]
   in
+  let flag prim =
+    if unique_indices || indices_are_sorted then
+      Np_ints.mark_gather_flags ~sorted:indices_are_sorted
+        ~unique:unique_indices prim
+    else prim
+  in
   match mode with
   | None | Some "fill" ->
-      Lax.Slicing.gather_fill ?fill_value a gather_indices dnums slice_sizes
+      Lax.Slicing.gather_fill ~flag ?fill_value a gather_indices dnums
+        slice_sizes
+  | Some "clip" ->
+      bind1
+        (Np_ints.mark_gather_clip ~sorted:false
+           (flag (T.Gather { dimension_numbers = dnums; slice_sizes })))
+        [ a; gather_indices ]
   | _ ->
       bind1
-        (T.Gather { dimension_numbers = dnums; slice_sizes })
+        (flag (T.Gather { dimension_numbers = dnums; slice_sizes }))
         [ a; gather_indices ]
 
 let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
@@ -336,13 +349,15 @@ let put_along_axis ?axis ?mode a0 a1 a2 =
       | [], [ a0; a1; a2 ] -> put_along_axis ?axis ?mode a0 a1 a2
       | _ -> assert false)
 
-let take_index = take
+let take_index ?axis ?mode ?fill_value a i = take ?axis ?mode ?fill_value a i
 
-let take ?axis ?mode ?fill_value a0 a1 =
-  Eager_jit.one ~jit:"_take" "numpy.indexing.take" (axis, mode, fill_value) []
-    [ a0; a1 ] (fun opts vals ->
+let take ?axis ?mode ?fill_value ?unique_indices ?indices_are_sorted a0 a1 =
+  Eager_jit.one ~jit:"_take" "numpy.indexing.take"
+    (axis, mode, fill_value, unique_indices, indices_are_sorted) [] [ a0; a1 ]
+    (fun opts vals ->
       match (opts, vals) with
-      | [], [ a0; a1 ] -> take ?axis ?mode ?fill_value a0 a1
+      | [], [ a0; a1 ] ->
+          take ?axis ?mode ?fill_value ?unique_indices ?indices_are_sorted a0 a1
       | _ -> assert false)
 
 let is_weak v = (get_aval v).T.weak_type

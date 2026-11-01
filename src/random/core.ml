@@ -17,6 +17,11 @@ let fdt () =
 let idt () =
   match !int_override with Some d -> d | None -> Dtypes.default_int_dtype ()
 
+let explicit_int : D.t option ref = ref None
+
+let result_idt () =
+  match !explicit_int with Some d -> d | None -> Dtypes.default_int_dtype ()
+
 let with_dtypes ?float_dtype ?int_dtype thunk =
   let saved_f = !float_override and saved_i = !int_override in
   (match float_dtype with
@@ -242,8 +247,20 @@ let randint_v key ~minval ~maxval ~shape ~dt =
     | _ -> assert false)
 
 let randint k ~shape ~minval ~maxval =
-  randint_v k ~minval:(JU.py_int minval) ~maxval:(JU.py_int maxval) ~shape
-    ~dt:(idt ())
+  let dt = idt () in
+  let lo, hi = int_bounds dt in
+  if Dtypes.itemsize_bits dt < 32 then
+    let bound v top =
+      NL.clip_values ~method_:true
+        ~min:(JU.py_int (Int64.to_int lo))
+        ~max:(JU.py_int (Int64.to_int top))
+        (NL.astype (JU.py_int v) D.I32)
+    in
+    let minval = bound minval hi in
+    let maxval = bound maxval (Int64.add hi 1L) in
+    NL.astype (randint_v k ~minval ~maxval ~shape ~dt:D.I32) dt
+  else
+    randint_v k ~minval:(JU.py_int minval) ~maxval:(JU.py_int maxval) ~shape ~dt
 
 let shuffle key x =
   let sh = shape_of x in
@@ -346,7 +363,21 @@ let normal_real key ~shape ~dt =
 
 let normal_dt key ~shape ~dt =
   jit_region "_normal" (shape, dt) [ key ] (function
-    | [ key ] -> normal_real key ~shape ~dt
+    | [ key ] -> (
+        match dt with
+        | D.Complex64 | D.Complex128 ->
+            let real_dt = if dt = D.Complex128 then D.F64 else D.F32 in
+            let sqrt2 =
+              Concrete
+                (Nd.of_complex dt [||]
+                   [| { Complex.re = sqrt 2.0; im = 0.0 } |])
+            in
+            let key_re, key_im = key2 key in
+            let re = conv (normal_real key_re ~shape ~dt:real_dt) dt in
+            let im = conv (normal_real key_im ~shape ~dt:real_dt) dt in
+            let j = JU.py_complex { Complex.re = 0.0; im = 1.0 } in
+            (re +! (j *! im)) /! sqrt2
+        | _ -> normal_real key ~shape ~dt)
     | _ -> assert false)
 
 let normal k ~shape = normal_dt k ~shape ~dt:(fdt ())
@@ -385,6 +416,18 @@ let bernoulli_v key ~p ~shape =
 
 let bernoulli k ~shape ~p = bernoulli_v k ~p:(npf (fdt ()) p) ~shape
 
+let bernoulli_high key ~p ~shape =
+  let pdt = dtype_of p in
+  jit_region "_bernoulli" (shape, pdt, "high") [ key; p ] (function
+    | [ key; p ] ->
+        let u = uniform_py key ~shape:(Array.append [| 2 |] shape) ~dt:pdt in
+        let u1 = L.index_in_dim ~keepdims:false u 0 in
+        let u2 = L.index_in_dim ~keepdims:false u 1 in
+        let nmant = (Dtypes.finfo pdt).nmant in
+        let u2 = u2 *! pyf (2.0 ** float_of_int (-nmant)) in
+        UF.less u2 (p -! u1)
+    | _ -> assert false)
+
 let bernoulli_prob k ~shape ~p =
   let dt = dtype_of p in
   let shaped = if shape_of p = shape then p else NL.broadcast_to p shape in
@@ -401,9 +444,7 @@ let rademacher_dt key ~shape ~dt =
 
 let float_dtype = fdt
 let rademacher_as = rademacher_dt
-
-let rademacher k ~shape =
-  rademacher_dt k ~shape ~dt:(Dtypes.default_int_dtype ())
+let rademacher k ~shape = rademacher_dt k ~shape ~dt:(result_idt ())
 
 let exponential_dt key ~shape ~dt =
   jit_region "_exponential" (shape, dt) [ key ] (function
@@ -433,7 +474,9 @@ let laplace k ~shape =
     | [ key ] ->
         let u =
           uniform_v key
-            ~minval:(npf dt (round_to dt (-1.0 +. epsneg_of dt)))
+            ~minval:
+              (let low = round_to dt (-1.0 +. epsneg_of dt) in
+               if dt = D.Bf16 then npf D.F32 low else npf dt low)
             ~maxval:(pyf 1.0) ~shape ~dt
         in
         let sign = L.sign u in
@@ -465,6 +508,87 @@ let gumbel_dt key ~shape ~dt =
     | _ -> assert false)
 
 let gumbel k ~shape = gumbel_dt k ~shape ~dt:(fdt ())
+
+let safe_int_to_float bits =
+  let u32 v = Concrete (Nd.of_floats D.Uint32 [||] [| v |]) in
+  let clz = L.clz bits in
+  let unpack v i = L.index_in_dim ~keepdims:false v i in
+  let hiclz = unpack clz 0 and loclz = unpack clz 1 in
+  let hi = unpack bits 0 and lo = unpack bits 1 in
+  let shifted_hi = L.shift_left hi hiclz in
+  let all_hi = UF.equal hiclz (JU.py_int 32) in
+  let shifted_lo = L.shift_left lo loclz in
+  let mantissa =
+    L.bitwise_or shifted_hi
+      (NL.where_ all_hi shifted_lo
+         (L.shift_right_logical lo (JU.py_int 32 -! hiclz)))
+  in
+  let mantissa = L.shift_right_logical mantissa (u32 8.0) in
+  let mantissa = L.bitwise_and mantissa (u32 8388607.0) in
+  let exp_all_hi = UF.equal hiclz (JU.py_int 32) in
+  let exp_lo = JU.py_int 32 +! loclz in
+  let exp =
+    L.shift_left (JU.py_int 126 -! NL.where_ exp_all_hi exp_lo hiclz) (u32 23.0)
+  in
+  let exp = L.bitwise_and exp (u32 1069547520.0) in
+  L.bitcast_convert_type (L.bitwise_or exp mantissa) D.F32
+
+let gumbel_mode key ~shape ~dt ~mode =
+  match mode with
+  | "low" -> gumbel_dt key ~shape ~dt
+  | _ ->
+      jit_region "_gumbel" (shape, dt, mode) [ key ] (function
+        | [ key ] ->
+            let info = Dtypes.finfo dt in
+            if dt = D.F32 && mode = "highest" then begin
+              let u32 v = Concrete (Nd.of_floats D.Uint32 [||] [| v |]) in
+              let bits =
+                PR.random_bits (wrap key) ~bit_width:32
+                  ~shape:(Array.append [| 2 |] shape)
+              in
+              let neg = L.bitwise_not bits in
+              let lo_bits = NL.index_at neg 1 in
+              let eq = UF.equal lo_bits (u32 4294967295.0) in
+              let ones = AC.ones_like lo_bits in
+              let eq = conv eq D.Uint32 in
+              let row v =
+                C.bind1
+                  (Broadcast_in_dim
+                     {
+                       shape = Array.append [| 1 |] shape;
+                       dims = Array.init (Array.length shape) (fun i -> i + 1);
+                     })
+                  [ v ]
+              in
+              let eq_row = row eq in
+              let ones_row = row ones in
+              let carry = L.concatenate [ eq_row; ones_row ] 0 in
+              let neg = neg +! carry in
+              let flip_mask = UF.less (NL.index_at bits 0) (u32 2147483648.0) in
+              let x = safe_int_to_float (NL.where_ flip_mask bits neg) in
+              NL.where_ flip_mask
+                (UF.negative (UF.log (UF.negative (UF.log1p (UF.negative x)))))
+                (UF.negative (UF.log (UF.negative (UF.log x))))
+            end
+            else begin
+              let uni =
+                uniform_kw key ~minval:(pyf 0.0) ~maxval:(pyf 1.0)
+                  ~shape:(Array.append [| 2 |] shape)
+                  ~dt
+              in
+              let high = L.index_in_dim ~keepdims:false uni 0 in
+              let low = L.index_in_dim ~keepdims:false uni 1 in
+              let x =
+                NL.where_
+                  (UF.greater_equal high (pyf 0.5))
+                  high
+                  (high
+                  +! (pyf (2.0 ** float_of_int (-info.nmant)) *! low)
+                  +! npf dt info.tiny)
+              in
+              UF.negative (UF.log (UF.negative (UF.log1p (UF.negative x))))
+            end
+        | _ -> assert false)
 
 let gamma_one dt log_space key alpha =
   let zero = like alpha 0.0
@@ -737,7 +861,7 @@ let wald k ~shape ~mean =
       | _ -> assert false)
 
 let geometric k ~shape ~p =
-  let idt_ = Dtypes.default_int_dtype () in
+  let idt_ = result_idt () in
   let pdt = fdt () in
   jit_region "_geometric" (shape, idt_)
     [ k; param_float p ]
@@ -892,9 +1016,7 @@ let poisson_impl key lam ~shape ~dt =
         in
         let lam_knuth = L.select use_knuth lam (L.full_like lam 0.0) in
         let lam_rejection = L.select use_knuth (L.full_like lam 1e5) lam in
-        let max_iters =
-          match dt with D.I64 -> Int64.max_int | _ -> 2147483647L
-        in
+        let max_iters = snd (int_bounds dt) in
         let knuth =
           jit_region "_poisson_knuth" (shape, dt, max_iters) [ key; lam_knuth ]
             (function
@@ -914,7 +1036,7 @@ let poisson_impl key lam ~shape ~dt =
 let poisson_value k ~shape ~lam =
   let lam = NL.broadcast_to lam shape in
   let lam = conv lam D.F32 in
-  poisson_impl k lam ~shape ~dt:(Dtypes.default_int_dtype ())
+  poisson_impl k lam ~shape ~dt:(result_idt ())
 
 let poisson k ~shape ~lam = poisson_value k ~shape ~lam:(pyf lam)
 
@@ -948,33 +1070,39 @@ let stirling_tail k =
   let i32_lit x = Concrete (Nd.of_floats D.I32 [||] [| x |]) in
   let idx = L.select (L.lt idx (i32_lit 0.0)) (L.add idx (i32_lit 10.0)) idx in
   let n = shape_of idx in
-  let start =
-    C.bind1
-      (Broadcast_in_dim
-         {
-           shape = Array.append n [| 1 |];
-           dims = Array.init (Array.length n) Fun.id;
-         })
-      [ idx ]
-  in
-  let picked =
-    C.bind1
-      (Gather
-         {
-           dimension_numbers =
-             {
-               offset_dims = [||];
-               collapsed_slice_dims = [| 0 |];
-               start_index_map = [| 0 |];
-               g_operand_batching_dims = [||];
-               g_start_indices_batching_dims = [||];
-               g_sorted_unique = false;
-             };
-           slice_sizes = [| 1 |];
-         })
-      [ vals; start ]
-  in
-  L.select use_tail picked approx
+  if n = [||] then
+    L.select use_tail
+      (C.bind1 (Squeeze [| 0 |])
+         [ C.bind1 (Dynamic_slice { slice_sizes = [| 1 |] }) [ vals; idx ] ])
+      approx
+  else
+    let start =
+      C.bind1
+        (Broadcast_in_dim
+           {
+             shape = Array.append n [| 1 |];
+             dims = Array.init (Array.length n) Fun.id;
+           })
+        [ idx ]
+    in
+    let picked =
+      C.bind1
+        (Gather
+           {
+             dimension_numbers =
+               {
+                 offset_dims = [||];
+                 collapsed_slice_dims = [| 0 |];
+                 start_index_map = [| 0 |];
+                 g_operand_batching_dims = [||];
+                 g_start_indices_batching_dims = [||];
+                 g_sorted_unique = false;
+               };
+             slice_sizes = [| 1 |];
+           })
+        [ vals; start ]
+    in
+    L.select use_tail picked approx
 
 let btrs key count prob ~shape ~dt =
   let c v = pyf v in
@@ -1135,7 +1263,11 @@ let dirichlet k ~alpha ~shape =
             ~shape:(Array.append shape [| event |])
             ~dt ~log_space:true
         in
-        let top = RED.max ~axis:[| -1 |] ~keepdims:true log_gamma in
+        let top =
+          RED.max ~axis:[| -1 |] ~keepdims:true
+            ~initial:(npf dt Float.neg_infinity)
+            log_gamma
+        in
         let unnormalized = UF.exp (log_gamma -! L.stop_gradient top) in
         unnormalized /! RED.sum ~axis:[| -1 |] ~keepdims:true unnormalized
     | _ -> assert false)
@@ -1233,6 +1365,248 @@ let check_prng_key k =
             "Raw arrays as random keys to jax.random functions are deprecated. \
              Assuming valid threefry2x32 key for now."
 
+let promote_inexact vs =
+  let vs = NL.promote_values vs in
+  let dt = dtype_of (List.hd vs) in
+  let dt =
+    match dt with
+    | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> dt
+    | _ -> Dtypes.default_float_dtype ()
+  in
+  List.map (fun v -> conv v dt) vs
+
+let shape_repr sh =
+  match Array.to_list sh with
+  | [ d ] -> Printf.sprintf "(%d,)" d
+  | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
+
+let shuffle_axis key x ~axis =
+  let sh = shape_of x in
+  let size = prod sh in
+  let rounds =
+    int_of_float
+      (ceil (3.0 *. log (float_of_int (max 1 size)) /. log 4294967295.0))
+  in
+  jit_region "_shuffle" (sh, rounds, axis) [ key; x ] (function
+    | [ key; x ] ->
+        let rec loop key x r =
+          if r = 0 then x
+          else
+            let k, sub = key2 key in
+            let sort_keys = PR.random_bits (wrap sub) ~bit_width:32 ~shape:sh in
+            let outs =
+              C.bind
+                (Sort { dimension = axis; is_stable = true; num_keys = 1 })
+                [ sort_keys; x ]
+            in
+            loop k (List.nth outs 1) (r - 1)
+        in
+        loop key x rounds
+    | _ -> assert false)
+
+let permutation_array ?(axis = 0) ?(independent = false) k x =
+  let rank = Array.length (shape_of x) in
+  let axis = if axis < 0 then axis + max rank 1 else axis in
+  if independent || rank = 1 then shuffle_axis k x ~axis
+  else
+    let n = (shape_of x).(axis) in
+    let dt = Dtypes.default_int_dtype () in
+    let ind =
+      shuffle_axis k
+        (C.bind1 (Iota { dtype = dt; shape = [| n |]; dimension = 0 }) [])
+        ~axis:0
+    in
+    Numpy.Indexing.take ~axis ~unique_indices:true x ind
+
+let gumbel_any key ~shape ~dt ~mode =
+  match mode with
+  | None -> gumbel_dt key ~shape ~dt
+  | Some mode -> gumbel_mode key ~shape ~dt ~mode
+
+let choice_array ?(shape = [||]) ?(replace = true) ?p ?(axis = 0) ?mode k arr =
+  let ash = shape_of arr in
+  let rank = Array.length ash in
+  let axis = if axis < 0 then axis + max rank 1 else axis in
+  let n_inputs =
+    if rank = 0 then int_of_float (Nd.get_f (concrete arr) [||]) else ash.(axis)
+  in
+  let n_draws = prod shape in
+  let out_shape () =
+    if rank = 0 then shape
+    else
+      Array.concat
+        [
+          Array.sub ash 0 axis; shape; Array.sub ash (axis + 1) (rank - axis - 1);
+        ]
+  in
+  if n_draws = 0 then AC.zeros ~dtype:(dtype_of arr) (out_shape ())
+  else if n_inputs <= 0 then
+    invalid_arg "a must be greater than 0 unless no samples are taken"
+  else if (not replace) && n_draws > n_inputs then
+    invalid_arg
+      (Printf.sprintf
+         "Cannot take a larger sample (size %d) than population (size %d) when \
+          'replace=False'"
+         n_draws n_inputs)
+  else
+    let int_dt = Dtypes.default_int_dtype () in
+    let take_ind ind =
+      if rank = 0 then ind else Numpy.Indexing.take ~axis arr ind
+    in
+    let result =
+      match p with
+      | None ->
+          if replace then
+            take_ind
+              (randint_v k ~minval:(JU.py_int 0) ~maxval:(JU.py_int n_inputs)
+                 ~shape ~dt:int_dt)
+          else
+            let perm =
+              if rank = 0 then
+                shuffle_axis k
+                  (C.bind1
+                     (Iota
+                        {
+                          dtype = int_dt;
+                          shape = [| n_inputs |];
+                          dimension = 0;
+                        })
+                     [])
+                  ~axis:0
+              else permutation_array ~axis k arr
+            in
+            let start = Array.make (max rank 1) 0 in
+            let limit = Array.copy (shape_of perm) in
+            limit.(axis) <- n_draws;
+            C.bind1
+              (Slice
+                 {
+                   start_indices = start;
+                   limit_indices = limit;
+                   strides = None;
+                 })
+              [ perm ]
+      | Some p_arr ->
+          let p_arr = List.hd (promote_inexact [ p_arr ]) in
+          if shape_of p_arr <> [| n_inputs |] then
+            invalid_arg
+              (Printf.sprintf
+                 "p must be None or a 1D vector with the same size as \
+                  a.shape[axis]. p has shape %s and a.shape[axis] is %d."
+                 (shape_repr (shape_of p_arr))
+                 n_inputs);
+          if replace then begin
+            let p_cuml = RED.cumsum p_arr in
+            let cdt = dtype_of p_cuml in
+            let last = NL.index_at p_cuml (-1) in
+            let r = last *! (JU.py_int 1 -! uniform_py k ~shape ~dt:cdt) in
+            take_ind (NL.astype (NL.searchsorted p_cuml r) int_dt)
+          end
+          else begin
+            let g =
+              gumbel_any k ~shape:[| n_inputs |] ~dt:(dtype_of p_arr) ~mode
+              +! UF.log p_arr
+            in
+            let _, idx = L.top_k g n_draws in
+            take_ind (NL.astype idx int_dt)
+          end
+    in
+    L.reshape result (out_shape ())
+
+let categorical_full ?(axis = -1) ?shape ?(replace = true) ?mode k logits =
+  let lsh = shape_of logits in
+  let rank = Array.length lsh in
+  let norm_axis = if axis < 0 then axis + rank else axis in
+  let batch_shape =
+    Array.of_list (List.filteri (fun i _ -> i <> norm_axis) (Array.to_list lsh))
+  in
+  let shape = Option.value shape ~default:batch_shape in
+  let nb = Array.length batch_shape and ns = Array.length shape in
+  let shape_prefix = Array.sub shape 0 (ns - nb) in
+  let dt = dtype_of logits in
+  if replace then begin
+    let axis = if axis >= 0 then axis - rank else axis in
+    let tail = Array.to_list (Array.sub shape (ns - nb) nb) in
+    let at = ((axis mod rank) + rank) mod rank in
+    let rec insert i = function
+      | rest when i = 0 -> lsh.(((axis mod rank) + rank) mod rank) :: rest
+      | h :: t -> h :: insert (i - 1) t
+      | [] -> []
+    in
+    let logits_shape = Array.of_list (insert at tail) in
+    let g =
+      gumbel_any k ~shape:(Array.append shape_prefix logits_shape) ~dt ~mode
+    in
+    let expanded =
+      L.expand_dims logits (Array.init (Array.length shape_prefix) Fun.id)
+    in
+    NL.argmax ~axis (g +! expanded)
+  end
+  else begin
+    let logits = logits +! gumbel_any k ~shape:lsh ~dt ~mode in
+    let top = prod shape_prefix in
+    if top > lsh.(norm_axis) then
+      invalid_arg
+        (Printf.sprintf
+           "Number of samples without replacement (%d) cannot exceed number of \
+            categories (%d)."
+           top lsh.(norm_axis));
+    let _, indices = L.top_k (NL.moveaxis [| axis |] [| -1 |] logits) top in
+    let ni = Array.length (shape_of indices) in
+    if ni = 1 && shape_of indices = shape then indices
+    else
+      L.reshape
+        ~dimensions:(Array.append [| ni - 1 |] (Array.init (ni - 1) Fun.id))
+        indices shape
+  end
+
+let multinomial_full ?shape ?dtype ?(unroll = 1) k ~n ~p =
+  let n, p =
+    match promote_inexact [ n; p ] with [ n; p ] -> (n, p) | _ -> assert false
+  in
+  let shape = Option.value shape ~default:(shape_of p) in
+  let n = NL.broadcast_to n (Array.sub shape 0 (Array.length shape - 1)) in
+  let p = NL.broadcast_to p shape in
+  let p = NL.moveaxis [| -1 |] [| 0 |] p in
+  let remaining = L.cumsum ~axis:0 ~reverse:true p in
+  let ratios =
+    p /! NL.where_ (UF.equal remaining (JU.py_int 0)) (JU.py_int 1) remaining
+  in
+  let keys = split_keys k (shape_of ratios).(0) in
+  let body = function
+    | [ remainder; ratio; key ] ->
+        let clipped =
+          NL.clip_values ~method_:true ~min:(JU.py_int 0) ~max:(JU.py_int 1)
+            ratio
+        in
+        let count =
+          binomial_v key ~count:remainder ~prob:clipped
+            ~shape:(shape_of remainder) ~dt:(dtype_of remainder)
+        in
+        [ remainder -! count; count ]
+    | _ -> assert false
+  in
+  let counts =
+    match L.scan ~unroll body [ n ] [ ratios; keys ] with
+    | [ _; counts ] -> counts
+    | _ -> assert false
+  in
+  let out = NL.moveaxis [| 0 |] [| -1 |] counts in
+  NL.astype out (match dtype with None -> fdt () | Some d -> d)
+
+let with_dt dtype f =
+  match dtype with None -> f () | Some d -> with_dtypes ~float_dtype:d f
+
+let with_it dtype f =
+  match dtype with
+  | None -> f ()
+  | Some d ->
+      let saved = !explicit_int in
+      explicit_int := Some d;
+      Fun.protect
+        ~finally:(fun () -> explicit_int := saved)
+        (fun () -> with_dtypes ~int_dtype:d f)
+
 let sampler ?(name = "jit-compiled function") k thunk =
   check_prng_key k;
   Key_reuse.consume name k;
@@ -1276,64 +1650,113 @@ let prng_key seed =
 
 let bits k ~shape = sampler ~name:"random_bits" k (fun () -> bits k ~shape)
 
-let randint k ~shape ~minval ~maxval =
-  sampler k (fun () -> randint k ~shape ~minval ~maxval)
+let randint ?dtype k ~shape ~minval ~maxval =
+  sampler k (fun () ->
+      with_it dtype (fun () -> randint k ~shape ~minval ~maxval))
 
-let uniform k ~shape ~minval ~maxval =
-  sampler k (fun () -> uniform k ~shape ~minval ~maxval)
+let uniform ?dtype k ~shape ~minval ~maxval =
+  sampler k (fun () ->
+      with_dt dtype (fun () -> uniform k ~shape ~minval ~maxval))
 
-let normal k ~shape = sampler k (fun () -> normal k ~shape)
+let normal ?dtype k ~shape =
+  sampler k (fun () -> with_dt dtype (fun () -> normal k ~shape))
 
-let truncated_normal k ~lower ~upper ~shape =
-  sampler k (fun () -> truncated_normal k ~lower ~upper ~shape)
+let truncated_normal ?dtype k ~lower ~upper ~shape =
+  sampler k (fun () ->
+      with_dt dtype (fun () -> truncated_normal k ~lower ~upper ~shape))
 
 let permutation k x0 = sampler k (fun () -> permutation k x0)
 
 let choice k ~n ~shape ~replace =
   sampler k (fun () -> choice k ~n ~shape ~replace)
 
-let exponential k ~shape = sampler k (fun () -> exponential k ~shape)
-let cauchy k ~shape = sampler k (fun () -> cauchy k ~shape)
-let laplace k ~shape = sampler k (fun () -> laplace k ~shape)
-let logistic k ~shape = sampler k (fun () -> logistic k ~shape)
-let gumbel k ~shape = sampler k (fun () -> gumbel k ~shape)
-let pareto k ~shape ~b = sampler k (fun () -> pareto k ~shape ~b)
-let rayleigh k ~shape ~scale = sampler k (fun () -> rayleigh k ~shape ~scale)
+let exponential ?dtype k ~shape =
+  sampler k (fun () -> with_dt dtype (fun () -> exponential k ~shape))
 
-let weibull_min k ~shape ~scale ~concentration =
-  sampler k (fun () -> weibull_min k ~shape ~scale ~concentration)
+let cauchy ?dtype k ~shape =
+  sampler k (fun () -> with_dt dtype (fun () -> cauchy k ~shape))
 
-let lognormal k ~shape ~sigma = sampler k (fun () -> lognormal k ~shape ~sigma)
+let laplace ?dtype k ~shape =
+  sampler k (fun () -> with_dt dtype (fun () -> laplace k ~shape))
 
-let triangular k ~shape ~left ~mode ~right =
-  sampler k (fun () -> triangular k ~shape ~left ~mode ~right)
+let logistic ?dtype k ~shape =
+  sampler k (fun () -> with_dt dtype (fun () -> logistic k ~shape))
 
-let wald k ~shape ~mean = sampler k (fun () -> wald k ~shape ~mean)
-let geometric k ~shape ~p = sampler k (fun () -> geometric k ~shape ~p)
-let bernoulli k ~shape ~p = sampler k (fun () -> bernoulli k ~shape ~p)
-let rademacher k ~shape = sampler k (fun () -> rademacher k ~shape)
+let gumbel ?dtype ?mode k ~shape =
+  sampler k (fun () ->
+      with_dt dtype (fun () -> gumbel_any k ~shape ~dt:(fdt ()) ~mode))
+
+let pareto ?dtype k ~shape ~b =
+  sampler k (fun () -> with_dt dtype (fun () -> pareto k ~shape ~b))
+
+let rayleigh ?dtype k ~shape ~scale =
+  sampler k (fun () -> with_dt dtype (fun () -> rayleigh k ~shape ~scale))
+
+let weibull_min ?dtype k ~shape ~scale ~concentration =
+  sampler k (fun () ->
+      with_dt dtype (fun () -> weibull_min k ~shape ~scale ~concentration))
+
+let lognormal ?dtype k ~shape ~sigma =
+  sampler k (fun () -> with_dt dtype (fun () -> lognormal k ~shape ~sigma))
+
+let triangular ?dtype k ~shape ~left ~mode ~right =
+  sampler k (fun () ->
+      with_dt dtype (fun () -> triangular k ~shape ~left ~mode ~right))
+
+let wald ?dtype k ~shape ~mean =
+  sampler k (fun () -> with_dt dtype (fun () -> wald k ~shape ~mean))
+
+let geometric ?dtype k ~shape ~p =
+  sampler k (fun () -> with_it dtype (fun () -> geometric k ~shape ~p))
+
+let bernoulli ?(mode = "low") k ~shape ~p =
+  sampler k (fun () ->
+      match mode with
+      | "low" -> bernoulli k ~shape ~p
+      | "high" -> bernoulli_high k ~p:(npf (fdt ()) p) ~shape
+      | m -> invalid_arg ("got mode='" ^ m ^ "', expected 'high' or 'low'"))
+
+let rademacher ?dtype k ~shape =
+  sampler k (fun () -> with_it dtype (fun () -> rademacher k ~shape))
 
 let categorical k ~logits ~axis =
   sampler k (fun () -> categorical k ~logits ~axis)
 
-let gamma k ~shape ~a = sampler k (fun () -> gamma k ~shape ~a)
-let loggamma k ~shape ~a = sampler k (fun () -> loggamma k ~shape ~a)
-let beta k ~shape ~a ~b = sampler k (fun () -> beta k ~shape ~a ~b)
-let chisquare k ~shape ~df = sampler k (fun () -> chisquare k ~shape ~df)
-let t k ~shape ~df = sampler k (fun () -> t k ~shape ~df)
-let f k ~shape ~dfnum ~dfden = sampler k (fun () -> f k ~shape ~dfnum ~dfden)
+let gamma ?dtype k ~shape ~a =
+  sampler k (fun () -> with_dt dtype (fun () -> gamma k ~shape ~a))
 
-let generalized_normal k ~shape ~p =
-  sampler k (fun () -> generalized_normal k ~shape ~p)
+let loggamma ?dtype k ~shape ~a =
+  sampler k (fun () -> with_dt dtype (fun () -> loggamma k ~shape ~a))
+
+let beta ?dtype k ~shape ~a ~b =
+  sampler k (fun () -> with_dt dtype (fun () -> beta k ~shape ~a ~b))
+
+let chisquare ?dtype k ~shape ~df =
+  sampler k (fun () -> with_dt dtype (fun () -> chisquare k ~shape ~df))
+
+let t ?dtype k ~shape ~df =
+  sampler k (fun () -> with_dt dtype (fun () -> t k ~shape ~df))
+
+let f ?dtype k ~shape ~dfnum ~dfden =
+  sampler k (fun () -> with_dt dtype (fun () -> f k ~shape ~dfnum ~dfden))
+
+let generalized_normal ?dtype k ~shape ~p =
+  sampler k (fun () -> with_dt dtype (fun () -> generalized_normal k ~shape ~p))
 
 let generalized_normal_value k ~shape ~p =
   sampler k (fun () -> generalized_normal_v k ~p ~shape)
 
-let dirichlet k ~alpha ~shape = sampler k (fun () -> dirichlet k ~alpha ~shape)
-let poisson k ~shape ~lam = sampler k (fun () -> poisson k ~shape ~lam)
+let dirichlet ?dtype k ~alpha ~shape =
+  sampler k (fun () -> with_dt dtype (fun () -> dirichlet k ~alpha ~shape))
 
-let binomial k ~shape ~count ~prob =
-  sampler k (fun () -> binomial k ~shape ~count ~prob)
+let poisson ?dtype k ~shape ~lam =
+  sampler k (fun () -> with_it dtype (fun () -> poisson k ~shape ~lam))
+
+let binomial ?dtype k ~shape ~count ~prob =
+  sampler k (fun () ->
+      match dtype with
+      | None -> binomial k ~shape ~count ~prob
+      | Some dt -> binomial_v k ~count:(pyf count) ~prob:(pyf prob) ~shape ~dt)
 
 let multinomial k ~p ~n_trials =
   sampler k (fun () -> multinomial k ~p ~n_trials)
@@ -1355,3 +1778,15 @@ let poisson_value k ~shape ~lam =
   sampler k (fun () -> poisson_value k ~shape ~lam)
 
 let bits_as k ~shape ~dtype = sampler k (fun () -> bits_as k ~shape ~dtype)
+
+let permutation_array ?axis ?independent k x =
+  sampler k (fun () -> permutation_array ?axis ?independent k x)
+
+let choice_array ?shape ?replace ?p ?axis ?mode k a =
+  sampler k (fun () -> choice_array ?shape ?replace ?p ?axis ?mode k a)
+
+let categorical_full ?axis ?shape ?replace ?mode k logits =
+  sampler k (fun () -> categorical_full ?axis ?shape ?replace ?mode k logits)
+
+let multinomial_full ?shape ?dtype ?unroll k ~n ~p =
+  sampler k (fun () -> multinomial_full ?shape ?dtype ?unroll k ~n ~p)

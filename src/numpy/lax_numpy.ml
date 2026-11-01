@@ -313,7 +313,13 @@ let unsignedinteger = Unsignedinteger
 let extended = Extended
 let issubdtype a b = a = b || List.mem b (class_chain a)
 
-let conv1d ~mode ~flip_kernel ~reverse_out a v =
+let flip1 y =
+  Jnp_util.jit1 "_flip" ~key:"0"
+    (function [ y ] -> rev_dims y [| 0 |] | _ -> invalid_arg "flip: arity")
+    [ y ]
+
+let conv1d_body ~mode ~correlating a v =
+  let flip_kernel = not correlating in
   let dt, _ =
     Dtypes.result_type
       [
@@ -323,8 +329,14 @@ let conv1d ~mode ~flip_kernel ~reverse_out a v =
   let a = convert a dt and v = convert v dt in
   let la = (shape a).(0) and lv = (shape v).(0) in
   if la = 0 || lv = 0 then invalid_arg "conv: inputs cannot be empty";
-  let x, y = if la < lv then (v, a) else (a, v) in
-  let y = if flip_kernel then rev_dims y [| 0 |] else y in
+  let v =
+    match dtype v with
+    | (D.Complex64 | D.Complex128) when correlating -> bind1 T.Conj [ v ]
+    | _ -> v
+  in
+  let swapped = la < lv in
+  let x, y = if swapped then (v, a) else (a, v) in
+  let y = if flip_kernel then flip1 y else y in
   let ly = (shape y).(0) in
   let padding =
     match mode with
@@ -334,46 +346,43 @@ let conv1d ~mode ~flip_kernel ~reverse_out a v =
     | _ -> invalid_arg "conv: mode must be one of full, same, valid"
   in
   let lx = (shape x).(0) in
-  let lhs = reshape x [| 1; 1; lx |] in
-  let rhs = reshape y [| 1; 1; ly |] in
+  let lifted v n =
+    bind1 (T.Broadcast_in_dim { shape = [| 1; 1; n |]; dims = [| 2 |] }) [ v ]
+  in
+  let lhs = lifted x lx in
+  let rhs = lifted y ly in
   let out =
-    Lax.complex_bilinear
-      (fun lhs rhs ->
-        bind1
-          (T.Conv_general_dilated
+    bind1
+      (T.Conv_general_dilated
+         {
+           window_strides = [| 1 |];
+           padding;
+           lhs_dilation = [| 1 |];
+           rhs_dilation = [| 1 |];
+           dimension_numbers =
              {
-               window_strides = [| 1 |];
-               padding;
-               lhs_dilation = [| 1 |];
-               rhs_dilation = [| 1 |];
-               dimension_numbers =
-                 {
-                   lhs_spec = [| 0; 1; 2 |];
-                   rhs_spec = [| 0; 1; 2 |];
-                   out_spec = [| 0; 1; 2 |];
-                 };
-               feature_group_count = 1;
-               batch_group_count = 1;
-             })
-          [ lhs; rhs ])
-      lhs rhs
+               lhs_spec = [| 0; 1; 2 |];
+               rhs_spec = [| 0; 1; 2 |];
+               out_spec = [| 0; 1; 2 |];
+             };
+           feature_group_count = 1;
+           batch_group_count = 1;
+         })
+      [ lhs; rhs ]
   in
-  let m = (shape out).(2) in
-  let flat = reshape out [| m |] in
-  if reverse_out then rev_dims flat [| 0 |] else flat
+  let flat = bind1 (T.Squeeze [| 0; 1 |]) [ out ] in
+  if correlating && swapped then rev_dims flat [| 0 |] else flat
 
-let convolve ?(mode = "full") a v =
-  conv1d ~mode ~flip_kernel:true ~reverse_out:false a v
+let conv1d ~mode ~correlating a v =
+  Jnp_util.jit1 "_conv"
+    ~key:(mode ^ string_of_bool correlating)
+    (function
+      | [ a; v ] -> conv1d_body ~mode ~correlating a v
+      | _ -> invalid_arg "conv: arity")
+    [ a; v ]
 
-let correlate ?(mode = "valid") a v =
-  let v =
-    match dtype v with
-    | D.Complex64 | D.Complex128 -> bind1 T.Conj [ v ]
-    | _ -> v
-  in
-  let la = (shape a).(0) and lv = (shape v).(0) in
-  conv1d ~mode ~flip_kernel:false ~reverse_out:(la < lv) a v
-
+let convolve ?(mode = "full") a v = conv1d ~mode ~correlating:false a v
+let correlate ?(mode = "valid") a v = conv1d ~mode ~correlating:true a v
 let bind = C.bind
 let scalar dt x = const_full dt [||] x
 let full dt sh x = const_full dt sh x
@@ -469,6 +478,43 @@ let allclose ?rtol ?atol ?equal_nan a b =
   let c = isclose ?rtol ?atol ?equal_nan a b in
   let n = ndim c in
   bind1 (T.Reduce_and (Array.init n (fun i -> i))) [ c ]
+
+let clip_values ?min ?max arr =
+  let present = Option.to_list min @ Option.to_list max in
+  Jnp_util.jit1 "clip"
+    ~key:(string_of_bool (min <> None) ^ string_of_bool (max <> None))
+    (function
+      | arr :: bounds -> (
+          let rest = ref bounds in
+          let next given =
+            match given with
+            | None -> None
+            | Some _ -> (
+                match !rest with
+                | v :: tl ->
+                    rest := tl;
+                    Some v
+                | [] -> invalid_arg "clip: arity")
+          in
+          let low = next min in
+          let high = next max in
+          let target =
+            let dts = List.filter_map Fun.id [ low; high ] in
+            fst
+              (Dtypes.result_type
+                 ((dtype arr, false) :: List.map (fun v -> (dtype v, true)) dts))
+          in
+          let arr = convert arr target in
+          let arr =
+            match low with
+            | Some v -> bind1 T.Max [ convert v target; arr ]
+            | None -> arr
+          in
+          match high with
+          | Some v -> bind1 T.Min [ convert v target; arr ]
+          | None -> arr)
+      | [] -> invalid_arg "clip: arity")
+    (arr :: present)
 
 let clip ?min ?max arr =
   (match dtype arr with
@@ -1718,75 +1764,73 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
     | Some f, Some a -> Some (bind1 T.Mul [ as_dt f; as_dt a ])
   in
   let sum_all v = bind1 (T.Reduce_sum (Array.init (ndim v) Fun.id)) [ v ] in
-  let weights_row = Option.map (fun wv -> reshape wv [| 1; nobs |]) w in
-  let weights_sum =
-    Option.map (fun row -> bind1 (T.Reduce_sum [| 1 |]) [ row ]) weights_row
-  in
-  let spread_row row sh =
-    if sh = shape row then row
-    else bind1 (T.Broadcast_in_dim { shape = sh; dims = [| 0; 1 |] }) [ row ]
-  in
-  let avg =
-    match (weights_row, weights_sum) with
-    | Some row, Some total ->
-        let sum1 =
-          bind1 (T.Reduce_sum [| 1 |])
-            [ bind1 T.Mul [ x; spread_row row (shape x) ] ]
-        in
-        let total =
-          if nvars = 1 then total
-          else
-            bind1
-              (T.Broadcast_in_dim { shape = [| nvars |]; dims = [| 0 |] })
-              [ total ]
-        in
-        bind1 T.Div [ sum1; total ]
-    | _ -> Reductions.mean ~axis:[| 1 |] x
-  in
-  let divisor_of shape_out =
-    match (w, weights_sum) with
-    | Some wv, Some total ->
-        let w_sum = bind1 (T.Squeeze [| 0 |]) [ total ] in
-        let f =
-          if ddof = 0 then w_sum
-          else
-            let d = scalar dt (float_of_int ddof) in
-            match a_abs with
-            | None -> bind1 T.Sub [ w_sum; d ]
-            | Some a ->
-                bind1 T.Sub
-                  [
-                    w_sum;
-                    bind1 T.Div
-                      [
-                        bind1 T.Mul [ d; sum_all (bind1 T.Mul [ wv; as_dt a ]) ];
-                        w_sum;
-                      ];
-                  ]
-        in
-        bind1 (T.Broadcast_in_dim { shape = shape_out; dims = [||] }) [ f ]
-    | _ -> full dt shape_out (float_of_int (nobs - ddof))
-  in
-  let xc =
-    let column = expand_dims avg [| 1 |] in
-    sub2 x
-      (bind1
-         (T.Broadcast_in_dim { shape = shape x; dims = [| 0; 1 |] })
-         [ column ])
-  in
-  let xw =
+  let avg, w_sum =
     match w with
-    | None -> xc
+    | None ->
+        let summed = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
+        let count = scalar dt (float_of_int nobs) in
+        let mean = bind1 T.Div [ summed; count ] in
+        ( mean,
+          bind1
+            (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
+            [ count ] )
     | Some wv ->
-        bind1 T.Mul
-          [
-            xc;
-            bind1
-              (T.Broadcast_in_dim { shape = shape xc; dims = [| 1 |] })
-              [ wv ];
-          ]
+        let lifted =
+          bind1
+            (T.Broadcast_in_dim { shape = [| 1; nobs |]; dims = [| 1 |] })
+            [ wv ]
+        in
+        let total = bind1 (T.Reduce_sum [| 1 |]) [ lifted ] in
+        let product = bind1 T.Mul [ x; lifted ] in
+        let summed = bind1 (T.Reduce_sum [| 1 |]) [ product ] in
+        let mean = bind1 T.Div [ summed; total ] in
+        (mean, Jnp_util.broadcast_to total (shape mean))
   in
-  let xt = bind1 (T.Transpose [| 1; 0 |]) [ xw ] in
+  let first =
+    bind1
+      (T.Slice
+         { start_indices = [| 0 |]; limit_indices = [| 1 |]; strides = None })
+      [ w_sum ]
+  in
+  let first = bind1 (T.Squeeze [| 0 |]) [ first ] in
+  let f =
+    match (w, a_abs) with
+    | None, _ -> scalar dt (float_of_int (nobs - ddof))
+    | Some _, _ when ddof = 0 -> first
+    | Some _, None -> bind1 T.Sub [ first; scalar dt (float_of_int ddof) ]
+    | Some wv, Some a ->
+        let scaled =
+          bind1 T.Mul
+            [
+              scalar dt (float_of_int ddof);
+              sum_all (bind1 T.Mul [ wv; as_dt a ]);
+            ]
+        in
+        bind1 T.Sub [ first; bind1 T.Div [ scaled; first ] ]
+  in
+  let lifted_avg =
+    bind1
+      (T.Broadcast_in_dim { shape = [| nvars; 1 |]; dims = [| 0 |] })
+      [ avg ]
+  in
+  let centered = bind1 T.Sub [ x; lifted_avg ] in
+  let weighted =
+    match w with
+    | None -> centered
+    | Some wv ->
+        let lifted =
+          bind1
+            (T.Broadcast_in_dim { shape = [| 1; nobs |]; dims = [| 1 |] })
+            [ wv ]
+        in
+        bind1 T.Mul [ centered; lifted ]
+  in
+  let x_t = bind1 (T.Transpose [| 1; 0 |]) [ weighted ] in
+  let x_t =
+    match dt with
+    | D.Complex64 | D.Complex128 -> bind1 T.Conj [ x_t ]
+    | _ -> x_t
+  in
   let prod =
     bind1
       (T.Dot_general
@@ -1796,14 +1840,9 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
            lhs_batch = [||];
            rhs_batch = [||];
          })
-      [
-        xc;
-        (match dt with
-        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xt ]
-        | _ -> xt);
-      ]
+      [ centered; x_t ]
   in
-  squeeze (bind1 T.Div [ prod; divisor_of (shape prod) ])
+  squeeze (bind1 T.Div [ prod; f ])
 
 let corrcoef ?y ?(rowvar = true) ?dtype x =
   let c = cov ?y ~rowvar ?dtype x in
@@ -1815,15 +1854,29 @@ let corrcoef ?y ?(rowvar = true) ?dtype x =
     let d = diagonal c in
     let d = if complex then bind1 T.Real [ d ] else d in
     let stddev = convert (bind1 T.Sqrt [ d ]) (dtype_of c) in
-    let c = binop T.Div c (expand_dims stddev [| 1 |]) in
-    let c = binop T.Div c (expand_dims stddev [| 0 |]) in
-    if complex then
-      bind1 T.Complex
-        [
-          clip ~min:(-1.0) ~max:1.0 (bind1 T.Real [ c ]);
-          clip ~min:(-1.0) ~max:1.0 (bind1 T.Imag [ c ]);
-        ]
-    else clip ~min:(-1.0) ~max:1.0 c
+    let n = (shape stddev).(0) in
+    let columns =
+      bind1
+        (T.Broadcast_in_dim { shape = [| n; 1 |]; dims = [| 0 |] })
+        [ stddev ]
+    in
+    let c = bind1 T.Div [ c; columns ] in
+    let rows =
+      bind1
+        (T.Broadcast_in_dim { shape = [| 1; n |]; dims = [| 1 |] })
+        [ stddev ]
+    in
+    let c = bind1 T.Div [ c; rows ] in
+    let limit x =
+      T.Concrete (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| x |])
+    in
+    let bound v = clip_values ~min:(limit (-1.0)) ~max:(limit 1.0) v in
+    if complex then begin
+      let re = bound (bind1 T.Real [ c ]) in
+      let im = bound (bind1 T.Imag [ c ]) in
+      bind1 T.Complex [ re; im ]
+    end
+    else bound (if complex then bind1 T.Real [ c ] else c)
   end
 
 let argsort_values v =

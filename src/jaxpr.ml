@@ -531,3 +531,8 @@ let named_jit ~name ?(key = "") f args =
           | _ -> None)
     in
     match closed with Some c -> Core.bind (Xla_call c) args | None -> f args
+
+let copy_call_name ~(source : closed_jaxpr) (target : closed_jaxpr) =
+  if Pretty_printer.has_call_name source.jid then
+    Pretty_printer.register_call_name target.jid
+      (Pretty_printer.call_name source.jid)

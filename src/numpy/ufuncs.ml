@@ -296,37 +296,31 @@ let exp2 x = unary_inexact T.Exp2 x
 
 let log2 x =
   let a = p1 (promote_inexact [ x ]) in
-  let logged = bind1 T.Log [ a ] in
-  let over_ln2 part =
-    let ln2 = bind1 T.Log [ const_full (dtype part) (shape part) 2.0 ] in
-    bind1 T.Div [ part; ln2 ]
-  in
   match dtype a with
   | D.Complex64 | D.Complex128 ->
-      let re = bind1 T.Real [ logged ] in
-      let im = bind1 T.Imag [ logged ] in
-      let ln2 = bind1 T.Log [ const_full (dtype re) (shape re) 2.0 ] in
+      let r = bind1 T.Log [ a ] in
+      let re = bind1 T.Real [ r ] in
+      let im = bind1 T.Imag [ r ] in
+      let ln2 = bind1 T.Log [ const_full (dtype re) [||] 2.0 ] in
       bind1 T.Complex [ bind1 T.Div [ re; ln2 ]; bind1 T.Div [ im; ln2 ] ]
-  | _ -> over_ln2 logged
+  | _ ->
+      bind1 T.Div
+        [ bind1 T.Log [ a ]; bind1 T.Log [ const_full (dtype a) [||] 2.0 ] ]
 
-let log_scaled scale x =
+let one_over_log10 = 0.4342944819032518
+
+let log10 x =
   let a = p1 (promote_inexact [ x ]) in
-  let dt = dtype a in
-  let real_dt =
-    match dt with D.Complex64 -> D.F32 | D.Complex128 -> D.F64 | d -> d
-  in
-  let times v =
-    bind1 T.Mul [ v; Core.splat real_dt (Core.get_aval v).T.shape scale ]
-  in
-  let logged = bind1 T.Log [ a ] in
-  match dt with
+  match dtype a with
   | D.Complex64 | D.Complex128 ->
-      let re = times (bind1 T.Real [ logged ]) in
-      let im = times (bind1 T.Imag [ logged ]) in
-      bind1 T.Complex [ re; im ]
-  | _ -> times logged
-
-let log10 x = log_scaled 0.4342944819032518 x
+      let r = bind1 T.Log [ a ] in
+      let re = bind1 T.Real [ r ] in
+      let im = bind1 T.Imag [ r ] in
+      let factor = const_full (dtype re) [||] one_over_log10 in
+      bind1 T.Complex [ bind1 T.Mul [ re; factor ]; bind1 T.Mul [ im; factor ] ]
+  | _ ->
+      bind1 T.Mul
+        [ bind1 T.Log [ a ]; const_full (dtype a) [||] one_over_log10 ]
 
 let reciprocal x =
   let a = p1 (promote_inexact [ x ]) in

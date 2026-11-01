@@ -41,203 +41,180 @@ let full_like ?dtype ?shape a fill =
 let zeros_like ?dtype ?shape a = full_like ?dtype ?shape a 0.0
 let ones_like ?dtype ?shape a = full_like ?dtype ?shape a 1.0
 let empty_like ?dtype ?shape a = zeros_like ?dtype ?shape a
+let weak_scalar dt x = scalar dt x
 
-let linspace_core ~num ~endpoint ~comp startv stopv =
-  let div = if endpoint then num - 1 else num in
-  if num > 1 then begin
-    let iota =
-      bind1 (T.Iota { dtype = comp; shape = [| div |]; dimension = 0 }) []
-    in
-    let divv = NL.broadcast_to (scalar comp (float_of_int div)) [| div |] in
-    let step = bind1 T.Div [ iota; divv ] in
-    let one = NL.broadcast_to (scalar comp 1.0) [| div |] in
-    let sb = NL.broadcast_to startv [| div |] in
-    let tb = NL.broadcast_to stopv [| div |] in
-    let body =
-      bind1 T.Add
-        [
-          bind1 T.Mul [ sb; bind1 T.Sub [ one; step ] ];
-          bind1 T.Mul [ tb; step ];
-        ]
-    in
-    if endpoint then NL.concatenate ~axis:0 [ body; NL.reshape stopv [| 1 |] ]
-    else body
-  end
-  else if num = 1 then NL.reshape startv [| 1 |]
-  else const_full comp [| 0 |] 0.0
+let reshape_same v sh =
+  if shape_of v = sh then v else bind1 (T.Reshape sh) [ v ]
 
-let linspace ?(num = 50) ?(endpoint = true) ?dtype start stop =
-  if num < 0 then invalid_arg "linspace: num must be non-negative";
-  let out_dt = match dtype with Some d -> d | None -> default_float () in
-  let comp = to_inexact out_dt in
-  let startv = scalar comp start and stopv = scalar comp stop in
-  let body = linspace_core ~num ~endpoint ~comp startv stopv in
-  let body = if is_inexact out_dt then body else bind1 T.Floor [ body ] in
-  convert body out_dt
+let result_of a b =
+  fst
+    (Dtypes.result_type
+       [
+         ((get_aval a).T.dtype, (get_aval a).T.weak_type);
+         ((get_aval b).T.dtype, (get_aval b).T.weak_type);
+       ])
 
-let logspace ?(num = 50) ?(endpoint = true) ?(base = 10.0) ?dtype start stop =
-  let out_dt = match dtype with Some d -> d | None -> default_float () in
-  let comp = to_inexact out_dt in
-  let startv = scalar comp start and stopv = scalar comp stop in
-  let lin = linspace_core ~num ~endpoint ~comp startv stopv in
-  let basev = NL.broadcast_to (scalar comp base) (shape_of lin) in
-  convert (UF.power basev lin) out_dt
-
-let geomspace ?(num = 50) ?(endpoint = true) ?dtype start stop =
-  let out_dt = match dtype with Some d -> d | None -> default_float () in
-  let comp = to_inexact out_dt in
-  let startv = scalar comp start and stopv = scalar comp stop in
-  let sign = UF.sign startv in
-  let ls = UF.log10 (bind1 T.Div [ startv; sign ]) in
-  let le = UF.log10 (bind1 T.Div [ stopv; sign ]) in
-  let lin = linspace_core ~num ~endpoint ~comp ls le in
-  let basev = NL.broadcast_to (scalar comp 10.0) (shape_of lin) in
-  let logsp = UF.power basev lin in
-  let res = UF.multiply (NL.broadcast_to sign (shape_of logsp)) logsp in
-  convert res out_dt
+let dtype_key = function None -> "none" | Some d -> Dtype.short_name d
 
 let statics_key statics =
   Digest.to_hex (Digest.string (Marshal.to_string statics []))
 
 let linspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
   if num < 0 then invalid_arg "linspace: num must be non-negative";
-  Jnp_util.jit1 "_linspace"
-    ~key:(statics_key (num, endpoint, axis, dtype))
+  let key = Printf.sprintf "%d %b %d %s" num endpoint axis (dtype_key dtype) in
+  Jnp_util.jit1 "_linspace" ~key
     (function
       | [ start; stop ] ->
-          let joined =
-            let dt, _ =
-              Dtypes.result_type
-                [
-                  ((get_aval start).T.dtype, (get_aval start).T.weak_type);
-                  ((get_aval stop).T.dtype, (get_aval stop).T.weak_type);
-                ]
-            in
-            dt
-          in
           let out_dt =
-            match dtype with Some d -> d | None -> to_inexact joined
+            match dtype with
+            | Some d -> d
+            | None -> to_inexact (result_of start stop)
           in
           let comp = to_inexact out_dt in
+          let start = convert start comp and stop = convert stop comp in
           let bounds =
             NL.broadcast_shapes_n [ shape_of start; shape_of stop ]
           in
+          let broadcast_start = Jnp_util.broadcast_to start bounds in
+          let broadcast_stop = Jnp_util.broadcast_to stop bounds in
           let rank = Array.length bounds in
-          let axis = if axis < 0 then axis + rank + 1 else axis in
-          let start = NL.broadcast_to (convert start comp) bounds in
-          let stop = NL.broadcast_to (convert stop comp) bounds in
-          let shape_for n =
+          let axis = if axis < 0 then rank + axis + 1 else axis in
+          let insert size =
             Array.init (rank + 1) (fun i ->
-                if i = axis then n
-                else if i < axis then bounds.(i)
+                if i < axis then bounds.(i)
+                else if i = axis then size
                 else bounds.(i - 1))
           in
-          let reshaped v = NL.reshape v (shape_for 1) in
+          let bounds_shape = insert 1 in
           let div = if endpoint then num - 1 else num in
-          let body =
+          let out =
             if num > 1 then begin
+              let difference = UF.subtract stop start in
+              ignore
+                (bind1 T.Div [ difference; scalar comp (float_of_int div) ]);
               let rdt =
                 match comp with
                 | D.Complex128 -> D.F64
                 | D.Complex64 -> D.F32
                 | d -> d
               in
+              let iota_shape =
+                Array.init (rank + 1) (fun i -> if i = axis then div else 1)
+              in
               let iota =
                 bind1
                   (T.Iota { dtype = rdt; shape = [| div |]; dimension = 0 })
                   []
               in
-              let iota_shape =
-                Array.init (rank + 1) (fun i -> if i = axis then div else 1)
-              in
-              let raised = NL.reshape iota iota_shape in
+              let reshaped = reshape_same iota iota_shape in
               let step =
-                convert
-                  (bind1 T.Div
-                     [
-                       raised;
-                       NL.broadcast_to
-                         (scalar rdt (float_of_int div))
-                         iota_shape;
-                     ])
-                  comp
+                bind1 T.Div [ reshaped; scalar rdt (float_of_int div) ]
               in
-              let one = NL.broadcast_to (scalar comp 1.0) iota_shape in
-              let rest = bind1 T.Sub [ one; step ] in
-              let low = UF.multiply (reshaped start) rest in
-              let high = UF.multiply (reshaped stop) step in
-              let inner = UF.add low high in
+              let step = convert step comp in
+              let start_part = reshape_same broadcast_start bounds_shape in
+              let remainder = bind1 T.Sub [ scalar comp 1.0; step ] in
+              let left = bind1 T.Mul [ start_part; remainder ] in
+              let stop_part = reshape_same broadcast_stop bounds_shape in
+              let right = bind1 T.Mul [ stop_part; step ] in
+              let body = bind1 T.Add [ left; right ] in
               if endpoint then
-                NL.concatenate ~axis
-                  [
-                    inner;
-                    bind1
-                      (T.Broadcast_in_dim
-                         {
-                           shape = shape_for 1;
-                           dims =
-                             Array.of_list
-                               (List.filter
-                                  (fun i -> i <> axis)
-                                  (List.init (rank + 1) Fun.id));
-                         })
-                      [ stop ];
-                  ]
-              else inner
+                let tail =
+                  bind1
+                    (T.Broadcast_in_dim
+                       {
+                         shape = bounds_shape;
+                         dims =
+                           Array.init rank (fun i ->
+                               if i < axis then i else i + 1);
+                       })
+                    [ broadcast_stop ]
+                in
+                bind1 (T.Concatenate axis) [ body; tail ]
+              else body
             end
-            else if num = 1 then reshaped start
-            else const_full comp (shape_for 0) 0.0
+            else if num = 1 then reshape_same broadcast_start bounds_shape
+            else const_full out_dt (insert 0) 0.0
           in
-          let body =
-            if is_inexact out_dt then body else bind1 T.Floor [ body ]
+          let out =
+            if is_inexact out_dt || not (is_inexact (dtype_of out)) then out
+            else bind1 T.Floor [ out ]
           in
-          convert body out_dt
-      | _ -> invalid_arg "_linspace: arity")
+          convert out out_dt
+      | _ -> invalid_arg "linspace: arity")
     [ start; stop ]
+
+let logspace_core ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop
+    base =
+  let key = Printf.sprintf "%d %b %d %s" num endpoint axis (dtype_key dtype) in
+  Jnp_util.jit1 "_logspace" ~key
+    (function
+      | [ start; stop; base ] ->
+          let out_dt =
+            match dtype with
+            | Some d -> d
+            | None -> to_inexact (result_of start stop)
+          in
+          let comp = to_inexact out_dt in
+          let start = convert start comp and stop = convert stop comp in
+          let lin = linspace_v ~num ~endpoint ~axis start stop in
+          let base = convert base (dtype_of lin) in
+          convert (bind1 T.Pow [ base; lin ]) out_dt
+      | _ -> invalid_arg "logspace: arity")
+    [ start; stop; base ]
 
 let logspace_v ?(num = 50) ?(endpoint = true) ?(base = 10.0) ?(axis = 0) ?dtype
     start stop =
-  Jnp_util.jit1 "_logspace"
-    ~key:(statics_key (num, endpoint, axis, dtype))
-    (function
-      | [ start; stop; base ] ->
-          let lin = linspace_v ~num ~endpoint ~axis ?dtype start stop in
-          let dt = dtype_of lin in
-          let basev = NL.broadcast_to (convert base dt) (shape_of lin) in
-          UF.power basev lin
-      | _ -> invalid_arg "_logspace: arity")
-    [ start; stop; scalar (Dtypes.default_float_dtype ()) base ]
+  logspace_core ~num ~endpoint ~axis ?dtype start stop
+    (weak_scalar (default_float ()) base)
 
 let geomspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
-  Jnp_util.jit1 "_geomspace"
-    ~key:(statics_key (num, endpoint, axis, dtype))
+  let key = Printf.sprintf "%d %b %d %s" num endpoint axis (dtype_key dtype) in
+  Jnp_util.jit1 "_geomspace" ~key
     (function
       | [ start; stop ] ->
-          let joined, _ =
-            Dtypes.result_type
-              [
-                ((get_aval start).T.dtype, (get_aval start).T.weak_type);
-                ((get_aval stop).T.dtype, (get_aval stop).T.weak_type);
-              ]
-          in
           let out_dt =
-            match dtype with Some d -> d | None -> to_inexact joined
+            match dtype with
+            | Some d -> d
+            | None -> to_inexact (result_of start stop)
           in
           let comp = to_inexact out_dt in
-          let start = convert start comp in
-          let stop = convert stop comp in
+          let start = convert start comp and stop = convert stop comp in
           let sign = UF.sign start in
-          let low = UF.log10 (UF.divide start sign) in
-          let high = UF.log10 (UF.divide stop sign) in
-          let spaced =
-            logspace_v ~num ~endpoint ~base:10.0 ~axis:0 ~dtype:comp low high
+          let lower = UF.log10 (UF.divide start sign) in
+          let upper = UF.log10 (UF.divide stop sign) in
+          let logs =
+            logspace_core ~num ~endpoint ~dtype:comp lower upper
+              (weak_scalar (default_float ()) 10.0)
           in
-          let res = UF.multiply sign spaced in
+          let res = UF.multiply sign logs in
           let rank = Array.length (shape_of res) in
           let axis = if axis < 0 then axis + rank else axis in
           let res =
-            if axis = 0 then res else NL.moveaxis [| 0 |] [| axis |] res
+            if axis = 0 then res
+            else
+              bind1
+                (T.Transpose
+                   (Array.init rank (fun i ->
+                        if i < axis then i + 1 else if i = axis then 0 else i)))
+                [ res ]
           in
           convert res out_dt
-      | _ -> invalid_arg "_geomspace: arity")
+      | _ -> invalid_arg "geomspace: arity")
     [ start; stop ]
+
+let float_bound dtype x =
+  match dtype with
+  | Some d when is_inexact d -> scalar (to_inexact d) x
+  | _ -> scalar (default_float ()) x
+
+let linspace ?num ?endpoint ?dtype start stop =
+  linspace_v ?num ?endpoint ?dtype (float_bound dtype start)
+    (float_bound dtype stop)
+
+let logspace ?num ?endpoint ?base ?dtype start stop =
+  logspace_v ?num ?endpoint ?base ?dtype (float_bound dtype start)
+    (float_bound dtype stop)
+
+let geomspace ?num ?endpoint ?dtype start stop =
+  geomspace_v ?num ?endpoint ?dtype (float_bound dtype start)
+    (float_bound dtype stop)

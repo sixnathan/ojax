@@ -260,7 +260,6 @@ and pinv ?rtol ?(hermitian = false) ?rcond a =
     | None, r -> r
   in
   let a = to_inexact a in
-  ignore hermitian;
   let arr = UF.conj a in
   let dt = dtype arr in
   let sa = shape arr in
@@ -272,9 +271,24 @@ and pinv ?rtol ?(hermitian = false) ?rcond a =
     | Some r -> r
     | None -> const dt (10.0 *. float_of_int maxrc *. eps_of dt)
   in
-  let u, s, vh = svd_uv ~full_matrices:false arr in
+  let u, s, vh =
+    match svd ~full_matrices:false ~hermitian arr with
+    | [ u; s; vh ] -> (u, s, vh)
+    | _ -> invalid_arg "pinv: svd arity"
+  in
   let rtolc = if ndim rtol = 0 then NL.expand_dims rtol [| 0 |] else rtol in
-  let s0 = RED.amax ~axis:[| -1 |] ~keepdims:true s in
+  let last = Array.length (shape s) - 1 in
+  let s0 =
+    Core.bind1
+      (Types.Slice
+         {
+           start_indices = Array.make (last + 1) 0;
+           limit_indices =
+             Array.mapi (fun i d -> if i = last then 1 else d) (shape s);
+           strides = None;
+         })
+      [ s ]
+  in
   let cutoff = UF.multiply rtolc s0 in
   let s = NL.where_ (UF.greater s cutoff) s (const dt infinity) in
   let s = NL.astype s (dtype u) in

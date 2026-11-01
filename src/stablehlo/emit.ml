@@ -291,6 +291,11 @@ let emit_stablehlo_binary ctx (eqn : eqn) in_ids op =
        (name b)
        (Ir.tensor_type_of_aval out.vaval))
 
+let is_complex_atom atom =
+  match (atom_aval atom).dtype with
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
 let emit_chlo_binary ctx (eqn : eqn) in_ids op =
   let a, b = pair in_ids in
   let lhs, rhs =
@@ -3125,6 +3130,23 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             ]
         | _ -> invalid_arg "Stablehlo.Emit: dot_general arity")
   | Dot_general dd -> emit_dot_general ctx eqn in_ids dd
+  | Conv_general_dilated _
+    when match eqn.inputs with lhs :: _ -> is_complex_atom lhs | [] -> false ->
+      emit_inlined ctx eqn in_ids (function
+        | [ x; y ] ->
+            let b1 = Core.bind1 in
+            let conv a b = b1 eqn.prim [ a; b ] in
+            let x_re = b1 Real [ x ] in
+            let x_im = b1 Imag [ x ] in
+            let y_re = b1 Real [ y ] in
+            let y_im = b1 Imag [ y ] in
+            let k1 = conv (b1 Add [ x_re; x_im ]) y_re in
+            let k2 = conv x_re (b1 Sub [ y_im; y_re ]) in
+            let k3 = conv x_im (b1 Add [ y_re; y_im ]) in
+            let re = b1 Sub [ k1; k3 ] in
+            let im = b1 Add [ k1; k2 ] in
+            [ b1 Complex [ re; im ] ]
+        | _ -> invalid_arg "Stablehlo.Emit: conv arity")
   | Conv_general_dilated
       {
         window_strides;

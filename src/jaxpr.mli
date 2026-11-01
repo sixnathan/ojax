@@ -29,6 +29,8 @@ val eager_jit :
   (string -> string -> (value list -> value list) -> value list -> value list)
   ref
 
+val copy_call_name : source:closed_jaxpr -> closed_jaxpr -> unit
+
 val named_jit :
   name:string ->
   ?key:string ->

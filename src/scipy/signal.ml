@@ -232,13 +232,15 @@ let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
 let pi = 4.0 *. Float.atan 1.0
 
 let hann dt n =
-  Concrete
-    (Ndarray.of_floats dt [| n |]
-       (Array.init n (fun i ->
-            if n = 1 then 1.0
-            else
-              let v = sin (pi *. float_of_int i /. float_of_int n) in
-              v *. v)))
+  if n = 1 then L.full [| 1 |] 1.0 dt
+  else
+    let wide = Dtypes.default_float_dtype () in
+    let points =
+      Numpy.Array_creation.linspace_v ~num:n ~endpoint:false
+        (L.full [||] 0.0 wide) (L.full [||] pi wide)
+    in
+    let sine = Numpy.Ufuncs.sin points in
+    NL.astype (b1 (Integer_pow 2) [ sine ]) dt
 
 let real_part_dtype = function
   | Dtype.Complex128 | Dtype.F64 -> Dtype.F64
@@ -347,25 +349,20 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
   in
   let x = pad_tail (extend x) in
   let y = Option.map (fun v -> pad_tail (extend v)) y in
-  let win_sum () = Numpy.Reductions.sum win in
-  let host_scalar v =
-    match v with
-    | Concrete nd -> Ndarray.get_f nd [||]
-    | Device d -> Ndarray.get_f (Pjrt.Buffer.to_host d) [||]
-    | Tracer _ -> invalid_arg "spectral_helper: window must be concrete"
-  in
-  let sum_sq =
-    Core.with_eval_dynamic (fun () ->
-        host_scalar (Numpy.Reductions.sum (L.mul win win)))
-  in
-  let total = Core.with_eval_dynamic (fun () -> host_scalar (win_sum ())) in
+  let fs_value = L.full [||] fs (dtype_of win) in
+  let one = L.full [||] 1.0 (dtype_of win) in
   let scale =
     match scaling with
-    | "density" -> 1.0 /. (fs *. sum_sq)
-    | "spectrum" -> 1.0 /. (total *. total)
+    | "density" ->
+        let total = Numpy.Reductions.sum (b1 Mul [ win; win ]) in
+        b1 Div [ one; b1 Mul [ fs_value; total ] ]
+    | "spectrum" ->
+        let total = Numpy.Reductions.sum win in
+        b1 Div [ one; b1 (Integer_pow 2) [ total ] ]
     | other -> invalid_arg ("Unknown scaling: " ^ other)
   in
-  let scale = if mode = "stft" then sqrt scale else scale in
+  let scale = if mode = "stft" then b1 Sqrt [ scale ] else scale in
+  let scale = NL.astype scale (complex_dtype_of (dtype_of scale)) in
   let onesided =
     return_onesided
     && (not (is_complex x))
@@ -389,18 +386,7 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
         let r = transform x in
         if mode = "psd" then b1 Mul [ b1 Conj [ r ]; r ] else r
   in
-  let scale_array v factor =
-    let cdt = complex_dtype_of dt in
-    let n = Array.fold_left ( * ) 1 (shape v) in
-    b1 Mul
-      [
-        v;
-        Concrete
-          (Ndarray.of_complex cdt (shape v)
-             (Array.make n { Complex.re = factor; im = 0.0 }));
-      ]
-  in
-  let result = scale_array result scale in
+  let result = b1 Mul [ result; scale ] in
   let result =
     if onesided && mode = "psd" then begin
       let sh = shape result in
@@ -425,15 +411,18 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
   in
   let processed_len = (shape x).(rank x - 1) in
   let n_times = ((processed_len - nperseg) / nstep) + 1 in
-  let shift =
-    if boundary <> None then float_of_int (nperseg / 2) /. fs else 0.0
-  in
   let time =
-    Concrete
-      (Ndarray.of_floats rdt [| n_times |]
-         (Array.init n_times (fun k ->
-              ((float_of_int (nperseg / 2) +. float_of_int (k * nstep)) /. fs)
-              -. shift)))
+    let steps =
+      b1 (Iota { dtype = rdt; shape = [| n_times |]; dimension = 0 }) []
+    in
+    let scaled = b1 Mul [ steps; L.full [||] (float_of_int nstep) rdt ] in
+    let moved =
+      b1 Add [ scaled; L.full [||] (float_of_int nperseg /. 2.0) rdt ]
+    in
+    let over = b1 Div [ moved; L.full [||] fs rdt ] in
+    if boundary <> None then
+      b1 Sub [ over; L.full [||] (float_of_int nperseg /. 2.0 /. fs) rdt ]
+    else over
   in
   let result =
     if y = None && mode <> "stft" then b1 Real [ result ] else result
@@ -557,18 +546,8 @@ let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
   in
   let last = rank time_domain - 1 in
   let cut = L.slice_in_dim ~axis:last time_domain 0 nperseg in
-  let host_sum v =
-    match Numpy.Reductions.sum v with
-    | Concrete nd -> Ndarray.get_f nd [||]
-    | Device d -> Ndarray.get_f (Pjrt.Buffer.to_host d) [||]
-    | Tracer _ -> invalid_arg "istft: window must be concrete"
-  in
-  let scale = Core.with_eval_dynamic (fun () -> host_sum win) in
-  let scaled =
-    if is_complex cut then
-      b1 Mul [ cut; NL.astype (L.full (shape cut) scale rdt) (dtype_of cut) ]
-    else L.mul cut (L.full_like cut scale)
-  in
+  let scale = Numpy.Reductions.sum win in
+  let scaled = b1 Mul [ cut; NL.astype scale (dtype_of cut) ] in
   let windowed =
     b1 Mul
       [

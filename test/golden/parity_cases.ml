@@ -1437,10 +1437,15 @@ let dtype_sweep_run op a =
   | "sw_linspace_end" -> one (fun v -> AC.linspace_v ~num:4 (row v 0) (row v 1))
   | "sw_geomspace" ->
       one (fun v ->
-          let v = as_float v in
-          AC.geomspace_v ~num:3
-            (UF.add (row v 0) (L.full_like (row v 0) 2.0))
-            (UF.add (row v 1) (L.full_like (row v 1) 3.0)))
+          let lower =
+            let r = as_float (row v 0) in
+            UF.add r (like r 2.0)
+          in
+          let upper =
+            let r = as_float (row v 1) in
+            UF.add r (like r 3.0)
+          in
+          AC.geomspace_v ~num:3 lower upper)
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
   | "sw_polyval" ->
       one (fun v -> PO.polyval (L.slice_in_dim ~axis:0 v 0 2) (row v 0))

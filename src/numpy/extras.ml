@@ -552,25 +552,27 @@ let histogram_bin_edges ?(bins = 10) ?range a =
   let lo, hi =
     match range with
     | Some (l, h) -> (L.full [||] l dt, L.full [||] h dt)
-    | None -> (R.min a, R.max a)
+    | None ->
+        let low = R.min a in
+        let high = R.max a in
+        (low, high)
   in
-  let same = U.equal lo hi in
+  let lifted v = L.broadcast_in_dim v [| 1 |] [||] in
+  let pair = NL.concatenate [ lifted lo; lifted hi ] in
+  let spread () =
+    Jnp_util.jit1 "_ptp"
+      (function [ v ] -> R.ptp v | _ -> invalid_arg "ptp: arity")
+      [ pair ]
+  in
   let half = L.full [||] 0.5 dt in
-  let lo' = NL.where_ same (U.subtract lo half) lo in
-  let hi' = NL.where_ same (U.add hi half) hi in
-  let fractions =
-    Concrete
-      (Ndarray.of_floats dt [| bins |]
-         (Array.init bins (fun i -> float_of_int i /. float_of_int bins)))
-  in
-  let complement = U.subtract (L.full [| bins |] 1.0 dt) fractions in
-  let broadcast v = L.broadcast_in_dim v [| bins |] [||] in
-  let body =
-    U.add
-      (U.multiply (broadcast lo') complement)
-      (U.multiply (broadcast hi') fractions)
-  in
-  NL.concatenate [ body; NL.reshape hi' [| 1 |] ]
+  let zero = L.full [||] 0.0 dt in
+  let same = Core.bind1 Types.Eq [ spread (); zero ] in
+  let first = L.index_in_dim ~keepdims:false pair 0 in
+  let lo' = NL.where_ same (Core.bind1 Types.Sub [ first; half ]) first in
+  let same = Core.bind1 Types.Eq [ spread (); zero ] in
+  let second = L.index_in_dim ~keepdims:false pair 1 in
+  let hi' = NL.where_ same (Core.bind1 Types.Add [ second; half ]) second in
+  AC.linspace_v ~num:(bins + 1) ~dtype:dt lo' hi'
 
 let histogram_core a edges weights density =
   let a = as_inexact (flat a) in
@@ -1178,37 +1180,49 @@ let polydiv ?(trim_leading_zeros = false) u v =
   let u = as_inexact u and v = as_inexact v in
   let lu = size_of u and lv = size_of v in
   let dt = dtype_of u in
-  let tolerance =
-    match dt with
-    | Dtype.F64 -> 1.4901161193847656e-08
-    | _ -> 0.00034526698300124393
+  let b1 = Core.bind1 in
+  let scalar x = L.full [||] x dt in
+  let index k =
+    Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int k |])
   in
-  let trimmed r =
-    if not trim_leading_zeros then r
-    else begin
-      let start = ref 0 in
-      while !start < Array.length r && Float.abs r.(!start) < tolerance do
-        incr start
-      done;
-      Array.sub r !start (Array.length r - !start)
-    end
-  in
-  let to_value a = Concrete (Ndarray.of_floats dt [| Array.length a |] a) in
-  if lu < lv then
-    let udata = flat_floats (host "polydiv" u) in
-    (AC.zeros ~dtype:dt [| 1 |], to_value (trimmed udata))
-  else
-    let udata = flat_floats (host "polydiv" u) in
-    let vdata = flat_floats (host "polydiv" v) in
-    let q = Array.make (lu - lv + 1) 0.0 in
-    let r = Array.copy udata in
-    for k = 0 to lu - lv do
-      q.(k) <- r.(k) /. vdata.(0);
-      for j = 0 to lv - 1 do
-        r.(k + j) <- r.(k + j) -. (q.(k) *. vdata.(j))
-      done
+  let scale = b1 Types.Div [ scalar 1.0; L.index_in_dim ~keepdims:false v 0 ] in
+  let q = ref (AC.zeros ~dtype:dt [| Stdlib.max (lu - lv + 1) 1 |]) in
+  let r = ref u in
+  for k = 0 to lu - lv do
+    let d = b1 Types.Mul [ scale; L.index_in_dim ~keepdims:false !r k ] in
+    q :=
+      b1 Types.Dynamic_update_slice
+        [ !q; L.broadcast_in_dim d [| 1 |] [||]; index k ];
+    let delta = b1 Types.Mul [ b1 Types.Neg [ d ]; v ] in
+    let window =
+      b1
+        (Types.Slice
+           {
+             start_indices = [| k |];
+             limit_indices = [| k + lv |];
+             strides = None;
+           })
+        [ !r ]
+    in
+    r :=
+      b1 Types.Dynamic_update_slice
+        [ !r; b1 Types.Add [ window; delta ]; index k ]
+  done;
+  if not trim_leading_zeros then (!q, !r)
+  else begin
+    let tolerance =
+      match dt with
+      | Dtype.F64 -> 1.4901161193847656e-08
+      | _ -> 0.00034526698300124393
+    in
+    let data = flat_floats (host "polydiv" !r) in
+    let start = ref 0 in
+    while !start < Array.length data && Float.abs data.(!start) < tolerance do
+      incr start
     done;
-    (to_value q, to_value (trimmed r))
+    let kept = Array.sub data !start (Array.length data - !start) in
+    (!q, Concrete (Ndarray.of_floats dt [| Array.length kept |] kept))
+  end
 
 let polyfit ?rcond ?w x y deg =
   let x = as_inexact x and y = as_inexact y in

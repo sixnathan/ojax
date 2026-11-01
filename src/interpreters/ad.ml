@@ -86,21 +86,20 @@ let scatter_gather_slice_sizes (sd : scatter_dims) operand_shape updates_shape =
 
 let reduce_chooser_jvp prim axes x tx =
   let a = Core.get_aval x in
-  let shape = a.shape in
-  let ndim = Array.length shape in
-  let is_red = Array.make ndim false in
-  Array.iter (fun i -> is_red.(i) <- true) axes;
   let shape_with_1 =
-    Array.mapi (fun i d -> if is_red.(i) then 1 else d) shape
+    Array.mapi (fun i d -> if Array.mem i axes then 1 else d) a.shape
   in
-  let ident = Array.init ndim (fun i -> i) in
   let ans = b1 prim [ x ] in
-  let reshaped = b1 (Reshape shape_with_1) [ ans ] in
-  let bcast = b1 (Broadcast_in_dim { shape; dims = ident }) [ reshaped ] in
-  let loc = b1 (Convert_element_type a.dtype) [ b1 Eq [ x; bcast ] ] in
-  let counts = b1 (Reduce_sum axes) [ loc ] in
-  let numer = b1 (Reduce_sum axes) [ mul tx loc ] in
-  (ans, div numer counts)
+  if is_zero tx then (ans, zeros_like_value ans)
+  else
+    let reshaped = b1 (Reshape shape_with_1) [ ans ] in
+    let loc =
+      b1 (Convert_element_type (Core.get_aval tx).dtype)
+        [ b1 Eq [ x; reshaped ] ]
+    in
+    let counts = b1 (Reduce_sum axes) [ loc ] in
+    let numer = b1 (Reduce_sum axes) [ b1 Mul [ tx; loc ] ] in
+    (ans, b1 Div [ numer; counts ])
 
 let swap_last2 x =
   let ndim = Array.length (Core.get_aval x).shape in

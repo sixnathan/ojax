@@ -13,6 +13,7 @@ val register_call_name : int -> string -> unit
 val custom_call :
   (int -> aval list -> (string * string * closed_jaxpr) option) ref
 
+val has_call_name : int -> bool
 val call_name : int -> string
 val registered_call_name : int -> string option
 val atom_type : atom -> aval

@@ -265,8 +265,8 @@ let mean ?dtype:dt ?axis ?keepdims ?where:mask a =
     | None -> to_inexact_dtype (dtype a)
   in
   let computation = upcast_f16 result_dtype in
-  let total = sum ?axis ?keepdims ?where:mask ~dtype:computation a in
   let normalizer = count_over ?axis ?keepdims ?where:mask a computation in
+  let total = sum ?axis ?keepdims ?where:mask ~dtype:computation a in
   convert (bind1 T.Div [ total; normalizer ]) result_dtype
 
 let is_complex_dtype = function
@@ -298,88 +298,78 @@ let var_promote a_dtype dt =
       else (upcast_f16 a_dtype, real_of_dtype a_dtype)
 
 let correction_of ddof correction =
+  let integer c =
+    let dt = Dtypes.default_int_dtype () in
+    T.Concrete (Nd.of_floats dt [||] [| c |])
+  in
   match (correction, ddof) with
-  | None, d ->
-      const_full
-        (Dtypes.default_int_dtype ())
-        [||]
-        (float_of_int (Option.value d ~default:0))
-  | Some c, (None | Some 0) -> const_full (Dtypes.default_float_dtype ()) [||] c
+  | None, d -> integer (float_of_int (Option.value d ~default:0))
+  | Some c, (None | Some 0) ->
+      T.Concrete (Nd.of_floats (Dtypes.default_float_dtype ()) [||] [| c |])
   | Some _, Some _ ->
       invalid_arg "ddof and correction can't be provided simultaneously."
 
-let lax_broadcast v sh =
-  if shape v = sh then v
-  else if ndim v = 0 then
-    bind1 (T.Broadcast_in_dim { shape = sh; dims = [||] }) [ v ]
-  else if ndim v = Array.length sh then
-    bind1
-      (T.Broadcast_in_dim { shape = sh; dims = Array.init (ndim v) Fun.id })
-      [ v ]
-  else broadcast_to v sh
+let axis_key = function
+  | None -> "none"
+  | Some ax -> String.concat "," (Array.to_list (Array.map string_of_int ax))
 
-let optional_args o = match o with Some v -> [ v ] | None -> []
+let statics_key dt axis keepdims =
+  Printf.sprintf "%s %s %b"
+    (match dt with Some d -> Dtype.short_name d | None -> "none")
+    (axis_key axis)
+    (Option.value keepdims ~default:false)
 
-let split_optional o args =
-  match (o, args) with
-  | Some _, v :: rest -> (Some v, rest)
-  | None, rest -> (None, rest)
-  | Some _, [] -> invalid_arg "reductions: argument underflow"
+let split_optional mask a_mean rest =
+  let mask, rest =
+    match (mask, rest) with Some _, m :: tl -> (Some m, tl) | _ -> (None, rest)
+  in
+  let a_mean =
+    match (a_mean, rest) with Some _, m :: _ -> Some m | _ -> None
+  in
+  (mask, a_mean)
 
-let var_named ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean a correction =
+let optional_args mask a_mean = Option.to_list mask @ Option.to_list a_mean
+
+let var_body dt axis keepdims mask a_mean correction a =
+  let computation, result_dtype = var_promote (dtype a) dt in
+  let af = convert a computation in
+  let m =
+    match a_mean with
+    | Some m -> convert m computation
+    | None -> mean ?axis ~dtype:computation ~keepdims:true ?where:mask af
+  in
+  let centered = squared_magnitude computation (bind1 T.Sub [ af; m ]) in
+  let rdt = real_of_dtype computation in
+  let normalizer = count_over ?axis ?keepdims ?where:mask af rdt in
+  let normalizer = bind1 T.Sub [ normalizer; convert correction rdt ] in
+  let total = sum ?axis ~dtype:rdt ?keepdims ?where:mask centered in
+  let result = convert (bind1 T.Div [ total; normalizer ]) result_dtype in
+  where
+    (bind1 T.Gt [ normalizer; const_full rdt [||] 0.0 ])
+    result
+    (const_full (dtype result) [||] Float.nan)
+
+let var_value ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean correction a =
+  let mask = check_where "var" mask in
+  let dt = Option.map Dtypes.canonicalize_dtype dt in
   Jnp_util.jit1 "_var"
     ~key:
-      (Digest.to_hex
-         (Digest.string
-            (Marshal.to_string
-               (dt, axis, keepdims, mask <> None, a_mean <> None)
-               [])))
+      (statics_key dt axis keepdims
+      ^ string_of_bool (mask <> None)
+      ^ string_of_bool (a_mean <> None))
     (function
-      | a :: rest ->
-          let a_mean, rest = split_optional a_mean rest in
-          let correction, rest =
-            match rest with
-            | c :: rest -> (c, rest)
-            | [] -> invalid_arg "_var: arity"
-          in
-          let mask, _ = split_optional mask rest in
-          let mask = check_where "var" mask in
-          let dt = Option.map Dtypes.canonicalize_dtype dt in
-          let computation, result_dtype = var_promote (dtype a) dt in
-          let af = convert a computation in
-          let m =
-            match a_mean with
-            | Some m -> convert m computation
-            | None ->
-                mean ?axis ~dtype:computation ~keepdims:true ?where:mask af
-          in
-          let m = lax_broadcast m (shape af) in
-          let centered =
-            squared_magnitude computation (bind1 T.Sub [ af; m ])
-          in
-          let rdt = real_of_dtype computation in
-          let normalizer = count_over ?axis ?keepdims ?where:mask af rdt in
-          let normalizer =
-            bind1 T.Sub
-              [
-                normalizer;
-                lax_broadcast (convert correction rdt) (shape normalizer);
-              ]
-          in
-          let total = sum ?axis ~dtype:rdt ?keepdims ?where:mask centered in
-          let result =
-            convert
-              (bind1 T.Div [ total; lax_broadcast normalizer (shape total) ])
-              result_dtype
-          in
-          let positive =
-            bind1 T.Gt [ normalizer; const_full rdt (shape normalizer) 0.0 ]
-          in
-          where positive result (const_full (dtype result) [||] Float.nan)
-      | [] -> invalid_arg "_var: arity")
-    ((a :: optional_args a_mean) @ (correction :: optional_args mask))
+      | a :: correction :: rest ->
+          let mask, a_mean = split_optional mask a_mean rest in
+          var_body dt axis keepdims mask a_mean correction a
+      | _ -> invalid_arg "var: arity")
+    (a :: correction :: optional_args mask a_mean)
 
-let std_named ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean a correction =
+let var ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
+  var_value ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean
+    (correction_of ddof correction)
+    a
+
+let std ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
   let dt = Option.map Dtypes.canonicalize_dtype dt in
   (match dt with
   | Some d when not (is_inexact d) ->
@@ -387,30 +377,19 @@ let std_named ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean a correction =
   | _ -> ());
   Jnp_util.jit1 "_std"
     ~key:
-      (Digest.to_hex
-         (Digest.string
-            (Marshal.to_string
-               (dt, axis, keepdims, mask <> None, a_mean <> None)
-               [])))
+      (statics_key dt axis keepdims
+      ^ string_of_bool (mask <> None)
+      ^ string_of_bool (a_mean <> None))
     (function
       | a :: correction :: rest ->
-          let a_mean, rest = split_optional a_mean rest in
-          let mask, _ = split_optional mask rest in
+          let mask, a_mean = split_optional mask a_mean rest in
           bind1 T.Sqrt
             [
-              var_named ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean a
-                correction;
+              var_value ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean
+                correction a;
             ]
-      | _ -> invalid_arg "_std: arity")
-    ((a :: correction :: optional_args a_mean) @ optional_args mask)
-
-let var ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
-  var_named ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean a
-    (correction_of ddof correction)
-
-let std ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
-  std_named ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean a
-    (correction_of ddof correction)
+      | _ -> invalid_arg "std: arity")
+    (a :: correction_of ddof correction :: optional_args mask a_mean)
 
 let ptp ?axis ?(keepdims = false) a =
   bind1 T.Sub [ amax ?axis ~keepdims a; amin ?axis ~keepdims a ]
@@ -424,8 +403,7 @@ let average_with_sum ?axis ?(keepdims = false) ?weights a =
       let a = to_inexact a in
       let avg = mean ?axis ~keepdims a in
       let axes = resolve_axes a axis in
-      ( avg,
-        const_full (dtype avg) (shape avg) (float_of_int (axis_count a axes)) )
+      (avg, const_full (dtype avg) [||] (float_of_int (axis_count a axes)))
   | Some w ->
       let rt, _ = Dtypes.result_type [ (dtype a, weak a); (dtype w, weak w) ] in
       let cdt = to_inexact_dtype rt in
@@ -441,12 +419,26 @@ let average_with_sum ?axis ?(keepdims = false) ?weights a =
             invalid_arg
               "Shape of weights must be consistent with shape of a along \
                specified axis.";
-          bind1 (T.Broadcast_in_dim { shape = shape a2; dims = axes }) [ w2 ]
+          let new_shape =
+            Array.mapi (fun i d -> if Array.mem i axes then d else 1) (shape a2)
+          in
+          let order =
+            Array.init (Array.length axes) Fun.id
+            |> Array.to_list
+            |> List.stable_sort (fun x y -> compare axes.(x) axes.(y))
+            |> Array.of_list
+          in
+          let moved =
+            if Array.for_all Fun.id (Array.mapi (fun i o -> i = o) order) then
+              w2
+            else bind1 (T.Transpose order) [ w2 ]
+          in
+          reshape moved new_shape
         end
       in
       let total = sum ?axis ~keepdims w2 in
-      ( bind1 T.Div [ sum ?axis ~keepdims (bind1 T.Mul [ a2; w2 ]); total ],
-        total )
+      let product = bind1 T.Mul [ a2; w2 ] in
+      (bind1 T.Div [ sum ?axis ~keepdims product; total ], total)
 
 let average ?axis ?keepdims ?weights a =
   fst (average_with_sum ?axis ?keepdims ?weights a)
@@ -1158,24 +1150,6 @@ let mean ?dtype ?axis ?keepdims ?where a0 =
     (fun opts vals ->
       match (opts, vals) with
       | [ where ], [ a0 ] -> mean ?dtype ?axis ?keepdims ?where a0
-      | _ -> assert false)
-
-let var ?dtype ?axis ?keepdims ?ddof ?where ?mean ?correction a0 =
-  Eager_jit.one "numpy.reductions.var" (dtype, axis, keepdims) [ where; mean ]
-    [ a0; correction_of ddof correction ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [ where; mean ], [ a0; correction ] ->
-          var_named ?dtype ?axis ?keepdims ?where ?mean a0 correction
-      | _ -> assert false)
-
-let std ?dtype ?axis ?keepdims ?ddof ?where ?mean ?correction a0 =
-  Eager_jit.one "numpy.reductions.std" (dtype, axis, keepdims) [ where; mean ]
-    [ a0; correction_of ddof correction ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [ where; mean ], [ a0; correction ] ->
-          std_named ?dtype ?axis ?keepdims ?where ?mean a0 correction
       | _ -> assert false)
 
 let ptp ?axis ?keepdims a0 =

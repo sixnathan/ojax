@@ -1211,6 +1211,9 @@ let convert_impl dt a =
     Ndarray.map dt (saturate_to dt) a
   else Ndarray.map dt (fun x -> x) a
 
+let impl_core_ref : (primitive -> Ndarray.t list -> Ndarray.t list) ref =
+  ref (fun _ _ -> failwith "lax: impl not installed")
+
 let rec impl_base prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
@@ -1586,11 +1589,32 @@ let rec impl_base prim inputs =
         feature_group_count;
         batch_group_count;
       } ->
+      let conv lhs rhs =
+        Convolution.conv_impl dimension_numbers window_strides padding
+          lhs_dilation rhs_dilation feature_group_count batch_group_count lhs
+          rhs
+      in
       bin
         (fun lhs rhs ->
-          Convolution.conv_impl dimension_numbers window_strides padding
-            lhs_dilation rhs_dilation feature_group_count batch_group_count lhs
-            rhs)
+          match Ndarray.dtype lhs with
+          | Dtype.Complex64 | Dtype.Complex128 ->
+              let part prim v =
+                match impl_core_ref.contents prim [ v ] with
+                | [ out ] -> out
+                | _ -> failwith "lax: conv complex parts"
+              in
+              let lift2 prim a b =
+                match impl_core_ref.contents prim [ a; b ] with
+                | [ out ] -> out
+                | _ -> failwith "lax: conv complex parts"
+              in
+              let x_re = part Real lhs and x_im = part Imag lhs in
+              let y_re = part Real rhs and y_im = part Imag rhs in
+              let k1 = conv (lift2 Add x_re x_im) y_re in
+              let k2 = conv x_re (lift2 Sub y_im y_re) in
+              let k3 = conv x_im (lift2 Add y_re y_im) in
+              lift2 Complex (lift2 Sub k1 k3) (lift2 Add k1 k2)
+          | _ -> conv lhs rhs)
         inputs
   | Reduce_window_sum window ->
       un (Windowed_reductions.reduce_window_sum window) inputs
@@ -2723,6 +2747,8 @@ let abstract_eval prim avals =
       | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call")
   | Custom_lin { out_avals; _ } -> out_avals
   | Checkpoint_name _ | Stop_gradient -> avals
+
+let () = impl_core_ref := impl_core
 
 let impl prim inputs =
   let batch =

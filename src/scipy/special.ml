@@ -2707,6 +2707,10 @@ let expn a0 a1 =
   Eager_jit.one "scipy.special.expn" () [] [ a0; a1 ] (fun opts vals ->
       match (opts, vals) with [], [ a0; a1 ] -> expn a0 a1 | _ -> assert false)
 
+let exp1 x =
+  let x = real_only "exp1" x in
+  expn (scalar_of x 1.0) x
+
 let hyp1f1 a0 a1 a2 =
   Eager_jit.one "scipy.special.hyp1f1" () [] [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with

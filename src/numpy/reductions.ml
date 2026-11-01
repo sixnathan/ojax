@@ -375,8 +375,7 @@ let var_named ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean a correction =
           let positive =
             bind1 T.Gt [ normalizer; const_full rdt (shape normalizer) 0.0 ]
           in
-          where positive result
-            (const_full (Dtypes.default_float_dtype ()) [||] Float.nan)
+          where positive result (const_full (dtype result) [||] Float.nan)
       | [] -> invalid_arg "_var: arity")
     ((a :: optional_args a_mean) @ (correction :: optional_args mask))
 

@@ -96,89 +96,148 @@ let geomspace ?(num = 50) ?(endpoint = true) ?dtype start stop =
   let res = UF.multiply (NL.broadcast_to sign (shape_of logsp)) logsp in
   convert res out_dt
 
+let statics_key statics =
+  Digest.to_hex (Digest.string (Marshal.to_string statics []))
+
 let linspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
   if num < 0 then invalid_arg "linspace: num must be non-negative";
-  let joined =
-    let dt, _ =
-      Dtypes.result_type
-        [
-          ((get_aval start).T.dtype, (get_aval start).T.weak_type);
-          ((get_aval stop).T.dtype, (get_aval stop).T.weak_type);
-        ]
-    in
-    dt
-  in
-  let out_dt = match dtype with Some d -> d | None -> to_inexact joined in
-  let comp = to_inexact out_dt in
-  let bounds = NL.broadcast_shapes_n [ shape_of start; shape_of stop ] in
-  let rank = Array.length bounds in
-  let axis = if axis < 0 then axis + rank + 1 else axis in
-  let start = NL.broadcast_to (convert start comp) bounds in
-  let stop = NL.broadcast_to (convert stop comp) bounds in
-  let lifted v = NL.expand_dims v [| axis |] in
-  let div = if endpoint then num - 1 else num in
-  let body =
-    if num > 1 then begin
-      let rdt =
-        match comp with D.Complex128 -> D.F64 | D.Complex64 -> D.F32 | d -> d
-      in
-      let iota =
-        bind1 (T.Iota { dtype = rdt; shape = [| div |]; dimension = 0 }) []
-      in
-      let fraction =
-        bind1 T.Div
-          [ iota; NL.broadcast_to (scalar rdt (float_of_int div)) [| div |] ]
-      in
-      let shape_for =
-        Array.init (rank + 1) (fun i -> if i = axis then div else 1)
-      in
-      let step = convert (NL.reshape fraction shape_for) comp in
-      let one = NL.broadcast_to (scalar comp 1.0) shape_for in
-      let inner =
-        UF.add
-          (UF.multiply (lifted start) (bind1 T.Sub [ one; step ]))
-          (UF.multiply (lifted stop) step)
-      in
-      if endpoint then NL.concatenate ~axis [ inner; lifted stop ] else inner
-    end
-    else if num = 1 then lifted start
-    else
-      const_full comp
-        (Array.init (rank + 1) (fun i ->
-             if i = axis then 0
-             else if i < axis then bounds.(i)
-             else bounds.(i - 1)))
-        0.0
-  in
-  let body = if is_inexact out_dt then body else bind1 T.Floor [ body ] in
-  convert body out_dt
+  Jnp_util.jit1 "_linspace"
+    ~key:(statics_key (num, endpoint, axis, dtype))
+    (function
+      | [ start; stop ] ->
+          let joined =
+            let dt, _ =
+              Dtypes.result_type
+                [
+                  ((get_aval start).T.dtype, (get_aval start).T.weak_type);
+                  ((get_aval stop).T.dtype, (get_aval stop).T.weak_type);
+                ]
+            in
+            dt
+          in
+          let out_dt =
+            match dtype with Some d -> d | None -> to_inexact joined
+          in
+          let comp = to_inexact out_dt in
+          let bounds =
+            NL.broadcast_shapes_n [ shape_of start; shape_of stop ]
+          in
+          let rank = Array.length bounds in
+          let axis = if axis < 0 then axis + rank + 1 else axis in
+          let start = NL.broadcast_to (convert start comp) bounds in
+          let stop = NL.broadcast_to (convert stop comp) bounds in
+          let shape_for n =
+            Array.init (rank + 1) (fun i ->
+                if i = axis then n
+                else if i < axis then bounds.(i)
+                else bounds.(i - 1))
+          in
+          let reshaped v = NL.reshape v (shape_for 1) in
+          let div = if endpoint then num - 1 else num in
+          let body =
+            if num > 1 then begin
+              let rdt =
+                match comp with
+                | D.Complex128 -> D.F64
+                | D.Complex64 -> D.F32
+                | d -> d
+              in
+              let iota =
+                bind1
+                  (T.Iota { dtype = rdt; shape = [| div |]; dimension = 0 })
+                  []
+              in
+              let iota_shape =
+                Array.init (rank + 1) (fun i -> if i = axis then div else 1)
+              in
+              let raised = NL.reshape iota iota_shape in
+              let step =
+                convert
+                  (bind1 T.Div
+                     [
+                       raised;
+                       NL.broadcast_to
+                         (scalar rdt (float_of_int div))
+                         iota_shape;
+                     ])
+                  comp
+              in
+              let one = NL.broadcast_to (scalar comp 1.0) iota_shape in
+              let rest = bind1 T.Sub [ one; step ] in
+              let low = UF.multiply (reshaped start) rest in
+              let high = UF.multiply (reshaped stop) step in
+              let inner = UF.add low high in
+              if endpoint then
+                NL.concatenate ~axis
+                  [
+                    inner;
+                    bind1
+                      (T.Broadcast_in_dim
+                         {
+                           shape = shape_for 1;
+                           dims =
+                             Array.of_list
+                               (List.filter
+                                  (fun i -> i <> axis)
+                                  (List.init (rank + 1) Fun.id));
+                         })
+                      [ stop ];
+                  ]
+              else inner
+            end
+            else if num = 1 then reshaped start
+            else const_full comp (shape_for 0) 0.0
+          in
+          let body =
+            if is_inexact out_dt then body else bind1 T.Floor [ body ]
+          in
+          convert body out_dt
+      | _ -> invalid_arg "_linspace: arity")
+    [ start; stop ]
 
 let logspace_v ?(num = 50) ?(endpoint = true) ?(base = 10.0) ?(axis = 0) ?dtype
     start stop =
-  let lin = linspace_v ~num ~endpoint ~axis ?dtype start stop in
-  let dt = dtype_of lin in
-  let basev = NL.broadcast_to (scalar dt base) (shape_of lin) in
-  UF.power basev lin
+  Jnp_util.jit1 "_logspace"
+    ~key:(statics_key (num, endpoint, axis, dtype))
+    (function
+      | [ start; stop; base ] ->
+          let lin = linspace_v ~num ~endpoint ~axis ?dtype start stop in
+          let dt = dtype_of lin in
+          let basev = NL.broadcast_to (convert base dt) (shape_of lin) in
+          UF.power basev lin
+      | _ -> invalid_arg "_logspace: arity")
+    [ start; stop; scalar (Dtypes.default_float_dtype ()) base ]
 
 let geomspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
-  let joined, _ =
-    Dtypes.result_type
-      [
-        ((get_aval start).T.dtype, (get_aval start).T.weak_type);
-        ((get_aval stop).T.dtype, (get_aval stop).T.weak_type);
-      ]
-  in
-  let out_dt = match dtype with Some d -> d | None -> to_inexact joined in
-  let comp = to_inexact out_dt in
-  let start = convert start comp and stop = convert stop comp in
-  let sign = UF.sign start in
-  let res =
-    UF.multiply sign
-      (logspace_v ~num ~endpoint ~base:10.0 ~axis:0 ~dtype:comp
-         (UF.log10 (UF.divide start sign))
-         (UF.log10 (UF.divide stop sign)))
-  in
-  let rank = Array.length (shape_of res) in
-  let axis = if axis < 0 then axis + rank else axis in
-  let res = if axis = 0 then res else NL.moveaxis [| 0 |] [| axis |] res in
-  convert res out_dt
+  Jnp_util.jit1 "_geomspace"
+    ~key:(statics_key (num, endpoint, axis, dtype))
+    (function
+      | [ start; stop ] ->
+          let joined, _ =
+            Dtypes.result_type
+              [
+                ((get_aval start).T.dtype, (get_aval start).T.weak_type);
+                ((get_aval stop).T.dtype, (get_aval stop).T.weak_type);
+              ]
+          in
+          let out_dt =
+            match dtype with Some d -> d | None -> to_inexact joined
+          in
+          let comp = to_inexact out_dt in
+          let start = convert start comp in
+          let stop = convert stop comp in
+          let sign = UF.sign start in
+          let low = UF.log10 (UF.divide start sign) in
+          let high = UF.log10 (UF.divide stop sign) in
+          let spaced =
+            logspace_v ~num ~endpoint ~base:10.0 ~axis:0 ~dtype:comp low high
+          in
+          let res = UF.multiply sign spaced in
+          let rank = Array.length (shape_of res) in
+          let axis = if axis < 0 then axis + rank else axis in
+          let res =
+            if axis = 0 then res else NL.moveaxis [| 0 |] [| axis |] res
+          in
+          convert res out_dt
+      | _ -> invalid_arg "_geomspace: arity")
+    [ start; stop ]

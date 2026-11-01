@@ -1715,11 +1715,35 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
     | Some f, Some a -> Some (bind1 T.Mul [ as_dt f; as_dt a ])
   in
   let sum_all v = bind1 (T.Reduce_sum (Array.init (ndim v) Fun.id)) [ v ] in
+  let weights_row = Option.map (fun wv -> reshape wv [| 1; nobs |]) w in
+  let weights_sum =
+    Option.map (fun row -> bind1 (T.Reduce_sum [| 1 |]) [ row ]) weights_row
+  in
+  let spread_row row sh =
+    if sh = shape row then row
+    else bind1 (T.Broadcast_in_dim { shape = sh; dims = [| 0; 1 |] }) [ row ]
+  in
+  let avg =
+    match (weights_row, weights_sum) with
+    | Some row, Some total ->
+        let sum1 =
+          bind1 (T.Reduce_sum [| 1 |])
+            [ bind1 T.Mul [ x; spread_row row (shape x) ] ]
+        in
+        let total =
+          if nvars = 1 then total
+          else
+            bind1
+              (T.Broadcast_in_dim { shape = [| nvars |]; dims = [| 0 |] })
+              [ total ]
+        in
+        bind1 T.Div [ sum1; total ]
+    | _ -> Reductions.mean ~axis:[| 1 |] x
+  in
   let divisor_of shape_out =
-    match w with
-    | None -> full dt shape_out (float_of_int (nobs - ddof))
-    | Some wv ->
-        let w_sum = sum_all wv in
+    match (w, weights_sum) with
+    | Some wv, Some total ->
+        let w_sum = bind1 (T.Squeeze [| 0 |]) [ total ] in
         let f =
           if ddof = 0 then w_sum
           else
@@ -1738,22 +1762,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
                   ]
         in
         bind1 (T.Broadcast_in_dim { shape = shape_out; dims = [||] }) [ f ]
-  in
-  let avg =
-    match w with
-    | None -> Reductions.mean ~axis:[| 1 |] x
-    | Some wv ->
-        let wb =
-          bind1 (T.Broadcast_in_dim { shape = shape x; dims = [| 1 |] }) [ wv ]
-        in
-        let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ bind1 T.Mul [ x; wb ] ] in
-        bind1 T.Div
-          [
-            sum1;
-            bind1
-              (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
-              [ sum_all wv ];
-          ]
+    | _ -> full dt shape_out (float_of_int (nobs - ddof))
   in
   let xc =
     let column = expand_dims avg [| 1 |] in
@@ -2060,17 +2069,19 @@ let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
   let y_given = y <> None in
   let fweights_given = fweights <> None in
   let aweights_given = aweights <> None in
-  if y_given || fweights_given || aweights_given then
+  if y_given || fweights_given then
     cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0
   else
     Jnp_util.jit1 "cov"
       ~key:
         (Digest.to_hex
-           (Digest.string (Marshal.to_string (rowvar, bias, ddof, dtype) [])))
+           (Digest.string
+              (Marshal.to_string (rowvar, bias, ddof, dtype, aweights_given) [])))
       (function
-        | [ p0 ] -> cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0
+        | [ p0 ] -> cov ?y ?rowvar ?bias ?ddof ?dtype p0
+        | [ p0; aweights ] -> cov ?y ?rowvar ?bias ?ddof ~aweights ?dtype p0
         | _ -> invalid_arg "cov: arity")
-      [ p0 ]
+      (p0 :: Option.to_list aweights)
 
 let corrcoef ?y ?rowvar ?dtype p0 =
   let y_given = y <> None in

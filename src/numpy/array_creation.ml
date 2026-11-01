@@ -15,6 +15,10 @@ let scalar dt x = const_full dt [||] x
 let convert v dt =
   if dtype_of v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
 
+let astype v dt =
+  if dtype_of v = dt && not (get_aval v).T.weak_type then v
+  else bind1 (T.Convert_element_type dt) [ v ]
+
 let is_inexact = function
   | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
   | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
@@ -53,7 +57,7 @@ let full_like ?dtype ?shape a fill =
 let zeros_like ?dtype ?shape a = full_like ?dtype ?shape a 0.0
 let ones_like ?dtype ?shape a = full_like ?dtype ?shape a 1.0
 let empty_like ?dtype ?shape a = zeros_like ?dtype ?shape a
-let weak_scalar dt x = scalar dt x
+let weak_scalar dt x = C.py_scalar dt x
 
 let reshape_same v sh =
   if shape_of v = sh then v else bind1 (T.Reshape sh) [ v ]
@@ -167,9 +171,9 @@ let logspace_core ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop
             | None -> to_inexact (result_of start stop)
           in
           let comp = to_inexact out_dt in
-          let start = convert start comp and stop = convert stop comp in
+          let start = astype start comp and stop = astype stop comp in
           let lin = linspace_v ~num ~endpoint ~axis start stop in
-          let base = convert base (dtype_of lin) in
+          let base = astype base (dtype_of lin) in
           convert (bind1 T.Pow [ base; lin ]) out_dt
       | _ -> invalid_arg "logspace: arity")
     [ start; stop; base ]
@@ -190,7 +194,7 @@ let geomspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
             | None -> to_inexact (result_of start stop)
           in
           let comp = to_inexact out_dt in
-          let start = convert start comp and stop = convert stop comp in
+          let start = astype start comp and stop = astype stop comp in
           let sign = UF.sign start in
           let lower = UF.log10 (UF.divide start sign) in
           let upper = UF.log10 (UF.divide stop sign) in

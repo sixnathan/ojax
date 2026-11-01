@@ -107,7 +107,11 @@ let symmetric_product ?(alpha = 1.0) ?(beta = 0.0) ?(symmetrize_output = false)
   let scale x v = UF.multiply (const_like v x) v in
   let result =
     UF.add
-      (scale alpha (L.batch_matmul a (NL.matrix_transpose a)))
+      (scale alpha
+         (L.batch_matmul
+            ~precision:
+              (Lax_config.precision_of_level Lax_config.Precision_highest)
+            a (NL.matrix_transpose a)))
       (scale beta c)
   in
   if symmetrize_output then

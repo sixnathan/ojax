@@ -141,7 +141,7 @@ let nonzero ?size ?(fill_value = 0) a =
           NL.concatenate
             [ order; AC.zeros ~dtype:(dtype_of order) [| k - total |] ]
       in
-      let hits = I.take ~axis:0 mask order in
+      let hits = I.take_index ~axis:0 mask order in
       let valid =
         if k <= total then L.slice_in_dim hits 0 k
         else NL.concatenate [ hits; AC.zeros ~dtype:Dtype.Bool [| k - total |] ]
@@ -204,7 +204,7 @@ let traced_unique ?axis ~size ?fill_value a =
     | [ only ] -> S.argsort only
     | _ -> S.lexsort (List.rev keys)
   in
-  let aux = I.take ~axis:0 aux_source perm in
+  let aux = I.take_index ~axis:0 aux_source perm in
   let aux_flat = NL.reshape aux [| rows; row_len |] in
   let tail = L.slice_in_dim ~axis:0 aux_flat 1 rows in
   let head = L.slice_in_dim ~axis:0 aux_flat 0 (rows - 1) in
@@ -222,7 +222,7 @@ let traced_unique ?axis ~size ?fill_value a =
       [ Concrete (Ndarray.of_floats Dtype.Bool [| 1 |] [| 1.0 |]); any_diff ]
   in
   let ind = List.hd (nonzero ~size mask) in
-  let result = I.take ~axis:0 aux ind in
+  let result = I.take_index ~axis:0 aux ind in
   let idt = dtype_of ind in
   let distinct = R.sum (NL.astype mask idt) in
   let result =
@@ -242,12 +242,12 @@ let traced_unique ?axis ~size ?fill_value a =
     | None -> result
     | Some ax -> NL.moveaxis [| 0 |] [| ax |] result
   in
-  let indices = I.take ~axis:0 perm ind in
+  let indices = I.take_index ~axis:0 perm ind in
   let inverse =
     let imask =
       L.sub (L.cumsum ~axis:0 (NL.astype mask idt)) (L.full_like distinct 1.0)
     in
-    I.take ~axis:0 imask (S.argsort perm)
+    I.take_index ~axis:0 imask (S.argsort perm)
   in
   let counts =
     let edges = List.hd (nonzero ~size:(size + 1) mask) in
@@ -640,7 +640,7 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") coords dims =
 let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
   let n_dims = (shape sample).(1) in
   let bins_for i = if Array.length bins = 0 then 10 else bins.(i) in
-  let column i = I.take ~axis:1 sample (int_scalar i) in
+  let column i = I.take_index ~axis:1 sample (int_scalar i) in
   let edges =
     List.init n_dims (fun i ->
         let range_i = Option.map (fun r -> r.(i)) range in
@@ -695,34 +695,33 @@ let histogram2d ?(bins = [| 10; 10 |]) ?range ?weights ?(density = false) x y =
   | _ -> failwith "histogram2d: arity"
 
 let interp ?left ?right ?period x xp fp =
-  let x = as_inexact x and xp = as_inexact xp and fp = as_inexact fp in
   let x, xp =
-    match period with
-    | None -> (x, xp)
-    | Some p ->
-        let p = Float.abs p in
-        let dt = dtype_of x in
-        let m v = U.remainder v (L.full (shape v) p dt) in
-        (m x, m xp)
+    match NL.promote_values [ as_inexact x; as_inexact xp ] with
+    | [ a; b ] -> (a, b)
+    | _ -> assert false
   in
-  let xp, fp =
+  let fp = as_inexact fp in
+  let idx = NL.take_trailing in
+  let int_lit = Jnp_util.py_int in
+  let x, xp, fp =
     match period with
-    | None -> (xp, fp)
+    | None -> (x, xp, fp)
     | Some p ->
-        let p = Float.abs p in
+        let p = U.absolute (Jnp_util.py_float p) in
+        let x = U.remainder x p and xp = U.remainder xp p in
         let order = Sorting.argsort ~axis:(Some 0) xp in
-        let sx = I.take ~axis:0 xp order and sf = I.take ~axis:0 fp order in
-        let n = size_of sx in
-        let dt = dtype_of sx in
-        let shift v d = U.add v (L.full (shape v) d dt) in
-        ( NL.concatenate
+        let xp = I.take_index ~axis:0 xp order
+        and fp = I.take_index ~axis:0 fp order in
+        let n = size_of xp in
+        ( x,
+          NL.concatenate
             [
-              shift (L.slice_in_dim sx (n - 1) n) (-.p);
-              sx;
-              shift (L.slice_in_dim sx 0 1) p;
+              U.subtract (L.slice_in_dim xp (n - 1) n) p;
+              xp;
+              U.add (L.slice_in_dim xp 0 1) p;
             ],
           NL.concatenate
-            [ L.slice_in_dim sf (n - 1) n; sf; L.slice_in_dim sf 0 1 ] )
+            [ L.slice_in_dim fp (n - 1) n; fp; L.slice_in_dim fp 0 1 ] )
   in
   let n = size_of xp in
   let i =
@@ -730,58 +729,74 @@ let interp ?left ?right ?period x xp fp =
       ~max:(float_of_int (n - 1))
       (NL.searchsorted ~side:"right" xp x)
   in
-  let one = L.full (shape i) 1.0 (dtype_of i) in
-  let prev = U.subtract i one in
-  let fp_i = I.take ~axis:0 fp i and fp_p = I.take ~axis:0 fp prev in
-  let xp_i = I.take ~axis:0 xp i and xp_p = I.take ~axis:0 xp prev in
+  let prev () = U.subtract i (int_lit 1) in
+  let at_fp j = idx fp [ j ] and at_xp j = idx xp [ j ] in
+  let fp_i = at_fp i in
+  let fp_p = at_fp (prev ()) in
   let df = U.subtract fp_i fp_p in
+  let xp_i = at_xp i in
+  let xp_p = at_xp (prev ()) in
   let dx = U.subtract xp_i xp_p in
-  let delta = U.subtract x xp_p in
+  let xp_q = at_xp (prev ()) in
+  let delta = U.subtract x xp_q in
   let eps =
     match dtype_of xp with
     | Dtype.F64 -> 4.930380657631324e-32
     | _ -> 1.4210854715202004e-14
   in
   let dx0 =
-    U.less_equal (U.absolute dx) (L.full (shape dx) eps (dtype_of dx))
+    Core.bind1 Types.Le
+      [
+        Core.bind1 Types.Abs [ dx ];
+        Concrete (Ndarray.of_floats (dtype_of dx) [||] [| eps |]);
+      ]
   in
-  let safe = NL.where_ dx0 (L.full (shape dx) 1.0 (dtype_of dx)) dx in
+  let fp_r = at_fp (prev ()) in
+  let fp_s = at_fp (prev ()) in
+  let safe = NL.where_ dx0 (int_lit 1) dx in
   let f =
-    NL.where_ dx0 fp_p (U.add fp_p (U.multiply (U.divide delta safe) df))
+    NL.where_ dx0 fp_r (U.add fp_s (U.multiply (U.divide delta safe) df))
   in
-  match period with
-  | Some _ -> f
-  | None ->
-      let first_x = L.index_in_dim ~keepdims:false xp 0 in
-      let last_x = L.index_in_dim ~keepdims:false xp (n - 1) in
-      let broad v = L.broadcast_in_dim v (shape x) [||] in
-      let first_f = L.index_in_dim ~keepdims:false fp 0 in
-      let last_f = L.index_in_dim ~keepdims:false fp (size_of fp - 1) in
-      let fill_left =
-        match left with
-        | Some v -> L.full (shape x) v (dtype_of x)
-        | None -> broad first_f
-      in
-      let fill_right =
-        match right with
-        | Some v -> L.full (shape x) v (dtype_of x)
-        | None -> broad last_f
-      in
-      let f = NL.where_ (U.less x (broad first_x)) fill_left f in
-      NL.where_ (U.greater x (broad last_x)) fill_right f
+  let f =
+    match period with
+    | Some _ -> f
+    | None ->
+        let left_arr =
+          match left with
+          | None -> NL.index_at fp 0
+          | Some v -> Jnp_util.py_float v
+        in
+        let f = NL.where_ (U.less x (NL.index_at xp 0)) left_arr f in
+        let right_arr =
+          match right with
+          | None -> NL.index_at fp (-1)
+          | Some v -> Jnp_util.py_float v
+        in
+        NL.where_ (U.greater x (NL.index_at xp (-1))) right_arr f
+  in
+  f
+
+let interp ?left ?right ?period a0 a1 a2 =
+  Eager_jit.one ~jit:"_interp" "numpy.extras.interp" (left, right, period) []
+    [ a0; a1; a2 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1; a2 ] -> interp ?left ?right ?period a0 a1 a2
+      | _ -> assert false)
 
 let gradient_along_axis a h axis =
   let n = (shape a).(axis) in
   if n < 2 then
     invalid_arg "Shape of array too small to calculate a numerical gradient";
   let cut lo hi = L.slice_in_dim ~axis a lo hi in
-  let div_by d v = U.divide v (L.full (shape v) d (dtype_of v)) in
-  let upper = div_by h (U.subtract (cut 1 2) (cut 0 1)) in
-  let lower = div_by h (U.subtract (cut (n - 1) n) (cut (n - 2) (n - 1))) in
-  if n = 2 then NL.concatenate ~axis [ upper; lower ]
-  else
-    let inner = div_by (2.0 *. h) (U.subtract (cut 2 n) (cut 0 (n - 2))) in
-    NL.concatenate ~axis [ upper; inner; lower ]
+  let py = Jnp_util.py_float in
+  let upper = U.subtract (cut 1 2) (cut 0 1) in
+  let lower = U.subtract (cut (n - 1) n) (cut (n - 2) (n - 1)) in
+  let inner =
+    U.divide (U.multiply (U.subtract (cut 2 n) (cut 0 (n - 2))) (py 0.5)) (py h)
+  in
+  let lower = U.divide lower (py h) in
+  let upper = U.divide upper (py h) in
+  NL.concatenate ~axis [ upper; inner; lower ]
 
 let gradient ?(spacing = 1.0) ?axis a =
   let a = as_inexact a in
@@ -792,6 +807,13 @@ let gradient ?(spacing = 1.0) ?axis a =
     | None -> List.init n Fun.id
   in
   List.map (fun ax -> gradient_along_axis a spacing ax) axes
+
+let gradient ?spacing ?axis a0 =
+  Eager_jit.many ~jit:"gradient" "numpy.extras.gradient" (spacing, axis) []
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> gradient ?spacing ?axis a0
+      | _ -> assert false)
 
 let choose ?(mode = "raise") a choices =
   let idx =
@@ -831,10 +853,10 @@ let compress ?axis ?size ?(fill_value = 0.0) condition a =
     ints_value (default_int ()) [| List.length list |] (Array.of_list list)
   in
   match size with
-  | None -> I.take ~mode:"clip" ~axis:ax source (index_of kept)
+  | None -> I.take_index ~mode:"clip" ~axis:ax source (index_of kept)
   | Some n ->
       let taken = List.filteri (fun i _ -> i < n) kept in
-      let found = I.take ~mode:"clip" ~axis:ax source (index_of taken) in
+      let found = I.take_index ~mode:"clip" ~axis:ax source (index_of taken) in
       let missing = n - List.length taken in
       if missing = 0 then found
       else begin
@@ -856,7 +878,7 @@ let delete ?axis a obj =
   let kept =
     List.filter (fun i -> not (List.mem i drop)) (List.init n Fun.id)
   in
-  I.take ~axis:ax a
+  I.take_index ~axis:ax a
     (ints_value (default_int ()) [| List.length kept |] (Array.of_list kept))
 
 let insert ?axis a position values =
@@ -1045,7 +1067,21 @@ let sort_complex a =
     values;
   Concrete (Ndarray.of_complex dt sh values)
 
+let sort_complex a0 =
+  Eager_jit.one ~jit:"sort_complex" "numpy.extras.sort_complex" () [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> sort_complex a0
+      | _ -> assert false)
+
 let bitwise_count a = NL.astype (L.population_count (U.absolute a)) (dtype_of a)
+
+let bitwise_count a0 =
+  Eager_jit.one ~jit:"bitwise_count" "numpy.extras.bitwise_count" () [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> bitwise_count a0
+      | _ -> assert false)
 
 let reject_complex name x =
   match dtype_of x with
@@ -1069,11 +1105,23 @@ let frexp x =
   ( Concrete (Ndarray.of_floats (dtype_of x) (shape x) mantissa),
     ints_value Dtype.I32 (shape x) exponent )
 
+let frexp a0 =
+  Eager_jit.pair ~jit:"frexp" "numpy.extras.frexp" () [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> frexp a0 | _ -> assert false)
+
 let ldexp x exponent =
   reject_complex "ldexp" x;
   let x = as_inexact x in
   let two = L.full (shape x) 2.0 (dtype_of x) in
   U.multiply x (U.power two (NL.astype exponent (dtype_of x)))
+
+let ldexp a0 a1 =
+  Eager_jit.one ~jit:"ldexp" "numpy.extras.ldexp" () [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> ldexp a0 a1
+      | _ -> assert false)
 
 let argpartition ?(axis = -1) a kth =
   ignore kth;
@@ -1258,6 +1306,13 @@ let polyfit ?rcond ?w x y deg =
     if rank c = 2 then L.broadcast_in_dim scale (shape c) [| 0 |] else scale
   in
   U.divide c scale_c
+
+let polyfit ?rcond ?w a0 a1 a2 =
+  Eager_jit.one ~jit:"polyfit" ~vals_first:true "numpy.extras.polyfit"
+    (rcond, a2) [ w ] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ w ], [ a0; a1 ] -> polyfit ?rcond ?w a0 a1 a2
+      | _ -> assert false)
 
 let roots_of_coefficients p =
   let dt = dtype_of p in
@@ -1454,6 +1509,13 @@ let packbits ?axis ?(bitorder = "big") a =
     [| ax |]
     (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))
 
+let packbits ?axis ?bitorder a0 =
+  Eager_jit.one ~jit:"packbits" "numpy.extras.packbits" (axis, bitorder) []
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> packbits ?axis ?bitorder a0
+      | _ -> assert false)
+
 let unpackbits ?axis ?count ?(bitorder = "big") a =
   let source, ax =
     match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
@@ -1485,59 +1547,9 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
     [| ax |]
     (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))
 
-let interp ?left ?right ?period a0 a1 a2 =
-  Eager_jit.one "numpy.extras.interp" (left, right, period) [] [ a0; a1; a2 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1; a2 ] -> interp ?left ?right ?period a0 a1 a2
-      | _ -> assert false)
-
-let polyfit ?rcond ?w a0 a1 a2 =
-  Eager_jit.one "numpy.extras.polyfit" (rcond, a2) [ w ] [ a0; a1 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [ w ], [ a0; a1 ] -> polyfit ?rcond ?w a0 a1 a2
-      | _ -> assert false)
-
-let bitwise_count a0 =
-  Eager_jit.one "numpy.extras.bitwise_count" () [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> bitwise_count a0
-      | _ -> assert false)
-
-let ldexp a0 a1 =
-  Eager_jit.one "numpy.extras.ldexp" () [] [ a0; a1 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1 ] -> ldexp a0 a1
-      | _ -> assert false)
-
-let frexp a0 =
-  Eager_jit.pair "numpy.extras.frexp" () [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with [], [ a0 ] -> frexp a0 | _ -> assert false)
-
-let sort_complex a0 =
-  Eager_jit.one "numpy.extras.sort_complex" () [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> sort_complex a0
-      | _ -> assert false)
-
-let packbits ?axis ?bitorder a0 =
-  Eager_jit.one "numpy.extras.packbits" (axis, bitorder) [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> packbits ?axis ?bitorder a0
-      | _ -> assert false)
-
 let unpackbits ?axis ?count ?bitorder a0 =
-  Eager_jit.one "numpy.extras.unpackbits" (axis, count, bitorder) [] [ a0 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"unpackbits" "numpy.extras.unpackbits"
+    (axis, count, bitorder) [] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> unpackbits ?axis ?count ?bitorder a0
-      | _ -> assert false)
-
-let gradient ?spacing ?axis a0 =
-  Eager_jit.many "numpy.extras.gradient" (spacing, axis) [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> gradient ?spacing ?axis a0
       | _ -> assert false)

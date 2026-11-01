@@ -397,6 +397,14 @@ let ptp ?axis ?(keepdims = false) a =
 let count_nonzero ?axis ?(keepdims = false) a =
   sum ?axis ~keepdims (bind1 T.Ne [ a; zeros_like a ])
 
+let count_nonzero ?axis ?keepdims p0 =
+  Jnp_util.jit1 "count_nonzero"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
+    (function
+      | [ p0 ] -> count_nonzero ?axis ?keepdims p0
+      | _ -> invalid_arg "count_nonzero: arity")
+    [ p0 ]
+
 let average_with_sum ?axis ?(keepdims = false) ?weights a =
   match weights with
   | None ->
@@ -464,11 +472,41 @@ let nansum ?dtype:dt ?axis ?keepdims ?initial ?where:mask a =
       sum ?dtype:dt ?axis ?keepdims ?initial ?where:mask v)
     ~init:0.0 ~nan_if_all_nan:false ?axis ?keepdims a
 
+let nansum ?dtype ?axis ?keepdims ?initial ?where p0 =
+  let initial_given = initial <> None in
+  let where_given = where <> None in
+  if initial_given || where_given then
+    nansum ?dtype ?axis ?keepdims ?initial ?where p0
+  else
+    Jnp_util.jit1 "nansum"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nansum ?dtype ?axis ?keepdims ?initial ?where p0
+        | _ -> invalid_arg "nansum: arity")
+      [ p0 ]
+
 let nanprod ?dtype:dt ?axis ?keepdims ?initial ?where:mask a =
   nan_reduce
     ~reduce:(fun ?axis ?keepdims v ->
       prod ?dtype:dt ?axis ?keepdims ?initial ?where:mask v)
     ~init:1.0 ~nan_if_all_nan:false ?axis ?keepdims a
+
+let nanprod ?dtype ?axis ?keepdims ?initial ?where p0 =
+  let initial_given = initial <> None in
+  let where_given = where <> None in
+  if initial_given || where_given then
+    nanprod ?dtype ?axis ?keepdims ?initial ?where p0
+  else
+    Jnp_util.jit1 "nanprod"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nanprod ?dtype ?axis ?keepdims ?initial ?where p0
+        | _ -> invalid_arg "nanprod: arity")
+      [ p0 ]
 
 let nanmax ?axis ?keepdims ?initial ?where:mask a =
   nan_reduce
@@ -476,11 +514,37 @@ let nanmax ?axis ?keepdims ?initial ?where:mask a =
       amax ?axis ?keepdims ?initial ?where:mask v)
     ~init:Float.neg_infinity ~nan_if_all_nan:true ?axis ?keepdims a
 
+let nanmax ?axis ?keepdims ?initial ?where p0 =
+  let initial_given = initial <> None in
+  let where_given = where <> None in
+  if initial_given || where_given then nanmax ?axis ?keepdims ?initial ?where p0
+  else
+    Jnp_util.jit1 "nanmax"
+      ~key:
+        (Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nanmax ?axis ?keepdims ?initial ?where p0
+        | _ -> invalid_arg "nanmax: arity")
+      [ p0 ]
+
 let nanmin ?axis ?keepdims ?initial ?where:mask a =
   nan_reduce
     ~reduce:(fun ?axis ?keepdims v ->
       amin ?axis ?keepdims ?initial ?where:mask v)
     ~init:Float.infinity ~nan_if_all_nan:true ?axis ?keepdims a
+
+let nanmin ?axis ?keepdims ?initial ?where p0 =
+  let initial_given = initial <> None in
+  let where_given = where <> None in
+  if initial_given || where_given then nanmin ?axis ?keepdims ?initial ?where p0
+  else
+    Jnp_util.jit1 "nanmin"
+      ~key:
+        (Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nanmin ?axis ?keepdims ?initial ?where p0
+        | _ -> invalid_arg "nanmin: arity")
+      [ p0 ]
 
 let nanmean ?dtype:dt ?axis ?keepdims ?where:mask a =
   if not (is_inexact (dtype a)) then
@@ -496,6 +560,19 @@ let nanmean ?dtype:dt ?axis ?keepdims ?where:mask a =
     bind1 T.Div [ nansum ~dtype:cdt ?axis ?keepdims ?where:mask a; normalizer ]
   end
 
+let nanmean ?dtype ?axis ?keepdims ?where p0 =
+  let where_given = where <> None in
+  if where_given then nanmean ?dtype ?axis ?keepdims ?where p0
+  else
+    Jnp_util.jit1 "nanmean"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nanmean ?dtype ?axis ?keepdims ?where p0
+        | _ -> invalid_arg "nanmean: arity")
+      [ p0 ]
+
 let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
   let mask = check_where "nanvar" mask in
   let dt = Option.map Dtypes.canonicalize_dtype dt in
@@ -507,27 +584,52 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
     | Some m -> convert m computation
     | None -> nanmean ~dtype:computation ?axis ~keepdims:true ?where:mask af
   in
-  let m = broadcast_to m (shape af) in
-  let centered =
-    where (isnan af)
-      (const_full computation (shape af) 0.0)
-      (bind1 T.Sub [ af; m ])
-  in
+  let nan_a = isnan af in
+  let centered = where nan_a (Jnp_util.py_int 0) (bind1 T.Sub [ af; m ]) in
   let centered = squared_magnitude computation centered in
   let notnan = bind1 T.Not [ isnan af ] in
-  let count = sum ~dtype:rdt ?axis ?keepdims ?where:mask notnan in
-  let nz =
-    bind1 T.Sub [ count; const_full rdt (shape count) (float_of_int ddof) ]
-  in
-  let bad = bind1 T.Le [ nz; const_full rdt (shape nz) 0.0 ] in
-  let result = sum ~dtype:rdt ?axis ?keepdims ?where:mask centered in
-  let result = where bad (const_full rdt (shape result) Float.nan) result in
-  let divisor = where bad (const_full rdt (shape nz) 1.0) nz in
-  convert (bind1 T.Div [ result; divisor ]) result_dtype
+  let count = sum ?axis ?keepdims ?where:mask notnan in
+  let nz = Ufuncs.subtract count (Jnp_util.py_int ddof) in
+  let bad = bind1 T.Le [ nz; const_full (dtype nz) (shape nz) 0.0 ] in
+  let result = sum ?axis ?keepdims ?where:mask centered in
+  let result = where bad (Jnp_util.py_float Float.nan) result in
+  let divisor = where bad (Jnp_util.py_int 1) nz in
+  ignore rdt;
+  convert (bind1 T.Div [ result; convert divisor (dtype result) ]) result_dtype
+
+let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
+  let where_given = where <> None in
+  let mean_given = mean <> None in
+  if where_given || mean_given then
+    nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+  else
+    Jnp_util.jit1 "nanvar"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
+      (function
+        | [ p0 ] -> nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+        | _ -> invalid_arg "nanvar: arity")
+      [ p0 ]
 
 let nanstd ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a =
   bind1 T.Sqrt
     [ nanvar ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a ]
+
+let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
+  let where_given = where <> None in
+  let mean_given = mean <> None in
+  if where_given || mean_given then
+    nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+  else
+    Jnp_util.jit1 "nanstd"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
+      (function
+        | [ p0 ] -> nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+        | _ -> invalid_arg "nanstd: arity")
+      [ p0 ]
 
 let cumulative ~fill ~promote ~make ?dtype:dt ?axis a =
   let a, ax =
@@ -567,15 +669,45 @@ let cumprod_make ax = T.Cumprod { axis = ax; reverse = false }
 let cumsum ?dtype:dt ?axis a =
   cumulative ~fill:None ~promote:false ~make:cumsum_make ?dtype:dt ?axis a
 
+let cumsum ?dtype ?axis p0 =
+  Jnp_util.jit1 "cumsum"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    (function
+      | [ p0 ] -> cumsum ?dtype ?axis p0 | _ -> invalid_arg "cumsum: arity")
+    [ p0 ]
+
 let cumprod ?dtype:dt ?axis a =
   cumulative ~fill:None ~promote:false ~make:cumprod_make ?dtype:dt ?axis a
+
+let cumprod ?dtype ?axis p0 =
+  Jnp_util.jit1 "cumprod"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    (function
+      | [ p0 ] -> cumprod ?dtype ?axis p0 | _ -> invalid_arg "cumprod: arity")
+    [ p0 ]
 
 let nancumsum ?dtype:dt ?axis a =
   cumulative ~fill:(Some 0.0) ~promote:false ~make:cumsum_make ?dtype:dt ?axis a
 
+let nancumsum ?dtype ?axis p0 =
+  Jnp_util.jit1 "nancumsum"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    (function
+      | [ p0 ] -> nancumsum ?dtype ?axis p0
+      | _ -> invalid_arg "nancumsum: arity")
+    [ p0 ]
+
 let nancumprod ?dtype:dt ?axis a =
   cumulative ~fill:(Some 1.0) ~promote:false ~make:cumprod_make ?dtype:dt ?axis
     a
+
+let nancumprod ?dtype ?axis p0 =
+  Jnp_util.jit1 "nancumprod"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    (function
+      | [ p0 ] -> nancumprod ?dtype ?axis p0
+      | _ -> invalid_arg "nancumprod: arity")
+    [ p0 ]
 
 let cum_api_axis kind x axis =
   if ndim x = 0 then
@@ -750,164 +882,6 @@ let quantile_core a q ~axis ~method_ ~keepdims ~squash_nans =
 let quantile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
   quantile_core a q ~axis ~method_ ~keepdims ~squash_nans:false
 
-let nanquantile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
-  quantile_core a q ~axis ~method_ ~keepdims ~squash_nans:true
-
-let percentile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
-  let cdt = to_inexact_dtype (dtype a) in
-  let q100 = bind1 T.Div [ convert q cdt; const_full cdt (shape q) 100.0 ] in
-  quantile ?axis ~keepdims ~method_ a q100
-
-let nanpercentile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
-  let cdt = to_inexact_dtype (dtype a) in
-  let q100 = bind1 T.Div [ convert q cdt; const_full cdt (shape q) 100.0 ] in
-  nanquantile ?axis ~keepdims ~method_ a q100
-
-let median ?axis ?(keepdims = false) a =
-  let q = const_full (to_inexact_dtype (dtype a)) [||] 0.5 in
-  quantile ?axis ~keepdims ~method_:"midpoint" a q
-
-let nanmedian ?axis ?(keepdims = false) a =
-  let q = const_full (to_inexact_dtype (dtype a)) [||] 0.5 in
-  nanquantile ?axis ~keepdims ~method_:"midpoint" a q
-
-let count_nonzero ?axis ?keepdims p0 =
-  Jnp_util.jit1 "count_nonzero"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
-    (function
-      | [ p0 ] -> count_nonzero ?axis ?keepdims p0
-      | _ -> invalid_arg "count_nonzero: arity")
-    [ p0 ]
-
-let nanmin ?axis ?keepdims ?initial ?where p0 =
-  let initial_given = initial <> None in
-  let where_given = where <> None in
-  if initial_given || where_given then nanmin ?axis ?keepdims ?initial ?where p0
-  else
-    Jnp_util.jit1 "nanmin"
-      ~key:
-        (Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
-      (function
-        | [ p0 ] -> nanmin ?axis ?keepdims ?initial ?where p0
-        | _ -> invalid_arg "nanmin: arity")
-      [ p0 ]
-
-let nanmax ?axis ?keepdims ?initial ?where p0 =
-  let initial_given = initial <> None in
-  let where_given = where <> None in
-  if initial_given || where_given then nanmax ?axis ?keepdims ?initial ?where p0
-  else
-    Jnp_util.jit1 "nanmax"
-      ~key:
-        (Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
-      (function
-        | [ p0 ] -> nanmax ?axis ?keepdims ?initial ?where p0
-        | _ -> invalid_arg "nanmax: arity")
-      [ p0 ]
-
-let nansum ?dtype ?axis ?keepdims ?initial ?where p0 =
-  let initial_given = initial <> None in
-  let where_given = where <> None in
-  if initial_given || where_given then
-    nansum ?dtype ?axis ?keepdims ?initial ?where p0
-  else
-    Jnp_util.jit1 "nansum"
-      ~key:
-        (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
-      (function
-        | [ p0 ] -> nansum ?dtype ?axis ?keepdims ?initial ?where p0
-        | _ -> invalid_arg "nansum: arity")
-      [ p0 ]
-
-let nanprod ?dtype ?axis ?keepdims ?initial ?where p0 =
-  let initial_given = initial <> None in
-  let where_given = where <> None in
-  if initial_given || where_given then
-    nanprod ?dtype ?axis ?keepdims ?initial ?where p0
-  else
-    Jnp_util.jit1 "nanprod"
-      ~key:
-        (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
-      (function
-        | [ p0 ] -> nanprod ?dtype ?axis ?keepdims ?initial ?where p0
-        | _ -> invalid_arg "nanprod: arity")
-      [ p0 ]
-
-let nanmean ?dtype ?axis ?keepdims ?where p0 =
-  let where_given = where <> None in
-  if where_given then nanmean ?dtype ?axis ?keepdims ?where p0
-  else
-    Jnp_util.jit1 "nanmean"
-      ~key:
-        (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
-      (function
-        | [ p0 ] -> nanmean ?dtype ?axis ?keepdims ?where p0
-        | _ -> invalid_arg "nanmean: arity")
-      [ p0 ]
-
-let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
-  let where_given = where <> None in
-  let mean_given = mean <> None in
-  if where_given || mean_given then
-    nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
-  else
-    Jnp_util.jit1 "nanvar"
-      ~key:
-        (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
-      (function
-        | [ p0 ] -> nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
-        | _ -> invalid_arg "nanvar: arity")
-      [ p0 ]
-
-let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
-  let where_given = where <> None in
-  let mean_given = mean <> None in
-  if where_given || mean_given then
-    nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
-  else
-    Jnp_util.jit1 "nanstd"
-      ~key:
-        (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
-      (function
-        | [ p0 ] -> nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
-        | _ -> invalid_arg "nanstd: arity")
-      [ p0 ]
-
-let cumsum ?dtype ?axis p0 =
-  Jnp_util.jit1 "cumsum"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
-    (function
-      | [ p0 ] -> cumsum ?dtype ?axis p0 | _ -> invalid_arg "cumsum: arity")
-    [ p0 ]
-
-let cumprod ?dtype ?axis p0 =
-  Jnp_util.jit1 "cumprod"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
-    (function
-      | [ p0 ] -> cumprod ?dtype ?axis p0 | _ -> invalid_arg "cumprod: arity")
-    [ p0 ]
-
-let nancumsum ?dtype ?axis p0 =
-  Jnp_util.jit1 "nancumsum"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
-    (function
-      | [ p0 ] -> nancumsum ?dtype ?axis p0
-      | _ -> invalid_arg "nancumsum: arity")
-    [ p0 ]
-
-let nancumprod ?dtype ?axis p0 =
-  Jnp_util.jit1 "nancumprod"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
-    (function
-      | [ p0 ] -> nancumprod ?dtype ?axis p0
-      | _ -> invalid_arg "nancumprod: arity")
-    [ p0 ]
-
 let quantile ?axis ?keepdims ?method_ p0 p1 =
   Jnp_util.jit1 "quantile"
     ~key:
@@ -917,6 +891,9 @@ let quantile ?axis ?keepdims ?method_ p0 p1 =
       | [ p0; p1 ] -> quantile ?axis ?keepdims ?method_ p0 p1
       | _ -> invalid_arg "quantile: arity")
     [ p0; p1 ]
+
+let nanquantile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
+  quantile_core a q ~axis ~method_ ~keepdims ~squash_nans:true
 
 let nanquantile ?axis ?keepdims ?method_ p0 p1 =
   Jnp_util.jit1 "nanquantile"
@@ -928,6 +905,11 @@ let nanquantile ?axis ?keepdims ?method_ p0 p1 =
       | _ -> invalid_arg "nanquantile: arity")
     [ p0; p1 ]
 
+let percentile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
+  let cdt = to_inexact_dtype (dtype a) in
+  let q100 = bind1 T.Div [ convert q cdt; const_full cdt (shape q) 100.0 ] in
+  quantile ?axis ~keepdims ~method_ a q100
+
 let percentile ?axis ?keepdims ?method_ p0 p1 =
   Jnp_util.jit1 "percentile"
     ~key:
@@ -937,6 +919,11 @@ let percentile ?axis ?keepdims ?method_ p0 p1 =
       | [ p0; p1 ] -> percentile ?axis ?keepdims ?method_ p0 p1
       | _ -> invalid_arg "percentile: arity")
     [ p0; p1 ]
+
+let nanpercentile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
+  let cdt = to_inexact_dtype (dtype a) in
+  let q100 = bind1 T.Div [ convert q cdt; const_full cdt (shape q) 100.0 ] in
+  nanquantile ?axis ~keepdims ~method_ a q100
 
 let nanpercentile ?axis ?keepdims ?method_ p0 p1 =
   Jnp_util.jit1 "nanpercentile"
@@ -948,12 +935,20 @@ let nanpercentile ?axis ?keepdims ?method_ p0 p1 =
       | _ -> invalid_arg "nanpercentile: arity")
     [ p0; p1 ]
 
+let median ?axis ?(keepdims = false) a =
+  let q = const_full (to_inexact_dtype (dtype a)) [||] 0.5 in
+  quantile ?axis ~keepdims ~method_:"midpoint" a q
+
 let median ?axis ?keepdims p0 =
   Jnp_util.jit1 "median"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
     (function
       | [ p0 ] -> median ?axis ?keepdims p0 | _ -> invalid_arg "median: arity")
     [ p0 ]
+
+let nanmedian ?axis ?(keepdims = false) a =
+  let q = const_full (to_inexact_dtype (dtype a)) [||] 0.5 in
+  nanquantile ?axis ~keepdims ~method_:"midpoint" a q
 
 let nanmedian ?axis ?keepdims p0 =
   Jnp_util.jit1 "nanmedian"

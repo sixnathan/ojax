@@ -1,6 +1,8 @@
 open Types
 
 val one :
+  ?jit:string ->
+  ?vals_first:bool ->
   string ->
   'statics ->
   value option list ->
@@ -9,6 +11,8 @@ val one :
   value
 
 val many :
+  ?jit:string ->
+  ?vals_first:bool ->
   string ->
   'statics ->
   value option list ->
@@ -17,6 +21,8 @@ val many :
   value list
 
 val pair :
+  ?jit:string ->
+  ?vals_first:bool ->
   string ->
   'statics ->
   value option list ->

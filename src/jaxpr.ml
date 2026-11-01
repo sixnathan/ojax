@@ -166,14 +166,58 @@ let get_or_make_const_tracer trace v =
       | None -> plain_const_tracer trace v)
   | _ -> plain_const_tracer trace v
 
-let trace_custom_call : (primitive -> aval list -> unit) ref =
-  ref (fun _ _ -> ())
+let trace_custom_call : (primitive -> aval list -> closed_jaxpr option) ref =
+  ref (fun _ _ -> None)
+
+let eval_lifted : (closed_jaxpr -> value list -> value list) ref =
+  ref (fun _ _ -> invalid_arg "Jaxpr.eval_lifted: not installed")
+
+let hoist_custom_consts prim (c : closed_jaxpr) args =
+  match (prim, Core.custom_rule_opt prim) with
+  | Custom_jvp_call id, Some (Core.Jvp_rule { jvp; _ }) when c.consts <> [] ->
+      let n = List.length c.consts in
+      let const_values = List.map (fun nd -> Concrete nd) c.consts in
+      let lifted = { c with consts = [] } in
+      let drop l = List.filteri (fun i _ -> i >= n) l in
+      let rule =
+        Core.Jvp_rule
+          {
+            primal = (fun all -> !eval_lifted lifted all);
+            jvp = (fun primals tangents -> jvp (drop primals) (drop tangents));
+          }
+      in
+      let id' = Core.register_custom_rule rule in
+      (match Core.custom_names_of id with
+      | Some (name, jvp_name) -> Core.register_custom_names id' ~name ~jvp_name
+      | None -> ());
+      Core.note_custom_num_consts id' n;
+      ( Custom_jvp_call id',
+        const_values @ args,
+        lifted,
+        fun avals -> Core.note_custom_call_jaxpr id' avals lifted )
+  | _ -> (prim, args, c, fun _ -> ())
 
 let process_primitive trace prim args =
   let builder = builder_of trace in
+  let avals_of l = List.map (fun (t : tracer) -> t.aval) l in
+  let avals_in = avals_of (List.map as_tracer args) in
+  let custom_jaxpr = !trace_custom_call prim avals_in in
+  let prim, args, custom_jaxpr =
+    match custom_jaxpr with
+    | None -> (prim, args, None)
+    | Some c ->
+        let prim, args, c, note = hoist_custom_consts prim c args in
+        let args =
+          List.map
+            (function
+              | Concrete _ as v -> get_or_make_const_tracer trace v | v -> v)
+            args
+        in
+        note (List.map Core.get_aval args);
+        (prim, args, Some c)
+  in
   let tracers = List.map as_tracer args in
-  let avals_in = List.map (fun (t : tracer) -> t.aval) tracers in
-  !trace_custom_call prim avals_in;
+  let avals_in = avals_of tracers in
   let avals_out = Core.rules.abstract_eval prim avals_in in
   let avals_out =
     match prim with
@@ -184,6 +228,9 @@ let process_primitive trace prim args =
   let out_tracers = List.map (new_tracer builder trace) avals_out in
   let inputs = List.map (fun t -> A_var (getvar builder t)) tracers in
   let outvars = List.map (add_var builder) out_tracers in
+  (match (custom_jaxpr, outvars) with
+  | Some c, (first : var) :: _ -> Core.note_custom_eqn_jaxpr first.vid c
+  | _ -> ());
   builder.jb_eqns <-
     { prim; inputs; outs = outvars; multiple_results = List.length outvars > 1 }
     :: builder.jb_eqns;
@@ -368,6 +415,60 @@ let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
   | closed, [] -> closed
   | _ -> invalid_arg "make_jaxpr: function closed over a tracer"
 
+let lift_while ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
+    (body : closed_jaxpr) (avals : aval list) =
+  let split args =
+    match Util.split_list args [ cond_nconsts; body_nconsts ] with
+    | [ c; b; r ] -> (c, b, r)
+    | _ -> invalid_arg "lift_while: arity"
+  in
+  let pred_of_cond args =
+    let c, _, r = split args in
+    match eval_closed_jaxpr cond (c @ r) with
+    | [ p ] -> p
+    | _ -> invalid_arg "lift_while: predicate arity"
+  in
+  let pred_rank =
+    let cond_out =
+      match cond.jaxpr.outs with
+      | [ A_var v ] -> v.vaval
+      | [ DropVar a ] -> a
+      | [ A_lit nd ] ->
+          {
+            shape = Ndarray.shape nd;
+            dtype = Ndarray.dtype nd;
+            weak_type = false;
+          }
+      | _ -> invalid_arg "lift_while: predicate arity"
+    in
+    Array.length cond_out.shape
+  in
+  let cond' =
+    make_jaxpr avals (fun args ->
+        let p = pred_of_cond args in
+        if pred_rank = 0 then [ p ]
+        else Core.bind (Reduce_or (Array.init pred_rank Fun.id)) [ p ])
+  in
+  let body' =
+    make_jaxpr avals (fun args ->
+        let c, b, r = split args in
+        let next = eval_closed_jaxpr body (b @ r) in
+        if pred_rank = 0 then c @ b @ next
+        else
+          let p = pred_of_cond args in
+          let select n o =
+            let shape = (Core.get_aval n).shape in
+            let spread =
+              Core.bind1
+                (Broadcast_in_dim { shape; dims = Array.init pred_rank Fun.id })
+                [ p ]
+            in
+            Core.bind1 Select_n [ spread; o; n ]
+          in
+          c @ b @ List.map2 select next r)
+  in
+  (cond', body')
+
 let custom_call_jaxpr id avals =
   match Core.find_custom_call_jaxpr id avals with
   | Some c -> Some c
@@ -383,19 +484,38 @@ let () =
   trace_custom_call :=
     fun prim avals ->
       match prim with
-      | Custom_jvp_call id | Custom_vjp_call id ->
-          ignore (custom_call_jaxpr id avals)
-      | _ -> ()
+      | Custom_jvp_call id | Custom_vjp_call id -> (
+          match Core.find_custom_call_jaxpr id avals with
+          | None -> custom_call_jaxpr id avals
+          | Some _ -> (
+              match Core.custom_rule id with
+              | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } ->
+                  Some (make_jaxpr avals primal)
+              | Core.Linear_rule _ | Core.Callback_rule _ -> None))
+      | _ -> None
 
+let () = eval_lifted := eval_closed_jaxpr
 let () = Core.call_inline := fun c args -> eval_closed_jaxpr c args
 let () = Core.call_direct := fun c args -> eval_closed_jaxpr c args
 
 let () =
+  Pretty_printer.custom_num_consts :=
+    fun (e : eqn) ->
+      match e.prim with
+      | Custom_jvp_call id -> Core.custom_num_consts_of id
+      | _ -> None
+
+let () =
   Pretty_printer.custom_call :=
-    fun id avals ->
+    fun id vid avals ->
       match Core.custom_names_of id with
-      | Some (name, jvp_name) ->
-          Option.map (fun c -> (name, jvp_name, c)) (custom_call_jaxpr id avals)
+      | Some (name, jvp_name) -> (
+          match Option.bind vid Core.find_custom_eqn_jaxpr with
+          | Some c -> Some (name, jvp_name, c)
+          | None ->
+              Option.map
+                (fun c -> (name, jvp_name, c))
+                (custom_call_jaxpr id avals))
       | None -> None
 
 let has_side_effect = function

@@ -6,6 +6,14 @@ val jaxpr_as_fun : jaxpr -> value list -> value list
 val eval_closed_jaxpr : closed_jaxpr -> value list -> value list
 val make_jaxpr : aval list -> (value list -> value list) -> closed_jaxpr
 
+val lift_while :
+  cond_nconsts:int ->
+  body_nconsts:int ->
+  closed_jaxpr ->
+  closed_jaxpr ->
+  aval list ->
+  closed_jaxpr * closed_jaxpr
+
 val make_jaxpr_stateful :
   aval list ->
   (value list -> value list) ->

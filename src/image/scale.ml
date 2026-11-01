@@ -220,7 +220,7 @@ let resize_nearest image ~output_shape =
             (float_of_int n)
         in
         let offsets = NL.astype (UF.floor offsets) D.I32 in
-        result := IDX.take ~axis:d !result offsets
+        result := IDX.take_index ~axis:d !result offsets
       end)
     output_shape;
   !result
@@ -252,8 +252,8 @@ let resize image ~shape:output_shape ~method_ ?(antialias = true) () =
         ~translation ~kernel ~antialias
 
 let resize image ~shape ~method_ ?antialias () =
-  Eager_jit.one "image.scale.resize" (shape, method_, antialias) [] [ image ]
-    (fun _ vals ->
+  Eager_jit.one ~jit:"_resize" "image.scale.resize" (shape, method_, antialias)
+    [] [ image ] (fun _ vals ->
       match vals with
       | [ image ] -> resize image ~shape ~method_ ?antialias ()
       | _ -> assert false)

@@ -900,9 +900,17 @@ let gap_run op p a b =
             ~mantissa_bits:(int "m" p);
         ]
   | "gp_clamp_jit" ->
-      let x = a () in
-      Some [ L.clamp (like x (-0.5)) x (like x 0.5) ]
-  | "gp_int_pow_neg" -> Some [ L.integer_pow (a ()) (-2) ]
+      Some
+        (Ojax.Api.jit_flat
+           (fun args ->
+             let x = List.hd args in
+             [ L.clamp (like x (-0.5)) x (like x 0.5) ])
+           [ a () ])
+  | "gp_int_pow_neg" ->
+      Some
+        (Ojax.Api.jit_flat
+           (fun args -> [ L.integer_pow (List.hd args) (-2) ])
+           [ a () ])
   | _ -> None
 
 let herm v =
@@ -1354,8 +1362,8 @@ let dtype_sweep_run op a =
   let module TC = Ojax.Numpy.Tensor_contractions in
   let module S = Ojax.Numpy.Sorting in
   let module FFT = Ojax.Numpy.Fft in
-  let row v i = L.index_in_dim ~axis:0 ~keepdims:false v i in
-  let cell v i = L.index_in_dim ~axis:0 ~keepdims:false (row v 0) i in
+  let row v i = NL.index_at v i in
+  let cell v i = NL.index_at (row v 0) i in
   let t = NL.matrix_transpose in
   let one f = Some [ f (a ()) ] in
   let ax0 = [| 0 |] in
@@ -1546,7 +1554,7 @@ let special_batch_run op params a =
   | "sx_exp1" -> Some [ SP.exp1 (scaled (UF.absolute (a ())) "scale") ]
   | "sx_expn" ->
       let x = scaled (UF.absolute (a ())) "scale" in
-      Some [ SP.expn (L.full [||] (float_p "n") (dt_of x)) x ]
+      Some [ SP.expn (Ojax.Numpy.Jnp_util.py_float (float_p "n")) x ]
   | "sx_expn_grad" ->
       let x = scaled (UF.absolute (a ())) "scale" in
       let x = UF.add x (like x 0.1) in
@@ -1571,9 +1579,23 @@ let special_batch_run op params a =
   | "sx_hyp2f1" ->
       let v = a () in
       let t = abc () in
-      let full x = like v x in
-      let z = UF.multiply (full (float_p "scale")) (UF.tanh v) in
-      Some [ SP.hyp2f1 (full t.(0)) (full t.(1)) (full t.(2)) z ]
+      let full x =
+        if Ojax.Core.top_is_staging [] then
+          NL.broadcast_to (Ojax.Numpy.Jnp_util.py_float x) (shp v)
+        else
+          let dt = Ojax.Dtypes.default_float_dtype () in
+          let n = Array.fold_left ( * ) 1 (shp v) in
+          T.Concrete
+            (Ojax.Ndarray.as_weak
+               (Ojax.Ndarray.of_floats dt (shp v) (Array.make n x)))
+      in
+      let first = full t.(0) in
+      let second = full t.(1) in
+      let third = full t.(2) in
+      let z =
+        UF.multiply (Ojax.Numpy.Jnp_util.py_float (float_p "scale")) (UF.tanh v)
+      in
+      Some [ SP.hyp2f1 first second third z ]
   | "sx_hyp2f1_grad" ->
       let v = a () in
       let t = abc () in

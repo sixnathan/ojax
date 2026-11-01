@@ -52,6 +52,9 @@ val result_type : Types.value list -> Dtype.t
 val convolve : ?mode:string -> Types.value -> Types.value -> Types.value
 val correlate : ?mode:string -> Types.value -> Types.value -> Types.value
 val where_ : Types.value -> Types.value -> Types.value -> Types.value
+val promote_values : Types.value list -> Types.value list
+val take_trailing : Types.value -> Types.value list -> Types.value
+val index_at : Types.value -> int -> Types.value
 
 val nan_to_num :
   ?nan:float -> ?posinf:float -> ?neginf:float -> Types.value -> Types.value

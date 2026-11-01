@@ -989,35 +989,35 @@ let nan_full v =
   else like v Float.nan
 
 let nan_where_bad ok v =
-  let dims = Array.init (Array.length (shape ok)) Fun.id in
-  select (L.broadcast_in_dim ok (shape v) dims) v (nan_full v)
+  let batch = shape ok in
+  let nb = Array.length batch in
+  let rank = Array.length (shape v) in
+  let select_shape = Array.append batch (Array.make (rank - nb) 1) in
+  let which = L.broadcast_in_dim ok select_shape (Array.init nb Fun.id) in
+  let nans = nan_full v in
+  let spread = L.broadcast_in_dim which (shape v) (Array.init rank Fun.id) in
+  select spread v nans
 
-let info_ok info = L.eq info (like info 0.0)
+let full_info info x =
+  L.broadcast_in_dim
+    (Concrete (Ndarray.of_floats (dtype info) [||] [| x |]))
+    (shape info) [||]
 
-let tril_mask shape_ =
-  let rank = Array.length shape_ in
-  let rows = shape_.(rank - 2) and cols = shape_.(rank - 1) in
-  let total = Array.fold_left ( * ) 1 shape_ in
-  Concrete
-    (Ndarray.of_floats Dtype.Bool shape_
-       (Array.init total (fun i ->
-            let local = i mod max 1 (rows * cols) in
-            if local mod max cols 1 <= local / max cols 1 then 1.0 else 0.0)))
+let info_ok info = L.eq info (full_info info 0.0)
 
 let lapack_cholesky = function
-  | [ r; info ] ->
-      let guarded = nan_where_bad (info_ok info) r in
-      [ select (tril_mask (shape r)) guarded (like r 0.0) ]
+  | [ r; info ] -> [ nan_where_bad (info_ok info) r ]
   | _ -> invalid_arg "Native_lowering: potrf arity"
 
 let lapack_lu ~permutation_size = function
   | [ lu; pivots; info ] ->
-      let ok = L.ge info (like info 0.0) in
-      let pivots = pivots -: like pivots 1.0 in
+      let pivots = pivots -: full_info pivots 1.0 in
+      let ok = L.ge info (full_info info 0.0) in
+      let guarded = nan_where_bad ok lu in
       let perm =
         List.hd (lu_pivots_to_permutation ~permutation_size [ pivots ])
       in
-      [ nan_where_bad ok lu; pivots; perm ]
+      [ guarded; pivots; perm ]
   | _ -> invalid_arg "Native_lowering: getrf arity"
 
 let lapack_guarded = function
@@ -1028,9 +1028,15 @@ let lapack_guarded = function
       let ok = info_ok info in
       List.map (nan_where_bad ok) values
 
-let lapack_svd ~compute_uv outs =
-  match lapack_guarded outs with
-  | [ _; s; u; vt ] -> if compute_uv then [ u; s; vt ] else [ s ]
+let lapack_svd ~compute_uv = function
+  | [ _; s; u; vt; info ] ->
+      let ok = info_ok info in
+      let s = nan_where_bad ok s in
+      if compute_uv then
+        let u = nan_where_bad ok u in
+        let vt = nan_where_bad ok vt in
+        [ u; s; vt ]
+      else [ s ]
   | _ -> invalid_arg "Native_lowering: gesdd arity"
 
 let lapack_eigen_values_real = function

@@ -76,7 +76,7 @@ let entropy ?loc mu =
   NL.reshape result (shape pmu)
 
 let entropy ?loc a0 =
-  Eager_jit.one "scipy.stats.poisson.entropy" () [ loc ] [ a0 ]
+  Eager_jit.one ~jit:"entropy" "scipy.stats.poisson.entropy" () [ loc ] [ a0 ]
     (fun opts vals ->
       match (opts, vals) with
       | [ loc ], [ a0 ] -> entropy ?loc a0

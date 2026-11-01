@@ -147,7 +147,12 @@ let timed_trace thunk =
     (Sys.time () -. start);
   result
 
-let jit_flat (f : value list -> value list) : value list -> value list =
+let bind_named_call ~name (cj : closed_jaxpr) args =
+  Pretty_printer.register_call_name cj.jid name;
+  Core.bind (Xla_call cj) args
+
+let jit_flat ?(name = "<lambda>") (f : value list -> value list) :
+    value list -> value list =
   let cache :
       ( string,
         closed_jaxpr * Ref_state.cell list * Key_reuse.signature )
@@ -181,8 +186,11 @@ let jit_flat (f : value list -> value list) : value list -> value list =
             Hashtbl.replace cache key entry;
             entry
       in
-      Key_reuse.call_with_signature signature args (fun () ->
-          run_with_refs cj cells args)
+      if cells = [] && Core.top_is_staging args then
+        bind_named_call ~name cj args
+      else
+        Key_reuse.call_with_signature signature args (fun () ->
+            run_with_refs cj cells args)
 
 type out_slot = Known of value | Unknown
 

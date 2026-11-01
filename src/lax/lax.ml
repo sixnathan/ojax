@@ -1311,7 +1311,11 @@ let rec impl_base prim inputs =
   | Select_n -> select_n_impl inputs
   | Convert_element_type dt -> un (convert_impl dt) inputs
   | Broadcast_in_dim { shape; dims } ->
-      un (broadcast_in_dim_impl shape dims) inputs
+      un
+        (fun a ->
+          let r = broadcast_in_dim_impl shape dims a in
+          if Ndarray.weak a then Ndarray.as_weak r else r)
+        inputs
   | Reshape ns -> un (reshape_impl ns) inputs
   | Reduce_sum axes ->
       un
@@ -1722,10 +1726,12 @@ let rec impl_base prim inputs =
         Ndarray.of_floats Dtype.I32 [||]
           [| float_of_int (platform_branch_index platforms) |];
       ]
-  | Cond { t; f } -> (
+  | Cond { branches; _ } -> (
       match inputs with
       | pred :: ops ->
-          let branch = if Ndarray.get_f pred [||] <> 0.0 then t else f in
+          let last = List.length branches - 1 in
+          let chosen = int_of_float (Ndarray.get_f pred [||]) in
+          let branch = List.nth branches (max 0 (min last chosen)) in
           let outs =
             Jaxpr.eval_closed_jaxpr branch
               (List.map (fun nd -> Concrete nd) ops)
@@ -1737,16 +1743,23 @@ let rec impl_base prim inputs =
               | Device _ -> failwith "lax: cond branch produced a tracer")
             outs
       | [] -> failwith "lax: cond expects a predicate")
-  | Scan { length; reverse; num_carry; jaxpr; _ } ->
+  | Scan { length; reverse; num_consts; num_carry; jaxpr; _ } ->
       let inputs_v = List.map (fun nd -> Concrete nd) inputs in
-      Control_flow.Loops.scan_impl ~length ~reverse ~num_carry jaxpr inputs_v
+      Control_flow.Loops.scan_impl ~length ~reverse ~num_consts ~num_carry jaxpr
+        inputs_v
       |> List.map (function
         | Concrete nd -> nd
         | Tracer _ -> failwith "lax: scan produced a tracer"
         | Device _ -> failwith "lax: scan produced a tracer")
-  | While { cond; body } ->
+  | While { cond_nconsts; body_nconsts; cond; body } ->
       let inputs_v = List.map (fun nd -> Concrete nd) inputs in
+      let n = cond_nconsts + body_nconsts in
+      let cond, body =
+        Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body
+          (List.map Core.get_aval inputs_v)
+      in
       Control_flow.Loops.while_impl cond body inputs_v
+      |> List.filteri (fun i _ -> i >= n)
       |> List.map (function
         | Concrete nd -> nd
         | Tracer _ -> failwith "lax: while produced a tracer"
@@ -2703,7 +2716,7 @@ let abstract_eval prim avals =
           [ shaped widest x.dtype (a.weak_type && b.weak_type && x.weak_type) ]
       | _ -> failwith "lax: regularized_incomplete_beta expects 3 avals")
   | Platform_index _ -> [ shaped [||] Dtype.I32 false ]
-  | Cond { t; _ } -> List.map aval_of_atom t.jaxpr.outs
+  | Cond { branches; _ } -> List.map aval_of_atom (List.hd branches).jaxpr.outs
   | Scan { length; num_carry; jaxpr; _ } ->
       Control_flow.Loops.scan_out_avals ~length ~num_carry jaxpr
   | While { body; _ } -> Control_flow.Loops.while_out_avals body
@@ -2816,8 +2829,12 @@ let install () =
 
 let () = install ()
 let cond = Control_flow.Conditionals.cond
+let switch = Control_flow.Conditionals.switch
 let platform_index = Control_flow.Conditionals.platform_index
 let scan = Control_flow.Loops.scan
+let lower_scan = Control_flow.Loops.lower_scan
+let dynamic_index_in_dim = Control_flow.Loops.dynamic_index_in_dim
+let dynamic_update_index_in_dim = Control_flow.Loops.dynamic_update_index_in_dim
 let while_loop = Control_flow.Loops.while_loop
 let cumsum = Control_flow.Loops.cumsum
 let cumprod = Control_flow.Loops.cumprod

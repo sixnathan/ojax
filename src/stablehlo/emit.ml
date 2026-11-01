@@ -590,7 +590,14 @@ let emit_convert ctx (eqn : eqn) in_ids =
       (Printf.sprintf "    %s = stablehlo.convert %s : %s\n" (name n) (name cmp)
          oty)
   end
-  else if in_dt = out_dt then Hashtbl.replace ctx.ids out.vid x
+  else if in_dt = out_dt && in_aval.weak_type = out.vaval.weak_type then
+    Hashtbl.replace ctx.ids out.vid x
+  else if in_dt = out_dt then begin
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.convert %s : %s\n" (name n) (name x)
+         oty)
+  end
   else begin
     let inty = Ir.tensor_type_of_aval in_aval in
     let n = bind_var ctx out in
@@ -680,12 +687,15 @@ let platform_branch_index platforms =
 
 let emit_platform_index ctx (eqn : eqn) platforms =
   let out = sole eqn.outs in
+  let ty = Ir.tensor_type_of_aval out.vaval in
+  let constant n v =
+    Printf.sprintf "%s = stablehlo.constant %s : %s\n" (name n)
+      (Ir.dense (Ir.int_literal (Int64.of_int v)))
+      ty
+  in
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name n)
-       (Ir.dense
-          (Ir.int_literal (Int64.of_int (platform_branch_index platforms))))
-       (Ir.tensor_type_of_aval out.vaval))
+    ("    " ^ constant n (platform_branch_index platforms))
 
 let emit_broadcast_in_dim ctx (eqn : eqn) in_ids dims =
   let x = sole in_ids in
@@ -2009,11 +2019,11 @@ let lapack_prec dt =
   | _ -> failwith "Stablehlo.Emit: LAPACK has no routine for this dtype"
 
 let lapack_layout rank ~batch =
-  if rank <= batch then Array.init rank Fun.id
-  else
+  if rank = batch + 2 then
     Array.append
-      (Array.init (rank - batch) (fun i -> batch + i))
-      (Array.init batch Fun.id)
+      [| rank - 2; rank - 1 |]
+      (Array.init (rank - 2) (fun i -> rank - 3 - i))
+  else Array.init rank (fun i -> rank - 1 - i)
 
 let lapack_aval shape dtype = { shape; dtype; weak_type = false }
 
@@ -2036,7 +2046,9 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
     String.concat ", "
       (List.map
          (fun (a : aval) ->
-           ffi_layout_text (lapack_layout (Array.length a.shape) ~batch))
+           match lapack_layout (Array.length a.shape) ~batch with
+           | [| only |] -> Printf.sprintf "dense<%d> : tensor<1xindex>" only
+           | layout -> ffi_layout_text layout)
          avals)
   in
   let alias_text =
@@ -2056,18 +2068,48 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
   let types avals =
     String.concat ", " (List.map Ir.tensor_type_of_aval avals)
   in
+  let sizes = ref [] in
+  let next_factor = ref 0 in
+  let fresh_factor size =
+    let letter = Char.escaped (Char.chr (Char.code 'i' + !next_factor)) in
+    incr next_factor;
+    sizes := (letter, size) :: !sizes;
+    letter
+  in
+  let batch_factors =
+    Array.init batch (fun d -> fresh_factor first.shape.(d))
+  in
+  let factors_of (a : aval) =
+    let inner =
+      Array.to_list a.shape
+      |> List.mapi (fun d size ->
+          if d < batch then batch_factors.(d) else fresh_factor size)
+    in
+    "[" ^ String.concat ", " inner ^ "]"
+  in
+  let operand_rule = List.map factors_of in_avals in
+  let result_rule = List.map factors_of out_avals in
+  let sharding_rule =
+    Printf.sprintf "#sdy.op_sharding_rule<(%s)->(%s) {%s}, custom>"
+      (String.concat ", " operand_rule)
+      (String.concat ", " result_rule)
+      (String.concat ", "
+         (List.rev_map
+            (fun (letter, size) -> Printf.sprintf "%s=%d" letter size)
+            !sizes))
+  in
   Buffer.add_string ctx.buf
     (Printf.sprintf
        "    %%%d%s = stablehlo.custom_call @%s(%s) {backend_config = \"\", \
         mhlo.backend_config = {%s}, mhlo.frontend_attributes = {num_batch_dims \
-        = \"%d\"}, operand_layouts = [%s]%s, result_layouts = [%s]} : (%s) -> \
-        %s\n"
+        = \"%d\"}, operand_layouts = [%s]%s, result_layouts = [%s], \
+        sdy.sharding_rule = %s} : (%s) -> %s\n"
        group
        (if n > 1 then Printf.sprintf ":%d" n else "")
        target
        (String.concat ", " (List.map name in_ids))
        config batch (layouts in_avals) alias_text (layouts out_avals)
-       (types in_avals)
+       sharding_rule (types in_avals)
        (if n > 1 then "(" ^ types out_avals ^ ")" else types out_avals));
   if n = 1 then [ group ]
   else List.init n (fun i -> alias_result (Printf.sprintf "%%%d#%d" group i))
@@ -2389,7 +2431,7 @@ and enter_region ctx (cj : closed_jaxpr) target_ids =
       Buffer.add_string ctx.buf (reindent 2 text))
     const_binders cj.consts
 
-and emit_cond ctx (eqn : eqn) in_ids branch_f branch_t =
+and emit_cond ctx (eqn : eqn) in_ids ~platforms branches =
   let pred_id, operand_ids =
     match in_ids with
     | i :: r -> (i, r)
@@ -2408,6 +2450,35 @@ and emit_cond ctx (eqn : eqn) in_ids branch_f branch_t =
         c
     | _ -> pred_id
   in
+  let index_id =
+    match platforms with
+    | None -> index_id
+    | Some _ ->
+        let i32 = Ir.tensor_type Dtype.I32 [||] in
+        let n = fresh ctx in
+        let start = ctx.next in
+        let k = fresh ctx in
+        let region =
+          Printf.sprintf
+            "      %s = stablehlo.constant %s : %s\n\
+            \      stablehlo.return %s : %s\n"
+            (name k)
+            (Ir.dense (Ir.int_literal 0L))
+            i32 (name k) i32
+        in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n%s" (name n)
+             (name index_id) region);
+        List.iteri
+          (fun i _ ->
+            if i > 0 then
+              Buffer.add_string ctx.buf (Printf.sprintf "    }, {\n%s" region))
+          branches;
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    }) : (%s) -> %s\n" i32 i32);
+        ctx.next <- start;
+        n
+  in
   let result = bind_results ctx eqn.outs in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" result
@@ -2418,9 +2489,14 @@ and emit_cond ctx (eqn : eqn) in_ids branch_f branch_t =
     enter_region ctx cj operand_ids;
     emit_region_returning ctx cj.jaxpr
   in
-  emit_branch branch_f;
-  Buffer.add_string ctx.buf "    }, {\n";
-  emit_branch branch_t;
+  (match platforms with
+  | None ->
+      List.iteri
+        (fun i b ->
+          if i > 0 then Buffer.add_string ctx.buf "    }, {\n";
+          emit_branch b)
+        branches
+  | Some _ -> emit_branch (List.nth branches (List.length branches - 1)));
   let out_types =
     List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
   in
@@ -2490,12 +2566,43 @@ and emit_reduce_window_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr)
        sty
        (Ir.tensor_type_of_aval out.vaval))
 
-and emit_while ctx (eqn : eqn) in_ids (cond : closed_jaxpr)
-    (body : closed_jaxpr) =
-  let result = bind_results ctx eqn.outs in
+and emit_while ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
+    (cond : closed_jaxpr) (body : closed_jaxpr) =
+  let pred_rank =
+    match cond.jaxpr.outs with
+    | [ A_var v ] -> Array.length v.vaval.shape
+    | _ -> 0
+  in
+  if pred_rank > 0 then begin
+    let n_consts = cond_nconsts + body_nconsts in
+    let in_avals = List.map atom_aval eqn.inputs in
+    let cond', body' =
+      Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body in_avals
+    in
+    let const_avals = List.filteri (fun i _ -> i < n_consts) in_avals in
+    let const_outs =
+      List.map (fun a -> { vid = Core.fresh_id (); vaval = a }) const_avals
+    in
+    emit_while_plain ctx
+      { eqn with outs = const_outs @ eqn.outs }
+      in_ids ~cond_nconsts:0 ~body_nconsts:0 cond' body'
+  end
+  else emit_while_plain ctx eqn in_ids ~cond_nconsts ~body_nconsts cond body
+
+and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
+    (cond : closed_jaxpr) (body : closed_jaxpr) =
+  let n_consts = cond_nconsts + body_nconsts in
+  let const_avals =
+    List.filteri (fun i _ -> i < n_consts) (List.map atom_aval eqn.inputs)
+  in
+  let const_outs =
+    List.map (fun a -> { vid = Core.fresh_id (); vaval = a }) const_avals
+  in
+  let all_outs = const_outs @ eqn.outs in
+  let result = bind_results ctx all_outs in
   let carry_ids = List.map (fun _ -> fresh ctx) in_ids in
   let carry_tys =
-    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) all_outs
   in
   let header_pairs =
     List.map2
@@ -2507,263 +2614,36 @@ and emit_while ctx (eqn : eqn) in_ids (cond : closed_jaxpr)
        (String.concat ", " header_pairs)
        (String.concat ", " carry_tys));
   let start = ctx.next in
-  enter_region_later ctx cond carry_ids "    cond {\n";
+  let cond_ids =
+    List.filteri (fun i _ -> i < cond_nconsts || i >= n_consts) carry_ids
+  in
+  enter_region_later ctx cond cond_ids "    cond {\n";
   Buffer.add_string ctx.buf "    } do {\n";
   ctx.next <- start;
-  enter_region ctx body carry_ids;
-  emit_region_returning ctx body.jaxpr;
+  let cond_fake =
+    List.filteri (fun i _ -> i < cond_nconsts) const_avals
+    |> List.map (fun a -> { vid = Core.fresh_id (); vaval = a })
+  in
+  List.iteri
+    (fun i (v : var) -> Hashtbl.replace ctx.ids v.vid (List.nth carry_ids i))
+    cond_fake;
+  let body_ids = List.filteri (fun i _ -> i >= cond_nconsts) carry_ids in
+  enter_region ctx body body_ids;
+  let body_consts =
+    List.filteri (fun i _ -> i < body_nconsts) body.jaxpr.in_binders
+  in
+  emit_region_returning ctx
+    {
+      body.jaxpr with
+      outs =
+        List.map (fun v -> A_var v) (cond_fake @ body_consts) @ body.jaxpr.outs;
+    };
   Buffer.add_string ctx.buf "    }\n"
 
 and enter_region_later ctx cj target_ids header =
   Buffer.add_string ctx.buf header;
   enter_region ctx cj target_ids;
   emit_region_returning ctx cj.jaxpr
-
-and scan_as_while ~length ~reverse ~num_carry (body : closed_jaxpr) args =
-  let b1 = Core.bind1 in
-  let split_at l n =
-    match Util.split_list l [ n ] with
-    | [ a; b ] -> (a, b)
-    | _ -> invalid_arg "Stablehlo.Emit: scan arity"
-  in
-  let index_scalar i =
-    Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
-  in
-  let carry, xs = split_at args num_carry in
-  let body_outs = List.map atom_aval body.jaxpr.outs in
-  let _, y_avals = split_at body_outs num_carry in
-  let zero_stack (a : aval) =
-    let zero = Concrete (Ndarray.of_floats a.dtype [||] [| 0.0 |]) in
-    b1
-      (Broadcast_in_dim
-         { shape = Array.append [| length |] a.shape; dims = [||] })
-      [ zero ]
-  in
-  let ys0 = List.map zero_stack y_avals in
-  let state0 = (index_scalar 0 :: carry) @ ys0 @ xs in
-  let avals = List.map Core.get_aval state0 in
-  let n_ys = List.length ys0 in
-  let unpack state =
-    match state with
-    | i :: rest ->
-        let c, r = split_at rest num_carry in
-        let ys, x = split_at r n_ys in
-        (i, c, ys, x)
-    | [] -> invalid_arg "Stablehlo.Emit: scan state"
-  in
-  let cond =
-    Jaxpr.make_jaxpr avals (fun state ->
-        [ b1 Lt [ List.hd state; index_scalar length ] ])
-  in
-  let step =
-    Jaxpr.make_jaxpr avals (fun state ->
-        let i, c, ys, x = unpack state in
-        let position =
-          if reverse then b1 Sub [ index_scalar (length - 1); i ] else i
-        in
-        let starts rank =
-          position :: List.init (rank - 1) (fun _ -> index_scalar 0)
-        in
-        let slice_of v =
-          let a = Core.get_aval v in
-          let rank = Array.length a.shape in
-          let sizes = Array.mapi (fun d s -> if d = 0 then 1 else s) a.shape in
-          let sliced =
-            b1 (Dynamic_slice { slice_sizes = sizes }) (v :: starts rank)
-          in
-          b1 (Squeeze [| 0 |]) [ sliced ]
-        in
-        let outs = Jaxpr.eval_closed_jaxpr body (c @ List.map slice_of x) in
-        let c', y = split_at outs num_carry in
-        let update stack v =
-          let a = Core.get_aval stack in
-          let rank = Array.length a.shape in
-          let piece =
-            b1
-              (Reshape (Array.mapi (fun d s -> if d = 0 then 1 else s) a.shape))
-              [ v ]
-          in
-          b1 Dynamic_update_slice (stack :: piece :: starts rank)
-        in
-        (b1 Add [ i; index_scalar 1 ] :: c') @ List.map2 update ys y @ x)
-  in
-  let final = Core.bind (While { cond; body = step }) state0 in
-  let _, c, ys, _ = unpack final in
-  c @ ys
-
-and scan_unrolled ~length ~reverse ~num_carry ~unroll (body : closed_jaxpr) args
-    =
-  let b1 = Core.bind1 in
-  let split_at l n =
-    match Util.split_list l [ n ] with
-    | [ a; b ] -> (a, b)
-    | _ -> invalid_arg "Stablehlo.Emit: scan arity"
-  in
-  let index_scalar i =
-    Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
-  in
-  let shape_of v = (Core.get_aval v).shape in
-  let slice_leading v lo hi =
-    let sh = shape_of v in
-    let start = Array.mapi (fun d _ -> if d = 0 then lo else 0) sh in
-    let limit = Array.mapi (fun d s -> if d = 0 then hi else s) sh in
-    b1
-      (Slice { start_indices = start; limit_indices = limit; strides = None })
-      [ v ]
-  in
-  let carry, xs = split_at args num_carry in
-  let _, y_avals = split_at (List.map atom_aval body.jaxpr.outs) num_carry in
-  let num_trips, remainder =
-    if unroll = 0 then (0, length)
-    else
-      let trips = length / unroll and rest = length mod unroll in
-      if trips = 1 && rest = 0 then (0, length) else (trips, rest)
-  in
-  let xs_main, xs_rem =
-    if remainder = 0 then (xs, [])
-    else if not reverse then
-      ( List.map (fun x -> slice_leading x 0 (num_trips * unroll)) xs,
-        List.map (fun x -> slice_leading x (num_trips * unroll) length) xs )
-    else
-      ( List.map (fun x -> slice_leading x remainder length) xs,
-        List.map (fun x -> slice_leading x 0 remainder) xs )
-  in
-  let empty prefix (a : aval) =
-    let zero = Concrete (Ndarray.of_floats a.dtype [||] [| 0.0 |]) in
-    b1
-      (Broadcast_in_dim { shape = Array.append prefix a.shape; dims = [||] })
-      [ zero ]
-  in
-  let stack values =
-    let widened =
-      List.map
-        (fun v ->
-          let s = shape_of v in
-          b1
-            (Broadcast_in_dim
-               {
-                 shape = Array.append [| 1 |] s;
-                 dims = Array.init (Array.length s) (fun d -> d + 1);
-               })
-            [ v ])
-        values
-    in
-    b1 (Concatenate 0) widened
-  in
-  let inner n carry xs =
-    let ys = ref [] and carry = ref carry in
-    for step = 0 to n - 1 do
-      let i = if reverse then n - step - 1 else step in
-      let x =
-        List.map
-          (fun v -> b1 (Squeeze [| 0 |]) [ slice_leading v i (i + 1) ])
-          xs
-      in
-      let c, y =
-        split_at (Jaxpr.eval_closed_jaxpr body (!carry @ x)) num_carry
-      in
-      carry := c;
-      ys := y :: !ys
-    done;
-    let per_step = if reverse then !ys else List.rev !ys in
-    let columns =
-      List.mapi
-        (fun j _ -> stack (List.map (fun y -> List.nth y j) per_step))
-        y_avals
-    in
-    (!carry, columns)
-  in
-  let carry, ys_main =
-    if num_trips = 0 then (carry, List.map (empty [| 0 |]) y_avals)
-    else begin
-      let xss =
-        List.map
-          (fun x ->
-            let s = shape_of x in
-            b1
-              (Reshape
-                 (Array.append [| num_trips; unroll |]
-                    (Array.sub s 1 (Array.length s - 1))))
-              [ x ])
-          xs_main
-      in
-      let yss = List.map (empty [| num_trips; unroll |]) y_avals in
-      let state0 = (index_scalar 0 :: carry) @ yss @ xss in
-      let avals = List.map Core.get_aval state0 in
-      let n_ys = List.length yss in
-      let unpack state =
-        match state with
-        | i :: rest ->
-            let c, r = split_at rest num_carry in
-            let ys, x = split_at r n_ys in
-            (i, c, ys, x)
-        | [] -> invalid_arg "Stablehlo.Emit: scan state"
-      in
-      let cond =
-        Jaxpr.make_jaxpr avals (fun state ->
-            [ b1 Lt [ List.hd state; index_scalar num_trips ] ])
-      in
-      let step =
-        Jaxpr.make_jaxpr avals (fun state ->
-            let i_, c, ys, x = unpack state in
-            let i =
-              if reverse then b1 Sub [ index_scalar (num_trips - 1); i_ ]
-              else i_
-            in
-            let starts rank =
-              i :: List.init (rank - 1) (fun _ -> index_scalar 0)
-            in
-            let index_of v =
-              let s = shape_of v in
-              let sizes = Array.mapi (fun d n -> if d = 0 then 1 else n) s in
-              b1 (Squeeze [| 0 |])
-                [
-                  b1
-                    (Dynamic_slice { slice_sizes = sizes })
-                    (v :: starts (Array.length s));
-                ]
-            in
-            let c', pieces = inner unroll c (List.map index_of x) in
-            let update stack piece =
-              let s = shape_of stack in
-              let widened =
-                b1
-                  (Reshape (Array.mapi (fun d n -> if d = 0 then 1 else n) s))
-                  [ piece ]
-              in
-              b1 Dynamic_update_slice
-                (stack :: widened :: starts (Array.length s))
-            in
-            (b1 Add [ i_; index_scalar 1 ] :: c')
-            @ List.map2 update ys pieces @ x)
-      in
-      let _, c, yss, _ =
-        unpack (Core.bind (While { cond; body = step }) state0)
-      in
-      ( c,
-        List.map
-          (fun y ->
-            let s = shape_of y in
-            b1
-              (Reshape
-                 (Array.append
-                    [| num_trips * unroll |]
-                    (Array.sub s 2 (Array.length s - 2))))
-              [ y ])
-          yss )
-    end
-  in
-  if remainder = 0 then carry @ ys_main
-  else
-    let carry, ys_rem = inner remainder carry xs_rem in
-    let joined =
-      List.map2
-        (fun main rest ->
-          b1 (Concatenate 0)
-            (if reverse then [ rest; main ] else [ main; rest ]))
-        ys_main ys_rem
-    in
-    carry @ joined
 
 and emit_inlined ctx (eqn : eqn) in_ids f =
   emit_traced ctx (List.map atom_aval eqn.inputs) in_ids eqn.outs f
@@ -2896,7 +2776,10 @@ and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
     match Hashtbl.find_opt call_symbols c.jid with
     | Some s -> s
     | None ->
-        let s = unique_symbol (Pretty_printer.call_name c.jid) in
+        let s =
+          Mlir_names.symbol_name
+            (unique_symbol (Pretty_printer.call_name c.jid))
+        in
         Hashtbl.replace call_symbols c.jid s;
         emit_private_function ctx s c;
         s
@@ -3421,16 +3304,16 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ key; data ] -> [ Prng_lowering.fold_in key data ]
         | _ -> invalid_arg "Stablehlo.Emit: fold_in arity")
   | Random_wrap | Random_unwrap -> emit_inlined ctx eqn in_ids Fun.id
-  | Cond { t; f } -> emit_cond ctx eqn in_ids f t
+  | Cond { branches; platforms } -> emit_cond ctx eqn in_ids ~platforms branches
   | Reduce { jaxpr; dimensions } ->
       emit_reduce_general ctx eqn in_ids jaxpr dimensions
   | Reduce_window { reducer; window } ->
       emit_reduce_window_general ctx eqn in_ids reducer window
-  | While { cond; body } -> emit_while ctx eqn in_ids cond body
-  | Scan { length; reverse; num_carry; jaxpr; unroll } ->
+  | While { cond_nconsts; body_nconsts; cond; body } ->
+      emit_while ctx eqn in_ids ~cond_nconsts ~body_nconsts cond body
+  | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       emit_inlined ctx eqn in_ids
-        (if unroll = 1 then scan_as_while ~length ~reverse ~num_carry jaxpr
-         else scan_unrolled ~length ~reverse ~num_carry ~unroll jaxpr)
+        (Lax.lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll jaxpr)
   | Select_and_scatter _ ->
       failwith
         "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \

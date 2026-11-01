@@ -185,7 +185,9 @@ let ramp n =
   f64 [| n; n |] (Array.init total (fun i -> 1.0 +. (0.5 *. float_of_int i)))
 
 let cholesky_rule () =
-  check_grad "cholesky" (fun a -> b1 Cholesky [ spd_of a ]) [| 3; 3 |]
+  check_grad "cholesky"
+    (fun a -> Lax.Linalg.cholesky ~symmetrize_input:false (spd_of a))
+    [| 3; 3 |]
 
 let triangular_rules () =
   let solve ~left a b =

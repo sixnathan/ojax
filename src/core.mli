@@ -79,6 +79,12 @@ val register_custom_rule : custom_rule -> int
 val custom_rule : int -> custom_rule
 val note_custom_call_jaxpr : int -> aval list -> closed_jaxpr -> unit
 val find_custom_call_jaxpr : int -> aval list -> closed_jaxpr option
+val note_custom_num_consts : int -> int -> unit
+val custom_num_consts_of : int -> int option
+val custom_rule_opt : primitive -> custom_rule option
+val scan_lift_consts : num_consts:int -> closed_jaxpr -> closed_jaxpr
+val note_custom_eqn_jaxpr : int -> closed_jaxpr -> unit
+val find_custom_eqn_jaxpr : int -> closed_jaxpr option
 val custom_call_jaxprs_of : int -> closed_jaxpr list
 val with_eval_dynamic : (unit -> 'a) -> 'a
 val ffi_impl : (primitive -> Ndarray.t list -> Ndarray.t list) ref

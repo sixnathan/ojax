@@ -83,7 +83,8 @@ let reshape_points t points =
   else points
 
 let kernel_eval in_log points values xi precision =
-  Eager_jit.one "scipy.stats.kde._gaussian_kernel_eval" in_log []
+  Eager_jit.one ~jit:"_gaussian_kernel_eval"
+    "scipy.stats.kde._gaussian_kernel_eval" in_log []
     [ points; values; xi; precision ] (fun _ vals ->
       JU.jit1 "_gaussian_kernel_eval" ~key:(string_of_bool in_log)
         (fun args ->
@@ -152,7 +153,7 @@ let logpdf t points =
 let integrate_box_1d t low high =
   if t.d <> 1 then invalid_arg "integrate_box_1d() only handles 1D pdfs";
   let pyf = JU.py_float in
-  Eager_jit.one "scipy.stats.kde.integrate_box_1d" () []
+  Eager_jit.one ~jit:"integrate_box_1d" "scipy.stats.kde.integrate_box_1d" () []
     [ t.dataset; t.weights; t.covariance; pyf low; pyf high ]
     (fun _ vals ->
       match vals with

@@ -4,6 +4,7 @@ type lowered = {
   closed : closed_jaxpr;
   in_avals : aval list;
   out_avals : aval list;
+  module_name : string;
 }
 
 type compiled

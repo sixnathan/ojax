@@ -107,6 +107,9 @@ let jit_region name statics args f =
   Eager_jit.one ("random." ^ name) statics [] args (fun _ vals ->
       JU.jit1 name ~key:(statics_key statics) f vals)
 
+let inline_region name statics args f =
+  Eager_jit.one ("random." ^ name) statics [] args (fun _ vals -> f vals)
+
 let dtype_of v = (C.get_aval v).dtype
 let shape_of v = (C.get_aval v).shape
 let npf dt x = Concrete (Nd.of_floats dt [||] [| x |])
@@ -723,7 +726,7 @@ let weibull_min k ~shape ~scale ~concentration =
 
 let triangular k ~shape ~left ~mode ~right =
   let dt = fdt () in
-  jit_region "_triangular" (shape, dt)
+  inline_region "_triangular" (shape, dt)
     [ k; pyf left; pyf mode; pyf right ]
     (function
       | [ key; left; mode; right ] ->
@@ -742,7 +745,7 @@ let triangular k ~shape ~left ~mode ~right =
 
 let lognormal k ~shape ~sigma =
   let dt = fdt () in
-  jit_region "_lognormal" (shape, dt)
+  inline_region "_lognormal" (shape, dt)
     [ k; pyf sigma ]
     (function
       | [ key; sigma ] ->
@@ -858,8 +861,18 @@ let poisson_impl key lam ~shape ~dt =
         let max_iters =
           match dt with D.I64 -> Int64.max_int | _ -> 2147483647L
         in
-        let knuth = poisson_knuth key lam_knuth ~shape ~dt ~max_iters in
-        let rej = poisson_rejection key lam_rejection ~shape ~dt ~max_iters in
+        let knuth =
+          jit_region "_poisson_knuth" (shape, dt, max_iters) [ key; lam_knuth ]
+            (function
+            | [ key; lam ] -> poisson_knuth key lam ~shape ~dt ~max_iters
+            | _ -> assert false)
+        in
+        let rej =
+          jit_region "_poisson_rejection" (shape, dt, max_iters)
+            [ key; lam_rejection ] (function
+            | [ key; lam ] -> poisson_rejection key lam ~shape ~dt ~max_iters
+            | _ -> assert false)
+        in
         let result = L.select use_knuth knuth rej in
         L.select (UF.equal lam (like lam 0.0)) (AC.zeros_like result) result
     | _ -> assert false)
@@ -898,7 +911,7 @@ let stirling_tail k =
   in
   let k = UF.floor k in
   let idx = conv k D.I32 in
-  L.select use_tail (Numpy.Indexing.take vals idx) approx
+  L.select use_tail (Numpy.Indexing.take_index vals idx) approx
 
 let btrs key count prob ~shape ~dt =
   let c v = like prob v in
@@ -994,7 +1007,7 @@ let binomial_inversion key count prob ~shape ~dt =
   conv (List.nth out 1 -! c 1.0) dt
 
 let binomial_v key ~count ~prob ~shape ~dt =
-  jit_region "_binomial" (shape, dt) [ key; count; prob ] (function
+  inline_region "_binomial" (shape, dt) [ key; count; prob ] (function
     | [ key; count; prob ] ->
         let pdt = dtype_of prob in
         let count = conv count pdt in

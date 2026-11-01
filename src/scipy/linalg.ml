@@ -39,6 +39,13 @@ let cholesky ?(lower = false) a =
   let l = LL.cholesky ~symmetrize_input:false a in
   if lower then l else hconj l
 
+let cholesky ?lower a0 =
+  Eager_jit.one ~jit:"_cholesky" "scipy.linalg.cholesky" lower [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> cholesky ?lower a0
+      | _ -> assert false)
+
 let cho_factor ?(lower = false) a = (cholesky ~lower a, lower)
 
 let cho_solve (c, lower) b =
@@ -75,15 +82,27 @@ let lu ?(permute_l = false) a =
   in
   let p = NL.astype (UF.equal perm_row iota_col) real_dt in
   let kcols = iota_idx k in
-  let l_lower = IDX.take ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
+  let l_lower = IDX.take_index ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
   let l = UF.add l_lower (NL.eye ~m:k ~dtype:dt m) in
-  let u = IDX.take ~axis:0 (NL.triu lu_) kcols in
+  let u = IDX.take_index ~axis:0 (NL.triu lu_) kcols in
   if permute_l then [ TC.matmul p l; u ] else [ p; l; u ]
+
+let lu ?permute_l a0 =
+  Eager_jit.many ~jit:"lu" "scipy.linalg.lu" permute_l [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> lu ?permute_l a0
+      | _ -> assert false)
 
 let lu_factor a =
   let a = to_inexact a in
   let lu_, piv, _ = LL.lu a in
   (lu_, piv)
+
+let lu_factor a0 =
+  Eager_jit.pair ~jit:"lu_factor" "scipy.linalg.lu_factor" () [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> lu_factor a0 | _ -> assert false)
 
 let lu_solve ?(trans = 0) (lu_, piv) b =
   let lu_ = to_inexact lu_ and b = to_inexact b in
@@ -94,7 +113,7 @@ let lu_solve ?(trans = 0) (lu_, piv) b =
   let x = if bvec then NL.reshape b [| m; 1 |] else b in
   let out =
     if trans = 0 then begin
-      let x = IDX.take ~axis:0 x perm in
+      let x = IDX.take_index ~axis:0 x perm in
       let x =
         LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu_
           x
@@ -111,7 +130,7 @@ let lu_solve ?(trans = 0) (lu_, piv) b =
         LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true
           ~transpose_a:true ~conjugate_a:conj lu_ x
       in
-      IDX.take ~axis:0 x (SORT.argsort perm)
+      IDX.take_index ~axis:0 x (SORT.argsort perm)
     end
     else invalid_arg (Printf.sprintf "lu_solve: invalid trans value %d" trans)
   in
@@ -151,6 +170,13 @@ let rec qr ?(mode = "full") ?(pivoting = false) a =
       in
       [ LL.householder_product base taus; r; perm ]
   end
+
+let qr ?mode ?pivoting a0 =
+  Eager_jit.many ~jit:"_qr" "scipy.linalg.qr" (mode, pivoting) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> qr ?mode ?pivoting a0
+      | _ -> assert false)
 
 let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
     c =
@@ -329,6 +355,13 @@ let rec rsf2csf t z =
     if n = 1 then (t, z) else go 1 t z
   end
 
+let rsf2csf a0 a1 =
+  Eager_jit.pair ~jit:"rsf2csf" "scipy.linalg.rsf2csf" () [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> rsf2csf a0 a1
+      | _ -> assert false)
+
 let solve ?(lower = false) ?(assume_a = "gen") a b =
   (match assume_a with
   | "gen" | "sym" | "her" | "pos" -> ()
@@ -339,6 +372,13 @@ let solve ?(lower = false) ?(assume_a = "gen") a b =
             '%s'"
            assume_a));
   if assume_a <> "pos" then LN.solve a b else cho_solve (cho_factor ~lower a) b
+
+let solve ?lower ?assume_a a0 a1 =
+  Eager_jit.one ~jit:"_solve" "scipy.linalg.solve" (lower, assume_a) []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> solve ?lower ?assume_a a0 a1
+      | _ -> assert false)
 
 let solve_triangular ?(trans = 0) ?(lower = false) ?(unit_diagonal = false) a b
     =
@@ -360,6 +400,13 @@ let solve_triangular ?(trans = 0) ?(lower = false) ?(unit_diagonal = false) a b
   in
   if bvec then NL.reshape x [| n |] else x
 
+let solve_triangular ?trans ?lower ?unit_diagonal a0 a1 =
+  Eager_jit.one ~jit:"_solve_triangular" "scipy.linalg.solve_triangular"
+    (trans, lower, unit_diagonal) [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> solve_triangular ?trans ?lower ?unit_diagonal a0 a1
+      | _ -> assert false)
+
 let host_nd = function
   | T.Concrete nd -> nd
   | _ ->
@@ -372,10 +419,24 @@ let svd ?(full_matrices = true) ?(compute_uv = true) a =
   let a = to_inexact a in
   LL.svd ~full_matrices ~compute_uv a
 
+let svd ?full_matrices ?compute_uv a0 =
+  Eager_jit.many ~jit:"_svd" "scipy.linalg.svd" (full_matrices, compute_uv)
+    [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> svd ?full_matrices ?compute_uv a0
+      | _ -> assert false)
+
 let eigh ?(lower = true) ?(eigvals_only = false) a =
   let a = to_inexact a in
   let v, w = LL.eigh ~lower a in
   if eigvals_only then [ w ] else [ w; v ]
+
+let eigh ?lower ?eigvals_only a0 =
+  Eager_jit.many ~jit:"_eigh" "scipy.linalg.eigh" (lower, eigvals_only) []
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> eigh ?lower ?eigvals_only a0
+      | _ -> assert false)
 
 let schur ?(output = "real") a =
   let a = to_inexact a in
@@ -390,6 +451,13 @@ let schur ?(output = "real") a =
           (Printf.sprintf "argument must be 'real' or 'complex', got %s" output)
   in
   LL.schur a
+
+let schur ?output a0 =
+  Eager_jit.many ~jit:"_schur" "scipy.linalg.schur" output [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> schur ?output a0
+      | _ -> assert false)
 
 let block_diag arrs =
   let arrs =
@@ -430,14 +498,14 @@ let toeplitz ?r c =
   else begin
     let r_tail =
       if n = 1 then NL.reshape r [| 0 |]
-      else IDX.take r (UF.add (iota_idx (n - 1)) (i32_scalar 1))
+      else IDX.take_index r (UF.add (iota_idx (n - 1)) (i32_scalar 1))
     in
     let elems = NL.concatenate [ NL.flip c; r_tail ] in
     let ii = NL.reshape (iota_idx m) [| m; 1 |] in
     let jj = NL.reshape (iota_idx n) [| 1; n |] in
     let idx = UF.add (UF.subtract (i32_scalar (m - 1)) ii) jj in
     let flat = NL.reshape idx [| m * n |] in
-    NL.reshape (IDX.take elems flat) [| m; n |]
+    NL.reshape (IDX.take_index elems flat) [| m; n |]
   end
 
 let hessenberg ?(calc_q = false) a =
@@ -453,7 +521,9 @@ let hessenberg ?(calc_q = false) a =
     else begin
       let rows = UF.add (iota_idx (n - 1)) (i32_scalar 1) in
       let cols = iota_idx (n - 1) in
-      let sub = IDX.take ~axis:1 (IDX.take ~axis:0 a_out rows) cols in
+      let sub =
+        IDX.take_index ~axis:1 (IDX.take_index ~axis:0 a_out rows) cols
+      in
       let q_inner = LL.householder_product sub taus in
       let dt = dtype a in
       let top =
@@ -466,6 +536,13 @@ let hessenberg ?(calc_q = false) a =
       [ h; NL.concatenate ~axis:0 [ top; bot ] ]
     end
   end
+
+let hessenberg ?calc_q a0 =
+  Eager_jit.many ~jit:"hessenberg" "scipy.linalg.hessenberg" calc_q [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> hessenberg ?calc_q a0
+      | _ -> assert false)
 
 let expm_coefficient m c = C.bind1 T.Mul [ C.splat (dtype m) [||] c; m ]
 
@@ -688,6 +765,13 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
         | _ -> invalid_arg "expm: arity")
     | _ -> invalid_arg "expm: arity"
 
+let expm ?upper_triangular ?max_squarings a0 =
+  Eager_jit.one ~jit:"expm" "scipy.linalg.expm"
+    (upper_triangular, max_squarings) [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> expm ?upper_triangular ?max_squarings a0
+      | _ -> assert false)
+
 let expm_frechet ?(compute_expm = true) a e =
   let a = to_inexact a and e = to_inexact e in
   let sa = shape a and se = shape e in
@@ -703,17 +787,15 @@ let expm_frechet ?(compute_expm = true) a e =
   if compute_expm then [ List.hd primal; List.hd tangent ]
   else [ List.hd tangent ]
 
-let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
-  let a = to_inexact a in
-  if ndim a < 2 then invalid_arg "The input `a` must be at least a 2-D array.";
-  (match side with
-  | "right" | "left" -> ()
-  | _ -> invalid_arg "The argument `side` must be either 'right' or 'left'.");
+let expm_frechet ?compute_expm a0 a1 =
+  Eager_jit.many ~jit:"expm_frechet" "scipy.linalg.expm_frechet" compute_expm []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> expm_frechet ?compute_expm a0 a1
+      | _ -> assert false)
+
+let polar_2d ~side ~method_ ?eps a =
   match method_ with
-  | "qdwh" when ndim a > 2 ->
-      Interpreters.Batching.vmap
-        (fun args -> polar ~side ~method_ ?eps (List.hd args))
-        [ Some 0 ] [ a ]
   | "qdwh" ->
       let sh = shape a in
       let m = sh.(0) and n = sh.(1) in
@@ -741,9 +823,36 @@ let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
         else TC.matmul (UF.multiply u s_row) (hconj u)
       in
       [ unitary; posdef ]
+  | _ -> invalid_arg "polar: method"
+
+let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
+  let a = to_inexact a in
+  if ndim a < 2 then invalid_arg "The input `a` must be at least a 2-D array.";
+  (match side with
+  | "right" | "left" -> ()
+  | _ -> invalid_arg "The argument `side` must be either 'right' or 'left'.");
+  match method_ with
+  | ("qdwh" | "svd") when ndim a > 2 ->
+      Interpreters.Batching.vmap
+        (fun args -> polar ~side ~method_ ?eps (List.hd args))
+        [ Some 0 ] [ a ]
+  | "qdwh" | "svd" ->
+      Numpy.Jnp_util.jit "_polar_2d"
+        ~key:(Printf.sprintf "%s,%s,%b" side method_ (eps <> None))
+        (function
+          | [ a ] -> polar_2d ~side ~method_ ?eps a
+          | _ -> invalid_arg "polar: arity")
+        [ a ]
   | _ ->
       invalid_arg
         (Printf.sprintf "Unknown polar decomposition method %s." method_)
+
+let polar ?side ?method_ ?eps a0 =
+  Eager_jit.many ~jit:"polar" "scipy.linalg.polar" (side, method_, eps) []
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> polar ?side ?method_ ?eps a0
+      | _ -> assert false)
 
 let rec sqrtm ?(blocksize = 1) a =
   if blocksize > 1 then
@@ -791,6 +900,13 @@ let rec sqrtm ?(blocksize = 1) a =
         let root = L.reshape (L.concatenate cells 0) [| n; n |] in
         L.dot (L.dot z root) (L.conj (NL.matrix_transpose z))
     | _ -> failwith "sqrtm: schur arity"
+
+let sqrtm ?blocksize a0 =
+  Eager_jit.one ~jit:"_sqrtm" "scipy.linalg.sqrtm" blocksize [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> sqrtm ?blocksize a0
+      | _ -> assert false)
 
 let funm ?(disp = true) a _func =
   ignore disp;
@@ -1107,106 +1223,11 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
       [ eigvals; NL.transpose vectors ]
   end
 
-let lu_factor a0 =
-  Eager_jit.pair "scipy.linalg.lu_factor" () [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with [], [ a0 ] -> lu_factor a0 | _ -> assert false)
-
-let lu ?permute_l a0 =
-  Eager_jit.many "scipy.linalg.lu" permute_l [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> lu ?permute_l a0
-      | _ -> assert false)
-
-let expm ?upper_triangular ?max_squarings a0 =
-  Eager_jit.one "scipy.linalg.expm" (upper_triangular, max_squarings) [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> expm ?upper_triangular ?max_squarings a0
-      | _ -> assert false)
-
-let expm_frechet ?compute_expm a0 a1 =
-  Eager_jit.many "scipy.linalg.expm_frechet" compute_expm [] [ a0; a1 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1 ] -> expm_frechet ?compute_expm a0 a1
-      | _ -> assert false)
-
 let eigh_tridiagonal ?eigvals_only ?select ?select_range ?tol ?key a0 a1 =
-  Eager_jit.many "scipy.linalg.eigh_tridiagonal"
+  Eager_jit.many ~jit:"eigh_tridiagonal" "scipy.linalg.eigh_tridiagonal"
     (eigvals_only, select, select_range, tol) [ key ] [ a0; a1 ]
     (fun opts vals ->
       match (opts, vals) with
       | [ key ], [ a0; a1 ] ->
           eigh_tridiagonal ?eigvals_only ?select ?select_range ?tol ?key a0 a1
-      | _ -> assert false)
-
-let polar ?side ?method_ ?eps a0 =
-  Eager_jit.many "scipy.linalg.polar" (side, method_, eps) [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> polar ?side ?method_ ?eps a0
-      | _ -> assert false)
-
-let rsf2csf a0 a1 =
-  Eager_jit.pair "scipy.linalg.rsf2csf" () [] [ a0; a1 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1 ] -> rsf2csf a0 a1
-      | _ -> assert false)
-
-let hessenberg ?calc_q a0 =
-  Eager_jit.many "scipy.linalg.hessenberg" calc_q [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> hessenberg ?calc_q a0
-      | _ -> assert false)
-
-let cholesky ?lower a0 =
-  Eager_jit.one "scipy.linalg.cholesky" lower [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> cholesky ?lower a0
-      | _ -> assert false)
-
-let svd ?full_matrices ?compute_uv a0 =
-  Eager_jit.many "scipy.linalg.svd" (full_matrices, compute_uv) [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> svd ?full_matrices ?compute_uv a0
-      | _ -> assert false)
-
-let eigh ?lower ?eigvals_only a0 =
-  Eager_jit.many "scipy.linalg.eigh" (lower, eigvals_only) [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> eigh ?lower ?eigvals_only a0
-      | _ -> assert false)
-
-let schur ?output a0 =
-  Eager_jit.many "scipy.linalg.schur" output [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> schur ?output a0
-      | _ -> assert false)
-
-let qr ?mode ?pivoting a0 =
-  Eager_jit.many "scipy.linalg.qr" (mode, pivoting) [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> qr ?mode ?pivoting a0
-      | _ -> assert false)
-
-let solve ?lower ?assume_a a0 a1 =
-  Eager_jit.one "scipy.linalg.solve" (lower, assume_a) [] [ a0; a1 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1 ] -> solve ?lower ?assume_a a0 a1
-      | _ -> assert false)
-
-let solve_triangular ?trans ?lower ?unit_diagonal a0 a1 =
-  Eager_jit.one "scipy.linalg.solve_triangular" (trans, lower, unit_diagonal)
-    [] [ a0; a1 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1 ] -> solve_triangular ?trans ?lower ?unit_diagonal a0 a1
-      | _ -> assert false)
-
-let sqrtm ?blocksize a0 =
-  Eager_jit.one "scipy.linalg.sqrtm" blocksize [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> sqrtm ?blocksize a0
       | _ -> assert false)

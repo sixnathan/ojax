@@ -11,3 +11,16 @@ let is_marked arr i =
   List.exists
     (fun (other, predicate) -> other == arr && predicate i)
     (Hashtbl.find_all table (Hashtbl.hash arr))
+
+let marked_prims : (int, Obj.t) Hashtbl.t = Hashtbl.create 64
+
+let mark_prim prim =
+  let o = Obj.repr prim in
+  Hashtbl.add marked_prims (Hashtbl.hash o) o;
+  prim
+
+let prim_marked prim =
+  let o = Obj.repr prim in
+  List.exists
+    (fun other -> other == o)
+    (Hashtbl.find_all marked_prims (Hashtbl.hash o))

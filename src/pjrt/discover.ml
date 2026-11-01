@@ -246,8 +246,10 @@ let read_stamp path =
 let write_stamp dir path hash =
   (try Sys.mkdir dir 0o755 with Sys_error _ -> ());
   let temp = Printf.sprintf "%s.%d.tmp" path (Unix.getpid ()) in
-  Out_channel.with_open_bin temp (fun oc -> output_string oc hash);
-  Sys.rename temp path
+  try
+    Out_channel.with_open_bin temp (fun oc -> output_string oc hash);
+    Sys.rename temp path
+  with Sys_error _ -> ()
 
 let stamped_sha256 path =
   match stamp_path path with

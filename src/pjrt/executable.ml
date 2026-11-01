@@ -44,14 +44,15 @@ let read_cache path key =
 let write_cache dir path key exec =
   match serialize_ exec with
   | exception Abi.Error _ -> ()
-  | bytes ->
+  | bytes -> (
       (try Sys.mkdir dir 0o755 with Sys_error _ -> ());
       let temp = Printf.sprintf "%s.%d.tmp" path (Unix.getpid ()) in
-      let oc = open_out_bin temp in
-      output_string oc key;
-      output_string oc bytes;
-      close_out oc;
-      Sys.rename temp path
+      try
+        Out_channel.with_open_bin temp (fun oc ->
+            output_string oc key;
+            output_string oc bytes);
+        Sys.rename temp path
+      with Sys_error _ -> ())
 
 let compile_cached client code options =
   match Lazy.force cache_dir with

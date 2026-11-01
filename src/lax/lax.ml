@@ -2496,7 +2496,10 @@ let abstract_eval prim avals =
   | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | Ne ->
       bin_aval
         (fun a b ->
-          shaped (Core.elementwise_shape [ a.shape; b.shape ]) Bool false)
+          shaped
+            (Core.elementwise_shape [ a.shape; b.shape ])
+            Bool
+            (a.weak_type && b.weak_type))
         avals
   | Select_n -> (
       match avals with

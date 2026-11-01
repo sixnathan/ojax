@@ -123,39 +123,14 @@ let orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
   let axis = if column_axis < 0 then column_axis + rank else column_axis in
   let n_cols = shape.(axis) in
   let n_rows = prod shape / n_cols in
-  let matrix_shape =
-    if n_rows < n_cols then [| n_cols; n_rows |] else [| n_rows; n_cols |]
-  in
-  let a = Random.Core.normal key ~shape:matrix_shape in
-  let q, r =
-    match Numpy.Linalg.qr a with
-    | [ q; r ] -> (q, r)
-    | _ -> failwith "orthogonal: qr arity"
-  in
-  let signs = C.bind1 Sign [ Numpy.Lax_numpy.diagonal r ] in
-  let qs = C.get_aval q in
-  let scaled =
-    C.bind1 Mul
-      [
-        q;
-        C.bind1
-          (Broadcast_in_dim { shape = qs.shape; dims = [| 1 |] })
-          [ signs ];
-      ]
-  in
-  let oriented =
-    if n_rows < n_cols then C.bind1 (Transpose [| 1; 0 |]) [ scaled ]
-    else scaled
-  in
+  let q = Random_extras.orthogonal ~m:n_cols key ~n:n_rows ~shape:[||] in
   let others =
     Array.of_list (List.filteri (fun i _ -> i <> axis) (Array.to_list shape))
   in
-  let reshaped =
-    C.bind1 (Reshape (Array.append others [| n_cols |])) [ oriented ]
-  in
-  let moved = Numpy.Lax_numpy.moveaxis [| rank - 1 |] [| axis |] reshaped in
-  let f = C.get_aval moved in
-  C.bind1 Mul [ moved; C.splat f.dtype f.shape scale ]
+  let q = Numpy.Lax_numpy.reshape q (Array.append others [| n_cols |]) in
+  let q = Numpy.Lax_numpy.moveaxis [| -1 |] [| column_axis |] q in
+  let dt = (C.get_aval q).dtype in
+  Numpy.Ufuncs.multiply (Concrete (Nd.of_floats dt [||] [| scale |])) q
 
 let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
  fun key ~shape ->
@@ -169,6 +144,28 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
       ~shape:[| shape.(rank - 2); shape.(rank - 1) |]
   in
   let a = C.get_aval ortho in
+  if rank = 3 then
+    let w = C.splat a.dtype shape 0.0 in
+    let idx =
+      C.bind1
+        (Broadcast_in_dim { shape = [| 1 |]; dims = [||] })
+        [ Numpy.Jnp_util.py_int ((shape.(0) - 1) / 2) ]
+    in
+    C.bind1
+      (Scatter
+         {
+           dimension_numbers =
+             {
+               update_window_dims = [| 0; 1 |];
+               inserted_window_dims = [| 0 |];
+               scatter_dims_to_operand_dims = [| 0 |];
+               s_operand_batching_dims = [||];
+               s_scatter_indices_batching_dims = [||];
+             };
+           unique_indices = true;
+         })
+      [ w; idx; ortho ]
+  else
   let center = Array.sub shape 0 (rank - 2) in
   let mid = Array.map (fun d -> (d - 1) / 2) center in
   let cfg =

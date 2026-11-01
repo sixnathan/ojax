@@ -927,20 +927,48 @@ let stirling_vals =
 let stirling_tail k =
   let dt = dtype_of k in
   let vals = Concrete (Nd.of_floats dt [| 10 |] stirling_vals) in
-  let use_tail = UF.less_equal k (like k 9.0) in
+  let use_tail = UF.less_equal k (pyf 9.0) in
   let k = L.clamp (like k 0.0) k (like k 9.0) in
-  let kp1sq = (k +! like k 1.0) *! (k +! like k 1.0) in
+  let kp1sq = (k +! pyf 1.0) *! (k +! pyf 1.0) in
   let approx =
-    (like k (1.0 /. 12.0)
-    -! ((like k (1.0 /. 360.0) -! (like k (1.0 /. 1260.0) /! kp1sq)) /! kp1sq))
-    /! (k +! like k 1.0)
+    (pyf (1.0 /. 12.0)
+    -! ((pyf (1.0 /. 360.0) -! (pyf (1.0 /. 1260.0) /! kp1sq)) /! kp1sq))
+    /! (k +! pyf 1.0)
   in
   let k = UF.floor k in
   let idx = conv k D.I32 in
-  L.select use_tail (Numpy.Indexing.take_index vals idx) approx
+  let i32_lit x = Concrete (Nd.of_floats D.I32 [||] [| x |]) in
+  let idx = L.select (L.lt idx (i32_lit 0.0)) (L.add idx (i32_lit 10.0)) idx in
+  let n = (shape_of idx) in
+  let start =
+    C.bind1
+      (Broadcast_in_dim
+         {
+           shape = Array.append n [| 1 |];
+           dims = Array.init (Array.length n) Fun.id;
+         })
+      [ idx ]
+  in
+  let picked =
+    C.bind1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = [||];
+               collapsed_slice_dims = [| 0 |];
+               start_index_map = [| 0 |];
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+             };
+           slice_sizes = [| 1 |];
+         })
+      [ vals; start ]
+  in
+  L.select use_tail picked approx
 
 let btrs key count prob ~shape ~dt =
-  let c v = like prob v in
+  let c v = pyf v in
   let stddev = UF.sqrt (count *! prob *! (c 1.0 -! prob)) in
   let b = c 1.15 +! (c 2.53 *! stddev) in
   let a = c (-0.0873) +! (c 0.0248 *! b) +! (c 0.01 *! prob) in
@@ -1000,7 +1028,7 @@ let btrs key count prob ~shape ~dt =
   conv (List.nth out 1) dt
 
 let binomial_inversion key count prob ~shape ~dt =
-  let c v = like prob v in
+  let c v = pyf v in
   let log1minusprob = UF.log1p (UF.negative prob) in
   let idx v = C.py_scalar (Dtypes.default_int_dtype ()) v in
   let pdt = dtype_of prob in
@@ -1024,8 +1052,11 @@ let binomial_inversion key count prob ~shape ~dt =
           (UF.less i (npf dt (Dtypes.finfo dt).fmax))
     | _ -> assert false
   in
-  let init = L.full shape 0.0 pdt in
-  let out = L.while_loop cond body [ idx 0.0; init; init; key ] in
+  let num_geom_init = L.full shape 0.0 pdt in
+  let geom_sum_init = L.full shape 0.0 pdt in
+  let out =
+    L.while_loop cond body [ idx 0.0; num_geom_init; geom_sum_init; key ]
+  in
   conv (List.nth out 1 -! c 1.0) dt
 
 let binomial_v key ~count ~prob ~shape ~dt =
@@ -1035,7 +1066,7 @@ let binomial_v key ~count ~prob ~shape ~dt =
         let count = conv count pdt in
         let count = NL.broadcast_to count shape in
         let prob = NL.broadcast_to prob shape in
-        let c v = like prob v in
+        let c v = pyf v in
         let p_lt_half = UF.less prob (c 0.5) in
         let q = L.select p_lt_half prob (c 1.0 -! prob) in
         let count_nan_or_neg =

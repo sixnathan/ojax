@@ -135,13 +135,37 @@ let rec while_loop (cond_fun : value list -> value)
       let arg_part =
         List.filteri (fun i _ -> i >= nc && i < total - nh) binders
       in
+      let first_use : (int, int) Hashtbl.t = Hashtbl.create 16 in
+      let note i = function
+        | A_var (v : var) ->
+            if not (Hashtbl.mem first_use v.vid) then
+              Hashtbl.replace first_use v.vid i
+        | _ -> ()
+      in
+      List.iteri
+        (fun i (e : eqn) -> List.iter (note i) e.inputs)
+        c.jaxpr.eqns;
+      List.iter (note max_int) c.jaxpr.outs;
+      let use_of (v : var) =
+        Option.value (Hashtbl.find_opt first_use v.vid) ~default:max_int
+      in
+      let ordered =
+        List.stable_sort
+          (fun ((a : var), _) ((b : var), _) ->
+            compare (use_of a) (use_of b))
+          (List.combine (const_part @ hoist_part)
+             (List.map (fun nd -> Concrete nd) c.consts @ hoisted))
+      in
       ( {
           c with
           consts = [];
           jaxpr =
-            { c.jaxpr with in_binders = const_part @ hoist_part @ arg_part };
+            {
+              c.jaxpr with
+              in_binders = List.map fst ordered @ arg_part;
+            };
         },
-        List.map (fun nd -> Concrete nd) c.consts @ hoisted )
+        List.map snd ordered )
     in
     let cond', cond_consts = binders_first cond hoisted_c in
     let body', body_consts = binders_first body hoisted_b in

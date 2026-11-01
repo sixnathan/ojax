@@ -936,11 +936,11 @@ let python_float_argument nd =
     ^ ":" ^ lit_short nd
   else jax_literal nd
 
-let pp_atoms ctx ?(separator = "") ?(call = false) atoms =
+let pp_atoms ctx ?(separator = "") atoms =
   let doc = function
     | A_var v -> Layout.Text (name_of_var ctx v)
     | A_lit nd
-      when call && Ndarray.weak nd
+      when Ndarray.weak nd
            && Ndarray.dtype nd = Dtype.F32
            && Array.length (Ndarray.shape nd) = 0 ->
         Layout.Text (python_float_argument nd)
@@ -1128,9 +1128,7 @@ and pp_eqn ctx (e : eqn) =
         Layout.Text (jax_prim_name e.prim);
         params;
         Layout.Text " ";
-        pp_atoms ctx
-          ~call:(match e.prim with Xla_call _ -> true | _ -> false)
-          e.inputs;
+        pp_atoms ctx e.inputs;
       ]
   in
   if e.outs = [] then rhs else Layout.Concat [ lhs; Layout.Text " = "; rhs ]

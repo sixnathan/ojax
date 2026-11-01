@@ -332,6 +332,7 @@ and scatter_dims = {
   s_operand_batching_dims : int array;
   s_scatter_indices_batching_dims : int array;
   s_sorted_unique : bool;
+  s_clip : bool;
 }
 
 and conv_dims = {

@@ -85,7 +85,14 @@ let lu ?(permute_l = false) a =
   let l_lower = IDX.take_index ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
   let l = UF.add l_lower (NL.eye ~m:k ~dtype:dt m) in
   let u = IDX.take_index ~axis:0 (NL.triu lu_) kcols in
-  if permute_l then [ TC.matmul ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest) p l; u ] else [ p; l; u ]
+  if permute_l then
+    [
+      TC.matmul
+        ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest)
+        p l;
+      u;
+    ]
+  else [ p; l; u ]
 
 let lu ?permute_l a0 =
   Eager_jit.many ~jit:"lu" "scipy.linalg.lu" permute_l [] [ a0 ]
@@ -544,8 +551,7 @@ let hessenberg ?(calc_q = false) a =
       let bl = AC.zeros ~dtype:dt (block_of (n - 1) 1) in
       let q =
         block
-          (Group
-             [ Group [ Item tl; Item tr ]; Group [ Item bl; Item q_inner ] ])
+          (Group [ Group [ Item tl; Item tr ]; Group [ Item bl; Item q_inner ] ])
       in
       [ h; q ]
     end
@@ -569,7 +575,10 @@ let expm_sum terms =
         (expm_coefficient (snd first) (fst first))
         rest
 
-let precise_dot a b = TC.dot ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest) a b
+let precise_dot a b =
+  TC.dot
+    ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest)
+    a b
 
 let pade3 a =
   let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
@@ -582,7 +591,9 @@ let pade5 a =
   let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
   let a2 = precise_dot a a in
   let a4 = precise_dot a2 a2 in
-  let u = precise_dot a (expm_sum [ (1.0, a4); (420.0, a2); (15120.0, ident) ]) in
+  let u =
+    precise_dot a (expm_sum [ (1.0, a4); (420.0, a2); (15120.0, ident) ])
+  in
   let v = expm_sum [ (30.0, a4); (3360.0, a2); (30240.0, ident) ] in
   [ u; v ]
 
@@ -650,7 +661,8 @@ let pade13 a =
   in
   let u = precise_dot a u_tail in
   let v_inner =
-    precise_dot a6 (expm_sum [ (182.0, a6); (960960.0, a4); (1323241920.0, a2) ])
+    precise_dot a6
+      (expm_sum [ (182.0, a6); (960960.0, a4); (1323241920.0, a2) ])
   in
   let v =
     List.fold_left
@@ -733,7 +745,8 @@ let expm_squaring r n_squarings max_squarings =
                 Lax_api.cond
                   (C.bind1 T.Lt [ i; n_squarings ])
                   (function
-                    | [ x ] -> [ precise_dot x x ] | _ -> invalid_arg "expm: arity")
+                    | [ x ] -> [ precise_dot x x ]
+                    | _ -> invalid_arg "expm: arity")
                   Fun.id [ c ]
             | _ -> invalid_arg "expm: arity"
           in
@@ -881,7 +894,10 @@ let sqrtm_triu t =
           let n = (shape diag).(0) in
           let u0 = NL.diag diag in
           let dt = dtype t in
-          let index v = T.Concrete (Ndarray.as_weak (Nd.of_floats D.I32 [||] [| float_of_int v |])) in
+          let index v =
+            T.Concrete
+              (Ndarray.as_weak (Nd.of_floats D.I32 [||] [| float_of_int v |]))
+          in
           let one () = index 1 in
           let i_loop j l = function
             | [ u ] ->
@@ -891,15 +907,13 @@ let sqrtm_triu t =
                   | [ acc ] ->
                       [
                         UF.add acc
-                          (UF.multiply
-                             (IDX.dynamic_at2 u i k)
+                          (UF.multiply (IDX.dynamic_at2 u i k)
                              (IDX.dynamic_at2 u k j));
                       ]
                   | _ -> invalid_arg "sqrtm: arity"
                 in
                 let s =
-                  List.hd
-                    (L.fori_loop lo j inner [ C.splat dt [||] 0.0 ])
+                  List.hd (L.fori_loop lo j inner [ C.splat dt [||] 0.0 ])
                 in
                 let same = UF.equal (IDX.dynamic_at2 t i j) s in
                 let quotient =

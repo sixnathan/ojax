@@ -73,6 +73,7 @@ let segment_dnums rank =
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 let segment_update prim identity ?num_segments data segment_ids =

@@ -618,8 +618,7 @@ let spd v =
   let n = sh.(Array.length sh - 1) in
   ignore sh;
   let product =
-    L.batch_matmul ~preferred_element_type:(dt_of v) v
-      (NL.swapaxes (-1) (-2) v)
+    L.batch_matmul ~preferred_element_type:(dt_of v) v (NL.swapaxes (-1) (-2) v)
   in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)

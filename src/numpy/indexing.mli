@@ -39,7 +39,6 @@ type dslice =
 
 val ds : ?size:int -> ?stride:int -> Types.value option -> dslice
 val dslice_index : Types.value -> dslice list -> Types.value
-
 val dynamic_at : Types.value -> Types.value -> Types.value
 val dynamic_at2 : Types.value -> Types.value -> Types.value -> Types.value
 

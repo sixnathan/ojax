@@ -112,6 +112,7 @@ type scatter_dimension_numbers = Types.scatter_dims = {
   s_operand_batching_dims : int array;
   s_scatter_indices_batching_dims : int array;
   s_sorted_unique : bool;
+  s_clip : bool;
 }
 
 val scatter_dimension_numbers :

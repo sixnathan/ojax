@@ -52,6 +52,7 @@ let gather_to_scatter (gd : gather_dims) : scatter_dims =
     s_operand_batching_dims = gd.g_operand_batching_dims;
     s_scatter_indices_batching_dims = gd.g_start_indices_batching_dims;
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 let scatter_to_gather (sd : scatter_dims) : gather_dims =
@@ -139,6 +140,7 @@ let matmul_at ?(dot_preferred = true) dot_precision x y =
     [ x; y ]
 
 let matmul_plain x y = matmul_at None x y
+
 let lax_matmul x y =
   matmul_at ~dot_preferred:false (Some ("HIGHEST", "HIGHEST")) x y
 
@@ -625,6 +627,7 @@ let construct_diagonal s =
              s_operand_batching_dims = [||];
              s_scatter_indices_batching_dims = [||];
              s_sorted_unique = false;
+             s_clip = false;
            };
          unique_indices = false;
        })
@@ -3815,8 +3818,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Custom_vjp_call _ ->
       failwith "ad: custom call cannot appear in a linear program"
   | Ffi_call c -> ffi_not_differentiable c
-  | Custom_linear_solve { matvec; vecmat; solve; transpose_solve; const_lengths }
-    -> (
+  | Custom_linear_solve
+      { matvec; vecmat; solve; transpose_solve; const_lengths } -> (
       match (vecmat, transpose_solve) with
       | Some vecmat, Some ts ->
           let total = Array.fold_left ( + ) 0 const_lengths in

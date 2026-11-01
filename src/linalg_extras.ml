@@ -107,9 +107,11 @@ let symmetric_product ?(alpha = 1.0) ?(beta = 0.0) ?(symmetrize_output = false)
   let scale x v = UF.multiply (const_like v x) v in
   let result =
     UF.add
-      (scale alpha (L.batch_matmul
- ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest)
- a (NL.matrix_transpose a)))
+      (scale alpha
+         (L.batch_matmul
+            ~precision:
+              (Lax_config.precision_of_level Lax_config.Precision_highest)
+            a (NL.matrix_transpose a)))
       (scale beta c)
   in
   if symmetrize_output then
@@ -118,7 +120,9 @@ let symmetric_product ?(alpha = 1.0) ?(beta = 0.0) ?(symmetrize_output = false)
       Array.init n (fun i ->
           if i = n - 1 then n - 2 else if i = n - 2 then n - 1 else i)
     in
-    let upper_half = Core.bind1 (Types.Transpose perm) [ LL.tril ~k:(-1) result ] in
+    let upper_half =
+      Core.bind1 (Types.Transpose perm) [ LL.tril ~k:(-1) result ]
+    in
     UF.add (LL.tril result) upper_half
   else result
 

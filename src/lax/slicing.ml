@@ -342,14 +342,42 @@ let clamp_scatter_indices operand indices updates (sd : scatter_dims) =
       (fun o -> float_of_int (op_shape.(o) - slice_sizes.(o)))
       sd.scatter_dims_to_operand_dims
   in
-  let bound = Concrete (Ndarray.of_floats idt [| Array.length upper |] upper) in
-  let bound =
+  let host = Dtypes.default_int_dtype () in
+  let raw = Concrete (Ndarray.of_floats host [| Array.length upper |] upper) in
+  let int_max dt =
+    match dt with
+    | Dtype.I64 | Dtype.Uint64 -> 9223372036854775807.0
+    | Dtype.I32 -> 2147483647.0
+    | Dtype.Uint32 -> 4294967295.0
+    | Dtype.I16 -> 32767.0
+    | Dtype.Uint16 -> 65535.0
+    | Dtype.I8 -> 127.0
+    | Dtype.Uint8 -> 255.0
+    | _ -> 2147483647.0
+  in
+  let cap =
     bind1
-      (Broadcast_in_dim { shape = ish; dims = [| Array.length ish - 1 |] })
-      [ bound ]
+      (Broadcast_in_dim { shape = [| Array.length upper |]; dims = [||] })
+      [
+        Concrete
+          (Ndarray.of_floats host [||]
+             [| Float.min (int_max host) (int_max idt) |]);
+      ]
+  in
+  let bound = bind1 Min [ raw; cap ] in
+  let bound =
+    if host = idt then bound else bind1 (Convert_element_type idt) [ bound ]
+  in
+  let bound =
+    if ish = [| Array.length upper |] then bound
+    else
+      bind1
+        (Broadcast_in_dim { shape = ish; dims = [| Array.length ish - 1 |] })
+        [ bound ]
   in
   let zero =
-    Concrete
-      (Ndarray.of_floats idt ish (Array.make (Array.fold_left ( * ) 1 ish) 0.0))
+    bind1
+      (Broadcast_in_dim { shape = ish; dims = [||] })
+      [ Concrete (Ndarray.of_floats idt [||] [| 0.0 |]) ]
   in
   bind1 Clamp [ zero; indices; bound ]

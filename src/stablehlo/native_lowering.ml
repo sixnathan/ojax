@@ -694,7 +694,9 @@ let rewriting_index i n =
   let strong =
     if is_weak i then Core.bind1 (Convert_element_type (dtype i)) [ i ] else i
   in
-  let shifted = Core.bind1 Add [ strong; scalar_like_index i (float_of_int n) ] in
+  let shifted =
+    Core.bind1 Add [ strong; scalar_like_index i (float_of_int n) ]
+  in
   Core.bind1 Select_n [ negative; i; shifted ]
 
 let scatter_index i n =
@@ -702,7 +704,8 @@ let scatter_index i n =
   let shifted = Core.bind1 Add [ i; scalar_like_index i (float_of_int n) ] in
   let picked = Core.bind1 Select_n [ negative; i; shifted ] in
   let strong =
-    if is_weak i then Core.bind1 (Convert_element_type (dtype i)) [ picked ]
+    if is_weak i || dtype i <> Dtype.I32 then
+      Core.bind1 (Convert_element_type Dtype.I32) [ picked ]
     else picked
   in
   L.broadcast_in_dim strong [| 1 |] [||]
@@ -731,6 +734,7 @@ let lu_pivots_body_inner i permutation swaps =
                s_operand_batching_dims = [||];
                s_scatter_indices_batching_dims = [||];
                s_sorted_unique = true;
+               s_clip = false;
              };
            unique_indices = true;
          })
@@ -767,8 +771,7 @@ let lu_pivots_to_permutation ~permutation_size = function
           | _ -> invalid_arg "Native_lowering: pivots state"
         in
         [
-          List.hd
-            (L.fori_loop (int32 0) (int32 k) body [ permutation; swaps ]);
+          List.hd (L.fori_loop (int32 0) (int32 k) body [ permutation; swaps ]);
         ]
   | _ -> invalid_arg "Native_lowering: pivots arity"
 
@@ -865,11 +868,13 @@ let qr_from_factors ~full_matrices = function
       let rank = Array.length dims in
       let m = dims.(rank - 2) and n = dims.(rank - 1) in
       let cut_to rows cols v =
-        let starts = Array.make rank 0 in
-        let limits = Array.copy dims in
-        limits.(rank - 2) <- rows;
-        limits.(rank - 1) <- cols;
-        L.slice v starts limits
+        if rows = m && cols = n then v
+        else
+          let starts = Array.make rank 0 in
+          let limits = Array.copy dims in
+          limits.(rank - 2) <- rows;
+          limits.(rank - 1) <- cols;
+          L.slice v starts limits
       in
       let product v = Core.bind1 Householder_product [ v; taus ] in
       if m < n then [ product (cut_to m m r); triu r ]

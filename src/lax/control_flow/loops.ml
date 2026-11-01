@@ -248,9 +248,7 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
       | A_lit _ | DropVar _ -> false
     in
     let move = List.map2 same_var carry_binders carry_outs in
-    let keep_of l flags =
-      List.filteri (fun i _ -> not (List.nth flags i)) l
-    in
+    let keep_of l flags = List.filteri (fun i _ -> not (List.nth flags i)) l in
     let pick_of l flags = List.filteri (fun i _ -> List.nth flags i) l in
     let new_consts = pick_of init move in
     let init' = keep_of init move in
@@ -265,9 +263,7 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
           |> Option.map fst)
         y_outs
     in
-    let y_kept =
-      List.filteri (fun i _ -> List.nth x_forward i = None) y_outs
-    in
+    let y_kept = List.filteri (fun i _ -> List.nth x_forward i = None) y_outs in
     let jaxpr =
       {
         jaxpr with
@@ -276,10 +272,8 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
           {
             jaxpr.jaxpr with
             in_binders =
-              pick_of carry_binders move
-              @ const_part @ hoist_part
-              @ keep_of carry_binders move
-              @ x_binders;
+              pick_of carry_binders move @ const_part @ hoist_part
+              @ keep_of carry_binders move @ x_binders;
             outs = keep_of carry_outs move @ y_kept;
           };
       }

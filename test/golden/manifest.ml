@@ -435,6 +435,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
           s_operand_batching_dims = opt "operand_batching_dims";
           s_scatter_indices_batching_dims = opt "scatter_indices_batching_dims";
           s_sorted_unique = false;
+          s_clip = false;
         }
       in
       let unique =

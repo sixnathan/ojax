@@ -168,9 +168,7 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
            (fun idx v ->
              let sh = shape_of v in
              let noncore = Array.sub sh 0 (Array.length sh - ncs.(idx)) in
-             Array.append
-               (Array.make (nb - Array.length noncore) 1)
-               noncore)
+             Array.append (Array.make (nb - Array.length noncore) 1) noncore)
            dyn_arr)
     in
     let expand = ref [] in
@@ -185,8 +183,7 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
         expand := (nb - 1 - negdim) :: !expand
       else
         let inner = !wrapped in
-        wrapped :=
-          fun args -> Interpreters.Batching.vmap inner in_axes args
+        wrapped := fun args -> Interpreters.Batching.vmap inner in_axes args
     done;
     let out = List.hd (!wrapped squeezed) in
     if !expand = [] then out

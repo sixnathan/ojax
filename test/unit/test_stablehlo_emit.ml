@@ -76,6 +76,7 @@ let sdn : T.scatter_dims =
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 let unary5 prim dtype =

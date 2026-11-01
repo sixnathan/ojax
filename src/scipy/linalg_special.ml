@@ -71,9 +71,7 @@ let comb big_n k =
   let cond = b1 And [ first; second ] in
   let cond = b1 And [ cond; b1 Ge [ k; zero ] ] in
   let weak_zero = Core.py_scalar dt 0.0 in
-  let where0 x =
-    Numpy.Jnp_util.where_weak ~y_weak:true cond x weak_zero
-  in
+  let where0 x = Numpy.Jnp_util.where_weak ~y_weak:true cond x weak_zero in
   let safe_n = where0 big_n in
   let safe_k = where0 k in
   let gammaln v = b1 Lgamma [ v ] in
@@ -87,23 +85,22 @@ let hilbert n =
   jit1 "hilbert"
     (fun _ ->
       let dt = default_float () in
-      let a =
-        b1 (Iota { dtype = dt; shape = [| n; 1 |]; dimension = 0 }) []
-      in
+      let a = b1 (Iota { dtype = dt; shape = [| n; 1 |]; dimension = 0 }) [] in
       let t = b1 (Transpose [| 1; 0 |]) [ a ] in
       let s = b1 Add [ b1 Add [ a; t ]; Core.py_scalar dt 1.0 ] in
       b1 Div [ Core.py_scalar dt 1.0; s ])
     []
 
 let weak_int v = Core.py_scalar (Dtypes.default_int_dtype ()) (float_of_int v)
-
 let int_iota n = iota (Dtypes.default_int_dtype ()) n
 
 let circulant c =
   let c = NL.atleast_1d c in
   require_vector "circulant" c;
   let n = (shape c).(0) in
-  let idx = U.remainder (b1 Sub [ column (int_iota n); row (int_iota n) ]) (weak_int n) in
+  let idx =
+    U.remainder (b1 Sub [ column (int_iota n); row (int_iota n) ]) (weak_int n)
+  in
   NL.take_trailing c [ idx ]
 
 let hankel_patches c r =
@@ -130,7 +127,9 @@ let hankel_patches c r =
 
 let hankel ?r c =
   require_vector "hankel" c;
-  let r = match r with Some v -> v | None -> Numpy.Array_creation.zeros_like c in
+  let r =
+    match r with Some v -> v | None -> Numpy.Array_creation.zeros_like c
+  in
   hankel_patches c r
 
 let toeplitz ?r c =
@@ -166,6 +165,7 @@ let set_first_row out row_values =
       s_operand_batching_dims = [||];
       s_scatter_indices_batching_dims = [||];
       s_sorted_unique = true;
+      s_clip = false;
     }
   in
   let indices =
@@ -205,7 +205,11 @@ let fiedler_companion a =
     let slice_from lo hi =
       b1
         (Slice
-           { start_indices = [| lo |]; limit_indices = [| hi |]; strides = None })
+           {
+             start_indices = [| lo |];
+             limit_indices = [| hi |];
+             strides = None;
+           })
         [ a ]
     in
     if n = 1 then b1 Neg [ L.reshape (slice_from 1 2) [| 1; 1 |] ]
@@ -413,7 +417,8 @@ let convolution_matrix ?(mode = "full") a n =
       | [ a ] ->
           let rank = Array.length (shape a) in
           let widths =
-            Array.init rank (fun d -> if d = rank - 1 then (0, n - 1) else (0, 0))
+            Array.init rank (fun d ->
+                if d = rank - 1 then (0, n - 1) else (0, 0))
           in
           let az = NL.pad a widths 0.0 in
           let raz = NL.pad (NL.flip ~axis:[| -1 |] a) widths 0.0 in
@@ -430,7 +435,9 @@ let convolution_matrix ?(mode = "full") a n =
                   ("mode must be one of 'full', 'valid', 'same'; got " ^ other)
           in
           let col0 = L.slice_in_dim ~axis:(-1) az tb (total - te) in
-          let row0 = L.slice_in_dim ~axis:(-1) raz (total - n - tb) (total - tb) in
+          let row0 =
+            L.slice_in_dim ~axis:(-1) raz (total - n - tb) (total - tb)
+          in
           toeplitz ~r:row0 col0
       | _ -> invalid_arg "convolution_matrix: arity")
     [ a ]
@@ -542,6 +549,7 @@ let sylvester_triangular_scan r s f =
               s_operand_batching_dims = [||];
               s_scatter_indices_batching_dims = [||];
               s_sorted_unique = true;
+              s_clip = false;
             };
         ]
     | _ -> invalid_arg "solve_sylvester: arity"

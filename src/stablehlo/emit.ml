@@ -91,7 +91,6 @@ let unique_symbol base =
 
 let direct_while_scope = ref false
 let lowering_scan = ref false
-
 let call_symbols : (int * bool, string) Hashtbl.t = Hashtbl.create 8
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
@@ -1336,8 +1335,7 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
         indices_are_sorted = %b, slice_sizes = %s}> : (%s, %s) -> %s\n"
        (name n) (name op_id) (name idx_id)
        (gather_dnums_attr dnums ivd)
-       dnums.g_sorted_unique
-       (array_i64 slice_sizes)
+       dnums.g_sorted_unique (array_i64 slice_sizes)
        (Ir.tensor_type_of_aval op_av)
        (Ir.tensor_type_of_aval idx_av)
        (Ir.tensor_type_of_aval out.vaval))
@@ -3352,6 +3350,17 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Dynamic_update_slice -> emit_dynamic_update_slice ctx eqn in_ids
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
+  | Scatter ({ dimension_numbers = { s_clip = true; _ } as d; _ } as o) ->
+      emit_inlined ctx eqn in_ids (function
+        | [ operand; indices; updates ] ->
+            let plain = { d with s_clip = false } in
+            let clamped =
+              Lax.Slicing.clamp_scatter_indices operand indices updates plain
+            in
+            Core.bind
+              (Scatter { o with dimension_numbers = plain })
+              [ operand; clamped; updates ]
+        | _ -> invalid_arg "Stablehlo.Emit: scatter arity")
   | Scatter { dimension_numbers; unique_indices } ->
       emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers None
   | Scatter_add { dimension_numbers } ->
@@ -3516,7 +3525,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       let total = last + const_lengths.(3) in
       emit_inlined ctx eqn in_ids (fun args ->
           Jaxpr.eval_closed_jaxpr solve
-            (List.filteri (fun i _ -> (i >= before && i < last) || i >= total) args))
+            (List.filteri
+               (fun i _ -> (i >= before && i < last) || i >= total)
+               args))
   | Cholesky when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let info =

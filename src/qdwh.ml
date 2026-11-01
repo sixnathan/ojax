@@ -170,8 +170,7 @@ let dynamic_index coefs k =
           let sh = shape coefs in
           let negative = b1 T.Lt [ k; index 0 ] in
           let strong =
-            if (aval k).T.weak_type then
-              b1 (T.Convert_element_type D.I32) [ k ]
+            if (aval k).T.weak_type then b1 (T.Convert_element_type D.I32) [ k ]
             else k
           in
           let wrapped = b1 T.Add [ strong; index sh.(0) ] in
@@ -213,7 +212,9 @@ let iterate u flag coefs update test_convergence =
             [ next_i; next; test_convergence next u ]
         | _ -> invalid_arg "qdwh: arity"
       in
-      let start = T.Concrete (Ndarray.as_weak (Ndarray.of_floats D.I32 [||] [| 0.0 |])) in
+      let start =
+        T.Concrete (Ndarray.as_weak (Ndarray.of_floats D.I32 [||] [| 0.0 |]))
+      in
       match Lax.scan ~length:n_rows body [ start; u; flag ] [] with
       | [ _; u; flag ] -> (u, flag)
       | _ -> invalid_arg "qdwh: arity")

@@ -631,7 +631,14 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
   match dimension_numbers with
   | Some ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)) ->
       dot_with ?precision ?preferred_element_type
-        { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None; dot_preferred = true }
+        {
+          lhs_contract;
+          rhs_contract;
+          lhs_batch;
+          rhs_batch;
+          dot_precision = None;
+          dot_preferred = true;
+        }
         x y
   | None ->
       if nx = 0 || ny = 0 then mul x y
@@ -650,7 +657,14 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
 let dot_general ?precision ?preferred_element_type x y ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch =
   dot_with ?precision ?preferred_element_type
-    { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None; dot_preferred = true }
+    {
+      lhs_contract;
+      rhs_contract;
+      lhs_batch;
+      rhs_batch;
+      dot_precision = None;
+      dot_preferred = true;
+    }
     x y
 
 let batch_matmul ?precision ?preferred_element_type x y =
@@ -718,9 +732,9 @@ let default_conv_dims rank =
   let id = Array.init rank Fun.id in
   { lhs_spec = id; rhs_spec = id; out_spec = id }
 
-let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation ?dimension_numbers
-    ?(feature_group_count = 1) ?(batch_group_count = 1) lhs rhs ~window_strides
-    padding =
+let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation
+    ?dimension_numbers ?(feature_group_count = 1) ?(batch_group_count = 1) lhs
+    rhs ~window_strides padding =
   let rank = ndim lhs in
   let sdims = rank - 2 in
   let ones = Array.make sdims 1 in
@@ -865,7 +879,7 @@ let fori_loop lower upper body init =
       let lower_ = int_of_float (Ndarray.get_f lo [||]) in
       let upper_ = int_of_float (Ndarray.get_f hi [||]) in
       let length = Stdlib.max (upper_ - lower_) 0 in
-      let dt = Ndarray.dtype lo in
+      let dt = Dtypes.default_int_dtype () in
       let start =
         Concrete
           (Ndarray.as_weak
@@ -879,13 +893,15 @@ let fori_loop lower upper body init =
       in
       List.tl (Lax.scan ~length step (start :: init) [])
   | _ ->
-      let lower = if dtype_of lower = dtype_of upper then lower else convert_to (dtype_of upper) lower in
+      let lower =
+        if dtype_of lower = dtype_of upper then lower
+        else convert_to (dtype_of upper) lower
+      in
       List.tl
         (List.tl
            (Lax.while_loop
               (function
-                | i :: u :: _ -> lt i u
-                | _ -> failwith "fori_loop: arity")
+                | i :: u :: _ -> lt i u | _ -> failwith "fori_loop: arity")
               (function
                 | i :: u :: rest ->
                     add i (filled (dtype_of i) [||] 1.0) :: u :: body i rest
@@ -1051,7 +1067,8 @@ let conv_transpose_shape_tuple lhs_shape rhs_shape window_strides padding
   out
 
 let conv_general_dilated_patches ?window_strides ?(padding = Valid)
-    ?lhs_dilation ?rhs_dilation ?dimension_numbers ?precision lhs ~filter_shape =
+    ?lhs_dilation ?rhs_dilation ?dimension_numbers ?precision lhs ~filter_shape
+    =
   let rank = ndim lhs in
   let k = Array.length filter_shape in
   let dn =
@@ -1101,8 +1118,7 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
       end)
     perm;
   let rhs =
-    if perm = Array.init total Fun.id then rhs
-    else b1 (Transpose perm) [ rhs ]
+    if perm = Array.init total Fun.id then rhs else b1 (Transpose perm) [ rhs ]
   in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
   conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn

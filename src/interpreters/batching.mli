@@ -28,5 +28,3 @@ val vmap_out :
   value list
 
 val find_axis : string -> string * trace * int
-
-val clamp_scatter_hook : (value -> value -> value -> scatter_dims -> value) ref

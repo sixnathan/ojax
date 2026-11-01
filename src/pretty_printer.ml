@@ -549,7 +549,10 @@ let scatter_params d unique =
   [
     ("dimension_numbers", Plain (scatter_numbers d));
     ("indices_are_sorted", Plain (py_bool d.s_sorted_unique));
-    ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
+    ( "mode",
+      Plain
+        (if d.s_clip then "GatherScatterMode.CLIP"
+         else "GatherScatterMode.FILL_OR_DROP") );
     ("unique_indices", Plain (py_bool (unique || d.s_sorted_unique)));
     ("update_consts", Plain "()");
     ("update_jaxpr", Plain "None");
@@ -709,12 +712,10 @@ let jax_params (e : eqn) =
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ("fill_value", Plain "None");
-        ( "indices_are_sorted",
-          Plain (py_bool dimension_numbers.g_sorted_unique) );
+        ("indices_are_sorted", Plain (py_bool dimension_numbers.g_sorted_unique));
         ("mode", Plain "GatherScatterMode.PROMISE_IN_BOUNDS");
         ("slice_sizes", Plain (py_ints slice_sizes));
-        ( "unique_indices",
-          Plain (py_bool dimension_numbers.g_sorted_unique) );
+        ("unique_indices", Plain (py_bool dimension_numbers.g_sorted_unique));
       ]
   | Scatter { dimension_numbers; unique_indices }
   | Scatter_mul { dimension_numbers; unique_indices } ->
@@ -741,8 +742,7 @@ let jax_params (e : eqn) =
         ( "precision",
           Plain
             (match c.conv_precision with
-            | Some (l, r) ->
-                Printf.sprintf "(Precision.%s, Precision.%s)" l r
+            | Some (l, r) -> Printf.sprintf "(Precision.%s, Precision.%s)" l r
             | None -> "None") );
         ("preferred_element_type", Plain "None");
         ("rhs_dilation", Plain (py_ints c.rhs_dilation));
@@ -867,12 +867,9 @@ let jax_params (e : eqn) =
         ("unroll", Plain (string_of_int unroll));
       ]
   | Xla_call c -> [ ("jaxpr", Sub c) ]
-  | Custom_linear_solve { matvec; vecmat; solve; transpose_solve; const_lengths }
-    ->
-      let opt = function
-        | Some c -> !closed_to_string c
-        | None -> "None"
-      in
+  | Custom_linear_solve
+      { matvec; vecmat; solve; transpose_solve; const_lengths } ->
+      let opt = function Some c -> !closed_to_string c | None -> "None" in
       [
         ( "const_lengths",
           Plain
@@ -886,8 +883,8 @@ let jax_params (e : eqn) =
             (Printf.sprintf
                "_LinearSolveTuple(matvec=%s, vecmat=%s, solve=%s, \
                 transpose_solve=%s)"
-               (!closed_to_string matvec) (opt vecmat)
-               (!closed_to_string solve) (opt transpose_solve)) );
+               (!closed_to_string matvec) (opt vecmat) (!closed_to_string solve)
+               (opt transpose_solve)) );
       ]
   | Select_and_scatter { select_jaxpr; scatter_jaxpr; window } ->
       List.sort compare

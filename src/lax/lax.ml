@@ -1587,6 +1587,23 @@ let rec impl_base prim inputs =
       | [ operand; indices ] ->
           [ Slicing.gather_impl dimension_numbers slice_sizes operand indices ]
       | _ -> failwith "lax: gather expects operand and indices")
+  | Scatter ({ dimension_numbers = { s_clip = true; _ } as d; _ } as o) -> (
+      match inputs with
+      | [ operand; indices; updates ] ->
+          let plain = { d with s_clip = false } in
+          let clamped =
+            Slicing.clamp_scatter_indices (Concrete operand) (Concrete indices)
+              (Concrete updates) plain
+          in
+          let clamped_nd =
+            match clamped with
+            | Concrete nd -> nd
+            | _ -> failwith "lax: scatter clip"
+          in
+          impl_base
+            (Scatter { o with dimension_numbers = plain })
+            [ operand; clamped_nd; updates ]
+      | _ -> failwith "lax: scatter expects operand, indices and updates")
   | ( Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
     | Scatter_max _ ) as p -> (
       match inputs with
@@ -2888,7 +2905,8 @@ let broadcasted_matvec a b =
     else
       let n = Array.length sh and h = Array.length have in
       Core.bind1
-        (Broadcast_in_dim { shape = sh; dims = Array.init h (fun i -> n - h + i) })
+        (Broadcast_in_dim
+           { shape = sh; dims = Array.init h (fun i -> n - h + i) })
         [ x ]
   in
   let a = to_shape a (Array.append batch (Array.sub sa (an - 2) 2)) in
@@ -2936,8 +2954,7 @@ let solve_with_lu a b =
             [ broadcasted_matvec a widened ]
         | _ -> invalid_arg "solve: arity")
       (function
-        | [ x ] -> [ broadcasted_matvec a x ]
-        | _ -> invalid_arg "solve: arity")
+        | [ x ] -> [ broadcasted_matvec a x ] | _ -> invalid_arg "solve: arity")
       bs
       (fun _ -> function
         | [ x ] -> [ Linalg.lu_solve_vector ~transpose:false lu_ permutation x ]
@@ -2955,9 +2972,6 @@ let solve_with_lu a b =
     | _ -> invalid_arg "solve: arity"
 
 let () = Interpreters.Ad.solve_ref := solve_with_lu
-
-let () =
-  Interpreters.Batching.clamp_scatter_hook := Slicing.clamp_scatter_indices
 
 module Linalg = Linalg
 module Special = Special

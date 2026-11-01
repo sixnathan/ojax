@@ -905,9 +905,7 @@ let select ?default condlist choicelist =
   if List.length choicelist <> k then
     invalid_arg "select: condlist and choicelist must have the same length";
   let default_v =
-    match default with
-    | Some d -> d
-    | None -> Jnp_util.py_int 0
+    match default with Some d -> d | None -> Jnp_util.py_int 0
   in
   let dt = result_type (default_v :: choicelist) in
   let cases = List.map (fun v -> convert v dt) (default_v :: choicelist) in
@@ -1641,7 +1639,8 @@ let take_trailing a indices =
     List.mapi
       (fun d i ->
         let w = normalize_index i s.(nd - k + d) in
-        if dtype w = D.I32 then w else bind1 (T.Convert_element_type D.I32) [ w ])
+        if dtype w = D.I32 then w
+        else bind1 (T.Convert_element_type D.I32) [ w ])
       indices
   in
   let start =

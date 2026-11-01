@@ -13,7 +13,6 @@ type ord = Onone | Ofro | Onuc | Onum of float
 type norm_axis = Anone | Aint of int | Apair of int * int
 
 let highest = Lax_config.precision_of_level Lax_config.Precision_highest
-
 let get_aval = C.get_aval
 let shape v = (get_aval v).T.shape
 let dtype v = (get_aval v).T.dtype
@@ -244,13 +243,16 @@ and solve_body a b =
   let na = Array.length sa and nb = Array.length sb in
   if na < 2 then invalid_arg "left hand array must be at least two dimensional";
   if nb < 1 then invalid_arg "right hand array must be at least one dimensional";
-  if nb > 1 && na = nb + 1 && sa.(na - 1) = sb.(nb - 1)
-     && sa.(na - 1) <> sb.(nb - 2)
+  if
+    nb > 1
+    && na = nb + 1
+    && sa.(na - 1) = sb.(nb - 1)
+    && sa.(na - 1) <> sb.(nb - 2)
   then
     invalid_arg
       "Invalid shapes for solve: Prior to JAX v0.5.0, this would have been \
-       treated as a batched 1-dimensional solve. To recover this behavior, \
-       use solve(a, b[..., None]).squeeze(-1).";
+       treated as a batched 1-dimensional solve. To recover this behavior, use \
+       solve(a, b[..., None]).squeeze(-1).";
   let signature = if nb = 1 then "(m,m),(m)->(m)" else "(m,m),(m,n)->(m,n)" in
   Vectorize.vectorize ~signature
     (function
@@ -269,10 +271,7 @@ and inv_body a =
     else
       Core.bind1
         (T.Broadcast_in_dim
-           {
-             shape = sa;
-             dims = Array.init 2 (fun i -> na - 2 + i);
-           })
+           { shape = sa; dims = Array.init 2 (fun i -> na - 2 + i) })
         [ eye ]
   in
   solve a batched
@@ -688,7 +687,9 @@ and lstsq_body ~rcond ~numpy_resid a b =
   let s_inv_col = NL.expand_dims s_inv [| ndim s_inv |] in
   let utb = TC.matmul ~precision:highest (UF.conj (matrix_transpose_v u)) bm in
   let x =
-    TC.matmul ~precision:highest (UF.conj (matrix_transpose_v vt)) (UF.multiply s_inv_col utb)
+    TC.matmul ~precision:highest
+      (UF.conj (matrix_transpose_v vt))
+      (UF.multiply s_inv_col utb)
   in
   let b_est = TC.matmul ~precision:highest a x in
   let full_resid () =

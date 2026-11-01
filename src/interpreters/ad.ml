@@ -131,6 +131,7 @@ let matmul x y =
          rhs_contract = [| ndim - 2 |];
          lhs_batch = batch;
          rhs_batch = batch;
+         untyped_dot = false;
        })
     [ x; y ]
 
@@ -191,12 +192,9 @@ let slice_in_dim ~axis ?(stride = 1) start stop x =
   start_indices.(axis) <- start;
   limit_indices.(axis) <- stop;
   let strides =
-    if stride = 1 then None
-    else begin
-      let st = Array.make n 1 in
-      st.(axis) <- stride;
-      Some st
-    end
+    let st = Array.make n 1 in
+    st.(axis) <- stride;
+    Some st
   in
   b1 (Slice { start_indices; limit_indices; strides }) [ x ]
 
@@ -2970,6 +2968,7 @@ let dot_transpose_lhs g (x : aval) y (dims : dot_dims) swap_ans =
       rhs_contract = y_kept;
       lhs_batch = ans_batch;
       rhs_batch = dims.rhs_batch;
+      untyped_dot = dims.untyped_dot;
     }
   in
   let x_contract_sorted =
@@ -3614,6 +3613,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               rhs_contract = dims.lhs_contract;
               lhs_batch = dims.rhs_batch;
               rhs_batch = dims.lhs_batch;
+              untyped_dot = dims.untyped_dot;
             }
           in
           [

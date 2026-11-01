@@ -222,6 +222,8 @@ val dot_general :
   value
 
 val batch_matmul : value -> value -> value
+val batch_matmul_typed : value -> value -> value
+val dot_typed : value -> value -> value
 
 val padtype_to_pads :
   int array -> int array -> int array -> padding -> (int * int) array

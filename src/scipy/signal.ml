@@ -230,7 +230,7 @@ let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
             in
             let part = L.slice_in_dim rows lo hi in
             let coef, _, _, _ = Numpy.Linalg.lstsq design part in
-            b1 Sub [ part; L.dot design coef ])
+            b1 Sub [ part; L.dot_typed design coef ])
           (segments bounds)
       in
       let out = NL.reshape (NL.concatenate ~axis:0 cleaned) moved_shape in

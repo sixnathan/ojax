@@ -2367,6 +2367,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
            rhs_contract = [| 0 |];
            lhs_batch = [||];
            rhs_batch = [||];
+           untyped_dot = false;
          })
       [ centered; x_t ]
   in

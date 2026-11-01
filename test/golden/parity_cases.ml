@@ -173,10 +173,7 @@ let lax_run op p a b =
            ]
            [ a () ])
   | "lax_fori_loop" ->
-      let scalar_i v =
-        T.Concrete
-          (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| float_of_int v |])
-      in
+      let scalar_i = Ojax.Numpy.Jnp_util.py_int in
       Some
         (L.fori_loop (scalar_i 0)
            (scalar_i (int "n" p))
@@ -519,7 +516,7 @@ let scipy_run op p a b c =
   | "rnd_multivariate_normal" ->
       let m = b () in
       let n = (shp m).(0) in
-      let product = L.dot m (L.transpose m [| 1; 0 |]) in
+      let product = L.dot_typed m (L.transpose m [| 1; 0 |]) in
       let eye = NL.identity ~dtype:(dt_of m) n in
       let cov = L.add product (L.mul eye (like eye 2.0)) in
       Some
@@ -617,7 +614,7 @@ let spd v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul v (NL.swapaxes (-1) (-2) v) in
+  let product = L.batch_matmul_typed v (NL.swapaxes (-1) (-2) v) in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -925,7 +922,7 @@ let herm v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul v (L.conj (NL.swapaxes (-1) (-2) v)) in
+  let product = L.batch_matmul_typed v (L.conj (NL.swapaxes (-1) (-2) v)) in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -989,7 +986,7 @@ let complex_grad_run op a =
   | "cg_conj" -> on (abs_of (fun z -> L.mul (L.conj z) z))
   | "cg_real" -> on (fun z -> UF.power (L.real z) (scalar_int 2))
   | "cg_imag" -> on (fun z -> UF.power (L.imag z) (scalar_int 2))
-  | "cg_matmul" -> on (abs_of (fun z -> L.dot z (L.conj z)))
+  | "cg_matmul" -> on (abs_of (fun z -> L.dot_typed z (L.conj z)))
   | "cg_fft" -> on (abs_of (fun z -> Ojax.Numpy.Fft.fft z))
   | "cg_angle" -> on (fun z -> NL.angle z)
   | _ -> None
@@ -999,7 +996,7 @@ let linalg_batch_run op params a b =
   let module SL = Ojax.Scipy.Linalg in
   let module LL = Ojax.Lax.Linalg in
   let h_of v = UF.conj (NL.swapaxes (-1) (-2) v) in
-  let recon z t = L.batch_matmul (L.batch_matmul z t) (h_of z) in
+  let recon z t = L.batch_matmul_typed (L.batch_matmul_typed z t) (h_of z) in
   let diag_mag t =
     Ojax.Numpy.Sorting.sort ~axis:(Some (-1))
       (UF.absolute (NL.diagonal ~axis1:(-2) ~axis2:(-1) t))
@@ -1056,7 +1053,7 @@ let linalg_batch_run op params a b =
       | _ -> failwith "parity: hessenberg arity")
   | "lx_sqrtm" ->
       let r = SL.sqrtm (a ()) in
-      Some [ L.dot r r; SL.sqrtm (herm (a ())) ]
+      Some [ L.dot_typed r r; SL.sqrtm (herm (a ())) ]
   | "lx_expm_frechet" -> Some (SL.expm_frechet (a ()) (b ()))
   | "lx_polar" ->
       Some (SL.polar ~side:(str_p "side") ~method_:(str_p "method") (a ()))

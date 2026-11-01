@@ -49,7 +49,7 @@ let dense ?(w_init = glorot) ?(b_init = normal_init) out_dim =
         | Tree.Tuple [ Tree.Leaf w; Tree.Leaf b ] ->
             let product =
               let nx = Array.length (Core.get_aval x).shape in
-              L.dot_general x w
+              L.dot_general ~preferred_element_type:(Core.get_aval x).dtype x w
                 ~lhs_contract:[| nx - 1 |]
                 ~rhs_contract:[| 0 |] ~lhs_batch:[||] ~rhs_batch:[||]
             in

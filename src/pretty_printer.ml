@@ -617,8 +617,10 @@ let jax_params (e : eqn) =
             (Printf.sprintf "((%s, %s), (%s, %s))" (py_list d.lhs_contract)
                (py_list d.rhs_contract) (py_list d.lhs_batch)
                (py_list d.rhs_batch)) );
-        ("preferred_element_type", Plain (dn (out_dtype ())));
       ]
+      @
+      if d.untyped_dot then []
+      else [ ("preferred_element_type", Plain (dn (out_dtype ()))) ]
   | Iota { dtype; shape; dimension } ->
       [
         ("dimension", Plain (string_of_int dimension));

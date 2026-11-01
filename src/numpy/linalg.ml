@@ -269,8 +269,9 @@ and solve_body a b =
   let matvec_tangent da x =
     if rank = 2 then
       let row_major = Core.bind1 (T.Transpose [| 1; 0 |]) [ x ] in
-      Lax_api.dot_general da row_major ~lhs_contract:[| 1 |]
-        ~rhs_contract:[| 1 |] ~lhs_batch:[||] ~rhs_batch:[||]
+      Lax_api.dot_general ~preferred_element_type:(dtype da) da row_major
+        ~lhs_contract:[| 1 |] ~rhs_contract:[| 1 |] ~lhs_batch:[||]
+        ~rhs_batch:[||]
     else TC.matmul da x
   in
   let solved =

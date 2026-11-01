@@ -199,8 +199,11 @@ let einsum_pair ?precision ?preferred lhs rhs lhs_names rhs_names result =
   let rem_rhs = removechars rhs_names deleted in
   let names_rl = batch_str ^ rem_rhs ^ rem_lhs in
   let dg lc rc lb rb x y =
-    Lax_api.dot_general ?precision ?preferred_element_type:preferred x y
-      ~lhs_contract:lc ~rhs_contract:rc ~lhs_batch:lb ~rhs_batch:rb
+    Lax_api.dot_general ?precision
+      ~preferred_element_type:
+        (Option.value preferred
+           ~default:(Dtypes.promote_types (dtype x) (dtype y)))
+      x y ~lhs_contract:lc ~rhs_contract:rc ~lhs_batch:lb ~rhs_batch:rb
   in
   let operand, names =
     if names_rl = result then

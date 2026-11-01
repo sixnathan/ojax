@@ -309,6 +309,7 @@ and dot_dims = {
   rhs_contract : int array;
   lhs_batch : int array;
   rhs_batch : int array;
+  untyped_dot : bool;
 }
 
 and gather_dims = {

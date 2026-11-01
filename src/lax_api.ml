@@ -571,7 +571,9 @@ let dot_accumulate prim x y acc =
   else convert_to acc (b1 prim [ x; y ])
 
 let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
-  let prim = Dot_general dn in
+  let prim =
+    Dot_general { dn with untyped_dot = preferred_element_type = None }
+  in
   let lhs = dtype_of x and rhs = dtype_of y in
   let result = if lhs = rhs then lhs else Dtypes.promote_types lhs rhs in
   let has_algorithm =
@@ -617,7 +619,13 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
   match dimension_numbers with
   | Some ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)) ->
       dot_with ?precision ?preferred_element_type
-        { lhs_contract; rhs_contract; lhs_batch; rhs_batch }
+        {
+          lhs_contract;
+          rhs_contract;
+          lhs_batch;
+          rhs_batch;
+          untyped_dot = false;
+        }
         x y
   | None ->
       if nx = 0 || ny = 0 then mul x y
@@ -628,24 +636,37 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
             rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
             lhs_batch = [||];
             rhs_batch = [||];
+            untyped_dot = false;
           }
           x y
 
 let dot_general ?precision ?preferred_element_type x y ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch =
   dot_with ?precision ?preferred_element_type
-    { lhs_contract; rhs_contract; lhs_batch; rhs_batch }
+    { lhs_contract; rhs_contract; lhs_batch; rhs_batch; untyped_dot = false }
     x y
 
-let batch_matmul x y =
+let batch_matmul_with ?preferred_element_type x y =
   let n = ndim x in
   if ndim y <> n || n < 2 then
     invalid_arg "batch_matmul requires equal ranks of at least two";
   let batch = Array.init (n - 2) Fun.id in
-  dot_general x y
+  dot_general ?preferred_element_type x y
     ~lhs_contract:[| n - 1 |]
     ~rhs_contract:[| n - 2 |]
     ~lhs_batch:batch ~rhs_batch:batch
+
+let batch_matmul x y = batch_matmul_with x y
+
+let batch_matmul_typed x y =
+  batch_matmul_with
+    ~preferred_element_type:(Dtypes.promote_types (dtype_of x) (dtype_of y))
+    x y
+
+let dot_typed x y =
+  dot
+    ~preferred_element_type:(Dtypes.promote_types (dtype_of x) (dtype_of y))
+    x y
 
 let padtype_to_pads in_shape window_shape window_strides padding =
   match padding with
@@ -794,19 +815,7 @@ let cummax = Lax.cummax
 let cummin = Lax.cummin
 let cumlogsumexp = Lax.cumlogsumexp
 let custom_linear_solve = Lax.custom_linear_solve
-
-let map_scan f xs =
-  Lax.scan
-    (fun args ->
-      let n_x = List.length xs in
-      ignore n_x;
-      match args with
-      | _ :: slices -> index_scalar 0 :: f slices
-      | [] -> failwith "map: arity")
-    [ index_scalar 0 ]
-    xs
-  |> List.tl
-
+let map_scan f xs = Lax.scan f [] xs
 let switch = Lax.switch
 
 let map ?batch_size f xs =
@@ -866,28 +875,45 @@ let fori_loop lower upper body init =
 
 let custom_root f initial_guess solve tangent_solve =
   let avals = List.map aval initial_guess in
-  let closed, hoisted = Custom_derivatives.closure_convert f avals in
   let n = List.length initial_guess in
-  let split all =
-    match Util.split_list all [ n ] with
-    | [ x; h ] -> (x, h)
+  let closed_f, f_consts = Custom_derivatives.closure_convert f avals in
+  let closed_solve, solve_consts =
+    Custom_derivatives.closure_convert (solve f) avals
+  in
+  let linearize_and_solve args =
+    match Util.split_list args [ n ] with
+    | [ x; b ] ->
+        let matvec v = snd (Interpreters.Ad.jvp f x v) in
+        tangent_solve matvec b
     | _ -> failwith "custom_root: arity"
   in
-  let f_of h x = closed (x @ h) in
+  let closed_ls, ls_consts =
+    Custom_derivatives.closure_convert linearize_and_solve (avals @ avals)
+  in
+  let nf = List.length f_consts and ns = List.length solve_consts in
+  let nl = List.length ls_consts in
+  let split all =
+    match Util.split_list all [ nf; ns; nl ] with
+    | [ pf; ps; pl; x ] -> (pf, ps, pl, x)
+    | _ -> failwith "custom_root: arity"
+  in
   let primal all =
-    let x0, h = split all in
-    solve (f_of h) x0
+    let _, ps, _, x0 = split all in
+    closed_solve (x0 @ ps)
   in
   let jvp primals tangents =
-    let x0, h = split primals in
-    let _, th = split tangents in
-    let solution = solve (f_of h) x0 in
-    let _, rhs = Interpreters.Ad.jvp (fun hs -> f_of hs solution) h th in
-    let matvec v = snd (Interpreters.Ad.jvp (f_of h) solution v) in
-    let answer = tangent_solve matvec (List.map neg rhs) in
+    let pf, _, pl, _ = split primals in
+    let solution = primal primals in
+    let tf, _, _, _ = split tangents in
+    let _, rhs =
+      Interpreters.Ad.jvp (fun hs -> closed_f (solution @ hs)) pf tf
+    in
+    let answer = List.map neg (closed_ls (solution @ rhs @ pl)) in
     (solution, answer)
   in
-  Custom_derivatives.custom_jvp primal ~jvp (initial_guess @ hoisted)
+  Custom_derivatives.custom_jvp ~name:"_custom_root" ~jvp_name:"_root_jvp"
+    primal ~jvp
+    (f_consts @ solve_consts @ ls_consts @ initial_guess)
 
 let platform_dependent ?default ?cuda ~cpu () =
   match (Config.current_platform (), cuda, default) with

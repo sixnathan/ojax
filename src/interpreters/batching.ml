@@ -662,6 +662,7 @@ let dot_general_batch (dims : dot_dims) (vals : value list)
           rhs_batch = Array.append [| r |] (bump dims.rhs_batch r);
           lhs_contract = bump dims.lhs_contract l;
           rhs_contract = bump dims.rhs_contract r;
+          untyped_dot = dims.untyped_dot;
         }
       in
       (b1 (Dot_general dims') [ lhs; rhs ], Some 0)

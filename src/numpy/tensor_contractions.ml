@@ -14,8 +14,9 @@ let pref preferred vs =
 let astype v dt = if dtype v = dt then v else NL.astype v dt
 
 let dot_general ?precision lc rc lb rb a b =
-  Lax_api.dot_general ?precision a b ~lhs_contract:lc ~rhs_contract:rc
-    ~lhs_batch:lb ~rhs_batch:rb
+  Lax_api.dot_general ?precision
+    ~preferred_element_type:(Dtypes.promote_types (dtype a) (dtype b))
+    a b ~lhs_contract:lc ~rhs_contract:rc ~lhs_batch:lb ~rhs_batch:rb
 
 let mul_prim dt = if dt = D.Bool then T.And else T.Mul
 

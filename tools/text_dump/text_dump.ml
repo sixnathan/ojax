@@ -119,6 +119,7 @@ let jaxpr_builders =
                  rhs_contract = [| 0 |];
                  lhs_batch = [||];
                  rhs_batch = [||];
+                 untyped_dot = true;
                })
             a;
         ] );

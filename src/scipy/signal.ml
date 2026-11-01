@@ -191,7 +191,7 @@ let correlate2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0) in1 in2
         conj_if_complex (convolve_nd (flip_all in2) (conj_if_complex in1) mode)
       else flipped_first ()
 
-let index_dtype () = Dtypes.default_int_dtype ()
+let index_dtype () = Dtype.I32
 let int_literal dt v = Concrete (Ndarray.of_floats dt [||] [| float_of_int v |])
 
 let slice_rows x lo hi =

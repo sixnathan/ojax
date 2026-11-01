@@ -130,8 +130,7 @@ let deinterleave x axis =
   let set_every target first updates =
     let count = (shape updates).(axis) in
     let positions =
-      NL.arange ~start:(float_of_int first) ~step:2.0
-        ~dtype:(Dtypes.default_int_dtype ())
+      NL.arange ~start:(float_of_int first) ~step:2.0 ~dtype:Dtype.I32
         (float_of_int size)
     in
     L.scatter ~unique_indices:true target

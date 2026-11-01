@@ -351,9 +351,9 @@ let pad_batch (cfg : (int * int * int) array) (vals : value list)
       let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
       let padded = b1 (Pad cfg2) [ x; zero ] in
       let keep =
-        Concrete
-          (Ndarray.of_floats Dtype.Bool (Core.get_aval x).shape
-             (Array.make (Array.fold_left ( * ) 1 (Core.get_aval x).shape) 1.0))
+        b1
+          (Broadcast_in_dim { shape = (Core.get_aval x).shape; dims = [||] })
+          [ Concrete (Ndarray.of_floats Dtype.Bool [||] [| 1.0 |]) ]
       in
       let off = Concrete (Ndarray.of_floats Dtype.Bool [||] [| 0.0 |]) in
       let mask = b1 (Pad cfg2) [ keep; off ] in
@@ -909,10 +909,10 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
             match prim with
             | Fft { fft_type; fft_lengths } ->
                 (match fft_type with
-                | Fft_forward -> "f"
-                | Fft_inverse -> "i"
-                | Fft_real -> "r"
-                | Fft_inverse_real -> "ir")
+                  | Fft_forward -> "f"
+                  | Fft_inverse -> "i"
+                  | Fft_real -> "r"
+                  | Fft_inverse_real -> "ir")
                 ^ String.concat ","
                     (List.map string_of_int (Array.to_list fft_lengths))
             | _ -> ""
@@ -1302,7 +1302,6 @@ let unstacks_operands prim (bdims : int option list) =
   | Custom_vjp_call id, _ -> (
       match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
   | Dynamic_update_slice, _ :: _ :: indices -> any_batched indices
-  | Pad _, [ _; padding ] -> padding <> None
   | Reduce _, _ ->
       let n = List.length bdims / 2 in
       any_batched (List.filteri (fun i _ -> i >= n) bdims)

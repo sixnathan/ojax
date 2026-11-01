@@ -21,3 +21,6 @@ val fold : ('acc -> float -> 'acc) -> 'acc -> t -> 'acc
 val canonicalize : Dtype.t -> t -> t
 val weak : t -> bool
 val as_weak : t -> t
+val py_value : t -> float option
+val with_py_value : t -> float -> t
+val without_py_value : t -> t

@@ -3,7 +3,9 @@ open Types
 let instantiate_zero t =
   if Ad_util.is_symbolic_zero t then
     let a = Core.get_aval t in
-    Core.splat a.dtype a.shape 0.0
+    if a.weak_type && Array.length a.shape = 0 then
+      Concrete (Ndarray.as_weak (Ndarray.of_floats a.dtype [||] [| 0.0 |]))
+    else Core.splat a.dtype a.shape 0.0
   else t
 
 let custom_jvp ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =

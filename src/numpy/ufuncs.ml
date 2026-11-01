@@ -497,7 +497,8 @@ let signbit_body x =
   | D.I32 | D.I64 | D.I8 | D.I16 | D.I2 | D.I4 -> bind1 T.Lt [ a; zeros_like a ]
   | D.F16 | D.Bf16 ->
       let i = bind1 (T.Bitcast_convert_type D.I16) [ a ] in
-      bind1 T.Lt [ i; zeros_like i ]
+      let s = bind1 T.Shift_right_arithmetic [ i; const_full D.I16 sh 15.0 ] in
+      bind1 (T.Convert_element_type D.Bool) [ s ]
   | D.Float0 -> invalid_arg "signbit does not accept float0"
   | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4 | D.F8_e4m3
   | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2 | D.F8_e5m2fnuz

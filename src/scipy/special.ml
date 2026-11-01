@@ -762,8 +762,11 @@ let const_full dt sh x = Core.splat dt sh x
 
 let scalar_of v x =
   let literal = Nd.of_floats (dtype v) [||] [| x |] in
-  T.Concrete (if (C.get_aval v).weak_type then Nd.as_weak literal else literal)
+  T.Concrete
+    (if (C.get_aval v).weak_type then Nd.with_py_value (Nd.as_weak literal) x
+     else literal)
 
+let lax_const v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
 let coeff_of v a = T.Concrete (Nd.of_floats (dtype v) [| Array.length a |] a)
 let where_ = NL.where_
 let q32 v = Int32.float_of_bits (Int32.bits_of_float v)
@@ -1024,8 +1027,8 @@ let gammasgn x =
       (band x_negative (ne_ (UF.remainder floor_x (py_int 2)) 0.0))
       (band (eq_ x 0.0) (UF.signbit x))
   in
-  select_default (scalar_of x 1.0) [ c1; c2 ]
-    [ scalar_of x Float.nan; scalar_of x (-1.0) ]
+  select_default (lax_const x 1.0) [ c1; c2 ]
+    [ lax_const x Float.nan; lax_const x (-1.0) ]
 
 let lanczos_g = 7.0
 
@@ -1226,8 +1229,7 @@ let rec logit x =
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x ], [ g ] ->
-             ( [ logit x ],
-               [ L.div g (L.mul x (L.sub (scalar_of x 1.0) x)) ] )
+             ([ logit x ], [ L.div g (L.mul x (L.sub (scalar_of x 1.0) x)) ])
          | _ -> assert false)
        [ x ])
 
@@ -1275,8 +1277,7 @@ let rec xlogx x =
        (function [ x ] -> [ xlogy x x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
-         | [ x ], [ x_dot ] ->
-             ([ xlogx x ], [ x_dot *! add_lit (L.log x) 1.0 ])
+         | [ x ], [ x_dot ] -> ([ xlogx x ], [ x_dot *! add_lit (L.log x) 1.0 ])
          | _ -> assert false)
        [ x ])
 
@@ -1738,7 +1739,7 @@ let log_softmax ?axis x =
 
 let poch_primal z m =
   let z, m = real_only2 "poch" z m in
-  where_ (eq_ m 0.0) (scalar_of z 1.0) (gamma (z +! m) /! gamma z)
+  where_ (eq_ m 0.0) (lax_const z 1.0) (gamma (z +! m) /! gamma z)
 
 let rec poch z m =
   List.hd
@@ -1750,7 +1751,7 @@ let rec poch z m =
              let out = poch z m in
              let wrt_z = (digamma (z +! m) -! digamma z) *! poch z m *! dz in
              let wrt_m = digamma (z +! m) *! poch z m *! dm in
-             ([ out ], [ L.add wrt_z wrt_m ])
+             ([ out ], [ Ad_util.add_any wrt_z wrt_m ])
          | _ -> assert false)
        [ z; m ])
 

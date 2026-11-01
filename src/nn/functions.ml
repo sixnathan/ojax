@@ -42,12 +42,41 @@ let jit_unary name f x =
     (function [ x ] -> f x | _ -> invalid_arg (name ^ ": arity"))
     [ x ]
 
-let relu = jit_unary "relu" (fun x -> UF.maximum x (scalar_like x 0.0))
+let select_or_zero pred g =
+  let zeros = Core.splat (dtype g) (shape g) 0.0 in
+  bind1 T.Select_n [ pred; zeros; g ]
+
+let custom_unary name primal rule =
+  let call =
+    Custom_derivatives.defjvps ~name
+      (function [ x ] -> [ primal x ] | _ -> invalid_arg "custom: arity")
+      [
+        Some
+          (fun g out primals ->
+            match (out, primals) with
+            | [ ans ], [ x ] -> [ rule g ans x ]
+            | _ -> invalid_arg "custom: arity");
+      ]
+  in
+  fun x -> List.hd (call [ x ])
+
+let relu =
+  custom_unary "relu"
+    (jit_unary "relu" (fun x -> UF.maximum x (scalar_like x 0.0)))
+    (fun g _ x ->
+      let pred = UF.greater x (scalar_like x 0.0) in
+      select_or_zero pred g)
 
 let relu6 =
-  jit_unary "relu6" (fun x ->
-      let high = UF.maximum x (scalar_like x 0.0) in
-      UF.minimum high (scalar_like x 6.0))
+  custom_unary "relu6"
+    (jit_unary "relu6" (fun x ->
+         let high = UF.maximum x (scalar_like x 0.0) in
+         UF.minimum high (scalar_like x 6.0)))
+    (fun g _ x ->
+      let above = UF.greater x (scalar_like x 0.0) in
+      let below = UF.less x (scalar_like x 6.0) in
+      let pred = UF.logical_and above below in
+      select_or_zero pred g)
 
 let softplus =
   jit_unary "softplus" (fun x -> UF.logaddexp x (scalar_like x 0.0))
@@ -133,12 +162,18 @@ let squareplus ?(b = 4.0) x =
   let y = UF.add x (UF.sqrt (UF.add (UF.square x) (scalar_like x b))) in
   UF.divide y (scalar_like x 2.0)
 
-let log1mexp x =
+let log1mexp_primal x =
   let c = scalar_like x (Float.log 2.0) in
+  let pred = UF.less x c in
   let nx = UF.negative x in
-  where3 (UF.less x c)
-    (UF.log (UF.negative (UF.expm1 nx)))
-    (UF.log1p (UF.negative (UF.exp nx)))
+  let a = UF.log (UF.negative (UF.expm1 nx)) in
+  let nx2 = UF.negative x in
+  let b = UF.log1p (UF.negative (UF.exp nx2)) in
+  where3 pred a b
+
+let log1mexp =
+  custom_unary "log1mexp" log1mexp_primal (fun g _ x ->
+      UF.divide g (UF.expm1 x))
 
 let gelu ?(approximate = true) x =
   let x = inexact x in

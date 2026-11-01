@@ -37,6 +37,10 @@ let opt_bool name p =
 
 let like x v = L.full [||] v (Ojax.Core.get_aval x).dtype
 
+let scalar_int n =
+  Ojax.Types.Concrete
+    (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| float_of_int n |])
+
 let padding_of p =
   match U.to_string (U.member "padding" p) with
   | "SAME" -> L.Same
@@ -604,9 +608,10 @@ module LA = Ojax.Numpy.Linalg
 let spd v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
+  ignore sh;
   let product = L.batch_matmul v (NL.swapaxes (-1) (-2) v) in
-  let eye = NL.broadcast_to (NL.identity ~dtype:(dt_of v) n) sh in
-  UF.add product (L.mul eye (like eye 3.0))
+  let eye = NL.eye ~dtype:(dt_of v) n in
+  UF.add product (UF.multiply (like eye 3.0) eye)
 
 let batched_run op p a b =
   match op with
@@ -903,9 +908,10 @@ let gap_run op p a b =
 let herm v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
+  ignore sh;
   let product = L.batch_matmul v (L.conj (NL.swapaxes (-1) (-2) v)) in
-  let eye = NL.broadcast_to (NL.identity ~dtype:(dt_of v) n) sh in
-  UF.add product (L.mul eye (like eye 3.0))
+  let eye = NL.eye ~dtype:(dt_of v) n in
+  UF.add product (UF.multiply (like eye 3.0) eye)
 
 let sum_all v = L.reduce_sum v (Array.init (Array.length (shp v)) Fun.id)
 
@@ -965,14 +971,8 @@ let complex_grad_run op a =
   | "cg_square" -> on (abs_of (fun z -> L.mul z z))
   | "cg_reciprocal" -> on (abs_of L.reciprocal)
   | "cg_conj" -> on (abs_of (fun z -> L.mul (L.conj z) z))
-  | "cg_real" ->
-      on (fun z ->
-          let r = L.real z in
-          L.mul r r)
-  | "cg_imag" ->
-      on (fun z ->
-          let r = L.imag z in
-          L.mul r r)
+  | "cg_real" -> on (fun z -> UF.power (L.real z) (scalar_int 2))
+  | "cg_imag" -> on (fun z -> UF.power (L.imag z) (scalar_int 2))
   | "cg_matmul" -> on (abs_of (fun z -> L.dot z (L.conj z)))
   | "cg_fft" -> on (abs_of (fun z -> Ojax.Numpy.Fft.fft z))
   | "cg_angle" -> on (fun z -> NL.angle z)
@@ -1629,14 +1629,14 @@ let transform_sweep_run op a =
       (Ojax.Interpreters.Ad.grad
          (fun args ->
            let m = UF.absolute (apply (List.hd args)) in
-           RD.sum (UF.multiply m m))
+           RD.sum (UF.power m (scalar_int 2)))
          [ a () ])
   else if prefixed "swj_" then begin
     let x = a () in
     let half = UF.multiply x (like x 0.5) in
     let tangent = UF.add half (like x 0.25) in
     let _, t =
-      Ojax.Interpreters.Ad.jvp
+      Ojax.Interpreters.Ad.jvp_instantiated
         (fun args -> [ apply (List.hd args) ])
         [ x ] [ tangent ]
     in

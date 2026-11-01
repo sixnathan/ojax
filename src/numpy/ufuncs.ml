@@ -581,17 +581,37 @@ let hypot x1 x2 =
   let x = where x1_is0 x1m v in
   where idx_inf (const_full dt sh infinity) x
 
+let rec sinc_maclaurin_call k =
+  Custom_derivatives.custom_jvp ~name:"_sinc_maclaurin"
+    ~jvp_name:"_sinc_maclaurin_jvp"
+    (function
+      | [ x ] ->
+          let zeroed = bind1 T.Mul [ x; Core.splat (dtype x) [||] 0.0 ] in
+          if k mod 2 = 1 then [ zeroed ]
+          else
+            let sign = if k / 2 mod 2 = 0 then 1.0 else -1.0 in
+            let c = sign /. float_of_int (k + 1) in
+            [ bind1 T.Add [ zeroed; Core.splat (dtype x) [||] c ] ]
+      | _ -> invalid_arg "sinc: arity")
+    ~jvp:(fun primals tangents ->
+      match (primals, tangents) with
+      | [ x ], [ t ] ->
+          let out = sinc_maclaurin_call k [ x ] in
+          let next = List.hd (sinc_maclaurin_call (k + 1) [ x ]) in
+          (out, [ bind1 T.Mul [ next; t ] ])
+      | _ -> invalid_arg "sinc: arity")
+
 let sinc x =
   Jnp_util.jit1 "sinc"
     (function
       | [ x ] ->
           let a = p1 (promote_inexact [ x ]) in
           let dt = dtype a and sh = shape a in
-          let eq_zero = bind1 T.Eq [ a; const_full dt sh 0.0 ] in
-          let pi_x = bind1 T.Mul [ const_full dt sh Float.pi; a ] in
-          let safe = where eq_zero (const_full dt sh 1.0) pi_x in
-          let times_zero = bind1 T.Mul [ pi_x; const_full dt sh 0.0 ] in
-          let maclaurin = bind1 T.Add [ times_zero; const_full dt sh 1.0 ] in
+          ignore sh;
+          let eq_zero = bind1 T.Eq [ a; Core.splat dt [||] 0.0 ] in
+          let pi_x = bind1 T.Mul [ Core.splat dt [||] Float.pi; a ] in
+          let safe = where eq_zero (Core.splat dt [||] 1.0) pi_x in
+          let maclaurin = List.hd (sinc_maclaurin_call 0 [ pi_x ]) in
           let sin_safe = bind1 T.Sin [ safe ] in
           let ratio = bind1 T.Div [ sin_safe; safe ] in
           where eq_zero maclaurin ratio
@@ -614,26 +634,7 @@ let is_complex v =
 
 let logaddexp x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in
-  let amax = bind1 T.Max [ a; b ] in
-  if is_complex a then begin
-    let two = const_full (dtype a) (shape a) 2.0 in
-    let delta =
-      bind1 T.Sub [ bind1 T.Add [ a; b ]; bind1 T.Mul [ amax; two ] ]
-    in
-    let out = bind1 T.Add [ amax; bind1 T.Log1p [ bind1 T.Exp [ delta ] ] ] in
-    bind1 T.Complex
-      [ bind1 T.Real [ out ]; wrap_between (bind1 T.Imag [ out ]) Float.pi ]
-  end
-  else
-    let delta = bind1 T.Sub [ a; b ] in
-    let is_nan = bind1 T.Ne [ delta; delta ] in
-    let sum = bind1 T.Add [ a; b ] in
-    let magnitude = bind1 T.Abs [ delta ] in
-    let negated = bind1 T.Neg [ magnitude ] in
-    let exponent = bind1 T.Exp [ negated ] in
-    let tail = bind1 T.Log1p [ exponent ] in
-    let normal = bind1 T.Add [ amax; tail ] in
-    bind1 T.Select_n [ is_nan; normal; sum ]
+  Lax_other.logaddexp a b
 
 let logaddexp2 x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in

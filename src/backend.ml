@@ -939,7 +939,7 @@ let eager_stats () =
 
 let eager_runs_impl = function
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ | Custom_linear_solve _
-  | Xla_call _ ->
+  | Xla_call _ | Stop_gradient ->
       true
   | _ -> false
 

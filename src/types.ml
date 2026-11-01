@@ -40,6 +40,8 @@ and recipe =
 
 and primitive =
   | Add
+  | Add_any
+  | Stop_gradient
   | Sub
   | Mul
   | Div

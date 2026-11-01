@@ -170,6 +170,13 @@ let register_custom_rule rule =
   Hashtbl.replace custom_rules id rule;
   id
 
+let custom_names : (int, string * string) Hashtbl.t = Hashtbl.create 16
+
+let register_custom_names id ~name ~jvp_name =
+  Hashtbl.replace custom_names id (name, jvp_name)
+
+let custom_names_of id = Hashtbl.find_opt custom_names id
+
 let custom_rule id =
   match Hashtbl.find_opt custom_rules id with
   | Some rule -> rule
@@ -326,7 +333,7 @@ let check_operands prim args =
         "subtypes of signedinteger, complexfloating, floating"
   | Square -> check "square" not_bool numeric
   | Sub -> check "sub" not_bool numeric
-  | Add -> check "add" not_bool numeric
+  | Add | Add_any -> check "add" not_bool numeric
   | Mul -> check "mul" not_bool numeric
   | Div -> check "div" not_bool numeric
   | Atan2 -> check "atan2" is_inexact inexact
@@ -358,10 +365,10 @@ let check_operands prim args =
   | _ -> ()
 
 let is_elementwise = function
-  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi | Nextafter
-  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | Ne | Complex | Igamma
-  | Igammac | Igamma_grad_a | Polygamma | Zeta ->
+  | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi
+  | Nextafter | Or | Rem | Shift_left | Shift_right_arithmetic
+  | Shift_right_logical | Xor | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to
+  | Ne | Complex | Igamma | Igammac | Igamma_grad_a | Polygamma | Zeta ->
       true
   | _ -> false
 
@@ -376,19 +383,19 @@ let elementwise_shape shapes =
       List.fold_left
         (fun acc s ->
           let k = i - (n - Array.length s) in
-          if k < 0 then acc else max acc s.(k))
-        (if List.for_all (fun s -> Array.length s = n && s.(i) = 0) shapes then
-           0
-         else 1)
-        shapes)
+          if k < 0 || s.(k) = 1 then acc else s.(k))
+        1 shapes)
 
 let call_inline : (closed_jaxpr -> value list -> value list) ref =
   ref (fun _ _ -> invalid_arg "Core.call_inline: not installed")
 
+let keeps_scalar_operands (top : trace) =
+  match top.kind with KJaxpr | KJVP | KPE | KBatch -> true | KEval -> false
+
 let rec dispatch prim args =
   let top = find_top_trace args in
   match (prim, args) with
-  | Xla_call c, _ when top.kind <> KJaxpr -> !call_inline c args
+  | Xla_call c, _ when top.kind = KEval -> !call_inline c args
   | Transpose perm, [ _ ]
     when Array.for_all Fun.id (Array.mapi (fun i p -> i = p) perm) ->
       args
@@ -417,12 +424,13 @@ let rec dispatch prim args =
                [ v ])
       in
       let which =
-        if Array.length (value_shape which) = 0 && top.kind = KJaxpr then which
+        if Array.length (value_shape which) = 0 && keeps_scalar_operands top
+        then which
         else widen which
       in
       dispatch Select_n (which :: List.map widen (first :: rest))
   | Select_n, which :: first :: _
-    when top.kind <> KJaxpr
+    when (not (keeps_scalar_operands top))
          && Array.length (value_shape which) = 0
          && Array.length (value_shape first) > 0 ->
       let out = value_shape first in
@@ -435,7 +443,8 @@ let rec dispatch prim args =
 
 and dispatch_widened top prim args =
   if
-    is_elementwise prim && top.kind <> KJaxpr
+    is_elementwise prim
+    && (not (keeps_scalar_operands top))
     &&
     match args with
     | first :: rest ->
@@ -495,7 +504,7 @@ let bind1 prim args =
   | [ out ] -> out
   | _ -> invalid_arg "bind1: expected a single output"
 
-let top_is_staging args = (find_top_trace args).kind = KJaxpr
+let top_is_staging args = (find_top_trace args).kind <> KEval
 
 let staging () =
   match !dynamic_trace with Some t -> t.kind = KJaxpr | None -> false

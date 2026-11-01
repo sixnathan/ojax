@@ -349,6 +349,27 @@ let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
   | _ -> invalid_arg "make_jaxpr: function closed over a tracer"
 
 let () = Core.call_inline := fun c args -> eval_closed_jaxpr c args
+
+let custom_call_cache : (int * aval list * bool, closed_jaxpr) Hashtbl.t =
+  Hashtbl.create 16
+
+let () =
+  Pretty_printer.custom_call :=
+    fun id avals ->
+      match (Core.custom_names_of id, Core.custom_rule id) with
+      | Some (name, jvp_name), Core.Jvp_rule { primal; _ } ->
+          let key = (id, avals, Config.x64_enabled ()) in
+          let closed =
+            match Hashtbl.find_opt custom_call_cache key with
+            | Some c -> c
+            | None ->
+                let c = make_jaxpr avals primal in
+                Hashtbl.replace custom_call_cache key c;
+                c
+          in
+          Some (name, jvp_name, closed)
+      | _ -> None
+
 let call_cache : (string, closed_jaxpr) Hashtbl.t = Hashtbl.create 64
 
 let call_key name key (avals : aval list) =

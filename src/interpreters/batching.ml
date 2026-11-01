@@ -42,24 +42,15 @@ let broadcast_insert (axis_size : int) (dst : int) (v : value) : value =
   b1 (Broadcast_in_dim { shape; dims }) [ v ]
 
 let moveaxis (src : int) (dst : int) (v : value) : value =
-  let a = Core.get_aval v in
-  let n = Array.length a.shape in
-  let order = Array.make n 0 in
-  let k = ref 0 in
-  for i = 0 to n - 1 do
-    if i <> src then begin
-      order.(!k) <- i;
-      incr k
-    end
-  done;
-  for i = n - 1 downto dst + 1 do
-    order.(i) <- order.(i - 1)
-  done;
-  order.(dst) <- src;
-  let shape = Array.map (fun ax -> a.shape.(ax)) order in
-  let dims = Array.make n 0 in
-  Array.iteri (fun out_pos in_ax -> dims.(in_ax) <- out_pos) order;
-  b1 (Broadcast_in_dim { shape; dims }) [ v ]
+  if src = dst then v
+  else
+    let n = Array.length (Core.get_aval v).shape in
+    let rest = List.filter (fun i -> i <> src) (List.init n Fun.id) in
+    let rec insert k l =
+      if k = 0 then src :: l
+      else match l with x :: tl -> x :: insert (k - 1) tl | [] -> [ src ]
+    in
+    b1 (Transpose (Array.of_list (insert dst rest))) [ v ]
 
 let move_batch_axis (axis_size : int) (src : int option) (dst : int) (v : value)
     : value =
@@ -87,19 +78,59 @@ let unop_rule (prim : primitive) (x : value) (bdim : int option) :
     value * int option =
   (b1 prim [ x ], bdim)
 
-let binop_rule (prim : primitive) (axis_size : int) (x : value)
-    (x_bdim : int option) (y : value) (y_bdim : int option) : value * int option
-    =
-  if x_bdim = y_bdim then (b1 prim [ x; y ], x_bdim)
+let bdim_at_front (size : int) (v : value) (bdim : int option) : value =
+  match bdim with None -> broadcast_insert size 0 v | Some d -> moveaxis d 0 v
+
+let broadcast_batcher (prim : primitive) (vals : value list)
+    (bdims : int option list) : value * int option =
+  if List.for_all (fun b -> b = None) bdims then (b1 prim vals, None)
   else
-    match x_bdim with
-    | None ->
-        let dst = match y_bdim with Some d -> d | None -> 0 in
-        let x = move_batch_axis axis_size x_bdim dst x in
-        (b1 prim [ x; y ], y_bdim)
-    | Some d ->
-        let y = move_batch_axis axis_size y_bdim d y in
-        (b1 prim [ x; y ], x_bdim)
+    let shape_of v = (Core.get_aval v).shape in
+    let shape, dim =
+      List.find_map
+        (fun (v, b) ->
+          match b with Some d -> Some (shape_of v, d) | None -> None)
+        (List.combine vals bdims)
+      |> Option.get
+    in
+    if
+      List.for_all2
+        (fun v b ->
+          Array.length (shape_of v) = 0 || (shape_of v = shape && b = Some dim))
+        vals bdims
+    then (b1 prim vals, Some dim)
+    else
+      let args =
+        List.map2
+          (fun v b ->
+            if Array.length (shape_of v) = 0 then v else bdim_at_front 1 v b)
+          vals bdims
+      in
+      let nd =
+        List.fold_left (fun acc v -> max acc (Array.length (shape_of v))) 0 args
+      in
+      let args =
+        List.map2
+          (fun v b ->
+            let r = Array.length (shape_of v) in
+            if b = None || nd = r then v
+            else
+              let sh = shape_of v in
+              b1
+                (Broadcast_in_dim
+                   {
+                     shape =
+                       Array.init nd (fun i -> if i < r then sh.(i) else 1);
+                     dims = Array.init r Fun.id;
+                   })
+                [ v ])
+          args bdims
+      in
+      (b1 prim args, Some 0)
+
+let binop_rule (prim : primitive) (x : value) (x_bdim : int option) (y : value)
+    (y_bdim : int option) : value * int option =
+  broadcast_batcher prim [ x; y ] [ x_bdim; y_bdim ]
 
 let align_to (axis_size : int) (dst : int) (v : value) (bdim : int option) :
     value =
@@ -107,13 +138,65 @@ let align_to (axis_size : int) (dst : int) (v : value) (bdim : int option) :
 
 let select_rule (axis_size : int) (vals : value list) (bdims : int option list)
     : value * int option =
-  let dst =
-    match List.find_opt (fun b -> b <> None) bdims with
-    | Some (Some d) -> d
-    | _ -> 0
-  in
-  let aligned = List.map2 (align_to axis_size dst) vals bdims in
-  (b1 Select_n aligned, Some dst)
+  match (vals, bdims) with
+  | which :: cases, which_bdim :: case_bdims ->
+      let shape_of v = (Core.get_aval v).shape in
+      let ndim v = Array.length (shape_of v) in
+      if List.for_all (fun b -> b = None) bdims then (b1 Select_n vals, None)
+      else if List.for_all (fun b -> b = which_bdim) case_bdims then
+        if shape_of which = shape_of (List.hd cases) then
+          (b1 Select_n vals, which_bdim)
+        else
+          let wb = Option.get which_bdim in
+          let which =
+            b1
+              (Broadcast_in_dim
+                 { shape = shape_of (List.hd cases); dims = [| wb |] })
+              [ which ]
+          in
+          (b1 Select_n (which :: cases), which_bdim)
+      else if ndim which = 0 && List.for_all (fun b -> b <> None) case_bdims
+      then
+        let first = List.hd case_bdims in
+        if List.for_all (fun b -> b = first) case_bdims then
+          (b1 Select_n vals, first)
+        else
+          let dst = Option.get first in
+          let moved =
+            List.map2
+              (fun c b -> moveaxis (Option.get b) dst c)
+              (List.tl cases) (List.tl case_bdims)
+          in
+          (b1 Select_n (which :: List.hd cases :: moved), first)
+      else
+        let which =
+          if ndim which > 0 then bdim_at_front axis_size which which_bdim
+          else which
+        in
+        let cases =
+          if List.for_all (fun c -> ndim c = 0) cases then cases
+          else List.map2 (bdim_at_front axis_size) cases case_bdims
+        in
+        let first = List.hd cases in
+        let which =
+          if ndim which > 0 && ndim which < ndim first then
+            b1
+              (Broadcast_in_dim { shape = shape_of first; dims = [| 0 |] })
+              [ which ]
+          else which
+        in
+        let cases =
+          if ndim which > ndim first then
+            List.map
+              (fun c ->
+                b1
+                  (Broadcast_in_dim { shape = shape_of which; dims = [||] })
+                  [ c ])
+              cases
+          else cases
+        in
+        (b1 Select_n (which :: cases), Some 0)
+  | _ -> failwith "batching: select arity"
 
 let clamp_rule (axis_size : int) (vals : value list) (bdims : int option list) :
     value * int option =
@@ -125,15 +208,9 @@ let clamp_rule (axis_size : int) (vals : value list) (bdims : int option list) :
   let aligned = List.map2 (align_to axis_size dst) vals bdims in
   (b1 Clamp aligned, Some dst)
 
-let naryop_rule (axis_size : int) (prim : primitive) (vals : value list)
-    (bdims : int option list) : value * int option =
-  let dst =
-    match List.find_opt (fun b -> b <> None) bdims with
-    | Some (Some d) -> d
-    | _ -> 0
-  in
-  let aligned = List.map2 (align_to axis_size dst) vals bdims in
-  (b1 prim aligned, Some dst)
+let naryop_rule (prim : primitive) (vals : value list) (bdims : int option list)
+    : value * int option =
+  broadcast_batcher prim vals bdims
 
 let reduce_sum_rule (axes : int array) (x : value) (bdim : int option) :
     value * int option =
@@ -611,7 +688,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   in
   let bin () =
     match (vals, bdims) with
-    | [ x; y ], [ bx; by ] -> binop_rule prim axis_size x bx y by
+    | [ x; y ], [ bx; by ] -> binop_rule prim x bx y by
     | _ -> failwith "batching: expected 2 operands"
   in
   match prim with
@@ -620,14 +697,15 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
   | Population_count | Real | Round | Round_nearest_even | Rsqrt | Sinh | Sqrt
   | Square | Tan | Bitcast_convert_type _ | Reduce_precision _ | Bessel_i0e
-  | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Lgamma ->
+  | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Lgamma | Stop_gradient ->
       un ()
   | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta
   | Regularized_incomplete_beta ->
-      naryop_rule axis_size prim vals bdims
-  | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le | Eq_to
-  | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or | Rem
-  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie ->
+      naryop_rule prim vals bdims
+  | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le
+  | Eq_to | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or
+  | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie
+    ->
       bin ()
   | Select_n -> select_rule axis_size vals bdims
   | Convert_element_type dt -> (
@@ -760,7 +838,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       match (vals, bdims) with
       | [ x ], [ d ] -> (b1 prim [ x ], d)
       | _ -> failwith "batching: checkpoint_name arity")
-  | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
+  | Xla_call _ ->
+      failwith "batching: xla_call handled by batch_process_primitive"
   | Ffi_call _ -> failwith "batching: ffi_call handled by ffi_batch"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :
@@ -818,7 +897,7 @@ let () =
         (fun (n, t, _) -> if n = name then Some t else None)
         !named_axes
 
-let vmap_flat ?axis_name (f : value list -> value list)
+let vmap_flat ?axis_name ?(out_axis = 0) (f : value list -> value list)
     (in_axes : int option list) (args : value list) : value list =
   let axis_size =
     let rec find axes vals =
@@ -850,7 +929,11 @@ let vmap_flat ?axis_name (f : value list -> value list)
       let vals_bdims =
         List.map (fun o -> to_batch_info main (Core.full_raise main o)) outs
       in
-      List.map (fun (v, bdim) -> move_batch_axis axis_size bdim 0 v) vals_bdims)
+      List.map
+        (fun (v, bdim) -> move_batch_axis axis_size bdim out_axis v)
+        vals_bdims)
+
+let vmap_out f in_axes args out_axis = vmap_flat ~out_axis f in_axes args
 
 let vmap ?axis_name (f : value list -> value list) (in_axes : int option list) :
     value list -> value list =
@@ -1109,6 +1192,10 @@ let batched_rule_id id axis_size =
   | Some batched -> batched
   | None ->
       let batched = Core.register_custom_rule (batch_custom_rule id) in
+      (match Core.custom_names_of id with
+      | Some (name, jvp_name) ->
+          Core.register_custom_names batched ~name ~jvp_name
+      | None -> ());
       Hashtbl.replace batched_custom_rules (id, axis_size) batched;
       batched
 
@@ -1222,12 +1309,54 @@ let ffi_batch axis_size (c : ffi_call) vals bdims =
            | None -> "None"
            | Some m -> "'" ^ m ^ "'"))
 
+let batch_call_cache :
+    ( int * int * int option list * bool,
+      closed_jaxpr * int option list )
+    Hashtbl.t =
+  Hashtbl.create 64
+
+let batch_jaxpr (c : closed_jaxpr) axis_size vals bdims =
+  let key = (c.jid, axis_size, bdims, Config.x64_enabled ()) in
+  match Hashtbl.find_opt batch_call_cache key with
+  | Some r -> r
+  | None ->
+      let out_dims = ref [] in
+      let closed =
+        Jaxpr.make_jaxpr (List.map Core.get_aval vals) (fun inner ->
+            Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+                let ins =
+                  List.map2
+                    (fun v b ->
+                      match b with
+                      | Some _ -> Tracer (new_batch_tracer main v b)
+                      | None -> v)
+                    inner bdims
+                in
+                let outs = Jaxpr.eval_closed_jaxpr c ins in
+                let pairs =
+                  List.map
+                    (fun o -> to_batch_info main (Core.full_raise main o))
+                    outs
+                in
+                out_dims := List.map snd pairs;
+                List.map fst pairs))
+      in
+      Pretty_printer.register_call_name closed.jid
+        (Pretty_printer.call_name c.jid);
+      let r = (closed, !out_dims) in
+      Hashtbl.replace batch_call_cache key r;
+      r
+
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
   let axis_size = axis_size_of trace in
   let pairs = List.map (to_batch_info trace) args in
   let vals = List.map fst pairs and bdims = List.map snd pairs in
   match prim with
+  | Xla_call c ->
+      let closed, out_dims = batch_jaxpr c axis_size vals bdims in
+      let outs = Core.bind (Xla_call closed) vals in
+      List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_dims
   | Collective { kind; axis_name } ->
       let out, out_bdim =
         collective_batch trace axis_size kind axis_name vals bdims

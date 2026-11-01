@@ -7,6 +7,7 @@ val move_batch_axis : int -> int option -> int -> value -> value
 
 val vmap_flat :
   ?axis_name:string ->
+  ?out_axis:int ->
   (value list -> value list) ->
   int option list ->
   value list ->
@@ -17,6 +18,13 @@ val vmap :
   (value list -> value list) ->
   int option list ->
   value list ->
+  value list
+
+val vmap_out :
+  (value list -> value list) ->
+  int option list ->
+  value list ->
+  int ->
   value list
 
 val find_axis : string -> string * trace * int

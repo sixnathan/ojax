@@ -1,8 +1,49 @@
 open Types
 
-let custom_jvp primal ~jvp =
-  let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp }) in
+let instantiate_zero t =
+  if Ad_util.is_symbolic_zero t then
+    let a = Core.get_aval t in
+    Core.splat a.dtype a.shape 0.0
+  else t
+
+let custom_jvp ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =
+  let rule primals tangents =
+    let tangents = List.map instantiate_zero tangents in
+    jvp primals tangents
+  in
+  let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp = rule }) in
+  Core.register_custom_names id ~name ~jvp_name;
   fun args -> Core.bind (Custom_jvp_call id) args
+
+let add_tangents x y =
+  if Ad_util.is_symbolic_zero x then y
+  else if Ad_util.is_symbolic_zero y then x
+  else Ad_util.add_any x y
+
+let defjvps ?name primal rules =
+  let self = ref (fun _ -> []) in
+  let jvp primals tangents =
+    let out = !self primals in
+    let terms =
+      List.map2
+        (fun rule t ->
+          match rule with Some r -> Some (r t out primals) | None -> None)
+        rules tangents
+    in
+    let tangent_for i po =
+      let pick = function
+        | Some term -> List.nth term i
+        | None -> Ad_util.symbolic_zero_like_value po
+      in
+      match List.map pick terms with
+      | [] -> Ad_util.symbolic_zero_like_value po
+      | first :: rest -> List.fold_left add_tangents first rest
+    in
+    (out, List.mapi tangent_for out)
+  in
+  let call = custom_jvp ?name primal ~jvp in
+  self := call;
+  call
 
 let custom_vjp primal ~fwd ~bwd =
   let id =
@@ -36,6 +77,10 @@ let aval_str = Ref_state.aval_string
 let same_type (a : aval) (b : aval) = a.shape = b.shape && a.dtype = b.dtype
 
 let custom_jvp_symbolic primal ~jvp =
+  let register primal ~jvp =
+    let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp }) in
+    fun args -> Core.bind (Custom_jvp_call id) args
+  in
   let rule primals tangents =
     let po, to_ = jvp primals (List.map tangent_of_internal tangents) in
     if List.compare_lengths po to_ <> 0 then
@@ -61,7 +106,7 @@ let custom_jvp_symbolic primal ~jvp =
     List.iter2 check po to_;
     (po, List.map internal_of_tangent to_)
   in
-  custom_jvp primal ~jvp:rule
+  register primal ~jvp:rule
 
 let bwd_output index (input : aval) = function
   | None -> Ad_util.symbolic_zero_of_aval input
@@ -181,18 +226,10 @@ let linear_call ~forward ~transpose =
       (Custom_lin { rule = id; n_res = List.length res; out_avals })
       (res @ linear)
 
-let stop_gradient =
-  let id =
-    Core.register_custom_rule
-      (Core.Jvp_rule
-         {
-           primal = Fun.id;
-           jvp =
-             (fun primals _ ->
-               (primals, List.map Ad_util.symbolic_zero_like_value primals));
-         })
-  in
-  fun v -> Core.bind1 (Custom_jvp_call id) [ v ]
+let rec stop_gradient v =
+  match v with
+  | Tracer { payload = JVP { primal; _ }; _ } -> stop_gradient primal
+  | _ -> Core.bind1 Stop_gradient [ v ]
 
 let closure_convert f avals =
   let closed, hoisted = Jaxpr.make_jaxpr_hoisted avals f in

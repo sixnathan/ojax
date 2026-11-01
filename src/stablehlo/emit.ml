@@ -2926,15 +2926,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ x ] ->
             let positive = Core.bind1 (Integer_pow (-y)) [ x ] in
             let a = Core.get_aval x in
-            let n = Array.fold_left ( * ) 1 a.shape in
-            [
-              Core.bind1 Div
-                [
-                  Concrete
-                    (Ndarray.of_floats a.dtype a.shape (Array.make n 1.0));
-                  positive;
-                ];
-            ]
+            let one = Core.splat a.dtype a.shape 1.0 in
+            [ Core.bind1 Div [ one; positive ] ]
         | _ -> invalid_arg "Stablehlo.Emit: integer_pow arity")
   | Integer_pow y -> emit_integer_pow ctx eqn in_ids y
   | Imag ->
@@ -2955,7 +2948,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (name x)
            (Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)))
            (Ir.tensor_type_of_aval out.vaval))
-  | Add -> emit_stablehlo_binary ctx eqn in_ids "add"
+  | Add | Add_any -> emit_stablehlo_binary ctx eqn in_ids "add"
   | And -> emit_stablehlo_binary ctx eqn in_ids "and"
   | Atan2 -> emit_stablehlo_binary ctx eqn in_ids "atan2"
   | Div -> emit_stablehlo_binary ctx eqn in_ids "divide"
@@ -3698,6 +3691,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           failwith
             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
   | Xla_call c -> emit_call ctx eqn in_ids c
+  | Stop_gradient -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
 
 let qualify_nested_calls ~depth text =
   let level = ref depth in
@@ -3811,40 +3805,90 @@ let has_side_effect = function
   | Dce_sink | Rng_bit_generator | Create_token | After_all -> true
   | _ -> false
 
-let prune_for_lowering (cj : closed_jaxpr) =
-  let jx = cj.jaxpr in
+let rec eqn_has_effect (e : eqn) =
+  match e.prim with
+  | Xla_call c -> List.exists eqn_has_effect c.jaxpr.eqns
+  | p -> has_side_effect p
+
+let dce_cache : (int * bool list, closed_jaxpr * bool list) Hashtbl.t =
+  Hashtbl.create 64
+
+let rec dce_closed (c : closed_jaxpr) used_outs =
+  let key = (c.jid, used_outs) in
+  match Hashtbl.find_opt dce_cache key with
+  | Some r -> r
+  | None ->
+      let r = dce_closed_uncached c used_outs in
+      Hashtbl.replace dce_cache key r;
+      r
+
+and dce_closed_uncached (c : closed_jaxpr) used_outs =
+  let jx = c.jaxpr in
   let used = Hashtbl.create 64 in
   let note = function
     | A_var (v : var) -> Hashtbl.replace used v.vid ()
     | A_lit _ | DropVar _ -> ()
   in
-  List.iter note jx.outs;
+  List.iter2 (fun a keep -> if keep then note a) jx.outs used_outs;
+  let is_used (v : var) = Hashtbl.mem used v.vid in
   let kept =
     List.fold_left
       (fun acc (e : eqn) ->
-        if
-          has_side_effect e.prim
-          || List.exists (fun (v : var) -> Hashtbl.mem used v.vid) e.outs
-        then begin
-          List.iter note e.inputs;
-          e :: acc
-        end
-        else acc)
+        match e.prim with
+        | Xla_call inner when not (eqn_has_effect e) ->
+            let outs_used = List.map is_used e.outs in
+            if not (List.exists Fun.id outs_used) then acc
+            else begin
+              let pruned, ins_used = dce_closed inner outs_used in
+              let inputs =
+                List.concat
+                  (List.map2
+                     (fun a keep -> if keep then [ a ] else [])
+                     e.inputs ins_used)
+              in
+              List.iter note inputs;
+              {
+                prim = Xla_call pruned;
+                inputs;
+                outs = List.filter is_used e.outs;
+                multiple_results = List.length (List.filter is_used e.outs) > 1;
+              }
+              :: acc
+            end
+        | _ ->
+            if eqn_has_effect e || e.outs = [] || List.exists is_used e.outs
+            then begin
+              List.iter note e.inputs;
+              e :: acc
+            end
+            else acc)
       [] (List.rev jx.eqns)
   in
-  let n_consts = List.length cj.consts in
+  let n_consts = List.length c.consts in
   let const_binders, arg_binders =
     match Util.split_list jx.in_binders [ n_consts ] with
     | [ cb; ab ] -> (cb, ab)
     | _ -> invalid_arg "Stablehlo.Emit: binder split"
   in
-  let kept_args =
-    List.filter (fun (v : var) -> Hashtbl.mem used v.vid) arg_binders
+  let kept_args = List.filter is_used arg_binders in
+  let outs =
+    List.concat
+      (List.map2 (fun a keep -> if keep then [ a ] else []) jx.outs used_outs)
   in
-  {
-    cj with
-    jaxpr = { jx with in_binders = const_binders @ kept_args; eqns = kept };
-  }
+  let pruned =
+    {
+      c with
+      jid = Core.fresh_id ();
+      jaxpr = { in_binders = const_binders @ kept_args; eqns = kept; outs };
+    }
+  in
+  Pretty_printer.register_call_name pruned.jid (Pretty_printer.call_name c.jid);
+  (pruned, List.map is_used arg_binders)
+
+let prune_for_lowering (cj : closed_jaxpr) =
+  let used_outs = List.map (fun _ -> true) cj.jaxpr.outs in
+  let pruned, _ = dce_closed cj used_outs in
+  pruned
 
 let emit_jax_text ~name cj =
   Mlir_names.render ~module_name:name

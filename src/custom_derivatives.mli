@@ -1,6 +1,8 @@
 open Types
 
 val custom_jvp :
+  ?name:string ->
+  ?jvp_name:string ->
   (value list -> value list) ->
   jvp:(value list -> value list -> value list * value list) ->
   value list ->
@@ -10,6 +12,13 @@ val custom_vjp :
   (value list -> value list) ->
   fwd:(value list -> value list * value list) ->
   bwd:(value list -> value list -> value list) ->
+  value list ->
+  value list
+
+val defjvps :
+  ?name:string ->
+  (value list -> value list) ->
+  (value -> value list -> value list -> value list) option list ->
   value list ->
   value list
 

@@ -6,6 +6,19 @@ let shape v = (C.get_aval v).T.shape
 let dtype v = (C.get_aval v).T.dtype
 let weak v = (C.get_aval v).T.weak_type
 let py_float x = C.py_scalar (Dtypes.default_float_dtype ()) x
+
+let py_float_arg x =
+  match py_float x with
+  | T.Concrete nd -> T.Concrete (Np_ints.mark_exact_float x nd)
+  | v -> v
+
+let py_complex z =
+  let dt =
+    if Dtypes.default_float_dtype () = Dtype.F64 then Dtype.Complex128
+    else Dtype.Complex64
+  in
+  T.Concrete (Ndarray.as_weak (Ndarray.of_complex dt [||] [| z |]))
+
 let py_int x = C.py_scalar (Dtypes.default_int_dtype ()) (float_of_int x)
 let jit name ?key f args = Jaxpr.named_jit ~name ?key f args
 

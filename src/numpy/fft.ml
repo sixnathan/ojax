@@ -230,19 +230,22 @@ let default_real () = if Config.x64_enabled () then Dtype.F64 else Dtype.F32
 
 let fftfreq ?(d = 1.0) ?dtype n =
   let dt = Option.value dtype ~default:(default_real ()) in
-  let half = n / 2 in
-  Concrete
-    (Ndarray.of_floats dt [| n |]
-       (Array.init n (fun i ->
-            let k = ((i + half) mod n) - half in
-            float_of_int k /. (d *. float_of_int n))))
+  let i = Lax_numpy.arange ~dtype:dt (float_of_int n) in
+  let half = Jnp_util.py_int (n / 2) in
+  let k =
+    Ufuncs.subtract
+      (Ufuncs.remainder (Ufuncs.add i half) (Jnp_util.py_int n))
+      half
+  in
+  Ufuncs.divide (Lax_numpy.astype k dt)
+    (Concrete (Ndarray.of_floats dt [||] [| d *. float_of_int n |]))
 
 let rfftfreq ?(d = 1.0) ?dtype n =
   let dt = Option.value dtype ~default:(default_real ()) in
-  let count = (n / 2) + 1 in
-  Concrete
-    (Ndarray.of_floats dt [| count |]
-       (Array.init count (fun i -> float_of_int i /. (d *. float_of_int n))))
+  let count = if n mod 2 = 0 then (n / 2) + 1 else ((n - 1) / 2) + 1 in
+  Ufuncs.divide
+    (Lax_numpy.arange ~dtype:dt (float_of_int count))
+    (Concrete (Ndarray.of_floats dt [||] [| d *. float_of_int n |]))
 
 let roll_axis v axis shift =
   let shape = shape_of v in

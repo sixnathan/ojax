@@ -303,7 +303,10 @@ let lit_value nd =
   | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
   | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
   | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
-      python_repr_float (Ndarray.get_f nd scalar)
+      python_repr_float
+        (match Np_ints.exact_float nd with
+        | Some x -> x
+        | None -> Ndarray.get_f nd scalar)
   | Dtype.Complex64 | Dtype.Complex128 ->
       let z = Ndarray.get_c nd scalar in
       let im = python_repr_float z.Complex.im in
@@ -555,11 +558,12 @@ let scatter_numbers (d : scatter_dims) =
     (py_ints d.s_scatter_indices_batching_dims)
 
 let scatter_params d unique =
+  let marked = Np_ints.is_sorted_unique d in
   [
     ("dimension_numbers", Plain (scatter_numbers d));
-    ("indices_are_sorted", Plain "False");
+    ("indices_are_sorted", Plain (py_bool marked));
     ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
-    ("unique_indices", Plain (py_bool unique));
+    ("unique_indices", Plain (py_bool (unique || marked)));
     ("update_consts", Plain "()");
     ("update_jaxpr", Plain "None");
   ]
@@ -696,7 +700,10 @@ let jax_params (e : eqn) =
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ("fill_value", Plain "None");
         ("indices_are_sorted", Plain "False");
-        ("mode", Plain "GatherScatterMode.PROMISE_IN_BOUNDS");
+        ( "mode",
+          Plain
+            (if Np_ints.is_clip dimension_numbers then "GatherScatterMode.CLIP"
+             else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
         ("unique_indices", Plain "False");
       ]

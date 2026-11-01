@@ -306,14 +306,28 @@ let index_in_dim ?(axis = 0) ?(keepdims = true) x index =
 let index_scalar i =
   Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
 
+let normalize_start start dim =
+  match start with
+  | Tracer _ ->
+      let dt = dtype_of start in
+      let lit v = Concrete (Ndarray.of_floats dt [||] [| float_of_int v |]) in
+      let negative = b1 Lt [ start; lit 0 ] in
+      let wrapped = b1 Add [ start; lit dim ] in
+      b1 Select_n [ negative; start; wrapped ]
+  | _ -> start
+
 let dynamic_slice x starts slice_sizes =
+  let starts =
+    List.mapi (fun i start -> normalize_start start (shape x).(i)) starts
+  in
   b1 (Dynamic_slice { slice_sizes }) (x :: starts)
 
 let dynamic_update_slice x update starts =
   b1 Dynamic_update_slice (x :: update :: starts)
 
 let starts_in_dim n axis start =
-  List.init n (fun d -> if d = axis then start else index_scalar 0)
+  let zero = Concrete (Ndarray.of_floats (dtype_of start) [||] [| 0.0 |]) in
+  List.init n (fun d -> if d = axis then start else zero)
 
 let dynamic_slice_in_dim ?(axis = 0) x start size =
   let n = ndim x in

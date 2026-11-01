@@ -38,3 +38,42 @@ let triple_marked arr i j =
   List.exists
     (fun (other, predicate) -> other == arr && predicate i j)
     (Hashtbl.find_all marked_triples (Hashtbl.hash arr))
+
+let sorted_unique : (int, Obj.t) Hashtbl.t = Hashtbl.create 16
+
+let mark_sorted_unique dims =
+  let o = Obj.repr dims in
+  Hashtbl.add sorted_unique (Hashtbl.hash o) o;
+  dims
+
+let is_sorted_unique dims =
+  let o = Obj.repr dims in
+  List.exists
+    (fun other -> other == o)
+    (Hashtbl.find_all sorted_unique (Hashtbl.hash o))
+
+let clip_gathers : (int, Obj.t) Hashtbl.t = Hashtbl.create 16
+
+let mark_clip dims =
+  let o = Obj.repr dims in
+  Hashtbl.add clip_gathers (Hashtbl.hash o) o;
+  dims
+
+let is_clip dims =
+  let o = Obj.repr dims in
+  List.exists
+    (fun other -> other == o)
+    (Hashtbl.find_all clip_gathers (Hashtbl.hash o))
+
+let exact_floats : (int, Obj.t * float) Hashtbl.t = Hashtbl.create 16
+
+let mark_exact_float x nd =
+  let o = Obj.repr nd in
+  Hashtbl.add exact_floats (Hashtbl.hash o) (o, x);
+  nd
+
+let exact_float nd =
+  let o = Obj.repr nd in
+  List.find_map
+    (fun (other, x) -> if other == o then Some x else None)
+    (Hashtbl.find_all exact_floats (Hashtbl.hash o))

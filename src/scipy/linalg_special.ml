@@ -386,34 +386,28 @@ let sylvester_triangular_scan r s f =
       ~start:(float_of_int (total - 1))
       ~step:(-1.0) (-1.0)
   in
+  let wrap_index ind size =
+    L.select
+      (L.lt ind (Core.splat (dtype_of ind) [||] 0.0))
+      (L.add ind (Core.splat (dtype_of ind) [||] (float_of_int size)))
+      ind
+  in
   let element v i j =
-    let wrap ind axis =
-      let size = (shape v).(axis) in
-      L.select
-        (L.lt ind (Core.splat (dtype_of ind) [||] 0.0))
-        (L.add ind (Core.splat (dtype_of ind) [||] (float_of_int size)))
-        ind
-    in
-    let i = wrap i 0 in
-    let j = wrap j 1 in
+    let i = wrap_index i (shape v).(0) in
+    let j = wrap_index j (shape v).(1) in
     NL.reshape (L.dynamic_slice v [ i; j ] [| 1; 1 |]) [||]
   in
   let line v ~row idx =
     let zero = Core.splat (dtype_of idx) [||] 0.0 in
-    let wrap ind axis =
-      let size = (shape v).(axis) in
-      L.select
-        (L.lt ind (Core.splat (dtype_of ind) [||] 0.0))
-        (L.add ind (Core.splat (dtype_of ind) [||] (float_of_int size)))
-        ind
-    in
     if row then
-      let i = wrap idx 0 and j = wrap zero 1 in
+      let i = wrap_index idx (shape v).(0) in
+      let j = wrap_index zero (shape v).(1) in
       NL.reshape
         (L.dynamic_slice v [ i; j ] [| 1; (shape v).(1) |])
         [| (shape v).(1) |]
     else
-      let i = wrap zero 0 and j = wrap idx 1 in
+      let i = wrap_index zero (shape v).(0) in
+      let j = wrap_index idx (shape v).(1) in
       NL.reshape
         (L.dynamic_slice v [ i; j ] [| (shape v).(0); 1 |])
         [| (shape v).(0) |]
@@ -446,12 +440,7 @@ let sylvester_triangular_scan r s f =
         let rhs = U.subtract rhs (U.add row_term col_term) in
         let value = U.divide rhs (U.add (element r i i) (element s j j)) in
         let flat = U.add (U.multiply i (int_scalar n)) j in
-        let wrapped =
-          L.select
-            (L.lt flat (Core.splat (dtype_of flat) [||] 0.0))
-            (L.add flat (Core.splat (dtype_of flat) [||] (float_of_int total)))
-            flat
-        in
+        let wrapped = wrap_index flat total in
         let index =
           L.broadcast_in_dim
             (L.convert_element_type wrapped Dtype.I32)

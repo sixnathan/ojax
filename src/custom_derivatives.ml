@@ -8,7 +8,8 @@ let instantiate_zero t =
 
 let instantiate_zero_like primal t =
   match instantiate_zero t with
-  | Concrete nd when Ad_util.is_symbolic_zero t && (Core.get_aval primal).weak_type ->
+  | Concrete nd
+    when Ad_util.is_symbolic_zero t && (Core.get_aval primal).weak_type ->
       Concrete (Ndarray.as_weak nd)
   | v -> v
 

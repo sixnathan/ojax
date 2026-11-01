@@ -27,7 +27,8 @@ let merge_consts hoisted_each =
   List.fold_left
     (fun acc own ->
       List.fold_left
-        (fun acc v -> if List.exists (same_const v) acc then acc else acc @ [ v ])
+        (fun acc v ->
+          if List.exists (same_const v) acc then acc else acc @ [ v ])
         acc own)
     [] hoisted_each
 

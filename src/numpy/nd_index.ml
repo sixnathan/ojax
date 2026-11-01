@@ -34,8 +34,7 @@ let index_dtype sh =
 let const dt v = T.Concrete (Ndarray.of_floats dt [||] [| float_of_int v |])
 
 let squeeze_axes idx =
-  List.filteri (fun _ _ -> true) idx
-  |> List.mapi (fun axis i -> match i with Int _ -> Some axis | _ -> None)
+  List.mapi (fun axis i -> match i with Int _ -> Some axis | _ -> None) idx
   |> List.filter_map Fun.id |> Array.of_list
 
 let static_take x idx =
@@ -56,9 +55,7 @@ let static_take x idx =
           limits.(axis) <- hi
       | Arr _ -> assert false)
     idx;
-  let trivial =
-    Array.for_all (fun v -> v = 0) starts && limits = sh
-  in
+  let trivial = Array.for_all (fun v -> v = 0) starts && limits = sh in
   let out = if trivial then x else L.slice x starts limits in
   L.squeeze out (squeeze_axes idx)
 
@@ -98,9 +95,7 @@ let dynamic_take x idx =
         C.bind1 T.Select_n [ negative; s; shifted ])
       starts
   in
-  let out =
-    L.dynamic_slice x normalised (Array.of_list (List.rev !sizes))
-  in
+  let out = L.dynamic_slice x normalised (Array.of_list (List.rev !sizes)) in
   L.squeeze out squeeze
 
 type indexer = {
@@ -167,8 +162,7 @@ let to_gather sh idx =
         let start_dim = List.length !gather_shape in
         List.iter
           (fun a ->
-            gather :=
-              (C.convert_like ~weak:false a dt, start_dim) :: !gather)
+            gather := (C.convert_like ~weak:false a dt, start_dim) :: !gather)
           arrs;
         gather_shape := !gather_shape @ Array.to_list bshape;
         start_map := !start_map @ adv_positions;
@@ -215,7 +209,8 @@ let to_gather sh idx =
         L.concatenate
           (List.map
              (fun (g, i) ->
-               L.broadcast_in_dim g target (Array.init (rank g) (fun d -> i + d)))
+               L.broadcast_in_dim g target
+                 (Array.init (rank g) (fun d -> i + d)))
              parts)
           last
   in
@@ -224,8 +219,7 @@ let to_gather sh idx =
     gather_slice_shape = Array.of_list (List.rev !gather_slice);
     gather_indices;
     offset_dims = Array.of_list !offset;
-    collapsed_slice_dims =
-      Array.of_list (List.sort compare !collapsed);
+    collapsed_slice_dims = Array.of_list (List.sort compare !collapsed);
     start_index_map = Array.of_list !start_map;
     plain = not any_adv;
   }
@@ -234,8 +228,7 @@ let empty sh = Array.exists (fun d -> d = 0) sh
 
 let gather_take ?(clip = false) x idx =
   let ix = to_gather (shape x) idx in
-  if empty ix.slice_shape then
-    L.full ix.slice_shape 0.0 (dtype x)
+  if empty ix.slice_shape then L.full ix.slice_shape 0.0 (dtype x)
   else
     let prim =
       T.Gather
@@ -273,8 +266,7 @@ let set x idx y =
     let dt, is_weak =
       Dtypes.result_type
         [
-          (x_aval.dtype, x_aval.weak_type);
-          (dtype y, (C.get_aval y).T.weak_type);
+          (x_aval.dtype, x_aval.weak_type); (dtype y, (C.get_aval y).T.weak_type);
         ]
     in
     let x' = C.convert_like ~weak:is_weak x dt in

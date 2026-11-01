@@ -233,13 +233,10 @@ let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
         (cond_consts @ body_consts @ init)
     else
       let pick keep l =
-        List.concat
-          (List.map2 (fun k v -> if k then [ v ] else []) keep l)
+        List.concat (List.map2 (fun k v -> if k then [ v ] else []) keep l)
       in
       let stay = List.map not move in
-      let cond_binder_keep =
-        List.init n_cond_consts (fun _ -> true) @ stay
-      in
+      let cond_binder_keep = List.init n_cond_consts (fun _ -> true) @ stay in
       let cond_final =
         let build () =
           {

@@ -3089,9 +3089,7 @@ let gen_derivatives_body p x =
     let lv = (l_vec +! lit 1.0) *! l_vec in
     let row0 = Ix.take p [ Ix.Int 0; all; all ] in
     let g0 = einsum "i,ij->ij" [ lv; row0 ] in
-    let g0 =
-      if num_l > 2 then g0 -! Ix.take p [ Ix.Int 2; all; all ] else g0
-    in
+    let g0 = if num_l > 2 then g0 -! Ix.take p [ Ix.Int 2; all; all ] else g0 in
     let xx = x *! x in
     let inv = lit 0.5 /! UF.sqrt (lit 1.0 -! xx) in
     let m0 = einsum "j,ij->ij" [ inv; g0 ] in
@@ -3132,8 +3130,6 @@ let sph_harm_body n_max args =
   | [ n; m; theta; phi ] ->
       let cos_colatitude = UF.cos theta in
       let legendre = gen_associated_legendre n_max cos_colatitude true in
-      let count = (shape theta).(0) in
-      ignore count;
       let abs_m = UF.abs m in
       let lanes =
         NL.arange ~dtype:(default_int ()) (float_of_int (shape n).(0))

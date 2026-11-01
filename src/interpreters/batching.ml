@@ -1528,7 +1528,12 @@ let batch_closed_axes_uncached (c : closed_jaxpr) axis_size in_dims out_dims =
 
 let batch_closed_axes (c : closed_jaxpr) axis_size in_dims out_dims =
   let key =
-    (c.jid, axis_size, in_dims, out_dims, Config.x64_enabled (), !Jaxpr.in_eqn_eval)
+    ( c.jid,
+      axis_size,
+      in_dims,
+      out_dims,
+      Config.x64_enabled (),
+      !Jaxpr.in_eqn_eval )
   in
   match Hashtbl.find_opt batch_axes_cache key with
   | Some hit -> hit
@@ -1692,7 +1697,9 @@ let batch_call_cache :
   Hashtbl.create 64
 
 let batch_jaxpr (c : closed_jaxpr) axis_size vals bdims =
-  let key = (c.jid, axis_size, bdims, Config.x64_enabled (), !Jaxpr.in_eqn_eval) in
+  let key =
+    (c.jid, axis_size, bdims, Config.x64_enabled (), !Jaxpr.in_eqn_eval)
+  in
   match Hashtbl.find_opt batch_call_cache key with
   | Some r -> r
   | None ->

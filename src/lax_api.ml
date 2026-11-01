@@ -864,8 +864,7 @@ let fori_loop lower upper body init =
                 | _ -> failwith "fori_loop: arity")
               (function
                 | i :: upper :: rest ->
-                    add i (filled (dtype_of i) [||] 1.0)
-                    :: upper :: body i rest
+                    add i (filled (dtype_of i) [||] 1.0) :: upper :: body i rest
                 | _ -> failwith "fori_loop: arity")
               (lower :: upper :: init)))
 

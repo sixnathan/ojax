@@ -2823,18 +2823,18 @@ let lin_process_cond (trace : trace) (b : jaxpr_builder) branches platforms
     | Some (n, nzs, jx, res) -> (known, n, nzs, jx, res)
     | None -> arity ()
   in
+  let first_traces = List.map (trace_branch []) branches in
   let out_nz =
-    match
-      List.map
-        (fun br ->
-          let _, _, nzs, _, _ = trace_branch [] br in
-          nzs)
-        branches
-    with
+    match List.map (fun (_, _, nzs, _, _) -> nzs) first_traces with
     | [] -> []
     | first :: others -> List.fold_left (List.map2 ( || )) first others
   in
-  let traced = List.map (trace_branch out_nz) branches in
+  let traced =
+    List.map2
+      (fun br ((_, _, nzs, _, _) as first) ->
+        if nzs = out_nz then first else trace_branch out_nz br)
+      branches first_traces
+  in
   let tag avals =
     let seen = ref [] in
     List.map

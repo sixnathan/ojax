@@ -464,6 +464,43 @@ let allclose ?rtol ?atol ?equal_nan a b =
   let n = ndim c in
   bind1 (T.Reduce_and (Array.init n (fun i -> i))) [ c ]
 
+let clip_values ?min ?max arr =
+  let present = Option.to_list min @ Option.to_list max in
+  Jnp_util.jit1 "clip"
+    ~key:(string_of_bool (min <> None) ^ string_of_bool (max <> None))
+    (function
+      | arr :: bounds -> (
+          let rest = ref bounds in
+          let next given =
+            match given with
+            | None -> None
+            | Some _ -> (
+                match !rest with
+                | v :: tl ->
+                    rest := tl;
+                    Some v
+                | [] -> invalid_arg "clip: arity")
+          in
+          let low = next min in
+          let high = next max in
+          let target =
+            let dts = List.filter_map Fun.id [ low; high ] in
+            fst
+              (Dtypes.result_type
+                 ((dtype arr, false) :: List.map (fun v -> (dtype v, true)) dts))
+          in
+          let arr = convert arr target in
+          let arr =
+            match low with
+            | Some v -> bind1 T.Max [ convert v target; arr ]
+            | None -> arr
+          in
+          match high with
+          | Some v -> bind1 T.Min [ convert v target; arr ]
+          | None -> arr)
+      | [] -> invalid_arg "clip: arity")
+    (arr :: present)
+
 let clip ?min ?max arr =
   (match dtype arr with
   | D.Complex64 | D.Complex128 ->
@@ -1712,78 +1749,85 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
     | Some f, Some a -> Some (bind1 T.Mul [ as_dt f; as_dt a ])
   in
   let sum_all v = bind1 (T.Reduce_sum (Array.init (ndim v) Fun.id)) [ v ] in
-  let divisor_of shape_out =
-    match w with
-    | None -> full dt shape_out (float_of_int (nobs - ddof))
-    | Some wv ->
-        let w_sum = sum_all wv in
-        let f =
-          if ddof = 0 then w_sum
-          else
-            let d = scalar dt (float_of_int ddof) in
-            match a_abs with
-            | None -> bind1 T.Sub [ w_sum; d ]
-            | Some a ->
-                bind1 T.Sub
-                  [
-                    w_sum;
-                    bind1 T.Div
-                      [
-                        bind1 T.Mul [ d; sum_all (bind1 T.Mul [ wv; as_dt a ]) ];
-                        w_sum;
-                      ];
-                  ]
-        in
-        bind1 (T.Broadcast_in_dim { shape = shape_out; dims = [||] }) [ f ]
-  in
-  let avg =
+  let avg, w_sum =
     match w with
     | None ->
-        let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
-        bind1 T.Div [ sum1; full dt [| nvars |] (float_of_int nobs) ]
+        let summed = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
+        let count = scalar dt (float_of_int nobs) in
+        let mean = bind1 T.Div [ summed; count ] in
+        ( mean,
+          bind1
+            (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
+            [ count ] )
     | Some wv ->
-        let wb =
-          bind1 (T.Broadcast_in_dim { shape = shape x; dims = [| 1 |] }) [ wv ]
+        let lifted =
+          bind1
+            (T.Broadcast_in_dim { shape = [| 1; nobs |]; dims = [| 1 |] })
+            [ wv ]
         in
-        let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ bind1 T.Mul [ x; wb ] ] in
-        bind1 T.Div
-          [
-            sum1;
-            bind1
-              (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
-              [ sum_all wv ];
-          ]
+        let total = bind1 (T.Reduce_sum [| 1 |]) [ lifted ] in
+        let product = bind1 T.Mul [ x; lifted ] in
+        let summed = bind1 (T.Reduce_sum [| 1 |]) [ product ] in
+        let mean = bind1 T.Div [ summed; total ] in
+        (mean, Jnp_util.broadcast_to total (shape mean))
   in
-  let xc = sub2 x (expand_dims avg [| 1 |]) in
-  let xw =
+  let first =
+    bind1
+      (T.Slice
+         { start_indices = [| 0 |]; limit_indices = [| 1 |]; strides = None })
+      [ w_sum ]
+  in
+  let first = bind1 (T.Squeeze [| 0 |]) [ first ] in
+  let f =
+    match (w, a_abs) with
+    | None, _ -> scalar dt (float_of_int (nobs - ddof))
+    | Some _, _ when ddof = 0 -> first
+    | Some _, None -> bind1 T.Sub [ first; scalar dt (float_of_int ddof) ]
+    | Some wv, Some a ->
+        let scaled =
+          bind1 T.Mul
+            [
+              scalar dt (float_of_int ddof);
+              sum_all (bind1 T.Mul [ wv; as_dt a ]);
+            ]
+        in
+        bind1 T.Sub [ first; bind1 T.Div [ scaled; first ] ]
+  in
+  let lifted_avg =
+    bind1
+      (T.Broadcast_in_dim { shape = [| nvars; 1 |]; dims = [| 0 |] })
+      [ avg ]
+  in
+  let centered = bind1 T.Sub [ x; lifted_avg ] in
+  let weighted =
     match w with
-    | None -> xc
+    | None -> centered
     | Some wv ->
-        bind1 T.Mul
-          [
-            xc;
-            bind1
-              (T.Broadcast_in_dim { shape = shape xc; dims = [| 1 |] })
-              [ wv ];
-          ]
+        let lifted =
+          bind1
+            (T.Broadcast_in_dim { shape = [| 1; nobs |]; dims = [| 1 |] })
+            [ wv ]
+        in
+        bind1 T.Mul [ centered; lifted ]
+  in
+  let x_t = bind1 (T.Transpose [| 1; 0 |]) [ weighted ] in
+  let x_t =
+    match dt with
+    | D.Complex64 | D.Complex128 -> bind1 T.Conj [ x_t ]
+    | _ -> x_t
   in
   let prod =
     bind1
       (T.Dot_general
          {
            lhs_contract = [| 1 |];
-           rhs_contract = [| 1 |];
+           rhs_contract = [| 0 |];
            lhs_batch = [||];
            rhs_batch = [||];
          })
-      [
-        xc;
-        (match dt with
-        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xw ]
-        | _ -> xw);
-      ]
+      [ centered; x_t ]
   in
-  squeeze (bind1 T.Div [ prod; divisor_of (shape prod) ])
+  squeeze (bind1 T.Div [ prod; f ])
 
 let corrcoef ?y ?(rowvar = true) ?dtype x =
   let c = cov ?y ~rowvar ?dtype x in
@@ -1795,15 +1839,29 @@ let corrcoef ?y ?(rowvar = true) ?dtype x =
     let d = diagonal c in
     let d = if complex then bind1 T.Real [ d ] else d in
     let stddev = convert (bind1 T.Sqrt [ d ]) (dtype_of c) in
-    let c = binop T.Div c (expand_dims stddev [| 1 |]) in
-    let c = binop T.Div c (expand_dims stddev [| 0 |]) in
-    if complex then
-      bind1 T.Complex
-        [
-          clip ~min:(-1.0) ~max:1.0 (bind1 T.Real [ c ]);
-          clip ~min:(-1.0) ~max:1.0 (bind1 T.Imag [ c ]);
-        ]
-    else clip ~min:(-1.0) ~max:1.0 c
+    let n = (shape stddev).(0) in
+    let columns =
+      bind1
+        (T.Broadcast_in_dim { shape = [| n; 1 |]; dims = [| 0 |] })
+        [ stddev ]
+    in
+    let c = bind1 T.Div [ c; columns ] in
+    let rows =
+      bind1
+        (T.Broadcast_in_dim { shape = [| 1; n |]; dims = [| 1 |] })
+        [ stddev ]
+    in
+    let c = bind1 T.Div [ c; rows ] in
+    let limit x =
+      T.Concrete (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| x |])
+    in
+    let bound v = clip_values ~min:(limit (-1.0)) ~max:(limit 1.0) v in
+    if complex then begin
+      let re = bound (bind1 T.Real [ c ]) in
+      let im = bound (bind1 T.Imag [ c ]) in
+      bind1 T.Complex [ re; im ]
+    end
+    else bound (if complex then bind1 T.Real [ c ] else c)
   end
 
 let argsort_values v =

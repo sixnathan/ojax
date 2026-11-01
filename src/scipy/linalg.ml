@@ -467,6 +467,189 @@ let hessenberg ?(calc_q = false) a =
     end
   end
 
+let expm_coefficient m c = C.bind1 T.Mul [ C.splat (dtype m) [||] c; m ]
+
+let expm_sum terms =
+  match terms with
+  | [] -> invalid_arg "expm: empty sum"
+  | first :: rest ->
+      List.fold_left
+        (fun acc (c, m) -> C.bind1 T.Add [ acc; expm_coefficient m c ])
+        (expm_coefficient (snd first) (fst first))
+        rest
+
+let pade3 a =
+  let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
+  let a2 = TC.dot a a in
+  let u = TC.dot a (expm_sum [ (1.0, a2); (60.0, ident) ]) in
+  let v = expm_sum [ (12.0, a2); (120.0, ident) ] in
+  [ u; v ]
+
+let pade5 a =
+  let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
+  let a2 = TC.dot a a in
+  let a4 = TC.dot a2 a2 in
+  let u = TC.dot a (expm_sum [ (1.0, a4); (420.0, a2); (15120.0, ident) ]) in
+  let v = expm_sum [ (30.0, a4); (3360.0, a2); (30240.0, ident) ] in
+  [ u; v ]
+
+let pade7 a =
+  let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
+  let a2 = TC.dot a a in
+  let a4 = TC.dot a2 a2 in
+  let a6 = TC.dot a4 a2 in
+  let u =
+    TC.dot a
+      (expm_sum [ (1.0, a6); (1512.0, a4); (277200.0, a2); (8648640.0, ident) ])
+  in
+  let v =
+    expm_sum [ (56.0, a6); (25200.0, a4); (1995840.0, a2); (17297280.0, ident) ]
+  in
+  [ u; v ]
+
+let pade9 a =
+  let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
+  let a2 = TC.dot a a in
+  let a4 = TC.dot a2 a2 in
+  let a6 = TC.dot a4 a2 in
+  let a8 = TC.dot a6 a2 in
+  let u =
+    TC.dot a
+      (expm_sum
+         [
+           (1.0, a8);
+           (3960.0, a6);
+           (2162160.0, a4);
+           (302702400.0, a2);
+           (8821612800.0, ident);
+         ])
+  in
+  let v =
+    expm_sum
+      [
+        (90.0, a8);
+        (110880.0, a6);
+        (30270240.0, a4);
+        (2075673600.0, a2);
+        (17643225600.0, ident);
+      ]
+  in
+  [ u; v ]
+
+let pade13 a =
+  let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
+  let a2 = TC.dot a a in
+  let a4 = TC.dot a2 a2 in
+  let a6 = TC.dot a4 a2 in
+  let u_inner =
+    TC.dot a6 (expm_sum [ (1.0, a6); (16380.0, a4); (40840800.0, a2) ])
+  in
+  let u_tail =
+    List.fold_left
+      (fun acc (c, m) -> C.bind1 T.Add [ acc; expm_coefficient m c ])
+      u_inner
+      [
+        (33522128640.0, a6);
+        (10559470521600.0, a4);
+        (1187353796428800.0, a2);
+        (32382376266240000.0, ident);
+      ]
+  in
+  let u = TC.dot a u_tail in
+  let v_inner =
+    TC.dot a6 (expm_sum [ (182.0, a6); (960960.0, a4); (1323241920.0, a2) ])
+  in
+  let v =
+    List.fold_left
+      (fun acc (c, m) -> C.bind1 T.Add [ acc; expm_coefficient m c ])
+      v_inner
+      [
+        (670442572800.0, a6);
+        (129060195264000.0, a4);
+        (7771770303897600.0, a2);
+        (64764752532480000.0, ident);
+      ]
+  in
+  [ u; v ]
+
+let calc_p_q a =
+  Numpy.Jnp_util.jit "_calc_P_Q"
+    (function
+      | [ a ] -> (
+          let is64 = dtype a = D.F64 || dtype a = D.Complex128 in
+          let a_l1 = LN.norm ~ord:(LN.Onum 1.0) a in
+          let rdt = dtype a_l1 in
+          let maxnorm = if is64 then 5.371920351148152 else 3.925724783138660 in
+          let scaled_norm = C.bind1 T.Div [ a_l1; C.splat rdt [||] maxnorm ] in
+          let log2 = UF.log2 scaled_norm in
+          let n_squarings =
+            C.bind1 T.Max [ C.splat rdt [||] 0.0; UF.floor log2 ]
+          in
+          let exponent = NL.astype n_squarings (dtype a) in
+          let divisor =
+            C.bind1 T.Pow [ C.splat (dtype a) [||] 2.0; exponent ]
+          in
+          let a = C.bind1 T.Div [ a; divisor ] in
+          let conds, branches =
+            if is64 then
+              ( [|
+                  1.495585217958292e-2;
+                  2.539398330063230e-1;
+                  9.504178996162932e-1;
+                  2.097847961257068;
+                |],
+                [ pade3; pade5; pade7; pade9; pade13 ] )
+            else
+              ( [| 4.258730016922831e-1; 1.880152677804762 |],
+                [ pade3; pade5; pade7 ] )
+          in
+          let bins =
+            T.Concrete (Nd.of_floats rdt [| Array.length conds |] conds)
+          in
+          let idx = NL.digitize a_l1 bins in
+          let wrap f = function
+            | [ a ] -> f a
+            | _ -> invalid_arg "expm: arity"
+          in
+          match Lax_api.switch idx (List.map wrap branches) [ a ] with
+          | [ u; v ] ->
+              let p = C.bind1 T.Add [ u; v ] in
+              let q = C.bind1 T.Add [ C.bind1 T.Neg [ u ]; v ] in
+              [ p; q; n_squarings ]
+          | _ -> invalid_arg "expm: arity")
+      | _ -> invalid_arg "expm: arity")
+    [ a ]
+
+let expm_squaring r n_squarings max_squarings =
+  Numpy.Jnp_util.jit1 "_squaring"
+    ~key:(string_of_int max_squarings)
+    (function
+      | [ r; n_squarings ] -> (
+          let steps =
+            C.bind1
+              (T.Iota
+                 {
+                   dtype = dtype n_squarings;
+                   shape = [| max_squarings |];
+                   dimension = 0;
+                 })
+              []
+          in
+          let body = function
+            | [ c; i ] ->
+                Lax_api.cond
+                  (C.bind1 T.Lt [ i; n_squarings ])
+                  (function
+                    | [ x ] -> [ TC.dot x x ] | _ -> invalid_arg "expm: arity")
+                  Fun.id [ c ]
+            | _ -> invalid_arg "expm: arity"
+          in
+          match Lax_api.scan body [ r ] [ steps ] with
+          | [ res ] -> res
+          | _ -> invalid_arg "expm: arity")
+      | _ -> invalid_arg "expm: arity")
+    [ r; n_squarings ]
+
 let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
   let a = to_inexact a in
   let sh = shape a in
@@ -479,179 +662,31 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
          (fun args -> [ expm ~upper_triangular ~max_squarings (List.hd args) ])
          [ Some 0 ] [ a ])
   else
-    let n = sh.(0) in
-    let dt = dtype a in
-    let ident = NL.eye ~dtype:dt n in
-    let sc co m = UF.multiply (scalar_of a co) m in
-    let dotp = TC.matmul in
-    let is64 = dt = D.F64 || dt = D.Complex128 in
-    let maxnorm = if is64 then 5.371920351148152 else 3.925724783138660 in
-    let conds =
-      if is64 then
-        [|
-          1.495585217958292e-2;
-          2.539398330063230e-1;
-          9.504178996162932e-1;
-          2.097847961257068;
-        |]
-      else [| 4.258730016922831e-1; 1.880152677804762 |]
-    in
-    let pades_for a =
-      let pade3 () =
-        let a2 = dotp a a in
-        let u = dotp a (UF.add (sc 1.0 a2) (sc 60.0 ident)) in
-        let v = UF.add (sc 12.0 a2) (sc 120.0 ident) in
-        (u, v)
-      in
-      let pade5 () =
-        let a2 = dotp a a in
-        let a4 = dotp a2 a2 in
-        let u =
-          dotp a (UF.add (sc 1.0 a4) (UF.add (sc 420.0 a2) (sc 15120.0 ident)))
+    match calc_p_q a with
+    | [ p; q; n_squarings ] -> (
+        let limit =
+          C.splat (dtype n_squarings) [||] (float_of_int max_squarings)
         in
-        let v =
-          UF.add (sc 30.0 a4) (UF.add (sc 3360.0 a2) (sc 30240.0 ident))
+        let compute = function
+          | [ _; p; q ] ->
+              let r =
+                if upper_triangular then solve_triangular q p else LN.solve q p
+              in
+              [ expm_squaring r n_squarings max_squarings ]
+          | _ -> invalid_arg "expm: arity"
         in
-        (u, v)
-      in
-      let pade7 () =
-        let a2 = dotp a a in
-        let a4 = dotp a2 a2 in
-        let a6 = dotp a4 a2 in
-        let u =
-          dotp a
-            (UF.add (sc 1.0 a6)
-               (UF.add (sc 1512.0 a4)
-                  (UF.add (sc 277200.0 a2) (sc 8648640.0 ident))))
+        let nan = function
+          | a :: _ -> [ AC.full_like a Float.nan ]
+          | [] -> invalid_arg "expm: arity"
         in
-        let v =
-          UF.add (sc 56.0 a6)
-            (UF.add (sc 25200.0 a4)
-               (UF.add (sc 1995840.0 a2) (sc 17297280.0 ident)))
-        in
-        (u, v)
-      in
-      let pade9 () =
-        let a2 = dotp a a in
-        let a4 = dotp a2 a2 in
-        let a6 = dotp a4 a2 in
-        let a8 = dotp a6 a2 in
-        let u =
-          dotp a
-            (UF.add (sc 1.0 a8)
-               (UF.add (sc 3960.0 a6)
-                  (UF.add (sc 2162160.0 a4)
-                     (UF.add (sc 302702400.0 a2) (sc 8821612800.0 ident)))))
-        in
-        let v =
-          UF.add (sc 90.0 a8)
-            (UF.add (sc 110880.0 a6)
-               (UF.add (sc 30270240.0 a4)
-                  (UF.add (sc 2075673600.0 a2) (sc 17643225600.0 ident))))
-        in
-        (u, v)
-      in
-      let pade13 () =
-        let a2 = dotp a a in
-        let a4 = dotp a2 a2 in
-        let a6 = dotp a4 a2 in
-        let u =
-          dotp a
-            (UF.add
-               (dotp a6
-                  (UF.add (sc 1.0 a6)
-                     (UF.add (sc 16380.0 a4) (sc 40840800.0 a2))))
-               (UF.add (sc 33522128640.0 a6)
-                  (UF.add (sc 10559470521600.0 a4)
-                     (UF.add (sc 1187353796428800.0 a2)
-                        (sc 32382376266240000.0 ident)))))
-        in
-        let v =
-          UF.add
-            (dotp a6
-               (UF.add (sc 182.0 a6)
-                  (UF.add (sc 960960.0 a4) (sc 1323241920.0 a2))))
-            (UF.add (sc 670442572800.0 a6)
-               (UF.add (sc 129060195264000.0 a4)
-                  (UF.add (sc 7771770303897600.0 a2)
-                     (sc 64764752532480000.0 ident))))
-        in
-        (u, v)
-      in
-      let pades =
-        if is64 then [| pade3; pade5; pade7; pade9; pade13 |]
-        else [| pade3; pade5; pade7 |]
-      in
-      pades
-    in
-    let is_traced = match a with T.Tracer _ -> true | _ -> false in
-    if is_traced then begin
-      let module L = Lax_api in
-      let l1 = RED.amax (RED.sum ~axis:[| 0 |] (UF.abs a)) in
-      let real_dt = (Core.get_aval l1).T.dtype in
-      let const x = L.full [||] x real_dt in
-      let exact = L.floor (UF.log2 (L.div l1 (const maxnorm))) in
-      let nsq_v =
-        L.select (L.gt l1 (const 0.0)) (L.max exact (const 0.0)) (const 0.0)
-      in
-      let factor = L.pow (const 2.0) nsq_v in
-      let widen v = NL.astype (L.broadcast_in_dim v sh [||]) dt in
-      let scaled = UF.divide a (widen factor) in
-      let results = Array.map (fun f -> f ()) (pades_for scaled) in
-      let pick select_part =
-        let last = Array.length results - 1 in
-        let rec go i =
-          if i = last then select_part results.(i)
-          else
-            NL.where_
-              (widen_bool (L.lt l1 (const conds.(i))))
-              (select_part results.(i))
-              (go (i + 1))
-        and widen_bool c = L.broadcast_in_dim c sh [||] in
-        go 0
-      in
-      let u = pick fst and v = pick snd in
-      let p = UF.add u v and q = UF.add (UF.negative u) v in
-      let r = if upper_triangular then solve_triangular q p else LN.solve q p in
-      let rec loop r k =
-        if k = max_squarings then r
-        else
-          let now = L.lt (const (float_of_int k)) nsq_v in
-          loop (NL.where_ (L.broadcast_in_dim now sh [||]) (dotp r r) r) (k + 1)
-      in
-      let out = loop r 0 in
-      let too_many = L.gt nsq_v (const (float_of_int max_squarings)) in
-      NL.where_
-        (L.broadcast_in_dim too_many sh [||])
-        (AC.full_like out Float.nan)
-        out
-    end
-    else
-      let l1f = host_float (RED.amax (RED.sum ~axis:[| 0 |] (UF.abs a))) in
-      let nsq =
-        if l1f <= 0.0 then 0
-        else max 0 (int_of_float (Float.floor (Float.log2 (l1f /. maxnorm))))
-      in
-      if nsq > max_squarings then AC.full_like a Float.nan
-      else begin
-        let a =
-          if nsq = 0 then a
-          else UF.divide a (scalar_of a (2.0 ** float_of_int nsq))
-        in
-        let idx =
-          Array.fold_left
-            (fun acc c -> if c <= l1f then acc + 1 else acc)
-            0 conds
-        in
-        let pades = pades_for a in
-        let u, v = pades.(idx) () in
-        let p = UF.add u v and q = UF.add (UF.negative u) v in
-        let r =
-          if upper_triangular then solve_triangular q p else LN.solve q p
-        in
-        let rec sq r k = if k = 0 then r else sq (dotp r r) (k - 1) in
-        sq r nsq
-      end
+        match
+          Lax_api.cond
+            (C.bind1 T.Gt [ n_squarings; limit ])
+            nan compute [ a; p; q ]
+        with
+        | [ r ] -> r
+        | _ -> invalid_arg "expm: arity")
+    | _ -> invalid_arg "expm: arity"
 
 let expm_frechet ?(compute_expm = true) a e =
   let a = to_inexact a and e = to_inexact e in

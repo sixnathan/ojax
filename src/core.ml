@@ -446,7 +446,7 @@ let rec dispatch prim args =
 
 and dispatch_widened top prim args =
   if
-    is_elementwise prim && top.kind <> KJaxpr
+    is_elementwise prim && top.kind = KBatch
     &&
     match args with
     | first :: rest ->
@@ -550,6 +550,27 @@ let eval_process_primitive _trace prim args =
   match !eager_eval prim args with
   | Some outs -> outs
   | None ->
+      let args =
+        if is_elementwise prim then begin
+          let shapes = List.map value_shape args in
+          let out = elementwise_shape shapes in
+          List.map
+            (fun v ->
+              let s = value_shape v in
+              if s = out then v
+              else
+                let k = Array.length out - Array.length s in
+                bind1
+                  (Broadcast_in_dim
+                     {
+                       shape = out;
+                       dims = Array.init (Array.length s) (fun i -> i + k);
+                     })
+                  [ v ])
+            args
+        end
+        else args
+      in
       let inputs = List.map as_concrete args in
       let results = rules.impl prim inputs in
       List.map

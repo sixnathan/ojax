@@ -34,6 +34,50 @@ let int_matrix n m f =
        [| n; m |]
        (Array.init (n * m) (fun k -> f (k / m) (k mod m))))
 
+let b1 = Core.bind1
+let jit1 = Numpy.Jnp_util.jit1
+let where = Numpy.Jnp_util.where
+let scalar dt x = Core.splat dt [||] x
+let iota dt n = b1 (Iota { dtype = dt; shape = [| n |]; dimension = 0 }) []
+
+let column v =
+  let n = (shape v).(0) in
+  b1 (Broadcast_in_dim { shape = [| n; 1 |]; dims = [| 0 |] }) [ v ]
+
+let row v =
+  let n = (shape v).(0) in
+  b1 (Broadcast_in_dim { shape = [| 1; n |]; dims = [| 1 |] }) [ v ]
+
+let default_float () = Dtypes.default_float_dtype ()
+
+let binom n k =
+  jit1 "_binom"
+    (function
+      | [ n; k ] ->
+          let dt = dtype_of n in
+          let one = scalar dt 1.0 in
+          let a = b1 Lgamma [ b1 Add [ n; one ] ] in
+          let b = b1 Lgamma [ b1 Add [ b1 Sub [ n; k ]; one ] ] in
+          let c = b1 Lgamma [ b1 Add [ k; one ] ] in
+          b1 Exp [ b1 Sub [ b1 Sub [ a; b ]; c ] ]
+      | _ -> invalid_arg "_binom: arity")
+    [ n; k ]
+
+let comb big_n k =
+  let dt = dtype_of big_n in
+  let zero = scalar dt 0.0 and one = scalar dt 1.0 in
+  let first = b1 Le [ k; big_n ] in
+  let second = b1 Ge [ big_n; zero ] in
+  let cond = b1 And [ first; second ] in
+  let cond = b1 And [ cond; b1 Ge [ k; zero ] ] in
+  let safe_n = where cond big_n zero in
+  let safe_k = where cond k zero in
+  let gammaln v = b1 Lgamma [ v ] in
+  let a = gammaln (b1 Add [ safe_n; one ]) in
+  let b = gammaln (b1 Add [ safe_k; one ]) in
+  let c = gammaln (b1 Sub [ b1 Add [ safe_n; one ]; safe_k ]) in
+  where cond (b1 Exp [ b1 Sub [ b1 Sub [ a; b ]; c ] ]) zero
+
 let hilbert n = float_matrix n n (fun i j -> 1.0 /. float_of_int (i + j + 1))
 
 let circulant c =
@@ -56,18 +100,44 @@ let fiedler a =
   let n = (shape a).(0) in
   matrix_of n n (fun i j -> L.abs (L.sub (at a i) (at a j)))
 
+let first_of a =
+  b1 (Squeeze [| 0 |])
+    [
+      b1
+        (Slice
+           { start_indices = [| 0 |]; limit_indices = [| 1 |]; strides = None })
+        [ a ];
+    ]
+
 let companion a =
   let a = inexact (NL.atleast_1d a) in
   require_vector "companion" a;
   let n = (shape a).(0) in
   if n < 2 then
     invalid_arg "The length of `a` along the last axis must be at least 2";
-  let zero = L.full [||] 0.0 (dtype_of a) in
-  let one = L.full [||] 1.0 (dtype_of a) in
-  matrix_of (n - 1) (n - 1) (fun i j ->
-      if i = 0 then L.neg (L.div (at a (j + 1)) (at a 0))
-      else if i = j + 1 then one
-      else zero)
+  let rest =
+    b1
+      (Slice
+         { start_indices = [| 1 |]; limit_indices = [| n |]; strides = None })
+      [ a ]
+  in
+  let negated = b1 Neg [ rest ] in
+  let first_row = b1 Div [ negated; first_of a ] in
+  let m = n - 1 in
+  let out = NL.eye ~m ~k:(-1) ~dtype:(dtype_of first_row) m in
+  let dims : scatter_dims =
+    {
+      update_window_dims = [| 0 |];
+      inserted_window_dims = [| 0 |];
+      scatter_dims_to_operand_dims = [| 0 |];
+      s_operand_batching_dims = [||];
+      s_scatter_indices_batching_dims = [||];
+    }
+  in
+  let indices = Concrete (Ndarray.of_floats Dtype.I32 [| 1 |] [| 0.0 |]) in
+  b1
+    (Scatter { dimension_numbers = dims; unique_indices = true })
+    [ out; indices; first_row ]
 
 let fiedler_companion a =
   let a = inexact (NL.atleast_1d a) in
@@ -75,11 +145,25 @@ let fiedler_companion a =
   let n = (shape a).(0) - 1 in
   if n <= 0 then L.full [| 0; 0 |] 0.0 (dtype_of a)
   else
-    let coef k = L.neg (L.div (at a k) (at a 0)) in
-    let zero = L.full [||] 0.0 (dtype_of a) in
-    let one = L.full [||] 1.0 (dtype_of a) in
-    if n = 1 then L.reshape (coef 1) [| 1; 1 |]
+    let a = b1 Div [ a; first_of a ] in
+    if n = 1 then
+      L.reshape
+        (b1 Neg
+           [
+             b1
+               (Slice
+                  {
+                    start_indices = [| 1 |];
+                    limit_indices = [| 2 |];
+                    strides = None;
+                  })
+               [ a ];
+           ])
+        [| 1; 1 |]
     else
+      let dt = dtype_of a in
+      let coef k = b1 Neg [ at a k ] in
+      let zero = scalar dt 0.0 and one = scalar dt 1.0 in
       matrix_of n n (fun i j ->
           let even = i mod 2 = 0 in
           if i = 0 && j = 0 then coef 1
@@ -104,86 +188,123 @@ let leslie f s =
       if i = 0 then at f j else if i = j + 1 then at s j else zero)
 
 let dft ?scale ?dtype:requested n =
-  let pi = 4.0 *. Float.atan 1.0 in
-  let denom =
-    match scale with
-    | None -> 1.0
-    | Some "sqrtn" -> sqrt (float_of_int n)
-    | Some "n" -> float_of_int n
-    | Some other ->
-        invalid_arg
-          ("scale must be None, 'sqrtn', or 'n'; " ^ other ^ " is not valid.")
-  in
+  (match scale with
+  | None | Some "sqrtn" | Some "n" -> ()
+  | Some other ->
+      invalid_arg
+        ("scale must be None, 'sqrtn', or 'n'; " ^ other ^ " is not valid."));
   let dt =
     match requested with
     | Some d -> Dtypes.canonicalize_dtype d
     | None -> (
-        match Dtypes.default_float_dtype () with
+        match default_float () with
         | Dtype.F64 -> Dtype.Complex128
         | _ -> Dtype.Complex64)
   in
-  Concrete
-    (Ndarray.of_complex dt [| n; n |]
-       (Array.init (n * n) (fun k ->
-            let i = k / n and j = k mod n in
-            let phase = i * j mod n in
-            let angle = -2.0 *. pi *. float_of_int phase /. float_of_int n in
-            { Complex.re = cos angle /. denom; im = sin angle /. denom })))
-
-let binomial n k =
-  let r = ref 1.0 in
-  for i = 1 to k do
-    r := !r *. float_of_int (n - k + i) /. float_of_int i
-  done;
-  Float.round !r
+  let pi = 3.141592653589793 in
+  jit1 "dft"
+    ~key:(Dtype.short_name dt ^ Option.value scale ~default:"none")
+    (fun _ ->
+      let a = iota dt n in
+      let i = column a in
+      let factor =
+        Concrete
+          (Ndarray.of_complex dt [||]
+             [| { Complex.re = -0.0; im = -2.0 *. pi } |])
+      in
+      let scaled = b1 Mul [ factor; i ] in
+      let j = row a in
+      let product = b1 Mul [ scaled; j ] in
+      let count = scalar dt (float_of_int n) in
+      let quotient = b1 Div [ product; count ] in
+      let omegas = b1 Exp [ quotient ] in
+      match scale with
+      | Some "sqrtn" ->
+          let rdt =
+            match dt with Dtype.Complex128 -> Dtype.F64 | _ -> Dtype.F32
+          in
+          let root = b1 Sqrt [ scalar rdt (float_of_int n) ] in
+          b1 Div [ omegas; b1 (Convert_element_type dt) [ root ] ]
+      | Some "n" -> b1 Div [ omegas; count ]
+      | _ -> omegas)
+    []
 
 let pascal ?(kind = "symmetric") n =
-  let entry =
-    match kind with
-    | "symmetric" -> fun i j -> binomial (i + j) i
-    | "lower" -> fun i j -> if j <= i then binomial i j else 0.0
-    | "upper" -> fun i j -> if i <= j then binomial j i else 0.0
-    | other ->
-        invalid_arg
-          ("Expected kind to be on of: ['symmetric', 'lower', 'upper']; got "
-         ^ other)
-  in
-  Concrete
-    (Ndarray.of_floats Dtype.F32 [| n; n |]
-       (Array.init (n * n) (fun k -> entry (k / n) (k mod n))))
+  (match kind with
+  | "symmetric" | "lower" | "upper" -> ()
+  | other ->
+      invalid_arg
+        ("Expected kind to be on of: ['symmetric', 'lower', 'upper']; got "
+       ^ other));
+  jit1 "pascal" ~key:kind
+    (fun _ ->
+      let a = iota Dtype.F32 n in
+      let i = column a in
+      let j = row a in
+      let lower = binom i j in
+      match kind with
+      | "lower" -> lower
+      | "upper" -> b1 (Transpose [| 1; 0 |]) [ lower ]
+      | _ ->
+          Numpy.Tensor_contractions.dot lower
+            (b1 (Transpose [| 1; 0 |]) [ lower ]))
+    []
 
 let invpascal ?(kind = "symmetric") n =
-  let sign i j = if (i + j) mod 2 = 0 then 1.0 else -1.0 in
-  let lower i j = if j <= i then sign i j *. binomial i j else 0.0 in
-  let entry =
-    match kind with
-    | "lower" -> lower
-    | "upper" -> fun i j -> lower j i
-    | "symmetric" ->
-        fun i j ->
-          let total = ref 0.0 in
-          for k = 0 to n - 1 do
-            total := !total +. (lower k i *. lower k j)
-          done;
-          !total
-    | other ->
-        invalid_arg
-          ("Expected kind to be one of: ['symmetric', 'lower', 'upper']; got "
-         ^ other)
-  in
-  float_matrix n n entry
+  (match kind with
+  | "symmetric" | "lower" | "upper" -> ()
+  | other ->
+      invalid_arg
+        ("Expected kind to be one of: ['symmetric', 'lower', 'upper']; got "
+       ^ other));
+  jit1 "invpascal" ~key:kind
+    (fun _ ->
+      let dt = default_float () in
+      let a = iota dt n in
+      let i = column a in
+      let j = row a in
+      let difference = b1 Sub [ i; j ] in
+      let signs = b1 Pow [ scalar dt (-1.0); difference ] in
+      let inverse = b1 Mul [ signs; binom i j ] in
+      match kind with
+      | "lower" -> inverse
+      | "upper" -> b1 (Transpose [| 1; 0 |]) [ inverse ]
+      | _ ->
+          Numpy.Tensor_contractions.dot
+            (b1 (Transpose [| 1; 0 |]) [ inverse ])
+            inverse)
+    []
 
 let helmert ?(full = false) n =
-  let entry i j =
-    if i = 0 then 1.0 /. sqrt (float_of_int n)
-    else
-      let norm = sqrt (float_of_int (i * (i + 1))) in
-      if j < i then 1.0 /. norm
-      else if j = i then -.float_of_int i /. norm
-      else 0.0
-  in
-  if full then float_matrix n n entry
-  else float_matrix (n - 1) n (fun i j -> entry (i + 1) j)
+  if n < 1 then
+    invalid_arg (Printf.sprintf "n must be a positive integer; got %d." n);
+  jit1 "helmert" ~key:(string_of_bool full)
+    (fun _ ->
+      let idt = Dtypes.default_int_dtype () in
+      let dt = default_float () in
+      let i = column (iota idt (n - 1)) in
+      let j = row (iota idt n) in
+      let k = b1 Add [ i; scalar idt 1.0 ] in
+      let k_f = b1 (Convert_element_type dt) [ k ] in
+      let next = b1 Add [ k_f; scalar dt 1.0 ] in
+      let denom = b1 Sqrt [ b1 Mul [ k_f; next ] ] in
+      let below = b1 Le [ j; i ] in
+      let inverse = b1 Div [ scalar dt 1.0; denom ] in
+      let on = b1 Eq [ j; k ] in
+      let diagonal = b1 Div [ b1 Neg [ k_f ]; denom ] in
+      let zeros = Core.splat dt (shape denom) 0.0 in
+      let inner = where on diagonal zeros in
+      let h = where below inverse inner in
+      if full then begin
+        let root = b1 Sqrt [ scalar dt (float_of_int n) ] in
+        let first = b1 Div [ scalar dt 1.0; root ] in
+        let first_row =
+          b1 (Broadcast_in_dim { shape = [| 1; n |]; dims = [||] }) [ first ]
+        in
+        b1 (Concatenate 0) [ first_row; h ]
+      end
+      else h)
+    []
 
 let hadamard ?dtype:requested n =
   if n <= 0 || n land (n - 1) <> 0 then
@@ -228,14 +349,32 @@ let convolution_matrix ?(mode = "full") a n =
   matrix_of rows n (fun i j -> entry (first + i) j)
 
 let invhilbert n =
-  let b = binomial in
-  float_matrix n n (fun i j ->
-      let sign = if (i + j) mod 2 = 0 then 1.0 else -1.0 in
-      sign
-      *. float_of_int (i + j + 1)
-      *. b (n + i) (n - j - 1)
-      *. b (n + j) (n - i - 1)
-      *. (b (i + j) i ** 2.0))
+  jit1 "invhilbert"
+    (fun _ ->
+      let dt = default_float () in
+      let a = iota dt n in
+      let i = column a in
+      let j = row a in
+      let s = b1 Add [ i; j ] in
+      let count = scalar dt (float_of_int n) in
+      let signs = b1 Pow [ scalar dt (-1.0); s ] in
+      let bumped = b1 Add [ s; scalar dt 1.0 ] in
+      let first = b1 Mul [ signs; bumped ] in
+      let left =
+        comb
+          (b1 Add [ count; i ])
+          (b1 Sub [ b1 Sub [ count; j ]; scalar dt 1.0 ])
+      in
+      let second = b1 Mul [ first; left ] in
+      let right =
+        comb
+          (b1 Add [ count; j ])
+          (b1 Sub [ b1 Sub [ count; i ]; scalar dt 1.0 ])
+      in
+      let third = b1 Mul [ second; right ] in
+      let last = b1 (Integer_pow 2) [ comb s i ] in
+      b1 Mul [ third; last ])
+    []
 
 let solve_sylvester a b q =
   let module LN = Numpy.Linalg in

@@ -255,7 +255,7 @@ let window_select params =
   | "le" -> T.Wle
   | s -> failwith ("lax golden: bad window select " ^ s)
 
-let prim_of op params : T.primitive =
+let prim_of ?(element = D.F32) op params : T.primitive =
   let member name = U.member name params in
   match op with
   | "neg" -> T.Neg
@@ -362,7 +362,7 @@ let prim_of op params : T.primitive =
           index_dtype = dtype_of_string (U.to_string (member "index_dtype"));
         }
   | "reduce" ->
-      let sc = { T.shape = [||]; dtype = D.F32; weak_type = false } in
+      let sc = { T.shape = [||]; dtype = element; weak_type = false } in
       let reducer =
         Ojax.Jaxpr.make_jaxpr [ sc; sc ] (fun args -> [ C.bind1 T.Add args ])
       in
@@ -496,7 +496,7 @@ let prim_of op params : T.primitive =
   | "reduce_window_max" -> T.Reduce_window_max (window_of params)
   | "reduce_window_min" -> T.Reduce_window_min (window_of params)
   | "reduce_window" ->
-      let sc = { T.shape = [||]; dtype = D.F32; weak_type = false } in
+      let sc = { T.shape = [||]; dtype = element; weak_type = false } in
       let reducer =
         Ojax.Jaxpr.make_jaxpr [ sc; sc ] (fun args -> [ C.bind1 T.Mul args ])
       in
@@ -542,7 +542,10 @@ let lax_check_case ~set_dir ~x64 c () =
       (fun a -> T.Concrete (nd_of_npz (find_member inputs a.name)))
       c.args
   in
-  let results = C.bind (prim_of c.op c.params) operands in
+  let element =
+    match operands with first :: _ -> (C.get_aval first).T.dtype | [] -> D.F32
+  in
+  let results = C.bind (prim_of ~element c.op c.params) operands in
   let paired =
     try List.combine c.outs results
     with Invalid_argument _ ->

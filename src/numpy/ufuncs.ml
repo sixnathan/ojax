@@ -291,20 +291,33 @@ let radians = deg2rad
 let degrees = rad2deg
 let exp2 x = unary_inexact T.Exp2 x
 
-let log_over base x =
+let log2 x =
   let a = p1 (promote_inexact [ x ]) in
-  let log_x = bind1 T.Log [ a ] in
-  let log_base part =
-    bind1 T.Div [ part; const_full (dtype part) (shape part) (Float.log base) ]
-  in
   match dtype a with
   | D.Complex64 | D.Complex128 ->
-      bind1 T.Complex
-        [ log_base (bind1 T.Real [ log_x ]); log_base (bind1 T.Imag [ log_x ]) ]
-  | _ -> log_base log_x
+      let r = bind1 T.Log [ a ] in
+      let re = bind1 T.Real [ r ] in
+      let im = bind1 T.Imag [ r ] in
+      let ln2 = bind1 T.Log [ const_full (dtype re) [||] 2.0 ] in
+      bind1 T.Complex [ bind1 T.Div [ re; ln2 ]; bind1 T.Div [ im; ln2 ] ]
+  | _ ->
+      bind1 T.Div
+        [ bind1 T.Log [ a ]; bind1 T.Log [ const_full (dtype a) [||] 2.0 ] ]
 
-let log2 x = log_over 2.0 x
-let log10 x = log_over 10.0 x
+let one_over_log10 = 0.4342944819032518
+
+let log10 x =
+  let a = p1 (promote_inexact [ x ]) in
+  match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      let r = bind1 T.Log [ a ] in
+      let re = bind1 T.Real [ r ] in
+      let im = bind1 T.Imag [ r ] in
+      let factor = const_full (dtype re) [||] one_over_log10 in
+      bind1 T.Complex [ bind1 T.Mul [ re; factor ]; bind1 T.Mul [ im; factor ] ]
+  | _ ->
+      bind1 T.Mul
+        [ bind1 T.Log [ a ]; const_full (dtype a) [||] one_over_log10 ]
 
 let reciprocal x =
   let a = p1 (promote_inexact [ x ]) in
@@ -612,14 +625,12 @@ let wrap_between x half =
 let is_complex v =
   match dtype v with D.Complex64 | D.Complex128 -> true | _ -> false
 
-let logaddexp x1 x2 =
-  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+let logaddexp_primal a b =
   let amax = bind1 T.Max [ a; b ] in
   if is_complex a then begin
-    let two = const_full (dtype a) (shape a) 2.0 in
-    let delta =
-      bind1 T.Sub [ bind1 T.Add [ a; b ]; bind1 T.Mul [ amax; two ] ]
-    in
+    let sum = bind1 T.Add [ a; b ] in
+    let twice = bind1 T.Mul [ amax; const_full (dtype a) [||] 2.0 ] in
+    let delta = bind1 T.Sub [ sum; twice ] in
     let out = bind1 T.Add [ amax; bind1 T.Log1p [ bind1 T.Exp [ delta ] ] ] in
     bind1 T.Complex
       [ bind1 T.Real [ out ]; wrap_between (bind1 T.Imag [ out ]) Float.pi ]
@@ -634,6 +645,36 @@ let logaddexp x1 x2 =
     let tail = bind1 T.Log1p [ exponent ] in
     let normal = bind1 T.Add [ amax; tail ] in
     bind1 T.Select_n [ is_nan; normal; sum ]
+
+let replace_inf x =
+  let re = if is_complex x then bind1 T.Real [ x ] else x in
+  let inf = const_full (dtype re) [||] Float.infinity in
+  let pred = bind1 T.Eq [ re; inf ] in
+  let zeros = const_full (dtype x) (shape x) 0.0 in
+  bind1 T.Select_n [ pred; x; zeros ]
+
+let logaddexp x1 x2 =
+  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+  let primal = function
+    | [ a; b ] -> [ logaddexp_primal a b ]
+    | _ -> invalid_arg "logaddexp: arity"
+  in
+  let jvp primals tangents =
+    match (primals, tangents) with
+    | [ x1; x2 ], [ t1; t2 ] ->
+        let out = logaddexp_primal x1 x2 in
+        let left =
+          let diff = bind1 T.Sub [ replace_inf x1; replace_inf out ] in
+          bind1 T.Mul [ t1; bind1 T.Exp [ diff ] ]
+        in
+        let right =
+          let diff = bind1 T.Sub [ replace_inf x2; replace_inf out ] in
+          bind1 T.Mul [ t2; bind1 T.Exp [ diff ] ]
+        in
+        ([ out ], [ bind1 T.Add [ left; right ] ])
+    | _ -> invalid_arg "logaddexp: arity"
+  in
+  p1 (Custom_derivatives.custom_jvp primal ~jvp [ a; b ])
 
 let logaddexp2 x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in

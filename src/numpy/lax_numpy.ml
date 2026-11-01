@@ -313,7 +313,13 @@ let unsignedinteger = Unsignedinteger
 let extended = Extended
 let issubdtype a b = a = b || List.mem b (class_chain a)
 
-let conv1d ~mode ~flip_kernel ~reverse_out a v =
+let flip1 y =
+  Jnp_util.jit1 "_flip" ~key:"0"
+    (function [ y ] -> rev_dims y [| 0 |] | _ -> invalid_arg "flip: arity")
+    [ y ]
+
+let conv1d_body ~mode ~correlating a v =
+  let flip_kernel = not correlating in
   let dt, _ =
     Dtypes.result_type
       [
@@ -323,8 +329,14 @@ let conv1d ~mode ~flip_kernel ~reverse_out a v =
   let a = convert a dt and v = convert v dt in
   let la = (shape a).(0) and lv = (shape v).(0) in
   if la = 0 || lv = 0 then invalid_arg "conv: inputs cannot be empty";
-  let x, y = if la < lv then (v, a) else (a, v) in
-  let y = if flip_kernel then rev_dims y [| 0 |] else y in
+  let v =
+    match dtype v with
+    | (D.Complex64 | D.Complex128) when correlating -> bind1 T.Conj [ v ]
+    | _ -> v
+  in
+  let swapped = la < lv in
+  let x, y = if swapped then (v, a) else (a, v) in
+  let y = if flip_kernel then flip1 y else y in
   let ly = (shape y).(0) in
   let padding =
     match mode with
@@ -334,46 +346,43 @@ let conv1d ~mode ~flip_kernel ~reverse_out a v =
     | _ -> invalid_arg "conv: mode must be one of full, same, valid"
   in
   let lx = (shape x).(0) in
-  let lhs = reshape x [| 1; 1; lx |] in
-  let rhs = reshape y [| 1; 1; ly |] in
+  let lifted v n =
+    bind1 (T.Broadcast_in_dim { shape = [| 1; 1; n |]; dims = [| 2 |] }) [ v ]
+  in
+  let lhs = lifted x lx in
+  let rhs = lifted y ly in
   let out =
-    Lax.complex_bilinear
-      (fun lhs rhs ->
-        bind1
-          (T.Conv_general_dilated
+    bind1
+      (T.Conv_general_dilated
+         {
+           window_strides = [| 1 |];
+           padding;
+           lhs_dilation = [| 1 |];
+           rhs_dilation = [| 1 |];
+           dimension_numbers =
              {
-               window_strides = [| 1 |];
-               padding;
-               lhs_dilation = [| 1 |];
-               rhs_dilation = [| 1 |];
-               dimension_numbers =
-                 {
-                   lhs_spec = [| 0; 1; 2 |];
-                   rhs_spec = [| 0; 1; 2 |];
-                   out_spec = [| 0; 1; 2 |];
-                 };
-               feature_group_count = 1;
-               batch_group_count = 1;
-             })
-          [ lhs; rhs ])
-      lhs rhs
+               lhs_spec = [| 0; 1; 2 |];
+               rhs_spec = [| 0; 1; 2 |];
+               out_spec = [| 0; 1; 2 |];
+             };
+           feature_group_count = 1;
+           batch_group_count = 1;
+         })
+      [ lhs; rhs ]
   in
-  let m = (shape out).(2) in
-  let flat = reshape out [| m |] in
-  if reverse_out then rev_dims flat [| 0 |] else flat
+  let flat = bind1 (T.Squeeze [| 0; 1 |]) [ out ] in
+  if correlating && swapped then rev_dims flat [| 0 |] else flat
 
-let convolve ?(mode = "full") a v =
-  conv1d ~mode ~flip_kernel:true ~reverse_out:false a v
+let conv1d ~mode ~correlating a v =
+  Jnp_util.jit1 "_conv"
+    ~key:(mode ^ string_of_bool correlating)
+    (function
+      | [ a; v ] -> conv1d_body ~mode ~correlating a v
+      | _ -> invalid_arg "conv: arity")
+    [ a; v ]
 
-let correlate ?(mode = "valid") a v =
-  let v =
-    match dtype v with
-    | D.Complex64 | D.Complex128 -> bind1 T.Conj [ v ]
-    | _ -> v
-  in
-  let la = (shape a).(0) and lv = (shape v).(0) in
-  conv1d ~mode ~flip_kernel:false ~reverse_out:(la < lv) a v
-
+let convolve ?(mode = "full") a v = conv1d ~mode ~correlating:false a v
+let correlate ?(mode = "valid") a v = conv1d ~mode ~correlating:true a v
 let bind = C.bind
 let scalar dt x = const_full dt [||] x
 let full dt sh x = const_full dt sh x

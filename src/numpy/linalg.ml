@@ -837,7 +837,6 @@ let slogdet_lu a =
   (sign, UF.real logdet)
 
 let () =
-  let self = ref (fun _ -> []) in
   let call =
     Custom_derivatives.custom_jvp ~name:"_slogdet_lu" ~jvp_name:"_slogdet_jvp"
       (function
@@ -848,8 +847,9 @@ let () =
       ~jvp:(fun primals tangents ->
         match (primals, tangents) with
         | [ x ], [ g ] -> (
-            match !self [ x ] with
-            | [ sign; ans ] as out ->
+            match slogdet x with
+            | sign, ans ->
+                let out = [ sign; ans ] in
                 let solved = solve x g in
                 let ans_dot = NL.trace ~axis1:(-1) ~axis2:(-2) solved in
                 if dtype x = D.Complex64 || dtype x = D.Complex128 then begin
@@ -860,11 +860,9 @@ let () =
                   let re2 = UF.real ans_dot in
                   (out, [ sign_dot; re2 ])
                 end
-                else (out, [ C.splat (dtype sign) (shape sign) 0.0; ans_dot ])
-            | _ -> invalid_arg "slogdet: arity")
+                else (out, [ C.splat (dtype sign) (shape sign) 0.0; ans_dot ]))
         | _ -> invalid_arg "slogdet: arity")
   in
-  self := call;
   slogdet_lu_call := call
 
 let cholesky ?upper ?symmetrize_input a0 =

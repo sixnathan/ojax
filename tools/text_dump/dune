@@ -1,6 +1,8 @@
 (copy_files# ../../test/golden/parity_cases.ml)
 
+(copy_files# ../../test/golden/npz.ml)
+
 (executable
  (name text_dump)
- (modules parity_cases text_dump)
+ (modules npz parity_cases text_dump)
  (libraries yojson ojax))

@@ -275,6 +275,66 @@ def show(ref_paths, our_paths, set_name, case, field):
         sys.stdout.write(str(row.get(field, row.get(field + "_error"))) + "\n")
 
 
+def arrays_reference(goldens, out):
+    os.environ.setdefault("JAX_PLATFORMS", "cpu")
+    import numpy as np
+    import jax.numpy as jnp
+
+    set_dir = os.path.join(goldens, "parity", "x64_off")
+    with open(os.path.join(set_dir, "manifest.json"), encoding="utf-8") as fh:
+        cases = json.load(fh)["cases"]
+    with open(out, "w", encoding="utf-8") as sink:
+        for case in cases:
+            with np.load(os.path.join(set_dir, "inputs", case["case_id"] + ".npz")) as z:
+                for name in z.files:
+                    arr = jnp.asarray(z[name])
+                    row = {"case": case["case_id"], "arg": name, "repr": repr(arr), "str": str(arr)}
+                    sink.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def arrays_compare(ref_path, our_path):
+    def load(path):
+        with open(path, encoding="utf-8") as fh:
+            return {(r["case"], r["arg"]): r for r in map(json.loads, fh)}
+
+    ref, ours = load(ref_path), load(our_path)
+    totals = collections.Counter()
+    by_dtype = collections.Counter()
+    samples = []
+    for key, r in sorted(ref.items()):
+        o = ours.get(key, {})
+        totals["arrays"] += 1
+        for field in ("repr", "str"):
+            same = r[field] == o.get(field)
+            totals[field + "_identical"] += same
+            if field == "repr" and not same:
+                match = re.search(r"dtype=(\w+)", r["repr"])
+                by_dtype[match.group(1) if match else "default"] += 1
+                if len(samples) < 6:
+                    samples.append((r["repr"][:160], str(o.get("repr", o.get("error")))[:160]))
+    sys.stdout.write(json.dumps(totals, sort_keys=True) + "\n")
+    sys.stdout.write(json.dumps(by_dtype.most_common(), sort_keys=True) + "\n")
+    for a, b in samples:
+        sys.stdout.write("JAX  " + a + "\nOJAX " + b + "\n")
+
+
+def errors_compare(ref_paths, our_paths):
+    ref, ours = load_rows(ref_paths), load_rows(our_paths)
+    both = same = 0
+    samples = []
+    for key, r in sorted(ref.items()):
+        o = ours.get(key, {})
+        if "text_error" in r and "text_error" in o:
+            both += 1
+            if r["text_error"] == o["text_error"]:
+                same += 1
+            elif len(samples) < 6:
+                samples.append((r["text_error"][:170], o["text_error"][:170]))
+    sys.stdout.write("both_error=" + str(both) + " identical_message=" + str(same) + "\n")
+    for a, b in samples:
+        sys.stdout.write("JAX  " + a.replace("\n", " ") + "\nOJAX " + b.replace("\n", " ") + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -294,8 +354,23 @@ def main():
     p.add_argument("--set", required=True)
     p.add_argument("--case", required=True)
     p.add_argument("--field", default="text")
+    p = sub.add_parser("arrays-reference")
+    p.add_argument("--goldens", required=True)
+    p.add_argument("--out", required=True)
+    p = sub.add_parser("arrays-compare")
+    p.add_argument("--ref", required=True)
+    p.add_argument("--ours", required=True)
+    p = sub.add_parser("errors")
+    p.add_argument("--ref", nargs="+", required=True)
+    p.add_argument("--ours", nargs="+", required=True)
     args = parser.parse_args()
-    if args.command == "reference":
+    if args.command == "arrays-reference":
+        arrays_reference(args.goldens, args.out)
+    elif args.command == "arrays-compare":
+        arrays_compare(args.ref, args.ours)
+    elif args.command == "errors":
+        errors_compare(args.ref, args.ours)
+    elif args.command == "reference":
         reference(args.goldens, args.out, args.shard, args.shards)
     elif args.command == "compare":
         compare(args.ref, args.ours, args.out, args.top)

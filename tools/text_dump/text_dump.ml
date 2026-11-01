@@ -132,12 +132,51 @@ let jaxpr_builders =
 let cases_of path = U.to_list (U.member "cases" (Yojson.Safe.from_file path))
 let in_shard ~shard ~shards i = shards <= 1 || i mod shards = shard
 
+let nd_of_npz (a : Npz.t) =
+  let dt = dtype_of_name a.Npz.dtype in
+  match a.Npz.data with
+  | Npz.C c -> Ojax.Ndarray.of_complex dt a.Npz.shape c
+  | Npz.F f -> Ojax.Ndarray.of_floats dt a.Npz.shape f
+  | Npz.I i ->
+      Ojax.Ndarray.of_floats dt a.Npz.shape (Array.map Int64.to_float i)
+
+let dump_arrays goldens out =
+  let oc = open_out out in
+  let set_dir = Filename.concat (Filename.concat goldens "parity") "x64_off" in
+  List.iter
+    (fun case ->
+      let id = U.to_string (U.member "case_id" case) in
+      let path =
+        Filename.concat (Filename.concat set_dir "inputs") (id ^ ".npz")
+      in
+      List.iter
+        (fun (name, arr) ->
+          let row =
+            try
+              let v = T.Concrete (nd_of_npz arr) in
+              [
+                ("repr", `String (Ojax.Numpy.Extras.array_repr v));
+                ("str", `String (Ojax.Numpy.Extras.array_str v));
+              ]
+            with e -> [ ("error", `String (Printexc.to_string e)) ]
+          in
+          Yojson.Safe.to_channel oc
+            (`Assoc ([ ("case", `String id); ("arg", `String name) ] @ row));
+          output_char oc '\n')
+        (Npz.read path))
+    (cases_of (Filename.concat set_dir "manifest.json"));
+  close_out oc
+
 let () =
   Ojax.Lax.install ();
   Ojax.Random.Prng.install ();
   Ojax.Random.Threefry.install ();
   let goldens = Sys.argv.(1) in
   let out = Sys.argv.(2) in
+  if Sys.argv.(3) = "arrays" then begin
+    dump_arrays goldens out;
+    exit 0
+  end;
   let shard = int_of_string Sys.argv.(3) in
   let shards = int_of_string Sys.argv.(4) in
   let oc = open_out out in

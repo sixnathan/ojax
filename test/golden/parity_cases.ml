@@ -1371,12 +1371,6 @@ let dtype_sweep_run op a =
   let module S = Ojax.Numpy.Sorting in
   let module FFT = Ojax.Numpy.Fft in
   let row v i = NL.index_at v i in
-  let first_rows v k =
-    let sh = (Ojax.Core.get_aval v).shape in
-    let hi = Array.copy sh in
-    hi.(0) <- k;
-    L.slice v (Array.map (fun _ -> 0) sh) hi
-  in
   let cell v i = NL.index_at (row v 0) i in
   let t = NL.matrix_transpose in
   let one f = Some [ f (a ()) ] in
@@ -1459,7 +1453,21 @@ let dtype_sweep_run op a =
           let upper = UF.add (row v 1) (py 3.0) in
           AC.geomspace_v ~num:3 lower upper)
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
-  | "sw_polyval" -> one (fun v -> PO.polyval (first_rows v 2) (row v 0))
+  | "sw_polyval" ->
+      one (fun v ->
+          let sh = (Ojax.Core.get_aval v).T.shape in
+          let top =
+            Ojax.Core.bind1
+              (T.Slice
+                 {
+                   start_indices = Array.map (fun _ -> 0) sh;
+                   limit_indices =
+                     Array.mapi (fun i d -> if i = 0 then 2 else d) sh;
+                   strides = None;
+                 })
+              [ v ]
+          in
+          PO.polyval top (row v 0))
   | "sw_polyder" -> one (fun v -> PO.polyder (row v 0))
   | "sw_polyint" -> one (fun v -> PO.polyint (row v 0))
   | "sw_polyadd" -> one (fun v -> PO.polyadd (row v 0) (row v 1))

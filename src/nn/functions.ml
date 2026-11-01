@@ -257,16 +257,14 @@ let softmax_body ~stop ax mask x =
   let x_safe =
     match mask with
     | None -> x
-    | Some m -> where3 m x (scalar_like x Float.neg_infinity)
+    | Some m -> where3 m x (py_float Float.neg_infinity)
   in
   let unnormalized = UF.exp (UF.subtract x_safe x_max) in
   let result =
     UF.divide unnormalized
       (RED.sum ~axis:ax ~keepdims:true ?where:mask unnormalized)
   in
-  match mask with
-  | None -> result
-  | Some m -> where3 m result (scalar_like result 0.0)
+  match mask with None -> result | Some m -> where3 m result (py_int 0)
 
 let softmax ?(axis = -1) ?where:mask x =
   let ax = [| canon_axis (Array.length (shape x)) axis |] in
@@ -298,7 +296,7 @@ let log_softmax ?(axis = -1) ?where:mask x =
   let x_safe =
     match mask with
     | None -> x
-    | Some m -> where3 m x (scalar_like x Float.neg_infinity)
+    | Some m -> where3 m x (py_float Float.neg_infinity)
   in
   let shifted = UF.subtract x_safe (Custom_derivatives.stop_gradient x_max) in
   let lse =
@@ -307,7 +305,7 @@ let log_softmax ?(axis = -1) ?where:mask x =
   let result = UF.subtract shifted lse in
   match mask with
   | None -> result
-  | Some m -> where3 m result (scalar_like result Float.neg_infinity)
+  | Some m -> where3 m result (py_float Float.neg_infinity)
 
 let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
     ?(algorithm = "fast") x =

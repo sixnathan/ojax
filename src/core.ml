@@ -485,7 +485,7 @@ and dispatch_widened top prim args =
         && List.for_all
              (fun v ->
                let s = value_shape v in
-               s = out || Array.length s = 0)
+               Array.length s = Array.length out || Array.length s = 0)
              args
       then !eager_eval prim args
       else None

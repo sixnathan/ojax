@@ -38,6 +38,7 @@ type eager_stats = {
 val eager_stats : unit -> eager_stats
 
 val jitted_keyed :
+  ?inline:bool ->
   string * Obj.t ->
   (Types.value list -> Types.value list) ->
   Types.value list ->

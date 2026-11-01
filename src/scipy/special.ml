@@ -914,58 +914,113 @@ let vectorize_scalar f args =
   | [] -> out
   | dims -> List.map (fun v -> NL.expand_dims v (Array.of_list dims)) out
 
-let piecewise_body x conds funcs =
-  let dt = dtype x in
-  let condlist =
-    match conds with
-    | [ c ] -> NL.stack ~axis:0 [ c ]
-    | cs -> NL.stack ~axis:0 cs
-  in
-  let lead = AC.zeros_like (L.slice_in_dim condlist 0 1) in
-  let indices =
-    NL.argmax ~axis:0
-      (RED.cumsum ~axis:0 (NL.concatenate ~axis:0 [ lead; condlist ]))
-  in
-  if ndim indices = 0 then
-    let branches =
-      List.map
-        (fun f ops ->
-          match ops with
-          | [ v ] -> [ NL.astype (f v) dt ]
-          | _ -> invalid_arg "piecewise: arity")
-        funcs
-    in
-    List.hd (L.switch indices branches [ x ])
-  else
-    let outs =
-      List.mapi
-        (fun i f ->
-          let pred = L.eq indices (int_full (dtype indices) i) in
-          let safe = L.select pred x (L.stop_gradient x) in
-          List.hd
-            (vectorize_scalar
-               (function
-                 | [ v ] -> [ NL.astype (f v) dt ]
-                 | _ -> invalid_arg "piecewise: arity")
-               [ safe ]))
-        funcs
-    in
-    L.select_n indices outs
+type piece =
+  | Piece_const of T.value
+  | Piece_fun of (T.value -> T.value)
+  | Piece_kw of (T.value -> T.value -> T.value)
 
-let piecewise x conds funcs =
-  match funcs with
-  | [] -> invalid_arg "piecewise: empty"
-  | _ ->
-      let n = List.length funcs in
-      let rotated =
-        if n = List.length conds + 1 then
-          List.nth funcs (n - 1) :: List.filteri (fun i _ -> i < n - 1) funcs
-        else (fun v -> AC.zeros_like v) :: funcs
-      in
-      piecewise_body x conds rotated
+let piecewise ?kw ~key x conds funcs =
+  let n_cond = List.length conds and n_fun = List.length funcs in
+  let funcs =
+    if n_fun = n_cond + 1 then
+      List.nth funcs (n_fun - 1)
+      :: List.filteri (fun i _ -> i < n_fun - 1) funcs
+    else Piece_const (JU.py_int 0) :: funcs
+  in
+  let condlist = NL.stack ~axis:0 conds in
+  let consts =
+    List.filter_map
+      (function Piece_const v -> Some v | Piece_fun _ | Piece_kw _ -> None)
+      funcs
+  in
+  JU.jit1 "_piecewise" ~key
+    (function
+      | x :: condlist :: rest_args ->
+          let kw_value, consts =
+            match (kw, rest_args) with
+            | Some _, k :: tl -> (Some k, tl)
+            | _ -> (None, rest_args)
+          in
+          let dt = dtype x in
+          let lead = AC.zeros_like (L.slice_in_dim condlist 0 1) in
+          let indices =
+            NL.argmax ~axis:0
+              (RED.cumsum ~axis:0 (NL.concatenate ~axis:0 [ lead; condlist ]))
+          in
+          let rest = ref consts in
+          let branches =
+            List.map
+              (function
+                | Piece_fun f -> fun ops -> [ NL.astype (f (List.hd ops)) dt ]
+                | Piece_kw f ->
+                    fun ops ->
+                      [ NL.astype (f (List.hd ops) (Option.get kw_value)) dt ]
+                | Piece_const _ ->
+                    let v = List.hd !rest in
+                    rest := List.tl !rest;
+                    fun _ -> [ NL.astype v dt ])
+              funcs
+          in
+          if ndim indices = 0 then List.hd (L.switch indices branches [ x ])
+          else
+            let int_at i = int_full (dtype indices) i in
+            let index =
+              L.clamp (int_at 0) indices (int_at (List.length branches - 1))
+            in
+            let outs =
+              List.mapi
+                (fun i branch ->
+                  let pred = L.eq index (int_at i) in
+                  let safe = L.select pred x (L.stop_gradient x) in
+                  let scalar : T.aval =
+                    { shape = [||]; dtype = dt; weak_type = false }
+                  in
+                  match Jaxpr.make_jaxpr_hoisted [ scalar ] branch with
+                  | closed, [] when closed.consts <> [] ->
+                      let lift nd =
+                        let inner = Nd.shape nd in
+                        let full = Array.append (shape x) inner in
+                        let rank = Array.length (shape x) in
+                        let dims =
+                          Array.init (Array.length inner) (fun d -> rank + d)
+                        in
+                        let lifted =
+                          bind1
+                            (T.Broadcast_in_dim { shape = full; dims })
+                            [ T.Concrete nd ]
+                        in
+                        L.select
+                          (NL.expand_dims pred
+                             (Array.init (Array.length inner) (fun d ->
+                                  rank + d)))
+                          lifted (L.stop_gradient lifted)
+                      in
+                      let lifted = List.map lift closed.consts in
+                      let body args =
+                        match List.rev args with
+                        | v :: rev_consts ->
+                            Jaxpr.eval_jaxpr closed.jaxpr
+                              (List.rev rev_consts @ [ v ])
+                        | [] -> invalid_arg "piecewise: arity"
+                      in
+                      let rec nest depth f =
+                        if depth = 0 then f
+                        else
+                          nest (depth - 1) (fun args ->
+                              Interpreters.Batching.vmap f
+                                (List.map (fun _ -> Some 0) args)
+                                args)
+                      in
+                      List.hd
+                        ((nest (Array.length (shape x)) body)
+                           (lifted @ [ safe ]))
+                  | _ -> List.hd (vectorize_scalar branch [ safe ]))
+                branches
+            in
+            L.select_n index outs
+      | _ -> invalid_arg "piecewise: arity")
+    ((x :: condlist :: Option.to_list kw) @ consts)
 
-let constf dt_of v x = T.Concrete (Nd.of_floats (dt_of x) [||] [| v |])
-let const_val v _ = v
 let gammaln x = bind1 T.Lgamma [ real_only "gammaln" x ]
 
 let gammasgn x =
@@ -1713,16 +1768,19 @@ let spence_poly w =
 
 let spence_calc x =
   let x2_bool = gt_ x 2.0 in
-  let x = piecewise x [ x2_bool ] [ (fun x -> lit_div 1.0 x); (fun x -> x) ] in
+  let x =
+    piecewise ~key:"spence.x" x [ x2_bool ]
+      [ Piece_fun (fun x -> lit_div 1.0 x); Piece_fun (fun x -> x) ]
+  in
   let x1_5_bool = gt_ x 1.5 in
   let x_5_bool = lt_ x 0.5 in
   let x2_bool = bor x2_bool x1_5_bool in
   let w =
-    piecewise x [ x1_5_bool; x_5_bool ]
+    piecewise ~key:"spence.w" x [ x1_5_bool; x_5_bool ]
       [
-        (fun x -> sub_lit (lit_div 1.0 x) 1.0);
-        (fun x -> neg_ x);
-        (fun x -> sub_lit x 1.0);
+        Piece_fun (fun x -> sub_lit (lit_div 1.0 x) 1.0);
+        Piece_fun (fun x -> neg_ x);
+        Piece_fun (fun x -> sub_lit x 1.0);
       ]
   in
   let y = spence_poly w in
@@ -1737,13 +1795,13 @@ let spence_calc x =
   where_ x2_bool y_flag_two y
 
 let spence_body x =
-  piecewise x
+  piecewise ~key:"spence" x
     [ lt_ x 0.0; eq_ x 1.0; eq_ x 0.0 ]
     [
-      constf dtype Float.nan;
-      constf dtype 0.0;
-      constf dtype ((Float.pi ** 2.0) /. 6.0);
-      spence_calc;
+      Piece_const (JU.py_float Float.nan);
+      Piece_const (JU.py_int 0);
+      Piece_const (JU.py_float ((Float.pi ** 2.0) /. 6.0));
+      Piece_fun spence_calc;
     ]
 
 let spence x =
@@ -1755,8 +1813,7 @@ let spence x =
            (Printf.sprintf
               "x.dtype=%s is not supported, see docstring for supported types."
               (D.short_name d))));
-  Eager_jit.one "scipy.special.spence" () [] [ x ] (fun _ vals ->
-      match vals with [ x ] -> spence_body x | _ -> assert false)
+  spence_body x
 
 let euler_gamma = 0.5772156649015329
 
@@ -2192,15 +2249,15 @@ let expn_core n x =
   in
   let n1 = where_ (UF.equal n (cn 1.0)) (n +! n) n in
   let v3 = one /! n1 and v4 = UF.exp (neg_ x) /! x in
-  piecewise x conds
+  piecewise ~kw:n ~key:"expn" x conds
     [
-      constf dtype Float.nan;
-      constf dtype Float.infinity;
-      const_val v3;
-      const_val v4;
-      (fun x -> expn3 x n);
-      (fun x -> expn2 x n);
-      (fun x -> expn1 x n);
+      Piece_const (JU.py_float Float.nan);
+      Piece_const (JU.py_float Float.infinity);
+      Piece_const v3;
+      Piece_const v4;
+      Piece_kw expn3;
+      Piece_kw expn2;
+      Piece_kw expn1;
     ]
 
 let expn_vect args =
@@ -2255,22 +2312,24 @@ let expi_pos x =
            range (Float.of_int (1 lsl i)) (Float.of_int (1 lsl (i + 1))))
          [ 1; 2; 3; 4; 5 ]
   in
-  piecewise x conds
+  piecewise ~key:"expi.pos" x conds
     [
-      expint1;
-      expint_tail c_expint2_a c_expint2_b;
-      expint_tail c_expint3_a c_expint3_b;
-      expint_tail c_expint4_a c_expint4_b;
-      expint_tail c_expint5_a c_expint5_b;
-      expint_tail c_expint6_a c_expint6_b;
-      expint_tail c_expint7_a c_expint7_b;
+      Piece_fun expint1;
+      Piece_fun (expint_tail c_expint2_a c_expint2_b);
+      Piece_fun (expint_tail c_expint3_a c_expint3_b);
+      Piece_fun (expint_tail c_expint4_a c_expint4_b);
+      Piece_fun (expint_tail c_expint5_a c_expint5_b);
+      Piece_fun (expint_tail c_expint6_a c_expint6_b);
+      Piece_fun (expint_tail c_expint7_a c_expint7_b);
     ]
 
 let expi_neg x = neg_ (exp1 (neg_ x))
 
 let expi_primal x =
   let x = real_only "expi" x in
-  piecewise x [ lt_ x 0.0 ] [ expi_neg; expi_pos ]
+  piecewise ~key:"expi" x
+    [ lt_ x 0.0 ]
+    [ Piece_fun expi_neg; Piece_fun expi_pos ]
 
 let expi_jit a0 =
   Eager_jit.one "scipy.special.expi" () [] [ a0 ] (fun _ vals ->

@@ -102,8 +102,13 @@ let fftconvolve_unbatched in1 in2 mode =
     | other -> invalid_arg ("Unrecognized mode=" ^ other)
   in
   let start = Array.map2 (fun f o -> (f - o) / 2) full_shape out_shape in
-  let limit = Array.map2 ( + ) start out_shape in
-  L.slice conv start limit
+  let index i =
+    Concrete
+      (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
+  in
+  b1
+    (Dynamic_slice { slice_sizes = out_shape })
+    (conv :: List.map index (Array.to_list start))
 
 let fftconvolve ?(mode = "full") ?axes in1 in2 =
   if rank in1 <> rank in2 then

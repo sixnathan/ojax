@@ -772,26 +772,64 @@ let interp ?left ?right ?period x xp fp =
 
 let gradient_along_axis a h axis =
   let n = (shape a).(axis) in
-  if n < 2 then
-    invalid_arg "Shape of array too small to calculate a numerical gradient";
   let cut lo hi = L.slice_in_dim ~axis a lo hi in
-  let div_by d v = U.divide v (L.full (shape v) d (dtype_of v)) in
-  let upper = div_by h (U.subtract (cut 1 2) (cut 0 1)) in
-  let lower = div_by h (U.subtract (cut (n - 1) n) (cut (n - 2) (n - 1))) in
-  if n = 2 then NL.concatenate ~axis [ upper; lower ]
-  else
-    let inner = div_by (2.0 *. h) (U.subtract (cut 2 n) (cut 0 (n - 2))) in
-    NL.concatenate ~axis [ upper; inner; lower ]
+  let upper_edge =
+    let hi = cut 1 2 in
+    U.subtract hi (cut 0 1)
+  in
+  let lower_edge =
+    let hi = cut (n - 1) n in
+    U.subtract hi (cut (n - 2) (n - 1))
+  in
+  let inner =
+    let hi = cut 2 n in
+    let diff = U.subtract hi (cut 0 (n - 2)) in
+    U.divide (U.multiply diff (Jnp_util.py_float 0.5)) h
+  in
+  let lower = U.divide lower_edge h in
+  let upper = U.divide upper_edge h in
+  NL.concatenate ~axis [ upper; inner; lower ]
 
-let gradient ?(spacing = 1.0) ?axis a =
-  let a = as_inexact a in
+let gradient ?spacing ?axis a =
   let n = rank a in
   let axes =
     match axis with
     | Some ax -> List.map (canon n) ax
     | None -> List.init n Fun.id
   in
-  List.map (fun ax -> gradient_along_axis a spacing ax) axes
+  if axes <> [] && List.exists (fun ax -> (shape a).(ax) < 2) axes then
+    invalid_arg
+      "Shape of array too small to calculate a numerical gradient, at least 2 \
+       elements are required.";
+  let key = Digest.to_hex (Digest.string (Marshal.to_string axis [])) in
+  match spacing with
+  | None ->
+      Jnp_util.jit "gradient" ~key
+        (function
+          | [ a ] ->
+              let a = as_inexact a in
+              let h = Jnp_util.py_float 1.0 in
+              List.map (fun ax -> gradient_along_axis a h ax) axes
+          | _ -> invalid_arg "gradient: arity")
+        [ a ]
+  | Some spacing ->
+  Jnp_util.jit "gradient" ~key
+    (function
+      | [ a; spacing ] ->
+          let aval v = Core.get_aval v in
+          let dt, is_weak =
+            Dtypes.result_type
+              [
+                ((aval a).dtype, (aval a).weak_type);
+                ((aval spacing).dtype, (aval spacing).weak_type);
+              ]
+          in
+          let target = Dtypes.to_inexact_dtype dt in
+          let a = Core.convert_like ~weak:is_weak a target in
+          let h = Core.convert_like ~weak:is_weak spacing target in
+          List.map (fun ax -> gradient_along_axis a h ax) axes
+      | _ -> invalid_arg "gradient: arity")
+    [ a; Jnp_util.py_float spacing ]
 
 let choose ?(mode = "raise") a choices =
   let idx =

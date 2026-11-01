@@ -1101,8 +1101,8 @@ let pad_stats v pad_width stat_length stat_func =
     pad_width;
   !out
 
-let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
-    pad_width constant_values =
+let pad_body ?(mode = "constant") ?stat_length ?end_values
+    ?(reflect_type = "even") v pad_width constant_values =
   if ndim v = 0 then v
   else begin
     if Array.length pad_width <> ndim v then
@@ -1148,6 +1148,39 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
         failwith
           (Printf.sprintf "Unimplemented padding mode '%s' for np.pad." m)
   end
+
+let pad_key mode pad_width stat_length end_values reflect_type =
+  Digest.to_hex
+    (Digest.string
+       (Marshal.to_string (mode, pad_width, stat_length, end_values, reflect_type)
+          []))
+
+let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
+    pad_width constant_values =
+  let key = pad_key mode pad_width stat_length end_values reflect_type in
+  let body v =
+    pad_body ~mode ?stat_length ?end_values ~reflect_type v pad_width 0.0
+  in
+  if ndim v = 0 then v
+  else if mode = "constant" then begin
+    let literal =
+      if Float.is_integer constant_values then
+        Jnp_util.py_int (int_of_float constant_values)
+      else Jnp_util.py_float constant_values
+    in
+    Jnp_util.jit1 "_pad" ~key
+      (function
+        | [ v; cval ] ->
+            let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
+            let cval = C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v) in
+            bind1 (T.Pad cfg) [ v; cval ]
+        | _ -> invalid_arg "pad: arity")
+      [ v; literal ]
+  end
+  else
+    Jnp_util.jit1 "_pad" ~key
+      (function [ v ] -> body v | _ -> invalid_arg "pad: arity")
+      [ v ]
 
 let i0 v =
   if is_complex_dtype (dtype v) then

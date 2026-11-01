@@ -1477,14 +1477,14 @@ let dtype_sweep_run op a =
       one (fun v ->
           Ojax.Numpy.Indexing.take ~axis:0 v
             (T.Concrete
-               (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [| 2 |] [| 0.; 1. |])))
+               (Ojax.Ndarray.of_floats
+                  (Ojax.Dtypes.default_int_dtype ())
+                  [| 2 |] [| 0.; 1. |])))
   | "sw_where" ->
       one (fun v ->
-          let v = as_float v in
-          NL.where_
-            (L.gt (UF.real v) (L.full_like (UF.real v) 0.0))
-            v
-            (UF.multiply v (like v 2.0)))
+          let c = UF.greater (UF.real v) (Ojax.Numpy.Jnp_util.py_int 0) in
+          let y = UF.multiply v (Ojax.Numpy.Jnp_util.py_float 2.0) in
+          NL.where_ c v y)
   | "sw_concatenate" -> one (fun v -> NL.concatenate ~axis:0 [ v; v ])
   | "sw_pad" ->
       one (fun v -> NL.pad v (Array.map (fun _ -> (1, 1)) (shp v)) 0.0)
@@ -1574,8 +1574,11 @@ let special_batch_run op params a =
       let v = a () in
       let t = abc () in
       let full x = like v x in
-      let z = UF.multiply (full (float_p "scale")) (UF.tanh v) in
-      Some [ SP.hyp2f1 (full t.(0)) (full t.(1)) (full t.(2)) z ]
+      let a0 = full t.(0) in
+      let a1 = full t.(1) in
+      let a2 = full t.(2) in
+      let z = UF.multiply (Ojax.Numpy.Jnp_util.py_float (float_p "scale")) (UF.tanh v) in
+      Some [ SP.hyp2f1 a0 a1 a2 z ]
   | "sx_hyp2f1_grad" ->
       let v = a () in
       let t = abc () in

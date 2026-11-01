@@ -1,0 +1,11 @@
+(copy_files# ../../test/golden/parity_cases.ml)
+
+(copy_files# ../../test/golden/npz.ml)
+
+(executable
+ (name gpu_parity)
+ (modules npz parity_cases gpu_parity)
+ (libraries yojson ojax)
+ (preprocess
+  (action
+   (run %{exe:../ltr/ltr.exe} %{input-file}))))

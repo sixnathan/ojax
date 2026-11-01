@@ -3587,23 +3587,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_scatter ctx eqn in_ids dimension_numbers (Some "minimum")
   | Scatter_max { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "maximum")
-  | Dot_general dd
-    when (atom_aval (List.hd eqn.inputs)).dtype = Dtype.Complex64
-         && Config.current_platform () = "cuda" ->
-      emit_inlined ctx eqn in_ids (function
-        | [ a; b ] ->
-            let dot x y = Core.bind1 (Dot_general dd) [ x; y ] in
-            let real v = Core.bind1 Real [ v ]
-            and imag v = Core.bind1 Imag [ v ] in
-            let ar = real a and ai = imag a and br = real b and bi = imag b in
-            [
-              Core.bind1 Complex
-                [
-                  Core.bind1 Sub [ dot ar br; dot ai bi ];
-                  Core.bind1 Add [ dot ar bi; dot ai br ];
-                ];
-            ]
-        | _ -> invalid_arg "Stablehlo.Emit: dot_general arity")
   | Dot_general dd -> emit_dot_general ctx eqn in_ids dd
   | Conv_general_dilated _
     when match eqn.inputs with lhs :: _ -> is_complex_atom lhs | [] -> false ->
@@ -4252,6 +4235,46 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       | All_to_all _ | Reduce_scatter _ ->
           failwith "Stablehlo.Emit: this collective runs under vmap only"
       | Axis_index -> emit_axis_index ctx eqn mesh axis_name)
+  | Fft { fft_type = Fft_inverse_real; fft_lengths }
+    when Array.length fft_lengths > 1 && Config.current_platform () <> "cpu" ->
+      emit_inlined ctx eqn in_ids (function
+        | [ x ] ->
+            let rank = Array.length (Core.get_aval x).shape in
+            let count = Array.length fft_lengths in
+            let target = rank - count in
+            let perm_out =
+              Array.init rank (fun i ->
+                  if i < target then i
+                  else if i = target then rank - 1
+                  else i - 1)
+            in
+            let perm_in =
+              Array.init rank (fun i ->
+                  if i < target then i
+                  else if i = rank - 1 then target
+                  else i + 1)
+            in
+            let x = Core.bind1 (Transpose perm_out) [ x ] in
+            let x =
+              Core.bind1
+                (Fft
+                   {
+                     fft_type = Fft_inverse;
+                     fft_lengths = Array.sub fft_lengths 0 (count - 1);
+                   })
+                [ x ]
+            in
+            let x = Core.bind1 (Transpose perm_in) [ x ] in
+            [
+              Core.bind1
+                (Fft
+                   {
+                     fft_type = Fft_inverse_real;
+                     fft_lengths = [| fft_lengths.(count - 1) |];
+                   })
+                [ x ];
+            ]
+        | _ -> invalid_arg "Stablehlo.Emit: fft arity")
   | Fft { fft_type; fft_lengths } ->
       let out = sole eqn.outs in
       let n = bind_var ctx out in

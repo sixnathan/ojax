@@ -1045,10 +1045,11 @@ let triangular_jvp_a ~left_side ~lower ~transpose_a ~conjugate_a ~unit_diagonal
     let i = a_inverse g in
     matmul ans i
 
-let gather_along ~axis ~rank t idx =
+let gather_along ?(numpy_ints = false) ~axis ~rank t idx =
   let batch =
     Array.of_list (List.filter (fun i -> i <> axis) (List.init rank Fun.id))
   in
+  let batch = if numpy_ints then Np_ints.mark batch else batch in
   b1
     (Gather
        {
@@ -1084,7 +1085,8 @@ let sort_jvp ~dimension ~is_stable ~num_keys primals tangents =
   let sorted_t =
     List.map
       (fun t ->
-        if is_zero t then t else gather_along ~axis:dimension ~rank t idx)
+        if is_zero t then t
+        else gather_along ~numpy_ints:true ~axis:dimension ~rank t idx)
       tangents
   in
   (sorted, sorted_t)

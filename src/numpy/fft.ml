@@ -111,7 +111,10 @@ let pad_zero v widths =
             else b1 (Convert_element_type dt) [ cval ]
           in
           b1
-            (Pad (Array.of_list (List.map (fun (l, h) -> (l, h, 0)) widths)))
+            (Pad
+               (Np_ints.mark_triples
+                  (fun _ j -> j < 2)
+                  (Array.of_list (List.map (fun (l, h) -> (l, h, 0)) widths))))
             [ v; cval ]
       | _ -> invalid_arg "pad: arity")
     [ v; Concrete (Ndarray.of_floats default_int [||] [| 0.0 |]) ]

@@ -14,7 +14,7 @@ def main():
         with open(path, encoding="utf-8") as fh:
             for line in fh:
                 fields = line.rstrip("\n").split("\t")
-                if len(fields) < 5 or fields[4] == "compare":
+                if len(fields) < 5 or fields[4] in ("compare", "ratchet_selftest"):
                     continue
                 total[fields[4]] += 1
                 identical[fields[4]] += fields[2] == "0"

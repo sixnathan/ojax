@@ -8,6 +8,21 @@ val jvp :
   value list ->
   value list * value list
 
+val jvp_instantiated :
+  (value list -> value list) ->
+  value list ->
+  value list ->
+  value list * value list
+
+val solve_ref : (value -> value -> value) ref
+
+val associative_scan_flat :
+  (value list -> value list -> value list) ->
+  axis:int ->
+  reverse:bool ->
+  value list ->
+  value list
+
 val linearize :
   (value list -> value list) ->
   value list ->

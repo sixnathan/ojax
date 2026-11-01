@@ -757,11 +757,41 @@ let symmetrize x =
     | Dtype.Complex64 | Dtype.Complex128 -> Core.bind1 Conj [ flipped ]
     | _ -> flipped
   in
-  let half = Core.splat aval.dtype aval.shape 2.0 in
-  Core.bind1 Div [ Core.bind1 Add [ x; flipped ]; half ]
+  let half = Core.splat aval.dtype [||] 2.0 in
+  let sum = Core.bind1 Add [ x; flipped ] in
+  Core.bind1 Div [ sum; half ]
+
+let tril ?(k = 0) m =
+  let aval = Core.get_aval m in
+  let rank = Array.length aval.shape in
+  let n_rows = aval.shape.(rank - 2) and n_cols = aval.shape.(rank - 1) in
+  let i =
+    Core.bind1
+      (Iota { dtype = Dtype.I32; shape = [| n_rows; n_cols |]; dimension = 0 })
+      []
+  in
+  let plus = Core.bind1 Add [ i; Core.splat Dtype.I32 [||] (float_of_int k) ] in
+  let j =
+    Core.bind1
+      (Iota { dtype = Dtype.I32; shape = [| n_rows; n_cols |]; dimension = 1 })
+      []
+  in
+  let mask = Core.bind1 Ge [ plus; j ] in
+  let b = rank - 2 in
+  let mask =
+    if b = 0 then mask
+    else
+      Core.bind1
+        (Broadcast_in_dim { shape = aval.shape; dims = [| b; b + 1 |] })
+        [ mask ]
+  in
+  let zeros = Core.splat aval.dtype aval.shape 0.0 in
+  Core.bind1 Select_n [ mask; zeros; m ]
 
 let cholesky ?(symmetrize_input = true) x =
-  Core.bind1 Cholesky [ (if symmetrize_input then symmetrize x else x) ]
+  let x = if symmetrize_input then symmetrize x else x in
+  let c = Core.bind1 Cholesky [ x ] in
+  tril c
 
 let lu x =
   match Core.bind Lu [ x ] with
@@ -841,3 +871,65 @@ let tridiagonal ?(lower = true) x =
   match Core.bind (Tridiagonal { lower }) [ x ] with
   | [ a; d; e; taus ] -> (a, d, e, taus)
   | _ -> failwith "linalg: tridiagonal arity"
+
+let lu_solve_core lu permutation b =
+  let m = (Core.get_aval lu).shape.(0) in
+  let bs = (Core.get_aval b).shape in
+  let rest = Array.fold_left ( * ) 1 (Array.sub bs 1 (Array.length bs - 1)) in
+  let x = Core.bind1 (Reshape [| m; rest |]) [ b ] in
+  let lt = Core.bind1 Lt [ permutation; Core.splat Dtype.I32 [||] 0.0 ] in
+  let plus =
+    Core.bind1 Add [ permutation; Core.splat Dtype.I32 [||] (float_of_int m) ]
+  in
+  let idx0 = Core.bind1 Select_n [ lt; permutation; plus ] in
+  let idx =
+    Core.bind1
+      (Broadcast_in_dim { shape = [| m; 1 |]; dims = [| 0 |] })
+      [ idx0 ]
+  in
+  let x =
+    Core.bind1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = [| 1 |];
+               collapsed_slice_dims = [| 0 |];
+               start_index_map = [| 0 |];
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+             };
+           slice_sizes = [| 1; rest |];
+         })
+      [ x; idx ]
+  in
+  let x =
+    triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x
+  in
+  let x = triangular_solve ~left_side:true ~lower:false lu x in
+  Core.bind1 (Reshape bs) [ x ]
+
+let solve_for_jvp a b =
+  let r = Array.length (Core.get_aval a).shape in
+  let lu, _, permutation = lu (Custom_derivatives.stop_gradient a) in
+  let solve_vec v =
+    match
+      Jaxpr.named_jit ~name:"_lu_solve"
+        (function
+          | [ l; p; y ] -> [ lu_solve_core l p y ]
+          | _ -> invalid_arg "lu_solve: arity")
+        [ lu; permutation; v ]
+    with
+    | [ out ] -> out
+    | _ -> invalid_arg "lu_solve: arity"
+  in
+  match
+    Interpreters.Batching.vmap_out
+      (function [ y ] -> [ solve_vec y ] | _ -> invalid_arg "solve: arity")
+      [ Some (Array.length (Core.get_aval b).shape - 1) ]
+      [ b ] (r - 1)
+  with
+  | [ out ] -> out
+  | _ -> invalid_arg "solve: arity"
+
+let () = Interpreters.Ad.solve_ref := solve_for_jvp

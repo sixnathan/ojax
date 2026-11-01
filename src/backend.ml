@@ -950,7 +950,7 @@ let eager_stats () =
 
 let eager_runs_impl = function
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ | Custom_linear_solve _
-  | Xla_call _ ->
+  | Xla_call _ | Stop_gradient ->
       true
   | _ -> false
 
@@ -1127,7 +1127,48 @@ let build_region name f avals =
           Some (exec, List.map atom_output_aval cj.jaxpr.outs, kept)
       | Error reason -> fall_back reason)
 
-let jitted_keyed (name, statics) f args =
+let inline_call_cache : (region_key, closed_jaxpr option) Hashtbl.t =
+  Hashtbl.create 512
+
+let stage_inline_call key name f avals =
+  match Hashtbl.find_opt inline_call_cache key with
+  | Some c -> c
+  | None ->
+      let c =
+        match Jaxpr.make_jaxpr_hoisted avals f with
+        | c, [] ->
+            Pretty_printer.register_call_name c.jid name;
+            Core.mark_inline_call c.jid;
+            Some c
+        | _ -> None
+        | exception error when eager_rejection error -> None
+      in
+      Hashtbl.replace inline_call_cache key c;
+      c
+
+let rec jitted_keyed (name, statics) f args =
+  match (Core.find_top_trace args).kind with
+  | (KJVP | KBatch | KPE)
+    when not
+           (Config.value Config.disable_jit
+           || Config.value Config.no_execution
+           || Stablehlo.Emit.emitting ()) -> (
+      let avals = List.map Core.get_aval args in
+      let key =
+        {
+          rk_name = name;
+          rk_statics = statics;
+          rk_avals = avals;
+          rk_platform = "";
+          rk_context = Config.trace_context ();
+        }
+      in
+      match stage_inline_call key name f avals with
+      | Some c -> Core.bind (Xla_call c) args
+      | None -> f args)
+  | _ -> jitted_eval (name, statics) f args
+
+and jitted_eval (name, statics) f args =
   if
     Config.value Config.disable_jit
     || Config.value Config.no_execution
@@ -1172,6 +1213,14 @@ let () =
   Jaxpr.eager_jit :=
     fun name key f args ->
       jitted_keyed ("named_jit." ^ name, Obj.repr key) f args
+
+let () =
+  Core.call_inline :=
+    fun c args ->
+      jitted_keyed
+        ("xla_call." ^ Pretty_printer.call_name c.jid, Obj.repr c.jid)
+        (fun a -> Jaxpr.eval_closed_jaxpr c a)
+        args
 
 let executor ?options (cj : closed_jaxpr) : value list -> value list =
   let precision = Config.value Config.default_matmul_precision in

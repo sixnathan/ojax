@@ -1250,7 +1250,7 @@ let rec impl_base prim inputs =
           else Ndarray.map dt Float.abs a)
         inputs
   | Sign -> un (fun a -> Ndarray.map (Ndarray.dtype a) sign_f a) inputs
-  | Add ->
+  | Add | Add_any ->
       bin
         (fun a b ->
           Ndarray.map2 (Ndarray.dtype a) (add_f (Ndarray.dtype a)) a b)
@@ -1811,7 +1811,7 @@ let rec impl_base prim inputs =
       | Core.Jvp_rule _ | Core.Vjp_rule _ | Core.Callback_rule _ ->
           failwith
             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
-  | Checkpoint_name _ -> inputs
+  | Checkpoint_name _ | Stop_gradient -> inputs
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 and complex_parts nd =
@@ -1927,7 +1927,7 @@ let wide_int_elementwise prim inputs =
     let shift_amount s = Int64.to_int s land 63 in
     let unsigned = dt = Dtype.Uint64 in
     match prim with
-    | Add -> binary Int64.add
+    | Add | Add_any -> binary Int64.add
     | Sub -> binary Int64.sub
     | Mul -> binary Int64.mul
     | Neg -> unary Int64.neg
@@ -2009,7 +2009,7 @@ let acts_on_parts = function
   | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Checkpoint_name _
   | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _
   | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _ | Dynamic_update_slice
-  | Gather _ | Scatter _ | Reduce_sum _ | Cumsum _ | Neg | Add | Sub
+  | Gather _ | Scatter _ | Reduce_sum _ | Cumsum _ | Neg | Add | Add_any | Sub
   | Scatter_add _ | Scatter_sub _ | Reduce_window_sum _ | Round
   | Round_nearest_even ->
       true
@@ -2419,9 +2419,9 @@ let abstract_eval prim avals =
             (a.weak_type && b.weak_type))
         avals
   | Is_finite -> un_aval (fun a -> shaped a.shape Bool false) avals
-  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi | Nextafter
-  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-    ->
+  | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi
+  | Nextafter | Or | Rem | Shift_left | Shift_right_arithmetic
+  | Shift_right_logical | Xor ->
       bin_aval
         (fun a b ->
           shaped
@@ -2648,7 +2648,11 @@ let abstract_eval prim avals =
       | [] -> failwith "lax: select_and_scatter expects an operand aval")
   | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta ->
       bin_aval
-        (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))
+        (fun a b ->
+          shaped
+            (Core.elementwise_shape [ a.shape; b.shape ])
+            a.dtype
+            (a.weak_type && b.weak_type))
         avals
   | Regularized_incomplete_beta -> (
       match avals with
@@ -2718,7 +2722,7 @@ let abstract_eval prim avals =
           List.map aval_of_atom traced.jaxpr.outs
       | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call")
   | Custom_lin { out_avals; _ } -> out_avals
-  | Checkpoint_name _ -> avals
+  | Checkpoint_name _ | Stop_gradient -> avals
 
 let impl prim inputs =
   let batch =

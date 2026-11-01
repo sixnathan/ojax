@@ -15,3 +15,4 @@ val custom_call :
 
 val call_name : int -> string
 val registered_call_name : int -> string option
+val atom_type : atom -> aval

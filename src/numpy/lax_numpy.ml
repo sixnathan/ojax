@@ -1145,10 +1145,7 @@ let eye ?m ?(k = 0) ~dtype n =
   let j =
     bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
   in
-  let ik =
-    if k = 0 then i
-    else bind1 T.Add [ i; full D.I32 [| n; m |] (float_of_int k) ]
-  in
+  let ik = bind1 T.Add [ i; C.splat D.I32 [||] (float_of_int k) ] in
   convert (bind1 T.Eq [ ik; j ]) dtype
 
 let identity ~dtype n = eye ~dtype n

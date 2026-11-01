@@ -15,6 +15,13 @@ val custom_vjp :
   value list ->
   value list
 
+val defjvps :
+  ?name:string ->
+  (value list -> value list) ->
+  (value -> value list -> value list -> value list) option list ->
+  value list ->
+  value list
+
 type symbolic_zero = { aval : aval }
 type tangent = Symbolic_zero of symbolic_zero | Tangent of value
 type custom_vjp_primal = { value : value; perturbed : bool }

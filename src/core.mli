@@ -124,3 +124,7 @@ val custom_names_of : int -> (string * string) option
 val py_scalar : Dtype.t -> float -> value
 val weak_convert : bool ref
 val convert_like : weak:bool -> value -> Dtype.t -> value
+val mark_inline_call : int -> unit
+val is_inline_call : int -> bool
+val inherit_inline : from:int -> int -> unit
+val call_direct : (closed_jaxpr -> value list -> value list) ref

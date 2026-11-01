@@ -319,7 +319,7 @@ let jvp (f : value Tree.t list -> value Tree.t) (primals : value Tree.t list)
   let tf, _ = flatten_args tangents in
   let tf = List.map2 tangent_of_float0 pf tf in
   let flat_fun, out_tree = Api_util.flatten_fun f in_tree in
-  let po, to_ = Ad.jvp (Linear_util.call_wrapped flat_fun) pf tf in
+  let po, to_ = Ad.jvp_instantiated (Linear_util.call_wrapped flat_fun) pf tf in
   let ot = out_tree () in
   let to_ = List.map2 float0_for_integral po to_ in
   (Tree.tree_unflatten ot po, Tree.tree_unflatten ot to_)

@@ -2850,6 +2850,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Cbrt -> emit_stablehlo_unary ctx eqn in_ids "cbrt"
   | Ceil -> emit_stablehlo_unary ctx eqn in_ids "ceil"
   | Clz -> emit_stablehlo_unary ctx eqn in_ids "count_leading_zeros"
+  | Cos when Dtypes.issubdtype (atom_aval (List.hd eqn.inputs)).dtype `Complex
+    ->
+      emit_inlined ctx eqn in_ids Native_lowering.complex_cos
   | Cos -> emit_stablehlo_unary ctx eqn in_ids "cosine"
   | Exp -> emit_stablehlo_unary ctx eqn in_ids "exponential"
   | Expm1 -> emit_stablehlo_unary ctx eqn in_ids "exponential_minus_one"
@@ -2914,6 +2917,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Sign when is_unsigned_dtype (atom_aval (sole eqn.inputs)).dtype ->
       emit_unsigned_sign ctx eqn in_ids
   | Sign -> emit_stablehlo_unary ctx eqn in_ids "sign"
+  | Sin when Dtypes.issubdtype (atom_aval (List.hd eqn.inputs)).dtype `Complex
+    ->
+      emit_inlined ctx eqn in_ids Native_lowering.complex_sin
   | Sin -> emit_stablehlo_unary ctx eqn in_ids "sine"
   | Sqrt -> emit_stablehlo_unary ctx eqn in_ids "sqrt"
   | Tan -> emit_stablehlo_unary ctx eqn in_ids "tan"
@@ -2951,7 +2957,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (name x)
            (Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)))
            (Ir.tensor_type_of_aval out.vaval))
-  | Add -> emit_stablehlo_binary ctx eqn in_ids "add"
+  | Add | Add_any -> emit_stablehlo_binary ctx eqn in_ids "add"
   | And -> emit_stablehlo_binary ctx eqn in_ids "and"
   | Atan2 -> emit_stablehlo_binary ctx eqn in_ids "atan2"
   | Div -> emit_stablehlo_binary ctx eqn in_ids "divide"
@@ -3700,6 +3706,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           failwith
             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
   | Xla_call c -> emit_call ctx eqn in_ids c
+  | Stop_gradient -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
 
 let qualify_nested_calls ~depth text =
   let level = ref depth in

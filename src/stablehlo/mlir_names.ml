@@ -340,6 +340,13 @@ let add_result_info line =
           ^ String.concat ", " annotated
           ^ String.sub line stop (n - stop)
 
+let symbol_name name =
+  let bare = function
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '$' | '.' -> true
+    | _ -> false
+  in
+  if String.for_all bare name then name else "\"" ^ name ^ "\""
+
 let render ~module_name text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let root = snd (build_regions lines) in
@@ -350,7 +357,7 @@ let render ~module_name text =
   if Array.length out > 0 && String.trim out.(0) = "module {" then
     out.(0) <-
       Printf.sprintf
-        "module @jit_%s attributes {mhlo.num_partitions = 1 : i32, \
+        "module @%s attributes {mhlo.num_partitions = 1 : i32, \
          mhlo.num_replicas = 1 : i32} {"
-        module_name;
+        (symbol_name ("jit_" ^ module_name));
   String.concat "\n" (Array.to_list out)

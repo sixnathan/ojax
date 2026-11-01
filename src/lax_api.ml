@@ -884,24 +884,14 @@ let platform_dependent ?default ?cuda ~cpu () =
            platform)
 
 let associative_scan ?(axis = 0) ?(reverse = false) fn xs =
-  let n = ndim xs in
-  let axis = canon_axis n axis in
-  let xs = if reverse then b1 (Rev [| axis |]) [ xs ] else xs in
-  let pieces = unstack xs axis in
-  let out =
-    match pieces with
-    | [] -> xs
-    | first :: rest ->
-        let _, reversed =
-          List.fold_left
-            (fun (acc, out) x ->
-              let v = fn acc x in
-              (v, v :: out))
-            (first, [ first ]) rest
-        in
-        stack (List.rev reversed) axis
-  in
-  if reverse then b1 (Rev [| axis |]) [ out ] else out
+  let axis = canon_axis (ndim xs) axis in
+  match
+    Interpreters.Ad.associative_scan_flat
+      (fun a b -> List.map2 fn a b)
+      ~axis ~reverse [ xs ]
+  with
+  | [ out ] -> out
+  | _ -> invalid_arg "associative_scan: arity"
 
 let shape_as_value x =
   let sh = shape x in

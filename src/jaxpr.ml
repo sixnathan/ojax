@@ -388,6 +388,7 @@ let () =
       | _ -> ()
 
 let () = Core.call_inline := fun c args -> eval_closed_jaxpr c args
+let () = Core.call_direct := fun c args -> eval_closed_jaxpr c args
 
 let () =
   Pretty_printer.custom_call :=
@@ -396,6 +397,104 @@ let () =
       | Some (name, jvp_name) ->
           Option.map (fun c -> (name, jvp_name, c)) (custom_call_jaxpr id avals)
       | None -> None
+
+let has_side_effect = function
+  | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
+  | Dce_sink | Create_token | After_all -> true
+  | _ -> false
+
+let rec eqn_has_effect (e : eqn) =
+  match e.prim with
+  | Xla_call c -> List.exists eqn_has_effect c.jaxpr.eqns
+  | p -> has_side_effect p
+
+let dce_cache : (int * bool list, closed_jaxpr * bool list) Hashtbl.t =
+  Hashtbl.create 64
+
+let rec dce_closed (c : closed_jaxpr) used_outs =
+  let key = (c.jid, used_outs) in
+  match Hashtbl.find_opt dce_cache key with
+  | Some r -> r
+  | None ->
+      let r = dce_closed_uncached c used_outs in
+      Hashtbl.replace dce_cache key r;
+      r
+
+and dce_closed_uncached (c : closed_jaxpr) used_outs =
+  let jx = c.jaxpr in
+  let used = Hashtbl.create 64 in
+  let note = function
+    | A_var (v : var) -> Hashtbl.replace used v.vid ()
+    | A_lit _ | DropVar _ -> ()
+  in
+  List.iter2 (fun a keep -> if keep then note a) jx.outs used_outs;
+  let is_used (v : var) = Hashtbl.mem used v.vid in
+  let kept =
+    List.fold_left
+      (fun acc (e : eqn) ->
+        match e.prim with
+        | Xla_call inner when not (eqn_has_effect e) ->
+            let outs_used = List.map is_used e.outs in
+            if not (List.exists Fun.id outs_used) then acc
+            else begin
+              let pruned, ins_used = dce_closed inner outs_used in
+              let inputs =
+                List.concat
+                  (List.map2
+                     (fun a keep -> if keep then [ a ] else [])
+                     e.inputs ins_used)
+              in
+              List.iter note inputs;
+              {
+                prim = Xla_call pruned;
+                inputs;
+                outs = List.filter is_used e.outs;
+                multiple_results = List.length (List.filter is_used e.outs) > 1;
+              }
+              :: acc
+            end
+        | _ ->
+            if eqn_has_effect e || e.outs = [] || List.exists is_used e.outs
+            then begin
+              List.iter note e.inputs;
+              e :: acc
+            end
+            else acc)
+      [] (List.rev jx.eqns)
+  in
+  let n_consts = List.length c.consts in
+  let const_binders, arg_binders =
+    match Util.split_list jx.in_binders [ n_consts ] with
+    | [ cb; ab ] -> (cb, ab)
+    | _ -> invalid_arg "Stablehlo.Emit: binder split"
+  in
+  let kept_args = List.filter is_used arg_binders in
+  let outs =
+    List.concat
+      (List.map2 (fun a keep -> if keep then [ a ] else []) jx.outs used_outs)
+  in
+  let pruned =
+    {
+      c with
+      jid = Core.fresh_id ();
+      jaxpr = { in_binders = const_binders @ kept_args; eqns = kept; outs };
+    }
+  in
+  Pretty_printer.register_call_name pruned.jid (Pretty_printer.call_name c.jid);
+  Core.inherit_inline ~from:c.jid pruned.jid;
+  (pruned, List.map is_used arg_binders)
+
+let dce_keep_args (c : closed_jaxpr) =
+  let n = List.length c.consts in
+  let args = List.filteri (fun i _ -> i >= n) c.jaxpr.in_binders in
+  let pruned, _ = dce_closed c (List.map (fun _ -> true) c.jaxpr.outs) in
+  let consts_binders =
+    List.filteri (fun i _ -> i < n) pruned.jaxpr.in_binders
+  in
+  {
+    pruned with
+    jaxpr = { pruned.jaxpr with in_binders = consts_binders @ args };
+  }
 
 let call_cache : (string, closed_jaxpr) Hashtbl.t = Hashtbl.create 64
 

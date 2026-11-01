@@ -33,7 +33,7 @@ let call_cache :
     (int * bool list * bool list, closed_jaxpr * bool list) Hashtbl.t =
   Hashtbl.create 64
 
-let custom_cache : (int * aval list * bool list, int) Hashtbl.t =
+let custom_cache : (int * aval list * bool list * bool, int) Hashtbl.t =
   Hashtbl.create 64
 
 let eqn_avals (e : eqn) =
@@ -90,6 +90,7 @@ and dce_uncached (c : closed_jaxpr) used_outputs ~instantiate =
   if not changed then (c, used_inputs)
   else
     let jid = Core.fresh_id () in
+    Core.inherit_inline ~from:c.jid jid;
     (match Pretty_printer.registered_call_name c.jid with
     | Some name -> Pretty_printer.register_call_name jid name
     | None -> ());
@@ -144,7 +145,7 @@ and rule used_outs (e : eqn) =
             let c', _ =
               dce_closed c used_outs ~instantiate:(List.init n (fun _ -> true))
             in
-            let key = (id, avals, used_outs) in
+            let key = (id, avals, used_outs, Config.x64_enabled ()) in
             if c' == c then (everything, with_prim e.prim everything)
             else
               let id' =

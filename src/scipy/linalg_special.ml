@@ -376,111 +376,145 @@ let invhilbert n =
       b1 Mul [ third; last ])
     []
 
-let dtype = dtype_of
-
 let sylvester_triangular_scan r s f =
-  let fs = shape f in
-  let m = fs.(0) and n = fs.(1) in
+  let m = (shape f).(0) and n = (shape f).(1) in
   let total = m * n in
-  let int_dt = Dtypes.default_int_dtype () in
-  let int_of v = Core.splat int_dt [||] (float_of_int v) in
+  let int_scalar v = Numpy.Jnp_util.py_int v in
+  let index_dtype = Dtypes.default_int_dtype () in
   let flat_indices =
-    U.add
-      (int_of (total - 1))
-      (U.multiply (int_of (-1)) (NL.arange ~dtype:int_dt (float_of_int total)))
+    Numpy.Lax_numpy.arange ~dtype:index_dtype
+      ~start:(float_of_int (total - 1))
+      ~step:(-1.0) (-1.0)
   in
-  let dt = dtype f in
-  let y0 = Lax_api.full [| total |] 0.0 dt in
-  let as_index v = Core.convert_like ~weak:false v Dtype.I32 in
-  let pick ~axis v i =
-    Lax_api.dynamic_index_in_dim ~axis ~keepdims:false v (as_index i)
+  let wrap_index ind size =
+    L.select
+      (L.lt ind (Core.splat (dtype_of ind) [||] 0.0))
+      (L.add ind (Core.splat (dtype_of ind) [||] (float_of_int size)))
+      ind
+  in
+  let element v i j =
+    let i = wrap_index i (shape v).(0) in
+    let j = wrap_index j (shape v).(1) in
+    NL.reshape (L.dynamic_slice v [ i; j ] [| 1; 1 |]) [||]
+  in
+  let line v ~row idx =
+    let zero = Core.splat (dtype_of idx) [||] 0.0 in
+    if row then
+      let i = wrap_index idx (shape v).(0) in
+      let j = wrap_index zero (shape v).(1) in
+      NL.reshape
+        (L.dynamic_slice v [ i; j ] [| 1; (shape v).(1) |])
+        [| (shape v).(1) |]
+    else
+      let i = wrap_index zero (shape v).(0) in
+      let j = wrap_index idx (shape v).(1) in
+      NL.reshape
+        (L.dynamic_slice v [ i; j ] [| (shape v).(0); 1 |])
+        [| (shape v).(0) |]
+  in
+  let masked_sum mask v =
+    Numpy.Reductions.sum
+      (Numpy.Jnp_util.where_weak ~y_weak:true mask v
+         (Numpy.Jnp_util.py_float 0.0))
   in
   let step = function
     | [ y_flat; idx ] ->
-        let i = U.floor_divide idx (int_of n)
-        and j = U.remainder idx (int_of n) in
+        let i = U.floor_divide idx (int_scalar n) in
+        let j = U.remainder idx (int_scalar n) in
         let y = NL.reshape y_flat [| m; n |] in
-        let rhs = pick ~axis:0 (pick ~axis:0 f i) j in
-        let row_mask = U.greater (NL.arange ~dtype:int_dt (float_of_int m)) i in
-        let r_row = pick ~axis:0 r i and y_col = pick ~axis:1 y j in
-        let row_term =
-          Numpy.Reductions.sum
-            (NL.where_ row_mask (U.multiply r_row y_col)
-               (Numpy.Jnp_util.py_float 0.0))
+        let rhs = element f i j in
+        let k_row =
+          Numpy.Lax_numpy.arange ~dtype:index_dtype (float_of_int m)
         in
-        let col_mask = U.greater (NL.arange ~dtype:int_dt (float_of_int n)) j in
-        let y_row = pick ~axis:0 y i and s_col = pick ~axis:1 s j in
-        let col_term =
-          Numpy.Reductions.sum
-            (NL.where_ col_mask (U.multiply y_row s_col)
-               (Numpy.Jnp_util.py_float 0.0))
+        let row_mask = U.greater k_row i in
+        let r_row = line r ~row:true i in
+        let y_col = line y ~row:false j in
+        let row_term = masked_sum row_mask (U.multiply r_row y_col) in
+        let k_col =
+          Numpy.Lax_numpy.arange ~dtype:index_dtype (float_of_int n)
         in
+        let col_mask = U.greater k_col j in
+        let y_row = line y ~row:true i in
+        let s_col = line s ~row:false j in
+        let col_term = masked_sum col_mask (U.multiply y_row s_col) in
         let rhs = U.subtract rhs (U.add row_term col_term) in
-        let denominator =
-          U.add
-            (pick ~axis:0 (pick ~axis:0 r i) i)
-            (pick ~axis:0 (pick ~axis:0 s j) j)
+        let value = U.divide rhs (U.add (element r i i) (element s j j)) in
+        let flat = U.add (U.multiply i (int_scalar n)) j in
+        let wrapped = wrap_index flat total in
+        let index =
+          L.broadcast_in_dim
+            (L.convert_element_type wrapped Dtype.I32)
+            [| 1 |] [||]
         in
-        let value = U.divide rhs denominator in
-        let at = U.add (U.multiply i (int_of n)) j in
-        let y_flat =
-          Lax_api.dynamic_update_index_in_dim ~axis:0 y_flat value (as_index at)
-        in
-        [ y_flat ]
+        [
+          L.scatter y_flat index value
+            {
+              update_window_dims = [||];
+              inserted_window_dims = [| 0 |];
+              scatter_dims_to_operand_dims = [| 0 |];
+              s_operand_batching_dims = [||];
+              s_scatter_indices_batching_dims = [||];
+            };
+        ]
     | _ -> invalid_arg "solve_sylvester: arity"
   in
-  match Lax_api.scan step [ y0 ] [ flat_indices ] with
-  | y_flat :: _ -> NL.reshape y_flat [| m; n |]
-  | [] -> invalid_arg "solve_sylvester: arity"
+  match
+    L.scan step [ Core.splat (dtype_of f) [| total |] 0.0 ] [ flat_indices ]
+  with
+  | [ final ] -> NL.reshape final [| m; n |]
+  | _ -> invalid_arg "solve_sylvester: arity"
 
-let solve_sylvester ?(tol = 1e-8) a b c =
-  let module LN = Numpy.Linalg in
-  let module TC = Numpy.Tensor_contractions in
-  Eager_jit.one "scipy.linalg.solve_sylvester" tol [] [ a; b; c ] (fun _ vals ->
-      match vals with
-      | [ a; b; c ] ->
-          let hermitian v = NL.transpose (U.conj v) in
-          let dt = NL.result_type [ a; b; c ] in
-          let dt =
-            if Dtypes.issubdtype dt `Inexact then dt
-            else Dtypes.default_float_dtype ()
-          in
-          let a = NL.astype a dt
-          and b = NL.astype b dt
-          and c = NL.astype c dt in
-          let schur_of v =
-            match Linalg.schur ~output:"complex" v with
-            | [ t; z ] -> (t, z)
-            | _ -> invalid_arg "solve_sylvester: schur"
-          in
-          let r, u = schur_of a in
-          let s, v = schur_of (hermitian b) in
-          let f =
-            TC.matmul (TC.matmul (hermitian u) (NL.astype c (dtype r))) v
-          in
-          let y = sylvester_triangular_scan r (hermitian s) f in
-          let x = TC.matmul (TC.matmul u y) (hermitian v) in
-          let x =
-            match dtype c with
-            | Dtype.Complex64 | Dtype.Complex128 -> x
-            | _ -> U.real x
-          in
-          let gap =
-            U.abs
-              (U.add
-                 (NL.expand_dims (LN.eigvals a) [| 1 |])
-                 (NL.expand_dims (LN.eigvals b) [| 0 |]))
-          in
-          let singular =
-            Numpy.Reductions.any (U.less gap (Core.splat (dtype gap) [||] tol))
-          in
-          List.hd
-            (Lax_api.cond singular
-               (fun _ ->
-                 [
-                   U.multiply (Lax_api.full_like x 0.0)
-                     (Numpy.Jnp_util.py_float Float.nan);
-                 ])
-               (fun _ -> [ x ])
-               [])
-      | _ -> assert false)
+let is_complex_dt = function
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let sylvester_schur a =
+  let complex_dt =
+    if dtype_of a = Dtype.F64 then Dtype.Complex128 else Dtype.Complex64
+  in
+  Numpy.Jnp_util.jit "_schur"
+    (function
+      | [ a ] ->
+          Lax.Linalg.schur
+            (if is_complex_dt (dtype_of a) then a else NL.astype a complex_dt)
+      | _ -> invalid_arg "schur: arity")
+    [ a ]
+
+let solve_sylvester_2d a b c tol =
+  let hermitian v = NL.transpose (U.conj v) in
+  let mm = Numpy.Tensor_contractions.matmul in
+  match (sylvester_schur a, sylvester_schur (NL.transpose (U.conj b))) with
+  | [ r; u ], [ s; v ] ->
+      let f = mm (mm (hermitian u) (NL.astype c (dtype_of r))) v in
+      let y = sylvester_triangular_scan r (hermitian s) f in
+      let x = mm (mm u y) (hermitian v) in
+      let x = if is_complex_dt (dtype_of c) then x else U.real x in
+      let ea = Numpy.Linalg.eigvals a and eb = Numpy.Linalg.eigvals b in
+      let sum = U.add (NL.expand_dims ea [| 1 |]) (NL.expand_dims eb [| 0 |]) in
+      let close = Numpy.Reductions.any (U.less (U.abs sum) tol) in
+      List.hd
+        (L.cond close
+           (fun _ ->
+             [
+               U.multiply
+                 (Numpy.Array_creation.zeros_like x)
+                 (Numpy.Jnp_util.py_float Float.nan);
+             ])
+           (fun _ -> [ x ])
+           [])
+  | _ -> invalid_arg "solve_sylvester: arity"
+
+let solve_sylvester ?(tol = 1e-8) a b q =
+  let dt = Dtypes.to_inexact_dtype (NL.result_type [ a; b; q ]) in
+  let a = NL.astype a dt and b = NL.astype b dt and q = NL.astype q dt in
+  let tol = Numpy.Jnp_util.py_float tol in
+  Numpy.Jnp_util.jit1 "solve_sylvester"
+    (function
+      | [ a; b; q ] ->
+          Numpy.Jnp_util.jit1 "_solve_sylvester_2d"
+            (function
+              | [ a; b; q; tol ] -> solve_sylvester_2d a b q tol
+              | _ -> invalid_arg "solve_sylvester: arity")
+            [ a; b; q; tol ]
+      | _ -> invalid_arg "solve_sylvester: arity")
+    [ a; b; q ]

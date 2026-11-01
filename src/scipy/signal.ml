@@ -398,18 +398,23 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
   let result =
     if onesided && mode = "psd" then begin
       let sh = shape result in
-      let n_freq = sh.(Array.length sh - 1) in
-      let cdt = complex_dtype_of dt in
-      let lanes = Array.fold_left ( * ) 1 sh / Stdlib.max n_freq 1 in
-      let mask =
-        Concrete
-          (Ndarray.of_complex cdt sh
-             (Array.init (lanes * n_freq) (fun k ->
-                  let f = k mod n_freq in
-                  let doubled = f > 0 && (nfft mod 2 = 1 || f < n_freq - 1) in
-                  { Complex.re = (if doubled then 2.0 else 1.0); im = 0.0 })))
+      let n = Array.length sh in
+      let n_freq = sh.(n - 1) in
+      let stop = if nfft mod 2 = 1 then n_freq else n_freq - 1 in
+      let cdt = dtype_of result in
+      let update_shape =
+        Array.mapi (fun i d -> if i = n - 1 then stop - 1 else d) sh
       in
-      b1 Mul [ result; mask ]
+      L.scatter_mul ~unique_indices:true result
+        (Concrete (Ndarray.of_floats Dtype.I32 [| 1 |] [| 1.0 |]))
+        (L.full update_shape 2.0 cdt)
+        {
+          update_window_dims = Array.init n Fun.id;
+          inserted_window_dims = [||];
+          scatter_dims_to_operand_dims = [| n - 1 |];
+          s_operand_batching_dims = [||];
+          s_scatter_indices_batching_dims = [||];
+        }
     end
     else result
   in

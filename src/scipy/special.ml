@@ -2139,7 +2139,7 @@ let expn1 x n =
   let cn v = scalar_of n v in
   let machep = eps_of x in
   let zero = c 0.0 and one = c 1.0 in
-  let psi0 = neg_ (scalar_of x euler_gamma) -! UF.log x in
+  let psi0 = c (-.euler_gamma) -! UF.log x in
   let psi =
     List.hd
       (fori_float (cn 1.0) n
@@ -2149,31 +2149,28 @@ let expn1 x n =
            | _ -> assert false)
          [ psi0 ])
   in
-  let n1 = where_ (UF.equal n (cn 1.0)) (one +! one) n in
+  let n1 = where_ (UF.equal n (cn 1.0)) (c 2.0) n in
   let z = neg_ x in
+  let pk0 = one -! n in
+  let ans0 = where_ (UF.equal n (cn 1.0)) zero (one /! (one -! n1)) in
   let init =
-    [
-      where_ (UF.equal n (cn 1.0)) zero (one /! (one -! n1));
-      one -! n;
-      c Float.infinity;
-      zero;
-      one;
-    ]
+    [ ans0; pk0; C.py_scalar (dtype x) Float.infinity; x; zero; one ]
   in
   let d =
     L.while_loop
       (function
-        | [ _; _; t; _; _ ] ->
-            band (UF.greater x (c 0.0)) (UF.greater t (c machep))
+        | [ _; _; t; x; _; _ ] ->
+            let positive = UF.greater x (c 0.0) in
+            band positive (UF.greater t (c machep))
         | _ -> assert false)
       (function
-        | [ ans; pk; _; xk; yk ] ->
+        | [ ans; pk; _; x; xk; yk ] ->
             let xk = xk +! one in
             let yk = yk *! (z /! xk) in
             let pk = pk +! one in
             let ans = ans +! where_ (UF.not_equal pk zero) (yk /! pk) zero in
             let t = where_ (UF.not_equal ans zero) (UF.abs (yk /! ans)) one in
-            [ ans; pk; t; xk; yk ]
+            [ ans; pk; t; x; xk; yk ]
         | _ -> assert false)
       init
   in
@@ -2188,17 +2185,18 @@ let expn2 x n =
   let big = c 1.4411518807585587e+17 in
   let machep = eps_of x in
   let zero = c 0.0 and one = c 1.0 in
-  let init =
-    [ one /! (x +! n); cn 1.0; one; one; x; x +! n; zero; c Float.infinity ]
-  in
+  let qkm1 = x +! n in
+  let ans0 = one /! (x +! n) in
+  let init = [ ans0; cn 1.0; one; one; qkm1; x; zero; c Float.infinity; x ] in
   let d =
     L.while_loop
       (function
-        | [ _; k; _; _; _; _; _; t ] ->
-            band (UF.greater x (scalar_of k 0.0)) (UF.greater t (c machep))
+        | [ _; k; _; _; _; _; _; t; x ] ->
+            let positive = UF.greater x (scalar_of k 0.0) in
+            band positive (UF.greater t (c machep))
         | _ -> assert false)
       (function
-        | [ ans; k; pkm1; pkm2; qkm2; qkm1; r; _ ] ->
+        | [ ans; k; pkm1; pkm2; qkm1; qkm2; r; _; x ] ->
             let ck v = scalar_of k v in
             let k = k +! ck 1.0 in
             let odd = UF.equal (UF.remainder k (ck 2.0)) (ck 1.0) in
@@ -2214,7 +2212,11 @@ let expn2 x n =
             let ans = where_ nz r ans in
             let is_big = UF.greater (UF.abs pk) big in
             let scale v = where_ is_big (v /! big) v in
-            [ ans; k; scale pk; scale pkm1; scale qkm1; scale qk; r; t ]
+            let pkm1' = scale pk in
+            let pkm2' = scale pkm1 in
+            let qkm1' = scale qk in
+            let qkm2' = scale qkm1 in
+            [ ans; k; pkm1'; pkm2'; qkm1'; qkm2'; r; t; x ]
         | _ -> assert false)
       init
   in

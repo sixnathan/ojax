@@ -17,35 +17,37 @@ let as_real v =
   | Dtype.I64 -> b1 (Convert_element_type Dtype.F64) [ v ]
   | _ -> b1 (Convert_element_type Dtype.F32) [ v ]
 
-let lengths_array dt lengths =
-  let count = [| List.length lengths |] in
-  let floats = List.map float_of_int lengths in
+let shape_array dt sizes =
+  let n = [| List.length sizes |] in
+  let values = Array.of_list (List.map float_of_int sizes) in
   match dt with
   | Dtype.Complex64 | Dtype.Complex128 ->
-      Concrete
-        (Ndarray.of_complex dt count
-           (Array.of_list
-              (List.map (fun re -> { Complex.re; im = 0.0 }) floats)))
-  | _ -> Concrete (Ndarray.of_floats dt count (Array.of_list floats))
+      Ndarray.of_complex dt n
+        (Array.map (fun re -> { Complex.re; im = 0.0 }) values)
+  | _ -> Ndarray.of_floats dt n values
 
-let scale_by norm ~inverse lengths v =
-  let dt = (Core.get_aval v).dtype in
-  let product () = Reductions.prod (lengths_array dt lengths) in
-  let one = Jnp_util.py_int 1 in
+let fft_norm ~inverse sizes dt norm =
+  let product () = Reductions.prod (Concrete (shape_array dt sizes)) in
+  let reciprocal v = Ufuncs.divide (Jnp_util.py_int 1) v in
   match norm with
-  | None | Some "backward" -> v
-  | Some "ortho" ->
+  | "backward" ->
+      Concrete (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| 1.0 |])
+  | "ortho" ->
       let root = Ufuncs.sqrt (product ()) in
-      Ufuncs.multiply v (if inverse then root else Ufuncs.divide one root)
-  | Some "forward" ->
-      let total = product () in
-      Ufuncs.multiply v (if inverse then total else Ufuncs.divide one total)
-  | Some other ->
+      if inverse then root else reciprocal root
+  | "forward" -> if inverse then product () else reciprocal (product ())
+  | other ->
       invalid_arg
         (Printf.sprintf
            "Invalid norm value %s; should be \"backward\",\"ortho\" or \
             \"forward\"."
            other)
+
+let apply_norm ~inverse sizes norm v =
+  match norm with
+  | None -> v
+  | Some norm ->
+      Ufuncs.multiply v (fft_norm ~inverse sizes (Core.get_aval v).dtype norm)
 
 let scale_const factor v =
   if factor = 1.0 then v
@@ -176,7 +178,7 @@ let fft_core kind ~inverse ?s ?axes ?norm a =
             (arr, List.map (fun ax -> shape.(ax)) last_axes))
   in
   let transformed = lax_fft kind sizes arr in
-  let scaled = scale_by norm ~inverse sizes transformed in
+  let scaled = apply_norm ~inverse sizes norm transformed in
   match orig_axes with
   | Some ax -> b1 (Transpose (moved_perm ndim last_axes ax)) [ scaled ]
   | None -> scaled

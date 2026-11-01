@@ -1801,12 +1801,10 @@ let vander ?n ?(increasing = false) x =
     if increasing then io
     else bind1 T.Sub [ full dt [| nn |] (float_of_int (nn - 1)); io ]
   in
-  let xcol =
-    bind1 (T.Broadcast_in_dim { shape = [| len; nn |]; dims = [| 0 |] }) [ x ]
-  in
-  let expo =
-    bind1 (T.Broadcast_in_dim { shape = [| len; nn |]; dims = [| 1 |] }) [ io ]
-  in
+  let lift v sh dims = bind1 (T.Broadcast_in_dim { shape = sh; dims }) [ v ] in
+  let full_shape = [| len; nn |] in
+  let xcol = lift (lift x [| len; 1 |] [| 0 |]) full_shape [| 0; 1 |] in
+  let expo = lift (lift io [| 1; nn |] [| 1 |]) full_shape [| 0; 1 |] in
   bind1 T.Pow [ xcol; expo ]
 
 let vander ?n ?increasing p0 =
@@ -2295,16 +2293,10 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   let avg, w_sum =
     match w with
     | None ->
-        let wide = match dt with D.F16 | D.Bf16 -> D.F32 | d -> d in
-        let summed = bind1 (T.Reduce_sum [| 1 |]) [ convert x wide ] in
-        let count = scalar dt (float_of_int nobs) in
-        let mean =
-          convert (bind1 T.Div [ summed; scalar wide (float_of_int nobs) ]) dt
-        in
-        ( mean,
+        ( Reductions.mean ~axis:[| 1 |] x,
           bind1
             (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
-            [ count ] )
+            [ scalar dt (float_of_int nobs) ] )
     | Some wv ->
         let lifted =
           bind1

@@ -2475,6 +2475,85 @@ let lin_process_call (trace : trace) (b : jaxpr_builder) (c : closed_jaxpr)
       else po)
     pos lc.lc_nzs_out
 
+let joint_branch_jvp rebuild branches primals tangents =
+  match (primals, tangents) with
+  | index :: prim_ops, _ :: tan_ops ->
+      let nzs = List.map (fun t -> not (is_zero t)) tan_ops in
+      let keep flags vs =
+        List.filter_map
+          (fun (nz, v) -> if nz then Some v else None)
+          (List.combine flags vs)
+      in
+      let op_avals = List.map Core.get_aval prim_ops in
+      let n = List.length op_avals in
+      let in_avals = op_avals @ keep nzs op_avals in
+      let run (branch : closed_jaxpr) args =
+        let ops, tans =
+          match Util.split_list args [ n ] with
+          | [ a; b ] -> (a, b)
+          | _ -> arity ()
+        in
+        let rest = ref tans in
+        let tangent_ops =
+          List.map2
+            (fun p nz ->
+              if nz then
+                begin match !rest with
+                | t :: tl ->
+                    rest := tl;
+                    t
+                | [] -> arity ()
+                end
+              else p2tz p)
+            ops nzs
+        in
+        jvp (fun a -> Jaxpr.eval_closed_jaxpr branch a) ops tangent_ops
+      in
+      let flags_of branch =
+        let flags = ref [] in
+        ignore
+          (Jaxpr.make_jaxpr in_avals (fun args ->
+               let pos, tos = run branch args in
+               flags := List.map (fun t -> not (is_zero t)) tos;
+               pos));
+        !flags
+      in
+      let out_nzs =
+        match List.map flags_of branches with
+        | [] -> []
+        | first :: others -> List.fold_left (List.map2 ( || )) first others
+      in
+      let joint =
+        List.map
+          (fun branch ->
+            Jaxpr.make_jaxpr in_avals (fun args ->
+                let pos, tos = run branch args in
+                pos @ keep out_nzs (List.map instantiate tos)))
+          branches
+      in
+      let outs =
+        Core.bind (rebuild joint) ((index :: prim_ops) @ keep nzs tan_ops)
+      in
+      let pos, tos =
+        match Util.split_list outs [ List.length out_nzs ] with
+        | [ a; b ] -> (a, b)
+        | _ -> arity ()
+      in
+      let rest = ref tos in
+      ( pos,
+        List.map2
+          (fun po nz ->
+            if nz then
+              begin match !rest with
+              | t :: tl ->
+                  rest := tl;
+                  t
+              | [] -> arity ()
+              end
+            else p2tz po)
+          pos out_nzs )
+  | _ -> arity ()
+
 let jvp_process_primitive trace prim args =
   let pairs = List.map (as_jvp trace) args in
   let primals = List.map fst pairs and tangents = List.map snd pairs in
@@ -2484,7 +2563,14 @@ let jvp_process_primitive trace prim args =
     | GBuilder b, Xla_call c -> lin_process_call trace b c primals tangents
     | GBuilder b, _ -> lin_process trace b prim primals tangents
     | _ ->
-        let pos, tos = jvp_pairs prim primals tangents in
+        let pos, tos =
+          match prim with
+          | Cond { branches; platforms } ->
+              joint_branch_jvp
+                (fun branches -> Cond { branches; platforms })
+                branches primals tangents
+          | _ -> jvp_pairs prim primals tangents
+        in
         List.map2 (wrap_jvp trace) pos tos
 
 let jvp_full_lower = function

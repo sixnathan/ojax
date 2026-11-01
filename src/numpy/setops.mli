@@ -5,3 +5,5 @@ val isin :
   Types.value ->
   Types.value ->
   Types.value
+
+val in1d : invert:bool -> Types.value -> Types.value -> Types.value

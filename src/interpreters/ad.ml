@@ -2633,6 +2633,13 @@ let trace_linearized_nz (f : value list -> value list) (primals : value list)
       jb_const_tracers = [];
       jb_constvals = [];
       jb_tracers = [];
+      jb_invars = [];
+      jb_debug =
+        {
+          func_src_info = "<unnamed function>";
+          traced_for = "jit";
+          arg_names = None;
+        };
     }
   in
   let tangent_trace = tape_trace b in

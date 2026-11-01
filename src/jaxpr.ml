@@ -128,8 +128,147 @@ let add_const builder (t : tracer) v =
 
 let new_arg builder trace aval =
   let t = new_tracer builder trace aval in
-  let _ = add_var builder t in
+  let v = add_var builder t in
+  builder.jb_invars <- builder.jb_invars @ [ v ];
   t
+
+let default_debug =
+  { func_src_info = "<unnamed function>"; traced_for = "jit"; arg_names = None }
+
+let pending_debug = ref None
+
+let with_trace_debug debug f =
+  pending_debug := Some debug;
+  Fun.protect ~finally:(fun () -> pending_debug := None) f
+
+let take_debug () =
+  match !pending_debug with
+  | Some debug ->
+      pending_debug := None;
+      debug
+  | None -> default_debug
+
+let scalar_constant builder (var : var) =
+  List.find_map
+    (fun ((c : var), value) ->
+      match value with
+      | Concrete nd when c.vid = var.vid && Ndarray.shape nd = [||] -> Some nd
+      | _ -> None)
+    builder.jb_constvals
+
+let is_constant builder (var : var) =
+  List.exists (fun ((c : var), _) -> c.vid = var.vid) builder.jb_constvals
+
+let progenitors builder (t : tracer) =
+  let var = getvar builder t in
+  let active = Hashtbl.create 16 in
+  Hashtbl.replace active var.vid ();
+  List.iter
+    (fun (e : eqn) ->
+      let produced =
+        List.filter (fun (o : var) -> Hashtbl.mem active o.vid) e.outs
+      in
+      if produced <> [] then begin
+        List.iter (fun (o : var) -> Hashtbl.remove active o.vid) produced;
+        List.iter
+          (function
+            | A_var (v : var) -> Hashtbl.replace active v.vid ()
+            | A_lit _ | DropVar _ -> ())
+          e.inputs
+      end)
+    builder.jb_eqns;
+  let positions =
+    List.concat
+      (List.mapi
+         (fun i (v : var) -> if Hashtbl.mem active v.vid then [ i ] else [])
+         builder.jb_invars)
+  in
+  let const_eqn (e : eqn) =
+    List.exists
+      (function
+        | A_var (v : var) ->
+            scalar_constant builder v <> None
+            || (is_constant builder v && Hashtbl.mem active v.vid)
+        | A_lit _ -> true
+        | DropVar _ -> false)
+      e.inputs
+  in
+  (positions, List.filter const_eqn (List.rev builder.jb_eqns))
+
+let eqn_with_literals builder (e : eqn) =
+  {
+    e with
+    inputs =
+      List.map
+        (function
+          | A_var (v : var) as atom -> (
+              match scalar_constant builder v with
+              | Some nd -> A_lit nd
+              | None -> atom)
+          | atom -> atom)
+        e.inputs;
+  }
+
+let origin_msg v =
+  match v with
+  | Tracer ({ payload = Jaxpr (); _ } as t) -> (
+      let builder = builder_of t.trace in
+      let dbg = builder.jb_debug in
+      let positions, eqns = progenitors builder t in
+      let origin =
+        Printf.sprintf
+          "The error occurred while tracing the function %s for %s. "
+          dbg.func_src_info dbg.traced_for
+      in
+      let name i =
+        match dbg.arg_names with
+        | None -> Some "unknown"
+        | Some names -> List.nth_opt names i
+      in
+      let names = List.map name positions in
+      if List.mem None names then ""
+      else
+        let names = List.filter_map Fun.id names in
+        let rec take n = function
+          | x :: tl when n > 0 -> x :: take (n - 1) tl
+          | _ -> []
+        in
+        match names with
+        | _ :: _ ->
+            let arg_info =
+              match List.rev names with
+              | [ only ] -> "the argument " ^ only
+              | [ b; a ] -> Printf.sprintf "the arguments %s and %s" a b
+              | last :: rest ->
+                  Printf.sprintf "the arguments %s, and %s"
+                    (String.concat ", " (List.rev rest))
+                    last
+              | [] -> ""
+            in
+            "\n" ^ origin
+            ^ "This concrete value was not available in Python because it \
+               depends on the value"
+            ^ (if List.length names > 1 then "s" else "")
+            ^ " of " ^ arg_info ^ "."
+        | [] when eqns <> [] ->
+            let lines =
+              List.map
+                (fun e ->
+                  Printf.sprintf "  operation %s\n    from line %s"
+                    (Pretty_printer.eqn_to_jax_string
+                       (eqn_with_literals builder e))
+                    "<unknown>")
+                (take 5 eqns)
+            in
+            "\n" ^ origin
+            ^ "This value became a tracer due to JAX operations on these \
+               lines:\n\n" ^ String.concat "\n\n" lines
+            ^
+            if List.length eqns > 5 then
+              "\n\n(Additional originating lines are not shown.)"
+            else ""
+        | [] -> "\n" ^ origin)
+  | _ -> ""
 
 let as_tracer = function
   | Tracer t -> t
@@ -141,6 +280,15 @@ let plain_const_tracer trace v =
   let t = new_tracer builder trace (Core.get_aval v) in
   let _ = add_const builder t v in
   Tracer t
+
+let stage_constant v =
+  match v with
+  | Tracer _ -> v
+  | _ ->
+      if Core.tracing_dynamically () then
+        let main = Core.find_top_trace [] in
+        if main.kind = KJaxpr then plain_const_tracer main v else v
+      else v
 
 let shared_tracer builder nd =
   List.find_map
@@ -319,6 +467,8 @@ let trace_with_refs mode_of (in_avals : aval list)
       jb_const_tracers = [];
       jb_constvals = [];
       jb_tracers = [];
+      jb_invars = [];
+      jb_debug = take_debug ();
     }
   in
   Core.with_new_main KJaxpr (GBuilder builder) (fun main ->

@@ -1,5 +1,7 @@
 val geqrf : Types.value -> Types.value * Types.value
-val geqp3 : Types.value -> Types.value -> Types.value * Types.value * Types.value
+
+val geqp3 :
+  Types.value -> Types.value -> Types.value * Types.value * Types.value
 
 val ormqr :
   ?left:bool ->

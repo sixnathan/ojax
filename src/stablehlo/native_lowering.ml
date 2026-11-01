@@ -787,8 +787,7 @@ let triu x =
     if rank = 2 then mask
     else
       Core.bind1
-        (Broadcast_in_dim
-           { shape = dims; dims = [| rank - 2; rank - 1 |] })
+        (Broadcast_in_dim { shape = dims; dims = [| rank - 2; rank - 1 |] })
         [ mask ]
   in
   let zero = like x 0.0 in

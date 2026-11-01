@@ -260,9 +260,7 @@ let qr_pivoted_impl full_matrices inputs =
                 if j < n then cell h [| i; j |] else Complex.zero)
           in
           ignore c;
-          let q =
-            List.hd (householder_product_impl [ base; taus ])
-          in
+          let q = List.hd (householder_product_impl [ base; taus ]) in
           let p =
             Ndarray.of_floats Dtype.I32 [| n |]
               (Array.init n (fun i ->
@@ -714,8 +712,7 @@ let qr_pivoted_aval full_matrices avals =
 
 let geqrf_aval avals =
   match avals with
-  | [ a ] ->
-      [ a; { a with shape = [| min a.shape.(0) a.shape.(1) |] } ]
+  | [ a ] -> [ a; { a with shape = [| min a.shape.(0) a.shape.(1) |] } ]
   | _ -> failwith "linalg: geqrf expects one aval"
 
 let geqp3_aval avals =
@@ -733,8 +730,7 @@ let ormqr_aval ~left avals =
         | [| x |] -> Printf.sprintf "(%d,)" x
         | _ ->
             "("
-            ^ String.concat ", "
-                (Array.to_list (Array.map string_of_int s))
+            ^ String.concat ", " (Array.to_list (Array.map string_of_int s))
             ^ ")"
       in
       if left && c.shape.(0) <> m then

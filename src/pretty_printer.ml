@@ -728,7 +728,10 @@ let jax_params (e : eqn) =
       ]
   | Rng_bit_generator { rbg_shape; rbg_dtype; rbg_algorithm } ->
       [
-        ("algorithm", Plain (if rbg_algorithm = "DEFAULT" then "RNG_DEFAULT" else "RNG_" ^ rbg_algorithm));
+        ( "algorithm",
+          Plain
+            (if rbg_algorithm = "DEFAULT" then "RNG_DEFAULT"
+             else "RNG_" ^ rbg_algorithm) );
         ("dtype", Plain (Dtype.numpy_name rbg_dtype));
         ("out_sharding", Plain "None");
         ("shape", Plain (py_ints rbg_shape));
@@ -1183,3 +1186,15 @@ let closed_jaxpr_to_jax_string (cj : closed_jaxpr) =
   in
   let main = pp_jaxpr ctx cj.jaxpr (List.length cj.consts) in
   Layout.render (Layout.Concat (docs @ [ main ]))
+
+let eqn_to_jax_string (e : eqn) =
+  let ctx =
+    {
+      next_name = 0;
+      var_names = Hashtbl.create 8;
+      shared = Hashtbl.create 1;
+      shared_names = Hashtbl.create 1;
+      keys = Hashtbl.create 1;
+    }
+  in
+  Layout.render (pp_eqn ctx e)

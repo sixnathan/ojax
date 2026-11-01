@@ -318,33 +318,30 @@ def arrays_compare(ref_path, our_path):
         sys.stdout.write("JAX  " + a + "\nOJAX " + b + "\n")
 
 
-def _error_head(message):
-    lines = []
-    for line in message.split("\n"):
-        if line.startswith("The error occurred while tracing"):
-            continue
-        if line.startswith("  operation ") or line.startswith("    from line "):
-            continue
-        if line.strip():
-            lines.append(line)
-    return "\n".join(lines)
+def _error_norm(message):
+    message = re.sub(r"(while tracing the function \S+) at \S+:\d+ for ", r"\1 at <loc> for ", message)
+    return re.sub(r"(\n    from line ).*", r"\1<loc>", message)
 
 
 def errors_compare(ref_paths, our_paths):
     ref, ours = load_rows(ref_paths), load_rows(our_paths)
-    both = same = 0
-    samples = []
-    for key, r in sorted(ref.items()):
-        o = ours.get(key, {})
-        if "text_error" in r and "text_error" in o:
-            both += 1
-            if _error_head(r["text_error"]) == _error_head(o["text_error"]):
-                same += 1
-            elif len(samples) < 6:
-                samples.append((r["text_error"][:170], o["text_error"][:170]))
-    sys.stdout.write("both_error=" + str(both) + " identical_message=" + str(same) + "\n")
-    for a, b in samples:
-        sys.stdout.write("JAX  " + a.replace("\n", " ") + "\nOJAX " + b.replace("\n", " ") + "\n")
+    for field in ("text_error", "jaxpr_error", "structure_error"):
+        both = raw = same = 0
+        samples = []
+        for key, r in sorted(ref.items()):
+            o = ours.get(key, {})
+            if field in r and field in o:
+                both += 1
+                raw += r[field] == o[field]
+                if _error_norm(r[field]) == _error_norm(o[field]):
+                    same += 1
+                elif len(samples) < 6:
+                    samples.append((key[1], r[field], o[field]))
+        sys.stdout.write(
+            field + " both_error=" + str(both) + " raw_identical=" + str(raw) + " identical_past_python_locations=" + str(same) + "\n"
+        )
+        for case, a, b in samples:
+            sys.stdout.write(case + "\nJAX  " + repr(a[:600]) + "\nOJAX " + repr(b[:600]) + "\n")
 
 
 def main():

@@ -40,7 +40,9 @@ let geqp3 a jpvt =
   | _ -> failwith "geqp3: arity"
 
 let ormqr ?(left = true) ?(transpose = false) a taus c =
-  Core.bind1 (T.Ormqr { ormqr_left = left; ormqr_transpose = transpose }) [ a; taus; c ]
+  Core.bind1
+    (T.Ormqr { ormqr_left = left; ormqr_transpose = transpose })
+    [ a; taus; c ]
 
 let rec cholesky_update r w =
   if Array.length (shape r) > 2 then

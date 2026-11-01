@@ -2078,27 +2078,21 @@ let sdy_lapack_rule ~batch in_avals out_avals =
   let mapping (a : aval) =
     let rank = Array.length a.shape in
     let leading =
-      if batch > 0 && rank >= batch then begin
-        match !batch_factors with
+      if batch > 0 && rank >= batch then
+        begin match !batch_factors with
         | Some f -> f
         | None ->
             let f = List.init batch (fun d -> factor a.shape.(d)) in
             batch_factors := Some f;
             f
-      end
+        end
       else []
     in
     let first = List.length leading in
-    let rest =
-      List.init (rank - first) (fun d -> factor a.shape.(first + d))
-    in
-    "["
-    ^ String.concat ", " (List.map sdy_factor_name (leading @ rest))
-    ^ "]"
+    let rest = List.init (rank - first) (fun d -> factor a.shape.(first + d)) in
+    "[" ^ String.concat ", " (List.map sdy_factor_name (leading @ rest)) ^ "]"
   in
-  let side avals =
-    "(" ^ String.concat ", " (List.map mapping avals) ^ ")"
-  in
+  let side avals = "(" ^ String.concat ", " (List.map mapping avals) ^ ")" in
   let lhs = side in_avals in
   let rhs = side out_avals in
   let factors =

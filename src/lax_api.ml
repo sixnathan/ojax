@@ -197,7 +197,8 @@ let reshape ?dimensions x new_sizes =
   let v =
     match dimensions with Some perm -> b1 (Transpose perm) [ x ] | None -> x
   in
-  b1 (Reshape new_sizes) [ v ]
+  if Array.length new_sizes > 0 && new_sizes = (Core.get_aval v).shape then v
+  else b1 (Reshape new_sizes) [ v ]
 
 let transpose x perm = b1 (Transpose perm) [ x ]
 let rev x dims = b1 (Rev dims) [ x ]

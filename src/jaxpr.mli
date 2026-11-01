@@ -5,6 +5,9 @@ val eval_jaxpr : jaxpr -> value list -> value list
 val jaxpr_as_fun : jaxpr -> value list -> value list
 val eval_closed_jaxpr : closed_jaxpr -> value list -> value list
 val make_jaxpr : aval list -> (value list -> value list) -> closed_jaxpr
+val with_trace_debug : trace_debug -> (unit -> 'a) -> 'a
+val origin_msg : value -> string
+val stage_constant : value -> value
 
 val make_jaxpr_stateful :
   aval list ->

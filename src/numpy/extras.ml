@@ -23,13 +23,11 @@ let unique_context =
    jnp.unique() compatible with JIT and other transforms, you can specify a \
    concrete value for the size argument, which will determine the output size."
 
-let tracing_origin = "The error occurred while tracing a function for jit."
-
 let concretization name v =
   let aval = Core.get_aval v in
   let context dt sh text =
-    Errors.concretization_type_error ~context:(text ^ "\n")
-      ~error_repr:(traced_shape_repr dt sh) ~origin_msg:tracing_origin ()
+    Errors.concretization_type_error ~context:text
+      ~error_repr:(traced_shape_repr dt sh) ~origin_msg:(Jaxpr.origin_msg v) ()
   in
   let int_dt = Dtypes.default_int_dtype () in
   let own text = context aval.dtype aval.shape text in
@@ -47,15 +45,15 @@ let concretization name v =
   | "union1d" -> own "The error arose in union1d()"
   | "setdiff1d" -> own "The error arose in setdiff1d()"
   | "trim_zeros" -> own "Error arose in the `filt` argument of trim_zeros()"
+  | "delete" -> own "'obj' array argument of jnp.delete()"
   | "bincount" ->
       own
         "The error occurred because of argument 'x' of jnp.bincount. To avoid \
          this error, pass a static `length` argument."
   | "compress" ->
       Errors.tracer_bool_conversion_error
-        ~error_repr:(traced_shape_repr Dtype.Bool [||])
-        ~origin_msg:("\n" ^ tracing_origin ^ "\n")
-        ()
+        ~error_repr:(traced_shape_repr aval.dtype aval.shape)
+        ~origin_msg:(Jaxpr.origin_msg v) ()
   | _ ->
       own
         (name
@@ -76,7 +74,7 @@ let ints_value dt shape_ xs =
 
 let int_scalar i = ints_value (default_int ()) [||] [| i |]
 let scalar_like v x = L.full [||] x (dtype_of v)
-let flat v = NL.reshape v [| size_of v |]
+let flat v = if rank v = 1 then v else NL.reshape v [| size_of v |]
 let shape_int a = Array.fold_left ( * ) 1 a
 
 let is_float_dtype = function
@@ -112,46 +110,88 @@ let strides_of sh =
   done;
   s
 
-let nonzero ?size ?(fill_value = 0) a =
+let scatter_add_drop operand indices updates =
+  let n = size_of indices in
+  let dt = dtype_of indices in
+  let negative = U.less indices (L.full [||] 0.0 dt) in
+  let shifted =
+    U.add indices (L.full [||] (float_of_int (size_of operand)) dt)
+  in
+  let normalised = Core.bind1 Select_n [ negative; indices; shifted ] in
+  let wrapped = L.broadcast_in_dim normalised [| n; 1 |] [| 0 |] in
+  let dims =
+    {
+      update_window_dims = [||];
+      inserted_window_dims = [| 0 |];
+      scatter_dims_to_operand_dims = [| 0 |];
+      s_operand_batching_dims = [||];
+      s_scatter_indices_batching_dims = [||];
+    }
+  in
+  L.scatter_add operand wrapped updates dims
+
+let bincount_length length weights x =
+  let wdt = dtype_of weights in
+  let operand = L.full [| length |] 0.0 wdt in
+  let clipped = NL.clip ~min:0.0 x in
+  let updates =
+    if rank weights = 0 then L.broadcast_in_dim weights [| size_of x |] [||]
+    else weights
+  in
+  scatter_add_drop operand clipped updates
+
+let nonzero ?size ?fill_value a =
   let sh = shape a in
   let n = Array.length sh in
-  let strides = strides_of sh in
-  match size with
-  | None ->
-      let data = flat_floats (host "nonzero" (nonzero_mask a)) in
-      let hits =
-        List.filter
-          (fun i -> data.(i) <> 0.0)
-          (List.init (Array.length data) Fun.id)
-      in
-      let count = List.length hits in
+  let mask = nonzero_mask a in
+  let count () = R.sum mask in
+  let k =
+    match size with
+    | Some k -> k
+    | None ->
+        let total = count () in
+        (match total with
+        | Tracer _ -> raise (concretization "nonzero" a)
+        | _ -> ());
+        int_of_float (Ndarray.get_f (host "nonzero" total) [||])
+  in
+  let int_dt = default_int () in
+  if k = 0 then
+    List.map (fun _ -> AC.zeros ~dtype:int_dt [| 0 |]) (Array.to_list sh)
+  else begin
+    let running = R.cumsum mask in
+    let histogram =
+      bincount_length k
+        (Concrete (Ndarray.of_floats (default_int ()) [||] [| 1.0 |]))
+        running
+    in
+    let flat_indices = R.cumsum histogram in
+    let fdt = dtype_of flat_indices in
+    let strides = strides_of sh in
+    let out =
       List.init n (fun d ->
-          ints_value (default_int ()) [| count |]
-            (Array.of_list
-               (List.map (fun i -> i / strides.(d) mod sh.(d)) hits)))
-  | Some k ->
-      let mask = flat (nonzero_mask a) in
-      let total = size_of a in
-      let order =
-        Sorting.argsort ~axis:(Some 0) ~stable:true (U.logical_not mask)
-      in
-      let padded =
-        if k <= total then L.slice_in_dim order 0 k
-        else
-          NL.concatenate
-            [ order; AC.zeros ~dtype:(dtype_of order) [| k - total |] ]
-      in
-      let hits = I.take ~axis:0 mask order in
-      let valid =
-        if k <= total then L.slice_in_dim hits 0 k
-        else NL.concatenate [ hits; AC.zeros ~dtype:Dtype.Bool [| k - total |] ]
-      in
-      List.init n (fun d ->
-          let dt = dtype_of padded in
-          let stride = L.full [| k |] (float_of_int strides.(d)) dt in
-          let dim = L.full [| k |] (float_of_int sh.(d)) dt in
-          let coord = U.remainder (U.floor_divide padded stride) dim in
-          NL.where_ valid coord (L.full [| k |] (float_of_int fill_value) dt))
+          let quotient =
+            U.floor_divide flat_indices
+              (Concrete
+                 (Ndarray.of_floats fdt [||] [| float_of_int strides.(d) |]))
+          in
+          U.remainder quotient
+            (Concrete (Ndarray.of_floats fdt [||] [| float_of_int sh.(d) |])))
+    in
+    match fill_value with
+    | None -> out
+    | Some fill ->
+        let idx = NL.arange ~dtype:(default_int ()) (float_of_int k) in
+        let fill_mask = U.greater_equal idx (count ()) in
+        List.map
+          (fun entry ->
+            NL.where_ fill_mask
+              (Concrete
+                 (Ndarray.of_floats (dtype_of entry) [||]
+                    [| float_of_int fill |]))
+              entry)
+          out
+  end
 
 let flatnonzero ?size ?fill_value a =
   List.hd (nonzero ?size ?fill_value (flat a))
@@ -176,7 +216,7 @@ let compare_with_nan a b =
   | false, true -> -1
   | false, false -> compare a b
 
-let traced_unique ?axis ~size ?fill_value a =
+let traced_unique_sized ?axis ~size ?fill_value a =
   let module S = Sorting in
   let axis =
     match axis with None -> None | Some x -> Some (canon (rank a) x)
@@ -267,7 +307,10 @@ let traced_unique ?axis ~size ?fill_value a =
     in
     L.sub stops starts
   in
-  { values; indices; inverse; counts }
+  ({ values; indices; inverse; counts }, distinct)
+
+let traced_unique ?axis ~size ?fill_value a =
+  fst (traced_unique_sized ?axis ~size ?fill_value a)
 
 let rec unique_full ?axis ?size ?fill_value a =
   match size with
@@ -411,6 +454,9 @@ let sorted_unique_floats name v =
   let data = flat_floats (host name v) in
   List.sort_uniq compare_with_nan (Array.to_list data)
 
+let unique_values_full ?size ?fill_value a =
+  (unique_full ?size ?fill_value a).values
+
 let of_float_list dt xs =
   let arr = Array.of_list xs in
   Concrete (Ndarray.of_floats dt [| Array.length arr |] arr)
@@ -429,71 +475,254 @@ let sized_result dt values ~size ~fill_value =
       in
       of_float_list dt (kept @ List.init (max 0 (n - count)) (fun _ -> fill))
 
+let lit_of v dt = Concrete (Ndarray.of_floats dt [||] [| v |])
+
+let positions_below n bound =
+  let idt = default_int () in
+  U.less (NL.arange ~dtype:idt (float_of_int n)) bound
+
+let fill_or_extremes ~fill_value vals valid_count =
+  let n = size_of vals in
+  let dt = dtype_of vals in
+  match fill_value with
+  | Some f -> NL.where_ (positions_below n valid_count) vals (lit_of f dt)
+  | None ->
+      let high = NL.where_ (positions_below n valid_count) vals (R.max vals) in
+      NL.where_ (positions_below n valid_count) high (R.min high)
+
 let union1d ?size ?fill_value a b =
   let a, b = same_dtype a b in
-  let xs =
-    List.sort_uniq compare_with_nan
-      (sorted_unique_floats "union1d" a @ sorted_unique_floats "union1d" b)
-  in
-  sized_result (dtype_of a) xs ~size ~fill_value
+  match size with
+  | Some n ->
+      unique_values_full ~size:n ?fill_value (NL.concatenate [ flat a; flat b ])
+  | None ->
+      let first = sorted_unique_floats "union1d" a in
+      let second = sorted_unique_floats "union1d" b in
+      let xs = List.sort_uniq compare_with_nan (first @ second) in
+      sized_result (dtype_of a) xs ~size ~fill_value
 
 let flat_float_list name v = Array.to_list (flat_floats (host name v))
 
+let concat_sorted_keys ~keys ~payload =
+  Core.bind
+    (Sort { dimension = 0; is_stable = true; num_keys = List.length keys })
+    (keys @ payload)
+
+let dynamic_set arr piece start = L.dynamic_update_slice arr piece [ start ]
+
+let concat_unique arr1 arr2 ~fill_value =
+  let u1, n1 =
+    traced_unique_sized ~axis:0 ~size:(size_of arr1) ?fill_value arr1
+  in
+  let u2, n2 =
+    traced_unique_sized ~axis:0 ~size:(size_of arr2) ?fill_value arr2
+  in
+  let dt = dtype_of u1.values in
+  let arr = L.full [| size_of arr1 + size_of arr2 |] 0.0 dt in
+  let arr = dynamic_set arr u1.values (lit_of 0.0 (default_int ())) in
+  let arr = dynamic_set arr u2.values n1 in
+  (arr, U.add n1 n2)
+
+let take_fill aux indices =
+  I.take ~mode:"fill" ~fill_value:0.0 ~axis:0 aux indices
+
+let intersect1d_sized ~assume_unique ~size ~fill_value a b =
+  let idt = default_int () in
+  let aux, mask =
+    if assume_unique then begin
+      let arr = NL.concatenate [ a; b ] in
+      let n = size_of arr in
+      match
+        concat_sorted_keys ~keys:[ arr ]
+          ~payload:[ NL.arange ~dtype:idt (float_of_int n) ]
+      with
+      | aux :: _ -> (aux, AC.ones ~dtype:Dtype.Bool [| n |])
+      | [] -> invalid_arg "intersect1d: arity"
+    end
+    else begin
+      let arr, total = concat_unique a b ~fill_value:(Some 0.0) in
+      let n = size_of arr in
+      let mask = positions_below n total in
+      match
+        concat_sorted_keys
+          ~keys:[ U.logical_not mask; arr ]
+          ~payload:[ NL.arange ~dtype:idt (float_of_int n) ]
+      with
+      | [ _; aux; _ ] -> (aux, mask)
+      | _ -> invalid_arg "intersect1d: arity"
+    end
+  in
+  let n = size_of aux in
+  let tail v = L.slice v [| 1 |] [| n |]
+  and head v = L.slice v [| 0 |] [| n - 1 |] in
+  let aux_mask =
+    U.logical_and (Core.bind1 Eq [ tail aux; head aux ]) (tail mask)
+  in
+  let num_results = R.sum aux_mask in
+  let vals =
+    if n > 0 then take_fill aux (List.hd (nonzero ~size ~fill_value:n aux_mask))
+    else L.full [| size |] 0.0 (dtype_of aux)
+  in
+  fill_or_extremes ~fill_value vals num_results
+
 let intersect1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in
-  let xs =
-    if assume_unique then
-      let sorted =
-        List.sort compare_with_nan
-          (flat_float_list "intersect1d" a @ flat_float_list "intersect1d" b)
+  let a = flat a and b = flat b in
+  match size with
+  | Some n -> intersect1d_sized ~assume_unique ~size:n ~fill_value a b
+  | None ->
+      let xs =
+        if assume_unique then
+          let first = flat_float_list "intersect1d" a in
+          let second = flat_float_list "intersect1d" b in
+          let sorted = List.sort compare_with_nan (first @ second) in
+          let rec adjacent = function
+            | p :: (q :: _ as rest) ->
+                if compare_with_nan p q = 0 then p :: adjacent rest
+                else adjacent rest
+            | _ -> []
+          in
+          adjacent sorted
+        else
+          let first = sorted_unique_floats "intersect1d" a in
+          let ys = sorted_unique_floats "intersect1d" b in
+          List.filter
+            (fun x -> List.exists (fun y -> compare_with_nan x y = 0) ys)
+            first
       in
-      let rec adjacent = function
-        | p :: (q :: _ as rest) ->
-            if compare_with_nan p q = 0 then p :: adjacent rest
-            else adjacent rest
-        | _ -> []
-      in
-      adjacent sorted
-    else
-      let ys = sorted_unique_floats "intersect1d" b in
-      List.filter
-        (fun x -> List.exists (fun y -> compare_with_nan x y = 0) ys)
-        (sorted_unique_floats "intersect1d" a)
-  in
-  sized_result (dtype_of a) xs ~size ~fill_value
+      sized_result (dtype_of a) xs ~size ~fill_value
 
 let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in
-  let ys = flat_float_list "setdiff1d" b in
-  let source =
-    if assume_unique then flat_float_list "setdiff1d" a
-    else sorted_unique_floats "setdiff1d" a
+  let dt = dtype_of a in
+  let a = flat a and b = flat b in
+  let fill = Option.value fill_value ~default:0.0 in
+  match size with
+  | Some n when size_of a = 0 -> L.full [| n |] fill dt
+  | Some n ->
+      let m = size_of a in
+      let arr =
+        if assume_unique then a
+        else unique_values_full ~size:(if n = 0 then 0 else m) a
+      in
+      let mask = Setops.in1d ~invert:true arr b in
+      let mask =
+        if assume_unique then mask
+        else
+          let first = L.slice arr [| 0 |] [| 1 |] in
+          let same =
+            R.sum (Core.bind1 Eq [ arr; NL.broadcast_to first [| m |] ])
+          in
+          let n_unique =
+            U.subtract (lit_of (float_of_int (m + 1)) (default_int ())) same
+          in
+          NL.where_
+            (positions_below m n_unique)
+            mask
+            (Concrete (Ndarray.of_floats Dtype.Bool [||] [| 0.0 |]))
+      in
+      let picked =
+        I.take ~mode:"clip" ~axis:0 arr (List.hd (nonzero ~size:n mask))
+      in
+      NL.where_ (positions_below n (R.sum mask)) picked (lit_of fill dt)
+  | None ->
+      let source =
+        if assume_unique then flat_float_list "setdiff1d" a
+        else sorted_unique_floats "setdiff1d" a
+      in
+      let ys = flat_float_list "setdiff1d" b in
+      sized_result dt
+        (List.filter
+           (fun x -> not (List.exists (fun y -> compare_with_nan x y = 0) ys))
+           source)
+        ~size ~fill_value:(Some fill)
+
+let setxor1d_sized ~assume_unique ~size ~fill_value a b =
+  let bool_lit v = Concrete (Ndarray.of_floats Dtype.Bool [| 1 |] [| v |]) in
+  let aux, flag =
+    if assume_unique then begin
+      let arr = NL.concatenate [ a; b ] in
+      let aux = Sorting.sort ~axis:(Some 0) arr in
+      let n = size_of aux in
+      let tail = L.slice aux [| 1 |] [| n |]
+      and head = L.slice aux [| 0 |] [| n - 1 |] in
+      ( aux,
+        NL.concatenate
+          [
+            bool_lit (if n > 0 then 1.0 else 0.0);
+            Core.bind1 Ne [ tail; head ];
+            bool_lit 1.0;
+          ] )
+    end
+    else begin
+      let arr, num_unique = concat_unique a b ~fill_value:None in
+      let n = size_of arr in
+      let idt = default_int () in
+      let mask = positions_below (n + 1) (U.add num_unique (lit_of 1.0 idt)) in
+      let aux =
+        match
+          concat_sorted_keys
+            ~keys:[ U.logical_not (L.slice mask [| 1 |] [| n + 1 |]); arr ]
+            ~payload:[]
+        with
+        | [ _; aux ] -> aux
+        | _ -> invalid_arg "setxor1d: arity"
+      in
+      let tail = L.slice aux [| 1 |] [| n |]
+      and head = L.slice aux [| 0 |] [| n - 1 |] in
+      let body =
+        NL.concatenate
+          [
+            bool_lit (if n > 0 then 1.0 else 0.0);
+            Core.bind1 Ne [ tail; head ];
+            bool_lit 0.0;
+          ]
+      in
+      let at_end =
+        Core.bind1 Eq
+          [ NL.arange ~dtype:idt (float_of_int (n + 1)); num_unique ]
+      in
+      (aux, U.logical_and mask (U.logical_or body at_end))
+    end
   in
-  let fill = Some (Option.value fill_value ~default:0.0) in
-  sized_result (dtype_of a)
-    (List.filter
-       (fun x -> not (List.exists (fun y -> compare_with_nan x y = 0) ys))
-       source)
-    ~size ~fill_value:fill
+  let m = size_of flag in
+  let aux_mask =
+    U.logical_and
+      (L.slice flag [| 1 |] [| m |])
+      (L.slice flag [| 0 |] [| m - 1 |])
+  in
+  let num_results = R.sum aux_mask in
+  let n = size_of aux in
+  let vals =
+    if n > 0 then take_fill aux (List.hd (nonzero ~size ~fill_value:n aux_mask))
+    else L.full [| size |] 0.0 (dtype_of aux)
+  in
+  fill_or_extremes ~fill_value vals num_results
 
 let setxor1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in
-  let values v =
-    if assume_unique then flat_float_list "setxor1d" v
-    else sorted_unique_floats "setxor1d" v
-  in
-  let sorted = List.sort compare_with_nan (values a @ values b) in
-  let rec singles = function
-    | p :: q :: rest when compare_with_nan p q = 0 ->
-        let rec drop = function
-          | r :: tl when compare_with_nan p r = 0 -> drop tl
-          | tl -> tl
-        in
-        singles (drop rest)
-    | p :: rest -> p :: singles rest
-    | [] -> []
-  in
-  sized_result (dtype_of a) (singles sorted) ~size ~fill_value
+  let a = flat a and b = flat b in
+  match size with
+  | Some n -> setxor1d_sized ~assume_unique ~size:n ~fill_value a b
+  | None ->
+      let values v =
+        if assume_unique then flat_float_list "setxor1d" v
+        else sorted_unique_floats "setxor1d" v
+      in
+      let first = values a in
+      let second = values b in
+      let sorted = List.sort compare_with_nan (first @ second) in
+      let rec singles = function
+        | p :: q :: rest when compare_with_nan p q = 0 ->
+            let rec drop = function
+              | r :: tl when compare_with_nan p r = 0 -> drop tl
+              | tl -> tl
+            in
+            singles (drop rest)
+        | p :: rest -> p :: singles rest
+        | [] -> []
+      in
+      sized_result (dtype_of a) (singles sorted) ~size ~fill_value
 
 let sum_at n data ids =
   let m = size_of ids in
@@ -531,20 +760,16 @@ let bincount ?weights ?(minlength = 0) ?length x =
           (if Array.length data = 0 then 0
            else 1 + int_of_float (Array.fold_left Float.max 0.0 data))
   in
-  let x = flat x in
-  let weights =
-    match weights with
-    | Some w -> flat w
-    | None -> AC.ones ~dtype:(default_int ()) [| size_of x |]
-  in
-  let idt = dtype_of x in
-  let zero = AC.zeros ~dtype:idt (shape x) in
-  let clipped = U.maximum x zero in
-  let in_range = U.less clipped (L.full (shape x) (float_of_int n) idt) in
-  let kept = NL.where_ in_range weights (AC.zeros_like weights) in
-  let safe = NL.where_ in_range clipped zero in
-  if n = 0 then AC.zeros ~dtype:(dtype_of weights) [| 0 |]
-  else sum_at n kept safe
+  match weights with
+  | None ->
+      if n = 0 then AC.zeros ~dtype:(default_int ()) [| 0 |]
+      else
+        bincount_length n
+          (Concrete (Ndarray.of_floats (default_int ()) [||] [| 1.0 |]))
+          (flat x)
+  | Some w ->
+      if n = 0 then AC.zeros ~dtype:(dtype_of w) [| 0 |]
+      else bincount_length n w (flat x)
 
 let histogram_bin_edges ?(bins = 10) ?range a =
   let a = as_inexact (flat a) in
@@ -808,41 +1033,74 @@ let choose ?(mode = "raise") a choices =
   L.squeeze (I.take_along_axis ~axis:0 stacked expanded) [| 0 |]
 
 let compress ?axis ?size ?(fill_value = 0.0) condition a =
-  if rank condition <> 1 then invalid_arg "condition must be a 1D array";
-  let cond = flat_floats (host "compress" condition) in
-  let source, ax =
-    match axis with Some ax -> (a, canon (rank a) ax) | None -> (flat a, 0)
+  let condition = Jaxpr.stage_constant condition in
+  let cond =
+    if dtype_of condition = Dtype.Bool then condition
+    else L.convert_element_type condition Dtype.Bool
   in
-  let extent = (shape source).(ax) in
-  let usable = min extent (Array.length cond) in
-  let kept = List.filter (fun i -> cond.(i) <> 0.0) (List.init usable Fun.id) in
-  (match size with
-  | None ->
-      for i = usable to Array.length cond - 1 do
-        if cond.(i) <> 0.0 then
-          invalid_arg "condition contains entries that are out of bounds"
-      done
-  | Some n ->
-      if n < 0 || n > extent then
-        invalid_arg
-          "size must be positive and not greater than the size of the array \
-           axis");
-  let index_of list =
-    ints_value (default_int ()) [| List.length list |] (Array.of_list list)
+  if rank cond <> 1 then invalid_arg "condition must be a 1D array";
+  let arr, ax =
+    match axis with
+    | None -> (flat a, 0)
+    | Some x ->
+        let x = canon (rank a) x in
+        (NL.moveaxis [| x |] [| 0 |] a, x)
   in
+  let extent = (shape arr).(0) in
+  let length = (shape cond).(0) in
+  let usable = min extent length in
+  let piece v start stop =
+    if start = 0 && stop = (shape v).(0) then v
+    else
+      let hi = Array.copy (shape v) in
+      hi.(0) <- stop;
+      let lo = Array.make (rank v) 0 in
+      lo.(0) <- start;
+      L.slice v lo hi
+  in
+  let extra = piece cond usable length in
+  let cond = piece cond 0 usable in
+  let arr = piece arr 0 usable in
+  let finish result = NL.moveaxis [| 0 |] [| ax |] result in
   match size with
-  | None -> I.take ~mode:"clip" ~axis:ax source (index_of kept)
+  | None ->
+      let any_extra = R.any extra in
+      (match any_extra with
+      | Tracer _ -> raise (concretization "compress" any_extra)
+      | _ ->
+          if Ndarray.get_f (host "compress" any_extra) [||] <> 0.0 then
+            invalid_arg "condition contains entries that are out of bounds");
+      let bits = flat_floats (host "compress" cond) in
+      let kept =
+        List.filter
+          (fun i -> bits.(i) <> 0.0)
+          (List.init (Array.length bits) Fun.id)
+      in
+      finish
+        (I.take ~mode:"clip" ~axis:0 arr
+           (ints_value (default_int ())
+              [| List.length kept |]
+              (Array.of_list kept)))
   | Some n ->
-      let taken = List.filteri (fun i _ -> i < n) kept in
-      let found = I.take ~mode:"clip" ~axis:ax source (index_of taken) in
-      let missing = n - List.length taken in
-      if missing = 0 then found
-      else begin
-        let sh = Array.copy (shape source) in
-        sh.(ax) <- missing;
-        NL.concatenate ~axis:ax
-          [ found; L.full sh fill_value (dtype_of source) ]
-      end
+      if n < 0 || n > (shape arr).(0) then
+        invalid_arg
+          (Printf.sprintf
+             "size must be positive and not greater than the size of the array \
+              axis; got size=%d for a.shape[axis]=%d"
+             n
+             (shape arr).(0));
+      let mask =
+        NL.expand_dims cond (Array.init (rank arr - 1) (fun i -> i + 1))
+      in
+      let arr =
+        NL.where_ mask arr
+          (Concrete (Ndarray.of_floats (dtype_of arr) [||] [| fill_value |]))
+      in
+      let order =
+        Sorting.argsort ~axis:(Some 0) ~stable:true ~descending:true cond
+      in
+      let picked = I.take ~mode:"fill" ~axis:0 arr order in
+      finish (piece picked 0 n)
 
 let extract ?size ?fill_value condition a =
   compress ?size ?fill_value (flat condition) (flat a)
@@ -858,6 +1116,15 @@ let delete ?axis a obj =
   in
   I.take ~axis:ax a
     (ints_value (default_int ()) [| List.length kept |] (Array.of_list kept))
+
+let delete_array ?axis a obj =
+  let a, axis =
+    match axis with
+    | Some x -> (a, Some (canon (rank a) x))
+    | None -> (flat a, Some 0)
+  in
+  let values = flat_floats (host "delete" obj) in
+  delete ?axis a (Array.to_list (Array.map int_of_float values))
 
 let insert ?axis a position values =
   let a, ax =
@@ -887,24 +1154,45 @@ let insert ?axis a position values =
     ]
 
 let place a mask values =
-  let mask_data = flat_floats (host "place" mask) in
-  let hits =
-    List.filter
-      (fun i -> mask_data.(i) <> 0.0)
-      (List.init (Array.length mask_data) Fun.id)
-  in
-  let vs = flat values in
-  let n_v = size_of vs in
-  let flat_a = flat a in
-  let result =
-    List.fold_left
-      (fun acc (k, i) ->
-        let v = L.index_in_dim ~keepdims:true vs (k mod n_v) in
-        L.dynamic_update_slice acc (NL.astype v (dtype_of a)) [ int_scalar i ])
-      flat_a
-      (List.mapi (fun k i -> (k, i)) hits)
-  in
-  NL.reshape result (shape a)
+  let vals = flat values in
+  if size_of a <> size_of mask then
+    invalid_arg "place: arr and mask must be the same size";
+  if size_of vals = 0 then invalid_arg "Cannot place values from an empty array";
+  if size_of a = 0 then a
+  else begin
+    let n = size_of mask in
+    let indices = List.hd (nonzero ~size:n ~fill_value:n (flat mask)) in
+    let vals =
+      if size_of vals = n then vals
+      else if size_of vals > n then L.slice vals [| 0 |] [| n |]
+      else
+        let repeats =
+          int_of_float
+            (Float.ceil (float_of_int n /. float_of_int (size_of vals)))
+        in
+        let tiled = NL.tile vals [| repeats |] in
+        if size_of tiled > n then L.slice tiled [| 0 |] [| n |] else tiled
+    in
+    let vals =
+      if dtype_of vals = dtype_of a then vals else NL.astype vals (dtype_of a)
+    in
+    let dt = dtype_of indices in
+    let negative = U.less indices (L.full [||] 0.0 dt) in
+    let shifted = U.add indices (L.full [||] (float_of_int n) dt) in
+    let normalised = Core.bind1 Select_n [ negative; indices; shifted ] in
+    let wrapped = L.broadcast_in_dim normalised [| n; 1 |] [| 0 |] in
+    let dims =
+      {
+        update_window_dims = [||];
+        inserted_window_dims = [| 0 |];
+        scatter_dims_to_operand_dims = [| 0 |];
+        s_operand_batching_dims = [||];
+        s_scatter_indices_batching_dims = [||];
+      }
+    in
+    let updated = L.scatter (flat a) wrapped vals dims in
+    NL.reshape updated (shape a)
+  end
 
 let piecewise x condlist funclist =
   let n_cond = List.length condlist in
@@ -1055,19 +1343,79 @@ let reject_complex name x =
            (name ^ " does not support complex-valued inputs"))
   | _ -> ()
 
+let frexp_info = function
+  | Dtype.F16 -> (10, 5, -14, 6.103515625e-05, Dtype.I16)
+  | Dtype.Bf16 -> (7, 8, -126, 1.1754943508222875e-38, Dtype.I16)
+  | Dtype.F64 -> (52, 11, -1022, 2.2250738585072014e-308, Dtype.I64)
+  | _ -> (23, 8, -126, 1.1754943508222875e-38, Dtype.I32)
+
+let frexp_body x =
+  let dt = dtype_of x in
+  let nmant, nexp, minexp, tiny, int_dt = frexp_info dt in
+  let lit v =
+    if int_dt = Dtype.I64 then Concrete (Ndarray.of_int64s int_dt [||] [| v |])
+    else Concrete (Ndarray.of_floats int_dt [||] [| Int64.to_float v |])
+  in
+  let lit_f v = Concrete (Ndarray.of_floats dt [||] [| v |]) in
+  let mask = Int64.pred (Int64.shift_left 1L nexp) in
+  let bias = Int64.of_int (1 - minexp) in
+  let cond = U.less (L.abs x) (lit_f tiny) in
+  let scaled = U.multiply x (lit_f (Float.ldexp 1.0 nmant)) in
+  let x1 = NL.where_ cond scaled x in
+  let x2 = NL.where_ cond (lit (Int64.of_int (-nmant))) (lit 0L) in
+  let x1 = Core.bind1 (Bitcast_convert_type int_dt) [ x1 ] in
+  let shifted =
+    Core.bind1 Shift_right_arithmetic [ x1; lit (Int64.of_int nmant) ]
+  in
+  let masked = Core.bind1 And [ shifted; lit mask ] in
+  let less_bias = Core.bind1 Sub [ masked; lit bias ] in
+  let plus_one = Core.bind1 Add [ less_bias; lit 1L ] in
+  let x2 = Core.bind1 Add [ x2; plus_one ] in
+  let cleared =
+    Core.bind1 And [ x1; lit (Int64.lognot (Int64.shift_left mask nmant)) ]
+  in
+  let set =
+    Core.bind1 Or [ cleared; lit (Int64.shift_left (Int64.pred bias) nmant) ]
+  in
+  let x1 = Core.bind1 (Bitcast_convert_type dt) [ set ] in
+  let inf = U.isinf x in
+  let nan = U.isnan x in
+  let inf_or_nan = Core.bind1 Or [ inf; nan ] in
+  let zero = Core.bind1 Eq [ x; lit_f 0.0 ] in
+  let cond = Core.bind1 Or [ inf_or_nan; zero ] in
+  let x2 = NL.where_ cond (L.full (shape x2) 0.0 int_dt) x2 in
+  let m = NL.where_ cond x x1 in
+  let e = if int_dt = Dtype.I32 then x2 else NL.astype x2 Dtype.I32 in
+  [ m; e ]
+
+let frexp_custom =
+  let self = ref (fun _ -> []) in
+  let call =
+    Custom_derivatives.custom_jvp ~name:"_frexp" ~jvp_name:"_frexp_jvp"
+      (function [ x ] -> frexp_body x | _ -> invalid_arg "frexp: arity")
+      ~jvp:(fun primals tangents ->
+        match (primals, tangents) with
+        | [ x ], [ t ] -> (
+            match !self [ x ] with
+            | [ m; e ] ->
+                let scale = U.exp2 (U.negative (NL.astype e (dtype_of t))) in
+                ( [ m; e ],
+                  [
+                    U.multiply t scale;
+                    Ad_util.symbolic_zero_of_aval (Core.get_aval e);
+                  ] )
+            | _ -> invalid_arg "frexp: arity")
+        | _ -> invalid_arg "frexp: arity")
+  in
+  self := call;
+  call
+
 let frexp x =
   reject_complex "frexp" x;
   let x = as_inexact x in
-  let nd = host "frexp" x in
-  let data = flat_floats nd in
-  let mantissa = Array.map (fun v -> fst (Float.frexp v)) data in
-  let exponent =
-    Array.map
-      (fun v -> if Float.is_finite v then snd (Float.frexp v) else 0)
-      data
-  in
-  ( Concrete (Ndarray.of_floats (dtype_of x) (shape x) mantissa),
-    ints_value Dtype.I32 (shape x) exponent )
+  Jnp_util.jit "frexp" (fun args -> frexp_custom args) [ x ] |> function
+  | [ m; e ] -> (m, e)
+  | _ -> invalid_arg "frexp: arity"
 
 let ldexp x exponent =
   reject_complex "ldexp" x;
@@ -1423,67 +1771,124 @@ let array_repr a =
 let array_str_jax a =
   Array_print.array_str ~options:(print_options ()) (host "array_str" a)
 
+let bit_positions bitorder =
+  let bits =
+    Core.bind1 (Iota { dtype = Dtype.Uint8; shape = [| 8 |]; dimension = 0 }) []
+  in
+  bits
+
+let check_bitorder bitorder =
+  if bitorder <> "little" && bitorder <> "big" then
+    invalid_arg "'order' must be either 'little' or 'big'"
+
 let packbits ?axis ?(bitorder = "big") a =
-  let source, ax =
-    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
-  in
-  let sh = shape source in
-  let n = sh.(ax) in
-  let bytes_out = (n + 7) / 8 in
-  let moved = NL.moveaxis [| ax |] [| rank source - 1 |] source in
-  let msh = shape moved in
-  let lanes = size_of moved / Stdlib.max n 1 in
-  let data = flat_floats (host "packbits" moved) in
-  let out =
-    Array.init (lanes * bytes_out) (fun k ->
-        let lane = k / bytes_out and byte = k mod bytes_out in
-        let value = ref 0 in
-        for bit = 0 to 7 do
-          let pos = (byte * 8) + bit in
-          if pos < n && data.((lane * n) + pos) <> 0.0 then
-            value :=
-              !value
-              lor if bitorder = "little" then 1 lsl bit else 1 lsl (7 - bit)
-        done;
-        float_of_int !value)
-  in
-  let out_shape = Array.copy msh in
-  out_shape.(Array.length msh - 1) <- bytes_out;
-  NL.moveaxis
-    [| rank source - 1 |]
-    [| ax |]
-    (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))
+  check_bitorder bitorder;
+  (match dtype_of a with
+  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
+  | Dtype.Complex128 ->
+      invalid_arg "Expected an input array of integer or boolean data type"
+  | _ -> ());
+  Jnp_util.jit1 "packbits"
+    ~key:
+      (Printf.sprintf "%s/%s"
+         (match axis with None -> "n" | Some x -> string_of_int x)
+         bitorder)
+    (function
+      | [ a ] ->
+          let nonzero = U.not_equal a (L.full [||] 0.0 (dtype_of a)) in
+          let arr = NL.astype nonzero Dtype.Uint8 in
+          let bits = bit_positions bitorder in
+          let bits =
+            if bitorder = "big" then Core.bind1 (Rev [| 0 |]) [ bits ] else bits
+          in
+          let arr, ax =
+            match axis with
+            | None -> (flat arr, 0)
+            | Some x -> (arr, canon (rank arr) x)
+          in
+          let arr = NL.swapaxes ax (-1) arr in
+          let last = (shape arr).(rank arr - 1) in
+          let remainder = last mod 8 in
+          let arr =
+            if remainder = 0 then arr
+            else
+              L.pad arr
+                (L.full [||] 0.0 Dtype.Uint8)
+                (Array.init (rank arr) (fun d ->
+                     if d = rank arr - 1 then (0, 8 - remainder, 0)
+                     else (0, 0, 0)))
+          in
+          let sa = shape arr in
+          let r = Array.length sa in
+          let arr =
+            NL.reshape arr
+              (Array.concat [ Array.sub sa 0 (r - 1); [| sa.(r - 1) / 8; 8 |] ])
+          in
+          let bits = NL.expand_dims bits (Array.init (rank arr - 1) Fun.id) in
+          let shifted = U.left_shift arr bits in
+          let summed = R.sum ~axis:[| -1 |] shifted in
+          let packed = NL.astype summed Dtype.Uint8 in
+          NL.swapaxes ax (-1) packed
+      | _ -> invalid_arg "packbits: arity")
+    [ a ]
 
 let unpackbits ?axis ?count ?(bitorder = "big") a =
-  let source, ax =
-    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
-  in
-  let n = (shape source).(ax) in
-  let moved = NL.moveaxis [| ax |] [| rank source - 1 |] source in
-  let msh = shape moved in
-  let lanes = size_of moved / Stdlib.max n 1 in
-  let data = flat_floats (host "unpackbits" moved) in
-  let total = n * 8 in
-  let keep =
-    match count with
-    | None -> total
-    | Some c when c >= 0 -> Stdlib.min c total
-    | Some c -> Stdlib.max (total + c) 0
-  in
-  let out =
-    Array.init (lanes * keep) (fun k ->
-        let lane = k / keep and pos = k mod keep in
-        let byte = int_of_float data.((lane * n) + (pos / 8)) in
-        let bit = pos mod 8 in
-        let mask = if bitorder = "little" then 1 lsl bit else 1 lsl (7 - bit) in
-        if byte land mask <> 0 then 1.0 else 0.0)
-  in
-  let out_shape = Array.copy msh in
-  out_shape.(Array.length msh - 1) <- keep;
-  NL.moveaxis
-    [| rank source - 1 |]
-    [| ax |]
-    (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))
+  if dtype_of a <> Dtype.Uint8 then
+    invalid_arg "Expected an input array of unsigned byte data type";
+  check_bitorder bitorder;
+  Jnp_util.jit1 "unpackbits"
+    ~key:
+      (Printf.sprintf "%s/%s/%s"
+         (match axis with None -> "n" | Some x -> string_of_int x)
+         (match count with None -> "n" | Some c -> string_of_int c)
+         bitorder)
+    (function
+      | [ a ] ->
+          let positions = bit_positions bitorder in
+          let bits = U.left_shift (L.full [| 8 |] 1.0 Dtype.Uint8) positions in
+          let bits =
+            if bitorder = "big" then Core.bind1 (Rev [| 0 |]) [ bits ] else bits
+          in
+          let arr, ax =
+            match axis with
+            | None -> (flat a, 0)
+            | Some x -> (a, canon (rank a) x)
+          in
+          let arr = NL.swapaxes ax (-1) arr in
+          let widened = NL.expand_dims arr [| rank arr |] in
+          let expanded = NL.expand_dims bits (Array.init (rank arr) Fun.id) in
+          let masked = U.bitwise_and widened expanded in
+          let positive = U.greater masked (L.full [||] 0.0 Dtype.Uint8) in
+          let unpacked = NL.astype positive Dtype.Uint8 in
+          let su = shape unpacked in
+          let r = Array.length su in
+          let unpacked =
+            NL.reshape unpacked
+              (Array.append
+                 (Array.sub su 0 (r - 2))
+                 [| su.(r - 2) * su.(r - 1) |])
+          in
+          let unpacked =
+            match count with
+            | None -> unpacked
+            | Some c ->
+                let su = shape unpacked in
+                let r = Array.length su in
+                let last = su.(r - 1) in
+                if c > last then
+                  L.pad unpacked
+                    (L.full [||] 0.0 Dtype.Uint8)
+                    (Array.init r (fun d ->
+                         if d = r - 1 then (0, c - last, 0) else (0, 0, 0)))
+                else
+                  let keep = if c >= 0 then c else max (last + c) 0 in
+                  let hi = Array.copy su in
+                  hi.(r - 1) <- keep;
+                  L.slice unpacked (Array.make r 0) hi
+          in
+          NL.swapaxes ax (-1) unpacked
+      | _ -> invalid_arg "unpackbits: arity")
+    [ a ]
 
 let interp ?left ?right ?period a0 a1 a2 =
   Eager_jit.one "numpy.extras.interp" (left, right, period) [] [ a0; a1; a2 ]

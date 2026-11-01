@@ -106,7 +106,8 @@ let reshape v sh =
     Array.fold_left (fun acc d -> if d = -1 then acc else acc * d) 1 sh
   in
   let resolved = Array.map (fun d -> if d = -1 then total / known else d) sh in
-  bind1 (T.Reshape resolved) [ v ]
+  if Array.length resolved > 0 && resolved = shape v then v
+  else bind1 (T.Reshape resolved) [ v ]
 
 let reverse_axes v = Array.init (ndim v) (fun i -> ndim v - 1 - i)
 

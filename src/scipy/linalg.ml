@@ -141,8 +141,7 @@ let qr ?(mode = "full") ?(pivoting = false) a =
       | _ -> failwith "qr: arity")
     [ a ]
 
-let qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a c
-    =
+let qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a c =
   let a = to_inexact a and c = to_inexact c in
   let dt =
     if is_complex_dt (dtype a) || is_complex_dt (dtype c) then
@@ -201,7 +200,9 @@ let qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a c
       [ Array.sub sh 0 (rank - 2); Array.sub cs 0 (crank - 2) ]
   in
   let a = NL.broadcast_to a (Array.append batch [| m; n |]) in
-  let c = NL.broadcast_to c (Array.append batch [| cs.(crank - 2); cs.(crank - 1) |]) in
+  let c =
+    NL.broadcast_to c (Array.append batch [| cs.(crank - 2); cs.(crank - 1) |])
+  in
   let h, perm, taus =
     if pivoting then
       let jpvt = AC.zeros ~dtype:D.I32 (Array.append batch [| n |]) in
@@ -227,11 +228,11 @@ let qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a c
   let cq = Linalg_extras.ormqr ~left ~transpose:conjugate h taus c in
   let cq = if conjugate then NL.swapaxes (-1) (-2) cq else cq in
   let cq =
-    if mode = "right" then
+    if mode = "right" then (
       let r = Array.length (shape cq) in
       let limits = Array.copy (shape cq) in
       limits.(r - 1) <- k;
-      Lax_api.slice cq (Array.make r 0) limits
+      Lax_api.slice cq (Array.make r 0) limits)
     else cq
   in
   let cq =

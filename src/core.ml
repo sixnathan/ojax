@@ -448,6 +448,7 @@ and dispatch_widened top prim args =
       if
         top.kind = KEval
         && (not (Config.value Config.no_execution))
+        && (not (List.exists is_placed args))
         && List.for_all
              (fun v ->
                let s = value_shape v in

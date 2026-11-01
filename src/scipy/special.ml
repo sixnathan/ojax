@@ -2619,16 +2619,33 @@ let vectorize4 f =
 
 let hyp2f1_deriv shifted a b c x =
   let prec = scalar_of x (eps_of x) in
-  let init = [ scalar_of x 0.0; py_int 1; a *! b /! c *! x ] in
+  let weak_int v = C.py_scalar (default_int ()) v in
+  let ab = a *! b in
+  let abc = ab /! c in
+  let init = [ weak_int 0.0; weak_int 1.0; abc *! x ] in
   List.hd
     (while3
-       (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
        (fun serie k term ->
-         let serie = serie +! (term *! shifted k) in
-         let term =
-           term *! ((a +! k) *! (b +! k) /! (c +! k) /! (k +! py_int 1) *! x)
-         in
-         [ serie; k +! py_int 1; term ])
+         let below = UF.less k (weak_int 250.0) in
+         let abs_term = L.abs term in
+         let abs_serie = L.abs serie in
+         let ratio = L.div abs_term abs_serie in
+         let above = UF.greater ratio prec in
+         band below above)
+       (fun serie k term ->
+         let d = shifted k in
+         let added = term *! d in
+         let serie = serie +! added in
+         let ak = a +! k in
+         let bk = b +! k in
+         let f = ak *! bk in
+         let ck = c +! k in
+         let f = f /! ck in
+         let k1 = k +! weak_int 1.0 in
+         let f = f /! k1 in
+         let f = f *! x in
+         let term = term *! f in
+         [ serie; k +! weak_int 1.0; term ])
        init)
 
 let rec hyp2f1_apply a b c x =
@@ -2642,47 +2659,38 @@ let rec hyp2f1_apply a b c x =
          (fun _ vals ->
            vectorize4 (fun a b c x -> hyp2f1_deriv (shifted a b c) a b c x) vals))
   in
+  let rule name shifted =
+    Some (fun t _ primals -> [ deriv name shifted primals *! t ])
+  in
+  let wrt_x t _ primals =
+    let d =
+      JU.jit1 "_hyp2f1_x_derivative"
+        (function
+          | [ a; b; c; x ] ->
+              let ratio = a *! b /! c in
+              let a1 = a +! py_float 1.0 in
+              let b1 = b +! py_float 1.0 in
+              let c1 = c +! py_float 1.0 in
+              ratio *! hyp2f1_apply a1 b1 c1 x
+          | _ -> assert false)
+        primals
+    in
+    [ d *! t ]
+  in
   List.hd
-    (CD.custom_jvp ~name:"hyp2f1" primal
-       ~jvp:(fun primals tangents ->
-         match (primals, tangents) with
-         | [ a; b; c; x ], [ da; db; dc; dx ] ->
-             let out = primal primals in
-             let wrt_a =
-               deriv "_hyp2f1_a_derivative"
-                 (fun a _ _ k -> digamma (a +! k) -! digamma a)
-                 primals
-             in
-             let wrt_b =
-               deriv "_hyp2f1_b_derivative"
-                 (fun _ b _ k -> digamma (b +! k) -! digamma b)
-                 primals
-             in
-             let wrt_c =
-               deriv "_hyp2f1_c_derivative"
-                 (fun _ _ c k -> digamma c -! digamma (c +! k))
-                 primals
-             in
-             let wrt_x =
-               JU.jit1 "_hyp2f1_x_derivative"
-                 (function
-                   | [ a; b; c; x ] ->
-                       a *! b /! c
-                       *! hyp2f1_apply
-                            (a +! py_float 1.0)
-                            (b +! py_float 1.0)
-                            (c +! py_float 1.0)
-                            x
-                   | _ -> assert false)
-                 primals
-             in
-             ( out,
-               [
-                 L.add
-                   (L.add (L.add (wrt_a *! da) (wrt_b *! db)) (wrt_c *! dc))
-                   (wrt_x *! dx);
-               ] )
-         | _ -> failwith "hyp2f1: arity")
+    ((CD.defjvps ~name:"hyp2f1" primal
+        [
+          rule "_hyp2f1_a_derivative" (fun a _ _ k ->
+              let top = digamma (a +! k) in
+              top -! digamma a);
+          rule "_hyp2f1_b_derivative" (fun _ b _ k ->
+              let top = digamma (b +! k) in
+              top -! digamma b);
+          rule "_hyp2f1_c_derivative" (fun _ _ c k ->
+              let top = digamma c in
+              top -! digamma (c +! k));
+          Some wrt_x;
+        ])
        [ a; b; c; x ])
 
 let hyp2f1 a b c x = hyp2f1_apply a b c x

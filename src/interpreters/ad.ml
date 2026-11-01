@@ -2014,6 +2014,12 @@ let rec jvp_pairs prim primals tangents =
           (List.map Ad_util.is_symbolic_zero carry_t)
       in
       let operands =
+        let top = Core.find_top_trace (primals @ tangents) in
+        let instantiate v =
+          if Ad_util.is_symbolic_zero v && top.kind = KPE then
+            Partial_eval.unknown_zero top (Core.get_aval v)
+          else instantiate v
+        in
         let dots zeros l = List.map instantiate (keep_nz zeros l) in
         let kd = dots const_zero consts_t in
         let cd = dots carry_zero carry_t in
@@ -3874,42 +3880,91 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
-  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
+  | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       let split_at l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
       let slice (a : aval) =
         { a with shape = Array.sub a.shape 1 (Array.length a.shape - 1) }
       in
-      let carry_tv, xs_tv = split_at primals num_carry in
+      let const_tv, rest_tv = split_at primals num_consts in
+      let carry_tv, xs_tv = split_at rest_tv num_carry in
       let ct_carry, ct_ys = split_at cts num_carry in
+      let materialize v =
+        if Ad_util.is_symbolic_zero v then
+          let a = Core.get_aval v in
+          Core.splat a.dtype a.shape 0.0
+        else v
+      in
+      let ct_carry = List.map materialize ct_carry in
+      let ires =
+        List.filter_map
+          (fun tv -> if is_undef tv then None else Some (prim_val tv))
+          const_tv
+      in
+      let const_dot_avals =
+        List.filter_map (function Undef a -> Some a | Prim _ -> None) const_tv
+      in
+      let ct_consts =
+        List.map
+          (fun (a : aval) -> Core.splat a.dtype a.shape 0.0)
+          const_dot_avals
+      in
       let residuals =
         List.filter_map
           (fun tv -> if is_undef tv then None else Some (prim_val tv))
           xs_tv
       in
       let n_ct = List.length cts in
-      let const_tvals = List.map (fun c -> Prim (Concrete c)) jaxpr.consts in
+      let n_ires = List.length ires in
+      let n_ct_consts = List.length ct_consts in
+      let closed_tvals = List.map (fun c -> Prim (Concrete c)) jaxpr.consts in
+      let n_closed = List.length closed_tvals in
+      let binders = jaxpr.jaxpr.in_binders in
+      let binder_range lo hi =
+        List.filteri (fun i _ -> i >= lo && i < hi) binders
+      in
+      let const_binders = binder_range n_closed (n_closed + num_consts) in
       let carry_undef =
-        List.filteri
-          (fun i _ ->
-            i >= List.length const_tvals
-            && i < List.length const_tvals + num_carry)
-          jaxpr.jaxpr.in_binders
+        binder_range (n_closed + num_consts) (n_closed + num_consts + num_carry)
         |> List.map (fun (v : var) -> Undef v.vaval)
       in
       let x_binders =
-        List.filteri
-          (fun i _ -> i >= List.length const_tvals + num_carry)
-          jaxpr.jaxpr.in_binders
+        List.filteri (fun i _ -> i >= n_closed + num_consts + num_carry) binders
       in
       let transposed_body =
         Jaxpr.make_jaxpr
-          (List.map Core.get_aval ct_carry
+          (List.map Core.get_aval ires
+          @ List.map Core.get_aval ct_consts
+          @ List.map Core.get_aval ct_carry
           @ List.map (fun c -> slice (Core.get_aval c)) ct_ys
           @ List.map (fun r -> slice (Core.get_aval r)) residuals)
           (fun args ->
-            let body_cts, res = split_at args n_ct in
+            let ires_args, r = split_at args n_ires in
+            let accum_args, r = split_at r n_ct_consts in
+            let body_cts, res = split_at r n_ct in
+            let ires_rest = ref ires_args in
+            let accum_rest = ref accum_args in
+            let seeds = ref [] in
+            let const_tvals =
+              List.map2
+                (fun tv (v : var) ->
+                  if is_undef tv then begin
+                    (match !accum_rest with
+                    | c :: tl ->
+                        accum_rest := tl;
+                        seeds := (v.vid, c) :: !seeds
+                    | [] -> arity ());
+                    Undef v.vaval
+                  end
+                  else
+                    match !ires_rest with
+                    | r :: tl ->
+                        ires_rest := tl;
+                        Prim r
+                    | [] -> arity ())
+                const_tv const_binders
+            in
             let rest = ref res in
             let x_tvals =
               List.map2
@@ -3923,8 +3978,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                     | [] -> arity ())
                 xs_tv x_binders
             in
-            eval_jaxpr_transposed jaxpr.jaxpr
-              (const_tvals @ carry_undef @ x_tvals)
+            eval_jaxpr_transposed_seeded !seeds jaxpr.jaxpr
+              (closed_tvals @ const_tvals @ carry_undef @ x_tvals)
               body_cts)
       in
       let outs =
@@ -3933,16 +3988,17 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
              {
                length;
                reverse = not reverse;
-               num_consts = 0;
-               num_carry;
+               num_consts = n_ires;
+               num_carry = n_ct_consts + num_carry;
                jaxpr = transposed_body;
                unroll;
              })
-          (ct_carry @ ct_ys @ residuals)
+          (ires @ ct_consts @ ct_carry @ ct_ys @ residuals)
       in
-      let carry_out, xs_out = split_at outs num_carry in
-      let remaining = ref xs_out in
-      let xs_cts =
+      let const_out, r = split_at outs n_ct_consts in
+      let carry_out, xs_out = split_at r num_carry in
+      let take_for tvs values =
+        let remaining = ref values in
         List.map
           (fun tv ->
             if is_undef tv then
@@ -3952,12 +4008,13 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                   Some c
               | [] -> None
             else None)
-          xs_tv
+          tvs
       in
-      List.map2
-        (fun tv c -> if is_undef tv then Some c else None)
-        carry_tv carry_out
-      @ xs_cts
+      take_for const_tv const_out
+      @ List.map2
+          (fun tv c -> if is_undef tv then Some c else None)
+          carry_tv carry_out
+      @ take_for xs_tv xs_out
   | While _ ->
       failwith
         "ad: reverse-mode differentiation does not work for lax.while_loop"
@@ -4106,6 +4163,10 @@ and xla_call_transpose (c : closed_jaxpr) cts primals =
 
 and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     value list =
+  eval_jaxpr_transposed_seeded [] jx args cts
+
+and eval_jaxpr_transposed_seeded seeds (jx : jaxpr) (args : tval list)
+    (cts : value list) : value list =
   let primal_env : (int, tval) Hashtbl.t = Hashtbl.create 32 in
   let read_primal = function
     | A_var v -> (
@@ -4145,6 +4206,7 @@ and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
         | None -> Hashtbl.replace ct_env v.vid ct)
     | _ -> ()
   in
+  List.iter (fun (v, c) -> Hashtbl.replace ct_env v c) seeds;
   List.iter2 write_ct jx.outs cts;
   List.iter
     (fun (e : eqn) ->

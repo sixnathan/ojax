@@ -19,6 +19,7 @@ let ( &&: ) = L.bitwise_and
 let ( ||: ) = L.bitwise_or
 let shape v = (Core.get_aval v).shape
 let dtype v = (Core.get_aval v).dtype
+
 let like v c =
   let a = Core.get_aval v in
   if a.weak_type then

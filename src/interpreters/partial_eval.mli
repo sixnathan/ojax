@@ -7,6 +7,7 @@ val is_unknown : partial_val -> bool
 val new_unknown_arg : trace -> aval -> tracer
 val instantiate_const : trace -> tracer -> tracer
 val toposort : tracer list -> (tracer -> tracer list) -> tracer list
+val unknown_zero : Types.trace -> Types.aval -> Types.value
 val tracers_to_jaxpr : tracer list -> tracer list -> jaxpr * value list
 
 val partial_eval_flat :

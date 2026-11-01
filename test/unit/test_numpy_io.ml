@@ -135,7 +135,7 @@ let jax_repr () =
   let check name expected v =
     Alcotest.(check string) name expected (X.array_repr v)
   in
-  check "aligned" "Array([1.       , 2.5      , 3.1415927], dtype=float64)"
+  check "aligned" "Array([1.        , 2.5       , 3.14159265], dtype=float64)"
     (T.Concrete (Nd.of_floats D.F64 [| 3 |] [| 1.0; 2.5; 3.14159265358979 |]));
   check "matrix" "Array([[ 1.5, -2. ],\n       [ 3. ,  4. ]], dtype=float32)"
     (T.Concrete (Nd.of_floats D.F32 [| 2; 2 |] [| 1.5; -2.0; 3.0; 4.0 |]));

@@ -441,21 +441,23 @@ let gmres_batched a_op m_op b x0 unit_residual residual_norm _ptol restart =
       finish_cycle a_op m_op b x0 vmat y restart
   | _ -> assert false
 
-let gmres_solve a_op m_op b x0 ~atol ~ptol ~restart ~maxiter gmres_func =
-  let ax0 = a_op x0 in
+let gmres_solve a_mat m_op b x0 ~atol ~ptol ~restart ~maxiter gmres_func =
+  let ax0 = dot_ a_mat x0 in
   let residual = m_op (sub_ b ax0) in
   let unit_residual, residual_norm = safe_normalize residual in
   let cond = function
-    | [ _; atol; _; _; k; _; residual_norm ] ->
+    | [ _; _; atol; _; _; k; _; residual_norm ] ->
         U.logical_and (U.less k (py_int maxiter)) (U.greater residual_norm atol)
     | _ -> assert false
   in
   let body = function
-    | [ b_c; atol_c; ptol_c; x; k; unit_residual; residual_norm ] ->
+    | [ a_c; b_c; atol_c; ptol_c; x; k; unit_residual; residual_norm ] ->
         let x, unit_residual, residual_norm =
-          gmres_func a_op m_op b_c x unit_residual residual_norm ptol_c restart
+          gmres_func (dot_ a_c) m_op b_c x unit_residual residual_norm ptol_c
+            restart
         in
         [
+          a_c;
           b_c;
           atol_c;
           ptol_c;
@@ -468,8 +470,8 @@ let gmres_solve a_op m_op b x0 ~atol ~ptol ~restart ~maxiter gmres_func =
   in
   List.nth
     (L.while_loop cond body
-       [ b; atol; ptol; x0; py_int 0; unit_residual; residual_norm ])
-    3
+       [ a_mat; b; atol; ptol; x0; py_int 0; unit_residual; residual_norm ])
+    4
 
 let solve_op matvec solver = fun _ bs -> [ solver matvec (List.hd bs) ]
 
@@ -497,13 +499,12 @@ let gmres ?(tol = 1e-5) ?(atol = 0.0) ?(restart = 20) ?maxiter ?m
     | "batched" -> gmres_batched
     | s -> invalid_arg ("invalid solve_method " ^ s)
   in
-  let solve op bs =
-    match (op, bs) with
-    | op, [ b ] ->
+  let solve _ bs =
+    match bs with
+    | [ b ] ->
         [
-          gmres_solve
-            (fun v -> List.hd (op [ v ]))
-            m_op b x0 ~atol:atol_v ~ptol ~restart ~maxiter gmres_func;
+          gmres_solve a m_op b x0 ~atol:atol_v ~ptol ~restart ~maxiter
+            gmres_func;
         ]
     | _ -> assert false
   in

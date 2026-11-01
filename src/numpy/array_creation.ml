@@ -36,7 +36,11 @@ let empty ?dtype shape = zeros ?dtype shape
 let full_like ?dtype ?shape a fill =
   let dt = match dtype with Some d -> d | None -> dtype_of a in
   let sh = match shape with Some s -> s | None -> shape_of a in
-  const_full dt sh fill
+  let filled = const_full dt sh fill in
+  match (dtype, filled) with
+  | None, T.Concrete nd when (Core.get_aval a).weak_type ->
+      T.Concrete (Ndarray.as_weak nd)
+  | _ -> filled
 
 let zeros_like ?dtype ?shape a = full_like ?dtype ?shape a 0.0
 let ones_like ?dtype ?shape a = full_like ?dtype ?shape a 1.0

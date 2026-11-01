@@ -759,7 +759,11 @@ let ndim v = Array.length (shape v)
 let bind1 = C.bind1
 let numel sh = Array.fold_left ( * ) 1 sh
 let const_full dt sh x = Core.splat dt sh x
-let scalar_of v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
+
+let scalar_of v x =
+  let literal = Nd.of_floats (dtype v) [||] [| x |] in
+  T.Concrete (if (C.get_aval v).weak_type then Nd.as_weak literal else literal)
+
 let coeff_of v a = T.Concrete (Nd.of_floats (dtype v) [| Array.length a |] a)
 let where_ = NL.where_
 let q32 v = Int32.float_of_bits (Int32.bits_of_float v)

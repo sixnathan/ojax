@@ -89,7 +89,10 @@ let unique_symbol base =
   in
   probe base
 
-let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
+let direct_while_scope = ref false
+let lowering_scan = ref false
+
+let call_symbols : (int * bool, string) Hashtbl.t = Hashtbl.create 8
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -565,7 +568,7 @@ let emit_convert ctx (eqn : eqn) in_ids =
         (re, rdt, { in_aval with dtype = rdt })
     | _ -> (x, in_dt, in_aval)
   in
-  if out_dt = Dtype.Bool && in_dt <> Dtype.Bool then begin
+  if out_dt = Dtype.Bool then begin
     let inty = Ir.tensor_type_of_aval in_aval in
     let sty = Ir.tensor_type in_dt [||] in
     let c = fresh ctx in
@@ -2940,14 +2943,14 @@ and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
 
 and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
   let fname =
-    match Hashtbl.find_opt call_symbols c.jid with
+    match Hashtbl.find_opt call_symbols (c.jid, !direct_while_scope) with
     | Some s -> s
     | None ->
         let s =
           Mlir_names.symbol_name
             (unique_symbol (Pretty_printer.call_name c.jid))
         in
-        Hashtbl.replace call_symbols c.jid s;
+        Hashtbl.replace call_symbols (c.jid, !direct_while_scope) s;
         emit_private_function ctx s c;
         s
   in
@@ -3480,10 +3483,25 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Reduce_window { reducer; window } ->
       emit_reduce_window_general ctx eqn in_ids reducer window
   | While { cond_nconsts; body_nconsts; cond; body } ->
-      emit_while ctx eqn in_ids ~cond_nconsts ~body_nconsts cond body
+      let saved = !direct_while_scope in
+      if not !lowering_scan then direct_while_scope := true;
+      let was_scan = !lowering_scan in
+      lowering_scan := false;
+      Fun.protect
+        ~finally:(fun () ->
+          direct_while_scope := saved;
+          lowering_scan := was_scan)
+        (fun () ->
+          emit_while ctx eqn in_ids ~cond_nconsts ~body_nconsts cond body)
   | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
-      emit_inlined ctx eqn in_ids
-        (Lax.lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll jaxpr)
+      let was_scan = !lowering_scan in
+      lowering_scan := true;
+      Fun.protect
+        ~finally:(fun () -> lowering_scan := was_scan)
+        (fun () ->
+          emit_inlined ctx eqn in_ids
+            (Lax.lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll
+               jaxpr))
   | Select_and_scatter _ ->
       failwith
         "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \

@@ -806,7 +806,9 @@ let polar_2d ~side ~method_ ?eps a =
         [ unitary; posdef ]
       else if m < n && side = "left" then
         let unitary, posdef, _, _ = Linalg_extras.qdwh ?eps (hconj a) in
-        [ hconj unitary; hconj posdef ]
+        let posdef = hconj posdef in
+        let unitary = hconj unitary in
+        [ unitary; posdef ]
       else
         invalid_arg
           "method='qdwh' only supports mxn matrices where m < n where \

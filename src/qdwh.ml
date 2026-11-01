@@ -192,7 +192,7 @@ let iterate u flag coefs update test_convergence =
       let n_rows = List.length coefs in
       let table =
         let flat = List.concat_map (fun (a, b, c) -> [ a; b; c ]) coefs in
-        let rdt = real_dtype u in
+        let rdt = Dtypes.default_float_dtype () in
         let host =
           T.Concrete
             (Ndarray.of_floats rdt [| n_rows; 3 |] (Array.of_list flat))
@@ -227,7 +227,11 @@ let qdwh_body max_iterations eps x =
   let alpha_inverse = b1 T.Mul [ first; second ] in
   let is_zero = b1 T.Eq [ one_norm; scalar (dtype one_norm) 0.0 ] in
   let alpha_inverse = where is_zero (index 1) alpha_inverse in
-  let u0 = b1 T.Mul [ x; b1 (T.Convert_element_type dt) [ alpha_inverse ] ] in
+  let scale =
+    if dtype alpha_inverse = dt then alpha_inverse
+    else b1 (T.Convert_element_type dt) [ alpha_inverse ]
+  in
+  let u0 = b1 T.Mul [ x; scale ] in
   let tol_l = 10.0 *. eps /. 2.0 in
   let tol_norm = b1 T.Cbrt [ scalar (Dtypes.default_float_dtype ()) tol_l ] in
   let qr_coefs = ref [] and chol_coefs = ref [] in
@@ -265,7 +269,8 @@ let qdwh_body max_iterations eps x =
     Lax.while_loop
       (function
         | [ k; _; flag ] ->
-            b1 T.And [ flag; b1 T.Lt [ k; index max_iterations ] ]
+            let lt = b1 T.Lt [ k; index max_iterations ] in
+            b1 T.And [ flag; b1 (T.Convert_element_type D.Bool) [ lt ] ]
         | _ -> invalid_arg "qdwh: arity")
       (function
         | [ k; u; _ ] ->

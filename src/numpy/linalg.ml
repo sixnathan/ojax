@@ -500,35 +500,62 @@ and qr ?(mode = "reduced") a =
     if mode = "r" then [ r ] else [ q; r ]
 
 and lstsq ?rcond ?(numpy_resid = false) a b =
-  if numpy_resid then lstsq_body ?rcond ~numpy_resid a b
+  if numpy_resid then
+    lstsq_body ~rcond:(Option.map (fun r -> `Python r) rcond) ~numpy_resid a b
   else
-    match
-      Jnp_util.jit "_lstsq"
-        ~key:(Digest.to_hex (Digest.string (Marshal.to_string rcond [])))
-        (function
-          | [ a; b ] ->
-              let x, resid, rank, s = lstsq_body ?rcond ~numpy_resid a b in
-              [ x; resid; rank; s ]
+    let call key args body =
+      match
+        Jnp_util.jit "_lstsq" ~key
+          (fun args ->
+            let x, resid, rank, s = body args in
+            [ x; resid; rank; s ])
+          args
+      with
+      | [ x; resid; rank; s ] -> (x, resid, rank, s)
+      | _ -> invalid_arg "_lstsq: arity"
+    in
+    match rcond with
+    | None ->
+        call "default" [ a; b ] (function
+          | [ a; b ] -> lstsq_body ~rcond:None ~numpy_resid a b
           | _ -> invalid_arg "_lstsq: arity")
-        [ a; b ]
-    with
-    | [ x; resid; rank; s ] -> (x, resid, rank, s)
-    | _ -> invalid_arg "_lstsq: arity"
+    | Some r ->
+        call "traced"
+          [ a; b; Jnp_util.py_float r ]
+          (function
+            | [ a; b; r ] ->
+                lstsq_body ~rcond:(Some (`Traced r)) ~numpy_resid a b
+            | _ -> invalid_arg "_lstsq: arity")
 
-and lstsq_body ?rcond ~numpy_resid a b =
+and lstsq_body ~rcond ~numpy_resid a b =
   let a = to_inexact a and b = to_inexact b in
   let b_vec = ndim b = 1 in
-  let bm = if b_vec then NL.reshape b [| (shape b).(0); 1 |] else b in
+  let bm = if b_vec then NL.expand_dims b [| 1 |] else b in
   let sa = shape a in
   let m = sa.(0) and n = sa.(1) in
   let dt = dtype a in
   let rcond =
     match rcond with
-    | Some r when r < 0.0 -> const dt (eps_of dt)
-    | Some r -> const dt r
+    | Some (`Python r) when r < 0.0 -> const dt (eps_of dt)
+    | Some (`Python r) -> const dt r
+    | Some (`Traced r) ->
+        let negative = UF.less r (Jnp_util.py_int 0) in
+        Jnp_util.where_weak ~x_weak:false negative (const dt (eps_of dt)) r
     | None -> const dt (eps_of dt *. float_of_int (max n m))
   in
-  let u, s, vt = svd_uv ~full_matrices:false a in
+  let u, s, vt =
+    match
+      Jnp_util.jit "svd" ~key:"reduced"
+        (function
+          | [ a ] ->
+              let u, s, vh = svd_uv ~full_matrices:false a in
+              [ u; s; vh ]
+          | _ -> invalid_arg "svd: arity")
+        [ a ]
+    with
+    | [ u; s; vh ] -> (u, s, vh)
+    | _ -> invalid_arg "svd: arity"
+  in
   let s0 =
     if ndim s = 1 then
       Core.bind1 (T.Squeeze [| 0 |])
@@ -547,11 +574,13 @@ and lstsq_body ?rcond ~numpy_resid a b =
   let mask =
     UF.logical_and
       (UF.greater s (const dt 0.0))
-      (UF.greater_equal s (UF.multiply rcond s0))
+      (UF.greater_equal s (UF.multiply (NL.astype rcond (dtype s)) s0))
   in
   let rank = RED.sum mask in
-  let safe_s = NL.where_ mask s (const dt 1.0) in
-  let s_inv = NL.where_ mask (UF.divide (const dt 1.0) safe_s) (const dt 0.0) in
+  let safe_s = NL.astype (NL.where_ mask s (Jnp_util.py_int 1)) dt in
+  let s_inv =
+    NL.where_ mask (UF.divide (Jnp_util.py_int 1) safe_s) (Jnp_util.py_int 0)
+  in
   let s_inv_col = NL.expand_dims s_inv [| ndim s_inv |] in
   let utb = TC.matmul (UF.conj (matrix_transpose_v u)) bm in
   let x =

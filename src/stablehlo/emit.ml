@@ -1360,7 +1360,7 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
        (Ir.tensor_type_of_aval idx_av)
        (Ir.tensor_type_of_aval out.vaval))
 
-let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
+let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
   let op_id, idx_id, upd_id =
     match in_ids with
     | [ a; b; c ] -> (a, b, c)
@@ -1378,10 +1378,11 @@ let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf
-       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = \
-        false, scatter_dimension_numbers = %s, unique_indices = false}> ({\n"
-       (name n) (name op_id) (name idx_id) (name upd_id)
-       (scatter_dnums_attr dnums ivd));
+       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
+        scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
+       (name n) (name op_id) (name idx_id) (name upd_id) unique
+       (scatter_dnums_attr dnums ivd)
+       unique);
   let a = fresh ctx in
   let b = fresh ctx in
   Buffer.add_string ctx.buf
@@ -3352,14 +3353,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Dynamic_update_slice -> emit_dynamic_update_slice ctx eqn in_ids
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
-  | Scatter { dimension_numbers; _ } ->
-      emit_scatter ctx eqn in_ids dimension_numbers None
+  | Scatter { dimension_numbers; unique_indices } ->
+      emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers None
   | Scatter_add { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "add")
   | Scatter_sub { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "subtract")
-  | Scatter_mul { dimension_numbers; _ } ->
-      emit_scatter ctx eqn in_ids dimension_numbers (Some "multiply")
+  | Scatter_mul { dimension_numbers; unique_indices } ->
+      emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers
+        (Some "multiply")
   | Scatter_min { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "minimum")
   | Scatter_max { dimension_numbers } ->

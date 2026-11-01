@@ -2865,32 +2865,36 @@ let einsum =
   Numpy.Einsum.einsum ?optimize:None ?precision:None
     ?preferred_element_type:None
 
-let const_mask sh f =
-  let total = numel sh in
-  let rank = Array.length sh in
-  let idx = Array.make rank 0 in
-  let vals =
-    Array.init total (fun pos ->
-        let r = ref pos in
-        for d = rank - 1 downto 0 do
-          idx.(d) <- !r mod sh.(d);
-          r := !r / sh.(d)
-        done;
-        if f idx then 1.0 else 0.0)
-  in
-  T.Concrete (Nd.of_floats D.Bool sh vals)
-
 let arange_dt dt lo hi =
   NL.arange ~start:(float_of_int lo) ~dtype:dt (float_of_int hi)
 
 let meshgrid_ij dt n m =
-  match NL.meshgrid ~indexing:"ij" [ arange_dt dt 0 n; arange_dt dt 0 m ] with
+  let first = arange_dt dt 0 n in
+  let second = arange_dt dt 0 m in
+  match NL.meshgrid ~indexing:"ij" [ first; second ] with
   | [ a; b ] -> (a, b)
   | _ -> assert false
 
-let masked_zeros mask vals = where_ mask vals (AC.zeros_like vals)
-let dus = L.dynamic_update_slice
-let idx_const i = int_full D.I32 i
+module Ix = Numpy.Nd_index
+
+let triu_size n m k =
+  let count = ref 0 in
+  for i = 0 to n - 1 do
+    for j = 0 to m - 1 do
+      if j - i >= k then incr count
+    done
+  done;
+  !count
+
+let triu_index_arrays ?m n k =
+  let m = Option.value m ~default:n in
+  let ones = AC.ones [| n; m |] in
+  let upper = NL.triu ~k ones in
+  match Numpy.Extras.nonzero ~size:(triu_size n m k) upper with
+  | [ i; j ] -> [ Ix.Arr i; Ix.Arr j ]
+  | _ -> assert false
+
+let py_weak_int v = C.py_scalar (default_int ()) (float_of_int v)
 
 let gen_recurrence_mask l_max is_normalized dt =
   let n = l_max + 1 in
@@ -2918,17 +2922,19 @@ let gen_recurrence_mask l_max is_normalized dt =
       (d0, d1)
     end
   in
-  let d0_mask =
-    masked_zeros (const_mask [| n; n |] (fun i -> i.(1) >= i.(0) + 1)) d0
+  let d0_idx = triu_index_arrays n 1 in
+  let d1_idx = triu_index_arrays n 2 in
+  let d_zeros = AC.zeros ~dtype:dt [| n; n |] in
+  let d0_mask = Ix.set d_zeros d0_idx (Ix.take d0 d0_idx) in
+  let d1_mask = Ix.set d_zeros d1_idx (Ix.take d1 d1_idx) in
+  let range = Numpy.Grids.Step (0.0, float_of_int n, 1.0) in
+  let mask =
+    match Numpy.Grids.ogrid [ range; range; range ] with
+    | [ i; j; k ] -> NL.astype (UF.equal (i +! j -! k) (py_weak_int 0)) dt
+    | _ -> assert false
   in
-  let d1_mask =
-    masked_zeros (const_mask [| n; n |] (fun i -> i.(1) >= i.(0) + 2)) d1
-  in
-  let mask3 =
-    NL.astype (const_mask [| n; n; n |] (fun i -> i.(0) + i.(1) - i.(2) = 0)) dt
-  in
-  let d0_3d = einsum "jk,ijk->ijk" [ d0_mask; mask3 ] in
-  let d1_3d = einsum "jk,ijk->ijk" [ d1_mask; mask3 ] in
+  let d0_3d = einsum "jk,ijk->ijk" [ d0_mask; mask ] in
+  let d1_3d = einsum "jk,ijk->ijk" [ d1_mask; mask ] in
   (d0_3d, d1_3d)
 
 let gen_associated_legendre_body l_max x is_normalized =
@@ -2936,82 +2942,49 @@ let gen_associated_legendre_body l_max x is_normalized =
   let lit v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
   let n = (shape x).(0) in
   let p = AC.zeros ~dtype:dt [| l_max + 1; l_max + 1; n |] in
-  let a_idx () = arange_dt dt 1 (l_max + 1) in
-  let b_idx () = arange_dt dt 0 l_max in
-  let initial_value, f_a_f_b =
+  let a_idx = arange_dt dt 1 (l_max + 1) in
+  let b_idx = arange_dt dt 0 l_max in
+  let initial_value, f_a, f_b =
     if is_normalized then begin
       let root = UF.sqrt (py_float Float.pi) in
       let initial = py_float 0.5 /! root in
-      ( initial,
-        fun () ->
-          let inner = UF.sqrt (lit 1.0 +! (lit 0.5 /! a_idx ())) in
-          let f_a = RED.cumprod (lit (-1.0) *! inner) in
-          let f_b = UF.sqrt ((lit 2.0 *! b_idx ()) +! lit 3.0) in
-          (f_a, f_b) )
+      let inner = UF.sqrt (lit 1.0 +! (lit 0.5 /! a_idx)) in
+      let f_a = RED.cumprod ~axis:0 (lit (-1.0) *! inner) in
+      let f_b = UF.sqrt ((lit 2.0 *! b_idx) +! lit 3.0) in
+      (initial, f_a, f_b)
     end
     else
-      ( py_float 1.0,
-        fun () ->
-          let f_a = RED.cumprod (lit 1.0 -! (lit 2.0 *! a_idx ())) in
-          let f_b = (lit 2.0 *! b_idx ()) +! lit 1.0 in
-          (f_a, f_b) )
+      let f_a = RED.cumprod ~axis:0 (lit 1.0 -! (lit 2.0 *! a_idx)) in
+      let f_b = (lit 2.0 *! b_idx) +! lit 1.0 in
+      (py_float 1.0, f_a, f_b)
   in
-  let init_as = NL.astype initial_value dt in
-  let p =
-    dus p
-      (L.reshape (L.broadcast_in_dim init_as [| n |] [||]) [| 1; 1; n |])
-      [ idx_const 0; idx_const 0; idx_const 0 ]
-  in
-  let set_row p r c row =
-    dus p
-      (L.reshape row [| 1; 1; n |])
-      [ idx_const r; idx_const c; idx_const 0 ]
-  in
-  let p = ref p in
-  if l_max > 0 then begin
-    let f_a, f_b = f_a_f_b () in
-    let root = UF.sqrt (lit 1.0 -! (x *! x)) in
-    let y = RED.cumprod ~axis:0 (NL.broadcast_to root [| l_max; n |]) in
-    let e1 = einsum "i,ij->ij" [ f_a; y ] in
-    let p_diag = init_as *! e1 in
-    for i = 1 to l_max do
-      p := set_row !p i i (L.index_in_dim ~keepdims:false p_diag (i - 1))
-    done;
-    let diag_rows =
-      L.stack
-        (List.init l_max (fun i ->
-             let row = L.index_in_dim ~keepdims:false !p i in
-             L.index_in_dim ~keepdims:false row i))
-        0
-    in
-    let fbx = einsum "i,j->ij" [ f_b; x ] in
-    let p_offdiag = einsum "ij,ij->ij" [ fbx; diag_rows ] in
-    for i = 0 to l_max - 1 do
-      p := set_row !p i (i + 1) (L.index_in_dim ~keepdims:false p_offdiag i)
-    done
-  end;
+  let p = Ix.set p [ Ix.Int 0; Ix.Int 0 ] initial_value in
+  let root = UF.sqrt (lit 1.0 -! (x *! x)) in
+  let y = RED.cumprod ~axis:0 (NL.broadcast_to root [| l_max; n |]) in
+  let e1 = einsum "i,ij->ij" [ f_a; y ] in
+  let p_diag = initial_value *! e1 in
+  let diag = List.hd (NL.diag_indices (l_max + 1)) in
+  let tail = Ix.take diag [ Ix.Range { start = Some 1; stop = None } ] in
+  let tail2 = Ix.take diag [ Ix.Range { start = Some 1; stop = None } ] in
+  let p = Ix.set p [ Ix.Arr tail; Ix.Arr tail2 ] p_diag in
+  let fbx = einsum "i,j->ij" [ f_b; x ] in
+  let short = List.hd (NL.diag_indices l_max) in
+  let on_diag = Ix.take p [ Ix.Arr short; Ix.Arr short ] in
+  let p_offdiag = einsum "ij,ij->ij" [ fbx; on_diag ] in
+  let head = Ix.take diag [ Ix.Range { start = None; stop = Some l_max } ] in
+  let head2 = Ix.take diag [ Ix.Range { start = None; stop = Some l_max } ] in
+  let head2 = head2 +! py_weak_int 1 in
+  let p = Ix.set p [ Ix.Arr head; Ix.Arr head2 ] p_offdiag in
   let d0_mask_3d, d1_mask_3d = gen_recurrence_mask l_max is_normalized dt in
   if l_max > 1 then
     List.hd
-      (L.fori_loop (idx_const 2)
-         (idx_const (l_max + 1))
+      (L.fori_loop (py_int 2)
+         (py_int (l_max + 1))
          (fun i state ->
            match state with
            | [ p_val ] ->
-               let coeff_0 =
-                 Numpy.Indexing.dslice_index d0_mask_3d
-                   [ Numpy.Indexing.Dslice { start = i; size = 1; stride = 1 } ]
-               in
-               let coeff_0 =
-                 L.reshape coeff_0 (Array.sub (shape coeff_0) 1 2)
-               in
-               let coeff_1 =
-                 Numpy.Indexing.dslice_index d1_mask_3d
-                   [ Numpy.Indexing.Dslice { start = i; size = 1; stride = 1 } ]
-               in
-               let coeff_1 =
-                 L.reshape coeff_1 (Array.sub (shape coeff_1) 1 2)
-               in
+               let coeff_0 = Ix.take d0_mask_3d [ Ix.Arr i ] in
+               let coeff_1 = Ix.take d1_mask_3d [ Ix.Arr i ] in
                let r1 = NL.roll ~axis:[| 1 |] p_val [| 1 |] in
                let e1 = einsum "ijk,k->ijk" [ r1; x ] in
                let t1 = einsum "ij,ijk->ijk" [ coeff_0; e1 ] in
@@ -3020,8 +2993,8 @@ let gen_associated_legendre_body l_max x is_normalized =
                let h = t1 -! t2 in
                [ p_val +! h ]
            | _ -> assert false)
-         [ !p ])
-  else !p
+         [ p ])
+  else p
 
 let gen_associated_legendre l_max x is_normalized =
   Eager_jit.one "scipy.special._gen_associated_legendre" (l_max, is_normalized)
@@ -3037,98 +3010,88 @@ let gen_derivatives_body p x =
   let dt = dtype x in
   let lit v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
   let sh = shape p in
-  let num_m = sh.(0) and num_l = sh.(1) and num_x = sh.(2) in
+  let num_m = sh.(0) and num_l = sh.(1) in
+  let all = Ix.Range { start = None; stop = None } in
+  let upto stop = Ix.Range { start = None; stop = Some stop } in
+  let between lo hi = Ix.Range { start = Some lo; stop = Some hi } in
   let p_m_lm1 =
-    L.slice
-      (NL.pad p [| (0, 0); (1, 0); (0, 0) |] 0.0)
-      [| 0; 0; 0 |] [| num_m; num_l; num_x |]
+    Ix.take (NL.pad p [| (0, 0); (1, 0); (0, 0) |] 0.0) [ all; upto num_l; all ]
   in
   let p_mp2_lm1 =
-    L.slice
+    Ix.take
       (NL.pad p_m_lm1 [| (0, 2); (0, 0); (0, 0) |] 0.0)
-      [| 2; 0; 0 |]
-      [| num_m + 2; num_l; num_x |]
+      [ between 2 (num_m + 2); all; all ]
   in
   let p_mm2_lm1 =
-    L.slice
+    Ix.take
       (NL.pad p_m_lm1 [| (2, 0); (0, 0); (0, 0) |] 0.0)
-      [| 0; 0; 0 |] [| num_m; num_l; num_x |]
-  in
-  let row_part row lo hi =
-    L.slice p [| row; lo; 0 |] [| row + 1; hi; num_x |]
-  in
-  let squeeze0 v =
-    let s = shape v in
-    L.reshape v (Array.sub s 1 (Array.length s - 1))
+      [ upto num_m; all; all ]
   in
   let p_mm2_lm1 =
-    if num_l > 1 && num_l - 1 > 1 then begin
+    if num_l > 1 then begin
       let l_vec = arange_dt dt 1 (num_l - 1) in
-      let p_p1 = squeeze0 (row_part 1 1 (num_l - 1)) in
+      let p_p1 = Ix.take p [ Ix.Int 1; between 1 (num_l - 1); all ] in
       let den = (l_vec +! lit 1.0) *! l_vec in
       let coeff = lit (-1.0) /! den in
       let update = einsum "i,ij->ij" [ coeff; p_p1 ] in
-      dus p_mm2_lm1
-        (L.expand_dims update [| 0 |])
-        [ idx_const 1; idx_const 2; idx_const 0 ]
+      Ix.set p_mm2_lm1 [ Ix.Int 1; between 2 num_l; all ] update
     end
     else p_mm2_lm1
   in
   let p_mm2_lm1 =
-    if num_l > 2 && num_l - 1 > 2 then begin
+    if num_l > 2 then begin
       let l_vec = arange_dt dt 2 (num_l - 1) in
-      let p_p2 = squeeze0 (row_part 2 2 (num_l - 1)) in
+      let p_p2 = Ix.take p [ Ix.Int 2; between 2 (num_l - 1); all ] in
       let d1 = l_vec +! lit 2.0 in
       let d2 = d1 *! (l_vec +! lit 1.0) in
       let d3 = d2 *! l_vec in
       let den = d3 *! (l_vec -! lit 1.0) in
       let coeff = lit 1.0 /! den in
       let update = einsum "i,ij->ij" [ coeff; p_p2 ] in
-      dus p_mm2_lm1
-        (L.expand_dims update [| 0 |])
-        [ idx_const 0; idx_const 3; idx_const 0 ]
+      Ix.set p_mm2_lm1 [ Ix.Int 0; between 3 num_l; all ] update
     end
     else p_mm2_lm1
   in
   let m_mat, l_mat = meshgrid_ij dt num_m num_l in
-  let upper = const_mask [| num_m; num_l |] (fun i -> i.(1) >= i.(0)) in
-  let not_row1 = const_mask [| num_m; num_l |] (fun i -> i.(0) <> 1) in
+  let coeff_zeros = AC.zeros ~dtype:dt [| num_m; num_l |] in
+  let upper = triu_index_arrays ~m:num_l num_m 0 in
+  let zero_vec = AC.zeros ~dtype:dt [| num_l |] in
+  let masked v = Ix.set coeff_zeros upper (Ix.take v upper) in
   let a0 = lit (-0.5) /! (m_mat -! lit 1.0) in
-  let a0_masked = masked_zeros not_row1 (masked_zeros upper a0) in
+  let a0_masked = masked a0 in
+  let a0_masked = Ix.set a0_masked [ Ix.Int 1; all ] zero_vec in
   let b0 = l_mat +! m_mat in
   let c0 = a0 *! (b0 -! lit 2.0) *! (b0 -! lit 1.0) in
-  let c0_masked = masked_zeros not_row1 (masked_zeros upper c0) in
+  let c0_masked = masked c0 in
+  let c0_masked = Ix.set c0_masked [ Ix.Int 1; all ] zero_vec in
   let e1 = einsum "ij,ijk->ijk" [ a0_masked; p_m_lm1 ] in
   let e2 = einsum "ij,ijk->ijk" [ c0_masked; p_mm2_lm1 ] in
   let p_mm1_l = e1 +! e2 in
   let d0 = lit (-0.5) /! (m_mat +! lit 1.0) in
-  let d0_masked = masked_zeros upper d0 in
+  let d0_masked = masked d0 in
   let e0 = d0 *! b0 *! (b0 +! lit 1.0) in
-  let e0_masked = masked_zeros upper e0 in
+  let e0_masked = masked e0 in
   let e3 = einsum "ij,ijk->ijk" [ d0_masked; p_mp2_lm1 ] in
   let e4 = einsum "ij,ijk->ijk" [ e0_masked; p_m_lm1 ] in
   let p_mp1_l = e3 +! e4 in
   let lmm = l_mat -! m_mat +! lit 1.0 in
   let f0 = b0 *! lmm /! lit 2.0 in
-  let f0_masked = masked_zeros upper f0 in
+  let f0_masked = masked f0 in
   let e5 = einsum "ij,ijk->ijk" [ f0_masked; p_mm1_l ] in
   let p_derivative = e5 -! (lit 0.5 *! p_mp1_l) in
   if num_m > 1 then begin
     let l_vec = arange_dt dt 0 num_l in
     let lv = (l_vec +! lit 1.0) *! l_vec in
-    let row0 = squeeze0 (row_part 0 0 num_l) in
+    let row0 = Ix.take p [ Ix.Int 0; all; all ] in
     let g0 = einsum "i,ij->ij" [ lv; row0 ] in
-    let g0 = if num_l > 2 then g0 -! squeeze0 (row_part 2 0 num_l) else g0 in
+    let g0 =
+      if num_l > 2 then g0 -! Ix.take p [ Ix.Int 2; all; all ] else g0
+    in
     let xx = x *! x in
     let inv = lit 0.5 /! UF.sqrt (lit 1.0 -! xx) in
     let m0 = einsum "j,ij->ij" [ inv; g0 ] in
-    let pd =
-      dus p_derivative (L.expand_dims m0 [| 0 |])
-        [ idx_const 1; idx_const 0; idx_const 0 ]
-    in
-    dus pd
-      (L.full [| 1; 1; num_x |] 0.0 dt)
-      [ idx_const 1; idx_const 0; idx_const 0 ]
+    let pd = Ix.set p_derivative [ Ix.Int 1; all; all ] m0 in
+    Ix.set pd [ Ix.Int 1; Ix.Int 0; all ] (py_weak_int 0)
   end
   else p_derivative
 

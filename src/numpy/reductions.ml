@@ -638,7 +638,7 @@ let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
 let cumulative ~fill ~promote ~make ?dtype:dt ?axis a =
   let a, ax =
     match axis with
-    | None -> (ravel a, 0)
+    | None -> ((if ndim a = 1 then a else ravel a), 0)
     | Some _ when ndim a = 0 -> (ravel a, 0)
     | Some ax -> (a, canonicalize_axis ax (ndim a))
   in

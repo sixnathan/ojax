@@ -76,6 +76,7 @@ val allclose :
   Types.value
 
 val clip : ?min:float -> ?max:float -> Types.value -> Types.value
+val clip_strong_max : Types.value -> Types.value -> Types.value
 val round : ?decimals:int -> Types.value -> Types.value
 val around : ?decimals:int -> Types.value -> Types.value
 val expand_dims : Types.value -> int array -> Types.value

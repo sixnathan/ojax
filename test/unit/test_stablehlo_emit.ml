@@ -74,6 +74,7 @@ let sdn : T.scatter_dims =
     scatter_dims_to_operand_dims = [| 0 |];
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
+    s_sorted_unique = false;
   }
 
 let unary5 prim dtype =
@@ -458,6 +459,7 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
                        rhs_contract = [| 0 |];
                        lhs_batch = [||];
                        rhs_batch = [||];
+                       dot_precision = None;
                      })
                   [ a; b ]
             | _ -> assert false) );
@@ -475,6 +477,7 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
                        rhs_contract = [| 1 |];
                        lhs_batch = [| 0 |];
                        rhs_batch = [| 0 |];
+                       dot_precision = None;
                      })
                   [ a; b ]
             | _ -> assert false) );

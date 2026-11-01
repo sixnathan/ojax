@@ -133,12 +133,27 @@ let body_forwarded (body : closed_jaxpr) carry_binders =
       match out with A_var v -> resolve v = b.vid | _ -> false)
     carry_binders body.jaxpr.outs
 
-let rec while_loop (cond_fun : value list -> value)
+let shared_conds = Hashtbl.create 8
+let shared_final_conds = Hashtbl.create 8
+
+let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
     (body_fun : value list -> value list) (init : value list) : value list =
   let trace init =
     let avals = List.map Core.get_aval init in
-    let cond, hoisted_c, cells_c =
+    let trace_cond () =
       Jaxpr.make_jaxpr_stateful avals (fun vs -> [ cond_fun vs ])
+    in
+    let cond, hoisted_c, cells_c =
+      match cond_key with
+      | None -> trace_cond ()
+      | Some key -> (
+          let k = (key, avals, Config.x64_enabled ()) in
+          match Hashtbl.find_opt shared_conds k with
+          | Some hit -> hit
+          | None ->
+              let traced = trace_cond () in
+              Hashtbl.replace shared_conds k traced;
+              traced)
     in
     let body, hoisted_b, cells_b = Jaxpr.make_jaxpr_stateful avals body_fun in
     (cond, hoisted_c, cells_c, body, hoisted_b, cells_b)
@@ -159,7 +174,7 @@ let rec while_loop (cond_fun : value list -> value)
       carry
     in
     let outs =
-      while_loop
+      while_loop_keyed ?cond_key
         (fun args -> cond_fun (enter args))
         (fun args ->
           let next = body_fun (enter args) in
@@ -226,14 +241,26 @@ let rec while_loop (cond_fun : value list -> value)
         List.init n_cond_consts (fun _ -> true) @ stay
       in
       let cond_final =
-        {
-          cond_pruned with
-          jaxpr =
-            {
-              cond_pruned.jaxpr with
-              in_binders = pick cond_binder_keep cond'.jaxpr.in_binders;
-            };
-        }
+        let build () =
+          {
+            cond_pruned with
+            jid = Core.fresh_id ();
+            jaxpr =
+              {
+                cond_pruned.jaxpr with
+                in_binders = pick cond_binder_keep cond'.jaxpr.in_binders;
+              };
+          }
+        in
+        if cond_key = None then build ()
+        else
+          let k = (cond.jid, move) in
+          match Hashtbl.find_opt shared_final_conds k with
+          | Some hit -> hit
+          | None ->
+              let built = build () in
+              Hashtbl.replace shared_final_conds k built;
+              built
       in
       let consts_part =
         List.filteri (fun i _ -> i < n_body_consts) body'.jaxpr.in_binders
@@ -271,6 +298,8 @@ let rec while_loop (cond_fun : value list -> value)
         | _ -> failwith "while_loop: merge"
       in
       merge move outs init
+
+let while_loop cond_fun body_fun init = while_loop_keyed cond_fun body_fun init
 
 let logaddexp a b =
   let m = Float.max a b in

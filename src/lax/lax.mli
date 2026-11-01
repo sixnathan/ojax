@@ -51,6 +51,13 @@ val scan :
   value list ->
   value list
 
+val while_loop_keyed :
+  ?cond_key:string ->
+  (Types.value list -> Types.value) ->
+  (Types.value list -> Types.value list) ->
+  Types.value list ->
+  Types.value list
+
 val while_loop :
   (value list -> value) ->
   (value list -> value list) ->

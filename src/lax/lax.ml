@@ -2860,6 +2860,7 @@ let lower_scan = Control_flow.Loops.lower_scan
 let dynamic_index_in_dim = Control_flow.Loops.dynamic_index_in_dim
 let dynamic_update_index_in_dim = Control_flow.Loops.dynamic_update_index_in_dim
 let while_loop = Control_flow.Loops.while_loop
+let while_loop_keyed = Control_flow.Loops.while_loop_keyed
 let cumsum = Control_flow.Loops.cumsum
 let cumprod = Control_flow.Loops.cumprod
 let cummax = Control_flow.Loops.cummax

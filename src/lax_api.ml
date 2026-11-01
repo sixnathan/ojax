@@ -858,7 +858,7 @@ let fori_loop lower upper body init =
   | _ ->
       List.tl
         (List.tl
-           (Lax.while_loop
+           (Lax.while_loop_keyed ~cond_key:"fori"
               (function
                 | i :: upper :: _ -> lt i upper
                 | _ -> failwith "fori_loop: arity")

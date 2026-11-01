@@ -1556,7 +1556,7 @@ let special_batch_run op params a =
   | "sx_expn_grad" ->
       let x = scaled (UF.absolute (a ())) "scale" in
       let x = UF.add x (like x 0.1) in
-      let order = L.full [||] (float_p "n") (dt_of x) in
+      let order = Ojax.Numpy.Jnp_util.py_float (float_p "n") in
       Some
         (Ojax.Interpreters.Batching.vmap
            (fun args ->

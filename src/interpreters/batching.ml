@@ -1490,7 +1490,9 @@ let batched_jvp_rule id axis_size vals bdims primal jvp =
       Hashtbl.replace jvp_batch_cache key r;
       r
 
-let batch_closed_axes (c : closed_jaxpr) axis_size in_dims out_dims =
+let batch_axes_cache = Hashtbl.create 64
+
+let batch_closed_axes_uncached (c : closed_jaxpr) axis_size in_dims out_dims =
   let binder_avals =
     List.filteri
       (fun i _ -> i >= List.length c.consts)
@@ -1523,6 +1525,15 @@ let batch_closed_axes (c : closed_jaxpr) axis_size in_dims out_dims =
               | _, Some d -> move_batch_axis axis_size b d v
               | Some _, None -> failwith "batching: while output mismatch")
             outs out_dims))
+
+let batch_closed_axes (c : closed_jaxpr) axis_size in_dims out_dims =
+  let key = (c.jid, axis_size, in_dims, out_dims, Config.x64_enabled ()) in
+  match Hashtbl.find_opt batch_axes_cache key with
+  | Some hit -> hit
+  | None ->
+      let built = batch_closed_axes_uncached c axis_size in_dims out_dims in
+      Hashtbl.replace batch_axes_cache key built;
+      built
 
 let batch_flags (c : closed_jaxpr) axis_size flags =
   let binder_avals =

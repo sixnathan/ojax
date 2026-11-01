@@ -2279,10 +2279,9 @@ let rec expn_apply n x =
       JU.jit "expn_jvp"
         (function
           | [ n; x; x_dot ] ->
-              expn_vect [ n; x ]
-              @ [
-                  L.mul (L.neg x_dot) (expn_apply (L.sub n (scalar_of n 1.0)) x);
-                ]
+              let primal = expn_apply n x in
+              let rest = expn_apply (L.sub n (scalar_of n 1.0)) x in
+              [ primal; L.mul (L.neg x_dot) rest ]
           | _ -> failwith "expn: arity")
         [ n; x; x_dot ]
     with
@@ -2301,6 +2300,7 @@ let rec expn_apply n x =
              | _ -> failwith "expn: arity")
            [ x ])
   | _ ->
+      let n = CD.stop_gradient n in
       List.hd
         (CD.custom_jvp ~name:"expn" ~jvp_name:"expn_jvp" expn_vect
            ~jvp:(fun primals tangents ->
@@ -2360,7 +2360,7 @@ let expi_jit a0 =
   Eager_jit.one ~jit:"expi" "scipy.special.expi" () [] [ a0 ] (fun _ vals ->
       match vals with [ a0 ] -> expi_primal a0 | _ -> assert false)
 
-let expi x =
+let rec expi x =
   List.hd
     (CD.custom_jvp ~name:"expi" ~jvp_name:"expi_jvp"
        (function [ x ] -> [ expi_jit x ] | _ -> assert false)
@@ -2370,7 +2370,7 @@ let expi x =
              match
                JU.jit "expi_jvp"
                  (function
-                   | [ x; x_dot ] -> [ expi_jit x; UF.exp x /! x *! x_dot ]
+                   | [ x; x_dot ] -> [ expi x; UF.exp x /! x *! x_dot ]
                    | _ -> assert false)
                  [ x; x_dot ]
              with
@@ -2445,7 +2445,7 @@ let hyp2f1_digamma_transform a b c x =
   let ard = NL.astype (where_ (ge_ rd 0.0) rd (neg_ rd)) D.I32 in
   let ax = UF.log s in
   let dg v = digamma v in
-  let y0 = NL.astype (dg (JU.py_float 1.0)) (dtype e) in
+  let y0 = dg (JU.py_float 1.0) in
   let y1 = dg (lit_add 1.0 e) in
   let y = y0 +! y1 in
   let y2 = dg (a +! d1) in
@@ -2528,6 +2528,7 @@ let hyp2f1_digamma_transform a b c x =
     let when_neg = y +! (y1 *! q) in
     where_ (gt_ rd 0.0) when_pos when_neg
   in
+  let is_zero = eq_ rd 0.0 in
   let g_c = gamma c in
   let top = y *! g_c in
   let g_a = gamma a in
@@ -2535,7 +2536,7 @@ let hyp2f1_digamma_transform a b c x =
   let bottom = g_a *! g_b in
   let at_zero = top /! bottom in
   let summed = compute_sum y in
-  where_ (eq_ rd 0.0) at_zero summed
+  where_ is_zero at_zero summed
 
 let hyp2f1_terminal_or_serie a b c x =
   let eps = eps50 x in

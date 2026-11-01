@@ -1,15 +1,34 @@
 open Types
 module L = Lax_api
 
-let ( +: ) = L.add
-let ( -: ) = L.sub
-let ( *: ) = L.mul
-let ( /: ) = L.div
+let weak v = (Core.get_aval v).weak_type
+
+let promoted op a b =
+  if weak a = weak b then op a b
+  else
+    let dt = (Core.get_aval a).dtype in
+    let a' = Core.convert_like ~weak:false a dt in
+    let b' = Core.convert_like ~weak:false b dt in
+    op a' b'
+
+let ( +: ) = promoted L.add
+let ( -: ) = promoted L.sub
+let ( *: ) = promoted L.mul
+let ( /: ) = promoted L.div
 let ( &&: ) = L.bitwise_and
 let ( ||: ) = L.bitwise_or
 let shape v = (Core.get_aval v).shape
 let dtype v = (Core.get_aval v).dtype
-let like = L.full_like
+let like v c =
+  let a = Core.get_aval v in
+  if a.weak_type then
+    let lit =
+      Concrete (Ndarray.as_weak (Ndarray.of_floats a.dtype [||] [| c |]))
+    in
+    if Array.length a.shape = 0 then lit
+    else Core.bind1 (Broadcast_in_dim { shape = a.shape; dims = [||] }) [ lit ]
+  else L.full_like v c
+
 let select = L.select
 let not_ = L.bitwise_not
 let is_nan x = L.ne x x
@@ -151,7 +170,7 @@ let igammac_continued_fraction ax x a enabled eps mode =
         let e3 = e2 -: (dqkm2_da *: yc) in
         let dqk_da = e3 +: (qkm2 *: c) in
         let dn = dpk_da -: (ans *: dqk_da) in
-        let dans_da_new = select nonzero (dn /: qk) dans_da0 in
+        let dans_da_new = select nonzero (L.div dn qk) dans_da0 in
         let gabs = L.abs (dans_da_new -: dans_da0) in
         let grad_conditional = select nonzero gabs (like dans_da0 1.0) in
         let npkm2 = pkm1
@@ -165,7 +184,7 @@ let igammac_continued_fraction ax x a enabled eps mode =
         let apk = L.abs pk in
         let rescale = L.gt apk (L.reciprocal (eps_of pk)) in
         let scaled v =
-          let m = v *: eps_of v in
+          let m = L.mul v (eps_of v) in
           select rescale m v
         in
         let npkm2 = scaled npkm2 in

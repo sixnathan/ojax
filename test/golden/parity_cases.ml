@@ -1454,7 +1454,20 @@ let dtype_sweep_run op a =
           AC.geomspace_v ~num:3 lower upper)
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
   | "sw_polyval" ->
-      one (fun v -> PO.polyval (L.slice_in_dim ~axis:0 v 0 2) (row v 0))
+      one (fun v ->
+          let sh = (Ojax.Core.get_aval v).T.shape in
+          let top =
+            Ojax.Core.bind1
+              (T.Slice
+                 {
+                   start_indices = Array.map (fun _ -> 0) sh;
+                   limit_indices =
+                     Array.mapi (fun i d -> if i = 0 then 2 else d) sh;
+                   strides = None;
+                 })
+              [ v ]
+          in
+          PO.polyval top (row v 0))
   | "sw_polyder" -> one (fun v -> PO.polyder (row v 0))
   | "sw_polyint" -> one (fun v -> PO.polyint (row v 0))
   | "sw_polyadd" -> one (fun v -> PO.polyadd (row v 0) (row v 1))

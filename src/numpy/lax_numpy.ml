@@ -676,12 +676,10 @@ let rec round ?(decimals = 0) v =
     let x =
       if dt = D.F16 then bind1 (T.Convert_element_type D.F32) [ v ] else v
     in
-    let factor () = full (dtype x) (shape x) (10.0 ** float_of_int decimals) in
+    let factor = scalar (dtype x) (10.0 ** float_of_int decimals) in
     let out =
       bind1 T.Div
-        [
-          bind1 T.Round_nearest_even [ bind1 T.Mul [ x; factor () ] ]; factor ();
-        ]
+        [ bind1 T.Round_nearest_even [ bind1 T.Mul [ x; factor ] ]; factor ]
     in
     if dt = D.F16 then bind1 (T.Convert_element_type D.F16) [ out ] else out
   end
@@ -1331,7 +1329,7 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
             let cval =
               C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v)
             in
-            bind1 (T.Pad cfg) [ v; cval ]
+            bind1 (Np_ints.mark_prim (T.Pad cfg)) [ v; cval ]
         | _ -> invalid_arg "pad: arity")
       [ v; literal ]
   end
@@ -1525,7 +1523,17 @@ let cross ?(axisa = -1) ?(axisb = -1) ?(axisc = -1) ?axis a b =
     let c0 = sub2 (mul2 a1 b2) (mul2 a2 b1) in
     let c1 = sub2 (mul2 a2 b0) (mul2 a0 b2) in
     let c2 = sub2 (mul2 a0 b1) (mul2 a1 b0) in
-    let c = stack ~axis:0 [ c0; c1; c2 ] in
+    let lift v =
+      let s = shape v in
+      bind1
+        (T.Broadcast_in_dim
+           {
+             shape = Array.append [| 1 |] s;
+             dims = Array.init (Array.length s) (fun i -> i + 1);
+           })
+        [ v ]
+    in
+    let c = bind1 (T.Concatenate 0) (List.map lift [ c0; c1; c2 ]) in
     moveaxis [| 0 |] [| axisc |] c
   end
 
@@ -1604,19 +1612,7 @@ let trace ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) ?dtype a =
   let am = moveaxis [| axis1; axis2 |] [| nd - 2; nd - 1 |] a in
   let mask = eye ~m:ma ~k:offset ~dtype:D.Bool na in
   let masked = where_ mask am (zeros_like am) in
-  let acc =
-    let dt_in = (get_aval masked).T.dtype in
-    if is_inexact dt_in then masked
-    else
-      let wide = Config.x64_enabled () in
-      convert masked
-        (match dt_in with
-        | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint32 | D.Uint64 ->
-            if wide then D.Uint64 else D.Uint32
-        | _ -> if wide then D.I64 else D.I32)
-  in
-  let res = bind1 (T.Reduce_sum [| nd - 2; nd - 1 |]) [ acc ] in
-  match dtype with Some d -> convert res d | None -> res
+  Reductions.sum ?dtype ~axis:[| nd - 2; nd - 1 |] masked
 
 let trace ?offset ?axis1 ?axis2 ?dtype a0 =
   Eager_jit.one ~jit:"trace" "numpy.lax_numpy.trace"
@@ -1645,6 +1641,7 @@ let take_trailing a indices =
   let wrapped =
     List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
   in
+  let wrapped = List.map (fun w -> convert w D.I32) wrapped in
   let start = bind1 (T.Concatenate 1) (List.map expand_last wrapped) in
   let start = match wrapped with [ w ] -> expand_last w | _ -> start in
   let batch = Array.length (shape (List.hd indices)) in
@@ -1688,11 +1685,18 @@ let default_diag ~offset ~axis1 ~axis2 a =
   let iota_from start =
     let base =
       bind1
-        (T.Iota { dtype = D.I32; shape = [| diag_size |]; dimension = 0 })
+        (T.Iota
+           {
+             dtype = Dtypes.default_int_dtype ();
+             shape = [| diag_size |];
+             dimension = 0;
+           })
         []
     in
     if start = 0 then base
-    else bind1 T.Add [ base; scalar D.I32 (float_of_int start) ]
+    else
+      bind1 T.Add
+        [ base; scalar (Dtypes.default_int_dtype ()) (float_of_int start) ]
   in
   let i = iota_from 0 in
   let j = iota_from (abs offset) in
@@ -1831,7 +1835,7 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
   let l = ny.(nd - 1) in
   match dxd with
   | None ->
-      let s = bind1 (T.Reduce_sum [| nd - 1 |]) [ y ] in
+      let s = Reductions.sum ~axis:[| nd - 1 |] y in
       let y0 = last_index y 0 in
       let yl = last_index y (l - 1) in
       let total = add2 y0 yl in
@@ -1999,7 +2003,7 @@ let gcd x1 x2 =
   in
   let cond carry =
     match carry with
-    | [ _; b ] -> any_reduce (bind1 T.Ne [ b; zeros_like b ])
+    | [ _; b ] -> any_reduce (bind1 T.Ne [ b; scalar (dtype b) 0.0 ])
     | _ -> assert false
   in
   let body carry =

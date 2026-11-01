@@ -598,6 +598,8 @@ let rebuild_scatter prim (sd : scatter_dims) =
   match prim with
   | Scatter { unique_indices; _ } ->
       Scatter { dimension_numbers = sd; unique_indices }
+  | Scatter_add _ when Np_ints.scatter_marked prim ->
+      Np_ints.mark_scatter (Scatter_add { dimension_numbers = sd })
   | Scatter_add _ -> Scatter_add { dimension_numbers = sd }
   | Scatter_sub _ -> Scatter_sub { dimension_numbers = sd }
   | Scatter_mul { unique_indices; _ } ->
@@ -620,11 +622,15 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
             let sd' =
               {
                 update_window_dims =
-                  Array.append [| 0 |] (bump sd.update_window_dims);
-                inserted_window_dims = bump sd.inserted_window_dims;
+                  Np_ints.mark_where
+                    (fun i -> i > 0)
+                    (Array.append [| 0 |] (bump sd.update_window_dims));
+                inserted_window_dims =
+                  Np_ints.mark (bump sd.inserted_window_dims);
                 scatter_dims_to_operand_dims =
-                  bump sd.scatter_dims_to_operand_dims;
-                s_operand_batching_dims = bump sd.s_operand_batching_dims;
+                  Np_ints.mark (bump sd.scatter_dims_to_operand_dims);
+                s_operand_batching_dims =
+                  Np_ints.mark (bump sd.s_operand_batching_dims);
                 s_scatter_indices_batching_dims =
                   sd.s_scatter_indices_batching_dims;
               }
@@ -635,14 +641,20 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
             let indices = move_batch_axis axis_size (Some idd) 0 indices in
             let sd' =
               {
-                update_window_dims = bump sd.update_window_dims;
-                inserted_window_dims = bump sd.inserted_window_dims;
+                update_window_dims = Np_ints.mark (bump sd.update_window_dims);
+                inserted_window_dims =
+                  Np_ints.mark (bump sd.inserted_window_dims);
                 scatter_dims_to_operand_dims =
-                  bump sd.scatter_dims_to_operand_dims;
+                  Np_ints.mark (bump sd.scatter_dims_to_operand_dims);
                 s_operand_batching_dims =
-                  Array.append [| 0 |] (bump sd.s_operand_batching_dims);
+                  Np_ints.mark_where
+                    (fun i -> i > 0)
+                    (Array.append [| 0 |] (bump sd.s_operand_batching_dims));
                 s_scatter_indices_batching_dims =
-                  Array.append [| 0 |] (bump sd.s_scatter_indices_batching_dims);
+                  Np_ints.mark_where
+                    (fun i -> i > 0)
+                    (Array.append [| 0 |]
+                       (bump sd.s_scatter_indices_batching_dims));
               }
             in
             ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],

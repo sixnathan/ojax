@@ -49,7 +49,7 @@ let nested_literals nd =
 
 let dense_body nd =
   match all_literals nd with
-  | [] -> invalid_arg "Stablehlo.Emit: empty constant"
+  | [] -> ""
   | first :: rest when List.for_all (String.equal first) rest -> first
   | _ -> nested_literals nd
 
@@ -1310,7 +1310,8 @@ let scatter_dnums_attr (d : scatter_dims) index_vector_dim =
         dim_field "scatter_indices_batching_dims"
           d.s_scatter_indices_batching_dims;
         dim_field "scatter_dims_to_operand_dims" d.scatter_dims_to_operand_dims;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.scatter<" ^ String.concat ", " parts ^ ">"
@@ -1354,10 +1355,12 @@ let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf
-       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = \
-        false, scatter_dimension_numbers = %s, unique_indices = false}> ({\n"
+       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
+        scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
        (name n) (name op_id) (name idx_id) (name upd_id)
-       (scatter_dnums_attr dnums ivd));
+       (Np_ints.scatter_marked eqn.prim)
+       (scatter_dnums_attr dnums ivd)
+       (Np_ints.scatter_marked eqn.prim));
   let a = fresh ctx in
   let b = fresh ctx in
   Buffer.add_string ctx.buf
@@ -3326,6 +3329,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Dynamic_slice { slice_sizes } ->
       emit_dynamic_slice ctx eqn in_ids slice_sizes
   | Dynamic_update_slice -> emit_dynamic_update_slice ctx eqn in_ids
+  | Gather _ as p when Np_ints.gather_fill_of p <> None ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a; i ] -> [ Lax.Slicing.gather_fill_lowered p a i ]
+        | _ -> invalid_arg "Stablehlo.Emit: gather arity")
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
   | Scatter { dimension_numbers; _ } ->

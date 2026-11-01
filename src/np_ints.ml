@@ -24,3 +24,30 @@ let prim_marked prim =
   List.exists
     (fun other -> other == o)
     (Hashtbl.find_all marked_prims (Hashtbl.hash o))
+
+let sorted_scatters : (int, Obj.t) Hashtbl.t = Hashtbl.create 64
+
+let mark_scatter prim =
+  let o = Obj.repr prim in
+  Hashtbl.add sorted_scatters (Hashtbl.hash o) o;
+  prim
+
+let scatter_marked prim =
+  let o = Obj.repr prim in
+  List.exists
+    (fun other -> other == o)
+    (Hashtbl.find_all sorted_scatters (Hashtbl.hash o))
+
+let gather_fills : (int, Obj.t * string * float option) Hashtbl.t =
+  Hashtbl.create 64
+
+let mark_gather_fill prim repr fill =
+  let o = Obj.repr prim in
+  Hashtbl.add gather_fills (Hashtbl.hash o) (o, repr, fill);
+  prim
+
+let gather_fill_of prim =
+  let o = Obj.repr prim in
+  List.find_map
+    (fun (other, repr, fill) -> if other == o then Some (repr, fill) else None)
+    (Hashtbl.find_all gather_fills (Hashtbl.hash o))

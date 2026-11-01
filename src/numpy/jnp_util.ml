@@ -20,21 +20,15 @@ let broadcast_to v sh =
   else begin
     let nlead = Array.length sh - Array.length s in
     if nlead < 0 then invalid_arg "broadcast_to: incompatible shapes";
-    let kept = ref [] and squeezed = ref [] in
     Array.iteri
       (fun i d ->
-        if d = sh.(i + nlead) then kept := (i + nlead) :: !kept
-        else if d = 1 then squeezed := i :: !squeezed
-        else invalid_arg "broadcast_to: incompatible shapes")
+        if not (d = sh.(i + nlead) || d = 1) then
+          invalid_arg "broadcast_to: incompatible shapes")
       s;
-    let operand =
-      match !squeezed with
-      | [] -> v
-      | dims -> C.bind1 (T.Squeeze (Array.of_list (List.rev dims))) [ v ]
-    in
     C.bind1
-      (T.Broadcast_in_dim { shape = sh; dims = Array.of_list (List.rev !kept) })
-      [ operand ]
+      (T.Broadcast_in_dim
+         { shape = sh; dims = Array.init (Array.length s) (fun i -> i + nlead) })
+      [ v ]
   end
 
 let broadcast_arrays vs =

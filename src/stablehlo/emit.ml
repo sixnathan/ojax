@@ -2950,7 +2950,11 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ x ] ->
             let positive = Core.bind1 (Integer_pow (-y)) [ x ] in
             let a = Core.get_aval x in
-            let one = Core.splat a.dtype a.shape 1.0 in
+            let one =
+              Core.bind1
+                (Broadcast_in_dim { shape = a.shape; dims = [||] })
+                [ Core.splat a.dtype [||] 1.0 ]
+            in
             [ Core.bind1 Div [ one; positive ] ]
         | _ -> invalid_arg "Stablehlo.Emit: integer_pow arity")
   | Integer_pow y -> emit_integer_pow ctx eqn in_ids y

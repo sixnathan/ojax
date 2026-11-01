@@ -180,8 +180,7 @@ let impl_rule prim inputs =
       let s = Nd.shape wide in
       [
         Nd.of_floats dt s
-          (Array.init (prod s) (fun i ->
-               float_of_int (geti wide i land m)));
+          (Array.init (prod s) (fun i -> float_of_int (geti wide i land m)));
       ]
   | Random_bits { bit_width; shape }, [ key ] ->
       [ random_bits_impl bit_width shape key ]
@@ -289,4 +288,6 @@ let random_bits key ~bit_width ~shape =
 
 let random_wrap arr = Core.bind1 Random_wrap [ arr ]
 let random_unwrap key = Core.bind1 Random_unwrap [ key ]
-let random_gamma ~log_space key a = Core.bind1 (Random_gamma { log_space }) [ key; a ]
+
+let random_gamma ~log_space key a =
+  Core.bind1 (Random_gamma { log_space }) [ key; a ]

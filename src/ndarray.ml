@@ -8,7 +8,13 @@ type buffer =
   | Complex64_buf of (Complex.t, complex32_elt, c_layout) Array1.t
   | Complex128_buf of (Complex.t, complex64_elt, c_layout) Array1.t
 
-type t = { dtype : Dtype.t; shape : int array; data : buffer; weak : bool }
+type t = {
+  dtype : Dtype.t;
+  shape : int array;
+  data : buffer;
+  weak : bool;
+  python_float : float option;
+}
 
 let uint32_mask = 0xFFFF_FFFF
 let f32_round v = Int32.float_of_bits (Int32.bits_of_float v)
@@ -193,7 +199,7 @@ let of_floats dtype shape floats =
     invalid_arg "Ndarray.of_floats: length mismatch";
   let data = create_buffer dtype n in
   Array.iteri (fun i v -> write_float dtype data i v) floats;
-  { dtype; shape = Array.copy shape; data; weak = false }
+  { dtype; shape = Array.copy shape; data; weak = false; python_float = None }
 
 let of_int64s dtype shape values =
   let n = size shape in
@@ -202,7 +208,13 @@ let of_int64s dtype shape values =
   match create_buffer dtype n with
   | Int64_buf a as data ->
       Array.iteri (fun i v -> Array1.unsafe_set a i v) values;
-      { dtype; shape = Array.copy shape; data; weak = false }
+      {
+        dtype;
+        shape = Array.copy shape;
+        data;
+        weak = false;
+        python_float = None;
+      }
   | _ -> invalid_arg "Ndarray.of_int64s: not a 64-bit integer dtype"
 
 let of_complex dtype shape values =
@@ -211,7 +223,7 @@ let of_complex dtype shape values =
     invalid_arg "Ndarray.of_complex: length mismatch";
   let data = create_buffer dtype n in
   Array.iteri (fun i z -> write_complex data i z) values;
-  { dtype; shape = Array.copy shape; data; weak = false }
+  { dtype; shape = Array.copy shape; data; weak = false; python_float = None }
 
 let dtype t = t.dtype
 let shape t = Array.copy t.shape
@@ -227,7 +239,7 @@ let map dtype f t =
   for i = 0 to n - 1 do
     write_float dtype data i (f (read_float t.dtype t.data i))
   done;
-  { dtype; shape = Array.copy t.shape; data; weak = false }
+  { dtype; shape = Array.copy t.shape; data; weak = false; python_float = None }
 
 let map2 dtype f a b =
   if a.shape <> b.shape then invalid_arg "Ndarray.map2: shape mismatch";
@@ -237,7 +249,7 @@ let map2 dtype f a b =
     write_float dtype data i
       (f (read_float a.dtype a.data i) (read_float b.dtype b.data i))
   done;
-  { dtype; shape = Array.copy a.shape; data; weak = false }
+  { dtype; shape = Array.copy a.shape; data; weak = false; python_float = None }
 
 let fold f acc t =
   let n = size t.shape in
@@ -284,7 +296,7 @@ let map_complex dtype f t =
   for i = 0 to n - 1 do
     write_complex data i (f (read_complex t.data i))
   done;
-  { dtype; shape = Array.copy t.shape; data; weak = false }
+  { dtype; shape = Array.copy t.shape; data; weak = false; python_float = None }
 
 let to_int64s t =
   let n = Array.fold_left ( * ) 1 t.shape in
@@ -299,3 +311,5 @@ let canonicalize dtype t =
 
 let weak t = t.weak
 let as_weak t = { t with weak = true }
+let python_float t = t.python_float
+let with_python_float t x = { t with python_float = Some x }

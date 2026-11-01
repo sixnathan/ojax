@@ -87,30 +87,30 @@ let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") key ~mean ~cov
   let sh = Option.value shape_opt ~default:batch in
   let float_dtype = NL.result_type [ mean; cov ] in
   C.jit_region "_multivariate_normal" (sh, float_dtype, method_)
-    [ key; mean; cov ]
-    (function
+    [ key; mean; cov ] (function
     | [ key; mean; cov ] ->
-  let factor =
-    match method_ with
-    | "cholesky" -> Numpy.Linalg.cholesky cov
-    | "eigh" ->
-        let w, v = Numpy.Linalg.eigh cov in
-        let root = L.expand_dims (L.sqrt w) [| -2 |] in
-        L.mul v (NL.broadcast_to root (shape v))
-    | "svd" -> (
-        match Numpy.Linalg.svd cov with
-        | [ u; s; _ ] ->
-            let root = L.expand_dims (L.sqrt s) [| -2 |] in
-            L.mul u (NL.broadcast_to root (shape u))
-        | _ -> failwith "multivariate_normal: svd arity")
-    | other ->
-        invalid_arg
-          ("method must be one of {'svd', 'eigh', 'cholesky'}; got " ^ other)
-  in
-  let z =
-    C.with_dtypes ~float_dtype (fun () ->
-        C.normal key ~shape:(Array.append sh [| event |]))
-  in
-  let product = Numpy.Einsum.einsum "...ij,...j->...i" [ factor; z ] in
-  Numpy.Ufuncs.add mean product
+        let factor =
+          match method_ with
+          | "cholesky" -> Numpy.Linalg.cholesky cov
+          | "eigh" ->
+              let w, v = Numpy.Linalg.eigh cov in
+              let root = L.expand_dims (L.sqrt w) [| -2 |] in
+              L.mul v (NL.broadcast_to root (shape v))
+          | "svd" -> (
+              match Numpy.Linalg.svd cov with
+              | [ u; s; _ ] ->
+                  let root = L.expand_dims (L.sqrt s) [| -2 |] in
+                  L.mul u (NL.broadcast_to root (shape u))
+              | _ -> failwith "multivariate_normal: svd arity")
+          | other ->
+              invalid_arg
+                ("method must be one of {'svd', 'eigh', 'cholesky'}; got "
+               ^ other)
+        in
+        let z =
+          C.with_dtypes ~float_dtype (fun () ->
+              C.normal key ~shape:(Array.append sh [| event |]))
+        in
+        let product = Numpy.Einsum.einsum "...ij,...j->...i" [ factor; z ] in
+        Numpy.Ufuncs.add mean product
     | _ -> assert false)

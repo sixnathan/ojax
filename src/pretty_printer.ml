@@ -932,7 +932,10 @@ let python_float_argument nd =
     if p >= 9 || Int32.bits_of_float d = bits then d else shortest (p + 1)
   in
   if Float.is_finite x then
-    lit_value (Ndarray.of_floats Dtype.F64 [||] [| shortest 1 |])
+    let shown =
+      match Ndarray.python_float nd with Some d -> d | None -> shortest 1
+    in
+    lit_value (Ndarray.of_floats Dtype.F64 [||] [| shown |])
     ^ ":" ^ lit_short nd
   else jax_literal nd
 

@@ -1295,7 +1295,8 @@ let gather_dnums_attr (d : gather_dims) index_vector_dim =
         dim_field "operand_batching_dims" d.g_operand_batching_dims;
         dim_field "start_indices_batching_dims" d.g_start_indices_batching_dims;
         dim_field "start_index_map" d.start_index_map;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.gather<" ^ String.concat ", " parts ^ ">"
@@ -1310,7 +1311,8 @@ let scatter_dnums_attr (d : scatter_dims) index_vector_dim =
         dim_field "scatter_indices_batching_dims"
           d.s_scatter_indices_batching_dims;
         dim_field "scatter_dims_to_operand_dims" d.scatter_dims_to_operand_dims;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.scatter<" ^ String.concat ", " parts ^ ">"
@@ -3051,7 +3053,12 @@ and widen_operands ctx (eqn : eqn) (in_ids : int list) =
       ({ eqn with inputs = List.map fst widened }, List.map snd widened)
 
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
-  let eqn, in_ids = widen_operands ctx eqn in_ids in
+  let eqn, in_ids =
+    match (eqn.prim, eqn.inputs) with
+    | Pow, [ l; r ] when (atom_aval l).dtype <> (atom_aval r).dtype ->
+        (eqn, in_ids)
+    | _ -> widen_operands ctx eqn in_ids
+  in
   try emit_eqn_unchecked ctx eqn in_ids
   with Invalid_argument msg when msg = "Stablehlo.Emit: arity" ->
     failwith

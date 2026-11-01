@@ -610,7 +610,9 @@ let splat dt sh x =
       (Broadcast_in_dim { shape = sh; dims = [||] })
       [ Concrete (splat_host dt [||] 1 x) ]
 
-let py_scalar dt x = Concrete (Ndarray.as_weak (splat_host dt [||] 1 x))
+let py_scalar dt x =
+  Concrete
+    (Ndarray.with_python_float (Ndarray.as_weak (splat_host dt [||] 1 x)) x)
 
 let get_aval = function
   | Concrete a ->

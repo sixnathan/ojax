@@ -121,6 +121,9 @@ let like v x =
 
 let pyf = JU.py_float
 
+let param_float x =
+  match !float_override with Some d -> npf d x | None -> JU.py_float x
+
 let conv v dt =
   let a = C.get_aval v in
   if a.dtype = dt && not a.weak_type then v else L.convert_element_type v dt
@@ -170,15 +173,16 @@ let int_const d v =
 
 let int_const_like example v =
   match int_const (dtype_of example) v with
-  | Concrete nd when (C.get_aval example).weak_type ->
-      Concrete (Nd.as_weak nd)
+  | Concrete nd when (C.get_aval example).weak_type -> Concrete (Nd.as_weak nd)
   | c -> c
 
 let int_bounds dt =
   let bits = Dtypes.itemsize_bits dt in
   match dt with
   | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 | D.Uint2 | D.Uint4 ->
-      (0L, if bits >= 64 then Int64.max_int else Int64.pred (Int64.shift_left 1L bits))
+      ( 0L,
+        if bits >= 64 then Int64.max_int
+        else Int64.pred (Int64.shift_left 1L bits) )
   | _ ->
       if bits >= 64 then (Int64.min_int, Int64.max_int)
       else
@@ -303,14 +307,12 @@ let jit_body_uniform key ~minval ~maxval ~shape ~dt =
 
 let uniform_v key ~minval ~maxval ~shape ~dt =
   jit_region "_uniform" (shape, dt) [ key; minval; maxval ] (function
-    | [ key; minval; maxval ] ->
-        jit_body_uniform key ~minval ~maxval ~shape ~dt
+    | [ key; minval; maxval ] -> jit_body_uniform key ~minval ~maxval ~shape ~dt
     | _ -> assert false)
 
 let uniform_kw key ~minval ~maxval ~shape ~dt =
   jit_region "_uniform" (shape, dt, "kw") [ key; maxval; minval ] (function
-    | [ key; maxval; minval ] ->
-        jit_body_uniform key ~minval ~maxval ~shape ~dt
+    | [ key; maxval; minval ] -> jit_body_uniform key ~minval ~maxval ~shape ~dt
     | _ -> assert false)
 
 let uniform_py key ~shape ~dt =
@@ -546,15 +548,20 @@ let gamma_impl ~log_space key a =
   let split_count =
     prod (Array.sub a_shape key_rank (Array.length a_shape - key_rank))
   in
-  let keys = L.reshape key [| prod (Array.sub (shape_of key) 0 key_rank); 2 |] in
+  let keys =
+    L.reshape key [| prod (Array.sub (shape_of key) 0 key_rank); 2 |]
+  in
   let keys =
     List.hd
       (Interpreters.Batching.vmap
          (function
-           | [ k ] -> [ PR.random_split k [| split_count |] ] | _ -> assert false)
+           | [ k ] -> [ PR.random_split k [| split_count |] ]
+           | _ -> assert false)
          [ Some 0 ] [ keys ])
   in
-  let keys = L.reshape keys [| Array.fold_left ( * ) 1 (shape_of keys) / 2; 2 |] in
+  let keys =
+    L.reshape keys [| Array.fold_left ( * ) 1 (shape_of keys) / 2; 2 |]
+  in
   let alphas = L.reshape a [| prod a_shape |] in
   let samples =
     Interpreters.Batching.vmap
@@ -588,7 +595,8 @@ let gamma_grad sample a ~log_space =
 
 let () =
   C.random_gamma_hook := gamma_impl;
-  C.random_gamma_grad_hook := fun ~log_space sample a -> gamma_grad sample a ~log_space
+  C.random_gamma_grad_hook :=
+    fun ~log_space sample a -> gamma_grad sample a ~log_space
 
 let gamma_v key ~a ~shape ~dt ~log_space =
   jit_region "_gamma" (shape, dt, log_space) [ key; a ] (function
@@ -732,7 +740,7 @@ let geometric k ~shape ~p =
   let idt_ = Dtypes.default_int_dtype () in
   let pdt = fdt () in
   jit_region "_geometric" (shape, idt_)
-    [ k; pyf p ]
+    [ k; param_float p ]
     (function
       | [ key; p ] ->
           let u = uniform_py key ~shape ~dt:pdt in
@@ -939,7 +947,7 @@ let stirling_tail k =
   let idx = conv k D.I32 in
   let i32_lit x = Concrete (Nd.of_floats D.I32 [||] [| x |]) in
   let idx = L.select (L.lt idx (i32_lit 0.0)) (L.add idx (i32_lit 10.0)) idx in
-  let n = (shape_of idx) in
+  let n = shape_of idx in
   let start =
     C.bind1
       (Broadcast_in_dim
@@ -1112,7 +1120,7 @@ let binomial_v key ~count ~prob ~shape ~dt =
 
 let binomial k ~shape ~count ~prob =
   let dt = fdt () in
-  binomial_v k ~count:(pyf count) ~prob:(pyf prob) ~shape ~dt
+  binomial_v k ~count:(param_float count) ~prob:(param_float prob) ~shape ~dt
 
 let dirichlet k ~alpha ~shape =
   let dt = fdt () in
@@ -1192,7 +1200,6 @@ let generalized_normal_v key ~p ~shape =
     | _ -> assert false)
 
 let generalized_normal k ~shape ~p = generalized_normal_v k ~p:(pyf p) ~shape
-
 let random_gamma_grad alpha sample = L.random_gamma_grad alpha sample
 
 let bits_as k ~shape ~dtype =
@@ -1200,8 +1207,7 @@ let bits_as k ~shape ~dtype =
   match dtype with
   | D.Uint64 -> PR.random_bits (wrap k) ~bit_width:64 ~shape
   | D.Uint32 -> PR.random_bits (wrap k) ~bit_width:32 ~shape
-  | (D.Uint8 | D.Uint16)
-    when Config.value Config.threefry_partitionable ->
+  | (D.Uint8 | D.Uint16) when Config.value Config.threefry_partitionable ->
       PR.random_bits (wrap k) ~bit_width:(Dtypes.itemsize_bits dtype) ~shape
   | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 ->
       C.bind1 (Convert_element_type dtype)

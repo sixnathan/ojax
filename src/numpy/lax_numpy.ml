@@ -1645,6 +1645,13 @@ let take_trailing a indices =
   let wrapped =
     List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
   in
+  let wrapped =
+    List.map
+      (fun w ->
+        if dtype w = D.I32 then w
+        else bind1 (T.Convert_element_type D.I32) [ w ])
+      wrapped
+  in
   let start = bind1 (T.Concatenate 1) (List.map expand_last wrapped) in
   let start = match wrapped with [ w ] -> expand_last w | _ -> start in
   let batch = Array.length (shape (List.hd indices)) in
@@ -1688,11 +1695,18 @@ let default_diag ~offset ~axis1 ~axis2 a =
   let iota_from start =
     let base =
       bind1
-        (T.Iota { dtype = D.I32; shape = [| diag_size |]; dimension = 0 })
+        (T.Iota
+           {
+             dtype = Dtypes.default_int_dtype ();
+             shape = [| diag_size |];
+             dimension = 0;
+           })
         []
     in
     if start = 0 then base
-    else bind1 T.Add [ base; scalar D.I32 (float_of_int start) ]
+    else
+      bind1 T.Add
+        [ base; scalar (Dtypes.default_int_dtype ()) (float_of_int start) ]
   in
   let i = iota_from 0 in
   let j = iota_from (abs offset) in
@@ -2298,11 +2312,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
             (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
             [ scalar dt (float_of_int nobs) ] )
     | Some wv ->
-        let lifted =
-          bind1
-            (T.Broadcast_in_dim { shape = [| 1; nobs |]; dims = [| 1 |] })
-            [ wv ]
-        in
+        let lifted = bind1 (T.Reshape [| 1; nobs |]) [ wv ] in
         let total = bind1 (T.Reduce_sum [| 1 |]) [ lifted ] in
         let product = bind1 T.Mul [ x; lifted ] in
         let summed = bind1 (T.Reduce_sum [| 1 |]) [ product ] in
@@ -2310,10 +2320,12 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
         (mean, Jnp_util.broadcast_to total (shape mean))
   in
   let first =
-    bind1
-      (T.Slice
-         { start_indices = [| 0 |]; limit_indices = [| 1 |]; strides = None })
-      [ w_sum ]
+    if (shape w_sum).(0) = 1 then w_sum
+    else
+      bind1
+        (T.Slice
+           { start_indices = [| 0 |]; limit_indices = [| 1 |]; strides = None })
+        [ w_sum ]
   in
   let first = bind1 (T.Squeeze [| 0 |]) [ first ] in
   let f =

@@ -142,28 +142,21 @@ let rec while_loop (cond_fun : value list -> value)
               Hashtbl.replace first_use v.vid i
         | _ -> ()
       in
-      List.iteri
-        (fun i (e : eqn) -> List.iter (note i) e.inputs)
-        c.jaxpr.eqns;
+      List.iteri (fun i (e : eqn) -> List.iter (note i) e.inputs) c.jaxpr.eqns;
       List.iter (note max_int) c.jaxpr.outs;
       let use_of (v : var) =
         Option.value (Hashtbl.find_opt first_use v.vid) ~default:max_int
       in
       let ordered =
         List.stable_sort
-          (fun ((a : var), _) ((b : var), _) ->
-            compare (use_of a) (use_of b))
+          (fun ((a : var), _) ((b : var), _) -> compare (use_of a) (use_of b))
           (List.combine (const_part @ hoist_part)
              (List.map (fun nd -> Concrete nd) c.consts @ hoisted))
       in
       ( {
           c with
           consts = [];
-          jaxpr =
-            {
-              c.jaxpr with
-              in_binders = List.map fst ordered @ arg_part;
-            };
+          jaxpr = { c.jaxpr with in_binders = List.map fst ordered @ arg_part };
         },
         List.map snd ordered )
     in

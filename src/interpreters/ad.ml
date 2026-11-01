@@ -1657,7 +1657,8 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
         [
           None;
           Some
-            (fun g ans -> lmul g (!Core.random_gamma_grad_hook ~log_space ans a));
+            (fun g ans ->
+              lmul g (!Core.random_gamma_grad_hook ~log_space ans a));
         ]
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _

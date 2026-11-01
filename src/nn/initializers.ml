@@ -149,7 +149,11 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
     let idx =
       C.bind1
         (Broadcast_in_dim { shape = [| 1 |]; dims = [||] })
-        [ Numpy.Jnp_util.py_int ((shape.(0) - 1) / 2) ]
+        [
+          Concrete
+            (Nd.of_floats Dtype.I32 [||]
+               [| float_of_int ((shape.(0) - 1) / 2) |]);
+        ]
     in
     C.bind1
       (Scatter
@@ -166,14 +170,17 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
          })
       [ w; idx; ortho ]
   else
-  let center = Array.sub shape 0 (rank - 2) in
-  let mid = Array.map (fun d -> (d - 1) / 2) center in
-  let cfg =
-    Array.init rank (fun i ->
-        if i < rank - 2 then (mid.(i), center.(i) - mid.(i) - 1, 0)
-        else (0, 0, 0))
-  in
-  let expanded =
-    C.bind1 (Reshape (Array.append (Array.make (rank - 2) 1) a.shape)) [ ortho ]
-  in
-  C.bind1 (Pad cfg) [ expanded; Concrete (Nd.of_floats a.dtype [||] [| 0.0 |]) ]
+    let center = Array.sub shape 0 (rank - 2) in
+    let mid = Array.map (fun d -> (d - 1) / 2) center in
+    let cfg =
+      Array.init rank (fun i ->
+          if i < rank - 2 then (mid.(i), center.(i) - mid.(i) - 1, 0)
+          else (0, 0, 0))
+    in
+    let expanded =
+      C.bind1
+        (Reshape (Array.append (Array.make (rank - 2) 1) a.shape))
+        [ ortho ]
+    in
+    C.bind1 (Pad cfg)
+      [ expanded; Concrete (Nd.of_floats a.dtype [||] [| 0.0 |]) ]

@@ -421,7 +421,7 @@ let reduce_axes_batch (make : int array -> primitive) (axes : int array)
   | None -> (b1 (make axes) [ x ], None)
   | Some d ->
       let new_axes =
-        Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes
+        Np_ints.mark (Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes)
       in
       let shift =
         Array.fold_left (fun acc ax -> if ax < d then acc + 1 else acc) 0 axes
@@ -862,9 +862,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       match (vals, bdims) with
       | [ key; msg ], [ bk; bm ] ->
           let front v b =
-            match b with
-            | None -> v
-            | Some _ -> bdim_at_front axis_size v b
+            match b with None -> v | Some _ -> bdim_at_front axis_size v b
           in
           (b1 prim [ front key bk; front msg bm ], Some 0)
       | _ -> failwith "batching: expected 2 prng operands")
@@ -875,11 +873,10 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
               [ bdim_at_front axis_size key bk; bdim_at_front axis_size a ba ],
             Some 0 )
       | _ -> failwith "batching: expected 2 prng operands")
-  | Threefry2x32 | Iota_2x32_shape _ | While _
-  | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Triangular_solve _
-  | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
-  | Tridiagonal _ ->
+  | Threefry2x32 | Iota_2x32_shape _ | While _ | Cholesky | Householder_product
+  | Lu | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3
+  | Ormqr _ | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _
+  | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "batching: handled by unstacking in batch_process_primitive"
   | Collective _ ->
       failwith "batching: collectives handled by batch_process_primitive"
@@ -1248,10 +1245,10 @@ let unstacks_operands prim (bdims : int option list) =
   | ( ( Conv_general_dilated _ | Reduce_window _ | Reduce_window_max _
       | Reduce_window_min _ | Reduce_window_sum _ | Select_and_gather_add _
       | Select_and_scatter _ | Select_and_scatter_add _ | Threefry2x32
-      | Iota_2x32_shape _ | While _ | Cholesky
-      | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-      | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
-      | Schur _ | Svd _ | Tridiagonal _ | Rng_bit_generator _ ),
+      | Iota_2x32_shape _ | While _ | Cholesky | Householder_product | Lu
+      | Lu_pivots_to_permutation _ | Qr _ | Triangular_solve _
+      | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
+      | Tridiagonal _ | Rng_bit_generator _ ),
       _ ) ->
       true
   | Custom_vjp_call id, _ -> (

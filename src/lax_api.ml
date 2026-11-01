@@ -240,8 +240,7 @@ let broadcast x sizes =
 
 let broadcast_to_rank x rank =
   let missing = rank - ndim x in
-  if missing <= 0 then x
-  else expand_dims x (Array.init missing Fun.id)
+  if missing <= 0 then x else expand_dims x (Array.init missing Fun.id)
 
 let broadcast_shapes shapes =
   let rank =
@@ -790,10 +789,7 @@ let cummax = Lax.cummax
 let cummin = Lax.cummin
 let cumlogsumexp = Lax.cumlogsumexp
 let custom_linear_solve = Lax.custom_linear_solve
-
-let map_scan f xs =
-  Lax.scan f [] xs
-
+let map_scan f xs = Lax.scan f [] xs
 let switch = Lax.switch
 
 let map ?batch_size f xs =

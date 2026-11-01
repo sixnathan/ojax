@@ -35,6 +35,7 @@ let broadcast_to_shape v shape =
 
 let i32_scalar x =
   Concrete (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| x |])
+
 let u32_scalar x = Concrete (Ndarray.of_floats u32 [||] [| x |])
 
 let rotation_array values =
@@ -89,7 +90,8 @@ let threefry_step = function
 
 let threefry2x32_body key1 key2 c1 c2 =
   let shape =
-    Core.elementwise_shape [ (Core.get_aval c1).shape; (Core.get_aval key1).shape ]
+    Core.elementwise_shape
+      [ (Core.get_aval c1).shape; (Core.get_aval key1).shape ]
   in
   let spread v = broadcast_to_shape v shape in
   let key3 = xor (xor key1 key2) (u32_scalar 466688986.0) in
@@ -196,8 +198,7 @@ let batched_threefry k1 k2 c1 c2 =
         b1
           (Broadcast_in_dim
              {
-               shape =
-                 Array.append ka (Array.make (nd - Array.length ka) 1);
+               shape = Array.append ka (Array.make (nd - Array.length ka) 1);
                dims = Array.init (Array.length ka) Fun.id;
              })
           [ k ]

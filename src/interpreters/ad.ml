@@ -190,15 +190,9 @@ let slice_in_dim ~axis ?(stride = 1) start stop x =
   let start_indices = Array.make n 0 and limit_indices = Array.copy shape in
   start_indices.(axis) <- start;
   limit_indices.(axis) <- stop;
-  let strides =
-    if stride = 1 then None
-    else begin
-      let st = Array.make n 1 in
-      st.(axis) <- stride;
-      Some st
-    end
-  in
-  b1 (Slice { start_indices; limit_indices; strides }) [ x ]
+  let st = Array.make n 1 in
+  st.(axis) <- stride;
+  b1 (Slice { start_indices; limit_indices; strides = Some st }) [ x ]
 
 let interleave a b axis =
   let an = (Core.get_aval a).shape.(axis) in
@@ -1927,86 +1921,133 @@ let rec jvp_pairs prim primals tangents =
       match (primals, tangents) with
       | [ a ], [ t ] -> svd_jvp ~full_matrices ~compute_uv a t
       | _ -> arity ())
-  | Scan ({ num_consts; num_carry; jaxpr; _ } as s) when num_consts > 0 ->
-      let lifted =
-        Scan
-          {
-            s with
-            num_consts = 0;
-            num_carry = num_consts + num_carry;
-            jaxpr = Core.scan_lift_consts ~num_consts jaxpr;
-          }
+  | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
+      let split3 l =
+        match Util.split_list l [ num_consts; num_carry ] with
+        | [ a; b; c ] -> (a, b, c)
+        | _ -> arity ()
       in
-      let drop = List.filteri (fun i _ -> i >= num_consts) in
-      let p, t = jvp_pairs lifted primals tangents in
-      (drop p, drop t)
-  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
-      let split2 l n =
+      let split_at l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
       let mapped_leading (a : aval) =
         let n = Array.length a.shape in
         { a with shape = Array.sub a.shape 1 (n - 1) }
       in
-      let nc = num_carry in
-      let carry, xs = split2 primals nc in
-      let carry_t, xs_t = split2 tangents nc in
-      let nx = List.length xs in
-      let num_ys = List.length jaxpr.jaxpr.outs - nc in
+      let keep_nz flags l =
+        List.concat (List.map2 (fun z v -> if z then [] else [ v ]) flags l)
+      in
+      let weave flags (avals : aval list) pruned =
+        let rest = ref pruned in
+        List.map2
+          (fun z a ->
+            if z then Ad_util.symbolic_zero_of_aval a
+            else
+              match !rest with
+              | v :: tl ->
+                  rest := tl;
+                  v
+              | [] -> arity ())
+          flags avals
+      in
+      let instantiate v =
+        if Ad_util.is_symbolic_zero v then
+          let a = Core.get_aval v in
+          Core.splat a.dtype a.shape 0.0
+        else v
+      in
+      let consts, carry, xs = split3 primals in
+      let consts_t, carry_t, xs_t = split3 tangents in
+      let num_ys = List.length jaxpr.jaxpr.outs - num_carry in
+      let const_avals = List.map Core.get_aval consts in
       let carry_avals = List.map Core.get_aval carry in
       let x_slice_avals =
         List.map (fun x -> mapped_leading (Core.get_aval x)) xs
       in
+      let const_zero = List.map Ad_util.is_symbolic_zero consts_t in
       let x_zero = List.map Ad_util.is_symbolic_zero xs_t in
       let ys_zero = ref [] in
       let trace_body carry_zero observed =
-        Jaxpr.make_jaxpr
-          (carry_avals @ carry_avals @ x_slice_avals @ x_slice_avals)
-          (fun args ->
-            let pc, r1 = split2 args nc in
-            let tc, r2 = split2 r1 nc in
-            let px, tx = split2 r2 nx in
+        let in_avals =
+          const_avals
+          @ keep_nz const_zero const_avals
+          @ carry_avals
+          @ keep_nz carry_zero carry_avals
+          @ x_slice_avals
+          @ keep_nz x_zero x_slice_avals
+        in
+        Jaxpr.make_jaxpr in_avals (fun args ->
+            let take l n =
+              let a, b = split_at !l n in
+              l := b;
+              a
+            in
+            let args = ref args in
+            let count flags = List.length (List.filter not flags) in
+            let pk = take args num_consts in
+            let tk = take args (count const_zero) in
+            let pc = take args num_carry in
+            let tc = take args (count carry_zero) in
+            let px = take args (List.length xs) in
+            let tx = !args in
             let po, to_ =
               jvp
                 (fun a -> Jaxpr.eval_closed_jaxpr jaxpr a)
-                (pc @ px)
-                (restore_symbolic_zeros carry_zero tc
-                @ restore_symbolic_zeros x_zero tx)
+                (pk @ pc @ px)
+                (weave const_zero const_avals tk
+                @ weave carry_zero carry_avals tc
+                @ weave x_zero x_slice_avals tx)
             in
-            let pc', py = split2 po nc in
-            let tc', ty = split2 to_ nc in
+            let pc', py = split_at po num_carry in
+            let tc', ty = split_at to_ num_carry in
             observed :=
               List.map2
                 (fun z t -> z && Ad_util.is_symbolic_zero t)
                 carry_zero tc';
             ys_zero := List.map Ad_util.is_symbolic_zero ty;
-            pc' @ tc' @ py @ ty)
+            pc'
+            @ List.map instantiate (keep_nz carry_zero tc')
+            @ py @ keep_nz !ys_zero ty)
       in
       let carry_zero, new_body =
         carry_zero_fixpoint trace_body
           (List.map Ad_util.is_symbolic_zero carry_t)
       in
-      let new_operands = carry @ carry_t @ xs @ xs_t in
+      let operands =
+        let dots zeros l = List.map instantiate (keep_nz zeros l) in
+        let kd = dots const_zero consts_t in
+        let cd = dots carry_zero carry_t in
+        let xd = dots x_zero xs_t in
+        consts @ kd @ carry @ cd @ xs @ xd
+      in
+      let nz_consts = List.length (keep_nz const_zero consts) in
+      let nz_carry = List.length (keep_nz carry_zero carry) in
       let out =
         Core.bind
           (Scan
              {
                length;
                reverse;
-               num_consts = 0;
-               num_carry = 2 * nc;
+               num_consts = num_consts + nz_consts;
+               num_carry = num_carry + nz_carry;
                jaxpr = new_body;
                unroll;
              })
-          new_operands
+          operands
       in
-      let pcarry, r1 = split2 out nc in
-      let tcarry, r2 = split2 r1 nc in
-      let pys, tys = split2 r2 num_ys in
+      let pcarry, r1 = split_at out num_carry in
+      let tcarry, r2 = split_at r1 nz_carry in
+      let pys, tys = split_at r2 num_ys in
       let primal_outs = pcarry @ pys in
       let tangent_outs =
-        restore_symbolic_zeros carry_zero tcarry
-        @ restore_symbolic_zeros !ys_zero tys
+        weave carry_zero carry_avals tcarry
+        @ weave !ys_zero
+            (List.map
+               (fun y ->
+                 let a = Core.get_aval y in
+                 a)
+               pys)
+            tys
       in
       (primal_outs, tangent_outs)
   | While { cond_nconsts; body_nconsts; cond; body }

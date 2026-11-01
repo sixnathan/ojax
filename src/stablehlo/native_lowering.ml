@@ -414,9 +414,11 @@ let betainc_impl dt = function
       let b_zero = L.eq b0 (like b0 0.0) ||: L.eq a0 (like a0 Float.infinity) in
       let x_zero = L.eq x0 (like x0 0.0) in
       let x_one = L.eq x0 (like x0 1.0) in
+      let x_not_zero = not_ x_zero in
+      let x_not_one = not_ x_one in
       let nan = is_nan a0 ||: is_nan b0 ||: is_nan x0 in
-      let result_zero = b_zero &&: not_ x_one ||: (a_zero &&: x_zero) in
-      let result_one = a_zero &&: not_ x_zero ||: (b_zero &&: x_one) in
+      let result_zero = b_zero &&: x_not_one ||: (a_zero &&: x_zero) in
+      let result_one = a_zero &&: x_not_zero ||: (b_zero &&: x_one) in
       let result_nan =
         L.lt a0 (like a0 0.0)
         ||: L.lt b0 (like b0 0.0)

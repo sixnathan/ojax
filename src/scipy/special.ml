@@ -797,7 +797,7 @@ let div_lit x v = x /! scalar_of x v
 let polyval = Poly.polyval
 let int_full dt v = T.Concrete (Nd.of_floats dt [||] [| float_of_int v |])
 let default_int () = Dts.default_int_dtype ()
-let py_int v = int_full (default_int ()) v
+let py_int = JU.py_int
 
 let to_inexact = function
   | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.I4 | D.Uint8 | D.Uint16
@@ -952,7 +952,7 @@ let piecewise_body dt x condlist funclist extra =
       (fun piece ops ->
         match (piece, ops) with
         | Piece_fn f, [ v ] -> [ NL.astype (f (v :: extra)) dt ]
-        | Piece_const c, [ _ ] -> [ NL.astype c dt ]
+        | Piece_const c, [ _ ] -> [ C.convert_like ~weak:false (NL.copy c) dt ]
         | _ -> invalid_arg "piecewise: arity")
       funclist
   in
@@ -972,6 +972,7 @@ let piecewise ~key ?(extra = []) x conds funcs =
   in
   let expand c =
     let sh = shape c in
+    let c = C.convert_like ~weak:false c D.Bool in
     bind1
       (T.Broadcast_in_dim
          {
@@ -1326,7 +1327,7 @@ let multigammaln a d =
 
 let rel_entr p q =
   let p, q = real_only2 "rel_entr" p q in
-  let zero = scalar_of p 0.0 in
+  let zero = lax_const p 0.0 in
   let both = L.bitwise_and (L.gt p zero) (L.gt q zero) in
   let one_zero = L.bitwise_and (L.eq p zero) (L.ge q zero) in
   let safe_p = where_ both p (py_int 1) in
@@ -1547,7 +1548,7 @@ let ndtri p =
   and q1 = coeff_of p c_ndtri_q1
   and p2 = coeff_of p c_ndtri_p2
   and q2 = coeff_of p c_ndtri_q2 in
-  let c v = scalar_of p v in
+  let c v = lax_const p v in
   let maybe = where_ (UF.greater p (c (-.Float.expm1 (-2.0)))) (c 1.0 -! p) p in
   let sanitized =
     where_ (UF.equal maybe (c 0.0)) (L.broadcast (c 0.5) sh) maybe
@@ -1555,7 +1556,7 @@ let ndtri p =
   let w = sanitized -! c 0.5 in
   let ww = L.square w in
   let x_big = w +! (w *! ww *! (polyval p0 ww /! polyval q0 ww)) in
-  let x_big = x_big *! neg_ (c (sqrt (2.0 *. Float.pi))) in
+  let x_big = x_big *! c (-.sqrt (2.0 *. Float.pi)) in
   let z = L.sqrt (c (-2.0) *! L.log sanitized) in
   let first = z -! (L.log z /! z) in
   let inv () = lit_div 1.0 z in
@@ -1685,11 +1686,13 @@ let zeta_series x q =
   strides.(rank - 1) <- 2;
   let t1 = L.slice ~strides t1 begins ends in
   let fmax = if is_f32 then 3.4028234663852886e38 else Float.max_float in
-  let t1 = NL.clip ~max:fmax t1 in
+  let t1 = NL.clip_values ~max:(lax_const a fmax) t1 in
   let coefs =
-    NL.expand_dims
-      (coeff_of a (Array.sub c_bernoulli_coefs 0 (shape t1).(rank - 1)))
-      (Array.init (ndim a) Fun.id)
+    let n = (shape t1).(rank - 1) in
+    T.Concrete
+      (Nd.of_floats (dtype a)
+         (Array.append (Array.make (ndim a) 1) [| n |])
+         (Array.sub c_bernoulli_coefs 0 n))
   in
   let t1 = t1 /! coefs in
   let total = t0 *! (lit 0.5 +! RED.sum ~axis:[| -1 |] t1) in
@@ -1916,7 +1919,7 @@ let owens_t_quadrature h a =
 let owens_t_primal h a =
   let h = UF.abs h in
   let abs_a = UF.abs a in
-  let root_2 = scalar_of h (sqrt 2.0) in
+  let root_2 = lax_const h (sqrt 2.0) in
   let h_normed = h /! root_2 in
   let modified_a = where_ (le_ abs_a 1.0) abs_a (UF.reciprocal abs_a) in
   let modified_h = where_ (le_ abs_a 1.0) h (abs_a *! h) in
@@ -1956,11 +1959,16 @@ let rec owens_t_custom h a =
          match (primals, tangents) with
          | [ h; a ], [ dh; da ] ->
              let result = owens_t_custom h a in
-             let root_2 = scalar_of h (sqrt 2.0) in
+             let root_2 = lax_const h (sqrt 2.0) in
+             let rounded =
+               Nd.get_f
+                 (Nd.of_floats (dtype h) [||] [| sqrt (2.0 *. Float.pi) |])
+                 [||]
+             in
              let dout_dh =
                neg_ (L.exp (lit_mul (-0.5) (L.square h)))
                *! bind1 T.Erf [ a *! h /! root_2 ]
-               /! lit_mul 2.0 (scalar_of h (sqrt (2.0 *. Float.pi)))
+               /! lax_const h (2.0 *. rounded)
              in
              let sq_a1 () = add_lit (L.square a) 1.0 in
              let dout_da =
@@ -2018,18 +2026,18 @@ let while3 cond body init =
     (function [ a; b; c ] -> body a b c | _ -> failwith "while: arity")
     init
 
-let hyp_cond x prec _ k term serie_abs =
-  band (UF.less k (py_int 250)) (UF.greater (L.div (L.abs term) serie_abs) prec)
-  |> fun v ->
-  ignore x;
-  v
+let hyp_cond prec k term serie =
+  let in_range = UF.less k (py_int 250) in
+  let abs_term = L.abs term in
+  let ratio = L.div abs_term (L.abs serie) in
+  band in_range (UF.greater ratio prec)
 
 let hyp1f1_serie a b x =
   let prec = scalar_of x (eps_of x) in
   let init = [ scalar_of x 1.0; py_int 1; a /! b *! x ] in
   List.hd
     (while3
-       (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
+       (fun serie k term -> hyp_cond prec k term serie)
        (fun serie k term ->
          let serie = serie +! term in
          let term = term *! ((a +! k) /! (b +! k) *! x /! (k +! py_int 1)) in
@@ -2042,7 +2050,7 @@ let hyp1f1_asymptotic a b x =
   let serie =
     List.hd
       (while3
-         (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
+         (fun serie k term -> hyp_cond prec k term serie)
          (fun serie k term ->
            let serie = serie +! term in
            let term =
@@ -2079,7 +2087,7 @@ let hyp1f1_deriv shifted a b x =
   let init = [ scalar_of x 0.0; py_int 1; a /! b *! x ] in
   List.hd
     (while3
-       (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
+       (fun serie k term -> hyp_cond prec k term serie)
        (fun serie k term ->
          let serie = serie +! (term *! shifted k) in
          let term = term *! ((a +! k) /! (b +! k) *! x /! (k +! py_int 1)) in
@@ -2115,6 +2123,7 @@ let rec hyp1f1_apply a b x =
                             (fun k -> digamma (a +! k) -! digamma a)
                             a b x)
                         vals))
+               *! da
              in
              let wrt_b =
                List.hd
@@ -2127,6 +2136,7 @@ let rec hyp1f1_apply a b x =
                             (fun k -> digamma b -! digamma (b +! k))
                             a b x)
                         vals))
+               *! db
              in
              let wrt_x =
                JU.jit1 "_hyp1f1_x_derivative"
@@ -2135,8 +2145,9 @@ let rec hyp1f1_apply a b x =
                        a /! b *! hyp1f1_apply (add_lit a 1.0) (add_lit b 1.0) x
                    | _ -> assert false)
                  primals
+               *! dx
              in
-             (out, [ L.add (L.add (wrt_a *! da) (wrt_b *! db)) (wrt_x *! dx) ])
+             (out, [ Ad_util.add_any (Ad_util.add_any wrt_a wrt_b) wrt_x ])
          | _ -> failwith "hyp1f1: arity")
        [ a; b; x ])
 
@@ -2626,7 +2637,7 @@ let hyp2f1_deriv shifted a b c x =
   let init = [ scalar_of x 0.0; py_int 1; a *! b /! c *! x ] in
   List.hd
     (while3
-       (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
+       (fun serie k term -> hyp_cond prec k term serie)
        (fun serie k term ->
          let serie = serie +! (term *! shifted k) in
          let term =

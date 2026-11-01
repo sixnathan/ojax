@@ -90,7 +90,16 @@ let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
   List.iter
     (fun (e : eqn) ->
       let in_vals = List.map read e.inputs in
-      let outs = Core.bind e.prim in_vals in
+      let outs =
+        match (e.prim, e.outs) with
+        | Convert_element_type _, [ v ] when v.vaval.weak_type ->
+            let saved = !Core.weak_convert in
+            Core.weak_convert := true;
+            Fun.protect
+              ~finally:(fun () -> Core.weak_convert := saved)
+              (fun () -> Core.bind e.prim in_vals)
+        | _ -> Core.bind e.prim in_vals
+      in
       List.iter2 write e.outs outs)
     jx.eqns;
   List.map read jx.outs
@@ -308,7 +317,7 @@ let shared_tracer builder nd =
 
 let get_or_make_const_tracer trace v =
   match v with
-  | Concrete nd when Array.length (Ndarray.shape nd) = 0 -> (
+  | Concrete nd -> (
       match shared_tracer (builder_of trace) nd with
       | Some t -> Tracer t
       | None -> plain_const_tracer trace v)

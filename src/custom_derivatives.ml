@@ -1,16 +1,16 @@
 open Types
 
-let instantiate_zero t =
+let instantiate_zero primal t =
   if Ad_util.is_symbolic_zero t then
     let a = Core.get_aval t in
-    if a.weak_type && Array.length a.shape = 0 then
+    if (Core.get_aval primal).weak_type && Array.length a.shape = 0 then
       Concrete (Ndarray.as_weak (Ndarray.of_floats a.dtype [||] [| 0.0 |]))
     else Core.splat a.dtype a.shape 0.0
   else t
 
 let custom_jvp ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =
   let rule primals tangents =
-    let tangents = List.map instantiate_zero tangents in
+    let tangents = List.map2 instantiate_zero primals tangents in
     jvp primals tangents
   in
   let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp = rule }) in

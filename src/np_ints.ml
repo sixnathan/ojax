@@ -51,3 +51,16 @@ let gather_fill_of prim =
   List.find_map
     (fun (other, repr, fill) -> if other == o then Some (repr, fill) else None)
     (Hashtbl.find_all gather_fills (Hashtbl.hash o))
+
+let clip_gathers : (int, Obj.t * bool) Hashtbl.t = Hashtbl.create 64
+
+let mark_gather_clip ~sorted prim =
+  let o = Obj.repr prim in
+  Hashtbl.add clip_gathers (Hashtbl.hash o) (o, sorted);
+  prim
+
+let gather_clip_of prim =
+  let o = Obj.repr prim in
+  List.find_map
+    (fun (other, sorted) -> if other == o then Some sorted else None)
+    (Hashtbl.find_all clip_gathers (Hashtbl.hash o))

@@ -733,17 +733,20 @@ let jax_params (e : eqn) =
       [ ("axis", Plain (string_of_int axis)); ("k", Plain (string_of_int k)) ]
   | Gather { dimension_numbers; slice_sizes } as p ->
       let fill = Np_ints.gather_fill_of p in
+      let clip = Np_ints.gather_clip_of p in
+      let sorted = clip = Some true in
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ( "fill_value",
           Plain (match fill with Some (r, _) -> r | None -> "None") );
-        ("indices_are_sorted", Plain "False");
+        ("indices_are_sorted", Plain (py_bool sorted));
         ( "mode",
           Plain
             (if fill <> None then "GatherScatterMode.FILL_OR_DROP"
+             else if clip <> None then "GatherScatterMode.CLIP"
              else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
-        ("unique_indices", Plain "False");
+        ("unique_indices", Plain (py_bool sorted));
       ]
   | Scatter { dimension_numbers; unique_indices } ->
       scatter_params dimension_numbers unique_indices

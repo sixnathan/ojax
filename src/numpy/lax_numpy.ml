@@ -1642,8 +1642,11 @@ let take_trailing a indices =
     List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
   in
   let wrapped = List.map (fun w -> convert w D.I32) wrapped in
-  let start = bind1 (T.Concatenate 1) (List.map expand_last wrapped) in
-  let start = match wrapped with [ w ] -> expand_last w | _ -> start in
+  let start =
+    match wrapped with
+    | [ w ] -> expand_last w
+    | _ -> bind1 (T.Concatenate 1) (List.map expand_last wrapped)
+  in
   let batch = Array.length (shape (List.hd indices)) in
   let dnums =
     {

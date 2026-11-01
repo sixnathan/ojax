@@ -90,6 +90,8 @@ let unique_symbol base =
   probe base
 
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
+let while_depth = ref 0
+let call_symbol_key jid = if !while_depth > 0 then jid lxor (1 lsl 61) else jid
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -2737,6 +2739,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
   let cond_ids =
     List.filteri (fun i _ -> i < cond_nconsts || i >= n_consts) carry_ids
   in
+  incr while_depth;
   enter_region_later ctx cond cond_ids "    cond {\n";
   Buffer.add_string ctx.buf "    } do {\n";
   ctx.next <- start;
@@ -2758,6 +2761,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
       outs =
         List.map (fun v -> A_var v) (cond_fake @ body_consts) @ body.jaxpr.outs;
     };
+  decr while_depth;
   Buffer.add_string ctx.buf "    }\n"
 
 and enter_region_later ctx cj target_ids header =
@@ -2922,14 +2926,14 @@ and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
 
 and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
   let fname =
-    match Hashtbl.find_opt call_symbols c.jid with
+    match Hashtbl.find_opt call_symbols (call_symbol_key c.jid) with
     | Some s -> s
     | None ->
         let s =
           Mlir_names.symbol_name
             (unique_symbol (Pretty_printer.call_name c.jid))
         in
-        Hashtbl.replace call_symbols c.jid s;
+        Hashtbl.replace call_symbols (call_symbol_key c.jid) s;
         emit_private_function ctx s c;
         s
   in
@@ -4046,6 +4050,7 @@ let emitting () = !emission_depth > 0
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
   Hashtbl.reset call_symbols;
+  while_depth := 0;
   symbol_counter := 0;
   seen_mesh := None;
   callback_seen := false;

@@ -38,8 +38,7 @@ let broadcast_shapes a b =
       else invalid_arg "take_along_axis: incompatible shapes")
 
 let wrap_negative indices axis_size =
-  let idt = dtype indices and ish = shape indices in
-  ignore ish;
+  let idt = dtype indices in
   NL.where_
     (bind1 T.Lt [ indices; full idt [||] 0.0 ])
     (bind1 T.Add [ indices; full idt [||] (float_of_int axis_size) ])

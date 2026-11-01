@@ -106,7 +106,8 @@ let prim_name = function
   | Select_n -> "select_n"
   | Convert_element_type _ -> "convert_element_type"
   | Broadcast_in_dim _ -> "broadcast_in_dim"
-  | Reshape _ -> "reshape"
+  | Reshape _ | Reshape_perm _ -> "reshape"
+  | Decomposable { dname; _ } -> dname
   | Reduce_sum _ -> "reduce_sum"
   | Dot_general _ -> "dot_general"
   | Acos -> "acos"
@@ -275,6 +276,13 @@ let prim_params = function
       "[broadcast_dimensions=" ^ int_tuple dims ^ " shape=" ^ int_tuple shape
       ^ "]"
   | Reshape ns -> "[new_sizes=" ^ int_tuple ns ^ "]"
+  | Decomposable { dparams; _ } ->
+      "["
+      ^ String.concat "," (List.map (fun (k, v) -> k ^ "=" ^ v) dparams)
+      ^ "]"
+  | Reshape_perm { new_sizes; dimensions } ->
+      "[new_sizes=" ^ int_tuple new_sizes ^ ",dimensions="
+      ^ int_tuple dimensions ^ "]"
   | Reduce_sum axes -> "[axes=" ^ int_tuple axes ^ "]"
   | Dot_general dd -> "[dimension_numbers=" ^ dot_dims_str dd ^ "]"
   | Integer_pow y -> "[y=" ^ string_of_int y ^ "]"
@@ -655,6 +663,13 @@ let jax_params (e : eqn) =
         ("new_sizes", Plain (py_ints ns));
         ("sharding", Plain "None");
       ]
+  | Decomposable { dparams; _ } -> List.map (fun (k, v) -> (k, Plain v)) dparams
+  | Reshape_perm { new_sizes; dimensions } ->
+      [
+        ("dimensions", Plain (py_ints dimensions));
+        ("new_sizes", Plain (py_ints new_sizes));
+        ("sharding", Plain "None");
+      ]
   | Transpose perm -> [ ("permutation", Plain (py_ints perm)) ]
   | Reduce_sum axes ->
       [ ("axes", Plain (py_ints axes)); ("out_sharding", Plain "None") ]
@@ -701,15 +716,6 @@ let jax_params (e : eqn) =
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
   | Empty2 dt ->
       [ ("dtype", Plain (dn dt)); ("memory_space", Plain "MemorySpace.Device") ]
-  | Pad cfg as p when Np_ints.prim_marked p ->
-      let one (lo, hi, i) =
-        Printf.sprintf "(np.int64(%d), np.int64(%d), %d)" lo hi i
-      in
-      let items = Array.to_list (Array.map one cfg) in
-      let body =
-        match items with [ x ] -> x ^ "," | _ -> String.concat ", " items
-      in
-      [ ("padding_config", Plain ("(" ^ body ^ ")")) ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]

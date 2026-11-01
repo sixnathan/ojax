@@ -12,12 +12,54 @@ let aval = Core.get_aval
 let shape v = (aval v).T.shape
 let dtype v = (aval v).T.dtype
 
+let approx_top_k ~is_max_k ~reduction_dimension operand k =
+  let exact = function
+    | [ x ] ->
+        if is_max_k then
+          let values, indices = L.top_k ~axis:reduction_dimension x k in
+          [ values; indices ]
+        else
+          let values, indices = L.top_k ~axis:reduction_dimension (L.neg x) k in
+          [ L.neg values; indices ]
+    | _ -> invalid_arg "approx_top_k: arity"
+  in
+  let a = aval operand in
+  let rank = Array.length a.T.shape in
+  let axis =
+    if reduction_dimension < 0 then rank + reduction_dimension
+    else reduction_dimension
+  in
+  let out_shape = Array.mapi (fun i d -> if i = axis then k else d) a.T.shape in
+  let prim =
+    T.Decomposable
+      {
+        dname = "approx_top_k";
+        dparams =
+          [
+            ("aggregate_to_topk", "True");
+            ("is_max_k", if is_max_k then "True" else "False");
+            ("k", string_of_int k);
+            ("recall_target", "0.95");
+            ("reduction_dimension", string_of_int reduction_dimension);
+            ("reduction_input_size_override", "-1");
+          ];
+        dimpl = Core.register_decomposition exact;
+        davals =
+          [
+            { a with T.shape = out_shape; weak_type = false };
+            { T.shape = out_shape; dtype = D.I32; weak_type = false };
+          ];
+      }
+  in
+  match Core.bind prim [ operand ] with
+  | [ values; indices ] -> (values, indices)
+  | _ -> invalid_arg "approx_top_k: arity"
+
 let approx_max_k ?(reduction_dimension = -1) operand k =
-  L.top_k ~axis:reduction_dimension operand k
+  approx_top_k ~is_max_k:true ~reduction_dimension operand k
 
 let approx_min_k ?(reduction_dimension = -1) operand k =
-  let values, indices = L.top_k ~axis:reduction_dimension (L.neg operand) k in
-  (L.neg values, indices)
+  approx_top_k ~is_max_k:false ~reduction_dimension operand k
 
 let broadcast_like arr like = NL.broadcast_to arr (shape like)
 let create_token () = Core.bind1 T.Create_token []
@@ -60,9 +102,7 @@ let ragged_to_dense x group_sizes dim axes =
   let positions = L.broadcasted_iota dt dense_shape (dim + 1) in
   let last = gs_rank - 1 in
   let ends = L.cumsum ~axis:last group_sizes in
-  let first =
-    L.full (Array.mapi (fun i s -> if i = last then 1 else s) gs_shape) 0.0 dt
-  in
+  let first = L.slice_in_dim ~axis:last (L.full gs_shape 0.0 dt) 0 1 in
   let shifted = L.slice_in_dim ~axis:last ends 0 (g - 1) in
   let starts = L.concatenate [ first; shifted ] last in
   let order =
@@ -76,8 +116,10 @@ let ragged_to_dense x group_sizes dim axes =
     let dims = Array.of_list (0 :: List.map (fun a -> a + 1) sorted_axes) in
     L.broadcast_in_dim (L.transpose v perm) dense_shape dims
   in
+  let placed_ends = place ends in
+  let placed_starts = place starts in
   let mask =
-    L.bitwise_and (L.le (place starts) positions) (L.lt positions (place ends))
+    L.bitwise_and (L.le placed_starts positions) (L.lt positions placed_ends)
   in
   L.select mask widened (L.full_like widened 0.0)
 
@@ -149,7 +191,9 @@ let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
              num_groups
              (shape rhs).(group)));
   let group_sizes =
-    if gs_rank = 1 then L.broadcast group_sizes prefix_shape else group_sizes
+    if gs_rank = 1 && Array.length prefix_shape > 0 then
+      L.broadcast group_sizes prefix_shape
+    else group_sizes
   in
   let incr_all = Array.map (fun d -> d + 1) in
   let dot = L.dot_general ?precision ?preferred_element_type in
@@ -179,6 +223,69 @@ let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
   | Ragged_batch ->
       dot lhs rhs ~lhs_contract:l_contract ~rhs_contract:r_contract
         ~lhs_batch:l_batch ~rhs_batch:r_batch
+
+let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
+    group_sizes (dims : Lax_config.ragged_dot_dimension_numbers) =
+  match (precision, group_offset) with
+  | None, None ->
+      let exact = function
+        | [ l; r; g ] ->
+            [ ragged_dot_general ?preferred_element_type l r g dims ]
+        | _ -> invalid_arg "ragged_dot_general: arity"
+      in
+      let args = [ lhs; rhs; group_sizes ] in
+      let closed = Jaxpr.make_jaxpr (List.map aval args) exact in
+      let davals =
+        List.map
+          (function
+            | T.A_var v -> v.T.vaval
+            | T.DropVar a -> a
+            | T.A_lit nd ->
+                {
+                  T.shape = Ndarray.shape nd;
+                  dtype = Ndarray.dtype nd;
+                  weak_type = Ndarray.weak nd;
+                })
+          closed.T.jaxpr.outs
+      in
+      let ints a =
+        match Array.to_list a with
+        | [] -> "()"
+        | [ x ] -> Printf.sprintf "(%d,)" x
+        | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
+      in
+      let dn = dims.dot_dimension_numbers in
+      let prim =
+        T.Decomposable
+          {
+            dname = "ragged_dot_general";
+            dparams =
+              [
+                ("group_offset", "None");
+                ("out_sharding", "None");
+                ("precision", "None");
+                ( "preferred_element_type",
+                  match preferred_element_type with
+                  | Some d -> D.numpy_name d
+                  | None -> "None" );
+                ( "ragged_dot_dimension_numbers",
+                  Printf.sprintf
+                    "RaggedDotDimensionNumbers(dot_dimension_numbers=((%s, \
+                     %s), (%s, %s)), lhs_ragged_dimensions=%s, \
+                     rhs_group_dimensions=%s)"
+                    (ints dn.lhs_contract) (ints dn.rhs_contract)
+                    (ints dn.lhs_batch) (ints dn.rhs_batch)
+                    (ints dims.lhs_ragged_dimensions)
+                    (ints dims.rhs_group_dimensions) );
+              ];
+            dimpl = Core.register_decomposition exact;
+            davals;
+          }
+      in
+      Core.bind1 prim args
+  | _ ->
+      ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs
+        rhs group_sizes dims
 
 let ragged_dot ?precision ?preferred_element_type ?group_offset lhs rhs
     group_sizes =

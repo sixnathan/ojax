@@ -399,7 +399,7 @@ let ptp ?axis ?(keepdims = false) a =
   bind1 T.Sub [ amax ?axis ~keepdims a; amin ?axis ~keepdims a ]
 
 let count_nonzero ?axis ?(keepdims = false) a =
-  sum ?axis ~keepdims (bind1 T.Ne [ a; zeros_like a ])
+  sum ?axis ~keepdims (bind1 T.Ne [ a; const_full (dtype a) [||] 0.0 ])
 
 let count_nonzero ?axis ?keepdims p0 =
   Jnp_util.jit1 "count_nonzero"

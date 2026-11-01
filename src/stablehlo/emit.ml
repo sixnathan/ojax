@@ -782,6 +782,119 @@ let emit_reshape ctx (eqn : eqn) in_ids =
        (name x) inty
        (Ir.tensor_type_of_aval out.vaval))
 
+let emit_reshape_perm ctx (eqn : eqn) in_ids dimensions =
+  let x = sole in_ids in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let inty = Ir.tensor_type_of_aval in_aval in
+  let mid =
+    Ir.tensor_type_of_aval
+      { in_aval with shape = Array.map (fun d -> in_aval.shape.(d)) dimensions }
+  in
+  let t = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = stablehlo.transpose %s, dims = [%s] : (%s) -> %s\n" (name t)
+       (name x)
+       (String.concat ", " (Array.to_list (Array.map string_of_int dimensions)))
+       inty mid);
+  let out = sole eqn.outs in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name n)
+       (name t) mid
+       (Ir.tensor_type_of_aval out.vaval))
+
+let prelude = Buffer.create 64
+let prelude_names : (string, int) Hashtbl.t = Hashtbl.create 4
+
+let emit_approx_top_k ctx (eqn : eqn) in_ids dparams =
+  let param k = List.assoc k dparams in
+  let operand = atom_aval (sole eqn.inputs) in
+  let dt = operand.dtype in
+  let rank = Array.length operand.shape in
+  let is_max = param "is_max_k" = "True" in
+  let reduction =
+    let d = int_of_string (param "reduction_dimension") in
+    if d < 0 then rank + d else d
+  in
+  let scalar = Ir.tensor_type dt [||] in
+  let index = Ir.tensor_type Dtype.I32 [||] in
+  let base =
+    Printf.sprintf "top_k_%s_%s_comparator"
+      (if is_max then "gt" else "lt")
+      (Dtype.short_name dt)
+  in
+  let symbol =
+    match Hashtbl.find_opt prelude_names base with
+    | None ->
+        Hashtbl.replace prelude_names base 0;
+        base
+    | Some k ->
+        Hashtbl.replace prelude_names base (k + 1);
+        Printf.sprintf "%s_%d" base k
+  in
+  let previous = Buffer.contents prelude in
+  Buffer.clear prelude;
+  Buffer.add_string prelude
+    (Printf.sprintf
+       "  func.func @%s(%%0: %s, %%1: %s, %%2: %s, %%3: %s) -> %s {\n\
+       \    %%4 = stablehlo.compare %s, %%0, %%1 : (%s, %s) -> %s\n\
+       \    stablehlo.return %%4 : %s\n\
+       \  }\n"
+       symbol scalar scalar index index
+       (Ir.tensor_type Dtype.Bool [||])
+       (if is_max then "GT" else "LT")
+       scalar scalar
+       (Ir.tensor_type Dtype.Bool [||])
+       (Ir.tensor_type Dtype.Bool [||]));
+  Buffer.add_string prelude previous;
+  let iota_type = Ir.tensor_type Dtype.I32 operand.shape in
+  let iota = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.iota dim = %d : %s\n" (name iota)
+       reduction iota_type);
+  let arg = fresh ctx in
+  emit_constant_at ctx arg (Ndarray.of_floats Dtype.I32 [||] [| -1.0 |]);
+  let init = fresh ctx in
+  emit_constant_at ctx init
+    (Ndarray.of_floats dt [||]
+       [| (if is_max then Float.neg_infinity else Float.infinity) |]);
+  let vout, iout =
+    match eqn.outs with
+    | [ v; i ] -> (v, i)
+    | _ -> invalid_arg "Stablehlo.Emit: approx_top_k expects two outputs"
+  in
+  let group = fresh ctx in
+  let result_name i = Printf.sprintf "%%%d#%d" group i in
+  let bind (v : var) i =
+    Hashtbl.replace ctx.ids v.vid (alias_result (result_name i))
+  in
+  bind vout 0;
+  bind iout 1;
+  let recall =
+    Int32.float_of_bits
+      (Int32.bits_of_float (float_of_string (param "recall_target")))
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %%%d:2 = stablehlo.custom_call @ApproxTopK(%s, %s, %s, %s) \
+        {backend_config = \"\", called_computations = [@%s], \
+        mhlo.backend_config = {aggregate_to_topk = %s, is_fallback = true, \
+        recall_target = %.9g : f32, reduction_dim = %d : i64, \
+        reduction_input_size_override = %s : i64, top_k = %s : i64}} : (%s, \
+        %s, %s, %s) -> (%s, %s)\n"
+       group
+       (name (sole in_ids))
+       (name iota) (name init) (name arg) symbol
+       (String.lowercase_ascii (param "aggregate_to_topk"))
+       recall reduction
+       (param "reduction_input_size_override")
+       (param "k")
+       (Ir.tensor_type_of_aval operand)
+       iota_type scalar index
+       (Ir.tensor_type_of_aval vout.vaval)
+       (Ir.tensor_type_of_aval iout.vaval))
+
 let emit_rev ctx (eqn : eqn) in_ids dims =
   let x = sole in_ids in
   let out = sole eqn.outs in
@@ -3377,6 +3490,12 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Iota { dimension; _ } -> emit_iota ctx eqn dimension
   | Pad config -> emit_pad ctx eqn in_ids config
   | Reshape _ -> emit_reshape ctx eqn in_ids
+  | Reshape_perm { dimensions; _ } ->
+      emit_reshape_perm ctx eqn in_ids dimensions
+  | Decomposable { dname = "approx_top_k"; dparams; _ } ->
+      emit_approx_top_k ctx eqn in_ids dparams
+  | Decomposable { dimpl; _ } ->
+      emit_inlined ctx eqn in_ids (Core.decomposition dimpl)
   | Squeeze _ -> emit_reshape ctx eqn in_ids
   | Rev dims -> emit_rev ctx eqn in_ids dims
   | Split { sizes; axis } -> emit_split ctx eqn in_ids axis sizes
@@ -4130,6 +4249,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             (List.assoc axis_name mesh)
             mesh axis_name
       | Ppermute pairs -> emit_ppermute ctx eqn in_ids pairs mesh axis_name
+      | All_to_all _ | Reduce_scatter _ ->
+          failwith "Stablehlo.Emit: this collective runs under vmap only"
       | Axis_index -> emit_axis_index ctx eqn mesh axis_name)
   | Fft { fft_type; fft_lengths } ->
       let out = sole eqn.outs in
@@ -4216,6 +4337,8 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   channel := 0;
   manual_axes := [];
   active_mesh := Option.map (fun p -> p.pt_mesh) partition;
+  Buffer.clear prelude;
+  Hashtbl.reset prelude_names;
   let n_consts = List.length cj.consts in
   let jx = cj.jaxpr in
   let const_binders, arg_binders =
@@ -4279,7 +4402,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
     | _ -> out_types
   in
   Printf.sprintf
-    "module {\n%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
+    "module {\n%s%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
     (match partition with
     | Some p -> sdy_mesh p.pt_mesh
     | None ->
@@ -4287,6 +4410,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
           "  sdy.mesh @maximal_mesh_0 = <[], device_ids=[0]> {stablehlo.mesh = \
            {axes = [], device_ids = dense<0> : tensor<1xi64>}}\n"
         else "")
+    (Buffer.contents prelude)
     (String.concat ", " params)
     (String.concat ", " out_attributes)
     (qualify_nested_calls ~depth:1 (Buffer.contents ctx.buf))

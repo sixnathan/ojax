@@ -416,3 +416,13 @@ let set_at2 x i j value =
          unique_indices = true;
        })
     [ x; index; value ]
+
+let () =
+  Interpreters.Batching.take_on_axis :=
+    fun v indices axis ->
+      take ~axis v
+        (T.Concrete
+           (Nd.of_floats
+              (if Config.value Config.enable_x64 then D.I64 else D.I32)
+              [| Array.length indices |]
+              (Array.map float_of_int indices)))

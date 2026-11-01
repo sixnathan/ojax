@@ -1343,7 +1343,9 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
             let cval =
               C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v)
             in
-            bind1 (Np_ints.mark_prim (T.Pad cfg)) [ v; cval ]
+            bind1
+              (T.Pad (Np_ints.mark_triples (fun _ j -> j < 2) cfg))
+              [ v; cval ]
         | _ -> invalid_arg "pad: arity")
       [ v; literal ]
   end

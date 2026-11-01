@@ -224,8 +224,8 @@ let apply prim args run =
     | Random_fold_in ->
         if is_typed head then on_outs (List.iter source) else run ()
     | Random_wrap | Random_unwrap -> forward_head ~share:true
-    | Broadcast_in_dim _ | Copy | Convert_element_type _ | Reshape _ | Squeeze _
-    | Dynamic_slice _ | Gather _ ->
+    | Broadcast_in_dim _ | Copy | Convert_element_type _ | Reshape _
+    | Reshape_perm _ | Squeeze _ | Dynamic_slice _ | Gather _ ->
         forward_head ~share:false
     | Eq | Ne -> run ()
     | Dynamic_update_slice ->

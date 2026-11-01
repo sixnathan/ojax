@@ -1080,11 +1080,12 @@ let triangular_jvp_a ~left_side ~lower ~transpose_a ~conjugate_a ~unit_diagonal
     let i = a_inverse g in
     lax_matmul ans i
 
-let gather_along ~axis ~rank t idx =
+let gather_along ?(numpy_ints = false) ~axis ~rank t idx =
   let batch =
     Np_ints.mark
       (Array.of_list (List.filter (fun i -> i <> axis) (List.init rank Fun.id)))
   in
+  let batch = if numpy_ints then Np_ints.mark batch else batch in
   b1
     (Gather
        {
@@ -1121,7 +1122,8 @@ let sort_jvp ~dimension ~is_stable ~num_keys primals tangents =
   let sorted_t =
     List.map
       (fun t ->
-        if is_zero t then t else gather_along ~axis:dimension ~rank t idx)
+        if is_zero t then t
+        else gather_along ~numpy_ints:true ~axis:dimension ~rank t idx)
       tangents
   in
   (sorted, sorted_t)
@@ -1188,9 +1190,9 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
           Some (out, maybe_broadcast shape t)
       | false, true -> Some (out, maybe_broadcast shape xdot)
       | false, false -> Some (out, b1 prim [ xdot; ydot ]))
-  | Add_any | Neg | Real | Imag | Complex | Conj | Squeeze _ | Reshape _ | Rev _
-  | Transpose _ | Reduce_sum _ | Stack _ | Concatenate _ | Pad _ | Copy
-  | Reduce_precision _ | Tile _ ->
+  | Add_any | Neg | Real | Imag | Complex | Conj | Squeeze _ | Reshape _
+  | Reshape_perm _ | Rev _ | Transpose _ | Reduce_sum _ | Stack _
+  | Concatenate _ | Pad _ | Copy | Reduce_precision _ | Tile _ ->
       linear ()
   | Stop_gradient ->
       let x = arg1 primals in
@@ -1757,7 +1759,10 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
   | Ormqr _ -> failwith "Differentiation rule for 'ormqr' not implemented"
   | Collective { kind; _ } -> (
       match (kind, primals, tangents) with
-      | (Psum | Pbroadcast _ | Ppermute _ | All_gather _), [ x ], [ t ] ->
+      | ( ( Psum | Pbroadcast _ | Ppermute _ | All_gather _ | All_to_all _
+          | Reduce_scatter _ ),
+          [ x ],
+          [ t ] ) ->
           (b1 prim [ x ], b1 prim [ t ])
       | Axis_index, [], [] ->
           let v = b1 prim [] in
@@ -3820,6 +3825,20 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       match primals with
       | [ x ] -> [ Some (lreshape (in_aval x).shape ct) ]
       | _ -> arity ())
+  | Reshape_perm { dimensions; _ } -> (
+      let ct = ct1 () in
+      match primals with
+      | [ x ] ->
+          let shape = (in_aval x).shape in
+          let n = Array.length dimensions in
+          let inverse = Array.make n 0 in
+          Array.iteri (fun i d -> inverse.(d) <- i) dimensions;
+          [
+            Some
+              (b1 (Transpose inverse)
+                 [ lreshape (Array.map (fun d -> shape.(d)) dimensions) ct ]);
+          ]
+      | _ -> arity ())
   | Reduce_sum axes -> (
       let ct = ct1 () in
       match primals with
@@ -4146,7 +4165,25 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                     })
                  [ ct1 () ]);
           ]
-      | Pmax | Pmin | Pbroadcast _ | All_gather _ | Axis_index ->
+      | All_to_all { split_axis; concat_axis; size } ->
+          [
+            Some
+              (b1
+                 (Collective
+                    {
+                      kind =
+                        All_to_all
+                          {
+                            split_axis = concat_axis;
+                            concat_axis = split_axis;
+                            size;
+                          };
+                      axis_name;
+                    })
+                 [ ct1 () ]);
+          ]
+      | Pmax | Pmin | Pbroadcast _ | All_gather _ | Axis_index
+      | Reduce_scatter _ ->
           failwith "ad: this collective has no transpose rule")
   | Real ->
       let t = ct1 () in
@@ -4703,6 +4740,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: nonlinear linalg primitive has no transpose rule"
+  | Decomposable _ -> failwith "ad: decomposed before differentiation"
 
 and xla_call_transpose (c : closed_jaxpr) cts primals =
   let known =

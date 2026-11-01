@@ -613,13 +613,13 @@ let lift_while ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
     Array.length cond_out.shape
   in
   let cond' =
-    make_jaxpr avals (fun args ->
+    make_jaxpr_for_lowering avals (fun args ->
         let p = pred_of_cond args in
         if pred_rank = 0 then [ p ]
         else Core.bind (Reduce_or (Array.init pred_rank Fun.id)) [ p ])
   in
   let body' =
-    make_jaxpr avals (fun args ->
+    make_jaxpr_for_lowering avals (fun args ->
         let c, b, r = split args in
         let next = eval_closed_jaxpr body (b @ r) in
         if pred_rank = 0 then c @ b @ next

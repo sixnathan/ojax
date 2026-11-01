@@ -9,3 +9,4 @@ val emit_closed_jaxpr : ?partition:partition -> Types.closed_jaxpr -> string
 val shard_mesh_seen : unit -> ((string * int) list * int array) option
 val lapack_ffi_ready : (unit -> bool) ref
 val emitting : unit -> bool
+val emit_jax_text : name:string -> Types.closed_jaxpr -> string

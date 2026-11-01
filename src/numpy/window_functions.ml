@@ -9,10 +9,7 @@ let get_aval = C.get_aval
 let shape v = (get_aval v).T.shape
 let bind1 = C.bind1
 let prod sh = Array.fold_left ( * ) 1 sh
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (prod sh) x))
-
+let const_full dt sh x = Core.splat dt sh x
 let iota dt m = bind1 (T.Iota { dtype = dt; shape = [| m |]; dimension = 0 }) []
 let smul dt s v = bind1 T.Mul [ const_full dt (shape v) s; v ]
 let sdiv_r dt v s = bind1 T.Div [ v; const_full dt (shape v) s ]

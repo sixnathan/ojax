@@ -10,9 +10,7 @@ let ndim v = Array.length (shape v)
 let bind = C.bind
 let bind1 = C.bind1
 let prod sh = Array.fold_left ( * ) 1 sh
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (prod sh) x))
+let const_full dt sh x = Core.splat dt sh x
 
 let canonicalize_axis ax n =
   let a = if ax < 0 then ax + n else ax in
@@ -95,6 +93,34 @@ let partition ?(axis = -1) a ~kth =
   let top = topk_vals (n - kth - 1) last arr in
   let out = NL.concatenate ~axis:last [ bottom; top ] in
   NL.swapaxes last axis out
+
+let sort ?axis ?stable ?descending p0 =
+  Jnp_util.jit1 "sort"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (axis, stable, descending) [])))
+    (function
+      | [ p0 ] -> sort ?axis ?stable ?descending p0
+      | _ -> invalid_arg "sort: arity")
+    [ p0 ]
+
+let argsort ?axis ?stable ?descending ?dtype p0 =
+  Jnp_util.jit1 "argsort"
+    ~key:
+      (Digest.to_hex
+         (Digest.string
+            (Marshal.to_string (axis, stable, descending, dtype) [])))
+    (function
+      | [ p0 ] -> argsort ?axis ?stable ?descending ?dtype p0
+      | _ -> invalid_arg "argsort: arity")
+    [ p0 ]
+
+let partition ?axis p0 ~kth =
+  Jnp_util.jit1 "partition"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (axis, kth) [])))
+    (function
+      | [ p0 ] -> partition ?axis p0 ~kth | _ -> invalid_arg "partition: arity")
+    [ p0 ]
 
 let sort ?axis ?stable ?descending a0 =
   Eager_jit.one "numpy.sorting.sort" (axis, stable, descending) [] [ a0 ]

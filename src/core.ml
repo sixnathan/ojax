@@ -357,8 +357,115 @@ let check_operands prim args =
   | Ge -> check "ge" not_complex real
   | _ -> ()
 
-let dispatch prim args =
+let is_elementwise = function
+  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi | Nextafter
+  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
+  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | Ne | Complex | Igamma
+  | Igammac | Igamma_grad_a | Polygamma | Zeta ->
+      true
+  | _ -> false
+
+let value_shape = function
+  | Concrete a -> Ndarray.shape a
+  | Tracer t -> t.aval.shape
+  | Device b -> Pjrt.Buffer.dimensions b
+
+let elementwise_shape shapes =
+  let n = List.fold_left (fun acc s -> max acc (Array.length s)) 0 shapes in
+  Array.init n (fun i ->
+      List.fold_left
+        (fun acc s ->
+          let k = i - (n - Array.length s) in
+          if k < 0 then acc else max acc s.(k))
+        (if List.for_all (fun s -> Array.length s = n && s.(i) = 0) shapes then
+           0
+         else 1)
+        shapes)
+
+let call_inline : (closed_jaxpr -> value list -> value list) ref =
+  ref (fun _ _ -> invalid_arg "Core.call_inline: not installed")
+
+let rec dispatch prim args =
   let top = find_top_trace args in
+  match (prim, args) with
+  | Xla_call c, _ when top.kind <> KJaxpr -> !call_inline c args
+  | Transpose perm, [ _ ]
+    when Array.for_all Fun.id (Array.mapi (fun i p -> i = p) perm) ->
+      args
+  | Convert_element_type dt, [ Concrete a ]
+    when top.kind = KJaxpr && Array.length (Ndarray.shape a) = 0 -> (
+      match rules.impl prim [ a ] with
+      | [ r ] -> [ Concrete (Ndarray.canonicalize dt r) ]
+      | _ -> invalid_arg "dispatch: convert arity")
+  | Select_n, which :: first :: rest
+    when List.exists (fun v -> value_shape v <> value_shape first) rest
+         || Array.length (value_shape which) > 0
+            && value_shape which <> value_shape first ->
+      let out = elementwise_shape (List.map value_shape args) in
+      let widen v =
+        let s = value_shape v in
+        if s = out then v
+        else
+          let k = Array.length out - Array.length s in
+          List.hd
+            (dispatch
+               (Broadcast_in_dim
+                  {
+                    shape = out;
+                    dims = Array.init (Array.length s) (fun i -> i + k);
+                  })
+               [ v ])
+      in
+      let which =
+        if Array.length (value_shape which) = 0 && top.kind = KJaxpr then which
+        else widen which
+      in
+      dispatch Select_n (which :: List.map widen (first :: rest))
+  | Select_n, which :: first :: _
+    when top.kind <> KJaxpr
+         && Array.length (value_shape which) = 0
+         && Array.length (value_shape first) > 0 ->
+      let out = value_shape first in
+      let widened =
+        List.hd
+          (dispatch (Broadcast_in_dim { shape = out; dims = [||] }) [ which ])
+      in
+      dispatch Select_n (widened :: List.tl args)
+  | _ -> dispatch_widened top prim args
+
+and dispatch_widened top prim args =
+  if
+    is_elementwise prim && top.kind <> KJaxpr
+    &&
+    match args with
+    | first :: rest ->
+        let s = value_shape first in
+        List.exists (fun v -> value_shape v <> s) rest
+    | [] -> false
+  then begin
+    let out = elementwise_shape (List.map value_shape args) in
+    let widen v =
+      let s = value_shape v in
+      if s = out then v
+      else
+        let k = Array.length out - Array.length s in
+        match
+          dispatch
+            (Broadcast_in_dim
+               {
+                 shape = out;
+                 dims = Array.init (Array.length s) (fun i -> i + k);
+               })
+            [ v ]
+        with
+        | [ w ] -> w
+        | _ -> invalid_arg "dispatch: broadcast arity"
+    in
+    dispatch prim (List.map widen args)
+  end
+  else dispatch_equal top prim args
+
+and dispatch_equal top prim args =
   let top =
     match prim with
     | Collective { axis_name; _ } -> (
@@ -387,6 +494,25 @@ let bind1 prim args =
   match bind prim args with
   | [ out ] -> out
   | _ -> invalid_arg "bind1: expected a single output"
+
+let top_is_staging args = (find_top_trace args).kind = KJaxpr
+
+let staging () =
+  match !dynamic_trace with Some t -> t.kind = KJaxpr | None -> false
+
+let splat_host dt sh n x =
+  match dt with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      Ndarray.of_complex dt sh (Array.make n { Complex.re = x; im = 0.0 })
+  | _ -> Ndarray.of_floats dt sh (Array.make n x)
+
+let splat dt sh x =
+  if Array.length sh = 0 || not (staging ()) then
+    Concrete (splat_host dt sh (Array.fold_left ( * ) 1 sh) x)
+  else
+    bind1
+      (Broadcast_in_dim { shape = sh; dims = [||] })
+      [ Concrete (splat_host dt [||] 1 x) ]
 
 let get_aval = function
   | Concrete a ->

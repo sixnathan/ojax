@@ -17,44 +17,6 @@ let as_real v =
   | Dtype.I64 -> b1 (Convert_element_type Dtype.F64) [ v ]
   | _ -> b1 (Convert_element_type Dtype.F32) [ v ]
 
-let resize_axis v axis n =
-  let shape = shape_of v in
-  let cur = shape.(axis) in
-  if cur = n then v
-  else if cur > n then begin
-    let limit = Array.copy shape in
-    limit.(axis) <- n;
-    b1
-      (Slice
-         {
-           start_indices = Array.make (Array.length shape) 0;
-           limit_indices = limit;
-           strides = None;
-         })
-      [ v ]
-  end
-  else
-    let cfg = Array.make (Array.length shape) (0, 0, 0) in
-    cfg.(axis) <- (0, n - cur, 0);
-    let dt = (Core.get_aval v).dtype in
-    let zero =
-      match dt with
-      | Dtype.Complex64 | Dtype.Complex128 ->
-          Concrete (Ndarray.of_complex dt [||] [| Complex.zero |])
-      | _ -> Concrete (Ndarray.of_floats dt [||] [| 0.0 |])
-    in
-    b1 (Pad cfg) [ v; zero ]
-
-let move_axes_last v axes =
-  let ndim = rank_of v in
-  let others =
-    List.filter (fun d -> not (List.mem d axes)) (List.init ndim Fun.id)
-  in
-  let perm = Array.of_list (others @ axes) in
-  let inverse = Array.make ndim 0 in
-  Array.iteri (fun i p -> inverse.(p) <- i) perm;
-  (b1 (Transpose perm) [ v ], inverse)
-
 let norm_factor norm ~inverse lengths =
   let product = float_of_int (List.fold_left ( * ) 1 lengths) in
   match norm with
@@ -72,22 +34,76 @@ let scale_by factor v =
   if factor = 1.0 then v
   else
     let aval = Core.get_aval v in
-    let n = Array.fold_left ( * ) 1 aval.shape in
-    let c =
-      match aval.dtype with
-      | Dtype.Complex64 | Dtype.Complex128 ->
-          Concrete
-            (Ndarray.of_complex aval.dtype aval.shape
-               (Array.make n { Complex.re = factor; im = 0.0 }))
-      | dt -> Concrete (Ndarray.of_floats dt aval.shape (Array.make n factor))
-    in
+    let c = Core.splat aval.dtype aval.shape factor in
     b1 Mul [ v; c ]
+
+let moved_perm ndim source destination =
+  let perm =
+    ref (List.filter (fun d -> not (List.mem d source)) (List.init ndim Fun.id))
+  in
+  List.iter
+    (fun (dest, src) ->
+      let rec insert k l =
+        if k = 0 then src :: l
+        else match l with x :: r -> x :: insert (k - 1) r | [] -> [ src ]
+      in
+      perm := insert dest !perm)
+    (List.sort compare (List.combine destination source));
+  Array.of_list !perm
+
+let lax_fft kind sizes v =
+  let key =
+    (match kind with
+      | Fft_forward -> "f"
+      | Fft_inverse -> "i"
+      | Fft_real -> "r"
+      | Fft_inverse_real -> "ir")
+    ^ String.concat "," (List.map string_of_int sizes)
+  in
+  Jnp_util.jit1 "fft" ~key
+    (function
+      | [ v ] ->
+          let prepared =
+            match kind with
+            | Fft_real -> as_real v
+            | Fft_forward | Fft_inverse | Fft_inverse_real -> as_complex v
+          in
+          b1
+            (Fft { fft_type = kind; fft_lengths = Array.of_list sizes })
+            [ prepared ]
+      | _ -> invalid_arg "fft: arity")
+    [ v ]
+
+let pad_zero v widths =
+  let key =
+    String.concat ";"
+      (List.map
+         (fun (lo, hi) -> string_of_int lo ^ "," ^ string_of_int hi)
+         widths)
+  in
+  let default_int =
+    if Config.value Config.enable_x64 then Dtype.I64 else Dtype.I32
+  in
+  Jnp_util.jit1 "_pad" ~key
+    (function
+      | [ v; cval ] ->
+          let dt = (Core.get_aval v).dtype in
+          let cval =
+            if (Core.get_aval cval).dtype = dt then cval
+            else b1 (Convert_element_type dt) [ cval ]
+          in
+          b1
+            (Pad (Array.of_list (List.map (fun (l, h) -> (l, h, 0)) widths)))
+            [ v; cval ]
+      | _ -> invalid_arg "pad: arity")
+    [ v; Concrete (Ndarray.of_floats default_int [||] [| 0.0 |]) ]
 
 let fft_core kind ~inverse ?s ?axes ?norm a =
   let ndim = rank_of a in
+  let orig_axes = Option.map (List.map (canon_axis ndim)) axes in
   let axes =
-    match (axes, s) with
-    | Some ax, _ -> List.map (canon_axis ndim) ax
+    match (orig_axes, s) with
+    | Some ax, _ -> ax
     | None, Some sizes ->
         let k = List.length sizes in
         List.init k (fun i -> ndim - k + i)
@@ -95,48 +111,59 @@ let fft_core kind ~inverse ?s ?axes ?norm a =
   in
   if List.length (List.sort_uniq compare axes) <> List.length axes then
     invalid_arg "numpy.fft: repeated axis";
-  let shape = shape_of a in
-  let sizes =
+  (match s with
+  | Some sizes when List.length sizes <> List.length axes ->
+      invalid_arg "Shape and axes have different lengths."
+  | _ -> ());
+  let k = List.length axes in
+  let last_axes = List.init k (fun i -> ndim - k + i) in
+  let arr =
+    match orig_axes with
+    | Some ax -> b1 (Transpose (moved_perm ndim ax last_axes)) [ a ]
+    | None -> a
+  in
+  let shape = shape_of arr in
+  let arr, sizes =
     match s with
     | Some sizes ->
-        if List.length sizes <> List.length axes then
-          invalid_arg "Shape and axes have different lengths.";
-        sizes
+        let in_s = Array.copy shape in
+        List.iter2 (fun ax n -> in_s.(ax) <- n) last_axes sizes;
+        (match kind with
+        | Fft_inverse_real when ndim > 0 ->
+            in_s.(ndim - 1) <- (in_s.(ndim - 1) / 2) + 1
+        | _ -> ());
+        let limit = Array.mapi (fun i n -> min n shape.(i)) in_s in
+        let cropped =
+          if limit = shape then arr
+          else
+            b1
+              (Slice
+                 {
+                   start_indices = Array.make ndim 0;
+                   limit_indices = limit;
+                   strides = None;
+                 })
+              [ arr ]
+        in
+        let widths = List.init ndim (fun i -> (0, in_s.(i) - limit.(i))) in
+        (pad_zero cropped widths, sizes)
     | None -> (
         match kind with
         | Fft_inverse_real ->
-            let n = List.length axes in
-            List.mapi
-              (fun i ax ->
-                if i = n - 1 then 2 * (shape.(ax) - 1) else shape.(ax))
-              axes
+            let n = List.length last_axes in
+            ( arr,
+              List.mapi
+                (fun i ax ->
+                  if i = n - 1 then max 0 (2 * (shape.(ax) - 1)) else shape.(ax))
+                last_axes )
         | Fft_forward | Fft_inverse | Fft_real ->
-            List.map (fun ax -> shape.(ax)) axes)
+            (arr, List.map (fun ax -> shape.(ax)) last_axes))
   in
-  let n_axes = List.length axes in
-  let resized =
-    List.fold_left2
-      (fun v ax n ->
-        let is_last =
-          match List.rev axes with last :: _ -> last = ax | [] -> false
-        in
-        match kind with
-        | Fft_inverse_real when is_last -> resize_axis v ax ((n / 2) + 1)
-        | _ -> resize_axis v ax n)
-      a axes sizes
-  in
-  let prepared =
-    match kind with
-    | Fft_real -> as_real resized
-    | Fft_forward | Fft_inverse | Fft_inverse_real -> as_complex resized
-  in
-  let moved, inverse_perm = move_axes_last prepared axes in
-  ignore n_axes;
-  let out =
-    b1 (Fft { fft_type = kind; fft_lengths = Array.of_list sizes }) [ moved ]
-  in
-  let back = b1 (Transpose inverse_perm) [ out ] in
-  scale_by (norm_factor norm ~inverse sizes) back
+  let transformed = lax_fft kind sizes arr in
+  let scaled = scale_by (norm_factor norm ~inverse sizes) transformed in
+  match orig_axes with
+  | Some ax -> b1 (Transpose (moved_perm ndim last_axes ax)) [ scaled ]
+  | None -> scaled
 
 let single_axis axis n = (Some [ axis ], Option.map (fun x -> [ x ]) n)
 

@@ -2387,6 +2387,13 @@ let bin_aval f = function
 
 let abstract_eval prim avals =
   match prim with
+  | Xla_call c ->
+      List.map
+        (function
+          | A_var (v : var) -> v.vaval
+          | A_lit nd -> shaped (Ndarray.shape nd) (Ndarray.dtype nd) false
+          | DropVar a -> a)
+        c.jaxpr.outs
   | Neg | Sin | Cos | Exp | Log | Tanh | Sign | Acos | Acosh | Asin | Asinh
   | Atan | Atanh | Cbrt | Ceil | Clz | Copy | Cosh | Exp2 | Expm1 | Floor
   | Integer_pow _ | Log1p | Logistic | Not | Population_count | Round
@@ -2402,17 +2409,27 @@ let abstract_eval prim avals =
   | Complex ->
       bin_aval
         (fun a b ->
-          shaped a.shape (complexify a.dtype) (a.weak_type && b.weak_type))
+          shaped
+            (Core.elementwise_shape [ a.shape; b.shape ])
+            (complexify a.dtype)
+            (a.weak_type && b.weak_type))
         avals
   | Is_finite -> un_aval (fun a -> shaped a.shape Bool false) avals
   | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi | Nextafter
   | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
     ->
       bin_aval
-        (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))
+        (fun a b ->
+          shaped
+            (Core.elementwise_shape [ a.shape; b.shape ])
+            a.dtype
+            (a.weak_type && b.weak_type))
         avals
   | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | Ne ->
-      bin_aval (fun a _ -> shaped a.shape Bool false) avals
+      bin_aval
+        (fun a b ->
+          shaped (Core.elementwise_shape [ a.shape; b.shape ]) Bool false)
+        avals
   | Select_n -> (
       match avals with
       | _ :: (c :: _ as cases) ->
@@ -2698,7 +2715,6 @@ let abstract_eval prim avals =
       | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call")
   | Custom_lin { out_avals; _ } -> out_avals
   | Checkpoint_name _ -> avals
-  | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 let impl prim inputs =
   let batch =

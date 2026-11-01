@@ -11,11 +11,8 @@ let dtype v = (get_aval v).T.dtype
 let shape v = (get_aval v).T.shape
 let bind1 = C.bind1
 let numel sh = Array.fold_left ( * ) 1 sh
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (numel sh) x))
-
-let scalar_like v x = const_full (dtype v) (shape v) x
+let const_full dt sh x = Core.splat dt sh x
+let scalar_like v x = Core.splat (dtype v) [||] x
 let where3 c a b = NL.where_ c a b
 
 let to_inexact = function
@@ -39,14 +36,46 @@ let inexact v =
 
 let canon_axis ndim a = if a < 0 then a + ndim else a
 let identity x = x
-let relu x = UF.maximum x (scalar_like x 0.0)
-let relu6 x = UF.minimum (relu x) (scalar_like x 6.0)
-let softplus x = UF.logaddexp x (scalar_like x 0.0)
-let soft_sign x = UF.divide x (UF.add (UF.abs x) (scalar_like x 1.0))
-let sigmoid x = bind1 T.Logistic [ x ]
-let silu x = UF.multiply x (sigmoid x)
-let mish x = UF.multiply x (UF.tanh (softplus x))
-let log_sigmoid x = UF.negative (softplus (UF.negative x))
+
+let jit_unary name f x =
+  Numpy.Jnp_util.jit1 name
+    (function [ x ] -> f x | _ -> invalid_arg (name ^ ": arity"))
+    [ x ]
+
+let relu = jit_unary "relu" (fun x -> UF.maximum x (scalar_like x 0.0))
+
+let relu6 =
+  jit_unary "relu6" (fun x ->
+      let high = UF.maximum x (scalar_like x 0.0) in
+      UF.minimum high (scalar_like x 6.0))
+
+let softplus =
+  jit_unary "softplus" (fun x -> UF.logaddexp x (scalar_like x 0.0))
+
+let soft_sign =
+  jit_unary "soft_sign" (fun x ->
+      let magnitude = UF.abs x in
+      let denom = UF.add magnitude (scalar_like x 1.0) in
+      UF.divide x denom)
+
+let sigmoid = jit_unary "sigmoid" (fun x -> bind1 T.Logistic [ x ])
+
+let silu =
+  jit_unary "silu" (fun x ->
+      let s = sigmoid x in
+      UF.multiply x s)
+
+let mish =
+  jit_unary "mish" (fun x ->
+      let s = softplus x in
+      let t = UF.tanh s in
+      UF.multiply x t)
+
+let log_sigmoid =
+  jit_unary "log_sigmoid" (fun x ->
+      let n = UF.negative x in
+      let s = softplus n in
+      UF.negative s)
 
 let sparse_plus x =
   let one = scalar_like x 1.0 in
@@ -66,10 +95,16 @@ let hard_tanh x =
     (scalar_like x 1.0)
     (where3 (UF.less x (scalar_like x (-1.0))) (scalar_like x (-1.0)) x)
 
-let hard_sigmoid x =
-  UF.divide (relu6 (UF.add x (scalar_like x 3.0))) (scalar_like x 6.0)
+let hard_sigmoid =
+  jit_unary "hard_sigmoid" (fun x ->
+      let shifted = UF.add x (scalar_like x 3.0) in
+      let r = relu6 shifted in
+      UF.divide r (scalar_like x 6.0))
 
-let hard_silu x = UF.multiply x (hard_sigmoid x)
+let hard_silu =
+  jit_unary "hard_silu" (fun x ->
+      let h = hard_sigmoid x in
+      UF.multiply x h)
 
 let elu ?(alpha = 1.0) x =
   let pos = UF.greater x (scalar_like x 0.0) in

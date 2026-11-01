@@ -8,10 +8,8 @@ let dtype v = (get_aval v).T.dtype
 let shape v = (get_aval v).T.shape
 let weak v = (get_aval v).T.weak_type
 let bind1 = C.bind1
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (Array.fold_left ( * ) 1 sh) x))
-
+let array_full dt sh x = Core.splat dt sh x
+let const_full dt _sh x = Core.splat dt [||] x
 let zeros_like v = const_full (dtype v) (shape v) 0.0
 
 let to_inexact_dtype = function
@@ -45,14 +43,7 @@ let broadcast_shapes a b =
       else if db = 1 then da
       else invalid_arg "broadcast: incompatible shapes")
 
-let broadcast_to v sh =
-  let s = shape v in
-  if s = sh then v
-  else begin
-    let nd_in = Array.length s and nd_out = Array.length sh in
-    let dims = Array.init nd_in (fun i -> i + (nd_out - nd_in)) in
-    bind1 (T.Broadcast_in_dim { shape = sh; dims }) [ v ]
-  end
+let broadcast_to = Jnp_util.broadcast_to
 
 let common_shape vs =
   List.fold_left (fun acc v -> broadcast_shapes acc (shape v)) [||] vs
@@ -76,10 +67,40 @@ let check_rank_promotion vs =
     end
   end
 
+let promote_shapes vs =
+  match vs with
+  | [] | [ _ ] -> vs
+  | first :: rest ->
+      let rank v = Array.length (shape v) in
+      if List.for_all (fun v -> rank v = rank first) rest then vs
+      else
+        let nonscalar =
+          List.sort_uniq compare
+            (List.filter_map
+               (fun v -> if rank v = 0 then None else Some (rank v))
+               vs)
+        in
+        if List.length nonscalar < 2 then vs
+        else
+          let n = List.fold_left (fun acc v -> max acc (rank v)) 0 vs in
+          List.map
+            (fun v ->
+              let s = shape v in
+              let k = n - Array.length s in
+              if k = 0 then v
+              else
+                bind1
+                  (T.Broadcast_in_dim
+                     {
+                       shape = Array.append (Array.make k 1) s;
+                       dims = Array.init (Array.length s) (fun i -> i + k);
+                     })
+                  [ v ])
+            vs
+
 let promote_to dt vs =
   check_rank_promotion vs;
-  let sh = common_shape vs in
-  List.map (fun v -> broadcast_to (convert v dt) sh) vs
+  promote_shapes (List.map (fun v -> convert v dt) vs)
 
 let result_dtype vs =
   let dt, _ = Dtypes.result_type (List.map (fun v -> (dtype v, weak v)) vs) in
@@ -242,7 +263,7 @@ let is_inexact = function
       true
   | _ -> false
 
-let where c a b = bind1 T.Select_n [ c; b; a ]
+let where = Jnp_util.where
 
 let absolute x =
   match dtype x with
@@ -354,56 +375,69 @@ let float_divmod x1 x2 =
   let dt = dtype x1 and sh = shape x1 in
   let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
   let m = bind1 T.Rem [ x1; x2 ] in
-  let x1c = where (bind1 T.Eq [ x2; zero ]) x1 (bind1 T.Sub [ x1; m ]) in
+  let x2_is_zero = bind1 T.Eq [ x2; zero ] in
+  let corrected = bind1 T.Sub [ x1; m ] in
+  let x1c = where x2_is_zero x1 corrected in
   let div = bind1 T.Div [ x1c; x2 ] in
-  let ind =
-    bind1 T.And
-      [
-        bind1 T.Ne [ m; zero ];
-        bind1 T.Ne [ bind1 T.Sign [ x2 ]; bind1 T.Sign [ m ] ];
-      ]
-  in
-  let m2 = where ind (bind1 T.Add [ m; x2 ]) m in
-  let div2 = where ind (bind1 T.Sub [ div; one ]) div in
+  let m_nonzero = bind1 T.Ne [ m; zero ] in
+  let sign_x2 = bind1 T.Sign [ x2 ] in
+  let sign_m = bind1 T.Sign [ m ] in
+  let sign_differs = bind1 T.Ne [ sign_x2; sign_m ] in
+  let ind = bind1 T.And [ m_nonzero; sign_differs ] in
+  let m_plus = bind1 T.Add [ m; x2 ] in
+  let m2 = bind1 T.Select_n [ ind; m; m_plus ] in
+  let div_minus = bind1 T.Sub [ div; one ] in
+  let div2 = bind1 T.Select_n [ ind; div; div_minus ] in
   (bind1 T.Round [ div2 ], m2)
 
 let is_unsigned dt = Dtypes.issubdtype dt `Unsigned
 
 let floor_divide x1 x2 =
-  let a, b = p2 (promote_numeric [ x1; x2 ]) in
-  let dt = dtype a and sh = shape a in
-  if is_unsigned dt then bind1 T.Div [ a; b ]
-  else if is_integer dt then begin
-    let q = bind1 T.Div [ a; b ] in
-    let sel =
-      bind1 T.And
-        [
-          bind1 T.Ne [ bind1 T.Sign [ a ]; bind1 T.Sign [ b ] ];
-          bind1 T.Ne [ bind1 T.Rem [ a; b ]; const_full dt sh 0.0 ];
-        ]
-    in
-    where sel (bind1 T.Sub [ q; const_full dt sh 1.0 ]) q
-  end
-  else fst (float_divmod a b)
+  Jnp_util.jit1 "floor_divide"
+    (function
+      | [ x1; x2 ] ->
+          let a, b = p2 (promote_numeric [ x1; x2 ]) in
+          let dt = dtype a and sh = shape a in
+          if is_unsigned dt then bind1 T.Div [ a; b ]
+          else if is_integer dt then begin
+            let q = bind1 T.Div [ a; b ] in
+            let sign_a = bind1 T.Sign [ a ] in
+            let sign_b = bind1 T.Sign [ b ] in
+            let differs = bind1 T.Ne [ sign_a; sign_b ] in
+            let r = bind1 T.Rem [ a; b ] in
+            let r_nonzero = bind1 T.Ne [ r; const_full dt sh 0.0 ] in
+            let sel = bind1 T.And [ differs; r_nonzero ] in
+            let q1 = bind1 T.Sub [ q; const_full dt sh 1.0 ] in
+            where sel q1 q
+          end
+          else fst (float_divmod a b)
+      | _ -> invalid_arg "floor_divide: arity")
+    [ x1; x2 ]
 
 let remainder x1 x2 =
-  let a, b0 = p2 (promote_numeric [ x1; x2 ]) in
-  let dt = dtype a and sh = shape a in
-  let zero = const_full dt sh 0.0 in
-  let b =
-    if is_integer dt then
-      where (bind1 T.Eq [ b0; zero ]) (const_full dt sh 1.0) b0
-    else b0
-  in
-  let trunc_mod = bind1 T.Rem [ a; b ] in
-  let do_plus =
-    bind1 T.And
-      [
-        bind1 T.Ne [ bind1 T.Lt [ trunc_mod; zero ]; bind1 T.Lt [ b; zero ] ];
-        bind1 T.Ne [ trunc_mod; zero ];
-      ]
-  in
-  where do_plus (bind1 T.Add [ trunc_mod; b ]) trunc_mod
+  Jnp_util.jit1 "remainder"
+    (function
+      | [ x1; x2 ] ->
+          let a, b0 = p2 (promote_numeric [ x1; x2 ]) in
+          let dt = dtype a and sh = shape a in
+          let zero = const_full dt sh 0.0 in
+          let b =
+            if is_integer dt then begin
+              let is_zero = bind1 T.Eq [ b0; const_full dt sh 0.0 ] in
+              where is_zero (array_full dt (shape b0) 1.0) b0
+            end
+            else b0
+          in
+          let trunc_mod = bind1 T.Rem [ a; b ] in
+          let not_zero = bind1 T.Ne [ trunc_mod; zero ] in
+          let mod_negative = bind1 T.Lt [ trunc_mod; zero ] in
+          let b_negative = bind1 T.Lt [ b; zero ] in
+          let differs = bind1 T.Ne [ mod_negative; b_negative ] in
+          let do_plus = bind1 T.And [ differs; not_zero ] in
+          let plus = bind1 T.Add [ trunc_mod; b ] in
+          bind1 T.Select_n [ do_plus; trunc_mod; plus ]
+      | _ -> invalid_arg "remainder: arity")
+    [ x1; x2 ]
 
 let mod_ = remainder
 
@@ -437,7 +471,7 @@ let modf x =
   in
   [ bind1 T.Sub [ a; whole ]; whole ]
 
-let signbit x =
+let signbit_body x =
   let a = p1 (promote [ x ]) in
   let sh = shape a in
   match dtype a with
@@ -451,7 +485,7 @@ let signbit x =
   | D.F8_e8m0fnu ->
       failwith "jax.numpy.signbit only supports 16, 32, and 64-bit types."
   | D.Bool | D.Uint32 | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint64 ->
-      const_full D.Bool sh 0.0
+      array_full D.Bool sh 0.0
   | D.Complex64 | D.Complex128 ->
       invalid_arg "signbit: complex dtype unsupported"
   | D.F32 ->
@@ -462,6 +496,11 @@ let signbit x =
       let i = bind1 (T.Bitcast_convert_type D.I64) [ a ] in
       let s = bind1 T.Shift_right_arithmetic [ i; const_full D.I64 sh 63.0 ] in
       bind1 (T.Convert_element_type D.Bool) [ s ]
+
+let signbit x =
+  Jnp_util.jit1 "signbit"
+    (function [ x ] -> signbit_body x | _ -> invalid_arg "signbit: arity")
+    [ x ]
 
 let copysign x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in
@@ -476,9 +515,9 @@ let isfinite x =
           bind1 T.Is_finite [ bind1 T.Imag [ x ] ];
         ]
   | d when Dtypes.issubdtype d `Floating -> bind1 T.Is_finite [ x ]
-  | _ -> const_full D.Bool (shape x) 1.0
+  | _ -> array_full D.Bool (shape x) 1.0
 
-let isinf x =
+let isinf_body x =
   let of_real v =
     bind1 T.Eq [ bind1 T.Abs [ v ]; const_full (dtype v) (shape v) infinity ]
   in
@@ -486,7 +525,12 @@ let isinf x =
   | D.Complex64 | D.Complex128 ->
       bind1 T.Or [ of_real (bind1 T.Real [ x ]); of_real (bind1 T.Imag [ x ]) ]
   | d when Dtypes.issubdtype d `Floating -> of_real x
-  | _ -> const_full D.Bool (shape x) 0.0
+  | _ -> array_full D.Bool (shape x) 0.0
+
+let isinf x =
+  Jnp_util.jit1 "isinf"
+    (function [ x ] -> isinf_body x | _ -> invalid_arg "isinf: arity")
+    [ x ]
 
 let isnan x = bind1 T.Ne [ x; x ]
 
@@ -496,7 +540,7 @@ let isposinf x =
       invalid_arg "isposinf/isneginf are not well defined for complex types"
   | d when Dtypes.issubdtype d `Floating ->
       bind1 T.Eq [ x; const_full (dtype x) (shape x) infinity ]
-  | _ -> const_full D.Bool (shape x) 0.0
+  | _ -> array_full D.Bool (shape x) 0.0
 
 let isneginf x =
   match dtype x with
@@ -504,7 +548,7 @@ let isneginf x =
       invalid_arg "isposinf/isneginf are not well defined for complex types"
   | d when Dtypes.issubdtype d `Floating ->
       bind1 T.Eq [ x; const_full (dtype x) (shape x) neg_infinity ]
-  | _ -> const_full D.Bool (shape x) 0.0
+  | _ -> array_full D.Bool (shape x) 0.0
 
 let heaviside x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in
@@ -538,13 +582,21 @@ let hypot x1 x2 =
   where idx_inf (const_full dt sh infinity) x
 
 let sinc x =
-  let a = p1 (promote_inexact [ x ]) in
-  let dt = dtype a and sh = shape a in
-  let eq_zero = bind1 T.Eq [ a; const_full dt sh 0.0 ] in
-  let pi_x = bind1 T.Mul [ const_full dt sh Float.pi; a ] in
-  let safe = where eq_zero (const_full dt sh 1.0) pi_x in
-  where eq_zero (const_full dt sh 1.0)
-    (bind1 T.Div [ bind1 T.Sin [ safe ]; safe ])
+  Jnp_util.jit1 "sinc"
+    (function
+      | [ x ] ->
+          let a = p1 (promote_inexact [ x ]) in
+          let dt = dtype a and sh = shape a in
+          let eq_zero = bind1 T.Eq [ a; const_full dt sh 0.0 ] in
+          let pi_x = bind1 T.Mul [ const_full dt sh Float.pi; a ] in
+          let safe = where eq_zero (const_full dt sh 1.0) pi_x in
+          let times_zero = bind1 T.Mul [ pi_x; const_full dt sh 0.0 ] in
+          let maclaurin = bind1 T.Add [ times_zero; const_full dt sh 1.0 ] in
+          let sin_safe = bind1 T.Sin [ safe ] in
+          let ratio = bind1 T.Div [ sin_safe; safe ] in
+          where eq_zero maclaurin ratio
+      | _ -> invalid_arg "sinc: arity")
+    [ x ]
 
 let wrap_between x half =
   let sh = shape x in
@@ -574,15 +626,14 @@ let logaddexp x1 x2 =
   end
   else
     let delta = bind1 T.Sub [ a; b ] in
-    let normal =
-      bind1 T.Add
-        [
-          amax;
-          bind1 T.Log1p
-            [ bind1 T.Exp [ bind1 T.Neg [ bind1 T.Abs [ delta ] ] ] ];
-        ]
-    in
-    where (bind1 T.Ne [ delta; delta ]) (bind1 T.Add [ a; b ]) normal
+    let is_nan = bind1 T.Ne [ delta; delta ] in
+    let sum = bind1 T.Add [ a; b ] in
+    let magnitude = bind1 T.Abs [ delta ] in
+    let negated = bind1 T.Neg [ magnitude ] in
+    let exponent = bind1 T.Exp [ negated ] in
+    let tail = bind1 T.Log1p [ exponent ] in
+    let normal = bind1 T.Add [ amax; tail ] in
+    bind1 T.Select_n [ is_nan; normal; sum ]
 
 let logaddexp2 x1 x2 =
   let a, b = p2 (promote_inexact [ x1; x2 ]) in
@@ -635,11 +686,62 @@ let is_complex_dtype = function
   | _ -> false
 
 let imag x =
-  if is_complex_dtype (dtype x) then bind1 T.Imag [ x ] else zeros_like x
+  if is_complex_dtype (dtype x) then bind1 T.Imag [ x ]
+  else array_full (dtype x) (shape x) 0.0
 
 let real x = if is_complex_dtype (dtype x) then bind1 T.Real [ x ] else x
 let conjugate x = if is_complex_dtype (dtype x) then bind1 T.Conj [ x ] else x
 let conj = conjugate
+
+let arccosh p0 =
+  Jnp_util.jit1 "arccosh"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> arccosh p0 | _ -> invalid_arg "arccosh: arity")
+    [ p0 ]
+
+let rint p0 =
+  Jnp_util.jit1 "rint"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> rint p0 | _ -> invalid_arg "rint: arity")
+    [ p0 ]
+
+let copysign p0 p1 =
+  Jnp_util.jit1 "copysign"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function
+      | [ p0; p1 ] -> copysign p0 p1 | _ -> invalid_arg "copysign: arity")
+    [ p0; p1 ]
+
+let divmod p0 p1 =
+  Jnp_util.jit "divmod"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> divmod p0 p1 | _ -> invalid_arg "divmod: arity")
+    [ p0; p1 ]
+
+let fmod p0 p1 =
+  Jnp_util.jit1 "fmod"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> fmod p0 p1 | _ -> invalid_arg "fmod: arity")
+    [ p0; p1 ]
+
+let modf p0 =
+  Jnp_util.jit "modf"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> modf p0 | _ -> invalid_arg "modf: arity")
+    [ p0 ]
+
+let heaviside p0 p1 =
+  Jnp_util.jit1 "heaviside"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function
+      | [ p0; p1 ] -> heaviside p0 p1 | _ -> invalid_arg "heaviside: arity")
+    [ p0; p1 ]
+
+let hypot p0 p1 =
+  Jnp_util.jit1 "hypot"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> hypot p0 p1 | _ -> invalid_arg "hypot: arity")
+    [ p0; p1 ]
 
 let fabs a0 =
   Eager_jit.one "numpy.ufuncs.fabs" () [] [ a0 ] (fun opts vals ->

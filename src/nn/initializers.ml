@@ -18,11 +18,7 @@ let concrete = function
   | Device _ ->
       failwith "nn/initializers: initializer on a tracer not supported"
 
-let const shape x =
-  Concrete
-    (Nd.canonicalize D.F32
-       (Nd.of_floats D.F32 shape (Array.make (prod shape) x)))
-
+let const shape x = C.splat D.F32 shape x
 let scalar_f v = Nd.get_f (concrete v) [||]
 let sqrt_f32 x = scalar_f (C.bind1 Sqrt [ const [||] x ])
 let scale_by shape v factor = C.bind1 Mul [ v; const shape factor ]
@@ -155,11 +151,7 @@ let orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
   in
   let moved = Numpy.Lax_numpy.moveaxis [| rank - 1 |] [| axis |] reshaped in
   let f = C.get_aval moved in
-  C.bind1 Mul
-    [
-      moved;
-      Concrete (Nd.of_floats f.dtype f.shape (Array.make (prod f.shape) scale));
-    ]
+  C.bind1 Mul [ moved; C.splat f.dtype f.shape scale ]
 
 let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
  fun key ~shape ->

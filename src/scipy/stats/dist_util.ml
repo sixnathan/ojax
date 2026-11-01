@@ -61,5 +61,5 @@ let real_only vs =
   vs
 
 let promote_dtypes vs = real_only (promote_dtypes_any vs)
-let promote vs = NL.broadcast_arrays (promote_dtypes vs)
+let promote vs = Numpy.Ufuncs.promote_shapes (promote_dtypes vs)
 let lgamma v = C.bind1 T.Lgamma [ v ]

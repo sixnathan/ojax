@@ -212,10 +212,10 @@ module RD = Ojax.Numpy.Reductions
 
 let dt_of v = (Ojax.Core.get_aval v).T.dtype
 let shp v = (Ojax.Core.get_aval v).T.shape
-let binarize a = UF.greater a (L.full_like a 0.0)
+let binarize a = UF.greater a (like a 0.0)
 
 let rounded a =
-  let two = L.full_like a 2.0 in
+  let two = like a 2.0 in
   UF.divide (NL.round (UF.multiply a two)) two
 
 let nonneg a = NL.astype (UF.absolute a) Ojax.Dtype.I32
@@ -306,7 +306,7 @@ let numpy_run op p a b c =
   | "np_gradient" -> Some (E.gradient ?spacing:(opt_number "spacing" p) (a ()))
   | "np_gradient_axis" -> Some (E.gradient ?axis:(opt_ints "axis" p) (a ()))
   | "np_choose" ->
-      let two = L.full_like (nonneg (a ())) 2.0 in
+      let two = like (nonneg (a ())) 2.0 in
       Some
         [
           E.choose ~mode:"clip"
@@ -345,11 +345,8 @@ let numpy_run op p a b c =
       Some
         [
           E.piecewise x
-            [
-              UF.less x (L.full_like x 0.0);
-              UF.greater_equal x (L.full_like x 0.0);
-            ]
-            [ L.neg; (fun v -> L.mul v (L.full_like v 2.0)) ];
+            [ UF.less x (like x 0.0); UF.greater_equal x (like x 0.0) ]
+            [ L.neg; (fun v -> L.mul v (like v 2.0)) ];
         ]
   | "np_fill_diagonal" ->
       let v = L.full [||] (U.to_number (U.member "val" p)) (dt_of (a ())) in
@@ -398,7 +395,7 @@ let numpy_run op p a b c =
       Some
         [
           E.apply_along_axis
-            (fun v -> L.mul v (L.full_like v 2.0))
+            (fun v -> L.mul v (like v 2.0))
             (int "axis" p) (a ());
         ]
   | "np_apply_over_axes" ->
@@ -493,7 +490,7 @@ let scipy_run op p a b c =
       let shift v =
         let n = (shp v).(0) in
         let eye = NL.identity ~dtype:(dt_of v) n in
-        L.add v (L.mul eye (L.full_like eye 4.0))
+        L.add v (L.mul eye (like eye 4.0))
       in
       Some [ SP.solve_sylvester (shift (a ())) (shift (b ())) (c ()) ]
   | "rnd_maxwell" -> Some [ RX.maxwell (seed_key p) ~shape:(ints "shape" p) ]
@@ -512,7 +509,7 @@ let scipy_run op p a b c =
       let n = (shp m).(0) in
       let product = L.dot m (L.transpose m [| 1; 0 |]) in
       let eye = NL.identity ~dtype:(dt_of m) n in
-      let cov = L.add product (L.mul eye (L.full_like eye 2.0)) in
+      let cov = L.add product (L.mul eye (like eye 2.0)) in
       Some
         [
           RX.multivariate_normal ~shape:(ints "shape" p)
@@ -556,7 +553,7 @@ let dtype_named = function
   | "float32" -> Ojax.Dtype.F32
   | other -> failwith ("parity: dtype " ^ other)
 
-let scaled v x = L.mul v (L.full_like v x)
+let scaled v x = L.mul v (like v x)
 
 let in_range v name =
   if String.length name >= 4 && String.sub name 0 4 = "uint" then L.abs v else v
@@ -591,7 +588,7 @@ let narrow_run op p a b =
         ]
   | "dt_float_ops" ->
       let v = UF.sin (NL.astype (a ()) (named "to")) in
-      Some [ L.mul v (L.full_like v 2.0) ]
+      Some [ L.mul v (like v 2.0) ]
   | "dt_sum" ->
       Some
         [
@@ -609,7 +606,7 @@ let spd v =
   let n = sh.(Array.length sh - 1) in
   let product = L.batch_matmul v (NL.swapaxes (-1) (-2) v) in
   let eye = NL.broadcast_to (NL.identity ~dtype:(dt_of v) n) sh in
-  UF.add product (L.mul eye (L.full_like eye 3.0))
+  UF.add product (L.mul eye (like eye 3.0))
 
 let batched_run op p a b =
   match op with
@@ -723,7 +720,7 @@ let misc_scipy_run op p a b =
   | "sp_fresnel" ->
       let x = a () in
       let factor = Option.value (opt_number "scale" p) ~default:1.0 in
-      Some (pair (Ojax.Scipy.Special.fresnel (L.mul x (L.full_like x factor))))
+      Some (pair (Ojax.Scipy.Special.fresnel (L.mul x (like x factor))))
   | _ -> None
 
 let lax_extra_run op p a =
@@ -794,7 +791,7 @@ let array_random_run op p a b =
   match op with
   | "ra_uniform" ->
       let lo = a () in
-      let hi = L.add (L.add lo (L.abs (b ()))) (L.full_like lo 1.0) in
+      let hi = L.add (L.add lo (L.abs (b ()))) (like lo 1.0) in
       Some [ RC.uniform_range (k ()) ~shape:(shp lo) ~minval:lo ~maxval:hi ]
   | "ra_bernoulli" ->
       let pr = L.abs (L.sin (a ())) in
@@ -805,7 +802,7 @@ let array_random_run op p a b =
   | "ra_beta" ->
       Some [ RC.beta_value (k ()) ~shape:(shp (a ())) ~a:(a ()) ~b:(b ()) ]
   | "ra_poisson" ->
-      let lam = L.mul (a ()) (L.full_like (a ()) 8.0) in
+      let lam = L.mul (a ()) (like (a ()) 8.0) in
       Some [ RC.poisson_value (k ()) ~shape:(shp lam) ~lam ]
   | "ra_bits" ->
       Some
@@ -820,7 +817,7 @@ let array_random_run op p a b =
         ]
   | "ra_gamma_grad" ->
       let x = a () in
-      let z = L.add (L.mul x (L.full_like x 0.7)) (L.full_like x 0.2) in
+      let z = L.add (L.mul x (like x 0.7)) (like x 0.2) in
       Some [ L.random_gamma_grad x z ]
   | "ra_grad_gamma" ->
       let x = a () in
@@ -873,11 +870,11 @@ let gap_run op p a b =
       Some (pair (ST.mode ?keepdims:(opt_bool "keepdims" p) x))
   | "gp_rankdata" ->
       let x = a () in
-      let scaled = NL.round (L.mul x (L.full_like x 2.0)) in
+      let scaled = NL.round (L.mul x (like x 2.0)) in
       Some [ ST.rankdata ~method_:(required_string "method" p) scaled ]
   | "gp_rankdata_axis" ->
       let x = a () in
-      let scaled = NL.round (L.mul x (L.full_like x 2.0)) in
+      let scaled = NL.round (L.mul x (like x 2.0)) in
       Some
         [
           ST.rankdata
@@ -891,7 +888,7 @@ let gap_run op p a b =
   | "gp_expm_batched" -> Some [ Ojax.Scipy.Linalg.expm (a ()) ]
   | "gp_reduce_precision" ->
       let x = a () in
-      let scaled = L.mul x (L.full_like x (U.to_number (U.member "scale" p))) in
+      let scaled = L.mul x (like x (U.to_number (U.member "scale" p))) in
       Some
         [
           L.reduce_precision scaled ~exponent_bits:(int "e" p)
@@ -908,7 +905,7 @@ let herm v =
   let n = sh.(Array.length sh - 1) in
   let product = L.batch_matmul v (L.conj (NL.swapaxes (-1) (-2) v)) in
   let eye = NL.broadcast_to (NL.identity ~dtype:(dt_of v) n) sh in
-  UF.add product (L.mul eye (L.full_like eye 3.0))
+  UF.add product (L.mul eye (like eye 3.0))
 
 let sum_all v = L.reduce_sum v (Array.init (Array.length (shp v)) Fun.id)
 
@@ -935,7 +932,7 @@ let complex_linalg_run op a b =
   | "cl_jvp_eigvals" ->
       let x = a () in
       let dt = dt_of x in
-      let tangent = UF.add (L.mul x (L.full_like x 0.5)) (L.full_like x 0.1) in
+      let tangent = UF.add (L.mul x (like x 0.5)) (like x 0.1) in
       ignore dt;
       let _, t =
         Ojax.Interpreters.Ad.jvp
@@ -1075,7 +1072,7 @@ let surface_batch_run op params a b =
     UFN.frompyfunc
       (fun args ->
         match args with
-        | [ x; y ] -> [ UF.add (UF.multiply x y) (L.full_like x 1.0) ]
+        | [ x; y ] -> [ UF.add (UF.multiply x y) (like x 1.0) ]
         | _ -> failwith "parity: ufunc arity")
       ~nin:2 ~nout:1
   in
@@ -1189,7 +1186,7 @@ let tracer_batch_run op params a b =
           Ojax.Numpy.Vectorize.vectorize
             (fun args ->
               match args with
-              | [ x; y ] -> UF.add (UF.multiply x y) (L.full_like x 1.0)
+              | [ x; y ] -> UF.add (UF.multiply x y) (like x 1.0)
               | _ -> failwith "parity: vectorize arity")
             [ a (); b () ];
         ]
@@ -1253,11 +1250,11 @@ let library_sweep op v =
   let u () = NF.sigmoid v in
   let q () =
     let s = NF.softplus v in
-    UF.add s (L.full_like s 0.1)
+    UF.add s (like s 0.1)
   in
   let q1 () =
     let p = q () in
-    UF.add p (L.full_like p 1.0)
+    UF.add p (like p 1.0)
   in
   match op with
   | "sw_nn_relu" -> Some (NF.relu v)
@@ -1419,28 +1416,25 @@ let dtype_sweep_run op a =
   | "sw_isfinite" -> one UF.isfinite
   | "sw_isinf" -> one UF.isinf
   | "sw_round" -> one (NL.round ~decimals:1)
-  | "sw_bitwise_and" ->
-      one (fun v -> UF.bitwise_and v (NL.flip ~axis:[| 0 |] v))
-  | "sw_bitwise_or" -> one (fun v -> UF.bitwise_or v (NL.flip ~axis:[| 0 |] v))
-  | "sw_bitwise_xor" ->
-      one (fun v -> UF.bitwise_xor v (NL.flip ~axis:[| 0 |] v))
+  | "sw_bitwise_and" -> one (fun v -> UF.bitwise_and v (L.rev v [| 0 |]))
+  | "sw_bitwise_or" -> one (fun v -> UF.bitwise_or v (L.rev v [| 0 |]))
+  | "sw_bitwise_xor" -> one (fun v -> UF.bitwise_xor v (L.rev v [| 0 |]))
   | "sw_bitwise_not" -> one UF.bitwise_not
   | "sw_left_shift" -> one (fun v -> UF.left_shift v (AC.ones_like v))
   | "sw_right_shift" -> one (fun v -> UF.right_shift v (AC.ones_like v))
   | "sw_remainder" ->
-      one (fun v ->
-          UF.remainder v (UF.add (NL.flip ~axis:[| 0 |] v) (AC.ones_like v)))
+      one (fun v -> UF.remainder v (UF.add (L.rev v [| 0 |]) (AC.ones_like v)))
   | "sw_floor_divide" ->
       one (fun v ->
-          UF.floor_divide v (UF.add (NL.flip ~axis:[| 0 |] v) (AC.ones_like v)))
+          UF.floor_divide v (UF.add (L.rev v [| 0 |]) (AC.ones_like v)))
   | "sw_power_self" ->
       one (fun v -> UF.power v (UF.add (AC.ones_like v) (AC.ones_like v)))
-  | "sw_gcd" -> one (fun v -> NL.gcd v (NL.flip ~axis:[| 0 |] v))
-  | "sw_lcm" -> one (fun v -> NL.lcm v (NL.flip ~axis:[| 0 |] v))
+  | "sw_gcd" -> one (fun v -> NL.gcd v (L.rev v [| 0 |]))
+  | "sw_lcm" -> one (fun v -> NL.lcm v (L.rev v [| 0 |]))
   | "sw_floor_div_self" ->
       one (fun v ->
           let v = as_float v in
-          UF.divide v (UF.add v (L.full_like v 2.0)))
+          UF.divide v (UF.add v (like v 2.0)))
   | "sw_linspace_end" -> one (fun v -> AC.linspace_v ~num:4 (row v 0) (row v 1))
   | "sw_geomspace" ->
       one (fun v ->
@@ -1468,8 +1462,8 @@ let dtype_sweep_run op a =
   | "sw_tensordot" -> one (fun v -> TC.tensordot ~axes:(TC.Ax_int 1) v (t v))
   | "sw_einsum" -> one (fun v -> Ojax.Numpy.Einsum.einsum "ij,kj->ik" [ v; v ])
   | "sw_clip" -> one (NL.clip ~min:(-0.5) ~max:0.5)
-  | "sw_minimum" -> one (fun v -> UF.minimum v (NL.flip ~axis:[| 0 |] v))
-  | "sw_maximum" -> one (fun v -> UF.maximum v (NL.flip ~axis:[| 0 |] v))
+  | "sw_minimum" -> one (fun v -> UF.minimum v (L.rev v [| 0 |]))
+  | "sw_maximum" -> one (fun v -> UF.maximum v (L.rev v [| 0 |]))
   | "sw_max" -> one (RD.amax ~axis:ax0)
   | "sw_min" -> one (RD.amin ~axis:ax0)
   | "sw_argmax" -> one (NL.argmax ~axis:0)
@@ -1484,7 +1478,7 @@ let dtype_sweep_run op a =
           NL.where_
             (L.gt (UF.real v) (L.full_like (UF.real v) 0.0))
             v
-            (UF.multiply v (L.full_like v 2.0)))
+            (UF.multiply v (like v 2.0)))
   | "sw_concatenate" -> one (fun v -> NL.concatenate ~axis:0 [ v; v ])
   | "sw_pad" ->
       one (fun v -> NL.pad v (Array.map (fun _ -> (1, 1)) (shp v)) 0.0)
@@ -1542,7 +1536,7 @@ let special_batch_run op params a =
          [| List.length values |]
          (Array.of_list (List.map float_of_int values)))
   in
-  let scaled v k = UF.multiply v (L.full_like v (float_p k)) in
+  let scaled v k = UF.multiply v (like v (float_p k)) in
   match op with
   | "sx_expi" -> Some [ SP.expi (scaled (a ()) "scale") ]
   | "sx_exp1" -> Some [ SP.exp1 (scaled (UF.absolute (a ())) "scale") ]
@@ -1551,7 +1545,7 @@ let special_batch_run op params a =
       Some [ SP.expn (L.full [||] (float_p "n") (dt_of x)) x ]
   | "sx_expn_grad" ->
       let x = scaled (UF.absolute (a ())) "scale" in
-      let x = UF.add x (L.full_like x 0.1) in
+      let x = UF.add x (like x 0.1) in
       let order = L.full [||] (float_p "n") (dt_of x) in
       Some
         (Ojax.Interpreters.Batching.vmap
@@ -1562,7 +1556,7 @@ let special_batch_run op params a =
            [ Some 0 ] [ x ])
   | "sx_expi_grad" ->
       let x = scaled (a ()) "scale" in
-      let x = UF.add x (L.full_like x 0.5) in
+      let x = UF.add x (like x 0.5) in
       Some
         (Ojax.Interpreters.Batching.vmap
            (fun args ->
@@ -1573,13 +1567,13 @@ let special_batch_run op params a =
   | "sx_hyp2f1" ->
       let v = a () in
       let t = abc () in
-      let full x = L.full_like v x in
+      let full x = like v x in
       let z = UF.multiply (full (float_p "scale")) (UF.tanh v) in
       Some [ SP.hyp2f1 (full t.(0)) (full t.(1)) (full t.(2)) z ]
   | "sx_hyp2f1_grad" ->
       let v = a () in
       let t = abc () in
-      let z = UF.multiply (L.full_like v 0.5) (UF.tanh v) in
+      let z = UF.multiply (like v 0.5) (UF.tanh v) in
       let lit x = L.full [||] x (dt_of v) in
       Some
         (Ojax.Interpreters.Batching.vmap
@@ -1602,9 +1596,7 @@ let special_batch_run op params a =
         ]
   | "sx_sph" ->
       let v = a () in
-      let phi =
-        UF.add (UF.multiply v (L.full_like v 0.5)) (L.full_like v 0.2)
-      in
+      let phi = UF.add (UF.multiply v (like v 0.5)) (like v 0.2) in
       let out =
         SP.sph_harm_y ~n_max:(int_p "n_max") (ints "n") (ints "m")
           (UF.absolute v) phi
@@ -1641,8 +1633,8 @@ let transform_sweep_run op a =
          [ a () ])
   else if prefixed "swj_" then begin
     let x = a () in
-    let half = UF.multiply x (L.full_like x 0.5) in
-    let tangent = UF.add half (L.full_like x 0.25) in
+    let half = UF.multiply x (like x 0.5) in
+    let tangent = UF.add half (like x 0.25) in
     let _, t =
       Ojax.Interpreters.Ad.jvp
         (fun args -> [ apply (List.hd args) ])

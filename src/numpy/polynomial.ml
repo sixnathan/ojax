@@ -12,10 +12,7 @@ let dtype v = (get_aval v).T.dtype
 let weak v = (get_aval v).T.weak_type
 let bind1 = C.bind1
 let prod sh = Array.fold_left ( * ) 1 sh
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (prod sh) x))
-
+let const_full dt sh x = Core.splat dt sh x
 let scalar dt x = const_full dt [||] x
 
 let convert v dt =
@@ -202,6 +199,47 @@ let polymul ?(trim_leading_zeros = false) a1 a2 =
     if (shape a2).(0) = 0 then const_full (dtype a1) [| 1 |] 0.0 else a2
   in
   NL.convolve ~mode:"full" a1 a2
+
+let poly p0 =
+  Jnp_util.jit1 "poly"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> poly p0 | _ -> invalid_arg "poly: arity")
+    [ p0 ]
+
+let polyval ?unroll p0 p1 =
+  Jnp_util.jit1 "polyval"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string unroll [])))
+    (function
+      | [ p0; p1 ] -> polyval ?unroll p0 p1 | _ -> invalid_arg "polyval: arity")
+    [ p0; p1 ]
+
+let polyadd p0 p1 =
+  Jnp_util.jit1 "polyadd"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> polyadd p0 p1 | _ -> invalid_arg "polyadd: arity")
+    [ p0; p1 ]
+
+let polyint ?m ?k p0 =
+  let k_given = k <> None in
+  if k_given then polyint ?m ?k p0
+  else
+    Jnp_util.jit1 "polyint"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string m [])))
+      (function
+        | [ p0 ] -> polyint ?m ?k p0 | _ -> invalid_arg "polyint: arity")
+      [ p0 ]
+
+let polyder ?m p0 =
+  Jnp_util.jit1 "polyder"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string m [])))
+    (function [ p0 ] -> polyder ?m p0 | _ -> invalid_arg "polyder: arity")
+    [ p0 ]
+
+let polysub p0 p1 =
+  Jnp_util.jit1 "polysub"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> polysub p0 p1 | _ -> invalid_arg "polysub: arity")
+    [ p0; p1 ]
 
 let poly a0 =
   Eager_jit.one "numpy.polynomial.poly" () [] [ a0 ] (fun opts vals ->

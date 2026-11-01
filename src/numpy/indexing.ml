@@ -18,8 +18,7 @@ let canonicalize_axis ax n =
       (Printf.sprintf "axis %d out of bounds for array of ndim %d" ax n);
   a
 
-let full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (Array.fold_left ( * ) 1 sh) x))
+let full dt sh x = Core.splat dt sh x
 
 let iota dt sh dim =
   bind1 (T.Iota { dtype = dt; shape = sh; dimension = dim }) []

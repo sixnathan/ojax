@@ -11,10 +11,7 @@ let dtype v = (get_aval v).T.dtype
 let ndim v = Array.length (shape v)
 let bind1 = C.bind1
 let numel sh = Array.fold_left ( * ) 1 sh
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (numel sh) x))
-
+let const_full dt sh x = Core.splat dt sh x
 let scalar dt x = const_full dt [||] x
 
 let is_integer = function

@@ -33,6 +33,8 @@ val arg_info_dtype : arg_info -> Dtype.t
 val lower : (value list -> value list) -> aval list -> lowered
 val as_text : lowered -> string
 val jaxpr_text : lowered -> string
+val as_jax_text : ?name:string -> lowered -> string
+val jax_jaxpr_text : lowered -> string
 val compile : ?compiler_options:compiler_options -> lowered -> compiled
 val call : compiled -> value list -> value list
 val cost_analysis : compiled -> (string * float) list

@@ -2000,6 +2000,7 @@ let ffi_layout_text layout =
   let n = Array.length layout in
   let body =
     if n = 0 then ""
+    else if n = 1 then string_of_int layout.(0)
     else
       "["
       ^ String.concat ", " (Array.to_list (Array.map string_of_int layout))
@@ -2019,11 +2020,11 @@ let lapack_prec dt =
   | _ -> failwith "Stablehlo.Emit: LAPACK has no routine for this dtype"
 
 let lapack_layout rank ~batch =
-  if rank <= batch then Array.init rank Fun.id
-  else
+  if rank = batch + 2 then
     Array.append
-      (Array.init (rank - batch) (fun i -> batch + i))
-      (Array.init batch Fun.id)
+      [| rank - 2; rank - 1 |]
+      (Array.init (rank - 2) (fun i -> rank - 3 - i))
+  else Array.init rank (fun i -> rank - 1 - i)
 
 let lapack_aval shape dtype = { shape; dtype; weak_type = false }
 
@@ -2066,18 +2067,48 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
   let types avals =
     String.concat ", " (List.map Ir.tensor_type_of_aval avals)
   in
+  let sizes = ref [] in
+  let next_factor = ref 0 in
+  let fresh_factor size =
+    let letter = Char.escaped (Char.chr (Char.code 'i' + !next_factor)) in
+    incr next_factor;
+    sizes := (letter, size) :: !sizes;
+    letter
+  in
+  let batch_factors =
+    Array.init batch (fun d -> fresh_factor first.shape.(d))
+  in
+  let factors_of (a : aval) =
+    let inner =
+      Array.to_list a.shape
+      |> List.mapi (fun d size ->
+          if d < batch then batch_factors.(d) else fresh_factor size)
+    in
+    "[" ^ String.concat ", " inner ^ "]"
+  in
+  let operand_rule = List.map factors_of in_avals in
+  let result_rule = List.map factors_of out_avals in
+  let sharding_rule =
+    Printf.sprintf "#sdy.op_sharding_rule<(%s)->(%s) {%s}, custom>"
+      (String.concat ", " operand_rule)
+      (String.concat ", " result_rule)
+      (String.concat ", "
+         (List.rev_map
+            (fun (letter, size) -> Printf.sprintf "%s=%d" letter size)
+            !sizes))
+  in
   Buffer.add_string ctx.buf
     (Printf.sprintf
        "    %%%d%s = stablehlo.custom_call @%s(%s) {backend_config = \"\", \
         mhlo.backend_config = {%s}, mhlo.frontend_attributes = {num_batch_dims \
-        = \"%d\"}, operand_layouts = [%s]%s, result_layouts = [%s]} : (%s) -> \
-        %s\n"
+        = \"%d\"}, operand_layouts = [%s]%s, result_layouts = [%s], \
+        sdy.sharding_rule = %s} : (%s) -> %s\n"
        group
        (if n > 1 then Printf.sprintf ":%d" n else "")
        target
        (String.concat ", " (List.map name in_ids))
        config batch (layouts in_avals) alias_text (layouts out_avals)
-       (types in_avals)
+       sharding_rule (types in_avals)
        (if n > 1 then "(" ^ types out_avals ^ ")" else types out_avals));
   if n = 1 then [ group ]
   else List.init n (fun i -> alias_result (Printf.sprintf "%%%d#%d" group i))
@@ -2429,7 +2460,8 @@ and emit_cond ctx (eqn : eqn) in_ids ~platforms branches =
         let region =
           Printf.sprintf
             "      %s = stablehlo.constant %s : %s\n\
-            \      stablehlo.return %s : %s\n" (name k)
+            \      stablehlo.return %s : %s\n"
+            (name k)
             (Ir.dense (Ir.int_literal 0L))
             i32 (name k) i32
         in
@@ -2582,9 +2614,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
        (String.concat ", " carry_tys));
   let start = ctx.next in
   let cond_ids =
-    List.filteri
-      (fun i _ -> i < cond_nconsts || i >= n_consts)
-      carry_ids
+    List.filteri (fun i _ -> i < cond_nconsts || i >= n_consts) carry_ids
   in
   enter_region_later ctx cond cond_ids "    cond {\n";
   Buffer.add_string ctx.buf "    } do {\n";
@@ -2596,9 +2626,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
   List.iteri
     (fun i (v : var) -> Hashtbl.replace ctx.ids v.vid (List.nth carry_ids i))
     cond_fake;
-  let body_ids =
-    List.filteri (fun i _ -> i >= cond_nconsts) carry_ids
-  in
+  let body_ids = List.filteri (fun i _ -> i >= cond_nconsts) carry_ids in
   enter_region ctx body body_ids;
   let body_consts =
     List.filteri (fun i _ -> i < body_nconsts) body.jaxpr.in_binders
@@ -2748,7 +2776,8 @@ and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
     | Some s -> s
     | None ->
         let s =
-          Mlir_names.symbol_name (unique_symbol (Pretty_printer.call_name c.jid))
+          Mlir_names.symbol_name
+            (unique_symbol (Pretty_printer.call_name c.jid))
         in
         Hashtbl.replace call_symbols c.jid s;
         emit_private_function ctx s c;
@@ -3283,8 +3312,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_while ctx eqn in_ids ~cond_nconsts ~body_nconsts cond body
   | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       emit_inlined ctx eqn in_ids
-        (Lax.lower_scan ~length ~reverse ~num_consts
-           ~num_carry ~unroll jaxpr)
+        (Lax.lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll jaxpr)
   | Select_and_scatter _ ->
       failwith
         "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \

@@ -504,11 +504,9 @@ let py_pairs a =
 let py_platforms platforms =
   let one = function
     | None -> "None"
-    | Some names ->
-        let items =
-          Array.to_list names |> List.map (fun n -> "'" ^ n ^ "'")
-        in
-        (match items with
+    | Some names -> (
+        let items = Array.to_list names |> List.map (fun n -> "'" ^ n ^ "'") in
+        match items with
         | [ only ] -> "(" ^ only ^ ",)"
         | _ -> "(" ^ String.concat ", " items ^ ")")
   in

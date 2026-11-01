@@ -188,8 +188,7 @@ let hoist_custom_consts prim (c : closed_jaxpr) args =
       in
       let id' = Core.register_custom_rule rule in
       (match Core.custom_names_of id with
-      | Some (name, jvp_name) ->
-          Core.register_custom_names id' ~name ~jvp_name
+      | Some (name, jvp_name) -> Core.register_custom_names id' ~name ~jvp_name
       | None -> ());
       Core.note_custom_num_consts id' n;
       ( Custom_jvp_call id',
@@ -211,8 +210,7 @@ let process_primitive trace prim args =
         let args =
           List.map
             (function
-              | Concrete _ as v -> get_or_make_const_tracer trace v
-              | v -> v)
+              | Concrete _ as v -> get_or_make_const_tracer trace v | v -> v)
             args
         in
         note (List.map Core.get_aval args);
@@ -436,7 +434,11 @@ let lift_while ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
       | [ A_var v ] -> v.vaval
       | [ DropVar a ] -> a
       | [ A_lit nd ] ->
-          { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+          {
+            shape = Ndarray.shape nd;
+            dtype = Ndarray.dtype nd;
+            weak_type = false;
+          }
       | _ -> invalid_arg "lift_while: predicate arity"
     in
     Array.length cond_out.shape
@@ -445,8 +447,7 @@ let lift_while ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
     make_jaxpr avals (fun args ->
         let p = pred_of_cond args in
         if pred_rank = 0 then [ p ]
-        else
-          Core.bind (Reduce_or (Array.init pred_rank Fun.id)) [ p ])
+        else Core.bind (Reduce_or (Array.init pred_rank Fun.id)) [ p ])
   in
   let body' =
     make_jaxpr avals (fun args ->
@@ -459,8 +460,7 @@ let lift_while ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
             let shape = (Core.get_aval n).shape in
             let spread =
               Core.bind1
-                (Broadcast_in_dim
-                   { shape; dims = Array.init pred_rank Fun.id })
+                (Broadcast_in_dim { shape; dims = Array.init pred_rank Fun.id })
                 [ p ]
             in
             Core.bind1 Select_n [ spread; o; n ]

@@ -93,36 +93,36 @@ let sf ?loc ?scale x a b =
   L.exp (logsf ~loc ~scale x a b)
 
 let logpdf ?loc ?scale a0 a1 a2 =
-  Eager_jit.one ~jit:"logpdf" "scipy.stats.truncnorm.logpdf" () [ loc; scale ] [ a0; a1; a2 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"logpdf" "scipy.stats.truncnorm.logpdf" () [ loc; scale ]
+    [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with
       | [ loc; scale ], [ a0; a1; a2 ] -> logpdf ?loc ?scale a0 a1 a2
       | _ -> assert false)
 
 let logsf ?loc ?scale a0 a1 a2 =
-  Eager_jit.one ~jit:"logsf" "scipy.stats.truncnorm.logsf" () [ loc; scale ] [ a0; a1; a2 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"logsf" "scipy.stats.truncnorm.logsf" () [ loc; scale ]
+    [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with
       | [ loc; scale ], [ a0; a1; a2 ] -> logsf ?loc ?scale a0 a1 a2
       | _ -> assert false)
 
 let sf ?loc ?scale a0 a1 a2 =
-  Eager_jit.one ~jit:"sf" "scipy.stats.truncnorm.sf" () [ loc; scale ] [ a0; a1; a2 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"sf" "scipy.stats.truncnorm.sf" () [ loc; scale ]
+    [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with
       | [ loc; scale ], [ a0; a1; a2 ] -> sf ?loc ?scale a0 a1 a2
       | _ -> assert false)
 
 let logcdf ?loc ?scale a0 a1 a2 =
-  Eager_jit.one ~jit:"logcdf" "scipy.stats.truncnorm.logcdf" () [ loc; scale ] [ a0; a1; a2 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"logcdf" "scipy.stats.truncnorm.logcdf" () [ loc; scale ]
+    [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with
       | [ loc; scale ], [ a0; a1; a2 ] -> logcdf ?loc ?scale a0 a1 a2
       | _ -> assert false)
 
 let cdf ?loc ?scale a0 a1 a2 =
-  Eager_jit.one ~jit:"cdf" "scipy.stats.truncnorm.cdf" () [ loc; scale ] [ a0; a1; a2 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"cdf" "scipy.stats.truncnorm.cdf" () [ loc; scale ]
+    [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with
       | [ loc; scale ], [ a0; a1; a2 ] -> cdf ?loc ?scale a0 a1 a2
       | _ -> assert false)

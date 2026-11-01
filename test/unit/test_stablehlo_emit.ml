@@ -582,7 +582,8 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
         let eqn : T.eqn =
           {
             prim =
-              T.Cond { branches = [ branch T.Sub; branch T.Add ]; platforms = None };
+              T.Cond
+                { branches = [ branch T.Sub; branch T.Add ]; platforms = None };
             inputs = [ T.A_var idx; T.A_var x; T.A_var y ];
             outs = [ o ];
             multiple_results = false;

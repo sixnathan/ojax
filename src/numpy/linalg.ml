@@ -84,7 +84,8 @@ and matrix_power p0 s1 =
   Jnp_util.jit1 "matrix_power"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string s1 [])))
     (function
-      | [ p0 ] -> matrix_power_body p0 s1 | _ -> invalid_arg "matrix_power: arity")
+      | [ p0 ] -> matrix_power_body p0 s1
+      | _ -> invalid_arg "matrix_power: arity")
     [ p0 ]
 
 and matrix_rank ?rtol ?hermitian ?tol p0 =
@@ -163,7 +164,8 @@ and norm ?ord ?axis ?keepdims p0 =
       (Digest.to_hex
          (Digest.string (Marshal.to_string (ord, axis, keepdims) [])))
     (function
-      | [ p0 ] -> norm_body ?ord ?axis ?keepdims p0 | _ -> invalid_arg "norm: arity")
+      | [ p0 ] -> norm_body ?ord ?axis ?keepdims p0
+      | _ -> invalid_arg "norm: arity")
     [ p0 ]
 
 and qr ?mode p0 =
@@ -175,7 +177,8 @@ and qr ?mode p0 =
 and solve p0 p1 =
   Jnp_util.jit1 "solve"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> solve_body p0 p1 | _ -> invalid_arg "solve: arity")
+    (function
+      | [ p0; p1 ] -> solve_body p0 p1 | _ -> invalid_arg "solve: arity")
     [ p0; p1 ]
 
 and cond ?p p0 =
@@ -194,7 +197,8 @@ and svd_values a =
   | [ s ] -> s
   | _ -> assert false
 
-and svd_body ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a =
+and svd_body ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a
+    =
   let a = to_inexact a in
   if hermitian then svd_hermitian ~compute_uv a
   else if compute_uv then
@@ -207,8 +211,7 @@ and svd_body ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a
       | _ -> assert false);
     ]
 
-and svdvals x =
-  List.hd (svd ~compute_uv:false ~hermitian:false x)
+and svdvals x = List.hd (svd ~compute_uv:false ~hermitian:false x)
 
 and svd_hermitian ~compute_uv a =
   let w, v = eigh a in

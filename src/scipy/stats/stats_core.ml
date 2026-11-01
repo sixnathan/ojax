@@ -18,7 +18,8 @@ let sem ?(axis = 0) ?(ddof = 1) a =
   UF.divide (RD.std ~axis:[| axis |] ~ddof b) denom
 
 let sem ?axis ?ddof a =
-  Eager_jit.one ~jit:"sem" "scipy.stats.sem" (axis, ddof) [] [ a ] (fun _ vals ->
+  Eager_jit.one ~jit:"sem" "scipy.stats.sem" (axis, ddof) [] [ a ]
+    (fun _ vals ->
       match vals with [ a ] -> sem ?axis ?ddof a | _ -> assert false)
 
 let lane_mode x =
@@ -88,8 +89,8 @@ let mode ?(axis = Some 0) ?(nan_policy = "propagate") ?(keepdims = false) a =
   | _ -> failwith "scipy.stats.mode: arity"
 
 let mode ?axis ?nan_policy ?keepdims a =
-  Eager_jit.pair ~jit:"mode" "scipy.stats.mode" (axis, nan_policy, keepdims) [] [ a ]
-    (fun _ vals ->
+  Eager_jit.pair ~jit:"mode" "scipy.stats.mode" (axis, nan_policy, keepdims)
+    [] [ a ] (fun _ vals ->
       match vals with
       | [ a ] -> mode ?axis ?nan_policy ?keepdims a
       | _ -> assert false)
@@ -134,7 +135,9 @@ let rec rankdata ?(method_ = "average") ?axis ?(nan_policy = "propagate") a =
           in
           let upper = Numpy.Indexing.take_index ~axis:0 count dense in
           let lower =
-            L.add (Numpy.Indexing.take_index ~axis:0 count (L.sub dense one)) one
+            L.add
+              (Numpy.Indexing.take_index ~axis:0 count (L.sub dense one))
+              one
           in
           match method_ with
           | "max" -> NL.astype upper out_dt
@@ -146,8 +149,8 @@ let rec rankdata ?(method_ = "average") ?axis ?(nan_policy = "propagate") a =
               L.mul sum (L.full_like sum 0.5))
 
 let rankdata ?method_ ?axis ?nan_policy a =
-  Eager_jit.one ~jit:"rankdata" "scipy.stats.rankdata" (method_, axis, nan_policy) [] [ a ]
-    (fun _ vals ->
+  Eager_jit.one ~jit:"rankdata" "scipy.stats.rankdata"
+    (method_, axis, nan_policy) [] [ a ] (fun _ vals ->
       match vals with
       | [ a ] -> rankdata ?method_ ?axis ?nan_policy a
       | _ -> assert false)

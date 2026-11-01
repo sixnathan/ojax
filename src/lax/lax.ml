@@ -2716,8 +2716,7 @@ let abstract_eval prim avals =
           [ shaped widest x.dtype (a.weak_type && b.weak_type && x.weak_type) ]
       | _ -> failwith "lax: regularized_incomplete_beta expects 3 avals")
   | Platform_index _ -> [ shaped [||] Dtype.I32 false ]
-  | Cond { branches; _ } ->
-      List.map aval_of_atom (List.hd branches).jaxpr.outs
+  | Cond { branches; _ } -> List.map aval_of_atom (List.hd branches).jaxpr.outs
   | Scan { length; num_carry; jaxpr; _ } ->
       Control_flow.Loops.scan_out_avals ~length ~num_carry jaxpr
   | While { body; _ } -> Control_flow.Loops.while_out_avals body

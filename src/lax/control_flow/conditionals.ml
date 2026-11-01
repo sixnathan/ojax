@@ -102,7 +102,8 @@ let rec cond (pred : value) (true_fun : value list -> value list)
       (Cond { branches = [ f'; t' ]; platforms = None })
       ((index :: hoisted) @ operands)
 
-let index_scalar i = Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
+let index_scalar i =
+  Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
 
 let switch (index : value) (branches : (value list -> value list) list)
     (operands : value list) : value list =

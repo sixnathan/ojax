@@ -448,6 +448,7 @@ let conv1d ~mode ~correlating a v =
     [ a; v ]
 
 let convolve ?(mode = "full") a v = conv1d ~mode ~correlating:false a v
+
 let convolve ?mode p0 p1 =
   Jnp_util.jit1 "convolve"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
@@ -456,6 +457,7 @@ let convolve ?mode p0 p1 =
     [ p0; p1 ]
 
 let correlate ?(mode = "valid") a v = conv1d ~mode ~correlating:true a v
+
 let correlate ?mode p0 p1 =
   Jnp_util.jit1 "correlate"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
@@ -1602,8 +1604,7 @@ let trace ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) ?dtype a =
 
 let trace ?offset ?axis1 ?axis2 ?dtype a0 =
   Eager_jit.one ~jit:"trace" "numpy.lax_numpy.trace"
-    (offset, axis1, axis2, dtype) [] [ a0 ]
-    (fun opts vals ->
+    (offset, axis1, axis2, dtype) [] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> trace ?offset ?axis1 ?axis2 ?dtype a0
       | _ -> assert false)
@@ -1629,11 +1630,7 @@ let take_trailing a indices =
     List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
   in
   let start = bind1 (T.Concatenate 1) (List.map expand_last wrapped) in
-  let start =
-    match wrapped with
-    | [ w ] -> expand_last w
-    | _ -> start
-  in
+  let start = match wrapped with [ w ] -> expand_last w | _ -> start in
   let batch = Array.length (shape (List.hd indices)) in
   let dnums =
     {
@@ -1649,8 +1646,7 @@ let take_trailing a indices =
     (T.Gather
        {
          dimension_numbers = dnums;
-         slice_sizes =
-           Array.mapi (fun d e -> if d >= nd - k then 1 else e) s;
+         slice_sizes = Array.mapi (fun d e -> if d >= nd - k then 1 else e) s;
        })
     [ a; start ]
 
@@ -1672,20 +1668,19 @@ let default_diag ~offset ~axis1 ~axis2 a =
   let nd = Array.length s in
   let a1 = canonicalize_axis axis1 nd and a2 = canonicalize_axis axis2 nd in
   let am = moveaxis [| axis1; axis2 |] [| nd - 2; nd - 1 |] a in
-  let diag_size =
-    max 0 (min (s.(a1) + min offset 0) (s.(a2) - max offset 0))
-  in
+  let diag_size = max 0 (min (s.(a1) + min offset 0) (s.(a2) - max offset 0)) in
   let iota_from start =
     let base =
-      bind1 (T.Iota { dtype = D.I32; shape = [| diag_size |]; dimension = 0 }) []
+      bind1
+        (T.Iota { dtype = D.I32; shape = [| diag_size |]; dimension = 0 })
+        []
     in
     if start = 0 then base
     else bind1 T.Add [ base; scalar D.I32 (float_of_int start) ]
   in
   let i = iota_from 0 in
   let j = iota_from (abs offset) in
-  if offset >= 0 then take_trailing am [ i; j ]
-  else take_trailing am [ j; i ]
+  if offset >= 0 then take_trailing am [ i; j ] else take_trailing am [ j; i ]
 
 let mosaic_diag a_eye a =
   let product = bind1 T.Mul [ a_eye; a ] in
@@ -1750,7 +1745,8 @@ let diag ?(k = 0) v =
   | _ -> invalid_arg "diag input must be 1d or 2d"
 
 let diag ?k a0 =
-  Eager_jit.one ~jit:"_diag" "numpy.lax_numpy.diag" k [] [ a0 ] (fun opts vals ->
+  Eager_jit.one ~jit:"_diag" "numpy.lax_numpy.diag" k [] [ a0 ]
+    (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> diag ?k a0 | _ -> assert false)
 
 let diagflat ?(k = 0) v = diag ~k (ravel v)
@@ -2057,18 +2053,10 @@ let canonicalize_for_sort x =
   let dt = dtype x in
   let result =
     bind1 T.Select_n
-      [
-        bind1 T.Eq [ x; scalar dt 0.0 ];
-        x;
-        const_full dt (shape x) 0.0;
-      ]
+      [ bind1 T.Eq [ x; scalar dt 0.0 ]; x; const_full dt (shape x) 0.0 ]
   in
   bind1 T.Select_n
-    [
-      bind1 T.Ne [ x; x ];
-      result;
-      const_full dt (shape x) Float.nan;
-    ]
+    [ bind1 T.Ne [ x; x ]; result; const_full dt (shape x) Float.nan ]
 
 let sort_compare_keys x =
   let dt = dtype x in
@@ -2091,7 +2079,10 @@ let sort_comparator strict x y =
       | Some p ->
           Some
             (bind1 T.Or
-               [ bind1 T.Lt_to [ a; b ]; bind1 T.And [ bind1 T.Eq_to [ a; b ]; p ] ]))
+               [
+                 bind1 T.Lt_to [ a; b ];
+                 bind1 T.And [ bind1 T.Eq_to [ a; b ]; p ];
+               ]))
     None (List.rev xk) (List.rev yk)
   |> Option.get
 
@@ -2100,9 +2091,7 @@ let scan_levels n =
   go 0
 
 let dynamic_item a i =
-  let sliced =
-    bind1 (T.Dynamic_slice { slice_sizes = [| 1 |] }) [ a; i ]
-  in
+  let sliced = bind1 (T.Dynamic_slice { slice_sizes = [| 1 |] }) [ a; i ] in
   bind1 (T.Squeeze [| 0 |]) [ sliced ]
 
 let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
@@ -2117,9 +2106,7 @@ let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
               (Interpreters.Batching.vmap
                  (function
                    | [ s; q ] ->
-                       [
-                         searchsorted_scan_impl ~side ~dt ~unrolled s q;
-                       ]
+                       [ searchsorted_scan_impl ~side ~dt ~unrolled s q ]
                    | _ -> invalid_arg "searchsorted: arity")
                  [ None; Some 0 ] [ sorted_arr; query ])
           else
@@ -2163,7 +2150,8 @@ let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
   if ndim a <> 1 then invalid_arg "a should be 1-dimensional";
   check_search_method method_;
   let args = [ a; v ] @ Option.to_list sorter in
-  Jnp_util.jit1 "searchsorted" ~key:(side ^ "," ^ method_)
+  Jnp_util.jit1 "searchsorted"
+    ~key:(side ^ "," ^ method_)
     (function
       | a :: v :: rest -> (
           let a, v =
@@ -2171,14 +2159,13 @@ let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
             | [ a; v ] -> (a, v)
             | _ -> assert false
           in
-          let a =
-            match rest with [ s ] -> take_trailing a [ s ] | _ -> a
-          in
+          let a = match rest with [ s ] -> take_trailing a [ s ] | _ -> a in
           let dt = D.I32 in
           match method_ with
           | "scan" | "scan_unrolled" ->
               searchsorted_scan_impl ~side ~dt
-                ~unrolled:(method_ = "scan_unrolled") a v
+                ~unrolled:(method_ = "scan_unrolled")
+                a v
           | _ ->
               let na = (shape a).(0) in
               let vsh = shape v in
@@ -2224,8 +2211,7 @@ let digitize ?(right = false) ?(method_ = "scan") x bins =
 
 let digitize ?right ?method_ a0 a1 =
   Eager_jit.one ~jit:"digitize" "numpy.lax_numpy.digitize" (right, method_) []
-    [ a0; a1 ]
-    (fun opts vals ->
+    [ a0; a1 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0; a1 ] -> digitize ?right ?method_ a0 a1
       | _ -> assert false)
@@ -2242,9 +2228,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   let dtin = to_inexact_dtype dt_common in
   let m = convert m dtin in
   let y = Option.map (fun v -> convert v dtin) y in
-  let x0 =
-    atleast_2d m
-  in
+  let x0 = atleast_2d m in
   let x0 = if (not rowvar) && ndim m <> 1 then matrix_transpose x0 else x0 in
   let x =
     match y with
@@ -2702,15 +2686,15 @@ let argmin ?axis ?keepdims a0 =
       | _ -> assert false)
 
 let nanargmax ?axis ?keepdims a0 =
-  Eager_jit.one ~jit:"_nanargmax" "numpy.lax_numpy.nanargmax" (axis, keepdims) [] [ a0 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"_nanargmax" "numpy.lax_numpy.nanargmax" (axis, keepdims)
+    [] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> nanargmax ?axis ?keepdims a0
       | _ -> assert false)
 
 let nanargmin ?axis ?keepdims a0 =
-  Eager_jit.one ~jit:"_nanargmin" "numpy.lax_numpy.nanargmin" (axis, keepdims) [] [ a0 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"_nanargmin" "numpy.lax_numpy.nanargmin" (axis, keepdims)
+    [] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> nanargmin ?axis ?keepdims a0
       | _ -> assert false)

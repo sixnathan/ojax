@@ -40,8 +40,8 @@ let index_leading (i : int) (v : value) : value =
   in
   Core.bind1 (Squeeze [| 0 |]) [ sliced ]
 
-let rec scan_impl ~length ~reverse ~num_consts ~num_carry
-    (jaxpr : closed_jaxpr) (inputs : value list) : value list =
+let rec scan_impl ~length ~reverse ~num_consts ~num_carry (jaxpr : closed_jaxpr)
+    (inputs : value list) : value list =
   if num_consts > 0 then
     snd
       (split_at
@@ -135,7 +135,12 @@ let rec while_loop (cond_fun : value list -> value)
       let arg_part =
         List.filteri (fun i _ -> i >= nc && i < total - nh) binders
       in
-      ( { c with consts = []; jaxpr = { c.jaxpr with in_binders = const_part @ hoist_part @ arg_part } },
+      ( {
+          c with
+          consts = [];
+          jaxpr =
+            { c.jaxpr with in_binders = const_part @ hoist_part @ arg_part };
+        },
         List.map (fun nd -> Concrete nd) c.consts @ hoisted )
     in
     let cond', cond_consts = binders_first cond hoisted_c in
@@ -261,9 +266,7 @@ let const_like v x =
 
 let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true)
     ?(allow_negative_indices = true) operand index =
-  let key =
-    Printf.sprintf "%d,%b,%b" axis keepdims allow_negative_indices
-  in
+  let key = Printf.sprintf "%d,%b,%b" axis keepdims allow_negative_indices in
   match
     Jaxpr.named_jit ~name:"dynamic_index_in_dim" ~key
       (function
@@ -273,9 +276,7 @@ let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true)
             let n = a.shape.(axis) in
             let index =
               if allow_negative_indices then
-                let negative =
-                  Core.bind1 Lt [ index; const_like index 0.0 ]
-                in
+                let negative = Core.bind1 Lt [ index; const_like index 0.0 ] in
                 let shifted =
                   Core.bind1 Add [ index; const_like index (float_of_int n) ]
                 in
@@ -286,12 +287,18 @@ let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true)
               List.init rank (fun d ->
                   if d = axis then index else const_like index 0.0)
             in
-            let sizes = Array.mapi (fun d s -> if d = axis then 1 else s) a.shape in
-            let sliced =
-              Core.bind1 (Dynamic_slice { slice_sizes = sizes }) (operand :: starts)
+            let sizes =
+              Array.mapi (fun d s -> if d = axis then 1 else s) a.shape
             in
-            [ (if keepdims then sliced
-               else Core.bind1 (Squeeze [| axis |]) [ sliced ]) ]
+            let sliced =
+              Core.bind1
+                (Dynamic_slice { slice_sizes = sizes })
+                (operand :: starts)
+            in
+            [
+              (if keepdims then sliced
+               else Core.bind1 (Squeeze [| axis |]) [ sliced ]);
+            ]
         | _ -> invalid_arg "dynamic_index_in_dim: arity")
       [ operand; index ]
   with
@@ -325,9 +332,7 @@ let dynamic_update_index_in_dim ?(allow_negative_indices = true) operand update
             in
             let index =
               if allow_negative_indices then
-                let negative =
-                  Core.bind1 Lt [ index; const_like index 0.0 ]
-                in
+                let negative = Core.bind1 Lt [ index; const_like index 0.0 ] in
                 let shifted =
                   Core.bind1 Add [ index; const_like index (float_of_int n) ]
                 in
@@ -394,8 +399,7 @@ let lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll
       (front, rem)
   in
   let xss, yss =
-    if unroll = 1 then
-      (xs_, List.map (empty_array [| length |]) y_avals)
+    if unroll = 1 then (xs_, List.map (empty_array [| length |]) y_avals)
     else if num_trips <> 0 then
       ( List.map
           (fun x ->

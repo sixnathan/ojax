@@ -590,9 +590,7 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
   let notnan = bind1 T.Not [ isnan af ] in
   let count = sum ?axis ?keepdims ?where:mask notnan in
   let nz = Ufuncs.subtract count (Jnp_util.py_int ddof) in
-  let bad =
-    bind1 T.Le [ nz; const_full (dtype nz) (shape nz) 0.0 ]
-  in
+  let bad = bind1 T.Le [ nz; const_full (dtype nz) (shape nz) 0.0 ] in
   let result = sum ?axis ?keepdims ?where:mask centered in
   let result = where bad (Jnp_util.py_float Float.nan) result in
   let divisor = where bad (Jnp_util.py_int 1) nz in

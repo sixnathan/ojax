@@ -862,18 +862,16 @@ let poisson_impl key lam ~shape ~dt =
           match dt with D.I64 -> Int64.max_int | _ -> 2147483647L
         in
         let knuth =
-          jit_region "_poisson_knuth" (shape, dt, max_iters)
-            [ key; lam_knuth ]
+          jit_region "_poisson_knuth" (shape, dt, max_iters) [ key; lam_knuth ]
             (function
-              | [ key; lam ] -> poisson_knuth key lam ~shape ~dt ~max_iters
-              | _ -> assert false)
+            | [ key; lam ] -> poisson_knuth key lam ~shape ~dt ~max_iters
+            | _ -> assert false)
         in
         let rej =
           jit_region "_poisson_rejection" (shape, dt, max_iters)
-            [ key; lam_rejection ]
-            (function
-              | [ key; lam ] -> poisson_rejection key lam ~shape ~dt ~max_iters
-              | _ -> assert false)
+            [ key; lam_rejection ] (function
+            | [ key; lam ] -> poisson_rejection key lam ~shape ~dt ~max_iters
+            | _ -> assert false)
         in
         let result = L.select use_knuth knuth rej in
         L.select (UF.equal lam (like lam 0.0)) (AC.zeros_like result) result

@@ -1061,9 +1061,7 @@ let cond_batch ~platforms (axis_size : int) (branches : closed_jaxpr list)
       in
       (outs, List.map (fun _ -> Some 0) outs)
   | index :: ops, Some pred_dim :: op_bdims, None ->
-      let index =
-        if pred_dim = 0 then index else moveaxis pred_dim 0 index
-      in
+      let index = if pred_dim = 0 then index else moveaxis pred_dim 0 index in
       let moved =
         List.map2 (fun v b -> move_batch_axis axis_size b 0 v) ops op_bdims
       in
@@ -1148,12 +1146,9 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   let build carry_batched =
     let flags = const_batched @ carry_batched @ xs_batched in
     let out_flags = ref [] in
-    let instantiate =
-      carry_batched @ List.init num_ys (fun _ -> false)
-    in
+    let instantiate = carry_batched @ List.init num_ys (fun _ -> false) in
     let closed =
-      Jaxpr.make_jaxpr (List.map2 batched_aval flags binder_avals)
-        (fun inner ->
+      Jaxpr.make_jaxpr (List.map2 batched_aval flags binder_avals) (fun inner ->
           Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
               let ins =
                 List.map2
@@ -1200,8 +1195,7 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   in
   let new_init =
     List.map2
-      (fun (v, b) now ->
-        if now then move_batch_axis axis_size b 0 v else v)
+      (fun (v, b) now -> if now then move_batch_axis axis_size b 0 v else v)
       (List.combine init init_b) carry_batched
   in
   let new_xs =
@@ -1214,15 +1208,7 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   in
   let outs =
     Core.bind
-      (Scan
-         {
-           length;
-           reverse;
-           num_consts;
-           num_carry;
-           jaxpr = new_body;
-           unroll;
-         })
+      (Scan { length; reverse; num_consts; num_carry; jaxpr = new_body; unroll })
       (new_consts @ new_init @ new_xs)
   in
   let out_bdims =
@@ -1754,7 +1740,9 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       let outs, out_bdims = vmap_rule_multi axis_size prim vals bdims in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | Cond { branches; platforms } ->
-      let outs, out_bdims = cond_batch ~platforms axis_size branches vals bdims in
+      let outs, out_bdims =
+        cond_batch ~platforms axis_size branches vals bdims
+      in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       let outs, out_bdims =

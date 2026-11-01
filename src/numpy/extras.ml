@@ -710,7 +710,8 @@ let interp ?left ?right ?period x xp fp =
         let p = U.absolute (Jnp_util.py_float p) in
         let x = U.remainder x p and xp = U.remainder xp p in
         let order = Sorting.argsort ~axis:(Some 0) xp in
-        let xp = I.take_index ~axis:0 xp order and fp = I.take_index ~axis:0 fp order in
+        let xp = I.take_index ~axis:0 xp order
+        and fp = I.take_index ~axis:0 fp order in
         let n = size_of xp in
         ( x,
           NL.concatenate
@@ -777,8 +778,7 @@ let interp ?left ?right ?period x xp fp =
 
 let interp ?left ?right ?period a0 a1 a2 =
   Eager_jit.one ~jit:"_interp" "numpy.extras.interp" (left, right, period) []
-    [ a0; a1; a2 ]
-    (fun opts vals ->
+    [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0; a1; a2 ] -> interp ?left ?right ?period a0 a1 a2
       | _ -> assert false)
@@ -792,9 +792,7 @@ let gradient_along_axis a h axis =
   let upper = U.subtract (cut 1 2) (cut 0 1) in
   let lower = U.subtract (cut (n - 1) n) (cut (n - 2) (n - 1)) in
   let inner =
-    U.divide
-      (U.multiply (U.subtract (cut 2 n) (cut 0 (n - 2))) (py 0.5))
-      (py h)
+    U.divide (U.multiply (U.subtract (cut 2 n) (cut 0 (n - 2))) (py 0.5)) (py h)
   in
   let lower = U.divide lower (py h) in
   let upper = U.divide upper (py h) in
@@ -812,11 +810,11 @@ let gradient ?(spacing = 1.0) ?axis a =
 
 let gradient ?spacing ?axis a0 =
   Eager_jit.many ~jit:"gradient" "numpy.extras.gradient" (spacing, axis) []
-    [ a0 ]
-    (fun opts vals ->
+    [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> gradient ?spacing ?axis a0
       | _ -> assert false)
+
 let choose ?(mode = "raise") a choices =
   let idx =
     match mode with
@@ -1070,7 +1068,8 @@ let sort_complex a =
   Concrete (Ndarray.of_complex dt sh values)
 
 let sort_complex a0 =
-  Eager_jit.one ~jit:"sort_complex" "numpy.extras.sort_complex" () [] [ a0 ] (fun opts vals ->
+  Eager_jit.one ~jit:"sort_complex" "numpy.extras.sort_complex" () [] [ a0 ]
+    (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> sort_complex a0
       | _ -> assert false)
@@ -1078,7 +1077,8 @@ let sort_complex a0 =
 let bitwise_count a = NL.astype (L.population_count (U.absolute a)) (dtype_of a)
 
 let bitwise_count a0 =
-  Eager_jit.one ~jit:"bitwise_count" "numpy.extras.bitwise_count" () [] [ a0 ] (fun opts vals ->
+  Eager_jit.one ~jit:"bitwise_count" "numpy.extras.bitwise_count" () [] [ a0 ]
+    (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> bitwise_count a0
       | _ -> assert false)
@@ -1106,7 +1106,8 @@ let frexp x =
     ints_value Dtype.I32 (shape x) exponent )
 
 let frexp a0 =
-  Eager_jit.pair ~jit:"frexp" "numpy.extras.frexp" () [] [ a0 ] (fun opts vals ->
+  Eager_jit.pair ~jit:"frexp" "numpy.extras.frexp" () [] [ a0 ]
+    (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> frexp a0 | _ -> assert false)
 
 let ldexp x exponent =
@@ -1116,7 +1117,8 @@ let ldexp x exponent =
   U.multiply x (U.power two (NL.astype exponent (dtype_of x)))
 
 let ldexp a0 a1 =
-  Eager_jit.one ~jit:"ldexp" "numpy.extras.ldexp" () [] [ a0; a1 ] (fun opts vals ->
+  Eager_jit.one ~jit:"ldexp" "numpy.extras.ldexp" () [] [ a0; a1 ]
+    (fun opts vals ->
       match (opts, vals) with
       | [], [ a0; a1 ] -> ldexp a0 a1
       | _ -> assert false)
@@ -1306,8 +1308,8 @@ let polyfit ?rcond ?w x y deg =
   U.divide c scale_c
 
 let polyfit ?rcond ?w a0 a1 a2 =
-  Eager_jit.one ~jit:"polyfit" ~vals_first:true "numpy.extras.polyfit" (rcond, a2) [ w ] [ a0; a1 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"polyfit" ~vals_first:true "numpy.extras.polyfit"
+    (rcond, a2) [ w ] [ a0; a1 ] (fun opts vals ->
       match (opts, vals) with
       | [ w ], [ a0; a1 ] -> polyfit ?rcond ?w a0 a1 a2
       | _ -> assert false)
@@ -1508,8 +1510,8 @@ let packbits ?axis ?(bitorder = "big") a =
     (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))
 
 let packbits ?axis ?bitorder a0 =
-  Eager_jit.one ~jit:"packbits" "numpy.extras.packbits" (axis, bitorder) [] [ a0 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"packbits" "numpy.extras.packbits" (axis, bitorder) []
+    [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> packbits ?axis ?bitorder a0
       | _ -> assert false)
@@ -1546,9 +1548,8 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
     (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))
 
 let unpackbits ?axis ?count ?bitorder a0 =
-  Eager_jit.one ~jit:"unpackbits" "numpy.extras.unpackbits" (axis, count, bitorder) [] [ a0 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"unpackbits" "numpy.extras.unpackbits"
+    (axis, count, bitorder) [] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> unpackbits ?axis ?count ?bitorder a0
       | _ -> assert false)
-

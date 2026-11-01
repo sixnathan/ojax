@@ -338,13 +338,9 @@ let logsumexp ?axis ?(keepdims = false) ?where:mask x =
   let amax =
     Custom_derivatives.stop_gradient
       (bind1 T.Select_n
-         [
-           UF.isfinite amax; const_full (dtype amax) (shape amax) 0.0; amax;
-         ])
+         [ UF.isfinite amax; const_full (dtype amax) (shape amax) 0.0; amax ])
   in
-  let amax_with_dims =
-    if keepdims then amax else NL.expand_dims amax dims
-  in
+  let amax_with_dims = if keepdims then amax else NL.expand_dims amax dims in
   let exp_a = bind1 T.Exp [ bind1 T.Sub [ x; amax_with_dims ] ] in
   let sumexp = RED.sum ~axis:dims ~keepdims ?where:mask exp_a in
   let _sign = bind1 T.Sign [ sumexp ] in
@@ -599,24 +595,22 @@ let glu ?axis a0 =
 
 let logmeanexp ?axis ?keepdims ?where a0 =
   Eager_jit.one ~jit:"logmeanexp" ~vals_first:true "nn.functions.logmeanexp"
-    (axis, keepdims) [ where ] [ a0 ]
-    (fun opts vals ->
+    (axis, keepdims) [ where ] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [ where ], [ a0 ] -> logmeanexp ?axis ?keepdims ?where a0
       | _ -> assert false)
 
 let log_softmax ?axis ?where a0 =
   Eager_jit.one ~jit:"log_softmax" ~vals_first:true "nn.functions.log_softmax"
-    axis [ where ] [ a0 ]
-    (fun opts vals ->
+    axis [ where ] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [ where ], [ a0 ] -> log_softmax ?axis ?where a0
       | _ -> assert false)
 
 let standardize ?axis ?mean ?variance ?epsilon ?where ?algorithm a0 =
-  Eager_jit.one ~jit:"standardize" ~vals_first:true
-    "nn.functions.standardize" (axis, epsilon, algorithm)
-    [ mean; variance; where ] [ a0 ] (fun opts vals ->
+  Eager_jit.one ~jit:"standardize" ~vals_first:true "nn.functions.standardize"
+    (axis, epsilon, algorithm) [ mean; variance; where ] [ a0 ]
+    (fun opts vals ->
       match (opts, vals) with
       | [ mean; variance; where ], [ a0 ] ->
           standardize ?axis ?mean ?variance ?epsilon ?where ?algorithm a0
@@ -641,8 +635,8 @@ let log1mexp a0 =
       match (opts, vals) with [], [ a0 ] -> log1mexp a0 | _ -> assert false)
 
 let one_hot ?axis ?dtype ~num_classes a1 =
-  Eager_jit.one ~jit:"_one_hot" "nn.functions.one_hot" (axis, dtype, num_classes) [] [ a1 ]
-    (fun opts vals ->
+  Eager_jit.one ~jit:"_one_hot" "nn.functions.one_hot"
+    (axis, dtype, num_classes) [] [ a1 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a1 ] -> one_hot ?axis ?dtype ~num_classes a1
       | _ -> assert false)

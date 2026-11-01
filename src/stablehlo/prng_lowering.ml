@@ -191,8 +191,7 @@ let random_split ~shape key =
       List.hd
         (Jaxpr.named_jit ~name:"_threefry_split"
            ~key:
-             (String.concat ","
-                (List.map string_of_int (Array.to_list shape)))
+             (String.concat "," (List.map string_of_int (Array.to_list shape)))
            (function
              | [ k ] -> (
                  let k1, k2 = key_words k in
@@ -268,9 +267,7 @@ let threefry_2x32 key count =
   let k1, k2 = key_words key in
   let n = (Core.get_aval count).shape.(0) in
   let half = n / 2 in
-  let x =
-    Core.bind (Split { sizes = [| half; half |]; axis = 0 }) [ count ]
-  in
+  let x = Core.bind (Split { sizes = [| half; half |]; axis = 0 }) [ count ] in
   match x with
   | [ x0; x1 ] -> (
       match threefry2x32 k1 k2 x0 x1 with

@@ -811,8 +811,7 @@ let promote_inexact vs =
       (List.map (fun v -> (dtype v, (get_aval v).T.weak_type)) vs)
   in
   let dt = to_inexact dt in
-  UF.promote_shapes
-    (List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs)
+  UF.promote_shapes (List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs)
 
 let promote1 x =
   match promote_inexact [ x ] with [ y ] -> y | _ -> assert false
@@ -961,8 +960,7 @@ let piecewise ~key ?(extra = []) x conds funcs =
   let rotated =
     if n = List.length conds + 1 then
       List.nth funcs (n - 1) :: List.filteri (fun i _ -> i < n - 1) funcs
-    else if n = List.length conds then
-      Piece_const (py_int 0) :: funcs
+    else if n = List.length conds then Piece_const (py_int 0) :: funcs
     else invalid_arg "piecewise: function count"
   in
   let expand c =
@@ -990,8 +988,7 @@ let piecewise ~key ?(extra = []) x conds funcs =
       | x :: condlist :: rest ->
           let consts = List.filteri (fun i _ -> i < n_const) rest in
           let extra = List.filteri (fun i _ -> i >= n_const) rest in
-          if List.length extra <> n_extra then
-            invalid_arg "piecewise: arity";
+          if List.length extra <> n_extra then invalid_arg "piecewise: arity";
           let remaining = ref consts in
           let funclist =
             List.map
@@ -1011,7 +1008,6 @@ let constf v = Piece_const (py_float v)
 let const_val v = Piece_const v
 let piece_fn f = Piece_fn (function [ x ] -> f x | _ -> assert false)
 let fresh_key () = string_of_int (C.fresh_id ())
-
 let gammaln x = bind1 T.Lgamma [ real_only "gammaln" x ]
 
 let gammasgn x =
@@ -1111,8 +1107,7 @@ let complex_loggamma_scipy z =
 
 let complex_loggamma_scipy a0 =
   Eager_jit.one ~jit:"_complex_loggamma_scipy"
-    "scipy.special._complex_loggamma_scipy" () [] [ a0 ]
-    (fun _ vals ->
+    "scipy.special._complex_loggamma_scipy" () [] [ a0 ] (fun _ vals ->
       match vals with [ a0 ] -> complex_loggamma_scipy a0 | _ -> assert false)
 
 let loggamma x =
@@ -1124,8 +1119,7 @@ let loggamma x =
 
 let gammasgn_jit a0 =
   Eager_jit.one ~jit:"gammasgn" "scipy.special.gammasgn" () [] [ a0 ]
-    (fun _ vals ->
-      match vals with [ a0 ] -> gammasgn a0 | _ -> assert false)
+    (fun _ vals -> match vals with [ a0 ] -> gammasgn a0 | _ -> assert false)
 
 let gamma x =
   let x = promote1 x in
@@ -2139,7 +2133,6 @@ let rec hyp1f1_apply a b x =
        [ a; b; x ])
 
 let hyp1f1 a b x = hyp1f1_apply a b x
-
 let fori_float lower upper body init = L.fori_loop lower upper body init
 
 let expn1 x n =
@@ -2284,8 +2277,7 @@ let rec expn_apply n x =
           | [ n; x; x_dot ] ->
               expn_vect [ n; x ]
               @ [
-                  L.mul (L.neg x_dot)
-                    (expn_apply (L.sub n (scalar_of n 1.0)) x);
+                  L.mul (L.neg x_dot) (expn_apply (L.sub n (scalar_of n 1.0)) x);
                 ]
           | _ -> failwith "expn: arity")
         [ n; x; x_dot ]
@@ -2297,7 +2289,8 @@ let rec expn_apply n x =
   | T.Concrete _ ->
       List.hd
         (CD.custom_jvp ~name:"expn" ~jvp_name:"expn_jvp"
-           (function [ x ] -> expn_vect [ n; x ] | _ -> failwith "expn: arity")
+           (function
+             | [ x ] -> expn_vect [ n; x ] | _ -> failwith "expn: arity")
            ~jvp:(fun primals tangents ->
              match (primals, tangents) with
              | [ x ], [ x_dot ] -> jvp_body n x x_dot
@@ -2373,8 +2366,7 @@ let expi x =
              match
                JU.jit "expi_jvp"
                  (function
-                   | [ x; x_dot ] ->
-                       [ expi_jit x; UF.exp x /! x *! x_dot ]
+                   | [ x; x_dot ] -> [ expi_jit x; UF.exp x /! x *! x_dot ]
                    | _ -> assert false)
                  [ x; x_dot ]
              with
@@ -2678,8 +2670,8 @@ let sincospisquaredhalf x =
   (sinpi, cospi)
 
 let sincospisquaredhalf_jit a0 =
-  Eager_jit.pair ~jit:"sincospisquaredhalf"
-    "scipy.special.sincospisquaredhalf" () [] [ a0 ] (fun _ vals ->
+  Eager_jit.pair ~jit:"sincospisquaredhalf" "scipy.special.sincospisquaredhalf"
+    () [] [ a0 ] (fun _ vals ->
       match vals with [ a0 ] -> sincospisquaredhalf a0 | _ -> assert false)
 
 let fresnel_primal xxa0 =
@@ -3181,8 +3173,8 @@ let sph_harm_y ?diff_n ?n_max n m theta phi =
                statically specified to use `sph_harm` within JAX \
                transformations.")
   in
-  Eager_jit.one ~jit:"_sph_harm" "scipy.special._sph_harm" n_max [] [ n; m; theta; phi ]
-    (fun _ vals -> sph_harm_body n_max vals)
+  Eager_jit.one ~jit:"_sph_harm" "scipy.special._sph_harm" n_max []
+    [ n; m; theta; phi ] (fun _ vals -> sph_harm_body n_max vals)
 
 let gammasgn = gammasgn_jit
 

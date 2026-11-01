@@ -829,17 +829,34 @@ let map ?batch_size f xs =
         (List.hd parts)
 
 let fori_loop lower upper body init =
-  let n_init = List.length init in
-  let outs =
-    Lax.while_loop
-      (function i :: _ -> lt i upper | [] -> failwith "fori_loop: arity")
-      (function
-        | i :: rest -> add i (filled (dtype_of i) [||] 1.0) :: body i rest
-        | [] -> failwith "fori_loop: arity")
-      (lower :: init)
-  in
-  ignore n_init;
-  List.tl outs
+  match (lower, upper) with
+  | Concrete lo, Concrete hi
+    when Array.length (Ndarray.shape lo) = 0
+         && Array.length (Ndarray.shape hi) = 0 ->
+      let lower_ = int_of_float (Ndarray.get_f lo [||]) in
+      let upper_ = int_of_float (Ndarray.get_f hi [||]) in
+      let length = Stdlib.max (upper_ - lower_) 0 in
+      let dt = Ndarray.dtype lo in
+      let start =
+        Concrete
+          (Ndarray.as_weak
+             (Ndarray.of_floats dt [||] [| float_of_int lower_ |]))
+      in
+      let step = function
+        | i :: rest ->
+            let next = add i (Core.py_scalar dt 1.0) in
+            next :: body i rest
+        | [] -> failwith "fori_loop: arity"
+      in
+      List.tl (Lax.scan ~length step (start :: init) [])
+  | _ ->
+      List.tl
+        (Lax.while_loop
+           (function i :: _ -> lt i upper | [] -> failwith "fori_loop: arity")
+           (function
+             | i :: rest -> add i (filled (dtype_of i) [||] 1.0) :: body i rest
+             | [] -> failwith "fori_loop: arity")
+           (lower :: init))
 
 let custom_root f initial_guess solve tangent_solve =
   let avals = List.map aval initial_guess in

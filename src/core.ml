@@ -197,10 +197,7 @@ let scan_lift_consts ~num_consts (c : closed_jaxpr) =
     c with
     jid = fresh_id ();
     jaxpr =
-      {
-        c.jaxpr with
-        outs = List.map (fun v -> A_var v) carried @ c.jaxpr.outs;
-      };
+      { c.jaxpr with outs = List.map (fun v -> A_var v) carried @ c.jaxpr.outs };
   }
 
 let custom_num_consts : (int, int) Hashtbl.t = Hashtbl.create 16

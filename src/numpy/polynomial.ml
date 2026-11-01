@@ -63,9 +63,7 @@ let polyval ?(unroll = 16) p x =
     | [ y; pk ] -> [ UF.add (UF.multiply y x) pk ]
     | _ -> assert false
   in
-  match Lax.scan ~unroll body [ y0 ] [ p ] with
-  | [ y ] -> y
-  | _ -> assert false
+  match Lax.scan ~unroll body [ y0 ] [ p ] with [ y ] -> y | _ -> assert false
 
 let polyval ?unroll p0 p1 =
   Jnp_util.jit1 "polyval"

@@ -21,4 +21,6 @@ let mark_prim prim =
 
 let prim_marked prim =
   let o = Obj.repr prim in
-  List.exists (fun other -> other == o) (Hashtbl.find_all marked_prims (Hashtbl.hash o))
+  List.exists
+    (fun other -> other == o)
+    (Hashtbl.find_all marked_prims (Hashtbl.hash o))

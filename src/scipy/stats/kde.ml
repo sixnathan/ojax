@@ -83,7 +83,8 @@ let reshape_points t points =
   else points
 
 let kernel_eval in_log points values xi precision =
-  Eager_jit.one ~jit:"_gaussian_kernel_eval" "scipy.stats.kde._gaussian_kernel_eval" in_log []
+  Eager_jit.one ~jit:"_gaussian_kernel_eval"
+    "scipy.stats.kde._gaussian_kernel_eval" in_log []
     [ points; values; xi; precision ] (fun _ vals ->
       JU.jit1 "_gaussian_kernel_eval" ~key:(string_of_bool in_log)
         (fun args ->

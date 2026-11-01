@@ -673,12 +673,18 @@ let cumprod_make ax = T.Cumprod { axis = ax; reverse = false }
 let cumsum ?dtype:dt ?axis a =
   cumulative ~fill:None ~promote:false ~make:cumsum_make ?dtype:dt ?axis a
 
-let cumsum ?dtype ?axis p0 =
+let cumsum_keyed ~by_keyword ?dtype ?axis p0 =
   Jnp_util.jit1 "cumsum"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    ~key:
+      (Digest.to_hex
+         (Digest.string
+            (if by_keyword then Marshal.to_string (dtype, axis, true) []
+             else Marshal.to_string (dtype, axis) [])))
     (function
       | [ p0 ] -> cumsum ?dtype ?axis p0 | _ -> invalid_arg "cumsum: arity")
     [ p0 ]
+
+let cumsum ?dtype ?axis p0 = cumsum_keyed ~by_keyword:false ?dtype ?axis p0
 
 let cumprod ?dtype:dt ?axis a =
   cumulative ~fill:None ~promote:false ~make:cumprod_make ?dtype:dt ?axis a
@@ -1133,6 +1139,13 @@ let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean a0 =
       | [ where; mean ], [ a0 ] ->
           nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean a0
       | _ -> assert false)
+
+let cumsum_by_keyword ?axis a0 =
+  Eager_jit.one "numpy.reductions.cumsum_by_keyword" axis [] [ a0 ]
+    (fun _ vals ->
+      match vals with
+      | [ a0 ] -> cumsum_keyed ~by_keyword:true ?axis a0
+      | _ -> invalid_arg "cumsum: arity")
 
 let cumsum ?dtype ?axis a0 =
   Eager_jit.one "numpy.reductions.cumsum" (dtype, axis) [] [ a0 ]

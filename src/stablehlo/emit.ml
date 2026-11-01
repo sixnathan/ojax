@@ -4424,14 +4424,17 @@ let emit_closed_jaxpr ?partition cj =
 
 type lowered = { text : string; kept : int list }
 
-let lower ~name cj =
+let lower ?result_names ~name cj =
   let pruned, kept = Dce.prune_unused_inputs cj in
   {
-    text = Mlir_names.render ~module_name:name (emit_closed_jaxpr pruned);
+    text =
+      Mlir_names.render ?result_names ~module_name:name
+        (emit_closed_jaxpr pruned);
     kept;
   }
 
-let emit_jax_text ~name cj = Mlir_names.renumber_callbacks (lower ~name cj).text
+let emit_jax_text ?result_names ~name cj =
+  Mlir_names.renumber_callbacks (lower ?result_names ~name cj).text
 
 let emit_export_text ~name ~uses_shape_polymorphism cj =
   let pruned, kept = Dce.prune_unused_inputs cj in

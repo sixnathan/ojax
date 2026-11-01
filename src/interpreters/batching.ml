@@ -1522,6 +1522,34 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
         (ffi_batch axis_size c vals bdims)
+  | Triangular_solve { left_side; _ } when List.hd bdims = None ->
+      let a, y, by =
+        match (vals, bdims) with
+        | [ a; y ], [ None; Some by ] -> (a, y, by)
+        | _ -> invalid_arg "batching: triangular_solve arity"
+      in
+      let rank = Array.length (Core.get_aval y).shape in
+      let target = if left_side then rank - 1 else rank - 2 in
+      let moved = moveaxis by target y in
+      let sh = (Core.get_aval moved).shape in
+      let flat_shape =
+        if left_side then
+          Array.append
+            (Array.sub sh 0 (rank - 2))
+            [| sh.(rank - 2) * sh.(rank - 1) |]
+        else
+          Array.append
+            (Array.sub sh 0 (rank - 3))
+            [| sh.(rank - 3) * sh.(rank - 2); sh.(rank - 1) |]
+      in
+      let flat = Core.bind1 (Reshape flat_shape) [ moved ] in
+      let solved = Core.bind1 prim [ a; flat ] in
+      [
+        Tracer
+          (new_batch_tracer trace
+             (Core.bind1 (Reshape sh) [ solved ])
+             (Some target));
+      ]
   | _ when unstacks_operands prim bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

@@ -1251,8 +1251,7 @@ let polyfit ?rcond ?w x y deg =
     match rcond with Some r -> r | None -> float_of_int (size_of x) *. eps
   in
   let scale = U.sqrt (R.sum ~axis:[| 0 |] (U.multiply lhs lhs)) in
-  let broad = L.broadcast_in_dim scale (shape lhs) [| 1 |] in
-  let scaled = U.divide lhs broad in
+  let scaled = U.divide lhs (L.broadcast_in_dim scale [| 1; order |] [| 1 |]) in
   let c, _, _, _ = Linalg.lstsq ~rcond scaled y in
   let scale_c =
     if rank c = 2 then L.broadcast_in_dim scale (shape c) [| 0 |] else scale

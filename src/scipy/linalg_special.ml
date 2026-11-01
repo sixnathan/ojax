@@ -376,10 +376,111 @@ let invhilbert n =
       b1 Mul [ third; last ])
     []
 
-let solve_sylvester a b q =
+let dtype = dtype_of
+
+let sylvester_triangular_scan r s f =
+  let fs = shape f in
+  let m = fs.(0) and n = fs.(1) in
+  let total = m * n in
+  let int_dt = Dtypes.default_int_dtype () in
+  let int_of v = Core.splat int_dt [||] (float_of_int v) in
+  let flat_indices =
+    U.add
+      (int_of (total - 1))
+      (U.multiply (int_of (-1)) (NL.arange ~dtype:int_dt (float_of_int total)))
+  in
+  let dt = dtype f in
+  let y0 = Lax_api.full [| total |] 0.0 dt in
+  let as_index v = Core.convert_like ~weak:false v Dtype.I32 in
+  let pick ~axis v i =
+    Lax_api.dynamic_index_in_dim ~axis ~keepdims:false v (as_index i)
+  in
+  let step = function
+    | [ y_flat; idx ] ->
+        let i = U.floor_divide idx (int_of n)
+        and j = U.remainder idx (int_of n) in
+        let y = NL.reshape y_flat [| m; n |] in
+        let rhs = pick ~axis:0 (pick ~axis:0 f i) j in
+        let row_mask = U.greater (NL.arange ~dtype:int_dt (float_of_int m)) i in
+        let r_row = pick ~axis:0 r i and y_col = pick ~axis:1 y j in
+        let row_term =
+          Numpy.Reductions.sum
+            (NL.where_ row_mask (U.multiply r_row y_col)
+               (Numpy.Jnp_util.py_float 0.0))
+        in
+        let col_mask = U.greater (NL.arange ~dtype:int_dt (float_of_int n)) j in
+        let y_row = pick ~axis:0 y i and s_col = pick ~axis:1 s j in
+        let col_term =
+          Numpy.Reductions.sum
+            (NL.where_ col_mask (U.multiply y_row s_col)
+               (Numpy.Jnp_util.py_float 0.0))
+        in
+        let rhs = U.subtract rhs (U.add row_term col_term) in
+        let denominator =
+          U.add
+            (pick ~axis:0 (pick ~axis:0 r i) i)
+            (pick ~axis:0 (pick ~axis:0 s j) j)
+        in
+        let value = U.divide rhs denominator in
+        let at = U.add (U.multiply i (int_of n)) j in
+        let y_flat =
+          Lax_api.dynamic_update_index_in_dim ~axis:0 y_flat value (as_index at)
+        in
+        [ y_flat ]
+    | _ -> invalid_arg "solve_sylvester: arity"
+  in
+  match Lax_api.scan step [ y0 ] [ flat_indices ] with
+  | y_flat :: _ -> NL.reshape y_flat [| m; n |]
+  | [] -> invalid_arg "solve_sylvester: arity"
+
+let solve_sylvester ?(tol = 1e-8) a b c =
   let module LN = Numpy.Linalg in
-  let n = (shape a).(0) and m = (shape b).(0) in
-  let eye k = NL.identity ~dtype:(NL.result_type [ a; b; q ]) k in
-  let lhs = U.add (NL.kron a (eye m)) (NL.kron (eye n) (NL.transpose b)) in
-  let solved = LN.solve lhs (NL.reshape q [| n * m |]) in
-  NL.reshape solved [| n; m |]
+  let module TC = Numpy.Tensor_contractions in
+  Eager_jit.one "scipy.linalg.solve_sylvester" tol [] [ a; b; c ] (fun _ vals ->
+      match vals with
+      | [ a; b; c ] ->
+          let hermitian v = NL.transpose (U.conj v) in
+          let dt = NL.result_type [ a; b; c ] in
+          let dt =
+            if Dtypes.issubdtype dt `Inexact then dt
+            else Dtypes.default_float_dtype ()
+          in
+          let a = NL.astype a dt
+          and b = NL.astype b dt
+          and c = NL.astype c dt in
+          let schur_of v =
+            match Linalg.schur ~output:"complex" v with
+            | [ t; z ] -> (t, z)
+            | _ -> invalid_arg "solve_sylvester: schur"
+          in
+          let r, u = schur_of a in
+          let s, v = schur_of (hermitian b) in
+          let f =
+            TC.matmul (TC.matmul (hermitian u) (NL.astype c (dtype r))) v
+          in
+          let y = sylvester_triangular_scan r (hermitian s) f in
+          let x = TC.matmul (TC.matmul u y) (hermitian v) in
+          let x =
+            match dtype c with
+            | Dtype.Complex64 | Dtype.Complex128 -> x
+            | _ -> U.real x
+          in
+          let gap =
+            U.abs
+              (U.add
+                 (NL.expand_dims (LN.eigvals a) [| 1 |])
+                 (NL.expand_dims (LN.eigvals b) [| 0 |]))
+          in
+          let singular =
+            Numpy.Reductions.any (U.less gap (Core.splat (dtype gap) [||] tol))
+          in
+          List.hd
+            (Lax_api.cond singular
+               (fun _ ->
+                 [
+                   U.multiply (Lax_api.full_like x 0.0)
+                     (Numpy.Jnp_util.py_float Float.nan);
+                 ])
+               (fun _ -> [ x ])
+               [])
+      | _ -> assert false)

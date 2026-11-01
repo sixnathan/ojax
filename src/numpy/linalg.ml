@@ -122,19 +122,61 @@ and solve a b =
   let k = sb.(nb - 1) in
   let a = NL.broadcast_to a (Array.append batch [| m; m |]) in
   let bmat = NL.broadcast_to bmat (Array.append batch [| m; k |]) in
-  let lu, _piv, perm = LL.lu a in
+  let lu, _piv, perm = LL.lu (Lax_api.stop_gradient a) in
   let rank = Array.length batch + 2 in
-  let x0 =
-    if rank = 2 then IDX.take ~axis:0 bmat perm
-    else
-      let expanded = NL.expand_dims perm [| -1 |] in
-      IDX.take_along_axis ~axis:(rank - 2) bmat
-        (NL.broadcast_to expanded (Array.append batch [| m; k |]))
+  let lu_solve lu perm rhs =
+    let x0 =
+      if rank = 2 then IDX.take ~axis:0 rhs perm
+      else
+        let expanded = NL.expand_dims perm [| -1 |] in
+        IDX.take_along_axis ~axis:(rank - 2) rhs
+          (NL.broadcast_to expanded (Array.append batch [| m; k |]))
+    in
+    let x1 =
+      LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x0
+    in
+    LL.triangular_solve ~left_side:true ~lower:false lu x1
   in
-  let x1 =
-    LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x0
+  let matvec_tangent da x =
+    if rank = 2 then
+      let row_major = Core.bind1 (T.Transpose [| 1; 0 |]) [ x ] in
+      Lax_api.dot_general da row_major ~lhs_contract:[| 1 |]
+        ~rhs_contract:[| 1 |] ~lhs_batch:[||] ~rhs_batch:[||]
+    else TC.matmul da x
   in
-  let x2 = LL.triangular_solve ~left_side:true ~lower:false lu x1 in
+  let solved =
+    Custom_derivatives.custom_jvp_symbolic
+      (function
+        | [ _; b; lu; perm ] -> [ lu_solve lu perm b ]
+        | _ -> invalid_arg "solve: arity")
+      ~jvp:(fun primals tangents ->
+        match (primals, tangents) with
+        | [ _; b; lu; perm ], [ da; db; _; _ ] ->
+            let x = lu_solve lu perm b in
+            let lifted =
+              match (da, db) with
+              | ( Custom_derivatives.Symbolic_zero _,
+                  Custom_derivatives.Symbolic_zero _ ) ->
+                  None
+              | ( Custom_derivatives.Symbolic_zero _,
+                  Custom_derivatives.Tangent db ) ->
+                  Some db
+              | ( Custom_derivatives.Tangent da,
+                  Custom_derivatives.Symbolic_zero _ ) ->
+                  Some (UF.negative (matvec_tangent da x))
+              | Custom_derivatives.Tangent da, Custom_derivatives.Tangent db ->
+                  Some (UF.add db (UF.negative (matvec_tangent da x)))
+            in
+            ( [ x ],
+              [
+                (match lifted with
+                | Some rhs -> Custom_derivatives.Tangent (lu_solve lu perm rhs)
+                | None -> Custom_derivatives.Tangent (Lax_api.full_like x 0.0));
+              ] )
+        | _ -> invalid_arg "solve: arity")
+      [ a; bmat; lu; perm ]
+  in
+  let x2 = List.hd solved in
   if b_vec then NL.reshape x2 (Array.append batch [| m |]) else x2
 
 and inv a =

@@ -17,12 +17,29 @@ let as_real v =
   | Dtype.I64 -> b1 (Convert_element_type Dtype.F64) [ v ]
   | _ -> b1 (Convert_element_type Dtype.F32) [ v ]
 
-let norm_factor norm ~inverse lengths =
-  let product = float_of_int (List.fold_left ( * ) 1 lengths) in
+let lengths_array dt lengths =
+  let count = [| List.length lengths |] in
+  let floats = List.map float_of_int lengths in
+  match dt with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      Concrete
+        (Ndarray.of_complex dt count
+           (Array.of_list
+              (List.map (fun re -> { Complex.re; im = 0.0 }) floats)))
+  | _ -> Concrete (Ndarray.of_floats dt count (Array.of_list floats))
+
+let scale_by norm ~inverse lengths v =
+  let dt = (Core.get_aval v).dtype in
+  let product () = Reductions.prod (lengths_array dt lengths) in
+  let one = Jnp_util.py_int 1 in
   match norm with
-  | None | Some "backward" -> 1.0
-  | Some "ortho" -> if inverse then sqrt product else 1.0 /. sqrt product
-  | Some "forward" -> if inverse then product else 1.0 /. product
+  | None | Some "backward" -> v
+  | Some "ortho" ->
+      let root = Ufuncs.sqrt (product ()) in
+      Ufuncs.multiply v (if inverse then root else Ufuncs.divide one root)
+  | Some "forward" ->
+      let total = product () in
+      Ufuncs.multiply v (if inverse then total else Ufuncs.divide one total)
   | Some other ->
       invalid_arg
         (Printf.sprintf
@@ -30,12 +47,11 @@ let norm_factor norm ~inverse lengths =
             \"forward\"."
            other)
 
-let scale_by factor v =
+let scale_const factor v =
   if factor = 1.0 then v
   else
     let aval = Core.get_aval v in
-    let c = Core.splat aval.dtype aval.shape factor in
-    b1 Mul [ v; c ]
+    b1 Mul [ v; Core.splat aval.dtype aval.shape factor ]
 
 let moved_perm ndim source destination =
   let perm =
@@ -160,7 +176,7 @@ let fft_core kind ~inverse ?s ?axes ?norm a =
             (arr, List.map (fun ax -> shape.(ax)) last_axes))
   in
   let transformed = lax_fft kind sizes arr in
-  let scaled = scale_by (norm_factor norm ~inverse sizes) transformed in
+  let scaled = scale_by norm ~inverse sizes transformed in
   match orig_axes with
   | Some ax -> b1 (Transpose (moved_perm ndim last_axes ax)) [ scaled ]
   | None -> scaled
@@ -190,14 +206,14 @@ let hfft ?n ?(axis = -1) ?norm a =
     match n with Some x -> x | None -> ((shape_of conj_a).(ax) * 2) - 2
   in
   let axes, s = single_axis axis n in
-  scale_by (float_of_int nn)
+  scale_const (float_of_int nn)
     (fft_core Fft_inverse_real ~inverse:false ?s ?axes ?norm conj_a)
 
 let ihfft ?n ?(axis = -1) ?norm a =
   let ax = canon_axis (rank_of a) axis in
   let nn = match n with Some x -> x | None -> (shape_of a).(ax) in
   let axes, s = single_axis axis n in
-  scale_by
+  scale_const
     (1.0 /. float_of_int nn)
     (b1 Conj [ fft_core Fft_real ~inverse:true ?s ?axes ?norm a ])
 

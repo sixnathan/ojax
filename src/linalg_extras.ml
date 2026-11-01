@@ -135,7 +135,6 @@ let rec cholesky_update r w =
         "Rank-1 update to Cholesky decomposition takes a square matrix and a \
          vector of the same size as input";
     let n = sh.(0) in
-    let scalar v i = L.reshape (L.slice_in_dim ~axis:0 v i (i + 1)) [||] in
     let rotation x y =
       let nonzero args =
         match args with
@@ -146,7 +145,7 @@ let rec cholesky_update r w =
             let rh =
               L.div (const_like x 1.0) (L.sqrt (L.add (L.mul x x) (L.mul y y)))
             in
-            [ L.mul x rh; L.neg (L.mul y rh) ]
+            [ L.mul x rh; L.mul (L.neg y) rh ]
         | _ -> failwith "cholesky_update: arity"
       in
       L.cond
@@ -154,19 +153,28 @@ let rec cholesky_update r w =
         (fun _ -> [ const_like x 1.0; const_like x 0.0 ])
         nonzero [ x; y ]
     in
-    let rows =
-      Array.init n (fun i -> L.index_in_dim ~axis:0 ~keepdims:false r i)
-    in
-    let z = ref w in
-    for k = 0 to n - 1 do
-      match rotation (scalar rows.(k) k) (scalar !z k) with
-      | [ c; s ] ->
-          let row = rows.(k) in
-          rows.(k) <- L.sub (L.mul c row) (L.mul s !z);
-          z := L.add (L.mul c !z) (L.mul s row)
-      | _ -> failwith "cholesky_update: arity"
-    done;
-    NL.stack (Array.to_list rows)
+    Eager_jit.one "lax.linalg.cholesky_update" () [] [ r; w ] (fun _ vals ->
+        let r, w = match vals with [ r; w ] -> (r, w) | _ -> assert false in
+        let at_scalar v starts =
+          L.reshape (L.slice v starts (Array.map (fun i -> i + 1) starts)) [||]
+        in
+        let current = ref r and z = ref w in
+        for k = 0 to n - 1 do
+          let x = at_scalar !current [| k; k |] and y = at_scalar !z [| k |] in
+          match rotation x y with
+          | [ c; s ] ->
+              let row = L.index_in_dim ~axis:0 ~keepdims:false !current k in
+              let spread v = L.broadcast_in_dim v [| n |] [||] in
+              let new_row =
+                L.sub (L.mul (spread c) row) (L.mul (spread s) !z)
+              in
+              z := L.add (L.mul (spread c) !z) (L.mul (spread s) row);
+              current :=
+                L.dynamic_update_index_in_dim ~axis:0 !current new_row
+                  (Core.splat D.I32 [||] (float_of_int k))
+          | _ -> failwith "cholesky_update: arity"
+        done;
+        !current)
   end
 
 let symmetric_product ?(alpha = 1.0) ?(beta = 0.0) ?(symmetrize_output = false)

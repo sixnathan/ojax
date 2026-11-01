@@ -423,3 +423,131 @@ let mish x = mish (if dtype x = D.Bool then as_float x else x)
 
 let logmeanexp ?axis ?keepdims ?where:mask x =
   logmeanexp ?axis ?keepdims ?where:mask (as_inexact_dtype x)
+
+let identity a0 =
+  Eager_jit.one "nn.functions.identity" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> identity a0 | _ -> assert false)
+
+let relu a0 =
+  Eager_jit.one "nn.functions.relu" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> relu a0 | _ -> assert false)
+
+let squareplus ?b a0 =
+  Eager_jit.one "nn.functions.squareplus" b [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> squareplus ?b a0
+      | _ -> assert false)
+
+let softplus a0 =
+  Eager_jit.one "nn.functions.softplus" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> softplus a0 | _ -> assert false)
+
+let sparse_plus a0 =
+  Eager_jit.one "nn.functions.sparse_plus" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> sparse_plus a0 | _ -> assert false)
+
+let soft_sign a0 =
+  Eager_jit.one "nn.functions.soft_sign" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> soft_sign a0 | _ -> assert false)
+
+let sigmoid a0 =
+  Eager_jit.one "nn.functions.sigmoid" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> sigmoid a0 | _ -> assert false)
+
+let sparse_sigmoid a0 =
+  Eager_jit.one "nn.functions.sparse_sigmoid" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> sparse_sigmoid a0
+      | _ -> assert false)
+
+let silu a0 =
+  Eager_jit.one "nn.functions.silu" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> silu a0 | _ -> assert false)
+
+let mish a0 =
+  Eager_jit.one "nn.functions.mish" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> mish a0 | _ -> assert false)
+
+let log_sigmoid a0 =
+  Eager_jit.one "nn.functions.log_sigmoid" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> log_sigmoid a0 | _ -> assert false)
+
+let elu ?alpha a0 =
+  Eager_jit.one "nn.functions.elu" alpha [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> elu ?alpha a0 | _ -> assert false)
+
+let leaky_relu ?negative_slope a0 =
+  Eager_jit.one "nn.functions.leaky_relu" negative_slope [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> leaky_relu ?negative_slope a0
+      | _ -> assert false)
+
+let hard_tanh a0 =
+  Eager_jit.one "nn.functions.hard_tanh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> hard_tanh a0 | _ -> assert false)
+
+let celu ?alpha a0 =
+  Eager_jit.one "nn.functions.celu" alpha [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> celu ?alpha a0 | _ -> assert false)
+
+let selu a0 =
+  Eager_jit.one "nn.functions.selu" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> selu a0 | _ -> assert false)
+
+let glu ?axis a0 =
+  Eager_jit.one "nn.functions.glu" axis [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> glu ?axis a0 | _ -> assert false)
+
+let logmeanexp ?axis ?keepdims ?where a0 =
+  Eager_jit.one "nn.functions.logmeanexp" (axis, keepdims) [ where ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ where ], [ a0 ] -> logmeanexp ?axis ?keepdims ?where a0
+      | _ -> assert false)
+
+let log_softmax ?axis ?where a0 =
+  Eager_jit.one "nn.functions.log_softmax" axis [ where ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ where ], [ a0 ] -> log_softmax ?axis ?where a0
+      | _ -> assert false)
+
+let standardize ?axis ?mean ?variance ?epsilon ?where ?algorithm a0 =
+  Eager_jit.one "nn.functions.standardize" (axis, epsilon, algorithm)
+    [ mean; variance; where ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ mean; variance; where ], [ a0 ] ->
+          standardize ?axis ?mean ?variance ?epsilon ?where ?algorithm a0
+      | _ -> assert false)
+
+let relu6 a0 =
+  Eager_jit.one "nn.functions.relu6" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> relu6 a0 | _ -> assert false)
+
+let hard_sigmoid a0 =
+  Eager_jit.one "nn.functions.hard_sigmoid" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> hard_sigmoid a0
+      | _ -> assert false)
+
+let hard_silu a0 =
+  Eager_jit.one "nn.functions.hard_silu" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> hard_silu a0 | _ -> assert false)
+
+let log1mexp a0 =
+  Eager_jit.one "nn.functions.log1mexp" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> log1mexp a0 | _ -> assert false)
+
+let one_hot ?axis ?dtype ~num_classes a1 =
+  Eager_jit.one "nn.functions.one_hot" (axis, dtype, num_classes) [] [ a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a1 ] -> one_hot ?axis ?dtype ~num_classes a1
+      | _ -> assert false)
+
+let softmax ?axis ?where a0 =
+  Eager_jit.one "nn.functions.softmax" axis [ where ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ where ], [ a0 ] -> softmax ?axis ?where a0
+      | _ -> assert false)

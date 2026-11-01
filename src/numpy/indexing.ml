@@ -317,3 +317,17 @@ let dslice_index x slices =
           (out, axis + 1))
     (x, 0) slices
   |> fst
+
+let put_along_axis ?axis ?mode a0 a1 a2 =
+  Eager_jit.one "numpy.indexing.put_along_axis" (axis, mode) [] [ a0; a1; a2 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1; a2 ] -> put_along_axis ?axis ?mode a0 a1 a2
+      | _ -> assert false)
+
+let take ?axis ?mode ?fill_value a0 a1 =
+  Eager_jit.one "numpy.indexing.take" (axis, mode, fill_value) [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> take ?axis ?mode ?fill_value a0 a1
+      | _ -> assert false)

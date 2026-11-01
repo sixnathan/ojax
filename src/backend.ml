@@ -880,6 +880,277 @@ let () =
           | exception (Failure _ | Invalid_argument _) -> None
           | cj -> run_plan cj plan args)
 
+type eager_program =
+  | Eager_compiled of Pjrt.Executable.t * aval list
+  | Eager_host
+
+type eager_key = {
+  ek_prim : primitive;
+  ek_avals : aval list;
+  ek_platform : string;
+  ek_context : (string * string) list;
+}
+
+module Eager_cache = Hashtbl.Make (struct
+  type t = eager_key
+
+  let equal a b = compare a b = 0
+  let hash key = Hashtbl.hash_param 64 256 key
+end)
+
+type eager_stats = {
+  eager_compiled : int;
+  eager_cache_hits : int;
+  eager_executions : int;
+  eager_fallbacks : (string * string * int) list;
+}
+
+let eager_programs = Eager_cache.create 512
+
+let eager_texts : (string * string, Pjrt.Executable.t) Hashtbl.t =
+  Hashtbl.create 512
+
+let eager_compiled = ref 0
+let eager_cache_hits = ref 0
+let eager_executions = ref 0
+let eager_fallback_table : (string * string, int) Hashtbl.t = Hashtbl.create 16
+
+let note_eager_fallback_named name reason =
+  let key = (name, reason) in
+  let seen =
+    Option.value ~default:0 (Hashtbl.find_opt eager_fallback_table key)
+  in
+  Hashtbl.replace eager_fallback_table key (seen + 1)
+
+let note_eager_fallback prim reason =
+  note_eager_fallback_named (Pretty_printer.primitive_name prim) reason
+
+let eager_stats () =
+  {
+    eager_compiled = !eager_compiled;
+    eager_cache_hits = !eager_cache_hits;
+    eager_executions = !eager_executions;
+    eager_fallbacks =
+      List.sort compare
+        (Hashtbl.fold
+           (fun (name, reason) count acc -> (name, reason, count) :: acc)
+           eager_fallback_table []);
+  }
+
+let eager_runs_impl = function
+  | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ | Custom_linear_solve _
+  | Xla_call _ ->
+      true
+  | _ -> false
+
+let eager_holds_jaxpr = function
+  | Reduce _ | Composite _ | Reduce_window _ | Select_and_scatter _ | Cond _
+  | Scan _ | While _ ->
+      true
+  | _ -> false
+
+let single_primitive_jaxpr prim avals_in avals_out =
+  let fresh vaval = { vid = Core.fresh_id (); vaval } in
+  let in_binders = List.map fresh avals_in in
+  let outs = List.map fresh avals_out in
+  {
+    jid = Core.fresh_id ();
+    consts = [];
+    jaxpr =
+      {
+        in_binders;
+        eqns =
+          [
+            {
+              prim;
+              inputs = List.map (fun v -> A_var v) in_binders;
+              outs;
+              multiple_results = List.length outs > 1;
+            };
+          ];
+        outs = List.map (fun v -> A_var v) outs;
+      };
+  }
+
+let compile_eager platform text =
+  match Hashtbl.find_opt eager_texts (platform, text) with
+  | Some exec ->
+      incr eager_cache_hits;
+      exec
+  | None ->
+      let exec = Xla.compile_text text in
+      incr eager_compiled;
+      Hashtbl.replace eager_texts (platform, text) exec;
+      exec
+
+let eager_rejection = function
+  | Stack_overflow | Out_of_memory -> false
+  | _ -> true
+
+let build_eager_program prim avals_in platform =
+  let fall_back reason =
+    note_eager_fallback prim reason;
+    Eager_host
+  in
+  match Core.rules.abstract_eval prim avals_in with
+  | exception ((Failure _ | Invalid_argument _ | Not_found) as error) ->
+      fall_back (Printexc.to_string error)
+  | exception error when eager_rejection error ->
+      fall_back (Printexc.to_string error)
+  | avals_out -> (
+      match
+        Stablehlo.Emit.emit_closed_jaxpr
+          (single_primitive_jaxpr prim avals_in avals_out)
+      with
+      | text when mentions_unsupported_type text ->
+          fall_back "f6 dtypes have no XLA type"
+      | exception ((Failure _ | Invalid_argument _ | Not_found) as error) ->
+          fall_back (Printexc.to_string error)
+      | text -> (
+          match compile_eager platform text with
+          | exec -> Eager_compiled (exec, avals_out)
+          | exception Pjrt.Abi.Error reason -> fall_back reason))
+
+let eager_program prim avals_in =
+  let platform = current_platform () in
+  if eager_holds_jaxpr prim then build_eager_program prim avals_in platform
+  else
+    let key =
+      {
+        ek_prim = prim;
+        ek_avals = avals_in;
+        ek_platform = platform;
+        ek_context = Config.trace_context ();
+      }
+    in
+    match Eager_cache.find_opt eager_programs key with
+    | Some program ->
+        incr eager_cache_hits;
+        program
+    | None ->
+        let program = build_eager_program prim avals_in platform in
+        Eager_cache.replace eager_programs key program;
+        program
+
+let output_matches outs avals_out =
+  List.compare_lengths outs avals_out = 0
+  && List.for_all2
+       (fun out (aval : aval) ->
+         match out with
+         | Concrete nd ->
+             Ndarray.dtype nd = aval.dtype && Ndarray.shape nd = aval.shape
+         | Device _ | Tracer _ -> false)
+       outs avals_out
+
+let eager_eval prim args =
+  if eager_runs_impl prim || Stablehlo.Emit.emitting () || not (use_xla ()) then
+    None
+  else
+    let avals_in = List.map Core.get_aval args in
+    match eager_program prim avals_in with
+    | Eager_host -> None
+    | Eager_compiled (exec, avals_out) -> (
+        match xla_run exec args false with
+        | outs when output_matches outs avals_out ->
+            incr eager_executions;
+            Some outs
+        | _ ->
+            note_eager_fallback prim "compiled output type differs";
+            None
+        | exception Errors.Jax_runtime_error reason ->
+            note_eager_fallback prim reason;
+            None)
+
+let () = Core.eager_eval := eager_eval
+
+let compile_region cj =
+  match Stablehlo.Emit.emit_closed_jaxpr cj with
+  | text when mentions_unsupported_type text ->
+      Error "f6 dtypes have no XLA type"
+  | text -> (
+      match compile_eager (current_platform ()) text with
+      | exec -> Ok exec
+      | exception Pjrt.Abi.Error reason -> Error reason)
+  | exception ((Failure _ | Invalid_argument _ | Not_found) as error) ->
+      Error (Printexc.to_string error)
+
+type region_key = {
+  rk_name : string;
+  rk_statics : Obj.t;
+  rk_avals : aval list;
+  rk_platform : string;
+  rk_context : (string * string) list;
+}
+
+module Region_cache = Hashtbl.Make (struct
+  type t = region_key
+
+  let equal a b = compare a b = 0
+  let hash key = Hashtbl.hash_param 64 256 key
+end)
+
+let region_programs = Region_cache.create 512
+
+let atom_output_aval = function
+  | A_var (v : var) -> v.vaval
+  | A_lit nd ->
+      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+  | DropVar aval -> aval
+
+let build_region name f avals =
+  let fall_back reason =
+    note_eager_fallback_named name reason;
+    None
+  in
+  match Jaxpr.make_jaxpr avals f with
+  | exception error when eager_rejection error ->
+      fall_back (Printexc.to_string error)
+  | cj -> (
+      match compile_region cj with
+      | Ok exec -> Some (exec, List.map atom_output_aval cj.jaxpr.outs)
+      | Error reason -> fall_back reason)
+
+let jitted_keyed (name, statics) f args =
+  if
+    Config.value Config.disable_jit
+    || Config.value Config.no_execution
+    || Core.tracing_dynamically ()
+    || Stablehlo.Emit.emitting ()
+    || (not (List.for_all is_hostable args))
+    || List.exists Core.is_placed args
+    || not (use_xla ())
+  then f args
+  else
+    let avals = List.map Core.get_aval args in
+    let key =
+      {
+        rk_name = name;
+        rk_statics = statics;
+        rk_avals = avals;
+        rk_platform = current_platform ();
+        rk_context = Config.trace_context ();
+      }
+    in
+    let program =
+      match Region_cache.find_opt region_programs key with
+      | Some program ->
+          incr eager_cache_hits;
+          program
+      | None ->
+          let program = build_region name f avals in
+          Region_cache.replace region_programs key program;
+          program
+    in
+    match program with
+    | None -> f args
+    | Some (exec, wanted) -> (
+        match xla_run exec args false with
+        | outs when output_matches outs wanted ->
+            incr eager_executions;
+            outs
+        | _ -> f args
+        | exception Errors.Jax_runtime_error _ -> f args)
+
 let executor ?options (cj : closed_jaxpr) : value list -> value list =
   let precision = Config.value Config.default_matmul_precision in
   let per_platform = Hashtbl.create 2 in

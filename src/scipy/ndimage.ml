@@ -167,3 +167,11 @@ let map_coordinates ?(mode = "constant") ?(cval = 0.0) input coordinates ~order
   in
   let result = if is_integer idt then round_half_away result else result in
   NL.astype result idt
+
+let map_coordinates ?mode ?cval input coordinates ~order =
+  Eager_jit.one "scipy.ndimage.map_coordinates" (mode, cval, order) []
+    (input :: coordinates) (fun _ vals ->
+      match vals with
+      | input :: coordinates ->
+          map_coordinates ?mode ?cval input coordinates ~order
+      | [] -> assert false)

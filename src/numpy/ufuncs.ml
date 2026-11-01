@@ -640,3 +640,442 @@ let imag x =
 let real x = if is_complex_dtype (dtype x) then bind1 T.Real [ x ] else x
 let conjugate x = if is_complex_dtype (dtype x) then bind1 T.Conj [ x ] else x
 let conj = conjugate
+
+let fabs a0 =
+  Eager_jit.one "numpy.ufuncs.fabs" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> fabs a0 | _ -> assert false)
+
+let bitwise_invert a0 =
+  Eager_jit.one "numpy.ufuncs.bitwise_invert" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> bitwise_invert a0
+      | _ -> assert false)
+
+let bitwise_not a0 =
+  Eager_jit.one "numpy.ufuncs.bitwise_not" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> bitwise_not a0 | _ -> assert false)
+
+let invert a0 =
+  Eager_jit.one "numpy.ufuncs.invert" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> invert a0 | _ -> assert false)
+
+let positive a0 =
+  Eager_jit.one "numpy.ufuncs.positive" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> positive a0 | _ -> assert false)
+
+let sign a0 =
+  Eager_jit.one "numpy.ufuncs.sign" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> sign a0 | _ -> assert false)
+
+let floor a0 =
+  Eager_jit.one "numpy.ufuncs.floor" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> floor a0 | _ -> assert false)
+
+let ceil a0 =
+  Eager_jit.one "numpy.ufuncs.ceil" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> ceil a0 | _ -> assert false)
+
+let exp a0 =
+  Eager_jit.one "numpy.ufuncs.exp" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> exp a0 | _ -> assert false)
+
+let log a0 =
+  Eager_jit.one "numpy.ufuncs.log" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> log a0 | _ -> assert false)
+
+let expm1 a0 =
+  Eager_jit.one "numpy.ufuncs.expm1" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> expm1 a0 | _ -> assert false)
+
+let log1p a0 =
+  Eager_jit.one "numpy.ufuncs.log1p" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> log1p a0 | _ -> assert false)
+
+let sin a0 =
+  Eager_jit.one "numpy.ufuncs.sin" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> sin a0 | _ -> assert false)
+
+let cos a0 =
+  Eager_jit.one "numpy.ufuncs.cos" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> cos a0 | _ -> assert false)
+
+let tan a0 =
+  Eager_jit.one "numpy.ufuncs.tan" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> tan a0 | _ -> assert false)
+
+let arcsin a0 =
+  Eager_jit.one "numpy.ufuncs.arcsin" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> arcsin a0 | _ -> assert false)
+
+let arccos a0 =
+  Eager_jit.one "numpy.ufuncs.arccos" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> arccos a0 | _ -> assert false)
+
+let arctan a0 =
+  Eager_jit.one "numpy.ufuncs.arctan" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> arctan a0 | _ -> assert false)
+
+let sinh a0 =
+  Eager_jit.one "numpy.ufuncs.sinh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> sinh a0 | _ -> assert false)
+
+let cosh a0 =
+  Eager_jit.one "numpy.ufuncs.cosh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> cosh a0 | _ -> assert false)
+
+let arcsinh a0 =
+  Eager_jit.one "numpy.ufuncs.arcsinh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> arcsinh a0 | _ -> assert false)
+
+let arccosh a0 =
+  Eager_jit.one "numpy.ufuncs.arccosh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> arccosh a0 | _ -> assert false)
+
+let tanh a0 =
+  Eager_jit.one "numpy.ufuncs.tanh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> tanh a0 | _ -> assert false)
+
+let arctanh a0 =
+  Eager_jit.one "numpy.ufuncs.arctanh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> arctanh a0 | _ -> assert false)
+
+let sqrt a0 =
+  Eager_jit.one "numpy.ufuncs.sqrt" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> sqrt a0 | _ -> assert false)
+
+let cbrt a0 =
+  Eager_jit.one "numpy.ufuncs.cbrt" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> cbrt a0 | _ -> assert false)
+
+let left_shift a0 a1 =
+  Eager_jit.one "numpy.ufuncs.left_shift" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> left_shift a0 a1
+      | _ -> assert false)
+
+let bitwise_left_shift a0 a1 =
+  Eager_jit.one "numpy.ufuncs.bitwise_left_shift" () [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> bitwise_left_shift a0 a1
+      | _ -> assert false)
+
+let equal a0 a1 =
+  Eager_jit.one "numpy.ufuncs.equal" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> equal a0 a1
+      | _ -> assert false)
+
+let not_equal a0 a1 =
+  Eager_jit.one "numpy.ufuncs.not_equal" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> not_equal a0 a1
+      | _ -> assert false)
+
+let arctan2 a0 a1 =
+  Eager_jit.one "numpy.ufuncs.arctan2" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> arctan2 a0 a1
+      | _ -> assert false)
+
+let float_power a0 a1 =
+  Eager_jit.one "numpy.ufuncs.float_power" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> float_power a0 a1
+      | _ -> assert false)
+
+let nextafter a0 a1 =
+  Eager_jit.one "numpy.ufuncs.nextafter" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> nextafter a0 a1
+      | _ -> assert false)
+
+let spacing a0 =
+  Eager_jit.one "numpy.ufuncs.spacing" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> spacing a0 | _ -> assert false)
+
+let logical_not a0 =
+  Eager_jit.one "numpy.ufuncs.logical_not" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> logical_not a0 | _ -> assert false)
+
+let greater_equal a0 a1 =
+  Eager_jit.one "numpy.ufuncs.greater_equal" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> greater_equal a0 a1
+      | _ -> assert false)
+
+let greater a0 a1 =
+  Eager_jit.one "numpy.ufuncs.greater" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> greater a0 a1
+      | _ -> assert false)
+
+let less_equal a0 a1 =
+  Eager_jit.one "numpy.ufuncs.less_equal" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> less_equal a0 a1
+      | _ -> assert false)
+
+let less a0 a1 =
+  Eager_jit.one "numpy.ufuncs.less" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> less a0 a1 | _ -> assert false)
+
+let acos a0 =
+  Eager_jit.one "numpy.ufuncs.acos" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> acos a0 | _ -> assert false)
+
+let acosh a0 =
+  Eager_jit.one "numpy.ufuncs.acosh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> acosh a0 | _ -> assert false)
+
+let asin a0 =
+  Eager_jit.one "numpy.ufuncs.asin" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> asin a0 | _ -> assert false)
+
+let asinh a0 =
+  Eager_jit.one "numpy.ufuncs.asinh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> asinh a0 | _ -> assert false)
+
+let atan a0 =
+  Eager_jit.one "numpy.ufuncs.atan" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> atan a0 | _ -> assert false)
+
+let atanh a0 =
+  Eager_jit.one "numpy.ufuncs.atanh" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> atanh a0 | _ -> assert false)
+
+let atan2 a0 a1 =
+  Eager_jit.one "numpy.ufuncs.atan2" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> atan2 a0 a1
+      | _ -> assert false)
+
+let right_shift a0 a1 =
+  Eager_jit.one "numpy.ufuncs.right_shift" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> right_shift a0 a1
+      | _ -> assert false)
+
+let bitwise_right_shift a0 a1 =
+  Eager_jit.one "numpy.ufuncs.bitwise_right_shift" () [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> bitwise_right_shift a0 a1
+      | _ -> assert false)
+
+let absolute a0 =
+  Eager_jit.one "numpy.ufuncs.absolute" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> absolute a0 | _ -> assert false)
+
+let abs a0 =
+  Eager_jit.one "numpy.ufuncs.abs" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> abs a0 | _ -> assert false)
+
+let rint a0 =
+  Eager_jit.one "numpy.ufuncs.rint" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> rint a0 | _ -> assert false)
+
+let copysign a0 a1 =
+  Eager_jit.one "numpy.ufuncs.copysign" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> copysign a0 a1
+      | _ -> assert false)
+
+let true_divide a0 a1 =
+  Eager_jit.one "numpy.ufuncs.true_divide" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> true_divide a0 a1
+      | _ -> assert false)
+
+let floor_divide a0 a1 =
+  Eager_jit.one "numpy.ufuncs.floor_divide" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> floor_divide a0 a1
+      | _ -> assert false)
+
+let divmod a0 a1 =
+  Eager_jit.many "numpy.ufuncs.divmod" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> divmod a0 a1
+      | _ -> assert false)
+
+let log2 a0 =
+  Eager_jit.one "numpy.ufuncs.log2" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> log2 a0 | _ -> assert false)
+
+let log10 a0 =
+  Eager_jit.one "numpy.ufuncs.log10" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> log10 a0 | _ -> assert false)
+
+let exp2 a0 =
+  Eager_jit.one "numpy.ufuncs.exp2" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> exp2 a0 | _ -> assert false)
+
+let signbit a0 =
+  Eager_jit.one "numpy.ufuncs.signbit" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> signbit a0 | _ -> assert false)
+
+let remainder a0 a1 =
+  Eager_jit.one "numpy.ufuncs.remainder" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> remainder a0 a1
+      | _ -> assert false)
+
+let fmod a0 a1 =
+  Eager_jit.one "numpy.ufuncs.fmod" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> fmod a0 a1 | _ -> assert false)
+
+let square a0 =
+  Eager_jit.one "numpy.ufuncs.square" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> square a0 | _ -> assert false)
+
+let deg2rad a0 =
+  Eager_jit.one "numpy.ufuncs.deg2rad" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> deg2rad a0 | _ -> assert false)
+
+let rad2deg a0 =
+  Eager_jit.one "numpy.ufuncs.rad2deg" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> rad2deg a0 | _ -> assert false)
+
+let conjugate a0 =
+  Eager_jit.one "numpy.ufuncs.conjugate" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> conjugate a0 | _ -> assert false)
+
+let imag a0 =
+  Eager_jit.one "numpy.ufuncs.imag" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> imag a0 | _ -> assert false)
+
+let real a0 =
+  Eager_jit.one "numpy.ufuncs.real" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> real a0 | _ -> assert false)
+
+let modf a0 =
+  Eager_jit.many "numpy.ufuncs.modf" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> modf a0 | _ -> assert false)
+
+let isfinite a0 =
+  Eager_jit.one "numpy.ufuncs.isfinite" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> isfinite a0 | _ -> assert false)
+
+let isinf a0 =
+  Eager_jit.one "numpy.ufuncs.isinf" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> isinf a0 | _ -> assert false)
+
+let isnan a0 =
+  Eager_jit.one "numpy.ufuncs.isnan" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> isnan a0 | _ -> assert false)
+
+let heaviside a0 a1 =
+  Eager_jit.one "numpy.ufuncs.heaviside" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> heaviside a0 a1
+      | _ -> assert false)
+
+let hypot a0 a1 =
+  Eager_jit.one "numpy.ufuncs.hypot" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> hypot a0 a1
+      | _ -> assert false)
+
+let reciprocal a0 =
+  Eager_jit.one "numpy.ufuncs.reciprocal" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> reciprocal a0 | _ -> assert false)
+
+let sinc a0 =
+  Eager_jit.one "numpy.ufuncs.sinc" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> sinc a0 | _ -> assert false)
+
+let add a0 a1 =
+  Eager_jit.one "numpy.ufuncs.add" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> add a0 a1 | _ -> assert false)
+
+let subtract a0 a1 =
+  Eager_jit.one "numpy.ufuncs.subtract" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> subtract a0 a1
+      | _ -> assert false)
+
+let multiply a0 a1 =
+  Eager_jit.one "numpy.ufuncs.multiply" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> multiply a0 a1
+      | _ -> assert false)
+
+let divide a0 a1 =
+  Eager_jit.one "numpy.ufuncs.divide" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> divide a0 a1
+      | _ -> assert false)
+
+let negative a0 =
+  Eager_jit.one "numpy.ufuncs.negative" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> negative a0 | _ -> assert false)
+
+let power a0 a1 =
+  match concrete_integer_exponent a1 with
+  | Some _ -> power a0 a1
+  | None ->
+      Eager_jit.one "numpy.ufuncs.power" () [] [ a0; a1 ] (fun opts vals ->
+          match (opts, vals) with
+          | [], [ a0; a1 ] -> power a0 a1
+          | _ -> assert false)
+
+let maximum a0 a1 =
+  Eager_jit.one "numpy.ufuncs.maximum" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> maximum a0 a1
+      | _ -> assert false)
+
+let minimum a0 a1 =
+  Eager_jit.one "numpy.ufuncs.minimum" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> minimum a0 a1
+      | _ -> assert false)
+
+let logaddexp a0 a1 =
+  Eager_jit.one "numpy.ufuncs.logaddexp" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> logaddexp a0 a1
+      | _ -> assert false)
+
+let logaddexp2 a0 a1 =
+  Eager_jit.one "numpy.ufuncs.logaddexp2" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> logaddexp2 a0 a1
+      | _ -> assert false)
+
+let bitwise_and a0 a1 =
+  Eager_jit.one "numpy.ufuncs.bitwise_and" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> bitwise_and a0 a1
+      | _ -> assert false)
+
+let bitwise_or a0 a1 =
+  Eager_jit.one "numpy.ufuncs.bitwise_or" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> bitwise_or a0 a1
+      | _ -> assert false)
+
+let bitwise_xor a0 a1 =
+  Eager_jit.one "numpy.ufuncs.bitwise_xor" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> bitwise_xor a0 a1
+      | _ -> assert false)
+
+let logical_and a0 a1 =
+  Eager_jit.one "numpy.ufuncs.logical_and" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> logical_and a0 a1
+      | _ -> assert false)
+
+let logical_or a0 a1 =
+  Eager_jit.one "numpy.ufuncs.logical_or" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> logical_or a0 a1
+      | _ -> assert false)
+
+let logical_xor a0 a1 =
+  Eager_jit.one "numpy.ufuncs.logical_xor" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> logical_xor a0 a1
+      | _ -> assert false)

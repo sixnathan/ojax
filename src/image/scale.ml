@@ -250,3 +250,10 @@ let resize image ~shape:output_shape ~method_ ?(antialias = true) () =
       let translation = Array.make (Array.length spatial_dims) 0.0 in
       scale_and_translate_internal image ~output_shape ~spatial_dims ~scale
         ~translation ~kernel ~antialias
+
+let resize image ~shape ~method_ ?antialias () =
+  Eager_jit.one "image.scale.resize" (shape, method_, antialias) [] [ image ]
+    (fun _ vals ->
+      match vals with
+      | [ image ] -> resize image ~shape ~method_ ?antialias ()
+      | _ -> assert false)

@@ -483,6 +483,8 @@ let custom_jvp_outputs () =
 let executed_during thunk =
   let counts = Hashtbl.create 8 in
   let original = Core.rules.impl in
+  let original_eager = !Core.eager_eval in
+  (Core.eager_eval := fun _ _ -> None);
   Core.rules.impl <-
     (fun prim inputs ->
       let name = Pretty_printer.primitive_name prim in
@@ -490,7 +492,9 @@ let executed_during thunk =
       Hashtbl.replace counts name (n + 1);
       original prim inputs);
   Fun.protect
-    ~finally:(fun () -> Core.rules.impl <- original)
+    ~finally:(fun () ->
+      Core.rules.impl <- original;
+      Core.eager_eval := original_eager)
     (fun () -> thunk ());
   fun name -> Option.value (Hashtbl.find_opt counts name) ~default:0
 

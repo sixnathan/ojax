@@ -202,3 +202,36 @@ let polymul ?(trim_leading_zeros = false) a1 a2 =
     if (shape a2).(0) = 0 then const_full (dtype a1) [| 1 |] 0.0 else a2
   in
   NL.convolve ~mode:"full" a1 a2
+
+let poly a0 =
+  Eager_jit.one "numpy.polynomial.poly" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> poly a0 | _ -> assert false)
+
+let polyval ?unroll a0 a1 =
+  Eager_jit.one "numpy.polynomial.polyval" unroll [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> polyval ?unroll a0 a1
+      | _ -> assert false)
+
+let polyadd a0 a1 =
+  Eager_jit.one "numpy.polynomial.polyadd" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> polyadd a0 a1
+      | _ -> assert false)
+
+let polyint ?m ?k a0 =
+  Eager_jit.one "numpy.polynomial.polyint" m [ k ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ k ], [ a0 ] -> polyint ?m ?k a0
+      | _ -> assert false)
+
+let polyder ?m a0 =
+  Eager_jit.one "numpy.polynomial.polyder" m [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> polyder ?m a0 | _ -> assert false)
+
+let polysub a0 a1 =
+  Eager_jit.one "numpy.polynomial.polysub" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> polysub a0 a1
+      | _ -> assert false)

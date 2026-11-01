@@ -75,3 +75,10 @@ let entropy ?loc mu =
          (NL.where_ (UF.less mu_flat (sc mu_flat 100.0)) medium large))
   in
   NL.reshape result (shape pmu)
+
+let entropy ?loc a0 =
+  Eager_jit.one "scipy.stats.poisson.entropy" () [ loc ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ loc ], [ a0 ] -> entropy ?loc a0
+      | _ -> assert false)

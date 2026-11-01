@@ -1800,3 +1800,294 @@ let argsort_values v =
   | _ -> failwith "argsort_values: arity"
 
 let from_dlpack ?device ?copy x = Dlpack.from_dlpack ?device ?copy x
+
+let fmin a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.fmin" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> fmin a0 a1 | _ -> assert false)
+
+let fmax a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.fmax" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> fmax a0 a1 | _ -> assert false)
+
+let trunc a0 =
+  Eager_jit.one "numpy.lax_numpy.trunc" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> trunc a0 | _ -> assert false)
+
+let convolve ?mode a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.convolve" mode [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> convolve ?mode a0 a1
+      | _ -> assert false)
+
+let correlate ?mode a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.correlate" mode [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> correlate ?mode a0 a1
+      | _ -> assert false)
+
+let rot90 ?k ?axes a0 =
+  Eager_jit.one "numpy.lax_numpy.rot90" (k, axes) [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> rot90 ?k ?axes a0
+      | _ -> assert false)
+
+let iscomplex a0 =
+  Eager_jit.one "numpy.lax_numpy.iscomplex" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> iscomplex a0 | _ -> assert false)
+
+let isreal a0 =
+  Eager_jit.one "numpy.lax_numpy.isreal" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> isreal a0 | _ -> assert false)
+
+let angle ?deg a0 =
+  Eager_jit.one "numpy.lax_numpy.angle" deg [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> angle ?deg a0 | _ -> assert false)
+
+let diff ?n ?axis ?prepend ?append a0 =
+  Eager_jit.one "numpy.lax_numpy.diff" (n, axis) [ prepend; append ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ prepend; append ], [ a0 ] -> diff ?n ?axis ?prepend ?append a0
+      | _ -> assert false)
+
+let ediff1d ?to_end ?to_begin a0 =
+  Eager_jit.one "numpy.lax_numpy.ediff1d" () [ to_end; to_begin ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ to_end; to_begin ], [ a0 ] -> ediff1d ?to_end ?to_begin a0
+      | _ -> assert false)
+
+let ravel ?order a0 =
+  Eager_jit.one "numpy.lax_numpy.ravel" order [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> ravel ?order a0
+      | _ -> assert false)
+
+let resize a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.resize" a1 [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> resize a0 a1 | _ -> assert false)
+
+let swapaxes a0 a1 a2 =
+  Eager_jit.one "numpy.lax_numpy.swapaxes" (a0, a1) [] [ a2 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a2 ] -> swapaxes a0 a1 a2
+      | _ -> assert false)
+
+let isclose ?rtol ?atol ?equal_nan a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.isclose" (rtol, atol, equal_nan) [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> isclose ?rtol ?atol ?equal_nan a0 a1
+      | _ -> assert false)
+
+let clip ?min ?max a0 =
+  Eager_jit.one "numpy.lax_numpy.clip" (min, max) [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> clip ?min ?max a0
+      | _ -> assert false)
+
+let round ?decimals a0 =
+  Eager_jit.one "numpy.lax_numpy.round" decimals [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> round ?decimals a0
+      | _ -> assert false)
+
+let around ?decimals a0 =
+  Eager_jit.one "numpy.lax_numpy.around" decimals [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> around ?decimals a0
+      | _ -> assert false)
+
+let nan_to_num ?nan ?posinf ?neginf a0 =
+  Eager_jit.one "numpy.lax_numpy.nan_to_num" (nan, posinf, neginf) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> nan_to_num ?nan ?posinf ?neginf a0
+      | _ -> assert false)
+
+let allclose ?rtol ?atol ?equal_nan a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.allclose" (rtol, atol, equal_nan) [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> allclose ?rtol ?atol ?equal_nan a0 a1
+      | _ -> assert false)
+
+let unwrap ?discont ?axis ?period a0 =
+  Eager_jit.one "numpy.lax_numpy.unwrap" (discont, axis, period) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> unwrap ?discont ?axis ?period a0
+      | _ -> assert false)
+
+let unstack ?axis a0 =
+  Eager_jit.many "numpy.lax_numpy.unstack" axis [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> unstack ?axis a0
+      | _ -> assert false)
+
+let atleast_1d a0 =
+  Eager_jit.one "numpy.lax_numpy.atleast_1d" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> atleast_1d a0 | _ -> assert false)
+
+let atleast_2d a0 =
+  Eager_jit.one "numpy.lax_numpy.atleast_2d" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> atleast_2d a0 | _ -> assert false)
+
+let atleast_3d a0 =
+  Eager_jit.one "numpy.lax_numpy.atleast_3d" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> atleast_3d a0 | _ -> assert false)
+
+let i0 a0 =
+  Eager_jit.one "numpy.lax_numpy.i0" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> i0 a0 | _ -> assert false)
+
+let trapezoid ?x ?dx ?axis a0 =
+  Eager_jit.one "numpy.lax_numpy.trapezoid" (dx, axis) [ x ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ x ], [ a0 ] -> trapezoid ?x ?dx ?axis a0
+      | _ -> assert false)
+
+let tril ?k a0 =
+  Eager_jit.one "numpy.lax_numpy.tril" k [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> tril ?k a0 | _ -> assert false)
+
+let triu ?k a0 =
+  Eager_jit.one "numpy.lax_numpy.triu" k [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> triu ?k a0 | _ -> assert false)
+
+let trace ?offset ?axis1 ?axis2 ?dtype a0 =
+  Eager_jit.one "numpy.lax_numpy.trace" (offset, axis1, axis2, dtype) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> trace ?offset ?axis1 ?axis2 ?dtype a0
+      | _ -> assert false)
+
+let diagonal ?offset ?axis1 ?axis2 a0 =
+  Eager_jit.one "numpy.lax_numpy.diagonal" (offset, axis1, axis2) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> diagonal ?offset ?axis1 ?axis2 a0
+      | _ -> assert false)
+
+let append ?axis a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.append" axis [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> append ?axis a0 a1
+      | _ -> assert false)
+
+let cross ?axisa ?axisb ?axisc ?axis a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.cross" (axisa, axisb, axisc, axis)
+    [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> cross ?axisa ?axisb ?axisc ?axis a0 a1
+      | _ -> assert false)
+
+let kron a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.kron" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> kron a0 a1 | _ -> assert false)
+
+let vander ?n ?increasing a0 =
+  Eager_jit.one "numpy.lax_numpy.vander" (n, increasing) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> vander ?n ?increasing a0
+      | _ -> assert false)
+
+let rollaxis ?start a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.rollaxis" (start, a0) [] [ a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a1 ] -> rollaxis ?start a0 a1
+      | _ -> assert false)
+
+let gcd a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.gcd" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> gcd a0 a1 | _ -> assert false)
+
+let lcm a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.lcm" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> lcm a0 a1 | _ -> assert false)
+
+let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype a0 =
+  Eager_jit.one "numpy.lax_numpy.cov" (rowvar, bias, ddof, dtype)
+    [ y; fweights; aweights ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ y; fweights; aweights ], [ a0 ] ->
+          cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype a0
+      | _ -> assert false)
+
+let corrcoef ?y ?rowvar ?dtype a0 =
+  Eager_jit.one "numpy.lax_numpy.corrcoef" (rowvar, dtype) [ y ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ y ], [ a0 ] -> corrcoef ?y ?rowvar ?dtype a0
+      | _ -> assert false)
+
+let searchsorted ?side ?sorter ?method_ a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.searchsorted" (side, method_) [ sorter ]
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ sorter ], [ a0; a1 ] -> searchsorted ?side ?sorter ?method_ a0 a1
+      | _ -> assert false)
+
+let digitize ?right ?method_ a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.digitize" (right, method_) [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> digitize ?right ?method_ a0 a1
+      | _ -> assert false)
+
+let flip ?axis a0 =
+  Eager_jit.one "numpy.lax_numpy.flip" axis [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> flip ?axis a0 | _ -> assert false)
+
+let squeeze ?axis a0 =
+  Eager_jit.one "numpy.lax_numpy.squeeze" axis [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> squeeze ?axis a0
+      | _ -> assert false)
+
+let moveaxis a0 a1 a2 =
+  Eager_jit.one "numpy.lax_numpy.moveaxis" (a0, a1) [] [ a2 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a2 ] -> moveaxis a0 a1 a2
+      | _ -> assert false)
+
+let diag ?k a0 =
+  Eager_jit.one "numpy.lax_numpy.diag" k [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> diag ?k a0 | _ -> assert false)
+
+let argmax ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.lax_numpy.argmax" (axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> argmax ?axis ?keepdims a0
+      | _ -> assert false)
+
+let argmin ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.lax_numpy.argmin" (axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> argmin ?axis ?keepdims a0
+      | _ -> assert false)
+
+let nanargmax ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.lax_numpy.nanargmax" (axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> nanargmax ?axis ?keepdims a0
+      | _ -> assert false)
+
+let nanargmin ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.lax_numpy.nanargmin" (axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> nanargmin ?axis ?keepdims a0
+      | _ -> assert false)
+
+let roll ?axis a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.roll" (axis, a1) [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> roll ?axis a0 a1
+      | _ -> assert false)

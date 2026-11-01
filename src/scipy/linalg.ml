@@ -1075,3 +1075,107 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
       in
       [ eigvals; NL.transpose vectors ]
   end
+
+let lu_factor a0 =
+  Eager_jit.pair "scipy.linalg.lu_factor" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> lu_factor a0 | _ -> assert false)
+
+let lu ?permute_l a0 =
+  Eager_jit.many "scipy.linalg.lu" permute_l [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> lu ?permute_l a0
+      | _ -> assert false)
+
+let expm ?upper_triangular ?max_squarings a0 =
+  Eager_jit.one "scipy.linalg.expm" (upper_triangular, max_squarings) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> expm ?upper_triangular ?max_squarings a0
+      | _ -> assert false)
+
+let expm_frechet ?compute_expm a0 a1 =
+  Eager_jit.many "scipy.linalg.expm_frechet" compute_expm [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> expm_frechet ?compute_expm a0 a1
+      | _ -> assert false)
+
+let eigh_tridiagonal ?eigvals_only ?select ?select_range ?tol ?key a0 a1 =
+  Eager_jit.many "scipy.linalg.eigh_tridiagonal"
+    (eigvals_only, select, select_range, tol) [ key ] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ key ], [ a0; a1 ] ->
+          eigh_tridiagonal ?eigvals_only ?select ?select_range ?tol ?key a0 a1
+      | _ -> assert false)
+
+let polar ?side ?method_ ?eps a0 =
+  Eager_jit.many "scipy.linalg.polar" (side, method_, eps) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> polar ?side ?method_ ?eps a0
+      | _ -> assert false)
+
+let rsf2csf a0 a1 =
+  Eager_jit.pair "scipy.linalg.rsf2csf" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> rsf2csf a0 a1
+      | _ -> assert false)
+
+let hessenberg ?calc_q a0 =
+  Eager_jit.many "scipy.linalg.hessenberg" calc_q [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> hessenberg ?calc_q a0
+      | _ -> assert false)
+
+let cholesky ?lower a0 =
+  Eager_jit.one "scipy.linalg.cholesky" lower [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> cholesky ?lower a0
+      | _ -> assert false)
+
+let svd ?full_matrices ?compute_uv a0 =
+  Eager_jit.many "scipy.linalg.svd" (full_matrices, compute_uv) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> svd ?full_matrices ?compute_uv a0
+      | _ -> assert false)
+
+let eigh ?lower ?eigvals_only a0 =
+  Eager_jit.many "scipy.linalg.eigh" (lower, eigvals_only) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> eigh ?lower ?eigvals_only a0
+      | _ -> assert false)
+
+let schur ?output a0 =
+  Eager_jit.many "scipy.linalg.schur" output [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> schur ?output a0
+      | _ -> assert false)
+
+let qr ?mode ?pivoting a0 =
+  Eager_jit.many "scipy.linalg.qr" (mode, pivoting) [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> qr ?mode ?pivoting a0
+      | _ -> assert false)
+
+let solve ?lower ?assume_a a0 a1 =
+  Eager_jit.one "scipy.linalg.solve" (lower, assume_a) [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> solve ?lower ?assume_a a0 a1
+      | _ -> assert false)
+
+let solve_triangular ?trans ?lower ?unit_diagonal a0 a1 =
+  Eager_jit.one "scipy.linalg.solve_triangular" (trans, lower, unit_diagonal)
+    [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> solve_triangular ?trans ?lower ?unit_diagonal a0 a1
+      | _ -> assert false)
+
+let sqrtm ?blocksize a0 =
+  Eager_jit.one "scipy.linalg.sqrtm" blocksize [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> sqrtm ?blocksize a0
+      | _ -> assert false)

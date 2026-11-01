@@ -133,3 +133,21 @@ let rec rankdata ?(method_ = "average") ?axis ?(nan_policy = "propagate") a =
                 L.add (NL.astype upper out_dt) (NL.astype lower out_dt)
               in
               L.mul sum (L.full_like sum 0.5))
+
+let sem ?axis ?ddof a =
+  Eager_jit.one "scipy.stats.sem" (axis, ddof) [] [ a ] (fun _ vals ->
+      match vals with [ a ] -> sem ?axis ?ddof a | _ -> assert false)
+
+let mode ?axis ?nan_policy ?keepdims a =
+  Eager_jit.pair "scipy.stats.mode" (axis, nan_policy, keepdims) [] [ a ]
+    (fun _ vals ->
+      match vals with
+      | [ a ] -> mode ?axis ?nan_policy ?keepdims a
+      | _ -> assert false)
+
+let rankdata ?method_ ?axis ?nan_policy a =
+  Eager_jit.one "scipy.stats.rankdata" (method_, axis, nan_policy) [] [ a ]
+    (fun _ vals ->
+      match vals with
+      | [ a ] -> rankdata ?method_ ?axis ?nan_policy a
+      | _ -> assert false)

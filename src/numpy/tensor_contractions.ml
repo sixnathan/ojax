@@ -133,3 +133,38 @@ let outer a b =
   let a2 = NL.expand_dims a [| 1 |] in
   let b2 = NL.expand_dims b [| 0 |] in
   bcast_binop (mul_prim pdt) a2 b2
+
+let matvec a0 a1 =
+  Eager_jit.one "numpy.tensor_contractions.matvec" () [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> matvec a0 a1
+      | _ -> assert false)
+
+let vecmat a0 a1 =
+  Eager_jit.one "numpy.tensor_contractions.vecmat" () [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> vecmat a0 a1
+      | _ -> assert false)
+
+let vdot ?precision ?preferred a0 a1 =
+  Eager_jit.one "numpy.tensor_contractions.vdot" (precision, preferred) []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> vdot ?precision ?preferred a0 a1
+      | _ -> assert false)
+
+let inner ?precision ?preferred a0 a1 =
+  Eager_jit.one "numpy.tensor_contractions.inner" (precision, preferred) []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> inner ?precision ?preferred a0 a1
+      | _ -> assert false)
+
+let outer a0 a1 =
+  Eager_jit.one "numpy.tensor_contractions.outer" () [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> outer a0 a1
+      | _ -> assert false)

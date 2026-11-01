@@ -1412,3 +1412,60 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
     [| rank source - 1 |]
     [| ax |]
     (Concrete (Ndarray.of_floats Dtype.Uint8 out_shape out))
+
+let interp ?left ?right ?period a0 a1 a2 =
+  Eager_jit.one "numpy.extras.interp" (left, right, period) [] [ a0; a1; a2 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1; a2 ] -> interp ?left ?right ?period a0 a1 a2
+      | _ -> assert false)
+
+let polyfit ?rcond ?w a0 a1 a2 =
+  Eager_jit.one "numpy.extras.polyfit" (rcond, a2) [ w ] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ w ], [ a0; a1 ] -> polyfit ?rcond ?w a0 a1 a2
+      | _ -> assert false)
+
+let bitwise_count a0 =
+  Eager_jit.one "numpy.extras.bitwise_count" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> bitwise_count a0
+      | _ -> assert false)
+
+let ldexp a0 a1 =
+  Eager_jit.one "numpy.extras.ldexp" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> ldexp a0 a1
+      | _ -> assert false)
+
+let frexp a0 =
+  Eager_jit.pair "numpy.extras.frexp" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> frexp a0 | _ -> assert false)
+
+let sort_complex a0 =
+  Eager_jit.one "numpy.extras.sort_complex" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> sort_complex a0
+      | _ -> assert false)
+
+let packbits ?axis ?bitorder a0 =
+  Eager_jit.one "numpy.extras.packbits" (axis, bitorder) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> packbits ?axis ?bitorder a0
+      | _ -> assert false)
+
+let unpackbits ?axis ?count ?bitorder a0 =
+  Eager_jit.one "numpy.extras.unpackbits" (axis, count, bitorder) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> unpackbits ?axis ?count ?bitorder a0
+      | _ -> assert false)
+
+let gradient ?spacing ?axis a0 =
+  Eager_jit.many "numpy.extras.gradient" (spacing, axis) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> gradient ?spacing ?axis a0
+      | _ -> assert false)

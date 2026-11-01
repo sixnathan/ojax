@@ -1022,9 +1022,9 @@ let nanquantile ?axis ?keepdims ?method_ p0 p1 =
     [ p0; p1 ]
 
 let percentile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
-  let cdt = to_inexact_dtype (dtype a) in
-  let q100 = bind1 T.Div [ convert q cdt; const_full cdt (shape q) 100.0 ] in
-  quantile ?axis ~keepdims ~method_ a q100
+  let q = to_inexact q in
+  let hundred = T.Concrete (Nd.of_floats (dtype q) [||] [| 100.0 |]) in
+  quantile ?axis ~keepdims ~method_ a (bind1 T.Div [ q; hundred ])
 
 let percentile ?axis ?keepdims ?method_ p0 p1 =
   Jnp_util.jit1 "percentile"

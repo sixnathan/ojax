@@ -5,6 +5,8 @@ val igammac : value list -> value list
 val igamma_grad_a : value list -> value list
 val betainc : value list -> value list
 val bessel_i0e : value list -> value list
+val complex_sin : value list -> value list
+val complex_cos : value list -> value list
 val complex_minmax : is_max:bool -> value list -> value list
 val complex_reduce : is_max:bool -> axes:int array -> value list -> value list
 

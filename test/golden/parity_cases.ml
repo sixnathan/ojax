@@ -969,7 +969,7 @@ let complex_grad_run op a =
   | "cg_sinh" -> on (abs_of UF.sinh)
   | "cg_cosh" -> on (abs_of UF.cosh)
   | "cg_square" -> on (abs_of (fun z -> L.mul z z))
-  | "cg_reciprocal" -> on (abs_of L.reciprocal)
+  | "cg_reciprocal" -> on (abs_of (fun z -> UF.divide (like z 1.0) z))
   | "cg_conj" -> on (abs_of (fun z -> L.mul (L.conj z) z))
   | "cg_real" -> on (fun z -> UF.power (L.real z) (scalar_int 2))
   | "cg_imag" -> on (fun z -> UF.power (L.imag z) (scalar_int 2))

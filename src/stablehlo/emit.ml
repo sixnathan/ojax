@@ -2847,6 +2847,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Cbrt -> emit_stablehlo_unary ctx eqn in_ids "cbrt"
   | Ceil -> emit_stablehlo_unary ctx eqn in_ids "ceil"
   | Clz -> emit_stablehlo_unary ctx eqn in_ids "count_leading_zeros"
+  | Cos when Dtypes.issubdtype (atom_aval (List.hd eqn.inputs)).dtype `Complex
+    ->
+      emit_inlined ctx eqn in_ids Native_lowering.complex_cos
   | Cos -> emit_stablehlo_unary ctx eqn in_ids "cosine"
   | Exp -> emit_stablehlo_unary ctx eqn in_ids "exponential"
   | Expm1 -> emit_stablehlo_unary ctx eqn in_ids "exponential_minus_one"
@@ -2911,6 +2914,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Sign when is_unsigned_dtype (atom_aval (sole eqn.inputs)).dtype ->
       emit_unsigned_sign ctx eqn in_ids
   | Sign -> emit_stablehlo_unary ctx eqn in_ids "sign"
+  | Sin when Dtypes.issubdtype (atom_aval (List.hd eqn.inputs)).dtype `Complex
+    ->
+      emit_inlined ctx eqn in_ids Native_lowering.complex_sin
   | Sin -> emit_stablehlo_unary ctx eqn in_ids "sine"
   | Sqrt -> emit_stablehlo_unary ctx eqn in_ids "sqrt"
   | Tan -> emit_stablehlo_unary ctx eqn in_ids "tan"

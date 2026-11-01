@@ -978,3 +978,43 @@ let lapack_schur ~compute_vectors outs =
   match lapack_guarded keep with
   | [ t; vs ] -> if compute_vectors then [ t; vs ] else [ t ]
   | _ -> invalid_arg "Native_lowering: gees arity"
+
+let complex_sin_parts x =
+  let a = Core.bind1 Real [ x ] in
+  let b = Core.bind1 Imag [ x ] in
+  let dt = (Core.get_aval a).dtype in
+  let zero = Core.splat dt [||] 0.0 in
+  let a_is_zero = Core.bind1 Eq [ a; zero ] in
+  let two = Core.splat dt [||] 2.0 in
+  let sn = Core.bind1 Sin [ a ] in
+  let cs = Core.bind1 Cos [ a ] in
+  let e1m = Core.bind1 Expm1 [ b ] in
+  let nb = Core.bind1 Neg [ b ] in
+  let e2m = Core.bind1 Expm1 [ nb ] in
+  let d = Core.bind1 Sub [ e1m; e2m ] in
+  let snh = Core.bind1 Div [ d; two ] in
+  let s1 = Core.bind1 Add [ e1m; e2m ] in
+  let s2 = Core.bind1 Add [ s1; two ] in
+  let csh = Core.bind1 Div [ s2; two ] in
+  (a_is_zero, zero, sn, cs, snh, csh)
+
+let complex_sin = function
+  | [ x ] ->
+      let a_is_zero, zero, sn, cs, snh, csh = complex_sin_parts x in
+      let re = Core.bind1 Mul [ sn; csh ] in
+      let im = Core.bind1 Mul [ cs; snh ] in
+      let on_zero = Core.bind1 Complex [ zero; im ] in
+      let other = Core.bind1 Complex [ re; im ] in
+      [ Core.bind1 Select_n [ a_is_zero; other; on_zero ] ]
+  | _ -> invalid_arg "native_lowering: complex_sin arity"
+
+let complex_cos = function
+  | [ x ] ->
+      let a_is_zero, zero, sn, cs, snh, csh = complex_sin_parts x in
+      let re = Core.bind1 Mul [ cs; csh ] in
+      let nsn = Core.bind1 Neg [ sn ] in
+      let im = Core.bind1 Mul [ nsn; snh ] in
+      let on_zero = Core.bind1 Complex [ re; zero ] in
+      let other = Core.bind1 Complex [ re; im ] in
+      [ Core.bind1 Select_n [ a_is_zero; other; on_zero ] ]
+  | _ -> invalid_arg "native_lowering: complex_cos arity"

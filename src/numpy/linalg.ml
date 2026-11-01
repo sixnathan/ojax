@@ -206,20 +206,24 @@ and det a =
   let na = Array.length sa in
   if na >= 2 && sa.(na - 1) = 2 && sa.(na - 2) = 2 then det_2x2 a
   else if na >= 2 && sa.(na - 1) = 3 && sa.(na - 2) = 3 then begin
-    let e i j = matrix_cell a i j in
-    let product x y z = UF.multiply (UF.multiply x y) z in
-    let plus =
-      UF.add
-        (UF.add
-           (product (e 0 0) (e 1 1) (e 2 2))
-           (product (e 0 1) (e 1 2) (e 2 0)))
-        (product (e 0 2) (e 1 0) (e 2 1))
+    let product (i0, j0) (i1, j1) (i2, j2) =
+      let x = matrix_cell a i0 j0 in
+      let y = matrix_cell a i1 j1 in
+      let xy = UF.multiply x y in
+      let z = matrix_cell a i2 j2 in
+      UF.multiply xy z
     in
-    UF.subtract
-      (UF.subtract
-         (UF.subtract plus (product (e 0 2) (e 1 1) (e 2 0)))
-         (product (e 0 0) (e 1 2) (e 2 1)))
-      (product (e 0 1) (e 1 0) (e 2 2))
+    let t0 = product (0, 0) (1, 1) (2, 2) in
+    let t1 = product (0, 1) (1, 2) (2, 0) in
+    let s1 = UF.add t0 t1 in
+    let t2 = product (0, 2) (1, 0) (2, 1) in
+    let s2 = UF.add s1 t2 in
+    let t3 = product (0, 2) (1, 1) (2, 0) in
+    let s3 = UF.subtract s2 t3 in
+    let t4 = product (0, 0) (1, 2) (2, 1) in
+    let s4 = UF.subtract s3 t4 in
+    let t5 = product (0, 1) (1, 0) (2, 2) in
+    UF.subtract s4 t5
   end
   else
     let sign, logdet = slogdet a in
@@ -227,13 +231,25 @@ and det a =
 
 and matrix_cell a i j =
   let na = ndim a in
-  Lax_api.index_in_dim ~axis:(na - 2) ~keepdims:false
-    (Lax_api.index_in_dim ~axis:(na - 1) ~keepdims:false a j)
-    i
+  let sh = shape a in
+  let start_indices = Array.make na 0 and limit_indices = Array.copy sh in
+  start_indices.(na - 2) <- i;
+  limit_indices.(na - 2) <- i + 1;
+  start_indices.(na - 1) <- j;
+  limit_indices.(na - 1) <- j + 1;
+  let sliced =
+    C.bind1 (T.Slice { start_indices; limit_indices; strides = None }) [ a ]
+  in
+  C.bind1 (T.Squeeze [| na - 2; na - 1 |]) [ sliced ]
 
 and det_2x2 a =
-  let e i j = matrix_cell a i j in
-  UF.subtract (UF.multiply (e 0 0) (e 1 1)) (UF.multiply (e 0 1) (e 1 0))
+  let x = matrix_cell a 0 0 in
+  let y = matrix_cell a 1 1 in
+  let xy = UF.multiply x y in
+  let u = matrix_cell a 0 1 in
+  let v = matrix_cell a 1 0 in
+  let uv = UF.multiply u v in
+  UF.subtract xy uv
 
 and eig a =
   let a = to_inexact a in

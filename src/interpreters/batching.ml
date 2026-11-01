@@ -1222,6 +1222,98 @@ let custom_batch axis_size prim vals bdims =
   in
   Core.bind prim' moved
 
+let jvp_batch_cache :
+    ( int * int * int option list * aval list * bool,
+      int * int option list )
+    Hashtbl.t =
+  Hashtbl.create 16
+
+let batched_jvp_rule id axis_size vals bdims primal jvp =
+  let avals = List.map Core.get_aval vals in
+  let key = (id, axis_size, bdims, avals, Config.x64_enabled ()) in
+  match Hashtbl.find_opt jvp_batch_cache key with
+  | Some r -> r
+  | None ->
+      let subtrace f dims inner record =
+        Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+            let ins =
+              List.map2
+                (fun v b ->
+                  match b with
+                  | Some _ -> Tracer (new_batch_tracer main v b)
+                  | None -> v)
+                inner dims
+            in
+            let outs = f ins in
+            let pairs =
+              List.map
+                (fun o -> to_batch_info main (Core.full_raise main o))
+                outs
+            in
+            record main (List.map snd pairs);
+            List.map fst pairs)
+      in
+      let out_dims = ref [] in
+      let primal' args =
+        subtrace primal bdims args (fun _ dims -> out_dims := dims)
+      in
+      ignore (Jaxpr.make_jaxpr avals primal');
+      let dims = !out_dims in
+      let inner_zero (t : value) b =
+        match b with
+        | Some d ->
+            Ad_util.symbolic_zero_of_aval (mapped_aval d (Core.get_aval t))
+        | None -> t
+      in
+      let jvp' ps ts =
+        let po = ref [] and to_ = ref [] in
+        let n_out = ref 0 in
+        let result =
+          Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+              let wrap v b =
+                match b with
+                | Some _ when Ad_util.is_symbolic_zero v -> inner_zero v b
+                | Some _ -> Tracer (new_batch_tracer main v b)
+                | None -> v
+              in
+              let ips = List.map2 wrap ps bdims in
+              let its = List.map2 wrap ts bdims in
+              let a, b = jvp ips its in
+              n_out := List.length a;
+              let unwrap o dim =
+                if Ad_util.is_symbolic_zero o then
+                  let av = Core.get_aval o in
+                  match dim with
+                  | Some d ->
+                      Ad_util.symbolic_zero_of_aval
+                        (unmapped_aval axis_size d av)
+                  | None -> o
+                else
+                  let v, od = to_batch_info main (Core.full_raise main o) in
+                  match (od, dim) with
+                  | None, None -> v
+                  | Some s, Some d -> if s = d then v else moveaxis s d v
+                  | None, Some d -> broadcast_insert axis_size d v
+                  | Some _, None ->
+                      failwith "batching: custom rule output batch mismatch"
+              in
+              (List.map2 unwrap a dims, List.map2 unwrap b dims))
+        in
+        po := fst result;
+        to_ := snd result;
+        (!po, !to_)
+      in
+      let nid =
+        Core.register_custom_rule
+          (Core.Jvp_rule { primal = primal'; jvp = jvp' })
+      in
+      (match Core.custom_names_of id with
+      | Some (name, jvp_name) -> Core.register_custom_names nid ~name ~jvp_name
+      | None -> ());
+      let r = (nid, dims) in
+      Hashtbl.replace jvp_batch_cache key r;
+      r
+
 let while_batch axis_size cond body vals bdims =
   let aligned = List.map2 (align_to axis_size 0) vals bdims in
   let avals = List.map Core.get_aval aligned in
@@ -1386,6 +1478,15 @@ let batch_process_primitive (trace : trace) (prim : primitive)
         scan_batch axis_size ~length ~reverse ~num_carry jaxpr vals bdims
       in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
+  | Custom_jvp_call id
+    when match Core.custom_rule id with Core.Jvp_rule _ -> true | _ -> false
+    -> (
+      match Core.custom_rule id with
+      | Core.Jvp_rule { primal; jvp } ->
+          let nid, dims = batched_jvp_rule id axis_size vals bdims primal jvp in
+          let outs = Core.bind (Custom_jvp_call nid) vals in
+          List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs dims
+      | _ -> failwith "batching: expected a jvp rule")
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

@@ -51,6 +51,9 @@ let matrix_transpose_v x =
 let hconj x = UF.conj (matrix_transpose_v x)
 let symmetrize x = UF.divide (UF.add x (hconj x)) (const (dtype x) 2.0)
 
+let slogdet_lu_call : (T.value list -> T.value list) ref =
+  ref (fun _ -> invalid_arg "slogdet_lu: not installed")
+
 let rec cholesky ?(upper = false) ?(symmetrize_input = true) a =
   let a = to_inexact a in
   let l = LL.cholesky ~symmetrize_input a in
@@ -162,43 +165,9 @@ and slogdet ?(method_ = "lu") a =
     else (UF.sign d, log_abs)
   end
   else
-    let lu, piv, _perm = LL.lu a in
-    let diag = NL.diagonal ~axis1:(-2) ~axis2:(-1) lu in
-    let zero = const dt 0.0 in
-    let is_zero = RED.any ~axis:[| -1 |] (UF.equal diag zero) in
-    let iota = NL.arange ~dtype:(dtype piv) (float_of_int n) in
-    let swaps = RED.count_nonzero ~axis:[| -1 |] (UF.not_equal piv iota) in
-    if dt = D.Complex64 || dt = D.Complex128 then begin
-      let magnitude = UF.abs diag in
-      let rdt = dtype magnitude in
-      let safe =
-        NL.where_ (UF.equal magnitude (const rdt 0.0)) (const rdt 1.0) magnitude
-      in
-      let unit = UF.divide diag (NL.astype safe dt) in
-      let swap_count = NL.astype swaps rdt in
-      let half = UF.floor (UF.divide swap_count (const rdt 2.0)) in
-      let odd = UF.subtract swap_count (UF.multiply (const rdt 2.0) half) in
-      let parity_sign =
-        UF.subtract (const rdt 1.0) (UF.multiply (const rdt 2.0) odd)
-      in
-      let phase =
-        UF.multiply (RED.prod ~axis:[| -1 |] unit) (NL.astype parity_sign dt)
-      in
-      let logdet = RED.sum ~axis:[| -1 |] (UF.log magnitude) in
-      ( NL.where_ is_zero (const dt 0.0) phase,
-        NL.where_ is_zero (const rdt neg_infinity) logdet )
-    end
-    else
-      let neg = RED.count_nonzero ~axis:[| -1 |] (UF.less diag zero) in
-      let parity = UF.add (NL.astype swaps dt) (NL.astype neg dt) in
-      let two = const dt 2.0 in
-      let half = UF.floor (UF.divide parity two) in
-      let pmod = UF.subtract parity (UF.multiply two half) in
-      let sgn = UF.subtract (const dt 1.0) (UF.multiply two pmod) in
-      let logdet = RED.sum ~axis:[| -1 |] (UF.log (UF.abs diag)) in
-      let sign = NL.where_ is_zero (const dt 0.0) sgn in
-      let logabsdet = NL.where_ is_zero (const dt neg_infinity) logdet in
-      (sign, logabsdet)
+    match !slogdet_lu_call [ a ] with
+    | [ sign; logdet ] -> (sign, logdet)
+    | _ -> assert false
 
 and det a =
   let a = to_inexact a in
@@ -684,6 +653,76 @@ let matrix_rank ?rtol ?hermitian ?tol p0 =
         | [ p0 ] -> matrix_rank ?rtol ?hermitian ?tol p0
         | _ -> invalid_arg "matrix_rank: arity")
       [ p0 ]
+
+let slogdet_lu a =
+  let dt = dtype a in
+  let n = (shape a).(ndim a - 1) in
+  let lu, pivot, _ = LL.lu a in
+  let diag = NL.diagonal ~axis1:(-2) ~axis2:(-1) lu in
+  let eq0 = UF.equal diag (const dt 0.0) in
+  let is_zero = RED.any ~axis:[| -1 |] eq0 in
+  let iota = NL.arange ~dtype:(dtype pivot) (float_of_int n) in
+  let ne = UF.not_equal pivot iota in
+  let parity = RED.count_nonzero ~axis:[| -1 |] ne in
+  let is_complex = dt = D.Complex64 || dt = D.Complex128 in
+  let sign, parity =
+    if is_complex then begin
+      let ab = UF.abs diag in
+      let conv = NL.astype ab dt in
+      let unit = UF.divide diag conv in
+      (RED.prod ~axis:[| -1 |] unit, parity)
+    end
+    else begin
+      let lt = UF.less diag (const dt 0.0) in
+      let c = RED.count_nonzero ~axis:[| -1 |] lt in
+      (const dt 1.0, UF.add parity c)
+    end
+  in
+  let pdt = dtype parity in
+  let rem = UF.remainder parity (const pdt 2.0) in
+  let m = UF.multiply (const pdt (-2.0)) rem in
+  let s = UF.add m (const pdt 1.0) in
+  let copied = C.bind1 T.Copy [ s ] in
+  let conv = NL.astype copied dt in
+  let product = UF.multiply sign conv in
+  let sign = NL.where_ is_zero (const dt 0.0) product in
+  let ab = UF.abs diag in
+  let lg = UF.log ab in
+  let lg = NL.astype lg dt in
+  let total = RED.sum ~axis:[| -1 |] lg in
+  let logdet = NL.where_ is_zero (const dt neg_infinity) total in
+  (sign, UF.real logdet)
+
+let () =
+  let self = ref (fun _ -> []) in
+  let call =
+    Custom_derivatives.custom_jvp ~name:"_slogdet_lu" ~jvp_name:"_slogdet_jvp"
+      (function
+        | [ a ] ->
+            let sign, logdet = slogdet_lu a in
+            [ sign; logdet ]
+        | _ -> invalid_arg "slogdet: arity")
+      ~jvp:(fun primals tangents ->
+        match (primals, tangents) with
+        | [ x ], [ g ] -> (
+            match !self [ x ] with
+            | [ sign; ans ] as out ->
+                let solved = solve x g in
+                let ans_dot = NL.trace ~axis1:(-1) ~axis2:(-2) solved in
+                if dtype x = D.Complex64 || dtype x = D.Complex128 then begin
+                  let re = UF.real ans_dot in
+                  let conv = NL.astype re (dtype ans_dot) in
+                  let d = UF.subtract ans_dot conv in
+                  let sign_dot = UF.multiply d sign in
+                  let re2 = UF.real ans_dot in
+                  (out, [ sign_dot; re2 ])
+                end
+                else (out, [ C.splat (dtype sign) (shape sign) 0.0; ans_dot ])
+            | _ -> invalid_arg "slogdet: arity")
+        | _ -> invalid_arg "slogdet: arity")
+  in
+  self := call;
+  slogdet_lu_call := call
 
 let slogdet ?method_ p0 =
   match

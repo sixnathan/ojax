@@ -69,17 +69,16 @@ let promote_all arrays =
 
 let r_ arrays =
   let lift v =
-    if Array.length (Core.get_aval v).T.shape = 0 then NL.reshape v [| 1 |]
+    if Array.length (Core.get_aval v).T.shape = 0 then NL.expand_dims v [| 0 |]
     else v
   in
   NL.concatenate ~axis:0 (promote_all (List.map lift arrays))
 
 let c_ arrays =
   let lift v =
-    let sh = (Core.get_aval v).T.shape in
-    match Array.length sh with
-    | 0 -> NL.reshape v [| 1; 1 |]
-    | 1 -> NL.reshape v [| sh.(0); 1 |]
+    match Array.length (Core.get_aval v).T.shape with
+    | 0 -> Core.bind1 (T.Transpose [| 1; 0 |]) [ NL.expand_dims v [| 0; 1 |] ]
+    | 1 -> Core.bind1 (T.Transpose [| 1; 0 |]) [ NL.expand_dims v [| 0 |] ]
     | _ -> v
   in
   NL.concatenate ~axis:(-1) (promote_all (List.map lift arrays))

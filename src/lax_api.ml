@@ -1031,21 +1031,41 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
   in
   let in_features = (shape lhs).(dn.lhs_spec.(1)) in
   let window = product filter_shape in
-  let out_features = in_features * window in
-  let cell = window * in_features in
-  let kernel_shape = Array.append [| out_features; 1 |] filter_shape in
-  let kernel =
-    Concrete
-      (Ndarray.of_floats (dtype_of lhs) kernel_shape
-         (Array.init (out_features * window) (fun i ->
-              let row = i / window and col = i mod window in
-              if row mod window = col then 1.0 else 0.0)))
+  let dt = dtype_of lhs in
+  let eye_shape = [| window; window |] in
+  let iota dimension =
+    b1 (Iota { dtype = Dtype.I32; shape = eye_shape; dimension }) []
   in
-  ignore cell;
+  let rows =
+    b1 Add [ iota 0; Concrete (Ndarray.of_floats Dtype.I32 [||] [| 0.0 |]) ]
+  in
+  let eye = Core.convert_like ~weak:false (b1 Eq [ rows; iota 1 ]) dt in
+  let spread =
+    b1
+      (Broadcast_in_dim
+         { shape = [| in_features; window; window |]; dims = [| 1; 2 |] })
+      [ eye ]
+  in
+  let kernel =
+    b1
+      (Reshape (Array.append [| in_features * window; 1 |] filter_shape))
+      [ spread ]
+  in
+  let source = [ 0; 1 ]
+  and destination = [ dn.rhs_spec.(0); dn.rhs_spec.(1) ] in
+  let perm =
+    List.fold_left
+      (fun perm (dest, src) ->
+        List.filteri (fun i _ -> i < dest) perm
+        @ (src :: List.filteri (fun i _ -> i >= dest) perm))
+      (List.filter
+         (fun i -> not (List.mem i source))
+         (List.init (k + 2) Fun.id))
+      (List.sort compare (List.combine destination source))
+  in
+  let kernel = b1 (Transpose (Array.of_list perm)) [ kernel ] in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
-  let kernel_spec = Array.init (k + 2) Fun.id in
-  conv_general_dilated ?lhs_dilation ?rhs_dilation
-    ~dimension_numbers:{ dn with rhs_spec = kernel_spec }
+  conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn
     ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
 
 let scatter_apply x indices func dimension_numbers =

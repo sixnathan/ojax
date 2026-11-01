@@ -326,6 +326,13 @@ let put_along_axis ?axis ?mode a0 a1 a2 =
 
 let take_index = take
 
+let take ?axis ?mode ?fill_value a0 a1 =
+  Eager_jit.one ~jit:"_take" "numpy.indexing.take" (axis, mode, fill_value) []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> take ?axis ?mode ?fill_value a0 a1
+      | _ -> assert false)
+
 let () =
   Interpreters.Batching.take_on_axis :=
     fun v indices axis ->
@@ -335,10 +342,3 @@ let () =
               (if Config.value Config.enable_x64 then D.I64 else D.I32)
               [| Array.length indices |]
               (Array.map float_of_int indices)))
-
-let take ?axis ?mode ?fill_value a0 a1 =
-  Eager_jit.one ~jit:"_take" "numpy.indexing.take" (axis, mode, fill_value) []
-    [ a0; a1 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1 ] -> take ?axis ?mode ?fill_value a0 a1
-      | _ -> assert false)

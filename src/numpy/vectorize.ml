@@ -146,29 +146,44 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
     Array.exists (function T.Tracer _ -> true | _ -> false) dyn_arr
   in
   if traced then begin
-    let flat =
+    let nb = Array.length broadcast_shape in
+    let batch_arr = Array.of_list batch_shapes in
+    let filled =
+      Array.map
+        (fun noncore ->
+          Array.append (Array.make (nb - Array.length noncore) 1) noncore)
+        batch_arr
+    in
+    let squeezed =
       Array.to_list
         (Array.mapi
            (fun idx v ->
-             let sh = shape_of v in
-             let core_shape =
-               Array.sub sh (Array.length sh - ncs.(idx)) ncs.(idx)
+             let squeeze_axes =
+               List.filter
+                 (fun i -> batch_arr.(idx).(i) = 1)
+                 (List.init (Array.length batch_arr.(idx)) Fun.id)
              in
-             let target = Array.append broadcast_shape core_shape in
-             LN.reshape (LN.broadcast_to v target)
-               (Array.append [| bsize |] core_shape))
+             LN.squeeze ~axis:(Array.of_list squeeze_axes) v)
            dyn_arr)
     in
-    let out =
-      List.hd
-        (Interpreters.Batching.vmap
-           (fun slices -> [ call_full slices ])
-           (List.map (fun _ -> Some 0) flat)
-           flat)
-    in
-    let out_sh = shape_of out in
-    let per_item = Array.sub out_sh 1 (Array.length out_sh - 1) in
-    LN.reshape out (Array.append broadcast_shape per_item)
+    let vectorized = ref (fun slices -> [ call_full slices ]) in
+    let dims_to_expand = ref [] in
+    for negdim = 0 to nb - 1 do
+      let at = nb - 1 - negdim in
+      let in_axes =
+        Array.to_list
+          (Array.map (fun f -> if f.(at) = 1 then None else Some 0) filled)
+      in
+      if List.for_all Option.is_none in_axes then
+        dims_to_expand := at :: !dims_to_expand
+      else
+        let inner = !vectorized in
+        vectorized := Interpreters.Batching.vmap inner in_axes
+    done;
+    let out = List.hd (!vectorized squeezed) in
+    match !dims_to_expand with
+    | [] -> out
+    | dims -> LN.expand_dims out (Array.of_list dims)
   end
   else
     let concretes = Array.map concrete dyn_arr in

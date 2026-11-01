@@ -271,7 +271,10 @@ let broadcast_rule (axis_size : int) (shape : int array) (dims : int array)
 
 let reshape_perm (x : value) (new_sizes : int array) (dimensions : int array) :
     value =
-  b1 (Reshape_perm { new_sizes; dimensions }) [ x ]
+  if Array.for_all Fun.id (Array.mapi (fun i d -> i = d) dimensions) then
+    if (Core.get_aval x).shape = new_sizes then x
+    else b1 (Reshape new_sizes) [ x ]
+  else b1 (Reshape_perm { new_sizes; dimensions }) [ x ]
 
 let reshape_axis_into (src : int) (dst : int) (x : value) : value =
   let shape = (Core.get_aval x).shape in

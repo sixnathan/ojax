@@ -2635,11 +2635,11 @@ let lin_process_scan (trace : trace) (b : jaxpr_builder) ~length ~reverse
           List.concat
             (List.map2 (fun v f -> if f = None then [ v ] else []) tconsts fwds)
         in
-        holder := Some (nzs_out, jx, fwds, List.length non_fwd);
+        holder := Some (nzs_out, jx, fwds);
         pos @ non_fwd)
   in
   let carry_nz, primal = carry_zero_fixpoint trace_primal (nz carry_t) in
-  let nzs_out, jx, fwds, num_res =
+  let nzs_out, jx, fwds =
     match !holder with Some h -> h | None -> arity ()
   in
   let primal = Jaxpr.dce_keep_args primal in
@@ -2656,7 +2656,6 @@ let lin_process_scan (trace : trace) (b : jaxpr_builder) ~length ~reverse
   in
   let _, res_pvals = split2 pvals_out num_primals_out in
   let which_hoisted = List.map Partial_eval.is_known res_pvals in
-  ignore num_res;
   let known_closed =
     { jid = Core.fresh_id (); jaxpr = known_jx; consts = [] }
   in
@@ -2876,7 +2875,7 @@ let lin_process_cond (trace : trace) (b : jaxpr_builder) branches platforms
                in
                outs
                @ List.map2
-                   (fun (((a : aval), _) as _s) pos ->
+                   (fun ((a : aval), _) pos ->
                      match pos with
                      | Some i -> List.nth res i
                      | None ->

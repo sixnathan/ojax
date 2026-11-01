@@ -1715,6 +1715,10 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
             (fun g ans ->
               lmul g (!Core.random_gamma_grad_hook ~log_space ans a));
         ]
+  | Cholesky_update ->
+      failwith "Differentiation rule for 'cholesky_update' not implemented"
+  | Symmetric_product _ ->
+      failwith "Differentiation rule for 'symmetric_product' not implemented"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
@@ -2293,10 +2297,23 @@ let tape_const (b : jaxpr_builder) v =
           b.jb_constvals <- (var, v) :: b.jb_constvals;
           A_var var)
 
-let rec tape_eval_atoms (b : jaxpr_builder) (jx : jaxpr) args =
+let rec tape_eval_atoms ?(pending = []) (b : jaxpr_builder) (jx : jaxpr) args =
   let env : (int, atom) Hashtbl.t = Hashtbl.create 16 in
-  List.iter2 (fun (v : var) a -> Hashtbl.replace env v.vid a) jx.in_binders args;
-  let read = function A_var v -> Hashtbl.find env v.vid | a -> a in
+  let binders =
+    List.filteri (fun i _ -> i >= List.length pending) jx.in_binders
+  in
+  let waiting : (int, value) Hashtbl.t = Hashtbl.create 16 in
+  List.iteri
+    (fun i c -> Hashtbl.replace waiting (List.nth jx.in_binders i).vid c)
+    pending;
+  List.iter2 (fun (v : var) a -> Hashtbl.replace env v.vid a) binders args;
+  let read = function
+    | A_var v -> (
+        match Hashtbl.find_opt waiting v.vid with
+        | Some c -> tape_const b c
+        | None -> Hashtbl.find env v.vid)
+    | a -> a
+  in
   List.iter
     (fun (e : eqn) ->
       let inputs = List.map read e.inputs in
@@ -2324,14 +2341,13 @@ let rec tape_eval_atoms (b : jaxpr_builder) (jx : jaxpr) args =
 
 let tape_eval (b : jaxpr_builder) (jx : jaxpr) consts tangents =
   let args =
-    List.map (tape_const b) consts
-    @ List.map
-        (function
-          | Tracer t -> A_var (tape_var b t)
-          | _ -> failwith "ad: expected a tangent on the tape")
-        tangents
+    List.map
+      (function
+        | Tracer t -> A_var (tape_var b t)
+        | _ -> failwith "ad: expected a tangent on the tape")
+      tangents
   in
-  tape_eval_atoms b jx args
+  tape_eval_atoms ~pending:consts b jx args
 
 let rec tape_value (b : jaxpr_builder) atom =
   match atom with
@@ -4742,9 +4758,9 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Checkpoint_name _ -> [ Some (ct1 ()) ]
   | Xla_call c -> xla_call_transpose c cts primals
   | Stop_gradient -> failwith "ad: stop_gradient has no transpose rule"
-  | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Eig _ | Eigh _ | Hessenberg
-  | Schur _ | Svd _ | Tridiagonal _ ->
+  | Cholesky | Cholesky_update | Symmetric_product _ | Householder_product | Lu
+  | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _
+  | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: nonlinear linalg primitive has no transpose rule"
   | Decomposable _ -> failwith "ad: decomposed before differentiation"
 

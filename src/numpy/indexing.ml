@@ -401,7 +401,13 @@ let dynamic_at x i =
 
 let dynamic_at2 x i j =
   let sh = shape x in
-  let i = strong_index i and j = strong_index j in
+  let dt = if Array.exists (fun d -> d > 2147483647) sh then D.I64 else D.I32 in
+  let to_dt v =
+    if is_weak v || dtype v <> dt then bind1 (T.Convert_element_type dt) [ v ]
+    else v
+  in
+  let i = to_dt i in
+  let j = to_dt j in
   let start_i = select_negative i sh.(0) in
   let start_j = select_negative j sh.(1) in
   let sizes = Array.mapi (fun d s -> if d < 2 then 1 else s) sh in

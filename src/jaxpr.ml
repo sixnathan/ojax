@@ -308,7 +308,7 @@ let shared_tracer builder nd =
 
 let get_or_make_const_tracer trace v =
   match v with
-  | Concrete nd when Array.length (Ndarray.shape nd) = 0 -> (
+  | Concrete nd -> (
       match shared_tracer (builder_of trace) nd with
       | Some t -> Tracer t
       | None -> plain_const_tracer trace v)

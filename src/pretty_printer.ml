@@ -683,6 +683,8 @@ let jax_params (e : eqn) =
       ]
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
+  | Empty2 dt ->
+      [ ("dtype", Plain (dn dt)); ("memory_space", Plain "MemorySpace.Device") ]
   | Pad cfg as p when Np_ints.prim_marked p ->
       let one (lo, hi, i) =
         Printf.sprintf "(np.int64(%d), np.int64(%d), %d)" lo hi i

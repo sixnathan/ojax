@@ -1431,9 +1431,17 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
             let g_up = instantiate g_up in
             Some (out, b1 prim (g_op :: g_up :: idx))
       | _ -> arity ())
-  | Gather _ -> (
+  | Gather { dimension_numbers; slice_sizes } -> (
+      let tangent_prim () =
+        if Np_ints.gather_fill_of prim <> None then
+          Np_ints.mark_gather_fill
+            (Gather { dimension_numbers; slice_sizes })
+            "0" (Some 0.0)
+        else prim
+      in
       match primals with
-      | [ _; indices ] -> std [ Some (fun g _ -> b1 prim [ g; indices ]); None ]
+      | [ _; indices ] ->
+          std [ Some (fun g _ -> b1 (tangent_prim ()) [ g; indices ]); None ]
       | _ -> arity ())
   | Scatter_add _ | Scatter_sub _ -> (
       match (primals, tangents) with
@@ -2757,6 +2765,161 @@ let lin_process_scan (trace : trace) (b : jaxpr_builder) ~length ~reverse
       else po)
     primals_out nzs_out
 
+let lin_process_cond (trace : trace) (b : jaxpr_builder) branches platforms
+    primals tangents =
+  let split2 l n =
+    match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
+  in
+  let index, ops, tan_ops =
+    match (primals, tangents) with i :: o, _ :: t -> (i, o, t) | _ -> arity ()
+  in
+  let ops_nz = List.map (fun t -> not (is_zero t)) tan_ops in
+  let op_avals = List.map Core.get_aval ops in
+  let trace_branch inst (branch : closed_jaxpr) =
+    let holder = ref None in
+    let known =
+      Jaxpr.make_jaxpr op_avals (fun inputs ->
+          incr lin_call_depth;
+          let pos, nzs, jx, consts =
+            Fun.protect
+              ~finally:(fun () -> decr lin_call_depth)
+              (fun () ->
+                !trace_linearized_ref
+                  (fun a -> Jaxpr.eval_closed_jaxpr branch a)
+                  inputs ops_nz inst)
+          in
+          holder :=
+            Some (List.length pos, nzs, jx, List.map Core.get_aval consts);
+          pos @ consts)
+    in
+    match !holder with
+    | Some (n, nzs, jx, res) -> (known, n, nzs, jx, res)
+    | None -> arity ()
+  in
+  let out_nz =
+    match
+      List.map
+        (fun br ->
+          let _, _, nzs, _, _ = trace_branch [] br in
+          nzs)
+        branches
+    with
+    | [] -> []
+    | first :: others -> List.fold_left (List.map2 ( || )) first others
+  in
+  let traced = List.map (trace_branch out_nz) branches in
+  let tag avals =
+    let seen = ref [] in
+    List.map
+      (fun a ->
+        let n = List.length (List.filter (fun x -> x = a) !seen) in
+        seen := a :: !seen;
+        (a, n))
+      avals
+  in
+  let tagged = List.map (fun (_, _, _, _, res) -> tag res) traced in
+  let all_res =
+    List.fold_left
+      (fun acc t ->
+        List.fold_left
+          (fun acc x -> if List.mem x acc then acc else acc @ [ x ])
+          acc t)
+      [] tagged
+  in
+  let slot_of branch_tags =
+    List.map
+      (fun slot ->
+        let rec go i = function
+          | [] -> None
+          | x :: tl -> if x = slot then Some i else go (i + 1) tl
+        in
+        go 0 branch_tags)
+      all_res
+  in
+  let slots = List.map slot_of tagged in
+  let joined =
+    List.map2
+      (fun (known, n, _, _, _) slot ->
+        Jaxpr.dce_keep_args
+          (Jaxpr.make_jaxpr op_avals (fun inputs ->
+               let outs, res =
+                 split2 (Jaxpr.eval_closed_jaxpr known inputs) n
+               in
+               outs
+               @ List.map2
+                   (fun (((a : aval), _) as _s) pos ->
+                     match pos with
+                     | Some i -> List.nth res i
+                     | None ->
+                         let e = b1 (Empty2 a.dtype) [] in
+                         if Array.length a.shape = 0 then e
+                         else
+                           b1
+                             (Broadcast_in_dim { shape = a.shape; dims = [||] })
+                             [ e ])
+                   all_res slot)))
+      traced slots
+  in
+  let unknown =
+    List.map2
+      (fun (_, _, _, (jx : jaxpr), res) slot ->
+        let res_b, tan_b = split2 jx.in_binders (List.length res) in
+        let slot_b =
+          List.map2
+            (fun ((a : aval), _) pos ->
+              match pos with
+              | Some i -> List.nth res_b i
+              | None -> { vid = Core.fresh_id (); vaval = a })
+            all_res slot
+        in
+        {
+          jid = Core.fresh_id ();
+          consts = [];
+          jaxpr = { jx with in_binders = slot_b @ tan_b };
+        })
+      traced slots
+  in
+  let out = Core.bind (Cond { branches = joined; platforms }) (index :: ops) in
+  let pos, res = split2 out (List.length out_nz) in
+  let index_atom = tape_const b index in
+  let res_atoms = List.map (tape_const b) res in
+  let tan_atoms =
+    List.filter_map
+      (function
+        | Tracer t when not (is_zero (Tracer t)) -> Some (A_var (tape_var b t))
+        | _ -> None)
+      tan_ops
+  in
+  let out_binders =
+    match unknown with
+    | [] -> []
+    | first :: _ ->
+        List.map
+          (fun a ->
+            { vid = Core.fresh_id (); vaval = Pretty_printer.atom_type a })
+          first.jaxpr.outs
+  in
+  b.jb_eqns <-
+    {
+      prim = Cond { branches = unknown; platforms };
+      inputs = (index_atom :: res_atoms) @ tan_atoms;
+      outs = out_binders;
+      multiple_results = List.length out_binders > 1;
+    }
+    :: b.jb_eqns;
+  let tan_rest = ref (List.map (fun v -> A_var v) out_binders) in
+  List.map2
+    (fun po nz ->
+      if nz then
+        begin match !tan_rest with
+        | a :: tl ->
+            tan_rest := tl;
+            Tracer (new_jvp_tracer trace po (tape_value b a))
+        | [] -> arity ()
+        end
+      else po)
+    pos out_nz
+
 let joint_branch_jvp rebuild branches primals tangents =
   match (primals, tangents) with
   | index :: prim_ops, _ :: tan_ops ->
@@ -2843,6 +3006,8 @@ let jvp_process_primitive trace prim args =
   else
     match (trace.global_data, prim) with
     | GBuilder b, Xla_call c -> lin_process_call trace b c primals tangents
+    | GBuilder b, Cond { branches; platforms } ->
+        lin_process_cond trace b branches platforms primals tangents
     | GBuilder b, Scan { length; reverse; num_consts; num_carry; jaxpr; unroll }
       ->
         lin_process_scan trace b ~length ~reverse ~num_consts ~num_carry ~unroll
@@ -3613,7 +3778,9 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               let sd = gather_to_scatter dimension_numbers in
               Some
                 (Core.bind1
-                   (Np_ints.mark_prim (Scatter_add { dimension_numbers = sd }))
+                   (let p = Scatter_add { dimension_numbers = sd } in
+                    if Np_ints.gather_fill_of prim <> None then p
+                    else Np_ints.mark_prim p)
                    [ zeros; prim_val indices; ct ])
             else None
           in
@@ -3631,10 +3798,12 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                 scatter_gather_slice_sizes dimension_numbers
                   (in_aval operand).shape (in_aval updates).shape
               in
-              Some
-                (Core.bind1
-                   (Gather { dimension_numbers = gd; slice_sizes = ss })
-                   [ ct; prim_val indices ])
+              let g = Gather { dimension_numbers = gd; slice_sizes = ss } in
+              let g =
+                if Np_ints.prim_marked prim then g
+                else Np_ints.mark_gather_fill g "0" (Some 0.0)
+              in
+              Some (Core.bind1 g [ ct; prim_val indices ])
             else None
           in
           [ op_t; None; up_t ]
@@ -3734,14 +3903,15 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               (fun tv -> if is_undef tv then None else Some (prim_val tv))
               rest
           in
-          let n_cts = List.length cts in
+          let n_res = List.length residuals in
+          let cts = List.map instantiate_traced cts in
           let avals =
-            List.map Core.get_aval cts @ List.map Core.get_aval residuals
+            List.map Core.get_aval residuals @ List.map Core.get_aval cts
           in
           let transposed (branch : closed_jaxpr) =
             Jaxpr.make_jaxpr avals (fun args ->
-                let body_cts, res =
-                  match Util.split_list args [ n_cts ] with
+                let res, body_cts =
+                  match Util.split_list args [ n_res ] with
                   | [ a; b ] -> (a, b)
                   | _ -> arity ()
                 in
@@ -3764,14 +3934,16 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                         | [] -> arity ())
                     rest binders
                 in
-                eval_jaxpr_transposed branch.jaxpr
-                  (List.map (fun c -> Prim (Concrete c)) branch.consts @ inner)
-                  body_cts)
+                List.map instantiate_traced
+                  (eval_jaxpr_transposed branch.jaxpr
+                     (List.map (fun c -> Prim (Concrete c)) branch.consts
+                     @ inner)
+                     body_cts))
           in
           let in_cts =
             Core.bind
               (Cond { branches = List.map transposed branches; platforms })
-              ((prim_val pred :: cts) @ residuals)
+              ((prim_val pred :: residuals) @ cts)
           in
           let remaining = ref in_cts in
           let rest_cts =

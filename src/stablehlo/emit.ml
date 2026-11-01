@@ -1298,7 +1298,8 @@ let gather_dnums_attr (d : gather_dims) index_vector_dim =
         dim_field "operand_batching_dims" d.g_operand_batching_dims;
         dim_field "start_indices_batching_dims" d.g_start_indices_batching_dims;
         dim_field "start_index_map" d.start_index_map;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.gather<" ^ String.concat ", " parts ^ ">"
@@ -3293,7 +3294,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith
         "Stablehlo.Emit: Dce_sink is a DCE-effect marker, non-representable"
   | Empty2 _ ->
-      failwith "Stablehlo.Emit: Empty2 (extended dtype) deferred to M5"
+      let out = sole eqn.outs in
+      let c = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+           (Ir.dense (zero_dense out.vaval.dtype))
+           (Ir.tensor_type_of_aval out.vaval));
+      Hashtbl.replace ctx.ids out.vid c
   | From_edtype _ ->
       failwith "Stablehlo.Emit: From_edtype (extended dtypes) deferred to M5"
   | To_edtype _ ->

@@ -2668,7 +2668,11 @@ let abstract_eval prim avals =
       | [] -> failwith "lax: select_and_scatter expects an operand aval")
   | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta ->
       bin_aval
-        (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))
+        (fun a b ->
+          shaped
+            (Core.elementwise_shape [ a.shape; b.shape ])
+            a.dtype
+            (a.weak_type && b.weak_type))
         avals
   | Regularized_incomplete_beta -> (
       match avals with

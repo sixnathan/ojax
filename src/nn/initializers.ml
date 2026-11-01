@@ -19,9 +19,6 @@ let concrete = function
       failwith "nn/initializers: initializer on a tracer not supported"
 
 let const shape x = C.splat D.F32 shape x
-let scalar_f v = Nd.get_f (concrete v) [||]
-let sqrt_f32 x = scalar_f (C.bind1 Sqrt [ const [||] x ])
-let scale_by shape v factor = C.bind1 Mul [ v; const shape factor ]
 
 let compute_fans shape ~in_axis ~out_axis ~batch_axis =
   let ndim = Array.length shape in
@@ -47,21 +44,24 @@ let compute_fans shape ~in_axis ~out_axis ~batch_axis =
 let zeros : t = fun _key ~shape -> const shape 0.0
 let ones : t = fun _key ~shape -> const shape 1.0
 let constant value : t = fun _key ~shape -> const shape (f32 value)
+let dtype_of v = (C.get_aval v).dtype
+let like v x = Concrete (Nd.of_floats (dtype_of v) [||] [| x |])
+let times = Numpy.Ufuncs.multiply
 
 let uniform ?(scale = 1e-2) () : t =
  fun key ~shape ->
   let samp = RC.uniform key ~shape ~minval:0.0 ~maxval:1.0 in
-  scale_by shape samp (f32 scale)
+  times samp (like samp scale)
 
 let normal ?(stddev = 1e-2) () : t =
  fun key ~shape ->
   let samp = RC.normal key ~shape in
-  scale_by shape samp (f32 stddev)
+  times samp (like samp stddev)
 
 let truncated_normal ?(stddev = 1e-2) ?(lower = -2.0) ?(upper = 2.0) () : t =
  fun key ~shape ->
   let samp = RC.truncated_normal key ~lower ~upper ~shape in
-  scale_by shape samp (f32 stddev)
+  times samp (like samp stddev)
 
 let variance_scaling scale mode distribution ?(in_axis = -2) ?(out_axis = -1)
     ?(batch_axis = [||]) () : t =
@@ -74,18 +74,22 @@ let variance_scaling scale mode distribution ?(in_axis = -2) ?(out_axis = -1)
     | Fan_avg -> (fan_in +. fan_out) /. 2.0
     | Fan_geo_avg -> sqrt (fan_in *. fan_out)
   in
-  let variance = f32 (scale /. denominator) in
+  let module UF = Numpy.Ufuncs in
+  let quotient = scale /. denominator in
   match distribution with
   | Truncated_normal ->
-      let stddev = f32 (sqrt_f32 variance /. f32 0.87962566103423978) in
       let samp = RC.truncated_normal key ~lower:(-2.0) ~upper:2.0 ~shape in
-      scale_by shape samp stddev
+      let variance = like samp quotient in
+      let root = UF.sqrt variance in
+      let stddev = UF.true_divide root (like samp 0.8796256610342398) in
+      times samp stddev
   | Normal ->
       let samp = RC.normal key ~shape in
-      scale_by shape samp (sqrt_f32 variance)
+      times samp (UF.sqrt (like samp quotient))
   | Uniform ->
       let samp = RC.uniform key ~shape ~minval:(-1.0) ~maxval:1.0 in
-      scale_by shape samp (sqrt_f32 (f32 (3.0 *. variance)))
+      let variance = like samp quotient in
+      times samp (UF.sqrt (times (like samp 3.0) variance))
 
 let glorot_uniform ?in_axis ?out_axis ?batch_axis () : t =
   variance_scaling 1.0 Fan_avg Uniform ?in_axis ?out_axis ?batch_axis ()

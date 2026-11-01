@@ -3,6 +3,7 @@ module C = Core
 module T = Types
 module D = Dtype
 module NL = Numpy.Lax_numpy
+module JU = Numpy.Jnp_util
 
 let get_aval = C.get_aval
 let dtype v = (get_aval v).T.dtype
@@ -37,6 +38,9 @@ let to_inexact = function
     d ->
       d
 
+let default_value v =
+  List.find_map (fun (x, d) -> if d == v then Some x else None) !weak_defaults
+
 let promote_dtypes_any vs =
   let strong = List.filter (fun v -> not (is_weak_default v)) vs in
   let dt =
@@ -44,9 +48,14 @@ let promote_dtypes_any vs =
     | D.Bool when List.length strong < List.length vs -> default_float ()
     | d -> to_inexact d
   in
-  List.map (fun v -> if dtype v = dt then v else NL.astype v dt) vs
+  List.map
+    (fun v ->
+      match default_value v with
+      | Some x -> T.Concrete (Nd.of_floats dt [||] [| x |])
+      | None -> if dtype v = dt then v else NL.astype v dt)
+    vs
 
-let promote_complex vs = NL.broadcast_arrays (promote_dtypes_any vs)
+let promote_complex vs = Numpy.Ufuncs.promote_shapes (promote_dtypes_any vs)
 
 let real_only vs =
   List.iter
@@ -63,3 +72,22 @@ let real_only vs =
 let promote_dtypes vs = real_only (promote_dtypes_any vs)
 let promote vs = Numpy.Ufuncs.promote_shapes (promote_dtypes vs)
 let lgamma v = C.bind1 T.Lgamma [ v ]
+let py_float = JU.py_float
+let where_px c v y = JU.where_weak ~x_weak:true c (JU.py_float v) y
+let where_py c x v = JU.where_weak ~y_weak:true c x (JU.py_float v)
+let where_ninf c y = where_px c Float.neg_infinity y
+let where_nan c y = where_px c Float.nan y
+let where_or_ninf c x = where_py c x Float.neg_infinity
+let where_or_nan c x = where_py c x Float.nan
+
+let defaults loc scale =
+  (Option.value loc ~default:(f32s 0.0), Option.value scale ~default:(f32s 1.0))
+
+let qbad q =
+  let module UF = Numpy.Ufuncs in
+  UF.bitwise_or
+    (UF.bitwise_or (UF.isnan q) (UF.less q (sc q 0.0)))
+    (UF.greater q (sc q 1.0))
+
+let promote_dtypes_any_like n v =
+  match default_value v with Some x -> Some (sc n x) | None -> None

@@ -10,3 +10,16 @@ val promote_dtypes : Types.value list -> Types.value list
 val promote : Types.value list -> Types.value list
 val promote_complex : Types.value list -> Types.value list
 val lgamma : Types.value -> Types.value
+val py_float : float -> Types.value
+val where_px : Types.value -> float -> Types.value -> Types.value
+val where_py : Types.value -> Types.value -> float -> Types.value
+val where_ninf : Types.value -> Types.value -> Types.value
+val where_nan : Types.value -> Types.value -> Types.value
+val where_or_ninf : Types.value -> Types.value -> Types.value
+val where_or_nan : Types.value -> Types.value -> Types.value
+
+val defaults :
+  Types.value option -> Types.value option -> Types.value * Types.value
+
+val qbad : Types.value -> Types.value
+val promote_dtypes_any_like : Types.value -> Types.value -> Types.value option

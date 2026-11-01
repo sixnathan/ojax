@@ -779,9 +779,10 @@ let argminmax_impl is_max axis index_dtype operand =
 
 let clamp_impl mn x mx =
   let a = to_array mn and b = to_array x and c = to_array mx in
+  let at v i = if Array.length v = 1 then v.(0) else v.(i) in
   let out =
     Array.init (Array.length b) (fun i ->
-        Float.max (Float.min a.(i) c.(i)) (Float.min b.(i) c.(i)))
+        Float.max (Float.min (at a i) (at c i)) (Float.min b.(i) (at c i)))
   in
   Ndarray.of_floats (Ndarray.dtype x) (Ndarray.shape x) out
 
@@ -2644,7 +2645,11 @@ let abstract_eval prim avals =
       | [] -> failwith "lax: select_and_scatter expects an operand aval")
   | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta ->
       bin_aval
-        (fun a b -> shaped a.shape a.dtype (a.weak_type && b.weak_type))
+        (fun a b ->
+          shaped
+            (if Array.length a.shape = 0 then b.shape else a.shape)
+            a.dtype
+            (a.weak_type && b.weak_type))
         avals
   | Regularized_incomplete_beta -> (
       match avals with

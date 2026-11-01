@@ -140,17 +140,23 @@ let random_seed seed =
   let high, low = seed_words seed in
   b1 (Stack (Array.length (Core.get_aval seed).shape)) [ high; low ]
 
-let fold_in key data =
-  over_key_batch
-    (fun k ->
-      let k1, k2 = key_words k in
-      let high, low = seed_words data in
-      let shape = (Core.get_aval data).shape in
-      ignore shape;
-      match threefry2x32 k1 k2 high low with
-      | [ x; y ] -> b1 (Stack (Array.length (Core.get_aval x).shape)) [ x; y ]
-      | _ -> invalid_arg "Prng_lowering: threefry arity")
-    key
+let rec fold_in key data =
+  let a = Core.get_aval key in
+  if Array.length a.shape = 1 then begin
+    let k1, k2 = key_words key in
+    let high, low = seed_words data in
+    match threefry2x32 k1 k2 high low with
+    | [ x; y ] -> b1 (Stack (Array.length (Core.get_aval x).shape)) [ x; y ]
+    | _ -> invalid_arg "Prng_lowering: threefry arity"
+  end
+  else
+    let rows = Core.bind (Unstack 0) [ key ] in
+    let datas =
+      if Array.length (Core.get_aval data).shape = 0 then
+        List.map (fun _ -> data) rows
+      else Core.bind (Unstack 0) [ data ]
+    in
+    b1 (Stack 0) (List.map2 fold_in rows datas)
 
 let random_bits64 ~shape key =
   over_key_batch

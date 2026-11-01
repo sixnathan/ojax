@@ -3,6 +3,10 @@ module C = Random.Core
 module NL = Numpy.Lax_numpy
 module L = Lax_api
 
+module Core_like = struct
+  let scalar dt x = Concrete (Ndarray.of_floats dt [||] [| x |])
+end
+
 let shape v = (Core.get_aval v).shape
 let dtype_of v = (Core.get_aval v).dtype
 
@@ -11,31 +15,46 @@ let split2 key =
   (L.index_in_dim ~keepdims:false keys 0, L.index_in_dim ~keepdims:false keys 1)
 
 let maxwell key ~shape:sh =
-  let samples = C.normal key ~shape:(Array.append sh [| 3 |]) in
-  let last = Array.length (shape samples) - 1 in
-  L.sqrt (Numpy.Reductions.sum ~axis:[| last |] (L.mul samples samples))
+  let dt = C.float_dtype () in
+  C.jit_region "_maxwell" (sh, dt) [ key ] (function
+    | [ key ] ->
+        let samples = C.normal key ~shape:(Array.append sh [| 3 |]) in
+        Numpy.Linalg.norm ~axis:(Numpy.Linalg.Aint (-1)) samples
+    | _ -> assert false)
 
 let double_sided_maxwell key ~loc ~scale ~shape:sh =
-  let k1, k2 = split2 key in
-  let magnitude = maxwell k1 ~shape:sh in
-  let signs = NL.astype (C.rademacher k2 ~shape:sh) (dtype_of magnitude) in
-  let dt = dtype_of magnitude in
-  L.add
-    (L.mul (L.mul signs magnitude) (L.full [||] scale dt))
-    (L.full [||] loc dt)
+  let dt = C.float_dtype () in
+  let pyf = Numpy.Jnp_util.py_float in
+  C.jit_region "_double_sided_maxwell" (sh, dt)
+    [ key; pyf loc; pyf scale ]
+    (function
+      | [ key; loc; scale ] ->
+          let k1, k2 = split2 key in
+          let magnitude = maxwell k1 ~shape:sh in
+          let signs = C.rademacher_as k2 ~shape:sh ~dt in
+          let open Numpy.Ufuncs in
+          let conv v = NL.astype v dt in
+          add (multiply (multiply signs magnitude) (conv scale)) (conv loc)
+      | _ -> assert false)
 
 let ball ?(p = 2.0) key ~d ~shape:sh =
-  let k1, k2 = split2 key in
-  let g = C.generalized_normal k1 ~shape:(Array.append sh [| d |]) ~p in
-  let e = C.exponential k2 ~shape:sh in
-  let dt = dtype_of g in
-  let power = L.pow (L.abs g) (L.full [||] p dt) in
-  let total =
-    Numpy.Reductions.sum ~axis:[| Array.length (shape g) - 1 |] power
-  in
-  let denom = L.pow (L.add total e) (L.full [||] (1.0 /. p) dt) in
-  let expanded = L.expand_dims denom [| -1 |] in
-  L.div g (NL.broadcast_to expanded (shape g))
+  let dt = C.float_dtype () in
+  let pyf = Numpy.Jnp_util.py_float in
+  C.jit_region "_ball" (sh, dt, d)
+    [ key; pyf p ]
+    (function
+      | [ key; pv ] ->
+          let k1, k2 = split2 key in
+          let g = C.generalized_normal k1 ~shape:(Array.append sh [| d |]) ~p in
+          let e = C.exponential k2 ~shape:sh in
+          let open Numpy.Ufuncs in
+          let pow_arg = NL.astype pv dt in
+          let power = power (abs g) pow_arg in
+          let total = Numpy.Reductions.sum ~axis:[| -1 |] power in
+          let inv = true_divide (Core_like.scalar dt 1.0) pow_arg in
+          let denom = Numpy.Ufuncs.power (add total e) inv in
+          true_divide g (L.expand_dims denom [| -1 |])
+      | _ -> assert false)
 
 let orthogonal ?m key ~n ~shape:sh =
   let m = Option.value m ~default:n in

@@ -1,7 +1,7 @@
 module DU = Dist_util
 module UF = Numpy.Ufuncs
-module NL = Numpy.Lax_numpy
 module SP = Special
+module L = Lax_api
 open DU
 
 let promote3 k p loc =
@@ -14,11 +14,9 @@ let logpmf ?loc k p =
   let k, p, loc = promote3 k p loc in
   let zero = sc k 0.0 in
   let one = sc k 1.0 in
-  let x = UF.subtract k loc in
-  let log_probs =
-    UF.add (SP.xlog1py (UF.subtract x one) (UF.negative p)) (UF.log p)
-  in
-  NL.where_ (UF.less_equal x zero) (ninf k) log_probs
+  let x = L.sub k loc in
+  let log_probs = UF.add (SP.xlog1py (L.sub x one) (UF.negative p)) (L.log p) in
+  where_ninf (L.le x zero) log_probs
 
 let pmf ?loc k p =
   let loc = Option.value loc ~default:(f32s 0.0) in

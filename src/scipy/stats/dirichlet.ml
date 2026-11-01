@@ -9,7 +9,7 @@ open DU
 
 let is_simplex x =
   let x_sum = RED.sum ~axis:[| 0 |] x in
-  UF.logical_and
+  UF.bitwise_and
     (RED.all ~axis:[| 0 |] (UF.greater x (sc x 0.0)))
     (UF.less (UF.abs (UF.subtract x_sum (sc x_sum 1.0))) (sc x_sum 1e-6))
 
@@ -23,7 +23,7 @@ let logpdf x alpha =
       let x =
         if (shape x).(0) <> ash.(0) then
           NL.concatenate ~axis:0
-            [ x; UF.subtract one (RED.sum ~axis:[| 0 |] ~keepdims:true x) ]
+            [ x; Lax_api.sub one (RED.sum ~axis:[| 0 |] ~keepdims:true x) ]
         else x
       in
       let normalize_term =
@@ -38,11 +38,11 @@ let logpdf x alpha =
         else alpha
       in
       let log_probs =
-        UF.subtract
-          (RED.sum ~axis:[| 0 |] (SP.xlogy (UF.subtract alpha one) x))
+        Lax_api.sub
+          (RED.sum ~axis:[| 0 |] (SP.xlogy (Lax_api.sub alpha one) x))
           normalize_term
       in
-      NL.where_ (is_simplex x) log_probs (ninf x)
+      where_or_ninf (is_simplex x) log_probs
   | _ -> assert false
 
-let pdf x alpha = UF.exp (logpdf x alpha)
+let pdf x alpha = Lax_api.exp (logpdf x alpha)

@@ -2,6 +2,7 @@ module UF = Numpy.Ufuncs
 module NL = Numpy.Lax_numpy
 module RD = Numpy.Reductions
 module SP = Special
+module L = Lax_api
 open Dist_util
 
 let promote3 a b c =
@@ -11,14 +12,13 @@ let logpmf ?loc k mu =
   let loc = Option.value loc ~default:(f32s 0.0) in
   let k, mu, loc = promote3 k mu loc in
   let zero = sc k 0.0 in
-  let one = sc k 1.0 in
-  let x = UF.subtract k loc in
+  let x = L.sub k loc in
   let log_probs =
-    UF.subtract (UF.subtract (SP.xlogy x mu) (SP.gammaln (UF.add x one))) mu
+    UF.subtract
+      (UF.subtract (SP.xlogy x mu) (SP.gammaln (UF.add x (sc x 1.0))))
+      mu
   in
-  NL.where_
-    (UF.logical_or (UF.less x zero) (UF.not_equal (NL.round k) k))
-    (ninf k) log_probs
+  where_ninf (UF.logical_or (L.lt x zero) (L.ne (NL.round k) k)) log_probs
 
 let pmf ?loc k mu =
   let loc = Option.value loc ~default:(f32s 0.0) in
@@ -28,10 +28,9 @@ let cdf ?loc k mu =
   let loc = Option.value loc ~default:(f32s 0.0) in
   let k, mu, loc = promote3 k mu loc in
   let zero = sc k 0.0 in
-  let one = sc k 1.0 in
-  let x = UF.subtract k loc in
-  let p = SP.gammaincc (UF.floor (UF.add one x)) mu in
-  NL.where_ (UF.less x zero) zero p
+  let x = L.sub k loc in
+  let p = SP.gammaincc (UF.floor (UF.add (sc x 1.0) x)) mu in
+  NL.where_ (L.lt x zero) zero p
 
 let entropy_helper max_k bound_expr mu =
   let dt = dtype mu in

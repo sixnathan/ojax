@@ -1,49 +1,38 @@
 module DU = Dist_util
 module UF = Numpy.Ufuncs
-module NL = Numpy.Lax_numpy
 module SP = Special
+module L = Lax_api
 open DU
 
 let logpmf ?loc k n a b =
   let loc = Option.value loc ~default:(f32s 0.0) in
   match promote [ k; n; a; b; loc ] with
   | [ k; n; a; b; loc ] ->
-      let y = UF.subtract (UF.floor k) loc in
+      let y = L.sub (L.floor k) loc in
       let one = sc y 1.0 in
       let zero = sc y 0.0 in
       let combiln =
-        UF.negative
-          (UF.add (UF.log1p n)
-             (SP.betaln (UF.add (UF.subtract n y) one) (UF.add y one)))
+        L.neg
+          (L.add (L.log1p n) (SP.betaln (L.add (L.sub n y) one) (L.add y one)))
       in
       let beta_lns =
-        UF.subtract
-          (SP.betaln (UF.add y a) (UF.add (UF.subtract n y) b))
-          (SP.betaln a b)
+        L.sub (SP.betaln (L.add y a) (L.add (L.sub n y) b)) (SP.betaln a b)
       in
-      let log_probs = UF.add combiln beta_lns in
+      let log_probs = L.add combiln beta_lns in
       let log_probs =
-        NL.where_
-          (UF.logical_and (UF.equal y zero) (UF.equal n zero))
-          (sc y 0.0) log_probs
+        where_px (UF.logical_and (L.eq y zero) (L.eq n zero)) 0.0 log_probs
       in
       let y_cond =
         UF.logical_or
-          (UF.logical_or (UF.less y (UF.negative loc)) (UF.greater y n))
-          (UF.less_equal (UF.add y a) zero)
+          (UF.logical_or (L.lt y (L.neg loc)) (L.gt y n))
+          (L.le (L.add y a) zero)
       in
-      let log_probs = NL.where_ y_cond (ninf y) log_probs in
+      let log_probs = where_ninf y_cond log_probs in
       let n_a_b_cond =
-        UF.logical_or
-          (UF.logical_or (UF.less n zero) (UF.less_equal a zero))
-          (UF.less_equal b zero)
+        UF.logical_or (UF.logical_or (L.lt n zero) (L.le a zero)) (L.le b zero)
       in
-      NL.where_ n_a_b_cond (nan y) log_probs
+      where_nan n_a_b_cond log_probs
   | _ -> assert false
-
-let pmf ?loc k n a b =
-  let loc = Option.value loc ~default:(f32s 0.0) in
-  UF.exp (logpmf ~loc k n a b)
 
 let logpmf ?loc a0 a1 a2 a3 =
   Eager_jit.one "scipy.stats.betabinom.logpmf" () [ loc ] [ a0; a1; a2; a3 ]
@@ -51,3 +40,7 @@ let logpmf ?loc a0 a1 a2 a3 =
       match (opts, vals) with
       | [ loc ], [ a0; a1; a2; a3 ] -> logpmf ?loc a0 a1 a2 a3
       | _ -> assert false)
+
+let pmf ?loc k n a b =
+  let loc = Option.value loc ~default:(f32s 0.0) in
+  L.exp (logpmf ~loc k n a b)

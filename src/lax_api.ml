@@ -24,6 +24,23 @@ let broadcast_scalar v sh =
 
 let unify a b =
   if shape a = shape b || ndim a = 0 then (a, b)
+  else if ndim a = ndim b then
+    let sh = Core.elementwise_shape [ shape a; shape b ] in
+    let widen v =
+      if shape v = sh then v
+      else
+        let kept = ref [] and squeezed = ref [] in
+        Array.iteri
+          (fun i d ->
+            if d = 1 && sh.(i) <> 1 then squeezed := i :: !squeezed
+            else kept := i :: !kept)
+          (shape v);
+        b1
+          (Broadcast_in_dim
+             { shape = sh; dims = Array.of_list (List.rev !kept) })
+          [ b1 (Squeeze (Array.of_list (List.rev !squeezed))) [ v ] ]
+    in
+    (widen a, widen b)
   else (a, broadcast_scalar b (if ndim b = 0 then shape b else shape a))
 
 let lift2 prim a b =
@@ -157,13 +174,8 @@ let bitcast_convert_type x dt = b1 (Bitcast_convert_type dt) [ x ]
 let reduce_precision x ~exponent_bits ~mantissa_bits =
   b1 (Reduce_precision { exponent_bits; mantissa_bits }) [ x ]
 
-let clamp lo x hi =
-  let sh = shape x in
-  b1 Clamp [ broadcast_scalar lo sh; x; broadcast_scalar hi sh ]
-
-let select pred on_true on_false =
-  let sh = shape on_true in
-  b1 Select_n [ broadcast_scalar pred sh; on_false; on_true ]
+let clamp lo x hi = b1 Clamp [ lo; x; hi ]
+let select pred on_true on_false = b1 Select_n [ pred; on_false; on_true ]
 
 let select_n pred cases =
   let sh =

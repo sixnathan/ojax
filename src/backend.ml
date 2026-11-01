@@ -580,16 +580,17 @@ let compile_plan (cj : closed_jaxpr) plan =
             let lowered = Stablehlo.Emit.lower ~name:"_lambda" cj in
             (lowered.text, Some lowered.kept)
           else
-            ( Stablehlo.Emit.emit_closed_jaxpr
-                ~partition:
-                  {
-                    pt_mesh = plan.mesh;
-                    pt_devices = plan.devices;
-                    pt_in = plan.arg_specs;
-                    pt_out = plan.out_specs;
-                  }
-                cj,
-              None )
+            let lowered =
+              Stablehlo.Emit.lower_partitioned ~name:"_lambda"
+                {
+                  pt_mesh = plan.mesh;
+                  pt_devices = plan.devices;
+                  pt_in = plan.arg_specs;
+                  pt_out = plan.out_specs;
+                }
+                cj
+            in
+            (lowered.text, Some lowered.kept)
         with
         | text, _ when mentions_unsupported_type text ->
             host_fallbacks := "f6 dtypes have no XLA type" :: !host_fallbacks;
@@ -731,7 +732,12 @@ let run_program plan placed args =
       [| Array.of_list (List.map (raw_on_device plan.devices.(0)) args) |]
     else
       let per_arg =
-        Array.of_list (List.map2 (raws_for_arg plan) args plan.arg_specs)
+        let specs =
+          match placed.kept with
+          | Some kept -> select_kept kept plan.arg_specs
+          | None -> plan.arg_specs
+        in
+        Array.of_list (List.map2 (raws_for_arg plan) args specs)
       in
       Array.mapi
         (fun pos _ -> Array.map (fun raws -> raws.(pos)) per_arg)
@@ -874,6 +880,22 @@ let plan_for_mesh mesh devices args =
         args;
     out_specs = [];
   }
+
+let placed_text ~name ?(out_specs = []) cj args =
+  match plan_of_args args with
+  | None -> Stablehlo.Emit.emit_jax_text ~name cj
+  | Some plan when Array.length plan.devices = 1 ->
+      Stablehlo.Emit.emit_jax_text ~name cj
+  | Some plan ->
+      (Stablehlo.Emit.lower_partitioned ~name
+         {
+           pt_mesh = plan.mesh;
+           pt_devices = plan.devices;
+           pt_in = plan.arg_specs;
+           pt_out = out_specs;
+         }
+         cj)
+        .text
 
 let run_plan cj plan args =
   match compile_plan cj plan with

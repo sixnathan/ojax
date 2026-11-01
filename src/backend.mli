@@ -92,6 +92,13 @@ val named_index :
 val check_divisible :
   shape:int array -> mesh:(string * int) list -> spec:string list array -> unit
 
+val placed_text :
+  name:string ->
+  ?out_specs:string list array option list ->
+  Types.closed_jaxpr ->
+  Types.value list ->
+  string
+
 val run_plan :
   Types.closed_jaxpr -> plan -> Types.value list -> Types.value list option
 

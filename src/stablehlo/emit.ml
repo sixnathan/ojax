@@ -2250,9 +2250,13 @@ let sdy_sharding_body spec =
 let sdy_sharding spec = "#sdy.sharding" ^ sdy_sharding_body spec
 
 let sdy_mesh mesh =
-  Printf.sprintf "  sdy.mesh @mesh = <[%s]>\n"
+  Printf.sprintf "  sdy.mesh @mesh = <[%s]> {stablehlo.mesh = {axes = [%s]}}\n"
     (String.concat ", "
        (List.map (fun (n, s) -> Printf.sprintf "\"%s\"=%d" n s) mesh))
+    (String.concat ", "
+       (List.map
+          (fun (n, s) -> Printf.sprintf "{name = \"%s\", size = %d : i64}" n s)
+          mesh))
 
 let list_index x l =
   let rec go i = function
@@ -2803,9 +2807,11 @@ and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
       in
       Buffer.add_string ctx.buf (reindent 2 text));
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    } : (%s) -> (%s)\n"
+    (Printf.sprintf "    } : (%s) -> %s\n"
        (String.concat ", " in_types)
-       (String.concat ", " out_types))
+       (match out_types with
+       | [ t ] -> t
+       | ts -> "(" ^ String.concat ", " ts ^ ")"))
 
 and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
   let fname =
@@ -4011,3 +4017,14 @@ let lower ~name cj =
   }
 
 let emit_jax_text ~name cj = (lower ~name cj).text
+
+let lower_partitioned ~name partition cj =
+  let pruned, kept = Dce.prune_unused_inputs cj in
+  let pt_in = List.map (List.nth partition.pt_in) kept in
+  {
+    text =
+      Mlir_names.render ~module_name:name
+        ~num_partitions:(Array.length partition.pt_devices)
+        (emit_closed_jaxpr ~partition:{ partition with pt_in } pruned);
+    kept;
+  }

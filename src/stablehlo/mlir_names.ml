@@ -191,6 +191,21 @@ let top_k_results line =
     | _ -> None
   else None
 
+let manual_computation_args line =
+  if contains "sdy.manual_computation(" line then begin
+    let key = "manual_axes=" in
+    let n = String.length line and m = String.length key in
+    let rec find i =
+      if i + m > n then None
+      else if String.sub line i m = key then Some i
+      else find (i + 1)
+    in
+    match find 0 with
+    | Some at -> tokens_of (String.sub line at (n - at))
+    | None -> []
+  end
+  else []
+
 let rng_bit_generator_results line =
   if contains "stablehlo.rng_bit_generator " line then
     match tokens_of line with
@@ -249,6 +264,9 @@ let rec number lines region st =
                 finished
                 (while_args lines.(header))
           | None -> finished
+        else if contains "sdy.manual_computation(" line then
+          List.fold_left (bind_arg child) finished
+            (manual_computation_args line)
         else List.fold_left (bind_arg child) finished (reducer_args line)
       in
       number lines child start)
@@ -314,9 +332,26 @@ let rec apply lines out region env =
     (fun (owner, child) ->
       apply lines out child env;
       let t = String.trim lines.(owner) in
-      if starts_with "func.func " t || starts_with "reducer(" t then
-        out.(owner) <- rewrite (overlay env child.names) lines.(owner))
+      if
+        starts_with "func.func " t || starts_with "reducer(" t
+        || contains "sdy.manual_computation(" t
+      then out.(owner) <- rewrite (overlay env child.names) lines.(owner))
     region.children
+
+let split_results body =
+  let parts = ref [] and depth = ref 0 and start = ref 0 in
+  String.iteri
+    (fun i c ->
+      match c with
+      | '<' | '{' | '[' | '(' -> incr depth
+      | '>' | '}' | ']' | ')' -> decr depth
+      | ',' when !depth = 0 ->
+          parts := String.sub body !start (i - !start) :: !parts;
+          start := i + 1
+      | _ -> ())
+    body;
+  parts := String.sub body !start (String.length body - !start) :: !parts;
+  List.rev_map String.trim !parts
 
 let add_result_info line =
   let t = String.trim line in
@@ -337,7 +372,7 @@ let add_result_info line =
         let body = String.sub line start (stop - start) in
         if body = "" then line
         else
-          let types = String.split_on_char ',' body |> List.map String.trim in
+          let types = split_results body in
           let many = List.length types > 1 in
           let annotated =
             List.mapi
@@ -345,7 +380,20 @@ let add_result_info line =
                 let label =
                   if many then Printf.sprintf "result[%d]" i else "result"
                 in
-                Printf.sprintf "%s {jax.result_info = \"%s\"}" ty label)
+                let key = " {" in
+                let k = String.length ty and m = String.length key in
+                let rec brace j =
+                  if j + m > k then None
+                  else if String.sub ty j m = key then Some j
+                  else brace (j + 1)
+                in
+                match brace 0 with
+                | Some j ->
+                    Printf.sprintf "%s {jax.result_info = \"%s\", %s"
+                      (String.sub ty 0 j) label
+                      (String.sub ty (j + m) (k - j - m))
+                | None ->
+                    Printf.sprintf "%s {jax.result_info = \"%s\"}" ty label)
               types
           in
           String.sub line 0 start
@@ -359,7 +407,7 @@ let symbol_name name =
   in
   if String.for_all bare name then name else "\"" ^ name ^ "\""
 
-let render ~module_name text =
+let render ?(num_partitions = 1) ~module_name text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let root = snd (build_regions lines) in
   number lines root fresh_state;
@@ -369,7 +417,8 @@ let render ~module_name text =
   if Array.length out > 0 && String.trim out.(0) = "module {" then
     out.(0) <-
       Printf.sprintf
-        "module @%s attributes {mhlo.num_partitions = 1 : i32, \
+        "module @%s attributes {mhlo.num_partitions = %d : i32, \
          mhlo.num_replicas = 1 : i32} {"
-        (symbol_name ("jit_" ^ module_name));
+        (symbol_name ("jit_" ^ module_name))
+        num_partitions;
   String.concat "\n" (Array.to_list out)

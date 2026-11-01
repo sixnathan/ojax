@@ -136,6 +136,9 @@ and rule used_outs (e : eqn) =
         (used_ins, with_prim (Cond { t = t'; f = f' }) used_ins)
     | Scan { length; reverse; num_carry; jaxpr } ->
         scan_rule e used_outs ~length ~reverse ~num_carry ~jaxpr
+    | (Custom_jvp_call id | Custom_vjp_call id)
+      when Core.shard_rule id <> None || Core.constraint_rule id <> None ->
+        (everything, Some e)
     | Custom_jvp_call id | Custom_vjp_call id -> (
         let avals = eqn_avals e in
         match Core.find_custom_call_jaxpr id avals with

@@ -1,1 +1,1 @@
-val render : module_name:string -> string -> string
+val render : ?num_partitions:int -> module_name:string -> string -> string

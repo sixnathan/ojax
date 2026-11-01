@@ -1845,7 +1845,13 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
     (function
       | [ a ] ->
           let positions = bit_positions bitorder in
-          let bits = U.left_shift (L.full [| 8 |] 1.0 Dtype.Uint8) positions in
+          let bits =
+            Core.bind1 Shift_left
+              [
+                Concrete (Ndarray.of_floats Dtype.Uint8 [||] [| 1.0 |]);
+                positions;
+              ]
+          in
           let bits =
             if bitorder = "big" then Core.bind1 (Rev [| 0 |]) [ bits ] else bits
           in

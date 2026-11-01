@@ -346,6 +346,32 @@ let reshard_modified abstract x =
       | _ -> x)
   | _ -> x
 
+let lower_text ?out_shardings ~name f args =
+  let flat, in_tree = Tree.tree_flatten (Tree.Tuple args) in
+  let flat_fun, _ = Api_util.flatten_fun f in_tree in
+  let cj =
+    Jaxpr.make_jaxpr
+      (List.map Core.get_aval flat)
+      (Linear_util.call_wrapped flat_fun)
+  in
+  let out_specs =
+    Option.map
+      (List.map2
+         (fun atom s ->
+           let rank =
+             match atom with
+             | A_var v -> Array.length v.vaval.shape
+             | A_lit nd -> Array.length (Ndarray.shape nd)
+             | DropVar a -> Array.length a.shape
+           in
+           match s with
+           | Named_sharding (_, spec) -> Some (spec_array spec rank)
+           | _ -> None)
+         cj.jaxpr.outs)
+      out_shardings
+  in
+  Backend.placed_text ~name ?out_specs cj flat
+
 let auto_axes ?axes ~out_sharding f args =
   match abstract_of_context "auto_axes" out_sharding with
   | None -> f args

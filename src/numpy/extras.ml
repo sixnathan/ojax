@@ -669,17 +669,13 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
     if density then begin
       let core = NL.astype core (dtype_of (as_inexact sample)) in
       let total = R.sum core in
-      let scaled = U.divide core (L.broadcast_in_dim total (shape core) [||]) in
+      let scaled = U.divide core total in
       List.fold_left
         (fun acc (i, e) ->
           let widths = NL.diff e in
           let sh = Array.make n_dims 1 in
           sh.(i) <- size_of widths;
-          let expanded = NL.reshape widths sh in
-          let broad =
-            L.broadcast_in_dim expanded (shape acc) (Array.init n_dims Fun.id)
-          in
-          U.divide acc broad)
+          U.divide acc (NL.reshape widths sh))
         scaled
         (List.mapi (fun i e -> (i, e)) edges)
     end

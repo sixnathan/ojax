@@ -134,3 +134,5 @@ val mark_inline_call : int -> unit
 val is_inline_call : int -> bool
 val inherit_inline : from:int -> int -> unit
 val call_direct : (closed_jaxpr -> value list -> value list) ref
+val register_decomposition : (value list -> value list) -> int
+val decomposition : int -> value list -> value list

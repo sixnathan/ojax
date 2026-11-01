@@ -1317,6 +1317,13 @@ let rec impl_base prim inputs =
           if Ndarray.weak a then Ndarray.as_weak r else r)
         inputs
   | Reshape ns -> un (reshape_impl ns) inputs
+  | Decomposable { dimpl; _ } ->
+      List.map
+        (function
+          | Concrete nd -> nd
+          | Device b -> Pjrt.Buffer.to_host b
+          | Tracer _ -> failwith "lax: decomposition produced a tracer")
+        (Core.decomposition dimpl (List.map (fun nd -> Concrete nd) inputs))
   | Reshape_perm { new_sizes; dimensions } ->
       un (fun a -> reshape_impl new_sizes (transpose_impl dimensions a)) inputs
   | Reduce_sum axes ->
@@ -2510,6 +2517,7 @@ let abstract_eval prim avals =
   | Reshape ns -> un_aval (fun a -> shaped ns a.dtype a.weak_type) avals
   | Reshape_perm { new_sizes; _ } ->
       un_aval (fun a -> shaped new_sizes a.dtype a.weak_type) avals
+  | Decomposable { davals; _ } -> davals
   | Reduce_sum axes ->
       un_aval
         (fun a -> shaped (Utils.reduce_shape a.shape axes) a.dtype a.weak_type)

@@ -850,7 +850,7 @@ let slogdet_lu a =
     end
   in
   let pdt = dtype parity in
-  let rem = UF.remainder parity (const pdt 2.0) in
+  let rem = UF.remainder parity (C.py_scalar pdt 2.0) in
   let m = UF.multiply (const pdt (-2.0)) rem in
   let s = UF.add m (const pdt 1.0) in
   let copied = C.bind1 T.Copy [ s ] in

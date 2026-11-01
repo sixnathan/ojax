@@ -3996,6 +3996,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Eig _ | Eigh _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: nonlinear linalg primitive has no transpose rule"
+  | Decomposable _ -> failwith "ad: decomposed before differentiation"
 
 and xla_call_transpose (c : closed_jaxpr) cts primals =
   let known =

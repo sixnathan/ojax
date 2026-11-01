@@ -107,6 +107,7 @@ let prim_name = function
   | Convert_element_type _ -> "convert_element_type"
   | Broadcast_in_dim _ -> "broadcast_in_dim"
   | Reshape _ | Reshape_perm _ -> "reshape"
+  | Decomposable { dname; _ } -> dname
   | Reduce_sum _ -> "reduce_sum"
   | Dot_general _ -> "dot_general"
   | Acos -> "acos"
@@ -274,6 +275,10 @@ let prim_params = function
       "[broadcast_dimensions=" ^ int_tuple dims ^ " shape=" ^ int_tuple shape
       ^ "]"
   | Reshape ns -> "[new_sizes=" ^ int_tuple ns ^ "]"
+  | Decomposable { dparams; _ } ->
+      "["
+      ^ String.concat "," (List.map (fun (k, v) -> k ^ "=" ^ v) dparams)
+      ^ "]"
   | Reshape_perm { new_sizes; dimensions } ->
       "[new_sizes=" ^ int_tuple new_sizes ^ ",dimensions="
       ^ int_tuple dimensions ^ "]"
@@ -613,6 +618,7 @@ let jax_params (e : eqn) =
         ("new_sizes", Plain (py_ints ns));
         ("sharding", Plain "None");
       ]
+  | Decomposable { dparams; _ } -> List.map (fun (k, v) -> (k, Plain v)) dparams
   | Reshape_perm { new_sizes; dimensions } ->
       [
         ("dimensions", Plain (py_ints dimensions));

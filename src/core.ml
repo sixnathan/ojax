@@ -434,12 +434,26 @@ let call_direct : (closed_jaxpr -> value list -> value list) ref =
 let call_inline : (closed_jaxpr -> value list -> value list) ref =
   ref (fun _ _ -> invalid_arg "Core.call_inline: not installed")
 
+let decompositions : (int, value list -> value list) Hashtbl.t =
+  Hashtbl.create 8
+
+let next_decomposition = ref 0
+
+let register_decomposition f =
+  incr next_decomposition;
+  Hashtbl.replace decompositions !next_decomposition f;
+  !next_decomposition
+
+let decomposition id = Hashtbl.find decompositions id
+
 let keeps_scalar_operands (top : trace) =
   match top.kind with KJaxpr | KJVP | KPE | KBatch -> true | KEval -> false
 
 let rec dispatch prim args =
   let top = find_top_trace args in
   match (prim, args) with
+  | Decomposable { dimpl; _ }, _ when top.kind <> KJaxpr ->
+      decomposition dimpl args
   | Xla_call c, _ when top.kind = KEval -> !call_inline c args
   | Xla_call c, _ when top.kind = KJaxpr && is_inline_call c.jid ->
       !call_direct c args

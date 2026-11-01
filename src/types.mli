@@ -72,6 +72,12 @@ and primitive =
   | Broadcast_in_dim of { shape : int array; dims : int array }
   | Reshape of int array
   | Reshape_perm of { new_sizes : int array; dimensions : int array }
+  | Decomposable of {
+      dname : string;
+      dparams : (string * string) list;
+      dimpl : int;
+      davals : aval list;
+    }
   | Reduce_sum of int array
   | Dot_general of dot_dims
   | Acos

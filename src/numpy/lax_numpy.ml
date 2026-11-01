@@ -1678,9 +1678,12 @@ let index_at a i =
   let start = Array.init n (fun d -> if d = 0 then i else 0) in
   let limit = Array.init n (fun d -> if d = 0 then i + 1 else s.(d)) in
   let sliced =
-    bind1
-      (T.Slice { start_indices = start; limit_indices = limit; strides = None })
-      [ a ]
+    if s.(0) = 1 then a
+    else
+      bind1
+        (T.Slice
+           { start_indices = start; limit_indices = limit; strides = None })
+        [ a ]
   in
   bind1 (T.Squeeze [| 0 |]) [ sliced ]
 
@@ -2303,11 +2306,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
             (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
             [ scalar dt (float_of_int nobs) ] )
     | Some wv ->
-        let lifted =
-          bind1
-            (T.Broadcast_in_dim { shape = [| 1; nobs |]; dims = [| 1 |] })
-            [ wv ]
-        in
+        let lifted = bind1 (T.Reshape [| 1; nobs |]) [ wv ] in
         let total = bind1 (T.Reduce_sum [| 1 |]) [ lifted ] in
         let product = bind1 T.Mul [ x; lifted ] in
         let summed = bind1 (T.Reduce_sum [| 1 |]) [ product ] in
@@ -2315,10 +2314,12 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
         (mean, Jnp_util.broadcast_to total (shape mean))
   in
   let first =
-    bind1
-      (T.Slice
-         { start_indices = [| 0 |]; limit_indices = [| 1 |]; strides = None })
-      [ w_sum ]
+    if (shape w_sum).(0) = 1 then w_sum
+    else
+      bind1
+        (T.Slice
+           { start_indices = [| 0 |]; limit_indices = [| 1 |]; strides = None })
+        [ w_sum ]
   in
   let first = bind1 (T.Squeeze [| 0 |]) [ first ] in
   let f =

@@ -51,7 +51,7 @@ let logsumexp ?axis ?b ?(keepdims = false) a =
   let finite = UF.isfinite amax in
   let amax = L.stop_gradient (L.select finite amax (L.full_like amax 0.0)) in
   let amax_with_dims = if keepdims then amax else L.expand_dims amax dims in
-  let diff = L.sub a_arr (NL.astype amax_with_dims (dtype a_arr)) in
+  let diff = C.bind1 T.Sub [ a_arr; NL.astype amax_with_dims (dtype a_arr) ] in
   let exp_a = L.exp diff in
   let exp_a = match b_arr with None -> exp_a | Some bb -> L.mul exp_a bb in
   let sumexp = RED.sum ~axis:dims ~keepdims exp_a in

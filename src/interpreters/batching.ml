@@ -406,7 +406,7 @@ let reduce_axes_batch (make : int array -> primitive) (axes : int array)
   | None -> (b1 (make axes) [ x ], None)
   | Some d ->
       let new_axes =
-        Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes
+        Np_ints.mark (Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes)
       in
       let shift =
         Array.fold_left (fun acc ax -> if ax < d then acc + 1 else acc) 0 axes

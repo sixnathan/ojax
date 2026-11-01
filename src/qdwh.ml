@@ -51,8 +51,7 @@ let index i = T.Concrete (Ndarray.of_floats D.I32 [||] [| float_of_int i |])
 
 let pyint i =
   T.Concrete
-    (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||]
-       [| float_of_int i |])
+    (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| float_of_int i |])
 
 let conj v = if is_complex v then b1 T.Conj [ v ] else v
 let transpose v = b1 (T.Transpose [| 1; 0 |]) [ v ]
@@ -178,7 +177,8 @@ let dynamic_index coefs k =
           let sh = shape coefs in
           let negative = b1 T.Lt [ k; pyint 0 ] in
           let strong =
-            if (aval k).T.weak_type then b1 (T.Convert_element_type (Dtypes.default_int_dtype ())) [ k ]
+            if (aval k).T.weak_type then
+              b1 (T.Convert_element_type (Dtypes.default_int_dtype ())) [ k ]
             else k
           in
           let wrapped = b1 T.Add [ strong; pyint sh.(0) ] in
@@ -214,8 +214,7 @@ let iterate u flag coefs update test_convergence =
       let body = function
         | [ i; u; _ ] ->
             let next_i =
-              b1 T.Add
-                [ i; Core.py_scalar (Dtypes.default_int_dtype ()) 1.0 ]
+              b1 T.Add [ i; Core.py_scalar (Dtypes.default_int_dtype ()) 1.0 ]
             in
             let row = dynamic_index table i in
             let params = unpack_row row in

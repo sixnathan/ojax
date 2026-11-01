@@ -127,6 +127,7 @@ val pad :
   ?end_values:(float * float) array ->
   ?reflect_type:string ->
   ?float_literal:bool ->
+  ?bool_literal:bool ->
   Types.value ->
   (int * int) array ->
   float ->

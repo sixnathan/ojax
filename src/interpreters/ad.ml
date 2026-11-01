@@ -2304,8 +2304,7 @@ let rec tape_eval_atoms ?(pending = []) (b : jaxpr_builder) (jx : jaxpr) args =
   in
   let waiting : (int, value) Hashtbl.t = Hashtbl.create 16 in
   List.iteri
-    (fun i c ->
-      Hashtbl.replace waiting (List.nth jx.in_binders i).vid c)
+    (fun i c -> Hashtbl.replace waiting (List.nth jx.in_binders i).vid c)
     pending;
   List.iter2 (fun (v : var) a -> Hashtbl.replace env v.vid a) binders args;
   let read = function

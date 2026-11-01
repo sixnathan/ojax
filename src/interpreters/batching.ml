@@ -1046,10 +1046,10 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
             Some 0 )
       | _ -> failwith "batching: expected 2 prng operands")
   | Threefry2x32 | Iota_2x32_shape _ | While _ | Cholesky | Cholesky_update
-  | Symmetric_product _ | Householder_product
-  | Lu | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3
-  | Ormqr _ | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _
-  | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
+  | Symmetric_product _ | Householder_product | Lu | Lu_pivots_to_permutation _
+  | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Triangular_solve _
+  | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
+  | Tridiagonal _ ->
       failwith "batching: handled by unstacking in batch_process_primitive"
   | Collective _ ->
       failwith "batching: collectives handled by batch_process_primitive"

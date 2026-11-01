@@ -77,8 +77,9 @@ let cholesky_update_jax_fn r w =
         let new_row = L.sub (L.mul (spread c) row) (L.mul (spread s) !z) in
         z := L.add (L.mul (spread c) !z) (L.mul (spread s) row);
         let index =
-          L.broadcast_in_dim (Core.splat D.I32 [||] (float_of_int k)) [| 1 |]
-            [||]
+          L.broadcast_in_dim
+            (Core.splat D.I32 [||] (float_of_int k))
+            [| 1 |] [||]
         in
         current :=
           Core.bind1

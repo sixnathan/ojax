@@ -506,8 +506,7 @@ let sylvester_triangular_scan r s f =
         ([ i; j ], [| (shape v).(0); 1 |], 1)
       end
     in
-    Core.bind1
-      (Types.Squeeze [| axis |])
+    Core.bind1 (Types.Squeeze [| axis |])
       [ L.dynamic_slice_normalized v starts sizes ]
   in
   let masked_sum mask v =

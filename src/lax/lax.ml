@@ -2816,8 +2816,7 @@ let abstract_eval prim avals =
                 (Printf.sprintf
                    "Input %d to %s must have a rank of exactly %d, but got \
                     shape=%s"
-                   i name expected
-                   (shape_tuple a.shape))
+                   i name expected (shape_tuple a.shape))
           in
           rank "cholesky_update" r 0 2;
           rank "cholesky_update" w 1 1;
@@ -2825,10 +2824,9 @@ let abstract_eval prim avals =
             invalid_arg
               (Printf.sprintf
                  "Rank-1 update to Cholesky decomposition takes a square \
-                  matrix and a vector of the same size as input. Got shapes \
-                  %s and %s instead"
-                 (shape_tuple r.shape)
-                 (shape_tuple w.shape));
+                  matrix and a vector of the same size as input. Got shapes %s \
+                  and %s instead"
+                 (shape_tuple r.shape) (shape_tuple w.shape));
           [ r ]
       | _ -> failwith "linalg: cholesky_update expects two avals")
   | Symmetric_product _ -> (
@@ -2845,8 +2843,7 @@ let abstract_eval prim avals =
                  "symmetric_update expects a rectangular matrix of shape (m, \
                   n) and a square matrix of shape (n, n). Got shapes %s and \
                   %s."
-                 (shape_tuple a.shape)
-                 (shape_tuple c.shape));
+                 (shape_tuple a.shape) (shape_tuple c.shape));
           [ c ]
       | _ -> failwith "linalg: symmetric_product expects two avals")
   | Lu -> Linalg.lu_aval avals

@@ -298,11 +298,12 @@ let rsf2csf_2d t z =
     let update m t z =
       let start_row = pred m in
       let start_col = pred m in
-      let vals = LN.eigvals (L.dynamic_slice t [ start_row; start_col ] [| 2; 2 |]) in
+      let vals =
+        LN.eigvals (L.dynamic_slice t [ start_row; start_col ] [| 2; 2 |])
+      in
       let mu = UF.subtract vals (IDX.dynamic_at2 t m m) in
       let first () =
-        C.bind1
-          (T.Squeeze [| 0 |])
+        C.bind1 (T.Squeeze [| 0 |])
           [
             C.bind1
               (T.Slice
@@ -334,7 +335,11 @@ let rsf2csf_2d t z =
       let g_h () = L.transpose (UF.conj g) [| 1; 0 |] in
       let zero = Numpy.Jnp_util.py_int 0 in
       let rows = L.dynamic_slice_in_dim ~axis:0 t (pred m) 2 in
-      let col_mask = UF.greater_equal (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n)) (pred m) in
+      let col_mask =
+        UF.greater_equal
+          (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n))
+          (pred m)
+      in
       let masked = NL.where_ col_mask rows zero in
       let g_dot = L.dot_typed g masked in
       let rows_new = NL.where_ (UF.logical_not col_mask) rows g_dot in
@@ -342,7 +347,9 @@ let rsf2csf_2d t z =
       let cols = L.dynamic_slice_in_dim ~axis:1 t (pred m) 2 in
       let row_mask =
         UF.less
-          (NL.expand_dims (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n)) [| 1 |])
+          (NL.expand_dims
+             (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n))
+             [| 1 |])
           (L.add m (index 1))
       in
       let masked = NL.where_ row_mask cols zero in
@@ -366,8 +373,7 @@ let rsf2csf_2d t z =
           match
             L.cond (UF.greater lhs threshold)
               (function
-                | [ m; t; z ] -> update m t z
-                | _ -> failwith "rsf2csf: arity")
+                | [ m; t; z ] -> update m t z | _ -> failwith "rsf2csf: arity")
               (function
                 | [ _; t; z ] -> [ t; z ] | _ -> failwith "rsf2csf: arity")
               [ m; t; z ]
@@ -1016,9 +1022,9 @@ let funm ?(disp = true) a _func =
 
 let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
   let module L = Lax_api in
+  let py_int = Numpy.Jnp_util.py_int in
   let n = (shape alpha).(0) and k = (shape eigvals).(0) in
-  let idt = D.I32 in
-  let int_const sh v = L.full sh (float_of_int v) idt in
+  let idt = Dtypes.default_int_dtype () in
   let real_const dt v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
   let eps =
     if base_dtype = D.F32 then 1.1920928955078125e-07 else epsilon_float
@@ -1030,128 +1036,154 @@ let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
     pad_low (if is_complex_dt (dtype beta) then UF.conj beta else beta)
   in
   let du = pad_high beta in
-  let gap =
-    UF.subtract (L.slice_in_dim eigvals 1 k) (L.slice_in_dim eigvals 0 (k - 1))
+  let static_slice v lo hi =
+    C.bind1
+      (T.Slice
+         { start_indices = [| lo |]; limit_indices = [| hi |]; strides = None })
+      [ v ]
   in
-  let first = L.index_in_dim ~keepdims:false eigvals 0 in
-  let last = L.index_in_dim ~keepdims:false eigvals (k - 1) in
-  let t_norm = UF.maximum (UF.abs first) (UF.abs last) in
-  let gaptol = UF.multiply (UF.sqrt (real_const base_dtype eps)) t_norm in
+  let static_at v i =
+    C.bind1 (T.Squeeze [| 0 |]) [ static_slice v i (i + 1) ]
+  in
+  let tail = static_slice eigvals 1 k in
+  let head = static_slice eigvals 0 (k - 1) in
+  let gap = UF.subtract tail head in
+  let first = UF.abs (static_at eigvals 0) in
+  let last = UF.abs (static_at eigvals (k - 1)) in
+  let t_norm = UF.maximum first last in
+  let root_eps = UF.sqrt (real_const base_dtype eps) in
+  let gaptol = UF.multiply root_eps t_norm in
   let close = UF.less gap gaptol in
-  let left_close = pad_low close in
-  let right_close = pad_high close in
-  let start_mask = UF.logical_and (UF.logical_not left_close) right_close in
-  let end_mask = UF.logical_and left_close (UF.logical_not right_close) in
+  let left_close = NL.pad ~bool_literal:true close [| (1, 0) |] 0.0 in
+  let right_close = NL.pad ~bool_literal:true close [| (0, 1) |] 0.0 in
+  let not_left = UF.logical_not left_close in
+  let start_mask = UF.logical_and not_left right_close in
+  let not_right = UF.logical_not right_close in
+  let end_mask = UF.logical_and left_close not_right in
   let max_clusters = (k / 2) + 1 in
-  let positions mask =
-    let values =
-      Numpy.Extras.flatnonzero ~size:max_clusters ~fill_value:0 mask
-    in
-    NL.astype values idt
-  in
+  let positions mask = List.hd (Numpy.Extras.nonzero ~size:max_clusters mask) in
   let starts = positions start_mask in
-  let ends = L.add (positions end_mask) (int_const [| max_clusters |] 1) in
-  let num_clusters = NL.astype (RED.sum start_mask) idt in
+  let ends = UF.add (positions end_mask) (py_int 1) in
+  let num_clusters = RED.sum start_mask in
   let arange_k = NL.arange ~dtype:idt (float_of_int k) in
   let raw =
     Random.Core.with_dtypes ~float_dtype:base_dtype (fun () ->
         Random.Core.normal key ~shape:[| k; n |])
   in
   let v0 = as_solve raw in
-  let v0 =
-    UF.divide v0
-      (as_solve (LN.vector_norm ~axis:(Some [| -1 |]) ~keepdims:true v0))
-  in
+  let norm_keep v = LN.norm ~axis:(LN.Aint (-1)) ~keepdims:true v in
+  let norm0 = as_solve (norm_keep v0) in
+  let v0 = UF.divide v0 norm0 in
   let solve_dt_of v = as_solve v in
   let orthogonalize ev =
     let cluster i ev =
-      let index arr = L.dynamic_index_in_dim ~keepdims:false arr i in
-      let start = index starts and stop = index ends in
+      let start = IDX.dynamic_at starts i in
+      let stop = IDX.dynamic_at ends i in
       let c = L.sub stop start in
-      let padded =
-        L.pad ev
-          (T.Concrete (Nd.of_floats (dtype ev) [||] [| 0.0 |]))
-          [| (0, k, 0); (0, 0, 0) |]
+      let padded = NL.pad ev [| (0, k); (0, 0) |] 0.0 in
+      let zero_i = T.Concrete (Nd.of_floats (dtype start) [||] [| 0.0 |]) in
+      let wrapped extent =
+        let negative = C.bind1 T.Lt [ start; py_int 0 ] in
+        let shifted = C.bind1 T.Add [ start; py_int extent ] in
+        C.bind1 T.Select_n [ negative; start; shifted ]
       in
+      let start_at = wrapped (2 * k) in
       let block =
-        L.dynamic_slice padded [ start; int_const [||] 0 ] [| k; n |]
+        L.dynamic_slice_normalized padded [ start_at; zero_i ] [| k; n |]
       in
-      let mask =
-        NL.astype
-          (UF.less arange_k (L.broadcast_in_dim c [| k |] [||]))
-          (dtype ev)
-      in
-      let column = NL.reshape mask [| k; 1 |] in
-      let masked = UF.multiply block column in
-      let q = fst (LL.qr ~full_matrices:false (NL.transpose masked)) in
-      let qt = UF.multiply (NL.transpose q) column in
+      let mask = NL.astype (UF.less arange_k c) (dtype ev) in
+      let column () = L.broadcast_in_dim mask [| k; 1 |] [| 0 |] in
+      let mask_col = column () in
+      let masked = UF.multiply block mask_col in
+      let transposed = NL.transpose masked in
+      let q = List.hd (LN.qr transposed) in
+      let qt = NL.transpose q in
+      let mask_col = column () in
+      let qt_masked = UF.multiply qt mask_col in
       let big = AC.zeros ~dtype:(dtype ev) [| 2 * k; n |] in
-      let updated = L.dynamic_update_slice big qt [ start; int_const [||] 0 ] in
-      let update_full = L.slice_in_dim updated 0 k in
-      let in_cluster =
-        UF.logical_and
-          (UF.greater_equal arange_k (L.broadcast_in_dim start [| k |] [||]))
-          (UF.less arange_k (L.broadcast_in_dim stop [| k |] [||]))
+      let start_at = wrapped (2 * k) in
+      let updated = L.dynamic_update_slice big qt_masked [ start_at; zero_i ] in
+      let update_full =
+        C.bind1
+          (T.Slice
+             {
+               start_indices = [| 0; 0 |];
+               limit_indices = [| k; n |];
+               strides = None;
+             })
+          [ updated ]
       in
-      NL.where_ (NL.reshape in_cluster [| k; 1 |]) update_full ev
+      let above = UF.greater_equal arange_k start in
+      let below = UF.less arange_k stop in
+      let in_cluster = C.bind1 T.And [ above; below ] in
+      let in_cluster = L.broadcast_in_dim in_cluster [| k; 1 |] [| 0 |] in
+      NL.where_ in_cluster update_full ev
     in
     match
-      L.fori_loop (int_const [||] 0) num_clusters
+      L.fori_loop (py_int 0) num_clusters
         (fun i state -> [ cluster i (List.hd state) ])
         [ ev ]
     with
     | [ out ] -> out
     | _ -> failwith "eigh_tridiagonal: arity"
   in
-  let batched v = L.broadcast_in_dim v [| k; n |] [| 1 |] in
-  let alpha_shifted =
-    UF.subtract
-      (L.broadcast_in_dim alpha [| 1; n |] [| 1 |])
-      (L.broadcast_in_dim eigvals [| k; 1 |] [| 0 |])
+  let batched v =
+    let row = L.broadcast_in_dim v [| 1; n |] [| 1 |] in
+    L.broadcast_in_dim row [| k; n |] [| 0; 1 |]
   in
-  let dl_batched = batched dl and du_batched = batched du in
+  let alpha_row = L.broadcast_in_dim alpha [| 1; n |] [| 1 |] in
+  let eigvals_col = L.broadcast_in_dim eigvals [| k; 1 |] [| 0 |] in
+  let alpha_shifted = UF.subtract alpha_row eigvals_col in
+  let dl_batched = batched dl in
+  let du_batched = batched du in
   let step state =
     match state with
     | [ i; v; nrm; _ ] ->
+        let a0 = solve_dt_of dl_batched in
+        let a1 = solve_dt_of alpha_shifted in
+        let a2 = solve_dt_of du_batched in
+        let rhs = L.broadcast_in_dim v [| k; n; 1 |] [| 0; 1 |] in
         let v_new =
-          LL.tridiagonal_solve ~perturb_singular:true (solve_dt_of dl_batched)
-            (solve_dt_of alpha_shifted)
-            (solve_dt_of du_batched)
-            (L.broadcast_in_dim (solve_dt_of v) [| k; n; 1 |] [| 0; 1 |])
+          LL.tridiagonal_solve ~perturb_singular:true a0 a1 a2 (solve_dt_of rhs)
         in
         let v_new = NL.squeeze ~axis:[| -1 |] v_new in
-        let nrm_new =
-          LN.vector_norm ~axis:(Some [| -1 |]) ~keepdims:true v_new
-        in
+        let nrm_new = norm_keep v_new in
         let v_new = UF.divide v_new (as_solve nrm_new) in
-        let nrm_new = NL.reshape nrm_new [| k |] in
-        [ L.add i (int_const [||] 1); orthogonalize v_new; nrm_new; nrm ]
+        let nrm_new = NL.squeeze ~axis:[| -1 |] nrm_new in
+        let v_new = orthogonalize v_new in
+        [ UF.add i (py_int 1); v_new; nrm_new; nrm ]
     | _ -> failwith "eigh_tridiagonal: state"
   in
   let keep_going state =
     match state with
     | [ i; _; nrm; old ] ->
-        UF.logical_and
-          (UF.less i (int_const [||] 5))
-          (RED.any
-             (UF.greater_equal nrm
-                (UF.multiply (real_const base_dtype 1.1) old)))
+        let more = UF.less i (py_int 5) in
+        let grown = UF.multiply (Numpy.Jnp_util.py_float (1.0 +. 0.1)) old in
+        let any_grew = RED.any (UF.greater_equal nrm grown) in
+        UF.logical_and more any_grew
     | _ -> failwith "eigh_tridiagonal: state"
   in
-  let result =
-    L.while_loop keep_going step
-      [
-        int_const [||] 0;
-        v0;
-        AC.ones ~dtype:base_dtype [| k |];
-        AC.zeros ~dtype:base_dtype [| k |];
-      ]
-  in
+  let ones = AC.ones ~dtype:base_dtype [| k |] in
+  let zeros = AC.zeros ~dtype:base_dtype [| k |] in
+  let result = L.while_loop keep_going step [ py_int 0; v0; ones; zeros ] in
   List.nth result 1
 
 let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
     ?key d e =
   let module L = Lax_api in
+  let py_int = Numpy.Jnp_util.py_int in
+  let py_float = Numpy.Jnp_util.py_float in
+  let key =
+    if eigvals_only then key
+    else
+      match key with
+      | Some _ -> key
+      | None ->
+          Some
+            (Random.Core.key
+               (T.Concrete
+                  (Nd.of_floats (Dtypes.default_int_dtype ()) [||] [| 42.0 |])))
+  in
   let alpha = d and beta = e in
   if dtype alpha <> dtype beta then
     raise
@@ -1179,10 +1211,16 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
   else begin
     let alpha_real = if is_complex then UF.real alpha else alpha in
     let beta_sq, beta_abs =
-      if is_complex then
+      if is_complex then begin
         let sq = UF.real (UF.multiply beta (UF.conj beta)) in
-        (sq, UF.sqrt sq)
-      else (UF.square beta, UF.abs beta)
+        let ab = UF.sqrt sq in
+        (sq, ab)
+      end
+      else begin
+        let ab = UF.abs beta in
+        let sq = UF.square beta in
+        (sq, ab)
+      end
     in
     let base_dtype = dtype alpha_real in
     let single = base_dtype = D.F32 in
@@ -1198,28 +1236,44 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
       if single then Int32.float_of_bits (Int32.bits_of_float v) else v
     in
     let c v = T.Concrete (Nd.of_floats base_dtype [||] [| v |]) in
+    let static_slice v lo hi =
+      C.bind1
+        (T.Slice
+           {
+             start_indices = [| lo |];
+             limit_indices = [| hi |];
+             strides = None;
+           })
+        [ v ]
+    in
+    let static_at v i =
+      C.bind1 (T.Squeeze [| 0 |]) [ static_slice v i (i + 1) ]
+    in
     let m = (shape beta_abs).(0) in
     let row_sum =
-      NL.concatenate
-        [
-          L.slice_in_dim beta_abs 0 1;
-          UF.add
-            (L.slice_in_dim beta_abs 0 (m - 1))
-            (L.slice_in_dim beta_abs 1 m);
-          L.slice_in_dim beta_abs (m - 1) m;
-        ]
+      let head = static_slice beta_abs 0 1 in
+      let left = static_slice beta_abs 0 (m - 1) in
+      let right = static_slice beta_abs 1 m in
+      let middle = UF.add left right in
+      let tail = static_slice beta_abs (m - 1) m in
+      NL.concatenate [ head; middle; tail ]
     in
     let lambda_max = RED.amax (UF.add alpha_real row_sum) in
     let lambda_min = RED.amin (UF.subtract alpha_real row_sum) in
-    let t_norm = UF.maximum (UF.abs lambda_min) (UF.abs lambda_max) in
+    let t_norm =
+      let lo = UF.abs lambda_min in
+      let hi = UF.abs lambda_max in
+      UF.maximum lo hi
+    in
     let safemin =
       Float.max (round (1.0 /. largest)) (round (round (1.0 +. eps) *. tiny))
     in
     let pivmin =
       UF.multiply (c safemin) (UF.maximum (c 1.0) (RED.amax beta_sq))
     in
-    let beta0 = L.index_in_dim ~keepdims:false beta_abs 0 in
-    let alpha0_perturbation = UF.square (UF.multiply (c eps) beta0) in
+    let alpha0_perturbation =
+      UF.square (UF.multiply (c eps) (static_at beta_abs 0))
+    in
     let abs_tol = UF.multiply (c eps) t_norm in
     let abs_tol =
       match tol with Some t -> UF.maximum (c t) abs_tol | None -> abs_tol
@@ -1240,55 +1294,84 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
     let k = (shape target_counts).(0) in
     let fudge = 2.1 in
     let norm_slack =
-      UF.multiply
-        (c (round (round (float_of_int n *. round fudge) *. eps)))
-        t_norm
+      let scaled = UF.multiply (c (float_of_int n)) (py_float fudge) in
+      let scaled = UF.multiply scaled (c eps) in
+      UF.multiply scaled t_norm
     in
     let lower =
-      UF.subtract
-        (UF.subtract lambda_min norm_slack)
-        (UF.multiply (c (round (2.0 *. fudge))) pivmin)
+      let shifted = UF.subtract lambda_min norm_slack in
+      let margin = UF.multiply (py_float (2.0 *. fudge)) pivmin in
+      UF.subtract shifted margin
     in
     let upper =
-      UF.add
-        (UF.add lambda_max norm_slack)
-        (UF.multiply (c (round fudge)) pivmin)
+      let shifted = UF.add lambda_max norm_slack in
+      let margin = UF.multiply (py_float fudge) pivmin in
+      UF.add shifted margin
     in
     let spread v = L.broadcast_in_dim v [| k |] [||] in
-    let lower = spread lower and upper = spread upper in
-    let mid = UF.multiply (c 0.5) (UF.add upper lower) in
+    let lower = spread lower in
+    let upper = spread upper in
+    let mid = UF.multiply (py_float 0.5) (UF.add upper lower) in
     let pivmin = spread pivmin in
     let alpha0_perturbation = spread alpha0_perturbation in
-    let at v i = L.index_in_dim ~keepdims:false v i in
-    let int_full v = L.full [| k |] (float_of_int v) D.I32 in
     let sturm x =
-      let a0 = spread (at alpha_real 0) in
-      let q = UF.subtract a0 x in
-      let count = NL.where_ (UF.less q (c 0.0)) (int_full 1) (int_full 0) in
-      let q = NL.where_ (UF.equal a0 x) alpha0_perturbation q in
-      let state = ref (q, count) in
-      for i = 1 to n - 1 do
-        let q, count = !state in
-        let q =
-          UF.subtract
-            (UF.subtract
-               (spread (at alpha_real i))
-               (UF.divide (spread (at beta_sq (i - 1))) q))
-            x
-        in
+      let zeros = AC.zeros ~dtype:D.I32 (shape x) in
+      let ones = AC.ones ~dtype:D.I32 (shape x) in
+      let q = UF.subtract (static_at alpha_real 0) x in
+      let count = NL.where_ (UF.less q (py_int 0)) ones zeros in
+      let at_x = UF.equal (static_at alpha_real 0) x in
+      let q = NL.where_ at_x alpha0_perturbation q in
+      let sturm_step alpha_i beta_i q count =
+        let quotient = UF.divide beta_i q in
+        let q = UF.subtract alpha_i quotient in
+        let q = UF.subtract q x in
         let low = UF.less_equal q pivmin in
-        let count = NL.where_ low (L.add count (int_full 1)) count in
-        let q = NL.where_ low (UF.minimum q (UF.negative pivmin)) q in
-        state := (q, count)
+        let bumped = UF.add count (py_int 1) in
+        let count = NL.where_ low bumped count in
+        let low = UF.less_equal q pivmin in
+        let floor = UF.negative pivmin in
+        let clamped = UF.minimum q floor in
+        let q = NL.where_ low clamped q in
+        (q, count)
+      in
+      let blocksize = 16 in
+      let peel = (n - 1) mod blocksize in
+      let state = ref (q, count) in
+      for j = 0 to peel - 1 do
+        let q, count = !state in
+        let i = 1 + j in
+        let alpha_i = static_at alpha_real i in
+        let beta_i = static_at beta_sq (i - 1) in
+        state := sturm_step alpha_i beta_i q count
       done;
-      snd !state
+      let q, count = !state in
+      let cond = function
+        | [ i; _; _ ] -> UF.less i (py_int n)
+        | _ -> failwith "eigh_tridiagonal: state"
+      in
+      let body = function
+        | [ start; q; count ] ->
+            let state = ref (q, count) in
+            for j = 0 to blocksize - 1 do
+              let q, count = !state in
+              let i = UF.add start (py_int j) in
+              let alpha_i = IDX.dynamic_at alpha_real i in
+              let prev = UF.subtract i (py_int 1) in
+              let beta_i = IDX.dynamic_at beta_sq prev in
+              state := sturm_step alpha_i beta_i q count
+            done;
+            let q, count = !state in
+            [ UF.add start (py_int blocksize); q; count ]
+        | _ -> failwith "eigh_tridiagonal: state"
+      in
+      List.nth (L.while_loop cond body [ py_int (1 + peel); q; count ]) 2
     in
     let cond state =
       match state with
       | [ i; lo; _; hi ] ->
-          UF.logical_and
-            (L.lt i (L.full [||] (float_of_int max_it) D.I32))
-            (L.lt abs_tol (RED.amax (UF.subtract hi lo)))
+          let more = UF.less i (py_int max_it) in
+          let wide = RED.amax (UF.subtract hi lo) in
+          UF.logical_and more (UF.less abs_tol wide)
       | _ -> failwith "eigh_tridiagonal: state"
     in
     let body state =
@@ -1297,23 +1380,15 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
           let counts = sturm mid in
           let lo = NL.where_ (UF.less_equal counts target_counts) mid lo in
           let hi = NL.where_ (UF.greater counts target_counts) mid hi in
-          [
-            L.add i (L.full [||] 1.0 D.I32);
-            lo;
-            UF.multiply (c 0.5) (UF.add lo hi);
-            hi;
-          ]
+          let mid = UF.multiply (py_float 0.5) (UF.add lo hi) in
+          [ UF.add i (py_int 1); lo; mid; hi ]
       | _ -> failwith "eigh_tridiagonal: state"
     in
-    let final =
-      L.while_loop cond body [ L.full [||] 0.0 D.I32; lower; mid; upper ]
-    in
+    let final = L.while_loop cond body [ py_int 0; lower; mid; upper ] in
     let eigvals = List.nth final 2 in
     if eigvals_only then [ eigvals ]
     else
-      let key =
-        match key with Some k -> k | None -> Random.Core.key (i32_scalar 42)
-      in
+      let key = Option.get key in
       let vectors =
         tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha_real beta
           eigvals

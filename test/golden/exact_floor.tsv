@@ -37,8 +37,8 @@ parity:x64_off	2565	2566
 parity:x64_on	5123	5126
 parity_jit:x64_off	1974	1976
 parity_jit:x64_on	3918	3923
-parity_jit_eager:x64_off	1854	1976
-parity_jit_eager:x64_on	3683	3923
+parity_jit_eager:x64_off	1853	1976
+parity_jit_eager:x64_on	3680	3923
 polynomial:x64_off	22	22
 polynomial:x64_on	31	31
 prng:x64_off	30	30

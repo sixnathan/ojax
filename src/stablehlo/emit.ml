@@ -91,7 +91,12 @@ let unique_symbol base =
 
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
 let while_depth = ref 0
-let call_symbol_key jid = if !while_depth > 0 then jid lxor (1 lsl 61) else jid
+let lowered_fun_depth = ref 0
+
+let call_symbol_key jid =
+  if !while_depth > 0 && !lowered_fun_depth = 0 then jid lxor (1 lsl 61)
+  else jid
+
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -2804,7 +2809,10 @@ and emit_traced ctx avals in_ids outs f =
     (emit_traced_ids ctx avals in_ids f)
 
 and emit_traced_ids ctx avals in_ids f =
-  emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids
+  incr lowered_fun_depth;
+  Fun.protect
+    ~finally:(fun () -> decr lowered_fun_depth)
+    (fun () -> emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids)
 
 and hoist_custom_consts ctx (jx : jaxpr) =
   List.iter
@@ -4090,6 +4098,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset cum_symbols;
   Hashtbl.reset call_symbols;
   while_depth := 0;
+  lowered_fun_depth := 0;
   symbol_counter := 0;
   seen_mesh := None;
   callback_seen := false;

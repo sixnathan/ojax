@@ -3653,16 +3653,22 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           let t = ct1 () in
           let ndim = Array.length cfg in
           let t_operand () =
-            let unpad = Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg in
+            let unpad =
+              Np_ints.mark_triples_where
+                (fun _ _ -> true)
+                (Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg)
+            in
             let dt = (Core.get_aval t).dtype in
             let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
             let unpadded = b1 (Pad unpad) [ t; zero ] in
             b1
               (Slice
                  {
-                   start_indices = Array.make ndim 0;
+                   start_indices = Np_ints.mark (Array.make ndim 0);
                    limit_indices = (Core.get_aval unpadded).shape;
-                   strides = Some (Array.map (fun (_, _, i) -> i + 1) cfg);
+                   strides =
+                     Some
+                       (Np_ints.mark (Array.map (fun (_, _, i) -> i + 1) cfg));
                  })
               [ unpadded ]
           in

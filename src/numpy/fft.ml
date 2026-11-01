@@ -49,12 +49,6 @@ let apply_norm ~inverse sizes norm v =
   | Some norm ->
       Ufuncs.multiply v (fft_norm ~inverse sizes (Core.get_aval v).dtype norm)
 
-let scale_const factor v =
-  if factor = 1.0 then v
-  else
-    let aval = Core.get_aval v in
-    b1 Mul [ v; Core.splat aval.dtype aval.shape factor ]
-
 let moved_perm ndim source destination =
   let perm =
     ref (List.filter (fun d -> not (List.mem d source)) (List.init ndim Fun.id))
@@ -111,7 +105,7 @@ let pad_zero v widths =
             else b1 (Convert_element_type dt) [ cval ]
           in
           b1
-            (Pad (Array.of_list (List.map (fun (l, h) -> (l, h, 0)) widths)))
+            (Pad (Lax_numpy.pad_widths_config (Array.of_list widths)))
             [ v; cval ]
       | _ -> invalid_arg "pad: arity")
     [ v; Concrete (Ndarray.of_floats default_int [||] [| 0.0 |]) ]
@@ -208,16 +202,17 @@ let hfft ?n ?(axis = -1) ?norm a =
     match n with Some x -> x | None -> ((shape_of conj_a).(ax) * 2) - 2
   in
   let axes, s = single_axis axis n in
-  scale_const (float_of_int nn)
+  Ufuncs.multiply
     (fft_core Fft_inverse_real ~inverse:false ?s ?axes ?norm conj_a)
+    (Jnp_util.py_int nn)
 
 let ihfft ?n ?(axis = -1) ?norm a =
   let ax = canon_axis (rank_of a) axis in
   let nn = match n with Some x -> x | None -> (shape_of a).(ax) in
   let axes, s = single_axis axis n in
-  scale_const
-    (1.0 /. float_of_int nn)
+  Ufuncs.multiply
     (b1 Conj [ fft_core Fft_real ~inverse:true ?s ?axes ?norm a ])
+    (Jnp_util.py_float (1.0 /. float_of_int nn))
 
 let fftn ?s ?axes ?norm a = fft_core Fft_forward ~inverse:false ?s ?axes ?norm a
 let ifftn ?s ?axes ?norm a = fft_core Fft_inverse ~inverse:true ?s ?axes ?norm a

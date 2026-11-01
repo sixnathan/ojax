@@ -114,6 +114,7 @@ val hstack : ?dtype:Dtype.t -> Types.value list -> Types.value
 val dstack : ?dtype:Dtype.t -> Types.value list -> Types.value
 val column_stack : Types.value list -> Types.value
 val tile : Types.value -> int array -> Types.value
+val pad_widths_config : (int * int) array -> (int * int * int) array
 
 val pad :
   ?mode:string ->

@@ -24,3 +24,17 @@ let prim_marked prim =
   List.exists
     (fun other -> other == o)
     (Hashtbl.find_all marked_prims (Hashtbl.hash o))
+
+let marked_triples :
+    (int, (int * int * int) array * (int -> int -> bool)) Hashtbl.t =
+  Hashtbl.create 64
+
+let mark_triples_where predicate arr =
+  if Array.length arr > 0 then
+    Hashtbl.add marked_triples (Hashtbl.hash arr) (arr, predicate);
+  arr
+
+let triple_marked arr i j =
+  List.exists
+    (fun (other, predicate) -> other == arr && predicate i j)
+    (Hashtbl.find_all marked_triples (Hashtbl.hash arr))

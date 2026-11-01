@@ -520,7 +520,17 @@ let py_platforms platforms =
 
 let py_triples a =
   py_tuple
-    (Array.to_list (Array.map (fun (x, y, z) -> py_ints [| x; y; z |]) a))
+    (Array.to_list
+       (Array.mapi
+          (fun i (x, y, z) ->
+            py_tuple
+              (List.mapi
+                 (fun j v ->
+                   if Np_ints.triple_marked a i j then
+                     Printf.sprintf "np.int64(%d)" v
+                   else string_of_int v)
+                 [ x; y; z ]))
+          a))
 
 let gather_numbers (d : gather_dims) =
   Printf.sprintf

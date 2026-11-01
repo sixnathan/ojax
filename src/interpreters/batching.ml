@@ -311,7 +311,12 @@ let pad_batch (cfg : (int * int * int) array) (vals : value list)
     (bdims : int option list) : value * int option =
   match (vals, bdims) with
   | [ operand; pv ], [ Some d; None ] ->
-      let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
+      let cfg2 =
+        Np_ints.mark_triples_where
+          (fun i j ->
+            i <> d && Np_ints.triple_marked cfg (if i < d then i else i - 1) j)
+          (insert_pad_cfg cfg d (0, 0, 0))
+      in
       (b1 (Pad cfg2) [ operand; pv ], Some d)
   | [ operand; pv ], [ ob; pvb ] ->
       let size =

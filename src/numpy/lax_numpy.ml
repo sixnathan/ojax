@@ -1072,8 +1072,13 @@ and repeat_scalar ?axis a repeats =
   result_shape.(ax) <- ish.(ax) * repeats;
   reshape bc result_shape
 
+let pad_widths_config pad_width =
+  Np_ints.mark_triples_where
+    (fun _ j -> j < 2)
+    (Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width)
+
 let pad_constant v pad_width cval =
-  let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
+  let cfg = pad_widths_config pad_width in
   bind1 (T.Pad cfg) [ v; scalar (dtype v) cval ]
 
 let no_padding_on_empty (lo, hi) mode =
@@ -1327,7 +1332,7 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
     Jnp_util.jit1 "_pad" ~key
       (function
         | [ v; cval ] ->
-            let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
+            let cfg = pad_widths_config pad_width in
             let cval =
               C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v)
             in

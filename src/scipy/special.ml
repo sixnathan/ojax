@@ -2946,7 +2946,12 @@ let gen_associated_legendre_body l_max x is_normalized =
   let b_idx = arange_dt dt 0 l_max in
   let initial_value, f_a, f_b =
     if is_normalized then begin
-      let root = UF.sqrt (py_float Float.pi) in
+      let pi =
+        match py_float Float.pi with
+        | T.Concrete nd -> T.Concrete (Np_ints.mark_exact nd Float.pi)
+        | v -> v
+      in
+      let root = UF.sqrt pi in
       let initial = py_float 0.5 /! root in
       let inner = UF.sqrt (lit 1.0 +! (lit 0.5 /! a_idx)) in
       let f_a = RED.cumprod ~axis:0 (lit (-1.0) *! inner) in
@@ -3128,46 +3133,25 @@ let sph_harm_body n_max args =
       let cos_colatitude = UF.cos theta in
       let legendre = gen_associated_legendre n_max cos_colatitude true in
       let count = (shape theta).(0) in
+      ignore count;
       let abs_m = UF.abs m in
-      let limit v top =
-        let low = T.Concrete (Nd.of_floats (dtype v) [||] [| 0.0 |]) in
-        let hi =
-          T.Concrete (Nd.of_floats (dtype v) [||] [| float_of_int top |])
-        in
-        UF.minimum (UF.maximum v low) hi
-      in
-      let rows = limit abs_m n_max in
-      let cols = limit n n_max in
-      let lanes = NL.arange ~dtype:(dtype rows) (float_of_int count) in
-      let side v =
-        T.Concrete (Nd.of_floats (dtype rows) [||] [| float_of_int v |])
-      in
-      let linear =
-        ((rows *! side (n_max + 1)) +! NL.astype cols (dtype rows))
-        *! side count
-        +! lanes
+      let lanes =
+        NL.arange ~dtype:(default_int ()) (float_of_int (shape n).(0))
       in
       let legendre_val =
-        Numpy.Indexing.take_index ~axis:0
-          (NL.reshape legendre [| (n_max + 1) * (n_max + 1) * count |])
-          linear
+        Ix.take_clip legendre [ Ix.Arr abs_m; Ix.Arr n; Ix.Arr lanes ]
       in
-      let dt = dtype legendre_val in
-      let angle = NL.astype abs_m dt *! phi in
+      let angle = UF.abs m *! phi in
       let cosa = UF.cos angle in
       let sina = UF.sin angle in
       let vandermonde = L.complex cosa sina in
       let re = legendre_val *! UF.real vandermonde in
       let im = legendre_val *! UF.imag vandermonde in
       let harmonics = L.complex re im in
-      let base = py_float (-1.0) in
-      let sign = UF.power base abs_m in
-      let negative_order =
-        NL.astype sign (dtype harmonics) *! UF.conj harmonics
-      in
-      where_
-        (UF.less m (T.Concrete (Nd.of_floats (dtype m) [||] [| 0.0 |])))
-        negative_order harmonics
+      let negative = UF.less m (py_weak_int 0) in
+      let sign = UF.power (py_float (-1.0)) (UF.abs m) in
+      let negative_order = sign *! UF.conj harmonics in
+      where_ negative negative_order harmonics
   | _ -> assert false
 
 let sph_harm_y ?diff_n ?n_max n m theta phi =

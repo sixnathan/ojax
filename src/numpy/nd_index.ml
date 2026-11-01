@@ -232,20 +232,29 @@ let to_gather sh idx =
 
 let empty sh = Array.exists (fun d -> d = 0) sh
 
-let gather_take x idx =
+let gather_take ?(clip = false) x idx =
   let ix = to_gather (shape x) idx in
   if empty ix.slice_shape then
     L.full ix.slice_shape 0.0 (dtype x)
   else
-    L.gather x ix.gather_indices
-      {
-        offset_dims = ix.offset_dims;
-        collapsed_slice_dims = ix.collapsed_slice_dims;
-        start_index_map = ix.start_index_map;
-        g_operand_batching_dims = [||];
-        g_start_indices_batching_dims = [||];
-      }
-      ix.gather_slice_shape
+    let prim =
+      T.Gather
+        {
+          dimension_numbers =
+            {
+              offset_dims = ix.offset_dims;
+              collapsed_slice_dims = ix.collapsed_slice_dims;
+              start_index_map = ix.start_index_map;
+              g_operand_batching_dims = [||];
+              g_start_indices_batching_dims = [||];
+            };
+          slice_sizes = ix.gather_slice_shape;
+        }
+    in
+    let prim = if clip then Np_ints.mark_prim prim else prim in
+    C.bind1 prim [ x; ix.gather_indices ]
+
+let take_clip x idx = gather_take ~clip:true x (expand idx (rank x))
 
 let take x idx =
   let idx = expand idx (rank x) in

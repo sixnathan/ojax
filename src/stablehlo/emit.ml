@@ -1130,10 +1130,13 @@ let cum_window_attrs shape axis reverse =
          shape)
   in
   let pad_str =
-    "dense<["
-    ^ (List.map (fun (l, h) -> Printf.sprintf "[%d, %d]" l h) pad
-      |> String.concat ", ")
-    ^ Printf.sprintf "]> : tensor<%dx2xi64>" ndim
+    if List.for_all (fun (l, h) -> l = 0 && h = 0) pad then
+      Printf.sprintf "dense<0> : tensor<%dx2xi64>" ndim
+    else
+      "dense<["
+      ^ (List.map (fun (l, h) -> Printf.sprintf "[%d, %d]" l h) pad
+        |> String.concat ", ")
+      ^ Printf.sprintf "]> : tensor<%dx2xi64>" ndim
   in
   Printf.sprintf
     "base_dilations = %s, padding = %s, window_dilations = %s, \

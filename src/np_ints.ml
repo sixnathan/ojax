@@ -24,3 +24,11 @@ let prim_marked prim =
   List.exists
     (fun other -> other == o)
     (Hashtbl.find_all marked_prims (Hashtbl.hash o))
+
+let exact_values : (Obj.t * float) list ref = ref []
+
+let mark_exact value x =
+  exact_values := (Obj.repr value, x) :: !exact_values;
+  value
+
+let exact_of value = List.assq_opt (Obj.repr value) !exact_values

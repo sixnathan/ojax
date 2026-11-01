@@ -1624,11 +1624,11 @@ let special_batch_run op params a =
         ]
   | "sx_sph" ->
       let v = a () in
+      let n = ints "n" in
+      let m = ints "m" in
+      let theta = UF.absolute v in
       let phi = UF.add (UF.multiply v (like v 0.5)) (like v 0.2) in
-      let out =
-        SP.sph_harm_y ~n_max:(int_p "n_max") (ints "n") (ints "m")
-          (UF.absolute v) phi
-      in
+      let out = SP.sph_harm_y ~n_max:(int_p "n_max") n m theta phi in
       Some
         [
           (if dt_of v = Ojax.Dtype.F32 then NL.astype out Ojax.Dtype.Complex64

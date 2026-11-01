@@ -302,8 +302,10 @@ let lit_value nd =
   | Dtype.F32 | Dtype.F64 | Dtype.F16 | Dtype.Bf16 | Dtype.F4_e2m1fn
   | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
   | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
-  | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
-      python_repr_float (Ndarray.get_f nd scalar)
+  | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu -> (
+      match Np_ints.exact_of nd with
+      | Some x -> python_repr_float x
+      | None -> python_repr_float (Ndarray.get_f nd scalar))
   | Dtype.Complex64 | Dtype.Complex128 ->
       let z = Ndarray.get_c nd scalar in
       let im = python_repr_float z.Complex.im in
@@ -743,12 +745,15 @@ let jax_params (e : eqn) =
       ]
   | Top_k { k; axis } ->
       [ ("axis", Plain (string_of_int axis)); ("k", Plain (string_of_int k)) ]
-  | Gather { dimension_numbers; slice_sizes } ->
+  | Gather { dimension_numbers; slice_sizes } as gather_prim ->
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ("fill_value", Plain "None");
         ("indices_are_sorted", Plain "False");
-        ("mode", Plain "GatherScatterMode.PROMISE_IN_BOUNDS");
+        ( "mode",
+          Plain
+            (if Np_ints.prim_marked gather_prim then "GatherScatterMode.CLIP"
+             else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
         ("unique_indices", Plain "False");
       ]

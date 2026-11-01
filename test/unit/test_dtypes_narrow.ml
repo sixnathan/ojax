@@ -7199,7 +7199,7 @@ let abi_codes () =
     ]
 
 let pjrt_roundtrip () =
-  if Sys.getenv_opt "OJAX_PJRT_PLUGIN" = None then ()
+  if Ojax.Pjrt.Discover.find () = None then ()
   else
     List.iter
       (fun (d, values) ->
@@ -7317,7 +7317,7 @@ let grad_small_float () =
   check_floats "grad" grad_e4m3 (flat (leaf_nd (Api.grad f [ leaf x ])))
 
 let device_buffers_survive_collection () =
-  if Sys.getenv_opt "OJAX_PJRT_PLUGIN" <> None then begin
+  if Ojax.Pjrt.Discover.find () <> None then begin
     for _ = 1 to 3 do
       ignore
         (Ojax.Backend.of_host_value

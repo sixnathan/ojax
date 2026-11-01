@@ -9,7 +9,7 @@ module D = Ojax.Pjrt.Discover
 let () = Ojax.Lax.install ()
 
 let plugin_present =
-  match Sys.getenv_opt D.env_var with
+  match D.find () with
   | Some p when (not (Filename.is_relative p)) && Sys.file_exists p -> true
   | _ -> false
 

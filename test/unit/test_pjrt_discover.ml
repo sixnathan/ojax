@@ -73,11 +73,53 @@ let verify_mismatch () =
       expect_error "mismatch" (fun () -> D.verify_at path))
 
 let real_plugin () =
-  match Sys.getenv_opt D.env_var with
+  match D.find () with
   | Some path when (not (Filename.is_relative path)) && Sys.file_exists path ->
       Alcotest.(check string)
         "preflight returns resolved path" path (D.preflight ())
   | _ -> ()
+
+let with_home names f =
+  let home = Filename.temp_file "ojax_home_" "" in
+  Sys.remove home;
+  Sys.mkdir home 0o755;
+  let dir = Filename.concat home ".local" in
+  Sys.mkdir dir 0o755;
+  let dir = Filename.concat dir "pjrt" in
+  Sys.mkdir dir 0o755;
+  let saved = Sys.getenv_opt "HOME" in
+  List.iter (fun name -> close_out (open_out (Filename.concat dir name))) names;
+  Unix.putenv "HOME" home;
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "HOME" (Option.value saved ~default:"");
+      List.iter (fun name -> Sys.remove (Filename.concat dir name)) names;
+      Sys.rmdir dir;
+      Sys.rmdir (Filename.dirname dir);
+      Sys.rmdir home)
+    (fun () -> f dir)
+
+let exact_name = "pjrt_c_api_cpu_xla_5a9e73c_plugin.so"
+let release_name = "pjrt_c_api_cpu_v0.83.1_plugin.so"
+
+let conventional_prefers_exact () =
+  with_home [ release_name; exact_name ] (fun dir ->
+      Alcotest.(check (option string))
+        "the plugin built from jax's XLA commit wins"
+        (Some (Filename.concat dir exact_name))
+        (D.conventional_path ()))
+
+let conventional_falls_back () =
+  with_home [ release_name ] (fun dir ->
+      Alcotest.(check (option string))
+        "the release plugin is the fallback"
+        (Some (Filename.concat dir release_name))
+        (D.conventional_path ()))
+
+let conventional_empty () =
+  with_home [] (fun _ ->
+      Alcotest.(check (option string))
+        "nothing to find" None (D.conventional_path ()))
 
 let () =
   Alcotest.run "pjrt_discover"
@@ -101,6 +143,13 @@ let () =
           Alcotest.test_case "empty errors" `Quick validate_empty;
           Alcotest.test_case "relative errors" `Quick validate_relative;
           Alcotest.test_case "absolute ok" `Quick validate_absolute;
+        ] );
+      ( "conventional",
+        [
+          Alcotest.test_case "prefers the exact plugin" `Quick
+            conventional_prefers_exact;
+          Alcotest.test_case "falls back" `Quick conventional_falls_back;
+          Alcotest.test_case "empty" `Quick conventional_empty;
         ] );
       ( "preflight",
         [

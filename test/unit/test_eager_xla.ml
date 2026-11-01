@@ -6,9 +6,7 @@ let () =
   Random.Prng.install ();
   Random.Threefry.install ()
 
-let need_plugin () =
-  if Sys.getenv_opt Pjrt.Discover.env_var = None then Alcotest.skip ()
-
+let need_plugin () = if Pjrt.Discover.find () = None then Alcotest.skip ()
 let f32 shape xs = Concrete (Ndarray.of_floats Dtype.F32 shape xs)
 
 let floats = function

@@ -16,7 +16,7 @@ let doubled = function
   | [ x ] -> [ L.mul x (L.full_like x 2.0) ]
   | _ -> Alcotest.fail "arity"
 
-let plugin_present () = Sys.getenv_opt "OJAX_PJRT_PLUGIN" <> None
+let plugin_present () = Ojax.Pjrt.Discover.find () <> None
 
 let stages () =
   let lowered = Stages.lower doubled [ scalar_aval ] in

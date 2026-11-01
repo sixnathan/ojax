@@ -14,7 +14,7 @@ module B = Interpreters.Batching
 module Tree = Tree_util
 
 let () = Lax.install ()
-let plugin_present () = Sys.getenv_opt "OJAX_PJRT_PLUGIN" <> None
+let plugin_present () = Ojax.Pjrt.Discover.find () <> None
 let arr dt sh xs = Concrete (Ndarray.of_floats dt sh xs)
 
 let nd = function

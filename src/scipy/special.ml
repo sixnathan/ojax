@@ -2524,9 +2524,10 @@ let hyp2f1_digamma_transform a b c x =
     let y = y *! (p /! bottom2) in
     let y = where_ (ne_ (band ard (int_full D.I32 1)) 0.0) (neg_ y) y in
     let q = UF.power s rd in
+    let positive = gt_ rd 0.0 in
     let when_pos = (y *! q) +! y1 in
     let when_neg = y +! (y1 *! q) in
-    where_ (gt_ rd 0.0) when_pos when_neg
+    where_ positive when_pos when_neg
   in
   let is_zero = eq_ rd 0.0 in
   let g_c = gamma c in

@@ -905,8 +905,9 @@ let select ?default condlist choicelist =
     invalid_arg "select: condlist and choicelist must have the same length";
   let false0 = scalar D.Bool 0.0 in
   let conds_b = broadcast_arrays (false0 :: condlist) in
-  let conds_i = List.map (fun c -> convert c D.I32) conds_b in
-  let stacked = bind1 (T.Stack 0) conds_i in
+  let common = result_type conds_b in
+  let conds_c = List.map (fun c -> convert c common) conds_b in
+  let stacked = convert (bind1 (T.Stack 0) conds_c) D.Bool in
   let idx =
     bind1
       (T.Argmax { axis = 0; index_dtype = Dtypes.default_int_dtype () })

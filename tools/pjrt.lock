@@ -76,3 +76,30 @@ exported_symbol = GetPjrtApi
 runtime_env_var = OJAX_PJRT_GPU_PLUGIN
 runtime_requires = libcudnn.so.9 on LD_LIBRARY_PATH, from PyPI nvidia-cudnn-cu13 9.27.0.42 (aarch64 wheel sha256 41b3aae756032ed13b1fcac39c79330cfc5434059d0c5251914e0f6ce582c7ea)
 verified_device = NVIDIA GB10, driver 580.173.02, CUDA 13.0, platform version cuda 13000
+
+[plugin.linux-arm64-xla-5a9e73c]
+provider = self-built from the jax-v0.10.2 bazel workspace
+xla_commit = 5a9e73cbd92530cac2ac36f4736a774b2412afe2
+xla_tarball_url = https://github.com/openxla/xla/archive/5a9e73cbd92530cac2ac36f4736a774b2412afe2.tar.gz
+xla_tarball_sha256 = 08a52210a04cd68d38f6201d56273d04ac0f8b4e0da9f72677c74a48cc637422
+xla_patches = jax-v0.10.2 third_party/xla: xla_1f3fbb74.patch xla_4c9ae741.patch xla_llvm_pr_203230.patch xla_9b348c6b.patch
+jax_tag = jax-v0.10.2
+jax_tarball_url = https://github.com/jax-ml/jax/archive/refs/tags/jax-v0.10.2.tar.gz
+jax_tarball_sha256 = fa7214ab31ed1cd418b4305807e9c4f3f175c783eeea40c28e0f77c3f4c24bc7
+bazel_url = https://github.com/bazelbuild/bazel/releases/download/7.7.0/bazel-7.7.0-linux-arm64
+bazel_sha256 = 8d404f7a266ead50be0918f913df1449a4880f5c8ef36c88d09d6204e67f114d
+workspace = jax-v0.10.2 WORKSPACE and .bazelrc, unmodified
+target = @xla//xla/pjrt/c:pjrt_c_api_cpu_plugin.so
+wheel_flags = --config=ci_linux_aarch64 --config=mkl_aarch64_threadpool --define=xnn_enable_avxvnniint8=false --repo_env=HERMETIC_PYTHON_VERSION=3.13
+export_flags = --per_file_copt=external/xla/xla/pjrt/c/pjrt_c_api_cpu\.cc@-fvisibility=default --linkopt=-Wl,--undefined=GetPjrtApi
+export_flags_note = not used for the jaxlib wheel; needed because the workspace compiles with -fvisibility=hidden and the target has no alwayslink, which otherwise leaves GetPjrtApi unexported
+compiler = hermetic rules_ml_toolchain clang 18.1.8 and LLD 18.1.8, same .comment strings as jaxlib 0.10.2 libjax_common.so
+install_path = $HOME/.local/pjrt/pjrt_c_api_cpu_xla_5a9e73c_plugin.so
+plugin_sha256 = 6852a300d723a8cb93e40fac89a87c1ab6cdc6b03a1ea9fd7350721c115dfe08
+plugin_bytes = 262264448
+exported_symbol = GetPjrtApi
+runtime_env_var = OJAX_PJRT_PLUGIN
+pjrt_api_major = 0
+pjrt_api_minor = 112
+struct_size_bytes = 1144
+abi_note = all 154 structs of the minor 81 header are field-offset prefixes of minor 112, and the plugin guards appended fields on struct_size, so the minor 81 header remains valid

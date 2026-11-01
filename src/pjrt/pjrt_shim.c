@@ -81,7 +81,7 @@ CAMLprim value ojax_pjrt_open(value v_path) {
   const PJRT_Api *api = NULL;
   ojax_disable_fast_min_max();
   caml_release_runtime_system();
-  handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+  handle = dlopen(path, RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
   if (handle == NULL) {
     const char *e = dlerror();
     snprintf(errbuf, sizeof(errbuf), "dlopen failed: %s", e ? e : "unknown");

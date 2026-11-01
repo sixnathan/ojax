@@ -230,7 +230,7 @@ let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
             in
             let part = L.slice_in_dim rows lo hi in
             let coef, _, _, _ = Numpy.Linalg.lstsq design part in
-            b1 Sub [ part; L.dot design coef ])
+            b1 Sub [ part; L.dot ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest) design coef ])
           (segments bounds)
       in
       let out = NL.reshape (NL.concatenate ~axis:0 cleaned) moved_shape in
@@ -414,6 +414,7 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
           scatter_dims_to_operand_dims = [| n - 1 |];
           s_operand_batching_dims = [||];
           s_scatter_indices_batching_dims = [||];
+          s_sorted_unique = false;
         }
     end
     else result

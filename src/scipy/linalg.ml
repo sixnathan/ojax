@@ -85,7 +85,7 @@ let lu ?(permute_l = false) a =
   let l_lower = IDX.take_index ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
   let l = UF.add l_lower (NL.eye ~m:k ~dtype:dt m) in
   let u = IDX.take_index ~axis:0 (NL.triu lu_) kcols in
-  if permute_l then [ TC.matmul p l; u ] else [ p; l; u ]
+  if permute_l then [ TC.matmul ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest) p l; u ] else [ p; l; u ]
 
 let lu ?permute_l a0 =
   Eager_jit.many ~jit:"lu" "scipy.linalg.lu" permute_l [] [ a0 ]
@@ -572,28 +572,30 @@ let expm_sum terms =
         (expm_coefficient (snd first) (fst first))
         rest
 
+let precise_dot a b = TC.dot ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest) a b
+
 let pade3 a =
   let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
-  let a2 = TC.dot a a in
-  let u = TC.dot a (expm_sum [ (1.0, a2); (60.0, ident) ]) in
+  let a2 = precise_dot a a in
+  let u = precise_dot a (expm_sum [ (1.0, a2); (60.0, ident) ]) in
   let v = expm_sum [ (12.0, a2); (120.0, ident) ] in
   [ u; v ]
 
 let pade5 a =
   let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
-  let a2 = TC.dot a a in
-  let a4 = TC.dot a2 a2 in
-  let u = TC.dot a (expm_sum [ (1.0, a4); (420.0, a2); (15120.0, ident) ]) in
+  let a2 = precise_dot a a in
+  let a4 = precise_dot a2 a2 in
+  let u = precise_dot a (expm_sum [ (1.0, a4); (420.0, a2); (15120.0, ident) ]) in
   let v = expm_sum [ (30.0, a4); (3360.0, a2); (30240.0, ident) ] in
   [ u; v ]
 
 let pade7 a =
   let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
-  let a2 = TC.dot a a in
-  let a4 = TC.dot a2 a2 in
-  let a6 = TC.dot a4 a2 in
+  let a2 = precise_dot a a in
+  let a4 = precise_dot a2 a2 in
+  let a6 = precise_dot a4 a2 in
   let u =
-    TC.dot a
+    precise_dot a
       (expm_sum [ (1.0, a6); (1512.0, a4); (277200.0, a2); (8648640.0, ident) ])
   in
   let v =
@@ -603,12 +605,12 @@ let pade7 a =
 
 let pade9 a =
   let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
-  let a2 = TC.dot a a in
-  let a4 = TC.dot a2 a2 in
-  let a6 = TC.dot a4 a2 in
-  let a8 = TC.dot a6 a2 in
+  let a2 = precise_dot a a in
+  let a4 = precise_dot a2 a2 in
+  let a6 = precise_dot a4 a2 in
+  let a8 = precise_dot a6 a2 in
   let u =
-    TC.dot a
+    precise_dot a
       (expm_sum
          [
            (1.0, a8);
@@ -632,11 +634,11 @@ let pade9 a =
 
 let pade13 a =
   let ident = NL.eye ~dtype:(dtype a) (shape a).(0) in
-  let a2 = TC.dot a a in
-  let a4 = TC.dot a2 a2 in
-  let a6 = TC.dot a4 a2 in
+  let a2 = precise_dot a a in
+  let a4 = precise_dot a2 a2 in
+  let a6 = precise_dot a4 a2 in
   let u_inner =
-    TC.dot a6 (expm_sum [ (1.0, a6); (16380.0, a4); (40840800.0, a2) ])
+    precise_dot a6 (expm_sum [ (1.0, a6); (16380.0, a4); (40840800.0, a2) ])
   in
   let u_tail =
     List.fold_left
@@ -649,9 +651,9 @@ let pade13 a =
         (32382376266240000.0, ident);
       ]
   in
-  let u = TC.dot a u_tail in
+  let u = precise_dot a u_tail in
   let v_inner =
-    TC.dot a6 (expm_sum [ (182.0, a6); (960960.0, a4); (1323241920.0, a2) ])
+    precise_dot a6 (expm_sum [ (182.0, a6); (960960.0, a4); (1323241920.0, a2) ])
   in
   let v =
     List.fold_left
@@ -734,7 +736,7 @@ let expm_squaring r n_squarings max_squarings =
                 Lax_api.cond
                   (C.bind1 T.Lt [ i; n_squarings ])
                   (function
-                    | [ x ] -> [ TC.dot x x ] | _ -> invalid_arg "expm: arity")
+                    | [ x ] -> [ precise_dot x x ] | _ -> invalid_arg "expm: arity")
                   Fun.id [ c ]
             | _ -> invalid_arg "expm: arity"
           in
@@ -915,7 +917,8 @@ let rec sqrtm ?(blocksize = 1) a =
             (Array.to_list u)
         in
         let root = L.reshape (L.concatenate cells 0) [| n; n |] in
-        L.dot (L.dot z root) (L.conj (NL.matrix_transpose z))
+        let highest = Lax_config.precision_of_level Lax_config.Precision_highest in
+TC.matmul ~precision:highest (TC.matmul ~precision:highest z root) (L.conj (NL.matrix_transpose z))
     | _ -> failwith "sqrtm: schur arity"
 
 let sqrtm ?blocksize a0 =

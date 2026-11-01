@@ -460,20 +460,18 @@ and pinv_jvp ~hermitian ~rtol a a_dot =
   in
   let sa = shape a in
   let na = Array.length sa in
-  let ( @@@ ) x y = TC.matmul x y in
+  let m x y = TC.matmul x y in
   let ( +! ) = UF.add and ( -! ) = UF.subtract in
   let h = hconj in
   let p_dot =
     if sa.(na - 2) >= sa.(na - 1) then
-      let s = (p @@@ h p) @@@ h a_dot in
-      let t = (h a_dot @@@ h p) @@@ p in
-      UF.negative (p @@@ a_dot)
-      @@@ (p +! s -! ((s @@@ a) @@@ p) +! t -! ((p @@@ a) @@@ t))
+      let s = m (m p (h p)) (h a_dot) in
+      let t = m (m (h a_dot) (h p)) p in
+      m (UF.negative (m p a_dot)) p +! s -! m (m s a) p +! t -! m (m p a) t
     else
-      let s = p @@@ h p @@@ h a_dot in
-      let t = h a_dot @@@ h p @@@ p in
-      UF.negative p
-      @@@ ((a_dot @@@ p) +! s -! (s @@@ a @@@ p) +! t -! (p @@@ a @@@ t))
+      let s = m p (m (h p) (h a_dot)) in
+      let t = m (h a_dot) (m (h p) p) in
+      m (UF.negative p) (m a_dot p) +! s -! m s (m a p) +! t -! m p (m a t)
   in
   ([ p ], [ p_dot ])
 

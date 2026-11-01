@@ -370,7 +370,11 @@ let custom_call :
 let atom_type = function
   | A_var (v : var) -> v.vaval
   | A_lit nd ->
-      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+      {
+        shape = Ndarray.shape nd;
+        dtype = Ndarray.dtype nd;
+        weak_type = Ndarray.weak nd;
+      }
   | DropVar a -> a
 
 let custom_call_of (e : eqn) =

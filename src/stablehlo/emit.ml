@@ -1,7 +1,11 @@
 open Types
 
 let aval_of_ndarray nd =
-  { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+  {
+    shape = Ndarray.shape nd;
+    dtype = Ndarray.dtype nd;
+    weak_type = Ndarray.weak nd;
+  }
 
 let atom_aval = function
   | A_var v -> v.vaval

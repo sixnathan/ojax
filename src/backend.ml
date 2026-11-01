@@ -1106,7 +1106,11 @@ let region_programs = Region_cache.create 512
 let atom_output_aval = function
   | A_var (v : var) -> v.vaval
   | A_lit nd ->
-      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+      {
+        shape = Ndarray.shape nd;
+        dtype = Ndarray.dtype nd;
+        weak_type = Ndarray.weak nd;
+      }
   | DropVar aval -> aval
 
 let build_region name f avals =

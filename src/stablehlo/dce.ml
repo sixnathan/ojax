@@ -44,7 +44,7 @@ let eqn_avals (e : eqn) =
           {
             shape = Ndarray.shape nd;
             dtype = Ndarray.dtype nd;
-            weak_type = false;
+            weak_type = Ndarray.weak nd;
           }
       | DropVar a -> a)
     e.inputs

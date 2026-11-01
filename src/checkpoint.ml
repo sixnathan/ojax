@@ -44,7 +44,11 @@ let is_effectful = function
 let atom_aval = function
   | A_var v -> v.vaval
   | A_lit nd ->
-      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+      {
+        shape = Ndarray.shape nd;
+        dtype = Ndarray.dtype nd;
+        weak_type = Ndarray.weak nd;
+      }
   | DropVar a -> a
 
 let atom_vars atoms =

@@ -1247,6 +1247,7 @@ let library_sweep op v =
   let module SP = Ojax.Scipy.Special in
   let module St = Ojax.Scipy.Stats in
   let lit x reference = L.full [||] x (dt_of reference) in
+  let py = Ojax.Numpy.Jnp_util.py_float in
   let u () = NF.sigmoid v in
   let q () =
     let s = NF.softplus v in
@@ -1299,8 +1300,8 @@ let library_sweep op v =
   | "sw_sp_xlogy" -> Some (SP.xlogy v (q ()))
   | "sw_sp_xlog1py" -> Some (SP.xlog1py v (q ()))
   | "sw_sp_entr" -> Some (SP.entr (q ()))
-  | "sw_sp_boxcox" -> Some (SP.boxcox (q ()) (lit 0.5 (q ())))
-  | "sw_sp_boxcox1p" -> Some (SP.boxcox1p (q ()) (lit 0.5 (q ())))
+  | "sw_sp_boxcox" -> Some (SP.boxcox (q ()) (py 0.5))
+  | "sw_sp_boxcox1p" -> Some (SP.boxcox1p (q ()) (py 0.5))
   | "sw_sp_rel_entr" -> Some (SP.rel_entr (q ()) (q1 ()))
   | "sw_sp_kl_div" -> Some (SP.kl_div (q ()) (q1 ()))
   | "sw_sp_i0" -> Some (SP.i0 v)
@@ -1316,7 +1317,7 @@ let library_sweep op v =
            (T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| 1.0 |]))
            (q ()))
   | "sw_sp_zeta" -> Some (SP.zeta ~q:(q ()) (q1 ()))
-  | "sw_sp_poch" -> Some (SP.poch (q ()) (lit 2.0 (q ())))
+  | "sw_sp_poch" -> Some (SP.poch (q ()) (py 2.0))
   | "sw_sp_spence" -> Some (SP.spence (q ()))
   | "sw_sp_owens_t" -> Some (SP.owens_t v (q ()))
   | "sw_sp_betainc" -> Some (SP.betainc (q ()) (q1 ()) (u ()))
@@ -1333,20 +1334,18 @@ let library_sweep op v =
   | "sw_st_norm_isf" -> Some (St.Norm.isf (u ()))
   | "sw_st_expon_logpdf" -> Some (St.Expon.logpdf (q ()))
   | "sw_st_expon_cdf" -> Some (St.Expon.cdf (q ()))
-  | "sw_st_gamma_logpdf" -> Some (St.Gamma.logpdf (q ()) (lit 2.0 (q ())))
-  | "sw_st_gamma_cdf" -> Some (St.Gamma.cdf (q ()) (lit 2.0 (q ())))
-  | "sw_st_beta_logpdf" ->
-      Some (St.Beta.logpdf (u ()) (lit 2.0 (u ())) (lit 3.0 (u ())))
-  | "sw_st_beta_cdf" ->
-      Some (St.Beta.cdf (u ()) (lit 2.0 (u ())) (lit 3.0 (u ())))
+  | "sw_st_gamma_logpdf" -> Some (St.Gamma.logpdf (q ()) (py 2.0))
+  | "sw_st_gamma_cdf" -> Some (St.Gamma.cdf (q ()) (py 2.0))
+  | "sw_st_beta_logpdf" -> Some (St.Beta.logpdf (u ()) (py 2.0) (py 3.0))
+  | "sw_st_beta_cdf" -> Some (St.Beta.cdf (u ()) (py 2.0) (py 3.0))
   | "sw_st_laplace_logpdf" -> Some (St.Laplace.logpdf v)
   | "sw_st_laplace_cdf" -> Some (St.Laplace.cdf v)
   | "sw_st_logistic_logpdf" -> Some (St.Logistic.logpdf v)
   | "sw_st_logistic_cdf" -> Some (St.Logistic.cdf v)
   | "sw_st_cauchy_logpdf" -> Some (St.Cauchy.logpdf v)
   | "sw_st_cauchy_cdf" -> Some (St.Cauchy.cdf v)
-  | "sw_st_chi2_logpdf" -> Some (St.Chi2.logpdf (q ()) (lit 3.0 (q ())))
-  | "sw_st_pareto_logpdf" -> Some (St.Pareto.logpdf (q1 ()) (lit 2.0 (q ())))
+  | "sw_st_chi2_logpdf" -> Some (St.Chi2.logpdf (q ()) (py 3.0))
+  | "sw_st_pareto_logpdf" -> Some (St.Pareto.logpdf (q1 ()) (py 2.0))
   | _ -> None
 
 let dtype_sweep_run op a =

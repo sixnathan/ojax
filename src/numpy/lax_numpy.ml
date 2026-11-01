@@ -378,12 +378,26 @@ let bind = C.bind
 let scalar dt x = const_full dt [||] x
 let full dt sh x = const_full dt sh x
 
+let promote_scalar_kept x y =
+  let dt, _ =
+    Dtypes.result_type
+      [
+        ((get_aval x).T.dtype, (get_aval x).T.weak_type);
+        ((get_aval y).T.dtype, (get_aval y).T.weak_type);
+      ]
+  in
+  let x = convert x dt and y = convert y dt in
+  if ndim x = ndim y || ndim x = 0 || ndim y = 0 then (x, y)
+  else
+    let sh = broadcast_shapes (shape x) (shape y) in
+    (broadcast_to x sh, broadcast_to y sh)
+
 let maximum a b =
-  let a, b, _, _ = promote2 a b in
+  let a, b = promote_scalar_kept a b in
   bind1 T.Max [ a; b ]
 
 let minimum a b =
-  let a, b, _, _ = promote2 a b in
+  let a, b = promote_scalar_kept a b in
   bind1 T.Min [ a; b ]
 
 let where_ = Jnp_util.where
@@ -462,21 +476,12 @@ let clip ?min ?max arr =
         "Clip received a complex value either through the input or the min/max \
          keywords. Complex values have no ordering and cannot be clipped."
   | _ -> ());
-  let fractional = function
-    | Some m -> not (Float.is_integer m)
-    | None -> false
+  let scalar_arg m =
+    if Float.is_integer m && (is_integral (dtype arr) || is_bool (dtype arr))
+    then Jnp_util.py_int (int_of_float m)
+    else Jnp_util.py_float m
   in
-  let arr =
-    if
-      (is_integral (dtype arr) || is_bool (dtype arr))
-      && (fractional min || fractional max)
-    then convert arr (Dtypes.default_float_dtype ())
-    else if is_bool (dtype arr) && (min <> None || max <> None) then
-      convert arr (Dtypes.default_int_dtype ())
-    else arr
-  in
-  let dt = dtype arr in
-  let lo = Option.map (scalar dt) min and hi = Option.map (scalar dt) max in
+  let lo = Option.map scalar_arg min and hi = Option.map scalar_arg max in
   let extras = List.filter_map Fun.id [ lo; hi ] in
   Jnp_util.jit1 "clip"
     (function

@@ -5,6 +5,8 @@ module D = Dtype
 let shape v = (C.get_aval v).T.shape
 let dtype v = (C.get_aval v).T.dtype
 let weak v = (C.get_aval v).T.weak_type
+let py_float x = C.py_scalar (Dtypes.default_float_dtype ()) x
+let py_int x = C.py_scalar (Dtypes.default_int_dtype ()) (float_of_int x)
 let jit name ?key f args = Jaxpr.named_jit ~name ?key f args
 
 let jit1 name ?key f args =

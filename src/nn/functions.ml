@@ -42,20 +42,20 @@ let jit_unary name f x =
     (function [ x ] -> f x | _ -> invalid_arg (name ^ ": arity"))
     [ x ]
 
-let relu = jit_unary "relu" (fun x -> UF.maximum x (scalar_like x 0.0))
+let relu = jit_unary "relu" (fun x -> UF.maximum x (Numpy.Jnp_util.py_int 0))
 
 let relu6 =
   jit_unary "relu6" (fun x ->
-      let high = UF.maximum x (scalar_like x 0.0) in
-      UF.minimum high (scalar_like x 6.0))
+      let high = UF.maximum x (Numpy.Jnp_util.py_int 0) in
+      UF.minimum high (Numpy.Jnp_util.py_float 6.0))
 
 let softplus =
-  jit_unary "softplus" (fun x -> UF.logaddexp x (scalar_like x 0.0))
+  jit_unary "softplus" (fun x -> UF.logaddexp x (Numpy.Jnp_util.py_int 0))
 
 let soft_sign =
   jit_unary "soft_sign" (fun x ->
       let magnitude = UF.abs x in
-      let denom = UF.add magnitude (scalar_like x 1.0) in
+      let denom = UF.add magnitude (Numpy.Jnp_util.py_int 1) in
       UF.divide x denom)
 
 let sigmoid = jit_unary "sigmoid" (fun x -> bind1 T.Logistic [ x ])
@@ -77,61 +77,92 @@ let log_sigmoid =
       let s = softplus n in
       UF.negative s)
 
-let sparse_plus x =
-  let one = scalar_like x 1.0 in
-  let quad = UF.divide (UF.square (UF.add x one)) (scalar_like x 4.0) in
-  where3
-    (UF.less_equal x (scalar_like x (-1.0)))
-    (scalar_like x 0.0)
-    (where3 (UF.greater_equal x one) x quad)
+let py_float = Numpy.Jnp_util.py_float
+let py_int = Numpy.Jnp_util.py_int
 
-let sparse_sigmoid x =
-  UF.multiply (scalar_like x 0.5)
-    (NL.clip ~min:0.0 ~max:2.0 (UF.add x (scalar_like x 1.0)))
+let sparse_plus =
+  jit_unary "sparse_plus" (fun x ->
+      where3
+        (UF.less_equal x (py_float (-1.0)))
+        (py_float 0.0)
+        (where3
+           (UF.greater_equal x (py_float 1.0))
+           x
+           (UF.divide
+              (UF.power (UF.add x (py_float 1.0)) (py_int 2))
+              (py_int 4))))
 
-let hard_tanh x =
-  where3
-    (UF.greater x (scalar_like x 1.0))
-    (scalar_like x 1.0)
-    (where3 (UF.less x (scalar_like x (-1.0))) (scalar_like x (-1.0)) x)
+let sparse_sigmoid =
+  jit_unary "sparse_sigmoid" (fun x ->
+      UF.multiply (py_float 0.5)
+        (NL.clip ~min:0.0 ~max:2.0 (UF.add x (py_float 1.0))))
+
+let hard_tanh =
+  jit_unary "hard_tanh" (fun x ->
+      where3
+        (UF.greater x (py_int 1))
+        (py_int 1)
+        (where3 (UF.less x (py_int (-1))) (py_int (-1)) x))
 
 let hard_sigmoid =
   jit_unary "hard_sigmoid" (fun x ->
-      let shifted = UF.add x (scalar_like x 3.0) in
+      let shifted = UF.add x (py_float 3.0) in
       let r = relu6 shifted in
-      UF.divide r (scalar_like x 6.0))
+      UF.divide r (py_float 6.0))
 
 let hard_silu =
   jit_unary "hard_silu" (fun x ->
       let h = hard_sigmoid x in
       UF.multiply x h)
 
-let elu ?(alpha = 1.0) x =
-  let pos = UF.greater x (scalar_like x 0.0) in
-  let safe = where3 pos (scalar_like x 0.0) x in
-  where3 pos x (UF.multiply (scalar_like x alpha) (UF.expm1 safe))
+let jit_scalar name ~default scalar f x =
+  match scalar with
+  | None ->
+      Numpy.Jnp_util.jit1 name
+        (function [ x ] -> f x default | _ -> invalid_arg (name ^ ": arity"))
+        [ x ]
+  | Some value ->
+      Numpy.Jnp_util.jit1 name
+        (function [ x; s ] -> f x s | _ -> invalid_arg (name ^ ": arity"))
+        [ x; py_float value ]
 
-let celu ?(alpha = 1.0) x =
-  UF.add
-    (UF.maximum x (scalar_like x 0.0))
-    (UF.multiply (scalar_like x alpha)
-       (UF.expm1
-          (UF.divide (UF.minimum x (scalar_like x 0.0)) (scalar_like x alpha))))
-
-let selu x =
-  let alpha = 1.6732632423543772848170429916717 in
-  let scale = 1.0507009873554804934193349852946 in
-  UF.multiply (scalar_like x scale) (elu ~alpha x)
-
-let leaky_relu ?(negative_slope = 0.01) x =
-  where3
-    (UF.greater_equal x (scalar_like x 0.0))
+let elu ?alpha x =
+  jit_scalar "elu" ~default:(py_float 1.0) alpha
+    (fun x alpha ->
+      where3
+        (UF.greater x (py_int 0))
+        x
+        (UF.multiply alpha
+           (UF.expm1 (where3 (UF.greater x (py_int 0)) (py_float 0.0) x))))
     x
-    (UF.multiply (scalar_like x negative_slope) x)
 
-let squareplus ?(b = 4.0) x =
-  let y = UF.add x (UF.sqrt (UF.add (UF.square x) (scalar_like x b))) in
-  UF.divide y (scalar_like x 2.0)
+let celu ?alpha x =
+  jit_scalar "celu" ~default:(py_float 1.0) alpha
+    (fun x alpha ->
+      UF.add
+        (UF.maximum x (py_float 0.0))
+        (UF.multiply alpha
+           (UF.expm1 (UF.divide (UF.minimum x (py_float 0.0)) alpha))))
+    x
+
+let selu =
+  jit_unary "selu" (fun x ->
+      let alpha = 1.6732632423543772848170429916717 in
+      let scale = 1.0507009873554804934193349852946 in
+      UF.multiply (py_float scale) (elu ~alpha x))
+
+let leaky_relu ?negative_slope x =
+  jit_scalar "leaky_relu" ~default:(py_float 0.01) negative_slope
+    (fun x slope ->
+      where3 (UF.greater_equal x (py_int 0)) x (UF.multiply slope x))
+    x
+
+let squareplus ?b x =
+  jit_scalar "squareplus" ~default:(py_int 4) b
+    (fun x b ->
+      let y = UF.add x (UF.sqrt (UF.add (UF.square x) b)) in
+      UF.divide y (py_int 2))
+    x
 
 let log1mexp x =
   let c = scalar_like x (Float.log 2.0) in
@@ -438,23 +469,7 @@ let as_int_if_bool x =
     NL.astype x (if Config.x64_enabled () then D.I64 else D.I32)
   else x
 
-let relu x = relu (as_int_if_bool x)
-let hard_tanh x = hard_tanh (as_int_if_bool x)
-let relu6 x = relu6 (as_float x)
-let leaky_relu ?negative_slope x = leaky_relu ?negative_slope (as_float x)
-let elu ?alpha x = elu ?alpha (as_float x)
-let celu ?alpha x = celu ?alpha (as_float x)
-let selu x = selu (as_float x)
-let hard_sigmoid x = hard_sigmoid (as_float x)
-let hard_silu x = hard_silu (as_float x)
-let hard_swish = hard_silu
-let sparse_plus x = sparse_plus (as_float x)
-let sparse_sigmoid x = sparse_sigmoid (as_float x)
 let as_inexact_dtype x = NL.astype x (Dtypes.to_inexact_dtype (dtype x))
-let squareplus ?b x = squareplus ?b (as_inexact_dtype x)
-let soft_sign x = soft_sign (if dtype x = D.Bool then as_float x else x)
-let softplus x = softplus (if dtype x = D.Bool then as_float x else x)
-let mish x = mish (if dtype x = D.Bool then as_float x else x)
 
 let logmeanexp ?axis ?keepdims ?where:mask x =
   logmeanexp ?axis ?keepdims ?where:mask (as_inexact_dtype x)

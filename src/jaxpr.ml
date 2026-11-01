@@ -1,7 +1,11 @@
 open Types
 
 let aval_of_ndarray nd =
-  { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+  {
+    shape = Ndarray.shape nd;
+    dtype = Ndarray.dtype nd;
+    weak_type = Ndarray.weak nd;
+  }
 
 let var_names (jx : jaxpr) =
   let names = Hashtbl.create 16 in

@@ -121,3 +121,4 @@ val call_inline : (closed_jaxpr -> value list -> value list) ref
 val top_is_staging : value list -> bool
 val register_custom_names : int -> name:string -> jvp_name:string -> unit
 val custom_names_of : int -> (string * string) option
+val py_scalar : Dtype.t -> float -> value

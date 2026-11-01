@@ -14,8 +14,8 @@ let rec has_effects = function
   | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
   | Dce_sink | Create_token | After_all -> true
   | Xla_call c -> closed_effects c
-  | Cond { t; f } -> closed_effects t || closed_effects f
-  | While { cond; body } -> closed_effects cond || closed_effects body
+  | Cond { branches; _ } -> List.exists closed_effects branches
+  | While { cond; body; _ } -> closed_effects cond || closed_effects body
   | Scan { jaxpr; _ } -> closed_effects jaxpr
   | Custom_jvp_call id | Custom_vjp_call id -> (
       match Core.custom_rule id with
@@ -124,18 +124,26 @@ and rule used_outs (e : eqn) =
             && not (closed_effects c')
           then None
           else with_prim (Xla_call c') used_ins )
-    | Cond { t; f } ->
+    | Cond { branches; platforms } ->
         let n = List.length e.inputs - 1 in
         let nothing = List.init n (fun _ -> false) in
-        let _, ut = dce_closed t used_outs ~instantiate:nothing in
-        let _, uf = dce_closed f used_outs ~instantiate:nothing in
-        let used = List.map2 ( || ) uf ut in
-        let t', _ = dce_closed t used_outs ~instantiate:used in
-        let f', _ = dce_closed f used_outs ~instantiate:used in
+        let used =
+          List.fold_left
+            (fun acc b ->
+              let _, u = dce_closed b used_outs ~instantiate:nothing in
+              List.map2 ( || ) acc u)
+            nothing branches
+        in
+        let branches' =
+          List.map
+            (fun b -> fst (dce_closed b used_outs ~instantiate:used))
+            branches
+        in
         let used_ins = true :: used in
-        (used_ins, with_prim (Cond { t = t'; f = f' }) used_ins)
-    | Scan { length; reverse; num_carry; jaxpr } ->
-        scan_rule e used_outs ~length ~reverse ~num_carry ~jaxpr
+        (used_ins, with_prim (Cond { branches = branches'; platforms }) used_ins)
+    | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
+        scan_rule e used_outs ~length ~reverse ~num_consts ~num_carry ~jaxpr
+          ~unroll
     | Custom_jvp_call id | Custom_vjp_call id -> (
         let avals = eqn_avals e in
         match Core.find_custom_call_jaxpr id avals with
@@ -169,9 +177,10 @@ and rule used_outs (e : eqn) =
               (everything, with_prim prim everything))
     | _ -> (everything, Some e)
 
-and scan_rule (e : eqn) used_outputs ~length ~reverse ~num_carry ~jaxpr =
+and scan_rule (e : eqn) used_outputs ~length ~reverse ~num_consts ~num_carry
+    ~jaxpr ~unroll =
   let n_in = List.length jaxpr.jaxpr.in_binders - List.length jaxpr.consts in
-  let num_xs = n_in - num_carry in
+  let num_xs = n_in - num_consts - num_carry in
   let carry_out, extensive_out =
     match Util.split_list used_outputs [ num_carry ] with
     | [ a; b ] -> (a, b)
@@ -181,27 +190,38 @@ and scan_rule (e : eqn) used_outputs ~length ~reverse ~num_carry ~jaxpr =
   let rec fixpoint carry_out =
     let used = carry_out @ extensive_out in
     let c', used_inputs =
-      dce_closed jaxpr used ~instantiate:(carry_out @ falses num_xs)
+      dce_closed jaxpr used
+        ~instantiate:(falses num_consts @ carry_out @ falses num_xs)
     in
     let carry_in =
-      match Util.split_list used_inputs [ num_carry ] with
-      | [ a; _ ] -> a
+      match Util.split_list used_inputs [ num_consts; num_carry ] with
+      | [ _; a; _ ] -> a
       | _ -> invalid_arg "Stablehlo.Dce: scan inputs"
     in
     if carry_in = carry_out then (c', used_inputs, used)
     else fixpoint (List.map2 ( || ) carry_out carry_in)
   in
   let c', used_inputs, used = fixpoint carry_out in
-  let num_carry' =
-    match Util.split_list used_inputs [ num_carry ] with
-    | [ a; _ ] -> List.length (List.filter Fun.id a)
+  let num_consts', num_carry' =
+    match Util.split_list used_inputs [ num_consts; num_carry ] with
+    | [ k; a; _ ] ->
+        (List.length (List.filter Fun.id k), List.length (List.filter Fun.id a))
     | _ -> invalid_arg "Stablehlo.Dce: scan inputs"
   in
   ( used_inputs,
     Some
       {
         e with
-        prim = Scan { length; reverse; num_carry = num_carry'; jaxpr = c' };
+        prim =
+          Scan
+            {
+              length;
+              reverse;
+              num_consts = num_consts';
+              num_carry = num_carry';
+              jaxpr = c';
+              unroll;
+            };
         inputs = keep_where e.inputs used_inputs;
         outs = keep_where e.outs used;
       } )

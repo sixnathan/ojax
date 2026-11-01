@@ -806,9 +806,13 @@ let to_inexact = function
       d
 
 let promote_inexact vs =
-  let dt = to_inexact (NL.result_type vs) in
+  let dt, is_weak =
+    Dtypes.result_type
+      (List.map (fun v -> (dtype v, (get_aval v).T.weak_type)) vs)
+  in
+  let dt = to_inexact dt in
   UF.promote_shapes
-    (List.map (fun v -> if dtype v = dt then v else NL.astype v dt) vs)
+    (List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs)
 
 let promote1 x =
   match promote_inexact [ x ] with [ y ] -> y | _ -> assert false
@@ -914,58 +918,88 @@ let vectorize_scalar f args =
   | [] -> out
   | dims -> List.map (fun v -> NL.expand_dims v (Array.of_list dims)) out
 
-let piecewise_body x conds funcs =
-  let dt = dtype x in
-  let condlist =
-    match conds with
-    | [ c ] -> NL.stack ~axis:0 [ c ]
-    | cs -> NL.stack ~axis:0 cs
+type piece = Piece_const of T.value | Piece_fn of (T.value list -> T.value)
+
+let piecewise_body dt x condlist funclist extra =
+  let lead =
+    let first =
+      if (shape condlist).(0) = 1 then condlist
+      else
+        let sh = shape condlist in
+        bind1
+          (T.Slice
+             {
+               start_indices = Array.make (Array.length sh) 0;
+               limit_indices = Array.mapi (fun d e -> if d = 0 then 1 else e) sh;
+               strides = None;
+             })
+          [ condlist ]
+    in
+    AC.zeros_like first
   in
-  let lead = AC.zeros_like (L.slice_in_dim condlist 0 1) in
   let indices =
     NL.argmax ~axis:0
       (RED.cumsum ~axis:0 (NL.concatenate ~axis:0 [ lead; condlist ]))
   in
-  if ndim indices = 0 then
-    let branches =
-      List.map
-        (fun f ops ->
-          match ops with
-          | [ v ] -> [ NL.astype (f v) dt ]
-          | _ -> invalid_arg "piecewise: arity")
-        funcs
-    in
-    List.hd (L.switch indices branches [ x ])
-  else
-    let outs =
-      List.mapi
-        (fun i f ->
-          let pred = L.eq indices (int_full (dtype indices) i) in
-          let safe = L.select pred x (L.stop_gradient x) in
-          List.hd
-            (vectorize_scalar
-               (function
-                 | [ v ] -> [ NL.astype (f v) dt ]
-                 | _ -> invalid_arg "piecewise: arity")
-               [ safe ]))
-        funcs
-    in
-    L.select_n indices outs
+  let branches =
+    List.map
+      (fun piece ops ->
+        match (piece, ops) with
+        | Piece_fn f, [ v ] -> [ NL.astype (f (v :: extra)) dt ]
+        | Piece_const c, [ _ ] -> [ NL.astype c dt ]
+        | _ -> invalid_arg "piecewise: arity")
+      funclist
+  in
+  let switch = function
+    | [ i; v ] -> L.switch i branches [ v ]
+    | _ -> invalid_arg "piecewise: arity"
+  in
+  List.hd (vectorize_scalar switch [ indices; x ])
 
-let piecewise x conds funcs =
-  match funcs with
-  | [] -> invalid_arg "piecewise: empty"
-  | _ ->
-      let n = List.length funcs in
-      let rotated =
-        if n = List.length conds + 1 then
-          List.nth funcs (n - 1) :: List.filteri (fun i _ -> i < n - 1) funcs
-        else (fun v -> AC.zeros_like v) :: funcs
-      in
-      piecewise_body x conds rotated
+let piecewise ~key ?(extra = []) x conds funcs =
+  let n = List.length funcs in
+  let rotated =
+    if n = List.length conds + 1 then
+      List.nth funcs (n - 1) :: List.filteri (fun i _ -> i < n - 1) funcs
+    else if n = List.length conds then
+      Piece_const (py_int 0) :: funcs
+    else invalid_arg "piecewise: function count"
+  in
+  let condlist =
+    match conds with [ c ] -> NL.stack ~axis:0 [ c ] | cs -> NL.stack ~axis:0 cs
+  in
+  let const_vals =
+    List.filter_map (function Piece_const c -> Some c | _ -> None) rotated
+  in
+  let n_const = List.length const_vals in
+  let n_extra = List.length extra in
+  JU.jit1 "_piecewise" ~key
+    (function
+      | x :: condlist :: rest ->
+          let consts = List.filteri (fun i _ -> i < n_const) rest in
+          let extra = List.filteri (fun i _ -> i >= n_const) rest in
+          if List.length extra <> n_extra then
+            invalid_arg "piecewise: arity";
+          let remaining = ref consts in
+          let funclist =
+            List.map
+              (function
+                | Piece_const _ ->
+                    let c = List.hd !remaining in
+                    remaining := List.tl !remaining;
+                    Piece_const c
+                | piece -> piece)
+              rotated
+          in
+          piecewise_body (dtype x) x condlist funclist extra
+      | _ -> invalid_arg "piecewise: arity")
+    ((x :: condlist :: const_vals) @ extra)
 
-let constf dt_of v x = T.Concrete (Nd.of_floats (dt_of x) [||] [| v |])
-let const_val v _ = v
+let constf v = Piece_const (py_float v)
+let const_val v = Piece_const v
+let piece_fn f = Piece_fn (function [ x ] -> f x | _ -> assert false)
+let fresh_key () = string_of_int (C.fresh_id ())
+
 let gammaln x = bind1 T.Lgamma [ real_only "gammaln" x ]
 
 let gammasgn x =
@@ -1064,7 +1098,8 @@ let complex_loggamma_scipy z =
   where_ safe (complex_nan z) res
 
 let complex_loggamma_scipy a0 =
-  Eager_jit.one "scipy.special._complex_loggamma_scipy" () [] [ a0 ]
+  Eager_jit.one ~jit:"_complex_loggamma_scipy"
+    "scipy.special._complex_loggamma_scipy" () [] [ a0 ]
     (fun _ vals ->
       match vals with [ a0 ] -> complex_loggamma_scipy a0 | _ -> assert false)
 
@@ -1076,7 +1111,8 @@ let loggamma x =
     where_py (gt_ x 0.0) res Float.nan
 
 let gammasgn_jit a0 =
-  Eager_jit.one "scipy.special.gammasgn" () [] [ a0 ] (fun _ vals ->
+  Eager_jit.one ~jit:"gammasgn" "scipy.special.gammasgn" () [] [ a0 ]
+    (fun _ vals ->
       match vals with [ a0 ] -> gammasgn a0 | _ -> assert false)
 
 let gamma x =
@@ -1172,7 +1208,7 @@ let expit x = bind1 T.Logistic [ promote1 x ]
 let logit x =
   let x = promote1 x in
   List.hd
-    (CD.custom_jvp
+    (CD.custom_jvp ~name:"logit"
        (function
          | [ x ] -> [ L.log (L.div x (L.sub (scalar_of x 1.0) x)) ]
          | _ -> assert false)
@@ -1193,7 +1229,7 @@ let xlogy_primal = function
 
 let xlogy x y =
   List.hd
-    (CD.custom_jvp xlogy_primal
+    (CD.custom_jvp ~name:"xlogy" ~jvp_name:"_xlogy_jvp" xlogy_primal
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x; y ], [ x_dot; y_dot ] ->
@@ -1212,7 +1248,7 @@ let xlog1py_primal = function
 
 let xlog1py x y =
   List.hd
-    (CD.custom_jvp xlog1py_primal
+    (CD.custom_jvp ~name:"xlog1py" ~jvp_name:"_xlog1py_jvp" xlog1py_primal
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x; y ], [ x_dot; y_dot ] ->
@@ -1224,7 +1260,7 @@ let xlog1py x y =
 
 let xlogx x =
   List.hd
-    (CD.custom_jvp
+    (CD.custom_jvp ~name:"_xlogx" ~jvp_name:"_xlogx_jvp"
        (function [ x ] -> [ xlogy x x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
@@ -1322,7 +1358,7 @@ let wofz_primal z =
 
 let wofz_custom z =
   List.hd
-    (CD.custom_jvp
+    (CD.custom_jvp ~name:"_wofz"
        (function [ z ] -> [ wofz_primal z ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
@@ -1394,7 +1430,7 @@ let erfcx x =
     wofz_custom iz
   else
     List.hd
-      (CD.custom_jvp
+      (CD.custom_jvp ~name:"_erfcx"
          (function [ x ] -> [ erfcx_real x ] | _ -> assert false)
          ~jvp:(fun primals tangents ->
            match (primals, tangents) with
@@ -1454,7 +1490,7 @@ let dawsn_real x =
 let dawsn x =
   let x = real_only "dawsn" x in
   List.hd
-    (CD.custom_jvp
+    (CD.custom_jvp ~name:"_dawsn"
        (function [ x ] -> [ dawsn_real x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
@@ -1584,7 +1620,7 @@ let log_ndtr ?(series_order = 3) x =
   if series_order > 30 then invalid_arg "series_order must be <= 30.";
   single_or_double x;
   List.hd
-    (CD.custom_jvp
+    (CD.custom_jvp ~name:"log_ndtr" ~jvp_name:"_log_ndtr_jvp"
        (function
          | [ x ] -> [ log_ndtr_primal series_order x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
@@ -1658,7 +1694,7 @@ let zeta ?q x =
         | _ -> failwith "zeta: arity"
       in
       List.hd
-        (CD.custom_jvp primal
+        (CD.custom_jvp ~name:"zeta" primal
            ~jvp:(fun primals tangents ->
              Interpreters.Ad.jvp
                (function
@@ -1693,7 +1729,7 @@ let poch_primal z m =
 let poch z m =
   let z, m = real_only2 "poch" z m in
   List.hd
-    (CD.custom_jvp
+    (CD.custom_jvp ~name:"poch"
        (function [ z; m ] -> [ poch_primal z m ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
@@ -1713,16 +1749,19 @@ let spence_poly w =
 
 let spence_calc x =
   let x2_bool = gt_ x 2.0 in
-  let x = piecewise x [ x2_bool ] [ (fun x -> lit_div 1.0 x); (fun x -> x) ] in
+  let x =
+    piecewise ~key:(fresh_key ()) x [ x2_bool ]
+      [ piece_fn (fun x -> lit_div 1.0 x); piece_fn (fun x -> x) ]
+  in
   let x1_5_bool = gt_ x 1.5 in
   let x_5_bool = lt_ x 0.5 in
   let x2_bool = bor x2_bool x1_5_bool in
   let w =
-    piecewise x [ x1_5_bool; x_5_bool ]
+    piecewise ~key:(fresh_key ()) x [ x1_5_bool; x_5_bool ]
       [
-        (fun x -> sub_lit (lit_div 1.0 x) 1.0);
-        (fun x -> neg_ x);
-        (fun x -> sub_lit x 1.0);
+        piece_fn (fun x -> sub_lit (lit_div 1.0 x) 1.0);
+        piece_fn (fun x -> neg_ x);
+        piece_fn (fun x -> sub_lit x 1.0);
       ]
   in
   let y = spence_poly w in
@@ -1737,13 +1776,13 @@ let spence_calc x =
   where_ x2_bool y_flag_two y
 
 let spence_body x =
-  piecewise x
+  piecewise ~key:"spence" x
     [ lt_ x 0.0; eq_ x 1.0; eq_ x 0.0 ]
     [
-      constf dtype Float.nan;
-      constf dtype 0.0;
-      constf dtype ((Float.pi ** 2.0) /. 6.0);
-      spence_calc;
+      constf Float.nan;
+      Piece_const (py_int 0);
+      constf ((Float.pi ** 2.0) /. 6.0);
+      piece_fn spence_calc;
     ]
 
 let spence x =
@@ -1816,19 +1855,28 @@ let sici_primal x =
   [ si; ci ]
 
 let sici_jit a0 =
-  Eager_jit.many "scipy.special.sici" () [] [ a0 ] (fun _ vals ->
+  Eager_jit.many ~jit:"sici" "scipy.special.sici" () [] [ a0 ] (fun _ vals ->
       match vals with [ a0 ] -> sici_primal a0 | _ -> assert false)
 
 let sici x =
-  CD.custom_jvp
+  CD.custom_jvp ~name:"sici" ~jvp_name:"sici_jvp"
     (function [ x ] -> sici_jit x | _ -> assert false)
     ~jvp:(fun primals tangents ->
       match (primals, tangents) with
-      | [ p ], [ t ] ->
-          let out = sici_jit p in
-          let sin_term = UF.sinc (div_lit p Float.pi) in
-          let cos_term = UF.cos p /! p in
-          (out, [ sin_term *! t; cos_term *! t ])
+      | [ p ], [ t ] -> (
+          match
+            JU.jit "sici_jvp"
+              (function
+                | [ p; t ] ->
+                    let out = sici_jit p in
+                    let sin_term = UF.sinc (div_lit p Float.pi) in
+                    let cos_term = UF.cos p /! p in
+                    out @ [ sin_term *! t; cos_term *! t ]
+                | _ -> assert false)
+              [ p; t ]
+          with
+          | [ si; ci; ts; tc ] -> ([ si; ci ], [ ts; tc ])
+          | _ -> assert false)
       | _ -> assert false)
     [ x ]
 
@@ -1892,7 +1940,7 @@ let owens_t_primal h a =
 let owens_t h a =
   let h, a = promote2 h a in
   List.hd
-    (CD.custom_jvp
+    (CD.custom_jvp ~name:"_owens_t_impl" ~jvp_name:"_owens_t_jvp"
        (function [ h; a ] -> [ owens_t_primal h a ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
@@ -2029,23 +2077,24 @@ let vectorize3 f =
     | [ a; b; x ] -> [ f a b x ]
     | _ -> failwith "vectorize: arity")
 
+let hyp1f1_jit args =
+  List.hd
+    (Eager_jit.many ~jit:"hyp1f1" "scipy.special.hyp1f1" () [] args
+       (fun _ vals -> vectorize3 hyp1f1_value vals))
+
 let rec hyp1f1_apply a b x =
   List.hd
-    (CD.custom_jvp
-       (fun args ->
-         Eager_jit.many "scipy.special.hyp1f1" () [] args (fun _ vals ->
-             vectorize3 hyp1f1_value vals))
+    (CD.custom_jvp ~name:"hyp1f1"
+       (fun args -> [ hyp1f1_jit args ])
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ a; b; x ], [ da; db; dx ] ->
-             let out =
-               Eager_jit.many "scipy.special.hyp1f1" () [] primals
-                 (fun _ vals -> vectorize3 hyp1f1_value vals)
-             in
+             let out = [ hyp1f1_jit primals ] in
              let wrt_a =
                List.hd
-                 (Eager_jit.many "scipy.special._hyp1f1_a_derivative" () []
-                    primals (fun _ vals ->
+                 (Eager_jit.many ~jit:"_hyp1f1_a_derivative"
+                    "scipy.special._hyp1f1_a_derivative" () [] primals
+                    (fun _ vals ->
                       vectorize3
                         (fun a b x ->
                           hyp1f1_deriv
@@ -2055,8 +2104,9 @@ let rec hyp1f1_apply a b x =
              in
              let wrt_b =
                List.hd
-                 (Eager_jit.many "scipy.special._hyp1f1_b_derivative" () []
-                    primals (fun _ vals ->
+                 (Eager_jit.many ~jit:"_hyp1f1_b_derivative"
+                    "scipy.special._hyp1f1_b_derivative" () [] primals
+                    (fun _ vals ->
                       vectorize3
                         (fun a b x ->
                           hyp1f1_deriv
@@ -2065,7 +2115,12 @@ let rec hyp1f1_apply a b x =
                         vals))
              in
              let wrt_x =
-               a /! b *! hyp1f1_apply (add_lit a 1.0) (add_lit b 1.0) x
+               JU.jit1 "_hyp1f1_x_derivative"
+                 (function
+                   | [ a; b; x ] ->
+                       a /! b *! hyp1f1_apply (add_lit a 1.0) (add_lit b 1.0) x
+                   | _ -> assert false)
+                 primals
              in
              (out, [ L.add (L.add (wrt_a *! da) (wrt_b *! db)) (wrt_x *! dx) ])
          | _ -> failwith "hyp1f1: arity")
@@ -2192,44 +2247,66 @@ let expn_core n x =
   in
   let n1 = where_ (UF.equal n (cn 1.0)) (n +! n) n in
   let v3 = one /! n1 and v4 = UF.exp (neg_ x) /! x in
-  piecewise x conds
+  let with_n f = Piece_fn (function [ x; n ] -> f x n | _ -> assert false) in
+  piecewise ~key:"expn" ~extra:[ n ] x conds
     [
-      constf dtype Float.nan;
-      constf dtype Float.infinity;
+      constf Float.nan;
+      constf Float.infinity;
       const_val v3;
       const_val v4;
-      (fun x -> expn3 x n);
-      (fun x -> expn2 x n);
-      (fun x -> expn1 x n);
+      with_n expn3;
+      with_n expn2;
+      with_n expn1;
     ]
 
 let expn_vect args =
-  Eager_jit.many "scipy.special.expn" () [] args (fun _ vals ->
-      vectorize_scalar
-        (function [ n; x ] -> [ expn_core n x ] | _ -> assert false)
-        vals)
+  vectorize_scalar
+    (fun vals ->
+      Eager_jit.many ~jit:"expn" "scipy.special.expn" () [] vals (fun _ vals ->
+          match vals with [ n; x ] -> [ expn_core n x ] | _ -> assert false))
+    args
 
 let rec expn_apply n x =
-  List.hd
-    (CD.custom_jvp expn_vect
-       ~jvp:(fun primals tangents ->
-         match (primals, tangents) with
-         | [ n; x ], [ _; x_dot ] ->
-             ( expn_vect [ n; x ],
-               [
-                 L.mul (L.neg x_dot) (expn_apply (L.sub n (scalar_of n 1.0)) x);
-               ] )
-         | _ -> failwith "expn: arity")
-       [ n; x ])
+  let jvp_body n x x_dot =
+    match
+      JU.jit "expn_jvp"
+        (function
+          | [ n; x; x_dot ] ->
+              expn_vect [ n; x ]
+              @ [
+                  L.mul (L.neg x_dot)
+                    (expn_apply (L.sub n (scalar_of n 1.0)) x);
+                ]
+          | _ -> failwith "expn: arity")
+        [ n; x; x_dot ]
+    with
+    | [ p; t ] -> ([ p ], [ t ])
+    | _ -> failwith "expn: arity"
+  in
+  match n with
+  | T.Concrete _ ->
+      List.hd
+        (CD.custom_jvp ~name:"expn" ~jvp_name:"expn_jvp"
+           (function [ x ] -> expn_vect [ n; x ] | _ -> failwith "expn: arity")
+           ~jvp:(fun primals tangents ->
+             match (primals, tangents) with
+             | [ x ], [ x_dot ] -> jvp_body n x x_dot
+             | _ -> failwith "expn: arity")
+           [ x ])
+  | _ ->
+      List.hd
+        (CD.custom_jvp ~name:"expn" ~jvp_name:"expn_jvp" expn_vect
+           ~jvp:(fun primals tangents ->
+             match (primals, tangents) with
+             | [ n; x ], [ _; x_dot ] -> jvp_body n x x_dot
+             | _ -> failwith "expn: arity")
+           [ n; x ])
 
-let expn n x =
-  let n, x = promote2 n x in
-  reject_complex "expn" x;
-  expn_apply n x
+let expn n x = expn_apply n x
 
 let exp1 x =
   let x = real_only "exp1" x in
-  expn_apply (scalar_of x 1.0) x
+  expn_apply (py_int 1) x
 
 let expint_tail a b x =
   let one = scalar_of x 1.0 in
@@ -2246,7 +2323,7 @@ let expint1 x =
 
 let expi_pos x =
   let range lo hi =
-    band (UF.less (scalar_of x lo) x) (UF.less_equal x (scalar_of x hi))
+    band (UF.greater x (scalar_of x lo)) (UF.less_equal x (scalar_of x hi))
   in
   let conds =
     range 0.0 2.0
@@ -2255,34 +2332,44 @@ let expi_pos x =
            range (Float.of_int (1 lsl i)) (Float.of_int (1 lsl (i + 1))))
          [ 1; 2; 3; 4; 5 ]
   in
-  piecewise x conds
+  piecewise ~key:"expi_pos" x conds
     [
-      expint1;
-      expint_tail c_expint2_a c_expint2_b;
-      expint_tail c_expint3_a c_expint3_b;
-      expint_tail c_expint4_a c_expint4_b;
-      expint_tail c_expint5_a c_expint5_b;
-      expint_tail c_expint6_a c_expint6_b;
-      expint_tail c_expint7_a c_expint7_b;
+      piece_fn expint1;
+      piece_fn (expint_tail c_expint2_a c_expint2_b);
+      piece_fn (expint_tail c_expint3_a c_expint3_b);
+      piece_fn (expint_tail c_expint4_a c_expint4_b);
+      piece_fn (expint_tail c_expint5_a c_expint5_b);
+      piece_fn (expint_tail c_expint6_a c_expint6_b);
+      piece_fn (expint_tail c_expint7_a c_expint7_b);
     ]
 
 let expi_neg x = neg_ (exp1 (neg_ x))
 
 let expi_primal x =
   let x = real_only "expi" x in
-  piecewise x [ lt_ x 0.0 ] [ expi_neg; expi_pos ]
+  piecewise ~key:"expi" x [ lt_ x 0.0 ] [ piece_fn expi_neg; piece_fn expi_pos ]
 
 let expi_jit a0 =
-  Eager_jit.one "scipy.special.expi" () [] [ a0 ] (fun _ vals ->
+  Eager_jit.one ~jit:"expi" "scipy.special.expi" () [] [ a0 ] (fun _ vals ->
       match vals with [ a0 ] -> expi_primal a0 | _ -> assert false)
 
 let expi x =
   List.hd
-    (CD.custom_jvp
+    (CD.custom_jvp ~name:"expi" ~jvp_name:"expi_jvp"
        (function [ x ] -> [ expi_jit x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
-         | [ x ], [ x_dot ] -> ([ expi_jit x ], [ UF.exp x /! x *! x_dot ])
+         | [ x ], [ x_dot ] -> (
+             match
+               JU.jit "expi_jvp"
+                 (function
+                   | [ x; x_dot ] ->
+                       [ expi_jit x; UF.exp x /! x *! x_dot ]
+                   | _ -> assert false)
+                 [ x; x_dot ]
+             with
+             | [ p; t ] -> ([ p ], [ t ])
+             | _ -> assert false)
          | _ -> assert false)
        [ x ])
 
@@ -2501,38 +2588,45 @@ let hyp2f1_deriv shifted a b c x =
 
 let rec hyp2f1_apply a b c x =
   let primal args =
-    Eager_jit.many "scipy.special.hyp2f1" () [] args (fun _ vals ->
-        vectorize4 hyp2f1_value vals)
+    Eager_jit.many ~jit:"hyp2f1" "scipy.special.hyp2f1" () [] args
+      (fun _ vals -> vectorize4 hyp2f1_value vals)
   in
   let deriv name shifted args =
     List.hd
-      (Eager_jit.many name () [] args (fun _ vals ->
+      (Eager_jit.many ~jit:name ("scipy.special." ^ name) () [] args
+         (fun _ vals ->
            vectorize4 (fun a b c x -> hyp2f1_deriv (shifted a b c) a b c x) vals))
   in
   List.hd
-    (CD.custom_jvp primal
+    (CD.custom_jvp ~name:"hyp2f1" primal
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ a; b; c; x ], [ da; db; dc; dx ] ->
              let out = primal primals in
              let wrt_a =
-               deriv "scipy.special._hyp2f1_a_derivative"
+               deriv "_hyp2f1_a_derivative"
                  (fun a _ _ k -> digamma (a +! k) -! digamma a)
                  primals
              in
              let wrt_b =
-               deriv "scipy.special._hyp2f1_b_derivative"
+               deriv "_hyp2f1_b_derivative"
                  (fun _ b _ k -> digamma (b +! k) -! digamma b)
                  primals
              in
              let wrt_c =
-               deriv "scipy.special._hyp2f1_c_derivative"
+               deriv "_hyp2f1_c_derivative"
                  (fun _ _ c k -> digamma c -! digamma (c +! k))
                  primals
              in
              let wrt_x =
-               a *! b /! c
-               *! hyp2f1_apply (add_lit a 1.0) (add_lit b 1.0) (add_lit c 1.0) x
+               JU.jit1 "_hyp2f1_x_derivative"
+                 (function
+                   | [ a; b; c; x ] ->
+                       a *! b /! c
+                       *! hyp2f1_apply (add_lit a 1.0) (add_lit b 1.0)
+                            (add_lit c 1.0) x
+                   | _ -> assert false)
+                 primals
              in
              ( out,
                [
@@ -2577,7 +2671,8 @@ let sincospisquaredhalf x =
   (sinpi, cospi)
 
 let sincospisquaredhalf_jit a0 =
-  Eager_jit.pair "scipy.special.sincospisquaredhalf" () [] [ a0 ] (fun _ vals ->
+  Eager_jit.pair ~jit:"sincospisquaredhalf"
+    "scipy.special.sincospisquaredhalf" () [] [ a0 ] (fun _ vals ->
       match vals with [ a0 ] -> sincospisquaredhalf a0 | _ -> assert false)
 
 let fresnel_primal xxa0 =
@@ -2648,7 +2743,7 @@ let fresnel_primal xxa0 =
 
 let fresnel x =
   match
-    CD.custom_jvp
+    CD.custom_jvp ~name:"fresnel" ~jvp_name:"_fresnel_jvp"
       (function [ x ] -> fresnel_primal x | _ -> assert false)
       ~jvp:(fun primals tangents ->
         match (primals, tangents) with
@@ -3037,7 +3132,7 @@ let sph_harm_body n_max args =
         +! lanes
       in
       let legendre_val =
-        Numpy.Indexing.take ~axis:0
+        Numpy.Indexing.take_index ~axis:0
           (NL.reshape legendre [| (n_max + 1) * (n_max + 1) * count |])
           linear
       in
@@ -3079,13 +3174,13 @@ let sph_harm_y ?diff_n ?n_max n m theta phi =
                statically specified to use `sph_harm` within JAX \
                transformations.")
   in
-  Eager_jit.one "scipy.special._sph_harm" n_max [] [ n; m; theta; phi ]
+  Eager_jit.one ~jit:"_sph_harm" "scipy.special._sph_harm" n_max [] [ n; m; theta; phi ]
     (fun _ vals -> sph_harm_body n_max vals)
 
 let gammasgn = gammasgn_jit
 
 let bessel_jn ?n_iter ~v a1 =
-  Eager_jit.one "scipy.special.bessel_jn" (n_iter, v) [] [ a1 ]
+  Eager_jit.one ~jit:"bessel_jn" "scipy.special.bessel_jn" (n_iter, v) [] [ a1 ]
     (fun opts vals ->
       match (opts, vals) with
       | [], [ a1 ] -> bessel_jn ?n_iter ~v a1

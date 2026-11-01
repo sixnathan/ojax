@@ -1546,7 +1546,7 @@ let special_batch_run op params a =
   | "sx_exp1" -> Some [ SP.exp1 (scaled (UF.absolute (a ())) "scale") ]
   | "sx_expn" ->
       let x = scaled (UF.absolute (a ())) "scale" in
-      Some [ SP.expn (L.full [||] (float_p "n") (dt_of x)) x ]
+      Some [ SP.expn (Ojax.Numpy.Jnp_util.py_float (float_p "n")) x ]
   | "sx_expn_grad" ->
       let x = scaled (UF.absolute (a ())) "scale" in
       let x = UF.add x (like x 0.1) in

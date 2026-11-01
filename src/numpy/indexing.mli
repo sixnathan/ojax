@@ -6,6 +6,14 @@ val take :
   Types.value ->
   Types.value
 
+val take_index :
+  ?axis:int ->
+  ?mode:string ->
+  ?fill_value:float ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
 val take_along_axis :
   ?axis:int ->
   ?mode:string ->

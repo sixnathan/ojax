@@ -89,8 +89,15 @@ let process_primitive trace prim (args : value list) : value list =
     Core.bind prim consts
   else
     match prim with
-    | Scan { length; reverse; num_carry; jaxpr } ->
-        !scan_rule trace ~length ~reverse ~num_carry jaxpr tracers
+    | Scan { length; reverse; num_consts; num_carry; jaxpr; _ } ->
+        let lifted =
+          if num_consts = 0 then jaxpr
+          else Core.scan_lift_consts ~num_consts jaxpr
+        in
+        List.filteri
+          (fun i _ -> i >= num_consts)
+          (!scan_rule trace ~length ~reverse
+             ~num_carry:(num_consts + num_carry) lifted tracers)
     | Xla_call c -> !jit_rule trace c tracers
     | _ -> record_unknown trace prim tracers
 
@@ -381,7 +388,15 @@ let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
   let n_known_carry = List.length known_carry in
   let known_results =
     Core.bind
-      (Scan { length; reverse; num_carry = n_known_carry; jaxpr = known_body })
+      (Scan
+         {
+           length;
+           reverse;
+           num_consts = 0;
+           num_carry = n_known_carry;
+           jaxpr = known_body;
+           unroll = 1;
+         })
       (List.map value_of known_carry @ List.map value_of known_xs)
   in
   let known_carry_out, r1 = split_at known_results n_known_carry in
@@ -434,7 +449,15 @@ let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
   let raise_known v = as_tracer (Core.full_raise trace v) in
   let unknown_results =
     record_unknown trace
-      (Scan { length; reverse; num_carry = n_unk_carry; jaxpr = unknown_body })
+      (Scan
+         {
+           length;
+           reverse;
+           num_consts = 0;
+           num_carry = n_unk_carry;
+           jaxpr = unknown_body;
+           unroll = 1;
+         })
       (unk_carry @ unk_xs @ List.map raise_known residual_out)
   in
   let unk_carry_out, unk_ys_out = split_at unknown_results n_unk_carry in

@@ -367,8 +367,9 @@ let call_name jid =
   match Hashtbl.find_opt call_names jid with Some n -> n | None -> "jit"
 
 let custom_call :
-    (int -> aval list -> (string * string * closed_jaxpr) option) ref =
-  ref (fun _ _ -> None)
+    (int -> int option -> aval list -> (string * string * closed_jaxpr) option)
+    ref =
+  ref (fun _ _ _ -> None)
 
 let atom_type = function
   | A_var (v : var) -> v.vaval
@@ -382,7 +383,11 @@ let atom_type = function
 
 let custom_call_of (e : eqn) =
   match e.prim with
-  | Custom_jvp_call id -> !custom_call id (List.map atom_type e.inputs)
+  | Custom_jvp_call id ->
+      let vid =
+        match e.outs with (first : var) :: _ -> Some first.vid | [] -> None
+      in
+      !custom_call id vid (List.map atom_type e.inputs)
   | _ -> None
 
 let rec structure_of_jaxpr (jx : jaxpr) =
@@ -396,8 +401,8 @@ and structure_of_eqn (e : eqn) =
     | Reduce_window { reducer; _ } -> [ reducer ]
     | Select_and_scatter { select_jaxpr; scatter_jaxpr; _ } ->
         [ scatter_jaxpr; select_jaxpr ]
-    | Cond { t; f } -> [ f; t ]
-    | While { cond; body } -> [ body; cond ]
+    | Cond { branches; _ } -> branches
+    | While { cond; body; _ } -> [ body; cond ]
     | Custom_linear_solve { solve; transpose_solve } ->
         solve :: Option.to_list transpose_solve
     | Custom_jvp_call _ -> (
@@ -493,6 +498,22 @@ let py_list a =
 
 let py_pairs a =
   py_tuple (Array.to_list (Array.map (fun (x, y) -> py_ints [| x; y |]) a))
+
+let py_platforms platforms =
+  let one = function
+    | None -> "None"
+    | Some names ->
+        let items =
+          Array.to_list names |> List.map (fun n -> "'" ^ n ^ "'")
+        in
+        (match items with
+        | [ only ] -> "(" ^ only ^ ",)"
+        | _ -> "(" ^ String.concat ", " items ^ ")")
+  in
+  let items = Array.to_list platforms |> List.map one in
+  match items with
+  | [ only ] -> "(" ^ only ^ ",)"
+  | _ -> "(" ^ String.concat ", " items ^ ")"
 
 let py_triples a =
   py_tuple
@@ -612,6 +633,8 @@ let jax_params (e : eqn) =
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
+  | Platform_index platforms ->
+      [ ("platforms", Plain (py_platforms platforms)) ]
   | Integer_pow y -> [ ("y", Plain (string_of_int y)) ]
   | Dynamic_slice { slice_sizes } ->
       [ ("slice_sizes", Plain (py_ints slice_sizes)) ]
@@ -759,22 +782,27 @@ let jax_params (e : eqn) =
       ]
   | Random_split shape -> [ ("shape", Plain (py_ints shape)) ]
   | Random_seed | Random_wrap -> [ ("impl", Plain "fry") ]
-  | While { cond; body } ->
+  | While { cond_nconsts; body_nconsts; cond; body } ->
       [
         ("body_jaxpr", Sub body);
-        ("body_nconsts", Plain (string_of_int (List.length body.consts)));
+        ("body_nconsts", Plain (string_of_int body_nconsts));
         ("cond_jaxpr", Sub cond);
-        ("cond_nconsts", Plain (string_of_int (List.length cond.consts)));
+        ("cond_nconsts", Plain (string_of_int cond_nconsts));
       ]
-  | Cond { t; f } -> [ ("branches", Subs [ f; t ]) ]
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Cond { branches; platforms = None } -> [ ("branches", Subs branches) ]
+  | Cond { branches; platforms = Some platforms } ->
+      [
+        ("branches", Subs branches);
+        ("branches_platforms", Plain (py_platforms platforms));
+      ]
+  | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       [
         ("jaxpr", Sub jaxpr);
         ("length", Plain (string_of_int length));
         ("num_carry", Plain (string_of_int num_carry));
-        ("num_consts", Plain (string_of_int (List.length jaxpr.consts)));
+        ("num_consts", Plain (string_of_int num_consts));
         ("reverse", Plain (py_bool reverse));
-        ("unroll", Plain "1");
+        ("unroll", Plain (string_of_int unroll));
       ]
   | Xla_call c -> [ ("jaxpr", Sub c) ]
   | Select_and_scatter { select_jaxpr; scatter_jaxpr; window } ->
@@ -786,10 +814,12 @@ let jax_params (e : eqn) =
 
 let insertion_order (e : eqn) =
   match e.prim with
-  | While { cond; body } -> [ cond; body ]
-  | Cond { t; f } -> [ f; t ]
+  | While { cond; body; _ } -> [ cond; body ]
+  | Cond { branches; _ } -> branches
   | Select_and_scatter { select_jaxpr; scatter_jaxpr; _ } ->
       [ select_jaxpr; scatter_jaxpr ]
+  | Custom_jvp_call _ -> (
+      match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
   | _ ->
       List.concat_map
         (fun (_, p) ->

@@ -87,7 +87,7 @@ let soft_sign =
       let denom = UF.add magnitude (Numpy.Jnp_util.py_int 1) in
       UF.divide x denom)
 
-let sigmoid = jit_unary "sigmoid" (fun x -> bind1 T.Logistic [ x ])
+let sigmoid x = bind1 T.Logistic [ x ]
 
 let silu =
   jit_unary "silu" (fun x ->
@@ -203,7 +203,7 @@ let log1mexp_primal x =
   where3 pred a b
 
 let log1mexp =
-  custom_unary "log1mexp" log1mexp_primal (fun g _ x ->
+  custom_unary "log1mexp" (jit_unary "log1mexp" log1mexp_primal) (fun g _ x ->
       UF.divide g (UF.expm1 x))
 
 let gelu ?(approximate = true) x =
@@ -581,25 +581,28 @@ let selu a0 =
       match (opts, vals) with [], [ a0 ] -> selu a0 | _ -> assert false)
 
 let glu ?axis a0 =
-  Eager_jit.one "nn.functions.glu" axis [] [ a0 ] (fun opts vals ->
+  Eager_jit.one ~jit:"glu" "nn.functions.glu" axis [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> glu ?axis a0 | _ -> assert false)
 
 let logmeanexp ?axis ?keepdims ?where a0 =
-  Eager_jit.one "nn.functions.logmeanexp" (axis, keepdims) [ where ] [ a0 ]
+  Eager_jit.one ~jit:"logmeanexp" ~vals_first:true "nn.functions.logmeanexp"
+    (axis, keepdims) [ where ] [ a0 ]
     (fun opts vals ->
       match (opts, vals) with
       | [ where ], [ a0 ] -> logmeanexp ?axis ?keepdims ?where a0
       | _ -> assert false)
 
 let log_softmax ?axis ?where a0 =
-  Eager_jit.one "nn.functions.log_softmax" axis [ where ] [ a0 ]
+  Eager_jit.one ~jit:"log_softmax" ~vals_first:true "nn.functions.log_softmax"
+    axis [ where ] [ a0 ]
     (fun opts vals ->
       match (opts, vals) with
       | [ where ], [ a0 ] -> log_softmax ?axis ?where a0
       | _ -> assert false)
 
 let standardize ?axis ?mean ?variance ?epsilon ?where ?algorithm a0 =
-  Eager_jit.one "nn.functions.standardize" (axis, epsilon, algorithm)
+  Eager_jit.one ~jit:"standardize" ~vals_first:true
+    "nn.functions.standardize" (axis, epsilon, algorithm)
     [ mean; variance; where ] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [ mean; variance; where ], [ a0 ] ->

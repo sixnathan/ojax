@@ -146,12 +146,24 @@ let rot90 ?(k = 1) ?(axes = (0, 1)) v =
     else flip ~axis:[| ax2 |] (transpose ~axes:perm v)
   end
 
+let rot90 ?k ?axes p0 =
+  Jnp_util.jit1 "rot90"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (k, axes) [])))
+    (function [ p0 ] -> rot90 ?k ?axes p0 | _ -> invalid_arg "rot90: arity")
+    [ p0 ]
+
 let trunc v =
   let dt = dtype v in
   if is_integral dt || is_bool dt then v
   else
     let below = bind1 T.Lt [ v; zeros_like v ] in
     bind1 T.Select_n [ below; bind1 T.Floor [ v ]; bind1 T.Ceil [ v ] ]
+
+let trunc p0 =
+  Jnp_util.jit1 "trunc"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> trunc p0 | _ -> invalid_arg "trunc: arity")
+    [ p0 ]
 
 let isnan v = bind1 T.Ne [ v; v ]
 
@@ -160,10 +172,22 @@ let fmin x y =
   let mask = bind1 T.Or [ bind1 T.Lt [ x; y ]; isnan y ] in
   bind1 T.Select_n [ mask; y; x ]
 
+let fmin p0 p1 =
+  Jnp_util.jit1 "fmin"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> fmin p0 p1 | _ -> invalid_arg "fmin: arity")
+    [ p0; p1 ]
+
 let fmax x y =
   let x, y, _, _ = promote2 x y in
   let mask = bind1 T.Or [ bind1 T.Gt [ x; y ]; isnan y ] in
   bind1 T.Select_n [ mask; y; x ]
+
+let fmax p0 p1 =
+  Jnp_util.jit1 "fmax"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> fmax p0 p1 | _ -> invalid_arg "fmax: arity")
+    [ p0; p1 ]
 
 let slice_axis v axis lo hi =
   let sh = shape v in
@@ -217,6 +241,18 @@ let diff ?(n = 1) ?(axis = -1) ?prepend ?append v =
     loop v n
   end
 
+let diff ?n ?axis ?prepend ?append p0 =
+  let prepend_given = prepend <> None in
+  let append_given = append <> None in
+  if prepend_given || append_given then diff ?n ?axis ?prepend ?append p0
+  else
+    Jnp_util.jit1 "diff"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string (n, axis) [])))
+      (function
+        | [ p0 ] -> diff ?n ?axis ?prepend ?append p0
+        | _ -> invalid_arg "diff: arity")
+      [ p0 ]
+
 let ediff1d ?to_end ?to_begin v =
   let a = ravel v in
   let d = (shape a).(0) in
@@ -228,6 +264,18 @@ let ediff1d ?to_end ?to_begin v =
     @ Option.to_list (Option.map extra to_end)
   in
   match parts with [ only ] -> only | _ -> bind1 (T.Concatenate 0) parts
+
+let ediff1d ?to_end ?to_begin p0 =
+  let to_end_given = to_end <> None in
+  let to_begin_given = to_begin <> None in
+  if to_end_given || to_begin_given then ediff1d ?to_end ?to_begin p0
+  else
+    Jnp_util.jit1 "ediff1d"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+      (function
+        | [ p0 ] -> ediff1d ?to_end ?to_begin p0
+        | _ -> invalid_arg "ediff1d: arity")
+      [ p0 ]
 
 let is_complex_dtype = function
   | D.Complex64 | D.Complex128 -> true
@@ -255,13 +303,31 @@ let angle ?(deg = false) v =
   let result = bind1 T.Atan2 [ im; re ] in
   if deg then degrees result else result
 
+let angle ?deg p0 =
+  Jnp_util.jit1 "angle"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string deg [])))
+    (function [ p0 ] -> angle ?deg p0 | _ -> invalid_arg "angle: arity")
+    [ p0 ]
+
 let iscomplex v =
   let i = imag v in
   bind1 T.Ne [ i; zeros_like i ]
 
+let iscomplex p0 =
+  Jnp_util.jit1 "iscomplex"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> iscomplex p0 | _ -> invalid_arg "iscomplex: arity")
+    [ p0 ]
+
 let isreal v =
   let i = imag v in
   bind1 T.Eq [ i; zeros_like i ]
+
+let isreal p0 =
+  Jnp_util.jit1 "isreal"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> isreal p0 | _ -> invalid_arg "isreal: arity")
+    [ p0 ]
 
 let iscomplexobj v = is_complex_dtype (dtype v)
 let isrealobj v = not (iscomplexobj v)
@@ -382,7 +448,22 @@ let conv1d ~mode ~correlating a v =
     [ a; v ]
 
 let convolve ?(mode = "full") a v = conv1d ~mode ~correlating:false a v
+let convolve ?mode p0 p1 =
+  Jnp_util.jit1 "convolve"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
+    (function
+      | [ p0; p1 ] -> convolve ?mode p0 p1 | _ -> invalid_arg "convolve: arity")
+    [ p0; p1 ]
+
 let correlate ?(mode = "valid") a v = conv1d ~mode ~correlating:true a v
+let correlate ?mode p0 p1 =
+  Jnp_util.jit1 "correlate"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
+    (function
+      | [ p0; p1 ] -> correlate ?mode p0 p1
+      | _ -> invalid_arg "correlate: arity")
+    [ p0; p1 ]
+
 let bind = C.bind
 let scalar dt x = const_full dt [||] x
 let full dt sh x = const_full dt sh x
@@ -433,6 +514,16 @@ let nan_to_num ?(nan = 0.0) ?posinf ?neginf x =
     where_ (isneginf out) (scalar dt nv) out
   end
 
+let nan_to_num ?nan ?posinf ?neginf p0 =
+  Jnp_util.jit1 "nan_to_num"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (nan, posinf, neginf) [])))
+    (function
+      | [ p0 ] -> nan_to_num ?nan ?posinf ?neginf p0
+      | _ -> invalid_arg "nan_to_num: arity")
+    [ p0 ]
+
 let real_dtype_of = function
   | D.Complex64 -> D.F32
   | D.Complex128 -> D.F64
@@ -474,10 +565,30 @@ let isclose ?(rtol = 1e-5) ?(atol = 1e-8) ?(equal_nan = false) a b =
   if equal_nan then bind1 T.Or [ out; bind1 T.And [ isnan a; isnan b ] ]
   else out
 
+let isclose ?rtol ?atol ?equal_nan p0 p1 =
+  Jnp_util.jit1 "isclose"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (rtol, atol, equal_nan) [])))
+    (function
+      | [ p0; p1 ] -> isclose ?rtol ?atol ?equal_nan p0 p1
+      | _ -> invalid_arg "isclose: arity")
+    [ p0; p1 ]
+
 let allclose ?rtol ?atol ?equal_nan a b =
   let c = isclose ?rtol ?atol ?equal_nan a b in
   let n = ndim c in
   bind1 (T.Reduce_and (Array.init n (fun i -> i))) [ c ]
+
+let allclose ?rtol ?atol ?equal_nan p0 p1 =
+  Jnp_util.jit1 "allclose"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (rtol, atol, equal_nan) [])))
+    (function
+      | [ p0; p1 ] -> allclose ?rtol ?atol ?equal_nan p0 p1
+      | _ -> invalid_arg "allclose: arity")
+    [ p0; p1 ]
 
 let clip_values ?min ?max arr =
   let present = Option.to_list min @ Option.to_list max in
@@ -531,6 +642,7 @@ let clip ?min ?max arr =
   let lo = Option.map scalar_arg min and hi = Option.map scalar_arg max in
   let extras = List.filter_map Fun.id [ lo; hi ] in
   Jnp_util.jit1 "clip"
+    ~key:(string_of_bool (min <> None) ^ string_of_bool (max <> None))
     (function
       | arr :: rest -> (
           let lo, hi =
@@ -571,7 +683,20 @@ let rec round ?(decimals = 0) v =
     if dt = D.F16 then bind1 (T.Convert_element_type D.F16) [ out ] else out
   end
 
+let round ?decimals p0 =
+  Jnp_util.jit1 "round"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string decimals [])))
+    (function [ p0 ] -> round ?decimals p0 | _ -> invalid_arg "round: arity")
+    [ p0 ]
+
 let around ?decimals v = round ?decimals v
+
+let around ?decimals p0 =
+  Jnp_util.jit1 "around"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string decimals [])))
+    (function
+      | [ p0 ] -> around ?decimals p0 | _ -> invalid_arg "around: arity")
+    [ p0 ]
 
 let expand_dims v axes =
   let nd = ndim v in
@@ -652,6 +777,12 @@ let resize v new_shape =
   let sliced = slice_axis tiled 0 0 new_size in
   reshape sliced new_shape
 
+let resize p0 s1 =
+  Jnp_util.jit1 "resize"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string s1 [])))
+    (function [ p0 ] -> resize p0 s1 | _ -> invalid_arg "resize: arity")
+    [ p0 ]
+
 let mod_floor a b =
   let zero = full (dtype a) (shape a) 0.0 in
   let trunc_mod = bind1 T.Rem [ a; b ] in
@@ -722,6 +853,16 @@ let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
     let cs = bind1 (T.Cumsum { axis; reverse = false }) [ ph_correct ] in
     bind1 (T.Concatenate axis) [ first; bind1 T.Add [ rest; cs ] ]
   end
+
+let unwrap ?discont ?axis ?period p0 =
+  Jnp_util.jit1 "unwrap"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (discont, axis, period) [])))
+    (function
+      | [ p0 ] -> unwrap ?discont ?axis ?period p0
+      | _ -> invalid_arg "unwrap: arity")
+    [ p0 ]
 
 type sections = Count of int | Indices of int array
 
@@ -809,12 +950,24 @@ let atleast_2d v =
   | 1 -> expand_dims v [| 0 |]
   | _ -> v
 
+let atleast_2d p0 =
+  Jnp_util.jit1 "atleast_2d"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> atleast_2d p0 | _ -> invalid_arg "atleast_2d: arity")
+    [ p0 ]
+
 let atleast_3d v =
   match ndim v with
   | 0 -> expand_dims v [| 0; 1; 2 |]
   | 1 -> expand_dims v [| 0; 2 |]
   | 2 -> expand_dims v [| 2 |]
   | _ -> v
+
+let atleast_3d p0 =
+  Jnp_util.jit1 "atleast_3d"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> atleast_3d p0 | _ -> invalid_arg "atleast_3d: arity")
+    [ p0 ]
 
 let with_dtype dt arrays =
   match dt with
@@ -1100,8 +1253,8 @@ let pad_stats v pad_width stat_length stat_func =
     pad_width;
   !out
 
-let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
-    pad_width constant_values =
+let pad_body ?(mode = "constant") ?stat_length ?end_values
+    ?(reflect_type = "even") v pad_width constant_values =
   if ndim v = 0 then v
   else begin
     if Array.length pad_width <> ndim v then
@@ -1155,6 +1308,12 @@ let i0 v =
   let ax = bind1 T.Abs [ v ] in
   bind1 T.Mul [ bind1 T.Exp [ ax ]; bind1 T.Bessel_i0e [ ax ] ]
 
+let i0 p0 =
+  Jnp_util.jit1 "i0"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> i0 p0 | _ -> invalid_arg "i0: arity")
+    [ p0 ]
+
 let array_equal ?(equal_nan = false) a b =
   if shape a <> shape b then scalar D.Bool 0.0
   else begin
@@ -1182,6 +1341,33 @@ let arange ?(start = 0.0) ?(step = 1.0) ~dtype stop =
         full dtype [| size |] start;
         bind1 T.Mul [ full dtype [| size |] step; idx ];
       ]
+
+let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
+    pad_width constant_values =
+  let int_valued = Float.is_integer constant_values in
+  let py_value =
+    if int_valued then Jnp_util.py_int (int_of_float constant_values)
+    else Jnp_util.py_float constant_values
+  in
+  let key =
+    Digest.to_hex
+      (Digest.string
+         (Marshal.to_string
+            (mode, stat_length, end_values, reflect_type, pad_width)
+            []))
+  in
+  Jnp_util.jit1 "_pad" ~key
+    (function
+      | [ v; c ] ->
+          if mode = "constant" then
+            bind1
+              (T.Pad (Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width))
+              [ v; convert c (dtype v) ]
+          else
+            pad_body ~mode ?stat_length ?end_values ~reflect_type v pad_width
+              constant_values
+      | _ -> invalid_arg "pad: arity")
+    [ v; py_value ]
 
 let eye ?m ?(k = 0) ~dtype n =
   let m = Option.value m ~default:n in
@@ -1262,6 +1448,13 @@ let append ?axis arr values =
   | None -> concatenate ~axis:0 [ ravel arr; ravel values ]
   | Some ax -> concatenate ~axis:ax [ arr; values ]
 
+let append ?axis p0 p1 =
+  Jnp_util.jit1 "append"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string axis [])))
+    (function
+      | [ p0; p1 ] -> append ?axis p0 p1 | _ -> invalid_arg "append: arity")
+    [ p0; p1 ]
+
 let argmax ?axis ?(keepdims = false) a =
   (match dtype a with
   | D.Complex64 | D.Complex128 ->
@@ -1307,6 +1500,16 @@ let cross ?(axisa = -1) ?(axisb = -1) ?(axisc = -1) ?axis a b =
     moveaxis [| 0 |] [| axisc |] c
   end
 
+let cross ?axisa ?axisb ?axisc ?axis p0 p1 =
+  Jnp_util.jit1 "cross"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (axisa, axisb, axisc, axis) [])))
+    (function
+      | [ p0; p1 ] -> cross ?axisa ?axisb ?axisc ?axis p0 p1
+      | _ -> invalid_arg "cross: arity")
+    [ p0; p1 ]
+
 let diag_indices ?(ndim = 2) n =
   let dt = Dtypes.default_int_dtype () in
   let one = bind1 (T.Iota { dtype = dt; shape = [| n |]; dimension = 0 }) [] in
@@ -1328,11 +1531,21 @@ let tri ?m ?(k = 0) ~dtype n =
   let i =
     bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 0 }) []
   in
+  let ik = bind1 T.Add [ i; scalar D.I32 (float_of_int k) ] in
   let j =
     bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
   in
-  let ik = bind1 T.Add [ i; scalar D.I32 (float_of_int k) ] in
   convert (bind1 T.Ge [ ik; j ]) dtype
+
+let broadcast_prefix mask full_shape =
+  let rank = Array.length (shape mask) in
+  let prefix = Array.length full_shape - rank in
+  if prefix = 0 then mask
+  else
+    bind1
+      (T.Broadcast_in_dim
+         { shape = full_shape; dims = Array.init rank (fun d -> d + prefix) })
+      [ mask ]
 
 let tril ?(k = 0) m =
   let s = shape m in
@@ -1342,7 +1555,8 @@ let tril ?(k = 0) m =
     (function
       | [ m ] ->
           let mask = tri ~m:s.(nd - 1) ~k ~dtype:D.Bool s.(nd - 2) in
-          where_ mask m (scalar (dtype m) 0.0)
+          let which = broadcast_prefix mask s in
+          bind1 T.Select_n [ which; zeros_like m; m ]
       | _ -> invalid_arg "tril: arity")
     [ m ]
 
@@ -1354,7 +1568,8 @@ let triu ?(k = 0) m =
     (function
       | [ m ] ->
           let mask = tri ~m:s.(nd - 1) ~k:(k - 1) ~dtype:D.Bool s.(nd - 2) in
-          where_ mask (scalar (dtype m) 0.0) m
+          let which = broadcast_prefix mask s in
+          bind1 T.Select_n [ which; m; zeros_like m ]
       | _ -> invalid_arg "triu: arity")
     [ m ]
 
@@ -1385,39 +1600,158 @@ let trace ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) ?dtype a =
   let res = bind1 (T.Reduce_sum [| nd - 2; nd - 1 |]) [ acc ] in
   match dtype with Some d -> convert res d | None -> res
 
+let trace ?offset ?axis1 ?axis2 ?dtype a0 =
+  Eager_jit.one ~jit:"trace" "numpy.lax_numpy.trace"
+    (offset, axis1, axis2, dtype) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> trace ?offset ?axis1 ?axis2 ?dtype a0
+      | _ -> assert false)
+
+let normalize_index i n =
+  let negative = bind1 T.Lt [ i; scalar (dtype i) 0.0 ] in
+  let shifted = bind1 T.Add [ i; scalar (dtype i) (float_of_int n) ] in
+  bind1 T.Select_n [ negative; i; shifted ]
+
+let expand_last i =
+  let sh = shape i in
+  let n = Array.length sh in
+  bind1
+    (T.Broadcast_in_dim
+       { shape = Array.append sh [| 1 |]; dims = Array.init n Fun.id })
+    [ i ]
+
+let take_trailing a indices =
+  let s = shape a in
+  let nd = Array.length s in
+  let k = List.length indices in
+  let wrapped =
+    List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
+  in
+  let start = bind1 (T.Concatenate 1) (List.map expand_last wrapped) in
+  let start =
+    match wrapped with
+    | [ w ] -> expand_last w
+    | _ -> start
+  in
+  let batch = Array.length (shape (List.hd indices)) in
+  let dnums =
+    {
+      T.offset_dims = Array.init (nd - k) Fun.id;
+      collapsed_slice_dims = Array.init k (fun d -> nd - k + d);
+      start_index_map = Array.init k (fun d -> nd - k + d);
+      g_operand_batching_dims = [||];
+      g_start_indices_batching_dims = [||];
+    }
+  in
+  ignore batch;
+  bind1
+    (T.Gather
+       {
+         dimension_numbers = dnums;
+         slice_sizes =
+           Array.mapi (fun d e -> if d >= nd - k then 1 else e) s;
+       })
+    [ a; start ]
+
+let index_at a i =
+  let s = shape a in
+  let i = if i < 0 then i + s.(0) else i in
+  let n = Array.length s in
+  let start = Array.init n (fun d -> if d = 0 then i else 0) in
+  let limit = Array.init n (fun d -> if d = 0 then i + 1 else s.(d)) in
+  let sliced =
+    bind1
+      (T.Slice { start_indices = start; limit_indices = limit; strides = None })
+      [ a ]
+  in
+  bind1 (T.Squeeze [| 0 |]) [ sliced ]
+
+let default_diag ~offset ~axis1 ~axis2 a =
+  let s = shape a in
+  let nd = Array.length s in
+  let a1 = canonicalize_axis axis1 nd and a2 = canonicalize_axis axis2 nd in
+  let am = moveaxis [| axis1; axis2 |] [| nd - 2; nd - 1 |] a in
+  let diag_size =
+    max 0 (min (s.(a1) + min offset 0) (s.(a2) - max offset 0))
+  in
+  let iota_from start =
+    let base =
+      bind1 (T.Iota { dtype = D.I32; shape = [| diag_size |]; dimension = 0 }) []
+    in
+    if start = 0 then base
+    else bind1 T.Add [ base; scalar D.I32 (float_of_int start) ]
+  in
+  let i = iota_from 0 in
+  let j = iota_from (abs offset) in
+  if offset >= 0 then take_trailing am [ i; j ]
+  else take_trailing am [ j; i ]
+
+let mosaic_diag a_eye a =
+  let product = bind1 T.Mul [ a_eye; a ] in
+  if is_bool (dtype product) then bind1 (T.Reduce_or [| 0 |]) [ product ]
+  else bind1 (T.Reduce_sum [| 0 |]) [ product ]
+
 let diagonal ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) a =
   let s = shape a in
   let nd = Array.length s in
   if nd < 2 then
     invalid_arg "diagonal requires an array of at least two dimensions.";
-  let a1 = canonicalize_axis axis1 nd and a2 = canonicalize_axis axis2 nd in
-  let na = s.(a1) and ma = s.(a2) in
-  let am = moveaxis [| axis1; axis2 |] [| nd - 2; nd - 1 |] a in
-  let diag_size = max 0 (min (na + min offset 0) (ma - max offset 0)) in
-  let mask = eye ~m:ma ~k:offset ~dtype:D.Bool na in
-  let masked = where_ mask am (zeros_like am) in
-  if offset >= 0 then
-    let reduced = reduce_over masked (nd - 2) in
-    slice_axis reduced (nd - 2) offset (offset + diag_size)
-  else
-    let reduced = reduce_over masked (nd - 1) in
-    slice_axis reduced (nd - 2) (-offset) (-offset + diag_size)
+  if s.(0) <> s.(1) || nd <> 2 || offset <> 0 || is_bool (dtype a) then
+    default_diag ~offset ~axis1 ~axis2 a
+  else begin
+    let a_eye = eye ~dtype:(dtype a) s.(0) in
+    let platforms = [| Some [| "mosaic" |]; None |] in
+    let index = bind1 (T.Platform_index platforms) [] in
+    let branch_avals = [ get_aval a_eye; get_aval a ] in
+    let t =
+      Jaxpr.make_jaxpr branch_avals (function
+        | [ _; v ] -> [ default_diag ~offset ~axis1 ~axis2 v ]
+        | _ -> invalid_arg "diagonal: arity")
+    in
+    let f =
+      Jaxpr.make_jaxpr branch_avals (function
+        | [ e; v ] -> [ mosaic_diag e v ]
+        | _ -> invalid_arg "diagonal: arity")
+    in
+    List.hd
+      (C.bind
+         (T.Cond { branches = [ f; t ]; platforms = Some platforms })
+         [ index; a_eye; a ])
+  end
+
+let diagonal ?offset ?axis1 ?axis2 p0 =
+  Jnp_util.jit1 "diagonal"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (offset, axis1, axis2) [])))
+    (function
+      | [ p0 ] -> diagonal ?offset ?axis1 ?axis2 p0
+      | _ -> invalid_arg "diagonal: arity")
+    [ p0 ]
 
 let diag ?(k = 0) v =
   let s = shape v in
   match Array.length s with
   | 1 ->
+      let zero () = scalar (dtype v) 0.0 in
       let n = s.(0) + abs k in
-      let padded = pad_constant v [| (max 0 (-k), max 0 k) |] 0.0 in
+      let padded =
+        bind1 (T.Pad [| (max 0 (-k), max 0 k, 0) |]) [ v; zero () ]
+      in
       let mask = eye ~k ~dtype:D.Bool n in
       let col =
         bind1
           (T.Broadcast_in_dim { shape = [| n; 1 |]; dims = [| 0 |] })
           [ padded ]
       in
-      where_ mask col (const_full (dtype v) [| n; n |] 0.0)
+      where_ mask col (zero ())
   | 2 -> diagonal ~offset:k v
   | _ -> invalid_arg "diag input must be 1d or 2d"
+
+let diag ?k a0 =
+  Eager_jit.one ~jit:"_diag" "numpy.lax_numpy.diag" k [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> diag ?k a0 | _ -> assert false)
 
 let diagflat ?(k = 0) v = diag ~k (ravel v)
 
@@ -1438,6 +1772,12 @@ let kron a b =
   let out_shape = Array.init nd (fun i -> sa.(i) * sb.(i)) in
   reshape (mul2 a_r b_r) out_shape
 
+let kron p0 p1 =
+  Jnp_util.jit1 "kron"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> kron p0 p1 | _ -> invalid_arg "kron: arity")
+    [ p0; p1 ]
+
 let vander ?n ?(increasing = false) x =
   if ndim x <> 1 then invalid_arg "x must be a one-dimensional array";
   let len = (shape x).(0) in
@@ -1456,6 +1796,13 @@ let vander ?n ?(increasing = false) x =
     bind1 (T.Broadcast_in_dim { shape = [| len; nn |]; dims = [| 1 |] }) [ io ]
   in
   bind1 T.Pow [ xcol; expo ]
+
+let vander ?n ?increasing p0 =
+  Jnp_util.jit1 "vander"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (n, increasing) [])))
+    (function
+      | [ p0 ] -> vander ?n ?increasing p0 | _ -> invalid_arg "vander: arity")
+    [ p0 ]
 
 let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
   let y = convert y (to_inexact_dtype (dtype y)) in
@@ -1483,6 +1830,17 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
       let y0 = slice_axis y (nd - 1) 0 (l - 1) in
       let prod = mul2 dxa (add2 y1 y0) in
       mul_scalar 0.5 (bind1 (T.Reduce_sum [| nd - 1 |]) [ prod ])
+
+let trapezoid ?x ?dx ?axis p0 =
+  let x_given = x <> None in
+  if x_given then trapezoid ?x ?dx ?axis p0
+  else
+    Jnp_util.jit1 "trapezoid"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dx, axis) [])))
+      (function
+        | [ p0 ] -> trapezoid ?x ?dx ?axis p0
+        | _ -> invalid_arg "trapezoid: arity")
+      [ p0 ]
 
 let any_reduce v =
   let n = ndim v in
@@ -1587,6 +1945,13 @@ let rollaxis ?(start = 0) axis a =
   let start = if start > axis then start - 1 else start in
   moveaxis [| axis |] [| start |] a
 
+let rollaxis ?start s0 p1 =
+  Jnp_util.jit1 "rollaxis"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (start, s0) [])))
+    (function
+      | [ p1 ] -> rollaxis ?start s0 p1 | _ -> invalid_arg "rollaxis: arity")
+    [ p1 ]
+
 let abs_of v =
   match dtype v with
   | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> v
@@ -1624,6 +1989,12 @@ let gcd x1 x2 =
   let init = [ abs_of x1; abs_of x2 ] in
   List.hd (Lax.while_loop cond body init)
 
+let gcd p0 p1 =
+  Jnp_util.jit1 "gcd"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> gcd p0 p1 | _ -> invalid_arg "gcd: arity")
+    [ p0; p1 ]
+
 let lcm x1 x2 =
   let x1, x2 =
     match promote_values [ x1; x2 ] with
@@ -1638,6 +2009,12 @@ let lcm x1 x2 =
   let dsafe = where_ is_zero (const_full (dtype d) (shape d) 1.0) d in
   let prod = mul2 x1 (binop T.Div x2 dsafe) in
   where_ is_zero (zeros_like prod) prod
+
+let lcm p0 p1 =
+  Jnp_util.jit1 "lcm"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> lcm p0 p1 | _ -> invalid_arg "lcm: arity")
+    [ p0; p1 ]
 
 let check_search_method = function
   | "scan" | "scan_unrolled" | "sort" | "compare_all" -> ()
@@ -1661,27 +2038,154 @@ let gather_1d a indices =
     (T.Gather { dimension_numbers = dnums; slice_sizes = [| 1 |] })
     [ a; reshape indices (Array.append sh [| 1 |]) ]
 
+let canonicalize_for_sort x =
+  let dt = dtype x in
+  let result =
+    bind1 T.Select_n
+      [
+        bind1 T.Eq [ x; scalar dt 0.0 ];
+        x;
+        const_full dt (shape x) 0.0;
+      ]
+  in
+  bind1 T.Select_n
+    [
+      bind1 T.Ne [ x; x ];
+      result;
+      const_full dt (shape x) Float.nan;
+    ]
+
+let sort_compare_keys x =
+  let dt = dtype x in
+  if is_complex_dtype dt then
+    [
+      canonicalize_for_sort (bind1 T.Real [ x ]);
+      canonicalize_for_sort (bind1 T.Imag [ x ]);
+    ]
+  else if is_inexact dt then [ canonicalize_for_sort x ]
+  else [ x ]
+
+let sort_comparator strict x y =
+  let xk = sort_compare_keys x in
+  let yk = sort_compare_keys y in
+  let last = if strict then T.Lt_to else T.Le_to in
+  List.fold_left2
+    (fun acc a b ->
+      match acc with
+      | None -> Some (bind1 last [ a; b ])
+      | Some p ->
+          Some
+            (bind1 T.Or
+               [ bind1 T.Lt_to [ a; b ]; bind1 T.And [ bind1 T.Eq_to [ a; b ]; p ] ]))
+    None (List.rev xk) (List.rev yk)
+  |> Option.get
+
+let scan_levels n =
+  let rec go k = if 1 lsl k >= n + 1 then k else go (k + 1) in
+  go 0
+
+let dynamic_item a i =
+  let sliced =
+    bind1 (T.Dynamic_slice { slice_sizes = [| 1 |] }) [ a; i ]
+  in
+  bind1 (T.Squeeze [| 0 |]) [ sliced ]
+
+let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
+  Jnp_util.jit1 "_searchsorted_scan_impl"
+    ~key:(Printf.sprintf "%s,%s,%b" side (D.short_name dt) unrolled)
+    (function
+      | [ sorted_arr; query ] ->
+          let n = (shape sorted_arr).(0) in
+          if n = 0 then const_full dt (shape query) 0.0
+          else if Array.length (shape query) > 0 then
+            List.hd
+              (Interpreters.Batching.vmap
+                 (function
+                   | [ s; q ] ->
+                       [
+                         searchsorted_scan_impl ~side ~dt ~unrolled s q;
+                       ]
+                   | _ -> invalid_arg "searchsorted: arity")
+                 [ None; Some 0 ] [ sorted_arr; query ])
+          else
+            let unsigned = if dt = D.I64 then D.Uint64 else D.Uint32 in
+            let n_levels = scan_levels n in
+            let init =
+              [
+                T.Concrete (Nd.of_floats unsigned [||] [| 0.0 |]);
+                T.Concrete (Nd.of_floats unsigned [||] [| float_of_int n |]);
+              ]
+            in
+            let body = function
+              | [ low; high ] ->
+                  let half =
+                    Ufuncs.floor_divide
+                      (bind1 T.Sub [ high; low ])
+                      (Jnp_util.py_int 2)
+                  in
+                  let mid = bind1 T.Add [ low; half ] in
+                  let item = dynamic_item sorted_arr mid in
+                  let go_left =
+                    if side = "left" then sort_comparator false query item
+                    else sort_comparator true query item
+                  in
+                  [
+                    bind1 T.Select_n [ go_left; mid; low ];
+                    bind1 T.Select_n [ go_left; high; mid ];
+                  ]
+              | _ -> invalid_arg "searchsorted: state"
+            in
+            let out =
+              Lax.scan ~length:n_levels
+                ~unroll:(if unrolled then n_levels else 1)
+                body init []
+            in
+            convert (List.nth out 1) dt
+      | _ -> invalid_arg "searchsorted: arity")
+    [ sorted_arr; query ]
+
 let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
   if ndim a <> 1 then invalid_arg "a should be 1-dimensional";
   check_search_method method_;
-  let a, v =
-    match promote_values [ a; v ] with [ a; v ] -> (a, v) | _ -> assert false
-  in
-  let a = match sorter with Some s -> gather_1d a s | None -> a in
-  let na = (shape a).(0) in
-  let vsh = shape v in
-  let out_shape = Array.append [| na |] vsh in
-  let a_b =
-    bind1 (T.Broadcast_in_dim { shape = out_shape; dims = [| 0 |] }) [ a ]
-  in
-  let v_dims = Array.init (Array.length vsh) (fun i -> i + 1) in
-  let v_b =
-    bind1 (T.Broadcast_in_dim { shape = out_shape; dims = v_dims }) [ v ]
-  in
-  let cmp =
-    if side = "right" then bind1 T.Le [ a_b; v_b ] else bind1 T.Lt [ a_b; v_b ]
-  in
-  bind1 (T.Reduce_sum [| 0 |]) [ convert cmp D.I32 ]
+  let args = [ a; v ] @ Option.to_list sorter in
+  Jnp_util.jit1 "searchsorted" ~key:(side ^ "," ^ method_)
+    (function
+      | a :: v :: rest -> (
+          let a, v =
+            match promote_values [ a; v ] with
+            | [ a; v ] -> (a, v)
+            | _ -> assert false
+          in
+          let a =
+            match rest with [ s ] -> take_trailing a [ s ] | _ -> a
+          in
+          let dt = D.I32 in
+          match method_ with
+          | "scan" | "scan_unrolled" ->
+              searchsorted_scan_impl ~side ~dt
+                ~unrolled:(method_ = "scan_unrolled") a v
+          | _ ->
+              let na = (shape a).(0) in
+              let vsh = shape v in
+              let out_shape = Array.append [| na |] vsh in
+              let a_b =
+                bind1
+                  (T.Broadcast_in_dim { shape = out_shape; dims = [| 0 |] })
+                  [ a ]
+              in
+              let v_dims = Array.init (Array.length vsh) (fun i -> i + 1) in
+              let v_b =
+                bind1
+                  (T.Broadcast_in_dim { shape = out_shape; dims = v_dims })
+                  [ v ]
+              in
+              let cmp =
+                if side = "right" then bind1 T.Le [ a_b; v_b ]
+                else bind1 T.Lt [ a_b; v_b ]
+              in
+              bind1 (T.Reduce_sum [| 0 |]) [ convert cmp dt ])
+      | _ -> invalid_arg "searchsorted: arity")
+    args
 
 let digitize ?(right = false) ?(method_ = "scan") x bins =
   check_search_method method_;
@@ -1691,17 +2195,25 @@ let digitize ?(right = false) ?(method_ = "scan") x bins =
   if nb = 0 then const_full D.I32 (shape x) 0.0
   else begin
     let side = if right then "left" else "right" in
-    let inc = bind1 T.Ge [ scalar_at bins (nb - 1); scalar_at bins 0 ] in
-    let asc = searchsorted ~side bins x in
+    let inc = bind1 T.Ge [ index_at bins (-1); index_at bins 0 ] in
+    let asc = searchsorted ~side ~method_ bins x in
     let desc =
       bind1 T.Sub
         [
-          const_full D.I32 (shape x) (float_of_int nb);
-          searchsorted ~side (flip bins) x;
+          Jnp_util.py_int nb;
+          searchsorted ~side ~method_ (rev_dims bins [| 0 |]) x;
         ]
     in
     where_ inc asc desc
   end
+
+let digitize ?right ?method_ a0 a1 =
+  Eager_jit.one ~jit:"digitize" "numpy.lax_numpy.digitize" (right, method_) []
+    [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> digitize ?right ?method_ a0 a1
+      | _ -> assert false)
 
 let dtype_of = dtype
 
@@ -1716,9 +2228,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   let m = convert m dtin in
   let y = Option.map (fun v -> convert v dtin) y in
   let x0 =
-    Jnp_util.jit1 "atleast_2d"
-      (function [ v ] -> atleast_2d v | _ -> invalid_arg "atleast_2d: arity")
-      [ m ]
+    atleast_2d m
   in
   let x0 = if (not rowvar) && ndim m <> 1 then matrix_transpose x0 else x0 in
   let x =
@@ -1879,6 +2389,18 @@ let corrcoef ?y ?(rowvar = true) ?dtype x =
     else bound (if complex then bind1 T.Real [ c ] else c)
   end
 
+let corrcoef ?y ?rowvar ?dtype p0 =
+  let y_given = y <> None in
+  if y_given then corrcoef ?y ?rowvar ?dtype p0
+  else
+    Jnp_util.jit1 "corrcoef"
+      ~key:
+        (Digest.to_hex (Digest.string (Marshal.to_string (rowvar, dtype) [])))
+      (function
+        | [ p0 ] -> corrcoef ?y ?rowvar ?dtype p0
+        | _ -> invalid_arg "corrcoef: arity")
+      [ p0 ]
+
 let argsort_values v =
   let n = (shape v).(0) in
   let dt = dtype v in
@@ -1892,234 +2414,6 @@ let argsort_values v =
   | _ -> failwith "argsort_values: arity"
 
 let from_dlpack ?device ?copy x = Dlpack.from_dlpack ?device ?copy x
-
-let fmin p0 p1 =
-  Jnp_util.jit1 "fmin"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> fmin p0 p1 | _ -> invalid_arg "fmin: arity")
-    [ p0; p1 ]
-
-let fmax p0 p1 =
-  Jnp_util.jit1 "fmax"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> fmax p0 p1 | _ -> invalid_arg "fmax: arity")
-    [ p0; p1 ]
-
-let trunc p0 =
-  Jnp_util.jit1 "trunc"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> trunc p0 | _ -> invalid_arg "trunc: arity")
-    [ p0 ]
-
-let convolve ?mode p0 p1 =
-  Jnp_util.jit1 "convolve"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
-    (function
-      | [ p0; p1 ] -> convolve ?mode p0 p1 | _ -> invalid_arg "convolve: arity")
-    [ p0; p1 ]
-
-let correlate ?mode p0 p1 =
-  Jnp_util.jit1 "correlate"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
-    (function
-      | [ p0; p1 ] -> correlate ?mode p0 p1
-      | _ -> invalid_arg "correlate: arity")
-    [ p0; p1 ]
-
-let rot90 ?k ?axes p0 =
-  Jnp_util.jit1 "rot90"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (k, axes) [])))
-    (function [ p0 ] -> rot90 ?k ?axes p0 | _ -> invalid_arg "rot90: arity")
-    [ p0 ]
-
-let iscomplex p0 =
-  Jnp_util.jit1 "iscomplex"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> iscomplex p0 | _ -> invalid_arg "iscomplex: arity")
-    [ p0 ]
-
-let isreal p0 =
-  Jnp_util.jit1 "isreal"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> isreal p0 | _ -> invalid_arg "isreal: arity")
-    [ p0 ]
-
-let angle ?deg p0 =
-  Jnp_util.jit1 "angle"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string deg [])))
-    (function [ p0 ] -> angle ?deg p0 | _ -> invalid_arg "angle: arity")
-    [ p0 ]
-
-let diff ?n ?axis ?prepend ?append p0 =
-  let prepend_given = prepend <> None in
-  let append_given = append <> None in
-  if prepend_given || append_given then diff ?n ?axis ?prepend ?append p0
-  else
-    Jnp_util.jit1 "diff"
-      ~key:(Digest.to_hex (Digest.string (Marshal.to_string (n, axis) [])))
-      (function
-        | [ p0 ] -> diff ?n ?axis ?prepend ?append p0
-        | _ -> invalid_arg "diff: arity")
-      [ p0 ]
-
-let ediff1d ?to_end ?to_begin p0 =
-  let to_end_given = to_end <> None in
-  let to_begin_given = to_begin <> None in
-  if to_end_given || to_begin_given then ediff1d ?to_end ?to_begin p0
-  else
-    Jnp_util.jit1 "ediff1d"
-      ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-      (function
-        | [ p0 ] -> ediff1d ?to_end ?to_begin p0
-        | _ -> invalid_arg "ediff1d: arity")
-      [ p0 ]
-
-let resize p0 s1 =
-  Jnp_util.jit1 "resize"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string s1 [])))
-    (function [ p0 ] -> resize p0 s1 | _ -> invalid_arg "resize: arity")
-    [ p0 ]
-
-let isclose ?rtol ?atol ?equal_nan p0 p1 =
-  Jnp_util.jit1 "isclose"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (rtol, atol, equal_nan) [])))
-    (function
-      | [ p0; p1 ] -> isclose ?rtol ?atol ?equal_nan p0 p1
-      | _ -> invalid_arg "isclose: arity")
-    [ p0; p1 ]
-
-let round ?decimals p0 =
-  Jnp_util.jit1 "round"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string decimals [])))
-    (function [ p0 ] -> round ?decimals p0 | _ -> invalid_arg "round: arity")
-    [ p0 ]
-
-let around ?decimals p0 =
-  Jnp_util.jit1 "around"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string decimals [])))
-    (function
-      | [ p0 ] -> around ?decimals p0 | _ -> invalid_arg "around: arity")
-    [ p0 ]
-
-let nan_to_num ?nan ?posinf ?neginf p0 =
-  Jnp_util.jit1 "nan_to_num"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (nan, posinf, neginf) [])))
-    (function
-      | [ p0 ] -> nan_to_num ?nan ?posinf ?neginf p0
-      | _ -> invalid_arg "nan_to_num: arity")
-    [ p0 ]
-
-let allclose ?rtol ?atol ?equal_nan p0 p1 =
-  Jnp_util.jit1 "allclose"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (rtol, atol, equal_nan) [])))
-    (function
-      | [ p0; p1 ] -> allclose ?rtol ?atol ?equal_nan p0 p1
-      | _ -> invalid_arg "allclose: arity")
-    [ p0; p1 ]
-
-let unwrap ?discont ?axis ?period p0 =
-  Jnp_util.jit1 "unwrap"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (discont, axis, period) [])))
-    (function
-      | [ p0 ] -> unwrap ?discont ?axis ?period p0
-      | _ -> invalid_arg "unwrap: arity")
-    [ p0 ]
-
-let atleast_2d p0 =
-  Jnp_util.jit1 "atleast_2d"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> atleast_2d p0 | _ -> invalid_arg "atleast_2d: arity")
-    [ p0 ]
-
-let atleast_3d p0 =
-  Jnp_util.jit1 "atleast_3d"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> atleast_3d p0 | _ -> invalid_arg "atleast_3d: arity")
-    [ p0 ]
-
-let i0 p0 =
-  Jnp_util.jit1 "i0"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> i0 p0 | _ -> invalid_arg "i0: arity")
-    [ p0 ]
-
-let trapezoid ?x ?dx ?axis p0 =
-  let x_given = x <> None in
-  if x_given then trapezoid ?x ?dx ?axis p0
-  else
-    Jnp_util.jit1 "trapezoid"
-      ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dx, axis) [])))
-      (function
-        | [ p0 ] -> trapezoid ?x ?dx ?axis p0
-        | _ -> invalid_arg "trapezoid: arity")
-      [ p0 ]
-
-let diagonal ?offset ?axis1 ?axis2 p0 =
-  Jnp_util.jit1 "diagonal"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (offset, axis1, axis2) [])))
-    (function
-      | [ p0 ] -> diagonal ?offset ?axis1 ?axis2 p0
-      | _ -> invalid_arg "diagonal: arity")
-    [ p0 ]
-
-let append ?axis p0 p1 =
-  Jnp_util.jit1 "append"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string axis [])))
-    (function
-      | [ p0; p1 ] -> append ?axis p0 p1 | _ -> invalid_arg "append: arity")
-    [ p0; p1 ]
-
-let cross ?axisa ?axisb ?axisc ?axis p0 p1 =
-  Jnp_util.jit1 "cross"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (axisa, axisb, axisc, axis) [])))
-    (function
-      | [ p0; p1 ] -> cross ?axisa ?axisb ?axisc ?axis p0 p1
-      | _ -> invalid_arg "cross: arity")
-    [ p0; p1 ]
-
-let kron p0 p1 =
-  Jnp_util.jit1 "kron"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> kron p0 p1 | _ -> invalid_arg "kron: arity")
-    [ p0; p1 ]
-
-let vander ?n ?increasing p0 =
-  Jnp_util.jit1 "vander"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (n, increasing) [])))
-    (function
-      | [ p0 ] -> vander ?n ?increasing p0 | _ -> invalid_arg "vander: arity")
-    [ p0 ]
-
-let rollaxis ?start s0 p1 =
-  Jnp_util.jit1 "rollaxis"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (start, s0) [])))
-    (function
-      | [ p1 ] -> rollaxis ?start s0 p1 | _ -> invalid_arg "rollaxis: arity")
-    [ p1 ]
-
-let gcd p0 p1 =
-  Jnp_util.jit1 "gcd"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> gcd p0 p1 | _ -> invalid_arg "gcd: arity")
-    [ p0; p1 ]
-
-let lcm p0 p1 =
-  Jnp_util.jit1 "lcm"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> lcm p0 p1 | _ -> invalid_arg "lcm: arity")
-    [ p0; p1 ]
 
 let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
   let y_given = y <> None in
@@ -2138,18 +2432,6 @@ let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
         | [ p0; aweights ] -> cov ?y ?rowvar ?bias ?ddof ~aweights ?dtype p0
         | _ -> invalid_arg "cov: arity")
       (p0 :: Option.to_list aweights)
-
-let corrcoef ?y ?rowvar ?dtype p0 =
-  let y_given = y <> None in
-  if y_given then corrcoef ?y ?rowvar ?dtype p0
-  else
-    Jnp_util.jit1 "corrcoef"
-      ~key:
-        (Digest.to_hex (Digest.string (Marshal.to_string (rowvar, dtype) [])))
-      (function
-        | [ p0 ] -> corrcoef ?y ?rowvar ?dtype p0
-        | _ -> invalid_arg "corrcoef: arity")
-      [ p0 ]
 
 let fmin a0 a1 =
   Eager_jit.one "numpy.lax_numpy.fmin" () [] [ a0; a1 ] (fun opts vals ->
@@ -2306,13 +2588,6 @@ let triu ?k a0 =
   Eager_jit.one "numpy.lax_numpy.triu" k [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> triu ?k a0 | _ -> assert false)
 
-let trace ?offset ?axis1 ?axis2 ?dtype a0 =
-  Eager_jit.one "numpy.lax_numpy.trace" (offset, axis1, axis2, dtype) [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> trace ?offset ?axis1 ?axis2 ?dtype a0
-      | _ -> assert false)
-
 let diagonal ?offset ?axis1 ?axis2 a0 =
   Eager_jit.one "numpy.lax_numpy.diagonal" (offset, axis1, axis2) [] [ a0 ]
     (fun opts vals ->
@@ -2381,13 +2656,6 @@ let searchsorted ?side ?sorter ?method_ a0 a1 =
       | [ sorter ], [ a0; a1 ] -> searchsorted ?side ?sorter ?method_ a0 a1
       | _ -> assert false)
 
-let digitize ?right ?method_ a0 a1 =
-  Eager_jit.one "numpy.lax_numpy.digitize" (right, method_) [] [ a0; a1 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1 ] -> digitize ?right ?method_ a0 a1
-      | _ -> assert false)
-
 let flip ?axis a0 =
   Eager_jit.one "numpy.lax_numpy.flip" axis [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> flip ?axis a0 | _ -> assert false)
@@ -2403,10 +2671,6 @@ let moveaxis a0 a1 a2 =
       match (opts, vals) with
       | [], [ a2 ] -> moveaxis a0 a1 a2
       | _ -> assert false)
-
-let diag ?k a0 =
-  Eager_jit.one "numpy.lax_numpy.diag" k [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with [], [ a0 ] -> diag ?k a0 | _ -> assert false)
 
 let argmax ?axis ?keepdims a0 =
   Eager_jit.one "numpy.lax_numpy.argmax" (axis, keepdims) [] [ a0 ]

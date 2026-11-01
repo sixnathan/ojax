@@ -68,11 +68,23 @@ let matvec x1 x2 =
   let r = matmul x1 x2e in
   NL.squeeze ~axis:[| ndim r - 1 |] r
 
+let matvec p0 p1 =
+  Jnp_util.jit1 "matvec"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> matvec p0 p1 | _ -> invalid_arg "matvec: arity")
+    [ p0; p1 ]
+
 let vecmat x1 x2 =
   let n1 = ndim x1 in
   let x1e = NL.expand_dims x1 [| n1 - 1 |] in
   let r = matmul x1e x2 in
   NL.squeeze ~axis:[| ndim r - 2 |] r
+
+let vecmat p0 p1 =
+  Jnp_util.jit1 "vecmat"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> vecmat p0 p1 | _ -> invalid_arg "vecmat: arity")
+    [ p0; p1 ]
 
 let vdot ?precision ?preferred a b =
   let a =
@@ -133,18 +145,6 @@ let outer a b =
   let a2 = NL.expand_dims a [| 1 |] in
   let b2 = NL.expand_dims b [| 0 |] in
   bcast_binop (mul_prim pdt) a2 b2
-
-let matvec p0 p1 =
-  Jnp_util.jit1 "matvec"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> matvec p0 p1 | _ -> invalid_arg "matvec: arity")
-    [ p0; p1 ]
-
-let vecmat p0 p1 =
-  Jnp_util.jit1 "vecmat"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> vecmat p0 p1 | _ -> invalid_arg "vecmat: arity")
-    [ p0; p1 ]
 
 let matvec a0 a1 =
   Eager_jit.one "numpy.tensor_contractions.matvec" () [] [ a0; a1 ]

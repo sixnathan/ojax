@@ -86,25 +86,15 @@ let threefry_step = function
       [ next_i; x0'; add x1' counter; k1; k2; k0; next_rotations; rotations ]
   | _ -> invalid_arg "Prng_lowering: threefry state"
 
-let threefry2x32 key1 key2 c1 c2 =
+let threefry2x32_body key1 key2 c1 c2 =
   let shape = (Core.get_aval c1).shape in
   let spread v = broadcast_to_shape v shape in
   let key3 = xor (xor key1 key2) (like key1 466688986.0) in
   let x0 = add c1 (spread key1) in
   let x1 = add c2 (spread key2) in
-  let step state = Jaxpr.named_jit ~name:"closed_call" threefry_step state in
-  let cond = function
-    | counter :: _ -> b1 Lt [ counter; i32_scalar 5.0 ]
-    | [] -> invalid_arg "Prng_lowering: threefry state"
-  in
-  let body = function
-    | counter :: state -> b1 Add [ counter; i32_scalar 1.0 ] :: step state
-    | [] -> invalid_arg "Prng_lowering: threefry state"
-  in
   match
-    Lax_api.while_loop cond body
+    Lax.scan ~length:5 threefry_step
       [
-        i32_scalar 0.0;
         i32_scalar 0.0;
         x0;
         x1;
@@ -114,20 +104,53 @@ let threefry2x32 key1 key2 c1 c2 =
         rotation_array rounds_a;
         rotation_array rounds_b;
       ]
+      []
   with
-  | _ :: _ :: x0 :: x1 :: _ -> [ x0; x1 ]
+  | _ :: x0 :: x1 :: _ -> [ x0; x1 ]
   | _ -> invalid_arg "Prng_lowering: threefry state"
 
+let threefry2x32 key1 key2 c1 c2 =
+  Jaxpr.named_jit ~name:"threefry2x32"
+    (function
+      | [ k1; k2; x1; x2 ] -> threefry2x32_body k1 k2 x1 x2
+      | _ -> invalid_arg "Prng_lowering: threefry state")
+    [ key1; key2; c1; c2 ]
+
 let iota_counters shape =
-  let total = Array.fold_left ( * ) 1 shape in
-  let high = float_of_int (total lsr 32) in
-  ignore high;
-  ( Concrete
-      (Ndarray.of_floats u32 shape
-         (Array.init total (fun i -> float_of_int (i lsr 32)))),
-    Concrete
-      (Ndarray.of_floats u32 shape
-         (Array.init total (fun i -> float_of_int (i land 0xFFFFFFFF)))) )
+  if Array.length shape = 0 then (u32_scalar 0.0, u32_scalar 0.0)
+  else begin
+    let u64 = Dtype.Uint64 in
+    let u64_scalar x = Concrete (Ndarray.of_int64s u64 [||] [| x |]) in
+    let spread v = b1 (Broadcast_in_dim { shape; dims = [||] }) [ v ] in
+    let n = Array.length shape in
+    let strides =
+      Array.init n (fun d ->
+          let product = ref 1 in
+          for k = d + 1 to n - 1 do
+            product := !product * shape.(k)
+          done;
+          !product)
+    in
+    let iotas =
+      List.init n (fun dimension ->
+          b1 (Iota { dtype = u64; shape; dimension }) [])
+    in
+    let scaled =
+      List.mapi
+        (fun d iota ->
+          b1 Mul [ spread (u64_scalar (Int64.of_int strides.(d))); iota ])
+        iotas
+    in
+    let counts =
+      match scaled with
+      | [] -> invalid_arg "Prng_lowering: iota rank"
+      | first :: rest -> List.fold_left add first rest
+    in
+    let shifted = b1 Shift_right_logical [ counts; spread (u64_scalar 32L) ] in
+    let lo = b1 (Convert_element_type u32) [ counts ] in
+    let hi = b1 (Convert_element_type u32) [ shifted ] in
+    (hi, lo)
+  end
 
 let key_words key =
   let piece i =
@@ -165,11 +188,20 @@ let random_bits ~shape key =
 let random_split ~shape key =
   over_key_batch
     (fun k ->
-      let k1, k2 = key_words k in
-      let c1, c2 = iota_counters shape in
-      match threefry2x32 k1 k2 c1 c2 with
-      | [ x; y ] -> b1 (Stack (Array.length shape)) [ x; y ]
-      | _ -> invalid_arg "Prng_lowering: threefry arity")
+      List.hd
+        (Jaxpr.named_jit ~name:"_threefry_split"
+           ~key:
+             (String.concat ","
+                (List.map string_of_int (Array.to_list shape)))
+           (function
+             | [ k ] -> (
+                 let k1, k2 = key_words k in
+                 let c1, c2 = iota_counters shape in
+                 match threefry2x32 k1 k2 c1 c2 with
+                 | [ x; y ] -> [ b1 (Stack (Array.length shape)) [ x; y ] ]
+                 | _ -> invalid_arg "Prng_lowering: threefry arity")
+             | _ -> invalid_arg "Prng_lowering: split arity")
+           [ k ]))
     key
 
 let seed_words seed =
@@ -203,13 +235,59 @@ let seed_words seed =
   in
   (high, low)
 
+let seed_scalar seed =
+  let a = Core.get_aval seed in
+  let const v =
+    match a.dtype with
+    | Dtype.I64 | Dtype.Uint64 ->
+        Concrete (Ndarray.of_int64s a.dtype [||] [| v |])
+    | _ -> Concrete (Ndarray.of_floats a.dtype [||] [| Int64.to_float v |])
+  in
+  let mask =
+    match a.dtype with
+    | Dtype.I64 | Dtype.Uint64 -> const 0xFFFFFFFFL
+    | Dtype.Uint32 -> const 0xFFFFFFFFL
+    | _ -> const (-1L)
+  in
+  let word v =
+    b1
+      (Broadcast_in_dim { shape = [| 1 |]; dims = [||] })
+      [ b1 (Convert_element_type u32) [ v ] ]
+  in
+  let k1 = word (b1 Shift_right_logical [ seed; const 32L ]) in
+  let k2 = word (b1 And [ seed; mask ]) in
+  b1 (Concatenate 0) [ k1; k2 ]
+
 let random_seed seed =
-  let high, low = seed_words seed in
-  b1 (Stack (Array.length (Core.get_aval seed).shape)) [ high; low ]
+  if Array.length (Core.get_aval seed).shape = 0 then seed_scalar seed
+  else
+    let high, low = seed_words seed in
+    b1 (Stack (Array.length (Core.get_aval seed).shape)) [ high; low ]
+
+let threefry_2x32 key count =
+  let k1, k2 = key_words key in
+  let n = (Core.get_aval count).shape.(0) in
+  let half = n / 2 in
+  let x =
+    Core.bind (Split { sizes = [| half; half |]; axis = 0 }) [ count ]
+  in
+  match x with
+  | [ x0; x1 ] -> (
+      match threefry2x32 k1 k2 x0 x1 with
+      | [ a; b ] -> b1 (Concatenate 0) [ a; b ]
+      | _ -> invalid_arg "Prng_lowering: threefry arity")
+  | _ -> invalid_arg "Prng_lowering: split arity"
 
 let rec fold_in key data =
   let ka = Core.get_aval key and da = Core.get_aval data in
-  if Array.length ka.shape = 1 then
+  if Array.length ka.shape = 1 && Array.length da.shape = 0 then
+    List.hd
+      (Jaxpr.named_jit ~name:"_threefry_fold_in"
+         (function
+           | [ key; data ] -> [ threefry_2x32 key (seed_scalar data) ]
+           | _ -> invalid_arg "Prng_lowering: fold_in arity")
+         [ key; data ])
+  else if Array.length ka.shape = 1 then
     let k1, k2 = key_words key in
     let high, low = seed_words data in
     match threefry2x32 k1 k2 high low with

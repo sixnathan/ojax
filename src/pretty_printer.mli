@@ -11,7 +11,8 @@ val closed_jaxpr_to_jax_string : closed_jaxpr -> string
 val register_call_name : int -> string -> unit
 
 val custom_call :
-  (int -> aval list -> (string * string * closed_jaxpr) option) ref
+  (int -> int option -> aval list -> (string * string * closed_jaxpr) option)
+  ref
 
 val has_call_name : int -> bool
 val call_name : int -> string

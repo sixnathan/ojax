@@ -220,7 +220,7 @@ let resize_nearest image ~output_shape =
             (float_of_int n)
         in
         let offsets = NL.astype (UF.floor offsets) D.I32 in
-        result := IDX.take ~axis:d !result offsets
+        result := IDX.take_index ~axis:d !result offsets
       end)
     output_shape;
   !result

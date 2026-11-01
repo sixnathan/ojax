@@ -75,9 +75,9 @@ let lu ?(permute_l = false) a =
   in
   let p = NL.astype (UF.equal perm_row iota_col) real_dt in
   let kcols = iota_idx k in
-  let l_lower = IDX.take ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
+  let l_lower = IDX.take_index ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
   let l = UF.add l_lower (NL.eye ~m:k ~dtype:dt m) in
-  let u = IDX.take ~axis:0 (NL.triu lu_) kcols in
+  let u = IDX.take_index ~axis:0 (NL.triu lu_) kcols in
   if permute_l then [ TC.matmul p l; u ] else [ p; l; u ]
 
 let lu_factor a =
@@ -94,7 +94,7 @@ let lu_solve ?(trans = 0) (lu_, piv) b =
   let x = if bvec then NL.reshape b [| m; 1 |] else b in
   let out =
     if trans = 0 then begin
-      let x = IDX.take ~axis:0 x perm in
+      let x = IDX.take_index ~axis:0 x perm in
       let x =
         LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu_
           x
@@ -111,7 +111,7 @@ let lu_solve ?(trans = 0) (lu_, piv) b =
         LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true
           ~transpose_a:true ~conjugate_a:conj lu_ x
       in
-      IDX.take ~axis:0 x (SORT.argsort perm)
+      IDX.take_index ~axis:0 x (SORT.argsort perm)
     end
     else invalid_arg (Printf.sprintf "lu_solve: invalid trans value %d" trans)
   in
@@ -430,14 +430,14 @@ let toeplitz ?r c =
   else begin
     let r_tail =
       if n = 1 then NL.reshape r [| 0 |]
-      else IDX.take r (UF.add (iota_idx (n - 1)) (i32_scalar 1))
+      else IDX.take_index r (UF.add (iota_idx (n - 1)) (i32_scalar 1))
     in
     let elems = NL.concatenate [ NL.flip c; r_tail ] in
     let ii = NL.reshape (iota_idx m) [| m; 1 |] in
     let jj = NL.reshape (iota_idx n) [| 1; n |] in
     let idx = UF.add (UF.subtract (i32_scalar (m - 1)) ii) jj in
     let flat = NL.reshape idx [| m * n |] in
-    NL.reshape (IDX.take elems flat) [| m; n |]
+    NL.reshape (IDX.take_index elems flat) [| m; n |]
   end
 
 let hessenberg ?(calc_q = false) a =
@@ -453,7 +453,7 @@ let hessenberg ?(calc_q = false) a =
     else begin
       let rows = UF.add (iota_idx (n - 1)) (i32_scalar 1) in
       let cols = iota_idx (n - 1) in
-      let sub = IDX.take ~axis:1 (IDX.take ~axis:0 a_out rows) cols in
+      let sub = IDX.take_index ~axis:1 (IDX.take_index ~axis:0 a_out rows) cols in
       let q_inner = LL.householder_product sub taus in
       let dt = dtype a in
       let top =

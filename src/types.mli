@@ -204,14 +204,24 @@ and primitive =
   | Custom_vjp_call of int
   | Custom_lin of { rule : int; n_res : int; out_avals : aval list }
   | Checkpoint_name of string
-  | Cond of { t : closed_jaxpr; f : closed_jaxpr }
+  | Cond of {
+      branches : closed_jaxpr list;
+      platforms : string array option array option;
+    }
   | Scan of {
       length : int;
       reverse : bool;
+      num_consts : int;
       num_carry : int;
       jaxpr : closed_jaxpr;
+      unroll : int;
     }
-  | While of { cond : closed_jaxpr; body : closed_jaxpr }
+  | While of {
+      cond_nconsts : int;
+      body_nconsts : int;
+      cond : closed_jaxpr;
+      body : closed_jaxpr;
+    }
   | Cumsum of { axis : int; reverse : bool }
   | Cumprod of { axis : int; reverse : bool }
   | Cummax of { axis : int; reverse : bool }

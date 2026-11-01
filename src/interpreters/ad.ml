@@ -1853,7 +1853,7 @@ let xla_call_jvp (c : closed_jaxpr) primals tangents =
         else p2tz po)
       pos out_nzs )
 
-let jvp_pairs prim primals tangents =
+let rec jvp_pairs prim primals tangents =
   match prim with
   | Xla_call c -> xla_call_jvp c primals tangents
   | Ffi_call c ->
@@ -1893,7 +1893,20 @@ let jvp_pairs prim primals tangents =
       match (primals, tangents) with
       | [ a ], [ t ] -> svd_jvp ~full_matrices ~compute_uv a t
       | _ -> arity ())
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan ({ num_consts; num_carry; jaxpr; _ } as s) when num_consts > 0 ->
+      let lifted =
+        Scan
+          {
+            s with
+            num_consts = 0;
+            num_carry = num_consts + num_carry;
+            jaxpr = Core.scan_lift_consts ~num_consts jaxpr;
+          }
+      in
+      let drop = List.filteri (fun i _ -> i >= num_consts) in
+      let p, t = jvp_pairs lifted primals tangents in
+      (drop p, drop t)
+  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
       let split2 l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
@@ -1942,7 +1955,15 @@ let jvp_pairs prim primals tangents =
       let new_operands = carry @ carry_t @ xs @ xs_t in
       let out =
         Core.bind
-          (Scan { length; reverse; num_carry = 2 * nc; jaxpr = new_body })
+          (Scan
+             {
+               length;
+               reverse;
+               num_consts = 0;
+               num_carry = 2 * nc;
+               jaxpr = new_body;
+               unroll;
+             })
           new_operands
       in
       let pcarry, r1 = split2 out nc in
@@ -1954,7 +1975,21 @@ let jvp_pairs prim primals tangents =
         @ restore_symbolic_zeros !ys_zero tys
       in
       (primal_outs, tangent_outs)
-  | While { cond; body } ->
+  | While { cond_nconsts; body_nconsts; cond; body }
+    when cond_nconsts + body_nconsts > 0 ->
+      let n = cond_nconsts + body_nconsts in
+      let cond, body =
+        Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body
+          (List.map Core.get_aval primals)
+      in
+      let drop = List.filteri (fun i _ -> i >= n) in
+      let p, t =
+        jvp_pairs
+          (While { cond_nconsts = 0; body_nconsts = 0; cond; body })
+          primals tangents
+      in
+      (drop p, drop t)
+  | While { cond; body; _ } ->
       let split2 l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
@@ -1986,22 +2021,31 @@ let jvp_pairs prim primals tangents =
       in
       let out =
         Core.bind
-          (While { cond = new_cond; body = new_body })
+          (While
+             {
+               cond_nconsts = 0;
+               body_nconsts = 0;
+               cond = new_cond;
+               body = new_body;
+             })
           (primals @ tangents)
       in
       let pcarry, tcarry = split2 out nc in
       (pcarry, restore_symbolic_zeros carry_zero tcarry)
-  | Cond { t; f } -> (
+  | Cond { branches; platforms } -> (
       match (primals, tangents) with
       | pred :: prim_ops, _ :: tan_ops ->
           let op_avals = List.map Core.get_aval prim_ops in
-          let primal_outs = Core.bind (Cond { t; f }) primals in
+          let primal_outs = Core.bind (Cond { branches; platforms }) primals in
           let op_zero = List.map Ad_util.is_symbolic_zero tan_ops in
-          let t_tan = cond_tangent_branch jvp t op_avals op_zero in
-          let f_tan = cond_tangent_branch jvp f op_avals op_zero in
+          let tan_branches =
+            List.map
+              (fun b -> cond_tangent_branch jvp b op_avals op_zero)
+              branches
+          in
           let tangent_outs =
             Core.bind
-              (Cond { t = t_tan; f = f_tan })
+              (Cond { branches = tan_branches; platforms })
               ((pred :: prim_ops) @ tan_ops)
           in
           (primal_outs, tangent_outs)
@@ -3262,7 +3306,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
             in
             [ op_t; None; up_t ]
         | _ -> arity ())
-  | Cond { t; f } -> (
+  | Cond { branches; platforms } -> (
       match primals with
       | pred :: rest ->
           if is_undef pred then
@@ -3308,7 +3352,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           in
           let in_cts =
             Core.bind
-              (Cond { t = transposed t; f = transposed f })
+              (Cond { branches = List.map transposed branches; platforms })
               ((prim_val pred :: cts) @ residuals)
           in
           let remaining = ref in_cts in
@@ -3628,7 +3672,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
       let split_at l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
@@ -3687,8 +3731,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
              {
                length;
                reverse = not reverse;
+               num_consts = 0;
                num_carry;
                jaxpr = transposed_body;
+               unroll;
              })
           (ct_carry @ ct_ys @ residuals)
       in

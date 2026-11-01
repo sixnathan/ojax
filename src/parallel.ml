@@ -173,6 +173,6 @@ let ragged_all_to_all operand output input_offsets send_sizes output_offsets
         L.add (L.sub positions start) (across (scalar source_at i))
       in
       let sender = scalar gathered (i / per_device) in
-      let taken = Numpy.Indexing.take ~axis:0 ~mode:"clip" sender from_row in
+      let taken = Numpy.Indexing.take_index ~axis:0 ~mode:"clip" sender from_row in
       L.select wide (L.convert_element_type taken dt) result)
     output (List.init slots Fun.id)

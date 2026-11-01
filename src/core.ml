@@ -191,6 +191,22 @@ let note_custom_call_jaxpr id avals c =
 let find_custom_call_jaxpr id avals =
   Hashtbl.find_opt custom_call_jaxprs (id, avals, Config.x64_enabled ())
 
+let scan_lift_consts ~num_consts (c : closed_jaxpr) =
+  let carried = List.filteri (fun i _ -> i < num_consts) c.jaxpr.in_binders in
+  {
+    c with
+    jid = fresh_id ();
+    jaxpr =
+      {
+        c.jaxpr with
+        outs = List.map (fun v -> A_var v) carried @ c.jaxpr.outs;
+      };
+  }
+
+let custom_eqn_jaxprs : (int, closed_jaxpr) Hashtbl.t = Hashtbl.create 64
+let note_custom_eqn_jaxpr vid c = Hashtbl.replace custom_eqn_jaxprs vid c
+let find_custom_eqn_jaxpr vid = Hashtbl.find_opt custom_eqn_jaxprs vid
+
 let custom_call_jaxprs_of id =
   Hashtbl.fold
     (fun (rule, _, _) c acc -> if rule = id then c :: acc else acc)

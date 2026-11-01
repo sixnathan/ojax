@@ -32,8 +32,8 @@ let find_indices point x =
       (NL.searchsorted ~side:"right" point x)
   in
   let lower = U.subtract i (L.full_like i 1.0) in
-  let lo = Numpy.Indexing.take ~axis:0 point lower in
-  let hi = Numpy.Indexing.take ~axis:0 point i in
+  let lo = Numpy.Indexing.take_index ~axis:0 point lower in
+  let hi = Numpy.Indexing.take_index ~axis:0 point i in
   let weight = U.divide (U.subtract x lo) (U.subtract hi lo) in
   (lower, weight)
 
@@ -61,7 +61,7 @@ let unravel_grid t indices =
   in
   let cells = Array.fold_left ( * ) 1 grid in
   let flat_values = NL.reshape t.values [| cells; tail_size |] in
-  let picked = Numpy.Indexing.take ~axis:0 flat_values flat_index in
+  let picked = Numpy.Indexing.take_index ~axis:0 flat_values flat_index in
   (picked, out_shape, tail)
 
 let expand_weight w tail_rank =

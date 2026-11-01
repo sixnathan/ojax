@@ -518,7 +518,7 @@ module Rotation = struct
   let compose a b =
     { quat = normalize_quaternion (compose_quat_v a.quat b.quat) }
 
-  let getitem r ind = { quat = IDX.take ~axis:0 r.quat ind }
+  let getitem r ind = { quat = IDX.take_index ~axis:0 r.quat ind }
 
   let getrow r i =
     let nd = concrete r.quat in
@@ -569,7 +569,7 @@ module Slerp = struct
   }
 
   let take_rows v lo hi =
-    IDX.take ~axis:0 v
+    IDX.take_index ~axis:0 v
       (LN.arange ~start:(float_of_int lo) ~step:1.0 ~dtype:D.I32
          (float_of_int hi))
 
@@ -609,10 +609,10 @@ module Slerp = struct
     in
     let alpha =
       U.divide
-        (U.subtract compute_times (IDX.take s.times ind))
-        (IDX.take s.timedelta ind)
+        (U.subtract compute_times (IDX.take_index s.times ind))
+        (IDX.take_index s.timedelta ind)
     in
-    let rv = IDX.take ~axis:0 s.rotvecs ind in
+    let rv = IDX.take_index ~axis:0 s.rotvecs ind in
     let scaled = U.multiply rv (LN.expand_dims alpha [| 1 |]) in
     let result =
       Rotation.compose

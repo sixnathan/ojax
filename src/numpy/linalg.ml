@@ -125,7 +125,7 @@ and solve a b =
   let lu, _piv, perm = LL.lu a in
   let rank = Array.length batch + 2 in
   let x0 =
-    if rank = 2 then IDX.take ~axis:0 bmat perm
+    if rank = 2 then IDX.take_index ~axis:0 bmat perm
     else
       let expanded = NL.expand_dims perm [| -1 |] in
       IDX.take_along_axis ~axis:(rank - 2) bmat

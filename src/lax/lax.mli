@@ -11,11 +11,41 @@ val cond :
   value list ->
   value list
 
+val switch :
+  value -> (value list -> value list) list -> value list -> value list
+
 val platform_index : platforms:string array option array -> value
+
+val lower_scan :
+  length:int ->
+  reverse:bool ->
+  num_consts:int ->
+  num_carry:int ->
+  unroll:int ->
+  Types.closed_jaxpr ->
+  Types.value list ->
+  Types.value list
+
+val dynamic_index_in_dim :
+  ?axis:int ->
+  ?keepdims:bool ->
+  ?allow_negative_indices:bool ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val dynamic_update_index_in_dim :
+  ?allow_negative_indices:bool ->
+  Types.value ->
+  Types.value ->
+  Types.value ->
+  int ->
+  Types.value
 
 val scan :
   ?length:int ->
   ?reverse:bool ->
+  ?unroll:int ->
   (value list -> value list) ->
   value list ->
   value list ->

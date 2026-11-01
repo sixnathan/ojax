@@ -40,7 +40,19 @@ let index_leading (i : int) (v : value) : value =
   in
   Core.bind1 (Squeeze [| 0 |]) [ sliced ]
 
-let scan_impl ~length ~reverse ~num_carry (jaxpr : closed_jaxpr)
+let rec scan_impl ~length ~reverse ~num_consts ~num_carry
+    (jaxpr : closed_jaxpr) (inputs : value list) : value list =
+  if num_consts > 0 then
+    snd
+      (split_at
+         (scan_impl ~length ~reverse ~num_consts:0
+            ~num_carry:(num_consts + num_carry)
+            (Core.scan_lift_consts ~num_consts jaxpr)
+            inputs)
+         num_consts)
+  else scan_impl_plain ~length ~reverse ~num_carry jaxpr inputs
+
+and scan_impl_plain ~length ~reverse ~num_carry (jaxpr : closed_jaxpr)
     (inputs : value list) : value list =
   let carry0, xs = split_at inputs num_carry in
   let num_ys = List.length jaxpr.jaxpr.outs - num_carry in
@@ -112,32 +124,31 @@ let rec while_loop (cond_fun : value list -> value)
     List.iter2 Ref_state.write cells finals;
     results
   end
-  else if hoisted_c = [] && hoisted_b = [] then
-    Core.bind (While { cond; body }) init
   else
-    let n = List.length init in
-    let n_c = List.length hoisted_c in
-    let hoisted = hoisted_c @ hoisted_b in
-    let all_avals = avals @ List.map Core.get_aval hoisted in
-    let split args =
-      match Util.split_list args [ n; n_c ] with
-      | [ c; h_c; h_b ] -> (c, h_c, h_b)
-      | _ -> failwith "while_loop: arity"
+    let binders_first (c : closed_jaxpr) hoisted =
+      let nc = List.length c.consts in
+      let nh = List.length hoisted in
+      let binders = c.jaxpr.in_binders in
+      let total = List.length binders in
+      let const_part = List.filteri (fun i _ -> i < nc) binders in
+      let hoist_part = List.filteri (fun i _ -> i >= total - nh) binders in
+      let arg_part =
+        List.filteri (fun i _ -> i >= nc && i < total - nh) binders
+      in
+      ( { c with consts = []; jaxpr = { c.jaxpr with in_binders = const_part @ hoist_part @ arg_part } },
+        List.map (fun nd -> Concrete nd) c.consts @ hoisted )
     in
-    let cond' =
-      Jaxpr.make_jaxpr all_avals (fun args ->
-          let c, h_c, _ = split args in
-          Jaxpr.eval_closed_jaxpr cond (c @ h_c))
-    in
-    let body' =
-      Jaxpr.make_jaxpr all_avals (fun args ->
-          let c, h_c, h_b = split args in
-          Jaxpr.eval_closed_jaxpr body (c @ h_b) @ h_c @ h_b)
-    in
-    let outs =
-      Core.bind (While { cond = cond'; body = body' }) (init @ hoisted)
-    in
-    fst (split_at outs n)
+    let cond', cond_consts = binders_first cond hoisted_c in
+    let body', body_consts = binders_first body hoisted_b in
+    Core.bind
+      (While
+         {
+           cond_nconsts = List.length cond_consts;
+           body_nconsts = List.length body_consts;
+           cond = cond';
+           body = body';
+         })
+      (cond_consts @ body_consts @ init)
 
 let logaddexp a b =
   let m = Float.max a b in
@@ -178,8 +189,9 @@ let cumred_impl ~axis ~reverse ~combine (nd : Ndarray.t) : Ndarray.t =
   done;
   out
 
-let rec scan ?length ?(reverse = false) (body : value list -> value list)
-    (init : value list) (xs : value list) : value list =
+let rec scan ?length ?(reverse = false) ?(unroll = 1)
+    (body : value list -> value list) (init : value list) (xs : value list) :
+    value list =
   let num_carry = List.length init in
   let length =
     match (length, xs) with
@@ -203,42 +215,309 @@ let rec scan ?length ?(reverse = false) (body : value list -> value list)
       next @ Ref_state.contents cells @ ys
     in
     let outs =
-      scan ~length ~reverse stateful (init @ List.map Ref_state.read cells) xs
+      scan ~length ~reverse ~unroll stateful
+        (init @ List.map Ref_state.read cells)
+        xs
     in
     let carry, rest = split_at outs num_carry in
     let finals, ys = split_at rest n_state in
     List.iter2 Ref_state.write cells finals;
     carry @ ys
   end
-  else if hoisted = [] then
-    Core.bind (Scan { length; reverse; num_carry; jaxpr }) (init @ xs)
   else
-    let n_hoisted = List.length hoisted in
-    let hoisted_avals = List.map Core.get_aval hoisted in
-    let lifted =
-      Jaxpr.make_jaxpr
-        (carry_avals @ hoisted_avals @ x_slice_avals)
-        (fun args ->
-          let c, r = split_at args num_carry in
-          let h, x = split_at r n_hoisted in
-          let c', ys =
-            split_at (Jaxpr.eval_closed_jaxpr jaxpr (c @ x @ h)) num_carry
-          in
-          c' @ h @ ys)
+    let nc = List.length jaxpr.consts in
+    let nh = List.length hoisted in
+    let binders = jaxpr.jaxpr.in_binders in
+    let total = List.length binders in
+    let const_part = List.filteri (fun i _ -> i < nc) binders in
+    let hoist_part = List.filteri (fun i _ -> i >= total - nh) binders in
+    let arg_part =
+      List.filteri (fun i _ -> i >= nc && i < total - nh) binders
     in
-    let outs =
-      Core.bind
-        (Scan
-           {
-             length;
-             reverse;
-             num_carry = num_carry + n_hoisted;
-             jaxpr = lifted;
-           })
-        (init @ hoisted @ xs)
+    let consts = List.map (fun nd -> Concrete nd) jaxpr.consts @ hoisted in
+    let jaxpr =
+      {
+        jaxpr with
+        consts = [];
+        jaxpr =
+          { jaxpr.jaxpr with in_binders = const_part @ hoist_part @ arg_part };
+      }
     in
-    let c, r = split_at outs num_carry in
-    c @ snd (split_at r n_hoisted)
+    Core.bind
+      (Scan
+         {
+           length;
+           reverse;
+           num_consts = List.length consts;
+           num_carry;
+           jaxpr;
+           unroll;
+         })
+      (consts @ init @ xs)
+
+let const_like v x =
+  let a = Core.get_aval v in
+  Concrete (Ndarray.of_floats a.dtype [||] [| x |])
+
+let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true)
+    ?(allow_negative_indices = true) operand index =
+  let key =
+    Printf.sprintf "%d,%b,%b" axis keepdims allow_negative_indices
+  in
+  match
+    Jaxpr.named_jit ~name:"dynamic_index_in_dim" ~key
+      (function
+        | [ operand; index ] ->
+            let a = Core.get_aval operand in
+            let rank = Array.length a.shape in
+            let n = a.shape.(axis) in
+            let index =
+              if allow_negative_indices then
+                let negative =
+                  Core.bind1 Lt [ index; const_like index 0.0 ]
+                in
+                let shifted =
+                  Core.bind1 Add [ index; const_like index (float_of_int n) ]
+                in
+                Core.bind1 Select_n [ negative; index; shifted ]
+              else index
+            in
+            let starts =
+              List.init rank (fun d ->
+                  if d = axis then index else const_like index 0.0)
+            in
+            let sizes = Array.mapi (fun d s -> if d = axis then 1 else s) a.shape in
+            let sliced =
+              Core.bind1 (Dynamic_slice { slice_sizes = sizes }) (operand :: starts)
+            in
+            [ (if keepdims then sliced
+               else Core.bind1 (Squeeze [| axis |]) [ sliced ]) ]
+        | _ -> invalid_arg "dynamic_index_in_dim: arity")
+      [ operand; index ]
+  with
+  | [ v ] -> v
+  | _ -> invalid_arg "dynamic_index_in_dim: arity"
+
+let dynamic_update_index_in_dim ?(allow_negative_indices = true) operand update
+    index axis =
+  let key = Printf.sprintf "%d,%b" axis allow_negative_indices in
+  match
+    Jaxpr.named_jit ~name:"dynamic_update_index_in_dim" ~key
+      (function
+        | [ operand; update; index ] ->
+            let a = Core.get_aval operand in
+            let rank = Array.length a.shape in
+            let n = a.shape.(axis) in
+            let u = Core.get_aval update in
+            let update =
+              if Array.length u.shape <> rank then
+                let shape =
+                  Array.init rank (fun d ->
+                      if d < axis then u.shape.(d)
+                      else if d = axis then 1
+                      else u.shape.(d - 1))
+                in
+                let dims =
+                  Array.init (rank - 1) (fun d -> if d < axis then d else d + 1)
+                in
+                Core.bind1 (Broadcast_in_dim { shape; dims }) [ update ]
+              else update
+            in
+            let index =
+              if allow_negative_indices then
+                let negative =
+                  Core.bind1 Lt [ index; const_like index 0.0 ]
+                in
+                let shifted =
+                  Core.bind1 Add [ index; const_like index (float_of_int n) ]
+                in
+                Core.bind1 Select_n [ negative; index; shifted ]
+              else index
+            in
+            let starts =
+              List.init rank (fun d ->
+                  if d = axis then index else const_like index 0.0)
+            in
+            [ Core.bind1 Dynamic_update_slice (operand :: update :: starts) ]
+        | _ -> invalid_arg "dynamic_update_index_in_dim: arity")
+      [ operand; update; index ]
+  with
+  | [ v ] -> v
+  | _ -> invalid_arg "dynamic_update_index_in_dim: arity"
+
+let lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll
+    (body : closed_jaxpr) args =
+  let b1 = Core.bind1 in
+  let consts, r = split_at args num_consts in
+  let carry, xs_ = split_at r num_carry in
+  Pretty_printer.register_call_name body.jid "closed_call";
+  let y_avals =
+    snd (split_at (List.map aval_of_atom body.jaxpr.outs) num_carry)
+  in
+  let num_trips, remainder =
+    if unroll = 0 then (0, length) else (length / unroll, length mod unroll)
+  in
+  let num_trips, remainder =
+    if unroll <> 1 && num_trips = 1 && remainder = 0 then (0, length)
+    else (num_trips, remainder)
+  in
+  let empty_array prefix (a : aval) =
+    let zero = Concrete (Ndarray.of_floats a.dtype [||] [| 0.0 |]) in
+    b1
+      (Broadcast_in_dim { shape = Array.append prefix a.shape; dims = [||] })
+      [ zero ]
+  in
+  let slice_leading x lo hi =
+    let sh = (Core.get_aval x).shape in
+    let n = Array.length sh in
+    b1
+      (Slice
+         {
+           start_indices = Array.init n (fun d -> if d = 0 then lo else 0);
+           limit_indices = Array.init n (fun d -> if d = 0 then hi else sh.(d));
+           strides = None;
+         })
+      [ x ]
+  in
+  let split_leading sz x =
+    let hi = (Core.get_aval x).shape.(0) in
+    let a = slice_leading x 0 sz in
+    let b = slice_leading x sz hi in
+    (a, b)
+  in
+  let xs_, xs_rem =
+    if unroll = 1 || remainder = 0 then (xs_, [])
+    else if not reverse then
+      List.split (List.map (split_leading (num_trips * unroll)) xs_)
+    else
+      let rem, front = List.split (List.map (split_leading remainder) xs_) in
+      (front, rem)
+  in
+  let xss, yss =
+    if unroll = 1 then
+      (xs_, List.map (empty_array [| length |]) y_avals)
+    else if num_trips <> 0 then
+      ( List.map
+          (fun x ->
+            let sh = (Core.get_aval x).shape in
+            b1
+              (Reshape
+                 (Array.append [| num_trips; unroll |]
+                    (Array.sub sh 1 (Array.length sh - 1))))
+              [ x ])
+          xs_,
+        List.map (empty_array [| num_trips; unroll |]) y_avals )
+    else ([], List.map (empty_array [| 0 |]) y_avals)
+  in
+  let eval_body operands = Core.bind (Xla_call body) operands in
+  let inner n carry xs =
+    if unroll = 1 then split_at (eval_body (consts @ carry @ xs)) num_carry
+    else begin
+      let carry = ref carry in
+      let collected = ref [] in
+      for i_ = 0 to n - 1 do
+        let i = if reverse then n - i_ - 1 else i_ in
+        let x =
+          List.map
+            (fun x -> b1 (Squeeze [| 0 |]) [ slice_leading x i (i + 1) ])
+            xs
+        in
+        let c, y = split_at (eval_body (consts @ !carry @ x)) num_carry in
+        carry := c;
+        collected := y :: !collected
+      done;
+      let ys = if reverse then !collected else List.rev !collected in
+      let stacked =
+        List.mapi
+          (fun j _ ->
+            let parts =
+              List.map
+                (fun y ->
+                  let v = List.nth y j in
+                  let a = Core.get_aval v in
+                  let rank = Array.length a.shape in
+                  b1
+                    (Broadcast_in_dim
+                       {
+                         shape = Array.append [| 1 |] a.shape;
+                         dims = Array.init rank (fun d -> d + 1);
+                       })
+                    [ v ])
+                ys
+            in
+            b1 (Concatenate 0) parts)
+          y_avals
+      in
+      (!carry, stacked)
+    end
+  in
+  let n_ys = List.length yss in
+  let idt = Dtypes.default_int_dtype () in
+  let int_lit v = Concrete (Ndarray.of_floats idt [||] [| float_of_int v |]) in
+  let carry, yss =
+    if num_trips = 0 then (carry, yss)
+    else
+      let init = (int_lit 0 :: carry) @ yss in
+      let cond_fun state = b1 Lt [ List.hd state; int_lit num_trips ] in
+      let body_fun state =
+        match state with
+        | i_ :: rest ->
+            let c, ys = split_at rest num_carry in
+            let i =
+              if reverse then
+                b1 Sub [ b1 Sub [ int_lit num_trips; i_ ]; int_lit 1 ]
+              else i_
+            in
+            let xs =
+              List.map
+                (fun x ->
+                  dynamic_index_in_dim ~keepdims:false
+                    ~allow_negative_indices:false x i)
+                xss
+            in
+            let c, outs = inner unroll c xs in
+            let updated =
+              List.map2
+                (fun y upd ->
+                  dynamic_update_index_in_dim ~allow_negative_indices:false y
+                    upd i 0)
+                ys outs
+            in
+            (b1 Add [ i_; int_lit 1 ] :: c) @ updated
+        | [] -> invalid_arg "lower_scan: state"
+      in
+      let final = while_loop cond_fun body_fun init in
+      let c, ys = split_at (List.tl final) num_carry in
+      (c, ys)
+  in
+  let ys =
+    if unroll <> 1 && num_trips <> 0 then
+      List.map
+        (fun y ->
+          let sh = (Core.get_aval y).shape in
+          b1
+            (Reshape
+               (Array.append
+                  [| num_trips * unroll |]
+                  (Array.sub sh 2 (Array.length sh - 2))))
+            [ y ])
+        yss
+    else yss
+  in
+  let carry, ys =
+    if remainder = 0 then (carry, ys)
+    else
+      let carry, ys_rem = inner remainder carry xs_rem in
+      let ys =
+        List.map2
+          (fun a b ->
+            b1 (Concatenate 0) (if reverse then [ b; a ] else [ a; b ]))
+          ys ys_rem
+      in
+      (carry, ys)
+  in
+  ignore n_ys;
+  carry @ ys
 
 let cumsum ?(axis = 0) ?(reverse = false) (operand : value) : value =
   Core.bind1 (Cumsum { axis; reverse }) [ operand ]

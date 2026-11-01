@@ -111,7 +111,7 @@ let rec rankdata ?(method_ = "average") ?axis ?(nan_policy = "propagate") a =
           L.concatenate [ L.full [| 1 |] 1.0 Dtype.Bool; different ] 0
         in
         let dense =
-          Numpy.Indexing.take ~axis:0 (L.cumsum (NL.astype obs idt)) inv
+          Numpy.Indexing.take_index ~axis:0 (L.cumsum (NL.astype obs idt)) inv
         in
         if method_ = "dense" then NL.astype dense out_dt
         else
@@ -121,9 +121,9 @@ let rec rankdata ?(method_ = "average") ?axis ?(nan_policy = "propagate") a =
               [ NL.astype positions idt; L.full [| 1 |] (float_of_int n) idt ]
               0
           in
-          let upper = Numpy.Indexing.take ~axis:0 count dense in
+          let upper = Numpy.Indexing.take_index ~axis:0 count dense in
           let lower =
-            L.add (Numpy.Indexing.take ~axis:0 count (L.sub dense one)) one
+            L.add (Numpy.Indexing.take_index ~axis:0 count (L.sub dense one)) one
           in
           match method_ with
           | "max" -> NL.astype upper out_dt

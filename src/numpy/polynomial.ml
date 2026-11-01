@@ -53,7 +53,6 @@ let slice_axis v axis lo hi =
 let neg v = bind1 T.Neg [ v ]
 
 let polyval ?(unroll = 16) p x =
-  ignore unroll;
   let p, x = two (promote_dtypes [ p; x ]) in
   let sh_p = shape p in
   let tail = Array.sub sh_p 1 (Array.length sh_p - 1) in
@@ -64,7 +63,16 @@ let polyval ?(unroll = 16) p x =
     | [ y; pk ] -> [ UF.add (UF.multiply y x) pk ]
     | _ -> assert false
   in
-  match Lax.scan body [ y0 ] [ p ] with [ y ] -> y | _ -> assert false
+  match Lax.scan ~unroll body [ y0 ] [ p ] with
+  | [ y ] -> y
+  | _ -> assert false
+
+let polyval ?unroll p0 p1 =
+  Jnp_util.jit1 "polyval"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string unroll [])))
+    (function
+      | [ p0; p1 ] -> polyval ?unroll p0 p1 | _ -> invalid_arg "polyval: arity")
+    [ p0; p1 ]
 
 let pad_leading v k =
   if k = 0 then v
@@ -81,9 +89,21 @@ let polyadd a1 a2 =
   let n = max n1 n2 in
   bind1 T.Add [ pad_leading a1 (n - n1); pad_leading a2 (n - n2) ]
 
+let polyadd p0 p1 =
+  Jnp_util.jit1 "polyadd"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> polyadd p0 p1 | _ -> invalid_arg "polyadd: arity")
+    [ p0; p1 ]
+
 let polysub a1 a2 =
   let a1, a2 = two (promote_dtypes [ a1; a2 ]) in
   polyadd a1 (neg a2)
+
+let polysub p0 p1 =
+  Jnp_util.jit1 "polysub"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> polysub p0 p1 | _ -> invalid_arg "polysub: arity")
+    [ p0; p1 ]
 
 let polyint ?(m = 1) ?k p =
   if m < 0 then invalid_arg "polyint: order of integral must be non-negative";
@@ -108,11 +128,21 @@ let polyint ?(m = 1) ?k p =
     in
     let grid = UF.subtract grid_a grid_b in
     let coeff =
-      NL.flip ~axis:[| 0 |]
-        (R.prod ~axis:[| 0 |] (UF.maximum (scalar dt 1.0) grid))
+      bind1 (T.Rev [| 0 |])
+        [ R.prod ~axis:[| 0 |] (UF.maximum (scalar dt 1.0) grid) ]
     in
     UF.true_divide (NL.concatenate [ p; k ]) coeff
   end
+
+let polyint ?m ?k p0 =
+  let k_given = k <> None in
+  if k_given then polyint ?m ?k p0
+  else
+    Jnp_util.jit1 "polyint"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string m [])))
+      (function
+        | [ p0 ] -> polyint ?m ?k p0 | _ -> invalid_arg "polyint: arity")
+      [ p0 ]
 
 let polyder ?(m = 1) p =
   if m < 0 then invalid_arg "polyder: order of derivative must be non-negative";
@@ -130,10 +160,16 @@ let polyder ?(m = 1) p =
       NL.expand_dims (NL.arange ~dtype:dt (float_of_int m)) [| 1 |]
     in
     let coeff =
-      NL.flip ~axis:[| 0 |] (R.prod ~axis:[| 0 |] (UF.subtract grid_a grid_b))
+      bind1 (T.Rev [| 0 |]) [ R.prod ~axis:[| 0 |] (UF.subtract grid_a grid_b) ]
     in
     bind1 T.Mul [ slice_axis p 0 0 (np_ - m); coeff ]
   end
+
+let polyder ?m p0 =
+  Jnp_util.jit1 "polyder"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string m [])))
+    (function [ p0 ] -> polyder ?m p0 | _ -> invalid_arg "polyder: arity")
+    [ p0 ]
 
 let poly seq =
   let s = NL.atleast_1d (List.hd (promote_dtypes_inexact [ seq ])) in
@@ -157,6 +193,12 @@ let poly seq =
     done;
     !a
   end
+
+let poly p0 =
+  Jnp_util.jit1 "poly"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> poly p0 | _ -> invalid_arg "poly: arity")
+    [ p0 ]
 
 let trim_front v =
   match v with
@@ -199,47 +241,6 @@ let polymul ?(trim_leading_zeros = false) a1 a2 =
     if (shape a2).(0) = 0 then const_full (dtype a1) [| 1 |] 0.0 else a2
   in
   NL.convolve ~mode:"full" a1 a2
-
-let poly p0 =
-  Jnp_util.jit1 "poly"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> poly p0 | _ -> invalid_arg "poly: arity")
-    [ p0 ]
-
-let polyval ?unroll p0 p1 =
-  Jnp_util.jit1 "polyval"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string unroll [])))
-    (function
-      | [ p0; p1 ] -> polyval ?unroll p0 p1 | _ -> invalid_arg "polyval: arity")
-    [ p0; p1 ]
-
-let polyadd p0 p1 =
-  Jnp_util.jit1 "polyadd"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> polyadd p0 p1 | _ -> invalid_arg "polyadd: arity")
-    [ p0; p1 ]
-
-let polyint ?m ?k p0 =
-  let k_given = k <> None in
-  if k_given then polyint ?m ?k p0
-  else
-    Jnp_util.jit1 "polyint"
-      ~key:(Digest.to_hex (Digest.string (Marshal.to_string m [])))
-      (function
-        | [ p0 ] -> polyint ?m ?k p0 | _ -> invalid_arg "polyint: arity")
-      [ p0 ]
-
-let polyder ?m p0 =
-  Jnp_util.jit1 "polyder"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string m [])))
-    (function [ p0 ] -> polyder ?m p0 | _ -> invalid_arg "polyder: arity")
-    [ p0 ]
-
-let polysub p0 p1 =
-  Jnp_util.jit1 "polysub"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> polysub p0 p1 | _ -> invalid_arg "polysub: arity")
-    [ p0; p1 ]
 
 let poly a0 =
   Eager_jit.one "numpy.polynomial.poly" () [] [ a0 ] (fun opts vals ->

@@ -1,6 +1,6 @@
 (test
  (name manifest)
- (modules npz compare parity_cases manifest)
+ (modules npz compare exact_floor parity_cases manifest)
  (libraries alcotest yojson ojax)
  (deps
   (source_tree %{project_root}/goldens/dtypes)
@@ -42,3 +42,14 @@
   (source_tree %{project_root}/goldens/parity)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))
+
+(rule
+ (targets exact_floor.ml)
+ (deps exact_floor.tsv)
+ (action
+  (with-stdout-to
+   %{targets}
+   (progn
+    (echo "let data = {floor|")
+    (cat exact_floor.tsv)
+    (echo "|floor}\n")))))

@@ -1,6 +1,6 @@
 (test
  (name e2e)
- (modules npz compare e2e)
+ (modules npz compare exact_floor e2e)
  (libraries ojax alcotest yojson unix)
  (deps
   (source_tree %{project_root}/goldens/e2e)))
@@ -10,3 +10,17 @@
 
 (copy_files
  (files %{project_root}/test/golden/compare.ml))
+
+(copy_files
+ (files %{project_root}/test/golden/exact_floor.tsv))
+
+(rule
+ (targets exact_floor.ml)
+ (deps exact_floor.tsv)
+ (action
+  (with-stdout-to
+   %{targets}
+   (progn
+    (echo "let data = {floor|")
+    (cat exact_floor.tsv)
+    (echo "|floor}\n")))))

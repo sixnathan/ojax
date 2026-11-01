@@ -35,8 +35,8 @@ numpy_linalg:x64_off	84	84
 numpy_linalg:x64_on	176	176
 parity:x64_off	2565	2566
 parity:x64_on	5124	5126
-parity_jit:x64_off	1975	1976
-parity_jit:x64_on	3919	3923
+parity_jit:x64_off	1976	1976
+parity_jit:x64_on	3923	3923
 parity_jit_eager:x64_off	1854	1976
 parity_jit_eager:x64_on	3680	3923
 polynomial:x64_off	22	22

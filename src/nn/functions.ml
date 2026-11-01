@@ -557,24 +557,9 @@ let log_sigmoid a0 =
   Eager_jit.one "nn.functions.log_sigmoid" () [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> log_sigmoid a0 | _ -> assert false)
 
-let elu ?alpha a0 =
-  Eager_jit.one "nn.functions.elu" alpha [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with [], [ a0 ] -> elu ?alpha a0 | _ -> assert false)
-
-let leaky_relu ?negative_slope a0 =
-  Eager_jit.one "nn.functions.leaky_relu" negative_slope [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> leaky_relu ?negative_slope a0
-      | _ -> assert false)
-
 let hard_tanh a0 =
   Eager_jit.one "nn.functions.hard_tanh" () [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> hard_tanh a0 | _ -> assert false)
-
-let celu ?alpha a0 =
-  Eager_jit.one "nn.functions.celu" alpha [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with [], [ a0 ] -> celu ?alpha a0 | _ -> assert false)
 
 let selu a0 =
   Eager_jit.one "nn.functions.selu" () [] [ a0 ] (fun opts vals ->

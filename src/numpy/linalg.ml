@@ -449,9 +449,6 @@ and norm ?(ord = Onone) ?(axis = Anone) ?(keepdims = false) x =
       vector_norm ~axis:(Some [| canon_axis a nd |]) ~keepdims ~ord x
   | Apair (r, c) -> matrix_norm_impl x ord r c keepdims
 
-and matrix_norm ?(keepdims = false) ?(ord = Ofro) x =
-  norm ~ord ~axis:(Apair (-2, -1)) ~keepdims (to_inexact x)
-
 and matrix_transpose x = matrix_transpose_v x
 
 and raw_qr a =
@@ -627,11 +624,6 @@ and tensorsolve ?axes a b =
   let a2 = NL.reshape a [| bsize; prod_out |] in
   let x = solve a2 (NL.ravel b) in
   NL.reshape x out_shape
-
-and multi_dot arrs =
-  match arrs with
-  | [] | [ _ ] -> invalid_arg "multi_dot requires at least two arrays"
-  | first :: rest -> List.fold_left (fun acc m -> TC.matmul acc m) first rest
 
 and cond ?(p = Onone) x =
   let arr = to_inexact x in
@@ -911,6 +903,20 @@ let norm ?ord ?axis ?keepdims a0 =
       match (opts, vals) with
       | [], [ a0 ] -> norm ?ord ?axis ?keepdims a0
       | _ -> assert false)
+
+let matrix_norm ?(keepdims = false) ?(ord = Ofro) x =
+  norm ~ord ~axis:(Apair (-2, -1)) ~keepdims x
+
+let multi_dot arrs =
+  (match arrs with
+  | [] | [ _ ] -> invalid_arg "multi_dot requires at least two arrays"
+  | _ -> ());
+  let letter i = String.make 1 (Char.chr (Char.code 'a' + i)) in
+  let term i arr =
+    let left = letter i and right = letter (i + 1) in
+    if ndim arr = 1 then if i = 0 then right else left else left ^ right
+  in
+  Einsum.einsum (String.concat "," (List.mapi term arrs)) arrs
 
 let qr ?mode a0 =
   Eager_jit.many "numpy.linalg.qr" mode [] [ a0 ] (fun opts vals ->

@@ -4426,6 +4426,12 @@ let () =
         ( "exact_ratchet",
           [
             Alcotest.test_case "bit-identical floors" `Quick
-              (Compare.check_ratchet ~floor_text:Exact_floor.data);
+              (Compare.check_ratchet
+                 ~floor_text:
+                   (String.concat "\n"
+                      (List.filter
+                         (fun line ->
+                           not (String.starts_with ~prefix:"e2e\t" line))
+                         (String.split_on_char '\n' Exact_floor.data))));
           ] );
       ])

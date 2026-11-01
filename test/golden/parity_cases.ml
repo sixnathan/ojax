@@ -1329,7 +1329,9 @@ let library_sweep op v =
         (SP.polygamma
            (T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| 1.0 |]))
            (q ()))
-  | "sw_sp_zeta" -> Some (SP.zeta ~q:(q ()) (q1 ()))
+  | "sw_sp_zeta" ->
+      let x = q1 () in
+      Some (SP.zeta ~q:(q ()) x)
   | "sw_sp_poch" -> Some (SP.poch (q ()) (py 2.0))
   | "sw_sp_spence" -> Some (SP.spence (q ()))
   | "sw_sp_owens_t" -> Some (SP.owens_t v (q ()))

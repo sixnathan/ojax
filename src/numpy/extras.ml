@@ -110,35 +110,32 @@ let strides_of sh =
   done;
   s
 
-let scatter_add_drop operand indices updates =
-  let n = size_of indices in
+let scatter_dims_1d =
+  {
+    update_window_dims = [||];
+    inserted_window_dims = [| 0 |];
+    scatter_dims_to_operand_dims = [| 0 |];
+    s_operand_batching_dims = [||];
+    s_scatter_indices_batching_dims = [||];
+  }
+
+let normalised_indices ~extent indices =
   let dt = dtype_of indices in
   let negative = U.less indices (L.full [||] 0.0 dt) in
-  let shifted =
-    U.add indices (L.full [||] (float_of_int (size_of operand)) dt)
-  in
+  let shifted = U.add indices (L.full [||] (float_of_int extent) dt) in
   let normalised = Core.bind1 Select_n [ negative; indices; shifted ] in
-  let wrapped = L.broadcast_in_dim normalised [| n; 1 |] [| 0 |] in
-  let dims =
-    {
-      update_window_dims = [||];
-      inserted_window_dims = [| 0 |];
-      scatter_dims_to_operand_dims = [| 0 |];
-      s_operand_batching_dims = [||];
-      s_scatter_indices_batching_dims = [||];
-    }
-  in
-  L.scatter_add operand wrapped updates dims
+  L.broadcast_in_dim normalised [| size_of indices; 1 |] [| 0 |]
 
 let bincount_length length weights x =
   let wdt = dtype_of weights in
   let operand = L.full [| length |] 0.0 wdt in
   let clipped = NL.clip ~min:0.0 x in
+  let wrapped = normalised_indices ~extent:length clipped in
   let updates =
     if rank weights = 0 then L.broadcast_in_dim weights [| size_of x |] [||]
     else weights
   in
-  scatter_add_drop operand clipped updates
+  L.scatter_add operand wrapped updates scatter_dims_1d
 
 let nonzero ?size ?fill_value a =
   let sh = shape a in
@@ -1176,21 +1173,8 @@ let place a mask values =
     let vals =
       if dtype_of vals = dtype_of a then vals else NL.astype vals (dtype_of a)
     in
-    let dt = dtype_of indices in
-    let negative = U.less indices (L.full [||] 0.0 dt) in
-    let shifted = U.add indices (L.full [||] (float_of_int n) dt) in
-    let normalised = Core.bind1 Select_n [ negative; indices; shifted ] in
-    let wrapped = L.broadcast_in_dim normalised [| n; 1 |] [| 0 |] in
-    let dims =
-      {
-        update_window_dims = [||];
-        inserted_window_dims = [| 0 |];
-        scatter_dims_to_operand_dims = [| 0 |];
-        s_operand_batching_dims = [||];
-        s_scatter_indices_batching_dims = [||];
-      }
-    in
-    let updated = L.scatter (flat a) wrapped vals dims in
+    let wrapped = normalised_indices ~extent:n indices in
+    let updated = L.scatter (flat a) wrapped vals scatter_dims_1d in
     NL.reshape updated (shape a)
   end
 

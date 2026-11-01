@@ -68,6 +68,9 @@ let scan_rule :
   ref (fun _ ~length:_ ~reverse:_ ~num_carry:_ _ _ ->
       failwith "partial_eval: scan rule not installed")
 
+let call_rule : (trace -> closed_jaxpr -> tracer list -> value list) ref =
+  ref (fun _ _ _ -> failwith "partial_eval: call rule not installed")
+
 let process_primitive trace prim (args : value list) : value list =
   let tracers = List.map as_tracer args in
   let pvals = List.map pe_pval tracers in
@@ -85,6 +88,7 @@ let process_primitive trace prim (args : value list) : value list =
     match prim with
     | Scan { length; reverse; num_carry; jaxpr } ->
         !scan_rule trace ~length ~reverse ~num_carry jaxpr tracers
+    | Xla_call c -> !call_rule trace c tracers
     | _ -> record_unknown trace prim tracers
 
 let full_lower_pe v =
@@ -443,3 +447,69 @@ let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
   carry_results @ ys_results
 
 let () = scan_rule := scan_partial_eval
+
+let call_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
+    value list =
+  let is_unk (t : tracer) = is_unknown (pe_pval t) in
+  let known_tracers = List.filter (fun t -> not (is_unk t)) tracers in
+  let unknown_tracers = List.filter is_unk tracers in
+  let staged = ref None in
+  let known_cj =
+    Jaxpr.make_jaxpr
+      (List.map (fun (t : tracer) -> t.aval) known_tracers)
+      (fun known_args ->
+        let remaining = ref known_args in
+        let pvals =
+          List.map
+            (fun (t : tracer) ->
+              if is_unk t then partial_val_unknown t.aval
+              else
+                match !remaining with
+                | v :: tl ->
+                    remaining := tl;
+                    partial_val_known v
+                | [] -> failwith "partial_eval: call known arity")
+            tracers
+        in
+        let jx, consts, pvals_out =
+          partial_eval_flat (fun a -> Jaxpr.eval_closed_jaxpr c a) pvals
+        in
+        staged := Some (jx, pvals_out);
+        List.filter_map (fun pv -> pv.pv_const) pvals_out @ consts)
+  in
+  Jaxpr.copy_call_name ~source:c known_cj;
+  let jx, pvals_out =
+    match !staged with
+    | Some r -> r
+    | None -> failwith "partial_eval: call was not traced"
+  in
+  let known_values =
+    List.map
+      (fun (t : tracer) ->
+        match (pe_pval t).pv_const with
+        | Some v -> v
+        | None -> failwith "partial_eval: expected a known call input")
+      known_tracers
+  in
+  let results = Core.bind (Xla_call known_cj) known_values in
+  let n_known_out = List.length (List.filter is_known pvals_out) in
+  let known_out, residuals = split_at results n_known_out in
+  let unknown_cj = { jid = Core.fresh_id (); jaxpr = jx; consts = [] } in
+  Jaxpr.copy_call_name ~source:c unknown_cj;
+  let raise_known v = as_tracer (Core.full_raise trace v) in
+  let unknown_out =
+    record_unknown trace (Xla_call unknown_cj)
+      (List.map raise_known residuals @ unknown_tracers)
+  in
+  let k = ref known_out and u = ref unknown_out in
+  List.map
+    (fun pv ->
+      let source = if is_known pv then k else u in
+      match !source with
+      | v :: tl ->
+          source := tl;
+          v
+      | [] -> failwith "partial_eval: call output arity")
+    pvals_out
+
+let () = call_rule := call_partial_eval

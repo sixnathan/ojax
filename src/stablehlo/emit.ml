@@ -283,6 +283,39 @@ let emit_stablehlo_binary ctx (eqn : eqn) in_ids op =
        (name b)
        (Ir.tensor_type_of_aval out.vaval))
 
+let is_complex_atom atom =
+  match (atom_aval atom).dtype with
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
+let complex_trig ~sine x =
+  let b1 = Core.bind1 in
+  let a = b1 Real [ x ] and b = b1 Imag [ x ] in
+  let rdt = (Core.get_aval a).dtype in
+  let const v = Core.splat rdt [||] v in
+  let a_is_zero = b1 Eq [ a; const 0.0 ] in
+  let two = const 2.0 in
+  let sn = b1 Sin [ a ] in
+  let cs = b1 Cos [ a ] in
+  let e1m = b1 Expm1 [ b ] in
+  let e2m = b1 Expm1 [ b1 Neg [ b ] ] in
+  let snh = b1 Div [ b1 Sub [ e1m; e2m ]; two ] in
+  let csh = b1 Div [ b1 Add [ b1 Add [ e1m; e2m ]; two ]; two ] in
+  if sine then begin
+    let re = b1 Mul [ sn; csh ] in
+    let im = b1 Mul [ cs; snh ] in
+    let on_zero = b1 Complex [ const 0.0; im ] in
+    let general = b1 Complex [ re; im ] in
+    b1 Select_n [ a_is_zero; general; on_zero ]
+  end
+  else begin
+    let re = b1 Mul [ cs; csh ] in
+    let im = b1 Mul [ b1 Neg [ sn ]; snh ] in
+    let on_zero = b1 Complex [ re; const 0.0 ] in
+    let general = b1 Complex [ re; im ] in
+    b1 Select_n [ a_is_zero; general; on_zero ]
+  end
+
 let emit_chlo_binary ctx (eqn : eqn) in_ids op =
   let a, b = pair in_ids in
   let lhs, rhs =
@@ -2847,6 +2880,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Cbrt -> emit_stablehlo_unary ctx eqn in_ids "cbrt"
   | Ceil -> emit_stablehlo_unary ctx eqn in_ids "ceil"
   | Clz -> emit_stablehlo_unary ctx eqn in_ids "count_leading_zeros"
+  | Cos when is_complex_atom (sole eqn.inputs) ->
+      emit_inlined ctx eqn in_ids (function
+        | [ x ] -> [ complex_trig ~sine:false x ]
+        | _ -> invalid_arg "Stablehlo.Emit: cos arity")
   | Cos -> emit_stablehlo_unary ctx eqn in_ids "cosine"
   | Exp -> emit_stablehlo_unary ctx eqn in_ids "exponential"
   | Expm1 -> emit_stablehlo_unary ctx eqn in_ids "exponential_minus_one"
@@ -2911,6 +2948,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Sign when is_unsigned_dtype (atom_aval (sole eqn.inputs)).dtype ->
       emit_unsigned_sign ctx eqn in_ids
   | Sign -> emit_stablehlo_unary ctx eqn in_ids "sign"
+  | Sin when is_complex_atom (sole eqn.inputs) ->
+      emit_inlined ctx eqn in_ids (function
+        | [ x ] -> [ complex_trig ~sine:true x ]
+        | _ -> invalid_arg "Stablehlo.Emit: sin arity")
   | Sin -> emit_stablehlo_unary ctx eqn in_ids "sine"
   | Sqrt -> emit_stablehlo_unary ctx eqn in_ids "sqrt"
   | Tan -> emit_stablehlo_unary ctx eqn in_ids "tan"
@@ -2955,7 +2996,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (name x)
            (Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)))
            (Ir.tensor_type_of_aval out.vaval))
-  | Add -> emit_stablehlo_binary ctx eqn in_ids "add"
+  | Add | Add_any -> emit_stablehlo_binary ctx eqn in_ids "add"
   | And -> emit_stablehlo_binary ctx eqn in_ids "and"
   | Atan2 -> emit_stablehlo_binary ctx eqn in_ids "atan2"
   | Div -> emit_stablehlo_binary ctx eqn in_ids "divide"
@@ -3123,6 +3164,23 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             ]
         | _ -> invalid_arg "Stablehlo.Emit: dot_general arity")
   | Dot_general dd -> emit_dot_general ctx eqn in_ids dd
+  | Conv_general_dilated _
+    when match eqn.inputs with lhs :: _ -> is_complex_atom lhs | [] -> false ->
+      emit_inlined ctx eqn in_ids (function
+        | [ x; y ] ->
+            let b1 = Core.bind1 in
+            let conv a b = b1 eqn.prim [ a; b ] in
+            let x_re = b1 Real [ x ] in
+            let x_im = b1 Imag [ x ] in
+            let y_re = b1 Real [ y ] in
+            let y_im = b1 Imag [ y ] in
+            let k1 = conv (b1 Add [ x_re; x_im ]) y_re in
+            let k2 = conv x_re (b1 Sub [ y_im; y_re ]) in
+            let k3 = conv x_im (b1 Add [ y_re; y_im ]) in
+            let re = b1 Sub [ k1; k3 ] in
+            let im = b1 Add [ k1; k2 ] in
+            [ b1 Complex [ re; im ] ]
+        | _ -> invalid_arg "Stablehlo.Emit: conv arity")
   | Conv_general_dilated
       {
         window_strides;
@@ -3800,52 +3858,102 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
     (qualify_nested_calls ~depth:1 (Buffer.contents ctx.buf))
     (qualify_nested_calls ~depth:0 (Buffer.contents ctx.extras))
 
-let emit_closed_jaxpr ?partition cj =
-  incr emission_depth;
-  Fun.protect
-    ~finally:(fun () -> decr emission_depth)
-    (fun () -> emit_closed_jaxpr_body ?partition cj)
-
-let has_side_effect = function
+let rec has_side_effect = function
   | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
   | Dce_sink | Rng_bit_generator | Create_token | After_all -> true
+  | Xla_call c ->
+      List.exists (fun (e : eqn) -> has_side_effect e.prim) c.jaxpr.eqns
+  | Custom_jvp_call id | Custom_vjp_call id -> (
+      match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
   | _ -> false
 
-let prune_for_lowering (cj : closed_jaxpr) =
-  let jx = cj.jaxpr in
+let rec prune_jaxpr (jx : jaxpr) used_outs =
   let used = Hashtbl.create 64 in
   let note = function
     | A_var (v : var) -> Hashtbl.replace used v.vid ()
     | A_lit _ | DropVar _ -> ()
   in
-  List.iter note jx.outs;
+  List.iter2 (fun a keep -> if keep then note a) jx.outs used_outs;
+  let is_used (v : var) = Hashtbl.mem used v.vid in
   let kept =
     List.fold_left
       (fun acc (e : eqn) ->
-        if
-          has_side_effect e.prim
-          || List.exists (fun (v : var) -> Hashtbl.mem used v.vid) e.outs
-        then begin
-          List.iter note e.inputs;
-          e :: acc
-        end
-        else acc)
+        match e.prim with
+        | Xla_call c
+          when (not (has_side_effect e.prim)) && List.exists is_used e.outs ->
+            let flags = List.map is_used e.outs in
+            let c', used_inputs = prune_call c flags in
+            let inputs =
+              List.filteri (fun i _ -> List.nth used_inputs i) e.inputs
+            in
+            List.iter note inputs;
+            let outs = List.filteri (fun i _ -> List.nth flags i) e.outs in
+            {
+              prim = Xla_call c';
+              inputs;
+              outs;
+              multiple_results = List.length outs > 1;
+            }
+            :: acc
+        | _ ->
+            if has_side_effect e.prim || List.exists is_used e.outs then begin
+              List.iter note e.inputs;
+              e :: acc
+            end
+            else acc)
       [] (List.rev jx.eqns)
   in
+  (kept, fun (v : var) -> Hashtbl.mem used v.vid)
+
+and prune_call (c : closed_jaxpr) flags =
+  let eqns, input_used = prune_jaxpr c.jaxpr flags in
+  let n_consts = List.length c.consts in
+  let binders = c.jaxpr.in_binders in
+  let used_inputs =
+    List.filteri (fun i _ -> i >= n_consts) binders |> List.map input_used
+  in
+  let kept_binders =
+    List.filteri (fun i b -> i < n_consts || input_used b) binders
+  in
+  let outs = List.filteri (fun i _ -> List.nth flags i) c.jaxpr.outs in
+  let pruned =
+    {
+      c with
+      jid = Core.fresh_id ();
+      jaxpr = { in_binders = kept_binders; eqns; outs };
+    }
+  in
+  if Pretty_printer.has_call_name c.jid then
+    Pretty_printer.register_call_name pruned.jid
+      (Pretty_printer.call_name c.jid);
+  (pruned, used_inputs)
+
+let prune_for_lowering (cj : closed_jaxpr) =
+  let jx = cj.jaxpr in
+  let eqns, _ = prune_jaxpr jx (List.map (fun _ -> true) jx.outs) in
+  { cj with jaxpr = { jx with eqns } }
+
+let emit_closed_jaxpr ?partition cj =
+  incr emission_depth;
+  Fun.protect
+    ~finally:(fun () -> decr emission_depth)
+    (fun () -> emit_closed_jaxpr_body ?partition (prune_for_lowering cj))
+
+let drop_unused_arguments (cj : closed_jaxpr) =
+  let jx = cj.jaxpr in
+  let eqns, input_used = prune_jaxpr jx (List.map (fun _ -> true) jx.outs) in
   let n_consts = List.length cj.consts in
-  let const_binders, arg_binders =
-    match Util.split_list jx.in_binders [ n_consts ] with
-    | [ cb; ab ] -> (cb, ab)
-    | _ -> invalid_arg "Stablehlo.Emit: binder split"
-  in
-  let kept_args =
-    List.filter (fun (v : var) -> Hashtbl.mem used v.vid) arg_binders
-  in
   {
     cj with
-    jaxpr = { jx with in_binders = const_binders @ kept_args; eqns = kept };
+    jaxpr =
+      {
+        jx with
+        eqns;
+        in_binders =
+          List.filteri (fun i v -> i < n_consts || input_used v) jx.in_binders;
+      };
   }
 
 let emit_jax_text ~name cj =
   Mlir_names.render ~module_name:name
-    (emit_closed_jaxpr (prune_for_lowering cj))
+    (emit_closed_jaxpr (drop_unused_arguments cj))

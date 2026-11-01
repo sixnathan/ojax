@@ -86,21 +86,20 @@ let scatter_gather_slice_sizes (sd : scatter_dims) operand_shape updates_shape =
 
 let reduce_chooser_jvp prim axes x tx =
   let a = Core.get_aval x in
-  let shape = a.shape in
-  let ndim = Array.length shape in
-  let is_red = Array.make ndim false in
-  Array.iter (fun i -> is_red.(i) <- true) axes;
   let shape_with_1 =
-    Array.mapi (fun i d -> if is_red.(i) then 1 else d) shape
+    Array.mapi (fun i d -> if Array.mem i axes then 1 else d) a.shape
   in
-  let ident = Array.init ndim (fun i -> i) in
   let ans = b1 prim [ x ] in
-  let reshaped = b1 (Reshape shape_with_1) [ ans ] in
-  let bcast = b1 (Broadcast_in_dim { shape; dims = ident }) [ reshaped ] in
-  let loc = b1 (Convert_element_type a.dtype) [ b1 Eq [ x; bcast ] ] in
-  let counts = b1 (Reduce_sum axes) [ loc ] in
-  let numer = b1 (Reduce_sum axes) [ mul tx loc ] in
-  (ans, div numer counts)
+  if is_zero tx then (ans, zeros_like_value ans)
+  else
+    let reshaped = b1 (Reshape shape_with_1) [ ans ] in
+    let loc =
+      b1 (Convert_element_type (Core.get_aval tx).dtype)
+        [ b1 Eq [ x; reshaped ] ]
+    in
+    let counts = b1 (Reduce_sum axes) [ loc ] in
+    let numer = b1 (Reduce_sum axes) [ b1 Mul [ tx; loc ] ] in
+    (ans, b1 Div [ numer; counts ])
 
 let swap_last2 x =
   let ndim = Array.length (Core.get_aval x).shape in
@@ -701,130 +700,360 @@ let bilinear_jvp prim x y tx ty =
   let term t args = if is_zero t then zeros_like_value po else b1 prim args in
   (po, add (term tx [ tx; y ]) (term ty [ x; ty ]))
 
+let const_scalar x c = Core.splat (Core.get_aval x).dtype [||] c
+
+let full_like_value x c =
+  let a = Core.get_aval x in
+  Core.splat a.dtype a.shape c
+
+let instantiate_zero t = if is_zero t then full_like_value t 0.0 else t
+
+let maybe_broadcast shape x =
+  let xs = (Core.get_aval x).shape in
+  if xs = shape then x
+  else if Array.length xs = 0 then
+    b1 (Broadcast_in_dim { shape; dims = [||] }) [ x ]
+  else
+    let dims =
+      List.filter
+        (fun i -> xs.(i) = shape.(i))
+        (List.init (Array.length xs) Fun.id)
+    in
+    let squeezed = Array.of_list (List.map (fun i -> xs.(i)) dims) in
+    b1
+      (Broadcast_in_dim { shape; dims = Array.of_list dims })
+      [ b1 (Reshape squeezed) [ x ] ]
+
+let unbroadcast (aval : aval) x =
+  let xs = (Core.get_aval x).shape in
+  if xs = aval.shape then x
+  else if Array.length aval.shape = 0 then
+    b1 (Reduce_sum (Array.init (Array.length xs) Fun.id)) [ x ]
+  else
+    let dims =
+      List.filter
+        (fun i -> xs.(i) <> aval.shape.(i))
+        (List.init (Array.length xs) Fun.id)
+    in
+    let summed = b1 (Reduce_sum (Array.of_list dims)) [ x ] in
+    b1
+      (Broadcast_in_dim
+         {
+           shape = aval.shape;
+           dims =
+             Array.of_list
+               (List.filter
+                  (fun i -> not (List.mem i dims))
+                  (List.init (Array.length xs) Fun.id));
+         })
+      [ summed ]
+
+let std_jvp po rules =
+  let outs =
+    List.filter_map (fun (t, r) -> if is_zero t then None else Some (r t)) rules
+  in
+  match outs with
+  | [] -> (po, zeros_like_value po)
+  | first :: rest -> (po, List.fold_left Ad_util.add_any first rest)
+
+let unary_jvp prim primals tangents rule =
+  match (primals, tangents) with
+  | [ x ], [ tx ] ->
+      let po = b1 prim [ x ] in
+      std_jvp po [ (tx, fun g -> rule g x po) ]
+  | _ -> arity ()
+
+let replace_zero x =
+  let pred = b1 Eq [ x; const_scalar x 0.0 ] in
+  b1 Select_n [ pred; x; full_like_value x 1.0 ]
+
+let balanced_eq x z y =
+  let numerator =
+    let pred = b1 Eq [ x; z ] in
+    let ones = full_like_value z 1.0 in
+    let zeros = full_like_value z 0.0 in
+    b1 Select_n [ pred; zeros; ones ]
+  in
+  let denominator =
+    let pred = b1 Eq [ y; z ] in
+    let twos = full_like_value z 2.0 in
+    let ones = full_like_value z 1.0 in
+    b1 Select_n [ pred; ones; twos ]
+  in
+  b1 Div [ numerator; denominator ]
+
+let pow_jvp_lhs g x y =
+  let y_dtype = (Core.get_aval y).dtype in
+  let result_dtype, _ =
+    Dtypes.result_type [ ((Core.get_aval x).dtype, false); (y_dtype, false) ]
+  in
+  let cast v =
+    if (Core.get_aval v).dtype = result_dtype then v
+    else b1 (Convert_element_type result_dtype) [ v ]
+  in
+  let x = cast x in
+  let y = cast y in
+  let jac =
+    if Dtypes.issubdtype y_dtype `Integer then begin
+      let xs = (Core.get_aval x).shape and ys = (Core.get_aval y).shape in
+      let shape = if Array.length xs = 0 then ys else xs in
+      let x = maybe_broadcast shape x in
+      let y = maybe_broadcast shape y in
+      let pred = b1 Eq [ y; const_scalar y 0.0 ] in
+      let zeros = full_like_value y 0.0 in
+      let safe = replace_zero y in
+      let ones = full_like_value y 1.0 in
+      let lowered = b1 Pow [ x; b1 Sub [ y; ones ] ] in
+      b1 Select_n [ pred; b1 Mul [ safe; lowered ]; zeros ]
+    end
+    else
+      let ones = full_like_value y 1.0 in
+      b1 Mul [ y; b1 Pow [ x; b1 Sub [ y; ones ] ] ]
+  in
+  b1 Mul [ g; jac ]
+
+let pow_jvp_rhs g ans x y =
+  let safe = replace_zero x in
+  let logged = b1 Log [ safe ] in
+  let product = b1 Mul [ g; b1 Mul [ logged; ans ] ] in
+  let y_dtype = (Core.get_aval y).dtype in
+  if (Core.get_aval product).dtype = y_dtype then product
+  else b1 (Convert_element_type y_dtype) [ product ]
+
+let igamma_gradx g a x =
+  let negated = b1 Neg [ x ] in
+  let ones = full_like_value a 1.0 in
+  let lowered = b1 Sub [ a; ones ] in
+  let logged = b1 Mul [ lowered; b1 Log [ x ] ] in
+  let summed = b1 Add [ negated; logged ] in
+  let total = b1 Sub [ summed; b1 Lgamma [ a ] ] in
+  b1 Mul [ g; b1 Exp [ total ] ]
+
 let jvp_rule prim (primals : value list) (tangents : value list) : value * value
     =
   match prim with
+  | Add_any -> (
+      match (primals, tangents) with
+      | [ x; y ], [ tx; ty ] ->
+          ( b1 Add_any [ x; y ],
+            b1 Add_any [ instantiate_zero tx; instantiate_zero ty ] )
+      | _ -> arity ())
   | Add -> (
       match (primals, tangents) with
-      | [ x; y ], [ tx; ty ] -> (add x y, add tx ty)
+      | [ x; y ], [ tx; ty ] -> (
+          let po = b1 Add [ x; y ] in
+          let shape = (Core.get_aval po).shape in
+          match (is_zero tx, is_zero ty) with
+          | true, true -> (po, zeros_like_value po)
+          | true, false -> (po, maybe_broadcast shape ty)
+          | false, true -> (po, maybe_broadcast shape tx)
+          | false, false -> (po, b1 Add [ tx; ty ]))
       | _ -> arity ())
   | Sub -> (
       match (primals, tangents) with
-      | [ x; y ], [ tx; ty ] -> (sub x y, sub tx ty)
+      | [ x; y ], [ tx; ty ] -> (
+          let po = b1 Sub [ x; y ] in
+          let shape = (Core.get_aval po).shape in
+          match (is_zero tx, is_zero ty) with
+          | true, true -> (po, zeros_like_value po)
+          | true, false -> (po, maybe_broadcast shape (b1 Neg [ ty ]))
+          | false, true -> (po, maybe_broadcast shape tx)
+          | false, false -> (po, b1 Sub [ tx; ty ]))
       | _ -> arity ())
   | Mul -> (
       match (primals, tangents) with
-      | [ x; y ], [ tx; ty ] -> (mul x y, add (mul tx y) (mul x ty))
+      | [ x; y ], [ tx; ty ] ->
+          std_jvp
+            (b1 Mul [ x; y ])
+            [ (tx, fun g -> b1 Mul [ g; y ]); (ty, fun g -> b1 Mul [ x; g ]) ]
       | _ -> arity ())
   | Div -> (
       match (primals, tangents) with
       | [ x; y ], [ tx; ty ] ->
-          (div x y, add (div tx y) (div (neg (mul x ty)) (mul y y)))
+          std_jvp
+            (b1 Div [ x; y ])
+            [
+              (tx, fun g -> b1 Div [ g; y ]);
+              ( ty,
+                fun g ->
+                  b1 Mul
+                    [ b1 Mul [ b1 Neg [ g ]; x ]; b1 (Integer_pow (-2)) [ y ] ]
+              );
+            ]
       | _ -> arity ())
   | Neg -> (
       match (primals, tangents) with
-      | [ x ], [ tx ] -> (neg x, neg tx)
+      | [ x ], [ tx ] -> (b1 Neg [ x ], b1 Neg [ tx ])
       | _ -> arity ())
-  | Sin -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Sin [ x ], mul (b1 Cos [ x ]) tx)
-      | _ -> arity ())
-  | Cos -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Cos [ x ], neg (mul (b1 Sin [ x ]) tx))
-      | _ -> arity ())
-  | Exp -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Exp [ x ] in
-          (po, mul po tx)
-      | _ -> arity ())
-  | Log -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Log [ x ], div tx x)
-      | _ -> arity ())
-  | Tanh -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Tanh [ x ] in
-          (po, mul (sub (ones_like_value po) (mul po po)) tx)
-      | _ -> arity ())
-  | Max -> (
-      match (primals, tangents) with
-      | [ x; y ], [ tx; ty ] ->
-          let po = b1 Max [ x; y ] in
-          (po, balanced_tangent po x y tx ty)
-      | _ -> arity ())
-  | Min -> (
-      match (primals, tangents) with
-      | [ x; y ], [ tx; ty ] ->
-          let po = b1 Min [ x; y ] in
-          (po, balanced_tangent po x y tx ty)
-      | _ -> arity ())
+  | Sin ->
+      unary_jvp prim primals tangents (fun g x _ -> b1 Mul [ g; b1 Cos [ x ] ])
+  | Cos ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Neg [ b1 Mul [ g; b1 Sin [ x ] ] ])
+  | Exp -> unary_jvp prim primals tangents (fun g _ ans -> b1 Mul [ g; ans ])
+  | Exp2 ->
+      unary_jvp prim primals tangents (fun g x ans ->
+          b1 Mul [ b1 Log [ const_scalar x 2.0 ]; b1 Mul [ g; ans ] ])
+  | Log -> unary_jvp prim primals tangents (fun g x _ -> b1 Div [ g; x ])
+  | Expm1 ->
+      unary_jvp prim primals tangents (fun g _ ans ->
+          b1 Mul [ g; b1 Add [ ans; const_scalar ans 1.0 ] ])
+  | Log1p ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Div [ g; b1 Add [ x; const_scalar x 1.0 ] ])
+  | Tanh ->
+      unary_jvp prim primals tangents (fun g x ans ->
+          let left = b1 Add [ g; b1 Mul [ g; ans ] ] in
+          b1 Mul [ left; b1 Sub [ const_scalar x 1.0; ans ] ])
+  | Logistic ->
+      unary_jvp prim primals tangents (fun g _ ans ->
+          b1 Mul [ g; b1 Mul [ ans; b1 Sub [ const_scalar ans 1.0; ans ] ] ])
+  | Tan ->
+      unary_jvp prim primals tangents (fun g x ans ->
+          b1 Mul [ g; b1 Add [ const_scalar x 1.0; b1 Square [ ans ] ] ])
+  | Asin ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Mul
+            [ g; b1 Rsqrt [ b1 Sub [ const_scalar x 1.0; b1 Square [ x ] ] ] ])
+  | Acos ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Mul
+            [
+              g;
+              b1 Neg
+                [ b1 Rsqrt [ b1 Sub [ const_scalar x 1.0; b1 Square [ x ] ] ] ];
+            ])
+  | Atan ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Div [ g; b1 Add [ const_scalar x 1.0; b1 Square [ x ] ] ])
+  | Sinh ->
+      unary_jvp prim primals tangents (fun g x _ -> b1 Mul [ g; b1 Cosh [ x ] ])
+  | Cosh ->
+      unary_jvp prim primals tangents (fun g x _ -> b1 Mul [ g; b1 Sinh [ x ] ])
+  | Asinh ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Mul
+            [ g; b1 Rsqrt [ b1 Add [ b1 Square [ x ]; const_scalar x 1.0 ] ] ])
+  | Acosh ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Mul
+            [ g; b1 Rsqrt [ b1 Sub [ b1 Square [ x ]; const_scalar x 1.0 ] ] ])
+  | Atanh ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          let first =
+            b1 (Integer_pow (-1)) [ b1 Add [ const_scalar x 1.0; x ] ]
+          in
+          b1 Mul [ first; b1 Div [ g; b1 Sub [ const_scalar x 1.0; x ] ] ])
+  | Abs ->
+      unary_jvp prim primals tangents (fun g x ans ->
+          if is_complex_value x then
+            let conj_x = b1 Conj [ x ] in
+            let widened =
+              b1 (Convert_element_type (Core.get_aval x).dtype) [ ans ]
+            in
+            b1 Real [ b1 Mul [ g; b1 Div [ conj_x; replace_zero widened ] ] ]
+          else
+            let pred = b1 Ge [ x; const_scalar x 0.0 ] in
+            b1 Select_n [ pred; b1 Neg [ g ]; g ])
+  | Sqrt ->
+      unary_jvp prim primals tangents (fun g x ans ->
+          b1 Mul [ g; b1 Div [ const_scalar x 0.5; ans ] ])
+  | Rsqrt ->
+      unary_jvp prim primals tangents (fun g x ans ->
+          b1 Mul [ g; b1 Mul [ const_scalar x (-0.5); b1 Div [ ans; x ] ] ])
+  | Cbrt ->
+      unary_jvp prim primals tangents (fun g x ans ->
+          b1 Mul
+            [
+              g;
+              b1 Mul
+                [ const_scalar x (1.0 /. 3.0); b1 (Integer_pow (-2)) [ ans ] ];
+            ])
+  | Square ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Mul [ g; b1 Mul [ const_scalar x 2.0; x ] ])
+  | Integer_pow y ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          if y = 0 then full_like_value g 0.0
+          else if y = 1 then g
+          else if y = 2 then b1 Mul [ g; b1 Mul [ const_scalar x 2.0; x ] ]
+          else
+            b1 Mul
+              [
+                g;
+                b1 Mul
+                  [
+                    const_scalar x (float_of_int y);
+                    b1 (Integer_pow (y - 1)) [ x ];
+                  ];
+              ])
   | Pow -> (
       match (primals, tangents) with
       | [ x; y ], [ tx; ty ] ->
           let po = b1 Pow [ x; y ] in
-          let one = ones_like_value y in
-          let dx () = mul (mul y (b1 Pow [ x; sub y one ])) tx in
-          let dy () = mul (mul (b1 Log [ x ]) po) ty in
-          if concrete_all_zero ty then (po, dx ())
-          else if concrete_all_zero tx then (po, dy ())
-          else (po, add (dx ()) (dy ()))
-      | _ -> arity ())
-  | Abs -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          if is_complex_value x then
-            let po = b1 Abs [ x ] in
-            let real_part v = b1 Real [ v ] and imag_part v = b1 Imag [ v ] in
-            let numer =
-              add
-                (mul (real_part x) (real_part tx))
-                (mul (imag_part x) (imag_part tx))
-            in
-            let safe =
-              b1 Select_n
-                [ b1 Eq [ po; zeros_like_value po ]; po; ones_like_value po ]
-            in
-            (po, div numer safe)
-          else (b1 Abs [ x ], mul (b1 Sign [ x ]) tx)
-      | _ -> arity ())
-  | Sign -> (
-      match (primals, tangents) with
-      | [ x ], [ _ ] ->
-          let po = b1 Sign [ x ] in
-          (po, zeros_like_value po)
-      | _ -> arity ())
-  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | And | Mulhi | Ne | Or | Xor
-  | Shift_left | Shift_right_arithmetic | Shift_right_logical -> (
-      match (primals, tangents) with
-      | [ x; y ], [ _; _ ] ->
-          let po = b1 prim [ x; y ] in
-          (po, zeros_like_value po)
+          std_jvp po
+            [
+              (tx, fun g -> pow_jvp_lhs g x y);
+              (ty, fun g -> pow_jvp_rhs g po x y);
+            ]
       | _ -> arity ())
   | Rem -> (
       match (primals, tangents) with
       | [ x; y ], [ tx; ty ] ->
-          let q = div x y in
-          let corr = mul (b1 Sign [ q ]) (b1 Floor [ b1 Abs [ q ] ]) in
-          (b1 Rem [ x; y ], add tx (mul (neg ty) corr))
+          let po = b1 Rem [ x; y ] in
+          std_jvp po
+            [
+              (tx, fun g -> maybe_broadcast (Core.get_aval po).shape g);
+              ( ty,
+                fun g ->
+                  let negated = b1 Neg [ g ] in
+                  let sign_part = b1 Sign [ b1 Div [ x; y ] ] in
+                  let floored = b1 Floor [ b1 Abs [ b1 Div [ x; y ] ] ] in
+                  b1 Mul [ negated; b1 Mul [ sign_part; floored ] ] );
+            ]
       | _ -> arity ())
   | Atan2 -> (
       match (primals, tangents) with
       | [ x; y ], [ tx; ty ] ->
-          let denom = add (square x) (square y) in
-          ( b1 Atan2 [ x; y ],
-            add (mul tx (div y denom)) (mul ty (div (neg x) denom)) )
+          let denom () = b1 Add [ b1 Square [ x ]; b1 Square [ y ] ] in
+          std_jvp
+            (b1 Atan2 [ x; y ])
+            [
+              (tx, fun g -> b1 Mul [ g; b1 Div [ y; denom () ] ]);
+              ( ty,
+                fun g ->
+                  let negated = b1 Neg [ x ] in
+                  b1 Mul [ g; b1 Div [ negated; denom () ] ] );
+            ]
+      | _ -> arity ())
+  | Max | Min -> (
+      match (primals, tangents) with
+      | [ x; y ], [ tx; ty ] ->
+          let po = b1 prim [ x; y ] in
+          std_jvp po
+            [
+              (tx, fun g -> b1 Mul [ g; balanced_eq x po y ]);
+              (ty, fun g -> b1 Mul [ g; balanced_eq y po x ]);
+            ]
       | _ -> arity ())
   | Complex -> (
       match (primals, tangents) with
-      | [ x; y ], [ tx; ty ] -> (b1 Complex [ x; y ], b1 Complex [ tx; ty ])
+      | [ x; y ], [ tx; ty ] ->
+          let po = b1 Complex [ x; y ] in
+          (po, b1 Complex [ instantiate_zero tx; instantiate_zero ty ])
       | _ -> arity ())
   | Select_n -> (
       match (primals, tangents) with
-      | which :: cases, _ :: tcases ->
-          (b1 Select_n (which :: cases), b1 Select_n (which :: tcases))
+      | which :: cases, _ :: tcases -> (
+          let po = b1 Select_n (which :: cases) in
+          match List.find_opt (fun t -> not (is_zero t)) tcases with
+          | None -> (po, zeros_like_value po)
+          | Some nonzero ->
+              let z = lazy (full_like_value nonzero 0.0) in
+              let filled =
+                List.map (fun t -> if is_zero t then Lazy.force z else t) tcases
+              in
+              (po, b1 Select_n (which :: filled)))
       | _ -> arity ())
   | Convert_element_type dt -> (
       match (primals, tangents) with
@@ -836,6 +1065,134 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
             else zeros_like_value po
           in
           (po, to_)
+      | _ -> arity ())
+  | Clamp -> (
+      match (primals, tangents) with
+      | [ mn; x; mx ], [ tmn; tx; tmx ] ->
+          let zeros () = full_like_value x 0.0 in
+          std_jvp
+            (b1 Clamp [ mn; x; mx ])
+            [
+              ( tmn,
+                fun g ->
+                  let pred = b1 And [ b1 Gt [ mn; x ]; b1 Lt [ mn; mx ] ] in
+                  b1 Select_n [ pred; zeros (); g ] );
+              ( tx,
+                fun g ->
+                  let pred = b1 And [ b1 Gt [ x; mn ]; b1 Lt [ x; mx ] ] in
+                  b1 Select_n [ pred; zeros (); g ] );
+              ( tmx,
+                fun g ->
+                  let pred = b1 Lt [ mx; x ] in
+                  b1 Select_n [ pred; zeros (); g ] );
+            ]
+      | _ -> arity ())
+  | Reduce_max axes | Reduce_min axes -> (
+      match (primals, tangents) with
+      | [ x ], [ tx ] -> reduce_chooser_jvp prim axes x tx
+      | _ -> arity ())
+  | Sign | Ceil | Floor | Is_finite -> (
+      match (primals, tangents) with
+      | [ x ], [ _ ] ->
+          let po = b1 prim [ x ] in
+          (po, zeros_like_value po)
+      | _ -> arity ())
+  | Lgamma ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Mul [ g; b1 Digamma [ x ] ])
+  | Digamma ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          b1 Mul [ g; b1 Polygamma [ const_scalar x 1.0; x ] ])
+  | Polygamma -> (
+      match (primals, tangents) with
+      | [ m; x ], [ _; tx ] ->
+          std_jvp
+            (b1 Polygamma [ m; x ])
+            [
+              ( tx,
+                fun g ->
+                  let raised = b1 Add [ m; const_scalar m 1.0 ] in
+                  b1 Mul [ g; b1 Polygamma [ raised; x ] ] );
+            ]
+      | _ -> arity ())
+  | Igamma -> (
+      match (primals, tangents) with
+      | [ a; x ], [ ta; tx ] ->
+          std_jvp
+            (b1 Igamma [ a; x ])
+            [
+              (ta, fun g -> b1 Mul [ g; b1 Igamma_grad_a [ a; x ] ]);
+              (tx, fun g -> igamma_gradx g a x);
+            ]
+      | _ -> arity ())
+  | Igammac -> (
+      match (primals, tangents) with
+      | [ a; x ], [ ta; tx ] ->
+          std_jvp
+            (b1 Igammac [ a; x ])
+            [
+              (ta, fun g -> b1 Neg [ b1 Mul [ g; b1 Igamma_grad_a [ a; x ] ] ]);
+              (tx, fun g -> b1 Neg [ igamma_gradx g a x ]);
+            ]
+      | _ -> arity ())
+  | Regularized_incomplete_beta -> (
+      match (primals, tangents) with
+      | [ a; b; x ], [ _; _; tx ] ->
+          std_jvp
+            (b1 Regularized_incomplete_beta [ a; b; x ])
+            [
+              ( tx,
+                fun g ->
+                  let la = b1 Lgamma [ a ] in
+                  let lb = b1 Lgamma [ b ] in
+                  let sum = b1 Add [ la; lb ] in
+                  let lbeta = b1 Sub [ sum; b1 Lgamma [ b1 Add [ a; b ] ] ] in
+                  let bm1 = b1 Sub [ b; const_scalar b 1.0 ] in
+                  let l1 = b1 Log1p [ b1 Neg [ x ] ] in
+                  let first = b1 Mul [ bm1; l1 ] in
+                  let am1 = b1 Sub [ a; const_scalar a 1.0 ] in
+                  let second = b1 Mul [ am1; b1 Log [ x ] ] in
+                  let total = b1 Sub [ b1 Add [ first; second ]; lbeta ] in
+                  b1 Mul [ b1 Exp [ total ]; g ] );
+            ]
+      | _ -> arity ())
+  | Bessel_i0e ->
+      unary_jvp prim primals tangents (fun g x y ->
+          let i1 = b1 Bessel_i1e [ x ] in
+          let signed = b1 Mul [ b1 Sign [ x ]; y ] in
+          b1 Mul [ g; b1 Sub [ i1; signed ] ])
+  | Bessel_i1e ->
+      unary_jvp prim primals tangents (fun g x y ->
+          let eps = (Dtypes.finfo (Core.get_aval x).dtype).eps in
+          let abs_x = b1 Abs [ x ] in
+          let not_tiny = b1 Gt [ abs_x; const_scalar x eps ] in
+          let safe_x = b1 Select_n [ not_tiny; full_like_value x eps; x ] in
+          let i0 = b1 Bessel_i0e [ safe_x ] in
+          let signed = b1 Sign [ safe_x ] in
+          let inverse = b1 (Integer_pow (-1)) [ safe_x ] in
+          let dy = b1 Sub [ i0; b1 Mul [ y; b1 Add [ signed; inverse ] ] ] in
+          let dy = b1 Select_n [ not_tiny; full_like_value x 0.5; dy ] in
+          b1 Mul [ g; dy ])
+  | Erf ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          let scale = const_scalar x two_over_sqrt_pi in
+          let exponent = b1 Exp [ b1 Neg [ b1 Square [ x ] ] ] in
+          b1 Mul [ scale; b1 Mul [ g; exponent ] ])
+  | Erfc ->
+      unary_jvp prim primals tangents (fun g x _ ->
+          let scale = const_scalar x (-.two_over_sqrt_pi) in
+          let exponent = b1 Exp [ b1 Neg [ b1 Square [ x ] ] ] in
+          b1 Mul [ scale; b1 Mul [ g; exponent ] ])
+  | Erf_inv ->
+      unary_jvp prim primals tangents (fun g x ans ->
+          let scale = const_scalar x sqrt_pi_over_2 in
+          b1 Mul [ scale; b1 Mul [ g; b1 Exp [ b1 Square [ ans ] ] ] ])
+  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | And | Mulhi | Ne | Or | Xor
+  | Shift_left | Shift_right_arithmetic | Shift_right_logical -> (
+      match (primals, tangents) with
+      | [ x; y ], [ _; _ ] ->
+          let po = b1 prim [ x; y ] in
+          (po, zeros_like_value po)
       | _ -> arity ())
   | Broadcast_in_dim p -> (
       match (primals, tangents) with
@@ -858,79 +1215,6 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       match (primals, tangents) with
       | [ x; y ], [ tx; ty ] -> bilinear_jvp prim x y tx ty
       | _ -> arity ())
-  | Asin -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          (b1 Asin [ x ], mul (rsqrt (sub (ones_like_value x) (square x))) tx)
-      | _ -> arity ())
-  | Acos -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          ( b1 Acos [ x ],
-            mul (neg (rsqrt (sub (ones_like_value x) (square x)))) tx )
-      | _ -> arity ())
-  | Atan -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          (b1 Atan [ x ], div tx (add (ones_like_value x) (square x)))
-      | _ -> arity ())
-  | Asinh -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          (b1 Asinh [ x ], mul (rsqrt (add (square x) (ones_like_value x))) tx)
-      | _ -> arity ())
-  | Acosh -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          (b1 Acosh [ x ], mul (rsqrt (sub (square x) (ones_like_value x))) tx)
-      | _ -> arity ())
-  | Atanh -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          ( b1 Atanh [ x ],
-            mul
-              (recip (add (ones_like_value x) x))
-              (div tx (sub (ones_like_value x) x)) )
-      | _ -> arity ())
-  | Cbrt -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Cbrt [ x ] in
-          ( po,
-            mul
-              (mul
-                 (const_like x (1.0 /. 3.0))
-                 (b1 Pow [ po; const_like po (-2.0) ]))
-              tx )
-      | _ -> arity ())
-  | Cosh -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Cosh [ x ], mul (sinh_of x) tx)
-      | _ -> arity ())
-  | Exp2 -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Exp2 [ x ] in
-          (po, mul (const_like x (Float.log 2.0)) (mul tx po))
-      | _ -> arity ())
-  | Expm1 -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Expm1 [ x ] in
-          (po, mul tx (add po (ones_like_value po)))
-      | _ -> arity ())
-  | Ceil -> (
-      match (primals, tangents) with
-      | [ x ], [ _ ] ->
-          let po = b1 Ceil [ x ] in
-          (po, zeros_like_value po)
-      | _ -> arity ())
-  | Floor -> (
-      match (primals, tangents) with
-      | [ x ], [ _ ] ->
-          let po = b1 Floor [ x ] in
-          (po, zeros_like_value po)
-      | _ -> arity ())
   | Conj -> (
       match (primals, tangents) with
       | [ x ], [ tx ] -> (b1 Conj [ x ], b1 Conj [ tx ])
@@ -939,58 +1223,6 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       match (primals, tangents) with
       | [ x ], [ tx ] -> (b1 Copy [ x ], b1 Copy [ tx ])
       | _ -> arity ())
-  | Integer_pow y -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 (Integer_pow y) [ x ] in
-          let dydx =
-            if y = 0 then zeros_like_value x
-            else if y = 1 then tx
-            else if y = 2 then mul tx (mul (const_like x 2.0) x)
-            else
-              mul tx
-                (mul
-                   (const_like x (float_of_int y))
-                   (b1 (Integer_pow (y - 1)) [ x ]))
-          in
-          (po, dydx)
-      | _ -> arity ())
-  | Log1p -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Log1p [ x ], div tx (add x (ones_like_value x)))
-      | _ -> arity ())
-  | Logistic -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Logistic [ x ] in
-          (po, mul tx (mul po (sub (ones_like_value po) po)))
-      | _ -> arity ())
-  | Sinh -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Sinh [ x ], mul (b1 Cosh [ x ]) tx)
-      | _ -> arity ())
-  | Sqrt -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Sqrt [ x ] in
-          (po, mul tx (div (const_like x 0.5) po))
-      | _ -> arity ())
-  | Rsqrt -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Rsqrt [ x ] in
-          (po, mul tx (mul (const_like x (-0.5)) (div po x)))
-      | _ -> arity ())
-  | Square -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Square [ x ], mul tx (mul (const_like x 2.0) x))
-      | _ -> arity ())
-  | Tan -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let po = b1 Tan [ x ] in
-          (po, mul tx (add (ones_like_value po) (mul po po)))
-      | _ -> arity ())
   | Real -> (
       match (primals, tangents) with
       | [ x ], [ tx ] -> (b1 Real [ x ], b1 Real [ tx ])
@@ -998,12 +1230,6 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
   | Imag -> (
       match (primals, tangents) with
       | [ x ], [ tx ] -> (b1 Imag [ x ], b1 Imag [ tx ])
-      | _ -> arity ())
-  | Is_finite -> (
-      match (primals, tangents) with
-      | [ x ], [ _ ] ->
-          let po = b1 Is_finite [ x ] in
-          (po, zeros_like_value po)
       | _ -> arity ())
   | (Round | Round_nearest_even) as prim -> (
       match (primals, tangents) with
@@ -1016,14 +1242,6 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       | [ x ], [ _ ] ->
           let po = b1 Not [ x ] in
           (po, zeros_like_value po)
-      | _ -> arity ())
-  | Reduce_max axes -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> reduce_chooser_jvp (Reduce_max axes) axes x tx
-      | _ -> arity ())
-  | Reduce_min axes -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> reduce_chooser_jvp (Reduce_min axes) axes x tx
       | _ -> arity ())
   | Reduce_and _ | Reduce_or _ | Reduce_xor _ | Argmax _ | Argmin _ -> (
       match (primals, tangents) with
@@ -1157,17 +1375,6 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       match (primals, tangents) with
       | [ x; y ], [ _; ty ] -> (b1 Tie [ x; y ], ty)
       | _ -> arity ())
-  | Clamp -> (
-      match (primals, tangents) with
-      | [ mn; x; mx ], [ tmn; tx; tmx ] ->
-          let po = b1 Clamp [ mn; x; mx ] in
-          let zeros = zeros_like_value x in
-          let sel pred g = b1 Select_n [ pred; zeros; g ] in
-          let t_mn = sel (b1 And [ b1 Gt [ mn; x ]; b1 Lt [ mn; mx ] ]) tmn in
-          let t_x = sel (b1 And [ b1 Gt [ x; mn ]; b1 Lt [ x; mx ] ]) tx in
-          let t_mx = sel (b1 Lt [ mx; x ]) tmx in
-          (po, add (add t_mn t_x) t_mx)
-      | _ -> arity ())
   | Bitcast_convert_type _ -> (
       match (primals, tangents) with
       | [ x ], [ _ ] ->
@@ -1209,126 +1416,11 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
         "ad: reduce_window jvp needs the variadic jvp reducer jaxpr (M2 gap)"
   | Select_and_scatter _ ->
       failwith "ad: select_and_scatter has no jvp rule in M1"
-  | Lgamma -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] -> (b1 Lgamma [ x ], mul (b1 Digamma [ x ]) tx)
-      | _ -> arity ())
   | Zeta -> (
       match (primals, tangents) with
       | [ x; q ], [ _; tq ] ->
           let raised = add x (const_like x 1.0) in
           (b1 Zeta [ x; q ], mul tq (mul (neg x) (b1 Zeta [ raised; q ])))
-      | _ -> arity ())
-  | Digamma -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          (b1 Digamma [ x ], mul (b1 Polygamma [ const_like x 1.0; x ]) tx)
-      | _ -> arity ())
-  | Erf -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          ( b1 Erf [ x ],
-            mul
-              (const_like x two_over_sqrt_pi)
-              (mul tx (b1 Exp [ neg (square x) ])) )
-      | _ -> arity ())
-  | Erfc -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          ( b1 Erfc [ x ],
-            mul
-              (const_like x (-.two_over_sqrt_pi))
-              (mul tx (b1 Exp [ neg (square x) ])) )
-      | _ -> arity ())
-  | Erf_inv -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let ans = b1 Erf_inv [ x ] in
-          ( ans,
-            mul (const_like x sqrt_pi_over_2) (mul tx (b1 Exp [ square ans ]))
-          )
-      | _ -> arity ())
-  | Bessel_i0e -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let y = b1 Bessel_i0e [ x ] in
-          (y, mul tx (sub (b1 Bessel_i1e [ x ]) (mul (b1 Sign [ x ]) y)))
-      | _ -> arity ())
-  | Bessel_i1e -> (
-      match (primals, tangents) with
-      | [ x ], [ tx ] ->
-          let y = b1 Bessel_i1e [ x ] in
-          let eps = const_like x 2.220446049250313e-16 in
-          let not_tiny = b1 Gt [ b1 Abs [ x ]; eps ] in
-          let safe_x = b1 Select_n [ not_tiny; eps; x ] in
-          let dy_dx =
-            sub (b1 Bessel_i0e [ safe_x ])
-              (mul y (add (b1 Sign [ safe_x ]) (recip safe_x)))
-          in
-          let dy_dx = b1 Select_n [ not_tiny; const_like x 0.5; dy_dx ] in
-          (y, mul tx dy_dx)
-      | _ -> arity ())
-  | Igamma -> (
-      match (primals, tangents) with
-      | [ a; x ], [ ta; tx ] ->
-          let po = b1 Igamma [ a; x ] in
-          let one = ones_like_value a in
-          let gradx =
-            b1 Exp
-              [
-                add
-                  (add (neg x) (mul (sub a one) (b1 Log [ x ])))
-                  (neg (b1 Lgamma [ a ]));
-              ]
-          in
-          let da = mul ta (b1 Igamma_grad_a [ a; x ]) in
-          let dx = mul tx gradx in
-          (po, add da dx)
-      | _ -> arity ())
-  | Igammac -> (
-      match (primals, tangents) with
-      | [ a; x ], [ ta; tx ] ->
-          let po = b1 Igammac [ a; x ] in
-          let one = ones_like_value a in
-          let gradx =
-            b1 Exp
-              [
-                add
-                  (add (neg x) (mul (sub a one) (b1 Log [ x ])))
-                  (neg (b1 Lgamma [ a ]));
-              ]
-          in
-          let da = mul ta (neg (b1 Igamma_grad_a [ a; x ])) in
-          let dx = mul tx (neg gradx) in
-          (po, add da dx)
-      | _ -> arity ())
-  | Polygamma -> (
-      match (primals, tangents) with
-      | [ m; x ], [ _; tx ] ->
-          let po = b1 Polygamma [ m; x ] in
-          (po, mul tx (b1 Polygamma [ add m (ones_like_value m); x ]))
-      | _ -> arity ())
-  | Regularized_incomplete_beta -> (
-      match (primals, tangents) with
-      | [ a; b; x ], [ _; _; tx ] ->
-          let po = b1 Regularized_incomplete_beta [ a; b; x ] in
-          let one = ones_like_value a in
-          let lbeta =
-            sub
-              (add (b1 Lgamma [ a ]) (b1 Lgamma [ b ]))
-              (b1 Lgamma [ add a b ])
-          in
-          let partial_x =
-            b1 Exp
-              [
-                add
-                  (add
-                     (mul (sub b one) (b1 Log1p [ neg x ]))
-                     (mul (sub a one) (b1 Log [ x ])))
-                  (neg lbeta);
-              ]
-          in
-          (po, mul partial_x tx)
       | _ -> arity ())
   | Cumsum { axis; reverse } -> (
       match (primals, tangents) with
@@ -1407,7 +1499,7 @@ let jvp_rule prim (primals : value list) (tangents : value list) : value * value
       match (primals, tangents) with
       | [ x ], [ tx ] -> (b1 prim [ x ], tx)
       | _ -> arity ())
-  | Xla_call _ -> failwith "ad: jvp of xla_call not supported in M1"
+  | Xla_call _ -> failwith "ad: xla_call jvp handled by jvp_process_primitive"
   | Ffi_call _ -> failwith "ad: ffi_call jvp handled by jvp_process_primitive"
 
 let ffi_not_differentiable (c : ffi_call) =
@@ -1485,8 +1577,72 @@ let carry_zero_fixpoint trace_body flags =
   in
   go flags
 
+let jvp_calls : (int * bool list, closed_jaxpr * bool list) Hashtbl.t =
+  Hashtbl.create 64
+
+let split_at_count l n =
+  match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
+
+let filter_flags flags l = List.filteri (fun i _ -> List.nth flags i) l
+
+let jvp_call trace (c : closed_jaxpr) primals tangents =
+  let nz_in = List.map (fun t -> not (is_zero t)) tangents in
+  let n_primals = List.length primals in
+  let nz_tangents = filter_flags nz_in tangents in
+  let cj, nz_out =
+    match Hashtbl.find_opt jvp_calls (c.jid, nz_in) with
+    | Some found -> found
+    | None ->
+        let flags = ref [] in
+        let cj =
+          Jaxpr.make_jaxpr
+            (List.map Core.get_aval (primals @ nz_tangents))
+            (fun args ->
+              let ps, ts = split_at_count args n_primals in
+              let rest = ref ts in
+              let full =
+                List.map2
+                  (fun nz p ->
+                    if nz then
+                      begin match !rest with
+                      | t :: tl ->
+                          rest := tl;
+                          t
+                      | [] -> arity ()
+                      end
+                    else zeros_like_value p)
+                  nz_in ps
+              in
+              let po, to_ = jvp (Jaxpr.eval_closed_jaxpr c) ps full in
+              flags := List.map (fun t -> not (is_zero t)) to_;
+              po @ filter_flags !flags to_)
+        in
+        Jaxpr.copy_call_name ~source:c cj;
+        Hashtbl.replace jvp_calls (c.jid, nz_in) (cj, !flags);
+        (cj, !flags)
+  in
+  let outs = Core.bind (Xla_call cj) (primals @ nz_tangents) in
+  let n_out = List.length nz_out in
+  let po, ts = split_at_count outs n_out in
+  let rest = ref ts in
+  List.map2
+    (fun p nz ->
+      let t =
+        if nz then
+          begin match !rest with
+          | t :: tl ->
+              rest := tl;
+              t
+          | [] -> arity ()
+          end
+        else zeros_like_value p
+      in
+      Tracer (new_jvp_tracer trace p t))
+    po nz_out
+
 let jvp_process_with_tangents trace prim primals tangents =
   match prim with
+  | Xla_call c -> jvp_call trace c primals tangents
   | Ffi_call c ->
       if List.for_all is_concrete_zero tangents then
         List.map
@@ -2049,40 +2205,67 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
     | _ -> failwith "ad: transpose expects a single cotangent"
   in
   match prim with
-  | Add ->
+  | Add_any ->
       let ct = ct1 () in
       [ Some ct; Some ct ]
-  | Sub ->
+  | Add -> (
       let ct = ct1 () in
-      [ Some ct; Some (neg ct) ]
-  | Neg -> [ Some (neg (ct1 ())) ]
+      match primals with
+      | [ x; y ] ->
+          let left = unbroadcast (in_aval x) ct in
+          let right = unbroadcast (in_aval y) ct in
+          [ Some left; Some right ]
+      | _ -> arity ())
+  | Sub -> (
+      let ct = ct1 () in
+      match primals with
+      | [ x; y ] ->
+          let left = unbroadcast (in_aval x) ct in
+          let right = unbroadcast (in_aval y) (b1 Neg [ ct ]) in
+          [ Some left; Some right ]
+      | _ -> arity ())
+  | Neg -> [ Some (b1 Neg [ ct1 () ]) ]
   | Mul -> (
       let ct = ct1 () in
       match primals with
       | [ x; y ] ->
-          if is_undef x then [ Some (mul ct (prim_val y)); None ]
-          else [ None; Some (mul (prim_val x) ct) ]
+          if is_undef x then
+            [ Some (unbroadcast (in_aval x) (b1 Mul [ ct; prim_val y ])); None ]
+          else
+            [ None; Some (unbroadcast (in_aval y) (b1 Mul [ prim_val x; ct ])) ]
       | _ -> arity ())
   | Div -> (
       let ct = ct1 () in
       match primals with
-      | [ _; y ] -> [ Some (div ct (prim_val y)); None ]
+      | [ x; y ] ->
+          [ Some (unbroadcast (in_aval x) (b1 Div [ ct; prim_val y ])); None ]
       | _ -> arity ())
   | Select_n -> (
       let ct = ct1 () in
       match primals with
+      | [ which; c0; c1 ]
+        when (Core.get_aval (prim_val which)).dtype = Dtype.Bool ->
+          let wv = prim_val which in
+          let zeros = full_like_value ct 0.0 in
+          let first =
+            if is_undef c0 then Some (b1 Select_n [ wv; ct; zeros ]) else None
+          in
+          let second =
+            if is_undef c1 then Some (b1 Select_n [ wv; zeros; ct ]) else None
+          in
+          [ None; first; second ]
       | which :: cases ->
           let wv = prim_val which in
+          let zeros = full_like_value ct 0.0 in
+          let which_aval = Core.get_aval wv in
           None
           :: List.mapi
                (fun i p ->
                  if is_undef p then
-                   let zs =
-                     List.mapi
-                       (fun j _ -> if j = i then ct else zeros_like_value ct)
-                       cases
+                   let index =
+                     Core.splat which_aval.dtype [||] (float_of_int i)
                    in
-                   Some (b1 Select_n (wv :: zs))
+                   Some (b1 Select_n [ b1 Eq [ wv; index ]; zeros; ct ])
                  else None)
                cases
       | _ -> arity ())
@@ -2410,18 +2593,83 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           ]
       | Pmax | Pmin | Pbroadcast _ | All_gather _ | Axis_index ->
           failwith "ad: this collective has no transpose rule")
+  | Xla_call c ->
+      let nz_cts = List.filter (fun t -> not (is_zero t)) cts in
+      let residuals =
+        List.filter_map
+          (fun p -> if is_undef p then None else Some (prim_val p))
+          primals
+      in
+      let n_res = List.length residuals in
+      let flags = ref [] in
+      let transposed =
+        Jaxpr.make_jaxpr
+          (List.map Core.get_aval (residuals @ nz_cts))
+          (fun flat ->
+            let res, given = split_at_count flat n_res in
+            let remaining_res = ref res and remaining_ct = ref given in
+            let pop cell =
+              match !cell with
+              | v :: tl ->
+                  cell := tl;
+                  v
+              | [] -> arity ()
+            in
+            let inner =
+              List.map
+                (fun p ->
+                  if is_undef p then Undef (in_aval p)
+                  else Prim (pop remaining_res))
+                primals
+            in
+            let full =
+              List.map (fun t -> if is_zero t then t else pop remaining_ct) cts
+            in
+            let outs =
+              eval_jaxpr_transposed c.jaxpr
+                (List.map (fun nd -> Prim (Concrete nd)) c.consts @ inner)
+                full
+            in
+            flags := List.map (fun t -> not (is_zero t)) outs;
+            List.filter (fun t -> not (is_zero t)) outs)
+      in
+      Jaxpr.copy_call_name ~source:c transposed;
+      let outs = ref (Core.bind (Xla_call transposed) (residuals @ nz_cts)) in
+      let remaining_flags = ref !flags in
+      List.map
+        (fun p ->
+          if is_undef p then begin
+            let nz = List.hd !remaining_flags in
+            remaining_flags := List.tl !remaining_flags;
+            if nz then begin
+              let v = List.hd !outs in
+              outs := List.tl !outs;
+              Some v
+            end
+            else None
+          end
+          else None)
+        primals
   | Real ->
       let t = ct1 () in
-      [ Some (b1 Complex [ t; zeros_like_value t ]) ]
+      [ Some (b1 Complex [ t; const_scalar t 0.0 ]) ]
   | Imag ->
       let t = ct1 () in
-      [ Some (b1 Complex [ zeros_like_value t; neg t ]) ]
+      let zero = const_scalar t 0.0 in
+      [ Some (b1 Complex [ zero; b1 Neg [ t ] ]) ]
   | Complex -> (
       let t = ct1 () in
       match primals with
       | [ x; y ] ->
-          let x_ct = if is_undef x then Some (b1 Real [ t ]) else None in
-          let y_ct = if is_undef y then Some (b1 Imag [ neg t ]) else None in
+          let x_ct =
+            if is_undef x then Some (unbroadcast (in_aval x) (b1 Real [ t ]))
+            else None
+          in
+          let y_ct =
+            if is_undef y then
+              Some (unbroadcast (in_aval y) (b1 Imag [ b1 Neg [ t ] ]))
+            else None
+          in
           [ x_ct; y_ct ]
       | _ -> arity ())
   | Fft { fft_type; fft_lengths } -> (
@@ -2681,7 +2929,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Polygamma | Regularized_incomplete_beta | Zeta | Platform_index _
   | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ | Threefry2x32
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-  | Random_bits _ | Random_wrap | Random_unwrap | Xla_call _ ->
+  | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
   | Scan { length; reverse; num_carry; jaxpr } ->
       let split_at l n =
@@ -2853,7 +3101,7 @@ and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
     match atom with
     | A_var v when not (Ad_util.is_symbolic_zero ct) -> (
         match Hashtbl.find_opt ct_env v.vid with
-        | Some c -> Hashtbl.replace ct_env v.vid (Ad_util.add_jaxvals c ct)
+        | Some c -> Hashtbl.replace ct_env v.vid (Ad_util.add_any c ct)
         | None -> Hashtbl.replace ct_env v.vid ct)
     | _ -> ()
   in

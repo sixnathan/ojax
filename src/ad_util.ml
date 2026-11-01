@@ -32,3 +32,4 @@ let is_symbolic_zero = function
 let clear_symbolic_zeros () = Hashtbl.reset symbolic_zeros
 let instantiate z = zeros_like_aval z.z_aval
 let add_jaxvals x y = Core.bind1 Add [ x; y ]
+let add_any x y = Core.bind1 Add_any [ x; y ]

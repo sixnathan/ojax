@@ -625,9 +625,10 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta
   | Regularized_incomplete_beta ->
       naryop_rule axis_size prim vals bdims
-  | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le | Eq_to
-  | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or | Rem
-  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie ->
+  | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le
+  | Eq_to | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or
+  | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie
+    ->
       bin ()
   | Select_n -> select_rule axis_size vals bdims
   | Convert_element_type dt -> (
@@ -760,7 +761,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       match (vals, bdims) with
       | [ x ], [ d ] -> (b1 prim [ x ], d)
       | _ -> failwith "batching: checkpoint_name arity")
-  | Xla_call _ -> failwith "batching: vmap of xla_call not supported in M1"
+  | Xla_call _ -> failwith "batching: xla_call handled by call_batch"
   | Ffi_call _ -> failwith "batching: ffi_call handled by ffi_batch"
 
 let opt_barrier_batch (vals : value list) (bdims : int option list) :
@@ -1222,12 +1223,40 @@ let ffi_batch axis_size (c : ffi_call) vals bdims =
            | None -> "None"
            | Some m -> "'" ^ m ^ "'"))
 
+let call_batch axis_size (c : closed_jaxpr) vals bdims =
+  let out_dims = ref [] in
+  let cj =
+    Jaxpr.make_jaxpr (List.map Core.get_aval vals) (fun xs ->
+        Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+            let tracers =
+              List.map2
+                (fun x b ->
+                  match b with
+                  | Some _ -> Tracer (new_batch_tracer main x b)
+                  | None -> x)
+                xs bdims
+            in
+            let outs = Jaxpr.eval_closed_jaxpr c tracers in
+            let pairs =
+              List.map
+                (fun o -> to_batch_info main (Core.full_raise main o))
+                outs
+            in
+            out_dims := List.map snd pairs;
+            List.map fst pairs))
+  in
+  Jaxpr.copy_call_name ~source:c cj;
+  (Core.bind (Xla_call cj) vals, !out_dims)
+
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
   let axis_size = axis_size_of trace in
   let pairs = List.map (to_batch_info trace) args in
   let vals = List.map fst pairs and bdims = List.map snd pairs in
   match prim with
+  | Xla_call c ->
+      let outs, out_bdims = call_batch axis_size c vals bdims in
+      List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | Collective { kind; axis_name } ->
       let out, out_bdim =
         collective_batch trace axis_size kind axis_name vals bdims

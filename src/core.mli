@@ -114,5 +114,7 @@ val staging : unit -> bool
 val splat : Dtype.t -> int array -> float -> value
 val elementwise_shape : int array list -> int array
 val is_elementwise : primitive -> bool
+val call_compiled : (closed_jaxpr -> value list -> value list option) ref
+val call_is_named : (int -> bool) ref
 val call_inline : (closed_jaxpr -> value list -> value list) ref
 val top_is_staging : value list -> bool

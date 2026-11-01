@@ -84,6 +84,7 @@ let dot_dims_str (dd : dot_dims) =
 
 let prim_name = function
   | Add -> "add"
+  | Add_any -> "add_any"
   | Sub -> "sub"
   | Mul -> "mul"
   | Div -> "div"
@@ -358,6 +359,7 @@ let jaxpr_to_string jx = Doc.to_string (jaxpr_to_doc jx)
 let closed_jaxpr_to_string (cj : closed_jaxpr) = jaxpr_to_string cj.jaxpr
 let call_names : (int, string) Hashtbl.t = Hashtbl.create 64
 let register_call_name jid name = Hashtbl.replace call_names jid name
+let has_call_name jid = Hashtbl.mem call_names jid
 
 let call_name jid =
   match Hashtbl.find_opt call_names jid with Some n -> n | None -> "jit"

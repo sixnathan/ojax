@@ -327,6 +327,7 @@ let check_operands prim args =
   | Square -> check "square" not_bool numeric
   | Sub -> check "sub" not_bool numeric
   | Add -> check "add" not_bool numeric
+  | Add_any -> ()
   | Mul -> check "mul" not_bool numeric
   | Div -> check "div" not_bool numeric
   | Atan2 -> check "atan2" is_inexact inexact
@@ -358,10 +359,10 @@ let check_operands prim args =
   | _ -> ()
 
 let is_elementwise = function
-  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi | Nextafter
-  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-  | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to | Ne | Complex | Igamma
-  | Igammac | Igamma_grad_a | Polygamma | Zeta ->
+  | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi
+  | Nextafter | Or | Rem | Shift_left | Shift_right_arithmetic
+  | Shift_right_logical | Xor | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to
+  | Ne | Complex | Igamma | Igammac | Igamma_grad_a | Polygamma | Zeta ->
       true
   | _ -> false
 
@@ -385,10 +386,20 @@ let elementwise_shape shapes =
 let call_inline : (closed_jaxpr -> value list -> value list) ref =
   ref (fun _ _ -> invalid_arg "Core.call_inline: not installed")
 
+let call_compiled : (closed_jaxpr -> value list -> value list option) ref =
+  ref (fun _ _ -> None)
+
+let call_is_named : (int -> bool) ref = ref (fun _ -> false)
+
 let rec dispatch prim args =
   let top = find_top_trace args in
   match (prim, args) with
-  | Xla_call c, _ when top.kind <> KJaxpr -> !call_inline c args
+  | Xla_call c, _ when top.kind = KEval -> (
+      match !call_compiled c args with
+      | Some outs -> outs
+      | None -> !call_inline c args)
+  | Xla_call c, _ when top.kind = KJaxpr && not (!call_is_named c.jid) ->
+      !call_inline c args
   | Transpose perm, [ _ ]
     when Array.for_all Fun.id (Array.mapi (fun i p -> i = p) perm) ->
       args

@@ -40,6 +40,7 @@ and recipe =
 
 and primitive =
   | Add
+  | Add_any
   | Sub
   | Mul
   | Div

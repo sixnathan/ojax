@@ -939,7 +939,7 @@ let eager_stats () =
 
 let eager_runs_impl = function
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ | Custom_linear_solve _
-  | Xla_call _ ->
+    ->
       true
   | _ -> false
 
@@ -1110,27 +1110,86 @@ let build_region name f avals =
       | Ok exec -> Some (exec, List.map atom_output_aval cj.jaxpr.outs)
       | Error reason -> fall_back reason)
 
+let region_calls = Region_cache.create 512
+
+let call_programs :
+    (int * string, (Pjrt.Executable.t * aval list) option) Hashtbl.t =
+  Hashtbl.create 512
+
+let call_program (c : closed_jaxpr) =
+  let key = (c.jid, current_platform ()) in
+  match Hashtbl.find_opt call_programs key with
+  | Some program -> program
+  | None ->
+      let program =
+        match compile_region c with
+        | Ok exec -> Some (exec, List.map atom_output_aval c.jaxpr.outs)
+        | Error reason ->
+            note_eager_fallback_named (Pretty_printer.call_name c.jid) reason;
+            None
+      in
+      Hashtbl.replace call_programs key program;
+      program
+
+let run_call c args =
+  if
+    Config.value Config.disable_jit
+    || Config.value Config.no_execution
+    || Stablehlo.Emit.emitting ()
+    || List.exists Core.is_placed args
+    || not (use_xla ())
+  then None
+  else
+    match call_program c with
+    | None -> None
+    | Some (exec, wanted) -> (
+        match xla_run exec args false with
+        | outs when output_matches outs wanted ->
+            incr eager_executions;
+            Some outs
+        | _ -> None
+        | exception Errors.Jax_runtime_error _ -> None)
+
+let () = Core.call_compiled := run_call
+
 let jitted_keyed (name, statics) f args =
+  let avals () = List.map Core.get_aval args in
+  let key () =
+    {
+      rk_name = name;
+      rk_statics = statics;
+      rk_avals = avals ();
+      rk_platform = current_platform ();
+      rk_context = Config.trace_context ();
+    }
+  in
   if
     Config.value Config.disable_jit
     || Config.value Config.no_execution
     || Core.tracing_dynamically ()
     || Stablehlo.Emit.emitting ()
-    || (not (List.for_all is_hostable args))
     || List.exists Core.is_placed args
     || not (use_xla ())
   then f args
-  else
-    let avals = List.map Core.get_aval args in
-    let key =
-      {
-        rk_name = name;
-        rk_statics = statics;
-        rk_avals = avals;
-        rk_platform = current_platform ();
-        rk_context = Config.trace_context ();
-      }
+  else if not (List.for_all is_hostable args) then
+    let key = key () in
+    let call =
+      match Region_cache.find_opt region_calls key with
+      | Some call -> call
+      | None ->
+          let call =
+            match Jaxpr.make_jaxpr_hoisted key.rk_avals f with
+            | c, [] -> Some c
+            | _ -> None
+            | exception error when eager_rejection error -> None
+          in
+          Region_cache.replace region_calls key call;
+          call
     in
+    match call with Some c -> Core.bind (Xla_call c) args | None -> f args
+  else
+    let avals = avals () in
+    let key = key () in
     let program =
       match Region_cache.find_opt region_programs key with
       | Some program ->

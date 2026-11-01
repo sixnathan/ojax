@@ -362,20 +362,27 @@ let call_key name key (avals : aval list) =
            ^ string_of_bool a.weak_type)
          avals)
 
+let () = Core.call_is_named := Pretty_printer.has_call_name
+
 let named_jit ~name ?(key = "") f args =
-  if not (Core.top_is_staging args) then f args
-  else
-    let avals = List.map Core.get_aval args in
-    let ck = call_key name key avals in
-    let closed =
-      match Hashtbl.find_opt call_cache ck with
-      | Some c -> Some c
-      | None -> (
-          match make_jaxpr_hoisted avals f with
-          | c, [] ->
-              Pretty_printer.register_call_name c.jid name;
-              Hashtbl.replace call_cache ck c;
-              Some c
-          | _ -> None)
-    in
-    match closed with Some c -> Core.bind (Xla_call c) args | None -> f args
+  let staged = Core.top_is_staging args in
+  let avals = List.map Core.get_aval args in
+  let ck = call_key name key avals in
+  let closed =
+    match Hashtbl.find_opt call_cache ck with
+    | Some c -> Some c
+    | None -> (
+        match make_jaxpr_hoisted avals f with
+        | c, [] ->
+            Pretty_printer.register_call_name c.jid name;
+            Hashtbl.replace call_cache ck c;
+            Some c
+        | _ -> None
+        | exception _ when not staged -> None)
+  in
+  match closed with Some c -> Core.bind (Xla_call c) args | None -> f args
+
+let copy_call_name ~(source : closed_jaxpr) (target : closed_jaxpr) =
+  if Pretty_printer.has_call_name source.jid then
+    Pretty_printer.register_call_name target.jid
+      (Pretty_printer.call_name source.jid)

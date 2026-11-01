@@ -697,21 +697,18 @@ let conv_general_dilated ?lhs_dilation ?rhs_dilation ?dimension_numbers
       (dilate rhs_sp rhs_dilation)
       window_strides padding
   in
-  Lax.complex_bilinear
-    (fun x y ->
-      b1
-        (Conv_general_dilated
-           {
-             window_strides;
-             padding = pads;
-             lhs_dilation;
-             rhs_dilation;
-             dimension_numbers = dn;
-             feature_group_count;
-             batch_group_count;
-           })
-        [ x; y ])
-    lhs rhs
+  b1
+    (Conv_general_dilated
+       {
+         window_strides;
+         padding = pads;
+         lhs_dilation;
+         rhs_dilation;
+         dimension_numbers = dn;
+         feature_group_count;
+         batch_group_count;
+       })
+    [ lhs; rhs ]
 
 let conv lhs rhs ~window_strides padding =
   conv_general_dilated lhs rhs ~window_strides padding

@@ -1211,6 +1211,9 @@ let convert_impl dt a =
     Ndarray.map dt (saturate_to dt) a
   else Ndarray.map dt (fun x -> x) a
 
+let impl_core_ref : (primitive -> Ndarray.t list -> Ndarray.t list) ref =
+  ref (fun _ _ -> failwith "lax: impl not installed")
+
 let rec impl_base prim inputs =
   match prim with
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
@@ -1250,7 +1253,7 @@ let rec impl_base prim inputs =
           else Ndarray.map dt Float.abs a)
         inputs
   | Sign -> un (fun a -> Ndarray.map (Ndarray.dtype a) sign_f a) inputs
-  | Add ->
+  | Add | Add_any ->
       bin
         (fun a b ->
           Ndarray.map2 (Ndarray.dtype a) (add_f (Ndarray.dtype a)) a b)
@@ -1586,11 +1589,32 @@ let rec impl_base prim inputs =
         feature_group_count;
         batch_group_count;
       } ->
+      let conv lhs rhs =
+        Convolution.conv_impl dimension_numbers window_strides padding
+          lhs_dilation rhs_dilation feature_group_count batch_group_count lhs
+          rhs
+      in
       bin
         (fun lhs rhs ->
-          Convolution.conv_impl dimension_numbers window_strides padding
-            lhs_dilation rhs_dilation feature_group_count batch_group_count lhs
-            rhs)
+          match Ndarray.dtype lhs with
+          | Dtype.Complex64 | Dtype.Complex128 ->
+              let part prim v =
+                match impl_core_ref.contents prim [ v ] with
+                | [ out ] -> out
+                | _ -> failwith "lax: conv complex parts"
+              in
+              let lift2 prim a b =
+                match impl_core_ref.contents prim [ a; b ] with
+                | [ out ] -> out
+                | _ -> failwith "lax: conv complex parts"
+              in
+              let x_re = part Real lhs and x_im = part Imag lhs in
+              let y_re = part Real rhs and y_im = part Imag rhs in
+              let k1 = conv (lift2 Add x_re x_im) y_re in
+              let k2 = conv x_re (lift2 Sub y_im y_re) in
+              let k3 = conv x_im (lift2 Add y_re y_im) in
+              lift2 Complex (lift2 Sub k1 k3) (lift2 Add k1 k2)
+          | _ -> conv lhs rhs)
         inputs
   | Reduce_window_sum window ->
       un (Windowed_reductions.reduce_window_sum window) inputs
@@ -1927,7 +1951,7 @@ let wide_int_elementwise prim inputs =
     let shift_amount s = Int64.to_int s land 63 in
     let unsigned = dt = Dtype.Uint64 in
     match prim with
-    | Add -> binary Int64.add
+    | Add | Add_any -> binary Int64.add
     | Sub -> binary Int64.sub
     | Mul -> binary Int64.mul
     | Neg -> unary Int64.neg
@@ -2009,7 +2033,7 @@ let acts_on_parts = function
   | Select_n | Broadcast_in_dim _ | Reshape _ | Copy | Checkpoint_name _
   | Concatenate _ | Pad _ | Rev _ | Split _ | Squeeze _ | Stack _ | Tile _
   | Transpose _ | Unstack _ | Slice _ | Dynamic_slice _ | Dynamic_update_slice
-  | Gather _ | Scatter _ | Reduce_sum _ | Cumsum _ | Neg | Add | Sub
+  | Gather _ | Scatter _ | Reduce_sum _ | Cumsum _ | Neg | Add | Add_any | Sub
   | Scatter_add _ | Scatter_sub _ | Reduce_window_sum _ | Round
   | Round_nearest_even ->
       true
@@ -2415,9 +2439,9 @@ let abstract_eval prim avals =
             (a.weak_type && b.weak_type))
         avals
   | Is_finite -> un_aval (fun a -> shaped a.shape Bool false) avals
-  | Add | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi | Nextafter
-  | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
-    ->
+  | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi
+  | Nextafter | Or | Rem | Shift_left | Shift_right_arithmetic
+  | Shift_right_logical | Xor ->
       bin_aval
         (fun a b ->
           shaped
@@ -2715,6 +2739,8 @@ let abstract_eval prim avals =
       | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call")
   | Custom_lin { out_avals; _ } -> out_avals
   | Checkpoint_name _ -> avals
+
+let () = impl_core_ref := impl_core
 
 let impl prim inputs =
   let batch =

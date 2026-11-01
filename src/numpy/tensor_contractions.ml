@@ -21,7 +21,8 @@ let mul_prim dt = if dt = D.Bool then T.And else T.Mul
 
 let bcast_binop prim a b =
   let dt = NL.result_type [ a; b ] in
-  C.bind1 prim [ astype a dt; astype b dt ]
+  let a, b = Jnp_util.promote_ranks (astype a dt) (astype b dt) in
+  C.bind1 prim [ a; b ]
 
 let dot ?precision ?preferred a b =
   let pdt = pref preferred [ a; b ] in

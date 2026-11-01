@@ -31,6 +31,22 @@ let broadcast_to v sh =
       [ v ]
   end
 
+let promote_ranks a b =
+  let ra = Array.length (shape a) and rb = Array.length (shape b) in
+  let lift v k =
+    let s = shape v in
+    C.bind1
+      (T.Broadcast_in_dim
+         {
+           shape = Array.append (Array.make k 1) s;
+           dims = Array.init (Array.length s) (fun i -> i + k);
+         })
+      [ v ]
+  in
+  if ra = rb || ra = 0 || rb = 0 then (a, b)
+  else if ra < rb then (lift a (rb - ra), b)
+  else (a, lift b (ra - rb))
+
 let broadcast_arrays vs =
   match vs with
   | [] -> []

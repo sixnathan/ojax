@@ -1298,7 +1298,8 @@ let ix_ xs =
 
 let binop prim x y =
   let dt = result_type [ x; y ] in
-  bind1 prim [ convert x dt; convert y dt ]
+  let x, y = Jnp_util.promote_ranks (convert x dt) (convert y dt) in
+  bind1 prim [ x; y ]
 
 let mul2 = binop T.Mul
 let sub2 = binop T.Sub

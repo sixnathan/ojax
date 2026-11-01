@@ -10,5 +10,9 @@ val mark_triples_where :
 val triple_marked : (int * int * int) array -> int -> int -> bool
 val mark_sorted_unique : 'a -> 'a
 val is_sorted_unique : 'a -> bool
-val mark_clip : 'a -> 'a
-val is_clip : 'a -> bool
+val mark_scatter : 'a -> 'a
+val scatter_marked : 'a -> bool
+val mark_gather_fill : 'a -> string -> float option -> 'a
+val gather_fill_of : 'a -> (string * float option) option
+val mark_gather_clip : sorted:bool -> 'a -> 'a
+val gather_clip_of : 'a -> bool option

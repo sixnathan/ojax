@@ -443,8 +443,9 @@ let gather_fill_hook : (primitive -> value list -> value list) ref =
 let rec dispatch prim args =
   let top = find_top_trace args in
   match (prim, args) with
-  | Gather _, _ when top.kind <> KJaxpr && Np_ints.gather_fill_of prim <> None
-    ->
+  | Gather _, _
+    when top.kind <> KJaxpr && top.kind <> KJVP && top.kind <> KPE
+         && Np_ints.gather_fill_of prim <> None ->
       !gather_fill_hook prim args
   | Xla_call c, _ when top.kind = KEval -> !call_inline c args
   | Xla_call c, _ when top.kind = KJaxpr && is_inline_call c.jid ->

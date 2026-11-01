@@ -97,6 +97,10 @@ let mark_typed v =
   if key_shaped v then register v (fresh_cell v);
   v
 
+let mark_raw v =
+  if key_shaped v then register v (fresh_cell ~typed:false v);
+  v
+
 let is_typed v = key_shaped v && Option.is_some (typed_cell v)
 
 let known_raw v =

@@ -7,6 +7,7 @@ val idle : unit -> bool
 val suspended : (unit -> 'a) -> 'a
 val apply : primitive -> value list -> (unit -> value list) -> value list
 val mark_typed : value -> value
+val mark_raw : value -> value
 val is_typed : value -> bool
 val known_raw : value -> bool
 val consume : string -> value -> unit

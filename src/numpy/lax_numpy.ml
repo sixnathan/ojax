@@ -914,7 +914,9 @@ let select ?default condlist choicelist =
   let conds_b = broadcast_arrays (scalar D.Bool 0.0 :: condlist) in
   let stacked = bind1 (T.Stack 0) conds_b in
   let idx =
-    bind1 (T.Argmax { axis = 0; index_dtype = D.I32 }) [ stacked ]
+    bind1
+      (T.Argmax { axis = 0; index_dtype = Dtypes.default_int_dtype () })
+      [ stacked ]
   in
   bind1 T.Select_n (broadcast_arrays (idx :: cases))
 
@@ -1636,7 +1638,11 @@ let take_trailing a indices =
   let nd = Array.length s in
   let k = List.length indices in
   let wrapped =
-    List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
+    List.mapi
+      (fun d i ->
+        let w = normalize_index i s.(nd - k + d) in
+        if dtype w = D.I32 then w else bind1 (T.Convert_element_type D.I32) [ w ])
+      indices
   in
   let start =
     match wrapped with

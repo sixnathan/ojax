@@ -70,14 +70,18 @@ let comb big_n k =
   let second = b1 Ge [ big_n; zero ] in
   let cond = b1 And [ first; second ] in
   let cond = b1 And [ cond; b1 Ge [ k; zero ] ] in
-  let safe_n = where cond big_n zero in
-  let safe_k = where cond k zero in
+  let weak_zero = Core.py_scalar dt 0.0 in
+  let where0 x =
+    Numpy.Jnp_util.where_weak ~y_weak:true cond x weak_zero
+  in
+  let safe_n = where0 big_n in
+  let safe_k = where0 k in
   let gammaln v = b1 Lgamma [ v ] in
   let a = gammaln (b1 Add [ safe_n; one ]) in
   let b = gammaln (b1 Add [ safe_k; one ]) in
   let ab = b1 Sub [ a; b ] in
   let c = gammaln (b1 Sub [ b1 Add [ safe_n; one ]; safe_k ]) in
-  where cond (b1 Exp [ b1 Sub [ ab; c ] ]) zero
+  where0 (b1 Exp [ b1 Sub [ ab; c ] ])
 
 let hilbert n =
   jit1 "hilbert"
@@ -537,7 +541,7 @@ let sylvester_triangular_scan r s f =
               scatter_dims_to_operand_dims = [| 0 |];
               s_operand_batching_dims = [||];
               s_scatter_indices_batching_dims = [||];
-              s_sorted_unique = false;
+              s_sorted_unique = true;
             };
         ]
     | _ -> invalid_arg "solve_sylvester: arity"
@@ -573,8 +577,9 @@ let solve_sylvester_2d a b c tol =
       let y = sylvester_triangular_scan r (hermitian s) f in
       let x = mm (mm u y) (hermitian v) in
       let x = if is_complex_dt (dtype_of c) then x else U.real x in
-      let ea = Numpy.Linalg.eigvals a and eb = Numpy.Linalg.eigvals b in
-      let sum = U.add (NL.expand_dims ea [| 1 |]) (NL.expand_dims eb [| 0 |]) in
+      let ea = NL.expand_dims (Numpy.Linalg.eigvals a) [| 1 |] in
+      let eb = NL.expand_dims (Numpy.Linalg.eigvals b) [| 0 |] in
+      let sum = U.add ea eb in
       let close = Numpy.Reductions.any (U.less (U.abs sum) tol) in
       List.hd
         (L.cond close

@@ -1114,28 +1114,16 @@ let generalized_normal k ~shape ~p =
       | _ -> assert false)
 
 let random_gamma_grad alpha sample = L.random_gamma_grad alpha sample
-let is_tracer = function Tracer _ -> true | Concrete _ | Device _ -> false
-
-let via_host f key =
-  if is_tracer key then failwith "random/core: bits_as on tracer" else f key
 
 let bits_as k ~shape ~dtype =
   let dtype = Dtypes.canonicalize_dtype dtype in
-  let host key =
-    match dtype with
-    | D.Uint64 ->
-        Concrete (Nd.of_int64s D.Uint64 shape (TF.bits64 (concrete key) shape))
-    | D.Uint32 -> PR.random_bits (wrap key) ~bit_width:32 ~shape
-    | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 ->
-        let wide = concrete (PR.random_bits (wrap key) ~bit_width:32 ~shape) in
-        let modulus = if dtype = D.Uint8 then 256 else 65536 in
-        Concrete
-          (Nd.of_floats dtype shape
-             (Array.init (prod shape) (fun i ->
-                  float_of_int (geti wide i mod modulus))))
-    | _ -> invalid_arg "random.bits requires an unsigned integer dtype"
-  in
-  via_host host k
+  match dtype with
+  | D.Uint64 -> PR.random_bits (wrap k) ~bit_width:64 ~shape
+  | D.Uint32 -> PR.random_bits (wrap k) ~bit_width:32 ~shape
+  | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 ->
+      C.bind1 (Convert_element_type dtype)
+        [ PR.random_bits (wrap k) ~bit_width:32 ~shape ]
+  | _ -> invalid_arg "random.bits requires an unsigned integer dtype"
 
 let is_key = Key_reuse.is_typed
 

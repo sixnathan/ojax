@@ -590,8 +590,6 @@ let emit_convert ctx (eqn : eqn) in_ids =
       (Printf.sprintf "    %s = stablehlo.convert %s : %s\n" (name n) (name cmp)
          oty)
   end
-  else if in_dt = out_dt && in_aval.weak_type = out.vaval.weak_type then
-    Hashtbl.replace ctx.ids out.vid x
   else if in_dt = out_dt then begin
     let n = bind_var ctx out in
     Buffer.add_string ctx.buf
@@ -2657,6 +2655,31 @@ and emit_traced ctx avals in_ids outs f =
 and emit_traced_ids ctx avals in_ids f =
   emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids
 
+and hoist_custom_consts ctx (jx : jaxpr) =
+  List.iter
+    (fun (e : eqn) ->
+      match e.prim with
+      | Custom_jvp_call id | Custom_vjp_call id -> (
+          match Jaxpr.custom_call_jaxpr id (List.map atom_aval e.inputs) with
+          | Some c -> begin
+              let binders =
+                match
+                  Util.split_list c.jaxpr.in_binders [ List.length c.consts ]
+                with
+                | [ cb; _ ] -> cb
+                | _ -> invalid_arg "Stablehlo.Emit: binder split"
+              in
+              List.iter2
+                (fun (v : var) nd ->
+                  if not (Hashtbl.mem ctx.ids v.vid) then
+                    emit_constant_at ctx (bind_var ctx v) nd)
+                binders c.consts;
+              hoist_custom_consts ctx c.jaxpr
+            end
+          | None -> ())
+      | _ -> ())
+    jx.eqns
+
 and emit_closed_inline ctx (traced : closed_jaxpr) in_ids =
   let jx = traced.jaxpr in
   let const_binders, arg_binders =
@@ -2665,7 +2688,9 @@ and emit_closed_inline ctx (traced : closed_jaxpr) in_ids =
     | _ -> invalid_arg "Stablehlo.Emit: binder split"
   in
   List.iter2
-    (fun (v : var) nd -> emit_constant_at ctx (bind_var ctx v) nd)
+    (fun (v : var) nd ->
+      if not (Hashtbl.mem ctx.ids v.vid) then
+        emit_constant_at ctx (bind_var ctx v) nd)
     const_binders traced.consts;
   List.iter2
     (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
@@ -2845,6 +2870,7 @@ and emit_private_function ctx fname (c : closed_jaxpr) =
   List.iter2
     (fun (v : var) nd -> emit_constant_at inner (bind_var inner v) nd)
     const_binders c.consts;
+  hoist_custom_consts inner c.jaxpr;
   List.iter
     (fun (e : eqn) -> emit_eqn inner e (List.map (id_of_atom inner) e.inputs))
     c.jaxpr.eqns;
@@ -3002,7 +3028,11 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ x ] ->
             let positive = Core.bind1 (Integer_pow (-y)) [ x ] in
             let a = Core.get_aval x in
-            let one = Core.splat a.dtype a.shape 1.0 in
+            let one =
+              Core.bind1
+                (Broadcast_in_dim { shape = a.shape; dims = [||] })
+                [ Core.splat a.dtype [||] 1.0 ]
+            in
             [ Core.bind1 Div [ one; positive ] ]
         | _ -> invalid_arg "Stablehlo.Emit: integer_pow arity")
   | Integer_pow y -> emit_integer_pow ctx eqn in_ids y
@@ -3880,6 +3910,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
       let n = bind_var ctx v in
       emit_constant_at ctx n nd)
     const_binders cj.consts;
+  hoist_custom_consts ctx jx;
   List.iter
     (fun (e : eqn) ->
       let in_ids = List.map (id_of_atom ctx) e.inputs in

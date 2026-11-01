@@ -761,22 +761,18 @@ let symmetrize x =
   let sum = Core.bind1 Add [ x; flipped ] in
   Core.bind1 Div [ sum; half ]
 
+let tri_mask n_rows n_cols k =
+  let dtype = Dtypes.default_int_dtype () in
+  let shape = [| n_rows; n_cols |] in
+  let i = Core.bind1 (Iota { dtype; shape; dimension = 0 }) [] in
+  let plus = Core.bind1 Add [ i; Core.splat dtype [||] (float_of_int k) ] in
+  let j = Core.bind1 (Iota { dtype; shape; dimension = 1 }) [] in
+  Core.bind1 Ge [ plus; j ]
+
 let tril ?(k = 0) m =
   let aval = Core.get_aval m in
   let rank = Array.length aval.shape in
-  let n_rows = aval.shape.(rank - 2) and n_cols = aval.shape.(rank - 1) in
-  let i =
-    Core.bind1
-      (Iota { dtype = Dtype.I32; shape = [| n_rows; n_cols |]; dimension = 0 })
-      []
-  in
-  let plus = Core.bind1 Add [ i; Core.splat Dtype.I32 [||] (float_of_int k) ] in
-  let j =
-    Core.bind1
-      (Iota { dtype = Dtype.I32; shape = [| n_rows; n_cols |]; dimension = 1 })
-      []
-  in
-  let mask = Core.bind1 Ge [ plus; j ] in
+  let mask = tri_mask aval.shape.(rank - 2) aval.shape.(rank - 1) k in
   let b = rank - 2 in
   let mask =
     if b = 0 then mask

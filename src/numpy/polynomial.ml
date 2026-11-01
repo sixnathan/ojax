@@ -115,7 +115,11 @@ let polyint ?(m = 1) ?k p =
     let dt = dtype p in
     let np_ = (shape p).(0) in
     let k = NL.atleast_1d k in
-    let k = if (shape k).(0) = 1 then NL.broadcast_to k [| m |] else k in
+    let k =
+      if (shape k).(0) = 1 then
+        NL.broadcast_to (bind1 (T.Squeeze [| 0 |]) [ k ]) [| m |]
+      else k
+    in
     if (shape k).(0) <> m then
       invalid_arg "polyint: k must be a scalar or a rank-1 array of length m";
     let grid_a =
@@ -157,10 +161,9 @@ let polyder ?(m = 1) p =
     let grid_b =
       NL.expand_dims (NL.arange ~dtype:dt (float_of_int m)) [| 1 |]
     in
-    let coeff =
-      bind1 (T.Rev [| 0 |]) [ R.prod ~axis:[| 0 |] (UF.subtract grid_a grid_b) ]
-    in
-    bind1 T.Mul [ slice_axis p 0 0 (np_ - m); coeff ]
+    let coeff = R.prod ~axis:[| 0 |] (UF.subtract grid_a grid_b) in
+    let head = slice_axis p 0 0 (np_ - m) in
+    bind1 T.Mul [ head; bind1 (T.Rev [| 0 |]) [ coeff ] ]
   end
 
 let polyder ?m p0 =

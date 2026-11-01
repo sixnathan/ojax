@@ -21,9 +21,7 @@ let mul_prim dt = if dt = D.Bool then T.And else T.Mul
 
 let bcast_binop prim a b =
   let dt = NL.result_type [ a; b ] in
-  let sh = NL.broadcast_shapes_n [ shape a; shape b ] in
-  let a = NL.broadcast_to (astype a dt) sh in
-  let b = NL.broadcast_to (astype b dt) sh in
+  let a, b = Jnp_util.promote_ranks (astype a dt) (astype b dt) in
   C.bind1 prim [ a; b ]
 
 let dot ?precision ?preferred a b =

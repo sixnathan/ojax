@@ -199,13 +199,16 @@ let reduction ~name ~prim ~bool_prim ~combine ~bool_combine ~init ~has_identity
   let out = if keepdims then expand_dims out (shape a) axes else out in
   convert out result_dtype
 
+let cast_to_numeric a = if dtype a = D.Bool then convert a D.I32 else a
+
 let sum ?dtype:dt ?axis ?keepdims ?initial ?where:mask
     ?(promote_integers = true) a =
   reduction ~name:"sum"
     ~prim:(fun ax -> T.Reduce_sum ax)
     ~bool_prim:(fun ax -> T.Reduce_or ax)
     ~combine:T.Add ~bool_combine:T.Or ~init:0.0 ~has_identity:true ~upcast:true
-    ~promote_integers ?dtype:dt ?axis ?keepdims ?initial ?where:mask a
+    ~promote_integers ?dtype:dt ?axis ?keepdims ?initial ?where:mask
+    (cast_to_numeric a)
 
 let prod ?dtype:dt ?axis ?keepdims ?initial ?where:mask
     ?(promote_integers = true) a =
@@ -213,7 +216,8 @@ let prod ?dtype:dt ?axis ?keepdims ?initial ?where:mask
     ~prim:(fun ax -> T.Reduce_prod ax)
     ~bool_prim:(fun ax -> T.Reduce_and ax)
     ~combine:T.Mul ~bool_combine:T.And ~init:1.0 ~has_identity:true ~upcast:true
-    ~promote_integers ?dtype:dt ?axis ?keepdims ?initial ?where:mask a
+    ~promote_integers ?dtype:dt ?axis ?keepdims ?initial ?where:mask
+    (cast_to_numeric a)
 
 let max ?axis ?keepdims ?initial ?where:mask a =
   reduction ~name:"max"
@@ -347,7 +351,7 @@ let var_body dt axis keepdims mask a_mean correction a =
   where
     (bind1 T.Gt [ normalizer; const_full rdt [||] 0.0 ])
     result
-    (const_full (dtype result) [||] Float.nan)
+    (Jnp_util.py_float Float.nan)
 
 let var_value ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean correction a =
   let mask = check_where "var" mask in

@@ -491,7 +491,8 @@ let chebyshev x coefficients =
       (like x 0.0, like x 0.0, like x 0.0)
       coefficients
   in
-  like x 0.5 *: (b0 -: b2)
+  let diff = b0 -: b2 in
+  like x 0.5 *: diff
 
 let bessel_i0e = function
   | [ x ] ->
@@ -508,10 +509,11 @@ let bessel_i0e = function
               Lax.Special.i0e_coeffs_b32 )
       in
       let w = L.abs working in
-      let le8 = chebyshev ((like w 0.5 *: w) -: like w 2.0) coeffs_a in
-      let gt8 =
-        chebyshev ((like w 32.0 /: w) -: like w 2.0) coeffs_b /: L.sqrt w
-      in
+      let half = like w 0.5 in
+      let two = like w 2.0 in
+      let thirty_two = like w 32.0 in
+      let le8 = chebyshev ((half *: w) -: two) coeffs_a in
+      let gt8 = chebyshev ((thirty_two /: w) -: two) coeffs_b /: L.sqrt w in
       let result = select (L.le w (like w 8.0)) le8 gt8 in
       [
         (if source = dtype result then result

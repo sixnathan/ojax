@@ -106,7 +106,8 @@ let reshape v sh =
     Array.fold_left (fun acc d -> if d = -1 then acc else acc * d) 1 sh
   in
   let resolved = Array.map (fun d -> if d = -1 then total / known else d) sh in
-  bind1 (T.Reshape resolved) [ v ]
+  if Array.length resolved > 0 && resolved = shape v then v
+  else bind1 (T.Reshape resolved) [ v ]
 
 let reverse_axes v = Array.init (ndim v) (fun i -> ndim v - 1 - i)
 
@@ -1303,6 +1304,42 @@ let pad_body ?(mode = "constant") ?stat_length ?end_values
           (Printf.sprintf "Unimplemented padding mode '%s' for np.pad." m)
   end
 
+let pad_key mode pad_width stat_length end_values reflect_type =
+  Digest.to_hex
+    (Digest.string
+       (Marshal.to_string
+          (mode, pad_width, stat_length, end_values, reflect_type)
+          []))
+
+let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
+    pad_width constant_values =
+  let key = pad_key mode pad_width stat_length end_values reflect_type in
+  let body v =
+    pad_body ~mode ?stat_length ?end_values ~reflect_type v pad_width 0.0
+  in
+  if ndim v = 0 then v
+  else if mode = "constant" then begin
+    let literal =
+      if Float.is_integer constant_values then
+        Jnp_util.py_int (int_of_float constant_values)
+      else Jnp_util.py_float constant_values
+    in
+    Jnp_util.jit1 "_pad" ~key
+      (function
+        | [ v; cval ] ->
+            let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
+            let cval =
+              C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v)
+            in
+            bind1 (T.Pad cfg) [ v; cval ]
+        | _ -> invalid_arg "pad: arity")
+      [ v; literal ]
+  end
+  else
+    Jnp_util.jit1 "_pad" ~key
+      (function [ v ] -> body v | _ -> invalid_arg "pad: arity")
+      [ v ]
+
 let i0 v =
   if is_complex_dtype (dtype v) then
     invalid_arg "Unsupported input type to jax.numpy.i0: complex";
@@ -1333,53 +1370,42 @@ let array_equiv a b =
   | exception Invalid_argument _ -> scalar D.Bool 0.0
   | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
 
-let arange ?(start = 0.0) ?(step = 1.0) ~dtype stop =
-  let size = max 0 (int_of_float (ceil ((stop -. start) /. step))) in
-  let idx = bind1 (T.Iota { dtype; shape = [| size |]; dimension = 0 }) [] in
-  if start = 0.0 && step = 1.0 then idx
-  else
-    bind1 T.Add
-      [
-        full dtype [| size |] start;
-        bind1 T.Mul [ full dtype [| size |] step; idx ];
-      ]
-
-let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
-    pad_width constant_values =
-  let int_valued = Float.is_integer constant_values in
-  let py_value =
-    if int_valued then Jnp_util.py_int (int_of_float constant_values)
-    else Jnp_util.py_float constant_values
-  in
-  let key =
-    Digest.to_hex
-      (Digest.string
-         (Marshal.to_string
-            (mode, stat_length, end_values, reflect_type, pad_width)
-            []))
-  in
-  Jnp_util.jit1 "_pad" ~key
-    (function
-      | [ v; c ] ->
-          if mode = "constant" then
-            bind1
-              (T.Pad (Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width))
-              [ v; convert c (dtype v) ]
-          else
-            pad_body ~mode ?stat_length ?end_values ~reflect_type v pad_width
-              constant_values
-      | _ -> invalid_arg "pad: arity")
-    [ v; py_value ]
+let arange ?(start = 0.0) ?step ~dtype stop =
+  match step with
+  | Some step ->
+      let working =
+        match dtype with
+        | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
+        | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
+        | D.F8_e5m2fnuz | D.F8_e8m0fnu ->
+            D.F32
+        | _ -> dtype
+      in
+      let size = max 0 (int_of_float (ceil ((stop -. start) /. step))) in
+      let idx =
+        bind1 (T.Iota { dtype = working; shape = [| size |]; dimension = 0 }) []
+      in
+      convert
+        (bind1 T.Add
+           [ scalar working start; bind1 T.Mul [ scalar working step; idx ] ])
+        dtype
+  | None ->
+      let size = max 0 (int_of_float (ceil (stop -. start))) in
+      let idx =
+        bind1 (T.Iota { dtype; shape = [| size |]; dimension = 0 }) []
+      in
+      if start = 0.0 then idx else bind1 T.Add [ scalar dtype start; idx ]
 
 let eye ?m ?(k = 0) ~dtype n =
   let m = Option.value m ~default:n in
+  let idt = Dtypes.default_int_dtype () in
   let i =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 0 }) []
+    bind1 (T.Iota { dtype = idt; shape = [| n; m |]; dimension = 0 }) []
   in
   let j =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
+    bind1 (T.Iota { dtype = idt; shape = [| n; m |]; dimension = 1 }) []
   in
-  let ik = bind1 T.Add [ i; C.splat D.I32 [||] (float_of_int k) ] in
+  let ik = bind1 T.Add [ i; C.splat idt [||] (float_of_int k) ] in
   convert (bind1 T.Eq [ ik; j ]) dtype
 
 let identity ~dtype n = eye ~dtype n
@@ -1432,7 +1458,8 @@ let ix_ xs =
     xs
 
 let binop prim x y =
-  let x, y, _, _ = promote2 x y in
+  let dt = result_type [ x; y ] in
+  let x, y = Jnp_util.promote_ranks (convert x dt) (convert y dt) in
   bind1 prim [ x; y ]
 
 let mul2 = binop T.Mul
@@ -1530,23 +1557,14 @@ let diag_indices_from arr =
 
 let tri ?m ?(k = 0) ~dtype n =
   let m = Option.value m ~default:n in
-  let i =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 0 }) []
-  in
-  let ik = bind1 T.Add [ i; scalar D.I32 (float_of_int k) ] in
-  let j =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
-  in
-  convert (bind1 T.Ge [ ik; j ]) dtype
+  convert (Lax.Linalg.tri_mask n m k) dtype
 
-let broadcast_prefix mask full_shape =
-  let rank = Array.length (shape mask) in
-  let prefix = Array.length full_shape - rank in
-  if prefix = 0 then mask
+let batch_mask mask s =
+  let nd = Array.length s in
+  if nd = 2 then mask
   else
     bind1
-      (T.Broadcast_in_dim
-         { shape = full_shape; dims = Array.init rank (fun d -> d + prefix) })
+      (T.Broadcast_in_dim { shape = s; dims = [| nd - 2; nd - 1 |] })
       [ mask ]
 
 let tril ?(k = 0) m =
@@ -1557,8 +1575,7 @@ let tril ?(k = 0) m =
     (function
       | [ m ] ->
           let mask = tri ~m:s.(nd - 1) ~k ~dtype:D.Bool s.(nd - 2) in
-          let which = broadcast_prefix mask s in
-          bind1 T.Select_n [ which; zeros_like m; m ]
+          bind1 T.Select_n [ batch_mask mask s; zeros_like m; m ]
       | _ -> invalid_arg "tril: arity")
     [ m ]
 
@@ -1570,8 +1587,7 @@ let triu ?(k = 0) m =
     (function
       | [ m ] ->
           let mask = tri ~m:s.(nd - 1) ~k:(k - 1) ~dtype:D.Bool s.(nd - 2) in
-          let which = broadcast_prefix mask s in
-          bind1 T.Select_n [ which; m; zeros_like m ]
+          bind1 T.Select_n [ batch_mask mask s; m; zeros_like m ]
       | _ -> invalid_arg "triu: arity")
     [ m ]
 
@@ -1818,9 +1834,12 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
   match dxd with
   | None ->
       let s = bind1 (T.Reduce_sum [| nd - 1 |]) [ y ] in
-      let y0 = last_index y 0 and yl = last_index y (l - 1) in
-      let ends = mul_scalar 0.5 (add2 y0 yl) in
-      mul_scalar dx (sub2 s ends)
+      let y0 = last_index y 0 in
+      let yl = last_index y (l - 1) in
+      let total = add2 y0 yl in
+      let ends = bind1 T.Mul [ scalar (dtype total) 0.5; total ] in
+      let out = sub2 s ends in
+      bind1 T.Mul [ scalar (dtype out) dx; out ]
   | Some dxa ->
       let y1 = slice_axis y (nd - 1) 1 l in
       let y0 = slice_axis y (nd - 1) 0 (l - 1) in

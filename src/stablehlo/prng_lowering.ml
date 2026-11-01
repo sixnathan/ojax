@@ -203,59 +203,47 @@ let random_split ~shape key =
            [ k ]))
     key
 
+let seed_const dt (a : aval) v =
+  let n = Array.fold_left ( * ) 1 a.shape in
+  Concrete
+    (match dt with
+    | Dtype.I64 | Dtype.Uint64 -> Ndarray.of_int64s dt a.shape (Array.make n v)
+    | Dtype.Uint32 ->
+        Ndarray.of_floats dt a.shape (Array.make n (Int64.to_float v))
+    | _ ->
+        let wrapped = Int32.to_float (Int64.to_int32 v) in
+        Ndarray.of_floats dt a.shape (Array.make n wrapped))
+
+let seed_wide_dtype dt =
+  Dtypes.canonicalize_dtype (Dtypes.promote_types dt Dtype.Uint32)
+
 let seed_words seed =
   let a = Core.get_aval seed in
   let convert v = b1 (Convert_element_type u32) [ v ] in
-  let low =
-    match a.dtype with
-    | Dtype.I64 | Dtype.Uint64 ->
-        convert
-          (b1 And
-             [
-               seed;
-               Concrete
-                 (Ndarray.of_int64s a.dtype a.shape
-                    (Array.make (Array.fold_left ( * ) 1 a.shape) 0xFFFFFFFFL));
-             ])
-    | _ -> convert seed
-  in
   let high =
-    match a.dtype with
-    | Dtype.I64 | Dtype.Uint64 ->
-        convert
-          (b1 Shift_right_logical
-             [
-               seed;
-               Concrete
-                 (Ndarray.of_int64s a.dtype a.shape
-                    (Array.make (Array.fold_left ( * ) 1 a.shape) 32L));
-             ])
-    | _ -> fill a.shape 0.0
+    convert (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ])
   in
+  let wide = seed_wide_dtype a.dtype in
+  let widened =
+    if wide = a.dtype then seed else b1 (Convert_element_type wide) [ seed ]
+  in
+  let low = convert (b1 And [ widened; seed_const wide a 0xFFFFFFFFL ]) in
   (high, low)
 
 let seed_scalar seed =
   let a = Core.get_aval seed in
-  let const v =
-    match a.dtype with
-    | Dtype.I64 | Dtype.Uint64 ->
-        Concrete (Ndarray.of_int64s a.dtype [||] [| v |])
-    | _ -> Concrete (Ndarray.of_floats a.dtype [||] [| Int64.to_float v |])
-  in
-  let mask =
-    match a.dtype with
-    | Dtype.I64 | Dtype.Uint64 -> const 0xFFFFFFFFL
-    | Dtype.Uint32 -> const 0xFFFFFFFFL
-    | _ -> const (-1L)
-  in
   let word v =
     b1
       (Broadcast_in_dim { shape = [| 1 |]; dims = [||] })
       [ b1 (Convert_element_type u32) [ v ] ]
   in
-  let k1 = word (b1 Shift_right_logical [ seed; const 32L ]) in
-  let k2 = word (b1 And [ seed; mask ]) in
-  b1 (Concatenate 0) [ k1; k2 ]
+  let high = word (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ]) in
+  let wide = seed_wide_dtype a.dtype in
+  let widened =
+    if wide = a.dtype then seed else b1 (Convert_element_type wide) [ seed ]
+  in
+  let low = word (b1 And [ widened; seed_const wide a 0xFFFFFFFFL ]) in
+  b1 (Concatenate 0) [ high; low ]
 
 let random_seed seed =
   if Array.length (Core.get_aval seed).shape = 0 then seed_scalar seed

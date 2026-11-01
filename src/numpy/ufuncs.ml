@@ -348,15 +348,18 @@ let right_shift x y =
 let bitwise_right_shift = right_shift
 
 let pow_int_int x1 x2 =
-  let dt = dtype x1 and sh = shape x1 in
-  let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
-  let init = bind1 T.And [ bind1 T.Eq [ x1; zero ]; bind1 T.Ne [ x2; zero ] ] in
+  let dt = dtype x2 in
+  let zero = const_full dt [||] 0.0 and one = const_full dt [||] 1.0 in
+  let x1_zero = bind1 T.Eq [ x1; zero ] in
+  let x2_nonzero = bind1 T.Ne [ x2; zero ] in
+  let init = bind1 T.And [ x1_zero; x2_nonzero ] in
   let acc0 = where init zero one in
   let rec loop i acc b1 b2 =
     if i = 0 then acc
     else
-      let is_odd = bind1 T.Ne [ bind1 T.And [ b2; one ]; zero ] in
-      let acc' = where is_odd (bind1 T.Mul [ acc; b1 ]) acc in
+      let is_odd = bind1 T.And [ b2; one ] in
+      let product = bind1 T.Mul [ acc; b1 ] in
+      let acc' = where is_odd product acc in
       let b1' = bind1 T.Mul [ b1; b1 ] in
       let b2' = bind1 T.Shift_right_logical [ b2; one ] in
       loop (i - 1) acc' b1' b2'

@@ -42,6 +42,7 @@ val hessenberg_aval : aval list -> aval list
 val schur_aval : bool -> aval list -> aval list
 val svd_aval : bool -> bool -> aval list -> aval list
 val tridiagonal_aval : aval list -> aval list
+val tri_mask : int -> int -> int -> value
 val cholesky : ?symmetrize_input:bool -> value -> value
 val lu : value -> value * value * value
 val qr : ?full_matrices:bool -> value -> value * value

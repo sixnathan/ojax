@@ -197,7 +197,12 @@ let reshape ?dimensions x new_sizes =
   let v =
     match dimensions with Some perm -> b1 (Transpose perm) [ x ] | None -> x
   in
-  b1 (Reshape new_sizes) [ v ]
+  if
+    Array.length new_sizes > 0
+    && dimensions = None
+    && new_sizes = (Core.get_aval v).shape
+  then v
+  else b1 (Reshape new_sizes) [ v ]
 
 let transpose x perm = b1 (Transpose perm) [ x ]
 let rev x dims = b1 (Rev dims) [ x ]
@@ -205,7 +210,8 @@ let tile x reps = b1 (Tile reps) [ x ]
 
 let squeeze x dims =
   let n = ndim x in
-  b1 (Squeeze (Array.map (canon_axis n) dims)) [ x ]
+  if Array.length dims = 0 then x
+  else b1 (Squeeze (Array.map (canon_axis n) dims)) [ x ]
 
 let expand_dims x dims =
   let n = ndim x + Array.length dims in

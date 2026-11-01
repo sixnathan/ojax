@@ -434,7 +434,9 @@ module NN = Ojax.Nn.Functions
 let seed_key p =
   Ojax.Random.Core.key
     (T.Concrete
-       (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||]
+       (Ojax.Ndarray.of_floats
+          (Ojax.Dtypes.default_int_dtype ())
+          [||]
           [| float_of_int (int "seed" p) |]))
 
 let required_string name p = U.to_string (U.member name p)
@@ -1367,11 +1369,6 @@ let dtype_sweep_run op a =
   let t = NL.matrix_transpose in
   let one f = Some [ f (a ()) ] in
   let ax0 = [| 0 |] in
-  let as_float v =
-    if Ojax.Dtypes.isdtype (dt_of v) "integral" || dt_of v = Ojax.Dtype.Bool
-    then NL.astype v (Ojax.Dtypes.default_float_dtype ())
-    else v
-  in
   match op with
   | "sw_mean" -> one (fun v -> RD.mean v)
   | "sw_mean_axis" -> one (RD.mean ~axis:ax0)
@@ -1440,19 +1437,14 @@ let dtype_sweep_run op a =
   | "sw_lcm" -> one (fun v -> NL.lcm v (L.rev v [| 0 |]))
   | "sw_floor_div_self" ->
       one (fun v ->
-          let v = as_float v in
-          UF.divide v (UF.add v (like v 2.0)))
+          let y = UF.add v (Ojax.Numpy.Jnp_util.py_float 2.0) in
+          UF.divide v y)
   | "sw_linspace_end" -> one (fun v -> AC.linspace_v ~num:4 (row v 0) (row v 1))
   | "sw_geomspace" ->
       one (fun v ->
-          let lower =
-            let r = as_float (row v 0) in
-            UF.add r (like r 2.0)
-          in
-          let upper =
-            let r = as_float (row v 1) in
-            UF.add r (like r 3.0)
-          in
+          let py = Ojax.Numpy.Jnp_util.py_float in
+          let lower = UF.add (row v 0) (py 2.0) in
+          let upper = UF.add (row v 1) (py 3.0) in
           AC.geomspace_v ~num:3 lower upper)
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
   | "sw_polyval" ->
@@ -1483,14 +1475,14 @@ let dtype_sweep_run op a =
       one (fun v ->
           Ojax.Numpy.Indexing.take ~axis:0 v
             (T.Concrete
-               (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [| 2 |] [| 0.; 1. |])))
+               (Ojax.Ndarray.of_floats
+                  (Ojax.Dtypes.default_int_dtype ())
+                  [| 2 |] [| 0.; 1. |])))
   | "sw_where" ->
       one (fun v ->
-          let v = as_float v in
-          NL.where_
-            (L.gt (UF.real v) (L.full_like (UF.real v) 0.0))
-            v
-            (UF.multiply v (like v 2.0)))
+          let c = UF.greater (UF.real v) (Ojax.Numpy.Jnp_util.py_int 0) in
+          let y = UF.multiply v (Ojax.Numpy.Jnp_util.py_float 2.0) in
+          NL.where_ c v y)
   | "sw_concatenate" -> one (fun v -> NL.concatenate ~axis:0 [ v; v ])
   | "sw_pad" ->
       one (fun v -> NL.pad v (Array.map (fun _ -> (1, 1)) (shp v)) 0.0)
@@ -1500,9 +1492,9 @@ let dtype_sweep_run op a =
       one (fun v ->
           let dt = Ojax.Dtypes.default_float_dtype () in
           let arr sh xs = T.Concrete (Ojax.Ndarray.of_floats dt sh xs) in
-          E.interp (arr [| 1 |] [| 0.5 |])
-            (arr [| 3 |] [| 0.; 1.; 2. |])
-            (row v 0))
+          let xs = arr [| 1 |] [| 0.5 |] in
+          let xp = arr [| 3 |] [| 0.; 1.; 2. |] in
+          E.interp xs xp (row v 0))
   | "sw_fft" -> one (FFT.fft ~axis:0)
   | "sw_ifft" -> one (FFT.ifft ~axis:0)
   | "sw_tril" -> one (fun v -> NL.tril v)
@@ -1599,14 +1591,18 @@ let special_batch_run op params a =
   | "sx_hyp2f1_grad" ->
       let v = a () in
       let t = abc () in
-      let z = UF.multiply (like v 0.5) (UF.tanh v) in
-      let lit x = L.full [||] x (dt_of v) in
+      let py = Ojax.Numpy.Jnp_util.py_float in
+      let z = UF.multiply (py 0.5) (UF.tanh v) in
+      let lit x = py x in
       Some
         (Ojax.Interpreters.Batching.vmap
            (fun args ->
              Ojax.Interpreters.Ad.grad
                (fun inner ->
-                 SP.hyp2f1 (lit t.(0)) (lit t.(1)) (lit t.(2)) (List.hd inner))
+                 let p0 = lit t.(0) in
+                 let p1 = lit t.(1) in
+                 let p2 = lit t.(2) in
+                 SP.hyp2f1 p0 p1 p2 (List.hd inner))
                args)
            [ Some 0 ] [ z ])
   | "sx_lpmn" ->

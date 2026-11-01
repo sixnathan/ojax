@@ -976,6 +976,7 @@ let take_rows x indices m rest =
              start_index_map = [| 0 |];
              g_operand_batching_dims = [||];
              g_start_indices_batching_dims = [||];
+             g_sorted_unique = false;
            };
          slice_sizes = [| 1; rest |];
        })

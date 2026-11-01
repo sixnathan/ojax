@@ -65,6 +65,7 @@ let gdn : T.gather_dims =
     start_index_map = [| 0 |];
     g_operand_batching_dims = [||];
     g_start_indices_batching_dims = [||];
+    g_sorted_unique = false;
   }
 
 let sdn : T.scatter_dims =
@@ -460,6 +461,7 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
                        lhs_batch = [||];
                        rhs_batch = [||];
                        dot_precision = None;
+                       dot_preferred = true;
                      })
                   [ a; b ]
             | _ -> assert false) );
@@ -478,6 +480,7 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
                        lhs_batch = [| 0 |];
                        rhs_batch = [| 0 |];
                        dot_precision = None;
+                       dot_preferred = true;
                      })
                   [ a; b ]
             | _ -> assert false) );

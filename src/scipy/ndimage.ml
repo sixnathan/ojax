@@ -91,6 +91,7 @@ let gather_nd input idx_arrays =
       start_index_map = Array.init r Fun.id;
       g_operand_batching_dims = [||];
       g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
     }
   in
   bind1

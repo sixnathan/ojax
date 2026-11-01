@@ -125,11 +125,12 @@ type dot_dimension_numbers = Types.dot_dims = {
   lhs_batch : int array;
   rhs_batch : int array;
   dot_precision : (string * string) option;
+  dot_preferred : bool;
 }
 
 let dot_dimension_numbers ?(lhs_batch = [||]) ?(rhs_batch = [||]) ~lhs_contract
     ~rhs_contract () =
-  { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None }
+  { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None; dot_preferred = true }
 
 type gather_dimension_numbers = Types.gather_dims = {
   offset_dims : int array;
@@ -137,6 +138,7 @@ type gather_dimension_numbers = Types.gather_dims = {
   start_index_map : int array;
   g_operand_batching_dims : int array;
   g_start_indices_batching_dims : int array;
+  g_sorted_unique : bool;
 }
 
 let gather_dimension_numbers ?(operand_batching_dims = [||])
@@ -148,6 +150,7 @@ let gather_dimension_numbers ?(operand_batching_dims = [||])
     start_index_map;
     g_operand_batching_dims = operand_batching_dims;
     g_start_indices_batching_dims = start_indices_batching_dims;
+    g_sorted_unique = false;
   }
 
 type scatter_dimension_numbers = Types.scatter_dims = {

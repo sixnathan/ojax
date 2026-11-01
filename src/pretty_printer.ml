@@ -408,8 +408,9 @@ and structure_of_eqn (e : eqn) =
         [ scatter_jaxpr; select_jaxpr ]
     | Cond { branches; _ } -> branches
     | While { cond; body; _ } -> [ body; cond ]
-    | Custom_linear_solve { solve; transpose_solve; _ } ->
-        solve :: Option.to_list transpose_solve
+    | Custom_linear_solve { matvec; vecmat; solve; transpose_solve; _ } ->
+        (matvec :: Option.to_list vecmat)
+        @ (solve :: Option.to_list transpose_solve)
     | Custom_jvp_call _ -> (
         match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
     | _ -> []
@@ -572,6 +573,8 @@ let jax_prim_name = function
   | Xla_call _ -> "jit"
   | p -> prim_name p
 
+let closed_to_string : (closed_jaxpr -> string) ref = ref (fun _ -> "")
+
 let jax_params (e : eqn) =
   let in_dtype () =
     match e.inputs with
@@ -625,7 +628,10 @@ let jax_params (e : eqn) =
                 Plain (Printf.sprintf "(Precision.%s, Precision.%s)" l r) );
             ]
         | None -> [])
-      @ [ ("preferred_element_type", Plain (dn (out_dtype ()))) ]
+      @
+      if d.dot_preferred then
+        [ ("preferred_element_type", Plain (dn (out_dtype ()))) ]
+      else []
   | Iota { dtype; shape; dimension } ->
       [
         ("dimension", Plain (string_of_int dimension));
@@ -692,10 +698,12 @@ let jax_params (e : eqn) =
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ("fill_value", Plain "None");
-        ("indices_are_sorted", Plain "False");
+        ( "indices_are_sorted",
+          Plain (py_bool dimension_numbers.g_sorted_unique) );
         ("mode", Plain "GatherScatterMode.PROMISE_IN_BOUNDS");
         ("slice_sizes", Plain (py_ints slice_sizes));
-        ("unique_indices", Plain "False");
+        ( "unique_indices",
+          Plain (py_bool dimension_numbers.g_sorted_unique) );
       ]
   | Scatter { dimension_numbers; unique_indices }
   | Scatter_mul { dimension_numbers; unique_indices } ->
@@ -843,6 +851,28 @@ let jax_params (e : eqn) =
         ("unroll", Plain (string_of_int unroll));
       ]
   | Xla_call c -> [ ("jaxpr", Sub c) ]
+  | Custom_linear_solve { matvec; vecmat; solve; transpose_solve; const_lengths }
+    ->
+      let opt = function
+        | Some c -> !closed_to_string c
+        | None -> "None"
+      in
+      [
+        ( "const_lengths",
+          Plain
+            (Printf.sprintf
+               "_LinearSolveTuple(matvec=%d, vecmat=%d, solve=%d, \
+                transpose_solve=%d)"
+               const_lengths.(0) const_lengths.(1) const_lengths.(2)
+               const_lengths.(3)) );
+        ( "jaxprs",
+          Plain
+            (Printf.sprintf
+               "_LinearSolveTuple(matvec=%s, vecmat=%s, solve=%s, \
+                transpose_solve=%s)"
+               (!closed_to_string matvec) (opt vecmat)
+               (!closed_to_string solve) (opt transpose_solve)) );
+      ]
   | Select_and_scatter { select_jaxpr; scatter_jaxpr; window } ->
       List.sort compare
         (("scatter_jaxpr", Sub scatter_jaxpr)
@@ -852,6 +882,9 @@ let jax_params (e : eqn) =
 
 let insertion_order (e : eqn) =
   match e.prim with
+  | Custom_linear_solve { matvec; vecmat; solve; transpose_solve; _ } ->
+      (matvec :: Option.to_list vecmat)
+      @ (solve :: Option.to_list transpose_solve)
   | While { cond; body; _ } -> [ cond; body ]
   | Cond { branches; _ } -> branches
   | Select_and_scatter { select_jaxpr; scatter_jaxpr; _ } ->
@@ -1240,6 +1273,8 @@ let closed_jaxpr_to_jax_string (cj : closed_jaxpr) =
   in
   let main = pp_jaxpr ctx cj.jaxpr (List.length cj.consts) in
   Layout.render (Layout.Concat (docs @ [ main ]))
+
+let () = closed_to_string := closed_jaxpr_to_jax_string
 
 let eqn_to_jax_string (e : eqn) =
   let ctx =

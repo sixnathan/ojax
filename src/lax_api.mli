@@ -221,7 +221,12 @@ val dot_general :
   rhs_batch:int array ->
   value
 
-val batch_matmul : ?precision:Lax_config.precision -> value -> value -> value
+val batch_matmul :
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
+  value ->
+  value ->
+  value
 
 val padtype_to_pads :
   int array -> int array -> int array -> padding -> (int * int) array
@@ -293,6 +298,7 @@ val cumlogsumexp : ?axis:int -> ?reverse:bool -> value -> value
 val custom_linear_solve :
   ?symmetric:bool ->
   ?transpose_solve:((value list -> value list) -> value list -> value list) ->
+  ?linear_matvec:(value list -> value list) ->
   (value list -> value list) ->
   value list ->
   ((value list -> value list) -> value list -> value list) ->

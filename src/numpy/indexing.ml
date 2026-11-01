@@ -78,6 +78,7 @@ let take ?axis ?mode ?fill_value a indices =
       start_index_map = [| axis_idx |];
       g_operand_batching_dims = [||];
       g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
     }
   in
   let gather_indices = NL.reshape indices (Array.append ish [| 1 |]) in
@@ -161,6 +162,7 @@ let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
       start_index_map = asc !start_index_map;
       g_operand_batching_dims = asc !op_batch;
       g_start_indices_batching_dims = asc !idx_batch;
+      g_sorted_unique = false;
     }
   in
   match mode with

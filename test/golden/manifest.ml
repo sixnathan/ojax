@@ -419,6 +419,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
               start_index_map = ia (member "start_index_map");
               g_operand_batching_dims = opt "operand_batching_dims";
               g_start_indices_batching_dims = opt "start_indices_batching_dims";
+              g_sorted_unique = false;
             };
           slice_sizes = ia (member "slice_sizes");
         }
@@ -467,6 +468,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
           lhs_batch = ia (List.nth batch 0);
           rhs_batch = ia (List.nth batch 1);
           dot_precision = None;
+          dot_preferred = true;
         }
   | "conv_general_dilated" ->
       let dn = U.to_list (member "dimension_numbers") in
@@ -1531,6 +1533,7 @@ let jaxpr_builders :
                  lhs_batch = [||];
                  rhs_batch = [||];
                  dot_precision = None;
+                 dot_preferred = true;
                })
             args;
         ] );
@@ -1627,6 +1630,7 @@ let ad_builders : (string * (T.value list -> T.value list)) list =
                  lhs_batch = [||];
                  rhs_batch = [||];
                  dot_precision = None;
+                 dot_preferred = true;
                })
             a;
         ] );

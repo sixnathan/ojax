@@ -1295,7 +1295,8 @@ let gather_dnums_attr (d : gather_dims) index_vector_dim =
         dim_field "operand_batching_dims" d.g_operand_batching_dims;
         dim_field "start_indices_batching_dims" d.g_start_indices_batching_dims;
         dim_field "start_index_map" d.start_index_map;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.gather<" ^ String.concat ", " parts ^ ">"
@@ -1310,7 +1311,8 @@ let scatter_dnums_attr (d : scatter_dims) index_vector_dim =
         dim_field "scatter_indices_batching_dims"
           d.s_scatter_indices_batching_dims;
         dim_field "scatter_dims_to_operand_dims" d.scatter_dims_to_operand_dims;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.scatter<" ^ String.concat ", " parts ^ ">"
@@ -1328,9 +1330,10 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
   Buffer.add_string ctx.buf
     (Printf.sprintf
        "    %s = \"stablehlo.gather\"(%s, %s) <{dimension_numbers = %s, \
-        indices_are_sorted = false, slice_sizes = %s}> : (%s, %s) -> %s\n"
+        indices_are_sorted = %b, slice_sizes = %s}> : (%s, %s) -> %s\n"
        (name n) (name op_id) (name idx_id)
        (gather_dnums_attr dnums ivd)
+       dnums.g_sorted_unique
        (array_i64 slice_sizes)
        (Ir.tensor_type_of_aval op_av)
        (Ir.tensor_type_of_aval idx_av)
@@ -3481,8 +3484,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
          general dual-region form is deferred to the PJRT execution rows"
   | Composite decomposition ->
       emit_inlined ctx eqn in_ids (Jaxpr.eval_closed_jaxpr decomposition)
-  | Custom_linear_solve { solve; _ } ->
-      emit_inlined ctx eqn in_ids (Jaxpr.eval_closed_jaxpr solve)
+  | Custom_linear_solve { solve; const_lengths; _ } ->
+      let before = const_lengths.(0) + const_lengths.(1) in
+      let last = before + const_lengths.(2) in
+      let total = last + const_lengths.(3) in
+      emit_inlined ctx eqn in_ids (fun args ->
+          Jaxpr.eval_closed_jaxpr solve
+            (List.filteri (fun i _ -> (i >= before && i < last) || i >= total) args))
   | Cholesky when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let info =

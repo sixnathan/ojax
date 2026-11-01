@@ -1655,6 +1655,7 @@ let take_trailing a indices =
       start_index_map = Array.init k (fun d -> nd - k + d);
       g_operand_batching_dims = [||];
       g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
     }
   in
   ignore batch;
@@ -2060,6 +2061,7 @@ let gather_1d a indices =
       start_index_map = [| 0 |];
       g_operand_batching_dims = [||];
       g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
     }
   in
   bind1
@@ -2363,6 +2365,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
            lhs_batch = [||];
            rhs_batch = [||];
            dot_precision = None;
+           dot_preferred = true;
          })
       [ centered; x_t ]
   in

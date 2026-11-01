@@ -480,41 +480,6 @@ let index_zero (idx_vals : value list) : value =
   in
   Concrete (Ndarray.of_floats dt [||] [| 0.0 |])
 
-let dynamic_slice_batch (axis_size : int) (slice_sizes : int array)
-    (vals : value list) (bdims : int option list) : value * int option =
-  match (vals, bdims) with
-  | operand :: idx_vals, ob :: idx_bdims -> (
-      if List.exists (fun b -> b <> None) idx_bdims then
-        failwith
-          "batching: dynamic_slice with batched indices needs gather (row 29)"
-      else
-        match ob with
-        | None -> (b1 (Dynamic_slice { slice_sizes }) vals, None)
-        | Some d ->
-            let x = move_batch_axis axis_size (Some d) 0 operand in
-            let zero = index_zero idx_vals in
-            let new_sizes = insert_size slice_sizes 0 axis_size in
-            ( Core.bind1
-                (Dynamic_slice { slice_sizes = new_sizes })
-                (x :: zero :: idx_vals),
-              Some 0 ))
-  | _ -> failwith "batching: dynamic_slice expects an operand"
-
-let dynamic_update_slice_batch (axis_size : int) (vals : value list)
-    (bdims : int option list) : value * int option =
-  match (vals, bdims) with
-  | operand :: update :: idx_vals, ob :: ub :: idx_bdims ->
-      if List.exists (fun b -> b <> None) idx_bdims then
-        failwith
-          "batching: dynamic_update_slice with batched indices needs scatter \
-           (row 29)"
-      else
-        let x = move_batch_axis axis_size ob 0 operand in
-        let u = move_batch_axis axis_size ub 0 update in
-        let zero = index_zero idx_vals in
-        (Core.bind1 Dynamic_update_slice (x :: u :: zero :: idx_vals), Some 0)
-  | _ -> failwith "batching: dynamic_update_slice expects operand and update"
-
 let bump arr = Array.map (fun i -> i + 1) arr
 
 let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
@@ -533,11 +498,16 @@ let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
           let slice_sizes = Array.append [| op0 |] slice_sizes in
           let gd' =
             {
-              offset_dims = Array.append [| 0 |] (bump gd.offset_dims);
-              collapsed_slice_dims = bump gd.collapsed_slice_dims;
-              start_index_map = bump gd.start_index_map;
-              g_operand_batching_dims = bump gd.g_operand_batching_dims;
+              offset_dims =
+                Np_ints.mark_where
+                  (fun i -> i >= 1)
+                  (Array.append [| 0 |] (bump gd.offset_dims));
+              collapsed_slice_dims = Np_ints.mark (bump gd.collapsed_slice_dims);
+              start_index_map = Np_ints.mark (bump gd.start_index_map);
+              g_operand_batching_dims =
+                Np_ints.mark (bump gd.g_operand_batching_dims);
               g_start_indices_batching_dims = gd.g_start_indices_batching_dims;
+              g_sorted_unique = gd.g_sorted_unique;
             }
           in
           ( b1
@@ -553,7 +523,8 @@ let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
               start_index_map = gd.start_index_map;
               g_operand_batching_dims = gd.g_operand_batching_dims;
               g_start_indices_batching_dims =
-                bump gd.g_start_indices_batching_dims;
+                Np_ints.mark (bump gd.g_start_indices_batching_dims);
+              g_sorted_unique = gd.g_sorted_unique;
             }
           in
           ( b1
@@ -570,12 +541,17 @@ let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
           let gd' =
             {
               offset_dims = bump gd.offset_dims;
-              collapsed_slice_dims = bump gd.collapsed_slice_dims;
-              start_index_map = bump gd.start_index_map;
+              collapsed_slice_dims = Np_ints.mark (bump gd.collapsed_slice_dims);
+              start_index_map = Np_ints.mark (bump gd.start_index_map);
               g_operand_batching_dims =
-                Array.append [| 0 |] (bump gd.g_operand_batching_dims);
+                Np_ints.mark_where
+                  (fun i -> i >= 1)
+                  (Array.append [| 0 |] (bump gd.g_operand_batching_dims));
               g_start_indices_batching_dims =
-                Array.append [| 0 |] (bump gd.g_start_indices_batching_dims);
+                Np_ints.mark_where
+                  (fun i -> i >= 1)
+                  (Array.append [| 0 |] (bump gd.g_start_indices_batching_dims));
+              g_sorted_unique = gd.g_sorted_unique;
             }
           in
           ( b1
@@ -583,6 +559,70 @@ let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
               [ operand; indices ],
             Some 0 ))
   | _ -> failwith "batching: gather expects operand and indices"
+
+let batch_dynamic_slice_indices (indices : value list) bdims =
+  match indices with
+  | [] -> (Concrete (Ndarray.of_floats Dtype.I32 [| 0 |] [||]), None)
+  | _ -> (
+      let size =
+        List.fold_left2
+          (fun acc v b ->
+            match (acc, b) with
+            | None, Some d -> Some (Core.get_aval v).shape.(d)
+            | _ -> acc)
+          None indices bdims
+      in
+      let concat parts =
+        match parts with [ only ] -> only | _ -> b1 (Concatenate 0) parts
+      in
+      match size with
+      | None ->
+          ( concat
+              (List.map
+                 (fun i ->
+                   b1 (Broadcast_in_dim { shape = [| 1 |]; dims = [||] }) [ i ])
+                 indices),
+            None )
+      | Some n ->
+          let parts =
+            List.map2
+              (fun x b ->
+                b1
+                  (Broadcast_in_dim
+                     {
+                       shape = [| n; 1 |];
+                       dims = (if b = None then [||] else [| 0 |]);
+                     })
+                  [ x ])
+              indices bdims
+          in
+          ( (match parts with
+            | [ only ] -> only
+            | _ -> b1 (Concatenate 1) parts),
+            Some 0 ))
+
+let dynamic_slice_batch (axis_size : int) (slice_sizes : int array)
+    (vals : value list) (bdims : int option list) : value * int option =
+  match (vals, bdims) with
+  | operand :: idx_vals, ob :: idx_bdims ->
+      if ob = None && List.for_all (fun b -> b = None) idx_bdims then
+        (b1 (Dynamic_slice { slice_sizes }) vals, None)
+      else
+        let rank = Array.length slice_sizes in
+        let dims = Array.init rank Fun.id in
+        let gd =
+          {
+            offset_dims = dims;
+            collapsed_slice_dims = [||];
+            start_index_map = dims;
+            g_operand_batching_dims = [||];
+            g_start_indices_batching_dims = [||];
+            g_sorted_unique = true;
+          }
+        in
+        let index, ib = batch_dynamic_slice_indices idx_vals idx_bdims in
+        gather_batch axis_size gd slice_sizes [ operand; index ] [ ob; ib ]
+  | _ -> failwith "batching: dynamic_slice expects an operand"
 
 let scatter_dnums_of = function
   | Scatter { dimension_numbers; _ }
@@ -606,7 +646,11 @@ let rebuild_scatter prim (sd : scatter_dims) =
   | Scatter_max _ -> Scatter_max { dimension_numbers = sd }
   | _ -> failwith "batching: not a scatter primitive"
 
-let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
+let clamp_scatter_hook :
+    (value -> value -> value -> scatter_dims -> value) ref =
+  ref (fun _ indices _ _ -> indices)
+
+let scatter_batch ?(clamp = false) (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
   match (vals, bdims) with
   | [ operand; indices; updates ], [ ob; ib; ub ] ->
@@ -620,15 +664,23 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
             let sd' =
               {
                 update_window_dims =
-                  Array.append [| 0 |] (bump sd.update_window_dims);
-                inserted_window_dims = bump sd.inserted_window_dims;
+                  Np_ints.mark_where
+                    (fun i -> i >= 1)
+                    (Array.append [| 0 |] (bump sd.update_window_dims));
+                inserted_window_dims =
+                  Np_ints.mark (bump sd.inserted_window_dims);
                 scatter_dims_to_operand_dims =
-                  bump sd.scatter_dims_to_operand_dims;
-                s_operand_batching_dims = bump sd.s_operand_batching_dims;
+                  Np_ints.mark (bump sd.scatter_dims_to_operand_dims);
+                s_operand_batching_dims =
+                  Np_ints.mark (bump sd.s_operand_batching_dims);
                 s_scatter_indices_batching_dims =
                   sd.s_scatter_indices_batching_dims;
                 s_sorted_unique = sd.s_sorted_unique;
               }
+            in
+            let indices =
+              if clamp then !clamp_scatter_hook operand indices updates sd'
+              else indices
             in
             ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],
               Some 0 )
@@ -636,16 +688,26 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
             let indices = move_batch_axis axis_size (Some idd) 0 indices in
             let sd' =
               {
-                update_window_dims = bump sd.update_window_dims;
-                inserted_window_dims = bump sd.inserted_window_dims;
+                update_window_dims = Np_ints.mark (bump sd.update_window_dims);
+                inserted_window_dims =
+                  Np_ints.mark (bump sd.inserted_window_dims);
                 scatter_dims_to_operand_dims =
-                  bump sd.scatter_dims_to_operand_dims;
+                  Np_ints.mark (bump sd.scatter_dims_to_operand_dims);
                 s_operand_batching_dims =
-                  Array.append [| 0 |] (bump sd.s_operand_batching_dims);
+                  Np_ints.mark_where
+                    (fun i -> i >= 1)
+                    (Array.append [| 0 |] (bump sd.s_operand_batching_dims));
                 s_scatter_indices_batching_dims =
-                  Array.append [| 0 |] (bump sd.s_scatter_indices_batching_dims);
+                  Np_ints.mark_where
+                    (fun i -> i >= 1)
+                    (Array.append [| 0 |]
+                       (bump sd.s_scatter_indices_batching_dims));
                 s_sorted_unique = sd.s_sorted_unique;
               }
+            in
+            let indices =
+              if clamp then !clamp_scatter_hook operand indices updates sd'
+              else indices
             in
             ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],
               Some 0 )
@@ -665,6 +727,7 @@ let dot_general_batch (dims : dot_dims) (vals : value list)
           lhs_contract = bump dims.lhs_contract l;
           rhs_contract = bump dims.rhs_contract r;
           dot_precision = dims.dot_precision;
+          dot_preferred = dims.dot_preferred;
         }
       in
       (b1 (Dot_general dims') [ lhs; rhs ], Some 0)
@@ -710,6 +773,31 @@ let dot_general_batch (dims : dot_dims) (vals : value list)
       ( b1 (Dot_general dims') [ lhs; rhs ],
         Some (lhs_ndim - Array.length dims.lhs_contract + tensors_before) )
   | _ -> failwith "batching: dot_general arity"
+
+let dynamic_update_slice_batch (axis_size : int) (vals : value list)
+    (bdims : int option list) : value * int option =
+  match (vals, bdims) with
+  | operand :: update :: idx_vals, ob :: ub :: idx_bdims ->
+      let update_rank =
+        let n = Array.length (Core.get_aval update).shape in
+        if ub = None then n else n - 1
+      in
+      let dims = Array.init update_rank Fun.id in
+      let sd =
+        {
+          update_window_dims = dims;
+          inserted_window_dims = [||];
+          scatter_dims_to_operand_dims = dims;
+          s_operand_batching_dims = [||];
+          s_scatter_indices_batching_dims = [||];
+          s_sorted_unique = true;
+        }
+      in
+      let index, ib = batch_dynamic_slice_indices idx_vals idx_bdims in
+      scatter_batch ~clamp:true axis_size
+        (Scatter { dimension_numbers = sd; unique_indices = true })
+        [ operand; index; update ] [ ob; ib; ub ]
+  | _ -> failwith "batching: dynamic_update_slice expects operand and update"
 
 let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
@@ -1224,22 +1312,18 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
 let unstacks_operands prim (bdims : int option list) =
   let any_batched = List.exists (fun b -> b <> None) in
   match (prim, bdims) with
-  | Triangular_solve _, [ None; _ ] -> false
+  | Triangular_solve _, _ -> false
   | Custom_linear_solve _, _ -> false
   | ( ( Conv_general_dilated _ | Reduce_window _ | Reduce_window_max _
       | Reduce_window_min _ | Reduce_window_sum _ | Select_and_gather_add _
       | Select_and_scatter _ | Select_and_scatter_add _ | Threefry2x32
       | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-      | Random_bits _ | Random_wrap | Random_unwrap | While _ | Cholesky
-      | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-      | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
-      | Schur _ | Svd _ | Tridiagonal _ | Rng_bit_generator _ ),
+      | Random_bits _ | Random_wrap | Random_unwrap | While _
+      | Tridiagonal_solve _ | Rng_bit_generator _ ),
       _ ) ->
       true
   | Custom_vjp_call id, _ -> (
       match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
-  | Dynamic_slice _, _ :: indices -> any_batched indices
-  | Dynamic_update_slice, _ :: _ :: indices -> any_batched indices
   | Pad _, [ _; padding ] -> padding <> None
   | Reduce _, _ ->
       let n = List.length bdims / 2 in
@@ -1714,43 +1798,109 @@ let batch_jaxpr (c : closed_jaxpr) axis_size vals bdims =
       Hashtbl.replace batch_call_cache key r;
       r
 
-let batch_solve_jaxpr (c : closed_jaxpr) axis_size vals bdims =
-  Jaxpr.make_jaxpr (List.map Core.get_aval vals) (fun inner ->
-      Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
-          let ins =
-            List.map2
-              (fun v b ->
-                match b with
-                | Some _ -> Tracer (new_batch_tracer main v (Some 0))
-                | None -> v)
-              inner bdims
-          in
-          List.map
-            (fun o ->
-              let v, b = to_batch_info main (Core.full_raise main o) in
-              bdim_at_front axis_size v b)
-            (Jaxpr.eval_closed_jaxpr c ins)))
+let batch_linear_part (c : closed_jaxpr) axis_size in_bat instantiate =
+  let lift bat (a : aval) =
+    if bat then { a with shape = Array.append [| axis_size |] a.shape } else a
+  in
+  let in_avals =
+    List.map2
+      (fun bat (v : var) -> lift bat v.vaval)
+      in_bat c.jaxpr.in_binders
+  in
+  let out_bat = ref [] in
+  let closed =
+    Jaxpr.make_jaxpr in_avals (fun inner ->
+        Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+            let ins =
+              List.map2
+                (fun v bat ->
+                  if bat then Tracer (new_batch_tracer main v (Some 0)) else v)
+                inner in_bat
+            in
+            let outs = Jaxpr.eval_closed_jaxpr c ins in
+            let pairs =
+              List.map2
+                (fun o inst ->
+                  let v, b = to_batch_info main (Core.full_raise main o) in
+                  if inst || b <> None then (bdim_at_front axis_size v b, true)
+                  else (v, false))
+                outs instantiate
+            in
+            out_bat := List.map snd pairs;
+            List.map fst pairs))
+  in
+  (closed, !out_bat)
 
-let custom_linear_solve_batch axis_size solve transpose_solve num_consts vals
-    bdims =
-  let vals =
-    List.mapi
-      (fun i (v, b) ->
-        if i < num_consts && b = None then v else bdim_at_front axis_size v b)
-      (List.combine vals bdims)
+let custom_linear_solve_batch axis_size matvec vecmat solve transpose_solve
+    const_lengths vals bdims =
+  let total = Array.fold_left ( + ) 0 const_lengths in
+  let is_bat = List.map (fun b -> b <> None) bdims in
+  let slice lo n l = List.filteri (fun i _ -> i >= lo && i < lo + n) l in
+  let m = const_lengths.(0)
+  and v = const_lengths.(1)
+  and s = const_lengths.(2)
+  and t = const_lengths.(3) in
+  let matvec_bat = slice 0 m is_bat
+  and vecmat_bat = slice m v is_bat
+  and solve_bat = slice (m + v) s is_bat
+  and tr_bat = slice (m + v + s) t is_bat in
+  let orig_b_bat = List.filteri (fun i _ -> i >= total) is_bat in
+  let or2 = List.map2 ( || ) in
+  let rec fix b_bat x_bat steps =
+    let solve_b, solve_x = batch_linear_part solve axis_size (solve_bat @ b_bat) x_bat in
+    let vecmat_b, x_bat_out =
+      match vecmat with
+      | None -> (None, solve_x)
+      | Some vm ->
+          let vb, vx = batch_linear_part vm axis_size (vecmat_bat @ b_bat) b_bat in
+          (Some vb, or2 vx solve_x)
+    in
+    let matvec_b, matvec_out =
+      batch_linear_part matvec axis_size (matvec_bat @ x_bat_out) b_bat
+    in
+    let tr_b, b_bat_out =
+      match transpose_solve with
+      | None -> (None, or2 matvec_out orig_b_bat)
+      | Some ts ->
+          let tb, tout =
+            batch_linear_part ts axis_size (tr_bat @ x_bat_out) x_bat_out
+          in
+          (Some tb, or2 (or2 matvec_out tout) orig_b_bat)
+    in
+    if (x_bat_out = x_bat && b_bat_out = b_bat) || steps = 0 then
+      (solve_b, solve_x, vecmat_b, matvec_b, tr_b, b_bat_out)
+    else fix b_bat_out x_bat_out (steps - 1)
   in
-  let bdims =
-    List.mapi
-      (fun i b -> if i < num_consts && b = None then None else Some 0)
-      bdims
+  let n_out = List.length solve.jaxpr.outs in
+  let solve_b, solve_x, vecmat_b, matvec_b, tr_b, b_bat =
+    fix orig_b_bat (List.init n_out (fun _ -> false))
+      (1 + (2 * List.length orig_b_bat))
   in
-  let solve = batch_solve_jaxpr solve axis_size vals bdims in
-  let transpose_solve =
-    Option.map
-      (fun ts -> batch_solve_jaxpr ts axis_size vals bdims)
-      transpose_solve
+  let params =
+    List.filteri (fun i _ -> i < total) (List.combine vals bdims)
+    |> List.map (fun (x, d) ->
+        match d with Some d when d <> 0 -> moveaxis d 0 x | _ -> x)
   in
-  Core.bind (Custom_linear_solve { solve; transpose_solve; num_consts }) vals
+  let b_pairs = List.filteri (fun i _ -> i >= total) (List.combine vals bdims) in
+  let new_b =
+    List.map2
+      (fun (x, d) now ->
+        if now then bdim_at_front axis_size x d else x)
+      b_pairs b_bat
+  in
+  let outs =
+    Core.bind
+      (Custom_linear_solve
+         {
+           matvec = matvec_b;
+           vecmat = vecmat_b;
+           solve = solve_b;
+           transpose_solve = tr_b;
+           const_lengths;
+         })
+      (params @ new_b)
+  in
+  (outs, List.map (fun b -> if b then Some 0 else None) solve_x)
 
 let triangular_solve_batch prim vals bdims =
   match (prim, vals, bdims) with
@@ -1769,6 +1919,15 @@ let triangular_solve_batch prim vals bdims =
       let out = b1 prim [ x; b1 (Reshape flat) [ y ] ] in
       (b1 (Reshape s) [ out ], Some (if left_side then n - 1 else n - 2))
   | _, [ x; y ], [ None; None ] -> (b1 prim [ x; y ], None)
+  | _, [ x; y ], [ bx; by ] ->
+      let size =
+        match (bx, by) with
+        | Some d, _ -> (Core.get_aval x).shape.(d)
+        | None, Some d -> (Core.get_aval y).shape.(d)
+        | None, None -> assert false
+      in
+      ( b1 prim [ bdim_at_front size x bx; bdim_at_front size y by ],
+        Some 0 )
   | _ -> failwith "batching: triangular_solve arity"
 
 let batch_process_primitive (trace : trace) (prim : primitive)
@@ -1795,15 +1954,19 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
         (ffi_batch axis_size c vals bdims)
-  | Custom_linear_solve { solve; transpose_solve; num_consts } ->
-      List.map
-        (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
-        (custom_linear_solve_batch axis_size solve transpose_solve num_consts
-           vals bdims)
+  | Custom_linear_solve { matvec; vecmat; solve; transpose_solve; const_lengths }
+    ->
+      let outs, dims =
+        custom_linear_solve_batch axis_size matvec vecmat solve transpose_solve
+          const_lengths vals bdims
+      in
+      List.map2 (fun o d -> Tracer (new_batch_tracer trace o d)) outs dims
   | Triangular_solve _ when not (unstacks_operands prim bdims) ->
       let out, b = triangular_solve_batch prim vals bdims in
       [ Tracer (new_batch_tracer trace out b) ]
-  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ ->
+  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Cholesky | Householder_product | Lu
+  | Lu_pivots_to_permutation _ | Qr _ | Eig _ | Eigh _ | Hessenberg | Schur _
+  | Svd _ | Tridiagonal _ ->
       let args = List.map2 (bdim_at_front axis_size) vals bdims in
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

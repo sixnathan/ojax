@@ -76,6 +76,7 @@ type dot_dimension_numbers = Types.dot_dims = {
   lhs_batch : int array;
   rhs_batch : int array;
   dot_precision : (string * string) option;
+  dot_preferred : bool;
 }
 
 val dot_dimension_numbers :
@@ -92,6 +93,7 @@ type gather_dimension_numbers = Types.gather_dims = {
   start_index_map : int array;
   g_operand_batching_dims : int array;
   g_start_indices_batching_dims : int array;
+  g_sorted_unique : bool;
 }
 
 val gather_dimension_numbers :

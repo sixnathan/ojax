@@ -568,6 +568,7 @@ let dot_dims lhs rhs =
       lhs_batch = [||];
       rhs_batch = [||];
       dot_precision = None;
+      dot_preferred = true;
     }
 
 let dots_fn a =
@@ -657,6 +658,7 @@ let batched_dot a =
            lhs_batch = [| 0 |];
            rhs_batch = [| 0 |];
            dot_precision = None;
+           dot_preferred = true;
          })
       [ x; x ]
   in

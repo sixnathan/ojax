@@ -631,7 +631,7 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
   match dimension_numbers with
   | Some ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)) ->
       dot_with ?precision ?preferred_element_type
-        { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None }
+        { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None; dot_preferred = true }
         x y
   | None ->
       if nx = 0 || ny = 0 then mul x y
@@ -643,24 +643,31 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
             lhs_batch = [||];
             rhs_batch = [||];
             dot_precision = None;
+            dot_preferred = true;
           }
           x y
 
 let dot_general ?precision ?preferred_element_type x y ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch =
   dot_with ?precision ?preferred_element_type
-    { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None }
+    { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None; dot_preferred = true }
     x y
 
-let batch_matmul ?precision x y =
+let batch_matmul ?precision ?preferred_element_type x y =
   let n = ndim x in
   if ndim y <> n || n < 2 then
     invalid_arg "batch_matmul requires equal ranks of at least two";
   let batch = Array.init (n - 2) Fun.id in
-  dot_general ?precision x y
-    ~lhs_contract:[| n - 1 |]
-    ~rhs_contract:[| n - 2 |]
-    ~lhs_batch:batch ~rhs_batch:batch
+  dot_with ?precision ?preferred_element_type
+    {
+      lhs_contract = [| n - 1 |];
+      rhs_contract = [| n - 2 |];
+      lhs_batch = batch;
+      rhs_batch = batch;
+      dot_precision = None;
+      dot_preferred = preferred_element_type <> None;
+    }
+    x y
 
 let padtype_to_pads in_shape window_shape window_strides padding =
   match padding with

@@ -120,6 +120,7 @@ let programs : (string * (T.value list -> T.value list)) list =
                  lhs_batch = [||];
                  rhs_batch = [||];
                  dot_precision = None;
+                 dot_preferred = true;
                })
             [ x; y ];
         ] );
@@ -135,6 +136,7 @@ let programs : (string * (T.value list -> T.value list)) list =
                  lhs_batch = [||];
                  rhs_batch = [||];
                  dot_precision = None;
+                 dot_preferred = true;
                })
             [ x; y ]
         in
@@ -156,6 +158,7 @@ let programs : (string * (T.value list -> T.value list)) list =
                  lhs_batch = [||];
                  rhs_batch = [||];
                  dot_precision = None;
+                 dot_preferred = true;
                })
             [ x; y ]
         in

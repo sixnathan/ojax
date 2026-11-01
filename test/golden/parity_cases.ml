@@ -617,7 +617,10 @@ let spd v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul v (NL.swapaxes (-1) (-2) v) in
+  let product =
+    L.batch_matmul ~preferred_element_type:(dt_of v) v
+      (NL.swapaxes (-1) (-2) v)
+  in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -925,7 +928,10 @@ let herm v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul v (L.conj (NL.swapaxes (-1) (-2) v)) in
+  let product =
+    L.batch_matmul ~preferred_element_type:(dt_of v) v
+      (L.conj (NL.swapaxes (-1) (-2) v))
+  in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -999,7 +1005,12 @@ let linalg_batch_run op params a b =
   let module SL = Ojax.Scipy.Linalg in
   let module LL = Ojax.Lax.Linalg in
   let h_of v = UF.conj (NL.swapaxes (-1) (-2) v) in
-  let recon z t = L.batch_matmul (L.batch_matmul z t) (h_of z) in
+  let recon z t =
+    let p = dt_of z in
+    L.batch_matmul ~preferred_element_type:p
+      (L.batch_matmul ~preferred_element_type:p z t)
+      (h_of z)
+  in
   let diag_mag t =
     Ojax.Numpy.Sorting.sort ~axis:(Some (-1))
       (UF.absolute (NL.diagonal ~axis1:(-2) ~axis2:(-1) t))

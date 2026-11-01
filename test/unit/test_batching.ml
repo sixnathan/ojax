@@ -80,6 +80,7 @@ let dot_general_rules () =
       lhs_batch = [||];
       rhs_batch = [||];
       dot_precision = None;
+      dot_preferred = true;
     }
   in
   let dot = function

@@ -141,36 +141,59 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
          dyn_arr)
   in
   let broadcast_shape = LN.broadcast_shapes_n batch_shapes in
-  let bsize = Array.fold_left ( * ) 1 broadcast_shape in
   let traced =
     Array.exists (function T.Tracer _ -> true | _ -> false) dyn_arr
   in
   if traced then begin
-    let flat =
+    let nb = Array.length broadcast_shape in
+    let squeezed =
       Array.to_list
         (Array.mapi
            (fun idx v ->
              let sh = shape_of v in
-             let core_shape =
-               Array.sub sh (Array.length sh - ncs.(idx)) ncs.(idx)
+             let noncore = Array.sub sh 0 (Array.length sh - ncs.(idx)) in
+             let picks =
+               List.filter
+                 (fun i -> noncore.(i) = 1)
+                 (List.init (Array.length noncore) Fun.id)
              in
-             let target = Array.append broadcast_shape core_shape in
-             LN.reshape (LN.broadcast_to v target)
-               (Array.append [| bsize |] core_shape))
+             match picks with
+             | [] -> v
+             | _ -> Core.bind1 (T.Squeeze (Array.of_list picks)) [ v ])
            dyn_arr)
     in
-    let out =
-      List.hd
-        (Interpreters.Batching.vmap
-           (fun slices -> [ call_full slices ])
-           (List.map (fun _ -> Some 0) flat)
-           flat)
+    let filled =
+      Array.to_list
+        (Array.mapi
+           (fun idx v ->
+             let sh = shape_of v in
+             let noncore = Array.sub sh 0 (Array.length sh - ncs.(idx)) in
+             Array.append
+               (Array.make (nb - Array.length noncore) 1)
+               noncore)
+           dyn_arr)
     in
-    let out_sh = shape_of out in
-    let per_item = Array.sub out_sh 1 (Array.length out_sh - 1) in
-    LN.reshape out (Array.append broadcast_shape per_item)
+    let expand = ref [] in
+    let wrapped = ref (fun slices -> [ call_full slices ]) in
+    for negdim = 0 to nb - 1 do
+      let in_axes =
+        List.map
+          (fun f -> if f.(nb - 1 - negdim) = 1 then None else Some 0)
+          filled
+      in
+      if List.for_all (fun x -> x = None) in_axes then
+        expand := (nb - 1 - negdim) :: !expand
+      else
+        let inner = !wrapped in
+        wrapped :=
+          fun args -> Interpreters.Batching.vmap inner in_axes args
+    done;
+    let out = List.hd (!wrapped squeezed) in
+    if !expand = [] then out
+    else LN.expand_dims out (Array.of_list (List.rev !expand))
   end
   else
+    let bsize = Array.fold_left ( * ) 1 broadcast_shape in
     let concretes = Array.map concrete dyn_arr in
     let fbuf = ref [||] in
     let cbuf = ref [||] in

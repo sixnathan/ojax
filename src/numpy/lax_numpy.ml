@@ -506,9 +506,17 @@ let rec round ?(decimals = 0) v =
       ]
   else if decimals = 0 then bind1 T.Round_nearest_even [ v ]
   else begin
-    let factor = full dt (shape v) (10.0 ** float_of_int decimals) in
-    bind1 T.Div
-      [ bind1 T.Round_nearest_even [ bind1 T.Mul [ v; factor ] ]; factor ]
+    let x =
+      if dt = D.F16 then bind1 (T.Convert_element_type D.F32) [ v ] else v
+    in
+    let factor () = full (dtype x) (shape x) (10.0 ** float_of_int decimals) in
+    let out =
+      bind1 T.Div
+        [
+          bind1 T.Round_nearest_even [ bind1 T.Mul [ x; factor () ] ]; factor ();
+        ]
+    in
+    if dt = D.F16 then bind1 (T.Convert_element_type D.F16) [ out ] else out
   end
 
 let around ?decimals v = round ?decimals v
@@ -1658,7 +1666,11 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   let dtin = to_inexact_dtype dt_common in
   let m = convert m dtin in
   let y = Option.map (fun v -> convert v dtin) y in
-  let x0 = atleast_2d m in
+  let x0 =
+    Jnp_util.jit1 "atleast_2d"
+      (function [ v ] -> atleast_2d v | _ -> invalid_arg "atleast_2d: arity")
+      [ m ]
+  in
   let x0 = if (not rowvar) && ndim m <> 1 then matrix_transpose x0 else x0 in
   let x =
     match y with
@@ -1729,9 +1741,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   in
   let avg =
     match w with
-    | None ->
-        let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
-        bind1 T.Div [ sum1; full dt [| nvars |] (float_of_int nobs) ]
+    | None -> Reductions.mean ~axis:[| 1 |] x
     | Some wv ->
         let wb =
           bind1 (T.Broadcast_in_dim { shape = shape x; dims = [| 1 |] }) [ wv ]
@@ -1745,7 +1755,13 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
               [ sum_all wv ];
           ]
   in
-  let xc = sub2 x (expand_dims avg [| 1 |]) in
+  let xc =
+    let column = expand_dims avg [| 1 |] in
+    sub2 x
+      (bind1
+         (T.Broadcast_in_dim { shape = shape x; dims = [| 0; 1 |] })
+         [ column ])
+  in
   let xw =
     match w with
     | None -> xc
@@ -1758,20 +1774,21 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
               [ wv ];
           ]
   in
+  let xt = bind1 (T.Transpose [| 1; 0 |]) [ xw ] in
   let prod =
     bind1
       (T.Dot_general
          {
            lhs_contract = [| 1 |];
-           rhs_contract = [| 1 |];
+           rhs_contract = [| 0 |];
            lhs_batch = [||];
            rhs_batch = [||];
          })
       [
         xc;
         (match dt with
-        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xw ]
-        | _ -> xw);
+        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xt ]
+        | _ -> xt);
       ]
   in
   squeeze (bind1 T.Div [ prod; divisor_of (shape prod) ])

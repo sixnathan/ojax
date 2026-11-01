@@ -294,6 +294,26 @@ let partial_eval_flat (f : value list -> value list)
       let jaxpr, consts = tracers_to_jaxpr unk_in unk_out in
       (jaxpr, consts, pvals_out))
 
+let partial_eval_flat_instantiate ~instantiate (f : value list -> value list)
+    (pvals_in : partial_val list) : jaxpr * value list * partial_val list =
+  Core.with_new_main KPE GNone (fun main ->
+      let tracers_in =
+        List.map (fun pv -> new_pe_tracer main pv (Some LambdaBinding)) pvals_in
+      in
+      let outs = f (List.map (fun t -> Tracer t) tracers_in) in
+      let tracers_out =
+        List.mapi
+          (fun i v ->
+            let t = as_tracer (Core.full_raise main v) in
+            if instantiate i then instantiate_const main t else t)
+          outs
+      in
+      let pvals_out = List.map pe_pval tracers_out in
+      let unk_in = List.filter (fun t -> is_unknown (pe_pval t)) tracers_in in
+      let unk_out = List.filter (fun t -> is_unknown (pe_pval t)) tracers_out in
+      let jaxpr, consts = tracers_to_jaxpr unk_in unk_out in
+      (jaxpr, consts, pvals_out))
+
 let mapped_leading (a : aval) =
   { a with shape = Array.sub a.shape 1 (Array.length a.shape - 1) }
 

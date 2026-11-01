@@ -556,7 +556,8 @@ let emit_convert ctx (eqn : eqn) in_ids =
   let oty = Ir.tensor_type_of_aval out.vaval in
   let x, in_dt, in_aval =
     match (in_dt, out_dt) with
-    | (Dtype.Complex64 | Dtype.Complex128), Dtype.Bool ->
+    | (Dtype.Complex64 | Dtype.Complex128), o
+      when o <> Dtype.Complex64 && o <> Dtype.Complex128 ->
         let rdt = if in_dt = Dtype.Complex128 then Dtype.F64 else Dtype.F32 in
         let re = fresh ctx in
         Buffer.add_string ctx.buf
@@ -2804,7 +2805,7 @@ and emit_traced ctx avals in_ids outs f =
     (emit_traced_ids ctx avals in_ids f)
 
 and emit_traced_ids ctx avals in_ids f =
-  emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids
+  emit_closed_inline ctx (Jaxpr.make_jaxpr_for_lowering avals f) in_ids
 
 and hoist_custom_consts ctx (jx : jaxpr) =
   List.iter
@@ -3317,7 +3318,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith
         "Stablehlo.Emit: Dce_sink is a DCE-effect marker, non-representable"
   | Empty2 _ ->
-      failwith "Stablehlo.Emit: Empty2 (extended dtype) deferred to M5"
+      let out = sole eqn.outs in
+      let c = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+           (Ir.dense (zero_dense out.vaval.dtype))
+           (Ir.tensor_type_of_aval out.vaval));
+      Hashtbl.replace ctx.ids out.vid c
   | From_edtype _ ->
       failwith "Stablehlo.Emit: From_edtype (extended dtypes) deferred to M5"
   | To_edtype _ ->

@@ -25,6 +25,19 @@ let prim_marked prim =
     (fun other -> other == o)
     (Hashtbl.find_all marked_prims (Hashtbl.hash o))
 
+let triples : (int, (int * int * int) array * (int -> int -> bool)) Hashtbl.t =
+  Hashtbl.create 64
+
+let mark_triples predicate arr =
+  if Array.length arr > 0 then
+    Hashtbl.add triples (Hashtbl.hash arr) (arr, predicate);
+  arr
+
+let triple_marked arr i j =
+  List.exists
+    (fun (other, predicate) -> other == arr && predicate i j)
+    (Hashtbl.find_all triples (Hashtbl.hash arr))
+
 let sorted_scatters : (int, Obj.t) Hashtbl.t = Hashtbl.create 64
 
 let mark_scatter prim =

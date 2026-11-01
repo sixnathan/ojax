@@ -113,7 +113,12 @@ let inline_region name statics args f =
 let dtype_of v = (C.get_aval v).dtype
 let shape_of v = (C.get_aval v).shape
 let npf dt x = Concrete (Nd.of_floats dt [||] [| x |])
-let like v x = npf (dtype_of v) x
+
+let like v x =
+  let a = C.get_aval v in
+  if a.weak_type && Array.length a.shape = 0 then C.py_scalar a.dtype x
+  else npf a.dtype x
+
 let pyf = JU.py_float
 
 let conv v dt =
@@ -163,6 +168,12 @@ let int_const d v =
   if d = D.I64 || d = D.Uint64 then Concrete (Nd.of_int64s d [||] [| v |])
   else Concrete (Nd.of_floats d [||] [| Int64.to_float v |])
 
+let int_const_like example v =
+  match int_const (dtype_of example) v with
+  | Concrete nd when (C.get_aval example).weak_type ->
+      Concrete (Nd.as_weak nd)
+  | c -> c
+
 let int_bounds dt =
   let bits = Dtypes.itemsize_bits dt in
   match dt with
@@ -177,8 +188,8 @@ let int_bounds dt =
 let convert_and_clip_integer v dt =
   let vd = dtype_of v in
   let lo_d, hi_d = int_bounds dt and lo_v, hi_v = int_bounds vd in
-  let lo = int_const vd (Int64.max lo_d lo_v)
-  and hi = int_const vd (Int64.min hi_d hi_v) in
+  let lo = int_const_like v (Int64.max lo_d lo_v)
+  and hi = int_const_like v (Int64.min hi_d hi_v) in
   conv (clip_arr v lo hi) dt
 
 let randint_v key ~minval ~maxval ~shape ~dt =
@@ -708,8 +719,9 @@ let wald k ~shape ~mean =
           let sqrt_term = L.sqrt (left +! right) in
           let two = like mean 2.0 in
           let term1 = mean_sq *! y /! two in
+          let x = mean +! term1 in
           let term2 = mean /! two *! sqrt_term in
-          let x = mean +! term1 -! term2 in
+          let x = x -! term2 in
           let threshold = mean /! (mean +! x) in
           let pred = L.le z threshold in
           let alt = mean_sq /! x in
@@ -724,9 +736,9 @@ let geometric k ~shape ~p =
     (function
       | [ key; p ] ->
           let u = uniform_py key ~shape ~dt:pdt in
-          let u = NL.where_ (UF.equal u (like u 0.0)) (like u 1.0) u in
+          let u = NL.where_ (UF.equal u (like u 0.0)) (JU.py_int 1) u in
           let log_u = L.log u in
-          let log_one_minus_p = L.log1p (UF.negative (conv p pdt)) in
+          let log_one_minus_p = L.log1p (UF.negative p) in
           let log_one_minus_p = NL.broadcast_to log_one_minus_p shape in
           let g = L.floor (L.div log_u log_one_minus_p) +! like u 1.0 in
           conv g idt_
@@ -777,9 +789,7 @@ let lognormal k ~shape ~sigma =
       | _ -> assert false)
 
 let poisson_knuth key lam ~shape ~dt ~max_iters =
-  let idx v =
-    Concrete (Nd.of_floats (Dtypes.default_int_dtype ()) [||] [| v |])
-  in
+  let idx v = C.py_scalar (Dtypes.default_int_dtype ()) v in
   let body = function
     | [ i; k; rng; log_prod ] ->
         let keys = split_keys rng 2 in
@@ -798,9 +808,7 @@ let poisson_knuth key lam ~shape ~dt ~max_iters =
     | i :: _ :: _ :: log_prod :: _ ->
         UF.bitwise_and
           (RED.any (UF.greater log_prod (UF.negative lam)))
-          (UF.less i
-             (Concrete
-                (Nd.of_floats (dtype_of i) [||] [| Int64.to_float max_iters |])))
+          (UF.less i (int_const dt max_iters))
     | _ -> assert false
   in
   let k_init = L.full shape 0.0 dt in
@@ -815,9 +823,7 @@ let poisson_rejection key lam ~shape ~dt ~max_iters =
   let a = c (-0.059) +! (c 0.02483 *! b) in
   let inv_alpha = c 1.1239 +! (c 1.1328 /! (b -! c 3.4)) in
   let v_r = c 0.9277 -! (c 3.6224 /! (b -! c 2.0)) in
-  let idx v =
-    Concrete (Nd.of_floats (Dtypes.default_int_dtype ()) [||] [| v |])
-  in
+  let idx v = C.py_scalar (Dtypes.default_int_dtype ()) v in
   let ldt = dtype_of lam in
   let body = function
     | [ i; k_out; accepted; key ] ->
@@ -862,9 +868,7 @@ let poisson_rejection key lam ~shape ~dt ~max_iters =
     | i :: _ :: accepted :: _ ->
         UF.bitwise_and
           (RED.any (UF.bitwise_not accepted))
-          (UF.less i
-             (Concrete
-                (Nd.of_floats (dtype_of i) [||] [| Int64.to_float max_iters |])))
+          (UF.less i (int_const dt max_iters))
     | _ -> assert false
   in
   let k_init = L.full shape (-1.0) ldt in
@@ -945,9 +949,7 @@ let btrs key count prob ~shape ~dt =
   let r = prob /! (c 1.0 -! prob) in
   let alpha = (c 2.83 +! (c 5.1 /! b)) *! stddev in
   let m = UF.floor ((count +! c 1.0) *! prob) in
-  let idx v =
-    Concrete (Nd.of_floats (Dtypes.default_int_dtype ()) [||] [| v |])
-  in
+  let idx v = C.py_scalar (Dtypes.default_int_dtype ()) v in
   let pdt = dtype_of prob in
   let body = function
     | [ i; k_out; accepted; key ] ->
@@ -989,7 +991,7 @@ let btrs key count prob ~shape ~dt =
     | i :: _ :: accepted :: _ ->
         UF.bitwise_and
           (RED.any (UF.bitwise_not accepted))
-          (UF.less (conv i pdt) (like prob (Dtypes.finfo dt).fmax))
+          (UF.less i (npf dt (Dtypes.finfo dt).fmax))
     | _ -> assert false
   in
   let k_init = L.full shape (-1.0) pdt in
@@ -1000,9 +1002,7 @@ let btrs key count prob ~shape ~dt =
 let binomial_inversion key count prob ~shape ~dt =
   let c v = like prob v in
   let log1minusprob = UF.log1p (UF.negative prob) in
-  let idx v =
-    Concrete (Nd.of_floats (Dtypes.default_int_dtype ()) [||] [| v |])
-  in
+  let idx v = C.py_scalar (Dtypes.default_int_dtype ()) v in
   let pdt = dtype_of prob in
   let body = function
     | [ i; num_geom; geom_sum; key ] ->
@@ -1021,7 +1021,7 @@ let binomial_inversion key count prob ~shape ~dt =
     | i :: _ :: geom_sum :: _ ->
         UF.bitwise_and
           (RED.any (UF.less_equal geom_sum count))
-          (UF.less (conv i pdt) (like prob (Dtypes.finfo dt).fmax))
+          (UF.less i (npf dt (Dtypes.finfo dt).fmax))
     | _ -> assert false
   in
   let init = L.full shape 0.0 pdt in
@@ -1081,7 +1081,7 @@ let binomial_v key ~count ~prob ~shape ~dt =
 
 let binomial k ~shape ~count ~prob =
   let dt = fdt () in
-  binomial_v k ~count:(pyf count) ~prob:(npf dt prob) ~shape ~dt
+  binomial_v k ~count:(pyf count) ~prob:(pyf prob) ~shape ~dt
 
 let dirichlet k ~alpha ~shape =
   let dt = fdt () in
@@ -1135,18 +1135,32 @@ let multinomial k ~p ~n_trials =
   in
   conv (L.stack counts 0) dt
 
-let generalized_normal k ~shape ~p =
+let index_key keys i =
+  let sh = shape_of keys in
+  let n = Array.length sh in
+  let start_indices = Array.make n 0 and limit_indices = Array.copy sh in
+  start_indices.(0) <- i;
+  limit_indices.(0) <- i + 1;
+  let sliced =
+    C.bind1 (Slice { start_indices; limit_indices; strides = None }) [ keys ]
+  in
+  L.squeeze sliced [| 0 |]
+
+let generalized_normal_v key ~p ~shape =
   let dt = fdt () in
-  jit_region "_generalized_normal" (shape, dt)
-    [ k; pyf p ]
-    (function
-      | [ key; p ] ->
-          let k0, k1 = key2 key in
-          let inv = conv (like p 1.0 /! p) dt in
-          let g = gamma_v k0 ~a:inv ~shape ~dt ~log_space:false in
-          let r = conv (rademacher_dt k1 ~shape ~dt) dt in
-          r *! UF.power g inv
-      | _ -> assert false)
+  jit_region "_generalized_normal" (shape, dt) [ key; p ] (function
+    | [ key; p ] ->
+        let keys = split_keys key 2 in
+        let k0 = index_key keys 0 in
+        let inv = pyf 1.0 /! p in
+        let g = gamma_v k0 ~a:inv ~shape ~dt ~log_space:false in
+        let k1 = index_key keys 1 in
+        let r = rademacher_dt k1 ~shape ~dt in
+        let inv = pyf 1.0 /! p in
+        r *! UF.power g inv
+    | _ -> assert false)
+
+let generalized_normal k ~shape ~p = generalized_normal_v k ~p:(pyf p) ~shape
 
 let random_gamma_grad alpha sample = L.random_gamma_grad alpha sample
 
@@ -1155,6 +1169,9 @@ let bits_as k ~shape ~dtype =
   match dtype with
   | D.Uint64 -> PR.random_bits (wrap k) ~bit_width:64 ~shape
   | D.Uint32 -> PR.random_bits (wrap k) ~bit_width:32 ~shape
+  | (D.Uint8 | D.Uint16)
+    when Config.value Config.threefry_partitionable ->
+      PR.random_bits (wrap k) ~bit_width:(Dtypes.itemsize_bits dtype) ~shape
   | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 ->
       C.bind1 (Convert_element_type dtype)
         [ PR.random_bits (wrap k) ~bit_width:32 ~shape ]
@@ -1264,6 +1281,9 @@ let f k ~shape ~dfnum ~dfden = sampler k (fun () -> f k ~shape ~dfnum ~dfden)
 
 let generalized_normal k ~shape ~p =
   sampler k (fun () -> generalized_normal k ~shape ~p)
+
+let generalized_normal_value k ~shape ~p =
+  sampler k (fun () -> generalized_normal_v k ~p ~shape)
 
 let dirichlet k ~alpha ~shape = sampler k (fun () -> dirichlet k ~alpha ~shape)
 let poisson k ~shape ~lam = sampler k (fun () -> poisson k ~shape ~lam)

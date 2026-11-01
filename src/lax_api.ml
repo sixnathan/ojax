@@ -167,7 +167,20 @@ let select_n pred cases =
   b1 Select_n (broadcast_scalar pred sh :: cases)
 
 let full sh fill_value dt = filled dt sh fill_value
-let full_like x fill_value = filled (dtype_of x) (shape x) fill_value
+
+let full_like x fill_value =
+  let a = aval x in
+  if not a.weak_type then filled a.dtype a.shape fill_value
+  else if Array.length a.shape = 0 then Core.py_scalar a.dtype fill_value
+  else if Core.staging () then
+    b1
+      (Broadcast_in_dim { shape = a.shape; dims = [||] })
+      [ Core.py_scalar a.dtype fill_value ]
+  else
+    match filled a.dtype a.shape fill_value with
+    | Concrete nd -> Concrete (Ndarray.as_weak nd)
+    | other -> other
+
 let empty dt = filled dt [| 0 |] 0.0
 
 let iota dt size =

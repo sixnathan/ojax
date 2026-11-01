@@ -173,6 +173,16 @@ let impl_rule prim inputs =
   | Random_fold_in, [ key; msg ] -> [ random_fold_in_impl key msg ]
   | Random_bits { bit_width = 64; shape }, [ key ] ->
       [ Nd.of_int64s Dtype.Uint64 shape (!bits64_hook key shape) ]
+  | Random_bits { bit_width = (8 | 16) as w; shape }, [ key ] ->
+      let dt = if w = 8 then Dtype.Uint8 else Dtype.Uint16 in
+      let m = (1 lsl w) - 1 in
+      let wide = random_bits_impl 32 shape key in
+      let s = Nd.shape wide in
+      [
+        Nd.of_floats dt s
+          (Array.init (prod s) (fun i ->
+               float_of_int (geti wide i land m)));
+      ]
   | Random_bits { bit_width; shape }, [ key ] ->
       [ random_bits_impl bit_width shape key ]
   | Random_wrap, [ arr ] -> [ arr ]
@@ -191,11 +201,15 @@ let abstract_eval_rule prim avals =
   | Random_fold_in, [ ka; ma ] ->
       let ob = broadcast_shapes [ drop_last ka.shape; ma.shape ] in
       [ shaped (Array.append ob [| 2 |]) ]
-  | Random_bits { bit_width = 64; shape }, [ a ] ->
+  | Random_bits { bit_width = (8 | 16 | 64) as w; shape }, [ a ] ->
       [
         {
           shape = Array.append (drop_last a.shape) shape;
-          dtype = Dtype.Uint64;
+          dtype =
+            (match w with
+            | 8 -> Dtype.Uint8
+            | 16 -> Dtype.Uint16
+            | _ -> Dtype.Uint64);
           weak_type = false;
         };
       ]

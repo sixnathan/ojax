@@ -517,16 +517,17 @@ let scipy_run op p a b c =
   | "rnd_ball" ->
       Some [ RX.ball (seed_key p) ~d:(int "d" p) ~shape:(ints "shape" p) ]
   | "rnd_multivariate_normal" ->
+      let key = seed_key p in
       let m = b () in
       let n = (shp m).(0) in
       let product = L.dot m (L.transpose m [| 1; 0 |]) in
       let eye = NL.identity ~dtype:(dt_of m) n in
-      let cov = L.add product (L.mul eye (like eye 2.0)) in
+      let cov = L.add product (L.mul (like eye 2.0) eye) in
       Some
         [
           RX.multivariate_normal ~shape:(ints "shape" p)
             ~method_:(required_string "method" p)
-            (seed_key p) ~mean:(a ()) ~cov;
+            key ~mean:(a ()) ~cov;
         ]
   | "nn_swish" -> Some [ NN.swish (a ()) ]
   | "nn_hard_swish" -> Some [ NN.hard_swish (a ()) ]
@@ -803,20 +804,23 @@ let array_random_run op p a b =
   let k () = seed_key p in
   match op with
   | "ra_uniform" ->
+      let key = k () in
       let lo = a () in
       let hi = L.add (L.add lo (L.abs (b ()))) (like lo 1.0) in
-      Some [ RC.uniform_range (k ()) ~shape:(shp lo) ~minval:lo ~maxval:hi ]
+      Some [ RC.uniform_range key ~shape:(shp lo) ~minval:lo ~maxval:hi ]
   | "ra_bernoulli" ->
+      let key = k () in
       let pr = L.abs (L.sin (a ())) in
-      Some [ RC.bernoulli_prob (k ()) ~shape:(shp pr) ~p:pr ]
+      Some [ RC.bernoulli_prob key ~shape:(shp pr) ~p:pr ]
   | "ra_gamma" -> Some [ RC.gamma_value (k ()) ~shape:(shp (a ())) ~a:(a ()) ]
   | "ra_loggamma" ->
       Some [ RC.loggamma_value (k ()) ~shape:(shp (a ())) ~a:(a ()) ]
   | "ra_beta" ->
       Some [ RC.beta_value (k ()) ~shape:(shp (a ())) ~a:(a ()) ~b:(b ()) ]
   | "ra_poisson" ->
+      let key = k () in
       let lam = L.mul (a ()) (like (a ()) 8.0) in
-      Some [ RC.poisson_value (k ()) ~shape:(shp lam) ~lam ]
+      Some [ RC.poisson_value key ~shape:(shp lam) ~lam ]
   | "ra_bits" ->
       Some
         [

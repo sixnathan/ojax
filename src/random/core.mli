@@ -72,3 +72,4 @@ val beta_value : value -> shape:int array -> a:value -> b:value -> value
 val poisson_value : value -> shape:int array -> lam:value -> value
 val bits_as : value -> shape:int array -> dtype:Dtype.t -> value
 val prng_key : value -> value
+val generalized_normal_value : value -> shape:int array -> p:value -> value

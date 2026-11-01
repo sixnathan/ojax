@@ -3437,6 +3437,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Random_bits { bit_width = 32; shape } ->
       emit_inlined ctx eqn in_ids (fun args ->
           [ Prng_lowering.random_bits ~shape (List.hd args) ])
+  | Random_bits { bit_width = (8 | 16) as w; shape } ->
+      let dt = if w = 8 then Dtype.Uint8 else Dtype.Uint16 in
+      emit_inlined ctx eqn in_ids (fun args ->
+          [
+            Core.bind1 (Convert_element_type dt)
+              [ Prng_lowering.random_bits ~shape (List.hd args) ];
+          ])
   | Random_bits { shape; _ } ->
       emit_inlined ctx eqn in_ids (fun args ->
           [ Prng_lowering.random_bits64 ~shape (List.hd args) ])

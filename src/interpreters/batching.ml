@@ -252,7 +252,8 @@ let reshape_rule (axis_size : int) (ns : int array) (x : value)
   | Some d ->
       let x = move_batch_axis axis_size bdim 0 x in
       let new_sizes = insert_size ns 0 axis_size in
-      (b1 (Reshape new_sizes) [ x ], Some 0)
+      if new_sizes = (Core.get_aval x).shape then (x, Some 0)
+      else (b1 (Reshape new_sizes) [ x ], Some 0)
 
 let broadcast_rule (axis_size : int) (shape : int array) (dims : int array)
     (x : value) (bdim : int option) : value * int option =

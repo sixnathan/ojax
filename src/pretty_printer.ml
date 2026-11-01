@@ -924,9 +924,26 @@ let suggest_names ctx for_vars like_atoms =
       for_vars like_atoms
   end
 
-let pp_atoms ctx ?(separator = "") atoms =
+let python_float_argument nd =
+  let x = Ndarray.get_f nd [||] in
+  let bits = Int32.bits_of_float x in
+  let rec shortest p =
+    let d = float_of_string (Printf.sprintf "%.*g" p x) in
+    if p >= 9 || Int32.bits_of_float d = bits then d else shortest (p + 1)
+  in
+  if Float.is_finite x then
+    lit_value (Ndarray.of_floats Dtype.F64 [||] [| shortest 1 |])
+    ^ ":" ^ lit_short nd
+  else jax_literal nd
+
+let pp_atoms ctx ?(separator = "") ?(call = false) atoms =
   let doc = function
     | A_var v -> Layout.Text (name_of_var ctx v)
+    | A_lit nd
+      when call && Ndarray.weak nd
+           && Ndarray.dtype nd = Dtype.F32
+           && Array.length (Ndarray.shape nd) = 0 ->
+        Layout.Text (python_float_argument nd)
     | A_lit nd -> Layout.Text (jax_literal nd)
     | DropVar _ -> Layout.Text "_"
   in
@@ -1111,7 +1128,9 @@ and pp_eqn ctx (e : eqn) =
         Layout.Text (jax_prim_name e.prim);
         params;
         Layout.Text " ";
-        pp_atoms ctx e.inputs;
+        pp_atoms ctx
+          ~call:(match e.prim with Xla_call _ -> true | _ -> false)
+          e.inputs;
       ]
   in
   if e.outs = [] then rhs else Layout.Concat [ lhs; Layout.Text " = "; rhs ]

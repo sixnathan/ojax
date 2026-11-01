@@ -117,6 +117,7 @@ let scatter_dims_1d =
     scatter_dims_to_operand_dims = [| 0 |];
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
+    s_sorted_unique = false;
   }
 
 let normalised_indices ~extent indices =
@@ -804,6 +805,7 @@ let sum_at n data ids =
       scatter_dims_to_operand_dims = [| 0 |];
       s_operand_batching_dims = [||];
       s_scatter_indices_batching_dims = [||];
+      s_sorted_unique = false;
     }
   in
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims

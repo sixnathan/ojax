@@ -627,6 +627,7 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
                 s_operand_batching_dims = bump sd.s_operand_batching_dims;
                 s_scatter_indices_batching_dims =
                   sd.s_scatter_indices_batching_dims;
+                s_sorted_unique = sd.s_sorted_unique;
               }
             in
             ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],
@@ -643,6 +644,7 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
                   Array.append [| 0 |] (bump sd.s_operand_batching_dims);
                 s_scatter_indices_batching_dims =
                   Array.append [| 0 |] (bump sd.s_scatter_indices_batching_dims);
+                s_sorted_unique = sd.s_sorted_unique;
               }
             in
             ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],
@@ -662,6 +664,7 @@ let dot_general_batch (dims : dot_dims) (vals : value list)
           rhs_batch = Array.append [| r |] (bump dims.rhs_batch r);
           lhs_contract = bump dims.lhs_contract l;
           rhs_contract = bump dims.rhs_contract r;
+          dot_precision = dims.dot_precision;
         }
       in
       (b1 (Dot_general dims') [ lhs; rhs ], Some 0)

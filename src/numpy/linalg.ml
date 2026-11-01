@@ -12,6 +12,8 @@ module LL = Lax.Linalg
 type ord = Onone | Ofro | Onuc | Onum of float
 type norm_axis = Anone | Aint of int | Apair of int * int
 
+let highest = Lax_config.precision_of_level Lax_config.Precision_highest
+
 let get_aval = C.get_aval
 let shape v = (get_aval v).T.shape
 let dtype v = (get_aval v).T.dtype
@@ -465,7 +467,7 @@ and pinv ?rtol ?(hermitian = false) ?rcond a =
   let s = NL.astype s (dtype u) in
   let s_col = NL.expand_dims s [| ndim s |] in
   let scaled = UF.divide (matrix_transpose_v u) s_col in
-  let res = TC.matmul (matrix_transpose_v vh) scaled in
+  let res = TC.matmul ~precision:highest (matrix_transpose_v vh) scaled in
   NL.astype res dt
 
 and matrix_power_body a p =
@@ -725,11 +727,11 @@ and lstsq_body ~rcond ~numpy_resid a b =
     NL.where_ mask (UF.divide (Jnp_util.py_int 1) safe_s) (Jnp_util.py_int 0)
   in
   let s_inv_col = NL.expand_dims s_inv [| ndim s_inv |] in
-  let utb = TC.matmul (UF.conj (matrix_transpose_v u)) bm in
+  let utb = TC.matmul ~precision:highest (UF.conj (matrix_transpose_v u)) bm in
   let x =
-    TC.matmul (UF.conj (matrix_transpose_v vt)) (UF.multiply s_inv_col utb)
+    TC.matmul ~precision:highest (UF.conj (matrix_transpose_v vt)) (UF.multiply s_inv_col utb)
   in
-  let b_est = TC.matmul a x in
+  let b_est = TC.matmul ~precision:highest a x in
   let full_resid () =
     Core.bind1 (T.Integer_pow 2) [ norm ~axis:(Aint 0) (UF.subtract bm b_est) ]
   in

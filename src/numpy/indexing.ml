@@ -194,6 +194,7 @@ let identity_scatter_dims r =
     scatter_dims_to_operand_dims = Array.init r Fun.id;
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
+    s_sorted_unique = false;
   }
 
 let put ?mode a ind v =

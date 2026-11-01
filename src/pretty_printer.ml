@@ -584,9 +584,9 @@ let scatter_reduction prim dtype =
 let scatter_params ?update d unique =
   [
     ("dimension_numbers", Plain (scatter_numbers d));
-    ("indices_are_sorted", Plain "False");
+    ("indices_are_sorted", Plain (py_bool d.s_sorted_unique));
     ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
-    ("unique_indices", Plain (py_bool unique));
+    ("unique_indices", Plain (py_bool (unique || d.s_sorted_unique)));
     ("update_consts", Plain "()");
     ( "update_jaxpr",
       match update with Some c -> Sub c | None -> Plain "None" );
@@ -655,8 +655,15 @@ let jax_params (e : eqn) =
             (Printf.sprintf "((%s, %s), (%s, %s))" (py_list d.lhs_contract)
                (py_list d.rhs_contract) (py_list d.lhs_batch)
                (py_list d.rhs_batch)) );
-        ("preferred_element_type", Plain (dn (out_dtype ())));
       ]
+      @ (match d.dot_precision with
+        | Some (l, r) ->
+            [
+              ( "precision",
+                Plain (Printf.sprintf "(Precision.%s, Precision.%s)" l r) );
+            ]
+        | None -> [])
+      @ [ ("preferred_element_type", Plain (dn (out_dtype ()))) ]
   | Iota { dtype; shape; dimension } ->
       [
         ("dimension", Plain (string_of_int dimension));

@@ -15,22 +15,40 @@ let lift_consts ((c : closed_jaxpr), hoisted, _) =
     },
     List.map (fun nd -> Concrete nd) c.consts @ hoisted )
 
-let build_branches all_avals lifted hoisted_each =
-  let n_hoisted = List.length (List.concat hoisted_each) in
-  let rec offsets acc = function
-    | [] -> []
-    | h :: tl -> acc :: offsets (acc + List.length h) tl
+let same_const a b =
+  a == b
+  ||
+  match (a, b) with
+  | Tracer x, Tracer y -> x == y
+  | Concrete x, Concrete y -> x == y
+  | _ -> false
+
+let merge_consts hoisted_each =
+  List.fold_left
+    (fun acc own ->
+      List.fold_left
+        (fun acc v ->
+          if List.exists (same_const v) acc then acc else acc @ [ v ])
+        acc own)
+    [] hoisted_each
+
+let const_position merged v =
+  let rec go i = function
+    | [] -> failwith "merge_consts: missing const"
+    | c :: tl -> if same_const v c then i else go (i + 1) tl
   in
-  List.map2
-    (fun ((c : closed_jaxpr), own) offset ->
-      let n_own = List.length own in
+  go 0 merged
+
+let build_branches all_avals lifted merged =
+  let n_hoisted = List.length merged in
+  List.map
+    (fun ((c : closed_jaxpr), own) ->
+      let positions = List.map (const_position merged) own in
       Jaxpr.make_jaxpr all_avals (fun args ->
           let ops = List.filteri (fun i _ -> i >= n_hoisted) args in
-          let mine =
-            List.filteri (fun i _ -> i >= offset && i < offset + n_own) args
-          in
+          let mine = List.map (List.nth args) positions in
           Jaxpr.eval_closed_jaxpr c (mine @ ops)))
-    lifted (offsets 0 hoisted_each)
+    lifted
 
 let rec branch_call ?platforms (index : value)
     (branches : (value list -> value list) list) (operands : value list) :
@@ -70,12 +88,11 @@ let rec branch_call ?platforms (index : value)
   end
   else
     let lifted = List.map lift_consts traced in
-    let hoisted_each = List.map snd lifted in
-    let hoisted = List.concat hoisted_each in
+    let hoisted = merge_consts (List.map snd lifted) in
     let all_avals = List.map Core.get_aval hoisted @ avals in
     let branches' =
       if hoisted = [] then List.map fst lifted
-      else build_branches all_avals lifted hoisted_each
+      else build_branches all_avals lifted hoisted
     in
     Core.bind
       (Cond { branches = branches'; platforms })
@@ -120,12 +137,11 @@ let rec cond (pred : value) (true_fun : value list -> value list)
     let index = Core.bind1 (Convert_element_type Dtype.I32) [ pred ] in
     ignore (t, hoisted_t, f, hoisted_f);
     let lifted = List.map lift_consts [ traced_t; traced_f ] in
-    let hoisted_each = List.map snd lifted in
-    let hoisted = List.concat hoisted_each in
+    let hoisted = merge_consts (List.map snd lifted) in
     let all_avals = List.map Core.get_aval hoisted @ avals in
     let branches' =
       if hoisted = [] then List.map fst lifted
-      else build_branches all_avals lifted hoisted_each
+      else build_branches all_avals lifted hoisted
     in
     let t', f' =
       match branches' with [ a; b ] -> (a, b) | _ -> assert false

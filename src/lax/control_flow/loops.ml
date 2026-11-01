@@ -97,13 +97,74 @@ let while_impl (cond : closed_jaxpr) (body : closed_jaxpr) (inputs : value list)
 let union_cells a b =
   a @ List.filter (fun (c : Ref_state.cell) -> not (List.memq c a)) b
 
-let rec while_loop (cond_fun : value list -> value)
-    (body_fun : value list -> value list) (init : value list) : value list =
-  let avals = List.map Core.get_aval init in
-  let cond, hoisted_c, cells_c =
-    Jaxpr.make_jaxpr_stateful avals (fun vs -> [ cond_fun vs ])
+let promote_weak_init init (body : closed_jaxpr) =
+  let outs = while_out_avals body in
+  if List.length outs <> List.length init then init
+  else
+    List.map2
+      (fun v (out : aval) ->
+        let a = Core.get_aval v in
+        if a.weak_type && a.dtype <> out.dtype then
+          let dt, _ =
+            Dtypes.result_type [ (a.dtype, true); (out.dtype, out.weak_type) ]
+          in
+          Core.convert_like ~weak:false v dt
+        else v)
+      init outs
+
+let body_forwarded (body : closed_jaxpr) carry_binders =
+  let fwd = Hashtbl.create 16 in
+  let resolve (v : var) =
+    Option.value (Hashtbl.find_opt fwd v.vid) ~default:v.vid
   in
-  let body, hoisted_b, cells_b = Jaxpr.make_jaxpr_stateful avals body_fun in
+  List.iter
+    (fun (e : eqn) ->
+      match (e.prim, e.inputs, e.outs) with
+      | Convert_element_type dt, [ A_var v ], [ o ]
+        when v.vaval.dtype = dt && v.vaval.weak_type = o.vaval.weak_type ->
+          Hashtbl.replace fwd o.vid (resolve v)
+      | Broadcast_in_dim { shape; _ }, [ A_var v ], [ o ]
+        when shape = v.vaval.shape ->
+          Hashtbl.replace fwd o.vid (resolve v)
+      | _ -> ())
+    body.jaxpr.eqns;
+  List.map2
+    (fun (b : var) out ->
+      match out with A_var v -> resolve v = b.vid | _ -> false)
+    carry_binders body.jaxpr.outs
+
+let shared_conds = Hashtbl.create 8
+let shared_final_conds = Hashtbl.create 8
+
+let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
+    (body_fun : value list -> value list) (init : value list) : value list =
+  let trace init =
+    let avals = List.map Core.get_aval init in
+    let trace_cond () =
+      Jaxpr.make_jaxpr_stateful avals (fun vs -> [ cond_fun vs ])
+    in
+    let cond, hoisted_c, cells_c =
+      match cond_key with
+      | None -> trace_cond ()
+      | Some key -> (
+          let k = (key, avals, Config.x64_enabled ()) in
+          match Hashtbl.find_opt shared_conds k with
+          | Some hit -> hit
+          | None ->
+              let traced = trace_cond () in
+              Hashtbl.replace shared_conds k traced;
+              traced)
+    in
+    let body, hoisted_b, cells_b = Jaxpr.make_jaxpr_stateful avals body_fun in
+    (cond, hoisted_c, cells_c, body, hoisted_b, cells_b)
+  in
+  let first = trace init in
+  let init, (cond, hoisted_c, cells_c, body, hoisted_b, cells_b) =
+    let _, _, _, body, _, _ = first in
+    let promoted = promote_weak_init init body in
+    if List.for_all2 ( == ) promoted init then (init, first)
+    else (promoted, trace promoted)
+  in
   let cells = union_cells cells_c cells_b in
   if cells <> [] then begin
     let n = List.length init in
@@ -113,7 +174,7 @@ let rec while_loop (cond_fun : value list -> value)
       carry
     in
     let outs =
-      while_loop
+      while_loop_keyed ?cond_key
         (fun args -> cond_fun (enter args))
         (fun args ->
           let next = body_fun (enter args) in
@@ -145,15 +206,97 @@ let rec while_loop (cond_fun : value list -> value)
     in
     let cond', cond_consts = binders_first cond hoisted_c in
     let body', body_consts = binders_first body hoisted_b in
-    Core.bind
-      (While
-         {
-           cond_nconsts = List.length cond_consts;
-           body_nconsts = List.length body_consts;
-           cond = cond';
-           body = body';
-         })
-      (cond_consts @ body_consts @ init)
+    let n_body_consts = List.length body_consts in
+    let carry_binders =
+      List.filteri (fun i _ -> i >= n_body_consts) body'.jaxpr.in_binders
+    in
+    let forwarded = body_forwarded body' carry_binders in
+    let cond_pruned, cond_used =
+      Jaxpr.dce_closed cond' (List.map (fun _ -> true) cond'.jaxpr.outs)
+    in
+    let n_cond_consts = List.length cond_consts in
+    let cond_carry_used =
+      List.filteri (fun i _ -> i >= n_cond_consts) cond_used
+    in
+    let move =
+      List.map2 (fun f used -> f && not used) forwarded cond_carry_used
+    in
+    if not (List.exists Fun.id move) then
+      Core.bind
+        (While
+           {
+             cond_nconsts = List.length cond_consts;
+             body_nconsts = n_body_consts;
+             cond = cond';
+             body = body';
+           })
+        (cond_consts @ body_consts @ init)
+    else
+      let pick keep l =
+        List.concat (List.map2 (fun k v -> if k then [ v ] else []) keep l)
+      in
+      let stay = List.map not move in
+      let cond_binder_keep = List.init n_cond_consts (fun _ -> true) @ stay in
+      let cond_final =
+        let build () =
+          {
+            cond_pruned with
+            jid = Core.fresh_id ();
+            jaxpr =
+              {
+                cond_pruned.jaxpr with
+                in_binders = pick cond_binder_keep cond'.jaxpr.in_binders;
+              };
+          }
+        in
+        if cond_key = None then build ()
+        else
+          let k = (cond.jid, move) in
+          match Hashtbl.find_opt shared_final_conds k with
+          | Some hit -> hit
+          | None ->
+              let built = build () in
+              Hashtbl.replace shared_final_conds k built;
+              built
+      in
+      let consts_part =
+        List.filteri (fun i _ -> i < n_body_consts) body'.jaxpr.in_binders
+      in
+      let body_final =
+        {
+          body' with
+          jid = Core.fresh_id ();
+          jaxpr =
+            {
+              body'.jaxpr with
+              in_binders =
+                pick move carry_binders @ consts_part @ pick stay carry_binders;
+              outs = pick stay body'.jaxpr.outs;
+            };
+        }
+      in
+      let moved = pick move init in
+      let outs =
+        Core.bind
+          (While
+             {
+               cond_nconsts = n_cond_consts;
+               body_nconsts = List.length moved + n_body_consts;
+               cond = cond_final;
+               body = body_final;
+             })
+          (cond_consts @ moved @ body_consts @ pick stay init)
+      in
+      let rec merge flags outs init =
+        match (flags, outs, init) with
+        | [], _, _ -> []
+        | true :: fs, _, v :: tl -> v :: merge fs outs tl
+        | false :: fs, o :: os, _ :: tl -> o :: merge fs os tl
+        | _ -> failwith "while_loop: merge"
+      in
+      merge move outs init
+
+let while_loop cond_fun body_fun init = while_loop_keyed cond_fun body_fun init
 
 let logaddexp a b =
   let m = Float.max a b in

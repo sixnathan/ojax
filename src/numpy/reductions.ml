@@ -24,7 +24,7 @@ let convert v dt =
   if dtype v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
 
 let reshape v sh = bind1 (T.Reshape sh) [ v ]
-let ravel v = reshape v [| size v |]
+let ravel v = if ndim v = 1 then v else reshape v [| size v |]
 let broadcast_to = Jnp_util.broadcast_to
 
 let is_inexact = function

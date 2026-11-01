@@ -78,6 +78,9 @@ let typecheck_jaxpr (jx : jaxpr) : unit =
     jx.eqns;
   List.iter (fun a -> ignore (atom_aval names env a)) jx.outs
 
+let in_eqn_eval = ref false
+let eval_transparent = ref false
+
 let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
   let env : (int, value) Hashtbl.t = Hashtbl.create 16 in
   let read = function
@@ -90,15 +93,25 @@ let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
   List.iter
     (fun (e : eqn) ->
       let in_vals = List.map read e.inputs in
+      let prev = !in_eqn_eval in
+      if not !eval_transparent then in_eqn_eval := true;
       let outs =
-        match (e.prim, e.outs) with
-        | Convert_element_type _, [ v ] when v.vaval.weak_type ->
-            let saved = !Core.weak_convert in
-            Core.weak_convert := true;
-            Fun.protect
-              ~finally:(fun () -> Core.weak_convert := saved)
-              (fun () -> Core.bind e.prim in_vals)
-        | _ -> Core.bind e.prim in_vals
+        Fun.protect
+          ~finally:(fun () -> in_eqn_eval := prev)
+          (fun () ->
+            match (e.prim, e.outs) with
+            | Convert_element_type _, [ v ] when v.vaval.weak_type ->
+                let saved = !Core.weak_convert in
+                Core.weak_convert := true;
+                Fun.protect
+                  ~finally:(fun () -> Core.weak_convert := saved)
+                  (fun () ->
+                    List.map
+                      (function
+                        | Concrete nd -> Concrete (Ndarray.as_weak nd)
+                        | out -> out)
+                      (Core.bind e.prim in_vals))
+            | _ -> Core.bind e.prim in_vals)
       in
       List.iter2 write e.outs outs)
     jx.eqns;

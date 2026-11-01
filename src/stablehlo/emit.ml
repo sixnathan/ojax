@@ -89,6 +89,16 @@ let unique_symbol base =
   in
   probe base
 
+let lowered_symbols : (string, string) Hashtbl.t = Hashtbl.create 8
+
+let lowered_symbol key base =
+  match Hashtbl.find_opt lowered_symbols key with
+  | Some fname -> (fname, false)
+  | None ->
+      let fname = unique_symbol base in
+      Hashtbl.replace lowered_symbols key fname;
+      (fname, true)
+
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
 let while_depth = ref 0
 let call_symbol_key jid = if !while_depth > 0 then jid lxor (1 lsl 61) else jid
@@ -1028,73 +1038,82 @@ let emit_argminmax ctx (eqn : eqn) in_ids ~is_max ~axis ~index_dtype =
   let inty = Ir.tensor_type_of_aval in_aval in
   let out = sole eqn.outs in
   let outty = Ir.tensor_type_of_aval out.vaval in
-  let fname = unique_symbol (if is_max then "argmax" else "argmin") in
+  let base = if is_max then "argmax" else "argmin" in
+  let fname, fresh =
+    lowered_symbol
+      (Printf.sprintf "%s %d %s %s" base axis
+         (Dtype.short_name index_dtype)
+         inty)
+      base
+  in
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) inty outty);
-  let vscalar = Ir.tensor_type dt [||] in
-  let iscalar = Ir.tensor_type index_dtype [||] in
-  let iota_ty = Ir.tensor_type index_dtype in_aval.shape in
-  let vout = Ir.tensor_type dt out.vaval.shape in
-  let bty = Ir.tensor_type Dtype.Bool [||] in
-  let dir = if is_max then "GT" else "LT" in
-  let ct = compare_type_of dt false in
-  let ict = compare_type_of index_dtype false in
-  let init_v = if is_max then reduce_maxid dt else reduce_minid dt in
-  let init_i = Ir.dense (zero_dense index_dtype) in
-  let b = ctx.extras in
-  Buffer.add_string b
-    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname inty
-       outty);
-  Buffer.add_string b
-    (Printf.sprintf "    %%1 = stablehlo.iota dim = %d : %s\n" axis iota_ty);
-  Buffer.add_string b
-    (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" init_v vscalar);
-  Buffer.add_string b
-    (Printf.sprintf "    %%3 = stablehlo.constant %s : %s\n" init_i iscalar);
-  Buffer.add_string b
-    (Printf.sprintf
-       "    %%4:2 = stablehlo.reduce(%%0 init: %%2), (%%1 init: %%3) across \
-        dimensions = [%d] : (%s, %s, %s, %s) -> (%s, %s)\n"
-       axis inty iota_ty vscalar iscalar vout outty);
-  Buffer.add_string b
-    (Printf.sprintf "     reducer(%%5: %s, %%6: %s) (%%7: %s, %%8: %s)  {\n"
-       vscalar vscalar iscalar iscalar);
-  Buffer.add_string b
-    (Printf.sprintf
-       "      %%9 = stablehlo.compare %s, %%5, %%6, %s : (%s, %s) -> %s\n" dir
-       ct vscalar vscalar bty);
-  Buffer.add_string b
-    (Printf.sprintf
-       "      %%10 = stablehlo.compare NE, %%5, %%5, %s : (%s, %s) -> %s\n" ct
-       vscalar vscalar bty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%11 = stablehlo.or %%9, %%10 : %s\n" bty);
-  Buffer.add_string b
-    (Printf.sprintf
-       "      %%12 = stablehlo.compare EQ, %%5, %%6, %s : (%s, %s) -> %s\n" ct
-       vscalar vscalar bty);
-  Buffer.add_string b
-    (Printf.sprintf
-       "      %%13 = stablehlo.compare LT, %%7, %%8, %s : (%s, %s) -> %s\n" ict
-       iscalar iscalar bty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%14 = stablehlo.and %%12, %%13 : %s\n" bty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%15 = stablehlo.or %%11, %%14 : %s\n" bty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%16 = stablehlo.select %%11, %%5, %%6 : %s, %s\n"
-       bty vscalar);
-  Buffer.add_string b
-    (Printf.sprintf "      %%17 = stablehlo.select %%15, %%7, %%8 : %s, %s\n"
-       bty iscalar);
-  Buffer.add_string b
-    (Printf.sprintf "      stablehlo.return %%16, %%17 : %s, %s\n" vscalar
-       iscalar);
-  Buffer.add_string b "    }\n";
-  Buffer.add_string b (Printf.sprintf "    return %%4#1 : %s\n" outty);
-  Buffer.add_string b "  }\n"
+  if fresh then begin
+    let vscalar = Ir.tensor_type dt [||] in
+    let iscalar = Ir.tensor_type index_dtype [||] in
+    let iota_ty = Ir.tensor_type index_dtype in_aval.shape in
+    let vout = Ir.tensor_type dt out.vaval.shape in
+    let bty = Ir.tensor_type Dtype.Bool [||] in
+    let dir = if is_max then "GT" else "LT" in
+    let ct = compare_type_of dt false in
+    let ict = compare_type_of index_dtype false in
+    let init_v = if is_max then reduce_maxid dt else reduce_minid dt in
+    let init_i = Ir.dense (zero_dense index_dtype) in
+    let b = ctx.extras in
+    Buffer.add_string b
+      (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname inty
+         outty);
+    Buffer.add_string b
+      (Printf.sprintf "    %%1 = stablehlo.iota dim = %d : %s\n" axis iota_ty);
+    Buffer.add_string b
+      (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" init_v vscalar);
+    Buffer.add_string b
+      (Printf.sprintf "    %%3 = stablehlo.constant %s : %s\n" init_i iscalar);
+    Buffer.add_string b
+      (Printf.sprintf
+         "    %%4:2 = stablehlo.reduce(%%0 init: %%2), (%%1 init: %%3) across \
+          dimensions = [%d] : (%s, %s, %s, %s) -> (%s, %s)\n"
+         axis inty iota_ty vscalar iscalar vout outty);
+    Buffer.add_string b
+      (Printf.sprintf "     reducer(%%5: %s, %%6: %s) (%%7: %s, %%8: %s)  {\n"
+         vscalar vscalar iscalar iscalar);
+    Buffer.add_string b
+      (Printf.sprintf
+         "      %%9 = stablehlo.compare %s, %%5, %%6, %s : (%s, %s) -> %s\n" dir
+         ct vscalar vscalar bty);
+    Buffer.add_string b
+      (Printf.sprintf
+         "      %%10 = stablehlo.compare NE, %%5, %%5, %s : (%s, %s) -> %s\n" ct
+         vscalar vscalar bty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%11 = stablehlo.or %%9, %%10 : %s\n" bty);
+    Buffer.add_string b
+      (Printf.sprintf
+         "      %%12 = stablehlo.compare EQ, %%5, %%6, %s : (%s, %s) -> %s\n" ct
+         vscalar vscalar bty);
+    Buffer.add_string b
+      (Printf.sprintf
+         "      %%13 = stablehlo.compare LT, %%7, %%8, %s : (%s, %s) -> %s\n"
+         ict iscalar iscalar bty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%14 = stablehlo.and %%12, %%13 : %s\n" bty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%15 = stablehlo.or %%11, %%14 : %s\n" bty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%16 = stablehlo.select %%11, %%5, %%6 : %s, %s\n"
+         bty vscalar);
+    Buffer.add_string b
+      (Printf.sprintf "      %%17 = stablehlo.select %%15, %%7, %%8 : %s, %s\n"
+         bty iscalar);
+    Buffer.add_string b
+      (Printf.sprintf "      stablehlo.return %%16, %%17 : %s, %s\n" vscalar
+         iscalar);
+    Buffer.add_string b "    }\n";
+    Buffer.add_string b (Printf.sprintf "    return %%4#1 : %s\n" outty);
+    Buffer.add_string b "  }\n"
+  end
 
 let cum_window_attrs shape axis reverse =
   let ndim = Array.length shape in
@@ -1115,10 +1134,13 @@ let cum_window_attrs shape axis reverse =
          shape)
   in
   let pad_str =
-    "dense<["
-    ^ (List.map (fun (l, h) -> Printf.sprintf "[%d, %d]" l h) pad
-      |> String.concat ", ")
-    ^ Printf.sprintf "]> : tensor<%dx2xi64>" ndim
+    if List.for_all (fun (l, h) -> l = 0 && h = 0) pad then
+      Printf.sprintf "dense<0> : tensor<%dx2xi64>" ndim
+    else
+      "dense<["
+      ^ (List.map (fun (l, h) -> Printf.sprintf "[%d, %d]" l h) pad
+        |> String.concat ", ")
+      ^ Printf.sprintf "]> : tensor<%dx2xi64>" ndim
   in
   Printf.sprintf
     "base_dilations = %s, padding = %s, window_dilations = %s, \
@@ -3083,11 +3105,21 @@ and widen_operands ctx (eqn : eqn) (in_ids : int list) =
       ({ eqn with inputs = List.map fst widened }, List.map snd widened)
 
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
-  let eqn, in_ids = widen_operands ctx eqn in_ids in
-  try emit_eqn_unchecked ctx eqn in_ids
-  with Invalid_argument msg when msg = "Stablehlo.Emit: arity" ->
-    failwith
-      ("Stablehlo.Emit: arity in " ^ Pretty_printer.primitive_name eqn.prim)
+  match (eqn.prim, eqn.inputs) with
+  | Pow, [ l; r ] when (atom_aval l).dtype <> (atom_aval r).dtype ->
+      emit_inlined ctx eqn in_ids (function
+        | [ x; y ] ->
+            let dt = (Core.get_aval x).dtype in
+            let y = Core.bind1 (Convert_element_type dt) [ y ] in
+            [ Core.bind1 Pow [ x; y ] ]
+        | _ -> invalid_arg "Stablehlo.Emit: pow arity")
+  | _ -> (
+      let eqn, in_ids = widen_operands ctx eqn in_ids in
+      try emit_eqn_unchecked ctx eqn in_ids
+      with Invalid_argument msg when msg = "Stablehlo.Emit: arity" ->
+        failwith
+          ("Stablehlo.Emit: arity in " ^ Pretty_printer.primitive_name eqn.prim)
+      )
 
 and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   match eqn.prim with
@@ -3216,21 +3248,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Min -> emit_min_max ctx eqn in_ids ~op:"minimum" ~direction:"LT"
   | Mul -> emit_stablehlo_binary ctx eqn in_ids "multiply"
   | Or -> emit_stablehlo_binary ctx eqn in_ids "or"
-  | Pow
-    when match eqn.inputs with
-         | [ l; r ] -> (atom_aval l).dtype <> (atom_aval r).dtype
-         | _ -> false ->
-      emit_inlined ctx eqn in_ids (function
-        | [ x; y ] ->
-            [
-              Core.bind1 Pow
-                [
-                  x;
-                  Core.bind1 (Convert_element_type (Core.get_aval x).dtype)
-                    [ y ];
-                ];
-            ]
-        | _ -> invalid_arg "Stablehlo.Emit: pow arity")
   | Pow -> emit_stablehlo_binary ctx eqn in_ids "power"
   | Rem -> emit_stablehlo_binary ctx eqn in_ids "remainder"
   | Shift_left -> emit_stablehlo_binary ctx eqn in_ids "shift_left"
@@ -4082,6 +4099,7 @@ let emitting () = !emission_depth > 0
 
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
+  Hashtbl.reset lowered_symbols;
   Hashtbl.reset cum_symbols;
   Hashtbl.reset call_symbols;
   while_depth := 0;

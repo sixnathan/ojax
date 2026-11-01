@@ -1543,7 +1543,9 @@ let batched_jvp_rule id axis_size vals bdims primal jvp =
       Hashtbl.replace jvp_batch_cache key r;
       r
 
-let batch_closed_axes (c : closed_jaxpr) axis_size in_dims out_dims =
+let batch_axes_cache = Hashtbl.create 64
+
+let batch_closed_axes_uncached (c : closed_jaxpr) axis_size in_dims out_dims =
   let binder_avals =
     List.filteri
       (fun i _ -> i >= List.length c.consts)
@@ -1576,6 +1578,22 @@ let batch_closed_axes (c : closed_jaxpr) axis_size in_dims out_dims =
               | _, Some d -> move_batch_axis axis_size b d v
               | Some _, None -> failwith "batching: while output mismatch")
             outs out_dims))
+
+let batch_closed_axes (c : closed_jaxpr) axis_size in_dims out_dims =
+  let key =
+    ( c.jid,
+      axis_size,
+      in_dims,
+      out_dims,
+      Config.x64_enabled (),
+      !Jaxpr.in_eqn_eval )
+  in
+  match Hashtbl.find_opt batch_axes_cache key with
+  | Some hit -> hit
+  | None ->
+      let built = batch_closed_axes_uncached c axis_size in_dims out_dims in
+      Hashtbl.replace batch_axes_cache key built;
+      built
 
 let batch_flags (c : closed_jaxpr) axis_size flags =
   let binder_avals =
@@ -1726,13 +1744,15 @@ let ffi_batch axis_size (c : ffi_call) vals bdims =
            | Some m -> "'" ^ m ^ "'"))
 
 let batch_call_cache :
-    ( int * int * int option list * bool,
+    ( int * int * int option list * bool * bool,
       closed_jaxpr * int option list )
     Hashtbl.t =
   Hashtbl.create 64
 
 let batch_jaxpr (c : closed_jaxpr) axis_size vals bdims =
-  let key = (c.jid, axis_size, bdims, Config.x64_enabled ()) in
+  let key =
+    (c.jid, axis_size, bdims, Config.x64_enabled (), !Jaxpr.in_eqn_eval)
+  in
   match Hashtbl.find_opt batch_call_cache key with
   | Some r -> r
   | None ->
@@ -1748,7 +1768,13 @@ let batch_jaxpr (c : closed_jaxpr) axis_size vals bdims =
                       | None -> v)
                     inner bdims
                 in
-                let outs = Jaxpr.eval_closed_jaxpr c ins in
+                let prev = !Jaxpr.eval_transparent in
+                Jaxpr.eval_transparent := Core.is_inline_call c.jid;
+                let outs =
+                  Fun.protect
+                    ~finally:(fun () -> Jaxpr.eval_transparent := prev)
+                    (fun () -> Jaxpr.eval_closed_jaxpr c ins)
+                in
                 let pairs =
                   List.map
                     (fun o -> to_batch_info main (Core.full_raise main o))

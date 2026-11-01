@@ -44,6 +44,13 @@ val scan :
 val while_out_avals : closed_jaxpr -> aval list
 val while_impl : closed_jaxpr -> closed_jaxpr -> value list -> value list
 
+val while_loop_keyed :
+  ?cond_key:string ->
+  (Types.value list -> Types.value) ->
+  (Types.value list -> Types.value list) ->
+  Types.value list ->
+  Types.value list
+
 val while_loop :
   (value list -> value) ->
   (value list -> value list) ->

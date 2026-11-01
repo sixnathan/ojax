@@ -630,6 +630,11 @@ let clip_values ?min ?max arr =
       | [] -> invalid_arg "clip: arity")
     (arr :: present)
 
+let clip_strong_max maximum_value arr =
+  Jnp_util.jit1 "clip" ~key:"falsetrue"
+    (function [ arr; hi ] -> minimum hi arr | _ -> invalid_arg "clip: arity")
+    [ arr; maximum_value ]
+
 let clip ?min ?max arr =
   (match dtype arr with
   | D.Complex64 | D.Complex128 ->

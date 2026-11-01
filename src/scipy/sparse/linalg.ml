@@ -228,40 +228,61 @@ let gram_schmidt q_mat x xnorm ~max_iterations =
       | [ _; q; r; _ ] -> (q, r)
       | _ -> assert false)
 
-let dyn_col mat k =
-  let rows = (shape mat).(0) in
-  let zero = py_int 0 in
-  let sl =
-    C.bind1 (T.Dynamic_slice { slice_sizes = [| rows; 1 |] }) [ mat; zero; k ]
+let norm_index i n =
+  let i32 = LN.astype i D.I32 in
+  let neg = U.less i32 (T.Concrete (Nd.of_floats D.I32 [||] [| 0.0 |])) in
+  let shifted =
+    U.add i32 (T.Concrete (Nd.of_floats D.I32 [||] [| float_of_int n |]))
   in
-  LN.reshape sl [| rows |]
+  L.select neg shifted i32
+
+let scatter_at mat k update ~window ~inserted =
+  let idx = L.broadcast_in_dim (LN.astype k D.I32) [| 1 |] [||] in
+  L.scatter ~mode:Lax_config.Fill_or_drop ~unique_indices:true mat idx update
+    {
+      T.update_window_dims = window;
+      inserted_window_dims = [| inserted |];
+      scatter_dims_to_operand_dims = [| inserted |];
+      s_operand_batching_dims = [||];
+      s_scatter_indices_batching_dims = [||];
+    }
+
+let i32_lit v = T.Concrete (Nd.of_floats D.I32 [||] [| float_of_int v |])
+
+let dyn_col mat k =
+  let rows = (shape mat).(0) and cols = (shape mat).(1) in
+  let k = norm_index k cols in
+  let sl =
+    C.bind1
+      (T.Dynamic_slice { slice_sizes = [| rows; 1 |] })
+      [ mat; i32_lit 0; k ]
+  in
+  L.squeeze sl [| 1 |]
 
 let set_dyn_col mat k col =
-  let rows = (shape mat).(0) in
-  C.bind1 T.Dynamic_update_slice
-    [ mat; LN.reshape col [| rows; 1 |]; py_int 0; k ]
+  scatter_at mat (norm_index k (shape mat).(1)) col ~window:[| 0 |] ~inserted:1
 
 let dyn_row mat k =
-  let cols = (shape mat).(1) in
+  let rows = (shape mat).(0) and cols = (shape mat).(1) in
+  let k = norm_index k rows in
   let sl =
     C.bind1
       (T.Dynamic_slice { slice_sizes = [| 1; cols |] })
-      [ mat; k; py_int 0 ]
+      [ mat; k; i32_lit 0 ]
   in
-  LN.reshape sl [| cols |]
+  L.squeeze sl [| 0 |]
 
 let set_dyn_row mat k row =
-  let cols = (shape mat).(1) in
-  C.bind1 T.Dynamic_update_slice
-    [ mat; LN.reshape row [| 1; cols |]; k; py_int 0 ]
+  scatter_at mat (norm_index k (shape mat).(0)) row ~window:[| 0 |] ~inserted:0
 
 let dyn_elem vec i =
-  LN.reshape
+  let i = norm_index i (shape vec).(0) in
+  L.squeeze
     (C.bind1 (T.Dynamic_slice { slice_sizes = [| 1 |] }) [ vec; i ])
-    [||]
+    [| 0 |]
 
 let set_dyn_elem vec i x =
-  C.bind1 T.Dynamic_update_slice [ vec; LN.reshape x [| 1 |]; i ]
+  scatter_at vec (norm_index i (shape vec).(0)) x ~window:[||] ~inserted:0
 
 let kth_arnoldi k a_op m_op vmat hmat =
   let dt = dtype vmat in
@@ -425,20 +446,30 @@ let gmres_solve a_op m_op b x0 ~atol ~ptol ~restart ~maxiter gmres_func =
   let residual = m_op (sub_ b ax0) in
   let unit_residual, residual_norm = safe_normalize residual in
   let cond = function
-    | [ _; k; _; residual_norm ] ->
+    | [ _; atol; _; _; k; _; residual_norm ] ->
         U.logical_and (U.less k (py_int maxiter)) (U.greater residual_norm atol)
     | _ -> assert false
   in
   let body = function
-    | [ x; k; unit_residual; residual_norm ] ->
+    | [ b_c; atol_c; ptol_c; x; k; unit_residual; residual_norm ] ->
         let x, unit_residual, residual_norm =
-          gmres_func a_op m_op b x unit_residual residual_norm ptol restart
+          gmres_func a_op m_op b_c x unit_residual residual_norm ptol_c restart
         in
-        [ x; U.add k (py_int 1); unit_residual; residual_norm ]
+        [
+          b_c;
+          atol_c;
+          ptol_c;
+          x;
+          U.add k (py_int 1);
+          unit_residual;
+          residual_norm;
+        ]
     | _ -> assert false
   in
-  List.hd
-    (L.while_loop cond body [ x0; py_int 0; unit_residual; residual_norm ])
+  List.nth
+    (L.while_loop cond body
+       [ b; atol; ptol; x0; py_int 0; unit_residual; residual_norm ])
+    3
 
 let solve_op matvec solver = fun _ bs -> [ solver matvec (List.hd bs) ]
 

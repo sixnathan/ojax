@@ -1434,8 +1434,8 @@ let dtype_sweep_run op a =
   | "sw_lcm" -> one (fun v -> NL.lcm v (L.rev v [| 0 |]))
   | "sw_floor_div_self" ->
       one (fun v ->
-          let v = as_float v in
-          UF.divide v (UF.add v (like v 2.0)))
+          let y = UF.add v (Ojax.Numpy.Jnp_util.py_float 2.0) in
+          UF.divide v y)
   | "sw_linspace_end" -> one (fun v -> AC.linspace_v ~num:4 (row v 0) (row v 1))
   | "sw_geomspace" ->
       one (fun v ->
@@ -1548,7 +1548,7 @@ let special_batch_run op params a =
   | "sx_exp1" -> Some [ SP.exp1 (scaled (UF.absolute (a ())) "scale") ]
   | "sx_expn" ->
       let x = scaled (UF.absolute (a ())) "scale" in
-      Some [ SP.expn (L.full [||] (float_p "n") (dt_of x)) x ]
+      Some [ SP.expn (Ojax.Numpy.Jnp_util.py_float (float_p "n")) x ]
   | "sx_expn_grad" ->
       let x = scaled (UF.absolute (a ())) "scale" in
       let x = UF.add x (like x 0.1) in

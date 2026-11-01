@@ -209,7 +209,8 @@ let tile x reps = b1 (Tile reps) [ x ]
 
 let squeeze x dims =
   let n = ndim x in
-  b1 (Squeeze (Array.map (canon_axis n) dims)) [ x ]
+  if Array.length dims = 0 then x
+  else b1 (Squeeze (Array.map (canon_axis n) dims)) [ x ]
 
 let expand_dims x dims =
   let n = ndim x + Array.length dims in

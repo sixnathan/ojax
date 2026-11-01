@@ -606,7 +606,7 @@ let squeeze ?axis v =
         Array.sort compare d;
         d
   in
-  bind1 (T.Squeeze dims) [ v ]
+  if Array.length dims = 0 then v else bind1 (T.Squeeze dims) [ v ]
 
 let swapaxes axis1 axis2 v =
   let n = ndim v in
@@ -1525,9 +1525,12 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
   match dxd with
   | None ->
       let s = bind1 (T.Reduce_sum [| nd - 1 |]) [ y ] in
-      let y0 = last_index y 0 and yl = last_index y (l - 1) in
-      let ends = mul_scalar 0.5 (add2 y0 yl) in
-      mul_scalar dx (sub2 s ends)
+      let y0 = last_index y 0 in
+      let yl = last_index y (l - 1) in
+      let total = add2 y0 yl in
+      let ends = bind1 T.Mul [ scalar (dtype total) 0.5; total ] in
+      let out = sub2 s ends in
+      bind1 T.Mul [ scalar (dtype out) dx; out ]
   | Some dxa ->
       let y1 = slice_axis y (nd - 1) 1 l in
       let y0 = slice_axis y (nd - 1) 0 (l - 1) in

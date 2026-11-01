@@ -220,8 +220,10 @@ let gelu ?(approximate = true) x =
   end
   else begin
     let sh = scalar_like x (sqrt 0.5) in
-    let e = bind1 T.Erfc [ UF.multiply (UF.negative x) sh ] in
-    UF.multiply (UF.multiply (scalar_like x 0.5) x) e
+    let half_x = UF.multiply (scalar_like x 0.5) x in
+    let negated = UF.negative x in
+    let e = bind1 T.Erfc [ UF.multiply negated sh ] in
+    UF.multiply half_x e
   end
 
 let glu ?(axis = -1) x =

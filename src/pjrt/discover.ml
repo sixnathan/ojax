@@ -7,6 +7,7 @@ let pinned_sha256 =
   [
     "a30b08a486bf4e80c64940ef70035ca2339f4a9badfc07cae2aab9901ed9d979";
     "5c4ceb9f9b96562fe264ab55f6caa7a5e686a060fd53c55b0c39093100aca130";
+    "6852a300d723a8cb93e40fac89a87c1ab6cdc6b03a1ea9fd7350721c115dfe08";
   ]
 
 let pinned_gpu_sha256 =

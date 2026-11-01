@@ -1308,7 +1308,8 @@ let gather_dnums_attr (d : gather_dims) index_vector_dim =
         dim_field "operand_batching_dims" d.g_operand_batching_dims;
         dim_field "start_indices_batching_dims" d.g_start_indices_batching_dims;
         dim_field "start_index_map" d.start_index_map;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.gather<" ^ String.concat ", " parts ^ ">"
@@ -1323,7 +1324,8 @@ let scatter_dnums_attr (d : scatter_dims) index_vector_dim =
         dim_field "scatter_indices_batching_dims"
           d.s_scatter_indices_batching_dims;
         dim_field "scatter_dims_to_operand_dims" d.scatter_dims_to_operand_dims;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.scatter<" ^ String.concat ", " parts ^ ">"

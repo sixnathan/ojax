@@ -124,7 +124,12 @@ let normalised_indices ~extent indices =
   let negative = U.less indices (L.full [||] 0.0 dt) in
   let shifted = U.add indices (L.full [||] (float_of_int extent) dt) in
   let normalised = Core.bind1 Select_n [ negative; indices; shifted ] in
-  L.broadcast_in_dim normalised [| size_of indices; 1 |] [| 0 |]
+  let narrow =
+    if dt = Dtype.I64 then
+      Core.bind1 (Convert_element_type Dtype.I32) [ normalised ]
+    else normalised
+  in
+  L.broadcast_in_dim narrow [| size_of indices; 1 |] [| 0 |]
 
 let bincount_length length weights x =
   let wdt = dtype_of weights in
@@ -233,8 +238,7 @@ let advanced_take x indices =
     [ x; start ]
 
 let set_tail base updates =
-  let dt = default_int () in
-  let start = L.full [| 1 |] 1.0 dt in
+  let start = L.full [| 1 |] 1.0 Dtype.I32 in
   L.scatter ~unique_indices:true base start updates
     {
       update_window_dims = [| 0 |];

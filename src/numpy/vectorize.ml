@@ -141,9 +141,8 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
          dyn_arr)
   in
   let broadcast_shape = LN.broadcast_shapes_n batch_shapes in
-  let bsize = Array.fold_left ( * ) 1 broadcast_shape in
   let traced =
-    Array.exists (function T.Tracer _ -> true | _ -> false) dyn_arr
+    Array.exists (function T.Concrete _ -> false | _ -> true) dyn_arr
   in
   if traced then begin
     let nb = Array.length broadcast_shape in
@@ -186,6 +185,7 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
     | dims -> LN.expand_dims result (Array.of_list dims)
   end
   else
+    let bsize = Array.fold_left ( * ) 1 broadcast_shape in
     let concretes = Array.map concrete dyn_arr in
     let fbuf = ref [||] in
     let cbuf = ref [||] in

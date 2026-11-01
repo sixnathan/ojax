@@ -73,10 +73,13 @@ val cumlogsumexp : ?axis:int -> ?reverse:bool -> value -> value
 val custom_linear_solve :
   ?symmetric:bool ->
   ?transpose_solve:((value list -> value list) -> value list -> value list) ->
+  ?linear_matvec:(value list -> value list) ->
   (value list -> value list) ->
   value list ->
   ((value list -> value list) -> value list -> value list) ->
   value list
+
+val solve_with_lu : value -> value -> value
 
 module Linalg = Linalg
 module Special = Special

@@ -37,6 +37,11 @@ let lgamma x = Core.bind1 Lgamma [ x ]
 let digamma x = Core.bind1 Digamma [ x ]
 let any pred = L.reduce_or pred (Array.init (Array.length (shape pred)) Fun.id)
 let int32 x = Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int x |])
+
+let default_int x =
+  Concrete
+    (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| float_of_int x |])
+
 let finfo_eps = Lax.Special.finfo_eps
 let finfo_max = Lax.Special.finfo_max
 let finfo_tiny = Lax.Special.finfo_tiny
@@ -831,7 +836,8 @@ let scatter_index i n =
   let shifted = Core.bind1 Add [ i; scalar_like_index i (float_of_int n) ] in
   let picked = Core.bind1 Select_n [ negative; i; shifted ] in
   let strong =
-    if is_weak i then Core.bind1 (Convert_element_type (dtype i)) [ picked ]
+    if is_weak i || dtype i <> Dtype.I32 then
+      Core.bind1 (Convert_element_type Dtype.I32) [ picked ]
     else picked
   in
   L.broadcast_in_dim strong [| 1 |] [||]
@@ -860,6 +866,7 @@ let lu_pivots_body_inner i permutation swaps =
                s_operand_batching_dims = [||];
                s_scatter_indices_batching_dims = [||];
                s_sorted_unique = true;
+               s_clip = false;
              };
            unique_indices = true;
          })
@@ -896,7 +903,9 @@ let lu_pivots_to_permutation ~permutation_size = function
           | _ -> invalid_arg "Native_lowering: pivots state"
         in
         [
-          List.hd (L.fori_loop (int32 0) (int32 k) body [ permutation; swaps ]);
+          List.hd
+            (L.fori_loop (default_int 0) (default_int k) body
+               [ permutation; swaps ]);
         ]
   | _ -> invalid_arg "Native_lowering: pivots arity"
 

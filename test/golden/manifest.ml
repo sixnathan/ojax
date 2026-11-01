@@ -419,6 +419,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
               start_index_map = ia (member "start_index_map");
               g_operand_batching_dims = opt "operand_batching_dims";
               g_start_indices_batching_dims = opt "start_indices_batching_dims";
+              g_sorted_unique = false;
             };
           slice_sizes = ia (member "slice_sizes");
         }
@@ -434,6 +435,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
           s_operand_batching_dims = opt "operand_batching_dims";
           s_scatter_indices_batching_dims = opt "scatter_indices_batching_dims";
           s_sorted_unique = false;
+          s_clip = false;
         }
       in
       let unique =
@@ -494,6 +496,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
             };
           feature_group_count = U.to_int (member "feature_group_count");
           batch_group_count = U.to_int (member "batch_group_count");
+          conv_precision = None;
         }
   | "reduce_window_sum" -> T.Reduce_window_sum (window_of params)
   | "reduce_window_max" -> T.Reduce_window_max (window_of params)

@@ -93,6 +93,7 @@ type gather_dimension_numbers = Types.gather_dims = {
   start_index_map : int array;
   g_operand_batching_dims : int array;
   g_start_indices_batching_dims : int array;
+  g_sorted_unique : bool;
 }
 
 val gather_dimension_numbers :
@@ -111,6 +112,7 @@ type scatter_dimension_numbers = Types.scatter_dims = {
   s_operand_batching_dims : int array;
   s_scatter_indices_batching_dims : int array;
   s_sorted_unique : bool;
+  s_clip : bool;
 }
 
 val scatter_dimension_numbers :

@@ -104,6 +104,7 @@ let tail_add x y =
                 s_operand_batching_dims = [||];
                 s_scatter_indices_batching_dims = [||];
                 s_sorted_unique = false;
+                s_clip = false;
               };
           }))
     [ x; indices; y ]

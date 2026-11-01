@@ -78,6 +78,7 @@ let take ?axis ?mode ?fill_value a indices =
       start_index_map = [| axis_idx |];
       g_operand_batching_dims = [||];
       g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
     }
   in
   let gather_indices =
@@ -169,6 +170,7 @@ let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
       start_index_map = asc !start_index_map;
       g_operand_batching_dims = asc !op_batch;
       g_start_indices_batching_dims = asc !idx_batch;
+      g_sorted_unique = false;
     }
   in
   match mode with
@@ -203,6 +205,7 @@ let identity_scatter_dims r =
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 let put ?mode a ind v =
@@ -341,3 +344,75 @@ let take ?axis ?mode ?fill_value a0 a1 =
       match (opts, vals) with
       | [], [ a0; a1 ] -> take ?axis ?mode ?fill_value a0 a1
       | _ -> assert false)
+
+let is_weak v = (get_aval v).T.weak_type
+
+let weak_literal v x =
+  T.Concrete
+    (Ndarray.as_weak (Ndarray.of_floats (dtype v) [||] [| float_of_int x |]))
+
+let strong_index i =
+  if is_weak i then bind1 (T.Convert_element_type (dtype i)) [ i ] else i
+
+let select_negative i n =
+  let negative = bind1 T.Lt [ i; weak_literal i 0 ] in
+  let shifted = bind1 T.Add [ i; weak_literal i n ] in
+  bind1 T.Select_n [ negative; i; shifted ]
+
+let dynamic_at x i =
+  let sh = shape x in
+  let negative = bind1 T.Lt [ i; weak_literal i 0 ] in
+  let shifted = bind1 T.Add [ strong_index i; weak_literal i sh.(0) ] in
+  let start = bind1 T.Select_n [ negative; i; shifted ] in
+  let sizes = Array.mapi (fun d s -> if d = 0 then 1 else s) sh in
+  let zeros =
+    List.init
+      (Array.length sh - 1)
+      (fun _ -> T.Concrete (Ndarray.of_floats (dtype i) [||] [| 0.0 |]))
+  in
+  bind1 (T.Squeeze [| 0 |])
+    [ bind1 (T.Dynamic_slice { slice_sizes = sizes }) (x :: start :: zeros) ]
+
+let dynamic_at2 x i j =
+  let sh = shape x in
+  let i = strong_index i and j = strong_index j in
+  let start_i = select_negative i sh.(0) in
+  let start_j = select_negative j sh.(1) in
+  let sizes = Array.mapi (fun d s -> if d < 2 then 1 else s) sh in
+  bind1
+    (T.Squeeze [| 0; 1 |])
+    [ bind1 (T.Dynamic_slice { slice_sizes = sizes }) [ x; start_i; start_j ] ]
+
+let set_at2 x i j value =
+  let sh = shape x in
+  let wi = select_negative i sh.(0) in
+  let wj = select_negative j sh.(1) in
+  let as_i32 v =
+    if is_weak v || dtype v <> D.I32 then
+      bind1 (T.Convert_element_type D.I32) [ v ]
+    else v
+  in
+  let wi = as_i32 wi in
+  let wj = as_i32 wj in
+  let lift v =
+    bind1 (T.Broadcast_in_dim { shape = [| 1 |]; dims = [||] }) [ v ]
+  in
+  let li = lift wi in
+  let lj = lift wj in
+  let index = bind1 (T.Concatenate 0) [ li; lj ] in
+  bind1
+    (T.Scatter
+       {
+         dimension_numbers =
+           {
+             T.update_window_dims = [||];
+             inserted_window_dims = [| 0; 1 |];
+             scatter_dims_to_operand_dims = [| 0; 1 |];
+             s_operand_batching_dims = [||];
+             s_scatter_indices_batching_dims = [||];
+             s_sorted_unique = true;
+             s_clip = false;
+           };
+         unique_indices = true;
+       })
+    [ x; index; value ]

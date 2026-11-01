@@ -118,6 +118,7 @@ let scatter_dims_1d =
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 let normalised_indices ~extent indices =
@@ -193,6 +194,7 @@ let at_update ?(axis = 0) build x idxs y =
       s_operand_batching_dims = [||];
       s_scatter_indices_batching_dims = [||];
       s_sorted_unique = false;
+      s_clip = false;
     }
   in
   let out = build x' indices y' dims in
@@ -303,6 +305,7 @@ let index_gather a idx =
              start_index_map = [| 0 |];
              g_operand_batching_dims = [||];
              g_start_indices_batching_dims = [||];
+             g_sorted_unique = false;
            };
          slice_sizes = Array.mapi (fun i d -> if i = 0 then 1 else d) sh;
        })
@@ -347,6 +350,7 @@ let fancy_take x indices =
              start_index_map = Array.init d Fun.id;
              g_operand_batching_dims = [||];
              g_start_indices_batching_dims = [||];
+             g_sorted_unique = false;
            };
          slice_sizes = Array.mapi (fun i e -> if i < d then 1 else e) sh;
        })
@@ -378,6 +382,7 @@ let at_leading_slice_set x start y =
       s_operand_batching_dims = [||];
       s_scatter_indices_batching_dims = [||];
       s_sorted_unique = true;
+      s_clip = false;
     }
 
 let unique_sorted_mask ar axis equal_nan =
@@ -935,6 +940,7 @@ let sum_at n data ids =
       s_operand_batching_dims = [||];
       s_scatter_indices_batching_dims = [||];
       s_sorted_unique = false;
+      s_clip = false;
     }
   in
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims
@@ -1357,6 +1363,7 @@ let choose ?(mode = "raise") a choices =
                  start_index_map = Array.init (r + 1) Fun.id;
                  g_operand_batching_dims = [||];
                  g_start_indices_batching_dims = [||];
+                 g_sorted_unique = false;
                };
              slice_sizes = Array.make (r + 1) 1;
            })
@@ -1986,6 +1993,7 @@ let polydiv ?(trim_leading_zeros = false) u v =
       s_operand_batching_dims = [||];
       s_scatter_indices_batching_dims = [||];
       s_sorted_unique = true;
+      s_clip = false;
     }
   in
   for k = 0 to lu - lv do

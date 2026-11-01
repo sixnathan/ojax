@@ -166,6 +166,7 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
                s_operand_batching_dims = [||];
                s_scatter_indices_batching_dims = [||];
                s_sorted_unique = true;
+               s_clip = false;
              };
            unique_indices = true;
          })

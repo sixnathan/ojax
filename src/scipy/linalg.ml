@@ -513,24 +513,7 @@ let block_diag arrs =
   in
   NL.concatenate ~axis:0 padded
 
-let toeplitz ?r c =
-  let c = NL.atleast_1d c in
-  let r = match r with None -> UF.conj c | Some r -> NL.atleast_1d r in
-  let m = (shape c).(0) and n = (shape r).(0) in
-  if m = 0 || n = 0 then
-    AC.zeros ~dtype:(Dtypes.promote_types (dtype c) (dtype r)) [| m; n |]
-  else begin
-    let r_tail =
-      if n = 1 then NL.reshape r [| 0 |]
-      else IDX.take_index r (UF.add (iota_idx (n - 1)) (i32_scalar 1))
-    in
-    let elems = NL.concatenate [ NL.flip c; r_tail ] in
-    let ii = NL.reshape (iota_idx m) [| m; 1 |] in
-    let jj = NL.reshape (iota_idx n) [| 1; n |] in
-    let idx = UF.add (UF.subtract (i32_scalar (m - 1)) ii) jj in
-    let flat = NL.reshape idx [| m * n |] in
-    NL.reshape (IDX.take_index elems flat) [| m; n |]
-  end
+let toeplitz = Linalg_special.toeplitz
 
 let hessenberg ?(calc_q = false) a =
   let a = to_inexact a in
@@ -543,21 +526,34 @@ let hessenberg ?(calc_q = false) a =
     let h = NL.triu ~k:(-1) a_out in
     if not calc_q then [ h ]
     else begin
-      let rows = UF.add (iota_idx (n - 1)) (i32_scalar 1) in
-      let cols = iota_idx (n - 1) in
+      let r = Array.length sh in
       let sub =
-        IDX.take_index ~axis:1 (IDX.take_index ~axis:0 a_out rows) cols
+        C.bind1
+          (T.Slice
+             {
+               start_indices =
+                 Array.init r (fun d -> if d = r - 2 then 1 else 0);
+               limit_indices =
+                 Array.mapi
+                   (fun d v -> if d = r - 1 then v - 1 else v)
+                   (shape a_out);
+               strides = None;
+             })
+          [ a_out ]
       in
       let q_inner = LL.householder_product sub taus in
       let dt = dtype a in
-      let top =
-        NL.concatenate ~axis:1
-          [ AC.ones ~dtype:dt [| 1; 1 |]; AC.zeros ~dtype:dt [| 1; n - 1 |] ]
+      let batch = Array.sub sh 0 (r - 2) in
+      let block_of a b = Array.append batch [| a; b |] in
+      let open Numpy.Extras in
+      let tl = AC.ones ~dtype:dt (block_of 1 1) in
+      let tr = AC.zeros ~dtype:dt (block_of 1 (n - 1)) in
+      let bl = AC.zeros ~dtype:dt (block_of (n - 1) 1) in
+      let q =
+        block
+          (Group [ Group [ Item tl; Item tr ]; Group [ Item bl; Item q_inner ] ])
       in
-      let bot =
-        NL.concatenate ~axis:1 [ AC.zeros ~dtype:dt [| n - 1; 1 |]; q_inner ]
-      in
-      [ h; NL.concatenate ~axis:0 [ top; bot ] ]
+      [ h; q ]
     end
   end
 
@@ -837,7 +833,9 @@ let polar_2d ~side ~method_ ?eps a =
         [ unitary; posdef ]
       else if m < n && side = "left" then
         let unitary, posdef, _, _ = Linalg_extras.qdwh ?eps (hconj a) in
-        [ hconj unitary; hconj posdef ]
+        let posdef = hconj posdef in
+        let unitary = hconj unitary in
+        [ unitary; posdef ]
       else
         invalid_arg
           "method='qdwh' only supports mxn matrices where m < n where \
@@ -887,6 +885,58 @@ let polar ?side ?method_ ?eps a0 =
       | [], [ a0 ] -> polar ?side ?method_ ?eps a0
       | _ -> assert false)
 
+let sqrtm_triu t =
+  Numpy.Jnp_util.jit1 "_sqrtm_triu"
+    (function
+      | [ t ] ->
+          let module L = Lax_api in
+          let diag = UF.sqrt (NL.diag t) in
+          let n = (shape diag).(0) in
+          let u0 = NL.diag diag in
+          let dt = dtype t in
+          let index v =
+            T.Concrete
+              (Ndarray.as_weak (Nd.of_floats D.I32 [||] [| float_of_int v |]))
+          in
+          let one () = index 1 in
+          let i_loop j l = function
+            | [ u ] ->
+                let i = L.sub (L.sub j (one ())) l in
+                let lo = L.add i (one ()) in
+                let inner k = function
+                  | [ acc ] ->
+                      [
+                        UF.add acc
+                          (UF.multiply (IDX.dynamic_at2 u i k)
+                             (IDX.dynamic_at2 u k j));
+                      ]
+                  | _ -> invalid_arg "sqrtm: arity"
+                in
+                let s =
+                  List.hd (L.fori_loop lo j inner [ C.splat dt [||] 0.0 ])
+                in
+                let same = UF.equal (IDX.dynamic_at2 t i j) s in
+                let quotient =
+                  UF.divide
+                    (UF.subtract (IDX.dynamic_at2 t i j) s)
+                    (UF.add (IDX.dynamic_at diag i) (IDX.dynamic_at diag j))
+                in
+                let value =
+                  Numpy.Jnp_util.where_weak ~x_weak:true same
+                    (Numpy.Jnp_util.py_float 0.0)
+                    quotient
+                in
+                [ IDX.set_at2 u i j value ]
+            | _ -> invalid_arg "sqrtm: arity"
+          in
+          let j_loop j = function
+            | [ u ] -> L.fori_loop (index 0) j (i_loop j) [ u ]
+            | _ -> invalid_arg "sqrtm: arity"
+          in
+          List.hd (L.fori_loop (index 0) (index n) j_loop [ u0 ])
+      | _ -> invalid_arg "sqrtm: arity")
+    [ t ]
+
 let rec sqrtm ?(blocksize = 1) a =
   if blocksize > 1 then
     failwith "scipy.linalg.sqrtm: Blocked version is not implemented yet.";
@@ -899,44 +949,13 @@ let rec sqrtm ?(blocksize = 1) a =
   else
     match schur ~output:"complex" a with
     | [ t; z ] ->
-        let module L = Lax_api in
-        let n = (shape t).(0) in
-        let dt = dtype t in
-        let zero = L.full [||] 0.0 dt in
-        let at x i j =
-          L.reshape (L.slice x [| i; j |] [| i + 1; j + 1 |]) [||]
-        in
-        let diag = Array.init n (fun i -> L.sqrt (at t i i)) in
-        let u = Array.make_matrix n n zero in
-        for i = 0 to n - 1 do
-          u.(i).(i) <- diag.(i)
-        done;
-        for j = 0 to n - 1 do
-          for l = 0 to j - 1 do
-            let i = j - 1 - l in
-            let sum = ref zero in
-            for k = i + 1 to j - 1 do
-              sum := L.add !sum (L.mul u.(i).(k) u.(k).(j))
-            done;
-            let tij = at t i j in
-            u.(i).(j) <-
-              NL.where_ (L.eq tij !sum) zero
-                (L.div (L.sub tij !sum) (L.add diag.(i) diag.(j)))
-          done
-        done;
-        let cells =
-          List.concat_map
-            (fun row ->
-              List.map (fun x -> L.reshape x [| 1 |]) (Array.to_list row))
-            (Array.to_list u)
-        in
-        let root = L.reshape (L.concatenate cells 0) [| n; n |] in
+        let root = sqrtm_triu t in
         let highest =
           Lax_config.precision_of_level Lax_config.Precision_highest
         in
-        TC.matmul ~precision:highest
-          (TC.matmul ~precision:highest z root)
-          (L.conj (NL.matrix_transpose z))
+        let product = TC.matmul ~precision:highest z root in
+        TC.matmul ~precision:highest product
+          (UF.conj (C.bind1 (T.Transpose [| 1; 0 |]) [ z ]))
     | _ -> failwith "sqrtm: schur arity"
 
 let sqrtm ?blocksize a0 =

@@ -1587,6 +1587,23 @@ let rec impl_base prim inputs =
       | [ operand; indices ] ->
           [ Slicing.gather_impl dimension_numbers slice_sizes operand indices ]
       | _ -> failwith "lax: gather expects operand and indices")
+  | Scatter ({ dimension_numbers = { s_clip = true; _ } as d; _ } as o) -> (
+      match inputs with
+      | [ operand; indices; updates ] ->
+          let plain = { d with s_clip = false } in
+          let clamped =
+            Slicing.clamp_scatter_indices (Concrete operand) (Concrete indices)
+              (Concrete updates) plain
+          in
+          let clamped_nd =
+            match clamped with
+            | Concrete nd -> nd
+            | _ -> failwith "lax: scatter clip"
+          in
+          impl_base
+            (Scatter { o with dimension_numbers = plain })
+            [ operand; clamped_nd; updates ]
+      | _ -> failwith "lax: scatter expects operand, indices and updates")
   | ( Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
     | Scatter_max _ ) as p -> (
       match inputs with
@@ -1606,6 +1623,7 @@ let rec impl_base prim inputs =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        _;
       } ->
       let conv lhs rhs =
         Convolution.conv_impl dimension_numbers window_strides padding
@@ -1805,9 +1823,9 @@ let rec impl_base prim inputs =
         (Control_flow.Loops.cumred_impl ~axis ~reverse
            ~combine:Control_flow.Loops.logaddexp)
         inputs
-  | Custom_linear_solve { solve; _ } ->
+  | Custom_linear_solve { solve; const_lengths; _ } ->
       let inputs_v = List.map (fun nd -> Concrete nd) inputs in
-      Control_flow.Solves.solve_impl solve inputs_v
+      Control_flow.Solves.solve_impl const_lengths solve inputs_v
       |> List.map (function
         | Concrete nd -> nd
         | Tracer _ -> failwith "lax: custom_linear_solve produced a tracer"
@@ -2675,6 +2693,7 @@ let abstract_eval prim avals =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        _;
       } ->
       bin_aval
         (fun l r ->
@@ -2873,27 +2892,90 @@ let cummin = Control_flow.Loops.cummin
 let cumlogsumexp = Control_flow.Loops.cumlogsumexp
 let custom_linear_solve = Control_flow.Solves.custom_linear_solve
 
+let broadcasted_matvec a b =
+  let sa = (Core.get_aval a).shape and sb = (Core.get_aval b).shape in
+  let an = Array.length sa and bn = Array.length sb in
+  let batch =
+    let la = Array.sub sa 0 (an - 2) and lb = Array.sub sb 0 (bn - 1) in
+    let n = max (Array.length la) (Array.length lb) in
+    let at l i =
+      let k = i - (n - Array.length l) in
+      if k < 0 then 1 else l.(k)
+    in
+    Array.init n (fun i -> max (at la i) (at lb i))
+  in
+  let nb = Array.length batch in
+  let to_shape x sh =
+    let have = (Core.get_aval x).shape in
+    if have = sh then x
+    else
+      let n = Array.length sh and h = Array.length have in
+      Core.bind1
+        (Broadcast_in_dim
+           { shape = sh; dims = Array.init h (fun i -> n - h + i) })
+        [ x ]
+  in
+  let a = to_shape a (Array.append batch (Array.sub sa (an - 2) 2)) in
+  let b = to_shape b (Array.append batch [| sb.(bn - 1) |]) in
+  let range = Array.init nb Fun.id in
+  Core.bind1
+    (Dot_general
+       {
+         lhs_contract = [| nb + 1 |];
+         rhs_contract = [| nb |];
+         lhs_batch = range;
+         rhs_batch = range;
+         dot_precision = Some ("HIGHEST", "HIGHEST");
+         untyped_dot = true;
+       })
+    [ a; b ]
+
 let solve_with_lu a b =
-  let an = Array.length (Core.get_aval a).shape in
-  let bn = Array.length (Core.get_aval b).shape in
+  let sa = (Core.get_aval a).shape and sb = (Core.get_aval b).shape in
+  let an = Array.length sa and bn = Array.length sb in
+  let out_shape =
+    Array.init bn (fun i ->
+        let d_a = if i = an - 1 then 1 else sa.(i) in
+        if sb.(i) = 1 then d_a else sb.(i))
+  in
+  let b =
+    if out_shape = sb then b
+    else
+      Core.bind1
+        (Broadcast_in_dim { shape = out_shape; dims = Array.init bn Fun.id })
+        [ b ]
+  in
   let lu_, _, permutation = Linalg.lu (Custom_derivatives.stop_gradient a) in
-  let solve_with ~transpose consts bs =
-    match (consts, bs) with
-    | [ l; p ], [ v ] -> [ Linalg.lu_solve_vector ~transpose l p v ]
-    | _ -> invalid_arg "solve: arity"
-  in
   let one bs =
-    Control_flow.Solves.custom_linear_solve_with_consts
-      ~consts:[ lu_; permutation ]
-      ~solve:(solve_with ~transpose:false)
-      ~transpose_solve:(solve_with ~transpose:true)
+    Control_flow.Solves.custom_linear_solve
+      ~linear_matvec:(function
+        | [ x ] ->
+            let sh = (Core.get_aval x).shape in
+            let widened =
+              Core.bind1
+                (Broadcast_in_dim
+                   { shape = sh; dims = Array.init (Array.length sh) Fun.id })
+                [ x ]
+            in
+            [ broadcasted_matvec a widened ]
+        | _ -> invalid_arg "solve: arity")
+      (function
+        | [ x ] -> [ broadcasted_matvec a x ] | _ -> invalid_arg "solve: arity")
       bs
+      (fun _ -> function
+        | [ x ] -> [ Linalg.lu_solve_vector ~transpose:false lu_ permutation x ]
+        | _ -> invalid_arg "solve: arity")
+      ~transpose_solve:(fun _ -> function
+        | [ x ] -> [ Linalg.lu_solve_vector ~transpose:true lu_ permutation x ]
+        | _ -> invalid_arg "solve: arity")
   in
-  match
-    Interpreters.Batching.vmap_out one [ Some (bn - 1) ] [ b ] (max an bn - 1)
-  with
-  | [ out ] -> out
-  | _ -> invalid_arg "solve: arity"
+  if an = bn + 1 then List.hd (one [ b ])
+  else
+    match
+      Interpreters.Batching.vmap_out one [ Some (bn - 1) ] [ b ] (max an bn - 1)
+    with
+    | [ out ] -> out
+    | _ -> invalid_arg "solve: arity"
 
 let () = Interpreters.Ad.solve_ref := solve_with_lu
 

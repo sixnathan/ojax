@@ -221,7 +221,13 @@ val dot_general :
   rhs_batch:int array ->
   value
 
-val batch_matmul : ?precision:Lax_config.precision -> value -> value -> value
+val batch_matmul :
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
+  value ->
+  value ->
+  value
+
 val batch_matmul_typed : value -> value -> value
 val dot_typed : value -> value -> value
 
@@ -232,6 +238,7 @@ val conv_general_permutations : String.t * String.t * String.t -> conv_dims
 val conv_dimension_numbers : String.t * String.t * String.t -> conv_dims
 
 val conv_general_dilated :
+  ?conv_precision:string * string ->
   ?lhs_dilation:int array ->
   ?rhs_dilation:int array ->
   ?dimension_numbers:conv_dims ->
@@ -295,6 +302,7 @@ val cumlogsumexp : ?axis:int -> ?reverse:bool -> value -> value
 val custom_linear_solve :
   ?symmetric:bool ->
   ?transpose_solve:((value list -> value list) -> value list -> value list) ->
+  ?linear_matvec:(value list -> value list) ->
   (value list -> value list) ->
   value list ->
   ((value list -> value list) -> value list -> value list) ->
@@ -354,6 +362,7 @@ val conv_general_dilated_patches :
   ?lhs_dilation:int array ->
   ?rhs_dilation:int array ->
   ?dimension_numbers:conv_dims ->
+  ?precision:string * string ->
   value ->
   filter_shape:int array ->
   value

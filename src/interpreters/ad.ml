@@ -52,6 +52,7 @@ let gather_to_scatter (gd : gather_dims) : scatter_dims =
     s_operand_batching_dims = gd.g_operand_batching_dims;
     s_scatter_indices_batching_dims = gd.g_start_indices_batching_dims;
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 let scatter_to_gather (sd : scatter_dims) : gather_dims =
@@ -61,6 +62,7 @@ let scatter_to_gather (sd : scatter_dims) : gather_dims =
     start_index_map = sd.scatter_dims_to_operand_dims;
     g_operand_batching_dims = sd.s_operand_batching_dims;
     g_start_indices_batching_dims = sd.s_scatter_indices_batching_dims;
+    g_sorted_unique = false;
   }
 
 let scatter_gather_slice_sizes (sd : scatter_dims) operand_shape updates_shape =
@@ -122,7 +124,7 @@ let like_dtype reference v =
   let dt = (Core.get_aval reference).dtype in
   if (Core.get_aval v).dtype = dt then v else b1 (Convert_element_type dt) [ v ]
 
-let matmul_at dot_precision x y =
+let matmul_at ?(untyped_dot = false) dot_precision x y =
   let ndim = Array.length (Core.get_aval x).shape in
   let batch = Array.init (ndim - 2) Fun.id in
   b1
@@ -132,13 +134,17 @@ let matmul_at dot_precision x y =
          rhs_contract = [| ndim - 2 |];
          lhs_batch = batch;
          rhs_batch = batch;
-         untyped_dot = false;
+         untyped_dot;
          dot_precision;
        })
     [ x; y ]
 
-let matmul_plain = matmul_at None
-let matmul = matmul_at (Some ("HIGHEST", "HIGHEST"))
+let matmul_plain x y = matmul_at None x y
+
+let lax_matmul x y =
+  matmul_at ~untyped_dot:true (Some ("HIGHEST", "HIGHEST")) x y
+
+let matmul x y = matmul_at (Some ("HIGHEST", "HIGHEST")) x y
 
 let broadcast_to_matrix x shape =
   let a = Core.get_aval x in
@@ -617,6 +623,7 @@ let extract_diagonal s =
              start_index_map = [| b; b + 1 |];
              g_operand_batching_dims = [||];
              g_start_indices_batching_dims = [||];
+             g_sorted_unique = false;
            };
          slice_sizes = Array.init r (fun i -> if i < b then sh.(i) else 1);
        })
@@ -644,6 +651,7 @@ let construct_diagonal s =
              s_operand_batching_dims = [||];
              s_scatter_indices_batching_dims = [||];
              s_sorted_unique = false;
+             s_clip = false;
            };
          unique_indices = false;
        })
@@ -697,7 +705,7 @@ let cholesky_jvp x t =
   in
   let inner = triangular ~left_side:true ~lower:true l tmp in
   let p = phi inner in
-  (l, matmul l p)
+  (l, lax_matmul l p)
 
 let eigh_jvp ~lower a t =
   let n = (shape_of a).(ndim_of a - 1) in
@@ -714,10 +722,10 @@ let eigh_jvp ~lower a t =
       let inv = b1 (Integer_pow (-1)) [ s2 ] in
       let fmat = promote_rank_sub inv eye_n in
       let hv = h_of v in
-      let d1 = matmul hv t in
-      let vav = matmul d1 v in
+      let d1 = lax_matmul hv t in
+      let vav = lax_matmul d1 v in
       let m = lmul fmat vav in
-      let dv = matmul v m in
+      let dv = lax_matmul v m in
       let re = lreal vav in
       let dw = extract_diagonal re in
       (outs, [ dv; dw ])
@@ -803,6 +811,7 @@ let qr_pivoted_jvp ~full_matrices x dx =
                start_index_map = [| 1 |];
                g_operand_batching_dims = [||];
                g_start_indices_batching_dims = [||];
+               g_sorted_unique = false;
              };
            slice_sizes = [| sh.(0); 1 |];
          })
@@ -842,6 +851,7 @@ let lu_jvp_inner lu a_dot permutation =
                start_index_map = [| 0 |];
                g_operand_batching_dims = [||];
                g_start_indices_batching_dims = [||];
+               g_sorted_unique = false;
              };
            slice_sizes = [| 1; n |];
          })
@@ -890,10 +900,10 @@ let eig_vec_jvp w v da =
   let rc = lreciprocal s2 in
   let fmat = promote_rank_sub rc eye_n in
   let solved = !solve_ref v da in
-  let p = matmul solved v in
+  let p = lax_matmul solved v in
   let dw = extract_diagonal p in
   let fp = lmul fmat p in
-  let u = matmul v fp in
+  let u = lax_matmul v fp in
   let r = ndim_of v in
   let ab = b1 Abs [ v ] in
   let k = b1 (Argmax { axis = r - 2; index_dtype = Dtype.I32 }) [ ab ] in
@@ -1059,14 +1069,14 @@ let triangular_jvp_a ~left_side ~lower ~transpose_a ~conjugate_a ~unit_diagonal
     triangular ~left_side ~lower ~transpose_a ~conjugate_a ~unit_diagonal a rhs
   in
   if left_side then
-    if m > n then a_inverse (matmul g ans)
+    if m > n then a_inverse (lax_matmul g ans)
     else
       let i = a_inverse g in
-      matmul i ans
-  else if m < n then a_inverse (matmul ans g)
+      lax_matmul i ans
+  else if m < n then a_inverse (lax_matmul ans g)
   else
     let i = a_inverse g in
-    matmul ans i
+    lax_matmul ans i
 
 let gather_along ~axis ~rank t idx =
   let batch =
@@ -1083,6 +1093,7 @@ let gather_along ~axis ~rank t idx =
              start_index_map = [| axis |];
              g_operand_batching_dims = batch;
              g_start_indices_batching_dims = batch;
+             g_sorted_unique = false;
            };
          slice_sizes = Array.make rank 1;
        })
@@ -2158,16 +2169,28 @@ let rec jvp_pairs prim primals tangents =
           in
           (primal_outs, tangent_outs)
       | _ -> arity ())
-  | Custom_linear_solve { num_consts; _ } ->
+  | Custom_linear_solve { matvec; const_lengths; _ } ->
       let x = Core.bind prim primals in
-      let keep i = i < num_consts in
-      let x_dot =
-        Core.bind prim
-          (List.filteri (fun i _ -> keep i) primals
-          @ List.filteri
-              (fun i _ -> not (keep i))
-              (List.map instantiate tangents))
+      let total = Array.fold_left ( + ) 0 const_lengths in
+      let n_matvec = const_lengths.(0) in
+      let params = List.filteri (fun i _ -> i < total) primals in
+      let matvec_params = List.filteri (fun i _ -> i < n_matvec) primals in
+      let matvec_dots = List.filteri (fun i _ -> i < n_matvec) tangents in
+      let b_dot = List.filteri (fun i _ -> i >= total) tangents in
+      let rhs =
+        if List.for_all is_zero matvec_dots then b_dot
+        else
+          let _, mt =
+            jvp
+              (fun all -> Jaxpr.eval_closed_jaxpr matvec all)
+              (matvec_params @ x)
+              (matvec_dots @ List.map p2tz x)
+          in
+          List.map2
+            (fun db t -> add_tangents db (b1 Neg [ instantiate t ]))
+            b_dot mt
       in
+      let x_dot = Core.bind prim (params @ List.map instantiate rhs) in
       (x, x_dot)
   | Custom_jvp_call id -> (
       match Core.custom_rule id with
@@ -3660,6 +3683,7 @@ let conv_transpose_lhs g (lhs : aval) rhs ~window_strides ~padding ~lhs_dilation
              };
            feature_group_count = groups;
            batch_group_count = 1;
+           conv_precision = None;
          })
       [ g; revd ]
   in
@@ -3699,6 +3723,7 @@ let conv_transpose_rhs g lhs (rhs : aval) ~window_strides ~padding ~lhs_dilation
            };
          feature_group_count = new_feature;
          batch_group_count = new_batch;
+         conv_precision = None;
        })
     [ lhs; g ]
 
@@ -4399,24 +4424,41 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Custom_vjp_call _ ->
       failwith "ad: custom call cannot appear in a linear program"
   | Ffi_call c -> ffi_not_differentiable c
-  | Custom_linear_solve { solve; transpose_solve; num_consts } -> (
-      match transpose_solve with
-      | None ->
-          failwith
-            "ad: transpose_solve required for backwards mode automatic \
-             differentiation of custom_linear_solve"
-      | Some ts ->
-          let consts =
-            List.filteri (fun i _ -> i < num_consts) primals
-            |> List.map prim_val
+  | Custom_linear_solve
+      { matvec; vecmat; solve; transpose_solve; const_lengths } -> (
+      match (vecmat, transpose_solve) with
+      | Some vecmat, Some ts ->
+          let total = Array.fold_left ( + ) 0 const_lengths in
+          let params =
+            List.filteri (fun i _ -> i < total) primals |> List.map prim_val
+          in
+          let m = const_lengths.(0)
+          and v = const_lengths.(1)
+          and s = const_lengths.(2)
+          and t = const_lengths.(3) in
+          let slice lo n =
+            List.filteri (fun i _ -> i >= lo && i < lo + n) params
+          in
+          let reordered =
+            slice m v @ slice 0 m @ slice (m + v + s) t @ slice (m + v) s
           in
           let ct_b =
             Core.bind
               (Custom_linear_solve
-                 { solve = ts; transpose_solve = Some solve; num_consts })
-              (consts @ cts)
+                 {
+                   matvec = vecmat;
+                   vecmat = Some matvec;
+                   solve = ts;
+                   transpose_solve = Some solve;
+                   const_lengths = [| v; m; t; s |];
+                 })
+              (reordered @ cts)
           in
-          List.map (fun _ -> None) consts @ List.map (fun c -> Some c) ct_b)
+          List.map (fun _ -> None) params @ List.map (fun c -> Some c) ct_b
+      | _ ->
+          failwith
+            "ad: transpose_solve required for backwards mode automatic \
+             differentiation of custom_linear_solve")
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Integer_pow _ | Is_finite | Log1p | Logistic | Not

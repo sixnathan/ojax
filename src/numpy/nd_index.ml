@@ -240,6 +240,7 @@ let gather_take ?(clip = false) x idx =
               start_index_map = ix.start_index_map;
               g_operand_batching_dims = [||];
               g_start_indices_batching_dims = [||];
+              g_sorted_unique = false;
             };
           slice_sizes = ix.gather_slice_shape;
         }
@@ -293,6 +294,7 @@ let set x idx y =
                  s_operand_batching_dims = [||];
                  s_scatter_indices_batching_dims = [||];
                  s_sorted_unique = ix.plain;
+                 s_clip = false;
                };
              unique_indices = ix.plain;
            })

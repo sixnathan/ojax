@@ -503,7 +503,7 @@ let scipy_run op p a b c =
       let shift v =
         let n = (shp v).(0) in
         let eye = NL.identity ~dtype:(dt_of v) n in
-        L.add v (L.mul eye (like eye 4.0))
+        L.add v (L.mul (like eye 4.0) eye)
       in
       Some [ SP.solve_sylvester (shift (a ())) (shift (b ())) (c ()) ]
   | "rnd_maxwell" -> Some [ RX.maxwell (seed_key p) ~shape:(ints "shape" p) ]
@@ -927,7 +927,7 @@ let herm v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul_typed v (L.conj (NL.swapaxes (-1) (-2) v)) in
+  let product = L.batch_matmul_typed v (UF.conj (NL.swapaxes (-1) (-2) v)) in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 

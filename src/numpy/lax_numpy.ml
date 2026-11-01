@@ -434,6 +434,7 @@ let conv1d_body ~mode ~correlating a v =
              };
            feature_group_count = 1;
            batch_group_count = 1;
+           conv_precision = None;
          })
       [ lhs; rhs ]
   in
@@ -906,8 +907,12 @@ let select ?default condlist choicelist =
   if k = 0 then invalid_arg "select: condlist must be non-empty";
   if List.length choicelist <> k then
     invalid_arg "select: condlist and choicelist must have the same length";
-  let false0 = scalar D.Bool 0.0 in
-  let conds_b = broadcast_arrays (false0 :: condlist) in
+  let default_v =
+    match default with Some d -> d | None -> Jnp_util.py_int 0
+  in
+  let dt = result_type (default_v :: choicelist) in
+  let cases = List.map (fun v -> convert v dt) (default_v :: choicelist) in
+  let conds_b = broadcast_arrays (scalar D.Bool 0.0 :: condlist) in
   let common = result_type conds_b in
   let conds_c = List.map (fun c -> convert c common) conds_b in
   let stacked = convert (bind1 (T.Stack 0) conds_c) D.Bool in
@@ -916,17 +921,6 @@ let select ?default condlist choicelist =
       (T.Argmax { axis = 0; index_dtype = Dtypes.default_int_dtype () })
       [ stacked ]
   in
-  let default_v =
-    match default with
-    | Some d -> d
-    | None -> scalar (result_type choicelist) 0.0
-  in
-  let dt =
-    match default with
-    | Some d -> result_type (d :: choicelist)
-    | None -> result_type choicelist
-  in
-  let cases = List.map (fun v -> convert v dt) (default_v :: choicelist) in
   bind1 T.Select_n (broadcast_arrays (idx :: cases))
 
 let all_reduce v =
@@ -1647,7 +1641,13 @@ let take_trailing a indices =
   let wrapped =
     List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
   in
-  let wrapped = List.map (fun w -> convert w D.I32) wrapped in
+  let wrapped =
+    List.map
+      (fun w ->
+        if dtype w = D.I32 then w
+        else bind1 (T.Convert_element_type D.I32) [ w ])
+      wrapped
+  in
   let start =
     match wrapped with
     | [ w ] -> expand_last w
@@ -1661,6 +1661,7 @@ let take_trailing a indices =
       start_index_map = Array.init k (fun d -> nd - k + d);
       g_operand_batching_dims = [||];
       g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
     }
   in
   ignore batch;
@@ -2075,6 +2076,7 @@ let gather_1d a indices =
       start_index_map = [| 0 |];
       g_operand_batching_dims = [||];
       g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
     }
   in
   bind1

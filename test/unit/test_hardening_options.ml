@@ -469,6 +469,7 @@ module T5 = struct
         start_index_map = [| 0 |];
         g_operand_batching_dims = [||];
         g_start_indices_batching_dims = [||];
+        g_sorted_unique = false;
       }
     in
     b "e.gather_d" (fun a i -> [ L.gather a i dn [| 1 |] ]);
@@ -491,6 +492,7 @@ module T5 = struct
         s_operand_batching_dims = [||];
         s_scatter_indices_batching_dims = [||];
         s_sorted_unique = false;
+        s_clip = false;
       }
     in
     let fam n

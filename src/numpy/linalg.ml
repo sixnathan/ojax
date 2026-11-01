@@ -237,78 +237,27 @@ and svd_hermitian ~compute_uv a =
 
 and solve_body a b =
   let a = to_inexact a and b = to_inexact b in
-  let sa = shape a in
-  let na = Array.length sa in
+  let dt = Dtypes.promote_types (dtype a) (dtype b) in
+  let a = NL.astype a dt and b = NL.astype b dt in
+  let sa = shape a and sb = shape b in
+  let na = Array.length sa and nb = Array.length sb in
   if na < 2 then invalid_arg "left hand array must be at least two dimensional";
-  let m = sa.(na - 1) in
-  let b_vec = ndim b = 1 in
-  let bmat = if b_vec then NL.reshape b [| m; 1 |] else b in
-  let sb = shape bmat in
-  let nb = Array.length sb in
-  let batch =
-    Lax_api.broadcast_shapes
-      [ Array.sub sa 0 (na - 2); Array.sub sb 0 (nb - 2) ]
-  in
-  let k = sb.(nb - 1) in
-  let a = NL.broadcast_to a (Array.append batch [| m; m |]) in
-  let bmat = NL.broadcast_to bmat (Array.append batch [| m; k |]) in
-  let lu, _piv, perm = LL.lu (Lax_api.stop_gradient a) in
-  let rank = Array.length batch + 2 in
-  let lu_solve lu perm rhs =
-    let x0 =
-      if rank = 2 then IDX.take_index ~axis:0 rhs perm
-      else
-        let expanded = NL.expand_dims perm [| -1 |] in
-        IDX.take_along_axis ~axis:(rank - 2) rhs
-          (NL.broadcast_to expanded (Array.append batch [| m; k |]))
-    in
-    let x1 =
-      LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x0
-    in
-    LL.triangular_solve ~left_side:true ~lower:false lu x1
-  in
-  let matvec_tangent da x =
-    if rank = 2 then
-      let row_major = Core.bind1 (T.Transpose [| 1; 0 |]) [ x ] in
-      Lax_api.dot_general ~preferred_element_type:(dtype da) da row_major
-        ~lhs_contract:[| 1 |] ~rhs_contract:[| 1 |] ~lhs_batch:[||]
-        ~rhs_batch:[||]
-    else TC.matmul da x
-  in
-  let solved =
-    Custom_derivatives.custom_jvp_symbolic
-      (function
-        | [ _; b; lu; perm ] -> [ lu_solve lu perm b ]
-        | _ -> invalid_arg "solve: arity")
-      ~jvp:(fun primals tangents ->
-        match (primals, tangents) with
-        | [ _; b; lu; perm ], [ da; db; _; _ ] ->
-            let x = lu_solve lu perm b in
-            let lifted =
-              match (da, db) with
-              | ( Custom_derivatives.Symbolic_zero _,
-                  Custom_derivatives.Symbolic_zero _ ) ->
-                  None
-              | ( Custom_derivatives.Symbolic_zero _,
-                  Custom_derivatives.Tangent db ) ->
-                  Some db
-              | ( Custom_derivatives.Tangent da,
-                  Custom_derivatives.Symbolic_zero _ ) ->
-                  Some (UF.negative (matvec_tangent da x))
-              | Custom_derivatives.Tangent da, Custom_derivatives.Tangent db ->
-                  Some (UF.add db (UF.negative (matvec_tangent da x)))
-            in
-            ( [ x ],
-              [
-                (match lifted with
-                | Some rhs -> Custom_derivatives.Tangent (lu_solve lu perm rhs)
-                | None -> Custom_derivatives.Tangent (Lax_api.full_like x 0.0));
-              ] )
-        | _ -> invalid_arg "solve: arity")
-      [ a; bmat; lu; perm ]
-  in
-  let x2 = List.hd solved in
-  if b_vec then NL.reshape x2 (Array.append batch [| m |]) else x2
+  if nb < 1 then invalid_arg "right hand array must be at least one dimensional";
+  if
+    nb > 1
+    && na = nb + 1
+    && sa.(na - 1) = sb.(nb - 1)
+    && sa.(na - 1) <> sb.(nb - 2)
+  then
+    invalid_arg
+      "Invalid shapes for solve: Prior to JAX v0.5.0, this would have been \
+       treated as a batched 1-dimensional solve. To recover this behavior, use \
+       solve(a, b[..., None]).squeeze(-1).";
+  let signature = if nb = 1 then "(m,m),(m)->(m)" else "(m,m),(m,n)->(m,n)" in
+  Vectorize.vectorize ~signature
+    (function
+      | [ a; b ] -> Lax.solve_with_lu a b | _ -> invalid_arg "solve: arity")
+    [ a; b ]
 
 and inv_body a =
   let sa = shape a in
@@ -316,7 +265,16 @@ and inv_body a =
   if na < 2 || sa.(na - 1) <> sa.(na - 2) then
     invalid_arg "Argument to inv must have shape [..., n, n]";
   let n = sa.(na - 1) in
-  solve a (NL.eye ~dtype:(dtype a) n)
+  let eye = NL.eye ~dtype:(dtype a) n in
+  let batched =
+    if na = 2 then eye
+    else
+      Core.bind1
+        (T.Broadcast_in_dim
+           { shape = sa; dims = Array.init 2 (fun i -> na - 2 + i) })
+        [ eye ]
+  in
+  solve a batched
 
 and slogdet_body ?(method_ = "lu") a =
   let a = to_inexact a in
@@ -858,7 +816,7 @@ let slogdet_lu a =
     end
   in
   let pdt = dtype parity in
-  let rem = UF.remainder parity (const pdt 2.0) in
+  let rem = UF.remainder parity (Core.py_scalar pdt 2.0) in
   let m = UF.multiply (const pdt (-2.0)) rem in
   let s = UF.add m (const pdt 1.0) in
   let copied = C.bind1 T.Copy [ s ] in

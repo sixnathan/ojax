@@ -889,6 +889,7 @@ let lu_pivots_to_permutation ~permutation_size p =
 
 let triangular_solve ?(left_side = false) ?(lower = false)
     ?(transpose_a = false) ?(conjugate_a = false) ?(unit_diagonal = false) a b =
+  let conjugate_a = conjugate_a && is_complex_dtype (Core.get_aval a).dtype in
   Core.bind1
     (Triangular_solve
        { left_side; lower; transpose_a; conjugate_a; unit_diagonal })
@@ -976,6 +977,7 @@ let take_rows x indices m rest =
              start_index_map = [| 0 |];
              g_operand_batching_dims = [||];
              g_start_indices_batching_dims = [||];
+             g_sorted_unique = false;
            };
          slice_sizes = [| 1; rest |];
        })

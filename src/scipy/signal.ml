@@ -422,6 +422,7 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
           s_operand_batching_dims = [||];
           s_scatter_indices_batching_dims = [||];
           s_sorted_unique = false;
+          s_clip = false;
         }
     end
     else result

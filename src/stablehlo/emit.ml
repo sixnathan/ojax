@@ -102,9 +102,13 @@ let lowered_symbol key base =
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
 let while_depth = ref 0
 let lowered_fun_depth = ref 0
+let scan_lowering = ref false
+let direct_while = ref false
 
 let call_symbol_key jid =
-  if !while_depth > 0 && !lowered_fun_depth = 0 then jid lxor (1 lsl 61)
+  if !lowered_fun_depth > 0 then jid
+  else if !direct_while then jid lxor (1 lsl 60)
+  else if !while_depth > 0 then jid lxor (1 lsl 61)
   else jid
 
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
@@ -1374,9 +1378,10 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
   Buffer.add_string ctx.buf
     (Printf.sprintf
        "    %s = \"stablehlo.gather\"(%s, %s) <{dimension_numbers = %s, \
-        indices_are_sorted = false, slice_sizes = %s}> : (%s, %s) -> %s\n"
+        indices_are_sorted = %b, slice_sizes = %s}> : (%s, %s) -> %s\n"
        (name n) (name op_id) (name idx_id)
        (gather_dnums_attr dnums ivd)
+       (dnums.g_sorted_unique || Np_ints.gather_clip_of eqn.prim = Some true)
        (array_i64 slice_sizes)
        (Ir.tensor_type_of_aval op_av)
        (Ir.tensor_type_of_aval idx_av)
@@ -1544,7 +1549,8 @@ let pad_pairs_str padding =
   ^ "]"
 
 let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
-    ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count =
+    ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count
+    ~conv_precision =
   let a, b = pair in_ids in
   let la, lb =
     match eqn.inputs with
@@ -1565,7 +1571,13 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
       (conv_spec_str dn.out_spec "b" "f")
   in
   let n = bind_var ctx out in
-  let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+  let level_l, level_r =
+    match conv_precision with
+    | Some pair -> pair
+    | None ->
+        let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+        (level, level)
+  in
   Buffer.add_string ctx.buf
     (Printf.sprintf
        "    %s = stablehlo.convolution(%s, %s) dim_numbers = %s, window = \
@@ -1578,7 +1590,7 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
        (pad_pairs_str padding)
        (Ir.int_array_attr lhs_dilation)
        (Ir.int_array_attr rhs_dilation)
-       reverse batch_group_count feature_group_count level level la lb
+       reverse batch_group_count feature_group_count level_l level_r la lb
        (Ir.tensor_type_of_aval out.vaval))
 
 let pad_dense_str padding =
@@ -3432,6 +3444,17 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | _ -> invalid_arg "Stablehlo.Emit: gather arity")
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
+  | Scatter ({ dimension_numbers = { s_clip = true; _ } as d; _ } as o) ->
+      emit_inlined ctx eqn in_ids (function
+        | [ operand; indices; updates ] ->
+            let plain = { d with s_clip = false } in
+            let clamped =
+              Lax.Slicing.clamp_scatter_indices operand indices updates plain
+            in
+            Core.bind
+              (Scatter { o with dimension_numbers = plain })
+              [ operand; clamped; updates ]
+        | _ -> invalid_arg "Stablehlo.Emit: scatter arity")
   | Scatter { dimension_numbers; unique_indices } ->
       emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers None
   | Scatter_add { dimension_numbers } ->
@@ -3489,10 +3512,11 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        conv_precision;
       } ->
       emit_conv ctx eqn in_ids ~window_strides ~padding ~lhs_dilation
         ~rhs_dilation ~dn:dimension_numbers ~feature_group_count
-        ~batch_group_count
+        ~batch_group_count ~conv_precision
   | Ragged_dot_general ->
       failwith
         "Stablehlo.Emit: Ragged_dot_general non-representable (needs \
@@ -3573,10 +3597,24 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Reduce_window { reducer; window } ->
       emit_reduce_window_general ctx eqn in_ids reducer window
   | While { cond_nconsts; body_nconsts; cond; body } ->
-      emit_while ctx eqn in_ids ~cond_nconsts ~body_nconsts cond body
+      let saved = !direct_while and from_scan = !scan_lowering in
+      if not from_scan then direct_while := true;
+      scan_lowering := false;
+      Fun.protect
+        ~finally:(fun () ->
+          direct_while := saved;
+          scan_lowering := from_scan)
+        (fun () ->
+          emit_while ctx eqn in_ids ~cond_nconsts ~body_nconsts cond body)
   | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
-      emit_inlined ctx eqn in_ids
-        (Lax.lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll jaxpr)
+      let saved = !scan_lowering in
+      scan_lowering := true;
+      Fun.protect
+        ~finally:(fun () -> scan_lowering := saved)
+        (fun () ->
+          emit_inlined ctx eqn in_ids
+            (Lax.lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll
+               jaxpr))
   | Select_and_scatter _ ->
       failwith
         "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \
@@ -3585,8 +3623,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
          general dual-region form is deferred to the PJRT execution rows"
   | Composite decomposition ->
       emit_inlined ctx eqn in_ids (Jaxpr.eval_closed_jaxpr decomposition)
-  | Custom_linear_solve { solve; _ } ->
-      emit_inlined ctx eqn in_ids (Jaxpr.eval_closed_jaxpr solve)
+  | Custom_linear_solve { solve; const_lengths; _ } ->
+      let before = const_lengths.(0) + const_lengths.(1) in
+      let last = before + const_lengths.(2) in
+      let total = last + const_lengths.(3) in
+      emit_inlined ctx eqn in_ids (fun args ->
+          Jaxpr.eval_closed_jaxpr solve
+            (List.filteri
+               (fun i _ -> (i >= before && i < last) || i >= total)
+               args))
   | Cholesky when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let info =
@@ -3598,17 +3643,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in_ids [ a ] [ a; info ]
       in
       emit_traced ctx [ a; info ] ids eqn.outs Native_lowering.lapack_cholesky
-  | Triangular_solve ({ transpose_a = false; conjugate_a = true; _ } as o)
-    when lapack_ffi () ->
-      emit_inlined ctx eqn in_ids (function
-        | [ a; b ] ->
-            let a =
-              if is_complex_dtype (Core.get_aval a).dtype then
-                Core.bind1 Conj [ a ]
-              else a
-            in
-            Core.bind (Triangular_solve { o with conjugate_a = false }) [ a; b ]
-        | _ -> invalid_arg "Stablehlo.Emit: triangular_solve arity")
   | Triangular_solve o when lapack_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let b = List.nth inputs 1 in
@@ -3626,6 +3660,21 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             char_attr "trans_x" trans;
             char_attr "uplo" (if o.lower then 'L' else 'U');
           ]
+      in
+      let in_ids =
+        if
+          o.conjugate_a && (not o.transpose_a)
+          && is_complex_dtype (List.hd inputs).dtype
+        then begin
+          let c = fresh ctx in
+          let ty = Ir.tensor_type_of_aval (List.hd inputs) in
+          Buffer.add_string ctx.buf
+            (Printf.sprintf "    %s = chlo.conj %s : %s -> %s\n" (name c)
+               (name (List.hd in_ids))
+               ty ty);
+          c :: List.tl in_ids
+        end
+        else in_ids
       in
       let ids =
         emit_lapack_call ctx ~base:"trsm" ~config
@@ -4159,6 +4208,8 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset call_symbols;
   while_depth := 0;
   lowered_fun_depth := 0;
+  scan_lowering := false;
+  direct_while := false;
   symbol_counter := 0;
   seen_mesh := None;
   callback_seen := false;

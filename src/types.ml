@@ -183,6 +183,7 @@ and primitive =
       dimension_numbers : conv_dims;
       feature_group_count : int;
       batch_group_count : int;
+      conv_precision : (string * string) option;
     }
   | Reduce_window of { reducer : closed_jaxpr; window : window_dims }
   | Reduce_window_max of window_dims
@@ -240,9 +241,11 @@ and primitive =
   | Cummin of { axis : int; reverse : bool }
   | Cumlogsumexp of { axis : int; reverse : bool }
   | Custom_linear_solve of {
+      matvec : closed_jaxpr;
+      vecmat : closed_jaxpr option;
       solve : closed_jaxpr;
       transpose_solve : closed_jaxpr option;
-      num_consts : int;
+      const_lengths : int array;
     }
   | Threefry2x32
   | Iota_2x32_shape of int array
@@ -320,6 +323,7 @@ and gather_dims = {
   start_index_map : int array;
   g_operand_batching_dims : int array;
   g_start_indices_batching_dims : int array;
+  g_sorted_unique : bool;
 }
 
 and scatter_dims = {
@@ -329,6 +333,7 @@ and scatter_dims = {
   s_operand_batching_dims : int array;
   s_scatter_indices_batching_dims : int array;
   s_sorted_unique : bool;
+  s_clip : bool;
 }
 
 and conv_dims = {

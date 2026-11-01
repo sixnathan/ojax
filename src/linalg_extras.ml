@@ -115,7 +115,15 @@ let symmetric_product ?(alpha = 1.0) ?(beta = 0.0) ?(symmetrize_output = false)
       (scale beta c)
   in
   if symmetrize_output then
-    UF.add (NL.tril result) (NL.matrix_transpose (NL.tril ~k:(-1) result))
+    let n = Array.length (Core.get_aval result).shape in
+    let perm =
+      Array.init n (fun i ->
+          if i = n - 1 then n - 2 else if i = n - 2 then n - 1 else i)
+    in
+    let upper_half =
+      Core.bind1 (Types.Transpose perm) [ LL.tril ~k:(-1) result ]
+    in
+    UF.add (LL.tril result) upper_half
   else result
 
 let qdwh = Qdwh.qdwh

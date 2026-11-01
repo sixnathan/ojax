@@ -65,6 +65,7 @@ let gdn : T.gather_dims =
     start_index_map = [| 0 |];
     g_operand_batching_dims = [||];
     g_start_indices_batching_dims = [||];
+    g_sorted_unique = false;
   }
 
 let sdn : T.scatter_dims =
@@ -75,6 +76,7 @@ let sdn : T.scatter_dims =
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 let unary5 prim dtype =
@@ -505,6 +507,7 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
                          };
                        feature_group_count = 1;
                        batch_group_count = 1;
+                       conv_precision = None;
                      })
                   [ l; r ]
             | _ -> assert false) );

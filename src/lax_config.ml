@@ -145,6 +145,7 @@ type gather_dimension_numbers = Types.gather_dims = {
   start_index_map : int array;
   g_operand_batching_dims : int array;
   g_start_indices_batching_dims : int array;
+  g_sorted_unique : bool;
 }
 
 let gather_dimension_numbers ?(operand_batching_dims = [||])
@@ -156,6 +157,7 @@ let gather_dimension_numbers ?(operand_batching_dims = [||])
     start_index_map;
     g_operand_batching_dims = operand_batching_dims;
     g_start_indices_batching_dims = start_indices_batching_dims;
+    g_sorted_unique = false;
   }
 
 type scatter_dimension_numbers = Types.scatter_dims = {
@@ -165,6 +167,7 @@ type scatter_dimension_numbers = Types.scatter_dims = {
   s_operand_batching_dims : int array;
   s_scatter_indices_batching_dims : int array;
   s_sorted_unique : bool;
+  s_clip : bool;
 }
 
 let scatter_dimension_numbers ?(operand_batching_dims = [||])
@@ -177,6 +180,7 @@ let scatter_dimension_numbers ?(operand_batching_dims = [||])
     s_operand_batching_dims = operand_batching_dims;
     s_scatter_indices_batching_dims = scatter_indices_batching_dims;
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 type conv_dimension_numbers = Types.conv_dims = {

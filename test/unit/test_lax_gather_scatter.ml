@@ -18,6 +18,7 @@ let take_dnums =
     start_index_map = [| 0 |];
     g_operand_batching_dims = [||];
     g_start_indices_batching_dims = [||];
+    g_sorted_unique = false;
   }
 
 let scalar_sdnums =
@@ -28,6 +29,7 @@ let scalar_sdnums =
     s_operand_batching_dims = [||];
     s_scatter_indices_batching_dims = [||];
     s_sorted_unique = false;
+    s_clip = false;
   }
 
 let gather operand indices ~dimension_numbers ~slice_sizes =
@@ -81,6 +83,7 @@ let gather_impl () =
           start_index_map = [| 0 |];
           g_operand_batching_dims = [||];
           g_start_indices_batching_dims = [||];
+          g_sorted_unique = false;
         }
       ~slice_sizes:[| 1; 3 |]
   in

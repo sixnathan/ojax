@@ -400,25 +400,72 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
       List.filteri (fun i _ -> i >= nc && i < total - nh) binders
     in
     let consts = List.map (fun nd -> Concrete nd) jaxpr.consts @ hoisted in
+    let outs = jaxpr.jaxpr.outs in
+    let carry_binders, x_binders = split_at arg_part num_carry in
+    let carry_outs, y_outs = split_at outs num_carry in
+    let same_var binder = function
+      | A_var (v : var) -> v.vid = binder.vid
+      | A_lit _ | DropVar _ -> false
+    in
+    let move = List.map2 same_var carry_binders carry_outs in
+    let keep_of l flags = List.filteri (fun i _ -> not (List.nth flags i)) l in
+    let pick_of l flags = List.filteri (fun i _ -> List.nth flags i) l in
+    let new_consts = pick_of init move in
+    let init' = keep_of init move in
+    let x_forward =
+      List.map
+        (fun out ->
+          List.find_opt
+            (fun (i, binder) ->
+              ignore i;
+              same_var binder out)
+            (List.mapi (fun i b -> (i, b)) x_binders)
+          |> Option.map fst)
+        y_outs
+    in
+    let y_kept = List.filteri (fun i _ -> List.nth x_forward i = None) y_outs in
     let jaxpr =
       {
         jaxpr with
         consts = [];
         jaxpr =
-          { jaxpr.jaxpr with in_binders = const_part @ hoist_part @ arg_part };
+          {
+            jaxpr.jaxpr with
+            in_binders =
+              pick_of carry_binders move @ const_part @ hoist_part
+              @ keep_of carry_binders move @ x_binders;
+            outs = keep_of carry_outs move @ y_kept;
+          };
       }
     in
-    Core.bind
-      (Scan
-         {
-           length;
-           reverse;
-           num_consts = List.length consts;
-           num_carry;
-           jaxpr;
-           unroll;
-         })
-      (consts @ init @ xs)
+    let all_consts = new_consts @ consts in
+    let result =
+      Core.bind
+        (Scan
+           {
+             length;
+             reverse;
+             num_consts = List.length all_consts;
+             num_carry = List.length init';
+             jaxpr;
+             unroll;
+           })
+        (all_consts @ init' @ xs)
+    in
+    let carry_out, ys_out = split_at result (List.length init') in
+    let rec merge flags kept moved =
+      match flags with
+      | [] -> []
+      | true :: tl -> List.hd moved :: merge tl kept (List.tl moved)
+      | false :: tl -> List.hd kept :: merge tl (List.tl kept) moved
+    in
+    let rec restore fwd ys =
+      match fwd with
+      | [] -> []
+      | Some i :: tl -> List.nth xs i :: restore tl ys
+      | None :: tl -> List.hd ys :: restore tl (List.tl ys)
+    in
+    merge move carry_out new_consts @ restore x_forward ys_out
 
 let const_like v x =
   let a = Core.get_aval v in

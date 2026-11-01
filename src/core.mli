@@ -122,3 +122,5 @@ val top_is_staging : value list -> bool
 val register_custom_names : int -> name:string -> jvp_name:string -> unit
 val custom_names_of : int -> (string * string) option
 val py_scalar : Dtype.t -> float -> value
+val weak_convert : bool ref
+val convert_like : weak:bool -> value -> Dtype.t -> value

@@ -379,14 +379,15 @@ let scalar dt x = const_full dt [||] x
 let full dt sh x = const_full dt sh x
 
 let promote_scalar_kept x y =
-  let dt, _ =
+  let dt, is_weak =
     Dtypes.result_type
       [
         ((get_aval x).T.dtype, (get_aval x).T.weak_type);
         ((get_aval y).T.dtype, (get_aval y).T.weak_type);
       ]
   in
-  let x = convert x dt and y = convert y dt in
+  let x = C.convert_like ~weak:is_weak x dt in
+  let y = C.convert_like ~weak:is_weak y dt in
   if ndim x = ndim y || ndim x = 0 || ndim y = 0 then (x, y)
   else
     let sh = broadcast_shapes (shape x) (shape y) in

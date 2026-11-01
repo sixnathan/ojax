@@ -56,7 +56,13 @@ let typecheck_jaxpr (jx : jaxpr) : unit =
       let out_types = Core.rules.abstract_eval e.prim in_types in
       List.iter2
         (fun (b : var) t ->
-          if not (avals_equal t b.vaval) then
+          let same =
+            match e.prim with
+            | Convert_element_type _ ->
+                avals_equal { t with weak_type = b.vaval.weak_type } b.vaval
+            | _ -> avals_equal t b.vaval
+          in
+          if not same then
             raise
               (Errors.Jaxpr_type_error
                  (Printf.sprintf
@@ -169,6 +175,12 @@ let process_primitive trace prim args =
   let avals_in = List.map (fun (t : tracer) -> t.aval) tracers in
   !trace_custom_call prim avals_in;
   let avals_out = Core.rules.abstract_eval prim avals_in in
+  let avals_out =
+    match prim with
+    | Convert_element_type _ when !Core.weak_convert ->
+        List.map (fun (a : aval) -> { a with weak_type = true }) avals_out
+    | _ -> avals_out
+  in
   let out_tracers = List.map (new_tracer builder trace) avals_out in
   let inputs = List.map (fun t -> A_var (getvar builder t)) tracers in
   let outvars = List.map (add_var builder) out_tracers in

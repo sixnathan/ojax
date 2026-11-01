@@ -555,7 +555,10 @@ let jax_params (e : eqn) =
       if Array.length dims = 0 then []
       else [ ("broadcast_dimensions", Plain (py_ints dims)) ]
   | Convert_element_type dt ->
-      [ ("new_dtype", Plain (dn dt)); ("weak_type", Plain "False") ]
+      let weak =
+        match e.outs with (v : var) :: _ -> v.vaval.weak_type | [] -> false
+      in
+      [ ("new_dtype", Plain (dn dt)); ("weak_type", Plain (py_bool weak)) ]
   | Bitcast_convert_type dt -> [ ("new_dtype", Plain (dn dt)) ]
   | Reshape ns ->
       [

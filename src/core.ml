@@ -518,6 +518,31 @@ let bind1 prim args =
   | [ out ] -> out
   | _ -> invalid_arg "bind1: expected a single output"
 
+let weak_convert = ref false
+
+let convert_like ~weak v dt =
+  let old_dt, old_weak =
+    match v with
+    | Concrete a -> (Ndarray.dtype a, Ndarray.weak a)
+    | Tracer t -> (t.aval.dtype, t.aval.weak_type)
+    | Device b -> (Pjrt.Buffer.element_type b, false)
+  in
+  if old_dt = dt && old_weak = weak then v
+  else
+    match v with
+    | Concrete a when Array.length (Ndarray.shape a) = 0 -> (
+        match rules.impl (Convert_element_type dt) [ a ] with
+        | [ r ] ->
+            let r = Ndarray.canonicalize dt r in
+            Concrete (if weak then Ndarray.as_weak r else r)
+        | _ -> invalid_arg "convert_like: arity")
+    | _ ->
+        let saved = !weak_convert in
+        weak_convert := weak;
+        Fun.protect
+          ~finally:(fun () -> weak_convert := saved)
+          (fun () -> bind1 (Convert_element_type dt) [ v ])
+
 let top_is_staging args = (find_top_trace args).kind = KJaxpr
 
 let staging () =

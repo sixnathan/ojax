@@ -54,13 +54,10 @@ let where c x y =
             if dtype c = D.Bool then c
             else C.bind1 T.Ne [ c; C.splat (dtype c) [||] 0.0 ]
           in
-          let dt, _ =
+          let dt, is_weak =
             Dtypes.result_type [ (dtype x, weak x); (dtype y, weak y) ]
           in
-          let conv v =
-            if dtype v = dt then v
-            else C.bind1 (T.Convert_element_type dt) [ v ]
-          in
+          let conv v = C.convert_like ~weak:is_weak v dt in
           let x = conv x in
           let y = conv y in
           if Array.length (shape c) = 0 then

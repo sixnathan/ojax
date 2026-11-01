@@ -1343,6 +1343,7 @@ let batch_jaxpr (c : closed_jaxpr) axis_size vals bdims =
       in
       Pretty_printer.register_call_name closed.jid
         (Pretty_printer.call_name c.jid);
+      Core.inherit_inline ~from:c.jid closed.jid;
       let r = (closed, !out_dims) in
       Hashtbl.replace batch_call_cache key r;
       r

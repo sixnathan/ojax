@@ -386,6 +386,14 @@ let elementwise_shape shapes =
           if k < 0 || s.(k) = 1 then acc else s.(k))
         1 shapes)
 
+let inline_calls : (int, unit) Hashtbl.t = Hashtbl.create 64
+let mark_inline_call jid = Hashtbl.replace inline_calls jid ()
+let is_inline_call jid = Hashtbl.mem inline_calls jid
+let inherit_inline ~from jid = if is_inline_call from then mark_inline_call jid
+
+let call_direct : (closed_jaxpr -> value list -> value list) ref =
+  ref (fun _ _ -> invalid_arg "Core.call_direct: not installed")
+
 let call_inline : (closed_jaxpr -> value list -> value list) ref =
   ref (fun _ _ -> invalid_arg "Core.call_inline: not installed")
 
@@ -396,6 +404,8 @@ let rec dispatch prim args =
   let top = find_top_trace args in
   match (prim, args) with
   | Xla_call c, _ when top.kind = KEval -> !call_inline c args
+  | Xla_call c, _ when top.kind = KJaxpr && is_inline_call c.jid ->
+      !call_direct c args
   | Transpose perm, [ _ ]
     when Array.for_all Fun.id (Array.mapi (fun i p -> i = p) perm) ->
       args

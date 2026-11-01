@@ -14,3 +14,4 @@ val custom_call :
   (int -> aval list -> (string * string * closed_jaxpr) option) ref
 
 val call_name : int -> string
+val atom_type : atom -> aval

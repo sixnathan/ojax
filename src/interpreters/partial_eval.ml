@@ -200,6 +200,11 @@ let tracers_to_jaxpr (tracers_in : tracer list) (tracers_out : tracer list) :
     | r :: _ -> ( match !r with Some (t : tracer) -> t.id | None -> -1)
     | [] -> -1
   in
+  let eqn_order (t : tracer) =
+    match t.payload with
+    | PE { recipe = Some (EqnRecipe e); _ } -> recipe_key e.er_out
+    | _ -> -1
+  in
   let recipe_to_eqn prim (inputs : tracer list) (avals_out : aval list) er_out =
     let in_atoms =
       List.map
@@ -247,7 +252,9 @@ let tracers_to_jaxpr (tracers_in : tracer list) (tracers_out : tracer list) :
       | PE { recipe = None; _ } ->
           invalid_arg "tracers_to_jaxpr: tracer without recipe"
       | _ -> invalid_arg "tracers_to_jaxpr: expected a PartialEval tracer")
-    (toposort tracers_out tracer_parents);
+    (List.stable_sort
+       (fun (x : tracer) (y : tracer) -> compare (eqn_order x) (eqn_order y))
+       (toposort (tracers_in @ tracers_out) tracer_parents));
   let constvals = List.rev !constvar_to_val in
   let constvars = List.map fst constvals in
   let in_binders =
@@ -531,6 +538,7 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
       known_tracers
   in
   Pretty_printer.register_call_name known_closed.jid name;
+  Core.inherit_inline ~from:c.jid known_closed.jid;
   let known_results = Core.bind (Xla_call known_closed) known_inputs in
   let n_known_outs = List.length (List.filter is_known pvals_out) in
   let known_out_vals, residual_vals =
@@ -578,6 +586,7 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
     { jid = Core.fresh_id (); jaxpr = unknown_jx; consts = [] }
   in
   Pretty_printer.register_call_name unknown_closed.jid name;
+  Core.inherit_inline ~from:c.jid unknown_closed.jid;
   let residual_tracers =
     List.map (fun (_, r) -> as_tracer (Core.full_raise trace r)) kept
   in

@@ -1824,6 +1824,7 @@ let jvp_jaxpr (c : closed_jaxpr) primal_avals nzs =
       in
       Pretty_printer.register_call_name closed.jid
         (Pretty_printer.call_name c.jid);
+      Core.inherit_inline ~from:c.jid closed.jid;
       let r = (closed, !out_nzs) in
       Hashtbl.replace jvp_jaxpr_cache key r;
       r
@@ -2102,8 +2103,36 @@ let tape_const (b : jaxpr_builder) v =
           b.jb_constvals <- (var, v) :: b.jb_constvals;
           A_var var)
 
-let tape_eval (b : jaxpr_builder) (jx : jaxpr) consts tangents =
+let rec tape_eval_atoms (b : jaxpr_builder) (jx : jaxpr) args =
   let env : (int, atom) Hashtbl.t = Hashtbl.create 16 in
+  List.iter2 (fun (v : var) a -> Hashtbl.replace env v.vid a) jx.in_binders args;
+  let read = function A_var v -> Hashtbl.find env v.vid | a -> a in
+  List.iter
+    (fun (e : eqn) ->
+      let inputs = List.map read e.inputs in
+      match e.prim with
+      | Xla_call c when Core.is_inline_call c.jid ->
+          let const_atoms =
+            List.map (fun nd -> tape_const b (Concrete nd)) c.consts
+          in
+          let outs = tape_eval_atoms b c.jaxpr (const_atoms @ inputs) in
+          List.iter2
+            (fun (v : var) a -> Hashtbl.replace env v.vid a)
+            e.outs outs
+      | _ ->
+          let outs =
+            List.map
+              (fun (v : var) ->
+                let fresh = { vid = Core.fresh_id (); vaval = v.vaval } in
+                Hashtbl.replace env v.vid (A_var fresh);
+                fresh)
+              e.outs
+          in
+          b.jb_eqns <- { e with inputs; outs } :: b.jb_eqns)
+    jx.eqns;
+  List.map read jx.outs
+
+let tape_eval (b : jaxpr_builder) (jx : jaxpr) consts tangents =
   let args =
     List.map (tape_const b) consts
     @ List.map
@@ -2112,22 +2141,7 @@ let tape_eval (b : jaxpr_builder) (jx : jaxpr) consts tangents =
           | _ -> failwith "ad: expected a tangent on the tape")
         tangents
   in
-  List.iter2 (fun (v : var) a -> Hashtbl.replace env v.vid a) jx.in_binders args;
-  let read = function A_var v -> Hashtbl.find env v.vid | a -> a in
-  List.iter
-    (fun (e : eqn) ->
-      let inputs = List.map read e.inputs in
-      let outs =
-        List.map
-          (fun (v : var) ->
-            let fresh = { vid = Core.fresh_id (); vaval = v.vaval } in
-            Hashtbl.replace env v.vid (A_var fresh);
-            fresh)
-          e.outs
-      in
-      b.jb_eqns <- { e with inputs; outs } :: b.jb_eqns)
-    jx.eqns;
-  List.map read jx.outs
+  tape_eval_atoms b jx args
 
 let rec tape_value (b : jaxpr_builder) atom =
   match atom with
@@ -2310,9 +2324,12 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
         | None -> failwith "ad: linearized call was not traced"
       in
       let name = Pretty_printer.call_name c.jid in
+      let primal = Jaxpr.dce_keep_args primal in
       Pretty_printer.register_call_name primal.jid name;
       let tangent = { jid = Core.fresh_id (); jaxpr = jx; consts = [] } in
       Pretty_printer.register_call_name tangent.jid name;
+      Core.inherit_inline ~from:c.jid primal.jid;
+      Core.inherit_inline ~from:c.jid tangent.jid;
       let r =
         {
           lc_primal = primal;
@@ -2374,43 +2391,35 @@ let lin_process_call (trace : trace) (b : jaxpr_builder) (c : closed_jaxpr)
         | _ -> failwith "ad: expected a tangent on the tape")
       nz_in
   in
-  let out_binders =
-    List.filter_map
-      (function A_var (v : var) -> Some v | _ -> None)
-      (List.map
-         (fun (a : atom) ->
-           match a with
-           | A_var v -> A_var { vid = Core.fresh_id (); vaval = v.vaval }
-           | A_lit nd ->
-               A_var
-                 {
-                   vid = Core.fresh_id ();
-                   vaval =
-                     {
-                       shape = Ndarray.shape nd;
-                       dtype = Ndarray.dtype nd;
-                       weak_type = false;
-                     };
-                 }
-           | DropVar aval -> A_var { vid = Core.fresh_id (); vaval = aval })
-         lc.lc_tangent.jaxpr.outs)
+  let out_atoms =
+    if Core.is_inline_call lc.lc_tangent.jid then
+      tape_eval_atoms b lc.lc_tangent.jaxpr (res_atoms @ tan_atoms)
+    else begin
+      let out_binders =
+        List.map
+          (fun a ->
+            { vid = Core.fresh_id (); vaval = Pretty_printer.atom_type a })
+          lc.lc_tangent.jaxpr.outs
+      in
+      b.jb_eqns <-
+        {
+          prim = Xla_call lc.lc_tangent;
+          inputs = res_atoms @ tan_atoms;
+          outs = out_binders;
+          multiple_results = List.length out_binders > 1;
+        }
+        :: b.jb_eqns;
+      List.map (fun v -> A_var v) out_binders
+    end
   in
-  b.jb_eqns <-
-    {
-      prim = Xla_call lc.lc_tangent;
-      inputs = res_atoms @ tan_atoms;
-      outs = out_binders;
-      multiple_results = List.length out_binders > 1;
-    }
-    :: b.jb_eqns;
-  let tan_rest = ref out_binders in
+  let tan_rest = ref out_atoms in
   List.map2
     (fun po nz ->
       if nz then
         begin match !tan_rest with
-        | v :: tl ->
+        | a :: tl ->
             tan_rest := tl;
-            Tracer (new_jvp_tracer trace po (tape_value b (A_var v)))
+            Tracer (new_jvp_tracer trace po (tape_value b a))
         | [] -> arity ()
         end
       else po)
@@ -2548,14 +2557,38 @@ let dce_tape (eqns : eqn list) (outs : atom list) =
     | A_var (v : var) -> Hashtbl.replace live v.vid ()
     | _ -> ()
   in
+  let is_live (v : var) = Hashtbl.mem live v.vid in
   List.iter mark outs;
   List.fold_left
     (fun kept (e : eqn) ->
-      if List.exists (fun (v : var) -> Hashtbl.mem live v.vid) e.outs then begin
-        List.iter mark e.inputs;
-        e :: kept
-      end
-      else kept)
+      match e.prim with
+      | Xla_call c when not (Jaxpr.eqn_has_effect e) ->
+          let used = List.map is_live e.outs in
+          if not (List.exists Fun.id used) then kept
+          else begin
+            let pruned, ins = Jaxpr.dce_closed c used in
+            let inputs =
+              List.concat
+                (List.map2
+                   (fun a keep -> if keep then [ a ] else [])
+                   e.inputs ins)
+            in
+            List.iter mark inputs;
+            let outs = List.filter is_live e.outs in
+            {
+              prim = Xla_call pruned;
+              inputs;
+              outs;
+              multiple_results = List.length outs > 1;
+            }
+            :: kept
+          end
+      | _ ->
+          if List.exists is_live e.outs || e.outs = [] then begin
+            List.iter mark e.inputs;
+            e :: kept
+          end
+          else kept)
     [] eqns
 
 let trace_linearized_nz (f : value list -> value list) (primals : value list)
@@ -3798,6 +3831,7 @@ and xla_call_transpose (c : closed_jaxpr) cts primals =
         in
         Pretty_printer.register_call_name closed.jid
           (Pretty_printer.call_name c.jid);
+        Core.inherit_inline ~from:c.jid closed.jid;
         let r = (closed, !out_nz) in
         Hashtbl.replace transpose_cache key r;
         r

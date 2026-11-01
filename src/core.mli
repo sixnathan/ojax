@@ -116,5 +116,9 @@ val elementwise_shape : int array list -> int array
 val is_elementwise : primitive -> bool
 val call_inline : (closed_jaxpr -> value list -> value list) ref
 val top_is_staging : value list -> bool
+val mark_inline_call : int -> unit
+val is_inline_call : int -> bool
+val inherit_inline : from:int -> int -> unit
+val call_direct : (closed_jaxpr -> value list -> value list) ref
 val register_custom_names : int -> name:string -> jvp_name:string -> unit
 val custom_names_of : int -> (string * string) option

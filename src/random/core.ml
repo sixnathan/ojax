@@ -279,7 +279,7 @@ let uniform k ~shape ~minval ~maxval =
   uniform_v k ~minval:(pyf minval) ~maxval:(pyf maxval) ~shape ~dt:(fdt ())
 
 let uniform_range k ~shape ~minval ~maxval =
-  uniform_v k ~minval ~maxval ~shape ~dt:(fdt ())
+  uniform_v k ~minval ~maxval ~shape ~dt:(dtype_of minval)
 
 let unif01 k ~shape = uniform_py k ~shape ~dt:(fdt ())
 
@@ -571,7 +571,7 @@ let loggamma k ~shape ~a =
 let gamma_value k ~shape ~a = gamma_v k ~a ~shape ~dt:(fdt ()) ~log_space:false
 
 let loggamma_value k ~shape ~a =
-  gamma_v k ~a ~shape ~dt:(fdt ()) ~log_space:true
+  gamma_v k ~a ~shape ~dt:(dtype_of a) ~log_space:true
 
 let beta_v key ~a ~b ~shape ~dt =
   jit_region "_beta" (shape, dt) [ key; a; b ] (function
@@ -590,7 +590,7 @@ let beta_v key ~a ~b ~shape ~dt =
     | _ -> assert false)
 
 let beta k ~shape ~a ~b = beta_v k ~a:(pyf a) ~b:(pyf b) ~shape ~dt:(fdt ())
-let beta_value k ~shape ~a ~b = beta_v k ~a ~b ~shape ~dt:(fdt ())
+let beta_value k ~shape ~a ~b = beta_v k ~a ~b ~shape ~dt:(dtype_of a)
 let default_float_for () = fdt ()
 
 let chisquare_v key ~df ~shape ~dt =

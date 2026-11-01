@@ -1069,13 +1069,10 @@ let pcast x ~dtype:_ = x
 let composite decomposition ~name:_ ~attrs:_ ~version:_ args =
   decomposition args
 
-let random_gamma_grad alpha sample =
-  let one = full_like alpha 1.0 in
-  let log_pdf =
-    sub (sub (mul (sub alpha one) (log sample)) sample) (b1 Lgamma [ alpha ])
-  in
-  neg (div (b1 Igamma_grad_a [ alpha; sample ]) (exp log_pdf))
+let random_gamma_grad_hook : (value -> value -> value) ref =
+  ref (fun _ _ -> failwith "lax: random_gamma_grad lowering is not linked")
 
+let random_gamma_grad alpha sample = !random_gamma_grad_hook alpha sample
 let rng_state = lazy (Stdlib.Random.State.make_self_init ())
 
 let rng_uniform lo hi out_shape =

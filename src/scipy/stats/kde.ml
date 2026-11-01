@@ -4,6 +4,7 @@ module NL = Numpy.Lax_numpy
 module U = Numpy.Ufuncs
 module R = Numpy.Reductions
 module LA = Numpy.Linalg
+module JU = Numpy.Jnp_util
 
 type t = {
   dataset : value;
@@ -11,130 +12,161 @@ type t = {
   neff : value;
   d : int;
   n : int;
-  factor : value;
   covariance : value;
   inv_cov : value;
 }
 
 let shape v = (Core.get_aval v).shape
 let dtype_of v = (Core.get_aval v).dtype
+let lit v x = Concrete (Ndarray.of_floats (dtype_of v) [||] [| x |])
+let py_int2 = lazy (JU.py_int 2)
 
 let gaussian_kde ?(bw_method = "scott") ?weights dataset =
+  let dataset = NL.atleast_2d dataset in
   let sh = shape dataset in
-  if Array.length sh <> 2 then
+  if Array.length sh <> 2 || Array.fold_left ( * ) 1 sh <= 1 then
     invalid_arg "`dataset` input should have multiple elements.";
   let d = sh.(0) and n = sh.(1) in
-  if n < 2 then invalid_arg "`dataset` input should have multiple elements.";
-  let dt = dtype_of dataset in
-  let raw_weights =
+  let dataset, w =
     match weights with
-    | Some w -> NL.astype w dt
-    | None -> L.full [| n |] 1.0 dt
+    | Some w -> (
+        match Dist_util.promote_dtypes [ dataset; w ] with
+        | [ dataset; w ] ->
+            let w = NL.atleast_1d w in
+            (dataset, U.true_divide w (R.sum w))
+        | _ -> assert false)
+    | None -> (
+        match Dist_util.promote_dtypes [ dataset ] with
+        | [ dataset ] ->
+            (dataset, L.full [| n |] (1.0 /. float_of_int n) (dtype_of dataset))
+        | _ -> assert false)
   in
-  let total = R.sum raw_weights in
-  let w = U.divide raw_weights (L.broadcast_in_dim total [| n |] [||]) in
-  let sum_sq = R.sum (U.multiply w w) in
-  let neff = L.div (L.full_like sum_sq 1.0) sum_sq in
-  let dim = float_of_int d in
-  let exponent = L.full_like neff (-1.0 /. (dim +. 4.0)) in
+  let neff =
+    U.true_divide (lit w 1.0) (R.sum (U.power w (Lazy.force py_int2)))
+  in
+  let exponent = -1.0 /. float_of_int (d + 4) in
   let factor =
     match bw_method with
-    | "scott" -> L.pow neff exponent
+    | "scott" -> U.power neff (lit neff exponent)
     | "silverman" ->
-        L.pow (L.mul neff (L.full_like neff ((dim +. 2.0) /. 4.0))) exponent
+        let scaled =
+          U.true_divide
+            (U.multiply neff (lit neff (float_of_int (d + 2))))
+            (lit neff 4.0)
+        in
+        U.power scaled (lit neff exponent)
     | other ->
-        invalid_arg ("`bw_method` should be 'scott' or 'silverman': " ^ other)
+        invalid_arg
+          ("`bw_method` should be 'scott', 'silverman', a scalar, or a \
+            callable: " ^ other)
   in
-  let mean = NL.reshape (L.dot dataset w) [| d; 1 |] in
-  let centered = U.subtract dataset (NL.broadcast_to mean sh) in
-  let weighted =
-    U.multiply centered (NL.broadcast_to (NL.reshape w [| 1; n |]) sh)
-  in
-  let raw_cov = L.dot weighted (L.transpose centered [| 1; 0 |]) in
-  let denom = L.sub (L.full_like sum_sq 1.0) sum_sq in
-  let data_cov =
-    L.div raw_cov (L.broadcast_in_dim denom (shape raw_cov) [||])
-  in
+  let cov = NL.cov ~rowvar:true ~bias:false ~aweights:w dataset in
+  let data_covariance = NL.atleast_2d cov in
+  let data_inv_cov = LA.inv data_covariance in
   let covariance =
-    L.mul data_cov
-      (L.broadcast_in_dim (L.mul factor factor) (shape data_cov) [||])
+    U.multiply data_covariance (U.power factor (Lazy.force py_int2))
   in
-  let inv_cov = LA.inv covariance in
-  { dataset; weights = w; neff; d; n; factor; covariance; inv_cov }
-
-let log_norm t =
-  let dim = float_of_int t.d in
-  let sign, logdet = LA.slogdet t.covariance in
-  ignore sign;
-  let two_pi = 8.0 *. Float.atan 1.0 in
-  L.mul
-    (L.add logdet (L.full_like logdet (dim *. log two_pi)))
-    (L.full_like logdet 0.5)
-
-let squared_mahalanobis t points =
-  let m = (shape points).(1) in
-  let expand_points =
-    NL.broadcast_to (NL.reshape points [| t.d; m; 1 |]) [| t.d; m; t.n |]
+  let inv_cov =
+    U.true_divide data_inv_cov (U.power factor (Lazy.force py_int2))
   in
-  let expand_data =
-    NL.broadcast_to (NL.reshape t.dataset [| t.d; 1; t.n |]) [| t.d; m; t.n |]
-  in
-  let diff = U.subtract expand_points expand_data in
-  let product = Numpy.Einsum.einsum "ij,jmn->imn" [ t.inv_cov; diff ] in
-  R.sum ~axis:[| 0 |] (U.multiply diff product)
+  { dataset; weights = w; neff; d; n; covariance; inv_cov }
 
-let as_points t points =
-  let points = NL.astype points (dtype_of t.dataset) in
-  match Array.length (shape points) with
-  | 1 -> NL.reshape points [| t.d; (shape points).(0) / t.d |]
-  | 2 -> points
-  | _ -> invalid_arg "points must be at most two dimensional"
+let reshape_points t points =
+  let points = NL.atleast_2d points in
+  let sh = shape points in
+  if sh.(0) <> t.d then
+    if sh.(0) = 1 && sh.(1) = t.d then NL.reshape points [| t.d; 1 |]
+    else
+      invalid_arg
+        (Printf.sprintf "points have dimension %d, dataset has dimension %d"
+           sh.(0) t.d)
+  else points
+
+let kernel_eval in_log points values xi precision =
+  Eager_jit.one "scipy.stats.kde._gaussian_kernel_eval" in_log []
+    [ points; values; xi; precision ] (fun _ vals ->
+      JU.jit1 "_gaussian_kernel_eval" ~key:(string_of_bool in_log)
+        (fun args ->
+          match Dist_util.promote_dtypes args with
+          | [ points; values; xi; precision ] ->
+              let d = (shape points).(1) in
+              let whitening = LA.cholesky ~symmetrize_input:false precision in
+              let points = Numpy.Tensor_contractions.dot points whitening in
+              let xi = Numpy.Tensor_contractions.dot xi whitening in
+              let diag = NL.diag whitening in
+              let summed = R.sum (U.log diag) in
+              let two_pi = Numpy.Jnp_util.py_float (2.0 *. Float.pi) in
+              let lg = U.log two_pi in
+              let half_d = lit summed (0.5 *. float_of_int d) in
+              let log_norm =
+                U.subtract summed
+                  (U.multiply half_d (NL.astype lg (dtype_of summed)))
+              in
+              let kernel x_test x_train y_train =
+                let delta = U.subtract x_train x_test in
+                let total = R.sum (U.square delta) in
+                let arg =
+                  U.subtract log_norm (U.multiply (lit total 0.5) total)
+                in
+                if in_log then U.add (U.log y_train) arg
+                else U.multiply y_train (U.exp arg)
+              in
+              let reduced x =
+                let mapped =
+                  List.hd
+                    (Interpreters.Batching.vmap
+                       (function
+                         | [ tr; y ] -> [ kernel x tr y ] | _ -> assert false)
+                       [ Some 0; Some 0 ] [ points; values ])
+                in
+                if in_log then Ops.Special.logsumexp ~axis:[| 0 |] mapped
+                else R.sum ~axis:[| 0 |] mapped
+              in
+              List.hd
+                (Interpreters.Batching.vmap
+                   (function [ x ] -> [ reduced x ] | _ -> assert false)
+                   [ Some 0 ] [ xi ])
+          | _ -> assert false)
+        vals)
+
+let values_of t = L.expand_dims t.weights [| 1 |]
 
 let evaluate t points =
-  let points = as_points t points in
-  let m = (shape points).(1) in
-  let maha = squared_mahalanobis t points in
-  let exponent = L.mul maha (L.full_like maha (-0.5)) in
-  let kernel = U.exp exponent in
-  let weights =
-    NL.broadcast_to (NL.reshape t.weights [| 1; t.n |]) [| m; t.n |]
+  let points = reshape_points t points in
+  let result =
+    kernel_eval false (NL.transpose t.dataset) (values_of t)
+      (NL.transpose points) t.inv_cov
   in
-  let total = R.sum ~axis:[| 1 |] (U.multiply weights kernel) in
-  let norm = U.exp (L.neg (log_norm t)) in
-  U.multiply total (L.broadcast_in_dim norm (shape total) [||])
+  L.index_in_dim ~axis:1 ~keepdims:false result 0
 
 let pdf = evaluate
 
 let logpdf t points =
-  let points = as_points t points in
-  let m = (shape points).(1) in
-  let maha = squared_mahalanobis t points in
-  let exponent = L.mul maha (L.full_like maha (-0.5)) in
-  let log_w =
-    NL.broadcast_to (NL.reshape (U.log t.weights) [| 1; t.n |]) [| m; t.n |]
+  let points = reshape_points t points in
+  let result =
+    kernel_eval true (NL.transpose t.dataset) (values_of t)
+      (NL.transpose points) t.inv_cov
   in
-  let combined = U.add exponent log_w in
-  let summed = Ops.Special.logsumexp ~axis:[| 1 |] combined in
-  U.subtract summed (L.broadcast_in_dim (log_norm t) (shape summed) [||])
+  L.index_in_dim ~axis:1 ~keepdims:false result 0
 
 let integrate_box_1d t low high =
   if t.d <> 1 then invalid_arg "integrate_box_1d() only handles 1D pdfs";
-  let variance =
-    L.index_in_dim ~keepdims:false
-      (L.index_in_dim ~keepdims:false t.covariance 0)
-      0
-  in
-  let sigma = L.sqrt variance in
-  let flat = NL.reshape t.dataset [| t.n |] in
-  let edge x =
-    U.divide
-      (U.subtract (L.full [| t.n |] x (dtype_of flat)) flat)
-      (L.broadcast_in_dim sigma [| t.n |] [||])
-  in
-  let cdf z =
-    let half = L.full_like z 0.5 in
-    let root2 = L.full_like z (sqrt 2.0) in
-    U.multiply half
-      (L.sub (L.full_like z 1.0) (Core.bind1 Erf [ L.neg (L.div z root2) ]))
-  in
-  R.sum (U.multiply t.weights (U.subtract (cdf (edge high)) (cdf (edge low))))
+  let pyf = JU.py_float in
+  Eager_jit.one "scipy.stats.kde.integrate_box_1d" () []
+    [ t.dataset; t.weights; t.covariance; pyf low; pyf high ]
+    (fun _ vals ->
+      match vals with
+      | [ dataset; weights; covariance; low; high ] ->
+          let sigma = NL.squeeze (U.sqrt covariance) in
+          let low = NL.astype low (dtype_of dataset) in
+          let high = NL.astype high (dtype_of dataset) in
+          let low_z =
+            NL.squeeze (U.true_divide (U.subtract low dataset) sigma)
+          in
+          let high_z =
+            NL.squeeze (U.true_divide (U.subtract high dataset) sigma)
+          in
+          let cdf_high = Special.ndtr high_z in
+          let cdf_low = Special.ndtr low_z in
+          R.sum (U.multiply weights (U.subtract cdf_high cdf_low))
+      | _ -> assert false)

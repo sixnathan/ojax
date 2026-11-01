@@ -16,33 +16,47 @@ let complex_of = function
   | Dtype.F64 | Dtype.Complex128 -> Dtype.Complex128
   | _ -> Dtype.Complex64
 
-let pi = 4.0 *. Float.atan 1.0
+module UF = Numpy.Ufuncs
+module NL = Numpy.Lax_numpy
 
-let expanded_along ndim axis values make =
-  let sh = Array.make ndim 1 in
-  sh.(axis) <- Array.length values;
-  make sh values
+let w4 n k =
+  let cdt = complex_of (dtype_of k) in
+  let k = if dtype_of k = cdt then k else NL.astype k cdt in
+  let n_arr =
+    Concrete
+      (Ndarray.of_complex cdt [||]
+         [| { Complex.re = float_of_int n; im = 0.0 } |])
+  in
+  let coef =
+    Concrete
+      (Ndarray.of_complex cdt [||]
+         [| { Complex.re = 0.0; im = -0.5 *. Float.pi } |])
+  in
+  let product = UF.multiply coef k in
+  UF.exp (UF.true_divide product n_arr)
 
-let twiddle dt ndim axis n =
-  let cdt = complex_of dt in
-  expanded_along ndim axis
-    (Array.init n (fun k ->
-         let angle = -.pi *. float_of_int k /. float_of_int (2 * n) in
-         { Complex.re = cos angle; im = sin angle }))
-    (fun sh vs -> Concrete (Ndarray.of_complex cdt sh vs))
+let other_axes ndim axis =
+  Array.of_list (List.filter (fun a -> a <> axis) (List.init ndim Fun.id))
 
-let broadcast_to v sh =
-  L.broadcast_in_dim v sh (Array.init (Array.length sh) Fun.id)
+let interleave x axis =
+  let size = (shape x).(axis) in
+  let v0 = L.slice_in_dim ~stride:2 ~axis x 0 size in
+  let sliced = L.slice_in_dim ~stride:2 ~axis x 1 size in
+  let v1 = L.rev sliced [| axis |] in
+  L.concatenate [ v0; v1 ] axis
 
 let ortho_norm out axis =
-  let ndim = rank out and n = (shape out).(axis) in
-  let factor =
-    expanded_along ndim axis
-      (Array.init n (fun i ->
-           sqrt ((if i = 0 then 4.0 else 2.0) *. float_of_int n)))
-      (fun sh vs -> Concrete (Ndarray.of_floats (dtype_of out) sh vs))
+  let dt = dtype_of out in
+  let n = (shape out).(axis) in
+  let first = L.full [| 1 |] 4.0 dt in
+  let rest = L.full [| n - 1 |] 2.0 dt in
+  let factor = L.concatenate [ first; rest ] 0 in
+  let factor = L.expand_dims factor (other_axes (rank out) axis) in
+  let scaled =
+    UF.multiply factor
+      (Concrete (Ndarray.of_floats dt [||] [| float_of_int n |]))
   in
-  b1 Div [ out; broadcast_to factor (shape out) ]
+  UF.true_divide out (L.sqrt scaled)
 
 let pad_axis x axis n =
   match n with
@@ -71,58 +85,65 @@ let is_complex v =
   | _ -> false
 
 let inexact x =
-  match dtype_of x with
-  | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> x
-  | Dtype.I64 -> b1 (Convert_element_type Dtype.F64) [ x ]
-  | _ -> b1 (Convert_element_type Dtype.F32) [ x ]
+  let dt = Dtypes.to_inexact_dtype (dtype_of x) in
+  if dt = dtype_of x then x else NL.astype x dt
+
+let two_real v =
+  UF.multiply (Concrete (Ndarray.of_floats (dtype_of v) [||] [| 2.0 |])) v
 
 let rec dct ?(type_ = 2) ?n ?(axis = -1) ?norm x =
   check_type type_;
   check_norm "dct" norm;
-  let x = inexact x in
-  if is_complex x then
-    b1 Complex
-      [
-        dct ~type_ ?n ~axis ?norm (b1 Real [ x ]);
-        dct ~type_ ?n ~axis ?norm (b1 Imag [ x ]);
-      ]
+  if is_complex x then begin
+    let re = dct ~type_ ?n ~axis ?norm (UF.real x) in
+    let im = dct ~type_ ?n ~axis ?norm (UF.imag x) in
+    L.complex re im
+  end
   else
     let axis = canon (rank x) axis in
     let x = pad_axis x axis n in
     let size = (shape x).(axis) in
-    let evens = L.slice_in_dim ~stride:2 ~axis x 0 size in
-    let odds = L.rev (L.slice_in_dim ~stride:2 ~axis x 1 size) [| axis |] in
-    let v = L.concatenate [ evens; odds ] axis in
+    let v = interleave x axis in
     let spectrum = NF.fft ~axis v in
-    let w = twiddle (dtype_of x) (rank x) axis size in
-    let product = b1 Mul [ spectrum; broadcast_to w (shape spectrum) ] in
-    let doubled = L.mul (b1 Real [ product ]) (L.full [||] 2.0 (dtype_of x)) in
-    if norm = Some "ortho" then ortho_norm doubled axis else doubled
+    let real_dt = dtype_of (UF.real spectrum) in
+    let k =
+      L.expand_dims
+        (NL.arange ~dtype:real_dt (float_of_int size))
+        (other_axes (rank x) axis)
+    in
+    let out = UF.multiply spectrum (w4 size k) in
+    let out = two_real (UF.real out) in
+    if norm = Some "ortho" then ortho_norm out axis else out
 
 let rec idct ?(type_ = 2) ?n ?(axis = -1) ?norm x =
   check_type type_;
   check_norm "idct" norm;
-  let x = inexact x in
-  if is_complex x then
-    b1 Complex
-      [
-        idct ~type_ ?n ~axis ?norm (b1 Real [ x ]);
-        idct ~type_ ?n ~axis ?norm (b1 Imag [ x ]);
-      ]
+  if is_complex x then begin
+    let re = idct ~type_ ?n ~axis ?norm (UF.real x) in
+    let im = idct ~type_ ?n ~axis ?norm (UF.imag x) in
+    L.complex re im
+  end
   else
     let axis = canon (rank x) axis in
     let x = pad_axis x axis n in
     let size = (shape x).(axis) in
-    let dt = dtype_of x in
+    let x = inexact x in
     let x = if norm = Some "ortho" then x else ortho_norm x axis in
     let x = ortho_norm x axis in
-    let w = twiddle dt (rank x) axis size in
-    let as_c = b1 (Convert_element_type (complex_of dt)) [ x ] in
-    let divided = b1 Div [ as_c; broadcast_to w (shape as_c) ] in
-    let scaled =
-      L.mul divided (L.full [||] (float_of_int (2 * size)) (dtype_of divided))
+    let k =
+      L.expand_dims
+        (NL.arange ~dtype:(dtype_of x) (float_of_int size))
+        (other_axes (rank x) axis)
     in
-    let inverse = b1 Real [ NF.ifft ~axis scaled ] in
+    let w = w4 size k in
+    let x = NL.astype x (dtype_of w) in
+    let x = UF.true_divide x (w4 size k) in
+    let cdt = dtype_of x in
+    let lit v =
+      Concrete (Ndarray.of_complex cdt [||] [| { Complex.re = v; im = 0.0 } |])
+    in
+    let x = UF.multiply (UF.multiply x (lit 2.0)) (lit (float_of_int size)) in
+    let inverse = UF.real (NF.ifft ~axis x) in
     let half = (size + 1) / 2 in
     let v0 = L.slice_in_dim ~axis inverse 0 half in
     let v1 = L.rev (L.slice_in_dim ~axis inverse half size) [| axis |] in
@@ -135,6 +156,28 @@ let rec idct ?(type_ = 2) ?n ?(axis = -1) ?norm x =
     in
     L.stack (weave pieces0 pieces1) axis
 
+let dct2 x ~axes:(axis1, axis2) ~norm =
+  let n1 = (shape x).(axis1) and n2 = (shape x).(axis2) in
+  let v = interleave (interleave x axis1) axis2 in
+  let spectrum = NF.fftn ~axes:[ axis1; axis2 ] v in
+  let vdt = dtype_of spectrum in
+  let ks n axis =
+    L.expand_dims
+      (NL.arange ~dtype:vdt (float_of_int n))
+      (other_axes (rank x) axis)
+  in
+  let k1 = ks n1 axis1 in
+  let k2 = ks n2 axis2 in
+  let w1 = w4 n1 k1 in
+  let t1 = UF.multiply (w4 n2 k2) spectrum in
+  let w2 = w4 n2 (UF.negative k2) in
+  let flipped = NL.flip ~axis:[| axis2 |] spectrum in
+  let rolled = NL.roll ~axis:[| axis2 |] flipped [| 1 |] in
+  let t2 = UF.multiply w2 rolled in
+  let out = UF.multiply w1 (UF.add t1 t2) in
+  let out = two_real (UF.real out) in
+  if norm = Some "ortho" then ortho_norm (ortho_norm out axis1) axis2 else out
+
 let resolve_axes ?s ?axes x =
   let n = rank x in
   match (axes, s) with
@@ -144,19 +187,67 @@ let resolve_axes ?s ?axes x =
       List.init k (fun i -> n - k + i)
   | None, None -> List.init n Fun.id
 
-let along_axes f ?s ?axes x =
-  let ax = resolve_axes ?s ?axes x in
-  let sizes =
-    match s with
-    | Some l -> List.map Option.some l
-    | None -> List.map (fun _ -> None) ax
+let pad_all x ~axes ~sizes =
+  let cfg =
+    Array.mapi
+      (fun a sz ->
+        let rec find ax ss =
+          match (ax, ss) with
+          | h :: _, v :: _ when h = a -> v - sz
+          | _ :: tl, _ :: vt -> find tl vt
+          | _ -> 0
+        in
+        (0, find axes sizes, 0))
+      (shape x)
   in
-  List.fold_left2 (fun v a n -> f ?n ~axis:a v) x ax sizes
+  b1 (Pad cfg) [ x; L.full [||] 0.0 (dtype_of x) ]
 
-let dctn ?(type_ = 2) ?s ?axes ?norm x =
+let rec dctn ?(type_ = 2) ?s ?axes ?norm x =
   check_type type_;
-  along_axes (fun ?n ~axis v -> dct ?n ~axis ?norm v) ?s ?axes x
+  check_norm "dctn" norm;
+  if is_complex x then begin
+    let re = dctn ~type_ ?s ?axes ?norm (UF.real x) in
+    let im = dctn ~type_ ?s ?axes ?norm (UF.imag x) in
+    L.complex re im
+  end
+  else
+    let ax = resolve_axes ?s ?axes x in
+    match ax with
+    | [ a ] ->
+        dct
+          ?n:(match s with Some (v :: _) -> Some v | _ -> None)
+          ~axis:a ?norm x
+    | _ -> (
+        let x =
+          match s with Some sizes -> pad_all x ~axes:ax ~sizes | None -> x
+        in
+        match ax with
+        | [ a1; a2 ] -> dct2 x ~axes:(a1, a2) ~norm
+        | _ ->
+            let rec blocks x = function
+              | a1 :: a2 :: tl -> blocks (dctn ~axes:[ a1; a2 ] ?norm x) tl
+              | [ a ] -> dctn ~axes:[ a ] ?norm x
+              | [] -> x
+            in
+            blocks x ax)
 
-let idctn ?(type_ = 2) ?s ?axes ?norm x =
+let rec idctn ?(type_ = 2) ?s ?axes ?norm x =
   check_type type_;
-  along_axes (fun ?n ~axis v -> idct ?n ~axis ?norm v) ?s ?axes x
+  check_norm "idctn" norm;
+  if is_complex x then begin
+    let re = idctn ~type_ ?s ?axes ?norm (UF.real x) in
+    let im = idctn ~type_ ?s ?axes ?norm (UF.imag x) in
+    L.complex re im
+  end
+  else
+    let ax = resolve_axes ?s ?axes x in
+    match ax with
+    | [ a ] ->
+        idct
+          ?n:(match s with Some (v :: _) -> Some v | _ -> None)
+          ~axis:a ?norm x
+    | _ ->
+        let x =
+          match s with Some sizes -> pad_all x ~axes:ax ~sizes | None -> x
+        in
+        List.fold_left (fun v a -> idct ~axis:a ?norm v) x ax

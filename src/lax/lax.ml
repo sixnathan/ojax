@@ -790,11 +790,23 @@ let beta_impl = function
   | [ av; bv; xv ] ->
       let dt = Ndarray.dtype av in
       let a = to_array av and b = to_array bv and x = to_array xv in
-      let out =
-        Array.init (Array.length a) (fun i ->
-            Special.regularized_incomplete_beta dt a.(i) b.(i) x.(i))
+      let at v i = if Array.length v = 1 then v.(0) else v.(i) in
+      let n =
+        Stdlib.max (Array.length a)
+          (Stdlib.max (Array.length b) (Array.length x))
       in
-      [ Ndarray.of_floats dt (Ndarray.shape xv) out ]
+      let out =
+        Array.init n (fun i ->
+            Special.regularized_incomplete_beta dt (at a i) (at b i) (at x i))
+      in
+      let sh =
+        List.fold_left
+          (fun acc v ->
+            let s = Ndarray.shape v in
+            if Array.length s > Array.length acc then s else acc)
+          [||] [ av; bv; xv ]
+      in
+      [ Ndarray.of_floats dt sh out ]
   | _ -> failwith "lax: regularized_incomplete_beta expects 3 operands"
 
 let small_bit_width = function

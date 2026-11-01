@@ -766,9 +766,8 @@ let jax_params (e : eqn) =
         ("unique_indices", Plain (py_bool sorted));
       ]
   | Scatter { dimension_numbers; unique_indices } as p ->
-      scatter_params
-        ~sorted:(Np_ints.scatter_marked p)
-        dimension_numbers unique_indices
+      scatter_params ~sorted:(Np_ints.scatter_marked p) dimension_numbers
+        unique_indices
   | Scatter_mul { dimension_numbers; unique_indices } ->
       scatter_params ~update:(Mul, in_dtype ()) dimension_numbers unique_indices
   | Scatter_add { dimension_numbers } as p when Np_ints.scatter_marked p ->
@@ -988,9 +987,13 @@ let rec fresh_var_name ctx =
   ctx.next_name <- ctx.next_name + 1;
   if Hashtbl.mem ctx.shared_names name then fresh_var_name ctx else name
 
+let dropped_vars : (int, unit) Hashtbl.t = Hashtbl.create 16
+let mark_dropped (v : var) = Hashtbl.replace dropped_vars v.vid ()
+
 let name_of_var ctx (v : var) =
   match Hashtbl.find_opt ctx.var_names v.vid with
   | Some n -> n
+  | None when Hashtbl.mem dropped_vars v.vid -> "_"
   | None ->
       let n = fresh_var_name ctx in
       Hashtbl.replace ctx.var_names v.vid n;

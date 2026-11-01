@@ -81,20 +81,12 @@ and dce_uncached (c : closed_jaxpr) used_outputs ~instantiate =
   in
   let in_binders = const_binders @ keep_where args used_inputs in
   let outs = keep_where c.jaxpr.outs used_outputs in
-  let changed =
-    List.compare_lengths kept c.jaxpr.eqns <> 0
-    || List.exists not used_inputs
-    || List.exists not used_outputs
-    || not (List.for_all2 ( == ) kept c.jaxpr.eqns)
-  in
-  if not changed then (c, used_inputs)
-  else
-    let jid = Core.fresh_id () in
-    Core.inherit_inline ~from:c.jid jid;
-    (match Pretty_printer.registered_call_name c.jid with
-    | Some name -> Pretty_printer.register_call_name jid name
-    | None -> ());
-    ({ c with jid; jaxpr = { in_binders; eqns = kept; outs } }, used_inputs)
+  let jid = Core.fresh_id () in
+  Core.inherit_inline ~from:c.jid jid;
+  (match Pretty_printer.registered_call_name c.jid with
+  | Some name -> Pretty_printer.register_call_name jid name
+  | None -> ());
+  ({ c with jid; jaxpr = { in_binders; eqns = kept; outs } }, used_inputs)
 
 and rule used_outs (e : eqn) =
   let none = List.map (fun _ -> false) e.inputs in

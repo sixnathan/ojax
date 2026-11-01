@@ -89,6 +89,16 @@ let unique_symbol base =
   in
   probe base
 
+let lowered_symbols : (string, string) Hashtbl.t = Hashtbl.create 8
+
+let lowered_symbol key base =
+  match Hashtbl.find_opt lowered_symbols key with
+  | Some fname -> (fname, false)
+  | None ->
+      let fname = unique_symbol base in
+      Hashtbl.replace lowered_symbols key fname;
+      (fname, true)
+
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
@@ -1025,11 +1035,18 @@ let emit_argminmax ctx (eqn : eqn) in_ids ~is_max ~axis ~index_dtype =
   let inty = Ir.tensor_type_of_aval in_aval in
   let out = sole eqn.outs in
   let outty = Ir.tensor_type_of_aval out.vaval in
-  let fname = unique_symbol (if is_max then "argmax" else "argmin") in
+  let base = if is_max then "argmax" else "argmin" in
+  let fname, fresh =
+    lowered_symbol
+      (Printf.sprintf "%s %d %s %s" base axis (Dtype.short_name index_dtype)
+         inty)
+      base
+  in
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) inty outty);
+  if fresh then begin
   let vscalar = Ir.tensor_type dt [||] in
   let iscalar = Ir.tensor_type index_dtype [||] in
   let iota_ty = Ir.tensor_type index_dtype in_aval.shape in
@@ -1092,6 +1109,7 @@ let emit_argminmax ctx (eqn : eqn) in_ids ~is_max ~axis ~index_dtype =
   Buffer.add_string b "    }\n";
   Buffer.add_string b (Printf.sprintf "    return %%4#1 : %s\n" outty);
   Buffer.add_string b "  }\n"
+  end
 
 let cum_window_attrs shape axis reverse =
   let ndim = Array.length shape in
@@ -1124,7 +1142,6 @@ let cum_window_attrs shape axis reverse =
 
 let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
-  let fname = unique_symbol base_name in
   let x = sole in_ids in
   let in_aval = atom_aval (sole eqn.inputs) in
   let dt = in_aval.dtype in
@@ -1132,9 +1149,15 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
   let sty = Ir.tensor_type dt [||] in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
+  let fname, fresh =
+    lowered_symbol
+      (Printf.sprintf "%s %d %b %s" base_name axis reverse ty)
+      base_name
+  in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
+  if fresh then begin
   let attrs = cum_window_attrs in_aval.shape axis reverse in
   let b = ctx.extras in
   Buffer.add_string b
@@ -1167,6 +1190,7 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
   end;
   Buffer.add_string b "  }\n"
+  end
 
 let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   let x = sole in_ids in
@@ -4038,6 +4062,7 @@ let emitting () = !emission_depth > 0
 
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
+  Hashtbl.reset lowered_symbols;
   Hashtbl.reset call_symbols;
   symbol_counter := 0;
   seen_mesh := None;

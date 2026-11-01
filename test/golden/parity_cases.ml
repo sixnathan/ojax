@@ -1824,3 +1824,8 @@ let needs_concrete op =
       "np_polydiv";
       "np_roots";
     ]
+
+let result_names = function
+  | "gp_qr_full" ->
+      Some (Ojax.Stages.result_names_of_tree Ojax.Numpy.Linalg.qr_result_def)
+  | _ -> None

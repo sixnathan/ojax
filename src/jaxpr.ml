@@ -861,7 +861,8 @@ let rec known_copy (c : closed_jaxpr) =
           jaxpr = { in_binders; eqns; outs = List.map atom c.jaxpr.outs };
         }
       in
-      Pretty_printer.register_call_name copy.jid (Pretty_printer.call_name c.jid);
+      Pretty_printer.register_call_name copy.jid
+        (Pretty_printer.call_name c.jid);
       Core.inherit_inline ~from:c.jid copy.jid;
       Hashtbl.replace known_copies c.jid copy;
       copy

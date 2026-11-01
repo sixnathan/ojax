@@ -227,9 +227,7 @@ and svd_hermitian ~compute_uv a =
       if (shape magnitudes).(last) > 4294967295 then D.Uint64 else D.Uint32
     in
     let idxs = L.broadcasted_iota idx_dtype (shape magnitudes) last in
-    match
-      L.sort ~dimension:last ~num_keys:1 [ magnitudes; idxs; sign ]
-    with
+    match L.sort ~dimension:last ~num_keys:1 [ magnitudes; idxs; sign ] with
     | [ s; idxs; sign ] ->
         let s = L.rev s [| last |] in
         let idxs = L.rev idxs [| last |] in
@@ -469,19 +467,13 @@ and pinv_jvp ~hermitian ~rtol a a_dot =
     if sa.(na - 2) >= sa.(na - 1) then
       let s = (p @@@ h p) @@@ h a_dot in
       let t = (h a_dot @@@ h p) @@@ p in
-      UF.negative (p @@@ a_dot) @@@ p
-      +! s
-      -! ((s @@@ a) @@@ p)
-      +! t
-      -! ((p @@@ a) @@@ t)
+      UF.negative (p @@@ a_dot)
+      @@@ (p +! s -! ((s @@@ a) @@@ p) +! t -! ((p @@@ a) @@@ t))
     else
-      let s = p @@@ (h p @@@ h a_dot) in
-      let t = h a_dot @@@ (h p @@@ p) in
-      UF.negative p @@@ (a_dot @@@ p)
-      +! s
-      -! (s @@@ (a @@@ p))
-      +! t
-      -! (p @@@ (a @@@ t))
+      let s = p @@@ h p @@@ h a_dot in
+      let t = h a_dot @@@ h p @@@ p in
+      UF.negative p
+      @@@ ((a_dot @@@ p) +! s -! (s @@@ a @@@ p) +! t -! (p @@@ a @@@ t))
   in
   ([ p ], [ p_dot ])
 
@@ -629,8 +621,7 @@ and matrix_norm_impl x ord r c keepdims =
   | Onum o ->
       if o = 1.0 then begin
         let c = if (not keepdims) && c > r then c - 1 else c in
-        RED.amax ~axis:[| c |] ~keepdims
-          ~initial:(Jnp_util.py_int 0)
+        RED.amax ~axis:[| c |] ~keepdims ~initial:(Jnp_util.py_int 0)
           (RED.sum ~axis:[| r |] ~keepdims (abs_x ()))
       end
       else if o = -1.0 then begin
@@ -640,8 +631,7 @@ and matrix_norm_impl x ord r c keepdims =
       end
       else if o = infinity then begin
         let r = if (not keepdims) && r > c then r - 1 else r in
-        RED.amax ~axis:[| r |] ~keepdims
-          ~initial:(Jnp_util.py_int 0)
+        RED.amax ~axis:[| r |] ~keepdims ~initial:(Jnp_util.py_int 0)
           (RED.sum ~axis:[| c |] ~keepdims (abs_x ()))
       end
       else if o = neg_infinity then begin
@@ -653,8 +643,7 @@ and matrix_norm_impl x ord r c keepdims =
         let x2 = NL.moveaxis [| r; c |] [| nd - 2; nd - 1 |] x in
         let s = svdvals x2 in
         let y =
-          if o = 2.0 then
-            RED.amax ~axis:[| -1 |] ~initial:(Jnp_util.py_int 0) s
+          if o = 2.0 then RED.amax ~axis:[| -1 |] ~initial:(Jnp_util.py_int 0) s
           else RED.amin ~axis:[| -1 |] s
         in
         if keepdims then NL.expand_dims y [| r; c |] else y
@@ -1031,6 +1020,12 @@ let multi_dot arrs =
     if ndim arr = 1 then if i = 0 then right else left else left ^ right
   in
   Einsum.einsum (String.concat "," (List.mapi term arrs)) arrs
+
+let () = Tree_util.register_attribute_keys "QRResult" [ "Q"; "R" ]
+
+let qr_result_def =
+  Tree_util.Custom_def
+    ("QRResult", "", [ Tree_util.Leaf_def; Tree_util.Leaf_def ])
 
 let qr ?mode a0 =
   Eager_jit.many "numpy.linalg.qr" mode [] [ a0 ] (fun opts vals ->

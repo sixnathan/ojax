@@ -72,8 +72,7 @@ let mode ?axis ?nan_policy ?keepdims a =
 let invert_permutation_at i =
   let size = Array.fold_left ( * ) 1 (shape i) in
   let base = AC.empty_like i in
-  Numpy.Nd_index.set base
-    [ Numpy.Nd_index.Arr i ]
+  Numpy.Nd_index.set base [ Numpy.Nd_index.Arr i ]
     (NL.arange ~dtype:(dtype i) (float_of_int size))
 
 let rankdata_body method_ a =
@@ -83,7 +82,8 @@ let rankdata_body method_ a =
   let out_dt = Dtypes.default_float_dtype () in
   let lit = Numpy.Jnp_util.py_int in
   let arr, sorter =
-    L.sort_key_val a (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n))
+    L.sort_key_val a
+      (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n))
   in
   let inv = invert_permutation_at sorter in
   if method_ = "ordinal" then NL.astype (UF.add inv (lit 1)) out_dt
@@ -138,8 +138,7 @@ let rec rankdata_impl ?(method_ = "average") ?axis ?(nan_policy = "propagate") a
       List.hd
         (L.cond
            (RD.any (UF.isnan flat))
-           (fun args ->
-             [ AC.full_like ~dtype:out_dt (List.hd args) Float.nan ])
+           (fun args -> [ AC.full_like ~dtype:out_dt (List.hd args) Float.nan ])
            (fun args -> [ rankdata_body method_ (List.hd args) ])
            [ flat ])
 

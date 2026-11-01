@@ -60,6 +60,7 @@ let interpreter_for trace =
 let eval_trace = { level = 0; kind = KEval; global_data = GNone }
 let trace_stack : trace list ref = ref [ eval_trace ]
 let dynamic_trace : trace option ref = ref None
+let linearize_scope : trace option option ref = ref None
 
 let tracing_dynamically () =
   match !dynamic_trace with Some t -> t.level > 0 | None -> false

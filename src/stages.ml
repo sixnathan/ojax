@@ -5,6 +5,7 @@ type lowered = {
   in_avals : aval list;
   out_avals : aval list;
   module_name : string;
+  result_names : string list option;
 }
 
 type compiled = { run : value list -> value list; source : lowered }
@@ -45,6 +46,24 @@ let closed_out_avals (closed : closed_jaxpr) =
       | DropVar a -> a)
     closed.jaxpr.outs
 
+let result_names_of_tree out_tree =
+  let rec count = function
+    | Tree_util.Leaf_def -> 1
+    | Null_def -> 0
+    | List_def ds | Tuple_def ds | Custom_def (_, _, ds) -> total ds
+    | Dict_def kvs -> total (List.map snd kvs)
+  and total ds = List.fold_left (fun acc d -> acc + count d) 0 ds in
+  let tree =
+    Tree_util.tree_unflatten out_tree (List.init (count out_tree) Fun.id)
+  in
+  let clean = function
+    | Tree_util.Flattened_index_key i -> Tree_util.Sequence_key i
+    | key -> key
+  in
+  List.map
+    (fun (path, _) -> "result" ^ Tree_util.keystr (List.map clean path))
+    (Tree_util.tree_leaves_with_path tree)
+
 let lower f avals =
   let closed = Jaxpr.make_jaxpr avals f in
   {
@@ -52,6 +71,7 @@ let lower f avals =
     in_avals = avals;
     out_avals = closed_out_avals closed;
     module_name = "_lambda";
+    result_names = None;
   }
 
 let raw_text lowered = Stablehlo.Emit.emit_closed_jaxpr lowered.closed
@@ -59,7 +79,8 @@ let jaxpr_text lowered = Pretty_printer.closed_jaxpr_to_string lowered.closed
 
 let as_jax_text ?name lowered =
   let name = Option.value name ~default:lowered.module_name in
-  Stablehlo.Emit.emit_jax_text ~name lowered.closed
+  Stablehlo.Emit.emit_jax_text ?result_names:lowered.result_names ~name
+    lowered.closed
 
 let as_text lowered = as_jax_text lowered
 
@@ -121,6 +142,7 @@ let trace_flat ~name f args =
           in_avals;
           out_avals = out_flat;
           module_name = (if name = "<fun>" then "_lambda" else name);
+          result_names = Some (result_names_of_tree out_tree);
         });
   }
 

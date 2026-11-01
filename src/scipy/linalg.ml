@@ -808,7 +808,8 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
   if nd > 2 then
     List.hd
       (Interpreters.Batching.vmap
-         (fun args -> [ expm ~upper_triangular ~max_squarings (List.hd args) ])
+         (fun args ->
+           [ expm_jit ~upper_triangular ~max_squarings (List.hd args) ])
          [ Some 0 ] [ a ])
   else
     match calc_p_q a with
@@ -837,12 +838,14 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
         | _ -> invalid_arg "expm: arity")
     | _ -> invalid_arg "expm: arity"
 
-let expm ?upper_triangular ?max_squarings a0 =
+and expm_jit ?upper_triangular ?max_squarings a0 =
   Eager_jit.one ~jit:"expm" "scipy.linalg.expm"
     (upper_triangular, max_squarings) [] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> expm ?upper_triangular ?max_squarings a0
       | _ -> assert false)
+
+let expm = expm_jit
 
 let expm_frechet ?(compute_expm = true) a e =
   let a = to_inexact a and e = to_inexact e in

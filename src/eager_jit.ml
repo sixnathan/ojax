@@ -32,6 +32,7 @@ let inline_names =
       "nn.functions.relu";
       "nn.functions.relu6";
       "nn.functions.log1mexp";
+      "numpy.linalg.pinv";
       "numpy.lax_numpy.ravel";
       "numpy.lax_numpy.swapaxes";
       "numpy.lax_numpy.unstack";

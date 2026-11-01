@@ -34,6 +34,8 @@ val current_level : unit -> int
 val with_new_main : trace_kind -> global_data -> (trace -> 'a) -> 'a
 val new_dynamic : trace -> (unit -> 'a) -> 'a
 val find_top_trace : value list -> trace
+val dynamic_trace : trace option ref
+val linearize_scope : trace option option ref
 val full_raise : trace -> value -> value
 val full_lower : value -> value
 val process_primitive : trace -> primitive -> value list -> value list

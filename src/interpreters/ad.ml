@@ -2407,7 +2407,13 @@ let lin_process (trace : trace) (b : jaxpr_builder) prim primals tangents =
         in
         let tangent_args = List.map fst args in
         let in_tracers = List.filter_map snd args in
-        let pos, tos = jvp_pairs prim primals tangent_args in
+        let previous_scope = !Core.linearize_scope in
+        Core.linearize_scope := Some !Core.dynamic_trace;
+        let pos, tos =
+          Fun.protect
+            ~finally:(fun () -> Core.linearize_scope := previous_scope)
+            (fun () -> jvp_pairs prim primals tangent_args)
+        in
         let pos =
           List.map
             (fun p ->

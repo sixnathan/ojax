@@ -3070,6 +3070,7 @@ and hoist_custom_consts ctx (jx : jaxpr) =
   List.iter
     (fun (e : eqn) ->
       match e.prim with
+      | Custom_jvp_call id when Core.shard_rule id <> None -> ()
       | Custom_jvp_call id | Custom_vjp_call id -> (
           match Jaxpr.custom_call_jaxpr id (List.map atom_aval e.inputs) with
           | Some c -> begin

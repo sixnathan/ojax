@@ -552,6 +552,7 @@ let hoist_constants text =
   let rec scope i =
     let kept = ref [] and constants = ref [] and renames = ref Tbl.empty in
     let depth = ref 0 in
+    let at_head = ref true in
     let rec walk i =
       if i >= n then i
       else
@@ -560,9 +561,13 @@ let hoist_constants text =
         | Some (tok, rhs) ->
             (match List.assoc_opt rhs !constants with
             | Some first -> renames := Tbl.add tok first !renames
-            | None -> constants := (rhs, tok) :: !constants);
+            | None ->
+                if !at_head && !depth = 0 then
+                  constants := !constants @ [ (rhs, tok) ]
+                else constants := (rhs, tok) :: !constants);
             walk (i + 1)
         | None ->
+            at_head := false;
             if closes line && not (opens line) then
               if !depth = 0 then i
               else begin

@@ -48,6 +48,7 @@ let f32_aval shape : T.aval = { shape; dtype = D.F32; weak_type = false }
 let two = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 2.0 |])
 let body x = U.add (U.multiply (U.sin x) two) (R.sum x)
 let unary f = function [ Tr.Leaf a ] -> Tr.Leaf (f a) | _ -> failwith "arity"
+let seen : Yojson.Safe.t list list ref = ref []
 
 let cases () =
   let ab = on mesh22 [ S.Named "a"; S.Named "b" ] arange16 in
@@ -117,6 +118,55 @@ let cases () =
                [ Tr.Leaf x ])),
       [ i_only ],
       None );
+    ( "shard_unused_input",
+      (function
+      | [ Tr.Leaf x; Tr.Leaf y ] ->
+          Tr.Leaf
+            (leaf
+               (S.shard_map ~mesh:(Lazy.force mesh4)
+                  ~in_specs:[ [ S.Named "i" ]; [ S.Named "i" ] ]
+                  ~out_specs:[ [ S.Named "i" ] ]
+                  (function
+                    | [ Tr.Leaf a; Tr.Leaf _ ] -> Tr.Leaf (U.sin a)
+                    | _ -> failwith "arity")
+                  [ Tr.Leaf x; Tr.Leaf y ]))
+      | _ -> failwith "arity"),
+      [ i_only; i_only ],
+      None );
+    ( "shard_unused_output",
+      unary (fun x ->
+          match
+            S.shard_map ~mesh:(Lazy.force mesh4) ~in_specs:[ [ S.Named "i" ] ]
+              ~out_specs:[ [ S.Named "i" ]; [ S.Named "i" ] ]
+              (function
+                | [ Tr.Leaf a ] ->
+                    Tr.Tuple [ Tr.Leaf (U.sin a); Tr.Leaf (U.cos a) ]
+                | _ -> failwith "arity")
+              [ Tr.Leaf x ]
+          with
+          | Tr.Tuple [ _; Tr.Leaf c ] -> c
+          | _ -> failwith "arity"),
+      [ i_only ],
+      None );
+    ( "shard_dead_eqns",
+      unary (fun x ->
+          leaf
+            (S.shard_map ~mesh:(Lazy.force mesh4) ~in_specs:[ [ S.Named "i" ] ]
+               ~out_specs:[ [ S.Named "i" ] ]
+               (unary (fun a ->
+                    ignore (U.cos a);
+                    U.sin a))
+               [ Tr.Leaf x ])),
+      [ i_only ],
+      None );
+    ( "shard_all_dead",
+      unary (fun x ->
+          ignore
+            (S.shard_map ~mesh:(Lazy.force mesh4) ~in_specs:[ [ S.Named "i" ] ]
+               ~out_specs:[ [ S.Named "i" ] ] (unary U.sin) [ Tr.Leaf x ]);
+          U.cos x),
+      [ i_only ],
+      None );
     ( "callback_pure",
       unary (fun x ->
           let doubled =
@@ -136,7 +186,9 @@ let cases () =
       None );
     ( "callback_debug",
       unary (fun x ->
-          Ojax.Debugging.callback (fun _ -> ()) [ x ];
+          Ojax.Debugging.callback
+            (fun vs -> seen := List.map values vs :: !seen)
+            [ x ];
           U.multiply x two),
       [ i_only ],
       None );
@@ -246,6 +298,112 @@ let single_device oc =
       [ f32_aval [| 3 |]; f32_aval [| 3 |] ]
   in
   write "export_multi_scan" e.Ojax.Export.mlir_module;
+  let nested_scan = function
+    | x :: _ -> (
+        let three = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 3.0 |]) in
+        let body = function
+          | [ c; e ] ->
+              let inner =
+                L.scan ~length:2
+                  (function [ d ] -> [ U.add d e ] | _ -> failwith "arity")
+                  [ c ] []
+              in
+              [ List.hd inner; U.multiply e three ]
+          | _ -> failwith "arity"
+        in
+        match
+          L.scan body
+            [ T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 0.0 |]) ]
+            [ x ]
+        with
+        | [ c; ys ] -> [ c; ys ]
+        | _ -> failwith "arity")
+    | [] -> failwith "arity"
+  in
+  write "stages_nested_scan"
+    (Ojax.Stages.as_jax_text (Ojax.Stages.lower nested_scan z3));
+  write "export_nested_scan"
+    (Ojax.Export.export ~fun_name:"f" nested_scan z3).Ojax.Export.mlir_module;
+  let scan_cond = function
+    | x :: _ -> (
+        let zero = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 0.0 |]) in
+        let body = function
+          | [ c; e ] ->
+              let r =
+                L.cond (U.greater e zero)
+                  (function [ a ] -> [ U.sin a ] | _ -> failwith "arity")
+                  (function [ a ] -> [ U.cos a ] | _ -> failwith "arity")
+                  [ e ]
+              in
+              [ U.add c (List.hd r) ]
+          | _ -> failwith "arity"
+        in
+        match L.scan body [ zero ] [ x ] with
+        | [ c ] -> [ c ]
+        | _ -> failwith "arity")
+    | [] -> failwith "arity"
+  in
+  write "stages_scan_cond"
+    (Ojax.Stages.as_jax_text (Ojax.Stages.lower scan_cond z3));
+  write "export_scan_cond"
+    (Ojax.Export.export ~fun_name:"f" scan_cond z3).Ojax.Export.mlir_module;
+  write "export_multi_scan_cond"
+    (Ojax.Export.export ~fun_name:"f" ~platforms scan_cond z3)
+      .Ojax.Export.mlir_module;
+  let while_body = function
+    | x :: _ -> (
+        let limit = T.Concrete (Ojax.Ndarray.of_floats D.I32 [||] [| 3.0 |]) in
+        let one = T.Concrete (Ojax.Ndarray.of_floats D.I32 [||] [| 1.0 |]) in
+        match
+          L.while_loop
+            (function [ i; _ ] -> L.lt i limit | _ -> failwith "arity")
+            (function
+              | [ i; v ] -> [ L.add i one; U.sin v ] | _ -> failwith "arity")
+            [ T.Concrete (Ojax.Ndarray.of_floats D.I32 [||] [| 0.0 |]); x ]
+        with
+        | [ _; v ] -> [ v ]
+        | _ -> failwith "arity")
+    | [] -> failwith "arity"
+  in
+  write "stages_while"
+    (Ojax.Stages.as_jax_text (Ojax.Stages.lower while_body z3));
+  write "export_while"
+    (Ojax.Export.export ~fun_name:"f" while_body z3).Ojax.Export.mlir_module;
+  write "export_multi_while"
+    (Ojax.Export.export ~fun_name:"f" ~platforms while_body z3)
+      .Ojax.Export.mlir_module;
+  let tree_lowered =
+    (Ojax.Stages.jit ~name:"f" (function
+      | [ Tr.Leaf x ] ->
+          Tr.Dict
+            [
+              ("a", Tr.Leaf (U.sin x));
+              ("b", Tr.Tuple [ Tr.Leaf (U.cos x); Tr.Leaf x ]);
+            ]
+      | _ -> failwith "arity"))
+      .Ojax.Stages.wrapped_lower
+      [
+        Tr.Leaf
+          (T.Concrete (Ojax.Ndarray.of_floats D.F32 [| 3 |] [| 0.; 0.; 0. |]));
+      ]
+  in
+  write "stages_tree_paths" (Ojax.Stages.as_text tree_lowered);
+  Tr.register_attribute_keys "QRResult" [ "Q"; "R" ];
+  let named_lowered =
+    (Ojax.Stages.jit ~name:"f" (function
+      | [ Tr.Leaf x ] -> (
+          match Ojax.Numpy.Linalg.qr x with
+          | [ q; r ] -> Tr.Custom ("QRResult", "", [ Tr.Leaf q; Tr.Leaf r ])
+          | _ -> failwith "arity")
+      | _ -> failwith "arity"))
+      .Ojax.Stages.wrapped_lower
+      [
+        Tr.Leaf
+          (T.Concrete
+             (Ojax.Ndarray.of_floats D.F32 [| 2; 2 |] [| 2.; 1.; 1.; 3. |]));
+      ]
+  in
+  write "stages_namedtuple_paths" (Ojax.Stages.as_text named_lowered);
   let called = Ojax.Export.call e [ vector3; vector3 ] in
   Yojson.Safe.to_channel oc
     (`Assoc
@@ -277,4 +435,12 @@ let () =
       Yojson.Safe.to_channel oc (`Assoc (("case", `String name) :: row));
       output_char oc '\n')
     (cases ());
+  Yojson.Safe.to_channel oc
+    (`Assoc
+       [
+         ("case", `String "callback_seen");
+         ("text", `String "");
+         ("values", `List (List.map (fun row -> `List row) (List.rev !seen)));
+       ]);
+  output_char oc '\n';
   close_out oc

@@ -53,14 +53,41 @@ def reference():
         y = jax.pure_callback(lambda a: np.asarray(a) * 2, jax.ShapeDtypeStruct((8,), jnp.float32), x)
         return y + 1.0
 
+    seen = []
+
     def callback_debug(x):
+        jax.debug.callback(lambda a: seen.append(np.asarray(a)), x)
+        return x * 2.0
+
+    def shard_unused_input(x, y):
+        return jax.shard_map(lambda a, b: jnp.sin(a), mesh=mesh4, in_specs=(P("i"), P("i")), out_specs=P("i"))(x, y)
+
+    def shard_unused_output(x):
+        return jax.shard_map(lambda a: (jnp.sin(a), jnp.cos(a)), mesh=mesh4, in_specs=P("i"), out_specs=(P("i"), P("i")))(x)[1]
+
+    def shard_dead_eqns(x):
+        def inner(a):
+            jnp.cos(a)
+            return jnp.sin(a)
+
+        return jax.shard_map(inner, mesh=mesh4, in_specs=P("i"), out_specs=P("i"))(x)
+
+    def shard_all_dead(x):
+        jax.shard_map(jnp.sin, mesh=mesh4, in_specs=P("i"), out_specs=P("i"))(x)
+        return jnp.cos(x)
+
+    def _callback_quiet(x):
         jax.debug.callback(lambda a: None, x)
         return x * 2.0
 
     cases = [
+        ("shard_unused_input", shard_unused_input, [i_only, i_only], {}),
+        ("shard_unused_output", shard_unused_output, [i_only], {}),
+        ("shard_dead_eqns", shard_dead_eqns, [i_only], {}),
+        ("shard_all_dead", shard_all_dead, [i_only], {}),
         ("callback_pure", callback_pure, [i_only], {}),
         ("callback_debug", callback_debug, [i_only], {}),
-        ("callback_tail_mesh", callback_debug, [tail_only], {}),
+        ("callback_tail_mesh", lambda x: _callback_quiet(x), [tail_only], {}),
         ("sin_sum", body, [ab], {}),
         ("out_sharded", body, [ab], {"out_shardings": NamedSharding(mesh22, P("a", None))}),
         ("two_results", two_results, [x_only, x_only], {}),
@@ -79,6 +106,11 @@ def reference():
             "text": jitted.lower(*args).as_text(),
             "values": [[str(int(np.float64(v).view(np.int64))) for v in np.asarray(leaf).ravel()] for leaf in leaves],
         }
+    jax.effects_barrier()
+    rows["callback_seen"] = {
+        "text": "",
+        "values": [[[str(int(np.float64(v).view(np.int64))) for v in a.ravel()]] for a in seen],
+    }
     from jax import export
 
     def staged(x, y):
@@ -129,6 +161,45 @@ def reference():
     rows["lower_dependent"] = {"text": jax.jit(h2).lower(z3).as_text(), "values": []}
     multi = export.export(jax.jit(staged), platforms=platforms)(zeros, zeros)
     rows["export_multi_scan"] = {"text": _strip_locations(multi.mlir_module()), "values": []}
+    def nested_scan(x):
+        def body(c, e):
+            return jax.lax.scan(lambda d, _: (d + e, None), c, None, length=2)[0], e * 3.0
+
+        return jax.lax.scan(body, jnp.float32(0.0), x)
+
+    def scan_cond(x):
+        def body(c, e):
+            return c + jax.lax.cond(e > 0.0, jnp.sin, jnp.cos, e), None
+
+        return jax.lax.scan(body, jnp.float32(0.0), x)[0]
+
+    def while_body(x):
+        return jax.lax.while_loop(lambda s: s[0] < 3, lambda s: (s[0] + 1, jnp.sin(s[1])), (0, x))[1]
+
+    for name, fn in (("nested_scan", nested_scan), ("scan_cond", scan_cond), ("while", while_body)):
+        lam = lambda x, _fn=fn: _fn(x)
+        rows["stages_" + name] = {"text": jax.jit(lam).lower(z3).as_text(), "values": []}
+        fn.__name__ = "f"
+        rows["export_" + name] = {"text": _strip_locations(export.export(jax.jit(fn))(z3).mlir_module()), "values": []}
+    scan_cond.__name__ = "f"
+    while_body.__name__ = "f"
+    rows["export_multi_scan_cond"] = {"text": _strip_locations(export.export(jax.jit(scan_cond), platforms=platforms)(z3).mlir_module()), "values": []}
+    rows["export_multi_while"] = {"text": _strip_locations(export.export(jax.jit(while_body), platforms=platforms)(z3).mlir_module()), "values": []}
+
+    def tree_out(x):
+        return {"a": jnp.sin(x), "b": (jnp.cos(x), x)}
+
+    tree_out.__name__ = "f"
+
+    def named_out(x):
+        return jnp.linalg.qr(x)
+
+    named_out.__name__ = "f"
+    rows["stages_namedtuple_paths"] = {
+        "text": jax.jit(named_out).lower(np.array([[2.0, 1.0], [1.0, 3.0]], np.float32)).as_text(),
+        "values": [],
+    }
+    rows["stages_tree_paths"] = {"text": jax.jit(tree_out).lower(z3).as_text(), "values": []}
     v3 = np.array([1.0, 2.0, -3.0], np.float32)
     rows["export_multi_call"] = {
         "text": "",

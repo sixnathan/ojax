@@ -38,10 +38,10 @@ let broadcast_shapes a b =
       else invalid_arg "take_along_axis: incompatible shapes")
 
 let wrap_negative indices axis_size =
-  let idt = dtype indices and ish = shape indices in
+  let idt = dtype indices in
   NL.where_
-    (bind1 T.Lt [ indices; full idt ish 0.0 ])
-    (bind1 T.Add [ indices; full idt ish (float_of_int axis_size) ])
+    (bind1 T.Lt [ indices; full idt [||] 0.0 ])
+    (bind1 T.Add [ indices; full idt [||] (float_of_int axis_size) ])
     indices
 
 let take ?axis ?mode ?fill_value a indices =
@@ -80,7 +80,15 @@ let take ?axis ?mode ?fill_value a indices =
       g_start_indices_batching_dims = [||];
     }
   in
-  let gather_indices = NL.reshape indices (Array.append ish [| 1 |]) in
+  let gather_indices =
+    bind1
+      (T.Broadcast_in_dim
+         {
+           shape = Array.append ish [| 1 |];
+           dims = Array.init index_dims Fun.id;
+         })
+      [ indices ]
+  in
   match mode with
   | None | Some "fill" ->
       Lax.Slicing.gather_fill ?fill_value a gather_indices dnums slice_sizes

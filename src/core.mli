@@ -134,3 +134,4 @@ val mark_inline_call : int -> unit
 val is_inline_call : int -> bool
 val inherit_inline : from:int -> int -> unit
 val call_direct : (closed_jaxpr -> value list -> value list) ref
+val gather_fill_hook : (primitive -> value list -> value list) ref

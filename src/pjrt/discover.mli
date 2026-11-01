@@ -15,6 +15,7 @@ val preflight : unit -> string
 val available : unit -> bool
 val exact_sha256 : string
 val conventional_path : unit -> string option
+val verified_sha256 : unit -> string option
 val is_exact : unit -> bool
 val verify_gpu_at : string -> string
 val gpu_configured : unit -> bool

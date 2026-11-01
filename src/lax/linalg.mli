@@ -87,3 +87,4 @@ val svd :
   value list
 
 val tridiagonal : ?lower:bool -> value -> value * value * value * value
+val lu_solve_vector : transpose:bool -> value -> value -> value -> value

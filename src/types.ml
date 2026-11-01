@@ -220,6 +220,7 @@ and primitive =
   | Custom_linear_solve of {
       solve : closed_jaxpr;
       transpose_solve : closed_jaxpr option;
+      num_consts : int;
     }
   | Threefry2x32
   | Iota_2x32_shape of int array

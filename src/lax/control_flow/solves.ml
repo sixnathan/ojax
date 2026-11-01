@@ -30,5 +30,24 @@ let custom_linear_solve ?(symmetric = false)
     | None -> if symmetric then Some solve_jaxpr else None
   in
   Core.bind
-    (Custom_linear_solve { solve = solve_jaxpr; transpose_solve = ts_jaxpr })
+    (Custom_linear_solve
+       { solve = solve_jaxpr; transpose_solve = ts_jaxpr; num_consts = 0 })
     b
+
+let custom_linear_solve_with_consts ~consts ~solve ~transpose_solve b =
+  let num_consts = List.length consts in
+  let args = consts @ b in
+  let staged f =
+    Jaxpr.make_jaxpr (List.map Core.get_aval args) (fun all ->
+        f
+          (List.filteri (fun i _ -> i < num_consts) all)
+          (List.filteri (fun i _ -> i >= num_consts) all))
+  in
+  Core.bind
+    (Custom_linear_solve
+       {
+         solve = staged solve;
+         transpose_solve = Some (staged transpose_solve);
+         num_consts;
+       })
+    args

@@ -10,8 +10,65 @@ external execute_devices_ :
   = "ojax_pjrt_execute_devices"
 
 external optimized_ : t -> string = "ojax_pjrt_executable_optimized"
+external serialize_ : t -> string = "ojax_pjrt_executable_serialize"
+
+external deserialize_ : Client.t -> string -> t
+  = "ojax_pjrt_executable_deserialize"
+
 external num_outputs_ : t -> int = "ojax_pjrt_executable_num_outputs"
 external destroy_ : t -> unit = "ojax_pjrt_executable_destroy"
+
+let cache_dir = lazy (Sys.getenv_opt "OJAX_TEST_COMPILE_CACHE")
+let plugin_hash = lazy (Option.get (Discover.verified_sha256 ()))
+
+let cache_key client code options =
+  String.concat "\000"
+    [
+      Lazy.force plugin_hash;
+      Client.platform_name client;
+      string_of_int (Client.device_count client);
+      options;
+      code;
+    ]
+
+let read_cache path key =
+  match open_in_bin path with
+  | exception Sys_error _ -> None
+  | ic ->
+      Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
+      let n = String.length key in
+      if in_channel_length ic >= n && really_input_string ic n = key then
+        Some (really_input_string ic (in_channel_length ic - n))
+      else None
+
+let write_cache dir path key exec =
+  match serialize_ exec with
+  | exception Abi.Error _ -> ()
+  | bytes ->
+      (try Sys.mkdir dir 0o755 with Sys_error _ -> ());
+      let temp = Printf.sprintf "%s.%d.tmp" path (Unix.getpid ()) in
+      let oc = open_out_bin temp in
+      output_string oc key;
+      output_string oc bytes;
+      close_out oc;
+      Sys.rename temp path
+
+let compile_cached client code options =
+  match Lazy.force cache_dir with
+  | Some dir when Client.platform_name client = "cpu" -> (
+      let key = cache_key client code options in
+      let path = Filename.concat dir (Digest.to_hex (Digest.string key)) in
+      let loaded =
+        Option.bind (read_cache path key) (fun bytes ->
+            try Some (deserialize_ client bytes) with Abi.Error _ -> None)
+      in
+      match loaded with
+      | Some exec -> exec
+      | None ->
+          let exec = compile_ client code options in
+          write_cache dir path key exec;
+          exec)
+  | _ -> compile_ client code options
 
 let add_varint buf v =
   let v = ref v in
@@ -86,7 +143,7 @@ let compile ?(options = []) client code =
     compile_options_proto
     ^ String.concat "" (List.map env_override_entry options)
   in
-  compile_ client code proto
+  compile_cached client code proto
 
 let device_assignment_proto devices =
   let b = Stdlib.Buffer.create 32 in
@@ -131,7 +188,7 @@ let placed_options_proto ~devices ~propagate_outputs =
   Stdlib.Buffer.contents b
 
 let compile_placed client code ~devices ~propagate_outputs =
-  compile_ client code (placed_options_proto ~devices ~propagate_outputs)
+  compile_cached client code (placed_options_proto ~devices ~propagate_outputs)
 
 type output_sharding =
   | Replicated

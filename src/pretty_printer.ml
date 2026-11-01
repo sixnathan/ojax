@@ -398,7 +398,7 @@ and structure_of_eqn (e : eqn) =
         [ scatter_jaxpr; select_jaxpr ]
     | Cond { t; f } -> [ f; t ]
     | While { cond; body } -> [ body; cond ]
-    | Custom_linear_solve { solve; transpose_solve } ->
+    | Custom_linear_solve { solve; transpose_solve; _ } ->
         solve :: Option.to_list transpose_solve
     | Custom_jvp_call _ -> (
         match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])

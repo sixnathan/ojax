@@ -2006,9 +2006,16 @@ let jvp_pairs prim primals tangents =
           in
           (primal_outs, tangent_outs)
       | _ -> arity ())
-  | Custom_linear_solve _ ->
+  | Custom_linear_solve { num_consts; _ } ->
       let x = Core.bind prim primals in
-      let x_dot = Core.bind prim (List.map instantiate tangents) in
+      let keep i = i < num_consts in
+      let x_dot =
+        Core.bind prim
+          (List.filteri (fun i _ -> keep i) primals
+          @ List.filteri
+              (fun i _ -> not (keep i))
+              (List.map instantiate tangents))
+      in
       (x, x_dot)
   | Custom_jvp_call id -> (
       match Core.custom_rule id with
@@ -3596,19 +3603,24 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Custom_jvp_call _ | Custom_vjp_call _ ->
       failwith "ad: custom call cannot appear in a linear program"
   | Ffi_call c -> ffi_not_differentiable c
-  | Custom_linear_solve { solve; transpose_solve } -> (
+  | Custom_linear_solve { solve; transpose_solve; num_consts } -> (
       match transpose_solve with
       | None ->
           failwith
             "ad: transpose_solve required for backwards mode automatic \
              differentiation of custom_linear_solve"
       | Some ts ->
+          let consts =
+            List.filteri (fun i _ -> i < num_consts) primals
+            |> List.map prim_val
+          in
           let ct_b =
             Core.bind
-              (Custom_linear_solve { solve = ts; transpose_solve = Some solve })
-              cts
+              (Custom_linear_solve
+                 { solve = ts; transpose_solve = Some solve; num_consts })
+              (consts @ cts)
           in
-          List.map (fun c -> Some c) ct_b)
+          List.map (fun _ -> None) consts @ List.map (fun c -> Some c) ct_b)
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Integer_pow _ | Is_finite | Log1p | Logistic | Not

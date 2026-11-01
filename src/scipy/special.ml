@@ -1215,17 +1215,18 @@ let erfc x = bind1 T.Erfc [ promote1 x ]
 let erfinv x = bind1 T.Erf_inv [ real_only "erfinv" x ]
 let expit x = bind1 T.Logistic [ promote1 x ]
 
-let logit x =
-  let x = promote1 x in
+let rec logit x =
   List.hd
     (CD.custom_jvp ~name:"logit"
        (function
-         | [ x ] -> [ L.log (L.div x (L.sub (scalar_of x 1.0) x)) ]
+         | [ x ] ->
+             let x = promote1 x in
+             [ L.log (L.div x (L.sub (scalar_of x 1.0) x)) ]
          | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x ], [ g ] ->
-             ( [ L.log (L.div x (L.sub (scalar_of x 1.0) x)) ],
+             ( [ logit x ],
                [ L.div g (L.mul x (L.sub (scalar_of x 1.0) x)) ] )
          | _ -> assert false)
        [ x ])
@@ -1237,15 +1238,15 @@ let xlogy_primal = function
       [ where_ (bor x_ok (UF.isnan y)) (L.mul x (L.log y)) (AC.zeros_like x) ]
   | _ -> assert false
 
-let xlogy x y =
+let rec xlogy x y =
   List.hd
     (CD.custom_jvp ~name:"xlogy" ~jvp_name:"_xlogy_jvp" xlogy_primal
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x; y ], [ x_dot; y_dot ] ->
-             let result = xlogy_primal primals in
+             let result = xlogy x y in
              let out = (x_dot *! L.log y) +! (y_dot *! x /! y) in
-             (result, [ NL.astype out (dtype (List.hd result)) ])
+             ([ result ], [ NL.astype out (dtype result) ])
          | _ -> assert false)
        [ x; y ])
 
@@ -1256,26 +1257,26 @@ let xlog1py_primal = function
       [ where_ (bor x_ok (UF.isnan y)) (L.mul x (L.log1p y)) (AC.zeros_like x) ]
   | _ -> assert false
 
-let xlog1py x y =
+let rec xlog1py x y =
   List.hd
     (CD.custom_jvp ~name:"xlog1py" ~jvp_name:"_xlog1py_jvp" xlog1py_primal
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x; y ], [ x_dot; y_dot ] ->
-             let result = xlog1py_primal primals in
+             let result = xlog1py x y in
              let out = (x_dot *! L.log1p y) +! (y_dot *! x /! lit_add 1.0 y) in
-             (result, [ NL.astype out (dtype (List.hd result)) ])
+             ([ result ], [ NL.astype out (dtype result) ])
          | _ -> assert false)
        [ x; y ])
 
-let xlogx x =
+let rec xlogx x =
   List.hd
     (CD.custom_jvp ~name:"_xlogx" ~jvp_name:"_xlogx_jvp"
        (function [ x ] -> [ xlogy x x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x ], [ x_dot ] ->
-             ([ xlogy x x ], [ x_dot *! add_lit (L.log x) 1.0 ])
+             ([ xlogx x ], [ x_dot *! add_lit (L.log x) 1.0 ])
          | _ -> assert false)
        [ x ])
 
@@ -1366,14 +1367,14 @@ let wofz_primal z =
   let correction = lit_mul 2.0 (L.exp (L.neg (z *! z))) -! w_upper in
   L.select sign w_upper correction
 
-let wofz_custom z =
+let rec wofz_custom z =
   List.hd
     (CD.custom_jvp ~name:"_wofz"
        (function [ z ] -> [ wofz_primal z ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ z ], [ g ] ->
-             let ans = wofz_primal z in
+             let ans = wofz_custom z in
              let re = L.real z in
              ( [ ans ],
                [
@@ -1433,27 +1434,29 @@ let erfcx_real x =
   | D.F32 -> erfcx_impl x 5
   | d -> NL.astype (erfcx_impl (NL.astype x D.F32) 5) d
 
+let rec erfcx_custom x =
+  List.hd
+    (CD.custom_jvp ~name:"_erfcx"
+       (function [ x ] -> [ erfcx_real x ] | _ -> assert false)
+       ~jvp:(fun primals tangents ->
+         match (primals, tangents) with
+         | [ x ], [ g ] ->
+             let ans = erfcx_custom x in
+             ( [ ans ],
+               [
+                 g
+                 *! ((lit_mul 2.0 x *! ans)
+                    -! scalar_of x (2.0 /. sqrt Float.pi));
+               ] )
+         | _ -> assert false)
+       [ x ])
+
 let erfcx x =
   let x = promote1 x in
   if is_complex_dtype (dtype x) then
     let iz = L.complex (L.neg (L.imag x)) (L.real x) in
     wofz_custom iz
-  else
-    List.hd
-      (CD.custom_jvp ~name:"_erfcx"
-         (function [ x ] -> [ erfcx_real x ] | _ -> assert false)
-         ~jvp:(fun primals tangents ->
-           match (primals, tangents) with
-           | [ x ], [ g ] ->
-               let ans = erfcx_real x in
-               ( [ ans ],
-                 [
-                   g
-                   *! ((lit_mul 2.0 x *! ans)
-                      -! scalar_of x (2.0 /. sqrt Float.pi));
-                 ] )
-           | _ -> assert false)
-         [ x ])
+  else erfcx_custom x
 
 let dawsn_impl x =
   let sign = UF.sign x in
@@ -1497,19 +1500,20 @@ let dawsn_real x =
   | D.F32 | D.F64 -> dawsn_impl x
   | d -> NL.astype (dawsn_impl (NL.astype x D.F32)) d
 
-let dawsn x =
-  let x = real_only "dawsn" x in
+let rec dawsn_custom x =
   List.hd
     (CD.custom_jvp ~name:"_dawsn"
        (function [ x ] -> [ dawsn_real x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x ], [ g ] ->
-             let ans = dawsn_real x in
+             let ans = dawsn_custom x in
              ( [ ans ],
                [ g *! (scalar_of x 1.0 -! (scalar_of x 2.0 *! x *! ans)) ] )
          | _ -> assert false)
        [ x ])
+
+let dawsn x = dawsn_custom (real_only "dawsn" x)
 
 let half_sqrt_2_of x =
   match dtype x with D.F32 -> 0.5 *. q32 (sqrt 2.0) | _ -> 0.5 *. sqrt 2.0
@@ -1625,7 +1629,7 @@ let norm_logpdf x =
     (L.mul (scalar_of x (-0.5)) (L.square x))
     (scalar_of x norm_logpdf_constant)
 
-let log_ndtr ?(series_order = 3) x =
+let rec log_ndtr ?(series_order = 3) x =
   if series_order < 0 then invalid_arg "series_order must be non-negative.";
   if series_order > 30 then invalid_arg "series_order must be <= 30.";
   single_or_double x;
@@ -1636,7 +1640,7 @@ let log_ndtr ?(series_order = 3) x =
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x ], [ t ] ->
-             let ans = log_ndtr_primal series_order x in
+             let ans = log_ndtr ~series_order x in
              ([ ans ], [ L.mul t (L.exp (L.sub (norm_logpdf x) ans)) ])
          | _ -> assert false)
        [ x ])
@@ -1736,19 +1740,16 @@ let poch_primal z m =
   let z, m = real_only2 "poch" z m in
   where_ (eq_ m 0.0) (scalar_of z 1.0) (gamma (z +! m) /! gamma z)
 
-let poch z m =
-  let z, m = real_only2 "poch" z m in
+let rec poch z m =
   List.hd
     (CD.custom_jvp ~name:"poch"
        (function [ z; m ] -> [ poch_primal z m ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ z; m ], [ dz; dm ] ->
-             let out = poch_primal z m in
-             let wrt_z =
-               (digamma (z +! m) -! digamma z) *! poch_primal z m *! dz
-             in
-             let wrt_m = digamma (z +! m) *! poch_primal z m *! dm in
+             let out = poch z m in
+             let wrt_z = (digamma (z +! m) -! digamma z) *! poch z m *! dz in
+             let wrt_m = digamma (z +! m) *! poch z m *! dm in
              ([ out ], [ L.add wrt_z wrt_m ])
          | _ -> assert false)
        [ z; m ])
@@ -1946,15 +1947,14 @@ let owens_t_primal h a =
   let result = L.sign a *! result in
   where_ (bor (UF.isnan a) (UF.isnan h)) (AC.full_like result Float.nan) result
 
-let owens_t h a =
-  let h, a = promote2 h a in
+let rec owens_t_custom h a =
   List.hd
     (CD.custom_jvp ~name:"_owens_t_impl" ~jvp_name:"_owens_t_jvp"
        (function [ h; a ] -> [ owens_t_primal h a ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ h; a ], [ dh; da ] ->
-             let result = owens_t_primal h a in
+             let result = owens_t_custom h a in
              let root_2 = scalar_of h (sqrt 2.0) in
              let dout_dh =
                neg_ (L.exp (lit_mul (-0.5) (L.square h)))
@@ -1971,6 +1971,10 @@ let owens_t h a =
              )
          | _ -> assert false)
        [ h; a ])
+
+let owens_t h a =
+  let h, a = promote2 h a in
+  owens_t_custom h a
 
 let rec bernoulli n =
   if n < 0 then invalid_arg "n must be a non-negative integer.";
@@ -2098,7 +2102,7 @@ let rec hyp1f1_apply a b x =
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ a; b; x ], [ da; db; dx ] ->
-             let out = [ hyp1f1_jit primals ] in
+             let out = [ hyp1f1_apply a b x ] in
              let wrt_a =
                List.hd
                  (Eager_jit.many ~jit:"_hyp1f1_a_derivative"

@@ -1146,9 +1146,23 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
       | false, true -> Some (out, maybe_broadcast shape xdot)
       | false, false -> Some (out, b1 prim [ xdot; ydot ]))
   | Add_any | Neg | Real | Imag | Complex | Conj | Squeeze _ | Reshape _ | Rev _
-  | Transpose _ | Reduce_sum _ | Stack _ | Concatenate _ | Pad _ | Copy
+  | Transpose _ | Reduce_sum _ | Stack _ | Concatenate _ | Copy
   | Reduce_precision _ | Tile _ ->
       linear ()
+  | Pad _ -> (
+      match (primals, tangents) with
+      | [ _; padding ], [ dx; dp ] when (not (is_zero dx)) && is_zero dp ->
+          let out = b1 prim primals in
+          let a = Core.get_aval padding in
+          let zero = Ndarray.of_floats a.dtype [||] [| 0.0 |] in
+          let zero =
+            match a.dtype with
+            | Dtype.Complex64 | Dtype.Complex128 ->
+                Ndarray.of_complex a.dtype [||] [| Complex.zero |]
+            | _ -> zero
+          in
+          Some (out, b1 prim [ dx; Concrete (Np_ints.mark_prim zero) ])
+      | _ -> linear ())
   | Stop_gradient ->
       let x = arg1 primals in
       let out = Custom_derivatives.stop_gradient x in
@@ -2180,7 +2194,9 @@ let same_const a b =
 
 let tape_const (b : jaxpr_builder) v =
   match v with
-  | Concrete nd when Array.length (Ndarray.shape nd) = 0 -> A_lit nd
+  | Concrete nd
+    when Array.length (Ndarray.shape nd) = 0 && not (Np_ints.prim_marked nd) ->
+      A_lit nd
   | _ -> (
       match List.find_opt (fun (_, c) -> same_const c v) b.jb_constvals with
       | Some (var, _) -> A_var var
@@ -2385,6 +2401,7 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
               List.map
                 (fun v ->
                   match v with
+                  | Concrete nd when Np_ints.prim_marked nd -> `Output
                   | Concrete _ | Device _ -> `Value v
                   | Tracer _ -> (
                       match index_in inputs v with

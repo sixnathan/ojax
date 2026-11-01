@@ -49,7 +49,7 @@ let nested_literals nd =
 
 let dense_body nd =
   match all_literals nd with
-  | [] -> invalid_arg "Stablehlo.Emit: empty constant"
+  | [] -> ""
   | first :: rest when List.for_all (String.equal first) rest -> first
   | _ -> nested_literals nd
 
@@ -90,6 +90,8 @@ let unique_symbol base =
   probe base
 
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
+let while_depth = ref 0
+let call_symbol_key jid = if !while_depth > 0 then jid lxor (1 lsl 61) else jid
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -1338,7 +1340,7 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
        (Ir.tensor_type_of_aval idx_av)
        (Ir.tensor_type_of_aval out.vaval))
 
-let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
+let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
   let op_id, idx_id, upd_id =
     match in_ids with
     | [ a; b; c ] -> (a, b, c)
@@ -1358,9 +1360,10 @@ let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
     (Printf.sprintf
        "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
         scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
-       (name n) (name op_id) (name idx_id) (name upd_id) unique
+       (name n) (name op_id) (name idx_id) (name upd_id)
+       (Np_ints.scatter_marked eqn.prim)
        (scatter_dnums_attr dnums ivd)
-       unique);
+       (Np_ints.scatter_marked eqn.prim));
   let a = fresh ctx in
   let b = fresh ctx in
   Buffer.add_string ctx.buf
@@ -2737,6 +2740,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
   let cond_ids =
     List.filteri (fun i _ -> i < cond_nconsts || i >= n_consts) carry_ids
   in
+  incr while_depth;
   enter_region_later ctx cond cond_ids "    cond {\n";
   Buffer.add_string ctx.buf "    } do {\n";
   ctx.next <- start;
@@ -2758,6 +2762,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
       outs =
         List.map (fun v -> A_var v) (cond_fake @ body_consts) @ body.jaxpr.outs;
     };
+  decr while_depth;
   Buffer.add_string ctx.buf "    }\n"
 
 and enter_region_later ctx cj target_ids header =
@@ -2922,14 +2927,14 @@ and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
 
 and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
   let fname =
-    match Hashtbl.find_opt call_symbols c.jid with
+    match Hashtbl.find_opt call_symbols (call_symbol_key c.jid) with
     | Some s -> s
     | None ->
         let s =
           Mlir_names.symbol_name
             (unique_symbol (Pretty_printer.call_name c.jid))
         in
-        Hashtbl.replace call_symbols c.jid s;
+        Hashtbl.replace call_symbols (call_symbol_key c.jid) s;
         emit_private_function ctx s c;
         s
   in
@@ -3330,10 +3335,14 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Dynamic_slice { slice_sizes } ->
       emit_dynamic_slice ctx eqn in_ids slice_sizes
   | Dynamic_update_slice -> emit_dynamic_update_slice ctx eqn in_ids
+  | Gather _ as p when Np_ints.gather_fill_of p <> None ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a; i ] -> [ Lax.Slicing.gather_fill_lowered p a i ]
+        | _ -> invalid_arg "Stablehlo.Emit: gather arity")
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
-  | Scatter { dimension_numbers; unique_indices } ->
-      emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers None
+  | Scatter { dimension_numbers; _ } ->
+      emit_scatter ctx eqn in_ids dimension_numbers None
   | Scatter_add { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "add")
   | Scatter_sub { dimension_numbers } ->
@@ -4054,6 +4063,7 @@ let emitting () = !emission_depth > 0
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
   Hashtbl.reset call_symbols;
+  while_depth := 0;
   symbol_counter := 0;
   seen_mesh := None;
   callback_seen := false;

@@ -222,7 +222,7 @@ let prod ?dtype:dt ?axis ?keepdims ?initial ?where:mask
 let max ?axis ?keepdims ?initial ?where:mask a =
   reduction ~name:"max"
     ~prim:(fun ax -> T.Reduce_max ax)
-    ~bool_prim:(fun ax -> T.Reduce_or ax)
+    ~bool_prim:(fun ax -> T.Reduce_max ax)
     ~combine:T.Max ~bool_combine:T.Or ~init:Float.neg_infinity
     ~has_identity:false ~upcast:false ~promote_integers:false ?axis ?keepdims
     ?initial ?where:mask a
@@ -230,7 +230,7 @@ let max ?axis ?keepdims ?initial ?where:mask a =
 let min ?axis ?keepdims ?initial ?where:mask a =
   reduction ~name:"min"
     ~prim:(fun ax -> T.Reduce_min ax)
-    ~bool_prim:(fun ax -> T.Reduce_and ax)
+    ~bool_prim:(fun ax -> T.Reduce_min ax)
     ~combine:T.Min ~bool_combine:T.And ~init:Float.infinity ~has_identity:false
     ~upcast:false ~promote_integers:false ?axis ?keepdims ?initial ?where:mask a
 
@@ -462,11 +462,11 @@ let average_returned ?axis ?keepdims ?weights a =
 let nan_reduce ~reduce ~init ~nan_if_all_nan ?axis ?keepdims a =
   if not (is_inexact (dtype a)) then reduce ?axis ?keepdims a
   else begin
-    let filled = where (isnan a) (init_array (dtype a) (shape a) init) a in
+    let filled = where (isnan a) (init_array (dtype a) [||] init) a in
     let out = reduce ?axis ?keepdims filled in
     if nan_if_all_nan then
       let allnan = all ?axis ?keepdims (isnan a) in
-      where allnan (const_full (dtype out) (shape out) Float.nan) out
+      where allnan (const_full (dtype a) [||] Float.nan) out
     else out
   end
 
@@ -594,7 +594,7 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
   let notnan = bind1 T.Not [ isnan af ] in
   let count = sum ?axis ?keepdims ?where:mask notnan in
   let nz = Ufuncs.subtract count (Jnp_util.py_int ddof) in
-  let bad = bind1 T.Le [ nz; const_full (dtype nz) (shape nz) 0.0 ] in
+  let bad = bind1 T.Le [ nz; const_full (dtype nz) [||] 0.0 ] in
   let result = sum ?axis ?keepdims ?where:mask centered in
   let result = where bad (Jnp_util.py_float Float.nan) result in
   let divisor = where bad (Jnp_util.py_int 1) nz in

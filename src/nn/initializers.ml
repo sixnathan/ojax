@@ -156,7 +156,8 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
         ]
     in
     C.bind1
-      (Scatter
+      (Np_ints.mark_scatter
+         (Scatter
          {
            dimension_numbers =
              {
@@ -167,7 +168,7 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
                s_scatter_indices_batching_dims = [||];
              };
            unique_indices = true;
-         })
+         }))
       [ w; idx; ortho ]
   else
     let center = Array.sub shape 0 (rank - 2) in

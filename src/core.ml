@@ -444,24 +444,39 @@ and dispatch_widened top prim args =
     | [] -> false
   then begin
     let out = elementwise_shape (List.map value_shape args) in
-    let widen v =
-      let s = value_shape v in
-      if s = out then v
-      else
-        let k = Array.length out - Array.length s in
-        match
-          dispatch
-            (Broadcast_in_dim
-               {
-                 shape = out;
-                 dims = Array.init (Array.length s) (fun i -> i + k);
-               })
-            [ v ]
-        with
-        | [ w ] -> w
-        | _ -> invalid_arg "dispatch: broadcast arity"
+    let compiled =
+      if
+        top.kind = KEval
+        && (not (Config.value Config.no_execution))
+        && List.for_all
+             (fun v ->
+               let s = value_shape v in
+               s = out || Array.length s = 0)
+             args
+      then !eager_eval prim args
+      else None
     in
-    dispatch prim (List.map widen args)
+    match compiled with
+    | Some outs -> outs
+    | None ->
+        let widen v =
+          let s = value_shape v in
+          if s = out then v
+          else
+            let k = Array.length out - Array.length s in
+            match
+              dispatch
+                (Broadcast_in_dim
+                   {
+                     shape = out;
+                     dims = Array.init (Array.length s) (fun i -> i + k);
+                   })
+                [ v ]
+            with
+            | [ w ] -> w
+            | _ -> invalid_arg "dispatch: broadcast arity"
+        in
+        dispatch prim (List.map widen args)
   end
   else dispatch_equal top prim args
 

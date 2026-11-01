@@ -232,7 +232,7 @@ let prim_name = function
   | Custom_vjp_call _ -> "custom_vjp_call"
   | Custom_lin _ -> "custom_lin"
   | Checkpoint_name _ -> "name"
-  | Cond _ -> "cond"
+  | Cond _ | Case _ -> "cond"
   | Scan _ -> "scan"
   | While _ -> "while"
   | Cumsum _ -> "cumsum"
@@ -397,6 +397,7 @@ and structure_of_eqn (e : eqn) =
     | Select_and_scatter { select_jaxpr; scatter_jaxpr; _ } ->
         [ scatter_jaxpr; select_jaxpr ]
     | Cond { t; f } -> [ f; t ]
+    | Case branches -> branches
     | While { cond; body } -> [ body; cond ]
     | Custom_linear_solve { solve; transpose_solve } ->
         solve :: Option.to_list transpose_solve
@@ -767,6 +768,7 @@ let jax_params (e : eqn) =
         ("cond_nconsts", Plain (string_of_int (List.length cond.consts)));
       ]
   | Cond { t; f } -> [ ("branches", Subs [ f; t ]) ]
+  | Case branches -> [ ("branches", Subs branches) ]
   | Scan { length; reverse; num_carry; jaxpr } ->
       [
         ("jaxpr", Sub jaxpr);
@@ -788,6 +790,7 @@ let insertion_order (e : eqn) =
   match e.prim with
   | While { cond; body } -> [ cond; body ]
   | Cond { t; f } -> [ f; t ]
+  | Case branches -> branches
   | Select_and_scatter { select_jaxpr; scatter_jaxpr; _ } ->
       [ select_jaxpr; scatter_jaxpr ]
   | _ ->

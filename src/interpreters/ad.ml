@@ -1678,7 +1678,7 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
       match (primals, tangents) with
       | [ x ], [ t ] -> (b1 prim [ x ], b1 prim [ t ])
       | _ -> arity ())
-  | Cond _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
+  | Cond _ | Case _ -> failwith "ad: cond jvp handled by jvp_process_primitive"
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       failwith "ad: custom rules handled by jvp_process_primitive"
   | Checkpoint_name _ -> (
@@ -2003,6 +2003,22 @@ let jvp_pairs prim primals tangents =
             Core.bind
               (Cond { t = t_tan; f = f_tan })
               ((pred :: prim_ops) @ tan_ops)
+          in
+          (primal_outs, tangent_outs)
+      | _ -> arity ())
+  | Case branches -> (
+      match (primals, tangents) with
+      | index :: prim_ops, _ :: tan_ops ->
+          let op_avals = List.map Core.get_aval prim_ops in
+          let primal_outs = Core.bind (Case branches) primals in
+          let op_zero = List.map Ad_util.is_symbolic_zero tan_ops in
+          let tangent_branches =
+            List.map
+              (fun b -> cond_tangent_branch jvp b op_avals op_zero)
+              branches
+          in
+          let tangent_outs =
+            Core.bind (Case tangent_branches) ((index :: prim_ops) @ tan_ops)
           in
           (primal_outs, tangent_outs)
       | _ -> arity ())
@@ -3309,6 +3325,70 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           let in_cts =
             Core.bind
               (Cond { t = transposed t; f = transposed f })
+              ((prim_val pred :: cts) @ residuals)
+          in
+          let remaining = ref in_cts in
+          let rest_cts =
+            List.map
+              (fun tv ->
+                if is_undef tv then
+                  match !remaining with
+                  | c :: tl ->
+                      remaining := tl;
+                      Some c
+                  | [] -> None
+                else None)
+              rest
+          in
+          None :: rest_cts
+      | _ -> arity ())
+  | Case branches -> (
+      match primals with
+      | pred :: rest ->
+          if is_undef pred then
+            failwith "ad: switch transpose needs a known index";
+          let residuals =
+            List.filter_map
+              (fun tv -> if is_undef tv then None else Some (prim_val tv))
+              rest
+          in
+          let n_cts = List.length cts in
+          let avals =
+            List.map Core.get_aval cts @ List.map Core.get_aval residuals
+          in
+          let transposed (branch : closed_jaxpr) =
+            Jaxpr.make_jaxpr avals (fun args ->
+                let body_cts, res =
+                  match Util.split_list args [ n_cts ] with
+                  | [ a; b ] -> (a, b)
+                  | _ -> arity ()
+                in
+                let remaining = ref res in
+                let n_consts = List.length branch.consts in
+                let binders =
+                  List.filteri
+                    (fun i _ -> i >= n_consts)
+                    branch.jaxpr.in_binders
+                in
+                let inner =
+                  List.map2
+                    (fun tv (v : var) ->
+                      if is_undef tv then Undef v.vaval
+                      else
+                        match !remaining with
+                        | r :: tl ->
+                            remaining := tl;
+                            Prim r
+                        | [] -> arity ())
+                    rest binders
+                in
+                eval_jaxpr_transposed branch.jaxpr
+                  (List.map (fun c -> Prim (Concrete c)) branch.consts @ inner)
+                  body_cts)
+          in
+          let in_cts =
+            Core.bind
+              (Case (List.map transposed branches))
               ((prim_val pred :: cts) @ residuals)
           in
           let remaining = ref in_cts in

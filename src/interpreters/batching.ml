@@ -833,7 +833,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       failwith "batching: handled by unstacking in batch_process_primitive"
   | Platform_index _ ->
       failwith "batching: vmap of platform_index not supported"
-  | Cond _ -> failwith "batching: cond handled by batch_process_primitive"
+  | Cond _ | Case _ ->
+      failwith "batching: cond handled by batch_process_primitive"
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | While _
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
@@ -1066,6 +1067,70 @@ let cond_batch (axis_size : int) (t : closed_jaxpr) (f : closed_jaxpr)
       let outs = Core.bind (Cond { t = t'; f = f' }) (pred :: moved) in
       (outs, List.map (fun _ -> Some 0) outs)
   | _ -> failwith "batching: cond expects a predicate"
+
+let case_batch (axis_size : int) (branches : closed_jaxpr list)
+    (vals : value list) (bdims : int option list) : value list * int option list
+    =
+  match (vals, bdims) with
+  | index :: ops, Some index_dim :: op_bdims ->
+      let index = if index_dim = 0 then index else moveaxis index_dim 0 index in
+      let moved =
+        List.map2 (fun v b -> move_batch_axis axis_size b 0 v) ops op_bdims
+      in
+      let bcast_index p (v : value) =
+        let shape = (Core.get_aval v).shape in
+        if (Core.get_aval p).shape = shape then p
+        else b1 (Broadcast_in_dim { shape; dims = [| 0 |] }) [ p ]
+      in
+      let index_aval = Core.get_aval index in
+      let branch_outs =
+        List.mapi
+          (fun i (branch : closed_jaxpr) ->
+            let constant =
+              Core.splat index_aval.dtype index_aval.shape (float_of_int i)
+            in
+            let predicate = b1 Eq [ index; constant ] in
+            let selected =
+              List.map
+                (fun v ->
+                  b1 Select_n [ bcast_index predicate v; stop_gradient v; v ])
+                moved
+            in
+            vmap_flat
+              (fun a -> Jaxpr.eval_closed_jaxpr branch a)
+              (List.map (fun _ -> Some 0) selected)
+              selected)
+          branches
+      in
+      let outs =
+        match branch_outs with
+        | [] -> []
+        | first :: _ ->
+            List.mapi
+              (fun k v ->
+                b1 Select_n
+                  (bcast_index index v
+                  :: List.map (fun o -> List.nth o k) branch_outs))
+              first
+      in
+      (outs, List.map (fun _ -> Some 0) outs)
+  | index :: ops, None :: op_bdims ->
+      let moved =
+        List.map2 (fun v b -> move_batch_axis axis_size b 0 v) ops op_bdims
+      in
+      let moved_avals = List.map Core.get_aval moved in
+      let batch_branch (branch : closed_jaxpr) : closed_jaxpr =
+        Jaxpr.make_jaxpr moved_avals (fun bops ->
+            vmap
+              (fun a -> Jaxpr.eval_closed_jaxpr branch a)
+              (List.map (fun _ -> Some 0) bops)
+              bops)
+      in
+      let outs =
+        Core.bind (Case (List.map batch_branch branches)) (index :: moved)
+      in
+      (outs, List.map (fun _ -> Some 0) outs)
+  | _ -> failwith "batching: switch expects an index"
 
 let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
     ~(num_carry : int) (jaxpr : closed_jaxpr) (vals : value list)
@@ -1531,6 +1596,9 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | Cond { t; f } ->
       let outs, out_bdims = cond_batch axis_size t f vals bdims in
+      List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
+  | Case branches ->
+      let outs, out_bdims = case_batch axis_size branches vals bdims in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | Scan { length; reverse; num_carry; jaxpr } ->
       let outs, out_bdims =

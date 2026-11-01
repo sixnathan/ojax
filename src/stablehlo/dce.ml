@@ -15,6 +15,7 @@ let rec has_effects = function
   | Dce_sink | Create_token | After_all -> true
   | Xla_call c -> closed_effects c
   | Cond { t; f } -> closed_effects t || closed_effects f
+  | Case branches -> List.exists closed_effects branches
   | While { cond; body } -> closed_effects cond || closed_effects body
   | Scan { jaxpr; _ } -> closed_effects jaxpr
   | Custom_jvp_call id | Custom_vjp_call id -> (
@@ -134,6 +135,23 @@ and rule used_outs (e : eqn) =
         let f', _ = dce_closed f used_outs ~instantiate:used in
         let used_ins = true :: used in
         (used_ins, with_prim (Cond { t = t'; f = f' }) used_ins)
+    | Case branches ->
+        let n = List.length e.inputs - 1 in
+        let nothing = List.init n (fun _ -> false) in
+        let used =
+          List.fold_left
+            (fun acc b ->
+              let _, ub = dce_closed b used_outs ~instantiate:nothing in
+              List.map2 ( || ) acc ub)
+            nothing branches
+        in
+        let branches' =
+          List.map
+            (fun b -> fst (dce_closed b used_outs ~instantiate:used))
+            branches
+        in
+        let used_ins = true :: used in
+        (used_ins, with_prim (Case branches') used_ins)
     | Scan { length; reverse; num_carry; jaxpr } ->
         scan_rule e used_outs ~length ~reverse ~num_carry ~jaxpr
     | Custom_jvp_call id | Custom_vjp_call id -> (

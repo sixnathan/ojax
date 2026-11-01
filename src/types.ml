@@ -205,6 +205,7 @@ and primitive =
   | Custom_lin of { rule : int; n_res : int; out_avals : aval list }
   | Checkpoint_name of string
   | Cond of { t : closed_jaxpr; f : closed_jaxpr }
+  | Case of closed_jaxpr list
   | Scan of {
       length : int;
       reverse : bool;

@@ -956,7 +956,7 @@ let eager_runs_impl = function
 
 let eager_holds_jaxpr = function
   | Reduce _ | Composite _ | Reduce_window _ | Select_and_scatter _ | Cond _
-  | Scan _ | While _ ->
+  | Case _ | Scan _ | While _ ->
       true
   | _ -> false
 

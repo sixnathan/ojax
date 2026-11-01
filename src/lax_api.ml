@@ -801,22 +801,17 @@ let map_scan f xs =
     xs
   |> List.tl
 
-let rec switch index branches operands =
+let switch index branches operands =
   match branches with
   | [] -> invalid_arg "Empty branch sequence"
   | [ only ] -> only operands
-  | first :: rest ->
-      let last = List.length branches - 1 in
+  | _ ->
       let i =
         clamp (index_scalar 0)
           (convert_element_type index Dtype.I32)
-          (index_scalar last)
+          (index_scalar (List.length branches - 1))
       in
-      Lax.cond
-        (lt i (index_scalar 1))
-        first
-        (fun ops -> switch (sub i (index_scalar 1)) rest ops)
-        operands
+      Lax.case i branches operands
 
 let map ?batch_size f xs =
   match batch_size with

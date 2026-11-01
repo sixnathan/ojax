@@ -2389,7 +2389,7 @@ and enter_region ctx (cj : closed_jaxpr) target_ids =
       Buffer.add_string ctx.buf (reindent 2 text))
     const_binders cj.consts
 
-and emit_cond ctx (eqn : eqn) in_ids branch_f branch_t =
+and emit_cond ctx (eqn : eqn) in_ids branches =
   let pred_id, operand_ids =
     match in_ids with
     | i :: r -> (i, r)
@@ -2418,9 +2418,11 @@ and emit_cond ctx (eqn : eqn) in_ids branch_f branch_t =
     enter_region ctx cj operand_ids;
     emit_region_returning ctx cj.jaxpr
   in
-  emit_branch branch_f;
-  Buffer.add_string ctx.buf "    }, {\n";
-  emit_branch branch_t;
+  List.iteri
+    (fun i branch ->
+      if i > 0 then Buffer.add_string ctx.buf "    }, {\n";
+      emit_branch branch)
+    branches;
   let out_types =
     List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
   in
@@ -3247,7 +3249,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ key; data ] -> [ Prng_lowering.fold_in key data ]
         | _ -> invalid_arg "Stablehlo.Emit: fold_in arity")
   | Random_wrap | Random_unwrap -> emit_inlined ctx eqn in_ids Fun.id
-  | Cond { t; f } -> emit_cond ctx eqn in_ids f t
+  | Cond { t; f } -> emit_cond ctx eqn in_ids [ f; t ]
+  | Case branches -> emit_cond ctx eqn in_ids branches
   | Reduce { jaxpr; dimensions } ->
       emit_reduce_general ctx eqn in_ids jaxpr dimensions
   | Reduce_window { reducer; window } ->

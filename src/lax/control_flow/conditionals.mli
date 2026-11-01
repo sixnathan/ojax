@@ -7,4 +7,5 @@ val cond :
   value list ->
   value list
 
+val case : value -> (value list -> value list) list -> value list -> value list
 val platform_index : platforms:string array option array -> value

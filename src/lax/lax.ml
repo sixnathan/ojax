@@ -1737,6 +1737,21 @@ let rec impl_base prim inputs =
               | Device _ -> failwith "lax: cond branch produced a tracer")
             outs
       | [] -> failwith "lax: cond expects a predicate")
+  | Case branches -> (
+      match inputs with
+      | index :: ops ->
+          let chosen = int_of_float (Ndarray.get_f index [||]) in
+          let outs =
+            Jaxpr.eval_closed_jaxpr (List.nth branches chosen)
+              (List.map (fun nd -> Concrete nd) ops)
+          in
+          List.map
+            (function
+              | Concrete nd -> nd
+              | Tracer _ | Device _ ->
+                  failwith "lax: switch branch produced a tracer")
+            outs
+      | [] -> failwith "lax: switch expects an index")
   | Scan { length; reverse; num_carry; jaxpr } ->
       let inputs_v = List.map (fun nd -> Concrete nd) inputs in
       Control_flow.Loops.scan_impl ~length ~reverse ~num_carry jaxpr inputs_v
@@ -2704,6 +2719,8 @@ let abstract_eval prim avals =
       | _ -> failwith "lax: regularized_incomplete_beta expects 3 avals")
   | Platform_index _ -> [ shaped [||] Dtype.I32 false ]
   | Cond { t; _ } -> List.map aval_of_atom t.jaxpr.outs
+  | Case [] -> []
+  | Case (first :: _) -> List.map aval_of_atom first.jaxpr.outs
   | Scan { length; num_carry; jaxpr; _ } ->
       Control_flow.Loops.scan_out_avals ~length ~num_carry jaxpr
   | While { body; _ } -> Control_flow.Loops.while_out_avals body
@@ -2816,6 +2833,7 @@ let install () =
 
 let () = install ()
 let cond = Control_flow.Conditionals.cond
+let case = Control_flow.Conditionals.case
 let platform_index = Control_flow.Conditionals.platform_index
 let scan = Control_flow.Loops.scan
 let while_loop = Control_flow.Loops.while_loop

@@ -951,7 +951,8 @@ let piecewise_body dt x condlist funclist extra =
     List.map
       (fun piece ops ->
         match (piece, ops) with
-        | Piece_fn f, [ v ] -> [ NL.astype (f (v :: extra)) dt ]
+        | Piece_fn f, [ v ] ->
+            [ C.convert_like ~weak:false (f (v :: extra)) dt ]
         | Piece_const c, [ _ ] -> [ C.convert_like ~weak:false (NL.copy c) dt ]
         | _ -> invalid_arg "piecewise: arity")
       funclist

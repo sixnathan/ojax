@@ -2937,7 +2937,8 @@ let broadcast_transpose (shape : int array) (dims : int array)
       (List.init (Array.length shape) Fun.id)
   in
   let reduced = b1 (Reduce_sum (Array.of_list axes)) [ ct ] in
-  expand_dims reduced (Array.of_list unit_dims)
+  if unit_dims = [] then reduced
+  else expand_dims reduced (Array.of_list unit_dims)
 
 let reduce_sum_transpose (axes : int array) (in_shape : int array) ct =
   let in_ndim = Array.length in_shape in
@@ -2951,7 +2952,8 @@ let reduce_sum_transpose (axes : int array) (in_shape : int array) ct =
     ct
   else
     b1
-      (Broadcast_in_dim { shape = in_shape; dims = Array.of_list !kept })
+      (Broadcast_in_dim
+         { shape = in_shape; dims = Np_ints.mark (Array.of_list !kept) })
       [ ct ]
 
 let argsort perm =

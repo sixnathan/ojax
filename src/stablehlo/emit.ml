@@ -2000,7 +2000,6 @@ let ffi_layout_text layout =
   let n = Array.length layout in
   let body =
     if n = 0 then ""
-    else if n = 1 then string_of_int layout.(0)
     else
       "["
       ^ String.concat ", " (Array.to_list (Array.map string_of_int layout))
@@ -2047,7 +2046,9 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
     String.concat ", "
       (List.map
          (fun (a : aval) ->
-           ffi_layout_text (lapack_layout (Array.length a.shape) ~batch))
+           match lapack_layout (Array.length a.shape) ~batch with
+           | [| only |] -> Printf.sprintf "dense<%d> : tensor<1xindex>" only
+           | layout -> ffi_layout_text layout)
          avals)
   in
   let alias_text =

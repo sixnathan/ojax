@@ -1579,7 +1579,16 @@ let special_batch_run op params a =
   | "sx_hyp2f1" ->
       let v = a () in
       let t = abc () in
-      let full x = NL.broadcast_to (Ojax.Numpy.Jnp_util.py_float x) (shp v) in
+      let full x =
+        if Ojax.Core.top_is_staging [] then
+          NL.broadcast_to (Ojax.Numpy.Jnp_util.py_float x) (shp v)
+        else
+          let dt = Ojax.Dtypes.default_float_dtype () in
+          let n = Array.fold_left ( * ) 1 (shp v) in
+          T.Concrete
+            (Ojax.Ndarray.as_weak
+               (Ojax.Ndarray.of_floats dt (shp v) (Array.make n x)))
+      in
       let first = full t.(0) in
       let second = full t.(1) in
       let third = full t.(2) in

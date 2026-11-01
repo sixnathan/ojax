@@ -7,11 +7,6 @@ let dtype v = (C.get_aval v).T.dtype
 let weak v = (C.get_aval v).T.weak_type
 let py_float x = C.py_scalar (Dtypes.default_float_dtype ()) x
 
-let py_float_arg x =
-  match py_float x with
-  | T.Concrete nd -> T.Concrete (Np_ints.mark_exact_float x nd)
-  | v -> v
-
 let py_complex z =
   let dt =
     if Dtypes.default_float_dtype () = Dtype.F64 then Dtype.Complex128

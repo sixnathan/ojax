@@ -304,7 +304,7 @@ let lit_value nd =
   | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
   | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
       python_repr_float
-        (match Np_ints.exact_float nd with
+        (match Ndarray.py_value nd with
         | Some x -> x
         | None -> Ndarray.get_f nd scalar)
   | Dtype.Complex64 | Dtype.Complex128 ->
@@ -649,6 +649,19 @@ let jax_params (e : eqn) =
       ]
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
+  | Pad cfg as p when Np_ints.prim_marked cfg ->
+      let np x = Printf.sprintf "np.int64(%d)" x in
+      let high x = if Np_ints.prim_marked p then np x else string_of_int x in
+      [
+        ( "padding_config",
+          Plain
+            (py_tuple
+               (Array.to_list
+                  (Array.map
+                     (fun (x, y, z) ->
+                       py_tuple [ string_of_int x; np y; high z ])
+                     cfg))) );
+      ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]

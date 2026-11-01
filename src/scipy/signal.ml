@@ -283,7 +283,7 @@ let hann n =
     let points =
       Numpy.Array_creation.linspace_v ~num:n ~endpoint:false
         (Numpy.Jnp_util.py_int 0)
-        (Numpy.Jnp_util.py_float_arg pi)
+        (Numpy.Jnp_util.py_float pi)
     in
     b1 (Integer_pow 2) [ Numpy.Ufuncs.sin points ]
 

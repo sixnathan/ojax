@@ -64,16 +64,3 @@ let is_clip dims =
   List.exists
     (fun other -> other == o)
     (Hashtbl.find_all clip_gathers (Hashtbl.hash o))
-
-let exact_floats : (int, Obj.t * float) Hashtbl.t = Hashtbl.create 16
-
-let mark_exact_float x nd =
-  let o = Obj.repr nd in
-  Hashtbl.add exact_floats (Hashtbl.hash o) (o, x);
-  nd
-
-let exact_float nd =
-  let o = Obj.repr nd in
-  List.find_map
-    (fun (other, x) -> if other == o then Some x else None)
-    (Hashtbl.find_all exact_floats (Hashtbl.hash o))

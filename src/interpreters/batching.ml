@@ -1386,8 +1386,8 @@ let while_batch axis_size cond body vals bdims =
   in
   let body' =
     Jaxpr.make_jaxpr avals (fun state ->
-        let active = running state in
         let next = vmap_all (fun s -> Jaxpr.eval_closed_jaxpr body s) state in
+        let active = running state in
         List.map2
           (fun old fresh ->
             let shape = (Core.get_aval fresh).shape in

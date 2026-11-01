@@ -1571,8 +1571,16 @@ let special_batch_run op params a =
   | "sx_hyp2f1" ->
       let v = a () in
       let t = abc () in
-      let full x = like v x in
-      let z = UF.multiply (full (float_p "scale")) (UF.tanh v) in
+      let full x =
+        let sh = (Ojax.Core.get_aval v).shape in
+        T.Concrete
+          (Ojax.Ndarray.as_weak
+             (Ojax.Ndarray.of_floats
+                (Ojax.Dtypes.default_float_dtype ())
+                sh
+                (Array.make (Array.fold_left ( * ) 1 sh) x)))
+      in
+      let z = UF.multiply (like v (float_p "scale")) (UF.tanh v) in
       Some [ SP.hyp2f1 (full t.(0)) (full t.(1)) (full t.(2)) z ]
   | "sx_hyp2f1_grad" ->
       let v = a () in

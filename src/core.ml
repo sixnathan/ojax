@@ -449,11 +449,17 @@ let decomposition id = Hashtbl.find decompositions id
 let keeps_scalar_operands (top : trace) =
   match top.kind with KJaxpr | KJVP | KPE | KBatch -> true | KEval -> false
 
+let gather_fill_hook : (primitive -> value list -> value list) ref =
+  ref (fun _ _ -> invalid_arg "gather_fill_hook")
+
 let rec dispatch prim args =
   let top = find_top_trace args in
   match (prim, args) with
   | Decomposable { dimpl; _ }, _ when top.kind <> KJaxpr ->
       decomposition dimpl args
+  | Gather _, _ when top.kind <> KJaxpr && Np_ints.gather_fill_of prim <> None
+    ->
+      !gather_fill_hook prim args
   | Xla_call c, _ when top.kind = KEval -> !call_inline c args
   | Xla_call c, _ when top.kind = KJaxpr && is_inline_call c.jid ->
       !call_direct c args

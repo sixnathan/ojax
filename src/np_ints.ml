@@ -37,3 +37,42 @@ let triple_marked arr i j =
   List.exists
     (fun (other, predicate) -> other == arr && predicate i j)
     (Hashtbl.find_all triples (Hashtbl.hash arr))
+let sorted_scatters : (int, Obj.t) Hashtbl.t = Hashtbl.create 64
+
+let mark_scatter prim =
+  let o = Obj.repr prim in
+  Hashtbl.add sorted_scatters (Hashtbl.hash o) o;
+  prim
+
+let scatter_marked prim =
+  let o = Obj.repr prim in
+  List.exists
+    (fun other -> other == o)
+    (Hashtbl.find_all sorted_scatters (Hashtbl.hash o))
+
+let gather_fills : (int, Obj.t * string * float option) Hashtbl.t =
+  Hashtbl.create 64
+
+let mark_gather_fill prim repr fill =
+  let o = Obj.repr prim in
+  Hashtbl.add gather_fills (Hashtbl.hash o) (o, repr, fill);
+  prim
+
+let gather_fill_of prim =
+  let o = Obj.repr prim in
+  List.find_map
+    (fun (other, repr, fill) -> if other == o then Some (repr, fill) else None)
+    (Hashtbl.find_all gather_fills (Hashtbl.hash o))
+
+let clip_gathers : (int, Obj.t * bool) Hashtbl.t = Hashtbl.create 64
+
+let mark_gather_clip ~sorted prim =
+  let o = Obj.repr prim in
+  Hashtbl.add clip_gathers (Hashtbl.hash o) (o, sorted);
+  prim
+
+let gather_clip_of prim =
+  let o = Obj.repr prim in
+  List.find_map
+    (fun (other, sorted) -> if other == o then Some sorted else None)
+    (Hashtbl.find_all clip_gathers (Hashtbl.hash o))

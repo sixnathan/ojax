@@ -551,14 +551,53 @@ let scatter_numbers (d : scatter_dims) =
     (py_ints d.s_operand_batching_dims)
     (py_ints d.s_scatter_indices_batching_dims)
 
-let scatter_params d unique =
+let update_jaxprs : (primitive * Dtype.t, closed_jaxpr) Hashtbl.t =
+  Hashtbl.create 8
+
+let update_ids = ref 0
+
+let update_id () =
+  decr update_ids;
+  !update_ids
+
+let update_jaxpr (op : primitive) dt =
+  match Hashtbl.find_opt update_jaxprs (op, dt) with
+  | Some c -> c
+  | None ->
+      let aval = { shape = [||]; dtype = dt; weak_type = false } in
+      let var () = { vid = update_id (); vaval = aval } in
+      let x = var () and y = var () and r = var () in
+      let c =
+        {
+          jid = update_id ();
+          consts = [];
+          jaxpr =
+            {
+              in_binders = [ x; y ];
+              eqns =
+                [
+                  {
+                    prim = op;
+                    inputs = [ A_var x; A_var y ];
+                    outs = [ r ];
+                    multiple_results = false;
+                  };
+                ];
+              outs = [ A_var r ];
+            };
+        }
+      in
+      Hashtbl.replace update_jaxprs (op, dt) c;
+      c
+
+let scatter_params ?update ?(mode = "FILL_OR_DROP") d unique =
   [
     ("dimension_numbers", Plain (scatter_numbers d));
     ("indices_are_sorted", Plain "False");
-    ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
+    ("mode", Plain ("GatherScatterMode." ^ mode));
     ("unique_indices", Plain (py_bool unique));
     ("update_consts", Plain "()");
-    ("update_jaxpr", Plain "None");
+    ("update_jaxpr", match update with Some c -> Sub c | None -> Plain "None");
   ]
 
 let window_params (w : window_dims) =
@@ -697,14 +736,32 @@ let jax_params (e : eqn) =
         ("slice_sizes", Plain (py_ints slice_sizes));
         ("unique_indices", Plain "False");
       ]
-  | Scatter { dimension_numbers; unique_indices }
-  | Scatter_mul { dimension_numbers; unique_indices } ->
+  | Scatter { dimension_numbers; unique_indices } ->
       scatter_params dimension_numbers unique_indices
-  | Scatter_add { dimension_numbers }
-  | Scatter_sub { dimension_numbers }
-  | Scatter_min { dimension_numbers }
+  | Scatter_mul { dimension_numbers; unique_indices } ->
+      scatter_params
+        ~update:(update_jaxpr Mul (out_dtype ()))
+        dimension_numbers unique_indices
+  | Scatter_add { dimension_numbers } ->
+      let mode =
+        if Np_ints.prim_marked e.prim then "PROMISE_IN_BOUNDS"
+        else "FILL_OR_DROP"
+      in
+      scatter_params ~mode
+        ~update:(update_jaxpr Add (out_dtype ()))
+        dimension_numbers false
+  | Scatter_sub { dimension_numbers } ->
+      scatter_params
+        ~update:(update_jaxpr Types.Sub (out_dtype ()))
+        dimension_numbers false
+  | Scatter_min { dimension_numbers } ->
+      scatter_params
+        ~update:(update_jaxpr Min (out_dtype ()))
+        dimension_numbers false
   | Scatter_max { dimension_numbers } ->
-      scatter_params dimension_numbers false
+      scatter_params
+        ~update:(update_jaxpr Max (out_dtype ()))
+        dimension_numbers false
   | Conv_general_dilated c ->
       [
         ("batch_group_count", Plain (string_of_int c.batch_group_count));

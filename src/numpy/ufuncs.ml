@@ -716,7 +716,15 @@ let conj = conjugate
 let arccosh p0 =
   Jnp_util.jit1 "arccosh"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> arccosh p0 | _ -> invalid_arg "arccosh: arity")
+    (function
+      | [ p0 ] ->
+          let result = arccosh p0 in
+          if is_complex_dtype (dtype result) then
+            let re = real result in
+            let zero = Core.splat (dtype re) [||] 0.0 in
+            where (bind1 T.Lt [ re; zero ]) (bind1 T.Neg [ result ]) result
+          else result
+      | _ -> invalid_arg "arccosh: arity")
     [ p0 ]
 
 let rint p0 =

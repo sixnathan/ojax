@@ -676,7 +676,7 @@ let rec round ?(decimals = 0) v =
     let x =
       if dt = D.F16 then bind1 (T.Convert_element_type D.F32) [ v ] else v
     in
-    let factor () = full (dtype x) (shape x) (10.0 ** float_of_int decimals) in
+    let factor () = full (dtype x) [||] (10.0 ** float_of_int decimals) in
     let out =
       bind1 T.Div
         [

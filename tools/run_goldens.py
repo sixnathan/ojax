@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import collections
+import fcntl
 import os
 import re
 import shutil
@@ -11,6 +12,25 @@ import time
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 LISTED = re.compile(r"^(\S+)\s+(\d+)\s")
+
+
+def slot_cores():
+    spec = os.environ.get("OJAX_SLOT_CORES", "2-17")
+    low, _, high = spec.partition("-")
+    return list(range(int(low), int(high or low) + 1))
+
+
+def try_slot(cores):
+    directory = os.environ.get("OJAX_SLOT_DIR", "/tmp/ojax_slots")
+    os.makedirs(directory, exist_ok=True)
+    for core in cores:
+        fd = os.open(os.path.join(directory, str(core)), os.O_CREAT | os.O_RDWR, 0o666)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return core, fd
+        except OSError:
+            os.close(fd)
+    return None
 
 
 def checkout_root():
@@ -78,7 +98,7 @@ def tally(log):
 def main():
     root = checkout_root()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--jobs", type=int, default=14)
+    parser.add_argument("--jobs", type=int, default=16)
     parser.add_argument("--filter", default=None)
     parser.add_argument("--log", default=None)
     parser.add_argument("--no-ratchet", action="store_true")
@@ -101,31 +121,36 @@ def main():
     running = []
     failed = []
     next_job = 0
+    cores = slot_cores()
     while next_job < len(jobs) or running:
         while next_job < len(jobs) and len(running) < args.jobs:
+            slot = try_slot(cores)
+            if slot is None:
+                break
             group, low, high = jobs[next_job]
             scratch = os.path.join(work, str(next_job))
             os.makedirs(os.path.join(scratch, "a"))
             job_env = dict(env, OJAX_EXACT_LOG=os.path.join(scratch, "exact.log"))
             out = open(os.path.join(scratch, "out"), "w")
             proc = subprocess.Popen(
-                [exe, "test", "-o", os.path.join(scratch, "a"), "^" + re.escape(group) + "$", f"{low}..{high}"],
+                ["nice", "-n", "10", "taskset", "-c", str(slot[0]), exe, "test", "-o", os.path.join(scratch, "a"), "^" + re.escape(group) + "$", f"{low}..{high}"],
                 cwd=cwd,
                 env=job_env,
                 stdout=out,
                 stderr=subprocess.STDOUT,
             )
-            running.append((proc, next_job, out))
+            running.append((proc, next_job, out, slot[1]))
             next_job += 1
         for item in running[:]:
             if item[0].poll() is not None:
                 item[2].close()
+                os.close(item[3])
                 if item[0].returncode != 0:
                     failed.append(item[1])
                 running.remove(item)
         time.sleep(0.05)
 
-    log = args.log or os.path.join(work, "exact.log")
+    log = os.path.abspath(args.log) if args.log else os.path.join(work, "exact.log")
     with open(log, "w") as merged:
         for index in range(len(jobs)):
             part = os.path.join(work, str(index), "exact.log")
@@ -154,8 +179,7 @@ def main():
     with open(log) as f:
         rows = sum(1 for _ in f)
     print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {sum(counts.values())}/{rows} bit-identical")
-    if not args.log:
-        shutil.rmtree(work, ignore_errors=True)
+    shutil.rmtree(work, ignore_errors=True)
     sys.exit(1 if failed or fell else 0)
 
 

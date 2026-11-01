@@ -684,28 +684,93 @@ let lu = function
       batched core 2 [ a ]
   | _ -> invalid_arg "Native_lowering: lu arity"
 
+let scalar_like_index i x =
+  Concrete (Ndarray.as_weak (Ndarray.of_floats (dtype i) [||] [| x |]))
+
+let is_weak v = (Core.get_aval v).weak_type
+
+let rewriting_index i n =
+  let negative = L.lt i (scalar_like_index i 0.0) in
+  let strong =
+    if is_weak i then Core.bind1 (Convert_element_type (dtype i)) [ i ] else i
+  in
+  let shifted =
+    Core.bind1 Add [ strong; scalar_like_index i (float_of_int n) ]
+  in
+  Core.bind1 Select_n [ negative; i; shifted ]
+
+let scatter_index i n =
+  let negative = L.lt i (scalar_like_index i 0.0) in
+  let shifted = Core.bind1 Add [ i; scalar_like_index i (float_of_int n) ] in
+  let picked = Core.bind1 Select_n [ negative; i; shifted ] in
+  let strong =
+    if is_weak i then Core.bind1 (Convert_element_type (dtype i)) [ picked ]
+    else picked
+  in
+  L.broadcast_in_dim strong [| 1 |] [||]
+
+let lu_pivots_body_inner i permutation swaps =
+  let m = (shape permutation).(0) in
+  let take v at =
+    let start = rewriting_index at (shape v).(0) in
+    let sliced =
+      Core.bind1 (Dynamic_slice { slice_sizes = [| 1 |] }) [ v; start ]
+    in
+    Core.bind1 (Squeeze [| 0 |]) [ sliced ]
+  in
+  let j = take swaps i in
+  let x = take permutation i in
+  let y = take permutation j in
+  let set v at value =
+    Core.bind1
+      (Scatter
+         {
+           dimension_numbers =
+             {
+               update_window_dims = [||];
+               inserted_window_dims = [| 0 |];
+               scatter_dims_to_operand_dims = [| 0 |];
+               s_operand_batching_dims = [||];
+               s_scatter_indices_batching_dims = [||];
+               s_sorted_unique = true;
+             };
+           unique_indices = true;
+         })
+      [ v; scatter_index at m; value ]
+  in
+  set (set permutation i y) j x
+
 let lu_pivots_to_permutation ~permutation_size = function
-  | [ pivots ] ->
-      let core = function
-        | [ swaps ] ->
-            let k = (shape swaps).(0) in
-            let permutation = L.iota Dtype.I32 permutation_size in
-            if k = 0 || permutation_size = 0 then [ permutation ]
-            else
-              let body i = function
-                | [ permutation ] ->
-                    let j = L.dynamic_slice swaps [ i ] [| 1 |] in
-                    let j = L.reshape j [||] in
-                    let x = L.dynamic_slice permutation [ i ] [| 1 |] in
-                    let y = L.dynamic_slice permutation [ j ] [| 1 |] in
-                    let p = L.dynamic_update_slice permutation y [ i ] in
-                    [ L.dynamic_update_slice p x [ j ] ]
-                | _ -> invalid_arg "Native_lowering: pivots state"
-              in
-              L.fori_loop (int32 0) (int32 k) body [ permutation ]
-        | _ -> invalid_arg "Native_lowering: pivots arity"
+  | [ swaps ] ->
+      let sh = shape swaps in
+      let nb = Array.length sh - 1 in
+      let k = sh.(nb) in
+      let batch = Array.sub sh 0 nb in
+      let permutation =
+        L.broadcasted_iota Dtype.I32
+          (Array.append batch [| permutation_size |])
+          nb
       in
-      batched core 1 [ pivots ]
+      if k = 0 || permutation_size = 0 then [ permutation ]
+      else
+        let body i = function
+          | [ permutation; swaps ] ->
+              let rec lifted d args =
+                if d = 0 then
+                  match args with
+                  | [ p; s ] -> [ lu_pivots_body_inner i p s ]
+                  | _ -> invalid_arg "Native_lowering: pivots state"
+                else
+                  Interpreters.Batching.vmap_flat
+                    (lifted (d - 1))
+                    [ Some 0; Some 0 ] args
+              in
+              lifted nb [ permutation; swaps ] @ [ swaps ]
+          | _ -> invalid_arg "Native_lowering: pivots state"
+        in
+        [
+          List.hd (L.fori_loop (int32 0) (int32 k) body [ permutation; swaps ]);
+        ]
   | _ -> invalid_arg "Native_lowering: pivots arity"
 
 let tridiagonal_solve_core = function
@@ -1033,8 +1098,10 @@ let real_basetype v =
 
 let nan_full v =
   if is_complex v then
-    let part = L.full (shape v) Float.nan (real_basetype v) in
-    L.complex part part
+    let nan = { Complex.re = Float.nan; im = Float.nan } in
+    L.broadcast_in_dim
+      (Concrete (Ndarray.of_complex (dtype v) [||] [| nan |]))
+      (shape v) [||]
   else like v Float.nan
 
 let nan_where_bad ok v =
@@ -1093,11 +1160,12 @@ let lapack_eigen_values_real = function
   | _ -> invalid_arg "Native_lowering: geev arity"
 
 let lapack_eig ~real ~compute_left ~compute_right outs =
-  let outs = if real then lapack_eigen_values_real outs else outs in
-  match lapack_guarded outs with
-  | [ w; vl; vr ] ->
-      (w :: (if compute_left then [ vl ] else []))
-      @ if compute_right then [ vr ] else []
+  match if real then lapack_eigen_values_real outs else outs with
+  | [ w; vl; vr; info ] ->
+      lapack_guarded
+        ((w :: (if compute_left then [ vl ] else []))
+        @ (if compute_right then [ vr ] else [])
+        @ [ info ])
   | _ -> invalid_arg "Native_lowering: geev arity"
 
 let lapack_schur ~compute_vectors outs =

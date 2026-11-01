@@ -39,6 +39,7 @@ let matmul () =
       rhs_contract = [| 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      dot_precision = None;
     }
   in
   let out = bind1 (T.Dot_general dd) [ lhs; rhs ] in
@@ -95,6 +96,7 @@ let abstract_shapes () =
       rhs_contract = [| 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      dot_precision = None;
     }
   in
   let l = { T.shape = [| 2; 3 |]; dtype = D.F32; weak_type = false } in

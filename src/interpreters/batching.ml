@@ -314,51 +314,36 @@ let pad_batch (cfg : (int * int * int) array) (vals : value list)
   | [ operand; pv ], [ Some d; None ] ->
       let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
       (b1 (Pad cfg2) [ operand; pv ], Some d)
-  | [ operand; pv ], [ ob; pvb ] ->
-      let size =
-        match (ob, pvb) with
-        | Some d, _ -> (Core.get_aval operand).shape.(d)
-        | None, Some d -> (Core.get_aval pv).shape.(d)
-        | None, None -> failwith "batching: pad with nothing batched"
-      in
-      let leading v bdim =
-        let a = Core.get_aval v in
-        match bdim with
-        | Some d ->
-            let n = Array.length a.shape in
-            let perm =
-              Array.of_list
-                (d :: List.filter (fun i -> i <> d) (List.init n Fun.id))
-            in
-            b1 (Transpose perm) [ v ]
+  | [ operand; pv ], [ ob; Some _ ] ->
+      let a = Core.get_aval pv in
+      let operand, d =
+        match ob with
+        | Some d -> (operand, d)
         | None ->
-            b1
-              (Broadcast_in_dim
-                 {
-                   shape = Array.append [| size |] a.shape;
-                   dims = Array.init (Array.length a.shape) (fun i -> i + 1);
-                 })
-              [ v ]
+            let oa = Core.get_aval operand in
+            ( b1
+                (Broadcast_in_dim
+                   {
+                     shape = Array.append [| a.shape.(0) |] oa.shape;
+                     dims = Array.init (Array.length oa.shape) (fun i -> i + 1);
+                   })
+                [ operand ],
+              0 )
       in
-      let x = leading operand ob in
-      let fill = leading pv pvb in
-      let cfg2 = insert_pad_cfg cfg 0 (0, 0, 0) in
-      let dt = (Core.get_aval x).dtype in
-      let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
-      let padded = b1 (Pad cfg2) [ x; zero ] in
-      let keep =
-        Concrete
-          (Ndarray.of_floats Dtype.Bool (Core.get_aval x).shape
-             (Array.make (Array.fold_left ( * ) 1 (Core.get_aval x).shape) 1.0))
-      in
-      let off = Concrete (Ndarray.of_floats Dtype.Bool [||] [| 0.0 |]) in
+      let oa = Core.get_aval operand in
+      let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
+      let zero = Core.splat oa.dtype [||] 0.0 in
+      let x = b1 (Pad cfg2) [ operand; zero ] in
+      let keep = Core.splat Dtype.Bool oa.shape 1.0 in
+      let off = Core.splat Dtype.Bool [||] 0.0 in
       let mask = b1 (Pad cfg2) [ keep; off ] in
-      let out_shape = (Core.get_aval padded).shape in
-      let wide_fill =
-        b1 (Broadcast_in_dim { shape = out_shape; dims = [| 0 |] }) [ fill ]
+      let fill =
+        b1
+          (Broadcast_in_dim { shape = (Core.get_aval x).shape; dims = [| d |] })
+          [ pv ]
       in
-      (b1 Select_n [ mask; wide_fill; padded ], Some 0)
-  | _ -> failwith "batching: pad expects 2 operands"
+      (b1 Select_n [ mask; fill; x ], Some d)
+  | _ -> failwith "batching: pad expects operand and padding value"
 
 let rev_batch (dims : int array) (x : value) (bdim : int option) :
     value * int option =
@@ -668,6 +653,7 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
                   Np_ints.mark (bump sd.s_operand_batching_dims);
                 s_scatter_indices_batching_dims =
                   sd.s_scatter_indices_batching_dims;
+                s_sorted_unique = sd.s_sorted_unique;
               }
             in
             ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],
@@ -690,6 +676,7 @@ let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
                     (fun i -> i > 0)
                     (Array.append [| 0 |]
                        (bump sd.s_scatter_indices_batching_dims));
+                s_sorted_unique = sd.s_sorted_unique;
               }
             in
             ( Core.bind1 (rebuild_scatter prim sd') [ operand; indices; updates ],
@@ -709,6 +696,7 @@ let dot_general_batch (dims : dot_dims) (vals : value list)
           rhs_batch = Array.append [| r |] (bump dims.rhs_batch r);
           lhs_contract = bump dims.lhs_contract l;
           rhs_contract = bump dims.rhs_contract r;
+          dot_precision = dims.dot_precision;
         }
       in
       (b1 (Dot_general dims') [ lhs; rhs ], Some 0)
@@ -1302,7 +1290,6 @@ let unstacks_operands prim (bdims : int option list) =
   | Custom_vjp_call id, _ -> (
       match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
   | Dynamic_update_slice, _ :: _ :: indices -> any_batched indices
-  | Pad _, [ _; padding ] -> padding <> None
   | Reduce _, _ ->
       let n = List.length bdims / 2 in
       any_batched (List.filteri (fun i _ -> i >= n) bdims)

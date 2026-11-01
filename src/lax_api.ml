@@ -566,7 +566,21 @@ let dot_accumulate prim x y acc =
   else convert_to acc (b1 prim [ x; y ])
 
 let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
-  let prim = Dot_general dn in
+  let level_name = function
+    | Lax_config.Precision_default -> "DEFAULT"
+    | Lax_config.Precision_high -> "HIGH"
+    | Lax_config.Precision_highest -> "HIGHEST"
+  in
+  let dot_precision =
+    match precision with
+    | Some (Lax_config.Precision (l, r)) -> Some (level_name l, level_name r)
+    | Some _ -> None
+    | None -> (
+        match Config.matmul_preset () with
+        | Some _ -> None
+        | None -> Option.map (fun l -> (l, l)) (Config.matmul_level ()))
+  in
+  let prim = Dot_general { dn with dot_precision } in
   let lhs = dtype_of x and rhs = dtype_of y in
   let result = if lhs = rhs then lhs else Dtypes.promote_types lhs rhs in
   let has_algorithm =
@@ -612,7 +626,13 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
   match dimension_numbers with
   | Some ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)) ->
       dot_with ?precision ?preferred_element_type
-        { lhs_contract; rhs_contract; lhs_batch; rhs_batch }
+        {
+          lhs_contract;
+          rhs_contract;
+          lhs_batch;
+          rhs_batch;
+          dot_precision = None;
+        }
         x y
   | None ->
       if nx = 0 || ny = 0 then mul x y
@@ -623,21 +643,22 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
             rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
             lhs_batch = [||];
             rhs_batch = [||];
+            dot_precision = None;
           }
           x y
 
 let dot_general ?precision ?preferred_element_type x y ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch =
   dot_with ?precision ?preferred_element_type
-    { lhs_contract; rhs_contract; lhs_batch; rhs_batch }
+    { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None }
     x y
 
-let batch_matmul x y =
+let batch_matmul ?precision x y =
   let n = ndim x in
   if ndim y <> n || n < 2 then
     invalid_arg "batch_matmul requires equal ranks of at least two";
   let batch = Array.init (n - 2) Fun.id in
-  dot_general x y
+  dot_general ?precision x y
     ~lhs_contract:[| n - 1 |]
     ~rhs_contract:[| n - 2 |]
     ~lhs_batch:batch ~rhs_batch:batch

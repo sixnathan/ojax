@@ -568,7 +568,8 @@ let gamma k ~shape ~a =
 let loggamma k ~shape ~a =
   gamma_v k ~a:(pyf a) ~shape ~dt:(fdt ()) ~log_space:true
 
-let gamma_value k ~shape ~a = gamma_v k ~a ~shape ~dt:(fdt ()) ~log_space:false
+let gamma_value k ~shape ~a =
+  gamma_v k ~a ~shape ~dt:(dtype_of a) ~log_space:false
 
 let loggamma_value k ~shape ~a =
   gamma_v k ~a ~shape ~dt:(dtype_of a) ~log_space:true

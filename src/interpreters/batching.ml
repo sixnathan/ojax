@@ -141,7 +141,30 @@ let naryop_rule (axis_size : int) (prim : primitive) (vals : value list)
     | Some (Some d) -> d
     | _ -> 0
   in
-  let aligned = List.map2 (align_to axis_size dst) vals bdims in
+  let logical v b =
+    let r = Array.length (Core.get_aval v).shape in
+    if b = None then r else r - 1
+  in
+  let top =
+    List.fold_left2 (fun acc v b -> Stdlib.max acc (logical v b)) 0 vals bdims
+  in
+  let aligned =
+    List.map2
+      (fun v b ->
+        match b with
+        | None when logical v b = 0 -> v
+        | _ ->
+            let moved = align_to axis_size dst v b in
+            let sh = (Core.get_aval moved).shape in
+            let lr = logical v b in
+            if lr = top then moved
+            else
+              let padded =
+                Array.init (top + 1) (fun i -> if i < lr + 1 then sh.(i) else 1)
+              in
+              b1 (Reshape padded) [ moved ])
+      vals bdims
+  in
   (b1 prim aligned, Some dst)
 
 let reduce_sum_rule (axes : int array) (x : value) (bdim : int option) :

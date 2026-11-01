@@ -2651,163 +2651,333 @@ let fresnel x =
   | [ s; c ] -> (s, c)
   | _ -> invalid_arg "fresnel: arity"
 
-let sp_c v x = scalar_of v x
-let sp_abs = UF.absolute
-let sp_lt = UF.less
-let sp_eq = UF.equal
 let full_like v x = const_full (dtype v) (shape v) x
+
+let bessel_jn_one ~v ~n_iter z =
+  let dt = dtype z in
+  let f0 = scalar_of z 0.0 in
+  let f1 = scalar_of z 1e-16 in
+  let bs = scalar_of z 0.0 in
+  let body args =
+    match args with
+    | [ f0; f1; bs; z; k ] ->
+        let num = lit_mul 2.0 (add_lit k 1.0) *! f1 in
+        let f = (num /! z) -! f0 in
+        let cond_pred = eq_ (UF.remainder k (scalar_of k 2.0)) 0.0 in
+        let bs =
+          List.hd
+            (L.cond cond_pred
+               (function
+                 | [ bs; f ] -> [ bs +! lit_mul 2.0 f ] | _ -> assert false)
+               (function [ bs; _ ] -> [ bs ] | _ -> assert false)
+               [ bs; f ])
+        in
+        [ f1; f; bs; z; f ]
+    | _ -> assert false
+  in
+  let out =
+    L.scan ~reverse:true body [ f0; f1; bs; z ] [ L.iota dt (n_iter + 1) ]
+  in
+  match out with
+  | [ _; _; bs; _; j_vals ] ->
+      let first = L.index_in_dim ~keepdims:false j_vals 0 in
+      let picked = L.slice_in_dim j_vals 0 (v + 1) in
+      picked /! (bs -! first)
+  | _ -> assert false
 
 let bessel_jn ?(n_iter = 50) ~v z =
   let z = promote1 z in
-  let dt = dtype z and sh = shape z in
-  let s x = scalar_of z x in
-  let cf x = const_full dt sh x in
-  let f0 = ref (cf 0.0) in
-  let f1 = ref (cf 1e-16) in
-  let bs = ref (cf 0.0) in
-  let out = Array.make (n_iter + 1) !f0 in
-  for k = n_iter downto 0 do
-    let kf = float_of_int k in
-    let f =
-      UF.subtract (UF.divide (UF.multiply (s (2.0 *. (kf +. 1.0))) !f1) z) !f0
-    in
-    if k mod 2 = 0 then bs := UF.add !bs (UF.multiply (s 2.0) f);
-    out.(k) <- f;
-    f0 := !f1;
-    f1 := f
-  done;
-  let f_last = out.(0) in
-  let denom = UF.subtract !bs f_last in
-  let js =
-    Array.to_list
-      (Array.map (fun jv -> UF.divide jv denom) (Array.sub out 0 (v + 1)))
+  reject_complex "bessel_jn" z;
+  let rank = ndim z in
+  let rec wrap d f =
+    if d = 0 then f
+    else wrap (d - 1) (fun xs -> Interpreters.Batching.vmap f [ Some 0 ] xs)
   in
-  NL.stack ~axis:0 js
+  let out =
+    List.hd
+      (wrap rank
+         (function
+           | [ z ] -> [ bessel_jn_one ~v ~n_iter z ] | _ -> assert false)
+         [ z ])
+  in
+  NL.moveaxis [| -1 |] [| 0 |] out
 
-let legendre_table ~normalized l_max x =
+let einsum =
+  Numpy.Einsum.einsum ?optimize:None ?precision:None
+    ?preferred_element_type:None
+
+let const_mask sh f =
+  let total = numel sh in
+  let rank = Array.length sh in
+  let idx = Array.make rank 0 in
+  let vals =
+    Array.init total (fun pos ->
+        let r = ref pos in
+        for d = rank - 1 downto 0 do
+          idx.(d) <- !r mod sh.(d);
+          r := !r / sh.(d)
+        done;
+        if f idx then 1.0 else 0.0)
+  in
+  T.Concrete (Nd.of_floats D.Bool sh vals)
+
+let arange_dt dt lo hi =
+  NL.arange ~start:(float_of_int lo) ~dtype:dt (float_of_int hi)
+
+let meshgrid_ij dt n m =
+  match NL.meshgrid ~indexing:"ij" [ arange_dt dt 0 n; arange_dt dt 0 m ] with
+  | [ a; b ] -> (a, b)
+  | _ -> assert false
+
+let masked_zeros mask vals = where_ mask vals (AC.zeros_like vals)
+let dus = L.dynamic_update_slice
+let idx_const i = int_full D.I32 i
+
+let gen_recurrence_mask l_max is_normalized dt =
   let n = l_max + 1 in
-  let zeros = AC.zeros_like x in
-  let table = Array.make_matrix n n zeros in
-  let lit v = sp_c x v in
-  let q v =
-    if dtype x = D.F32 then Int32.float_of_bits (Int32.bits_of_float v) else v
+  let m_mat, l_mat = meshgrid_ij dt n n in
+  let lit v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
+  let d0, d1 =
+    if is_normalized then begin
+      let c0 = l_mat *! l_mat in
+      let c1 = m_mat *! m_mat in
+      let c2 = lit 2.0 *! l_mat in
+      let lm1 = l_mat -! lit 1.0 in
+      let c3 = lm1 *! (l_mat -! lit 1.0) in
+      let n0 = (lit 4.0 *! c0) -! lit 1.0 in
+      let d0 = UF.sqrt (n0 /! (c0 -! c1)) in
+      let n1 = (c2 +! lit 1.0) *! (c3 -! c1) in
+      let den = (c2 -! lit 3.0) *! (c0 -! c1) in
+      let d1 = UF.sqrt (n1 /! den) in
+      (d0, d1)
+    end
+    else begin
+      let n0 = (lit 2.0 *! l_mat) -! lit 1.0 in
+      let d0 = n0 /! (l_mat -! m_mat) in
+      let n1 = l_mat +! m_mat -! lit 1.0 in
+      let d1 = n1 /! (l_mat -! m_mat) in
+      (d0, d1)
+    end
   in
-  let wide = Config.x64_enabled () in
-  let initial =
-    if not normalized then 1.0
-    else if wide then 0.5 /. Float.sqrt Float.pi
-    else q (0.5 /. q (Float.sqrt Float.pi))
+  let d0_mask =
+    masked_zeros (const_mask [| n; n |] (fun i -> i.(1) >= i.(0) + 1)) d0
   in
-  let initial_value =
-    const_full (if wide then D.F64 else dtype x) [||] initial
+  let d1_mask =
+    masked_zeros (const_mask [| n; n |] (fun i -> i.(1) >= i.(0) + 2)) d1
   in
-  table.(0).(0) <- NL.broadcast_to (lit initial) (shape x);
-  let root = UF.sqrt (lit 1.0 -! (x *! x)) in
-  let factor = ref 1.0 and power = ref (AC.ones_like x) in
-  for l = 1 to l_max do
-    let a = float_of_int l in
-    let step =
-      if normalized then -.q (Float.sqrt (q (1.0 +. q (0.5 /. a))))
-      else 1.0 -. (2.0 *. a)
-    in
-    factor := q (!factor *. step);
-    power := !power *! root;
-    table.(l).(l) <-
-      NL.astype (initial_value *! (lit !factor *! !power)) (dtype x)
-  done;
-  for m = 0 to l_max - 1 do
-    let fm = float_of_int m in
-    let coeff =
-      if normalized then q (Float.sqrt ((2.0 *. fm) +. 3.0))
-      else (2.0 *. fm) +. 1.0
-    in
-    table.(m).(m + 1) <- lit coeff *! x *! table.(m).(m)
-  done;
-  for offset = 2 to l_max do
-    for m = 0 to l_max - offset do
-      let l = m + offset in
-      let fl = float_of_int l and fm = float_of_int m in
-      let d0, d1 =
-        if normalized then begin
-          let c0 = fl *. fl and c1 = fm *. fm in
-          let c2 = 2.0 *. fl and c3 = (fl -. 1.0) *. (fl -. 1.0) in
-          ( q (Float.sqrt (q (((4.0 *. c0) -. 1.0) /. (c0 -. c1)))),
-            q
-              (Float.sqrt
-                 (q
-                    (q ((c2 +. 1.0) *. (c3 -. c1))
-                    /. q ((c2 -. 3.0) *. (c0 -. c1))))) )
-        end
-        else
-          (((2.0 *. fl) -. 1.0) /. (fl -. fm), (fl +. fm -. 1.0) /. (fl -. fm))
-      in
-      table.(m).(l) <-
-        (lit d0 *! (table.(m).(l - 1) *! x)) -! (lit d1 *! table.(m).(l - 2))
-    done
-  done;
-  table
+  let mask3 =
+    NL.astype (const_mask [| n; n; n |] (fun i -> i.(0) + i.(1) - i.(2) = 0)) dt
+  in
+  let d0_3d = einsum "jk,ijk->ijk" [ d0_mask; mask3 ] in
+  let d1_3d = einsum "jk,ijk->ijk" [ d1_mask; mask3 ] in
+  (d0_3d, d1_3d)
 
-let stack_table table =
-  NL.stack
-    (Array.to_list (Array.map (fun row -> NL.stack (Array.to_list row)) table))
-
-let legendre_derivatives l_max x p =
-  let n = l_max + 1 in
-  let zeros = AC.zeros_like x in
-  let lit v = sp_c x v in
-  let at_l_minus m l = if l = 0 then zeros else p.(m).(l - 1) in
-  let up2 m l = if m + 2 > l_max then zeros else at_l_minus (m + 2) l in
-  let down2 =
-    Array.init n (fun m ->
-        Array.init n (fun l -> if m < 2 then zeros else at_l_minus (m - 2) l))
+let gen_associated_legendre_body l_max x is_normalized =
+  let dt = dtype x in
+  let lit v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
+  let n = (shape x).(0) in
+  let p = AC.zeros ~dtype:dt [| l_max + 1; l_max + 1; n |] in
+  let a_idx () = arange_dt dt 1 (l_max + 1) in
+  let b_idx () = arange_dt dt 0 l_max in
+  let initial_value, f_a_f_b =
+    if is_normalized then begin
+      let root = UF.sqrt (py_float Float.pi) in
+      let initial = py_float 0.5 /! root in
+      ( initial,
+        fun () ->
+          let inner = UF.sqrt (lit 1.0 +! (lit 0.5 /! a_idx ())) in
+          let f_a = RED.cumprod (lit (-1.0) *! inner) in
+          let f_b = UF.sqrt ((lit 2.0 *! b_idx ()) +! lit 3.0) in
+          (f_a, f_b) )
+    end
+    else
+      ( py_float 1.0,
+        fun () ->
+          let f_a = RED.cumprod (lit 1.0 -! (lit 2.0 *! a_idx ())) in
+          let f_b = (lit 2.0 *! b_idx ()) +! lit 1.0 in
+          (f_a, f_b) )
   in
-  for l = 1 to n - 2 do
-    let fl = float_of_int l in
-    down2.(1).(l + 1) <- lit (-1.0 /. ((fl +. 1.0) *. fl)) *! p.(1).(l)
-  done;
-  for l = 2 to n - 2 do
-    let fl = float_of_int l in
-    down2.(0).(l + 1) <-
-      lit (1.0 /. ((fl +. 2.0) *. (fl +. 1.0) *. fl *. (fl -. 1.0)))
-      *! p.(2).(l)
-  done;
-  let derivative =
-    Array.init n (fun m ->
-        Array.init n (fun l ->
-            if m > l then (
-              let fl = float_of_int l and fm = float_of_int m in
-              ignore (fl, fm);
-              zeros)
-            else begin
-              let fl = float_of_int l and fm = float_of_int m in
-              let b0 = fl +. fm in
-              let minus_one =
-                if m = 1 then zeros
-                else begin
-                  let a0 = -0.5 /. (fm -. 1.0) in
-                  let c0 = a0 *. (b0 -. 2.0) *. (b0 -. 1.0) in
-                  (lit a0 *! at_l_minus m l) +! (lit c0 *! down2.(m).(l))
-                end
-              in
-              let d0 = -0.5 /. (fm +. 1.0) in
-              let e0 = d0 *. b0 *. (b0 +. 1.0) in
-              let plus_one =
-                (lit d0 *! up2 m l) +! (lit e0 *! at_l_minus m l)
-              in
-              let f0 = b0 *. (fl -. fm +. 1.0) /. 2.0 in
-              (lit f0 *! minus_one) -! (lit 0.5 *! plus_one)
-            end))
+  let init_as = NL.astype initial_value dt in
+  let p =
+    dus p
+      (L.reshape (L.broadcast_in_dim init_as [| n |] [||]) [| 1; 1; n |])
+      [ idx_const 0; idx_const 0; idx_const 0 ]
   in
-  if n > 1 then begin
-    let scale = lit 0.5 /! UF.sqrt (lit 1.0 -! (x *! x)) in
-    for l = 0 to n - 1 do
-      let fl = float_of_int l in
-      let g0 = lit ((fl +. 1.0) *. fl) *! p.(0).(l) in
-      let g0 = if n > 2 then g0 -! p.(2).(l) else g0 in
-      derivative.(1).(l) <- (if l = 0 then zeros else scale *! g0)
+  let set_row p r c row =
+    dus p
+      (L.reshape row [| 1; 1; n |])
+      [ idx_const r; idx_const c; idx_const 0 ]
+  in
+  let p = ref p in
+  if l_max > 0 then begin
+    let f_a, f_b = f_a_f_b () in
+    let root = UF.sqrt (lit 1.0 -! (x *! x)) in
+    let y = RED.cumprod ~axis:0 (NL.broadcast_to root [| l_max; n |]) in
+    let e1 = einsum "i,ij->ij" [ f_a; y ] in
+    let p_diag = init_as *! e1 in
+    for i = 1 to l_max do
+      p := set_row !p i i (L.index_in_dim ~keepdims:false p_diag (i - 1))
+    done;
+    let diag_rows =
+      L.stack
+        (List.init l_max (fun i ->
+             let row = L.index_in_dim ~keepdims:false !p i in
+             L.index_in_dim ~keepdims:false row i))
+        0
+    in
+    let fbx = einsum "i,j->ij" [ f_b; x ] in
+    let p_offdiag = einsum "ij,ij->ij" [ fbx; diag_rows ] in
+    for i = 0 to l_max - 1 do
+      p := set_row !p i (i + 1) (L.index_in_dim ~keepdims:false p_offdiag i)
     done
   end;
-  derivative
+  let d0_mask_3d, d1_mask_3d = gen_recurrence_mask l_max is_normalized dt in
+  if l_max > 1 then
+    List.hd
+      (L.fori_loop (idx_const 2)
+         (idx_const (l_max + 1))
+         (fun i state ->
+           match state with
+           | [ p_val ] ->
+               let coeff_0 =
+                 Numpy.Indexing.dslice_index d0_mask_3d
+                   [ Numpy.Indexing.Dslice { start = i; size = 1; stride = 1 } ]
+               in
+               let coeff_0 =
+                 L.reshape coeff_0 (Array.sub (shape coeff_0) 1 2)
+               in
+               let coeff_1 =
+                 Numpy.Indexing.dslice_index d1_mask_3d
+                   [ Numpy.Indexing.Dslice { start = i; size = 1; stride = 1 } ]
+               in
+               let coeff_1 =
+                 L.reshape coeff_1 (Array.sub (shape coeff_1) 1 2)
+               in
+               let r1 = NL.roll ~axis:[| 1 |] p_val [| 1 |] in
+               let e1 = einsum "ijk,k->ijk" [ r1; x ] in
+               let t1 = einsum "ij,ijk->ijk" [ coeff_0; e1 ] in
+               let r2 = NL.roll ~axis:[| 1 |] p_val [| 2 |] in
+               let t2 = einsum "ij,ijk->ijk" [ coeff_1; r2 ] in
+               let h = t1 -! t2 in
+               [ p_val +! h ]
+           | _ -> assert false)
+         [ !p ])
+  else !p
+
+let gen_associated_legendre l_max x is_normalized =
+  Eager_jit.one "scipy.special._gen_associated_legendre" (l_max, is_normalized)
+    [] [ x ] (fun _ vals ->
+      JU.jit1 "_gen_associated_legendre"
+        ~key:(Printf.sprintf "%d_%b" l_max is_normalized)
+        (function
+          | [ x ] -> gen_associated_legendre_body l_max x is_normalized
+          | _ -> assert false)
+        vals)
+
+let gen_derivatives_body p x =
+  let dt = dtype x in
+  let lit v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
+  let sh = shape p in
+  let num_m = sh.(0) and num_l = sh.(1) and num_x = sh.(2) in
+  let p_m_lm1 =
+    L.slice
+      (NL.pad p [| (0, 0); (1, 0); (0, 0) |] 0.0)
+      [| 0; 0; 0 |] [| num_m; num_l; num_x |]
+  in
+  let p_mp2_lm1 =
+    L.slice
+      (NL.pad p_m_lm1 [| (0, 2); (0, 0); (0, 0) |] 0.0)
+      [| 2; 0; 0 |]
+      [| num_m + 2; num_l; num_x |]
+  in
+  let p_mm2_lm1 =
+    L.slice
+      (NL.pad p_m_lm1 [| (2, 0); (0, 0); (0, 0) |] 0.0)
+      [| 0; 0; 0 |] [| num_m; num_l; num_x |]
+  in
+  let row_part row lo hi =
+    L.slice p [| row; lo; 0 |] [| row + 1; hi; num_x |]
+  in
+  let squeeze0 v =
+    let s = shape v in
+    L.reshape v (Array.sub s 1 (Array.length s - 1))
+  in
+  let p_mm2_lm1 =
+    if num_l > 1 && num_l - 1 > 1 then begin
+      let l_vec = arange_dt dt 1 (num_l - 1) in
+      let p_p1 = squeeze0 (row_part 1 1 (num_l - 1)) in
+      let den = (l_vec +! lit 1.0) *! l_vec in
+      let coeff = lit (-1.0) /! den in
+      let update = einsum "i,ij->ij" [ coeff; p_p1 ] in
+      dus p_mm2_lm1
+        (L.expand_dims update [| 0 |])
+        [ idx_const 1; idx_const 2; idx_const 0 ]
+    end
+    else p_mm2_lm1
+  in
+  let p_mm2_lm1 =
+    if num_l > 2 && num_l - 1 > 2 then begin
+      let l_vec = arange_dt dt 2 (num_l - 1) in
+      let p_p2 = squeeze0 (row_part 2 2 (num_l - 1)) in
+      let d1 = l_vec +! lit 2.0 in
+      let d2 = d1 *! (l_vec +! lit 1.0) in
+      let d3 = d2 *! l_vec in
+      let den = d3 *! (l_vec -! lit 1.0) in
+      let coeff = lit 1.0 /! den in
+      let update = einsum "i,ij->ij" [ coeff; p_p2 ] in
+      dus p_mm2_lm1
+        (L.expand_dims update [| 0 |])
+        [ idx_const 0; idx_const 3; idx_const 0 ]
+    end
+    else p_mm2_lm1
+  in
+  let m_mat, l_mat = meshgrid_ij dt num_m num_l in
+  let upper = const_mask [| num_m; num_l |] (fun i -> i.(1) >= i.(0)) in
+  let not_row1 = const_mask [| num_m; num_l |] (fun i -> i.(0) <> 1) in
+  let a0 = lit (-0.5) /! (m_mat -! lit 1.0) in
+  let a0_masked = masked_zeros not_row1 (masked_zeros upper a0) in
+  let b0 = l_mat +! m_mat in
+  let c0 = a0 *! (b0 -! lit 2.0) *! (b0 -! lit 1.0) in
+  let c0_masked = masked_zeros not_row1 (masked_zeros upper c0) in
+  let e1 = einsum "ij,ijk->ijk" [ a0_masked; p_m_lm1 ] in
+  let e2 = einsum "ij,ijk->ijk" [ c0_masked; p_mm2_lm1 ] in
+  let p_mm1_l = e1 +! e2 in
+  let d0 = lit (-0.5) /! (m_mat +! lit 1.0) in
+  let d0_masked = masked_zeros upper d0 in
+  let e0 = d0 *! b0 *! (b0 +! lit 1.0) in
+  let e0_masked = masked_zeros upper e0 in
+  let e3 = einsum "ij,ijk->ijk" [ d0_masked; p_mp2_lm1 ] in
+  let e4 = einsum "ij,ijk->ijk" [ e0_masked; p_m_lm1 ] in
+  let p_mp1_l = e3 +! e4 in
+  let lmm = l_mat -! m_mat +! lit 1.0 in
+  let f0 = b0 *! lmm /! lit 2.0 in
+  let f0_masked = masked_zeros upper f0 in
+  let e5 = einsum "ij,ijk->ijk" [ f0_masked; p_mm1_l ] in
+  let p_derivative = e5 -! (lit 0.5 *! p_mp1_l) in
+  if num_m > 1 then begin
+    let l_vec = arange_dt dt 0 num_l in
+    let lv = (l_vec +! lit 1.0) *! l_vec in
+    let row0 = squeeze0 (row_part 0 0 num_l) in
+    let g0 = einsum "i,ij->ij" [ lv; row0 ] in
+    let g0 = if num_l > 2 then g0 -! squeeze0 (row_part 2 0 num_l) else g0 in
+    let xx = x *! x in
+    let inv = lit 0.5 /! UF.sqrt (lit 1.0 -! xx) in
+    let m0 = einsum "j,ij->ij" [ inv; g0 ] in
+    let pd =
+      dus p_derivative (L.expand_dims m0 [| 0 |])
+        [ idx_const 1; idx_const 0; idx_const 0 ]
+    in
+    dus pd
+      (L.full [| 1; 1; num_x |] 0.0 dt)
+      [ idx_const 1; idx_const 0; idx_const 0 ]
+  end
+  else p_derivative
+
+let gen_derivatives p x =
+  Eager_jit.one "scipy.special._gen_derivatives" () [] [ p; x ] (fun _ vals ->
+      JU.jit1 "_gen_derivatives"
+        (function [ p; x ] -> gen_derivatives_body p x | _ -> assert false)
+        vals)
 
 let check_lpmn m n z =
   (match dtype z with
@@ -2822,18 +2992,66 @@ let check_lpmn m n z =
 
 let lpmn m n z =
   check_lpmn m n z;
-  let p = legendre_table ~normalized:false n z in
-  [ stack_table p; stack_table (legendre_derivatives n z p) ]
+  let p_vals = gen_associated_legendre n z false in
+  let p_derivatives = gen_derivatives p_vals z in
+  [ p_vals; p_derivatives ]
 
 let lpmn_values m n z is_normalized =
   check_lpmn m n z;
-  stack_table (legendre_table ~normalized:is_normalized n z)
+  gen_associated_legendre n z is_normalized
+
+let sph_harm_body n_max args =
+  match args with
+  | [ n; m; theta; phi ] ->
+      let cos_colatitude = UF.cos theta in
+      let legendre = gen_associated_legendre n_max cos_colatitude true in
+      let count = (shape theta).(0) in
+      let abs_m = UF.abs m in
+      let limit v top =
+        let low = T.Concrete (Nd.of_floats (dtype v) [||] [| 0.0 |]) in
+        let hi =
+          T.Concrete (Nd.of_floats (dtype v) [||] [| float_of_int top |])
+        in
+        UF.minimum (UF.maximum v low) hi
+      in
+      let rows = limit abs_m n_max in
+      let cols = limit n n_max in
+      let lanes = NL.arange ~dtype:(dtype rows) (float_of_int count) in
+      let side v =
+        T.Concrete (Nd.of_floats (dtype rows) [||] [| float_of_int v |])
+      in
+      let linear =
+        ((rows *! side (n_max + 1)) +! NL.astype cols (dtype rows))
+        *! side count
+        +! lanes
+      in
+      let legendre_val =
+        Numpy.Indexing.take ~axis:0
+          (NL.reshape legendre [| (n_max + 1) * (n_max + 1) * count |])
+          linear
+      in
+      let dt = dtype legendre_val in
+      let angle = NL.astype abs_m dt *! phi in
+      let cosa = UF.cos angle in
+      let sina = UF.sin angle in
+      let vandermonde = L.complex cosa sina in
+      let re = legendre_val *! UF.real vandermonde in
+      let im = legendre_val *! UF.imag vandermonde in
+      let harmonics = L.complex re im in
+      let base = py_float (-1.0) in
+      let sign = UF.power base abs_m in
+      let negative_order =
+        NL.astype sign (dtype harmonics) *! UF.conj harmonics
+      in
+      where_
+        (UF.less m (T.Concrete (Nd.of_floats (dtype m) [||] [| 0.0 |])))
+        negative_order harmonics
+  | _ -> assert false
 
 let sph_harm_y ?diff_n ?n_max n m theta phi =
   if diff_n <> None then
     invalid_arg
       "The 'diff_n' argument to jax.scipy.special.sph_harm_y is not supported.";
-  let theta = promote1 theta and phi = promote1 phi in
   let theta =
     if Array.length (shape theta) = 0 then NL.reshape theta [| 1 |] else theta
   in
@@ -2850,50 +3068,8 @@ let sph_harm_y ?diff_n ?n_max n m theta phi =
                statically specified to use `sph_harm` within JAX \
                transformations.")
   in
-  let cube =
-    stack_table (legendre_table ~normalized:true n_max (UF.cos theta))
-  in
-  let count = (shape theta).(0) in
-  let abs_m = sp_abs m in
-  let limit v =
-    let top =
-      T.Concrete (Nd.of_floats (dtype v) [||] [| float_of_int n_max |])
-    in
-    let low = T.Concrete (Nd.of_floats (dtype v) [||] [| 0.0 |]) in
-    UF.minimum (UF.maximum v low) top
-  in
-  let rows = limit abs_m and cols = limit n in
-  let lanes = NL.arange ~dtype:(dtype rows) (float_of_int count) in
-  let side v =
-    T.Concrete (Nd.of_floats (dtype rows) [||] [| float_of_int v |])
-  in
-  let linear =
-    (((rows *! side (n_max + 1)) +! NL.astype cols (dtype rows)) *! side count)
-    +! lanes
-  in
-  let value =
-    Numpy.Indexing.take ~axis:0
-      (NL.reshape cube [| (n_max + 1) * (n_max + 1) * count |])
-      linear
-  in
-  let dt = dtype value in
-  let angle = NL.astype abs_m dt *! phi in
-  let harmonics =
-    bind1 T.Complex [ value *! UF.cos angle; value *! UF.sin angle ]
-  in
-  let two = T.Concrete (Nd.of_floats (dtype abs_m) [||] [| 2.0 |]) in
-  let odd =
-    sp_eq (UF.remainder abs_m two)
-      (T.Concrete (Nd.of_floats (dtype abs_m) [||] [| 1.0 |]))
-  in
-  let sign_dt = Dts.to_inexact_dtype (dtype abs_m) in
-  let sign =
-    where_ odd (const_full sign_dt [||] (-1.0)) (const_full sign_dt [||] 1.0)
-  in
-  let negative_order = sign *! UF.conj harmonics in
-  where_
-    (sp_lt m (T.Concrete (Nd.of_floats (dtype m) [||] [| 0.0 |])))
-    negative_order harmonics
+  Eager_jit.one "scipy.special._sph_harm" n_max [] [ n; m; theta; phi ]
+    (fun _ vals -> sph_harm_body n_max vals)
 
 let gammasgn = gammasgn_jit
 

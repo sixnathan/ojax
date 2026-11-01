@@ -2666,7 +2666,13 @@ let abstract_eval prim avals =
   | Regularized_incomplete_beta -> (
       match avals with
       | [ a; b; x ] ->
-          [ shaped x.shape x.dtype (a.weak_type && b.weak_type && x.weak_type) ]
+          let widest =
+            List.fold_left
+              (fun acc (v : aval) ->
+                if Array.length v.shape > Array.length acc then v.shape else acc)
+              [||] [ a; b; x ]
+          in
+          [ shaped widest x.dtype (a.weak_type && b.weak_type && x.weak_type) ]
       | _ -> failwith "lax: regularized_incomplete_beta expects 3 avals")
   | Platform_index _ -> [ shaped [||] Dtype.I32 false ]
   | Cond { t; _ } -> List.map aval_of_atom t.jaxpr.outs

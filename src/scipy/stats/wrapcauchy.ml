@@ -1,5 +1,5 @@
 module UF = Numpy.Ufuncs
-module NL = Numpy.Lax_numpy
+module L = Lax_api
 open Dist_util
 
 let promote2 a b =
@@ -7,26 +7,22 @@ let promote2 a b =
 
 let logpdf x c =
   let x, c = promote2 x c in
-  let zero_c = sc c 0.0 in
-  let one_c = sc c 1.0 in
-  let zero_x = sc x 0.0 in
-  let two_pi = sc x (2.0 *. Float.pi) in
   let cc = UF.multiply c c in
-  let inner =
+  let log_two_pi = UF.log (py_float (2.0 *. Float.pi)) in
+  let first = UF.log (UF.subtract (sc c 1.0) cc) in
+  let first_less =
+    UF.subtract first (Numpy.Lax_numpy.astype log_two_pi (dtype first))
+  in
+  let denom =
     UF.subtract
-      (UF.subtract
-         (UF.log (UF.subtract one_c cc))
-         (sc x (Float.log (2.0 *. Float.pi))))
-      (UF.log
-         (UF.add
-            (UF.subtract one_c
-               (UF.multiply (sc x 2.0) (UF.multiply c (UF.cos x))))
-            cc))
+      (UF.add (sc c 1.0) (UF.multiply c c))
+      (UF.multiply (UF.multiply (sc c 2.0) c) (UF.cos x))
   in
+  let inner = UF.subtract first_less (UF.log denom) in
   let in_support =
-    UF.logical_and (UF.greater_equal x zero_x) (UF.less_equal x two_pi)
+    UF.bitwise_and (L.ge x (sc x 0.0)) (L.le x (sc x (Float.pi *. 2.0)))
   in
-  let valid_c = UF.logical_and (UF.greater c zero_c) (UF.less c one_c) in
-  NL.where_ valid_c (NL.where_ in_support inner (ninf x)) (nan c)
+  let valid_c = UF.bitwise_and (L.gt c (sc c 0.0)) (L.lt c (sc c 1.0)) in
+  where_or_nan valid_c (where_or_ninf in_support inner)
 
-let pdf x c = UF.exp (logpdf x c)
+let pdf x c = L.exp (logpdf x c)

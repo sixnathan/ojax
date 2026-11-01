@@ -921,6 +921,9 @@ let ufuncs_fn op _params operands : T.value list =
   | "modf", [ x ] -> UF.modf x
   | _ -> failwith ("ufuncs golden: unknown op " ^ op)
 
+let jit_golden fn op params operands =
+  Ojax.Api.jit_flat (fun args -> fn op params args) operands
+
 let numpy_check_case ?(jit = true) ~fn ~set_dir ~x64 c () =
   let canon d = if x64 then d else Compare.canonical_dtype_x64_off d in
   let inputs =
@@ -2666,7 +2669,7 @@ let prng_suite_for set_name =
     List.map
       (fun c ->
         Alcotest.test_case c.case_id `Quick
-          (numpy_check_case ~fn:prng_fn ~set_dir ~x64 c))
+          (numpy_check_case ~jit:false ~fn:(jit_golden prng_fn) ~set_dir ~x64 c))
       cases
   in
   let coverage =
@@ -2765,7 +2768,9 @@ let random_core_suite_for set_name =
     List.map
       (fun c ->
         Alcotest.test_case c.case_id `Quick
-          (numpy_check_case ~jit:false ~fn:random_core_fn ~set_dir ~x64 c))
+          (numpy_check_case ~jit:false
+             ~fn:(jit_golden random_core_fn)
+             ~set_dir ~x64 c))
       cases
   in
   let coverage =
@@ -2902,7 +2907,9 @@ let initializers_suite_for set_name =
     List.map
       (fun c ->
         Alcotest.test_case c.case_id `Quick
-          (numpy_check_case ~jit:false ~fn:initializers_fn ~set_dir ~x64 c))
+          (numpy_check_case ~jit:false
+             ~fn:(jit_golden initializers_fn)
+             ~set_dir ~x64 c))
       cases
   in
   let coverage =
@@ -3115,7 +3122,9 @@ let scipy_special_suite_for set_name =
     List.map
       (fun c ->
         Alcotest.test_case c.case_id `Quick
-          (numpy_check_case ~fn:scipy_special_fn ~set_dir ~x64 c))
+          (numpy_check_case ~jit:false
+             ~fn:(jit_golden scipy_special_fn)
+             ~set_dir ~x64 c))
       cases
   in
   let coverage =
@@ -3249,7 +3258,9 @@ let scipy_stats_suite_for set_name =
     List.map
       (fun c ->
         Alcotest.test_case c.case_id `Quick
-          (numpy_check_case ~fn:scipy_stats_fn ~set_dir ~x64 c))
+          (numpy_check_case ~jit:false
+             ~fn:(jit_golden scipy_stats_fn)
+             ~set_dir ~x64 c))
       cases
   in
   let coverage =

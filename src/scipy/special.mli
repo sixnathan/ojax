@@ -1,3 +1,4 @@
+val lax_igamma : Types.value -> Types.value -> Types.value
 val gammaln : Types.value -> Types.value
 val gammasgn : Types.value -> Types.value
 val loggamma : Types.value -> Types.value

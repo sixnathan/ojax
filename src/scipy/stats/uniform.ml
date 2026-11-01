@@ -1,24 +1,20 @@
 module UF = Numpy.Ufuncs
 module NL = Numpy.Lax_numpy
+module L = Lax_api
 open Dist_util
 
 let promote3 a b c =
   match promote [ a; b; c ] with [ a; b; c ] -> (a, b, c) | _ -> assert false
 
-let defaults loc scale =
-  (Option.value loc ~default:(f32s 0.0), Option.value scale ~default:(f32s 1.0))
-
 let logpdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
-  let log_probs = UF.negative (UF.log scale) in
-  NL.where_
-    (UF.logical_or (UF.greater x (UF.add loc scale)) (UF.less x loc))
-    (ninf x) log_probs
+  let log_probs = L.neg (L.log scale) in
+  where_ninf (UF.logical_or (L.gt x (L.add loc scale)) (L.lt x loc)) log_probs
 
 let pdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  UF.exp (logpdf ~loc ~scale x)
+  L.exp (logpdf ~loc ~scale x)
 
 let cdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
@@ -27,13 +23,12 @@ let cdf ?loc ?scale x =
   let one = sc x 1.0 in
   let conds =
     [
-      UF.less x loc;
-      UF.greater x (UF.add loc scale);
-      UF.logical_and (UF.greater_equal x loc)
-        (UF.less_equal x (UF.add loc scale));
+      L.lt x loc;
+      L.gt x (L.add loc scale);
+      UF.bitwise_and (L.ge x loc) (L.le x (L.add loc scale));
     ]
   in
-  let vals = [ zero; one; UF.divide (UF.subtract x loc) scale ] in
+  let vals = [ zero; one; L.div (L.sub x loc) scale ] in
   NL.select conds vals
 
 let ppf ?loc ?scale q =
@@ -43,9 +38,4 @@ let ppf ?loc ?scale q =
     | [ q; loc; scale ] -> (q, loc, scale)
     | _ -> assert false
   in
-  let bad =
-    UF.logical_or
-      (UF.logical_or (UF.isnan q) (UF.less q (sc q 0.0)))
-      (UF.greater q (sc q 1.0))
-  in
-  NL.where_ bad (nan q) (UF.add loc (UF.multiply scale q))
+  where_nan (qbad q) (L.add loc (L.mul scale q))

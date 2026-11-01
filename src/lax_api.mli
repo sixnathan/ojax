@@ -370,5 +370,6 @@ val composite :
 val fft :
   value -> fft_type:Lax_config.fft_type -> fft_lengths:int array -> value
 
+val random_gamma_grad_hook : (value -> value -> value) ref
 val random_gamma_grad : value -> value -> value
 val rng_uniform : value -> value -> int array -> value

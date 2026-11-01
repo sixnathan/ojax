@@ -1,5 +1,9 @@
 open Types
 
+val jit_region : string -> 'a -> value list -> (value list -> value) -> value
+val float_dtype : unit -> Dtype.t
+val rademacher_as : value -> shape:int array -> dt:Dtype.t -> value
+
 val with_dtypes :
   ?float_dtype:Dtype.t -> ?int_dtype:Dtype.t -> (unit -> 'a) -> 'a
 

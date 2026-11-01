@@ -54,106 +54,147 @@ let of_leaf_rules ~init ~update ~get =
 
 let head = function x :: _ -> x | [] -> invalid_arg "optimizer: empty state"
 
+module UF = Numpy.Ufuncs
+module AC = Numpy.Array_creation
+module RED = Numpy.Reductions
+module NL = Numpy.Lax_numpy
+
+let ( +! ) = UF.add
+let ( -! ) = UF.subtract
+let ( *! ) = UF.multiply
+let ( /! ) = UF.true_divide
+let lit v x = Concrete (Ndarray.of_floats (Core.get_aval v).dtype [||] [| x |])
+let zl = AC.zeros_like
+
 let sgd (step_size : schedule) =
   of_leaf_rules
     ~init:(fun x -> [ x ])
-    ~update:(fun i g s -> [ sub (head s) (scale (step_size i) g) ])
+    ~update:(fun i g s ->
+      let x = head s in
+      let step = lit g (step_size i) *! g in
+      [ x -! step ])
     ~get:head
 
 let momentum (step_size : schedule) ~mass =
   of_leaf_rules
-    ~init:(fun x -> [ x; zeros_like x ])
+    ~init:(fun x -> [ x; zl x ])
     ~update:(fun i g s ->
       match s with
       | [ x; v ] ->
-          let v' = add (scale mass v) g in
-          [ sub x (scale (step_size i) v'); v' ]
+          let v' = (lit v mass *! v) +! g in
+          let step = lit v' (step_size i) *! v' in
+          [ x -! step; v' ]
       | _ -> invalid_arg "momentum: state")
     ~get:head
 
 let nesterov (step_size : schedule) ~mass =
   of_leaf_rules
-    ~init:(fun x -> [ x; zeros_like x ])
+    ~init:(fun x -> [ x; zl x ])
     ~update:(fun i g s ->
       match s with
       | [ x; v ] ->
-          let v' = add (scale mass v) g in
-          [ sub x (scale (step_size i) (add (scale mass v') g)); v' ]
+          let v' = (lit v mass *! v) +! g in
+          let inner = (lit v' mass *! v') +! g in
+          let step = lit inner (step_size i) *! inner in
+          [ x -! step; v' ]
       | _ -> invalid_arg "nesterov: state")
     ~get:head
 
 let adagrad ?(momentum = 0.9) (step_size : schedule) =
   of_leaf_rules
-    ~init:(fun x -> [ x; zeros_like x; zeros_like x ])
+    ~init:(fun x -> [ x; zl x; zl x ])
     ~update:(fun i g s ->
       match s with
       | [ x; gsq; m ] ->
-          let gsq' = add gsq (mul g g) in
-          let m' =
-            add
-              (scale (1.0 -. momentum) (div g (sqrt_ gsq')))
-              (scale momentum m)
+          let gsq' = gsq +! UF.square g in
+          let positive = UF.greater gsq' (lit gsq' 0.0) in
+          let inv = lit gsq' 1.0 /! UF.sqrt gsq' in
+          let g_sq_inv_sqrt =
+            Numpy.Jnp_util.where_weak ~y_weak:true positive inv
+              (Numpy.Jnp_util.py_float 0.0)
           in
-          [ sub x (scale (step_size i) m'); gsq'; m' ]
+          let t1 = lit g (1.0 -. momentum) *! (g *! g_sq_inv_sqrt) in
+          let m' = t1 +! (lit m momentum *! m) in
+          let step = lit m' (step_size i) *! m' in
+          [ x -! step; gsq'; m' ]
       | _ -> invalid_arg "adagrad: state")
     ~get:head
 
 let rmsprop ?(gamma = 0.9) ?(eps = 1e-8) (step_size : schedule) =
   of_leaf_rules
-    ~init:(fun x -> [ x; zeros_like x ])
+    ~init:(fun x -> [ x; zl x ])
     ~update:(fun i g s ->
       match s with
       | [ x; avg ] ->
-          let avg' = add (scale gamma avg) (scale (1.0 -. gamma) (mul g g)) in
-          let denom = sqrt_ (add avg' (const_like avg' eps)) in
-          [ sub x (scale (step_size i) (div g denom)); avg' ]
+          let t1 = avg *! lit avg gamma in
+          let avg' = t1 +! (UF.square g *! lit g (1.0 -. gamma)) in
+          let num = lit g (step_size i) *! g in
+          let denom = UF.sqrt (avg' +! lit avg' eps) in
+          [ x -! (num /! denom); avg' ]
       | _ -> invalid_arg "rmsprop: state")
     ~get:head
 
 let rmsprop_momentum ?(gamma = 0.9) ?(eps = 1e-8) ?(momentum = 0.9)
     (step_size : schedule) =
   of_leaf_rules
-    ~init:(fun x -> [ x; zeros_like x; zeros_like x ])
+    ~init:(fun x -> [ x; zl x; zl x ])
     ~update:(fun i g s ->
       match s with
       | [ x; avg; mom ] ->
-          let avg' = add (scale gamma avg) (scale (1.0 -. gamma) (mul g g)) in
-          let denom = sqrt_ (add avg' (const_like avg' eps)) in
-          let mom' =
-            add (scale momentum mom) (scale (step_size i) (div g denom))
-          in
-          [ sub x mom'; avg'; mom' ]
+          let t1 = avg *! lit avg gamma in
+          let avg' = t1 +! (UF.square g *! lit g (1.0 -. gamma)) in
+          let t2 = lit mom momentum *! mom in
+          let num = lit g (step_size i) *! g in
+          let denom = UF.sqrt (avg' +! lit avg' eps) in
+          let mom' = t2 +! (num /! denom) in
+          [ x -! mom'; avg'; mom' ]
       | _ -> invalid_arg "rmsprop_momentum: state")
     ~get:head
 
+let beta_power m b i =
+  let base = lit m b in
+  let raised =
+    UF.power base
+      (Concrete
+         (Ndarray.of_floats
+            (Dtypes.default_int_dtype ())
+            [||]
+            [| float_of_int (i + 1) |]))
+  in
+  lit m 1.0 -! raised
+
 let adam ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) (step_size : schedule) =
   of_leaf_rules
-    ~init:(fun x -> [ x; zeros_like x; zeros_like x ])
+    ~init:(fun x -> [ x; zl x; zl x ])
     ~update:(fun i g s ->
       match s with
       | [ x; m; v ] ->
-          let m' = add (scale (1.0 -. b1) g) (scale b1 m) in
-          let v' = add (scale (1.0 -. b2) (mul g g)) (scale b2 v) in
-          let t = float_of_int (i + 1) in
-          let mhat = scale (1.0 /. (1.0 -. (b1 ** t))) m' in
-          let vhat = scale (1.0 /. (1.0 -. (b2 ** t))) v' in
-          let denom = add (sqrt_ vhat) (const_like vhat eps) in
-          [ sub x (scale (step_size i) (div mhat denom)); m'; v' ]
+          let t1 = lit g (1.0 -. b1) *! g in
+          let m' = t1 +! (lit m b1 *! m) in
+          let t2 = lit g (1.0 -. b2) *! UF.square g in
+          let v' = t2 +! (lit v b2 *! v) in
+          let mhat = m' /! beta_power m' b1 i in
+          let vhat = v' /! beta_power m' b2 i in
+          let num = lit g (step_size i) *! mhat in
+          let denom = UF.sqrt vhat +! lit vhat eps in
+          [ x -! (num /! denom); m'; v' ]
       | _ -> invalid_arg "adam: state")
     ~get:head
 
 let adamax ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) (step_size : schedule) =
   of_leaf_rules
-    ~init:(fun x -> [ x; zeros_like x; zeros_like x ])
+    ~init:(fun x -> [ x; zl x; zl x ])
     ~update:(fun i g s ->
       match s with
       | [ x; m; u ] ->
-          let m' = add (scale (1.0 -. b1) g) (scale b1 m) in
-          let u' = L.max (scale b2 u) (L.abs g) in
-          let t = float_of_int (i + 1) in
-          let factor = step_size i /. (1.0 -. (b1 ** t)) in
-          let denom = add u' (const_like u' eps) in
-          [ sub x (scale factor (div m' denom)); m'; u' ]
+          let t1 = lit g (1.0 -. b1) *! g in
+          let m' = t1 +! (lit m b1 *! m) in
+          let t2 = lit u b2 *! u in
+          let u' = UF.maximum t2 (UF.abs g) in
+          let num = lit g (step_size i) /! beta_power m' b1 i in
+          let num = num *! m' in
+          let denom = u' +! lit u' eps in
+          [ x -! (num /! denom); m'; u' ]
       | _ -> invalid_arg "adamax: state")
     ~get:head
 
@@ -161,7 +202,7 @@ let sm3 ?(momentum = 0.9) (step_size : schedule) =
   of_leaf_rules
     ~init:(fun x ->
       let a = Core.get_aval x in
-      x :: zeros_like x
+      x :: zl x
       :: List.map
            (fun size -> L.full [| size |] 0.0 a.dtype)
            (Array.to_list a.shape))
@@ -170,29 +211,36 @@ let sm3 ?(momentum = 0.9) (step_size : schedule) =
       | x :: m :: vs ->
           let shape = (Core.get_aval g).shape in
           let rank = Array.length shape in
-          let expand axis v = L.broadcast_in_dim v shape [| axis |] in
+          let expand axis v =
+            let sh = Array.make rank 1 in
+            sh.(axis) <- shape.(axis);
+            L.reshape v sh
+          in
           let smallest =
             match List.mapi expand vs with
-            | first :: rest -> List.fold_left L.min first rest
-            | [] -> zeros_like g
+            | first :: rest -> List.fold_left UF.minimum first rest
+            | [] -> zl g
           in
-          let accum = add smallest (mul g g) in
+          let accum = smallest +! UF.square g in
+          let positive = UF.greater accum (lit accum 0.0) in
           let inverse =
-            L.select
-              (L.gt accum (zeros_like accum))
-              (L.rsqrt accum) (zeros_like accum)
+            NL.where_ positive
+              (lit accum 1.0 /! UF.sqrt accum)
+              (Concrete
+                 (Ndarray.of_floats
+                    (Dtypes.default_int_dtype ())
+                    [||] [| 0.0 |]))
           in
-          let m' =
-            add (scale (1.0 -. momentum) (mul g inverse)) (scale momentum m)
-          in
-          let x' = sub x (scale (step_size i) m') in
+          let t1 = lit g (1.0 -. momentum) *! (g *! inverse) in
+          let m' = t1 +! (lit m momentum *! m) in
+          let x' = x -! (lit m' (step_size i) *! m') in
           let vs' =
             List.init rank (fun j ->
                 let axes =
                   Array.of_list
                     (List.filter (fun d -> d <> j) (List.init rank Fun.id))
                 in
-                if Array.length axes = 0 then accum else L.reduce_max accum axes)
+                RED.max ~axis:axes accum)
           in
           x' :: m' :: vs'
       | _ -> invalid_arg "sm3: state")

@@ -1,6 +1,5 @@
 module UF = Numpy.Ufuncs
-module NL = Numpy.Lax_numpy
-module SP = Special
+module L = Lax_api
 open Dist_util
 
 let promote2 a b =
@@ -9,11 +8,15 @@ let promote2 a b =
 let logpdf x kappa =
   let x, kappa = promote2 x kappa in
   let zero = sc kappa 0.0 in
+  let cos_term = UF.subtract (UF.cos x) (sc x 1.0) in
   let value =
     UF.subtract
-      (UF.multiply kappa (UF.subtract (UF.cos x) (sc x 1.0)))
-      (UF.log (UF.multiply (sc kappa (2.0 *. Float.pi)) (SP.i0e kappa)))
+      (UF.multiply kappa cos_term)
+      (UF.log
+         (UF.multiply
+            (sc kappa (2.0 *. Float.pi))
+            (Core.bind1 Types.Bessel_i0e [ kappa ])))
   in
-  NL.where_ (UF.greater kappa zero) value (nan kappa)
+  where_or_nan (L.gt kappa zero) value
 
-let pdf x kappa = UF.exp (logpdf x kappa)
+let pdf x kappa = L.exp (logpdf x kappa)

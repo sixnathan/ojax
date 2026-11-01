@@ -154,6 +154,11 @@ let id_of_atom ctx = function
 
 let sole = function [ x ] -> x | _ -> invalid_arg "Stablehlo.Emit: arity"
 
+let is_complex_atom atom =
+  match (atom_aval atom).dtype with
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
 let emit_stablehlo_unary ctx (eqn : eqn) in_ids op =
   let x = sole in_ids in
   let out = sole eqn.outs in
@@ -2970,6 +2975,21 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Min -> emit_min_max ctx eqn in_ids ~op:"minimum" ~direction:"LT"
   | Mul -> emit_stablehlo_binary ctx eqn in_ids "multiply"
   | Or -> emit_stablehlo_binary ctx eqn in_ids "or"
+  | Pow
+    when match eqn.inputs with
+         | [ l; r ] -> (atom_aval l).dtype <> (atom_aval r).dtype
+         | _ -> false ->
+      emit_inlined ctx eqn in_ids (function
+        | [ x; y ] ->
+            [
+              Core.bind1 Pow
+                [
+                  x;
+                  Core.bind1 (Convert_element_type (Core.get_aval x).dtype)
+                    [ y ];
+                ];
+            ]
+        | _ -> invalid_arg "Stablehlo.Emit: pow arity")
   | Pow -> emit_stablehlo_binary ctx eqn in_ids "power"
   | Rem -> emit_stablehlo_binary ctx eqn in_ids "remainder"
   | Shift_left -> emit_stablehlo_binary ctx eqn in_ids "shift_left"

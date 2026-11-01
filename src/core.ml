@@ -427,9 +427,7 @@ let rec dispatch prim args =
   | Convert_element_type dt, [ Concrete a ]
     when top.kind = KJaxpr && Array.length (Ndarray.shape a) = 0 -> (
       match rules.impl prim [ a ] with
-      | [ r ] ->
-          let r = Ndarray.canonicalize dt r in
-          [ Concrete (if Ndarray.weak a then Ndarray.as_weak r else r) ]
+      | [ r ] -> [ Concrete (Ndarray.canonicalize dt r) ]
       | _ -> invalid_arg "dispatch: convert arity")
   | Select_n, which :: first :: rest
     when List.exists (fun v -> value_shape v <> value_shape first) rest

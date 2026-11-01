@@ -207,7 +207,16 @@ let clamp_rule (axis_size : int) (vals : value list) (bdims : int option list) :
     | Some (Some d) -> d
     | _ -> 0
   in
-  let aligned = List.map2 (align_to axis_size dst) vals bdims in
+  let aligned =
+    List.map2
+      (fun v b ->
+        if b = None && Array.length (Core.get_aval v).shape = 0 then
+          match vals with
+          | [ _; x; _ ] when x == v -> align_to axis_size dst v b
+          | _ -> v
+        else align_to axis_size dst v b)
+      vals bdims
+  in
   (b1 Clamp aligned, Some dst)
 
 let naryop_rule (prim : primitive) (vals : value list) (bdims : int option list)
@@ -988,15 +997,60 @@ let collective_batch trace axis_size kind axis_name vals bdims =
       (b1 (Stack 0) (Array.to_list out), Some 0)
   | _ -> failwith "batching: collective arity"
 
+let stop_gradient_rule =
+  lazy
+    (Core.register_custom_rule
+       (Core.Jvp_rule
+          {
+            primal = Fun.id;
+            jvp =
+              (fun primals _ ->
+                (primals, List.map Ad_util.symbolic_zero_like_value primals));
+          }))
+
+let stop_gradient v = b1 (Custom_jvp_call (Lazy.force stop_gradient_rule)) [ v ]
+
 let cond_batch (axis_size : int) (t : closed_jaxpr) (f : closed_jaxpr)
     (vals : value list) (bdims : int option list) : value list * int option list
     =
   match (vals, bdims) with
-  | pred :: ops, pred_bdim :: op_bdims ->
-      if pred_bdim <> None then
-        failwith
-          "batching: vmap of cond with batched predicate needs select_n (M2 \
-           gap)";
+  | pred :: ops, Some pred_dim :: op_bdims ->
+      let pred = if pred_dim = 0 then pred else moveaxis pred_dim 0 pred in
+      let moved =
+        List.map2 (fun v b -> move_batch_axis axis_size b 0 v) ops op_bdims
+      in
+      let bcast_pred p (v : value) =
+        let shape = (Core.get_aval v).shape in
+        if (Core.get_aval p).shape = shape then p
+        else b1 (Broadcast_in_dim { shape; dims = [| 0 |] }) [ p ]
+      in
+      let safe_ops p =
+        List.map
+          (fun v -> b1 Select_n [ bcast_pred p v; stop_gradient v; v ])
+          moved
+      in
+      let not_pred = b1 Not [ pred ] in
+      let false_out =
+        let ops_f = safe_ops not_pred in
+        vmap_flat
+          (fun a -> Jaxpr.eval_closed_jaxpr f a)
+          (List.map (fun _ -> Some 0) ops_f)
+          ops_f
+      in
+      let true_out =
+        let ops_t = safe_ops pred in
+        vmap_flat
+          (fun a -> Jaxpr.eval_closed_jaxpr t a)
+          (List.map (fun _ -> Some 0) ops_t)
+          ops_t
+      in
+      let outs =
+        List.map2
+          (fun fo tr -> b1 Select_n [ bcast_pred pred fo; fo; tr ])
+          false_out true_out
+      in
+      (outs, List.map (fun _ -> Some 0) outs)
+  | pred :: ops, None :: op_bdims ->
       let moved =
         List.map2 (fun v b -> move_batch_axis axis_size b 0 v) ops op_bdims
       in
@@ -1067,7 +1121,6 @@ let unstacks_operands prim (bdims : int option list) =
   | Dynamic_slice _, _ :: indices -> any_batched indices
   | Dynamic_update_slice, _ :: _ :: indices -> any_batched indices
   | Pad _, [ _; padding ] -> padding <> None
-  | Cond _, pred :: _ -> pred <> None
   | Reduce _, _ ->
       let n = List.length bdims / 2 in
       any_batched (List.filteri (fun i _ -> i >= n) bdims)

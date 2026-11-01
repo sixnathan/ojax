@@ -70,3 +70,33 @@ let where c x y =
             | _ -> assert false)
       | _ -> invalid_arg "where: arity")
     [ c; x; y ]
+
+let where_weak ?(x_weak = false) ?(y_weak = false) c x y =
+  let key = (if x_weak then "w" else "s") ^ if y_weak then "w" else "s" in
+  jit1 "_where" ~key
+    (function
+      | [ c; x; y ] -> (
+          let c =
+            if dtype c = D.Bool then c
+            else C.bind1 T.Ne [ c; C.splat (dtype c) [||] 0.0 ]
+          in
+          let dt, _ =
+            Dtypes.result_type
+              [ (dtype x, weak x || x_weak); (dtype y, weak y || y_weak) ]
+          in
+          let conv v =
+            if dtype v = dt then v
+            else C.bind1 (T.Convert_element_type dt) [ v ]
+          in
+          let x = conv x in
+          let y = conv y in
+          if Array.length (shape c) = 0 then
+            match broadcast_arrays [ x; y ] with
+            | [ a; b ] -> C.bind1 T.Select_n [ c; b; a ]
+            | _ -> assert false
+          else
+            match broadcast_arrays [ c; x; y ] with
+            | [ c; a; b ] -> C.bind1 T.Select_n [ c; b; a ]
+            | _ -> assert false)
+      | _ -> invalid_arg "where: arity")
+    [ c; x; y ]

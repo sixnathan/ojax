@@ -1,8 +1,7 @@
 module DU = Dist_util
-module UF = Numpy.Ufuncs
-module NL = Numpy.Lax_numpy
 module SP = Special
 module NN = Nn.Functions
+module L = Lax_api
 open DU
 
 let promote3 x loc scale =
@@ -10,55 +9,49 @@ let promote3 x loc scale =
   | [ x; loc; scale ] -> (x, loc, scale)
   | _ -> assert false
 
-let defaults loc scale =
-  (Option.value loc ~default:(f32s 0.0), Option.value scale ~default:(f32s 1.0))
-
 let logpdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
-  let ok = UF.greater scale (sc scale 0.0) in
-  let z = UF.divide (UF.subtract x loc) scale in
+  let ok = L.gt scale (sc scale 0.0) in
+  let z = L.div (L.sub x loc) scale in
   let neg_log_scale = SP.xlogy (sc scale (-1.0)) scale in
-  let t2 = UF.negative (UF.add z (UF.exp (UF.negative z))) in
-  NL.where_ ok (UF.add neg_log_scale t2) (nan x)
+  let t2 = L.neg (L.add z (L.exp (L.neg z))) in
+  where_or_nan ok (L.add neg_log_scale t2)
 
 let pdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  UF.exp (logpdf ~loc ~scale x)
+  L.exp (logpdf ~loc ~scale x)
 
 let logcdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
-  let ok = UF.greater scale (sc scale 0.0) in
-  let z = UF.divide (UF.subtract x loc) scale in
-  let log_cdf = UF.negative (UF.exp (UF.negative z)) in
-  NL.where_ ok log_cdf (nan x)
+  let ok = L.gt scale (sc scale 0.0) in
+  let z = L.div (L.sub x loc) scale in
+  where_or_nan ok (L.neg (L.exp (L.neg z)))
 
 let cdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  UF.exp (logcdf ~loc ~scale x)
+  L.exp (logcdf ~loc ~scale x)
 
 let ppf ?loc ?scale p =
   let loc, scale = defaults loc scale in
   let p, loc, scale = promote3 p loc scale in
-  let ok = UF.logical_and (UF.greater p (sc p 0.0)) (UF.less p (sc p 1.0)) in
+  let ok = L.bitwise_and (L.gt p (sc p 0.0)) (L.lt p (sc p 1.0)) in
   let t1 = SP.xlogy (sc p (-1.0)) p in
-  let t = UF.multiply scale (UF.log t1) in
-  NL.where_ ok (UF.subtract loc t) (nan p)
+  let t = L.mul scale (L.log t1) in
+  where_or_nan ok (L.sub loc t)
 
 let sf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
-  let ok = UF.greater scale (sc scale 0.0) in
-  let neg_z = UF.divide (UF.subtract loc x) scale in
-  let t1 = UF.exp (UF.negative (UF.exp neg_z)) in
-  let s = UF.subtract (sc x 1.0) t1 in
-  NL.where_ ok s (nan x)
+  let ok = L.gt scale (sc scale 0.0) in
+  let neg_z = L.div (L.sub loc x) scale in
+  let t1 = L.exp (L.neg (L.exp neg_z)) in
+  where_or_nan ok (L.sub (sc x 1.0) t1)
 
 let logsf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
-  let ok = UF.greater scale (sc scale 0.0) in
-  let neg_z = UF.divide (UF.subtract loc x) scale in
-  let log_sf = NN.log1mexp (UF.exp neg_z) in
-  NL.where_ ok log_sf (nan x)
+  let ok = L.gt scale (sc scale 0.0) in
+  let neg_z = L.div (L.sub loc x) scale in
+  where_or_nan ok (NN.log1mexp (L.exp neg_z))

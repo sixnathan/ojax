@@ -44,7 +44,9 @@ let up_and_broadcast doit args =
       [ L.convert_element_type result source ]
   | _ -> [ doit source widened ]
 
-type igamma_mode = Value | Derivative
+type igamma_mode = Value | Derivative | Sample_derivative
+
+let scalar_const v x = Concrete (Ndarray.of_floats (dtype v) [||] [| x |])
 
 let igamma_series ax x a enabled eps mode =
   let cond = function
@@ -53,44 +55,60 @@ let igamma_series ax x a enabled eps mode =
   in
   let body = function
     | [ enabled; r0; c0; ans0; x0; dc_da0; dans_da0 ] ->
-        let r = r0 +: like r0 1.0 in
-        let dc_da = (dc_da0 *: (x0 /: r)) -: (c0 *: x0 /: (r *: r)) in
+        let r = r0 +: scalar_const r0 1.0 in
+        let t1 = dc_da0 *: (x0 /: r) in
+        let t2n = c0 *: x0 in
+        let t2 = t2n /: (r *: r) in
+        let dc_da = t1 -: t2 in
         let dans_da = dans_da0 +: dc_da in
         let c = c0 *: (x0 /: r) in
         let ans = ans0 +: c in
         let keep_going =
           match mode with
-          | Value -> L.gt (c /: ans) (like c eps)
-          | Derivative -> L.gt (L.abs (dc_da /: dans_da)) (like dc_da eps)
+          | Value ->
+              let ratio = c /: ans in
+              L.gt ratio (scalar_const c eps)
+          | Derivative | Sample_derivative ->
+              let ratio = L.abs (dc_da /: dans_da) in
+              L.gt ratio (scalar_const dc_da eps)
         in
-        [
-          enabled &&: keep_going;
-          select enabled r r0;
-          select enabled c c0;
-          select enabled ans ans0;
-          select enabled x0 x0;
-          select enabled dc_da dc_da0;
-          select enabled dans_da dans_da0;
-        ]
+        let cond_out = enabled &&: keep_going in
+        let s1 = select enabled r r0 in
+        let s2 = select enabled c c0 in
+        let s3 = select enabled ans ans0 in
+        let s4 = select enabled x0 x0 in
+        let s5 = select enabled dc_da dc_da0 in
+        let s6 = select enabled dans_da dans_da0 in
+        [ cond_out; s1; s2; s3; s4; s5; s6 ]
     | _ -> invalid_arg "Native_lowering: igamma series state"
   in
-  let init =
-    [ enabled; a; like a 1.0; like a 1.0; x; like a 0.0; like a 0.0 ]
-  in
+  let one1 = like a 1.0 in
+  let one2 = like a 1.0 in
+  let zero1 = like a 0.0 in
+  let zero2 = like a 0.0 in
+  let init = [ enabled; a; one1; one2; x; zero1; zero2 ] in
   match L.while_loop cond body init with
   | [ _; _; _; ans; _; _; dans_da ] -> (
       match mode with
       | Value -> ans *: ax /: a
       | Derivative ->
-          let dlogax_da = L.log x -: digamma (a +: like a 1.0) in
-          ax *: ((ans *: dlogax_da) +: dans_da) /: a)
+          let lx = L.log x in
+          let dlogax_da = lx -: digamma (a +: scalar_const a 1.0) in
+          let inner = (ans *: dlogax_da) +: dans_da in
+          ax *: inner /: a
+      | Sample_derivative ->
+          let lx = L.log x in
+          let dlogax_da = lx -: digamma (a +: scalar_const a 1.0) in
+          let inner = dans_da +: (ans *: dlogax_da) in
+          L.neg inner *: x /: a)
   | _ -> invalid_arg "Native_lowering: igamma series state"
 
 let igammac_continued_fraction ax x a enabled eps mode =
-  let eps_of v = like v eps in
+  let eps_of v = scalar_const v eps in
   let cond = function
     | enabled :: _ :: _ :: _ :: _ :: c :: _ ->
-        any (L.lt c (like c 2000.0)) &&: any enabled
+        let below = L.lt c (scalar_const c 2000.0) in
+        below &&: any enabled
     | _ -> invalid_arg "Native_lowering: igammac state"
   in
   let body = function
@@ -111,60 +129,83 @@ let igammac_continued_fraction ax x a enabled eps mode =
         dqkm1_da;
         dans_da0;
       ] ->
-        let c = c0 +: like c0 1.0 in
-        let y = y0 +: like y0 1.0 in
-        let z = z0 +: like z0 2.0 in
+        let c = c0 +: scalar_const c0 1.0 in
+        let y = y0 +: scalar_const y0 1.0 in
+        let z = z0 +: scalar_const z0 2.0 in
         let yc = y *: c in
-        let pk = (pkm1 *: z) -: (pkm2 *: yc) in
-        let qk = (qkm1 *: z) -: (qkm2 *: yc) in
-        let nonzero = L.ne qk (like qk 0.0) in
+        let p1 = pkm1 *: z in
+        let pk = p1 -: (pkm2 *: yc) in
+        let q1 = qkm1 *: z in
+        let qk = q1 -: (qkm2 *: yc) in
+        let nonzero = L.ne qk (scalar_const qk 0.0) in
         let r = pk /: qk in
-        let t = select nonzero (L.abs ((ans0 -: r) /: r)) (like r 1.0) in
+        let tv = L.abs ((ans0 -: r) /: r) in
+        let t = select nonzero tv (like r 1.0) in
         let ans = select nonzero r ans0 in
-        let dpk_da =
-          (dpkm1_da *: z) -: pkm1 -: (dpkm2_da *: yc) +: (pkm2 *: c)
+        let d1 = dpkm1_da *: z in
+        let d2 = d1 -: pkm1 in
+        let d3 = d2 -: (dpkm2_da *: yc) in
+        let dpk_da = d3 +: (pkm2 *: c) in
+        let e1 = dqkm1_da *: z in
+        let e2 = e1 -: qkm1 in
+        let e3 = e2 -: (dqkm2_da *: yc) in
+        let dqk_da = e3 +: (qkm2 *: c) in
+        let dn = dpk_da -: (ans *: dqk_da) in
+        let dans_da_new = select nonzero (dn /: qk) dans_da0 in
+        let gabs = L.abs (dans_da_new -: dans_da0) in
+        let grad_conditional = select nonzero gabs (like dans_da0 1.0) in
+        let npkm2 = pkm1
+        and npkm1 = pk
+        and nqkm2 = qkm1
+        and nqkm1 = qk
+        and ndpkm2 = dpkm1_da
+        and ndqkm2 = dqkm1_da
+        and ndpkm1 = dpk_da
+        and ndqkm1 = dqk_da in
+        let apk = L.abs pk in
+        let rescale = L.gt apk (L.reciprocal (eps_of pk)) in
+        let scaled v =
+          let m = v *: eps_of v in
+          select rescale m v
         in
-        let dqk_da =
-          (dqkm1_da *: z) -: qkm1 -: (dqkm2_da *: yc) +: (qkm2 *: c)
-        in
-        let dans_da_new =
-          select nonzero ((dpk_da -: (ans *: dqk_da)) /: qk) dans_da0
-        in
-        let grad_conditional =
-          select nonzero (L.abs (dans_da_new -: dans_da0)) (like dans_da0 1.0)
-        in
-        let rescale = L.gt (L.abs pk) (L.reciprocal (eps_of pk)) in
-        let scaled v = select rescale (v *: eps_of v) v in
+        let npkm2 = scaled npkm2 in
+        let npkm1 = scaled npkm1 in
+        let nqkm2 = scaled nqkm2 in
+        let nqkm1 = scaled nqkm1 in
+        let ndpkm2 = scaled ndpkm2 in
+        let ndqkm2 = scaled ndqkm2 in
+        let ndpkm1 = scaled ndpkm1 in
+        let ndqkm1 = scaled ndqkm1 in
         let keep_going =
           match mode with
           | Value -> L.gt t (eps_of t)
-          | Derivative -> L.gt grad_conditional (eps_of grad_conditional)
+          | Derivative | Sample_derivative ->
+              L.gt grad_conditional (eps_of grad_conditional)
         in
-        [
-          enabled &&: keep_going;
-          select enabled ans ans0;
-          select enabled t t0;
-          select enabled y y0;
-          select enabled z z0;
-          c;
-          select enabled (scaled pk) pkm1;
-          select enabled (scaled qk) qkm1;
-          select enabled (scaled pkm1) pkm2;
-          select enabled (scaled qkm1) qkm2;
-          select enabled (scaled dpkm1_da) dpkm2_da;
-          select enabled (scaled dqkm1_da) dqkm2_da;
-          select enabled (scaled dpk_da) dpkm1_da;
-          select enabled (scaled dqk_da) dqkm1_da;
-          select enabled dans_da_new dans_da0;
-        ]
+        let cond_out = enabled &&: keep_going in
+        let s1 = select enabled ans ans0 in
+        let s2 = select enabled t t0 in
+        let s3 = select enabled y y0 in
+        let s4 = select enabled z z0 in
+        let s6 = select enabled npkm1 pkm1 in
+        let s7 = select enabled nqkm1 qkm1 in
+        let s8 = select enabled npkm2 pkm2 in
+        let s9 = select enabled nqkm2 qkm2 in
+        let s10 = select enabled ndpkm2 dpkm2_da in
+        let s11 = select enabled ndqkm2 dqkm2_da in
+        let s12 = select enabled ndpkm1 dpkm1_da in
+        let s13 = select enabled ndqkm1 dqkm1_da in
+        let s14 = select enabled dans_da_new dans_da0 in
+        [ cond_out; s1; s2; s3; s4; c; s6; s7; s8; s9; s10; s11; s12; s13; s14 ]
     | _ -> invalid_arg "Native_lowering: igammac state"
   in
-  let y = like a 1.0 -: a in
-  let z = x +: y +: like x 1.0 in
-  let c = like x 0.0 in
+  let y = scalar_const a 1.0 -: a in
+  let xy = x +: y in
+  let z = xy +: scalar_const x 1.0 in
+  let c = scalar_const x 0.0 in
   let pkm2 = like x 1.0 in
   let qkm2 = x in
-  let pkm1 = x +: like x 1.0 in
+  let pkm1 = x +: scalar_const x 1.0 in
   let qkm1 = z *: x in
   let ans = pkm1 /: qkm1 in
   let t = like x 1.0 in
@@ -172,7 +213,8 @@ let igammac_continued_fraction ax x a enabled eps mode =
   let dqkm2_da = like x 0.0 in
   let dpkm1_da = like x 0.0 in
   let dqkm1_da = L.neg x in
-  let dans_da = (dpkm1_da -: (ans *: dqkm1_da)) /: qkm1 in
+  let dn = dpkm1_da -: (ans *: dqkm1_da) in
+  let dans_da = dn /: qkm1 in
   let init =
     [
       enabled;
@@ -198,37 +240,55 @@ let igammac_continued_fraction ax x a enabled eps mode =
       | Value -> ans *: ax
       | Derivative ->
           let dans_da = List.nth rest 12 in
-          let dlogax_da = L.log x -: digamma a in
-          ax *: ((ans *: dlogax_da) +: dans_da))
+          let lx = L.log x in
+          let dlogax_da = lx -: digamma a in
+          ax *: ((ans *: dlogax_da) +: dans_da)
+      | Sample_derivative ->
+          let dans_da = List.nth rest 12 in
+          let lx = L.log x in
+          let dlogax_da = lx -: digamma a in
+          let inner = dans_da +: (ans *: dlogax_da) in
+          L.neg (inner *: x))
   | _ -> invalid_arg "Native_lowering: igammac state"
 
-let log_ax a x = (a *: L.log x) -: x -: lgamma a
-let underflow dt ax = L.lt ax (like ax (-.Float.log (finfo_max dt)))
+let log_ax a x =
+  let lx = L.log x in
+  let t = a *: lx in
+  let d = t -: x in
+  d -: lgamma a
+
+let underflow dt ax =
+  let top = Concrete (Ndarray.of_floats dt [||] [| finfo_max dt |]) in
+  L.lt ax (L.neg (L.log top))
 
 let igamma_impl dt = function
   | [ a; x ] ->
       let eps = finfo_eps dt in
-      let nan = is_nan a ||: is_nan x in
-      let x_inf = L.eq x (like x Float.infinity) in
-      let a_zero = L.eq a (like a 0.0) in
-      let x_zero = L.eq x (like x 0.0) in
-      let domain_error =
-        L.lt x (like x 0.0)
-        ||: L.lt a (like a 0.0)
-        ||: (a_zero &&: x_zero) ||: nan
-      in
-      let use_igammac = L.ge x (like x 1.0) &&: L.gt x a in
+      let na = is_nan a in
+      let nan = na ||: is_nan x in
+      let x_inf = L.eq x (scalar_const x Float.infinity) in
+      let a_zero = L.eq a (scalar_const a 0.0) in
+      let x_zero = L.eq x (scalar_const x 0.0) in
+      let d1 = L.lt x (scalar_const x 0.0) in
+      let d2 = L.lt a (scalar_const a 0.0) in
+      let d3 = a_zero &&: x_zero in
+      let domain_error = d1 ||: d2 in
+      let domain_error = domain_error ||: d3 in
+      let domain_error = domain_error ||: nan in
+      let u1 = L.ge x (scalar_const x 1.0) in
+      let use_igammac = u1 &&: L.gt x a in
       let log_axv = log_ax a x in
       let under = underflow dt log_axv in
       let ax = L.exp log_axv in
-      let enabled = not_ (x_zero ||: domain_error ||: under ||: x_inf) in
-      let cf =
-        like a 1.0
-        -: igammac_continued_fraction ax x a (enabled &&: use_igammac) eps Value
-      in
-      let series =
-        igamma_series ax x a (enabled &&: not_ use_igammac) eps Value
-      in
+      let e = x_zero ||: domain_error in
+      let e = e ||: under in
+      let e = e ||: x_inf in
+      let enabled = not_ e in
+      let en_cf = enabled &&: use_igammac in
+      let cf0 = igammac_continued_fraction ax x a en_cf eps Value in
+      let cf = scalar_const a 1.0 -: cf0 in
+      let en_s = enabled &&: not_ use_igammac in
+      let series = igamma_series ax x a en_s eps Value in
       let output = select use_igammac cf series in
       let output = select x_zero (like a 0.0) output in
       let output = select x_inf (like a 1.0) output in
@@ -238,58 +298,73 @@ let igamma_impl dt = function
 let igammac_impl dt = function
   | [ a; x ] ->
       let eps = finfo_eps dt in
-      let nan = is_nan a ||: is_nan x in
-      let a_zero = L.eq a (like a 0.0) in
-      let x_zero = L.eq x (like x 0.0) in
-      let x_inf = L.eq x (like x Float.infinity) in
-      let domain_error =
-        L.lt x (like x 0.0)
-        ||: L.lt a (like a 0.0)
-        ||: (a_zero &&: x_zero) ||: nan
-      in
-      let use_igamma = L.lt x (like x 1.0) ||: L.lt x a in
+      let na = is_nan a in
+      let nan = na ||: is_nan x in
+      let a_zero = L.eq a (scalar_const a 0.0) in
+      let x_zero = L.eq x (scalar_const x 0.0) in
+      let x_inf = L.eq x (scalar_const x Float.infinity) in
+      let d1 = L.lt x (scalar_const x 0.0) in
+      let d2 = L.lt a (scalar_const a 0.0) in
+      let d3 = a_zero &&: x_zero in
+      let domain_error = d1 ||: d2 in
+      let domain_error = domain_error ||: d3 in
+      let domain_error = domain_error ||: nan in
+      let u1 = L.lt x (scalar_const x 1.0) in
+      let use_igamma = u1 ||: L.lt x a in
       let log_axv = log_ax a x in
       let under = underflow dt log_axv in
-      let enabled = not_ (domain_error ||: under ||: x_inf ||: a_zero) in
+      let e = domain_error ||: under in
+      let e = e ||: x_inf in
+      let e = e ||: a_zero in
+      let enabled = not_ e in
       let ax = L.exp log_axv in
-      let series = igamma_series ax x a (enabled &&: use_igamma) eps Value in
-      let cf =
-        igammac_continued_fraction ax x a
-          (enabled &&: not_ use_igamma)
-          eps Value
-      in
-      let output = select use_igamma (like a 1.0 -: series) cf in
-      let output = select (x_inf ||: a_zero) (like output 0.0) output in
+      let en_s = enabled &&: use_igamma in
+      let series = igamma_series ax x a en_s eps Value in
+      let en_cf = enabled &&: not_ use_igamma in
+      let cf = igammac_continued_fraction ax x a en_cf eps Value in
+      let one_minus = scalar_const a 1.0 -: series in
+      let output = select use_igamma one_minus cf in
+      let inf_or = x_inf ||: a_zero in
+      let output = select inf_or (like output 0.0) output in
       select domain_error (like a Float.nan) output
   | _ -> invalid_arg "Native_lowering: igammac arity"
 
-let igamma_grad_a_impl dt = function
+let grad_impl mode dt = function
   | [ a; x ] ->
       let eps = finfo_eps dt in
-      let nan = is_nan a ||: is_nan x in
+      let na = is_nan a in
+      let nan = na ||: is_nan x in
       let x_zero = L.eq x (like x 0.0) in
-      let domain_error = L.lt x (like x 0.0) ||: L.le a (like a 0.0) in
-      let use_igammac = L.gt x (like x 1.0) &&: L.gt x a in
+      let d1 = L.lt x (like x 0.0) in
+      let domain_error = d1 ||: L.le a (like a 0.0) in
+      let u1 = L.gt x (like x 1.0) in
+      let use_igammac = u1 &&: L.gt x a in
       let log_axv = log_ax a x in
       let under = underflow dt log_axv in
       let ax = L.exp log_axv in
-      let enabled = not_ (x_zero ||: domain_error ||: under ||: nan) in
-      let cf =
-        L.neg
-          (igammac_continued_fraction ax x a (enabled &&: use_igammac) eps
-             Derivative)
-      in
-      let series =
-        igamma_series ax x a (enabled &&: not_ use_igammac) eps Derivative
-      in
+      let e = x_zero ||: domain_error in
+      let e = e ||: under in
+      let e = e ||: nan in
+      let enabled = not_ e in
+      let en_cf = enabled &&: use_igammac in
+      let cf = L.neg (igammac_continued_fraction ax x a en_cf eps mode) in
+      let en_s = enabled &&: not_ use_igammac in
+      let series = igamma_series ax x a en_s eps mode in
       let output = select use_igammac cf series in
       let output = select x_zero (like output 0.0) output in
-      select (domain_error ||: nan) (like a Float.nan) output
+      let bad = domain_error ||: nan in
+      select bad (like a Float.nan) output
   | _ -> invalid_arg "Native_lowering: igamma_grad_a arity"
 
+let igamma_grad_a_impl dt args = grad_impl Derivative dt args
+let random_gamma_grad_impl dt args = grad_impl Sample_derivative dt args
 let igamma = up_and_broadcast igamma_impl
 let igammac = up_and_broadcast igammac_impl
 let igamma_grad_a = up_and_broadcast igamma_grad_a_impl
+
+let () =
+  L.random_gamma_grad_hook :=
+    fun a x -> List.hd (up_and_broadcast random_gamma_grad_impl [ a; x ])
 
 let lentz ~num_iterations ~small ~threshold ~numerator ~denominator ~first =
   let cond = function

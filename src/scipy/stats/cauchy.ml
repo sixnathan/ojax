@@ -1,6 +1,6 @@
 module DU = Dist_util
 module UF = Numpy.Ufuncs
-module NL = Numpy.Lax_numpy
+module L = Lax_api
 open DU
 
 let promote3 x loc scale =
@@ -8,31 +8,28 @@ let promote3 x loc scale =
   | [ x; loc; scale ] -> (x, loc, scale)
   | _ -> assert false
 
-let defaults loc scale =
-  (Option.value loc ~default:(f32s 0.0), Option.value scale ~default:(f32s 1.0))
-
 let logpdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
   let pi = sc x Float.pi in
-  let scaled_x = UF.divide (UF.subtract x loc) scale in
-  let normalize_term = UF.log (UF.multiply pi scale) in
-  UF.negative (UF.add normalize_term (UF.log1p (UF.multiply scaled_x scaled_x)))
+  let scaled_x = L.div (L.sub x loc) scale in
+  let normalize_term = L.log (L.mul pi scale) in
+  L.neg (L.add normalize_term (L.log1p (L.mul scaled_x scaled_x)))
 
 let pdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  UF.exp (logpdf ~loc ~scale x)
+  L.exp (logpdf ~loc ~scale x)
 
 let cdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
   let pi = sc x Float.pi in
-  let scaled_x = UF.divide (UF.subtract x loc) scale in
-  UF.add (sc x 0.5) (UF.multiply (UF.divide (sc x 1.0) pi) (UF.arctan scaled_x))
+  let scaled_x = L.div (L.sub x loc) scale in
+  L.add (sc x 0.5) (L.mul (L.div (sc x 1.0) pi) (UF.arctan scaled_x))
 
 let logcdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  UF.log (cdf ~loc ~scale x)
+  L.log (cdf ~loc ~scale x)
 
 let sf ?loc ?scale x =
   let loc, scale = defaults loc scale in
@@ -49,13 +46,13 @@ let isf ?loc ?scale q =
   let q, loc, scale = promote3 q loc scale in
   let pi = sc q Float.pi in
   let half_pi = sc q (Float.pi /. 2.0) in
-  let unscaled = UF.tan (UF.subtract half_pi (UF.multiply pi q)) in
-  UF.add (UF.multiply unscaled scale) loc
+  let unscaled = L.tan (L.sub half_pi (L.mul pi q)) in
+  L.add (L.mul unscaled scale) loc
 
 let ppf ?loc ?scale q =
   let loc, scale = defaults loc scale in
   let q, loc, scale = promote3 q loc scale in
   let pi = sc q Float.pi in
   let half_pi = sc q (Float.pi /. 2.0) in
-  let unscaled = UF.tan (UF.subtract (UF.multiply pi q) half_pi) in
-  UF.add (UF.multiply unscaled scale) loc
+  let unscaled = L.tan (L.sub (L.mul pi q) half_pi) in
+  L.add (L.mul unscaled scale) loc

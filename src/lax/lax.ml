@@ -779,9 +779,10 @@ let argminmax_impl is_max axis index_dtype operand =
 
 let clamp_impl mn x mx =
   let a = to_array mn and b = to_array x and c = to_array mx in
+  let at v i = if Array.length v = 1 then v.(0) else v.(i) in
   let out =
     Array.init (Array.length b) (fun i ->
-        Float.max (Float.min a.(i) c.(i)) (Float.min b.(i) c.(i)))
+        Float.max (Float.min (at a i) (at c i)) (Float.min b.(i) (at c i)))
   in
   Ndarray.of_floats (Ndarray.dtype x) (Ndarray.shape x) out
 
@@ -789,11 +790,23 @@ let beta_impl = function
   | [ av; bv; xv ] ->
       let dt = Ndarray.dtype av in
       let a = to_array av and b = to_array bv and x = to_array xv in
-      let out =
-        Array.init (Array.length a) (fun i ->
-            Special.regularized_incomplete_beta dt a.(i) b.(i) x.(i))
+      let at v i = if Array.length v = 1 then v.(0) else v.(i) in
+      let n =
+        Stdlib.max (Array.length a)
+          (Stdlib.max (Array.length b) (Array.length x))
       in
-      [ Ndarray.of_floats dt (Ndarray.shape xv) out ]
+      let out =
+        Array.init n (fun i ->
+            Special.regularized_incomplete_beta dt (at a i) (at b i) (at x i))
+      in
+      let sh =
+        List.fold_left
+          (fun acc v ->
+            let s = Ndarray.shape v in
+            if Array.length s > Array.length acc then s else acc)
+          [||] [ av; bv; xv ]
+      in
+      [ Ndarray.of_floats dt sh out ]
   | _ -> failwith "lax: regularized_incomplete_beta expects 3 operands"
 
 let small_bit_width = function
@@ -2681,7 +2694,13 @@ let abstract_eval prim avals =
   | Regularized_incomplete_beta -> (
       match avals with
       | [ a; b; x ] ->
-          [ shaped x.shape x.dtype (a.weak_type && b.weak_type && x.weak_type) ]
+          let widest =
+            List.fold_left
+              (fun acc (v : aval) ->
+                if Array.length v.shape > Array.length acc then v.shape else acc)
+              [||] [ a; b; x ]
+          in
+          [ shaped widest x.dtype (a.weak_type && b.weak_type && x.weak_type) ]
       | _ -> failwith "lax: regularized_incomplete_beta expects 3 avals")
   | Platform_index _ -> [ shaped [||] Dtype.I32 false ]
   | Cond { t; _ } -> List.map aval_of_atom t.jaxpr.outs

@@ -243,15 +243,8 @@ let count_over ?axis ?(keepdims = false) ?where:mask a cdt =
   | None ->
       let axes = resolve_axes a axis in
       let n = float_of_int (axis_count a axes) in
-      let sh =
-        if keepdims then keepdims_shape (shape a) axes
-        else
-          Array.of_list
-            (List.filteri
-               (fun i _ -> not (mem_axis axes i))
-               (Array.to_list (shape a)))
-      in
-      const_full cdt sh n
+      ignore keepdims;
+      const_full cdt [||] n
 
 let mean ?dtype:dt ?axis ?keepdims ?where:mask a =
   let mask = check_where "mean" mask in
@@ -261,11 +254,9 @@ let mean ?dtype:dt ?axis ?keepdims ?where:mask a =
     | None -> to_inexact_dtype (dtype a)
   in
   let computation = upcast_f16 result_dtype in
+  let total = sum ?axis ?keepdims ?where:mask ~dtype:computation a in
   let normalizer = count_over ?axis ?keepdims ?where:mask a computation in
-  convert
-    (bind1 T.Div
-       [ sum ?axis ?keepdims ?where:mask ~dtype:computation a; normalizer ])
-    result_dtype
+  convert (bind1 T.Div [ total; normalizer ]) result_dtype
 
 let is_complex_dtype = function
   | D.Complex64 | D.Complex128 -> true

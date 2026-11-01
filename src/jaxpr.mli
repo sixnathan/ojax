@@ -32,3 +32,5 @@ val named_jit :
   (value list -> value list) ->
   value list ->
   value list
+
+val custom_call_jaxpr : int -> Types.aval list -> Types.closed_jaxpr option

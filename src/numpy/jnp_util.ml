@@ -5,6 +5,8 @@ module D = Dtype
 let shape v = (C.get_aval v).T.shape
 let dtype v = (C.get_aval v).T.dtype
 let weak v = (C.get_aval v).T.weak_type
+let py_float x = C.py_scalar (Dtypes.default_float_dtype ()) x
+let py_int x = C.py_scalar (Dtypes.default_int_dtype ()) (float_of_int x)
 let jit name ?key f args = Jaxpr.named_jit ~name ?key f args
 
 let jit1 name ?key f args =
@@ -52,13 +54,10 @@ let where c x y =
             if dtype c = D.Bool then c
             else C.bind1 T.Ne [ c; C.splat (dtype c) [||] 0.0 ]
           in
-          let dt, _ =
+          let dt, is_weak =
             Dtypes.result_type [ (dtype x, weak x); (dtype y, weak y) ]
           in
-          let conv v =
-            if dtype v = dt then v
-            else C.bind1 (T.Convert_element_type dt) [ v ]
-          in
+          let conv v = C.convert_like ~weak:is_weak v dt in
           let x = conv x in
           let y = conv y in
           if Array.length (shape c) = 0 then

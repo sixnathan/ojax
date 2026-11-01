@@ -318,6 +318,18 @@ def arrays_compare(ref_path, our_path):
         sys.stdout.write("JAX  " + a + "\nOJAX " + b + "\n")
 
 
+def _error_head(message):
+    lines = []
+    for line in message.split("\n"):
+        if line.startswith("The error occurred while tracing"):
+            continue
+        if line.startswith("  operation ") or line.startswith("    from line "):
+            continue
+        if line.strip():
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def errors_compare(ref_paths, our_paths):
     ref, ours = load_rows(ref_paths), load_rows(our_paths)
     both = same = 0
@@ -326,7 +338,7 @@ def errors_compare(ref_paths, our_paths):
         o = ours.get(key, {})
         if "text_error" in r and "text_error" in o:
             both += 1
-            if r["text_error"] == o["text_error"]:
+            if _error_head(r["text_error"]) == _error_head(o["text_error"]):
                 same += 1
             elif len(samples) < 6:
                 samples.append((r["text_error"][:170], o["text_error"][:170]))

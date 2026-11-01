@@ -249,7 +249,8 @@ module Xla = struct
       (Sys.time () -. start);
     exec
 
-  let compile cj = compile_text (Stablehlo.Emit.emit_closed_jaxpr cj)
+  let compile cj =
+    compile_text (Stablehlo.Emit.emit_jax_text ~name:"_lambda" cj)
 
   let execute exec bufs =
     Array.to_list (Pjrt.Executable.execute exec (Array.of_list bufs))
@@ -391,12 +392,16 @@ let mentions_unsupported_type text =
 
 let emit_timed cj =
   let start = Sys.time () in
-  let text = Stablehlo.Emit.emit_closed_jaxpr cj in
+  let lowered = Stablehlo.Emit.lower ~name:"_lambda" cj in
   Monitoring.record_event_duration_secs
     ~kwargs:[ ("fun_name", Monitoring.Text "jit") ]
     "/jax/core/compile/jaxpr_to_mlir_module_duration"
     (Sys.time () -. start);
-  text
+  lowered
+
+let select_kept kept args =
+  let table = Array.of_list args in
+  List.map (fun i -> table.(i)) kept
 
 module PB = Pjrt.Buffer
 module PE = Pjrt.Executable
@@ -558,6 +563,7 @@ type plan = {
 
 type placed_program = {
   program : PE.t;
+  kept : int list option;
   tilings : PE.output_sharding list Lazy.t;
 }
 
@@ -571,22 +577,24 @@ let compile_plan (cj : closed_jaxpr) plan =
       let entry =
         match
           if Array.length plan.devices = 1 then
-            Stablehlo.Emit.emit_closed_jaxpr cj
+            let lowered = Stablehlo.Emit.lower ~name:"_lambda" cj in
+            (lowered.text, Some lowered.kept)
           else
-            Stablehlo.Emit.emit_closed_jaxpr
-              ~partition:
-                {
-                  pt_mesh = plan.mesh;
-                  pt_devices = plan.devices;
-                  pt_in = plan.arg_specs;
-                  pt_out = plan.out_specs;
-                }
-              cj
+            ( Stablehlo.Emit.emit_closed_jaxpr
+                ~partition:
+                  {
+                    pt_mesh = plan.mesh;
+                    pt_devices = plan.devices;
+                    pt_in = plan.arg_specs;
+                    pt_out = plan.out_specs;
+                  }
+                cj,
+              None )
         with
-        | text when mentions_unsupported_type text ->
+        | text, _ when mentions_unsupported_type text ->
             host_fallbacks := "f6 dtypes have no XLA type" :: !host_fallbacks;
             None
-        | text ->
+        | text, kept ->
             let propagate_outputs =
               Array.length plan.devices > 1
               && List.exists Option.is_none plan.out_specs
@@ -598,7 +606,7 @@ let compile_plan (cj : closed_jaxpr) plan =
               with Pjrt.Abi.Error reason -> runtime_error reason
             in
             incr compiled_on_xla;
-            Some { program; tilings = lazy (PE.output_shardings program) }
+            Some { program; kept; tilings = lazy (PE.output_shardings program) }
         | exception (Failure reason | Invalid_argument reason) ->
             host_fallbacks := reason :: !host_fallbacks;
             None
@@ -715,6 +723,9 @@ let derive_spec ~shape ~mesh indices =
 
 let run_program plan placed args =
   let single = Array.length plan.devices = 1 in
+  let args =
+    match placed.kept with Some kept -> select_kept kept args | None -> args
+  in
   let lists =
     if single then
       [| Array.of_list (List.map (raw_on_device plan.devices.(0)) args) |]
@@ -881,7 +892,7 @@ let () =
           | cj -> run_plan cj plan args)
 
 type eager_program =
-  | Eager_compiled of Pjrt.Executable.t * aval list
+  | Eager_compiled of Pjrt.Executable.t * aval list * int list
   | Eager_host
 
 type eager_key = {
@@ -999,16 +1010,17 @@ let build_eager_program prim avals_in platform =
       fall_back (Printexc.to_string error)
   | avals_out -> (
       match
-        Stablehlo.Emit.emit_closed_jaxpr
+        Stablehlo.Emit.lower
+          ~name:(Pretty_printer.primitive_name prim)
           (single_primitive_jaxpr prim avals_in avals_out)
       with
-      | text when mentions_unsupported_type text ->
+      | { text; _ } when mentions_unsupported_type text ->
           fall_back "f6 dtypes have no XLA type"
       | exception ((Failure _ | Invalid_argument _ | Not_found) as error) ->
           fall_back (Printexc.to_string error)
-      | text -> (
+      | { text; kept } -> (
           match compile_eager platform text with
-          | exec -> Eager_compiled (exec, avals_out)
+          | exec -> Eager_compiled (exec, avals_out, kept)
           | exception Pjrt.Abi.Error reason -> fall_back reason))
 
 let eager_program prim avals_in =
@@ -1049,8 +1061,8 @@ let eager_eval prim args =
     let avals_in = List.map Core.get_aval args in
     match eager_program prim avals_in with
     | Eager_host -> None
-    | Eager_compiled (exec, avals_out) -> (
-        match xla_run exec args false with
+    | Eager_compiled (exec, avals_out, kept) -> (
+        match xla_run exec (select_kept kept args) false with
         | outs when output_matches outs avals_out ->
             incr eager_executions;
             Some outs
@@ -1063,13 +1075,13 @@ let eager_eval prim args =
 
 let () = Core.eager_eval := eager_eval
 
-let compile_region cj =
-  match Stablehlo.Emit.emit_closed_jaxpr cj with
-  | text when mentions_unsupported_type text ->
+let compile_region name cj =
+  match Stablehlo.Emit.lower ~name cj with
+  | { text; _ } when mentions_unsupported_type text ->
       Error "f6 dtypes have no XLA type"
-  | text -> (
+  | { text; kept } -> (
       match compile_eager (current_platform ()) text with
-      | exec -> Ok exec
+      | exec -> Ok (exec, kept)
       | exception Pjrt.Abi.Error reason -> Error reason)
   | exception ((Failure _ | Invalid_argument _ | Not_found) as error) ->
       Error (Printexc.to_string error)
@@ -1094,7 +1106,11 @@ let region_programs = Region_cache.create 512
 let atom_output_aval = function
   | A_var (v : var) -> v.vaval
   | A_lit nd ->
-      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+      {
+        shape = Ndarray.shape nd;
+        dtype = Ndarray.dtype nd;
+        weak_type = Ndarray.weak nd;
+      }
   | DropVar aval -> aval
 
 let build_region name f avals =
@@ -1106,8 +1122,9 @@ let build_region name f avals =
   | exception error when eager_rejection error ->
       fall_back (Printexc.to_string error)
   | cj -> (
-      match compile_region cj with
-      | Ok exec -> Some (exec, List.map atom_output_aval cj.jaxpr.outs)
+      match compile_region name cj with
+      | Ok (exec, kept) ->
+          Some (exec, List.map atom_output_aval cj.jaxpr.outs, kept)
       | Error reason -> fall_back reason)
 
 let jitted_keyed (name, statics) f args =
@@ -1143,8 +1160,8 @@ let jitted_keyed (name, statics) f args =
     in
     match program with
     | None -> f args
-    | Some (exec, wanted) -> (
-        match xla_run exec args false with
+    | Some (exec, wanted, kept) -> (
+        match xla_run exec (select_kept kept args) false with
         | outs when output_matches outs wanted ->
             incr eager_executions;
             outs
@@ -1166,11 +1183,11 @@ let executor ?options (cj : closed_jaxpr) : value list -> value list =
         let emitted =
           Config.with_value Config.default_matmul_precision precision (fun () ->
               match emit_timed cj with
-              | text when mentions_unsupported_type text ->
+              | { text; _ } when mentions_unsupported_type text ->
                   host_fallbacks :=
                     "f6 dtypes have no XLA type" :: !host_fallbacks;
                   (None, None)
-              | text -> (Some text, Stablehlo.Emit.shard_mesh_seen ())
+              | lowered -> (Some lowered, Stablehlo.Emit.shard_mesh_seen ())
               | exception Invalid_argument reason
                 when String.starts_with ~prefix:"The precision" reason ->
                   invalid_arg reason
@@ -1182,10 +1199,10 @@ let executor ?options (cj : closed_jaxpr) : value list -> value list =
           lazy
             (match fst emitted with
             | None -> None
-            | Some text -> (
+            | Some { Stablehlo.Emit.text; kept } -> (
                 incr compiled_on_xla;
                 match Xla.compile_text ?options text with
-                | exec -> Some exec
+                | exec -> Some (exec, kept)
                 | exception Pjrt.Abi.Error reason -> runtime_error reason))
         in
         Hashtbl.replace per_platform platform (emitted, exec);
@@ -1207,8 +1224,9 @@ let executor ?options (cj : closed_jaxpr) : value list -> value list =
       let emitted, exec = artifacts_for (current_platform ()) in
       let plain args =
         match Lazy.force exec with
-        | Some compiled when List.for_all is_hostable args ->
-            xla_run compiled args (List.exists is_device args)
+        | Some (compiled, kept) when List.for_all is_hostable args ->
+            xla_run compiled (select_kept kept args)
+              (List.exists is_device args)
         | Some _ | None -> Jaxpr.eval_closed_jaxpr cj args
       in
       if not (List.for_all is_hostable args) then plain args

@@ -19,3 +19,5 @@ val map : Dtype.t -> (float -> float) -> t -> t
 val map2 : Dtype.t -> (float -> float -> float) -> t -> t -> t
 val fold : ('acc -> float -> 'acc) -> 'acc -> t -> 'acc
 val canonicalize : Dtype.t -> t -> t
+val weak : t -> bool
+val as_weak : t -> t

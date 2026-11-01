@@ -451,9 +451,12 @@ let complex_minmax ~is_max = function
   | [ x; y ] ->
       let pick a b = if is_max then L.gt a b else L.lt a b in
       let rx = L.real x and ry = L.real y in
-      let pick_x =
-        select (L.eq rx ry) (pick (L.imag x) (L.imag y)) (pick rx ry)
-      in
+      let same = L.eq rx ry in
+      let by_real = pick rx ry in
+      let ix = L.imag x in
+      let iy = L.imag y in
+      let by_imag = pick ix iy in
+      let pick_x = select same by_imag by_real in
       [ select pick_x x y ]
   | _ -> invalid_arg "Native_lowering: complex minmax arity"
 

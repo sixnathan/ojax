@@ -38,7 +38,9 @@ let broadcast_insert (axis_size : int) (dst : int) (v : value) : value =
   let a = Core.get_aval v in
   let n = Array.length a.shape in
   let shape = insert_size a.shape dst axis_size in
-  let dims = Array.init n (fun i -> if i < dst then i else i + 1) in
+  let dims =
+    Np_ints.mark (Array.init n (fun i -> if i < dst then i else i + 1))
+  in
   b1 (Broadcast_in_dim { shape; dims }) [ v ]
 
 let moveaxis (src : int) (dst : int) (v : value) : value =
@@ -141,7 +143,7 @@ let reduce_sum_rule (axes : int array) (x : value) (bdim : int option) :
   | None -> (b1 (Reduce_sum axes) [ x ], None)
   | Some d ->
       let new_axes =
-        Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes
+        Np_ints.mark (Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes)
       in
       let shift =
         Array.fold_left (fun acc ax -> if ax < d then acc + 1 else acc) 0 axes
@@ -173,7 +175,11 @@ let broadcast_rule (axis_size : int) (shape : int array) (dims : int array)
   | Some d ->
       let x = move_batch_axis axis_size bdim 0 x in
       let new_shape = insert_size shape 0 axis_size in
-      let new_dims = Array.append [| 0 |] (Array.map (fun i -> i + 1) dims) in
+      let new_dims =
+        Np_ints.mark_where
+          (fun i -> i > 0)
+          (Array.append [| 0 |] (Array.map (fun i -> i + 1) dims))
+      in
       ( b1 (Broadcast_in_dim { shape = new_shape; dims = new_dims }) [ x ],
         Some 0 )
 
@@ -1109,6 +1115,10 @@ let batched_rule_id id axis_size =
   | Some batched -> batched
   | None ->
       let batched = Core.register_custom_rule (batch_custom_rule id) in
+      (match Core.custom_names_of id with
+      | Some (name, jvp_name) ->
+          Core.register_custom_names batched ~name ~jvp_name
+      | None -> ());
       Hashtbl.replace batched_custom_rules (id, axis_size) batched;
       batched
 

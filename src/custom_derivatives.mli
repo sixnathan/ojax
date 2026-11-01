@@ -1,6 +1,8 @@
 open Types
 
 val custom_jvp :
+  ?name:string ->
+  ?jvp_name:string ->
   (value list -> value list) ->
   jvp:(value list -> value list -> value list * value list) ->
   value list ->

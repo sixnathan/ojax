@@ -15,7 +15,11 @@ let unmapped_leading (length : int) (a : aval) : aval =
 let aval_of_atom = function
   | A_var v -> v.vaval
   | A_lit nd ->
-      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+      {
+        shape = Ndarray.shape nd;
+        dtype = Ndarray.dtype nd;
+        weak_type = Ndarray.weak nd;
+      }
   | DropVar a -> a
 
 let scan_out_avals ~length ~num_carry (jaxpr : closed_jaxpr) : aval list =

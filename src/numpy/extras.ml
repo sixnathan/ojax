@@ -14,17 +14,59 @@ let canon n a = if a < 0 then a + n else a
 let default_int () = Dtypes.default_int_dtype ()
 let default_float () = Dtypes.default_float_dtype ()
 
+let traced_shape_repr dt sh =
+  Printf.sprintf "traced array with shape %s[%s]" (Dtype.numpy_name dt)
+    (String.concat "," (Array.to_list (Array.map string_of_int sh)))
+
+let unique_context =
+  "The error arose for the first argument of jnp.unique(). To make \
+   jnp.unique() compatible with JIT and other transforms, you can specify a \
+   concrete value for the size argument, which will determine the output size."
+
+let tracing_origin = "The error occurred while tracing a function for jit."
+
+let concretization name v =
+  let aval = Core.get_aval v in
+  let context dt sh text =
+    Errors.concretization_type_error ~context:(text ^ "\n")
+      ~error_repr:(traced_shape_repr dt sh) ~origin_msg:tracing_origin ()
+  in
+  let int_dt = Dtypes.default_int_dtype () in
+  let own text = context aval.dtype aval.shape text in
+  match name with
+  | "nonzero" ->
+      context int_dt [||]
+        "The size argument of jnp.nonzero must be statically specified to use \
+         jnp.nonzero within JAX transformations."
+  | "roots" ->
+      context int_dt [||]
+        "The error occurred in the jnp.roots() function. To use this within a \
+         JIT-compiled context, pass strip_zeros=False, but be aware that \
+         leading zeros will result in some returned roots being set to NaN."
+  | "unique" | "intersect1d" | "setxor1d" -> own unique_context
+  | "union1d" -> own "The error arose in union1d()"
+  | "setdiff1d" -> own "The error arose in setdiff1d()"
+  | "trim_zeros" -> own "Error arose in the `filt` argument of trim_zeros()"
+  | "bincount" ->
+      own
+        "The error occurred because of argument 'x' of jnp.bincount. To avoid \
+         this error, pass a static `length` argument."
+  | "compress" ->
+      Errors.tracer_bool_conversion_error
+        ~error_repr:(traced_shape_repr Dtype.Bool [||])
+        ~origin_msg:("\n" ^ tracing_origin ^ "\n")
+        ()
+  | _ ->
+      own
+        (name
+       ^ " requires concrete input; pass a size argument to use it under jit")
+
 let rec host name v =
   match v with
   | Concrete nd -> nd
   | Device b -> Pjrt.Buffer.to_host b
   | Tracer { payload = JVP { primal; _ }; _ } -> host name primal
-  | Tracer _ ->
-      raise
-        (Errors.Non_concrete_boolean_index_error
-           (name
-          ^ " requires concrete input; pass a size argument to use it under jit"
-           ))
+  | Tracer _ -> raise (concretization name v)
 
 let flat_floats nd =
   Array.of_list (List.rev (Ndarray.fold (fun acc x -> x :: acc) [] nd))
@@ -952,6 +994,9 @@ let trim_zeros ?(trim = "fb") ?axis a =
           Array.of_list
             (List.filter (fun i -> i <> ax) (List.init (rank a) Fun.id))
         in
+        (match a with
+        | Tracer _ -> raise (concretization "trim_zeros" a)
+        | _ -> ());
         let mask = flat_floats (host "trim_zeros" (R.any ~axis:others a)) in
         let n = Array.length mask in
         let first = ref 0 and last = ref n in
@@ -1348,8 +1393,21 @@ let array_str a =
   let summarize = Array.fold_left ( * ) 1 sh > o.threshold in
   render_elements o summarize nd [] (Array.to_list sh)
 
+let print_options () =
+  let o = !current_printoptions in
+  {
+    Array_print.default_options with
+    precision = o.precision;
+    threshold = o.threshold;
+    edgeitems = o.edgeitems;
+    suppress = o.suppress;
+  }
+
 let array_repr a =
-  "Array(" ^ array_str a ^ ", dtype=" ^ Dtype.short_name (dtype_of a) ^ ")"
+  Array_print.array_repr ~options:(print_options ()) (host "array_repr" a)
+
+let array_str_jax a =
+  Array_print.array_str ~options:(print_options ()) (host "array_str" a)
 
 let packbits ?axis ?(bitorder = "big") a =
   let source, ax =

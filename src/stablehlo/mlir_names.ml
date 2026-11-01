@@ -178,7 +178,18 @@ let func_args line =
   else []
 
 let reducer_args line =
-  if starts_with "reducer(" (String.trim line) then tokens_of line else []
+  if starts_with "reducer(" (String.trim line) then
+    let tokens = tokens_of line in
+    let at parity = List.filteri (fun i _ -> i mod 2 = parity) tokens in
+    at 0 @ at 1
+  else []
+
+let top_k_results line =
+  if contains "chlo.top_k(" line then
+    match tokens_of line with
+    | values :: indices :: _ -> Some (values, indices)
+    | _ -> None
+  else None
 
 let rec nearest_while lines i =
   if i < 0 then None
@@ -199,12 +210,17 @@ let rec number lines region st =
   let in_child i = List.exists (fun (a, b) -> i >= a && i < b) spans in
   for i = region.first to min region.last (Array.length lines) - 1 do
     if not (in_child i) then
-      match definition_of lines.(i) with
-      | Some (tok, rhs) -> (
-          match constant_base rhs with
-          | Some base -> st := bind_named region !st tok base
-          | None -> st := bind_numbered region !st tok)
-      | None -> ()
+      match top_k_results lines.(i) with
+      | Some (values, indices) ->
+          st := bind_named region !st values "values";
+          st := bind_named region !st indices "indices"
+      | None -> (
+          match definition_of lines.(i) with
+          | Some (tok, rhs) -> (
+              match constant_base rhs with
+              | Some base -> st := bind_named region !st tok base
+              | None -> st := bind_numbered region !st tok)
+          | None -> ())
   done;
   let finished = !st in
   List.iter

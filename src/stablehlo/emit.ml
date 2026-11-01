@@ -1,7 +1,11 @@
 open Types
 
 let aval_of_ndarray nd =
-  { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+  {
+    shape = Ndarray.shape nd;
+    dtype = Ndarray.dtype nd;
+    weak_type = Ndarray.weak nd;
+  }
 
 let atom_aval = function
   | A_var v -> v.vaval
@@ -132,15 +136,8 @@ let reindent extra s =
 let ssa_of_atom ctx = function
   | A_var v -> ssa_of_var ctx v
   | A_lit nd ->
-      let n =
-        match List.assq_opt nd ctx.literals with
-        | Some n -> n
-        | None ->
-            let n = fresh ctx in
-            emit_constant_at ctx n nd;
-            ctx.literals <- (nd, n) :: ctx.literals;
-            n
-      in
+      let n = fresh ctx in
+      emit_constant_at ctx n nd;
       name n
   | DropVar _ -> invalid_arg "Stablehlo.Emit: DropVar in value position"
 
@@ -149,14 +146,10 @@ let id_of_atom ctx = function
       match Hashtbl.find_opt ctx.ids v.vid with
       | Some n -> n
       | None -> invalid_arg "Stablehlo.Emit: unbound variable")
-  | A_lit nd -> (
-      match List.assq_opt nd ctx.literals with
-      | Some n -> n
-      | None ->
-          let n = fresh ctx in
-          emit_constant_at ctx n nd;
-          ctx.literals <- (nd, n) :: ctx.literals;
-          n)
+  | A_lit nd ->
+      let n = fresh ctx in
+      emit_constant_at ctx n nd;
+      n
   | DropVar _ -> invalid_arg "Stablehlo.Emit: DropVar in value position"
 
 let sole = function [ x ] -> x | _ -> invalid_arg "Stablehlo.Emit: arity"
@@ -211,18 +204,31 @@ let emit_unsigned_sign ctx (eqn : eqn) in_ids =
   let out = sole eqn.outs in
   let ty = Ir.tensor_type_of_aval out.vaval in
   let flag_ty = Ir.tensor_type Dtype.Bool out.vaval.shape in
-  let zero = fresh ctx in
+  let scalar_ty = Ir.tensor_type out.vaval.dtype [||] in
+  let splat value =
+    let c = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.constant dense<%d> : %s\n" (name c)
+         value scalar_ty);
+    let n = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+         (name n) (name c) scalar_ty ty);
+    n
+  in
+  let zero = splat 0 in
   let flag = fresh ctx in
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    %s = stablehlo.constant dense<0> : %s\n" (name zero) ty);
-  Buffer.add_string ctx.buf
     (Printf.sprintf
-       "    %s = stablehlo.compare NE, %s, %s, UNSIGNED : (%s, %s) -> %s\n"
+       "    %s = stablehlo.compare EQ, %s, %s, UNSIGNED : (%s, %s) -> %s\n"
        (name flag) (name x) (name zero) ty ty flag_ty);
+  let zeros = splat 0 in
+  let ones = splat 1 in
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    %s = stablehlo.convert %s : (%s) -> %s\n" (name n)
-       (name flag) flag_ty ty)
+    (Printf.sprintf "    %s = stablehlo.select %s, %s, %s : %s, %s\n" (name n)
+       (name flag) (name zeros) (name ones) flag_ty ty)
 
 let emit_chlo_unary ctx (eqn : eqn) in_ids op =
   let x = sole in_ids in
@@ -260,10 +266,12 @@ let emit_complex_pick ctx (eqn : eqn) a b ~direction =
          (name n) dir (name x) (name y) rty rty bty);
     n
   in
-  let ra = unary "real" a and rb = unary "real" b in
-  let ia = unary "imag" a and ib = unary "imag" b in
+  let ra = unary "real" a in
+  let rb = unary "real" b in
   let same = compare "EQ" ra rb in
   let by_real = compare direction ra rb in
+  let ia = unary "imag" a in
+  let ib = unary "imag" b in
   let by_imag = compare direction ia ib in
   let pick = fresh ctx in
   Stdlib.Buffer.add_string ctx.buf
@@ -1732,51 +1740,17 @@ let emit_sort_canonical_key ctx dt operand =
        (name cres) (name isnan) (name cnan) (name selz) bty sty);
   cres
 
-let emit_sort_comparator ctx dt =
-  let sty = Ir.tensor_type dt [||] in
-  let bty = Ir.tensor_type Dtype.Bool [||] in
-  let x = fresh ctx in
-  let y = fresh ctx in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name x) sty (name y) sty);
-  match dt with
-  | d when d <> Dtype.F4_e2m1fn && Dtypes.issubdtype d `Floating ->
-      let canon = emit_sort_canonical_key ctx dt in
-      let cx = canon x in
-      let cy = canon y in
-      let p = fresh ctx in
-      Buffer.add_string ctx.buf
-        (Printf.sprintf
-           "      %s = stablehlo.compare LT, %s, %s, TOTALORDER : (%s, %s) -> %s\n"
-           (name p) (name cx) (name cy) sty sty bty);
-      Buffer.add_string ctx.buf
-        (Printf.sprintf "      stablehlo.return %s : %s\n" (name p) bty)
-  | _ ->
-      let ct = compare_type_of dt false in
-      let p = fresh ctx in
-      Buffer.add_string ctx.buf
-        (Printf.sprintf
-           "      %s = stablehlo.compare LT, %s, %s, %s : (%s, %s) -> %s\n"
-           (name p) (name x) (name y) ct sty sty bty);
-      Buffer.add_string ctx.buf
-        (Printf.sprintf "      stablehlo.return %s : %s\n" (name p) bty)
-
 let emit_sort_multi ctx (eqn : eqn) in_ids ~dimension ~is_stable ~num_keys =
-  List.iter
-    (fun (av : aval) ->
-      match av.dtype with
-      | Dtype.Complex64 | Dtype.Complex128 ->
-          failwith "Stablehlo.Emit: sorting complex values runs on the host"
-      | _ -> ())
-    (List.map atom_aval eqn.inputs);
   let inputs = List.map atom_aval eqn.inputs in
   let bty = Ir.tensor_type Dtype.Bool [||] in
   let group = fresh ctx in
+  let single = List.length inputs = 1 in
   Buffer.add_string ctx.buf
     (Printf.sprintf
-       "    %%%d:%d = \"stablehlo.sort\"(%s) <{dimension = %d : i64, is_stable \
-        = %s}> ({\n"
-       group (List.length inputs)
+       "    %s = \"stablehlo.sort\"(%s) <{dimension = %d : i64, is_stable = \
+        %s}> ({\n"
+       (if single then name group
+        else Printf.sprintf "%%%d:%d" group (List.length inputs))
        (String.concat ", " (List.map name in_ids))
        dimension
        (if is_stable then "true" else "false"));
@@ -1808,68 +1782,89 @@ let emit_sort_multi ctx (eqn : eqn) in_ids ~dimension ~is_stable ~num_keys =
          (name l) (name r) bty);
     p
   in
-  let rec lex k =
-    let key = List.nth inputs k in
-    let x, _ = List.nth args (2 * k) and y, _ = List.nth args ((2 * k) + 1) in
-    let sty = Ir.tensor_type key.dtype [||] in
-    let cmp =
-      match key.dtype with
-      | Dtype.F4_e2m1fn -> "FLOAT"
-      | Dtype.F16 | Dtype.Bf16 | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn
-      | Dtype.F8_e3m4 | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn
-      | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu
-      | Dtype.F32 | Dtype.F64 ->
-          "TOTALORDER"
-      | dt -> compare_type_of dt false
+  let part op dt v =
+    let part_dt =
+      match dt with Dtype.Complex128 -> Dtype.F64 | _ -> Dtype.F32
     in
-    let x, y =
-      if cmp = "TOTALORDER" then
-        ( emit_sort_canonical_key ctx key.dtype x,
-          emit_sort_canonical_key ctx key.dtype y )
-      else (x, y)
-    in
-    let lt = compare_op "LT" x y sty cmp in
-    if k = num_keys - 1 then lt
-    else
-      let eq = compare_op "EQ" x y sty cmp in
-      binary "or" lt (binary "and" eq (lex (k + 1)))
+    let n = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "      %s = stablehlo.%s %s : (%s) -> %s\n" (name n) op
+         (name v) (Ir.tensor_type dt [||])
+         (Ir.tensor_type part_dt [||]));
+    (part_dt, n)
   in
-  let result = lex 0 in
+  let keys_of dt v =
+    match dt with
+    | Dtype.Complex64 | Dtype.Complex128 ->
+        let rdt, re = part "real" dt v in
+        let re = emit_sort_canonical_key ctx rdt re in
+        let idt, im = part "imag" dt v in
+        let im = emit_sort_canonical_key ctx idt im in
+        [ (rdt, re); (idt, im) ]
+    | Dtype.F16 | Dtype.Bf16 | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4
+    | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz
+    | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu | Dtype.F32
+    | Dtype.F64 ->
+        [ (dt, emit_sort_canonical_key ctx dt v) ]
+    | _ -> [ (dt, v) ]
+  in
+  let key_operands = List.filteri (fun i _ -> i < num_keys) inputs in
+  let pairs =
+    List.concat
+      (List.mapi
+         (fun k (key : aval) ->
+           let x, _ = List.nth args (2 * k)
+           and y, _ = List.nth args ((2 * k) + 1) in
+           let xk = keys_of key.dtype x in
+           let yk = keys_of key.dtype y in
+           List.map2 (fun (dt, xv) (_, yv) -> (dt, xv, yv)) xk yk)
+         key_operands)
+  in
+  let comparison dt =
+    match dt with
+    | Dtype.F4_e2m1fn -> "FLOAT"
+    | Dtype.F16 | Dtype.Bf16 | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4
+    | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz
+    | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu | Dtype.F32
+    | Dtype.F64 ->
+        "TOTALORDER"
+    | dt -> compare_type_of dt false
+  in
+  let result =
+    List.fold_left
+      (fun acc (dt, x, y) ->
+        let sty = Ir.tensor_type dt [||] in
+        let cmp = comparison dt in
+        let lt = compare_op "LT" x y sty cmp in
+        match acc with
+        | None -> Some lt
+        | Some p ->
+            let eq = compare_op "EQ" x y sty cmp in
+            Some (binary "or" lt (binary "and" eq p)))
+      None (List.rev pairs)
+  in
   Buffer.add_string ctx.buf
-    (Printf.sprintf "      stablehlo.return %s : %s\n" (name result) bty);
+    (Printf.sprintf "      stablehlo.return %s : %s\n"
+       (name (Option.get result))
+       bty);
+  let in_types = String.concat ", " (List.map Ir.tensor_type_of_aval inputs) in
+  let out_types =
+    String.concat ", "
+      (List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs)
+  in
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    }) : (%s) -> (%s)\n"
-       (String.concat ", " (List.map Ir.tensor_type_of_aval inputs))
-       (String.concat ", "
-          (List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs)));
-  List.iteri
-    (fun i (v : var) ->
-      Hashtbl.replace ctx.ids v.vid
-        (alias_result (Printf.sprintf "%%%d#%d" group i)))
-    eqn.outs
+    (if single then Printf.sprintf "    }) : (%s) -> %s\n" in_types out_types
+     else Printf.sprintf "    }) : (%s) -> (%s)\n" in_types out_types);
+  if single then Hashtbl.replace ctx.ids (sole eqn.outs).vid group
+  else
+    List.iteri
+      (fun i (v : var) ->
+        Hashtbl.replace ctx.ids v.vid
+          (alias_result (Printf.sprintf "%%%d#%d" group i)))
+      eqn.outs
 
 let emit_sort ctx (eqn : eqn) in_ids ~dimension ~is_stable =
-  let x = sole in_ids in
-  let in_aval = atom_aval (sole eqn.inputs) in
-  let dt = in_aval.dtype in
-  (match dt with
-  | Dtype.Complex64 | Dtype.Complex128 ->
-      failwith "Stablehlo.Emit: sorting complex values runs on the host"
-  | _ -> ());
-  let out = sole eqn.outs in
-  let n = fresh ctx in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = \"stablehlo.sort\"(%s) <{dimension = %d : i64, is_stable = \
-        %s}> ({\n"
-       (name n) (name x) dimension
-       (if is_stable then "true" else "false"));
-  emit_sort_comparator ctx dt;
-  Buffer.add_string ctx.buf
-    (Printf.sprintf "    }) : (%s) -> %s\n"
-       (Ir.tensor_type_of_aval in_aval)
-       (Ir.tensor_type_of_aval out.vaval));
-  Hashtbl.replace ctx.ids out.vid n
+  emit_sort_multi ctx eqn in_ids ~dimension ~is_stable ~num_keys:1
 
 let emit_top_k ctx (eqn : eqn) in_ids k =
   let x = sole in_ids in
@@ -2596,7 +2591,9 @@ and emit_traced ctx avals in_ids outs f =
     (emit_traced_ids ctx avals in_ids f)
 
 and emit_traced_ids ctx avals in_ids f =
-  let traced = Jaxpr.make_jaxpr avals f in
+  emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids
+
+and emit_closed_inline ctx (traced : closed_jaxpr) in_ids =
   let jx = traced.jaxpr in
   let const_binders, arg_binders =
     match Util.split_list jx.in_binders [ List.length traced.consts ] with
@@ -2932,15 +2929,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ x ] ->
             let positive = Core.bind1 (Integer_pow (-y)) [ x ] in
             let a = Core.get_aval x in
-            let n = Array.fold_left ( * ) 1 a.shape in
-            [
-              Core.bind1 Div
-                [
-                  Concrete
-                    (Ndarray.of_floats a.dtype a.shape (Array.make n 1.0));
-                  positive;
-                ];
-            ]
+            let one = Core.splat a.dtype a.shape 1.0 in
+            [ Core.bind1 Div [ one; positive ] ]
         | _ -> invalid_arg "Stablehlo.Emit: integer_pow arity")
   | Integer_pow y -> emit_integer_pow ctx eqn in_ids y
   | Imag ->
@@ -3158,11 +3148,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_select_and_gather_add ctx eqn in_ids ~select ~window
   | Select_and_scatter_add { select; window } ->
       emit_select_and_scatter_add ctx eqn in_ids ~select ~window
-  | Sort { dimension; is_stable; num_keys }
-    when List.exists (fun a -> is_complex_dtype (atom_aval a).dtype) eqn.inputs
-    ->
-      emit_inlined ctx eqn in_ids
-        (Native_lowering.complex_sort ~dimension ~is_stable ~num_keys)
   | Sort { dimension; is_stable; num_keys } ->
       if List.length in_ids = 1 then
         emit_sort ctx eqn in_ids ~dimension ~is_stable
@@ -3690,16 +3675,18 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (Ir.tensor_type_of_aval (atom_aval (List.hd eqn.inputs)))
            (Ir.tensor_type_of_aval out.vaval))
   | Custom_jvp_call id when placed_call ctx eqn in_ids id -> ()
-  | Custom_jvp_call id | Custom_vjp_call id ->
-      let primal =
-        match Core.custom_rule id with
-        | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } -> primal
-        | Core.Linear_rule _ ->
-            invalid_arg "Stablehlo.Emit: linear rule has no primal call"
-        | Core.Callback_rule _ ->
-            failwith "Stablehlo.Emit: callbacks run on the host interpreter"
-      in
-      emit_inlined ctx eqn in_ids primal
+  | Custom_jvp_call id | Custom_vjp_call id -> (
+      match Jaxpr.custom_call_jaxpr id (List.map atom_aval eqn.inputs) with
+      | Some c ->
+          List.iter2
+            (fun (v : var) out -> Hashtbl.replace ctx.ids v.vid out)
+            eqn.outs
+            (emit_closed_inline ctx c in_ids)
+      | None -> (
+          match Core.custom_rule id with
+          | Core.Callback_rule _ ->
+              failwith "Stablehlo.Emit: callbacks run on the host interpreter"
+          | _ -> invalid_arg "Stablehlo.Emit: linear rule has no primal call"))
   | Custom_lin { rule; n_res; _ } -> (
       match Core.custom_rule rule with
       | Core.Linear_rule { forward; _ } ->
@@ -3821,46 +3808,13 @@ let emit_closed_jaxpr ?partition cj =
     ~finally:(fun () -> decr emission_depth)
     (fun () -> emit_closed_jaxpr_body ?partition cj)
 
-let has_side_effect = function
-  | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
-  | Dce_sink | Rng_bit_generator | Create_token | After_all -> true
-  | _ -> false
+type lowered = { text : string; kept : int list }
 
-let prune_for_lowering (cj : closed_jaxpr) =
-  let jx = cj.jaxpr in
-  let used = Hashtbl.create 64 in
-  let note = function
-    | A_var (v : var) -> Hashtbl.replace used v.vid ()
-    | A_lit _ | DropVar _ -> ()
-  in
-  List.iter note jx.outs;
-  let kept =
-    List.fold_left
-      (fun acc (e : eqn) ->
-        if
-          has_side_effect e.prim
-          || List.exists (fun (v : var) -> Hashtbl.mem used v.vid) e.outs
-        then begin
-          List.iter note e.inputs;
-          e :: acc
-        end
-        else acc)
-      [] (List.rev jx.eqns)
-  in
-  let n_consts = List.length cj.consts in
-  let const_binders, arg_binders =
-    match Util.split_list jx.in_binders [ n_consts ] with
-    | [ cb; ab ] -> (cb, ab)
-    | _ -> invalid_arg "Stablehlo.Emit: binder split"
-  in
-  let kept_args =
-    List.filter (fun (v : var) -> Hashtbl.mem used v.vid) arg_binders
-  in
+let lower ~name cj =
+  let pruned, kept = Dce.prune_unused_inputs cj in
   {
-    cj with
-    jaxpr = { jx with in_binders = const_binders @ kept_args; eqns = kept };
+    text = Mlir_names.render ~module_name:name (emit_closed_jaxpr pruned);
+    kept;
   }
 
-let emit_jax_text ~name cj =
-  Mlir_names.render ~module_name:name
-    (emit_closed_jaxpr (prune_for_lowering cj))
+let emit_jax_text ~name cj = (lower ~name cj).text

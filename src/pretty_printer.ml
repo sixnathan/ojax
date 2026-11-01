@@ -358,9 +358,29 @@ let jaxpr_to_string jx = Doc.to_string (jaxpr_to_doc jx)
 let closed_jaxpr_to_string (cj : closed_jaxpr) = jaxpr_to_string cj.jaxpr
 let call_names : (int, string) Hashtbl.t = Hashtbl.create 64
 let register_call_name jid name = Hashtbl.replace call_names jid name
+let registered_call_name jid = Hashtbl.find_opt call_names jid
 
 let call_name jid =
   match Hashtbl.find_opt call_names jid with Some n -> n | None -> "jit"
+
+let custom_call :
+    (int -> aval list -> (string * string * closed_jaxpr) option) ref =
+  ref (fun _ _ -> None)
+
+let atom_type = function
+  | A_var (v : var) -> v.vaval
+  | A_lit nd ->
+      {
+        shape = Ndarray.shape nd;
+        dtype = Ndarray.dtype nd;
+        weak_type = Ndarray.weak nd;
+      }
+  | DropVar a -> a
+
+let custom_call_of (e : eqn) =
+  match e.prim with
+  | Custom_jvp_call id -> !custom_call id (List.map atom_type e.inputs)
+  | _ -> None
 
 let rec structure_of_jaxpr (jx : jaxpr) =
   String.concat " " (List.map structure_of_eqn jx.eqns)
@@ -377,6 +397,8 @@ and structure_of_eqn (e : eqn) =
     | While { cond; body } -> [ body; cond ]
     | Custom_linear_solve { solve; transpose_solve } ->
         solve :: Option.to_list transpose_solve
+    | Custom_jvp_call _ -> (
+        match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
     | _ -> []
   in
   let name = match e.prim with Xla_call _ -> "jit" | p -> prim_name p in
@@ -453,7 +475,14 @@ let py_tuple items =
   | [ x ] -> "(" ^ x ^ ",)"
   | _ -> "(" ^ String.concat ", " items ^ ")"
 
-let py_ints a = py_tuple (Array.to_list (Array.map string_of_int a))
+let py_ints a =
+  py_tuple
+    (List.mapi
+       (fun i x ->
+         if Np_ints.is_marked a i then Printf.sprintf "np.int64(%d)" x
+         else string_of_int x)
+       (Array.to_list a))
+
 let py_bool b = if b then "True" else "False"
 
 let py_list a =
@@ -533,7 +562,10 @@ let jax_params (e : eqn) =
       if Array.length dims = 0 then []
       else [ ("broadcast_dimensions", Plain (py_ints dims)) ]
   | Convert_element_type dt ->
-      [ ("new_dtype", Plain (dn dt)); ("weak_type", Plain "False") ]
+      let weak =
+        match e.outs with (v : var) :: _ -> v.vaval.weak_type | [] -> false
+      in
+      [ ("new_dtype", Plain (dn dt)); ("weak_type", Plain (py_bool weak)) ]
   | Bitcast_convert_type dt -> [ ("new_dtype", Plain (dn dt)) ]
   | Reshape ns ->
       [
@@ -791,6 +823,7 @@ let alpha_name n =
   go n ""
 
 type context = {
+  keys : (int, unit) Hashtbl.t;
   mutable next_name : int;
   var_names : (int, string) Hashtbl.t;
   shared : (int, string) Hashtbl.t;
@@ -839,10 +872,19 @@ let pp_atoms ctx ?(separator = "") atoms =
               [ Layout.Text separator; Layout.Group (Layout.Brk " ") ])
            (List.map doc atoms)) )
 
+let key_short (a : aval) =
+  let rank = Array.length a.shape in
+  let dims = Array.to_list (Array.sub a.shape 0 (max 0 (rank - 1))) in
+  "key<fry>[" ^ String.concat "," (List.map string_of_int dims) ^ "]"
+
 let pp_binders ctx (vars : var list) =
   let doc (v : var) =
     let name = name_of_var ctx v in
-    Layout.Text (name ^ ":" ^ aval_short v.vaval)
+    let short =
+      if Hashtbl.mem ctx.keys v.vid then key_short v.vaval
+      else aval_short v.vaval
+    in
+    Layout.Text (name ^ ":" ^ short)
   in
   Layout.Nest
     ( 2,
@@ -957,6 +999,16 @@ and pp_eqn ctx (e : eqn) =
           suggest_names ctx c.jaxpr.outs (List.map (fun v -> A_var v) e.outs)
         end;
         [ ("name", Plain (xla_call_name c)) ]
+    | Custom_jvp_call _ -> (
+        match custom_call_of e with
+        | Some (name, jvp_name, c) ->
+            [
+              ("name", Plain name);
+              ("call_jaxpr", Sub c);
+              ("jvp", Plain jvp_name);
+              ("symbolic_zeros", Plain "False");
+            ]
+        | None -> [])
     | _ -> []
   in
   let lhs = pp_binders ctx e.outs in
@@ -973,6 +1025,33 @@ and pp_eqn ctx (e : eqn) =
   if e.outs = [] then rhs else Layout.Concat [ lhs; Layout.Text " = "; rhs ]
 
 and xla_call_name (c : closed_jaxpr) = call_name c.jid
+
+let rec mark_keys keys (jx : jaxpr) =
+  let mark (v : var) = Hashtbl.replace keys v.vid () in
+  let is_key = function
+    | A_var (v : var) -> Hashtbl.mem keys v.vid
+    | A_lit _ | DropVar _ -> false
+  in
+  List.iter
+    (fun (e : eqn) ->
+      match e.prim with
+      | Random_seed | Random_wrap | Random_split _ | Random_fold_in ->
+          List.iter mark e.outs
+      | Xla_call c ->
+          let args =
+            List.filteri
+              (fun i _ -> i >= List.length c.consts)
+              c.jaxpr.in_binders
+          in
+          List.iter2
+            (fun (b : var) input -> if is_key input then mark b)
+            args e.inputs;
+          mark_keys keys c.jaxpr;
+          List.iter2
+            (fun (out : var) inner -> if is_key inner then mark out)
+            e.outs c.jaxpr.outs
+      | _ -> ())
+    jx.eqns
 
 let dropvars ctx (jx : jaxpr) =
   let used = Hashtbl.create 64 in
@@ -998,8 +1077,10 @@ let closed_jaxpr_to_jax_string (cj : closed_jaxpr) =
       var_names = Hashtbl.create 64;
       shared = Hashtbl.create 8;
       shared_names = Hashtbl.create 8;
+      keys = Hashtbl.create 8;
     }
   in
+  mark_keys ctx.keys cj.jaxpr;
   dropvars ctx cj.jaxpr;
   let counts = Hashtbl.create 16 in
   let order = ref [] in

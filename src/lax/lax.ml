@@ -2374,7 +2374,11 @@ let shaped shape dtype weak_type = { shape; dtype; weak_type }
 let aval_of_atom = function
   | A_var v -> v.vaval
   | A_lit nd ->
-      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+      {
+        shape = Ndarray.shape nd;
+        dtype = Ndarray.dtype nd;
+        weak_type = Ndarray.weak nd;
+      }
   | DropVar a -> a
 
 let un_aval f = function
@@ -2709,8 +2713,8 @@ let abstract_eval prim avals =
   | Custom_jvp_call id | Custom_vjp_call id -> (
       match Core.custom_rule id with
       | Core.Callback_rule { result_avals; _ } -> result_avals
-      | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } ->
-          let traced = Jaxpr.make_jaxpr avals primal in
+      | Core.Jvp_rule _ | Core.Vjp_rule _ ->
+          let traced = Option.get (Jaxpr.custom_call_jaxpr id avals) in
           List.map aval_of_atom traced.jaxpr.outs
       | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call")
   | Custom_lin { out_avals; _ } -> out_avals

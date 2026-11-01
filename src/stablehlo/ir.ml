@@ -125,20 +125,20 @@ let round_digits digits exp precision =
       | Some rest -> at_length (List.rev rest)
       | None -> ([ 1 ], exp + n)
 
-let scientific_digits v =
+let scientific_digits ?(precision = 6) v =
   let m, e = shortest_binary v in
   let big, exp10 =
     if e >= 0 then (big_pow_mul (big_of_int m) 2 e, 0)
     else (big_pow_mul (big_of_int m) 5 (-e), e)
   in
-  let required = ((6 * 196) + 58) / 59 in
+  let required = ((precision * 196) + 58) / 59 in
   let bits = big_active_bits big in
   let tens = if bits > required then (bits - required) * 59 / 196 else 0 in
   let rec drop big k =
     if k = 0 then big else drop (fst (big_div_small big 10)) (k - 1)
   in
   let digits, exp = big_digits (drop big tens) (exp10 + tens) [] in
-  round_digits digits exp 6
+  round_digits digits exp precision
 
 let small_finite_text v =
   let sign = if Float.sign_bit v then "-" else "" in
@@ -161,43 +161,42 @@ let strip_trailing_zeros digits =
   done;
   String.sub digits 0 !n
 
-let sig_figs dtype = if is_f32 dtype then 9 else 17
+let apfloat_default_text ~precision v =
+  let sign = if Float.sign_bit v then "-" else "" in
+  let digits, exp = scientific_digits ~precision (Float.abs v) in
+  let buffer = String.concat "" (List.map string_of_int digits) in
+  let n = String.length buffer in
+  let scientific =
+    if exp >= 0 then exp > 3 || n + exp > precision
+    else
+      let msd = exp + n - 1 in
+      if msd >= 0 then false else -msd > 3
+  in
+  if scientific then
+    let e = exp + n - 1 in
+    sign
+    ^ String.make 1 buffer.[0]
+    ^ "."
+    ^ (if n = 1 then "0" else String.sub buffer 1 (n - 1))
+    ^ "E"
+    ^ (if e >= 0 then "+" else "-")
+    ^ string_of_int (abs e)
+  else if exp >= 0 then sign ^ buffer ^ String.make exp '0'
+  else
+    let whole = exp + n in
+    if whole > 0 then
+      sign ^ String.sub buffer 0 whole ^ "."
+      ^ String.sub buffer whole (n - whole)
+    else sign ^ "0." ^ String.make (-whole) '0' ^ buffer
 
 let stage2 dtype v =
-  let p = sig_figs dtype in
-  let s = Printf.sprintf "%.*e" (p - 1) v in
-  let ei = String.index s 'e' in
-  let mant = String.sub s 0 ei in
-  let e = int_of_string (String.sub s (ei + 1) (String.length s - ei - 1)) in
-  let neg = mant.[0] = '-' in
-  let mant = if neg then String.sub mant 1 (String.length mant - 1) else mant in
-  let digits =
-    strip_trailing_zeros (String.concat "" (String.split_on_char '.' mant))
-  in
-  let sign = if neg then "-" else "" in
-  let ndig = String.length digits in
-  if e >= -3 && e <= p - 2 then
-    let pp = e + 1 in
-    if pp >= ndig then hex_bits dtype v
-    else if pp <= 0 then sign ^ "0." ^ String.make (-pp) '0' ^ digits
-    else sign ^ String.sub digits 0 pp ^ "." ^ String.sub digits pp (ndig - pp)
-  else
-    let m =
-      if ndig = 1 then digits ^ ".0"
-      else String.sub digits 0 1 ^ "." ^ String.sub digits 1 (ndig - 1)
-    in
-    let es =
-      if e >= 0 then Printf.sprintf "+%d" e else Printf.sprintf "-%d" (-e)
-    in
-    sign ^ m ^ "E" ^ es
+  let precision = if is_f32 dtype then 9 else 17 in
+  let text = apfloat_default_text ~precision v in
+  if String.contains text '.' then text else hex_bits dtype v
 
 let narrow_stage2 dtype v =
-  let p = match dtype with Dtype.F16 -> 5 | _ -> 4 in
-  let s = Printf.sprintf "%.*e" (p - 1) v in
-  let ei = String.index s 'e' in
-  let e = int_of_string (String.sub s (ei + 1) (String.length s - ei - 1)) in
-  if e >= -3 && e <= p - 2 then Printf.sprintf "%.*f" (max (p - 1 - e) 0) v
-  else Printf.sprintf "%sE%+d" (String.sub s 0 ei) e
+  let precision = match dtype with Dtype.F16 -> 5 | _ -> 4 in
+  apfloat_default_text ~precision v
 
 let round_half_even x =
   let r = Float.floor x in

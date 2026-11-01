@@ -170,10 +170,31 @@ let register_custom_rule rule =
   Hashtbl.replace custom_rules id rule;
   id
 
+let custom_names : (int, string * string) Hashtbl.t = Hashtbl.create 16
+
+let register_custom_names id ~name ~jvp_name =
+  Hashtbl.replace custom_names id (name, jvp_name)
+
+let custom_names_of id = Hashtbl.find_opt custom_names id
+
 let custom_rule id =
   match Hashtbl.find_opt custom_rules id with
   | Some rule -> rule
   | None -> failwith "core: unknown custom derivative rule"
+
+let custom_call_jaxprs : (int * aval list, closed_jaxpr) Hashtbl.t =
+  Hashtbl.create 64
+
+let note_custom_call_jaxpr id avals c =
+  Hashtbl.replace custom_call_jaxprs (id, avals) c
+
+let find_custom_call_jaxpr id avals =
+  Hashtbl.find_opt custom_call_jaxprs (id, avals)
+
+let custom_call_jaxprs_of id =
+  Hashtbl.fold
+    (fun (rule, _) c acc -> if rule = id then c :: acc else acc)
+    custom_call_jaxprs []
 
 let with_eval_dynamic thunk = new_dynamic eval_trace thunk
 
@@ -395,7 +416,9 @@ let rec dispatch prim args =
   | Convert_element_type dt, [ Concrete a ]
     when top.kind = KJaxpr && Array.length (Ndarray.shape a) = 0 -> (
       match rules.impl prim [ a ] with
-      | [ r ] -> [ Concrete (Ndarray.canonicalize dt r) ]
+      | [ r ] ->
+          let r = Ndarray.canonicalize dt r in
+          [ Concrete (if Ndarray.weak a then Ndarray.as_weak r else r) ]
       | _ -> invalid_arg "dispatch: convert arity")
   | Select_n, which :: first :: rest
     when List.exists (fun v -> value_shape v <> value_shape first) rest
@@ -495,6 +518,31 @@ let bind1 prim args =
   | [ out ] -> out
   | _ -> invalid_arg "bind1: expected a single output"
 
+let weak_convert = ref false
+
+let convert_like ~weak v dt =
+  let old_dt, old_weak =
+    match v with
+    | Concrete a -> (Ndarray.dtype a, Ndarray.weak a)
+    | Tracer t -> (t.aval.dtype, t.aval.weak_type)
+    | Device b -> (Pjrt.Buffer.element_type b, false)
+  in
+  if old_dt = dt && old_weak = weak then v
+  else
+    match v with
+    | Concrete a when Array.length (Ndarray.shape a) = 0 -> (
+        match rules.impl (Convert_element_type dt) [ a ] with
+        | [ r ] ->
+            let r = Ndarray.canonicalize dt r in
+            Concrete (if weak then Ndarray.as_weak r else r)
+        | _ -> invalid_arg "convert_like: arity")
+    | _ ->
+        let saved = !weak_convert in
+        weak_convert := weak;
+        Fun.protect
+          ~finally:(fun () -> weak_convert := saved)
+          (fun () -> bind1 (Convert_element_type dt) [ v ])
+
 let top_is_staging args = (find_top_trace args).kind = KJaxpr
 
 let staging () =
@@ -514,9 +562,15 @@ let splat dt sh x =
       (Broadcast_in_dim { shape = sh; dims = [||] })
       [ Concrete (splat_host dt [||] 1 x) ]
 
+let py_scalar dt x = Concrete (Ndarray.as_weak (splat_host dt [||] 1 x))
+
 let get_aval = function
   | Concrete a ->
-      { shape = Ndarray.shape a; dtype = Ndarray.dtype a; weak_type = false }
+      {
+        shape = Ndarray.shape a;
+        dtype = Ndarray.dtype a;
+        weak_type = Ndarray.weak a;
+      }
   | Tracer t -> t.aval
   | Device b ->
       {

@@ -169,6 +169,31 @@ let leak_smoke () =
       (growth < 64 * 1024 * 1024)
   end
 
+let compile_path_matches_jax () =
+  let f32 sh : T.aval = { shape = sh; dtype = Dt.F32; weak_type = false } in
+  let cj =
+    J.make_jaxpr
+      [ f32 [| 3 |]; f32 [| 2 |] ]
+      (function
+        | [ x; _ ] ->
+            let _dead = Core.bind1 T.Exp [ x ] in
+            [ Core.bind1 T.Sin [ x ] ]
+        | _ -> assert false)
+  in
+  let lowered = Ojax.Stablehlo.Emit.lower ~name:"f" cj in
+  Alcotest.(check (list int)) "kept" [ 0 ] lowered.kept;
+  Alcotest.(check string)
+    "text"
+    "module @jit_f attributes {mhlo.num_partitions = 1 : i32, \
+     mhlo.num_replicas = 1 : i32} {\n\
+    \  func.func public @main(%arg0: tensor<3xf32>) -> (tensor<3xf32> \
+     {jax.result_info = \"result\"}) {\n\
+    \    %0 = stablehlo.sine %arg0 : tensor<3xf32>\n\
+    \    return %0 : tensor<3xf32>\n\
+    \  }\n\
+     }\n"
+    lowered.text
+
 let () =
   Alcotest.run "backend"
     [
@@ -180,6 +205,7 @@ let () =
             (check_executor Dt.I32 [| 1.0; -2.0; 3.0 |] [| 4.0; 5.0; -6.0 |]);
           Alcotest.test_case "jit concrete" `Quick jit_concrete;
           Alcotest.test_case "jit under jvp" `Quick jit_under_jvp;
+          Alcotest.test_case "compile path text" `Quick compile_path_matches_jax;
         ] );
       ( "seam",
         [

@@ -1,7 +1,10 @@
 open Types
 
-let custom_jvp primal ~jvp =
+let custom_jvp ?name ?(jvp_name = "jvp") primal ~jvp =
   let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp }) in
+  (match name with
+  | Some name -> Core.register_custom_names id ~name ~jvp_name
+  | None -> ());
   fun args -> Core.bind (Custom_jvp_call id) args
 
 let custom_vjp primal ~fwd ~bwd =

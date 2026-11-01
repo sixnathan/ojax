@@ -77,6 +77,9 @@ type custom_rule =
 
 val register_custom_rule : custom_rule -> int
 val custom_rule : int -> custom_rule
+val note_custom_call_jaxpr : int -> aval list -> closed_jaxpr -> unit
+val find_custom_call_jaxpr : int -> aval list -> closed_jaxpr option
+val custom_call_jaxprs_of : int -> closed_jaxpr list
 val with_eval_dynamic : (unit -> 'a) -> 'a
 val ffi_impl : (primitive -> Ndarray.t list -> Ndarray.t list) ref
 val named_axis_trace : (string -> trace option) ref
@@ -116,3 +119,8 @@ val elementwise_shape : int array list -> int array
 val is_elementwise : primitive -> bool
 val call_inline : (closed_jaxpr -> value list -> value list) ref
 val top_is_staging : value list -> bool
+val register_custom_names : int -> name:string -> jvp_name:string -> unit
+val custom_names_of : int -> (string * string) option
+val py_scalar : Dtype.t -> float -> value
+val weak_convert : bool ref
+val convert_like : weak:bool -> value -> Dtype.t -> value

@@ -169,5 +169,6 @@ val with_printoptions :
 
 val array_str : value -> string
 val array_repr : value -> string
+val array_str_jax : value -> string
 val packbits : ?axis:int -> ?bitorder:string -> value -> value
 val unpackbits : ?axis:int -> ?count:int -> ?bitorder:string -> value -> value

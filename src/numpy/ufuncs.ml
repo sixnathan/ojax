@@ -98,17 +98,20 @@ let promote_shapes vs =
                   [ v ])
             vs
 
-let promote_to dt vs =
+let result_flags vs =
+  Dtypes.result_type (List.map (fun v -> (dtype v, weak v)) vs)
+
+let promote_with map vs =
   check_rank_promotion vs;
-  promote_shapes (List.map (fun v -> convert v dt) vs)
+  let dt, is_weak = result_flags vs in
+  let dt = map dt in
+  promote_shapes (List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs)
 
-let result_dtype vs =
-  let dt, _ = Dtypes.result_type (List.map (fun v -> (dtype v, weak v)) vs) in
-  dt
-
-let promote vs = promote_to (result_dtype vs) vs
-let promote_inexact vs = promote_to (to_inexact_dtype (result_dtype vs)) vs
-let promote_numeric vs = promote_to (to_numeric_dtype (result_dtype vs)) vs
+let result_dtype vs = fst (result_flags vs)
+let promote_to dt vs = promote_with (fun _ -> dt) vs
+let promote vs = promote_with Fun.id vs
+let promote_inexact vs = promote_with to_inexact_dtype vs
+let promote_numeric vs = promote_with to_numeric_dtype vs
 let p1 = function [ a ] -> a | _ -> assert false
 let p2 = function [ a; b ] -> (a, b) | _ -> assert false
 let unary_inexact prim x = bind1 prim [ p1 (promote_inexact [ x ]) ]

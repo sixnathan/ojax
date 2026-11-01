@@ -131,9 +131,25 @@ let printing () =
     "summarized" "[0 1 ... 8 9]"
     (X.with_printoptions ~threshold:4 ~edgeitems:2 (fun () -> X.array_str big))
 
+let jax_repr () =
+  let check name expected v =
+    Alcotest.(check string) name expected (X.array_repr v)
+  in
+  check "aligned" "Array([1.        , 2.5       , 3.14159265], dtype=float64)"
+    (T.Concrete (Nd.of_floats D.F64 [| 3 |] [| 1.0; 2.5; 3.14159265358979 |]));
+  check "matrix" "Array([[ 1.5, -2. ],\n       [ 3. ,  4. ]], dtype=float32)"
+    (T.Concrete (Nd.of_floats D.F32 [| 2; 2 |] [| 1.5; -2.0; 3.0; 4.0 |]));
+  check "ints" "Array([ 1, 20], dtype=int32)"
+    (T.Concrete (Nd.of_floats D.I32 [| 2 |] [| 1.0; 20.0 |]));
+  check "bools" "Array([ True, False], dtype=bool)"
+    (T.Concrete (Nd.of_floats D.Bool [| 2 |] [| 1.0; 0.0 |]));
+  check "empty" "Array([], shape=(0, 3), dtype=float32)"
+    (T.Concrete (Nd.of_floats D.F32 [| 0; 3 |] [||]))
+
 let () =
   Alcotest.run "numpy_io"
     [
+      ("repr", [ Alcotest.test_case "jax repr" `Quick jax_repr ]);
       ( "files",
         [
           Alcotest.test_case "reads numpy files" `Quick reads_numpy;

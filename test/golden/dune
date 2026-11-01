@@ -2,6 +2,9 @@
  (name manifest)
  (modules npz compare exact_floor parity_cases manifest)
  (libraries alcotest yojson ojax)
+ (preprocess
+  (action
+   (run %{exe:../../tools/ltr/ltr.exe} %{input-file})))
  (deps
   (source_tree %{project_root}/goldens/dtypes)
   (source_tree %{project_root}/goldens/lax)

@@ -211,9 +211,12 @@ let eager_impl prim inputs =
       inputs
   in
   let closed = Jaxpr.make_jaxpr avals (fun args -> Core.bind prim args) in
-  let text = Stablehlo.Emit.emit_closed_jaxpr closed in
+  let { Stablehlo.Emit.text; kept } =
+    Stablehlo.Emit.lower ~name:"ffi_call" closed
+  in
+  let table = Array.of_list inputs in
   let outs =
-    Backend.run_text_forced text (List.map (fun nd -> Concrete nd) inputs)
+    Backend.run_text_forced text (List.map (fun i -> Concrete table.(i)) kept)
   in
   List.map
     (function

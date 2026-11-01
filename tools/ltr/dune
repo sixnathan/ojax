@@ -1,0 +1,3 @@
+(executable
+ (name ltr)
+ (libraries compiler-libs.common))

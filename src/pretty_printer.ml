@@ -701,15 +701,6 @@ let jax_params (e : eqn) =
       ]
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
-  | Pad cfg as p when Np_ints.prim_marked p ->
-      let one (lo, hi, i) =
-        Printf.sprintf "(np.int64(%d), np.int64(%d), %d)" lo hi i
-      in
-      let items = Array.to_list (Array.map one cfg) in
-      let body =
-        match items with [ x ] -> x ^ "," | _ -> String.concat ", " items
-      in
-      [ ("padding_config", Plain ("(" ^ body ^ ")")) ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]

@@ -347,50 +347,39 @@ let pad_batch (cfg : (int * int * int) array) (vals : value list)
   | [ operand; pv ], [ Some d; None ] ->
       let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
       (b1 (Pad cfg2) [ operand; pv ], Some d)
-  | [ operand; pv ], [ ob; pvb ] ->
-      let size =
-        match (ob, pvb) with
-        | Some d, _ -> (Core.get_aval operand).shape.(d)
-        | None, Some d -> (Core.get_aval pv).shape.(d)
-        | None, None -> failwith "batching: pad with nothing batched"
-      in
-      let leading v bdim =
-        let a = Core.get_aval v in
-        match bdim with
-        | Some d ->
-            let n = Array.length a.shape in
-            let perm =
-              Array.of_list
-                (d :: List.filter (fun i -> i <> d) (List.init n Fun.id))
-            in
-            b1 (Transpose perm) [ v ]
+  | [ operand; pv ], [ ob; Some pd ] ->
+      let operand, d =
+        match ob with
+        | Some d -> (operand, d)
         | None ->
-            b1
-              (Broadcast_in_dim
-                 {
-                   shape = Array.append [| size |] a.shape;
-                   dims = Array.init (Array.length a.shape) (fun i -> i + 1);
-                 })
-              [ v ]
+            let a = Core.get_aval operand in
+            let size = (Core.get_aval pv).shape.(pd) in
+            ( b1
+                (Broadcast_in_dim
+                   {
+                     shape = Array.append [| size |] a.shape;
+                     dims = Array.init (Array.length a.shape) (fun i -> i + 1);
+                   })
+                [ operand ],
+              0 )
       in
-      let x = leading operand ob in
-      let fill = leading pv pvb in
-      let cfg2 = insert_pad_cfg cfg 0 (0, 0, 0) in
-      let dt = (Core.get_aval x).dtype in
-      let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
-      let padded = b1 (Pad cfg2) [ x; zero ] in
+      let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
+      let a = Core.get_aval operand in
+      let zero = Concrete (Ndarray.of_floats a.dtype [||] [| 0.0 |]) in
+      let padded = b1 (Pad cfg2) [ operand; zero ] in
       let keep =
-        Concrete
-          (Ndarray.of_floats Dtype.Bool (Core.get_aval x).shape
-             (Array.make (Array.fold_left ( * ) 1 (Core.get_aval x).shape) 1.0))
+        b1
+          (Broadcast_in_dim { shape = a.shape; dims = [||] })
+          [ Concrete (Ndarray.of_floats Dtype.Bool [||] [| 1.0 |]) ]
       in
       let off = Concrete (Ndarray.of_floats Dtype.Bool [||] [| 0.0 |]) in
       let mask = b1 (Pad cfg2) [ keep; off ] in
       let out_shape = (Core.get_aval padded).shape in
       let wide_fill =
-        b1 (Broadcast_in_dim { shape = out_shape; dims = [| 0 |] }) [ fill ]
+        b1 (Broadcast_in_dim { shape = out_shape; dims = [| d |] }) [ pv ]
       in
-      (b1 Select_n [ mask; wide_fill; padded ], Some 0)
+      (b1 Select_n [ mask; wide_fill; padded ], Some d)
+  | [ operand; pv ], [ None; None ] -> (b1 (Pad cfg) [ operand; pv ], None)
   | _ -> failwith "batching: pad expects 2 operands"
 
 let rev_batch (dims : int array) (x : value) (bdim : int option) :
@@ -533,15 +522,16 @@ let bump arr = Array.map (fun i -> i + 1) arr
 let mark_all arr = Np_ints.mark arr
 let mark_tail arr = Np_ints.mark_where (fun i -> i > 0) arr
 
-let gather_batch ?clip (axis_size : int) (gd : gather_dims)
+let gather_batch ?clip ?fill (axis_size : int) (gd : gather_dims)
     (slice_sizes : int array) (vals : value list) (bdims : int option list) :
     value * int option =
   let gather ~sorted gd' slice_sizes =
     let prim = Gather { dimension_numbers = gd'; slice_sizes } in
-    match clip with
-    | Some was_sorted ->
+    match (clip, fill) with
+    | Some was_sorted, _ ->
         Np_ints.mark_gather_clip ~sorted:(was_sorted && sorted) prim
-    | None -> prim
+    | None, Some (repr, value) -> Np_ints.mark_gather_fill prim repr value
+    | None, None -> prim
   in
   match (vals, bdims) with
   | [ operand; indices ], [ ob; ib ] -> (
@@ -933,6 +923,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Gather { dimension_numbers; slice_sizes } ->
       gather_batch
         ?clip:(Np_ints.gather_clip_of prim)
+        ?fill:(Np_ints.gather_fill_of prim)
         axis_size dimension_numbers slice_sizes vals bdims
   | Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
   | Scatter_max _ ->
@@ -1663,14 +1654,12 @@ let unstacks_operands prim (bdims : int option list) =
   | Custom_linear_solve _, _ -> false
   | ( ( Reduce_window _ | Select_and_scatter _ | Threefry2x32
       | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-      | Random_bits _ | Random_wrap | Random_unwrap | While _
-      | Rng_bit_generator _ ),
+      | Random_bits _ | Random_wrap | Random_unwrap | While _ ),
       _ ) ->
       true
   | Custom_vjp_call id, _ -> (
       match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
   | Dynamic_update_slice, _ :: _ :: indices -> any_batched indices
-  | Pad _, [ _; padding ] -> padding <> None
   | Reduce _, _ ->
       let n = List.length bdims / 2 in
       any_batched (List.filteri (fun i _ -> i >= n) bdims)
@@ -2216,6 +2205,78 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
         (Core.bind prim args)
+  | Reduce_window { reducer; window }
+    when List.for_all Option.is_none
+           (List.filteri (fun i _ -> i >= List.length bdims / 2) bdims) ->
+      let n = List.length vals / 2 in
+      let args =
+        List.mapi
+          (fun i (v, b) -> if i < n then bdim_at_front axis_size v b else v)
+          (List.combine vals bdims)
+      in
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
+        (Core.bind
+           (Reduce_window { reducer; window = window_insert window 0 })
+           args)
+  | Rng_bit_generator ({ rbg_shape; _ } as params) -> (
+      match (vals, bdims) with
+      | [ keys ], [ None ] ->
+          List.map
+            (fun o -> Tracer (new_batch_tracer trace o None))
+            (Core.bind prim [ keys ])
+      | [ keys ], [ Some d ] -> (
+          let keys = moveaxis d 0 keys in
+          let shape = (Core.get_aval keys).shape in
+          let rank = Array.length shape in
+          let key =
+            b1 (Squeeze [| 0 |])
+              [
+                b1
+                  (Slice
+                     {
+                       start_indices = Array.make rank 0;
+                       limit_indices =
+                         Array.mapi (fun i n -> if i = 0 then 1 else n) shape;
+                       strides = None;
+                     })
+                  [ keys ];
+              ]
+          in
+          match
+            Core.bind
+              (Rng_bit_generator
+                 {
+                   params with
+                   rbg_shape = Array.append [| shape.(0) |] rbg_shape;
+                 })
+              [ key ]
+          with
+          | [ new_key; bits ] ->
+              let zero =
+                Concrete (Ndarray.of_floats Dtype.I32 [||] [| 0.0 |])
+              in
+              let new_keys =
+                Core.bind1 Dynamic_update_slice
+                  (keys
+                  :: b1
+                       (Broadcast_in_dim
+                          {
+                            shape =
+                              Array.mapi
+                                (fun i n -> if i = 0 then 1 else n)
+                                shape;
+                            dims = Array.init (rank - 1) (fun i -> i + 1);
+                          })
+                       [ new_key ]
+                  :: List.init rank (fun _ -> zero))
+              in
+              [
+                Tracer (new_batch_tracer trace new_keys (Some 0));
+                Tracer (new_batch_tracer trace bits (Some 0));
+              ]
+          | _ -> failwith "batching: rng_bit_generator arity")
+      | _ -> failwith "batching: rng_bit_generator arity")
   | _ when unstacks_operands prim bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

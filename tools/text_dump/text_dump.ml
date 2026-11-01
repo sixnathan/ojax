@@ -91,7 +91,7 @@ let parity_case oc ~set case =
         (traced_debug (List.length avals))
         (fun () ->
           Ojax.Jaxpr.make_jaxpr avals (fun args ->
-              Parity_cases.run op params (lookup args))))
+              Parity_cases.run_cases op params (lookup args))))
 
 let f32 shape : T.aval = { shape; dtype = D.F32; weak_type = false }
 let of_dtype dtype shape : T.aval = { shape; dtype; weak_type = false }

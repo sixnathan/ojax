@@ -2519,6 +2519,131 @@ and enter_region_later ctx cj target_ids header =
   enter_region ctx cj target_ids;
   emit_region_returning ctx cj.jaxpr
 
+and scan_unrolled ~length ~reverse ~num_carry ~unroll (body : closed_jaxpr) args
+    =
+  let b1 = Core.bind1 in
+  let split_at l n =
+    match Util.split_list l [ n ] with
+    | [ a; b ] -> (a, b)
+    | _ -> invalid_arg "Stablehlo.Emit: scan arity"
+  in
+  let shape_of v = (Core.get_aval v).shape in
+  let slice_leading v low high =
+    let sh = shape_of v in
+    let start = Array.mapi (fun d _ -> if d = 0 then low else 0) sh in
+    let limit = Array.mapi (fun d s -> if d = 0 then high else s) sh in
+    b1
+      (Slice { start_indices = start; limit_indices = limit; strides = None })
+      [ v ]
+  in
+  let tail sh = Array.sub sh 1 (Array.length sh - 1) in
+  let index_at v i = b1 (Squeeze [| 0 |]) [ slice_leading v i (i + 1) ] in
+  let stack vs =
+    match vs with
+    | [] -> invalid_arg "Stablehlo.Emit: empty unrolled block"
+    | first :: _ ->
+        let sh = shape_of first in
+        let lifted =
+          List.map
+            (fun v ->
+              b1
+                (Broadcast_in_dim
+                   {
+                     shape = Array.append [| 1 |] sh;
+                     dims = Array.init (Array.length sh) (fun d -> d + 1);
+                   })
+                [ v ])
+            vs
+        in
+        b1 (Concatenate 0) lifted
+  in
+  let inner n carry xs =
+    let carry = ref carry and collected = ref [] in
+    for i_ = 0 to n - 1 do
+      let i = if reverse then n - i_ - 1 else i_ in
+      let x = List.map (fun v -> index_at v i) xs in
+      let outs = Jaxpr.eval_closed_jaxpr body (!carry @ x) in
+      let next, y = split_at outs num_carry in
+      carry := next;
+      collected := y :: !collected
+    done;
+    let per_iter = if reverse then !collected else List.rev !collected in
+    let n_ys = List.length (List.hd per_iter) in
+    let ys =
+      List.init n_ys (fun k ->
+          stack (List.map (fun y -> List.nth y k) per_iter))
+    in
+    (!carry, ys)
+  in
+  let carry, xs = split_at args num_carry in
+  let num_trips, remainder =
+    if unroll <= 0 then (0, length) else (length / unroll, length mod unroll)
+  in
+  let xs_main, xs_rem =
+    if remainder = 0 then (xs, [])
+    else if not reverse then
+      ( List.map (fun x -> slice_leading x 0 (num_trips * unroll)) xs,
+        List.map (fun x -> slice_leading x (num_trips * unroll) length) xs )
+    else
+      ( List.map (fun x -> slice_leading x remainder length) xs,
+        List.map (fun x -> slice_leading x 0 remainder) xs )
+  in
+  let carry, ys_main =
+    if num_trips = 0 then (carry, [])
+    else
+      let xss =
+        List.map
+          (fun x ->
+            b1
+              (Reshape
+                 (Array.append [| num_trips; unroll |] (tail (shape_of x))))
+              [ x ])
+          xs_main
+      in
+      let block_avals =
+        List.map Core.get_aval carry
+        @ List.map
+            (fun x ->
+              let a = Core.get_aval x in
+              { a with shape = tail a.shape })
+            xss
+      in
+      let block =
+        Jaxpr.make_jaxpr block_avals (fun state ->
+            let c, x = split_at state num_carry in
+            let c', ys = inner unroll c x in
+            c' @ ys)
+      in
+      let outs =
+        scan_as_while ~length:num_trips ~reverse ~num_carry block (carry @ xss)
+      in
+      let c, stacked = split_at outs num_carry in
+      ( c,
+        List.map
+          (fun y ->
+            let sh = shape_of y in
+            b1
+              (Reshape
+                 (Array.append
+                    [| num_trips * unroll |]
+                    (Array.sub sh 2 (Array.length sh - 2))))
+              [ y ])
+          stacked )
+  in
+  if remainder = 0 then carry @ ys_main
+  else
+    let carry, ys_rem = inner remainder carry xs_rem in
+    let ys =
+      if ys_main = [] then ys_rem
+      else
+        List.map2
+          (fun main rem ->
+            b1 (Concatenate 0)
+              (if reverse then [ rem; main ] else [ main; rem ]))
+          ys_main ys_rem
+    in
+    carry @ ys
+
 and scan_as_while ~length ~reverse ~num_carry (body : closed_jaxpr) args =
   let b1 = Core.bind1 in
   let split_at l n =
@@ -3253,9 +3378,12 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Reduce_window { reducer; window } ->
       emit_reduce_window_general ctx eqn in_ids reducer window
   | While { cond; body } -> emit_while ctx eqn in_ids cond body
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll = 1 } ->
       emit_inlined ctx eqn in_ids
         (scan_as_while ~length ~reverse ~num_carry jaxpr)
+  | Scan { length; reverse; num_carry; jaxpr; unroll } ->
+      emit_inlined ctx eqn in_ids
+        (scan_unrolled ~length ~reverse ~num_carry ~unroll jaxpr)
   | Select_and_scatter _ ->
       failwith
         "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \

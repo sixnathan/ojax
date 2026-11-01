@@ -1259,18 +1259,21 @@ let polyfit ?rcond ?w x y deg =
   U.divide c scale_c
 
 let roots_of_coefficients p =
-  let dt = dtype_of p in
-  let n = (shape p).(0) in
-  let d = n - 1 in
-  let tail = L.slice_in_dim ~axis:0 p 1 n in
-  let lead = L.slice_in_dim ~axis:0 p 0 1 in
-  let row = L.neg (U.divide tail lead) in
-  let top = NL.reshape row [| 1; d |] in
-  let companion =
-    if d = 1 then top
-    else NL.concatenate ~axis:0 [ top; NL.eye ~m:d ~dtype:dt (d - 1) ]
-  in
-  Linalg.eigvals companion
+  Eager_jit.one "numpy.extras._roots_no_zeros" () [] [ p ] (fun _ vals ->
+      let p = List.hd vals in
+      let dt = dtype_of p in
+      let n = (shape p).(0) in
+      let d = n - 1 in
+      let ones = L.full [| d - 1 |] 1.0 dt in
+      let companion = NL.diag ~k:(-1) ones in
+      let tail = L.slice_in_dim ~axis:0 p 1 n in
+      let lead = L.index_in_dim ~axis:0 ~keepdims:false p 0 in
+      let row = U.divide (U.negative tail) lead in
+      let companion =
+        L.dynamic_update_index_in_dim ~axis:0 companion row
+          (Core.splat Dtype.I32 [||] 0.0)
+      in
+      Linalg.eigvals companion)
 
 let roots ?(strip_zeros = true) p =
   let p = as_inexact p in
@@ -1296,22 +1299,8 @@ let roots ?(strip_zeros = true) p =
     while !lead < n && not (nonzero !lead) do
       incr lead
     done;
-    let trail = ref n in
-    while !trail > !lead && not (nonzero (!trail - 1)) do
-      decr trail
-    done;
-    let zero_roots = n - !trail in
-    let zeros =
-      Concrete
-        (Ndarray.of_complex complex_dt [| zero_roots |]
-           (Array.make zero_roots Complex.zero))
-    in
-    if !trail - !lead < 2 then zeros
-    else
-      let values =
-        roots_of_coefficients (L.slice_in_dim ~axis:0 p !lead !trail)
-      in
-      if zero_roots = 0 then values else NL.concatenate [ values; zeros ]
+    if n - !lead < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
+    else roots_of_coefficients (L.slice_in_dim ~axis:0 p !lead n)
   end
 
 let fromfunction f shape_ ~dtype =

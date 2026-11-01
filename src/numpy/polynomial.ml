@@ -53,7 +53,6 @@ let slice_axis v axis lo hi =
 let neg v = bind1 T.Neg [ v ]
 
 let polyval ?(unroll = 16) p x =
-  ignore unroll;
   let p, x = two (promote_dtypes [ p; x ]) in
   let sh_p = shape p in
   let tail = Array.sub sh_p 1 (Array.length sh_p - 1) in
@@ -64,7 +63,7 @@ let polyval ?(unroll = 16) p x =
     | [ y; pk ] -> [ UF.add (UF.multiply y x) pk ]
     | _ -> assert false
   in
-  match Lax.scan body [ y0 ] [ p ] with [ y ] -> y | _ -> assert false
+  match Lax.scan ~unroll body [ y0 ] [ p ] with [ y ] -> y | _ -> assert false
 
 let pad_leading v k =
   if k = 0 then v

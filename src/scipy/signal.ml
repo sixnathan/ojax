@@ -456,34 +456,36 @@ let csd ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft
       match average with
       | "mean" -> Numpy.Reductions.mean ~axis:[| last |] swapped
       | "median" ->
-          let bias =
-            let total = ref 1.0 in
-            let k = ref 2 in
-            while !k < n do
-              total :=
-                !total
-                +. (1.0 /. float_of_int (!k + 1))
-                -. (1.0 /. float_of_int !k);
-              k := !k + 2
-            done;
-            !total
+          let dt = dtype_of swapped in
+          let real_dt = real_part_dtype dt in
+          let ii_2 =
+            NL.arange ~start:2.0 ~step:2.0 ~dtype:real_dt (float_of_int n)
           in
+          let py_float = Numpy.Jnp_util.py_float in
+          let bias =
+            Numpy.Ufuncs.add (py_float 1.0)
+              (Numpy.Reductions.sum
+                 (Numpy.Ufuncs.subtract
+                    (Numpy.Ufuncs.divide (py_float 1.0)
+                       (Numpy.Ufuncs.add ii_2 (py_float 1.0)))
+                    (Numpy.Ufuncs.divide (py_float 1.0) ii_2)))
+          in
+          let bias = NL.astype bias dt in
           let med =
             if is_complex swapped then
-              b1 Complex
-                [
-                  Numpy.Reductions.median ~axis:last (b1 Real [ swapped ]);
-                  Numpy.Reductions.median ~axis:last (b1 Imag [ swapped ]);
-                ]
+              let unit_i =
+                Concrete
+                  (Ndarray.of_complex dt [||]
+                     [| { Complex.re = 0.0; im = 1.0 } |])
+              in
+              Numpy.Ufuncs.add
+                (Numpy.Reductions.median ~axis:last (Numpy.Ufuncs.real swapped))
+                (Numpy.Ufuncs.multiply unit_i
+                   (Numpy.Reductions.median ~axis:last
+                      (Numpy.Ufuncs.imag swapped)))
             else Numpy.Reductions.median ~axis:last swapped
           in
-          b1 Div
-            [
-              med;
-              NL.astype
-                (L.full (shape med) bias (real_part_dtype (dtype_of med)))
-                (dtype_of med);
-            ]
+          Numpy.Ufuncs.divide med bias
       | other -> invalid_arg ("average must be 'median' or 'mean', got " ^ other)
   in
   (freqs, averaged)

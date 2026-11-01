@@ -1737,7 +1737,7 @@ let rec impl_base prim inputs =
               | Device _ -> failwith "lax: cond branch produced a tracer")
             outs
       | [] -> failwith "lax: cond expects a predicate")
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll = _ } ->
       let inputs_v = List.map (fun nd -> Concrete nd) inputs in
       Control_flow.Loops.scan_impl ~length ~reverse ~num_carry jaxpr inputs_v
       |> List.map (function

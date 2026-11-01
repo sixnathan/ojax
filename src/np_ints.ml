@@ -37,6 +37,7 @@ let triple_marked arr i j =
   List.exists
     (fun (other, predicate) -> other == arr && predicate i j)
     (Hashtbl.find_all triples (Hashtbl.hash arr))
+
 let sorted_scatters : (int, Obj.t) Hashtbl.t = Hashtbl.create 64
 
 let mark_scatter prim =

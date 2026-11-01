@@ -195,15 +195,9 @@ let slice_in_dim ~axis ?(stride = 1) start stop x =
   let start_indices = Array.make n 0 and limit_indices = Array.copy shape in
   start_indices.(axis) <- start;
   limit_indices.(axis) <- stop;
-  let strides =
-    if stride = 1 then None
-    else begin
-      let st = Array.make n 1 in
-      st.(axis) <- stride;
-      Some st
-    end
-  in
-  b1 (Slice { start_indices; limit_indices; strides }) [ x ]
+  let st = Array.make n 1 in
+  st.(axis) <- stride;
+  b1 (Slice { start_indices; limit_indices; strides = Some st }) [ x ]
 
 let interleave a b axis =
   let an = (Core.get_aval a).shape.(axis) in
@@ -384,11 +378,41 @@ let standard_jvp prim primals tangents rules =
   in
   (out, List.fold_left add_tangents (p2tz out) terms)
 
+let lin_call_depth = ref 0
+let residual_zeros : Ndarray.t list ref = ref []
+
+let instantiate_residual t =
+  if is_zero t && !lin_call_depth > 0 then begin
+    let a = Core.get_aval t in
+    let zero = Core.splat a.dtype [||] 0.0 in
+    if Array.length a.shape = 0 then begin
+      (match zero with
+      | Concrete nd -> residual_zeros := nd :: !residual_zeros
+      | _ -> ());
+      zero
+    end
+    else b1 (Broadcast_in_dim { shape = a.shape; dims = [||] }) [ zero ]
+  end
+  else instantiate t
+
+let is_residual_zero = function
+  | Concrete nd -> List.memq nd !residual_zeros
+  | _ -> false
+
+let instantiate_traced t =
+  if is_zero t then begin
+    let a = Core.get_aval t in
+    let zero = Core.splat a.dtype [||] 0.0 in
+    if Array.length a.shape = 0 then zero
+    else b1 (Broadcast_in_dim { shape = a.shape; dims = [||] }) [ zero ]
+  end
+  else t
+
 let linear_jvp prim primals tangents =
   let out = b1 prim primals in
   if List.for_all is_zero tangents then (out, p2tz out)
   else
-    let ts = List.map instantiate tangents in
+    let ts = List.map instantiate_residual tangents in
     (out, b1 prim ts)
 
 let zero_jvp prim primals =
@@ -1047,7 +1071,8 @@ let triangular_jvp_a ~left_side ~lower ~transpose_a ~conjugate_a ~unit_diagonal
 
 let gather_along ?(numpy_ints = false) ~axis ~rank t idx =
   let batch =
-    Array.of_list (List.filter (fun i -> i <> axis) (List.init rank Fun.id))
+    Np_ints.mark
+      (Array.of_list (List.filter (fun i -> i <> axis) (List.init rank Fun.id)))
   in
   let batch = if numpy_ints then Np_ints.mark batch else batch in
   b1
@@ -1416,9 +1441,17 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
             let g_up = instantiate g_up in
             Some (out, b1 prim (g_op :: g_up :: idx))
       | _ -> arity ())
-  | Gather _ -> (
+  | Gather { dimension_numbers; slice_sizes } -> (
+      let tangent_prim () =
+        if Np_ints.gather_fill_of prim <> None then
+          Np_ints.mark_gather_fill
+            (Gather { dimension_numbers; slice_sizes })
+            "0" (Some 0.0)
+        else prim
+      in
       match primals with
-      | [ _; indices ] -> std [ Some (fun g _ -> b1 prim [ g; indices ]); None ]
+      | [ _; indices ] ->
+          std [ Some (fun g _ -> b1 (tangent_prim ()) [ g; indices ]); None ]
       | _ -> arity ())
   | Scatter_add _ | Scatter_sub _ -> (
       match (primals, tangents) with
@@ -1940,20 +1973,7 @@ let rec jvp_pairs prim primals tangents =
       match (primals, tangents) with
       | [ a ], [ t ] -> svd_jvp ~full_matrices ~compute_uv a t
       | _ -> arity ())
-  | Scan ({ num_consts; num_carry; jaxpr; _ } as s) when num_consts > 0 ->
-      let lifted =
-        Scan
-          {
-            s with
-            num_consts = 0;
-            num_carry = num_consts + num_carry;
-            jaxpr = Core.scan_lift_consts ~num_consts jaxpr;
-          }
-      in
-      let drop = List.filteri (fun i _ -> i >= num_consts) in
-      let p, t = jvp_pairs lifted primals tangents in
-      (drop p, drop t)
-  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
+  | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       let split2 l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
@@ -1961,124 +1981,162 @@ let rec jvp_pairs prim primals tangents =
         let n = Array.length a.shape in
         { a with shape = Array.sub a.shape 1 (n - 1) }
       in
-      let nc = num_carry in
-      let carry, xs = split2 primals nc in
-      let carry_t, xs_t = split2 tangents nc in
-      let nx = List.length xs in
-      let num_ys = List.length jaxpr.jaxpr.outs - nc in
-      let carry_avals = List.map Core.get_aval carry in
-      let x_slice_avals =
-        List.map (fun x -> mapped_leading (Core.get_aval x)) xs
+      let keep flags l =
+        List.concat (List.map2 (fun f v -> if f then [ v ] else []) flags l)
       in
-      let x_zero = List.map Ad_util.is_symbolic_zero xs_t in
-      let ys_zero = ref [] in
-      let trace_body carry_zero observed =
+      let restore flags ps ts =
+        let rest = ref ts in
+        List.map2
+          (fun f p ->
+            if f then
+              begin match !rest with
+              | t :: tl ->
+                  rest := tl;
+                  t
+              | [] -> arity ()
+              end
+            else p2tz p)
+          flags ps
+      in
+      let nz l = List.map (fun t -> not (is_zero t)) l in
+      let consts, r = split2 primals num_consts in
+      let carry, xs = split2 r num_carry in
+      let consts_t, r = split2 tangents num_consts in
+      let carry_t, xs_t = split2 r num_carry in
+      let const_nz = nz consts_t and xs_nz = nz xs_t in
+      let const_avals = List.map Core.get_aval consts in
+      let carry_avals = List.map Core.get_aval carry in
+      let x_avals = List.map (fun x -> mapped_leading (Core.get_aval x)) xs in
+      let ys_nz = ref [] in
+      let trace_body carry_nz observed =
         Jaxpr.make_jaxpr
-          (carry_avals @ carry_avals @ x_slice_avals @ x_slice_avals)
+          (const_avals @ keep const_nz const_avals @ carry_avals
+         @ keep carry_nz carry_avals @ x_avals @ keep xs_nz x_avals)
           (fun args ->
-            let pc, r1 = split2 args nc in
-            let tc, r2 = split2 r1 nc in
-            let px, tx = split2 r2 nx in
+            let pc, r = split2 args num_consts in
+            let tc, r = split2 r (List.length (keep const_nz const_avals)) in
+            let pcarry, r = split2 r num_carry in
+            let tcarry, r =
+              split2 r (List.length (keep carry_nz carry_avals))
+            in
+            let px, tx = split2 r (List.length xs) in
             let po, to_ =
               jvp
                 (fun a -> Jaxpr.eval_closed_jaxpr jaxpr a)
-                (pc @ px)
-                (restore_symbolic_zeros carry_zero tc
-                @ restore_symbolic_zeros x_zero tx)
+                (pc @ pcarry @ px)
+                (restore const_nz pc tc
+                @ restore carry_nz pcarry tcarry
+                @ restore xs_nz px tx)
             in
-            let pc', py = split2 po nc in
-            let tc', ty = split2 to_ nc in
-            observed :=
-              List.map2
-                (fun z t -> z && Ad_util.is_symbolic_zero t)
-                carry_zero tc';
-            ys_zero := List.map Ad_util.is_symbolic_zero ty;
-            pc' @ tc' @ py @ ty)
+            let carry_o, ys = split2 po num_carry in
+            let tcarry_o, tys = split2 to_ num_carry in
+            observed := List.map2 ( || ) carry_nz (nz tcarry_o);
+            ys_nz := nz tys;
+            carry_o
+            @ keep carry_nz (List.map instantiate_traced tcarry_o)
+            @ ys
+            @ List.filter (fun t -> not (is_zero t)) tys)
       in
-      let carry_zero, new_body =
-        carry_zero_fixpoint trace_body
-          (List.map Ad_util.is_symbolic_zero carry_t)
-      in
-      let new_operands = carry @ carry_t @ xs @ xs_t in
+      let carry_nz, new_body = carry_zero_fixpoint trace_body (nz carry_t) in
+      let init_dot = keep carry_nz (List.map instantiate_traced carry_t) in
+      let consts_dot = keep const_nz consts_t in
       let out =
         Core.bind
           (Scan
              {
                length;
                reverse;
-               num_consts = 0;
-               num_carry = 2 * nc;
+               num_consts = num_consts + List.length consts_dot;
+               num_carry = num_carry + List.length init_dot;
                jaxpr = new_body;
                unroll;
              })
-          new_operands
+          (consts @ consts_dot @ carry @ init_dot @ xs @ keep xs_nz xs_t)
       in
-      let pcarry, r1 = split2 out nc in
-      let tcarry, r2 = split2 r1 nc in
-      let pys, tys = split2 r2 num_ys in
-      let primal_outs = pcarry @ pys in
-      let tangent_outs =
-        restore_symbolic_zeros carry_zero tcarry
-        @ restore_symbolic_zeros !ys_zero tys
-      in
-      (primal_outs, tangent_outs)
-  | While { cond_nconsts; body_nconsts; cond; body }
-    when cond_nconsts + body_nconsts > 0 ->
-      let n = cond_nconsts + body_nconsts in
-      let cond, body =
-        Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body
-          (List.map Core.get_aval primals)
-      in
-      let drop = List.filteri (fun i _ -> i >= n) in
-      let p, t =
-        jvp_pairs
-          (While { cond_nconsts = 0; body_nconsts = 0; cond; body })
-          primals tangents
-      in
-      (drop p, drop t)
-  | While { cond; body; _ } ->
+      let pcarry, r = split2 out num_carry in
+      let tcarry, r = split2 r (List.length init_dot) in
+      let pys, tys = split2 r (List.length !ys_nz) in
+      (pcarry @ pys, restore carry_nz pcarry tcarry @ restore !ys_nz pys tys)
+  | While { cond_nconsts; body_nconsts; cond; body } ->
       let split2 l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
-      let nc = List.length primals in
-      let carry_avals = List.map Core.get_aval primals in
-      let trace_body carry_zero observed =
-        Jaxpr.make_jaxpr (carry_avals @ carry_avals) (fun args ->
-            let pc, tc = split2 args nc in
+      let keep flags l =
+        List.concat (List.map2 (fun f v -> if f then [ v ] else []) flags l)
+      in
+      let restore flags ps ts =
+        let rest = ref ts in
+        List.map2
+          (fun f p ->
+            if f then
+              begin match !rest with
+              | t :: tl ->
+                  rest := tl;
+                  t
+              | [] -> arity ()
+              end
+            else p2tz p)
+          flags ps
+      in
+      let nz l = List.map (fun t -> not (is_zero t)) l in
+      let cconst, r = split2 primals cond_nconsts in
+      let bconst, init = split2 r body_nconsts in
+      let _, r = split2 tangents cond_nconsts in
+      let bconst_t, init_t = split2 r body_nconsts in
+      let bconst_nz = nz bconst_t in
+      let bconst_avals = List.map Core.get_aval bconst in
+      let carry_avals = List.map Core.get_aval init in
+      let n_carry = List.length init in
+      let trace_body carry_nz observed =
+        Jaxpr.make_jaxpr
+          (bconst_avals
+          @ keep bconst_nz bconst_avals
+          @ carry_avals @ keep carry_nz carry_avals)
+          (fun args ->
+            let pb, r = split2 args body_nconsts in
+            let tb, r = split2 r (List.length (keep bconst_nz bconst_avals)) in
+            let pc, tc = split2 r n_carry in
             let po, to_ =
               jvp
                 (fun a -> Jaxpr.eval_closed_jaxpr body a)
-                pc
-                (restore_symbolic_zeros carry_zero tc)
+                (pb @ pc)
+                (restore bconst_nz pb tb @ restore carry_nz pc tc)
             in
-            observed :=
-              List.map2
-                (fun z t -> z && Ad_util.is_symbolic_zero t)
-                carry_zero to_;
-            po @ to_)
+            observed := List.map2 ( || ) carry_nz (nz to_);
+            po @ keep carry_nz (List.map instantiate_traced to_))
       in
-      let carry_zero, new_body =
-        carry_zero_fixpoint trace_body
-          (List.map Ad_util.is_symbolic_zero tangents)
-      in
+      let carry_nz, new_body = carry_zero_fixpoint trace_body (nz init_t) in
+      let init_dot = keep carry_nz (List.map instantiate_traced init_t) in
+      let bconst_dot = keep bconst_nz bconst_t in
       let new_cond =
-        Jaxpr.make_jaxpr (carry_avals @ carry_avals) (fun args ->
-            let pc, _ = split2 args nc in
-            Jaxpr.eval_closed_jaxpr cond pc)
+        {
+          cond with
+          jid = Core.fresh_id ();
+          jaxpr =
+            {
+              cond.jaxpr with
+              in_binders =
+                cond.jaxpr.in_binders
+                @ List.map
+                    (fun v ->
+                      { vid = Core.fresh_id (); vaval = Core.get_aval v })
+                    init_dot;
+            };
+        }
       in
       let out =
         Core.bind
           (While
              {
-               cond_nconsts = 0;
-               body_nconsts = 0;
+               cond_nconsts;
+               body_nconsts = body_nconsts + List.length bconst_dot;
                cond = new_cond;
                body = new_body;
              })
-          (primals @ tangents)
+          (cconst @ bconst @ bconst_dot @ init @ init_dot)
       in
-      let pcarry, tcarry = split2 out nc in
-      (pcarry, restore_symbolic_zeros carry_zero tcarry)
+      let pcarry, tcarry = split2 out n_carry in
+      (pcarry, restore carry_nz pcarry tcarry)
   | Cond { branches; platforms } -> (
       match (primals, tangents) with
       | pred :: prim_ops, _ :: tan_ops ->
@@ -2191,7 +2249,9 @@ let same_const a b =
 
 let tape_const (b : jaxpr_builder) v =
   match v with
-  | Concrete nd when Array.length (Ndarray.shape nd) = 0 -> A_lit nd
+  | Concrete nd
+    when Array.length (Ndarray.shape nd) = 0 && not (is_residual_zero v) ->
+      A_lit nd
   | _ -> (
       match List.find_opt (fun (_, c) -> same_const c v) b.jb_constvals with
       | Some (var, _) -> A_var var
@@ -2358,9 +2418,10 @@ let trace_linearized_ref :
     ((value list -> value list) ->
     value list ->
     bool list ->
+    bool list ->
     value list * bool list * jaxpr * value list)
     ref =
-  ref (fun _ _ _ -> failwith "ad: linearize not installed")
+  ref (fun _ _ _ _ -> failwith "ad: linearize not installed")
 
 let lin_call_cache : (int * bool list * bool, lin_call) Hashtbl.t =
   Hashtbl.create 64
@@ -2373,10 +2434,14 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
       let holder = ref None in
       let primal =
         Jaxpr.make_jaxpr primal_avals (fun inputs ->
+            incr lin_call_depth;
             let pos, nzs_out, jx, consts =
-              !trace_linearized_ref
-                (fun a -> Jaxpr.eval_closed_jaxpr c a)
-                inputs nzs
+              Fun.protect
+                ~finally:(fun () -> decr lin_call_depth)
+                (fun () ->
+                  !trace_linearized_ref
+                    (fun a -> Jaxpr.eval_closed_jaxpr c a)
+                    inputs nzs [])
             in
             let index_in l v =
               let rec go i = function
@@ -2396,7 +2461,9 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
               List.map
                 (fun v ->
                   match v with
-                  | Concrete _ | Device _ -> `Value v
+                  | (Concrete _ | Device _) when not (is_residual_zero v) ->
+                      `Value v
+                  | Concrete _ | Device _ -> `Output
                   | Tracer _ -> (
                       match index_in inputs v with
                       | Some i -> `Input i
@@ -2522,6 +2589,372 @@ let lin_process_call (trace : trace) (b : jaxpr_builder) (c : closed_jaxpr)
       else po)
     pos lc.lc_nzs_out
 
+let lin_process_scan (trace : trace) (b : jaxpr_builder) ~length ~reverse
+    ~num_consts ~num_carry ~unroll (jaxpr : closed_jaxpr) primals tangents =
+  let split2 l n =
+    match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
+  in
+  let mapped_leading (a : aval) =
+    { a with shape = Array.sub a.shape 1 (Array.length a.shape - 1) }
+  in
+  let nz l = List.map (fun t -> not (is_zero t)) l in
+  let consts_in, r = split2 primals num_consts in
+  let carry, xs = split2 r num_carry in
+  let const_t, r = split2 tangents num_consts in
+  let carry_t, xs_t = split2 r num_carry in
+  let const_nz = nz const_t and xs_nz = nz xs_t in
+  let body_avals =
+    List.map Core.get_aval consts_in
+    @ List.map Core.get_aval carry
+    @ List.map (fun x -> mapped_leading (Core.get_aval x)) xs
+  in
+  let num_ys = List.length jaxpr.jaxpr.outs - num_carry in
+  let holder = ref None in
+  let trace_primal carry_nz observed =
+    Jaxpr.make_jaxpr body_avals (fun inputs ->
+        incr lin_call_depth;
+        let pos, nzs_out, jx, tconsts =
+          Fun.protect
+            ~finally:(fun () -> decr lin_call_depth)
+            (fun () ->
+              !trace_linearized_ref
+                (fun a -> Jaxpr.eval_closed_jaxpr jaxpr a)
+                inputs
+                (const_nz @ carry_nz @ xs_nz)
+                (carry_nz @ List.init num_ys (fun _ -> false)))
+        in
+        let carry_out, _ = split2 nzs_out num_carry in
+        observed := List.map2 ( || ) carry_nz carry_out;
+        let fwd_of v =
+          let rec go i = function
+            | [] -> None
+            | a :: tl ->
+                if
+                  same_const a v
+                  && (i < num_consts || i >= num_consts + num_carry)
+                then Some i
+                else go (i + 1) tl
+          in
+          match v with Tracer _ -> go 0 inputs | _ -> None
+        in
+        let fwds = List.map fwd_of tconsts in
+        let non_fwd =
+          List.concat
+            (List.map2 (fun v f -> if f = None then [ v ] else []) tconsts fwds)
+        in
+        holder := Some (nzs_out, jx, fwds);
+        pos @ non_fwd)
+  in
+  let carry_nz, primal = carry_zero_fixpoint trace_primal (nz carry_t) in
+  let nzs_out, jx, fwds =
+    match !holder with Some h -> h | None -> arity ()
+  in
+  let primal = Jaxpr.dce_keep_args primal in
+  let num_primals_out = num_carry + num_ys in
+  let others =
+    List.filteri (fun i _ -> i >= num_consts) body_avals
+    |> List.map Partial_eval.partial_val_unknown
+  in
+  let known_jx, new_consts, pvals_out =
+    Partial_eval.partial_eval_flat_instantiate
+      ~instantiate:(fun i -> i < num_primals_out)
+      (fun args -> Jaxpr.eval_closed_jaxpr primal args)
+      (List.map Partial_eval.partial_val_known consts_in @ others)
+  in
+  let _, res_pvals = split2 pvals_out num_primals_out in
+  let which_hoisted = List.map Partial_eval.is_known res_pvals in
+  let known_closed =
+    { jid = Core.fresh_id (); jaxpr = known_jx; consts = [] }
+  in
+  let out =
+    Core.bind
+      (Scan
+         {
+           length;
+           reverse;
+           num_consts = List.length new_consts;
+           num_carry;
+           jaxpr = known_closed;
+           unroll;
+         })
+      (new_consts @ carry @ xs)
+  in
+  let primals_out, ext_res = split2 out num_primals_out in
+  let hoisted_flags = ref which_hoisted in
+  let res_pvals_rest = ref res_pvals in
+  let ext_rest = ref ext_res in
+  let res =
+    List.map
+      (fun f ->
+        match f with
+        | Some i -> (List.nth primals i, i >= num_consts + num_carry)
+        | None -> (
+            let h = List.hd !hoisted_flags in
+            hoisted_flags := List.tl !hoisted_flags;
+            let pv = List.hd !res_pvals_rest in
+            res_pvals_rest := List.tl !res_pvals_rest;
+            if h then
+              match pv.pv_const with Some c -> (c, false) | None -> arity ()
+            else
+              match !ext_rest with
+              | v :: tl ->
+                  ext_rest := tl;
+                  (v, true)
+              | [] -> arity ()))
+      fwds
+  in
+  let n_res = List.length res in
+  let res_binders, tan_binders = split2 jx.in_binders n_res in
+  let int_b, ext_b =
+    List.partition
+      (fun (_, (_, moved)) -> not moved)
+      (List.combine res_binders res)
+  in
+  let tangent =
+    {
+      jid = Core.fresh_id ();
+      consts = [];
+      jaxpr =
+        {
+          jx with
+          in_binders = List.map fst int_b @ tan_binders @ List.map fst ext_b;
+        };
+    }
+  in
+  let int_atoms = List.map (fun (_, (v, _)) -> tape_const b v) int_b in
+  let ext_atoms = List.map (fun (_, (v, _)) -> tape_const b v) ext_b in
+  let carry_tan_atoms =
+    List.concat
+      (List.map2
+         (fun t f ->
+           if not f then []
+           else if not (is_zero t) then
+             match t with
+             | Tracer tt -> [ A_var (tape_var b tt) ]
+             | _ -> arity ()
+           else
+             let a = Core.get_aval t in
+             let zero = Core.splat a.dtype [||] 0.0 in
+             if Array.length a.shape = 0 then [ tape_const b zero ]
+             else begin
+               let v = { vid = Core.fresh_id (); vaval = a } in
+               b.jb_eqns <-
+                 {
+                   prim = Broadcast_in_dim { shape = a.shape; dims = [||] };
+                   inputs = [ tape_const b zero ];
+                   outs = [ v ];
+                   multiple_results = false;
+                 }
+                 :: b.jb_eqns;
+               [ A_var v ]
+             end)
+         carry_t carry_nz)
+  in
+  let tan_atoms l =
+    List.filter_map
+      (function
+        | Tracer tt when not (is_zero (Tracer tt)) ->
+            Some (A_var (tape_var b tt))
+        | _ -> None)
+      l
+  in
+  let inputs =
+    int_atoms @ tan_atoms const_t @ carry_tan_atoms @ tan_atoms xs_t @ ext_atoms
+  in
+  let scan_prim =
+    Scan
+      {
+        length;
+        reverse;
+        num_consts = List.length int_atoms + List.length (tan_atoms const_t);
+        num_carry = List.length carry_tan_atoms;
+        jaxpr = tangent;
+        unroll;
+      }
+  in
+  let out_avals =
+    Core.rules.abstract_eval scan_prim
+      (List.map Pretty_printer.atom_type inputs)
+  in
+  let out_binders =
+    List.map (fun a -> { vid = Core.fresh_id (); vaval = a }) out_avals
+  in
+  b.jb_eqns <-
+    {
+      prim = scan_prim;
+      inputs;
+      outs = out_binders;
+      multiple_results = List.length out_binders > 1;
+    }
+    :: b.jb_eqns;
+  let tan_rest = ref (List.map (fun v -> A_var v) out_binders) in
+  List.map2
+    (fun po nz ->
+      if nz then
+        begin match !tan_rest with
+        | a :: tl ->
+            tan_rest := tl;
+            Tracer (new_jvp_tracer trace po (tape_value b a))
+        | [] -> arity ()
+        end
+      else po)
+    primals_out nzs_out
+
+let lin_process_cond (trace : trace) (b : jaxpr_builder) branches platforms
+    primals tangents =
+  let split2 l n =
+    match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
+  in
+  let index, ops, tan_ops =
+    match (primals, tangents) with i :: o, _ :: t -> (i, o, t) | _ -> arity ()
+  in
+  let ops_nz = List.map (fun t -> not (is_zero t)) tan_ops in
+  let op_avals = List.map Core.get_aval ops in
+  let trace_branch inst (branch : closed_jaxpr) =
+    let holder = ref None in
+    let known =
+      Jaxpr.make_jaxpr op_avals (fun inputs ->
+          incr lin_call_depth;
+          let pos, nzs, jx, consts =
+            Fun.protect
+              ~finally:(fun () -> decr lin_call_depth)
+              (fun () ->
+                !trace_linearized_ref
+                  (fun a -> Jaxpr.eval_closed_jaxpr branch a)
+                  inputs ops_nz inst)
+          in
+          holder :=
+            Some (List.length pos, nzs, jx, List.map Core.get_aval consts);
+          pos @ consts)
+    in
+    match !holder with
+    | Some (n, nzs, jx, res) -> (known, n, nzs, jx, res)
+    | None -> arity ()
+  in
+  let out_nz =
+    match
+      List.map
+        (fun br ->
+          let _, _, nzs, _, _ = trace_branch [] br in
+          nzs)
+        branches
+    with
+    | [] -> []
+    | first :: others -> List.fold_left (List.map2 ( || )) first others
+  in
+  let traced = List.map (trace_branch out_nz) branches in
+  let tag avals =
+    let seen = ref [] in
+    List.map
+      (fun a ->
+        let n = List.length (List.filter (fun x -> x = a) !seen) in
+        seen := a :: !seen;
+        (a, n))
+      avals
+  in
+  let tagged = List.map (fun (_, _, _, _, res) -> tag res) traced in
+  let all_res =
+    List.fold_left
+      (fun acc t ->
+        List.fold_left
+          (fun acc x -> if List.mem x acc then acc else acc @ [ x ])
+          acc t)
+      [] tagged
+  in
+  let slot_of branch_tags =
+    List.map
+      (fun slot ->
+        let rec go i = function
+          | [] -> None
+          | x :: tl -> if x = slot then Some i else go (i + 1) tl
+        in
+        go 0 branch_tags)
+      all_res
+  in
+  let slots = List.map slot_of tagged in
+  let joined =
+    List.map2
+      (fun (known, n, _, _, _) slot ->
+        Jaxpr.dce_keep_args
+          (Jaxpr.make_jaxpr op_avals (fun inputs ->
+               let outs, res =
+                 split2 (Jaxpr.eval_closed_jaxpr known inputs) n
+               in
+               outs
+               @ List.map2
+                   (fun ((a : aval), _) pos ->
+                     match pos with
+                     | Some i -> List.nth res i
+                     | None ->
+                         let e = b1 (Empty2 a.dtype) [] in
+                         if Array.length a.shape = 0 then e
+                         else
+                           b1
+                             (Broadcast_in_dim { shape = a.shape; dims = [||] })
+                             [ e ])
+                   all_res slot)))
+      traced slots
+  in
+  let unknown =
+    List.map2
+      (fun (_, _, _, (jx : jaxpr), res) slot ->
+        let res_b, tan_b = split2 jx.in_binders (List.length res) in
+        let slot_b =
+          List.map2
+            (fun ((a : aval), _) pos ->
+              match pos with
+              | Some i -> List.nth res_b i
+              | None -> { vid = Core.fresh_id (); vaval = a })
+            all_res slot
+        in
+        {
+          jid = Core.fresh_id ();
+          consts = [];
+          jaxpr = { jx with in_binders = slot_b @ tan_b };
+        })
+      traced slots
+  in
+  let out = Core.bind (Cond { branches = joined; platforms }) (index :: ops) in
+  let pos, res = split2 out (List.length out_nz) in
+  let index_atom = tape_const b index in
+  let res_atoms = List.map (tape_const b) res in
+  let tan_atoms =
+    List.filter_map
+      (function
+        | Tracer t when not (is_zero (Tracer t)) -> Some (A_var (tape_var b t))
+        | _ -> None)
+      tan_ops
+  in
+  let out_binders =
+    match unknown with
+    | [] -> []
+    | first :: _ ->
+        List.map
+          (fun a ->
+            { vid = Core.fresh_id (); vaval = Pretty_printer.atom_type a })
+          first.jaxpr.outs
+  in
+  b.jb_eqns <-
+    {
+      prim = Cond { branches = unknown; platforms };
+      inputs = (index_atom :: res_atoms) @ tan_atoms;
+      outs = out_binders;
+      multiple_results = List.length out_binders > 1;
+    }
+    :: b.jb_eqns;
+  let tan_rest = ref (List.map (fun v -> A_var v) out_binders) in
+  List.map2
+    (fun po nz ->
+      if nz then
+        begin match !tan_rest with
+        | a :: tl ->
+            tan_rest := tl;
+            Tracer (new_jvp_tracer trace po (tape_value b a))
+        | [] -> arity ()
+        end
+      else po)
+    pos out_nz
+
 let joint_branch_jvp rebuild branches primals tangents =
   match (primals, tangents) with
   | index :: prim_ops, _ :: tan_ops ->
@@ -2608,6 +3041,12 @@ let jvp_process_primitive trace prim args =
   else
     match (trace.global_data, prim) with
     | GBuilder b, Xla_call c -> lin_process_call trace b c primals tangents
+    | GBuilder b, Cond { branches; platforms } ->
+        lin_process_cond trace b branches platforms primals tangents
+    | GBuilder b, Scan { length; reverse; num_consts; num_carry; jaxpr; unroll }
+      ->
+        lin_process_scan trace b ~length ~reverse ~num_consts ~num_carry ~unroll
+          jaxpr primals tangents
     | GBuilder b, _ -> lin_process trace b prim primals tangents
     | _ ->
         let pos, tos =
@@ -2686,7 +3125,7 @@ let () =
                  {
                    start_indices = start;
                    limit_indices = limit;
-                   strides = None;
+                   strides = Some (Array.make (Array.length sh) 1);
                  })
               [ x ]
           in
@@ -2775,7 +3214,7 @@ let dce_tape (eqns : eqn list) (outs : atom list) =
     [] eqns
 
 let trace_linearized_nz (f : value list -> value list) (primals : value list)
-    nzs =
+    nzs inst =
   let b =
     {
       jb_eqns = [];
@@ -2820,12 +3259,36 @@ let trace_linearized_nz (f : value list -> value list) (primals : value list)
         in
         List.split pairs)
   in
-  let nzs = List.map (fun t -> not (is_zero t)) tos in
+  let inst = if inst = [] then List.map (fun _ -> false) tos else inst in
+  let tos =
+    List.map2
+      (fun t i ->
+        if i && is_zero t then begin
+          let a = Core.get_aval t in
+          let zero = Core.splat a.dtype [||] 0.0 in
+          if Array.length a.shape = 0 then begin
+            (match zero with
+            | Concrete nd -> residual_zeros := nd :: !residual_zeros
+            | _ -> ());
+            `Const zero
+          end
+          else
+            `Const
+              (b1 (Broadcast_in_dim { shape = a.shape; dims = [||] }) [ zero ])
+        end
+        else `Tan t)
+      tos inst
+  in
+  let nzs =
+    List.map (function `Const _ -> true | `Tan t -> not (is_zero t)) tos
+  in
   let out_atoms =
     List.filter_map
       (function
-        | Tracer t when not (is_zero (Tracer t)) -> Some (A_var (tape_var b t))
-        | _ -> None)
+        | `Const v -> Some (tape_const b v)
+        | `Tan (Tracer t) when not (is_zero (Tracer t)) ->
+            Some (A_var (tape_var b t))
+        | `Tan _ -> None)
       tos
   in
   let eqns = dce_tape b.jb_eqns out_atoms in
@@ -2852,6 +3315,7 @@ let trace_linearized f primals =
     (List.map
        (fun p -> is_differentiable_dtype (Core.get_aval p).dtype)
        primals)
+    []
 
 let () = trace_linearized_ref := trace_linearized_nz
 
@@ -3302,7 +3766,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           let unit_strides = Array.for_all (fun s -> s = 1) strides in
           let cfg =
             Np_ints.mark_triples
-              (fun _ j -> j = 1 || (j = 2 && not unit_strides))
+              (fun i j ->
+                (j = 0 && Np_ints.is_marked start_indices i)
+                || j = 1
+                || (j = 2 && not unit_strides))
               (Array.init n (fun i ->
                    let s = strides.(i) in
                    let out_d = ct_shape.(i) in
@@ -3362,7 +3829,9 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               let sd = gather_to_scatter dimension_numbers in
               Some
                 (Core.bind1
-                   (Scatter_add { dimension_numbers = sd })
+                   (let p = Scatter_add { dimension_numbers = sd } in
+                    if Np_ints.gather_fill_of prim <> None then p
+                    else Np_ints.mark_prim p)
                    [ zeros; prim_val indices; ct ])
             else None
           in
@@ -3380,10 +3849,12 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                 scatter_gather_slice_sizes dimension_numbers
                   (in_aval operand).shape (in_aval updates).shape
               in
-              Some
-                (Core.bind1
-                   (Gather { dimension_numbers = gd; slice_sizes = ss })
-                   [ ct; prim_val indices ])
+              let g = Gather { dimension_numbers = gd; slice_sizes = ss } in
+              let g =
+                if Np_ints.prim_marked prim then g
+                else Np_ints.mark_gather_fill g "0" (Some 0.0)
+              in
+              Some (Core.bind1 g [ ct; prim_val indices ])
             else None
           in
           [ op_t; None; up_t ]
@@ -3483,14 +3954,15 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               (fun tv -> if is_undef tv then None else Some (prim_val tv))
               rest
           in
-          let n_cts = List.length cts in
+          let n_res = List.length residuals in
+          let cts = List.map instantiate_traced cts in
           let avals =
-            List.map Core.get_aval cts @ List.map Core.get_aval residuals
+            List.map Core.get_aval residuals @ List.map Core.get_aval cts
           in
           let transposed (branch : closed_jaxpr) =
             Jaxpr.make_jaxpr avals (fun args ->
-                let body_cts, res =
-                  match Util.split_list args [ n_cts ] with
+                let res, body_cts =
+                  match Util.split_list args [ n_res ] with
                   | [ a; b ] -> (a, b)
                   | _ -> arity ()
                 in
@@ -3513,14 +3985,16 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                         | [] -> arity ())
                     rest binders
                 in
-                eval_jaxpr_transposed branch.jaxpr
-                  (List.map (fun c -> Prim (Concrete c)) branch.consts @ inner)
-                  body_cts)
+                List.map instantiate_traced
+                  (eval_jaxpr_transposed branch.jaxpr
+                     (List.map (fun c -> Prim (Concrete c)) branch.consts
+                     @ inner)
+                     body_cts))
           in
           let in_cts =
             Core.bind
               (Cond { branches = List.map transposed branches; platforms })
-              ((prim_val pred :: cts) @ residuals)
+              ((prim_val pred :: residuals) @ cts)
           in
           let remaining = ref in_cts in
           let rest_cts =
@@ -3621,7 +4095,18 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       in
       let length_product = Array.fold_left ( * ) 1 fft_lengths in
       match fft_type with
-      | Fft_forward | Fft_inverse -> [ Some (b1 prim [ t ]) ]
+      | Fft_forward | Fft_inverse -> (
+          match
+            Jaxpr.named_jit ~name:"fft"
+              ~key:
+                ((if fft_type = Fft_forward then "f" else "i")
+                ^ String.concat ","
+                    (List.map string_of_int (Array.to_list fft_lengths)))
+              (fun a -> Core.bind prim a)
+              [ t ]
+          with
+          | [ v ] -> [ Some v ]
+          | _ -> arity ())
       | Fft_real ->
           let mask = expanded (hermitian_mask m) dt in
           let inner =
@@ -3705,16 +4190,22 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           let t = ct1 () in
           let ndim = Array.length cfg in
           let t_operand () =
-            let unpad = Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg in
+            let unpad =
+              Np_ints.mark_triples
+                (fun _ _ -> true)
+                (Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg)
+            in
             let dt = (Core.get_aval t).dtype in
             let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
             let unpadded = b1 (Pad unpad) [ t; zero ] in
             b1
               (Slice
                  {
-                   start_indices = Array.make ndim 0;
+                   start_indices = Np_ints.mark (Array.make ndim 0);
                    limit_indices = (Core.get_aval unpadded).shape;
-                   strides = Some (Array.map (fun (_, _, i) -> i + 1) cfg);
+                   strides =
+                     Some
+                       (Np_ints.mark (Array.map (fun (_, _, i) -> i + 1) cfg));
                  })
               [ unpadded ]
           in
@@ -3870,42 +4361,82 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
-  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
+  | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       let split_at l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
       let slice (a : aval) =
         { a with shape = Array.sub a.shape 1 (Array.length a.shape - 1) }
       in
-      let carry_tv, xs_tv = split_at primals num_carry in
+      let consts_tv, r = split_at primals num_consts in
+      let carry_tv, xs_tv = split_at r num_carry in
       let ct_carry, ct_ys = split_at cts num_carry in
+      let ct_carry = List.map instantiate_traced ct_carry in
+      let tv_aval = function Undef a -> a | Prim v -> Core.get_aval v in
+      let ires =
+        List.filter_map
+          (fun tv -> if is_undef tv then None else Some (prim_val tv))
+          consts_tv
+      in
+      let const_dot = List.filter is_undef consts_tv in
+      let ct_consts =
+        List.map
+          (fun tv ->
+            instantiate_traced (Ad_util.symbolic_zero_of_aval (tv_aval tv)))
+          const_dot
+      in
       let residuals =
         List.filter_map
           (fun tv -> if is_undef tv then None else Some (prim_val tv))
           xs_tv
       in
-      let n_ct = List.length cts in
+      let ys_nz = List.map (fun c -> not (is_zero c)) ct_ys in
+      let ct_ys_nz = List.filter (fun c -> not (is_zero c)) ct_ys in
+      let n_closed = List.length jaxpr.consts in
       let const_tvals = List.map (fun c -> Prim (Concrete c)) jaxpr.consts in
+      let binders = jaxpr.jaxpr.in_binders in
+      let consts_b =
+        List.filteri
+          (fun i _ -> i >= n_closed && i < n_closed + num_consts)
+          binders
+      in
       let carry_undef =
         List.filteri
           (fun i _ ->
-            i >= List.length const_tvals
-            && i < List.length const_tvals + num_carry)
-          jaxpr.jaxpr.in_binders
+            i >= n_closed + num_consts && i < n_closed + num_consts + num_carry)
+          binders
         |> List.map (fun (v : var) -> Undef v.vaval)
       in
       let x_binders =
-        List.filteri
-          (fun i _ -> i >= List.length const_tvals + num_carry)
-          jaxpr.jaxpr.in_binders
+        List.filteri (fun i _ -> i >= n_closed + num_consts + num_carry) binders
       in
+      let ys_outs = List.filteri (fun i _ -> i >= num_carry) jaxpr.jaxpr.outs in
+      let n_ires = List.length ires and n_ct_consts = List.length ct_consts in
       let transposed_body =
         Jaxpr.make_jaxpr
-          (List.map Core.get_aval ct_carry
-          @ List.map (fun c -> slice (Core.get_aval c)) ct_ys
+          (List.map Core.get_aval ires
+          @ List.map Core.get_aval ct_consts
+          @ List.map Core.get_aval ct_carry
+          @ List.map (fun c -> slice (Core.get_aval c)) ct_ys_nz
           @ List.map (fun r -> slice (Core.get_aval r)) residuals)
           (fun args ->
-            let body_cts, res = split_at args n_ct in
+            let ires_a, r = split_at args n_ires in
+            let ct_c, r = split_at r n_ct_consts in
+            let body_carry, r = split_at r num_carry in
+            let body_ys, res = split_at r (List.length ct_ys_nz) in
+            let ires_rest = ref ires_a in
+            let const_args =
+              List.map
+                (fun tv ->
+                  if is_undef tv then tv
+                  else
+                    match !ires_rest with
+                    | v :: tl ->
+                        ires_rest := tl;
+                        Prim v
+                    | [] -> arity ())
+                consts_tv
+            in
             let rest = ref res in
             let x_tvals =
               List.map2
@@ -3919,9 +4450,41 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                     | [] -> arity ())
                 xs_tv x_binders
             in
-            eval_jaxpr_transposed jaxpr.jaxpr
-              (const_tvals @ carry_undef @ x_tvals)
-              body_cts)
+            let ys_rest = ref body_ys in
+            let body_ys_all =
+              List.map2
+                (fun f atom ->
+                  if f then
+                    begin match !ys_rest with
+                    | v :: tl ->
+                        ys_rest := tl;
+                        v
+                    | [] -> arity ()
+                    end
+                  else
+                    Ad_util.symbolic_zero_of_aval
+                      (Pretty_printer.atom_type atom))
+                ys_nz ys_outs
+            in
+            let seeds =
+              let c = ref ct_c in
+              List.concat
+                (List.map2
+                   (fun tv (v : var) ->
+                     if is_undef tv then begin
+                       let s = List.hd !c in
+                       c := List.tl !c;
+                       [ (v, s) ]
+                     end
+                     else [])
+                   consts_tv consts_b)
+            in
+            let out =
+              eval_jaxpr_transposed ~seeds jaxpr.jaxpr
+                (const_tvals @ const_args @ carry_undef @ x_tvals)
+                (body_carry @ body_ys_all)
+            in
+            List.map instantiate_traced out)
       in
       let outs =
         Core.bind
@@ -3929,14 +4492,27 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
              {
                length;
                reverse = not reverse;
-               num_consts = 0;
-               num_carry;
+               num_consts = n_ires;
+               num_carry = n_ct_consts + num_carry;
                jaxpr = transposed_body;
                unroll;
              })
-          (ct_carry @ ct_ys @ residuals)
+          (ires @ ct_consts @ ct_carry @ ct_ys_nz @ residuals)
       in
-      let carry_out, xs_out = split_at outs num_carry in
+      let consts_out, r = split_at outs n_ct_consts in
+      let carry_out, xs_out = split_at r num_carry in
+      let c_rest = ref consts_out in
+      let const_cts =
+        List.map
+          (fun tv ->
+            if is_undef tv then begin
+              let c = List.hd !c_rest in
+              c_rest := List.tl !c_rest;
+              Some c
+            end
+            else None)
+          consts_tv
+      in
       let remaining = ref xs_out in
       let xs_cts =
         List.map
@@ -3950,9 +4526,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
             else None)
           xs_tv
       in
-      List.map2
-        (fun tv c -> if is_undef tv then Some c else None)
-        carry_tv carry_out
+      const_cts
+      @ List.map2
+          (fun tv c -> if is_undef tv then Some c else None)
+          carry_tv carry_out
       @ xs_cts
   | While _ ->
       failwith
@@ -4101,8 +4678,8 @@ and xla_call_transpose (c : closed_jaxpr) cts primals =
           | [] -> arity ()))
     specs
 
-and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
-    value list =
+and eval_jaxpr_transposed ?(seeds = []) (jx : jaxpr) (args : tval list)
+    (cts : value list) : value list =
   let primal_env : (int, tval) Hashtbl.t = Hashtbl.create 32 in
   let read_primal = function
     | A_var v -> (
@@ -4142,6 +4719,7 @@ and eval_jaxpr_transposed (jx : jaxpr) (args : tval list) (cts : value list) :
         | None -> Hashtbl.replace ct_env v.vid ct)
     | _ -> ()
   in
+  List.iter (fun ((v : var), c) -> Hashtbl.replace ct_env v.vid c) seeds;
   List.iter2 write_ct jx.outs cts;
   List.iter
     (fun (e : eqn) ->

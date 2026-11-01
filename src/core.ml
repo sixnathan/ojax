@@ -458,7 +458,8 @@ let rec dispatch prim args =
   | Decomposable { dimpl; _ }, _ when top.kind <> KJaxpr ->
       decomposition dimpl args
   | Gather _, _
-    when top.kind <> KJaxpr && top.kind <> KBatch
+    when top.kind <> KJaxpr && top.kind <> KJVP && top.kind <> KPE
+         && top.kind <> KBatch
          && Np_ints.gather_fill_of prim <> None ->
       !gather_fill_hook prim args
   | Xla_call c, _ when top.kind = KEval -> !call_inline c args

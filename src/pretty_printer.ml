@@ -530,14 +530,14 @@ let py_platforms platforms =
   | _ -> "(" ^ String.concat ", " items ^ ")"
 
 let py_triples a =
-  let item i j v =
-    if Np_ints.triple_marked a i j then Printf.sprintf "np.int64(%d)" v
-    else string_of_int v
+  let one i j x =
+    if Np_ints.triple_marked a i j then Printf.sprintf "np.int64(%d)" x
+    else string_of_int x
   in
   py_tuple
     (Array.to_list
        (Array.mapi
-          (fun i (x, y, z) -> py_tuple [ item i 0 x; item i 1 y; item i 2 z ])
+          (fun i (x, y, z) -> py_tuple [ one i 0 x; one i 1 y; one i 2 z ])
           a))
 
 let gather_numbers (d : gather_dims) =
@@ -600,11 +600,11 @@ let update_jaxpr prim dt =
       Hashtbl.replace update_jaxprs (prim, dt) c;
       c
 
-let scatter_params ?(sorted = false) ?update d unique =
+let scatter_params ?(sorted = false) ?update ?(mode = "FILL_OR_DROP") d unique =
   [
     ("dimension_numbers", Plain (scatter_numbers d));
     ("indices_are_sorted", Plain (py_bool (sorted || d.s_sorted_unique)));
-    ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
+    ("mode", Plain ("GatherScatterMode." ^ mode));
     ("unique_indices", Plain (py_bool (unique || d.s_sorted_unique)));
     ("update_consts", Plain "()");
     ( "update_jaxpr",
@@ -708,6 +708,8 @@ let jax_params (e : eqn) =
       ]
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
+  | Empty2 dt ->
+      [ ("dtype", Plain (dn dt)); ("memory_space", Plain "MemorySpace.Device") ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]
@@ -779,8 +781,11 @@ let jax_params (e : eqn) =
       scatter_params ~sorted:true
         ~update:(Add, in_dtype ())
         dimension_numbers true
-  | Scatter_add { dimension_numbers } ->
-      scatter_params ~update:(Add, in_dtype ()) dimension_numbers false
+  | Scatter_add { dimension_numbers } as p ->
+      let mode =
+        if Np_ints.prim_marked p then "PROMISE_IN_BOUNDS" else "FILL_OR_DROP"
+      in
+      scatter_params ~mode ~update:(Add, in_dtype ()) dimension_numbers false
   | Scatter_sub { dimension_numbers } ->
       scatter_params ~update:(Sub, in_dtype ()) dimension_numbers false
   | Scatter_min { dimension_numbers } ->

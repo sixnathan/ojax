@@ -490,6 +490,62 @@ let opens_isolated line =
      && (not (contains "stablehlo.case" t))
      && not (contains "stablehlo.if" t)
 
+let replace_first ~sub ~by line =
+  let n = String.length line and m = String.length sub in
+  let rec find i =
+    if i + m > n then None
+    else if String.sub line i m = sub then Some i
+    else find (i + 1)
+  in
+  match find 0 with
+  | None -> None
+  | Some i ->
+      Some (String.sub line 0 i ^ by ^ String.sub line (i + m) (n - i - m))
+
+let add_platform_index_arg ~arg text =
+  let param = Printf.sprintf "%%%d" arg in
+  let scalar = "tensor<i32>" in
+  let attr =
+    Printf.sprintf "%s: %s {jax.global_constant = \"_platform_index\"}" param
+      scalar
+  in
+  let first_paren line =
+    let i = String.index line '(' in
+    ( String.sub line 0 (i + 1),
+      String.sub line (i + 1) (String.length line - i - 1) )
+  in
+  let with_first x rest =
+    if String.length rest > 0 && rest.[0] = ')' then x ^ rest
+    else x ^ ", " ^ rest
+  in
+  let rewrite line =
+    let t = String.trim line in
+    if starts_with "func.func " t then
+      let head, rest = first_paren line in
+      head ^ with_first attr rest
+    else
+      let is_call =
+        starts_with "call @" t
+        || starts_with "func.call @" t
+        || contains " = call @" t
+        || contains " = func.call @" t
+      in
+      if not is_call then line
+      else
+        let head, rest = first_paren line in
+        let line = head ^ with_first param rest in
+        match replace_first ~sub:" : (" ~by:" : (\000" line with
+        | None -> line
+        | Some marked ->
+            let i = String.index marked '\000' in
+            let before = String.sub marked 0 i in
+            let after =
+              String.sub marked (i + 1) (String.length marked - i - 1)
+            in
+            before ^ with_first scalar after
+  in
+  String.concat "\n" (List.map rewrite (String.split_on_char '\n' text))
+
 let hoist_constants text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let n = Array.length lines in

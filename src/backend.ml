@@ -949,15 +949,16 @@ let placed_text ~name ?(out_specs = []) cj args =
   | Some plan when Array.length plan.devices = 1 ->
       Stablehlo.Emit.emit_jax_text ~name cj
   | Some plan ->
-      (Stablehlo.Emit.lower_partitioned ~name
-         {
-           pt_mesh = plan.mesh;
-           pt_devices = plan.devices;
-           pt_in = plan.arg_specs;
-           pt_out = out_specs;
-         }
-         cj)
-        .text
+      Stablehlo.Mlir_names.renumber_callbacks
+        (Stablehlo.Emit.lower_partitioned ~name
+           {
+             pt_mesh = plan.mesh;
+             pt_devices = plan.devices;
+             pt_in = plan.arg_specs;
+             pt_out = out_specs;
+           }
+           cj)
+          .text
 
 let run_plan cj plan args =
   match compile_plan cj plan with

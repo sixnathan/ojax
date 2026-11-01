@@ -10,3 +10,4 @@ val render :
 
 val hoist_constants : string -> string
 val renumber_callbacks : string -> string
+val add_platform_index_arg : arg:int -> string -> string

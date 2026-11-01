@@ -35,9 +35,16 @@ let mesh22 = lazy (S.make_mesh [ 2; 2 ] [ "a"; "b" ])
 let mesh2 = lazy (S.make_mesh [ 2 ] [ "x" ])
 let mesh4 = lazy (S.make_mesh [ 4 ] [ "i" ])
 
+let mesh_tail =
+  lazy
+    (Ojax.Spmd.make_mesh
+       ~devices:(Array.sub (Ojax.Spmd.local_devices ()) 4 4)
+       [ 4 ] [ "i" ])
+
 let on mesh spec x =
   leaf (S.device_put (Tr.Leaf x) (S.named_sharding (Lazy.force mesh) spec))
 
+let f32_aval shape : T.aval = { shape; dtype = D.F32; weak_type = false }
 let two = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 2.0 |])
 let body x = U.add (U.multiply (U.sin x) two) (R.sum x)
 let unary f = function [ Tr.Leaf a ] -> Tr.Leaf (f a) | _ -> failwith "arity"
@@ -46,6 +53,7 @@ let cases () =
   let ab = on mesh22 [ S.Named "a"; S.Named "b" ] arange16 in
   let x_only = on mesh2 [ S.Named "x"; S.Unconstrained ] arange8 in
   let i_only = on mesh4 [ S.Named "i" ] vector8 in
+  let tail_only = on mesh_tail [ S.Named "i" ] vector8 in
   [
     ("sin_sum", unary body, [ ab ], None);
     ( "out_sharded",
@@ -109,6 +117,35 @@ let cases () =
                [ Tr.Leaf x ])),
       [ i_only ],
       None );
+    ( "callback_pure",
+      unary (fun x ->
+          let doubled =
+            match
+              Ojax.Custom_derivatives.pure_callback
+                (function
+                  | [ a ] -> [ U.multiply a two ] | _ -> failwith "arity")
+                ~result_avals:[ f32_aval [| 8 |] ]
+                [ x ]
+            with
+            | [ y ] -> y
+            | _ -> failwith "arity"
+          in
+          U.add doubled
+            (T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 1.0 |]))),
+      [ i_only ],
+      None );
+    ( "callback_debug",
+      unary (fun x ->
+          Ojax.Debugging.callback (fun _ -> ()) [ x ];
+          U.multiply x two),
+      [ i_only ],
+      None );
+    ( "callback_tail_mesh",
+      unary (fun x ->
+          Ojax.Debugging.callback (fun _ -> ()) [ x ];
+          U.multiply x two),
+      [ tail_only ],
+      None );
     ( "shard_map",
       unary (fun x ->
           leaf
@@ -120,8 +157,6 @@ let cases () =
       [ i_only ],
       None );
   ]
-
-let f32_aval shape : T.aval = { shape; dtype = D.F32; weak_type = false }
 
 let staged x =
   let a = U.add (U.multiply (U.sin x) two) two in
@@ -153,6 +188,9 @@ let staged_where x =
   in
   U.add a weak
 
+let vector3 =
+  T.Concrete (Ojax.Ndarray.of_floats D.F32 [| 3 |] [| 1.0; 2.0; -3.0 |])
+
 let single_device oc =
   let write name text =
     Yojson.Safe.to_channel oc
@@ -178,7 +216,45 @@ let single_device oc =
     (Ojax.Export.export ~fun_name:"f" plain avals).Ojax.Export.mlir_module;
   write "export_kept"
     (String.concat ","
-       (List.map string_of_int exported.Ojax.Export.module_kept_var_idx))
+       (List.map string_of_int exported.Ojax.Export.module_kept_var_idx));
+  let platforms = [ "cpu"; "cuda" ] in
+  let sin_first = function x :: _ -> [ U.sin x ] | [] -> failwith "arity" in
+  write "export_multi_sin"
+    (Ojax.Export.export ~fun_name:"h" ~platforms sin_first [ f32_aval [| 3 |] ])
+      .Ojax.Export.mlir_module;
+  let times c =
+    let k = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| c |]) in
+    fun xs -> [ U.multiply (List.hd xs) k ]
+  in
+  let dependent = function
+    | x :: _ ->
+        L.platform_dependent_args ~cpu:(times 2.0) ~default:(times 3.0) [ x ]
+    | [] -> failwith "arity"
+  in
+  let z3 = [ f32_aval [| 3 |] ] in
+  write "export_multi_dependent"
+    (Ojax.Export.export ~fun_name:"h2" ~platforms dependent z3)
+      .Ojax.Export.mlir_module;
+  write "export_single_dependent"
+    (Ojax.Export.export ~fun_name:"h2" ~platforms:[ "cpu" ] dependent z3)
+      .Ojax.Export.mlir_module;
+  write "lower_dependent"
+    (Ojax.Stages.as_jax_text ~name:"h2" (Ojax.Stages.lower dependent z3));
+  let scan_where = function x :: _ -> [ staged x ] | [] -> failwith "arity" in
+  let e =
+    Ojax.Export.export ~fun_name:"f" ~platforms scan_where
+      [ f32_aval [| 3 |]; f32_aval [| 3 |] ]
+  in
+  write "export_multi_scan" e.Ojax.Export.mlir_module;
+  let called = Ojax.Export.call e [ vector3; vector3 ] in
+  Yojson.Safe.to_channel oc
+    (`Assoc
+       [
+         ("case", `String "export_multi_call");
+         ("text", `String "");
+         ("values", `List (List.map values called));
+       ]);
+  output_char oc '\n'
 
 let () =
   let oc = open_out Sys.argv.(1) in

@@ -46,7 +46,21 @@ def reference():
 
         return jax.shard_map(inner, mesh=mesh4, in_specs=P("i"), out_specs=P())(x)
 
+    mesh_tail = Mesh(np.array(devices[4:8]), ("i",))
+    tail_only = jax.device_put(np.arange(8.0, dtype=np.float32), NamedSharding(mesh_tail, P("i")))
+
+    def callback_pure(x):
+        y = jax.pure_callback(lambda a: np.asarray(a) * 2, jax.ShapeDtypeStruct((8,), jnp.float32), x)
+        return y + 1.0
+
+    def callback_debug(x):
+        jax.debug.callback(lambda a: None, x)
+        return x * 2.0
+
     cases = [
+        ("callback_pure", callback_pure, [i_only], {}),
+        ("callback_debug", callback_debug, [i_only], {}),
+        ("callback_tail_mesh", callback_debug, [tail_only], {}),
         ("sin_sum", body, [ab], {}),
         ("out_sharded", body, [ab], {"out_shardings": NamedSharding(mesh22, P("a", None))}),
         ("two_results", two_results, [x_only, x_only], {}),
@@ -93,6 +107,33 @@ def reference():
         "values": [],
     }
     rows["export_kept"] = {"text": ",".join(map(str, exported.module_kept_var_idx)), "values": []}
+
+    platforms = ["cpu", "cuda"]
+
+    def h(x):
+        return jnp.sin(x)
+
+    def h2(x):
+        return jax.lax.platform_dependent(x, cpu=lambda a: a * 2.0, default=lambda a: a * 3.0)
+
+    z3 = np.zeros(3, np.float32)
+    rows["export_multi_sin"] = {"text": _strip_locations(export.export(jax.jit(h), platforms=platforms)(z3).mlir_module()), "values": []}
+    rows["export_multi_dependent"] = {
+        "text": _strip_locations(export.export(jax.jit(h2), platforms=platforms)(z3).mlir_module()),
+        "values": [],
+    }
+    rows["export_single_dependent"] = {
+        "text": _strip_locations(export.export(jax.jit(h2), platforms=["cpu"])(z3).mlir_module()),
+        "values": [],
+    }
+    rows["lower_dependent"] = {"text": jax.jit(h2).lower(z3).as_text(), "values": []}
+    multi = export.export(jax.jit(staged), platforms=platforms)(zeros, zeros)
+    rows["export_multi_scan"] = {"text": _strip_locations(multi.mlir_module()), "values": []}
+    v3 = np.array([1.0, 2.0, -3.0], np.float32)
+    rows["export_multi_call"] = {
+        "text": "",
+        "values": [[str(int(np.float64(v).view(np.int64))) for v in np.asarray(multi.call(v3, v3)).ravel()]],
+    }
     return rows
 
 

@@ -276,13 +276,14 @@ let softmax ?(axis = -1) ?where:mask x =
 
 let log_softmax ?(axis = -1) ?where:mask x =
   let ax = [| canon_axis (Array.length (shape x)) axis |] in
-  let x_max = masked_max ax mask x in
+  let initial = const_full (dtype x) [||] Float.neg_infinity in
+  let x_max = RED.max ~axis:ax ~keepdims:true ?where:mask ~initial x in
   let x_safe =
     match mask with
     | None -> x
     | Some m -> where3 m x (scalar_like x Float.neg_infinity)
   in
-  let shifted = UF.subtract x_safe x_max in
+  let shifted = UF.subtract x_safe (Custom_derivatives.stop_gradient x_max) in
   let lse =
     UF.log (RED.sum ~axis:ax ~keepdims:true ?where:mask (UF.exp shifted))
   in
@@ -591,12 +592,21 @@ let logmeanexp ?axis ?keepdims ?where a0 =
       | [ where ], [ a0 ] -> logmeanexp ?axis ?keepdims ?where a0
       | _ -> assert false)
 
-let log_softmax ?axis ?where a0 =
-  Eager_jit.one "nn.functions.log_softmax" axis [ where ] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [ where ], [ a0 ] -> log_softmax ?axis ?where a0
-      | _ -> assert false)
+let log_softmax ?(axis = -1) ?where a0 =
+  let key = string_of_int axis in
+  match where with
+  | None ->
+      Numpy.Jnp_util.jit1 "log_softmax" ~key
+        (function
+          | [ a0 ] -> log_softmax ~axis a0
+          | _ -> invalid_arg "log_softmax: arity")
+        [ a0 ]
+  | Some m ->
+      Numpy.Jnp_util.jit1 "log_softmax" ~key
+        (function
+          | [ a0; m ] -> log_softmax ~axis ~where:m a0
+          | _ -> invalid_arg "log_softmax: arity")
+        [ a0; m ]
 
 let standardize ?axis ?mean ?variance ?epsilon ?where ?algorithm a0 =
   Eager_jit.one "nn.functions.standardize" (axis, epsilon, algorithm)

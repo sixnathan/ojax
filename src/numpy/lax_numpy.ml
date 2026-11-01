@@ -605,7 +605,7 @@ let squeeze ?axis v =
         Array.sort compare d;
         d
   in
-  bind1 (T.Squeeze dims) [ v ]
+  if dims = [||] then v else bind1 (T.Squeeze dims) [ v ]
 
 let swapaxes axis1 axis2 v =
   let n = ndim v in
@@ -1767,13 +1767,10 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   let avg, w_sum =
     match w with
     | None ->
-        let summed = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
-        let count = scalar dt (float_of_int nobs) in
-        let mean = bind1 T.Div [ summed; count ] in
-        ( mean,
+        ( Reductions.mean ~axis:[| 1 |] x,
           bind1
             (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
-            [ count ] )
+            [ scalar dt (float_of_int nobs) ] )
     | Some wv ->
         let lifted =
           bind1

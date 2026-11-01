@@ -17,18 +17,37 @@ let as_real v =
   | Dtype.I64 -> b1 (Convert_element_type Dtype.F64) [ v ]
   | _ -> b1 (Convert_element_type Dtype.F32) [ v ]
 
-let norm_factor norm ~inverse lengths =
-  let product = float_of_int (List.fold_left ( * ) 1 lengths) in
+let shape_array dt sizes =
+  let n = [| List.length sizes |] in
+  let values = Array.of_list (List.map float_of_int sizes) in
+  match dt with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      Ndarray.of_complex dt n
+        (Array.map (fun re -> { Complex.re; im = 0.0 }) values)
+  | _ -> Ndarray.of_floats dt n values
+
+let fft_norm ~inverse sizes dt norm =
+  let product () = Reductions.prod (Concrete (shape_array dt sizes)) in
+  let reciprocal v = Ufuncs.divide (Jnp_util.py_int 1) v in
   match norm with
-  | None | Some "backward" -> 1.0
-  | Some "ortho" -> if inverse then sqrt product else 1.0 /. sqrt product
-  | Some "forward" -> if inverse then product else 1.0 /. product
-  | Some other ->
+  | "backward" ->
+      Concrete (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| 1.0 |])
+  | "ortho" ->
+      let root = Ufuncs.sqrt (product ()) in
+      if inverse then root else reciprocal root
+  | "forward" -> if inverse then product () else reciprocal (product ())
+  | other ->
       invalid_arg
         (Printf.sprintf
            "Invalid norm value %s; should be \"backward\",\"ortho\" or \
             \"forward\"."
            other)
+
+let apply_norm ~inverse sizes norm v =
+  match norm with
+  | None -> v
+  | Some norm ->
+      Ufuncs.multiply v (fft_norm ~inverse sizes (Core.get_aval v).dtype norm)
 
 let scale_by factor v =
   if factor = 1.0 then v
@@ -160,7 +179,7 @@ let fft_core kind ~inverse ?s ?axes ?norm a =
             (arr, List.map (fun ax -> shape.(ax)) last_axes))
   in
   let transformed = lax_fft kind sizes arr in
-  let scaled = scale_by (norm_factor norm ~inverse sizes) transformed in
+  let scaled = apply_norm ~inverse sizes norm transformed in
   match orig_axes with
   | Some ax -> b1 (Transpose (moved_perm ndim last_axes ax)) [ scaled ]
   | None -> scaled

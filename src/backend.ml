@@ -1137,8 +1137,18 @@ let stage_inline_call ~inline key name f avals =
       let c =
         match Jaxpr.make_jaxpr_hoisted avals f with
         | c, [] ->
-            Pretty_printer.register_call_name c.jid name;
-            if inline then Core.mark_inline_call c.jid;
+            let short =
+              match String.rindex_opt name '.' with
+              | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+              | None -> name
+            in
+            Pretty_printer.register_call_name c.jid short;
+            let wraps_one_call =
+              match c.jaxpr.eqns with
+              | [ { prim = Xla_call _; _ } ] -> true
+              | _ -> false
+            in
+            if inline || wraps_one_call then Core.mark_inline_call c.jid;
             Some c
         | _ -> None
         | exception error when eager_rejection error -> None

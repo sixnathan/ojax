@@ -262,3 +262,5 @@ val gecon :
   anorm:float ->
   rcond:'k real ->
   int
+
+val ffi_targets : (string * nativeint) list

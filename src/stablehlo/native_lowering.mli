@@ -17,3 +17,16 @@ val tridiagonal_solve : value list -> value list
 val qr_from_factors : full_matrices:bool -> value list -> value list
 val svd : full_matrices:bool -> compute_uv:bool -> value list -> value list
 val eigh_refined : lower:bool -> value list -> value list
+val lapack_cholesky : value list -> value list
+val lapack_lu : permutation_size:int -> value list -> value list
+val lapack_guarded : value list -> value list
+val lapack_svd : compute_uv:bool -> value list -> value list
+
+val lapack_eig :
+  real:bool ->
+  compute_left:bool ->
+  compute_right:bool ->
+  value list ->
+  value list
+
+val lapack_schur : compute_vectors:bool -> value list -> value list

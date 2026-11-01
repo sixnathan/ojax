@@ -897,3 +897,84 @@ let svd ~full_matrices ~compute_uv = function
         failwith "Stablehlo.Emit: an empty svd runs on the host";
       batched (svd_core ~full_matrices ~compute_uv) 2 [ a ]
   | _ -> invalid_arg "Native_lowering: svd arity"
+
+let real_basetype v =
+  match dtype v with
+  | Dtype.Complex64 -> Dtype.F32
+  | Dtype.Complex128 -> Dtype.F64
+  | d -> d
+
+let nan_full v =
+  if is_complex v then
+    let part = L.full (shape v) Float.nan (real_basetype v) in
+    L.complex part part
+  else like v Float.nan
+
+let nan_where_bad ok v =
+  let dims = Array.init (Array.length (shape ok)) Fun.id in
+  select (L.broadcast_in_dim ok (shape v) dims) v (nan_full v)
+
+let info_ok info = L.eq info (like info 0.0)
+
+let tril_mask shape_ =
+  let rank = Array.length shape_ in
+  let rows = shape_.(rank - 2) and cols = shape_.(rank - 1) in
+  let total = Array.fold_left ( * ) 1 shape_ in
+  Concrete
+    (Ndarray.of_floats Dtype.Bool shape_
+       (Array.init total (fun i ->
+            let local = i mod max 1 (rows * cols) in
+            if local mod max cols 1 <= local / max cols 1 then 1.0 else 0.0)))
+
+let lapack_cholesky = function
+  | [ r; info ] ->
+      let guarded = nan_where_bad (info_ok info) r in
+      [ select (tril_mask (shape r)) guarded (like r 0.0) ]
+  | _ -> invalid_arg "Native_lowering: potrf arity"
+
+let lapack_lu ~permutation_size = function
+  | [ lu; pivots; info ] ->
+      let ok = L.ge info (like info 0.0) in
+      let pivots = pivots -: like pivots 1.0 in
+      let perm =
+        List.hd (lu_pivots_to_permutation ~permutation_size [ pivots ])
+      in
+      [ nan_where_bad ok lu; pivots; perm ]
+  | _ -> invalid_arg "Native_lowering: getrf arity"
+
+let lapack_guarded = function
+  | [] -> invalid_arg "Native_lowering: empty lapack result"
+  | outs ->
+      let rev = List.rev outs in
+      let info = List.hd rev and values = List.rev (List.tl rev) in
+      let ok = info_ok info in
+      List.map (nan_where_bad ok) values
+
+let lapack_svd ~compute_uv outs =
+  match lapack_guarded outs with
+  | [ _; s; u; vt ] -> if compute_uv then [ u; s; vt ] else [ s ]
+  | _ -> invalid_arg "Native_lowering: gesdd arity"
+
+let lapack_eigen_values_real = function
+  | wr :: wi :: rest -> L.complex wr wi :: rest
+  | _ -> invalid_arg "Native_lowering: geev arity"
+
+let lapack_eig ~real ~compute_left ~compute_right outs =
+  let outs = if real then lapack_eigen_values_real outs else outs in
+  match lapack_guarded outs with
+  | [ w; vl; vr ] ->
+      (w :: (if compute_left then [ vl ] else []))
+      @ if compute_right then [ vr ] else []
+  | _ -> invalid_arg "Native_lowering: geev arity"
+
+let lapack_schur ~compute_vectors outs =
+  let keep =
+    match outs with
+    | t :: vs :: tail ->
+        let info = List.hd (List.rev tail) in
+        [ t; vs; info ]
+    | _ -> invalid_arg "Native_lowering: gees arity"
+  in
+  match lapack_guarded keep with
+  | [ t; vs ] -> if compute_vectors then [ t; vs ] else [ t ]
+  | _ -> invalid_arg "Native_lowering: gees arity"

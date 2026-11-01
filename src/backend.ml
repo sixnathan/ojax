@@ -191,6 +191,28 @@ module Xla = struct
         Hashtbl.replace plugins platform plugin;
         plugin
 
+  let lapack_registered = ref None
+
+  let lapack_targets_ready () =
+    match !lapack_registered with
+    | Some ready -> ready
+    | None ->
+        let ready =
+          Lapack_seam.Lapack.single_routines
+          &&
+          let plugin = plugin_for "cpu" in
+          try
+            List.iter
+              (fun (target, handler) ->
+                Pjrt.Abi.ffi_register_handler plugin target "Host" handler)
+              Lapack_seam.Lapack.ffi_targets;
+            true
+          with Pjrt.Abi.Error _ -> false
+        in
+        lapack_registered := Some ready;
+        ready
+
+  let () = Stablehlo.Emit.lapack_ffi_ready := lapack_targets_ready
   let clients = Hashtbl.create 2
 
   let client_for platform =

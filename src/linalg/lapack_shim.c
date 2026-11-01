@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -359,11 +360,21 @@ int ojax_lapack_call_syevd(char prec, char jobz, char uplo, LI n, void *a,
   return info;
 }
 
+static int all_finite(char prec, const void *a, size_t count) {
+  for (size_t i = 0; i < count; i++) {
+    double v = (prec == 's' || prec == 'c') ? (double)((const float *)a)[i]
+                                            : ((const double *)a)[i];
+    if (!isfinite(v)) return 0;
+  }
+  return 1;
+}
+
 int ojax_lapack_call_geev(char prec, char jobvl, char jobvr, LI n, void *a,
                           LI lda, void *w, void *vl, LI ldvl, void *vr,
                           LI ldvr) {
   void *fn = ojax_lapack_symbol(prec, "geev");
   int cplx = prec == 'c' || prec == 'z';
+  if (!all_finite(prec, a, (size_t)n * (size_t)n * (cplx ? 2 : 1))) return -4;
   LI info = 0, lwork = -1;
   double q[2] = {0.0, 0.0};
   void *rwork = cplx ? rwork_alloc(prec, 2 * (size_t)n + 1) : NULL;

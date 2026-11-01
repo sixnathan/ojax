@@ -211,3 +211,36 @@ let zgees ~jobvs ~n ~a ~lda ~w ~vs ~ldvs =
 let gecon ~norm ~n ~a ~lda ~anorm ~rcond =
   guard "gecon";
   gecon_ [| code norm; n; lda |] a anorm rcond
+
+external ffi_handler_ : string -> nativeint = "ojax_lapack_ffi_handler"
+
+let ffi_targets =
+  let target prec base = Printf.sprintf "lapack_%c%s_ffi" prec base in
+  let both real_base complex_base handler =
+    [
+      (target 's' real_base, handler);
+      (target 'd' real_base, handler);
+      (target 'c' complex_base, handler);
+      (target 'z' complex_base, handler);
+    ]
+  in
+  List.concat_map
+    (fun (real_base, complex_base, handler) ->
+      both real_base complex_base (ffi_handler_ handler))
+    [
+      ("potrf", "potrf", "potrf");
+      ("getrf", "getrf", "getrf");
+      ("geqrf", "geqrf", "geqrf");
+      ("geqp3", "geqp3", "geqp3");
+      ("orgqr", "ungqr", "orgqr");
+      ("ormqr", "unmqr", "ormqr");
+      ("gesdd", "gesdd", "gesdd");
+      ("gesvd", "gesvd", "gesvd");
+      ("syevd", "heevd", "syevd");
+      ("geev", "geev", "geev");
+      ("gees", "gees", "gees");
+      ("gehrd", "gehrd", "gehrd");
+      ("sytrd", "hetrd", "sytrd");
+      ("trsm", "trsm", "trsm");
+      ("gtsv", "gtsv", "gtsv");
+    ]

@@ -331,7 +331,12 @@ let pad_batch (cfg : (int * int * int) array) (vals : value list)
     (bdims : int option list) : value * int option =
   match (vals, bdims) with
   | [ operand; pv ], [ Some d; None ] ->
-      let cfg2 = insert_pad_cfg cfg d (0, 0, 0) in
+      let cfg2 =
+        Np_ints.mark_triples
+          (fun i j ->
+            i <> d && Np_ints.triple_marked cfg (if i < d then i else i - 1) j)
+          (insert_pad_cfg cfg d (0, 0, 0))
+      in
       (b1 (Pad cfg2) [ operand; pv ], Some d)
   | [ operand; pv ], [ ob; Some _ ] ->
       let a = Core.get_aval pv in
@@ -994,7 +999,24 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       failwith "batching: collectives handled by batch_process_primitive"
   | Fft _ -> (
       match (vals, bdims) with
-      | [ x ], [ Some d ] -> (b1 prim [ moveaxis d 0 x ], Some 0)
+      | [ x ], [ Some d ] ->
+          let key =
+            match prim with
+            | Fft { fft_type; fft_lengths } ->
+                (match fft_type with
+                  | Fft_forward -> "f"
+                  | Fft_inverse -> "i"
+                  | Fft_real -> "r"
+                  | Fft_inverse_real -> "ir")
+                ^ String.concat ","
+                    (List.map string_of_int (Array.to_list fft_lengths))
+            | _ -> ""
+          in
+          ( List.hd
+              (Jaxpr.named_jit ~name:"fft" ~key
+                 (fun args -> [ b1 prim args ])
+                 [ moveaxis d 0 x ]),
+            Some 0 )
       | [ x ], [ None ] -> (b1 prim [ x ], None)
       | _ -> failwith "batching: fft arity")
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
@@ -1095,7 +1117,15 @@ let vmap_flat ?axis_name ?(out_axis = 0) (f : value list -> value list)
         List.map (fun o -> to_batch_info main (Core.full_raise main o)) outs
       in
       List.map
-        (fun (v, bdim) -> move_batch_axis axis_size bdim out_axis v)
+        (fun (v, bdim) ->
+          let dest =
+            if out_axis >= 0 then out_axis
+            else
+              out_axis
+              + Array.length (Core.get_aval v).shape
+              + if bdim = None then 1 else 0
+          in
+          move_batch_axis axis_size bdim dest v)
         vals_bdims)
 
 let vmap_out f in_axes args out_axis = vmap_flat ~out_axis f in_axes args

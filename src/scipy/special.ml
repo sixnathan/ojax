@@ -2708,8 +2708,8 @@ let hyp2f1 a b c x = hyp2f1_apply a b c x
 
 let sincospisquaredhalf x =
   let x = UF.abs x in
-  let s = UF.fmod x (scalar_of x 2.0) in
-  let r = UF.fmod (s *! (x -! div_lit s 2.0)) (scalar_of x 2.0) in
+  let s = UF.fmod x (py_float 2.0) in
+  let r = UF.fmod (s *! (x -! div_lit s 2.0)) (py_float 2.0) in
   let pi = scalar_of x Float.pi in
   let sinpi =
     where_ (lt_ r 0.5)
@@ -2718,14 +2718,6 @@ let sincospisquaredhalf x =
          (UF.sin (pi *! sub_lit r 2.0))
          (neg_ (UF.sin (pi *! sub_lit r 1.0))))
   in
-  let cospi =
-    where_py (eq_ r 0.5)
-      (where_ (lt_ r 1.0)
-         (neg_ (UF.sin (pi *! sub_lit r 0.5)))
-         (UF.sin (pi *! sub_lit r 1.5)))
-      0.0
-  in
-  ignore cospi;
   let cospi =
     where_px (eq_ r 0.5) 0.0
       (where_ (lt_ r 1.0)
@@ -2751,6 +2743,10 @@ let fresnel_primal xxa0 =
     | _ -> failwith "Support for this dtype is not implemented yet."
   in
   let single = dtype xxa = D.F32 in
+  if single then
+    for _ = 1 to 4 do
+      ignore (AC.empty [| 0 |])
+    done;
   let x = UF.abs xxa in
   let x2 = x *! x in
   let t = x2 *! x2 in
@@ -2767,6 +2763,13 @@ let fresnel_primal xxa0 =
   in
   let sinpi, cospi = sincospisquaredhalf_jit x in
   let pi = scalar_of x Float.pi in
+  let large_parts =
+    if single then None
+    else
+      let c_large = lit_add 0.5 (lit_div 1.0 (pi *! x) *! sinpi) in
+      let s_large = lit_sub 0.5 (lit_div 1.0 (pi *! x) *! cospi) in
+      Some (c_large, s_large)
+  in
   let tt = pi *! x2 in
   let u = lit_div 1.0 (tt *! tt) in
   let tt = lit_div 1.0 tt in
@@ -2786,18 +2789,16 @@ let fresnel_primal xxa0 =
   let isinf = UF.isinf xxa in
   let small = lt_ x2 2.5625 in
   let large = gt_ x 36974.0 in
-  let s_inner, c_inner =
-    if single then
-      ( where_ small s_small (where_px large 0.5 s_other),
-        where_ small c_small (where_px large 0.5 c_other) )
-    else
-      let c_large = lit_add 0.5 (lit_div 1.0 (pi *! x) *! sinpi) in
-      let s_large = lit_sub 0.5 (lit_div 1.0 (pi *! x) *! cospi) in
-      ( where_ small s_small (where_ large s_large s_other),
-        where_ small c_small (where_ large c_large c_other) )
+  let choose small_part large_part other =
+    let far =
+      match large_part with
+      | None -> where_px large 0.5 other
+      | Some v -> where_ large v other
+    in
+    where_px isinf 0.5 (where_ small small_part far)
   in
-  let s = where_px isinf 0.5 s_inner in
-  let c = where_px isinf 0.5 c_inner in
+  let s = choose s_small (Option.map snd large_parts) s_other in
+  let c = choose c_small (Option.map fst large_parts) c_other in
   let neg = lt_ xxa 0.0 in
   let s = where_ neg (neg_ s) s in
   let c = where_ neg (neg_ c) c in
@@ -2805,14 +2806,15 @@ let fresnel_primal xxa0 =
     [ NL.astype s original_dtype; NL.astype c original_dtype ]
   else [ s; c ]
 
-let fresnel x =
+let rec fresnel x =
   match
     CD.custom_jvp ~name:"fresnel" ~jvp_name:"_fresnel_jvp"
       (function [ x ] -> fresnel_primal x | _ -> assert false)
       ~jvp:(fun primals tangents ->
         match (primals, tangents) with
         | [ x ], [ x_dot ] ->
-            let result = fresnel_primal x in
+            let s, c = fresnel x in
+            let result = [ s; c ] in
             let sinpi, cospi = sincospisquaredhalf_jit x in
             (result, [ sinpi *! x_dot; cospi *! x_dot ])
         | _ -> assert false)

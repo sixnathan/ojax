@@ -1020,11 +1020,12 @@ let opt_s params name =
   match U.member name params with `Null -> None | j -> Some (U.to_string j)
 
 let q_value params =
+  let dt = Ojax.Dtypes.default_float_dtype () in
   match U.member "q" params with
   | `List _ as j ->
       let vs = List.map U.to_number (U.to_list j) in
-      T.Concrete (Nd.of_floats D.F32 [| List.length vs |] (Array.of_list vs))
-  | j -> T.Concrete (Nd.of_floats D.F32 [||] [| U.to_number j |])
+      T.Concrete (Nd.of_floats dt [| List.length vs |] (Array.of_list vs))
+  | j -> T.Concrete (Nd.of_floats dt [||] [| U.to_number j |])
 
 let reductions_fn op params operands : T.value list =
   let one v = [ v ] in

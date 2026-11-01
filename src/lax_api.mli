@@ -102,6 +102,10 @@ val pad : value -> value -> (int * int * int) array -> value
 val slice : ?strides:int array -> value -> int array -> int array -> value
 val slice_in_dim : ?stride:int -> ?axis:int -> value -> int -> int -> value
 val index_in_dim : ?axis:int -> ?keepdims:bool -> value -> int -> value
+
+val dynamic_slice_normalized :
+  Types.value -> Types.value list -> int array -> Types.value
+
 val dynamic_slice : value -> value list -> int array -> value
 val dynamic_update_slice : value -> value -> value list -> value
 val dynamic_slice_in_dim : ?axis:int -> value -> value -> int -> value

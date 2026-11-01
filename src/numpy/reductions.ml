@@ -779,7 +779,7 @@ let move_to_last v ax =
 let reduce_last_sum v = bind1 (T.Reduce_sum [| ndim v - 1 |]) [ v ]
 let reduce_last_or v = bind1 (T.Reduce_or [| ndim v - 1 |]) [ v ]
 
-let quantile_core a q ~axis ~method_ ~keepdims ~squash_nans =
+let quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans =
   let a = to_inexact a in
   let cdt = dtype a in
   let nd0 = ndim a in
@@ -883,6 +883,119 @@ let quantile_core a q ~axis ~method_ ~keepdims ~squash_nans =
   | None -> result
   | Some ks -> reshape result (Array.append qsh ks)
 
+let quantile_plain a q ~axis ~method_ ~keepdims =
+  let a = to_inexact a in
+  if match dtype a with D.Complex64 | D.Complex128 -> true | _ -> false then
+    invalid_arg
+      "quantile does not support complex input, as the operation is poorly \
+       defined.";
+  let q = to_inexact q in
+  let keepdim =
+    if keepdims && axis = None then Array.make (ndim a) 1 else [||]
+  in
+  let a, ax =
+    match axis with
+    | None -> (ravel a, 0)
+    | Some ax -> (a, canonicalize_axis ax (ndim a))
+  in
+  let q_ndim = ndim q in
+  if q_ndim > 1 then
+    invalid_arg (Printf.sprintf "q must be have rank <= 1, got rank %d" q_ndim);
+  let a_shape = shape a in
+  let nan_mask = any ~axis:[| ax |] ~keepdims:true (isnan a) in
+  let a = where nan_mask (Jnp_util.py_float Float.nan) a in
+  let a =
+    bind1 (T.Sort { dimension = ax; is_stable = true; num_keys = 1 }) [ a ]
+  in
+  let qdt = dtype q in
+  let lit dt v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
+  let n () = lit qdt (float_of_int a_shape.(ax)) in
+  let n_minus_1 () = bind1 T.Sub [ n (); lit qdt 1.0 ] in
+  let q = bind1 T.Mul [ q; n_minus_1 () ] in
+  let low = bind1 T.Floor [ q ] in
+  let high = bind1 T.Ceil [ q ] in
+  let high_weight = bind1 T.Sub [ q; low ] in
+  let low_weight = bind1 T.Sub [ lit qdt 1.0; high_weight ] in
+  let clamped v =
+    let top = n_minus_1 () in
+    bind1 T.Clamp [ lit qdt 0.0; v; top ]
+  in
+  let low = clamped low in
+  let high = clamped high in
+  let idt = Dtypes.default_int_dtype () in
+  let low = bind1 (T.Convert_element_type idt) [ low ] in
+  let high = bind1 (T.Convert_element_type idt) [ high ] in
+  let slice_sizes = Array.copy a_shape in
+  slice_sizes.(ax) <- 1;
+  let rank = Array.length a_shape in
+  let offset_stop = if keepdims then rank + q_ndim else rank + q_ndim - 1 in
+  let dimension_numbers =
+    {
+      T.offset_dims = Array.init (offset_stop - q_ndim) (fun i -> i + q_ndim);
+      collapsed_slice_dims = (if keepdims then [||] else [| ax |]);
+      start_index_map = [| ax |];
+      g_operand_batching_dims = [||];
+      g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
+    }
+  in
+  let gather_at idx =
+    let idx_shape = shape idx in
+    let wide =
+      bind1
+        (T.Broadcast_in_dim
+           {
+             shape = Array.append idx_shape [| 1 |];
+             dims = Array.init (Array.length idx_shape) Fun.id;
+           })
+        [ idx ]
+    in
+    bind1 (T.Gather { dimension_numbers; slice_sizes }) [ a; wide ]
+  in
+  let low_value = gather_at low in
+  let high_value = gather_at high in
+  let widen w like =
+    if q_ndim = 1 then
+      bind1 (T.Broadcast_in_dim { shape = shape like; dims = [| 0 |] }) [ w ]
+    else w
+  in
+  let low_weight = widen low_weight low_value in
+  let high_weight = widen high_weight high_value in
+  let result =
+    match method_ with
+    | "linear" ->
+        let product v w = bind1 T.Mul [ convert v qdt; w ] in
+        let left = product low_value low_weight in
+        let right = product high_value high_weight in
+        bind1 T.Add [ left; right ]
+    | "lower" -> low_value
+    | "higher" -> high_value
+    | "nearest" ->
+        let pred = bind1 T.Le [ high_weight; lit qdt 0.5 ] in
+        bind1 T.Select_n [ pred; high_value; low_value ]
+    | "midpoint" ->
+        let total = bind1 T.Add [ low_value; high_value ] in
+        bind1 T.Mul [ total; lit (dtype low_value) 0.5 ]
+    | m ->
+        invalid_arg
+          (Printf.sprintf
+             "method can only be 'linear', 'lower', 'higher', 'midpoint', \
+              'nearest' or 'inverted_cdf', got %s"
+             m)
+  in
+  let result =
+    if keepdims && Array.length keepdim > 0 then
+      reshape result
+        (if q_ndim > 0 then Array.append [| (shape q).(0) |] keepdim
+         else keepdim)
+    else result
+  in
+  convert result (dtype a)
+
+let quantile_core a q ~axis ~method_ ~keepdims ~squash_nans =
+  if squash_nans then quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans
+  else quantile_plain a q ~axis ~method_ ~keepdims
+
 let quantile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
   quantile_core a q ~axis ~method_ ~keepdims ~squash_nans:false
 
@@ -910,9 +1023,9 @@ let nanquantile ?axis ?keepdims ?method_ p0 p1 =
     [ p0; p1 ]
 
 let percentile ?axis ?(keepdims = false) ?(method_ = "linear") a q =
-  let cdt = to_inexact_dtype (dtype a) in
-  let q100 = bind1 T.Div [ convert q cdt; const_full cdt (shape q) 100.0 ] in
-  quantile ?axis ~keepdims ~method_ a q100
+  let q = to_inexact q in
+  let hundred = T.Concrete (Nd.of_floats (dtype q) [||] [| 100.0 |]) in
+  quantile ?axis ~keepdims ~method_ a (bind1 T.Div [ q; hundred ])
 
 let percentile ?axis ?keepdims ?method_ p0 p1 =
   Jnp_util.jit1 "percentile"
@@ -940,8 +1053,7 @@ let nanpercentile ?axis ?keepdims ?method_ p0 p1 =
     [ p0; p1 ]
 
 let median ?axis ?(keepdims = false) a =
-  let q = const_full (to_inexact_dtype (dtype a)) [||] 0.5 in
-  quantile ?axis ~keepdims ~method_:"midpoint" a q
+  quantile ?axis ~keepdims ~method_:"midpoint" a (Jnp_util.py_float 0.5)
 
 let median ?axis ?keepdims p0 =
   Jnp_util.jit1 "median"

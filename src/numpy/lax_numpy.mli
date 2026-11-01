@@ -76,6 +76,10 @@ val allclose :
   Types.value
 
 val clip : ?min:float -> ?max:float -> Types.value -> Types.value
+
+val clip_values :
+  ?min:Types.value -> ?max:Types.value -> Types.value -> Types.value
+
 val clip_strong_max : Types.value -> Types.value -> Types.value
 val round : ?decimals:int -> Types.value -> Types.value
 val around : ?decimals:int -> Types.value -> Types.value
@@ -115,12 +119,14 @@ val hstack : ?dtype:Dtype.t -> Types.value list -> Types.value
 val dstack : ?dtype:Dtype.t -> Types.value list -> Types.value
 val column_stack : Types.value list -> Types.value
 val tile : Types.value -> int array -> Types.value
+val pad_widths_config : (int * int) array -> (int * int * int) array
 
 val pad :
   ?mode:string ->
   ?stat_length:(int * int) array ->
   ?end_values:(float * float) array ->
   ?reflect_type:string ->
+  ?float_literal:bool ->
   Types.value ->
   (int * int) array ->
   float ->

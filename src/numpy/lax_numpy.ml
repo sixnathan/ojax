@@ -594,8 +594,22 @@ let allclose ?rtol ?atol ?equal_nan p0 p1 =
       | _ -> invalid_arg "allclose: arity")
     [ p0; p1 ]
 
+let reject_complex_clip values =
+  if
+    List.exists
+      (fun v ->
+        match dtype v with D.Complex64 | D.Complex128 -> true | _ -> false)
+      values
+  then
+    invalid_arg
+      "Clip received a complex value either through the input or the min/max \
+       keywords. Complex values have no ordering and cannot be clipped. Please \
+       convert to a real value or array by taking the real or imaginary \
+       components via jax.numpy.real/imag respectively."
+
 let clip_values ?min ?max arr =
   let present = Option.to_list min @ Option.to_list max in
+  reject_complex_clip (arr :: present);
   Jnp_util.jit1 "clip"
     ~key:(string_of_bool (min <> None) ^ string_of_bool (max <> None))
     (function
@@ -637,12 +651,7 @@ let clip_strong_max maximum_value arr =
     [ arr; maximum_value ]
 
 let clip ?min ?max arr =
-  (match dtype arr with
-  | D.Complex64 | D.Complex128 ->
-      invalid_arg
-        "Clip received a complex value either through the input or the min/max \
-         keywords. Complex values have no ordering and cannot be clipped."
-  | _ -> ());
+  reject_complex_clip [ arr ];
   let scalar_arg m =
     if Float.is_integer m && (is_integral (dtype arr) || is_bool (dtype arr))
     then Jnp_util.py_int (int_of_float m)
@@ -891,7 +900,7 @@ let do_split ~array_split ?(axis = 0) v s =
           Array.init nsec (fun i -> if i < r then part + 1 else part)
         else invalid_arg "array split does not result in an equal division"
   in
-  bind (T.Split { sizes; axis }) [ v ]
+  bind (T.Split { sizes = Np_ints.mark sizes; axis }) [ v ]
 
 let split ?axis v s = do_split ~array_split:false ?axis v s
 let array_split ?axis v s = do_split ~array_split:true ?axis v s
@@ -1070,8 +1079,13 @@ and repeat_scalar ?axis a repeats =
   result_shape.(ax) <- ish.(ax) * repeats;
   reshape bc result_shape
 
+let pad_widths_config pad_width =
+  Np_ints.mark_triples
+    (fun _ j -> j < 2)
+    (Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width)
+
 let pad_constant v pad_width cval =
-  let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
+  let cfg = pad_widths_config pad_width in
   bind1 (T.Pad cfg) [ v; scalar (dtype v) cval ]
 
 let no_padding_on_empty (lo, hi) mode =
@@ -1309,8 +1323,8 @@ let pad_key mode pad_width stat_length end_values reflect_type =
           (mode, pad_width, stat_length, end_values, reflect_type)
           []))
 
-let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
-    pad_width constant_values =
+let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
+    ?(float_literal = false) v pad_width constant_values =
   let key = pad_key mode pad_width stat_length end_values reflect_type in
   let body v =
     pad_body ~mode ?stat_length ?end_values ~reflect_type v pad_width 0.0
@@ -1318,14 +1332,14 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
   if ndim v = 0 then v
   else if mode = "constant" then begin
     let literal =
-      if Float.is_integer constant_values then
+      if Float.is_integer constant_values && not float_literal then
         Jnp_util.py_int (int_of_float constant_values)
       else Jnp_util.py_float constant_values
     in
     Jnp_util.jit1 "_pad" ~key
       (function
         | [ v; cval ] ->
-            let cfg = Array.map (fun (lo, hi) -> (lo, hi, 0)) pad_width in
+            let cfg = pad_widths_config pad_width in
             let cval =
               C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v)
             in

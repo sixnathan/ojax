@@ -320,8 +320,14 @@ let normalized_start start size =
         let wrapped = b1 Add [ widened; literal (float_of_int size) ] in
         b1 Select_n [ negative; start; wrapped ]
 
-let dynamic_slice x starts slice_sizes =
+let dynamic_slice_normalized x starts slice_sizes =
   b1 (Dynamic_slice { slice_sizes }) (x :: starts)
+
+let dynamic_slice x starts slice_sizes =
+  let starts =
+    List.mapi (fun i start -> normalized_start start (shape x).(i)) starts
+  in
+  dynamic_slice_normalized x starts slice_sizes
 
 let dynamic_update_slice x update starts =
   b1 Dynamic_update_slice (x :: update :: starts)
@@ -338,7 +344,7 @@ let dynamic_slice_in_dim ?(axis = 0) x start size =
   let axis = canon_axis n axis in
   let sizes = Array.copy (shape x) in
   sizes.(axis) <- size;
-  dynamic_slice x (starts_in_dim x axis start) sizes
+  dynamic_slice_normalized x (starts_in_dim x axis start) sizes
 
 let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
   let axis = canon_axis (ndim x) axis in

@@ -95,7 +95,9 @@ let dynamic_take x idx =
         C.bind1 T.Select_n [ negative; s; shifted ])
       starts
   in
-  let out = L.dynamic_slice x normalised (Array.of_list (List.rev !sizes)) in
+  let out =
+    L.dynamic_slice_normalized x normalised (Array.of_list (List.rev !sizes))
+  in
   L.squeeze out squeeze
 
 type indexer = {

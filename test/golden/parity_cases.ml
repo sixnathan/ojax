@@ -1268,6 +1268,19 @@ let tracer_batch_run op params a b =
       Some [ Ojax.Random.Core.key_data (Ojax.Random.Core.prng_key seed) ]
   | _ -> None
 
+let slice_prefix v stop =
+  let sh = (Ojax.Core.get_aval v).Ojax.Types.shape in
+  let limit = Array.copy sh in
+  limit.(0) <- stop;
+  Ojax.Core.bind1
+    (Ojax.Types.Slice
+       {
+         start_indices = Array.make (Array.length sh) 0;
+         limit_indices = limit;
+         strides = None;
+       })
+    [ v ]
+
 let library_sweep op v =
   let module NF = Ojax.Nn.Functions in
   let module SP = Ojax.Scipy.Special in
@@ -1303,7 +1316,7 @@ let library_sweep op v =
   | "sw_nn_squareplus" -> Some (NF.squareplus v)
   | "sw_nn_gelu" -> Some (NF.gelu v)
   | "sw_nn_gelu_exact" -> Some (NF.gelu ~approximate:false v)
-  | "sw_nn_glu" -> Some (NF.glu ~axis:0 (L.slice_in_dim ~axis:0 v 0 2))
+  | "sw_nn_glu" -> Some (NF.glu ~axis:0 (slice_prefix v 2))
   | "sw_nn_softmax" -> Some (NF.softmax v)
   | "sw_nn_log_softmax" -> Some (NF.log_softmax v)
   | "sw_nn_standardize" -> Some (NF.standardize v)

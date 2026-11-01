@@ -87,7 +87,13 @@ let linspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
             | None -> to_inexact (result_of start stop)
           in
           let comp = to_inexact out_dt in
-          let start = convert start comp and stop = convert stop comp in
+          let strong v =
+            if (get_aval v).T.weak_type then
+              bind1 (T.Convert_element_type comp) [ v ]
+            else convert v comp
+          in
+          let start = strong start in
+          let stop = strong stop in
           let bounds =
             NL.broadcast_shapes_n [ shape_of start; shape_of stop ]
           in

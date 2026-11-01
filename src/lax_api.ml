@@ -210,7 +210,11 @@ let expand_dims x dims =
               h
           | [] -> invalid_arg "expand_dims")
   in
-  b1 (Reshape out) [ x ]
+  let kept =
+    List.filter (fun i -> not (Array.mem i dims)) (List.init n Fun.id)
+  in
+  if Array.length dims = 0 then x
+  else b1 (Broadcast_in_dim { shape = out; dims = Array.of_list kept }) [ x ]
 
 let broadcast_in_dim x sh dims =
   b1 (Broadcast_in_dim { shape = sh; dims }) [ x ]

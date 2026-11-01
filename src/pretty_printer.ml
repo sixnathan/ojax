@@ -475,7 +475,14 @@ let py_tuple items =
   | [ x ] -> "(" ^ x ^ ",)"
   | _ -> "(" ^ String.concat ", " items ^ ")"
 
-let py_ints a = py_tuple (Array.to_list (Array.map string_of_int a))
+let py_ints a =
+  py_tuple
+    (List.mapi
+       (fun i x ->
+         if Np_ints.is_marked a i then Printf.sprintf "np.int64(%d)" x
+         else string_of_int x)
+       (Array.to_list a))
+
 let py_bool b = if b then "True" else "False"
 
 let py_list a =
@@ -816,6 +823,7 @@ let alpha_name n =
   go n ""
 
 type context = {
+  keys : (int, unit) Hashtbl.t;
   mutable next_name : int;
   var_names : (int, string) Hashtbl.t;
   shared : (int, string) Hashtbl.t;
@@ -864,10 +872,19 @@ let pp_atoms ctx ?(separator = "") atoms =
               [ Layout.Text separator; Layout.Group (Layout.Brk " ") ])
            (List.map doc atoms)) )
 
+let key_short (a : aval) =
+  let rank = Array.length a.shape in
+  let dims = Array.to_list (Array.sub a.shape 0 (max 0 (rank - 1))) in
+  "key<fry>[" ^ String.concat "," (List.map string_of_int dims) ^ "]"
+
 let pp_binders ctx (vars : var list) =
   let doc (v : var) =
     let name = name_of_var ctx v in
-    Layout.Text (name ^ ":" ^ aval_short v.vaval)
+    let short =
+      if Hashtbl.mem ctx.keys v.vid then key_short v.vaval
+      else aval_short v.vaval
+    in
+    Layout.Text (name ^ ":" ^ short)
   in
   Layout.Nest
     ( 2,
@@ -1009,6 +1026,33 @@ and pp_eqn ctx (e : eqn) =
 
 and xla_call_name (c : closed_jaxpr) = call_name c.jid
 
+let rec mark_keys keys (jx : jaxpr) =
+  let mark (v : var) = Hashtbl.replace keys v.vid () in
+  let is_key = function
+    | A_var (v : var) -> Hashtbl.mem keys v.vid
+    | A_lit _ | DropVar _ -> false
+  in
+  List.iter
+    (fun (e : eqn) ->
+      match e.prim with
+      | Random_seed | Random_wrap | Random_split _ | Random_fold_in ->
+          List.iter mark e.outs
+      | Xla_call c ->
+          let args =
+            List.filteri
+              (fun i _ -> i >= List.length c.consts)
+              c.jaxpr.in_binders
+          in
+          List.iter2
+            (fun (b : var) input -> if is_key input then mark b)
+            args e.inputs;
+          mark_keys keys c.jaxpr;
+          List.iter2
+            (fun (out : var) inner -> if is_key inner then mark out)
+            e.outs c.jaxpr.outs
+      | _ -> ())
+    jx.eqns
+
 let dropvars ctx (jx : jaxpr) =
   let used = Hashtbl.create 64 in
   let note = function
@@ -1033,8 +1077,10 @@ let closed_jaxpr_to_jax_string (cj : closed_jaxpr) =
       var_names = Hashtbl.create 64;
       shared = Hashtbl.create 8;
       shared_names = Hashtbl.create 8;
+      keys = Hashtbl.create 8;
     }
   in
+  mark_keys ctx.keys cj.jaxpr;
   dropvars ctx cj.jaxpr;
   let counts = Hashtbl.create 16 in
   let order = ref [] in

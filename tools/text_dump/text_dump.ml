@@ -125,7 +125,10 @@ let jaxpr_builders =
     ( "nested",
       [ f32 [| 3 |]; f32 [| 3 |] ],
       function
-      | [ x; y ] -> [ one T.Add [ one T.Mul [ x; y ]; one T.Sin [ x ] ] ]
+      | [ x; y ] ->
+          let m = one T.Mul [ x; y ] in
+          let d = one T.Sin [ x ] in
+          [ one T.Add [ m; d ] ]
       | _ -> assert false );
   ]
 

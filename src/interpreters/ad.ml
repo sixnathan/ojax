@@ -1893,7 +1893,7 @@ let jvp_pairs prim primals tangents =
       match (primals, tangents) with
       | [ a ], [ t ] -> svd_jvp ~full_matrices ~compute_uv a t
       | _ -> arity ())
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
       let split2 l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
@@ -1942,7 +1942,15 @@ let jvp_pairs prim primals tangents =
       let new_operands = carry @ carry_t @ xs @ xs_t in
       let out =
         Core.bind
-          (Scan { length; reverse; num_carry = 2 * nc; jaxpr = new_body })
+          (Scan
+             {
+               length;
+               reverse;
+               num_carry = 2 * nc;
+               jaxpr = new_body;
+               unroll;
+               num_hoisted = 0;
+             })
           new_operands
       in
       let pcarry, r1 = split2 out nc in
@@ -3628,7 +3636,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
       let split_at l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
@@ -3689,6 +3697,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                reverse = not reverse;
                num_carry;
                jaxpr = transposed_body;
+               unroll;
+               num_hoisted = 0;
              })
           (ct_carry @ ct_ys @ residuals)
       in

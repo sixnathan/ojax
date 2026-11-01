@@ -210,6 +210,8 @@ and primitive =
       reverse : bool;
       num_carry : int;
       jaxpr : closed_jaxpr;
+      unroll : int;
+      num_hoisted : int;
     }
   | While of { cond : closed_jaxpr; body : closed_jaxpr }
   | Cumsum of { axis : int; reverse : bool }

@@ -178,7 +178,7 @@ let cumred_impl ~axis ~reverse ~combine (nd : Ndarray.t) : Ndarray.t =
   done;
   out
 
-let rec scan ?length ?(reverse = false) (body : value list -> value list)
+let rec scan ?length ?(reverse = false) ?(unroll = 1) (body : value list -> value list)
     (init : value list) (xs : value list) : value list =
   let num_carry = List.length init in
   let length =
@@ -203,7 +203,7 @@ let rec scan ?length ?(reverse = false) (body : value list -> value list)
       next @ Ref_state.contents cells @ ys
     in
     let outs =
-      scan ~length ~reverse stateful (init @ List.map Ref_state.read cells) xs
+      scan ~length ~reverse ~unroll stateful (init @ List.map Ref_state.read cells) xs
     in
     let carry, rest = split_at outs num_carry in
     let finals, ys = split_at rest n_state in
@@ -211,7 +211,9 @@ let rec scan ?length ?(reverse = false) (body : value list -> value list)
     carry @ ys
   end
   else if hoisted = [] then
-    Core.bind (Scan { length; reverse; num_carry; jaxpr }) (init @ xs)
+    Core.bind
+      (Scan { length; reverse; num_carry; jaxpr; unroll; num_hoisted = 0 })
+      (init @ xs)
   else
     let n_hoisted = List.length hoisted in
     let hoisted_avals = List.map Core.get_aval hoisted in
@@ -234,6 +236,8 @@ let rec scan ?length ?(reverse = false) (body : value list -> value list)
              reverse;
              num_carry = num_carry + n_hoisted;
              jaxpr = lifted;
+             unroll;
+             num_hoisted = n_hoisted;
            })
         (init @ hoisted @ xs)
     in

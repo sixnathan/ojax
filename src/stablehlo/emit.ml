@@ -2596,6 +2596,134 @@ and scan_as_while ~length ~reverse ~num_carry (body : closed_jaxpr) args =
   let _, c, ys, _ = unpack final in
   c @ ys
 
+and scan_unrolled ~length ~reverse ~num_carry ~num_hoisted ~unroll
+    (body : closed_jaxpr) args =
+  let b1 = Core.bind1 in
+  let split_at l n =
+    match Util.split_list l [ n ] with
+    | [ a; b ] -> (a, b)
+    | _ -> invalid_arg "Stablehlo.Emit: scan arity"
+  in
+  let num_trips, remainder =
+    if unroll = 0 then (0, length) else (length / unroll, length mod unroll)
+  in
+  let num_trips, remainder =
+    if unroll <> 1 && num_trips = 1 && remainder = 0 then (0, length)
+    else (num_trips, remainder)
+  in
+  let num_ys = List.length body.jaxpr.outs - num_carry in
+  if num_trips > 0 && num_ys > 0 then
+    scan_as_while ~length ~reverse ~num_carry body args
+  else begin
+    let carry_all, xs = split_at args num_carry in
+    let num_kept = num_carry - num_hoisted in
+    let carry, consts = split_at carry_all num_kept in
+    let slice_leading lo hi v =
+      let sh = (Core.get_aval v).shape in
+      b1
+        (Slice
+           {
+             start_indices = Array.mapi (fun d _ -> if d = 0 then lo else 0) sh;
+             limit_indices = Array.mapi (fun d s -> if d = 0 then hi else s) sh;
+             strides = None;
+           })
+        [ v ]
+    in
+    let call c x =
+      let k = List.length consts and n = List.length c in
+      let run all =
+        let h, rest = split_at all k in
+        let c, x = split_at rest n in
+        let c', rest = split_at (Jaxpr.eval_closed_jaxpr body (c @ h @ x)) n in
+        c' @ snd (split_at rest k)
+      in
+      let key = string_of_int body.jid in
+      Jaxpr.named_jit ~name:"closed_call" ~key run (consts @ c @ x)
+    in
+    let inner n carry xs =
+      let carry = ref carry in
+      let ys = ref [] in
+      for step = 0 to n - 1 do
+        let i = if reverse then n - step - 1 else step in
+        let x =
+          List.map
+            (fun v -> b1 (Squeeze [| 0 |]) [ slice_leading i (i + 1) v ])
+            xs
+        in
+        let c', y = split_at (call !carry x) num_kept in
+        carry := c';
+        ys := y :: !ys
+      done;
+      let rows = if reverse then !ys else List.rev !ys in
+      let stacked =
+        List.init num_ys (fun j ->
+            b1 (Stack 0) (List.map (fun row -> List.nth row j) rows))
+      in
+      (!carry, stacked)
+    in
+    let split_xs =
+      if remainder = 0 then List.map (fun x -> (x, x)) xs
+      else
+        List.map
+          (fun x ->
+            if not reverse then begin
+              let first = slice_leading 0 (num_trips * unroll) x in
+              let rest = slice_leading (num_trips * unroll) length x in
+              (first, rest)
+            end
+            else begin
+              let first = slice_leading 0 remainder x in
+              let rest = slice_leading remainder length x in
+              (rest, first)
+            end)
+          xs
+    in
+    let xs_main = List.map fst split_xs and xs_rem = List.map snd split_xs in
+    let carry =
+      if num_trips = 0 then carry
+      else begin
+        let int_dt = Dtypes.default_int_dtype () in
+        let scalar i =
+          Concrete (Ndarray.of_floats int_dt [||] [| float_of_int i |])
+        in
+        let xss =
+          List.map
+            (fun x ->
+              let sh = (Core.get_aval x).shape in
+              let tail = Array.sub sh 1 (Array.length sh - 1) in
+              b1 (Reshape (Array.append [| num_trips; unroll |] tail)) [ x ])
+            xs_main
+        in
+        let cond state = b1 Lt [ List.hd state; scalar num_trips ] in
+        let step state =
+          match state with
+          | i_ :: rest ->
+              let carry, xss = split_at rest num_kept in
+              let i =
+                if reverse then b1 Sub [ scalar (num_trips - 1); i_ ] else i_
+              in
+              let row x =
+                let sh = (Core.get_aval x).shape in
+                let sizes = Array.mapi (fun d s -> if d = 0 then 1 else s) sh in
+                let starts =
+                  i :: List.init (Array.length sh - 1) (fun _ -> scalar 0)
+                in
+                b1 (Squeeze [| 0 |])
+                  [ b1 (Dynamic_slice { slice_sizes = sizes }) (x :: starts) ]
+              in
+              let carry, _ = inner unroll carry (List.map row xss) in
+              (b1 Add [ i_; scalar 1 ] :: carry) @ xss
+          | [] -> invalid_arg "Stablehlo.Emit: scan state"
+        in
+        match Lax_api.while_loop cond step ((scalar 0 :: carry) @ xss) with
+        | _ :: rest -> fst (split_at rest num_kept)
+        | [] -> invalid_arg "Stablehlo.Emit: scan state"
+      end
+    in
+    let carry, ys = if remainder > 0 then inner remainder carry xs_rem else (carry, []) in
+    carry @ consts @ ys
+  end
+
 and emit_inlined ctx (eqn : eqn) in_ids f =
   emit_traced ctx (List.map atom_aval eqn.inputs) in_ids eqn.outs f
 
@@ -2608,6 +2736,31 @@ and emit_traced ctx avals in_ids outs f =
 and emit_traced_ids ctx avals in_ids f =
   emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids
 
+and hoist_custom_consts ctx (jx : jaxpr) =
+  List.iter
+    (fun (e : eqn) ->
+      match e.prim with
+      | Custom_jvp_call id | Custom_vjp_call id -> (
+          match Jaxpr.custom_call_jaxpr id (List.map atom_aval e.inputs) with
+          | Some c -> begin
+              let binders =
+                match
+                  Util.split_list c.jaxpr.in_binders [ List.length c.consts ]
+                with
+                | [ cb; _ ] -> cb
+                | _ -> invalid_arg "Stablehlo.Emit: binder split"
+              in
+              List.iter2
+                (fun (v : var) nd ->
+                  if not (Hashtbl.mem ctx.ids v.vid) then
+                    emit_constant_at ctx (bind_var ctx v) nd)
+                binders c.consts;
+              hoist_custom_consts ctx c.jaxpr
+            end
+          | None -> ())
+      | _ -> ())
+    jx.eqns
+
 and emit_closed_inline ctx (traced : closed_jaxpr) in_ids =
   let jx = traced.jaxpr in
   let const_binders, arg_binders =
@@ -2616,7 +2769,9 @@ and emit_closed_inline ctx (traced : closed_jaxpr) in_ids =
     | _ -> invalid_arg "Stablehlo.Emit: binder split"
   in
   List.iter2
-    (fun (v : var) nd -> emit_constant_at ctx (bind_var ctx v) nd)
+    (fun (v : var) nd ->
+      if not (Hashtbl.mem ctx.ids v.vid) then
+        emit_constant_at ctx (bind_var ctx v) nd)
     const_binders traced.consts;
   List.iter2
     (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
@@ -2793,6 +2948,7 @@ and emit_private_function ctx fname (c : closed_jaxpr) =
   List.iter2
     (fun (v : var) nd -> emit_constant_at inner (bind_var inner v) nd)
     const_binders c.consts;
+  hoist_custom_consts inner c.jaxpr;
   List.iter
     (fun (e : eqn) -> emit_eqn inner e (List.map (id_of_atom inner) e.inputs))
     c.jaxpr.eqns;
@@ -3262,9 +3418,11 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Reduce_window { reducer; window } ->
       emit_reduce_window_general ctx eqn in_ids reducer window
   | While { cond; body } -> emit_while ctx eqn in_ids cond body
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll; num_hoisted } ->
       emit_inlined ctx eqn in_ids
-        (scan_as_while ~length ~reverse ~num_carry jaxpr)
+        (if unroll = 1 then scan_as_while ~length ~reverse ~num_carry jaxpr
+         else
+           scan_unrolled ~length ~reverse ~num_carry ~num_hoisted ~unroll jaxpr)
   | Select_and_scatter _ ->
       failwith
         "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \
@@ -3831,6 +3989,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
       let n = bind_var ctx v in
       emit_constant_at ctx n nd)
     const_binders cj.consts;
+  hoist_custom_consts ctx jx;
   List.iter
     (fun (e : eqn) ->
       let in_ids = List.map (id_of_atom ctx) e.inputs in

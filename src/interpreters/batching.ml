@@ -1067,7 +1067,7 @@ let cond_batch (axis_size : int) (t : closed_jaxpr) (f : closed_jaxpr)
       (outs, List.map (fun _ -> Some 0) outs)
   | _ -> failwith "batching: cond expects a predicate"
 
-let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
+let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool) ~(unroll : int)
     ~(num_carry : int) (jaxpr : closed_jaxpr) (vals : value list)
     (bdims : int option list) : value list * int option list =
   let split2 l n =
@@ -1094,7 +1094,7 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   in
   let outs =
     Core.bind
-      (Scan { length; reverse; num_carry; jaxpr = new_body })
+      (Scan { length; reverse; num_carry; jaxpr = new_body; unroll; num_hoisted = 0 })
       (new_carry @ new_xs)
   in
   let num_ys = List.length outs - num_carry in
@@ -1532,9 +1532,9 @@ let batch_process_primitive (trace : trace) (prim : primitive)
   | Cond { t; f } ->
       let outs, out_bdims = cond_batch axis_size t f vals bdims in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
       let outs, out_bdims =
-        scan_batch axis_size ~length ~reverse ~num_carry jaxpr vals bdims
+        scan_batch axis_size ~length ~reverse ~num_carry ~unroll jaxpr vals bdims
       in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | Custom_jvp_call id

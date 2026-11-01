@@ -492,9 +492,10 @@ and vector_norm ?(axis = None) ?(keepdims = false) ?(ord = Onum 2.0) x =
     | Some ax -> RED.sum ~axis:ax ~keepdims v
   in
   let amaxf v =
+    let initial = const (dtype v) 0.0 in
     match axis with
-    | None -> RED.amax ~keepdims v
-    | Some ax -> RED.amax ~axis:ax ~keepdims v
+    | None -> RED.amax ~keepdims ~initial v
+    | Some ax -> RED.amax ~axis:ax ~keepdims ~initial v
   in
   let aminf v =
     match axis with
@@ -534,8 +535,10 @@ and matrix_norm_impl x ord r c keepdims =
   | Onum o ->
       if o = 1.0 then begin
         let c = if (not keepdims) && c > r then c - 1 else c in
+        let summed = RED.sum ~axis:[| r |] ~keepdims (abs_x ()) in
         RED.amax ~axis:[| c |] ~keepdims
-          (RED.sum ~axis:[| r |] ~keepdims (abs_x ()))
+          ~initial:(const (dtype summed) 0.0)
+          summed
       end
       else if o = -1.0 then begin
         let c = if (not keepdims) && c > r then c - 1 else c in
@@ -544,8 +547,10 @@ and matrix_norm_impl x ord r c keepdims =
       end
       else if o = infinity then begin
         let r = if (not keepdims) && r > c then r - 1 else r in
+        let summed = RED.sum ~axis:[| c |] ~keepdims (abs_x ()) in
         RED.amax ~axis:[| r |] ~keepdims
-          (RED.sum ~axis:[| c |] ~keepdims (abs_x ()))
+          ~initial:(const (dtype summed) 0.0)
+          summed
       end
       else if o = neg_infinity then begin
         let r = if (not keepdims) && r > c then r - 1 else r in
@@ -556,7 +561,8 @@ and matrix_norm_impl x ord r c keepdims =
         let x2 = NL.moveaxis [| r; c |] [| nd - 2; nd - 1 |] x in
         let s = svdvals x2 in
         let y =
-          if o = 2.0 then RED.amax ~axis:[| -1 |] s
+          if o = 2.0 then
+            RED.amax ~axis:[| -1 |] ~initial:(const (dtype s) 0.0) s
           else RED.amin ~axis:[| -1 |] s
         in
         if keepdims then NL.expand_dims y [| r; c |] else y

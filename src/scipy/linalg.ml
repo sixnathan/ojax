@@ -896,7 +896,11 @@ let sqrtm_triu t =
           let dt = dtype t in
           let index v =
             T.Concrete
-              (Ndarray.as_weak (Nd.of_floats D.I32 [||] [| float_of_int v |]))
+              (Ndarray.as_weak
+                 (Nd.of_floats
+                    (Dtypes.default_int_dtype ())
+                    [||]
+                    [| float_of_int v |]))
           in
           let one () = index 1 in
           let i_loop j l = function

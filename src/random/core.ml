@@ -50,11 +50,7 @@ let unravel shape i =
   idx
 
 let geti nd i = Int64.to_int (Nd.get_i64 nd (unravel (Nd.shape nd) i))
-
-let const dt shape x =
-  Concrete
-    (Nd.canonicalize dt (Nd.of_floats dt shape (Array.make (prod shape) x)))
-
+let const dt shape x = C.splat dt shape x
 let wrap k = PR.random_wrap k
 let unwrap k = PR.random_unwrap k
 let mask32 = 0xFFFFFFFFL

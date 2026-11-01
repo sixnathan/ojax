@@ -12,10 +12,7 @@ let dtype v = (get_aval v).T.dtype
 let weak v = (get_aval v).T.weak_type
 let bind1 = C.bind1
 let prod sh = Array.fold_left ( * ) 1 sh
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (prod sh) x))
-
+let const_full dt sh x = Core.splat dt sh x
 let scalar dt x = const_full dt [||] x
 
 let convert v dt =

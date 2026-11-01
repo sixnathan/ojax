@@ -10,10 +10,7 @@ let weak v = (get_aval v).T.weak_type
 let ndim v = Array.length (shape v)
 let size v = Array.fold_left ( * ) 1 (shape v)
 let bind1 = C.bind1
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (Array.fold_left ( * ) 1 sh) x))
-
+let const_full dt sh x = Core.splat dt sh x
 let zeros_like v = const_full (dtype v) (shape v) 0.0
 
 let canonicalize_axis ax n =
@@ -28,15 +25,7 @@ let convert v dt =
 
 let reshape v sh = bind1 (T.Reshape sh) [ v ]
 let ravel v = reshape v [| size v |]
-
-let broadcast_to v sh =
-  let s = shape v in
-  if s = sh then v
-  else begin
-    let nd_in = Array.length s and nd_out = Array.length sh in
-    let dims = Array.init nd_in (fun i -> i + (nd_out - nd_in)) in
-    bind1 (T.Broadcast_in_dim { shape = sh; dims }) [ v ]
-  end
+let broadcast_to = Jnp_util.broadcast_to
 
 let is_inexact = function
   | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
@@ -106,7 +95,7 @@ let axis_count v axes =
   Array.fold_left (fun acc i -> acc * s.(i)) 1 axes
 
 let isnan v = bind1 T.Ne [ v; v ]
-let where c x y = bind1 T.Select_n [ c; y; x ]
+let where = Jnp_util.where
 
 let check_where name = function
   | None -> None

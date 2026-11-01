@@ -956,10 +956,7 @@ let symmetrize x =
     | Dtype.Complex64 | Dtype.Complex128 -> Core.bind1 Conj [ flipped ]
     | _ -> flipped
   in
-  let n = Array.fold_left ( * ) 1 aval.shape in
-  let half =
-    Concrete (Ndarray.of_floats aval.dtype aval.shape (Array.make n 2.0))
-  in
+  let half = Core.splat aval.dtype aval.shape 2.0 in
   Core.bind1 Div [ Core.bind1 Add [ x; flipped ]; half ]
 
 let cholesky ?(symmetrize_input = true) x =

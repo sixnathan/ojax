@@ -9,14 +9,7 @@ let dtype_of v = (aval v).dtype
 let ndim v = Array.length (shape v)
 let canon_axis n a = if a < 0 then a + n else a
 let product a = Array.fold_left ( * ) 1 a
-
-let filled dt sh x =
-  let n = product sh in
-  match dt with
-  | Dtype.Complex64 | Dtype.Complex128 ->
-      Concrete
-        (Ndarray.of_complex dt sh (Array.make n { Complex.re = x; im = 0.0 }))
-  | _ -> Concrete (Ndarray.of_floats dt sh (Array.make n x))
+let filled dt sh x = Core.splat dt sh x
 
 let broadcast_scalar v sh =
   if shape v = sh then v
@@ -30,9 +23,8 @@ let broadcast_scalar v sh =
          (ndim v) (Array.length sh))
 
 let unify a b =
-  if shape a = shape b then (a, b)
-  else if ndim a = 0 then (broadcast_scalar a (shape b), b)
-  else (a, broadcast_scalar b (shape a))
+  if shape a = shape b || ndim a = 0 then (a, b)
+  else (a, broadcast_scalar b (if ndim b = 0 then shape b else shape a))
 
 let lift2 prim a b =
   let x, y = unify a b in

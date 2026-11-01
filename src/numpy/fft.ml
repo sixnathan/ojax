@@ -72,15 +72,7 @@ let scale_by factor v =
   if factor = 1.0 then v
   else
     let aval = Core.get_aval v in
-    let n = Array.fold_left ( * ) 1 aval.shape in
-    let c =
-      match aval.dtype with
-      | Dtype.Complex64 | Dtype.Complex128 ->
-          Concrete
-            (Ndarray.of_complex aval.dtype aval.shape
-               (Array.make n { Complex.re = factor; im = 0.0 }))
-      | dt -> Concrete (Ndarray.of_floats dt aval.shape (Array.make n factor))
-    in
+    let c = Core.splat aval.dtype aval.shape factor in
     b1 Mul [ v; c ]
 
 let fft_core kind ~inverse ?s ?axes ?norm a =

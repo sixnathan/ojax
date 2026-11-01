@@ -55,6 +55,7 @@ type ctx = {
   ids : (int, int) Hashtbl.t;
   names : (int, string) Hashtbl.t;
   mutable next : int;
+  mutable literals : (Ndarray.t * int) list;
 }
 
 let fresh ctx =
@@ -68,16 +69,23 @@ let bind_var ctx (v : var) =
   n
 
 let used_symbols : (string, int) Hashtbl.t = Hashtbl.create 8
+let symbol_counter = ref 0
 
 let unique_symbol base =
-  match Hashtbl.find_opt used_symbols base with
-  | None ->
-      Hashtbl.replace used_symbols base 1;
-      base
-  | Some n ->
-      Hashtbl.replace used_symbols base (n + 1);
-      Printf.sprintf "%s_%d" base n
+  let rec probe candidate =
+    if Hashtbl.mem used_symbols candidate then begin
+      let n = !symbol_counter in
+      incr symbol_counter;
+      probe (Printf.sprintf "%s_%d" base n)
+    end
+    else begin
+      Hashtbl.replace used_symbols candidate 1;
+      candidate
+    end
+  in
+  probe base
 
+let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -106,10 +114,13 @@ let emit_constant_at ctx n nd =
 
 let capture ctx f =
   let saved = ctx.buf in
+  let saved_literals = ctx.literals in
   ctx.buf <- Buffer.create 128;
+  ctx.literals <- [];
   f ();
   let s = Buffer.contents ctx.buf in
   ctx.buf <- saved;
+  ctx.literals <- saved_literals;
   s
 
 let reindent extra s =
@@ -121,8 +132,15 @@ let reindent extra s =
 let ssa_of_atom ctx = function
   | A_var v -> ssa_of_var ctx v
   | A_lit nd ->
-      let n = fresh ctx in
-      emit_constant_at ctx n nd;
+      let n =
+        match List.assq_opt nd ctx.literals with
+        | Some n -> n
+        | None ->
+            let n = fresh ctx in
+            emit_constant_at ctx n nd;
+            ctx.literals <- (nd, n) :: ctx.literals;
+            n
+      in
       name n
   | DropVar _ -> invalid_arg "Stablehlo.Emit: DropVar in value position"
 
@@ -131,10 +149,14 @@ let id_of_atom ctx = function
       match Hashtbl.find_opt ctx.ids v.vid with
       | Some n -> n
       | None -> invalid_arg "Stablehlo.Emit: unbound variable")
-  | A_lit nd ->
-      let n = fresh ctx in
-      emit_constant_at ctx n nd;
-      n
+  | A_lit nd -> (
+      match List.assq_opt nd ctx.literals with
+      | Some n -> n
+      | None ->
+          let n = fresh ctx in
+          emit_constant_at ctx n nd;
+          ctx.literals <- (nd, n) :: ctx.literals;
+          n)
   | DropVar _ -> invalid_arg "Stablehlo.Emit: DropVar in value position"
 
 let sole = function [ x ] -> x | _ -> invalid_arg "Stablehlo.Emit: arity"
@@ -2604,7 +2626,136 @@ and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
        (String.concat ", " in_types)
        (String.concat ", " out_types))
 
+and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
+  let fname =
+    match Hashtbl.find_opt call_symbols c.jid with
+    | Some s -> s
+    | None ->
+        let s = unique_symbol (Pretty_printer.call_name c.jid) in
+        Hashtbl.replace call_symbols c.jid s;
+        emit_private_function ctx s c;
+        s
+  in
+  let arg_types =
+    List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) eqn.inputs
+  in
+  let out_types =
+    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+  in
+  let results =
+    match out_types with [ t ] -> t | ts -> "(" ^ String.concat ", " ts ^ ")"
+  in
+  let args = String.concat ", " (List.map name in_ids) in
+  match eqn.outs with
+  | [] ->
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    call @%s(%s) : (%s) -> ()\n" fname args
+           (String.concat ", " arg_types))
+  | [ out ] ->
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
+           args
+           (String.concat ", " arg_types)
+           results)
+  | outs ->
+      let n = fresh ctx in
+      List.iteri
+        (fun i (v : var) ->
+          Hashtbl.replace ctx.ids v.vid
+            (alias_result (Printf.sprintf "%%%d#%d" n i)))
+        outs;
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %%%d:%d = call @%s(%s) : (%s) -> %s\n" n
+           (List.length outs) fname args
+           (String.concat ", " arg_types)
+           results)
+
+and emit_private_function ctx fname (c : closed_jaxpr) =
+  let inner =
+    {
+      buf = Buffer.create 256;
+      extras = Buffer.create 256;
+      ids = Hashtbl.create 16;
+      names = Hashtbl.create 4;
+      next = 0;
+      literals = [];
+    }
+  in
+  let const_binders, arg_binders =
+    match Util.split_list c.jaxpr.in_binders [ List.length c.consts ] with
+    | [ cb; ab ] -> (cb, ab)
+    | _ -> invalid_arg "Stablehlo.Emit: binder split"
+  in
+  let params =
+    List.map
+      (fun (v : var) ->
+        Printf.sprintf "%%%d: %s" (bind_var inner v)
+          (Ir.tensor_type_of_aval v.vaval))
+      arg_binders
+  in
+  List.iter2
+    (fun (v : var) nd -> emit_constant_at inner (bind_var inner v) nd)
+    const_binders c.consts;
+  List.iter
+    (fun (e : eqn) -> emit_eqn inner e (List.map (id_of_atom inner) e.inputs))
+    c.jaxpr.eqns;
+  let out_names = List.map (ssa_of_atom inner) c.jaxpr.outs in
+  let out_types =
+    List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) c.jaxpr.outs
+  in
+  let results =
+    match out_types with [ t ] -> t | ts -> "(" ^ String.concat ", " ts ^ ")"
+  in
+  Buffer.add_string ctx.extras
+    (Printf.sprintf
+       "  func.func private @%s(%s) -> %s {\n%s    return %s : %s\n  }\n" fname
+       (String.concat ", " params)
+       results
+       (Buffer.contents inner.buf)
+       (String.concat ", " out_names)
+       (String.concat ", " out_types));
+  Buffer.add_buffer ctx.extras inner.extras
+
+and widen_operands ctx (eqn : eqn) (in_ids : int list) =
+  let needs_widening =
+    match eqn.prim with Clamp -> true | p -> Core.is_elementwise p
+  in
+  if not needs_widening then (eqn, in_ids)
+  else
+    let shapes = List.map (fun a -> (atom_aval a).shape) eqn.inputs in
+    let out = Core.elementwise_shape shapes in
+    if List.for_all (fun s -> s = out) shapes then (eqn, in_ids)
+    else
+      let widened =
+        List.map2
+          (fun atom id ->
+            let aval = atom_aval atom in
+            if aval.shape = out then (atom, id)
+            else begin
+              let k = Array.length out - Array.length aval.shape in
+              let dims =
+                Array.init (Array.length aval.shape) (fun i -> i + k)
+              in
+              let var =
+                { vid = Core.fresh_id (); vaval = { aval with shape = out } }
+              in
+              emit_broadcast_in_dim ctx
+                {
+                  prim = Broadcast_in_dim { shape = out; dims };
+                  inputs = [ atom ];
+                  outs = [ var ];
+                  multiple_results = false;
+                }
+                [ id ] dims;
+              (A_var var, Hashtbl.find ctx.ids var.vid)
+            end)
+          eqn.inputs in_ids
+      in
+      ({ eqn with inputs = List.map fst widened }, List.map snd widened)
+
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
+  let eqn, in_ids = widen_operands ctx eqn in_ids in
   try emit_eqn_unchecked ctx eqn in_ids
   with Invalid_argument msg when msg = "Stablehlo.Emit: arity" ->
     failwith
@@ -3198,11 +3349,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       | Core.Jvp_rule _ | Core.Vjp_rule _ | Core.Callback_rule _ ->
           failwith
             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
-  | Xla_call _ ->
-      failwith
-        "Stablehlo.Emit: a nested Xla_call must be inlined by the caller; the \
-         top-level compiled jaxpr body is @main (emitter core row 75), an \
-         eqn-level Xla_call is non-representable here"
+  | Xla_call c -> emit_call ctx eqn in_ids c
 
 let qualify_nested_calls ~depth text =
   let level = ref depth in
@@ -3227,6 +3374,8 @@ let qualify_nested_calls ~depth text =
 
 let emit_closed_jaxpr ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
+  Hashtbl.reset call_symbols;
+  symbol_counter := 0;
   seen_mesh := None;
   channel := 0;
   manual_axes := [];
@@ -3245,6 +3394,7 @@ let emit_closed_jaxpr ?partition (cj : closed_jaxpr) : string =
       ids = Hashtbl.create 16;
       names = Hashtbl.create 4;
       next = 0;
+      literals = [];
     }
   in
   let in_specs =
@@ -3298,3 +3448,47 @@ let emit_closed_jaxpr ?partition (cj : closed_jaxpr) : string =
     (String.concat ", " out_attributes)
     (qualify_nested_calls ~depth:1 (Buffer.contents ctx.buf))
     (qualify_nested_calls ~depth:0 (Buffer.contents ctx.extras))
+
+let has_side_effect = function
+  | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
+  | Dce_sink | Rng_bit_generator | Create_token | After_all -> true
+  | _ -> false
+
+let prune_for_lowering (cj : closed_jaxpr) =
+  let jx = cj.jaxpr in
+  let used = Hashtbl.create 64 in
+  let note = function
+    | A_var (v : var) -> Hashtbl.replace used v.vid ()
+    | A_lit _ | DropVar _ -> ()
+  in
+  List.iter note jx.outs;
+  let kept =
+    List.fold_left
+      (fun acc (e : eqn) ->
+        if
+          has_side_effect e.prim
+          || List.exists (fun (v : var) -> Hashtbl.mem used v.vid) e.outs
+        then begin
+          List.iter note e.inputs;
+          e :: acc
+        end
+        else acc)
+      [] (List.rev jx.eqns)
+  in
+  let n_consts = List.length cj.consts in
+  let const_binders, arg_binders =
+    match Util.split_list jx.in_binders [ n_consts ] with
+    | [ cb; ab ] -> (cb, ab)
+    | _ -> invalid_arg "Stablehlo.Emit: binder split"
+  in
+  let kept_args =
+    List.filter (fun (v : var) -> Hashtbl.mem used v.vid) arg_binders
+  in
+  {
+    cj with
+    jaxpr = { jx with in_binders = const_binders @ kept_args; eqns = kept };
+  }
+
+let emit_jax_text ~name cj =
+  Mlir_names.render ~module_name:name
+    (emit_closed_jaxpr (prune_for_lowering cj))

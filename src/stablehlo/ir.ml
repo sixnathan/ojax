@@ -58,62 +58,6 @@ let hex_bits dtype v =
 let canonical_nan dtype =
   if is_f32 dtype then "0x7FC00000" else "0x7FF8000000000000"
 
-let stage1 dtype v =
-  let s = Printf.sprintf "%.5e" v in
-  let ei = String.index s 'e' in
-  let spliced =
-    String.sub s 0 ei ^ "0" ^ String.sub s ei (String.length s - ei)
-  in
-  if bits_equal dtype (float_of_string spliced) v then Some spliced else None
-
-let strip_trailing_zeros digits =
-  let n = ref (String.length digits) in
-  while !n > 1 && digits.[!n - 1] = '0' do
-    decr n
-  done;
-  String.sub digits 0 !n
-
-let sig_figs dtype = if is_f32 dtype then 9 else 17
-
-let stage2 dtype v =
-  let p = sig_figs dtype in
-  let s = Printf.sprintf "%.*e" (p - 1) v in
-  let ei = String.index s 'e' in
-  let mant = String.sub s 0 ei in
-  let e = int_of_string (String.sub s (ei + 1) (String.length s - ei - 1)) in
-  let neg = mant.[0] = '-' in
-  let mant = if neg then String.sub mant 1 (String.length mant - 1) else mant in
-  let digits =
-    strip_trailing_zeros (String.concat "" (String.split_on_char '.' mant))
-  in
-  let sign = if neg then "-" else "" in
-  let ndig = String.length digits in
-  if e >= -3 && e <= p - 2 then
-    let pp = e + 1 in
-    if pp >= ndig then hex_bits dtype v
-    else if pp <= 0 then sign ^ "0." ^ String.make (-pp) '0' ^ digits
-    else sign ^ String.sub digits 0 pp ^ "." ^ String.sub digits pp (ndig - pp)
-  else
-    let m =
-      if ndig = 1 then digits ^ ".0"
-      else String.sub digits 0 1 ^ "." ^ String.sub digits 1 (ndig - 1)
-    in
-    let es =
-      if e >= 0 then Printf.sprintf "+%d" e else Printf.sprintf "-%d" (-e)
-    in
-    sign ^ m ^ "E" ^ es
-
-let narrow_literal dtype v =
-  let nan_bits, inf_bits =
-    match dtype with Dtype.F16 -> ("0x7E00", 0x7C00) | _ -> ("0x7FC0", 0x7F80)
-  in
-  match Float.classify_float v with
-  | FP_nan -> nan_bits
-  | FP_infinite ->
-      Printf.sprintf "0x%04X"
-        (if v < 0.0 then inf_bits lor 0x8000 else inf_bits)
-  | _ -> Printf.sprintf "%.17e" v
-
 let big_of_int n =
   let rec limbs n = if n = 0 then [] else (n land 0xffff) :: limbs (n lsr 16) in
   limbs n
@@ -206,6 +150,90 @@ let small_finite_text v =
     let padded = text ^ String.make (7 - String.length text) '0' in
     Printf.sprintf "%s%c.%se%+03d" sign padded.[0] (String.sub padded 1 6) sci
 
+let stage1 dtype v =
+  let spliced = small_finite_text v in
+  if bits_equal dtype (float_of_string spliced) v then Some spliced else None
+
+let strip_trailing_zeros digits =
+  let n = ref (String.length digits) in
+  while !n > 1 && digits.[!n - 1] = '0' do
+    decr n
+  done;
+  String.sub digits 0 !n
+
+let sig_figs dtype = if is_f32 dtype then 9 else 17
+
+let stage2 dtype v =
+  let p = sig_figs dtype in
+  let s = Printf.sprintf "%.*e" (p - 1) v in
+  let ei = String.index s 'e' in
+  let mant = String.sub s 0 ei in
+  let e = int_of_string (String.sub s (ei + 1) (String.length s - ei - 1)) in
+  let neg = mant.[0] = '-' in
+  let mant = if neg then String.sub mant 1 (String.length mant - 1) else mant in
+  let digits =
+    strip_trailing_zeros (String.concat "" (String.split_on_char '.' mant))
+  in
+  let sign = if neg then "-" else "" in
+  let ndig = String.length digits in
+  if e >= -3 && e <= p - 2 then
+    let pp = e + 1 in
+    if pp >= ndig then hex_bits dtype v
+    else if pp <= 0 then sign ^ "0." ^ String.make (-pp) '0' ^ digits
+    else sign ^ String.sub digits 0 pp ^ "." ^ String.sub digits pp (ndig - pp)
+  else
+    let m =
+      if ndig = 1 then digits ^ ".0"
+      else String.sub digits 0 1 ^ "." ^ String.sub digits 1 (ndig - 1)
+    in
+    let es =
+      if e >= 0 then Printf.sprintf "+%d" e else Printf.sprintf "-%d" (-e)
+    in
+    sign ^ m ^ "E" ^ es
+
+let narrow_stage2 dtype v =
+  let p = match dtype with Dtype.F16 -> 5 | _ -> 4 in
+  let s = Printf.sprintf "%.*e" (p - 1) v in
+  let ei = String.index s 'e' in
+  let e = int_of_string (String.sub s (ei + 1) (String.length s - ei - 1)) in
+  if e >= -3 && e <= p - 2 then Printf.sprintf "%.*f" (max (p - 1 - e) 0) v
+  else Printf.sprintf "%sE%+d" (String.sub s 0 ei) e
+
+let round_half_even x =
+  let r = Float.floor x in
+  let d = x -. r in
+  if d > 0.5 || (d = 0.5 && Float.rem r 2.0 <> 0.0) then r +. 1.0 else r
+
+let narrow_round dtype v =
+  if v = 0.0 || not (Float.is_finite v) then v
+  else
+    let precision, emin =
+      match dtype with Dtype.F16 -> (11, -14) | _ -> (8, -126)
+    in
+    let m, e = Float.frexp v in
+    let bits =
+      if e - 1 < emin then precision - (emin - (e - 1)) else precision
+    in
+    if bits < 0 then Float.copy_sign 0.0 v
+    else Float.ldexp (round_half_even (Float.ldexp m bits)) (e - bits)
+
+let narrow_finite dtype v0 =
+  let v = narrow_round dtype v0 in
+  let spliced = small_finite_text v in
+  if narrow_round dtype (float_of_string spliced) = v then spliced
+  else narrow_stage2 dtype v
+
+let narrow_literal dtype v =
+  let nan_bits, inf_bits =
+    match dtype with Dtype.F16 -> ("0x7E00", 0x7C00) | _ -> ("0x7FC0", 0x7F80)
+  in
+  match Float.classify_float v with
+  | FP_nan -> nan_bits
+  | FP_infinite ->
+      Printf.sprintf "0x%04X"
+        (if v < 0.0 then inf_bits lor 0x8000 else inf_bits)
+  | _ -> narrow_finite dtype v
+
 let small_literal f v0 =
   let v = Float_format.round f v0 in
   if Float.is_finite v then small_finite_text v
@@ -240,4 +268,4 @@ let complex_literal dtype (z : Complex.t) =
   let part =
     match dtype with Dtype.Complex128 -> Dtype.F64 | _ -> Dtype.F32
   in
-  Printf.sprintf "(%s, %s)" (float_literal part z.re) (float_literal part z.im)
+  Printf.sprintf "(%s,%s)" (float_literal part z.re) (float_literal part z.im)

@@ -42,9 +42,7 @@ let removechars s to_remove =
 let indices_where s c =
   List.filter (fun i -> s.[i] = c) (List.init (String.length s) Fun.id)
 
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (prod sh) x))
-
+let const_full dt sh x = Core.splat dt sh x
 let zeros_like v = const_full (dtype v) (shape v) 0.0
 let ones_bool sh = const_full D.Bool sh 1.0
 

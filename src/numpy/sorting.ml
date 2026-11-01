@@ -10,9 +10,7 @@ let ndim v = Array.length (shape v)
 let bind = C.bind
 let bind1 = C.bind1
 let prod sh = Array.fold_left ( * ) 1 sh
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (prod sh) x))
+let const_full dt sh x = Core.splat dt sh x
 
 let canonicalize_axis ax n =
   let a = if ax < 0 then ax + n else ax in

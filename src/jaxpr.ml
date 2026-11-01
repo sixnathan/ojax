@@ -126,11 +126,35 @@ let as_tracer = function
   | Concrete _ -> invalid_arg "jaxpr: expected a JaxprTracer"
   | Device _ -> invalid_arg "jaxpr: expected a JaxprTracer"
 
-let get_or_make_const_tracer trace v =
+let plain_const_tracer trace v =
   let builder = builder_of trace in
   let t = new_tracer builder trace (Core.get_aval v) in
   let _ = add_const builder t v in
   Tracer t
+
+let shared_tracer builder nd =
+  List.find_map
+    (fun ((var : var), value) ->
+      match value with
+      | Concrete other when other == nd ->
+          List.find_map
+            (fun (tid, (v : var)) ->
+              if v.vid = var.vid then
+                List.find_opt
+                  (fun (t : tracer) -> t.id = tid)
+                  builder.jb_tracers
+              else None)
+            builder.jb_tracer_to_var
+      | _ -> None)
+    builder.jb_constvals
+
+let get_or_make_const_tracer trace v =
+  match v with
+  | Concrete nd when Array.length (Ndarray.shape nd) = 0 -> (
+      match shared_tracer (builder_of trace) nd with
+      | Some t -> Tracer t
+      | None -> plain_const_tracer trace v)
+  | _ -> plain_const_tracer trace v
 
 let process_primitive trace prim args =
   let builder = builder_of trace in
@@ -323,3 +347,35 @@ let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
   match make_jaxpr_hoisted in_avals f with
   | closed, [] -> closed
   | _ -> invalid_arg "make_jaxpr: function closed over a tracer"
+
+let () = Core.call_inline := fun c args -> eval_closed_jaxpr c args
+let call_cache : (string, closed_jaxpr) Hashtbl.t = Hashtbl.create 64
+
+let call_key name key (avals : aval list) =
+  String.concat "|"
+    (name :: key
+    :: string_of_bool (Config.value Config.enable_x64)
+    :: List.map
+         (fun (a : aval) ->
+           Dtype.short_name a.dtype
+           ^ Pretty_printer.aval_short a
+           ^ string_of_bool a.weak_type)
+         avals)
+
+let named_jit ~name ?(key = "") f args =
+  if not (Core.top_is_staging args) then f args
+  else
+    let avals = List.map Core.get_aval args in
+    let ck = call_key name key avals in
+    let closed =
+      match Hashtbl.find_opt call_cache ck with
+      | Some c -> Some c
+      | None -> (
+          match make_jaxpr_hoisted avals f with
+          | c, [] ->
+              Pretty_printer.register_call_name c.jid name;
+              Hashtbl.replace call_cache ck c;
+              Some c
+          | _ -> None)
+    in
+    match closed with Some c -> Core.bind (Xla_call c) args | None -> f args

@@ -16,9 +16,7 @@ let canonicalize_axis ax n =
       (Printf.sprintf "axis %d out of bounds for array of ndim %d" ax n);
   a
 
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (Array.fold_left ( * ) 1 sh) x))
-
+let const_full dt sh x = Core.splat dt sh x
 let zeros_like v = const_full (dtype v) (shape v) 0.0
 let bind1 = C.bind1
 
@@ -41,19 +39,7 @@ let to_inexact_dtype = Dtypes.to_inexact_dtype
 let convert v dt =
   if dtype v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
 
-let broadcast_to v sh =
-  let s = shape v in
-  if s = sh then v
-  else begin
-    let nd_in = Array.length s and nd_out = Array.length sh in
-    let dims = Array.init nd_in (fun i -> i + (nd_out - nd_in)) in
-    Array.iteri
-      (fun k i ->
-        if s.(k) <> sh.(i) && s.(k) <> 1 then
-          invalid_arg "broadcast_to: incompatible shapes")
-      dims;
-    bind1 (T.Broadcast_in_dim { shape = sh; dims }) [ v ]
-  end
+let broadcast_to = Jnp_util.broadcast_to
 
 let broadcast_shapes a b =
   let na = Array.length a and nb = Array.length b in
@@ -394,19 +380,7 @@ let minimum a b =
   let a, b, _, _ = promote2 a b in
   bind1 T.Min [ a; b ]
 
-let where_ c x y =
-  let dt, _ =
-    Dtypes.result_type
-      [
-        ((get_aval x).T.dtype, (get_aval x).T.weak_type);
-        ((get_aval y).T.dtype, (get_aval y).T.weak_type);
-      ]
-  in
-  let sh = broadcast_shapes (broadcast_shapes (shape c) (shape x)) (shape y) in
-  let cb = broadcast_to c sh in
-  let xb = broadcast_to (convert x dt) sh in
-  let yb = broadcast_to (convert y dt) sh in
-  bind1 T.Select_n [ cb; yb; xb ]
+let where_ = Jnp_util.where
 
 let finfo_max = function
   | D.F64 | D.Complex128 -> Float.max_float

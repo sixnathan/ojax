@@ -8,10 +8,7 @@ let dtype v = (get_aval v).T.dtype
 let shape v = (get_aval v).T.shape
 let weak v = (get_aval v).T.weak_type
 let bind1 = C.bind1
-
-let const_full dt sh x =
-  T.Concrete (Nd.of_floats dt sh (Array.make (Array.fold_left ( * ) 1 sh) x))
-
+let const_full dt sh x = Core.splat dt sh x
 let zeros_like v = const_full (dtype v) (shape v) 0.0
 
 let to_inexact_dtype = function
@@ -45,14 +42,7 @@ let broadcast_shapes a b =
       else if db = 1 then da
       else invalid_arg "broadcast: incompatible shapes")
 
-let broadcast_to v sh =
-  let s = shape v in
-  if s = sh then v
-  else begin
-    let nd_in = Array.length s and nd_out = Array.length sh in
-    let dims = Array.init nd_in (fun i -> i + (nd_out - nd_in)) in
-    bind1 (T.Broadcast_in_dim { shape = sh; dims }) [ v ]
-  end
+let broadcast_to = Jnp_util.broadcast_to
 
 let common_shape vs =
   List.fold_left (fun acc v -> broadcast_shapes acc (shape v)) [||] vs
@@ -76,10 +66,40 @@ let check_rank_promotion vs =
     end
   end
 
+let promote_shapes vs =
+  match vs with
+  | [] | [ _ ] -> vs
+  | first :: rest ->
+      let rank v = Array.length (shape v) in
+      if List.for_all (fun v -> rank v = rank first) rest then vs
+      else
+        let nonscalar =
+          List.sort_uniq compare
+            (List.filter_map
+               (fun v -> if rank v = 0 then None else Some (rank v))
+               vs)
+        in
+        if List.length nonscalar < 2 then vs
+        else
+          let n = List.fold_left (fun acc v -> max acc (rank v)) 0 vs in
+          List.map
+            (fun v ->
+              let s = shape v in
+              let k = n - Array.length s in
+              if k = 0 then v
+              else
+                bind1
+                  (T.Broadcast_in_dim
+                     {
+                       shape = Array.append (Array.make k 1) s;
+                       dims = Array.init (Array.length s) (fun i -> i + k);
+                     })
+                  [ v ])
+            vs
+
 let promote_to dt vs =
   check_rank_promotion vs;
-  let sh = common_shape vs in
-  List.map (fun v -> broadcast_to (convert v dt) sh) vs
+  promote_shapes (List.map (fun v -> convert v dt) vs)
 
 let result_dtype vs =
   let dt, _ = Dtypes.result_type (List.map (fun v -> (dtype v, weak v)) vs) in
@@ -242,7 +262,7 @@ let is_inexact = function
       true
   | _ -> false
 
-let where c a b = bind1 T.Select_n [ c; b; a ]
+let where = Jnp_util.where
 
 let absolute x =
   match dtype x with

@@ -107,3 +107,9 @@ val register_constraint_rule : int -> constraint_rule -> unit
 val mesh_axes : (string * int) list ref
 val with_mesh_axes : (string * int) list -> (unit -> 'a) -> 'a
 val placed_eval : (primitive -> value list -> value list option) ref
+val staging : unit -> bool
+val splat : Dtype.t -> int array -> float -> value
+val elementwise_shape : int array list -> int array
+val is_elementwise : primitive -> bool
+val call_inline : (closed_jaxpr -> value list -> value list) ref
+val top_is_staging : value list -> bool

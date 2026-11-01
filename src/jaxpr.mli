@@ -21,3 +21,10 @@ val make_jaxpr_hoisted :
   aval list -> (value list -> value list) -> closed_jaxpr * value list
 
 val install : unit -> unit
+
+val named_jit :
+  name:string ->
+  ?key:string ->
+  (value list -> value list) ->
+  value list ->
+  value list

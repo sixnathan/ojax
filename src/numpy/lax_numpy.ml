@@ -437,8 +437,8 @@ let conv1d_body ~mode ~correlating a v =
          })
       [ lhs; rhs ]
   in
-  let flat = bind1 (T.Squeeze [| 0; 1 |]) [ out ] in
-  if correlating && swapped then rev_dims flat [| 0 |] else flat
+  let out = if correlating && swapped then rev_dims out [| 2 |] else out in
+  bind1 (T.Squeeze [| 0; 1 |]) [ out ]
 
 let conv1d ~mode ~correlating a v =
   Jnp_util.jit1 "_conv"
@@ -629,6 +629,11 @@ let clip_values ?min ?max arr =
           | None -> arr)
       | [] -> invalid_arg "clip: arity")
     (arr :: present)
+
+let clip_strong_max maximum_value arr =
+  Jnp_util.jit1 "clip" ~key:"falsetrue"
+    (function [ arr; hi ] -> minimum hi arr | _ -> invalid_arg "clip: arity")
+    [ arr; maximum_value ]
 
 let clip ?min ?max arr =
   (match dtype arr with
@@ -1808,13 +1813,12 @@ let vander ?n ?(increasing = false) x =
   let io = bind1 (T.Iota { dtype = dt; shape = [| nn |]; dimension = 0 }) [] in
   let io =
     if increasing then io
-    else bind1 T.Sub [ full dt [| nn |] (float_of_int (nn - 1)); io ]
+    else bind1 T.Sub [ scalar dt (float_of_int (nn - 1)); io ]
   in
   let lift v sh dims = bind1 (T.Broadcast_in_dim { shape = sh; dims }) [ v ] in
-  let full_shape = [| len; nn |] in
-  let xcol = lift (lift x [| len; 1 |] [| 0 |]) full_shape [| 0; 1 |] in
-  let expo = lift (lift io [| 1; nn |] [| 1 |]) full_shape [| 0; 1 |] in
-  bind1 T.Pow [ xcol; expo ]
+  let xcol = lift x [| len; 1 |] [| 0 |] in
+  let expo = lift io [| 1; nn |] [| 1 |] in
+  Ufuncs.power xcol expo
 
 let vander ?n ?increasing p0 =
   Jnp_util.jit1 "vander"
@@ -2371,6 +2375,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
            rhs_contract = [| 0 |];
            lhs_batch = [||];
            rhs_batch = [||];
+           dot_precision = None;
          })
       [ centered; x_t ]
   in

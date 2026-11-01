@@ -14,4 +14,5 @@ val argsort :
   Types.value
 
 val lexsort : ?axis:int -> Types.value list -> Types.value
+val lexsort_array : ?axis:int -> Types.value -> Types.value
 val partition : ?axis:int -> Types.value -> kth:int -> Types.value

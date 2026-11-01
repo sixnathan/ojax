@@ -1237,9 +1237,11 @@ let cum_window_attrs shape axis reverse =
      window_dimensions = %s, window_strides = %s"
     (arr ones) pad_str (arr ones) (arr window_dims) (arr ones)
 
+let cum_symbols : (string * string * int * bool, string) Hashtbl.t =
+  Hashtbl.create 8
+
 let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
-  let fname = unique_symbol base_name in
   let x = sole in_ids in
   let in_aval = atom_aval (sole eqn.inputs) in
   let dt = in_aval.dtype in
@@ -1247,41 +1249,53 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
   let sty = Ir.tensor_type dt [||] in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
+  let key = (base_name, ty, axis, reverse) in
+  let cached = Hashtbl.find_opt cum_symbols key in
+  let fname =
+    match cached with Some f -> f | None -> unique_symbol base_name
+  in
+  Hashtbl.replace cum_symbols key fname;
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
-  let attrs = cum_window_attrs in_aval.shape axis reverse in
-  let b = ctx.extras in
-  Buffer.add_string b
-    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
-  Buffer.add_string b
-    (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
-  if broadcast then (
+  if cached = None then begin
+    let attrs = cum_window_attrs in_aval.shape axis reverse in
+    let b = ctx.extras in
     Buffer.add_string b
-      (Printf.sprintf
-         "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
-         sty sty);
+      (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
     Buffer.add_string b
-      (Printf.sprintf
-         "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
-    Buffer.add_string b (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
-    Buffer.add_string b (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
-    Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-    Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
-  else begin
-    Buffer.add_string b
-      (Printf.sprintf
-         "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
-    Buffer.add_string b (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
-    Buffer.add_string b (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
-    Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-    Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
-  end;
-  Buffer.add_string b "  }\n"
+      (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
+    if broadcast then (
+      Buffer.add_string b
+        (Printf.sprintf
+           "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
+           sty sty);
+      Buffer.add_string b
+        (Printf.sprintf
+           "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
+      Buffer.add_string b
+        (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
+      Buffer.add_string b
+        (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
+      Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+      Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
+    else begin
+      Buffer.add_string b
+        (Printf.sprintf
+           "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
+      Buffer.add_string b
+        (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
+      Buffer.add_string b
+        (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
+      Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+      Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
+    end;
+    Buffer.add_string b "  }\n"
+  end
 
 let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   let x = sole in_ids in
@@ -1410,7 +1424,8 @@ let gather_dnums_attr (d : gather_dims) index_vector_dim =
         dim_field "operand_batching_dims" d.g_operand_batching_dims;
         dim_field "start_indices_batching_dims" d.g_start_indices_batching_dims;
         dim_field "start_index_map" d.start_index_map;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.gather<" ^ String.concat ", " parts ^ ">"
@@ -1452,7 +1467,7 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
        (Ir.tensor_type_of_aval idx_av)
        (Ir.tensor_type_of_aval out.vaval))
 
-let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
+let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
   let op_id, idx_id, upd_id =
     match in_ids with
     | [ a; b; c ] -> (a, b, c)
@@ -1473,9 +1488,9 @@ let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
        "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
         scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
        (name n) (name op_id) (name idx_id) (name upd_id)
-       (Np_ints.scatter_marked eqn.prim)
+       (Np_ints.scatter_marked eqn.prim || dnums.s_sorted_unique)
        (scatter_dnums_attr dnums ivd)
-       (Np_ints.scatter_marked eqn.prim));
+       (unique || Np_ints.scatter_marked eqn.prim || dnums.s_sorted_unique));
   let a = fresh ctx in
   let b = fresh ctx in
   Buffer.add_string ctx.buf
@@ -1507,11 +1522,17 @@ let dot_dims_str (dd : dot_dims) =
         (Ir.int_array_attr dd.rhs_batch)
     else ""
   in
-  let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+  let left, right =
+    match dd.dot_precision with
+    | Some pair -> pair
+    | None ->
+        let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+        (level, level)
+  in
   Printf.sprintf "%scontracting_dims = %s x %s, precision = [%s, %s]" batch
     (Ir.int_array_attr dd.lhs_contract)
     (Ir.int_array_attr dd.rhs_contract)
-    level level
+    left right
 
 let dot_preset_info = function
   | "F16_F16_F16" -> ("f16", "f16", "f16", 1, [ Dtype.F16 ], Dtype.F16)
@@ -1534,7 +1555,11 @@ let emit_dot_general ctx (eqn : eqn) in_ids dd =
   in
   let out = sole eqn.outs in
   Config.check_matmul_preset_on_cpu ();
-  match Config.matmul_preset () with
+  match
+    match dd.dot_precision with
+    | Some _ -> None
+    | None -> Config.matmul_preset ()
+  with
   | None ->
       let n = bind_var ctx out in
       Buffer.add_string ctx.buf
@@ -3458,14 +3483,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | _ -> invalid_arg "Stablehlo.Emit: gather arity")
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
-  | Scatter { dimension_numbers; _ } ->
-      emit_scatter ctx eqn in_ids dimension_numbers None
+  | Scatter { dimension_numbers; unique_indices } ->
+      emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers None
   | Scatter_add { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "add")
   | Scatter_sub { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "subtract")
-  | Scatter_mul { dimension_numbers; _ } ->
-      emit_scatter ctx eqn in_ids dimension_numbers (Some "multiply")
+  | Scatter_mul { dimension_numbers; unique_indices } ->
+      emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers
+        (Some "multiply")
   | Scatter_min { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "minimum")
   | Scatter_max { dimension_numbers } ->
@@ -4170,6 +4196,7 @@ let emitting () = !emission_depth > 0
 
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
+  Hashtbl.reset cum_symbols;
   Hashtbl.reset call_symbols;
   while_depth := 0;
   symbol_counter := 0;

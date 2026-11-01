@@ -1680,11 +1680,13 @@ let zeta_series x q =
   strides.(rank - 1) <- 2;
   let t1 = L.slice ~strides t1 begins ends in
   let fmax = if is_f32 then 3.4028234663852886e38 else Float.max_float in
-  let t1 = NL.clip ~max:fmax t1 in
+  let t1 = NL.clip_strong_max (lit fmax) t1 in
+  let terms = (shape t1).(rank - 1) in
   let coefs =
-    NL.expand_dims
-      (coeff_of a (Array.sub c_bernoulli_coefs 0 (shape t1).(rank - 1)))
-      (Array.init (ndim a) Fun.id)
+    T.Concrete
+      (Nd.of_floats (dtype a)
+         (Array.append (Array.make (ndim a) 1) [| terms |])
+         (Array.sub c_bernoulli_coefs 0 terms))
   in
   let t1 = t1 /! coefs in
   let total = t0 *! (lit 0.5 +! RED.sum ~axis:[| -1 |] t1) in

@@ -298,6 +298,7 @@ let ragged_dot ?precision ?preferred_element_type ?group_offset lhs rhs
           rhs_contract = [| 1 |];
           lhs_batch = [||];
           rhs_batch = [||];
+          dot_precision = None;
         };
       lhs_ragged_dimensions = [| 0 |];
       rhs_group_dimensions = [| 0 |];
@@ -424,6 +425,7 @@ let scaled_dot ?lhs_scale ?rhs_scale ?dimension_numbers ?preferred_element_type
           rhs_contract = [| n - 2 |];
           lhs_batch = batch;
           rhs_batch = batch;
+          dot_precision = None;
         }
   in
   let dummy operand contracting =

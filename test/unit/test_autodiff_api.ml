@@ -567,6 +567,7 @@ let dot_dims lhs rhs =
       rhs_contract = [| rhs |];
       lhs_batch = [||];
       rhs_batch = [||];
+      dot_precision = None;
     }
 
 let dots_fn a =
@@ -655,6 +656,7 @@ let batched_dot a =
            rhs_contract = [| 1 |];
            lhs_batch = [| 0 |];
            rhs_batch = [| 0 |];
+           dot_precision = None;
          })
       [ x; x ]
   in

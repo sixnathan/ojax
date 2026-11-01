@@ -172,13 +172,23 @@ def main():
     if not args.no_ratchet and not args.filter:
         floors = read_floors(os.path.join(root, "test/golden/exact_floor.tsv"))
         ran = {c[0] for c in cases}
+        ran |= {s.replace("parity_jit:", "parity_jit_eager:") for s in ran}
         fell = [(s, counts[s], f) for s, f in sorted(floors.items()) if s in ran and counts[s] < f]
     for suite, got, floor in fell:
         print(f"RATCHET {suite}: {got} bit-identical, floor {floor}")
 
+    totals = collections.Counter()
     with open(log) as f:
-        rows = sum(1 for _ in f)
-    print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {sum(counts.values())}/{rows} bit-identical")
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 5:
+                totals[parts[4]] += 1
+    shadow = [s for s in totals if s.startswith("parity_jit_eager:")]
+    identical = sum(n for s, n in counts.items() if s not in shadow)
+    rows = sum(n for s, n in totals.items() if s not in shadow)
+    print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {identical}/{rows} bit-identical")
+    if shadow:
+        print(f"parity_jit against the eager goldens: {sum(counts[s] for s in shadow)}/{sum(totals[s] for s in shadow)} bit-identical")
     shutil.rmtree(work, ignore_errors=True)
     sys.exit(1 if failed or fell else 0)
 

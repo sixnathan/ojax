@@ -872,64 +872,94 @@ let tridiagonal ?(lower = true) x =
   | [ a; d; e; taus ] -> (a, d, e, taus)
   | _ -> failwith "linalg: tridiagonal arity"
 
-let lu_solve_core lu permutation b =
-  let m = (Core.get_aval lu).shape.(0) in
-  let bs = (Core.get_aval b).shape in
-  let rest = Array.fold_left ( * ) 1 (Array.sub bs 1 (Array.length bs - 1)) in
-  let x = Core.bind1 (Reshape [| m; rest |]) [ b ] in
-  let lt = Core.bind1 Lt [ permutation; Core.splat Dtype.I32 [||] 0.0 ] in
+let reshape_if_changed shape x =
+  if (Core.get_aval x).shape = shape then x
+  else Core.bind1 (Reshape shape) [ x ]
+
+let take_rows x indices m rest =
+  let lt = Core.bind1 Lt [ indices; Core.splat Dtype.I32 [||] 0.0 ] in
   let plus =
-    Core.bind1 Add [ permutation; Core.splat Dtype.I32 [||] (float_of_int m) ]
+    Core.bind1 Add [ indices; Core.splat Dtype.I32 [||] (float_of_int m) ]
   in
-  let idx0 = Core.bind1 Select_n [ lt; permutation; plus ] in
+  let idx0 = Core.bind1 Select_n [ lt; indices; plus ] in
   let idx =
     Core.bind1
       (Broadcast_in_dim { shape = [| m; 1 |]; dims = [| 0 |] })
       [ idx0 ]
   in
-  let x =
-    Core.bind1
-      (Gather
-         {
-           dimension_numbers =
-             {
-               offset_dims = [| 1 |];
-               collapsed_slice_dims = [| 0 |];
-               start_index_map = [| 0 |];
-               g_operand_batching_dims = [||];
-               g_start_indices_batching_dims = [||];
-             };
-           slice_sizes = [| 1; rest |];
-         })
-      [ x; idx ]
-  in
-  let x =
-    triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x
-  in
-  let x = triangular_solve ~left_side:true ~lower:false lu x in
-  Core.bind1 (Reshape bs) [ x ]
+  Core.bind1
+    (Gather
+       {
+         dimension_numbers =
+           {
+             offset_dims = [| 1 |];
+             collapsed_slice_dims = [| 0 |];
+             start_index_map = [| 0 |];
+             g_operand_batching_dims = [||];
+             g_start_indices_batching_dims = [||];
+           };
+         slice_sizes = [| 1; rest |];
+       })
+    [ x; idx ]
 
-let solve_for_jvp a b =
-  let r = Array.length (Core.get_aval a).shape in
-  let lu, _, permutation = lu (Custom_derivatives.stop_gradient a) in
-  let solve_vec v =
-    match
-      Jaxpr.named_jit ~name:"_lu_solve"
-        (function
-          | [ l; p; y ] -> [ lu_solve_core l p y ]
-          | _ -> invalid_arg "lu_solve: arity")
-        [ lu; permutation; v ]
-    with
-    | [ out ] -> out
+let lu_solve_core ~transpose lu permutation b =
+  let m = (Core.get_aval lu).shape.(0) in
+  let bs = (Core.get_aval b).shape in
+  let rest = Array.fold_left ( * ) 1 (Array.sub bs 1 (Array.length bs - 1)) in
+  let x = reshape_if_changed [| m; rest |] b in
+  let x =
+    if transpose then begin
+      let x =
+        triangular_solve ~left_side:true ~lower:false ~transpose_a:true lu x
+      in
+      let x =
+        triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true
+          ~transpose_a:true lu x
+      in
+      let iota =
+        Core.bind1
+          (Iota { dtype = Dtype.I32; shape = [| m |]; dimension = 0 })
+          []
+      in
+      let ind =
+        match
+          Core.bind
+            (Sort { dimension = 0; is_stable = true; num_keys = 1 })
+            [ permutation; iota ]
+        with
+        | [ _; ind ] -> ind
+        | _ -> invalid_arg "lu_solve: sort arity"
+      in
+      take_rows x ind m rest
+    end
+    else begin
+      let x = take_rows x permutation m rest in
+      let x =
+        triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x
+      in
+      triangular_solve ~left_side:true ~lower:false lu x
+    end
+  in
+  reshape_if_changed bs x
+
+let lu_solve_vector ~transpose lu permutation b =
+  let core = function
+    | [ l; p; y ] ->
+        let m = (Core.get_aval y).shape.(0) in
+        let widened =
+          Core.bind1
+            (Broadcast_in_dim { shape = [| m; 1 |]; dims = [| 0 |] })
+            [ y ]
+        in
+        [
+          Core.bind1 (Squeeze [| 1 |]) [ lu_solve_core ~transpose l p widened ];
+        ]
     | _ -> invalid_arg "lu_solve: arity"
   in
   match
-    Interpreters.Batching.vmap_out
-      (function [ y ] -> [ solve_vec y ] | _ -> invalid_arg "solve: arity")
-      [ Some (Array.length (Core.get_aval b).shape - 1) ]
-      [ b ] (r - 1)
+    Jaxpr.named_jit ~name:"_lu_solve"
+      ~key:(if transpose then "1" else "0")
+      core [ lu; permutation; b ]
   with
   | [ out ] -> out
-  | _ -> invalid_arg "solve: arity"
-
-let () = Interpreters.Ad.solve_ref := solve_for_jvp
+  | _ -> invalid_arg "lu_solve: arity"

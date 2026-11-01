@@ -2549,7 +2549,7 @@ let solves_run c primals tangents =
           matvec bs solve
       in
       match c.sv_mode with
-      | "eval" -> wrapped [ b ]
+      | "eval" -> Ojax.Api.jit_flat wrapped [ b ]
       | "jvp" ->
           let po, to_ = Ad.jvp wrapped [ b ] tangents in
           po @ to_
@@ -4213,7 +4213,7 @@ let spatial_transform_run c inputs =
       [ RT.as_euler seq (SLERP.apply sl (get "query")) ]
   | _ -> failwith ("spatial_transform golden: unknown op " ^ c.op)
 
-let composed_check_case ~run ~set_dir ~x64 c () =
+let composed_check_case ?reference ~run ~set_dir ~x64 c () =
   Ojax.Config.set Ojax.Config.enable_x64 x64;
   Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
   @@ fun () ->
@@ -4246,13 +4246,24 @@ let composed_check_case ~run ~set_dir ~x64 c () =
           (string_of_dtype (Nd.dtype nd))
           o.odtype;
       let golden = find_member outputs o.oname in
-      let actual =
-        gauge_aligned c o.oname golden (npz_of_nd nd golden.Npz.dtype ocompare)
+      let aligned expected =
+        gauge_aligned c o.oname expected
+          (npz_of_nd nd expected.Npz.dtype ocompare)
       in
+      let actual = aligned golden in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
-      Compare.check
-        ~name:(c.case_id ^ ":" ^ o.oname)
-        ~compare:ocompare ~atol:oatol ~rtol:ortol ~expected:golden ~actual)
+      let name = c.case_id ^ ":" ^ o.oname in
+      match reference with
+      | None ->
+          Compare.check ~name ~compare:ocompare ~atol:oatol ~rtol:ortol
+            ~expected:golden ~actual
+      | Some (eager_suite, select) ->
+          let expected =
+            find_member (Option.value (select c) ~default:outputs) o.oname
+          in
+          Compare.check_with_reference ~name ~compare:ocompare ~atol:oatol
+            ~rtol:ortol ~eager_suite ~expected:golden ~actual
+            ~reference:expected ~reference_actual:(aligned expected))
     paired
 
 let parity_run c inputs =
@@ -4282,6 +4293,58 @@ let parity_jit_run c inputs =
       (fun args -> Parity_cases.run c.op c.params (lookup args))
       values
 
+type jit_reference = {
+  jit_set_dir : string;
+  jit_errors : (string * string) list Lazy.t;
+  jit_case_ids : string list Lazy.t;
+}
+
+let jit_reference_for set_name =
+  let jit_set_dir =
+    Filename.concat (Filename.concat goldens_root "parity_jit") set_name
+  in
+  let cases =
+    lazy
+      (let path = Filename.concat jit_set_dir "manifest.json" in
+       if not (Sys.file_exists path) then
+         Alcotest.failf "%s is missing, run tools/gen_parity_jit_goldens.py"
+           path;
+       Yojson.Safe.from_file path |> U.member "cases" |> U.to_list)
+  in
+  {
+    jit_set_dir;
+    jit_errors =
+      lazy
+        (List.filter_map
+           (fun j ->
+             match U.member "jit_error" j with
+             | `Null -> None
+             | e -> Some (U.member "case_id" j |> U.to_string, U.to_string e))
+           (Lazy.force cases));
+    jit_case_ids =
+      lazy
+        (List.map
+           (fun j -> U.member "case_id" j |> U.to_string)
+           (Lazy.force cases));
+  }
+
+let jit_outputs reference c =
+  if
+    Parity_cases.needs_concrete c.op
+    || List.mem_assoc c.case_id (Lazy.force reference.jit_errors)
+  then None
+  else
+    Some
+      (Npz.read
+         (Filename.concat
+            (Filename.concat reference.jit_set_dir "outputs")
+            (c.case_id ^ ".npz")))
+
+let jit_reference_coverage reference cases () =
+  let expected = List.sort compare (List.map (fun c -> c.case_id) cases) in
+  if List.sort compare (Lazy.force reference.jit_case_ids) <> expected then
+    Alcotest.failf "%s does not cover the parity cases" reference.jit_set_dir
+
 let sampled_for_jit c =
   let transformed =
     String.length c.op > 4
@@ -4306,7 +4369,27 @@ let composed_suite_for ?(keep = fun _ -> true) ~run module_name set_name =
   in
   (module_name ^ ":" ^ set_name, coverage :: case_tests)
 
-let relabel name (_, tests) = (name, tests)
+let parity_jit_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "parity") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let reference = jit_reference_for set_name in
+  let select = jit_outputs reference in
+  let eager_suite = "parity_jit_eager:" ^ set_name in
+  let case_tests =
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (composed_check_case ~reference:(eager_suite, select)
+             ~run:parity_jit_run ~set_dir ~x64 c))
+      (List.filter sampled_for_jit cases)
+  in
+  ( "parity_jit:" ^ set_name,
+    Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
+    :: Alcotest.test_case "jit reference coverage" `Quick
+         (jit_reference_coverage reference cases)
+    :: case_tests )
 
 let attributed (suite, tests) =
   ( suite,
@@ -4422,12 +4505,8 @@ let () =
          scipy_optimize_suite_for "x64_on";
          composed_suite_for ~run:parity_run "parity" "x64_off";
          composed_suite_for ~run:parity_run "parity" "x64_on";
-         relabel "parity_jit:x64_off"
-           (composed_suite_for ~keep:sampled_for_jit ~run:parity_jit_run
-              "parity" "x64_off");
-         relabel "parity_jit:x64_on"
-           (composed_suite_for ~keep:sampled_for_jit ~run:parity_jit_run
-              "parity" "x64_on");
+         parity_jit_suite_for "x64_off";
+         parity_jit_suite_for "x64_on";
          composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
          composed_suite_for ~run:vectorize_run "vectorize" "x64_on";
          composed_suite_for ~run:spatial_transform_run "spatial_transform"

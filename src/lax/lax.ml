@@ -1737,7 +1737,7 @@ let rec impl_base prim inputs =
               | Device _ -> failwith "lax: cond branch produced a tracer")
             outs
       | [] -> failwith "lax: cond expects a predicate")
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; _ } ->
       let inputs_v = List.map (fun nd -> Concrete nd) inputs in
       Control_flow.Loops.scan_impl ~length ~reverse ~num_carry jaxpr inputs_v
       |> List.map (function
@@ -2825,6 +2825,30 @@ let cummax = Control_flow.Loops.cummax
 let cummin = Control_flow.Loops.cummin
 let cumlogsumexp = Control_flow.Loops.cumlogsumexp
 let custom_linear_solve = Control_flow.Solves.custom_linear_solve
+
+let solve_with_lu a b =
+  let an = Array.length (Core.get_aval a).shape in
+  let bn = Array.length (Core.get_aval b).shape in
+  let lu_, _, permutation = Linalg.lu (Custom_derivatives.stop_gradient a) in
+  let solve_with ~transpose consts bs =
+    match (consts, bs) with
+    | [ l; p ], [ v ] -> [ Linalg.lu_solve_vector ~transpose l p v ]
+    | _ -> invalid_arg "solve: arity"
+  in
+  let one bs =
+    Control_flow.Solves.custom_linear_solve_with_consts
+      ~consts:[ lu_; permutation ]
+      ~solve:(solve_with ~transpose:false)
+      ~transpose_solve:(solve_with ~transpose:true)
+      bs
+  in
+  match
+    Interpreters.Batching.vmap_out one [ Some (bn - 1) ] [ b ] (max an bn - 1)
+  with
+  | [ out ] -> out
+  | _ -> invalid_arg "solve: arity"
+
+let () = Interpreters.Ad.solve_ref := solve_with_lu
 
 module Linalg = Linalg
 module Special = Special

@@ -33,10 +33,12 @@ nn:x64_off	49	50
 nn:x64_on	77	77
 numpy_linalg:x64_off	83	84
 numpy_linalg:x64_on	173	176
-parity:x64_off	2541	2566
-parity:x64_on	5068	5126
-parity_jit:x64_off	1845	1976
-parity_jit:x64_on	3660	3923
+parity:x64_off	2545	2566
+parity:x64_on	5080	5126
+parity_jit:x64_off	1964	1976
+parity_jit:x64_on	3888	3923
+parity_jit_eager:x64_off	1846	1976
+parity_jit_eager:x64_on	3660	3923
 polynomial:x64_off	22	22
 polynomial:x64_on	31	31
 prng:x64_off	30	30
@@ -65,8 +67,8 @@ segment:x64_off	11	11
 segment:x64_on	15	15
 setops:x64_off	35	35
 setops:x64_on	42	42
-solves:x64_off	4	7
-solves:x64_on	7	11
+solves:x64_off	7	7
+solves:x64_on	11	11
 spatial_transform:x64_off	36	36
 spatial_transform:x64_on	72	72
 special:x64_off	7	7

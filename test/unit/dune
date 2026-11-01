@@ -54,6 +54,7 @@
   test_pjrt_abi
   test_pjrt_client
   test_pjrt_executable
+  test_compile_cache
   test_stablehlo_ir
   test_stablehlo_emit
   test_backend

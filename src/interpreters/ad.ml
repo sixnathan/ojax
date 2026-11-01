@@ -1893,7 +1893,7 @@ let jvp_pairs prim primals tangents =
       match (primals, tangents) with
       | [ a ], [ t ] -> svd_jvp ~full_matrices ~compute_uv a t
       | _ -> arity ())
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll } ->
       let split2 l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
@@ -1942,7 +1942,8 @@ let jvp_pairs prim primals tangents =
       let new_operands = carry @ carry_t @ xs @ xs_t in
       let out =
         Core.bind
-          (Scan { length; reverse; num_carry = 2 * nc; jaxpr = new_body })
+          (Scan
+             { length; reverse; num_carry = 2 * nc; jaxpr = new_body; unroll })
           new_operands
       in
       let pcarry, r1 = split2 out nc in
@@ -2006,9 +2007,16 @@ let jvp_pairs prim primals tangents =
           in
           (primal_outs, tangent_outs)
       | _ -> arity ())
-  | Custom_linear_solve _ ->
+  | Custom_linear_solve { num_consts; _ } ->
       let x = Core.bind prim primals in
-      let x_dot = Core.bind prim (List.map instantiate tangents) in
+      let keep i = i < num_consts in
+      let x_dot =
+        Core.bind prim
+          (List.filteri (fun i _ -> keep i) primals
+          @ List.filteri
+              (fun i _ -> not (keep i))
+              (List.map instantiate tangents))
+      in
       (x, x_dot)
   | Custom_jvp_call id -> (
       match Core.custom_rule id with
@@ -3596,19 +3604,24 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Custom_jvp_call _ | Custom_vjp_call _ ->
       failwith "ad: custom call cannot appear in a linear program"
   | Ffi_call c -> ffi_not_differentiable c
-  | Custom_linear_solve { solve; transpose_solve } -> (
+  | Custom_linear_solve { solve; transpose_solve; num_consts } -> (
       match transpose_solve with
       | None ->
           failwith
             "ad: transpose_solve required for backwards mode automatic \
              differentiation of custom_linear_solve"
       | Some ts ->
+          let consts =
+            List.filteri (fun i _ -> i < num_consts) primals
+            |> List.map prim_val
+          in
           let ct_b =
             Core.bind
-              (Custom_linear_solve { solve = ts; transpose_solve = Some solve })
-              cts
+              (Custom_linear_solve
+                 { solve = ts; transpose_solve = Some solve; num_consts })
+              (consts @ cts)
           in
-          List.map (fun c -> Some c) ct_b)
+          List.map (fun _ -> None) consts @ List.map (fun c -> Some c) ct_b)
   | Sin | Cos | Exp | Log | Tanh | Max | Min | Pow | Abs | Sign | Eq | Lt | Gt
   | Acos | Acosh | Asin | Asinh | Atan | Atanh | Cbrt | Ceil | Clz | Cosh | Exp2
   | Expm1 | Floor | Integer_pow _ | Is_finite | Log1p | Logistic | Not
@@ -3628,7 +3641,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll } ->
       let split_at l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
       in
@@ -3689,6 +3702,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                reverse = not reverse;
                num_carry;
                jaxpr = transposed_body;
+               unroll;
              })
           (ct_carry @ ct_ys @ residuals)
       in

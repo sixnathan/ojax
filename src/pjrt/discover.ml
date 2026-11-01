@@ -226,12 +226,48 @@ let resolve () =
 let find () = try Some (resolve ()) with Error _ -> None
 let last_verified = ref None
 
+let stamp_path path =
+  Option.map
+    (fun dir ->
+      let stat = Unix.stat path in
+      let identity =
+        Printf.sprintf "%s\000%d\000%h" path stat.Unix.st_size
+          stat.Unix.st_mtime
+      in
+      ( dir,
+        Filename.concat dir ("plugin-" ^ Digest.to_hex (Digest.string identity))
+      ))
+    (Sys.getenv_opt "OJAX_TEST_COMPILE_CACHE")
+
+let read_stamp path =
+  try Some (In_channel.with_open_bin path In_channel.input_all)
+  with Sys_error _ -> None
+
+let write_stamp dir path hash =
+  (try Sys.mkdir dir 0o755 with Sys_error _ -> ());
+  let temp = Printf.sprintf "%s.%d.tmp" path (Unix.getpid ()) in
+  try
+    Out_channel.with_open_bin temp (fun oc -> output_string oc hash);
+    Sys.rename temp path
+  with Sys_error _ -> ()
+
+let stamped_sha256 path =
+  match stamp_path path with
+  | None -> sha256_file path
+  | Some (dir, stamp) -> (
+      match read_stamp stamp with
+      | Some hash -> hash
+      | None ->
+          let hash = sha256_file path in
+          write_stamp dir stamp hash;
+          hash)
+
 let verify_against pins path =
   if not (Sys.file_exists path) then
     raise (Error (Printf.sprintf "PJRT plugin not found: %s" path));
   if Sys.is_directory path then
     raise (Error (Printf.sprintf "PJRT plugin path is a directory: %s" path));
-  let actual = sha256_file path in
+  let actual = stamped_sha256 path in
   if not (List.mem actual pins) then
     raise
       (Error
@@ -256,6 +292,7 @@ let preflight () =
 let available () =
   match preflight () with _ -> true | exception Error _ -> false
 
+let verified_sha256 () = if available () then !last_verified else None
 let is_exact () = available () && !last_verified = Some exact_sha256
 let gpu_configured () = Sys.getenv_opt gpu_env_var <> None
 let gpu_cached = ref None

@@ -210,6 +210,7 @@ and primitive =
       reverse : bool;
       num_carry : int;
       jaxpr : closed_jaxpr;
+      unroll : int;
     }
   | While of { cond : closed_jaxpr; body : closed_jaxpr }
   | Cumsum of { axis : int; reverse : bool }
@@ -220,6 +221,7 @@ and primitive =
   | Custom_linear_solve of {
       solve : closed_jaxpr;
       transpose_solve : closed_jaxpr option;
+      num_consts : int;
     }
   | Threefry2x32
   | Iota_2x32_shape of int array

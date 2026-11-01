@@ -1714,7 +1714,6 @@ let needs_concrete op =
       "np_unique_counts";
       "np_unique_inverse";
       "np_unique_all";
-      "np_unique_size";
       "np_unique_axis";
       "np_union1d";
       "np_intersect1d";
@@ -1731,9 +1730,4 @@ let needs_concrete op =
       "np_roots";
       "np_packbits";
       "np_unpackbits";
-      "np_histogramdd";
-      "sp_fresnel";
-      "gp_rankdata_axis";
-      "gp_rankdata";
-      "gp_bernoulli";
     ]

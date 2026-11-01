@@ -2591,6 +2591,180 @@ and scan_as_while ~length ~reverse ~num_carry (body : closed_jaxpr) args =
   let _, c, ys, _ = unpack final in
   c @ ys
 
+and scan_unrolled ~length ~reverse ~num_carry ~unroll (body : closed_jaxpr) args
+    =
+  let b1 = Core.bind1 in
+  let split_at l n =
+    match Util.split_list l [ n ] with
+    | [ a; b ] -> (a, b)
+    | _ -> invalid_arg "Stablehlo.Emit: scan arity"
+  in
+  let index_scalar i =
+    Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
+  in
+  let shape_of v = (Core.get_aval v).shape in
+  let slice_leading v lo hi =
+    let sh = shape_of v in
+    let start = Array.mapi (fun d _ -> if d = 0 then lo else 0) sh in
+    let limit = Array.mapi (fun d s -> if d = 0 then hi else s) sh in
+    b1
+      (Slice { start_indices = start; limit_indices = limit; strides = None })
+      [ v ]
+  in
+  let carry, xs = split_at args num_carry in
+  let _, y_avals = split_at (List.map atom_aval body.jaxpr.outs) num_carry in
+  let num_trips, remainder =
+    if unroll = 0 then (0, length)
+    else
+      let trips = length / unroll and rest = length mod unroll in
+      if trips = 1 && rest = 0 then (0, length) else (trips, rest)
+  in
+  let xs_main, xs_rem =
+    if remainder = 0 then (xs, [])
+    else if not reverse then
+      ( List.map (fun x -> slice_leading x 0 (num_trips * unroll)) xs,
+        List.map (fun x -> slice_leading x (num_trips * unroll) length) xs )
+    else
+      ( List.map (fun x -> slice_leading x remainder length) xs,
+        List.map (fun x -> slice_leading x 0 remainder) xs )
+  in
+  let empty prefix (a : aval) =
+    let zero = Concrete (Ndarray.of_floats a.dtype [||] [| 0.0 |]) in
+    b1
+      (Broadcast_in_dim { shape = Array.append prefix a.shape; dims = [||] })
+      [ zero ]
+  in
+  let stack values =
+    let widened =
+      List.map
+        (fun v ->
+          let s = shape_of v in
+          b1
+            (Broadcast_in_dim
+               {
+                 shape = Array.append [| 1 |] s;
+                 dims = Array.init (Array.length s) (fun d -> d + 1);
+               })
+            [ v ])
+        values
+    in
+    b1 (Concatenate 0) widened
+  in
+  let inner n carry xs =
+    let ys = ref [] and carry = ref carry in
+    for step = 0 to n - 1 do
+      let i = if reverse then n - step - 1 else step in
+      let x =
+        List.map
+          (fun v -> b1 (Squeeze [| 0 |]) [ slice_leading v i (i + 1) ])
+          xs
+      in
+      let c, y =
+        split_at (Jaxpr.eval_closed_jaxpr body (!carry @ x)) num_carry
+      in
+      carry := c;
+      ys := y :: !ys
+    done;
+    let per_step = if reverse then !ys else List.rev !ys in
+    let columns =
+      List.mapi
+        (fun j _ -> stack (List.map (fun y -> List.nth y j) per_step))
+        y_avals
+    in
+    (!carry, columns)
+  in
+  let carry, ys_main =
+    if num_trips = 0 then (carry, List.map (empty [| 0 |]) y_avals)
+    else begin
+      let xss =
+        List.map
+          (fun x ->
+            let s = shape_of x in
+            b1
+              (Reshape
+                 (Array.append [| num_trips; unroll |]
+                    (Array.sub s 1 (Array.length s - 1))))
+              [ x ])
+          xs_main
+      in
+      let yss = List.map (empty [| num_trips; unroll |]) y_avals in
+      let state0 = (index_scalar 0 :: carry) @ yss @ xss in
+      let avals = List.map Core.get_aval state0 in
+      let n_ys = List.length yss in
+      let unpack state =
+        match state with
+        | i :: rest ->
+            let c, r = split_at rest num_carry in
+            let ys, x = split_at r n_ys in
+            (i, c, ys, x)
+        | [] -> invalid_arg "Stablehlo.Emit: scan state"
+      in
+      let cond =
+        Jaxpr.make_jaxpr avals (fun state ->
+            [ b1 Lt [ List.hd state; index_scalar num_trips ] ])
+      in
+      let step =
+        Jaxpr.make_jaxpr avals (fun state ->
+            let i_, c, ys, x = unpack state in
+            let i =
+              if reverse then b1 Sub [ index_scalar (num_trips - 1); i_ ]
+              else i_
+            in
+            let starts rank =
+              i :: List.init (rank - 1) (fun _ -> index_scalar 0)
+            in
+            let index_of v =
+              let s = shape_of v in
+              let sizes = Array.mapi (fun d n -> if d = 0 then 1 else n) s in
+              b1 (Squeeze [| 0 |])
+                [
+                  b1
+                    (Dynamic_slice { slice_sizes = sizes })
+                    (v :: starts (Array.length s));
+                ]
+            in
+            let c', pieces = inner unroll c (List.map index_of x) in
+            let update stack piece =
+              let s = shape_of stack in
+              let widened =
+                b1
+                  (Reshape (Array.mapi (fun d n -> if d = 0 then 1 else n) s))
+                  [ piece ]
+              in
+              b1 Dynamic_update_slice
+                (stack :: widened :: starts (Array.length s))
+            in
+            (b1 Add [ i_; index_scalar 1 ] :: c')
+            @ List.map2 update ys pieces @ x)
+      in
+      let _, c, yss, _ =
+        unpack (Core.bind (While { cond; body = step }) state0)
+      in
+      ( c,
+        List.map
+          (fun y ->
+            let s = shape_of y in
+            b1
+              (Reshape
+                 (Array.append
+                    [| num_trips * unroll |]
+                    (Array.sub s 2 (Array.length s - 2))))
+              [ y ])
+          yss )
+    end
+  in
+  if remainder = 0 then carry @ ys_main
+  else
+    let carry, ys_rem = inner remainder carry xs_rem in
+    let joined =
+      List.map2
+        (fun main rest ->
+          b1 (Concatenate 0)
+            (if reverse then [ rest; main ] else [ main; rest ]))
+        ys_main ys_rem
+    in
+    carry @ joined
+
 and emit_inlined ctx (eqn : eqn) in_ids f =
   emit_traced ctx (List.map atom_aval eqn.inputs) in_ids eqn.outs f
 
@@ -3253,9 +3427,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Reduce_window { reducer; window } ->
       emit_reduce_window_general ctx eqn in_ids reducer window
   | While { cond; body } -> emit_while ctx eqn in_ids cond body
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll } ->
       emit_inlined ctx eqn in_ids
-        (scan_as_while ~length ~reverse ~num_carry jaxpr)
+        (if unroll = 1 then scan_as_while ~length ~reverse ~num_carry jaxpr
+         else scan_unrolled ~length ~reverse ~num_carry ~unroll jaxpr)
   | Select_and_scatter _ ->
       failwith
         "Stablehlo.Emit: general Select_and_scatter lowers on cpu to a pad + \

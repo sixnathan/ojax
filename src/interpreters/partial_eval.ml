@@ -64,11 +64,12 @@ let scan_rule :
     length:int ->
     reverse:bool ->
     num_carry:int ->
+    unroll:int ->
     closed_jaxpr ->
     tracer list ->
     value list)
     ref =
-  ref (fun _ ~length:_ ~reverse:_ ~num_carry:_ _ _ ->
+  ref (fun _ ~length:_ ~reverse:_ ~num_carry:_ ~unroll:_ _ _ ->
       failwith "partial_eval: scan rule not installed")
 
 let jit_rule : (trace -> closed_jaxpr -> tracer list -> value list) ref =
@@ -89,8 +90,8 @@ let process_primitive trace prim (args : value list) : value list =
     Core.bind prim consts
   else
     match prim with
-    | Scan { length; reverse; num_carry; jaxpr } ->
-        !scan_rule trace ~length ~reverse ~num_carry jaxpr tracers
+    | Scan { length; reverse; num_carry; jaxpr; unroll } ->
+        !scan_rule trace ~length ~reverse ~num_carry ~unroll jaxpr tracers
     | Xla_call c -> !jit_rule trace c tracers
     | _ -> record_unknown trace prim tracers
 
@@ -296,8 +297,8 @@ let split_at l n =
 
 let select flags l = List.filteri (fun i _ -> List.nth flags i) l
 
-let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
-    (tracers : tracer list) : value list =
+let scan_partial_eval trace ~length ~reverse ~num_carry ~unroll
+    (body : closed_jaxpr) (tracers : tracer list) : value list =
   let carry, xs = split_at tracers num_carry in
   let unk (t : tracer) = is_unknown (pe_pval t) in
   let xs_unk = List.map unk xs in
@@ -381,7 +382,14 @@ let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
   let n_known_carry = List.length known_carry in
   let known_results =
     Core.bind
-      (Scan { length; reverse; num_carry = n_known_carry; jaxpr = known_body })
+      (Scan
+         {
+           length;
+           reverse;
+           num_carry = n_known_carry;
+           jaxpr = known_body;
+           unroll;
+         })
       (List.map value_of known_carry @ List.map value_of known_xs)
   in
   let known_carry_out, r1 = split_at known_results n_known_carry in
@@ -434,7 +442,14 @@ let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
   let raise_known v = as_tracer (Core.full_raise trace v) in
   let unknown_results =
     record_unknown trace
-      (Scan { length; reverse; num_carry = n_unk_carry; jaxpr = unknown_body })
+      (Scan
+         {
+           length;
+           reverse;
+           num_carry = n_unk_carry;
+           jaxpr = unknown_body;
+           unroll;
+         })
       (unk_carry @ unk_xs @ List.map raise_known residual_out)
   in
   let unk_carry_out, unk_ys_out = split_at unknown_results n_unk_carry in

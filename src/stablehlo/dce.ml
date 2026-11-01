@@ -134,8 +134,8 @@ and rule used_outs (e : eqn) =
         let f', _ = dce_closed f used_outs ~instantiate:used in
         let used_ins = true :: used in
         (used_ins, with_prim (Cond { t = t'; f = f' }) used_ins)
-    | Scan { length; reverse; num_carry; jaxpr } ->
-        scan_rule e used_outs ~length ~reverse ~num_carry ~jaxpr
+    | Scan { length; reverse; num_carry; jaxpr; unroll } ->
+        scan_rule e used_outs ~length ~reverse ~num_carry ~unroll ~jaxpr
     | Custom_jvp_call id | Custom_vjp_call id -> (
         let avals = eqn_avals e in
         match Core.find_custom_call_jaxpr id avals with
@@ -169,7 +169,8 @@ and rule used_outs (e : eqn) =
               (everything, with_prim prim everything))
     | _ -> (everything, Some e)
 
-and scan_rule (e : eqn) used_outputs ~length ~reverse ~num_carry ~jaxpr =
+and scan_rule (e : eqn) used_outputs ~length ~reverse ~num_carry ~unroll ~jaxpr
+    =
   let n_in = List.length jaxpr.jaxpr.in_binders - List.length jaxpr.consts in
   let num_xs = n_in - num_carry in
   let carry_out, extensive_out =
@@ -201,7 +202,8 @@ and scan_rule (e : eqn) used_outputs ~length ~reverse ~num_carry ~jaxpr =
     Some
       {
         e with
-        prim = Scan { length; reverse; num_carry = num_carry'; jaxpr = c' };
+        prim =
+          Scan { length; reverse; num_carry = num_carry'; jaxpr = c'; unroll };
         inputs = keep_where e.inputs used_inputs;
         outs = keep_where e.outs used;
       } )

@@ -1068,8 +1068,9 @@ let cond_batch (axis_size : int) (t : closed_jaxpr) (f : closed_jaxpr)
   | _ -> failwith "batching: cond expects a predicate"
 
 let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
-    ~(num_carry : int) (jaxpr : closed_jaxpr) (vals : value list)
-    (bdims : int option list) : value list * int option list =
+    ~(unroll : int) ~(num_carry : int) (jaxpr : closed_jaxpr)
+    (vals : value list) (bdims : int option list) : value list * int option list
+    =
   let split2 l n =
     match Util.split_list l [ n ] with
     | [ a; b ] -> (a, b)
@@ -1094,7 +1095,7 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   in
   let outs =
     Core.bind
-      (Scan { length; reverse; num_carry; jaxpr = new_body })
+      (Scan { length; reverse; num_carry; jaxpr = new_body; unroll })
       (new_carry @ new_xs)
   in
   let num_ys = List.length outs - num_carry in
@@ -1106,6 +1107,8 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
 let unstacks_operands prim (bdims : int option list) =
   let any_batched = List.exists (fun b -> b <> None) in
   match (prim, bdims) with
+  | Triangular_solve _, [ None; _ ] -> false
+  | Custom_linear_solve _, _ -> false
   | ( ( Conv_general_dilated _ | Reduce_window _ | Reduce_window_max _
       | Reduce_window_min _ | Reduce_window_sum _ | Select_and_gather_add _
       | Select_and_scatter _ | Select_and_scatter_add _ | Threefry2x32
@@ -1113,7 +1116,7 @@ let unstacks_operands prim (bdims : int option list) =
       | Random_bits _ | Random_wrap | Random_unwrap | While _ | Cholesky
       | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
       | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
-      | Schur _ | Svd _ | Tridiagonal _ | Custom_linear_solve _ ),
+      | Schur _ | Svd _ | Tridiagonal _ ),
       _ ) ->
       true
   | Custom_vjp_call id, _ -> (
@@ -1499,6 +1502,63 @@ let batch_jaxpr (c : closed_jaxpr) axis_size vals bdims =
       Hashtbl.replace batch_call_cache key r;
       r
 
+let batch_solve_jaxpr (c : closed_jaxpr) axis_size vals bdims =
+  Jaxpr.make_jaxpr (List.map Core.get_aval vals) (fun inner ->
+      Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+          let ins =
+            List.map2
+              (fun v b ->
+                match b with
+                | Some _ -> Tracer (new_batch_tracer main v (Some 0))
+                | None -> v)
+              inner bdims
+          in
+          List.map
+            (fun o ->
+              let v, b = to_batch_info main (Core.full_raise main o) in
+              bdim_at_front axis_size v b)
+            (Jaxpr.eval_closed_jaxpr c ins)))
+
+let custom_linear_solve_batch axis_size solve transpose_solve num_consts vals
+    bdims =
+  let vals =
+    List.mapi
+      (fun i (v, b) ->
+        if i < num_consts && b = None then v else bdim_at_front axis_size v b)
+      (List.combine vals bdims)
+  in
+  let bdims =
+    List.mapi
+      (fun i b -> if i < num_consts && b = None then None else Some 0)
+      bdims
+  in
+  let solve = batch_solve_jaxpr solve axis_size vals bdims in
+  let transpose_solve =
+    Option.map
+      (fun ts -> batch_solve_jaxpr ts axis_size vals bdims)
+      transpose_solve
+  in
+  Core.bind (Custom_linear_solve { solve; transpose_solve; num_consts }) vals
+
+let triangular_solve_batch prim vals bdims =
+  match (prim, vals, bdims) with
+  | Triangular_solve { left_side; _ }, [ x; y ], [ None; Some by ] ->
+      let n = Array.length (Core.get_aval y).shape in
+      let y = moveaxis by (if left_side then n - 1 else n - 2) y in
+      let s = (Core.get_aval y).shape in
+      let flat =
+        if left_side then
+          Array.append (Array.sub s 0 (n - 2)) [| s.(n - 2) * s.(n - 1) |]
+        else
+          Array.append
+            (Array.sub s 0 (n - 3))
+            [| s.(n - 3) * s.(n - 2); s.(n - 1) |]
+      in
+      let out = b1 prim [ x; b1 (Reshape flat) [ y ] ] in
+      (b1 (Reshape s) [ out ], Some (if left_side then n - 1 else n - 2))
+  | _, [ x; y ], [ None; None ] -> (b1 prim [ x; y ], None)
+  | _ -> failwith "batching: triangular_solve arity"
+
 let batch_process_primitive (trace : trace) (prim : primitive)
     (args : value list) : value list =
   let axis_size = axis_size_of trace in
@@ -1522,6 +1582,14 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
         (ffi_batch axis_size c vals bdims)
+  | Custom_linear_solve { solve; transpose_solve; num_consts } ->
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
+        (custom_linear_solve_batch axis_size solve transpose_solve num_consts
+           vals bdims)
+  | Triangular_solve _ when not (unstacks_operands prim bdims) ->
+      let out, b = triangular_solve_batch prim vals bdims in
+      [ Tracer (new_batch_tracer trace out b) ]
   | _ when unstacks_operands prim bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
@@ -1532,9 +1600,10 @@ let batch_process_primitive (trace : trace) (prim : primitive)
   | Cond { t; f } ->
       let outs, out_bdims = cond_batch axis_size t f vals bdims in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll } ->
       let outs, out_bdims =
-        scan_batch axis_size ~length ~reverse ~num_carry jaxpr vals bdims
+        scan_batch axis_size ~length ~reverse ~unroll ~num_carry jaxpr vals
+          bdims
       in
       List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs out_bdims
   | Custom_jvp_call id

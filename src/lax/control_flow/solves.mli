@@ -10,3 +10,10 @@ val custom_linear_solve :
   value list ->
   ((value list -> value list) -> value list -> value list) ->
   value list
+
+val custom_linear_solve_with_consts :
+  consts:value list ->
+  solve:(value list -> value list -> value list) ->
+  transpose_solve:(value list -> value list -> value list) ->
+  value list ->
+  value list

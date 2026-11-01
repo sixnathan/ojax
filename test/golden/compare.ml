@@ -179,14 +179,15 @@ let measure_exact (expected : Npz.t) (actual : Npz.t) =
     end;
   (!count, !differing, !largest)
 
-let record_exact name expected actual =
+let record_exact ?suite:named name expected actual =
+  let suite = Option.value named ~default:!suite in
   let count, differing, largest = measure_exact expected actual in
   let identical, total =
-    match Hashtbl.find_opt tallies !suite with
+    match Hashtbl.find_opt tallies suite with
     | Some tally -> tally
     | None ->
         let tally = (ref 0, ref 0) in
-        Hashtbl.replace tallies !suite tally;
+        Hashtbl.replace tallies suite tally;
         tally
   in
   incr total;
@@ -196,7 +197,7 @@ let record_exact name expected actual =
   | Some oc -> (
       try
         Printf.fprintf oc "%s\t%d\t%d\t%g\t%s\n%!" name count differing largest
-          !suite
+          suite
       with Sys_error _ -> ())
 
 let parse_floor text =
@@ -238,8 +239,8 @@ let check_ratchet ~floor_text () =
     | failures -> failwith ("exact ratchet fell: " ^ String.concat "; " failures)
   end
 
-let check ~name ~compare ~atol ~rtol ~(expected : Npz.t) ~(actual : Npz.t) =
-  record_exact name expected actual;
+let check_tolerance ~name ~compare ~atol ~rtol ~(expected : Npz.t)
+    ~(actual : Npz.t) =
   if not (shapes_equal expected.shape actual.shape) then
     failwith (name ^ ": shape mismatch");
   match (compare, expected.data, actual.data) with
@@ -248,3 +249,14 @@ let check ~name ~compare ~atol ~rtol ~(expected : Npz.t) ~(actual : Npz.t) =
   | "allclose", Npz.C ea, Npz.C aa -> allclose_complex name atol rtol aa ea
   | "allclose", Npz.I ea, Npz.I aa -> exact_int name aa ea
   | _ -> failwith (name ^ ": data-kind/compare mismatch")
+
+let check ~name ~compare ~atol ~rtol ~(expected : Npz.t) ~(actual : Npz.t) =
+  record_exact name expected actual;
+  check_tolerance ~name ~compare ~atol ~rtol ~expected ~actual
+
+let check_with_reference ~name ~compare ~atol ~rtol ~eager_suite
+    ~(expected : Npz.t) ~(actual : Npz.t) ~(reference : Npz.t)
+    ~(reference_actual : Npz.t) =
+  record_exact name reference reference_actual;
+  record_exact ~suite:eager_suite name expected actual;
+  check_tolerance ~name ~compare ~atol ~rtol ~expected ~actual

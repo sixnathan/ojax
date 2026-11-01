@@ -3570,7 +3570,21 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       in
       let length_product = Array.fold_left ( * ) 1 fft_lengths in
       match fft_type with
-      | Fft_forward | Fft_inverse -> [ Some (b1 prim [ t ]) ]
+      | Fft_forward | Fft_inverse ->
+          let name_key =
+            String.concat ","
+              (Array.to_list (Array.map string_of_int fft_lengths))
+            ^ if fft_type = Fft_forward then "f" else "i"
+          in
+          [
+            Some
+              (List.hd
+                 (Jaxpr.named_jit ~name:"fft" ~key:name_key
+                    (function
+                      | [ t ] -> [ b1 prim [ t ] ]
+                      | _ -> failwith "ad: fft arity")
+                    [ t ]));
+          ]
       | Fft_real ->
           let mask = expanded (hermitian_mask m) dt in
           let inner =

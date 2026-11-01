@@ -2632,27 +2632,55 @@ and emit_reduce_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr) dims =
   let sty = Ir.tensor_type dt [||] in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = stablehlo.reduce(%s init: %s) across dimensions = %s : (%s, \
-        %s) -> %s\n"
-       (name n) (name op_id) (name init_id) (Ir.int_array_attr dims)
-       (Ir.tensor_type_of_aval in_aval)
-       sty
-       (Ir.tensor_type_of_aval out.vaval));
-  let ba, bb =
-    match reducer.jaxpr.in_binders with
-    | [ a; b ] ->
-        let ia = bind_var ctx a in
-        let ib = bind_var ctx b in
-        (ia, ib)
-    | _ -> invalid_arg "Stablehlo.Emit: reduce reducer arity"
+  let single_op =
+    match
+      (reducer.jaxpr.in_binders, reducer.jaxpr.eqns, reducer.jaxpr.outs)
+    with
+    | ( [ a; b ],
+        [ { prim; inputs = [ A_var x; A_var y ]; outs = [ o ]; _ } ],
+        [ A_var r ] )
+      when x.vid = a.vid && y.vid = b.vid && r.vid = o.vid -> (
+        match prim with
+        | Add -> Some "add"
+        | Mul -> Some "multiply"
+        | And -> Some "and"
+        | Or -> Some "or"
+        | Xor -> Some "xor"
+        | _ -> None)
+    | _ -> None
   in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf "     reducer(%s: %s, %s: %s)  {\n" (name ba) sty (name bb)
-       sty);
-  emit_region_returning ctx reducer.jaxpr;
-  Buffer.add_string ctx.buf "    }\n"
+  match single_op with
+  | Some op ->
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.reduce(%s init: %s) applies stablehlo.%s across \
+            dimensions = %s : (%s, %s) -> %s\n"
+           (name n) (name op_id) (name init_id) op (Ir.int_array_attr dims)
+           (Ir.tensor_type_of_aval in_aval)
+           sty
+           (Ir.tensor_type_of_aval out.vaval))
+  | None ->
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.reduce(%s init: %s) across dimensions = %s : \
+            (%s, %s) -> %s\n"
+           (name n) (name op_id) (name init_id) (Ir.int_array_attr dims)
+           (Ir.tensor_type_of_aval in_aval)
+           sty
+           (Ir.tensor_type_of_aval out.vaval));
+      let ba, bb =
+        match reducer.jaxpr.in_binders with
+        | [ a; b ] ->
+            let ia = bind_var ctx a in
+            let ib = bind_var ctx b in
+            (ia, ib)
+        | _ -> invalid_arg "Stablehlo.Emit: reduce reducer arity"
+      in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "     reducer(%s: %s, %s: %s)  {\n" (name ba) sty
+           (name bb) sty);
+      emit_region_returning ctx reducer.jaxpr;
+      Buffer.add_string ctx.buf "    }\n"
 
 and emit_reduce_window_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr)
     window =

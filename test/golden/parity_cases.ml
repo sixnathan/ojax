@@ -36,6 +36,7 @@ let opt_bool name p =
   match U.member name p with `Null -> None | v -> Some (U.to_bool v)
 
 let like x v = L.full [||] v (Ojax.Core.get_aval x).dtype
+let dt_of_input x = (Ojax.Core.get_aval x).dtype
 
 let scalar_int n =
   Ojax.Types.Concrete
@@ -92,9 +93,7 @@ let lax_run op p a b =
       Some
         [
           L.dynamic_slice_in_dim ?axis:(opt_int "axis" p) (a ())
-            (T.Concrete
-               (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||]
-                  [| float_of_int (int "start" p) |]))
+            (Ojax.Numpy.Jnp_util.py_int (int "start" p))
             (int "size" p);
         ]
   | "lax_dynamic_index_in_dim" ->
@@ -102,12 +101,13 @@ let lax_run op p a b =
         [
           L.dynamic_index_in_dim ?axis:(opt_int "axis" p)
             ?keepdims:(opt_bool "keepdims" p) (a ())
-            (T.Concrete
-               (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||]
-                  [| float_of_int (int "index" p) |]));
+            (Ojax.Numpy.Jnp_util.py_int (int "index" p));
         ]
   | "lax_reduce_custom" ->
-      Some [ L.reduce (a ()) (like (a ()) 0.0) L.add (ints "dims" p) ]
+      let zero =
+        T.Concrete (Ojax.Ndarray.of_floats (dt_of_input (a ())) [||] [| 0.0 |])
+      in
+      Some [ L.reduce (a ()) zero L.add (ints "dims" p) ]
   | "lax_reduce_window" ->
       let pad =
         Array.of_list
@@ -121,7 +121,8 @@ let lax_run op p a b =
       Some
         [
           L.reduce_window (a ())
-            (like (a ()) 0.0)
+            (T.Concrete
+               (Ojax.Ndarray.of_floats (dt_of_input (a ())) [||] [| 0.0 |]))
             L.add ~window_dimensions:(ints "win" p)
             ~window_strides:(ints "str" p) pad;
         ]

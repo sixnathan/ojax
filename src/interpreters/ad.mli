@@ -23,6 +23,8 @@ val associative_scan_flat :
   value list ->
   value list
 
+val lax_eye : Dtype.t -> int -> int -> value
+
 val linearize :
   (value list -> value list) ->
   value list ->

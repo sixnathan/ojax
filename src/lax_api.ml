@@ -306,31 +306,64 @@ let index_in_dim ?(axis = 0) ?(keepdims = true) x index =
 let index_scalar i =
   Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
 
+let normalized_start start size =
+  let aval = Core.get_aval start in
+  let dt = aval.dtype in
+  let literal v = Concrete (Ndarray.of_floats dt [||] [| v |]) in
+  if Dtypes.issubdtype dt `Unsigned then start
+  else
+    match start with
+    | Concrete nd when Array.length (Ndarray.shape nd) = 0 ->
+        let v = Ndarray.get_f nd [||] in
+        if v < 0.0 then literal (v +. float_of_int size) else start
+    | _ ->
+        let negative = b1 Lt [ start; literal 0.0 ] in
+        let widened =
+          if aval.weak_type then b1 (Convert_element_type dt) [ start ]
+          else start
+        in
+        let wrapped = b1 Add [ widened; literal (float_of_int size) ] in
+        b1 Select_n [ negative; start; wrapped ]
+
 let dynamic_slice x starts slice_sizes =
   b1 (Dynamic_slice { slice_sizes }) (x :: starts)
 
 let dynamic_update_slice x update starts =
   b1 Dynamic_update_slice (x :: update :: starts)
 
-let starts_in_dim n axis start =
-  List.init n (fun d -> if d = axis then start else index_scalar 0)
+let starts_in_dim x axis start =
+  let dt = (Core.get_aval start).dtype in
+  let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+  let sh = shape x in
+  let start = normalized_start start sh.(axis) in
+  List.init (Array.length sh) (fun d -> if d = axis then start else zero)
 
 let dynamic_slice_in_dim ?(axis = 0) x start size =
   let n = ndim x in
   let axis = canon_axis n axis in
   let sizes = Array.copy (shape x) in
   sizes.(axis) <- size;
-  dynamic_slice x (starts_in_dim n axis start) sizes
+  dynamic_slice x (starts_in_dim x axis start) sizes
 
 let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
   let axis = canon_axis (ndim x) axis in
-  let v = dynamic_slice_in_dim ~axis x index 1 in
-  if keepdims then v else b1 (Squeeze [| axis |]) [ v ]
+  match
+    Jaxpr.named_jit ~name:"dynamic_index_in_dim"
+      ~key:(Printf.sprintf "%d %b" axis keepdims)
+      (function
+        | [ x; index ] ->
+            let v = dynamic_slice_in_dim ~axis x index 1 in
+            [ (if keepdims then v else b1 (Squeeze [| axis |]) [ v ]) ]
+        | _ -> invalid_arg "dynamic_index_in_dim: arity")
+      [ x; index ]
+  with
+  | [ v ] -> v
+  | _ -> invalid_arg "dynamic_index_in_dim: arity"
 
 let dynamic_update_slice_in_dim ?(axis = 0) x update start =
   let n = ndim x in
   let axis = canon_axis n axis in
-  dynamic_update_slice x update (starts_in_dim n axis start)
+  dynamic_update_slice x update (starts_in_dim x axis start)
 
 let dynamic_update_index_in_dim ?(axis = 0) x update index =
   let axis = canon_axis (ndim x) axis in
@@ -488,12 +521,8 @@ let reduce_window x init computation ~window_dimensions ~window_strides
       window_dilation = Option.value window_dilation ~default:ones;
     }
   in
-  if computation == add then b1 (Reduce_window_sum window) [ x ]
-  else if computation == max then b1 (Reduce_window_max window) [ x ]
-  else if computation == min then b1 (Reduce_window_min window) [ x ]
-  else
-    let reducer = reducer_jaxpr (dtype_of x) computation in
-    b1 (Reduce_window { reducer; window }) [ x; init ]
+  let reducer = reducer_jaxpr (dtype_of x) computation in
+  b1 (Reduce_window { reducer; window }) [ x; init ]
 
 let argmax x ~axis ~index_dtype = b1 (Argmax { axis; index_dtype }) [ x ]
 let argmin x ~axis ~index_dtype = b1 (Argmin { axis; index_dtype }) [ x ]
@@ -1057,21 +1086,33 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
   in
   let in_features = (shape lhs).(dn.lhs_spec.(1)) in
   let window = product filter_shape in
-  let out_features = in_features * window in
-  let cell = window * in_features in
-  let kernel_shape = Array.append [| out_features; 1 |] filter_shape in
-  let kernel =
-    Concrete
-      (Ndarray.of_floats (dtype_of lhs) kernel_shape
-         (Array.init (out_features * window) (fun i ->
-              let row = i / window and col = i mod window in
-              if row mod window = col then 1.0 else 0.0)))
+  let eye = Interpreters.Ad.lax_eye (dtype_of lhs) window window in
+  let spread =
+    b1
+      (Broadcast_in_dim
+         { shape = [| in_features; window; window |]; dims = [| 1; 2 |] })
+      [ eye ]
   in
-  ignore cell;
+  let kernel =
+    b1
+      (Reshape (Array.append [| in_features * window; 1 |] filter_shape))
+      [ spread ]
+  in
+  let kernel =
+    let rest =
+      List.filter
+        (fun d -> d <> dn.rhs_spec.(0) && d <> dn.rhs_spec.(1))
+        (List.init (k + 2) Fun.id)
+    in
+    let order = Array.make (k + 2) 0 in
+    order.(dn.rhs_spec.(0)) <- 0;
+    order.(dn.rhs_spec.(1)) <- 1;
+    List.iteri (fun i d -> order.(d) <- i + 2) rest;
+    if order = Array.init (k + 2) Fun.id then kernel
+    else b1 (Transpose order) [ kernel ]
+  in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
-  let kernel_spec = Array.init (k + 2) Fun.id in
-  conv_general_dilated ?lhs_dilation ?rhs_dilation
-    ~dimension_numbers:{ dn with rhs_spec = kernel_spec }
+  conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn
     ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
 
 let scatter_apply x indices func dimension_numbers =

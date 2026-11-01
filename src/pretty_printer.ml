@@ -637,6 +637,22 @@ let jax_params (e : eqn) =
       ]
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
+  | Pad cfg as p when Np_ints.prim_marked p ->
+      [
+        ( "padding_config",
+          Plain
+            (py_tuple
+               (Array.to_list
+                  (Array.map
+                     (fun (x, y, z) ->
+                       py_tuple
+                         [
+                           Printf.sprintf "np.int64(%d)" x;
+                           Printf.sprintf "np.int64(%d)" y;
+                           string_of_int z;
+                         ])
+                     cfg))) );
+      ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]
@@ -727,7 +743,19 @@ let jax_params (e : eqn) =
       window_params w
   | Reduce { jaxpr; dimensions } ->
       [
-        ("computation", Plain "<function>");
+        ( "computation",
+          Plain
+            (match jaxpr.jaxpr.eqns with
+            | [ { prim = (Add | Mul | And | Or | Xor | Max | Min) as p; _ } ] ->
+                let fname =
+                  match p with
+                  | And -> "bitwise_and"
+                  | Or -> "bitwise_or"
+                  | Xor -> "bitwise_xor"
+                  | p -> primitive_name p
+                in
+                Printf.sprintf "<function %s at 0xXXXXXXXXXXXX>" fname
+            | _ -> "<function>") );
         ("dimensions", Plain (py_ints dimensions));
         ("jaxpr", Sub jaxpr);
       ]

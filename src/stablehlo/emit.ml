@@ -590,7 +590,12 @@ let emit_convert ctx (eqn : eqn) in_ids =
       (Printf.sprintf "    %s = stablehlo.convert %s : %s\n" (name n) (name cmp)
          oty)
   end
-  else if in_dt = out_dt then Hashtbl.replace ctx.ids out.vid x
+  else if in_dt = out_dt then begin
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.convert %s : %s\n" (name n) (name x)
+         oty)
+  end
   else begin
     let inty = Ir.tensor_type_of_aval in_aval in
     let n = bind_var ctx out in

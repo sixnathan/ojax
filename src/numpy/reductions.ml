@@ -347,7 +347,7 @@ let var_body dt axis keepdims mask a_mean correction a =
   where
     (bind1 T.Gt [ normalizer; const_full rdt [||] 0.0 ])
     result
-    (const_full (dtype result) [||] Float.nan)
+    (Jnp_util.py_float Float.nan)
 
 let var_value ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean correction a =
   let mask = check_where "var" mask in

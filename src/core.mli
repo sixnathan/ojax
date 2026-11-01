@@ -134,3 +134,6 @@ val mark_inline_call : int -> unit
 val is_inline_call : int -> bool
 val inherit_inline : from:int -> int -> unit
 val call_direct : (closed_jaxpr -> value list -> value list) ref
+
+val random_gamma_hook : (log_space:bool -> value -> value -> value) ref
+val random_gamma_grad_hook : (log_space:bool -> value -> value -> value) ref

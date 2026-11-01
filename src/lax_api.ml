@@ -23,24 +23,7 @@ let broadcast_scalar v sh =
          (ndim v) (Array.length sh))
 
 let unify a b =
-  if shape a = shape b || ndim a = 0 then (a, b)
-  else if ndim a = ndim b then
-    let sh = Core.elementwise_shape [ shape a; shape b ] in
-    let widen v =
-      if shape v = sh then v
-      else
-        let kept = ref [] and squeezed = ref [] in
-        Array.iteri
-          (fun i d ->
-            if d = 1 && sh.(i) <> 1 then squeezed := i :: !squeezed
-            else kept := i :: !kept)
-          (shape v);
-        b1
-          (Broadcast_in_dim
-             { shape = sh; dims = Array.of_list (List.rev !kept) })
-          [ b1 (Squeeze (Array.of_list (List.rev !squeezed))) [ v ] ]
-    in
-    (widen a, widen b)
+  if shape a = shape b || ndim a = 0 || ndim a = ndim b then (a, b)
   else (a, broadcast_scalar b (if ndim b = 0 then shape b else shape a))
 
 let lift2 prim a b =
@@ -245,7 +228,7 @@ let broadcast x sizes =
 let broadcast_to_rank x rank =
   let missing = rank - ndim x in
   if missing <= 0 then x
-  else b1 (Reshape (Array.append (Array.make missing 1) (shape x))) [ x ]
+  else expand_dims x (Array.init missing Fun.id)
 
 let broadcast_shapes shapes =
   let rank =

@@ -160,6 +160,11 @@ let random_bits_impl bit_width shape key =
 
 let impl_rule prim inputs =
   match (prim, inputs) with
+  | Random_gamma { log_space }, [ key; a ] -> (
+      match !Core.random_gamma_hook ~log_space (Concrete key) (Concrete a) with
+      | Concrete nd -> [ nd ]
+      | Device b -> [ Pjrt.Buffer.to_host b ]
+      | Tracer _ -> failwith "prng: random_gamma produced a tracer")
   | Iota_2x32_shape shape, [] ->
       let hi, lo = iota_2x32_nd shape in
       [ hi; lo ]
@@ -178,6 +183,7 @@ let shaped shape = { shape; dtype = Dtype.Uint32; weak_type = false }
 
 let abstract_eval_rule prim avals =
   match (prim, avals) with
+  | Random_gamma _, [ _; a ] -> [ a ]
   | Iota_2x32_shape shape, [] -> [ shaped shape; shaped shape ]
   | Random_seed, [ a ] -> [ shaped (Array.append a.shape [| 2 |]) ]
   | Random_split shape, [ a ] ->
@@ -203,7 +209,7 @@ let abstract_eval_rule prim avals =
 
 let is_prng_prim = function
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-  | Random_bits _ | Random_wrap | Random_unwrap ->
+  | Random_bits _ | Random_wrap | Random_unwrap | Random_gamma _ ->
       true
   | _ -> false
 
@@ -269,3 +275,4 @@ let random_bits key ~bit_width ~shape =
 
 let random_wrap arr = Core.bind1 Random_wrap [ arr ]
 let random_unwrap key = Core.bind1 Random_unwrap [ key ]
+let random_gamma ~log_space key a = Core.bind1 (Random_gamma { log_space }) [ key; a ]

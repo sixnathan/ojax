@@ -1651,6 +1651,14 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
       cumulative_jvp ~axis ~reverse primals tangents (fun a b ->
           Lax_other.logaddexp a b)
   | Igamma_grad_a -> failwith "ad: primitive has no jvp rule (matches jax)"
+  | Random_gamma { log_space } ->
+      let _, a = arg2 primals in
+      standard_jvp prim primals tangents
+        [
+          None;
+          Some
+            (fun g ans -> lmul g (!Core.random_gamma_grad_hook ~log_space ans a));
+        ]
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
@@ -3816,7 +3824,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Polygamma | Regularized_incomplete_beta | Zeta | Platform_index _
   | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ | Threefry2x32
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-  | Random_bits _ | Random_wrap | Random_unwrap ->
+  | Random_bits _ | Random_wrap | Random_unwrap | Random_gamma _ ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
   | Scan { length; reverse; num_carry; jaxpr; unroll; _ } ->
       let split_at l n =

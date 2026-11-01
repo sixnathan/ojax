@@ -252,6 +252,7 @@ and primitive =
   | Random_bits of { bit_width : int; shape : int array }
   | Random_wrap
   | Random_unwrap
+  | Random_gamma of { log_space : bool }
   | Cholesky
   | Householder_product
   | Lu

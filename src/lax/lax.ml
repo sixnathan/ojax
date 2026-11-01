@@ -1813,7 +1813,8 @@ let rec impl_base prim inputs =
         | Tracer _ -> failwith "lax: custom_linear_solve produced a tracer"
         | Device _ -> failwith "lax: custom_linear_solve produced a tracer")
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
-  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
+  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap
+  | Random_gamma _ ->
       failwith "lax: prng primitive handled by the random module"
   | Cholesky -> Linalg.cholesky_impl inputs
   | Lu -> Linalg.lu_impl inputs
@@ -2754,7 +2755,8 @@ let abstract_eval prim avals =
   | Custom_linear_solve { solve; _ } ->
       Control_flow.Solves.solve_out_avals solve
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
-  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap ->
+  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap
+  | Random_gamma _ ->
       failwith "lax: prng primitive handled by the random module"
   | Cholesky -> Linalg.cholesky_aval avals
   | Lu -> Linalg.lu_aval avals

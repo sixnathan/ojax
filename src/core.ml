@@ -699,3 +699,9 @@ let divide_shape_sizes s1 s2 =
                remainder %d should be 0."
               (tuple s1) (tuple s2) r));
     sz1 / sz2
+
+let random_gamma_hook : (log_space:bool -> value -> value -> value) ref =
+  ref (fun ~log_space:_ _ _ -> failwith "core: random_gamma not installed")
+
+let random_gamma_grad_hook : (log_space:bool -> value -> value -> value) ref =
+  ref (fun ~log_space:_ _ _ -> failwith "core: random_gamma not installed")

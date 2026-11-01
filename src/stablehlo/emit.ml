@@ -3451,6 +3451,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ key; data ] -> [ Prng_lowering.fold_in key data ]
         | _ -> invalid_arg "Stablehlo.Emit: fold_in arity")
   | Random_wrap | Random_unwrap -> emit_inlined ctx eqn in_ids Fun.id
+  | Random_gamma { log_space } ->
+      emit_inlined ctx eqn in_ids (function
+        | [ key; a ] -> [ !Core.random_gamma_hook ~log_space key a ]
+        | _ -> invalid_arg "Stablehlo.Emit: random_gamma arity")
   | Cond { branches; platforms } -> emit_cond ctx eqn in_ids ~platforms branches
   | Reduce { jaxpr; dimensions } ->
       emit_reduce_general ctx eqn in_ids jaxpr dimensions

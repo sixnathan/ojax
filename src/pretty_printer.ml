@@ -249,6 +249,7 @@ let prim_name = function
   | Random_bits _ -> "random_bits"
   | Random_wrap -> "random_wrap"
   | Random_unwrap -> "random_unwrap"
+  | Random_gamma _ -> "random_gamma"
   | Cholesky -> "cholesky"
   | Householder_product -> "householder_product"
   | Lu -> "lu"
@@ -812,6 +813,7 @@ let jax_params (e : eqn) =
         ("shape", Plain (py_ints shape));
       ]
   | Random_split shape -> [ ("shape", Plain (py_ints shape)) ]
+  | Random_gamma { log_space } -> [ ("log_space", Plain (py_bool log_space)) ]
   | Random_seed | Random_wrap -> [ ("impl", Plain "fry") ]
   | While { cond_nconsts; body_nconsts; cond; body } ->
       [
@@ -1079,7 +1081,30 @@ and pp_eqn ctx (e : eqn) =
     | _ -> []
   in
   let lhs = pp_binders ctx e.outs in
-  let params = pp_params ctx (name_param @ jax_params e) in
+  let params =
+    let strip a = Array.sub a 0 (Array.length a - 1) in
+    let keyed =
+      match e.inputs with
+      | A_var v :: _ -> Hashtbl.mem ctx.keys v.vid
+      | _ -> false
+    in
+    let shown =
+      match e.prim with
+      | Slice { start_indices; limit_indices; strides } when keyed ->
+          {
+            e with
+            prim =
+              Slice
+                {
+                  start_indices = strip start_indices;
+                  limit_indices = strip limit_indices;
+                  strides = Option.map strip strides;
+                };
+          }
+      | _ -> e
+    in
+    pp_params ctx (name_param @ jax_params shown)
+  in
   let rhs =
     Layout.Concat
       [
@@ -1104,6 +1129,8 @@ let rec mark_keys keys (jx : jaxpr) =
       match e.prim with
       | Random_seed | Random_wrap | Random_split _ | Random_fold_in ->
           List.iter mark e.outs
+      | Slice _ | Squeeze _ | Reshape _ | Copy | Stop_gradient ->
+          if List.exists is_key e.inputs then List.iter mark e.outs
       | Xla_call c ->
           let args =
             List.filteri
@@ -1117,6 +1144,26 @@ let rec mark_keys keys (jx : jaxpr) =
           List.iter2
             (fun (out : var) inner -> if is_key inner then mark out)
             e.outs c.jaxpr.outs
+      | While { cond_nconsts; body_nconsts; cond; body } ->
+          let n = cond_nconsts + body_nconsts in
+          let mark_carry (c : closed_jaxpr) nconsts =
+            let binders =
+              List.filteri
+                (fun i _ -> i >= List.length c.consts + nconsts)
+                c.jaxpr.in_binders
+            in
+            let carry = List.filteri (fun i _ -> i >= n) e.inputs in
+            List.iter2
+              (fun (b : var) input -> if is_key input then mark b)
+              binders carry;
+            mark_keys keys c.jaxpr
+          in
+          mark_carry cond cond_nconsts;
+          mark_carry body body_nconsts;
+          let carry = List.filteri (fun i _ -> i >= n) e.inputs in
+          List.iter2
+            (fun (out : var) input -> if is_key input then mark out)
+            e.outs carry
       | _ -> ())
     jx.eqns
 

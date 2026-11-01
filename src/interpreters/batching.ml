@@ -852,8 +852,29 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Platform_index _ ->
       failwith "batching: vmap of platform_index not supported"
   | Cond _ -> failwith "batching: cond handled by batch_process_primitive"
-  | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
-  | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | While _
+  | Random_seed | Random_split _ | Random_bits _ | Random_wrap | Random_unwrap
+    -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] -> (b1 prim [ bdim_at_front axis_size x b ], Some 0)
+      | _ -> failwith "batching: expected 1 prng operand")
+  | Random_fold_in -> (
+      match (vals, bdims) with
+      | [ key; msg ], [ bk; bm ] ->
+          let front v b =
+            match b with
+            | None -> v
+            | Some _ -> bdim_at_front axis_size v b
+          in
+          (b1 prim [ front key bk; front msg bm ], Some 0)
+      | _ -> failwith "batching: expected 2 prng operands")
+  | Random_gamma _ -> (
+      match (vals, bdims) with
+      | [ key; a ], [ bk; ba ] ->
+          ( b1 prim
+              [ bdim_at_front axis_size key bk; bdim_at_front axis_size a ba ],
+            Some 0 )
+      | _ -> failwith "batching: expected 2 prng operands")
+  | Threefry2x32 | Iota_2x32_shape _ | While _
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
   | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Triangular_solve _
   | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
@@ -1226,8 +1247,7 @@ let unstacks_operands prim (bdims : int option list) =
   | ( ( Conv_general_dilated _ | Reduce_window _ | Reduce_window_max _
       | Reduce_window_min _ | Reduce_window_sum _ | Select_and_gather_add _
       | Select_and_scatter _ | Select_and_scatter_add _ | Threefry2x32
-      | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-      | Random_bits _ | Random_wrap | Random_unwrap | While _ | Cholesky
+      | Iota_2x32_shape _ | While _ | Cholesky
       | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
       | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
       | Schur _ | Svd _ | Tridiagonal _ | Rng_bit_generator _ ),

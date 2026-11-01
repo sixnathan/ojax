@@ -87,3 +87,10 @@ val svd :
   value list
 
 val tridiagonal : ?lower:bool -> value -> value * value * value * value
+
+val solve_tangent :
+  Types.value ->
+  Types.value ->
+  Types.value ->
+  Types.value ->
+  Types.value * Types.value

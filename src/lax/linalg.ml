@@ -909,20 +909,21 @@ let lu_solve_core lu permutation b =
   let x = triangular_solve ~left_side:true ~lower:false lu x in
   Core.bind1 (Reshape bs) [ x ]
 
+let lu_solve_call lu permutation v =
+  match
+    Jaxpr.named_jit ~name:"_lu_solve"
+      (function
+        | [ l; p; y ] -> [ lu_solve_core l p y ]
+        | _ -> invalid_arg "lu_solve: arity")
+      [ lu; permutation; v ]
+  with
+  | [ out ] -> out
+  | _ -> invalid_arg "lu_solve: arity"
+
 let solve_for_jvp a b =
   let r = Array.length (Core.get_aval a).shape in
   let lu, _, permutation = lu (Custom_derivatives.stop_gradient a) in
-  let solve_vec v =
-    match
-      Jaxpr.named_jit ~name:"_lu_solve"
-        (function
-          | [ l; p; y ] -> [ lu_solve_core l p y ]
-          | _ -> invalid_arg "lu_solve: arity")
-        [ lu; permutation; v ]
-    with
-    | [ out ] -> out
-    | _ -> invalid_arg "lu_solve: arity"
-  in
+  let solve_vec v = lu_solve_call lu permutation v in
   match
     Interpreters.Batching.vmap_out
       (function [ y ] -> [ solve_vec y ] | _ -> invalid_arg "solve: arity")
@@ -931,5 +932,56 @@ let solve_for_jvp a b =
   with
   | [ out ] -> out
   | _ -> invalid_arg "solve: arity"
+
+let add_tangent x y =
+  if Ad_util.is_symbolic_zero x then y
+  else if Ad_util.is_symbolic_zero y then x
+  else Ad_util.add_any x y
+
+let solve_tangent a b a_dot b_dot =
+  let rank v = Array.length (Core.get_aval v).shape in
+  let lu, _, permutation = lu (Custom_derivatives.stop_gradient a) in
+  let solve_vec v = lu_solve_call lu permutation v in
+  let matvec y =
+    Core.bind1
+      (Dot_general
+         {
+           lhs_contract = [| 1 |];
+           rhs_contract = [| 0 |];
+           lhs_batch = [||];
+           rhs_batch = [||];
+         })
+      [ a_dot; y ]
+  in
+  if rank b = 1 then begin
+    let x = solve_vec b in
+    let rhs =
+      if Ad_util.is_symbolic_zero a_dot then b_dot
+      else add_tangent b_dot (Core.bind1 Neg [ matvec x ])
+    in
+    (x, solve_vec rhs)
+  end
+  else begin
+    let batched f v =
+      match
+        Interpreters.Batching.vmap
+          (function [ y ] -> [ f y ] | _ -> invalid_arg "solve: arity")
+          [ Some 0 ] [ v ]
+      with
+      | [ out ] -> out
+      | _ -> invalid_arg "solve: arity"
+    in
+    let swap v = Core.bind1 (Transpose [| 1; 0 |]) [ v ] in
+    let moved_b = swap b in
+    let moved_b_dot =
+      if Ad_util.is_symbolic_zero b_dot then b_dot else swap b_dot
+    in
+    let x = batched solve_vec moved_b in
+    let rhs =
+      if Ad_util.is_symbolic_zero a_dot then moved_b_dot
+      else add_tangent moved_b_dot (Core.bind1 Neg [ batched matvec x ])
+    in
+    (swap x, swap (batched solve_vec rhs))
+  end
 
 let () = Interpreters.Ad.solve_ref := solve_for_jvp

@@ -841,10 +841,47 @@ let qr ?mode p0 =
     (function [ p0 ] -> qr ?mode p0 | _ -> invalid_arg "qr: arity")
     [ p0 ]
 
+let solve_direct = solve
+
+let linearizing =
+  List.exists (function
+    | T.Tracer { trace = { kind = T.KPE; _ }; _ } -> true
+    | _ -> false)
+
+let solve_primal = function
+  | [ a; b ] -> [ solve_direct a b ]
+  | _ -> invalid_arg "solve: arity"
+
+let solve_rule =
+  lazy
+    (C.register_custom_rule
+       (C.Jvp_rule
+          {
+            primal = solve_primal;
+            jvp =
+              (fun primals tangents ->
+                match (primals, tangents) with
+                | [ a; b ], [ a_dot; b_dot ]
+                  when ndim a = 2 && ndim b <= 2 && not (linearizing tangents)
+                  ->
+                    let x, x_dot = LL.solve_tangent a b a_dot b_dot in
+                    ([ x ], [ x_dot ])
+                | _ -> Interpreters.Ad.jvp solve_primal primals tangents);
+          }))
+
+let solve_with_rule a b =
+  match C.bind (T.Custom_jvp_call (Lazy.force solve_rule)) [ a; b ] with
+  | [ x ] -> x
+  | _ -> invalid_arg "solve: arity"
+
 let solve p0 p1 =
   Jnp_util.jit1 "solve"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> solve p0 p1 | _ -> invalid_arg "solve: arity")
+    (function
+      | [ p0; p1 ] ->
+          let dt = Dtypes.to_inexact_dtype (NL.result_type [ p0; p1 ]) in
+          solve_with_rule (NL.astype p0 dt) (NL.astype p1 dt)
+      | _ -> invalid_arg "solve: arity")
     [ p0; p1 ]
 
 let cond ?p p0 =

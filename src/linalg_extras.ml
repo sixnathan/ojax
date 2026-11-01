@@ -122,6 +122,19 @@ let () =
       | _ -> failwith "lowered linalg: unexpected primitive"
 
 let cholesky_update r w =
+  let check name v i expected =
+    if Array.length (shape v) <> expected then
+      invalid_arg
+        (Printf.sprintf
+           "Input %d to %s must have a rank of exactly %d, but got shape=%s" i
+           name expected
+           ("("
+           ^ String.concat ", "
+               (List.map string_of_int (Array.to_list (shape v)))
+           ^ ")"))
+  in
+  check "cholesky_update" r 0 2;
+  check "cholesky_update" w 1 1;
   Eager_jit.one "lax.linalg.cholesky_update" () [] [ r; w ] (fun _ vals ->
       Core.bind1 T.Cholesky_update vals)
 

@@ -4,6 +4,7 @@ type lowered = {
   closed : closed_jaxpr;
   in_avals : aval list;
   out_avals : aval list;
+  module_name : string;
 }
 
 type compiled = { run : value list -> value list; source : lowered }
@@ -46,12 +47,18 @@ let closed_out_avals (closed : closed_jaxpr) =
 
 let lower f avals =
   let closed = Jaxpr.make_jaxpr avals f in
-  { closed; in_avals = avals; out_avals = closed_out_avals closed }
+  {
+    closed;
+    in_avals = avals;
+    out_avals = closed_out_avals closed;
+    module_name = "_lambda";
+  }
 
 let as_text lowered = Stablehlo.Emit.emit_closed_jaxpr lowered.closed
 let jaxpr_text lowered = Pretty_printer.closed_jaxpr_to_string lowered.closed
 
-let as_jax_text ?(name = "_lambda") lowered =
+let as_jax_text ?name lowered =
+  let name = Option.value name ~default:lowered.module_name in
   Stablehlo.Emit.emit_jax_text ~name lowered.closed
 
 let jax_jaxpr_text lowered =
@@ -105,7 +112,14 @@ let trace_flat ~name f args =
     out_tree;
     out_avals = Tree_util.tree_unflatten out_tree out_flat;
     call = call_args;
-    trace_lower = (fun () -> { closed; in_avals; out_avals = out_flat });
+    trace_lower =
+      (fun () ->
+        {
+          closed;
+          in_avals;
+          out_avals = out_flat;
+          module_name = (if name = "<fun>" then "_lambda" else name);
+        });
   }
 
 let jit ?(name = "<fun>") f =

@@ -590,7 +590,14 @@ let emit_convert ctx (eqn : eqn) in_ids =
       (Printf.sprintf "    %s = stablehlo.convert %s : %s\n" (name n) (name cmp)
          oty)
   end
-  else if in_dt = out_dt then Hashtbl.replace ctx.ids out.vid x
+  else if in_dt = out_dt && in_aval.weak_type = out.vaval.weak_type then
+    Hashtbl.replace ctx.ids out.vid x
+  else if in_dt = out_dt then begin
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.convert %s : %s\n" (name n) (name x)
+         oty)
+  end
   else begin
     let inty = Ir.tensor_type_of_aval in_aval in
     let n = bind_var ctx out in
@@ -2528,6 +2535,29 @@ and emit_reduce_window_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr)
 
 and emit_while ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
     (cond : closed_jaxpr) (body : closed_jaxpr) =
+  let pred_rank =
+    match cond.jaxpr.outs with
+    | [ A_var v ] -> Array.length v.vaval.shape
+    | _ -> 0
+  in
+  if pred_rank > 0 then begin
+    let n_consts = cond_nconsts + body_nconsts in
+    let in_avals = List.map atom_aval eqn.inputs in
+    let cond', body' =
+      Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body in_avals
+    in
+    let const_avals = List.filteri (fun i _ -> i < n_consts) in_avals in
+    let const_outs =
+      List.map (fun a -> { vid = Core.fresh_id (); vaval = a }) const_avals
+    in
+    emit_while_plain ctx
+      { eqn with outs = const_outs @ eqn.outs }
+      in_ids ~cond_nconsts:0 ~body_nconsts:0 cond' body'
+  end
+  else emit_while_plain ctx eqn in_ids ~cond_nconsts ~body_nconsts cond body
+
+and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
+    (cond : closed_jaxpr) (body : closed_jaxpr) =
   let n_consts = cond_nconsts + body_nconsts in
   let const_avals =
     List.filteri (fun i _ -> i < n_consts) (List.map atom_aval eqn.inputs)
@@ -2717,7 +2747,9 @@ and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
     match Hashtbl.find_opt call_symbols c.jid with
     | Some s -> s
     | None ->
-        let s = unique_symbol (Pretty_printer.call_name c.jid) in
+        let s =
+          Mlir_names.symbol_name (unique_symbol (Pretty_printer.call_name c.jid))
+        in
         Hashtbl.replace call_symbols c.jid s;
         emit_private_function ctx s c;
         s

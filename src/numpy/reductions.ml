@@ -584,23 +584,20 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
     | Some m -> convert m computation
     | None -> nanmean ~dtype:computation ?axis ~keepdims:true ?where:mask af
   in
-  let m = broadcast_to m (shape af) in
-  let centered =
-    where (isnan af)
-      (const_full computation (shape af) 0.0)
-      (bind1 T.Sub [ af; m ])
-  in
+  let nan_a = isnan af in
+  let centered = where nan_a (Jnp_util.py_int 0) (bind1 T.Sub [ af; m ]) in
   let centered = squared_magnitude computation centered in
   let notnan = bind1 T.Not [ isnan af ] in
-  let count = sum ~dtype:rdt ?axis ?keepdims ?where:mask notnan in
-  let nz =
-    bind1 T.Sub [ count; const_full rdt (shape count) (float_of_int ddof) ]
+  let count = sum ?axis ?keepdims ?where:mask notnan in
+  let nz = Ufuncs.subtract count (Jnp_util.py_int ddof) in
+  let bad =
+    bind1 T.Le [ nz; const_full (dtype nz) (shape nz) 0.0 ]
   in
-  let bad = bind1 T.Le [ nz; const_full rdt (shape nz) 0.0 ] in
-  let result = sum ~dtype:rdt ?axis ?keepdims ?where:mask centered in
-  let result = where bad (const_full rdt (shape result) Float.nan) result in
-  let divisor = where bad (const_full rdt (shape nz) 1.0) nz in
-  convert (bind1 T.Div [ result; divisor ]) result_dtype
+  let result = sum ?axis ?keepdims ?where:mask centered in
+  let result = where bad (Jnp_util.py_float Float.nan) result in
+  let divisor = where bad (Jnp_util.py_int 1) nz in
+  ignore rdt;
+  convert (bind1 T.Div [ result; convert divisor (dtype result) ]) result_dtype
 
 let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
   let where_given = where <> None in

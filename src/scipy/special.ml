@@ -965,8 +965,20 @@ let piecewise ~key ?(extra = []) x conds funcs =
       Piece_const (py_int 0) :: funcs
     else invalid_arg "piecewise: function count"
   in
+  let expand c =
+    let sh = shape c in
+    bind1
+      (T.Broadcast_in_dim
+         {
+           shape = Array.append [| 1 |] sh;
+           dims = Array.init (Array.length sh) (fun d -> d + 1);
+         })
+      [ c ]
+  in
   let condlist =
-    match conds with [ c ] -> NL.stack ~axis:0 [ c ] | cs -> NL.stack ~axis:0 cs
+    match List.map expand conds with
+    | [ only ] -> only
+    | parts -> bind1 (T.Concatenate 0) parts
   in
   let const_vals =
     List.filter_map (function Piece_const c -> Some c | _ -> None) rotated
@@ -1009,7 +1021,7 @@ let gammasgn x =
   let c1 = bor (band x_negative (UF.equal x floor_x)) (UF.isnan x) in
   let c2 =
     bor
-      (band x_negative (ne_ (UF.remainder floor_x (scalar_of x 2.0)) 0.0))
+      (band x_negative (ne_ (UF.remainder floor_x (py_int 2)) 0.0))
       (band (eq_ x 0.0) (UF.signbit x))
   in
   select_default (scalar_of x 1.0) [ c1; c2 ]
@@ -2126,9 +2138,7 @@ let rec hyp1f1_apply a b x =
          | _ -> failwith "hyp1f1: arity")
        [ a; b; x ])
 
-let hyp1f1 a b x =
-  let a, b, x = real_only3 "hyp1f1" a b x in
-  hyp1f1_apply a b x
+let hyp1f1 a b x = hyp1f1_apply a b x
 
 let fori_float lower upper body init = L.fori_loop lower upper body init
 
@@ -2637,10 +2647,7 @@ let rec hyp2f1_apply a b c x =
          | _ -> failwith "hyp2f1: arity")
        [ a; b; c; x ])
 
-let hyp2f1 a b c x =
-  match promote_inexact [ a; b; c; x ] with
-  | [ a; b; c; x ] -> hyp2f1_apply a b c x
-  | _ -> failwith "hyp2f1: arity"
+let hyp2f1 a b c x = hyp2f1_apply a b c x
 
 let sincospisquaredhalf x =
   let x = UF.abs x in

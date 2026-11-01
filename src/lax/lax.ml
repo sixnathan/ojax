@@ -1311,7 +1311,11 @@ let rec impl_base prim inputs =
   | Select_n -> select_n_impl inputs
   | Convert_element_type dt -> un (convert_impl dt) inputs
   | Broadcast_in_dim { shape; dims } ->
-      un (broadcast_in_dim_impl shape dims) inputs
+      un
+        (fun a ->
+          let r = broadcast_in_dim_impl shape dims a in
+          if Ndarray.weak a then Ndarray.as_weak r else r)
+        inputs
   | Reshape ns -> un (reshape_impl ns) inputs
   | Reduce_sum axes ->
       un
@@ -1751,10 +1755,8 @@ let rec impl_base prim inputs =
       let inputs_v = List.map (fun nd -> Concrete nd) inputs in
       let n = cond_nconsts + body_nconsts in
       let cond, body =
-        if n = 0 then (cond, body)
-        else
-          Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body
-            (List.map Core.get_aval inputs_v)
+        Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body
+          (List.map Core.get_aval inputs_v)
       in
       Control_flow.Loops.while_impl cond body inputs_v
       |> List.filteri (fun i _ -> i >= n)

@@ -381,6 +381,8 @@ let atom_type = function
       }
   | DropVar a -> a
 
+let custom_num_consts : (eqn -> int option) ref = ref (fun _ -> None)
+
 let custom_call_of (e : eqn) =
   match e.prim with
   | Custom_jvp_call id ->
@@ -664,6 +666,12 @@ let jax_params (e : eqn) =
         ("dimension", Plain (string_of_int dimension));
         ("is_stable", Plain (py_bool is_stable));
         ("num_keys", Plain (string_of_int num_keys));
+      ]
+  | (Argmax { axis; index_dtype } | Argmin { axis; index_dtype }) as p
+    when Np_ints.prim_marked p ->
+      [
+        ("axes", Plain (Printf.sprintf "(np.int64(%d),)" axis));
+        ("index_dtype", Plain (dn index_dtype));
       ]
   | Argmax { axis; index_dtype } | Argmin { axis; index_dtype } ->
       [
@@ -1039,8 +1047,11 @@ and pp_eqn ctx (e : eqn) =
               ("name", Plain name);
               ("call_jaxpr", Sub c);
               ("jvp", Plain jvp_name);
-              ("symbolic_zeros", Plain "False");
             ]
+            @ (match !custom_num_consts e with
+              | Some n -> [ ("num_consts", Plain (string_of_int n)) ]
+              | None -> [])
+            @ [ ("symbolic_zeros", Plain "False") ]
         | None -> [])
     | _ -> []
   in
@@ -1136,8 +1147,16 @@ let closed_jaxpr_to_jax_string (cj : closed_jaxpr) =
         let subs = insertion_order e in
         (match e.prim with
         | Xla_call inner ->
-            if not (Hashtbl.mem names inner.jid) then
-              Hashtbl.replace names inner.jid (xla_call_name inner)
+            if not (Hashtbl.mem names inner.jid) then begin
+              let raw = xla_call_name inner in
+              let n = String.length raw in
+              let name =
+                if n >= 2 && raw.[0] = '<' && raw.[n - 1] = '>' then
+                  String.sub raw 1 (n - 2)
+                else raw
+              in
+              Hashtbl.replace names inner.jid name
+            end
         | _ -> ());
         List.iter (fun s -> Queue.add (s, false) queue) subs)
       c.jaxpr.eqns

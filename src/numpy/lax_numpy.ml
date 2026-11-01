@@ -730,7 +730,7 @@ let squeeze ?axis v =
         Array.sort compare d;
         d
   in
-  bind1 (T.Squeeze dims) [ v ]
+  if Array.length dims = 0 then v else bind1 (T.Squeeze dims) [ v ]
 
 let swapaxes axis1 axis2 v =
   let n = ndim v in
@@ -1919,8 +1919,22 @@ let roll_static a shift axis =
             let sz = (shape !acc).(ax) in
             if sz <> 0 then begin
               let i = ((-s mod sz) + sz) mod sz in
-              let high = slice_axis !acc ax i sz in
-              let low = slice_axis !acc ax 0 i in
+              let slice lo hi =
+                let cur = shape !acc in
+                let nd = Array.length cur in
+                bind1
+                  (T.Slice
+                     {
+                       start_indices =
+                         Array.init nd (fun d -> if d = ax then lo else 0);
+                       limit_indices =
+                         Array.mapi (fun d e -> if d = ax then hi else e) cur;
+                       strides = Some (Array.make nd 1);
+                     })
+                  [ !acc ]
+              in
+              let high = slice i sz in
+              let low = slice 0 i in
               acc := bind1 (T.Concatenate ax) [ high; low ]
             end
           done;
@@ -1978,12 +1992,14 @@ let gcd x1 x2 =
   let body carry =
     match carry with
     | [ a; b ] ->
-        let nz = bind1 T.Ne [ b; zeros_like b ] in
-        let bsafe = where_ nz b (const_full (dtype b) (shape b) 1.0) in
-        let t1 = where_ nz b a in
-        let t2 = where_ nz (bind1 T.Rem [ a; bsafe ]) (zeros_like b) in
-        let lt = bind1 T.Lt [ t1; t2 ] in
-        [ where_ lt t2 t1; where_ lt t1 t2 ]
+        let ne0 () = bind1 T.Ne [ b; scalar (dtype b) 0.0 ] in
+        let t1 = where_ (ne0 ()) b a in
+        let nz = ne0 () in
+        let t2 = where_ nz (bind1 T.Rem [ a; b ]) (scalar (dtype b) 0.0) in
+        let lt1 () = bind1 T.Lt [ t1; t2 ] in
+        let u1 = where_ (lt1 ()) t2 t1 in
+        let u2 = where_ (lt1 ()) t1 t2 in
+        [ u1; u2 ]
     | _ -> assert false
   in
   let init = [ abs_of x1; abs_of x2 ] in
@@ -2005,10 +2021,9 @@ let lcm x1 x2 =
   if not (is_integral (dtype x1)) then
     invalid_arg "Arguments to jax.numpy.lcm must be integers.";
   let d = gcd x1 x2 in
-  let is_zero = bind1 T.Eq [ d; zeros_like d ] in
-  let dsafe = where_ is_zero (const_full (dtype d) (shape d) 1.0) d in
-  let prod = mul2 x1 (binop T.Div x2 dsafe) in
-  where_ is_zero (zeros_like prod) prod
+  let is_zero = bind1 T.Eq [ d; scalar (dtype d) 0.0 ] in
+  let prod = Ufuncs.multiply x1 (Ufuncs.floor_divide x2 d) in
+  where_ is_zero (scalar (dtype d) 0.0) prod
 
 let lcm p0 p1 =
   Jnp_util.jit1 "lcm"
@@ -2354,6 +2369,24 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   in
   squeeze (bind1 T.Div [ prod; f ])
 
+let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
+  let y_given = y <> None in
+  let fweights_given = fweights <> None in
+  let aweights_given = aweights <> None in
+  if y_given || fweights_given then
+    cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0
+  else
+    Jnp_util.jit1 "cov"
+      ~key:
+        (Digest.to_hex
+           (Digest.string
+              (Marshal.to_string (rowvar, bias, ddof, dtype, aweights_given) [])))
+      (function
+        | [ p0 ] -> cov ?y ?rowvar ?bias ?ddof ?dtype p0
+        | [ p0; aweights ] -> cov ?y ?rowvar ?bias ?ddof ~aweights ?dtype p0
+        | _ -> invalid_arg "cov: arity")
+      (p0 :: Option.to_list aweights)
+
 let corrcoef ?y ?(rowvar = true) ?dtype x =
   let c = cov ?y ~rowvar ?dtype x in
   if ndim c = 0 then bind1 T.Div [ c; c ]
@@ -2414,24 +2447,6 @@ let argsort_values v =
   | _ -> failwith "argsort_values: arity"
 
 let from_dlpack ?device ?copy x = Dlpack.from_dlpack ?device ?copy x
-
-let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
-  let y_given = y <> None in
-  let fweights_given = fweights <> None in
-  let aweights_given = aweights <> None in
-  if y_given || fweights_given then
-    cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0
-  else
-    Jnp_util.jit1 "cov"
-      ~key:
-        (Digest.to_hex
-           (Digest.string
-              (Marshal.to_string (rowvar, bias, ddof, dtype, aweights_given) [])))
-      (function
-        | [ p0 ] -> cov ?y ?rowvar ?bias ?ddof ?dtype p0
-        | [ p0; aweights ] -> cov ?y ?rowvar ?bias ?ddof ~aweights ?dtype p0
-        | _ -> invalid_arg "cov: arity")
-      (p0 :: Option.to_list aweights)
 
 let fmin a0 a1 =
   Eager_jit.one "numpy.lax_numpy.fmin" () [] [ a0; a1 ] (fun opts vals ->

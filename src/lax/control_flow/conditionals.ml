@@ -1,36 +1,49 @@
 open Types
 
+let lift_consts ((c : closed_jaxpr), hoisted, _) =
+  let n = List.length c.consts in
+  let binders = c.jaxpr.in_binders in
+  let total = List.length binders in
+  let nh = List.length hoisted in
+  let const_part = List.filteri (fun i _ -> i < n) binders in
+  let hoist_part = List.filteri (fun i _ -> i >= total - nh) binders in
+  let arg_part = List.filteri (fun i _ -> i >= n && i < total - nh) binders in
+  ( {
+      c with
+      consts = [];
+      jaxpr = { c.jaxpr with in_binders = const_part @ hoist_part @ arg_part };
+    },
+    List.map (fun nd -> Concrete nd) c.consts @ hoisted )
+
+let build_branches all_avals lifted hoisted_each =
+  let n_hoisted = List.length (List.concat hoisted_each) in
+  let rec offsets acc = function
+    | [] -> []
+    | h :: tl -> acc :: offsets (acc + List.length h) tl
+  in
+  List.map2
+    (fun ((c : closed_jaxpr), own) offset ->
+      let n_own = List.length own in
+      Jaxpr.make_jaxpr all_avals (fun args ->
+          let ops = List.filteri (fun i _ -> i >= n_hoisted) args in
+          let mine =
+            List.filteri (fun i _ -> i >= offset && i < offset + n_own) args
+          in
+          Jaxpr.eval_closed_jaxpr c (mine @ ops)))
+    lifted (offsets 0 hoisted_each)
+
 let branch_call ?platforms (index : value)
     (branches : (value list -> value list) list) (operands : value list) :
     value list =
   let avals = List.map Core.get_aval operands in
   let traced = List.map (Jaxpr.make_jaxpr_stateful avals) branches in
-  let hoisted_each = List.map (fun (_, h, _) -> h) traced in
+  let lifted = List.map lift_consts traced in
+  let hoisted_each = List.map snd lifted in
   let hoisted = List.concat hoisted_each in
   let all_avals = List.map Core.get_aval hoisted @ avals in
-  let n_hoisted = List.length hoisted in
-  let offsets =
-    let rec go acc = function
-      | [] -> []
-      | h :: tl -> acc :: go (acc + List.length h) tl
-    in
-    go 0 hoisted_each
-  in
   let branches' =
-    if n_hoisted = 0 then List.map (fun (c, _, _) -> c) traced
-    else
-      List.map2
-        (fun ((c : closed_jaxpr), own, _) offset ->
-          let n_own = List.length own in
-          Jaxpr.make_jaxpr all_avals (fun args ->
-              let ops = List.filteri (fun i _ -> i >= n_hoisted) args in
-              let mine =
-                List.filteri
-                  (fun i _ -> i >= offset && i < offset + n_own)
-                  args
-              in
-              Jaxpr.eval_closed_jaxpr c (ops @ mine)))
-        traced offsets
+    if hoisted = [] then List.map fst lifted
+    else build_branches all_avals lifted hoisted_each
   in
   Core.bind
     (Cond { branches = branches'; platforms })
@@ -73,24 +86,17 @@ let rec cond (pred : value) (true_fun : value list -> value list)
   end
   else
     let index = Core.bind1 (Convert_element_type Dtype.I32) [ pred ] in
-    let hoisted = hoisted_t @ hoisted_f in
-    let n_t = List.length hoisted_t in
-    let n_f = List.length hoisted_f in
+    ignore (t, hoisted_t, f, hoisted_f);
+    let lifted = List.map lift_consts [ traced_t; traced_f ] in
+    let hoisted_each = List.map snd lifted in
+    let hoisted = List.concat hoisted_each in
     let all_avals = List.map Core.get_aval hoisted @ avals in
-    let split args =
-      match Util.split_list args [ n_t; n_f ] with
-      | [ h_t; h_f; ops ] -> (ops, h_t, h_f)
-      | _ -> failwith "cond: arity"
+    let branches' =
+      if hoisted = [] then List.map fst lifted
+      else build_branches all_avals lifted hoisted_each
     in
     let t', f' =
-      if hoisted = [] then (t, f)
-      else
-        ( Jaxpr.make_jaxpr all_avals (fun args ->
-              let ops, h_t, _ = split args in
-              Jaxpr.eval_closed_jaxpr t (ops @ h_t)),
-          Jaxpr.make_jaxpr all_avals (fun args ->
-              let ops, _, h_f = split args in
-              Jaxpr.eval_closed_jaxpr f (ops @ h_f)) )
+      match branches' with [ a; b ] -> (a, b) | _ -> assert false
     in
     Core.bind
       (Cond { branches = [ f'; t' ]; platforms = None })

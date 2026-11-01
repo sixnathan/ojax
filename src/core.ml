@@ -203,6 +203,14 @@ let scan_lift_consts ~num_consts (c : closed_jaxpr) =
       };
   }
 
+let custom_num_consts : (int, int) Hashtbl.t = Hashtbl.create 16
+let note_custom_num_consts id n = Hashtbl.replace custom_num_consts id n
+let custom_num_consts_of id = Hashtbl.find_opt custom_num_consts id
+
+let custom_rule_opt = function
+  | Custom_jvp_call id | Custom_vjp_call id -> Hashtbl.find_opt custom_rules id
+  | _ -> None
+
 let custom_eqn_jaxprs : (int, closed_jaxpr) Hashtbl.t = Hashtbl.create 64
 let note_custom_eqn_jaxpr vid c = Hashtbl.replace custom_eqn_jaxprs vid c
 let find_custom_eqn_jaxpr vid = Hashtbl.find_opt custom_eqn_jaxprs vid

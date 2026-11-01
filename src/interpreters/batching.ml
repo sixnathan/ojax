@@ -282,7 +282,21 @@ let insert_pad_cfg (cfg : (int * int * int) array) (idx : int)
 let concatenate_batch (axis_size : int) (dim : int) (vals : value list)
     (bdims : int option list) : value * int option =
   let aligned =
-    List.map2 (fun v b -> move_batch_axis axis_size b 0 v) vals bdims
+    List.map2
+      (fun v b ->
+        match b with
+        | Some _ -> move_batch_axis axis_size b 0 v
+        | None ->
+            let a = Core.get_aval v in
+            let n = Array.length a.shape in
+            b1
+              (Broadcast_in_dim
+                 {
+                   shape = insert_size a.shape 0 axis_size;
+                   dims = Array.init n (fun i -> i + 1);
+                 })
+              [ v ])
+      vals bdims
   in
   (b1 (Concatenate (dim + 1)) aligned, Some 0)
 
@@ -780,12 +794,16 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Argmax { axis; index_dtype } -> (
       match (vals, bdims) with
       | [ x ], [ b ] ->
-          argminmax_batch (fun ax -> Argmax { axis = ax; index_dtype }) axis x b
+          argminmax_batch
+            (fun ax -> Np_ints.mark_prim (Argmax { axis = ax; index_dtype }))
+            axis x b
       | _ -> failwith "batching: expected 1 operand")
   | Argmin { axis; index_dtype } -> (
       match (vals, bdims) with
       | [ x ], [ b ] ->
-          argminmax_batch (fun ax -> Argmin { axis = ax; index_dtype }) axis x b
+          argminmax_batch
+            (fun ax -> Np_ints.mark_prim (Argmin { axis = ax; index_dtype }))
+            axis x b
       | _ -> failwith "batching: expected 1 operand")
   | Reduce { jaxpr; dimensions } ->
       reduce_general_batch axis_size jaxpr dimensions vals bdims
@@ -1483,32 +1501,125 @@ let batched_jvp_rule id axis_size vals bdims primal jvp =
       Hashtbl.replace jvp_batch_cache key r;
       r
 
-let while_batch axis_size cond body vals bdims =
-  let aligned = List.map2 (align_to axis_size 0) vals bdims in
-  let avals = List.map Core.get_aval aligned in
-  let running state =
-    List.hd (vmap_all (fun s -> Jaxpr.eval_closed_jaxpr cond s) state)
+let batch_closed_axes (c : closed_jaxpr) axis_size in_dims out_dims =
+  let binder_avals =
+    List.filteri
+      (fun i _ -> i >= List.length c.consts)
+      (List.map (fun (v : var) -> v.vaval) c.jaxpr.in_binders)
   in
-  let cond' =
-    Jaxpr.make_jaxpr avals (fun state ->
-        [ b1 (Reduce_or [| 0 |]) [ running state ] ])
+  let widened =
+    List.map2
+      (fun (a : aval) d ->
+        match d with
+        | Some d -> { a with shape = insert_size a.shape d axis_size }
+        | None -> a)
+      binder_avals in_dims
+  in
+  Jaxpr.make_jaxpr widened (fun inner ->
+      Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+          let ins =
+            List.map2
+              (fun v d ->
+                match d with
+                | Some _ -> Tracer (new_batch_tracer main v d)
+                | None -> v)
+              inner in_dims
+          in
+          let outs = Jaxpr.eval_closed_jaxpr c ins in
+          List.map2
+            (fun o d ->
+              let v, b = to_batch_info main (Core.full_raise main o) in
+              match (b, d) with
+              | None, None -> v
+              | _, Some d -> move_batch_axis axis_size b d v
+              | Some _, None -> failwith "batching: while output mismatch")
+            outs out_dims))
+
+let batch_flags (c : closed_jaxpr) axis_size flags =
+  let binder_avals =
+    List.filteri
+      (fun i _ -> i >= List.length c.consts)
+      (List.map (fun (v : var) -> v.vaval) c.jaxpr.in_binders)
+  in
+  let out_flags = ref [] in
+  let widened =
+    List.map2
+      (fun (a : aval) f ->
+        if f then { a with shape = insert_size a.shape 0 axis_size } else a)
+      binder_avals flags
+  in
+  ignore
+    (Jaxpr.make_jaxpr widened (fun inner ->
+         Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+             let ins =
+               List.map2
+                 (fun v f ->
+                   if f then Tracer (new_batch_tracer main v (Some 0)) else v)
+                 inner flags
+             in
+             let outs = Jaxpr.eval_closed_jaxpr c ins in
+             let pairs =
+               List.map
+                 (fun o -> to_batch_info main (Core.full_raise main o))
+                 outs
+             in
+             out_flags := List.map (fun (_, b) -> Option.is_some b) pairs;
+             List.map fst pairs)));
+  !out_flags
+
+let while_batch axis_size ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
+    (body : closed_jaxpr) vals bdims =
+  let split l =
+    match Util.split_list l [ cond_nconsts; body_nconsts ] with
+    | [ a; b; c ] -> (a, b, c)
+    | _ -> failwith "batching: while split"
+  in
+  let cconsts, bconsts, init = split vals in
+  let cconst_dims, bconst_dims, init_dims = split bdims in
+  let flag = Option.is_some in
+  let cconst_bat = List.map flag cconst_dims in
+  let bconst_bat = List.map flag bconst_dims in
+  let rec fixpoint carry_bat =
+    let out = batch_flags body axis_size (bconst_bat @ carry_bat) in
+    let merged = List.map2 ( || ) carry_bat out in
+    if merged = carry_bat then carry_bat else fixpoint merged
+  in
+  let carry_bat = fixpoint (List.map flag init_dims) in
+  let pred_bat =
+    List.hd (batch_flags cond axis_size (cconst_bat @ carry_bat))
+  in
+  let carry_dims, cond_out =
+    if pred_bat then (List.map (fun _ -> Some 0) carry_bat, [ Some 0 ])
+    else
+      let rank =
+        match cond.jaxpr.outs with
+        | [ A_var v ] -> Array.length v.vaval.shape
+        | _ -> 0
+      in
+      (List.map (fun b -> if b then Some rank else None) carry_bat, [ None ])
   in
   let body' =
-    Jaxpr.make_jaxpr avals (fun state ->
-        let active = running state in
-        let next = vmap_all (fun s -> Jaxpr.eval_closed_jaxpr body s) state in
-        List.map2
-          (fun old fresh ->
-            let shape = (Core.get_aval fresh).shape in
-            let mask =
-              b1 (Broadcast_in_dim { shape; dims = [| 0 |] }) [ active ]
-            in
-            b1 Select_n [ mask; old; fresh ])
-          state next)
+    batch_closed_axes body axis_size (bconst_dims @ carry_dims) carry_dims
   in
-  Core.bind
-    (While { cond_nconsts = 0; body_nconsts = 0; cond = cond'; body = body' })
-    aligned
+  let cond' =
+    batch_closed_axes cond axis_size (cconst_dims @ carry_dims) cond_out
+  in
+  let new_init =
+    List.map2
+      (fun (x, old_axis) new_axis ->
+        match (old_axis, new_axis) with
+        | None, None -> x
+        | _, Some d -> move_batch_axis axis_size old_axis d x
+        | Some _, None -> failwith "batching: while carry mismatch")
+      (List.combine init init_dims)
+      carry_dims
+  in
+  let outs =
+    Core.bind
+      (While { cond_nconsts; body_nconsts; cond = cond'; body = body' })
+      (cconsts @ bconsts @ new_init)
+  in
+  (outs, carry_dims)
 
 let ffi_shift_layout layout =
   let n = Array.length layout in
@@ -1627,18 +1738,10 @@ let batch_process_primitive (trace : trace) (prim : primitive)
       in
       [ Tracer (new_batch_tracer trace out out_bdim) ]
   | While { cond_nconsts; body_nconsts; cond; body } ->
-      let n = cond_nconsts + body_nconsts in
-      let cond, body =
-        if n = 0 then (cond, body)
-        else
-          Jaxpr.lift_while ~cond_nconsts ~body_nconsts cond body
-            (List.map (fun (v : value) -> (Core.get_aval v)) args)
+      let outs, dims =
+        while_batch axis_size ~cond_nconsts ~body_nconsts cond body vals bdims
       in
-      List.filteri
-        (fun i _ -> i >= n)
-        (List.map
-           (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
-           (while_batch axis_size cond body vals bdims))
+      List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs dims
   | Ffi_call c ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

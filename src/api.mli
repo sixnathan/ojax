@@ -1,6 +1,7 @@
 open Types
 
-val jit_flat : (value list -> value list) -> value list -> value list
+val jit_flat :
+  ?name:string -> (value list -> value list) -> value list -> value list
 val call : (value list -> value list) -> value list -> value list
 
 val make_jaxpr :

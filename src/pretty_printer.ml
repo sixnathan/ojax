@@ -767,14 +767,14 @@ let jax_params (e : eqn) =
         ("cond_nconsts", Plain (string_of_int (List.length cond.consts)));
       ]
   | Cond { t; f } -> [ ("branches", Subs [ f; t ]) ]
-  | Scan { length; reverse; num_carry; jaxpr } ->
+  | Scan { length; reverse; num_carry; jaxpr; unroll } ->
       [
         ("jaxpr", Sub jaxpr);
         ("length", Plain (string_of_int length));
         ("num_carry", Plain (string_of_int num_carry));
         ("num_consts", Plain (string_of_int (List.length jaxpr.consts)));
         ("reverse", Plain (py_bool reverse));
-        ("unroll", Plain "1");
+        ("unroll", Plain (string_of_int unroll));
       ]
   | Xla_call c -> [ ("jaxpr", Sub c) ]
   | Select_and_scatter { select_jaxpr; scatter_jaxpr; window } ->

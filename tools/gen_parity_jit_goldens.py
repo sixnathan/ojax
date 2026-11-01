@@ -80,11 +80,10 @@ def gen_set(x64, outdir, jobs):
     if os.path.isdir(outdir):
         shutil.rmtree(outdir)
     os.makedirs(os.path.join(outdir, "outputs"))
-    env = dict(os.environ, OMP_NUM_THREADS="1")
     workers = []
     for index in range(jobs):
         command = [sys.executable, os.path.abspath(__file__), "--shard", str(index), str(jobs), "--x64", str(int(x64)), "--outdir", outdir]
-        workers.append(subprocess.Popen(command, env=env))
+        workers.append(subprocess.Popen(command))
     if any(w.wait() != 0 for w in workers):
         raise SystemExit("a shard failed for " + outdir)
     entries = []

@@ -48,16 +48,24 @@ let where c x y =
     [ c; x; y ]
 
 let index i = T.Concrete (Ndarray.of_floats D.I32 [||] [| float_of_int i |])
+
+let pyint i =
+  T.Concrete
+    (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||]
+       [| float_of_int i |])
+
 let conj v = if is_complex v then b1 T.Conj [ v ] else v
 let transpose v = b1 (T.Transpose [| 1; 0 |]) [ v ]
 let hconj x = conj (transpose x)
-let iota sh dimension = b1 (T.Iota { dtype = D.I32; shape = sh; dimension }) []
+let iota_of dtype sh dimension = b1 (T.Iota { dtype; shape = sh; dimension }) []
+let iota sh dimension = iota_of D.I32 sh dimension
 
 let eye dt n =
   let sh = [| n; n |] in
-  let rows = iota sh 0 in
-  let cols = iota sh 1 in
-  let shifted = b1 T.Add [ rows; index 0 ] in
+  let idt = Dtypes.default_int_dtype () in
+  let rows = iota_of idt sh 0 in
+  let cols = iota_of idt sh 1 in
+  let shifted = b1 T.Add [ rows; pyint 0 ] in
   b1 (T.Convert_element_type dt) [ b1 T.Eq [ shifted; cols ] ]
 
 let mask x dims alternative =
@@ -77,7 +85,7 @@ let use_qr u (a_minus_e_by_sqrt_c, sqrt_c, e) =
   let padded =
     b1 (T.Pad [| (0, n, 0); (0, 0, 0) |]) [ scaled; scalar dt 0.0 ]
   in
-  let y = b1 T.Dynamic_update_slice [ padded; identity; index m; index 0 ] in
+  let y = b1 T.Dynamic_update_slice [ padded; identity; pyint m; pyint 0 ] in
   let q, _ = LL.qr ~full_matrices:false y in
   let q1 =
     b1
@@ -89,11 +97,11 @@ let use_qr u (a_minus_e_by_sqrt_c, sqrt_c, e) =
          })
       [ q ]
   in
-  let q1 = mask q1 [| m; n |] (index 0) in
+  let q1 = mask q1 [| m; n |] (pyint 0) in
   let q2 =
-    b1 (T.Dynamic_slice { slice_sizes = [| n; n |] }) [ q; index m; index 0 ]
+    b1 (T.Dynamic_slice { slice_sizes = [| n; n |] }) [ q; pyint m; pyint 0 ]
   in
-  let q2 = hconj (mask q2 [| n; n |] (index 0)) in
+  let q2 = hconj (mask q2 [| n; n |] (pyint 0)) in
   let left = b1 T.Mul [ e; u ] in
   let product = L.dot_typed q1 q2 in
   b1 T.Add [ left; b1 T.Mul [ a_minus_e_by_sqrt_c; product ] ]
@@ -168,17 +176,17 @@ let dynamic_index coefs k =
     (function
       | [ coefs; k ] ->
           let sh = shape coefs in
-          let negative = b1 T.Lt [ k; index 0 ] in
+          let negative = b1 T.Lt [ k; pyint 0 ] in
           let strong =
-            if (aval k).T.weak_type then b1 (T.Convert_element_type D.I32) [ k ]
+            if (aval k).T.weak_type then b1 (T.Convert_element_type (Dtypes.default_int_dtype ())) [ k ]
             else k
           in
-          let wrapped = b1 T.Add [ strong; index sh.(0) ] in
+          let wrapped = b1 T.Add [ strong; pyint sh.(0) ] in
           let start = b1 T.Select_n [ negative; k; wrapped ] in
           let picked =
             b1
               (T.Dynamic_slice { slice_sizes = [| 1; sh.(1) |] })
-              [ coefs; start; index 0 ]
+              [ coefs; start; pyint 0 ]
           in
           b1 (T.Squeeze [| 0 |]) [ picked ]
       | _ -> invalid_arg "dynamic_index_in_dim: arity")
@@ -205,7 +213,10 @@ let iterate u flag coefs update test_convergence =
       in
       let body = function
         | [ i; u; _ ] ->
-            let next_i = b1 T.Add [ i; Core.py_scalar D.I32 1.0 ] in
+            let next_i =
+              b1 T.Add
+                [ i; Core.py_scalar (Dtypes.default_int_dtype ()) 1.0 ]
+            in
             let row = dynamic_index table i in
             let params = unpack_row row in
             let next = update u params in
@@ -213,7 +224,9 @@ let iterate u flag coefs update test_convergence =
         | _ -> invalid_arg "qdwh: arity"
       in
       let start =
-        T.Concrete (Ndarray.as_weak (Ndarray.of_floats D.I32 [||] [| 0.0 |]))
+        T.Concrete
+          (Ndarray.as_weak
+             (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| 0.0 |]))
       in
       match Lax.scan ~length:n_rows body [ start; u; flag ] [] with
       | [ _; u; flag ] -> (u, flag)
@@ -233,7 +246,7 @@ let qdwh_body max_iterations eps x =
   let second = b1 T.Rsqrt [ inf_norm ] in
   let alpha_inverse = b1 T.Mul [ first; second ] in
   let is_zero = b1 T.Eq [ one_norm; scalar (dtype one_norm) 0.0 ] in
-  let alpha_inverse = where is_zero (index 1) alpha_inverse in
+  let alpha_inverse = where is_zero (pyint 1) alpha_inverse in
   let scale =
     if dtype alpha_inverse = dt then alpha_inverse
     else b1 (T.Convert_element_type dt) [ alpha_inverse ]
@@ -276,16 +289,16 @@ let qdwh_body max_iterations eps x =
     Lax.while_loop
       (function
         | [ k; _; flag ] ->
-            let lt = b1 T.Lt [ k; index max_iterations ] in
+            let lt = b1 T.Lt [ k; pyint max_iterations ] in
             b1 T.And [ flag; b1 (T.Convert_element_type D.Bool) [ lt ] ]
         | _ -> invalid_arg "qdwh: arity")
       (function
         | [ k; u; _ ] ->
             let next = use_cholesky u final_params in
             let flag = not_converged tol_norm next u in
-            [ b1 T.Add [ k; index 1 ]; next; flag ]
+            [ b1 T.Add [ k; pyint 1 ]; next; flag ]
         | _ -> invalid_arg "qdwh: arity")
-      [ index start; u; flag ]
+      [ pyint start; u; flag ]
   in
   match final with
   | [ num_iters; u; flag ] ->

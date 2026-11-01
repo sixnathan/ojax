@@ -382,6 +382,9 @@ let rec dispatch prim args =
   let top = find_top_trace args in
   match (prim, args) with
   | Xla_call c, _ when top.kind <> KJaxpr -> !call_inline c args
+  | Transpose perm, [ _ ]
+    when Array.for_all Fun.id (Array.mapi (fun i p -> i = p) perm) ->
+      args
   | Convert_element_type dt, [ Concrete a ]
     when top.kind = KJaxpr && Array.length (Ndarray.shape a) = 0 -> (
       match rules.impl prim [ a ] with
@@ -391,7 +394,7 @@ let rec dispatch prim args =
     when List.exists (fun v -> value_shape v <> value_shape first) rest
          || Array.length (value_shape which) > 0
             && value_shape which <> value_shape first ->
-      let out = elementwise_shape (List.map value_shape (first :: rest)) in
+      let out = elementwise_shape (List.map value_shape args) in
       let widen v =
         let s = value_shape v in
         if s = out then v

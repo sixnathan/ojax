@@ -704,3 +704,195 @@ let median ?axis ?(keepdims = false) a =
 let nanmedian ?axis ?(keepdims = false) a =
   let q = const_full (to_inexact_dtype (dtype a)) [||] 0.5 in
   nanquantile ?axis ~keepdims ~method_:"midpoint" a q
+
+let count_nonzero ?axis ?keepdims p0 =
+  Jnp_util.jit1 "count_nonzero"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
+    (function
+      | [ p0 ] -> count_nonzero ?axis ?keepdims p0
+      | _ -> invalid_arg "count_nonzero: arity")
+    [ p0 ]
+
+let nanmin ?axis ?keepdims ?initial ?where p0 =
+  let initial_given = initial <> None in
+  let where_given = where <> None in
+  if initial_given || where_given then nanmin ?axis ?keepdims ?initial ?where p0
+  else
+    Jnp_util.jit1 "nanmin"
+      ~key:
+        (Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nanmin ?axis ?keepdims ?initial ?where p0
+        | _ -> invalid_arg "nanmin: arity")
+      [ p0 ]
+
+let nanmax ?axis ?keepdims ?initial ?where p0 =
+  let initial_given = initial <> None in
+  let where_given = where <> None in
+  if initial_given || where_given then nanmax ?axis ?keepdims ?initial ?where p0
+  else
+    Jnp_util.jit1 "nanmax"
+      ~key:
+        (Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nanmax ?axis ?keepdims ?initial ?where p0
+        | _ -> invalid_arg "nanmax: arity")
+      [ p0 ]
+
+let nansum ?dtype ?axis ?keepdims ?initial ?where p0 =
+  let initial_given = initial <> None in
+  let where_given = where <> None in
+  if initial_given || where_given then
+    nansum ?dtype ?axis ?keepdims ?initial ?where p0
+  else
+    Jnp_util.jit1 "nansum"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nansum ?dtype ?axis ?keepdims ?initial ?where p0
+        | _ -> invalid_arg "nansum: arity")
+      [ p0 ]
+
+let nanprod ?dtype ?axis ?keepdims ?initial ?where p0 =
+  let initial_given = initial <> None in
+  let where_given = where <> None in
+  if initial_given || where_given then
+    nanprod ?dtype ?axis ?keepdims ?initial ?where p0
+  else
+    Jnp_util.jit1 "nanprod"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nanprod ?dtype ?axis ?keepdims ?initial ?where p0
+        | _ -> invalid_arg "nanprod: arity")
+      [ p0 ]
+
+let nanmean ?dtype ?axis ?keepdims ?where p0 =
+  let where_given = where <> None in
+  if where_given then nanmean ?dtype ?axis ?keepdims ?where p0
+  else
+    Jnp_util.jit1 "nanmean"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims) [])))
+      (function
+        | [ p0 ] -> nanmean ?dtype ?axis ?keepdims ?where p0
+        | _ -> invalid_arg "nanmean: arity")
+      [ p0 ]
+
+let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
+  let where_given = where <> None in
+  let mean_given = mean <> None in
+  if where_given || mean_given then
+    nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+  else
+    Jnp_util.jit1 "nanvar"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
+      (function
+        | [ p0 ] -> nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+        | _ -> invalid_arg "nanvar: arity")
+      [ p0 ]
+
+let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
+  let where_given = where <> None in
+  let mean_given = mean <> None in
+  if where_given || mean_given then
+    nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+  else
+    Jnp_util.jit1 "nanstd"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
+      (function
+        | [ p0 ] -> nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+        | _ -> invalid_arg "nanstd: arity")
+      [ p0 ]
+
+let cumsum ?dtype ?axis p0 =
+  Jnp_util.jit1 "cumsum"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    (function
+      | [ p0 ] -> cumsum ?dtype ?axis p0 | _ -> invalid_arg "cumsum: arity")
+    [ p0 ]
+
+let cumprod ?dtype ?axis p0 =
+  Jnp_util.jit1 "cumprod"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    (function
+      | [ p0 ] -> cumprod ?dtype ?axis p0 | _ -> invalid_arg "cumprod: arity")
+    [ p0 ]
+
+let nancumsum ?dtype ?axis p0 =
+  Jnp_util.jit1 "nancumsum"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    (function
+      | [ p0 ] -> nancumsum ?dtype ?axis p0
+      | _ -> invalid_arg "nancumsum: arity")
+    [ p0 ]
+
+let nancumprod ?dtype ?axis p0 =
+  Jnp_util.jit1 "nancumprod"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (dtype, axis) [])))
+    (function
+      | [ p0 ] -> nancumprod ?dtype ?axis p0
+      | _ -> invalid_arg "nancumprod: arity")
+    [ p0 ]
+
+let quantile ?axis ?keepdims ?method_ p0 p1 =
+  Jnp_util.jit1 "quantile"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (axis, keepdims, method_) [])))
+    (function
+      | [ p0; p1 ] -> quantile ?axis ?keepdims ?method_ p0 p1
+      | _ -> invalid_arg "quantile: arity")
+    [ p0; p1 ]
+
+let nanquantile ?axis ?keepdims ?method_ p0 p1 =
+  Jnp_util.jit1 "nanquantile"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (axis, keepdims, method_) [])))
+    (function
+      | [ p0; p1 ] -> nanquantile ?axis ?keepdims ?method_ p0 p1
+      | _ -> invalid_arg "nanquantile: arity")
+    [ p0; p1 ]
+
+let percentile ?axis ?keepdims ?method_ p0 p1 =
+  Jnp_util.jit1 "percentile"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (axis, keepdims, method_) [])))
+    (function
+      | [ p0; p1 ] -> percentile ?axis ?keepdims ?method_ p0 p1
+      | _ -> invalid_arg "percentile: arity")
+    [ p0; p1 ]
+
+let nanpercentile ?axis ?keepdims ?method_ p0 p1 =
+  Jnp_util.jit1 "nanpercentile"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (axis, keepdims, method_) [])))
+    (function
+      | [ p0; p1 ] -> nanpercentile ?axis ?keepdims ?method_ p0 p1
+      | _ -> invalid_arg "nanpercentile: arity")
+    [ p0; p1 ]
+
+let median ?axis ?keepdims p0 =
+  Jnp_util.jit1 "median"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
+    (function
+      | [ p0 ] -> median ?axis ?keepdims p0 | _ -> invalid_arg "median: arity")
+    [ p0 ]
+
+let nanmedian ?axis ?keepdims p0 =
+  Jnp_util.jit1 "nanmedian"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string (axis, keepdims) [])))
+    (function
+      | [ p0 ] -> nanmedian ?axis ?keepdims p0
+      | _ -> invalid_arg "nanmedian: arity")
+    [ p0 ]

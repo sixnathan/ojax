@@ -133,3 +133,15 @@ let outer a b =
   let a2 = NL.expand_dims a [| 1 |] in
   let b2 = NL.expand_dims b [| 0 |] in
   bcast_binop (mul_prim pdt) a2 b2
+
+let matvec p0 p1 =
+  Jnp_util.jit1 "matvec"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> matvec p0 p1 | _ -> invalid_arg "matvec: arity")
+    [ p0; p1 ]
+
+let vecmat p0 p1 =
+  Jnp_util.jit1 "vecmat"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> vecmat p0 p1 | _ -> invalid_arg "vecmat: arity")
+    [ p0; p1 ]

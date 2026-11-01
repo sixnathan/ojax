@@ -628,3 +628,128 @@ and cond ?(p = Onone) x =
         (UF.logical_not (RED.any ~axis:[| -2; -1 |] (UF.isnan arr)))
     in
     NL.where_ bad (const dt infinity) r
+
+let cholesky ?upper ?symmetrize_input p0 =
+  Jnp_util.jit1 "cholesky"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (upper, symmetrize_input) [])))
+    (function
+      | [ p0 ] -> cholesky ?upper ?symmetrize_input p0
+      | _ -> invalid_arg "cholesky: arity")
+    [ p0 ]
+
+let svd ?full_matrices ?compute_uv ?hermitian p0 =
+  Jnp_util.jit "svd"
+    ~key:
+      (Digest.to_hex
+         (Digest.string
+            (Marshal.to_string (full_matrices, compute_uv, hermitian) [])))
+    (function
+      | [ p0 ] -> svd ?full_matrices ?compute_uv ?hermitian p0
+      | _ -> invalid_arg "svd: arity")
+    [ p0 ]
+
+let matrix_power p0 s1 =
+  Jnp_util.jit1 "matrix_power"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string s1 [])))
+    (function
+      | [ p0 ] -> matrix_power p0 s1 | _ -> invalid_arg "matrix_power: arity")
+    [ p0 ]
+
+let matrix_rank ?rtol ?hermitian ?tol p0 =
+  let rtol_given = rtol <> None in
+  let tol_given = tol <> None in
+  if rtol_given || tol_given then matrix_rank ?rtol ?hermitian ?tol p0
+  else
+    Jnp_util.jit1 "matrix_rank"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string hermitian [])))
+      (function
+        | [ p0 ] -> matrix_rank ?rtol ?hermitian ?tol p0
+        | _ -> invalid_arg "matrix_rank: arity")
+      [ p0 ]
+
+let slogdet ?method_ p0 =
+  match
+    Jnp_util.jit "slogdet"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string method_ [])))
+      (function
+        | [ p0 ] ->
+            let a, b = slogdet ?method_ p0 in
+            [ a; b ]
+        | _ -> invalid_arg "slogdet: arity")
+      [ p0 ]
+  with
+  | [ a; b ] -> (a, b)
+  | _ -> invalid_arg "slogdet: arity"
+
+let det p0 =
+  Jnp_util.jit1 "det"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> det p0 | _ -> invalid_arg "det: arity")
+    [ p0 ]
+
+let eigvals p0 =
+  Jnp_util.jit1 "eigvals"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> eigvals p0 | _ -> invalid_arg "eigvals: arity")
+    [ p0 ]
+
+let eigh ?uplo ?symmetrize_input p0 =
+  match
+    Jnp_util.jit "eigh"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (uplo, symmetrize_input) [])))
+      (function
+        | [ p0 ] ->
+            let a, b = eigh ?uplo ?symmetrize_input p0 in
+            [ a; b ]
+        | _ -> invalid_arg "eigh: arity")
+      [ p0 ]
+  with
+  | [ a; b ] -> (a, b)
+  | _ -> invalid_arg "eigh: arity"
+
+let eigvalsh ?uplo ?symmetrize_input p0 =
+  Jnp_util.jit1 "eigvalsh"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (uplo, symmetrize_input) [])))
+    (function
+      | [ p0 ] -> eigvalsh ?uplo ?symmetrize_input p0
+      | _ -> invalid_arg "eigvalsh: arity")
+    [ p0 ]
+
+let inv p0 =
+  Jnp_util.jit1 "inv"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> inv p0 | _ -> invalid_arg "inv: arity")
+    [ p0 ]
+
+let norm ?ord ?axis ?keepdims p0 =
+  Jnp_util.jit1 "norm"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (ord, axis, keepdims) [])))
+    (function
+      | [ p0 ] -> norm ?ord ?axis ?keepdims p0 | _ -> invalid_arg "norm: arity")
+    [ p0 ]
+
+let qr ?mode p0 =
+  Jnp_util.jit "qr"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
+    (function [ p0 ] -> qr ?mode p0 | _ -> invalid_arg "qr: arity")
+    [ p0 ]
+
+let solve p0 p1 =
+  Jnp_util.jit1 "solve"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> solve p0 p1 | _ -> invalid_arg "solve: arity")
+    [ p0; p1 ]
+
+let cond ?p p0 =
+  Jnp_util.jit1 "cond"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string p [])))
+    (function [ p0 ] -> cond ?p p0 | _ -> invalid_arg "cond: arity")
+    [ p0 ]

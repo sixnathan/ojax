@@ -1416,24 +1416,21 @@ let dtype_sweep_run op a =
   | "sw_isfinite" -> one UF.isfinite
   | "sw_isinf" -> one UF.isinf
   | "sw_round" -> one (NL.round ~decimals:1)
-  | "sw_bitwise_and" ->
-      one (fun v -> UF.bitwise_and v (NL.flip ~axis:[| 0 |] v))
-  | "sw_bitwise_or" -> one (fun v -> UF.bitwise_or v (NL.flip ~axis:[| 0 |] v))
-  | "sw_bitwise_xor" ->
-      one (fun v -> UF.bitwise_xor v (NL.flip ~axis:[| 0 |] v))
+  | "sw_bitwise_and" -> one (fun v -> UF.bitwise_and v (L.rev v [| 0 |]))
+  | "sw_bitwise_or" -> one (fun v -> UF.bitwise_or v (L.rev v [| 0 |]))
+  | "sw_bitwise_xor" -> one (fun v -> UF.bitwise_xor v (L.rev v [| 0 |]))
   | "sw_bitwise_not" -> one UF.bitwise_not
   | "sw_left_shift" -> one (fun v -> UF.left_shift v (AC.ones_like v))
   | "sw_right_shift" -> one (fun v -> UF.right_shift v (AC.ones_like v))
   | "sw_remainder" ->
-      one (fun v ->
-          UF.remainder v (UF.add (NL.flip ~axis:[| 0 |] v) (AC.ones_like v)))
+      one (fun v -> UF.remainder v (UF.add (L.rev v [| 0 |]) (AC.ones_like v)))
   | "sw_floor_divide" ->
       one (fun v ->
-          UF.floor_divide v (UF.add (NL.flip ~axis:[| 0 |] v) (AC.ones_like v)))
+          UF.floor_divide v (UF.add (L.rev v [| 0 |]) (AC.ones_like v)))
   | "sw_power_self" ->
       one (fun v -> UF.power v (UF.add (AC.ones_like v) (AC.ones_like v)))
-  | "sw_gcd" -> one (fun v -> NL.gcd v (NL.flip ~axis:[| 0 |] v))
-  | "sw_lcm" -> one (fun v -> NL.lcm v (NL.flip ~axis:[| 0 |] v))
+  | "sw_gcd" -> one (fun v -> NL.gcd v (L.rev v [| 0 |]))
+  | "sw_lcm" -> one (fun v -> NL.lcm v (L.rev v [| 0 |]))
   | "sw_floor_div_self" ->
       one (fun v ->
           let v = as_float v in
@@ -1465,8 +1462,8 @@ let dtype_sweep_run op a =
   | "sw_tensordot" -> one (fun v -> TC.tensordot ~axes:(TC.Ax_int 1) v (t v))
   | "sw_einsum" -> one (fun v -> Ojax.Numpy.Einsum.einsum "ij,kj->ik" [ v; v ])
   | "sw_clip" -> one (NL.clip ~min:(-0.5) ~max:0.5)
-  | "sw_minimum" -> one (fun v -> UF.minimum v (NL.flip ~axis:[| 0 |] v))
-  | "sw_maximum" -> one (fun v -> UF.maximum v (NL.flip ~axis:[| 0 |] v))
+  | "sw_minimum" -> one (fun v -> UF.minimum v (L.rev v [| 0 |]))
+  | "sw_maximum" -> one (fun v -> UF.maximum v (L.rev v [| 0 |]))
   | "sw_max" -> one (RD.amax ~axis:ax0)
   | "sw_min" -> one (RD.amin ~axis:ax0)
   | "sw_argmax" -> one (NL.argmax ~axis:0)

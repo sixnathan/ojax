@@ -51,6 +51,7 @@ let gather_to_scatter (gd : gather_dims) : scatter_dims =
     scatter_dims_to_operand_dims = gd.start_index_map;
     s_operand_batching_dims = gd.g_operand_batching_dims;
     s_scatter_indices_batching_dims = gd.g_start_indices_batching_dims;
+    s_sorted_unique = false;
   }
 
 let scatter_to_gather (sd : scatter_dims) : gather_dims =
@@ -121,7 +122,7 @@ let like_dtype reference v =
   let dt = (Core.get_aval reference).dtype in
   if (Core.get_aval v).dtype = dt then v else b1 (Convert_element_type dt) [ v ]
 
-let matmul x y =
+let matmul_at dot_precision x y =
   let ndim = Array.length (Core.get_aval x).shape in
   let batch = Array.init (ndim - 2) Fun.id in
   b1
@@ -131,8 +132,12 @@ let matmul x y =
          rhs_contract = [| ndim - 2 |];
          lhs_batch = batch;
          rhs_batch = batch;
+         dot_precision;
        })
     [ x; y ]
+
+let matmul_plain = matmul_at None
+let matmul = matmul_at (Some ("HIGHEST", "HIGHEST"))
 
 let broadcast_to_matrix x shape =
   let a = Core.get_aval x in
@@ -615,6 +620,7 @@ let construct_diagonal s =
              scatter_dims_to_operand_dims = [| bd; bd + 1 |];
              s_operand_batching_dims = [||];
              s_scatter_indices_batching_dims = [||];
+             s_sorted_unique = false;
            };
          unique_indices = false;
        })
@@ -709,7 +715,7 @@ let slice_block x row col =
 let thin_qr_jvp q r dx =
   let dx_rinv = triangular r dx in
   let hq = h_of q in
-  let qt = matmul hq dx_rinv in
+  let qt = matmul_plain hq dx_rinv in
   let lower = ltril ~k:(-1) qt in
   let hl = h_of lower in
   let d = lsub lower hl in
@@ -721,10 +727,10 @@ let thin_qr_jvp q r dx =
   let corr = lmul i diff in
   let d = ladd d corr in
   let dq_in = lsub d qt in
-  let m = matmul q dq_in in
+  let m = matmul_plain q dq_in in
   let dq = ladd m dx_rinv in
   let dr_in = lsub qt d in
-  let dr = matmul dr_in r in
+  let dr = matmul_plain dr_in r in
   (dq, dr)
 
 let qr_tangents ~full_matrices x dx outs =
@@ -739,9 +745,9 @@ let qr_tangents ~full_matrices x dx outs =
         let r1 = slice_block r (0, m) (0, m) in
         let dq, dr1 = thin_qr_jvp q r1 dx1 in
         let hdq = h_of dq in
-        let a1 = matmul hdq x2 in
+        let a1 = matmul_plain hdq x2 in
         let hq = h_of q in
-        let a2 = matmul hq dx2 in
+        let a2 = matmul_plain hq dx2 in
         let dr2 = ladd a1 a2 in
         let dr = b1 (Concatenate (ndim_of dr1 - 1)) [ dr1; dr2 ] in
         [ dq; dr ]
@@ -2915,7 +2921,8 @@ let broadcast_transpose (shape : int array) (dims : int array)
       (List.init (Array.length shape) Fun.id)
   in
   let reduced = b1 (Reduce_sum (Array.of_list axes)) [ ct ] in
-  expand_dims reduced (Array.of_list unit_dims)
+  if unit_dims = [] then reduced
+  else expand_dims reduced (Array.of_list unit_dims)
 
 let reduce_sum_transpose (axes : int array) (in_shape : int array) ct =
   let in_ndim = Array.length in_shape in
@@ -2989,6 +2996,7 @@ let dot_transpose_lhs g (x : aval) y (dims : dot_dims) swap_ans =
       rhs_contract = y_kept;
       lhs_batch = ans_batch;
       rhs_batch = dims.rhs_batch;
+      dot_precision = dims.dot_precision;
     }
   in
   let x_contract_sorted =
@@ -3651,6 +3659,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               rhs_contract = dims.lhs_contract;
               lhs_batch = dims.rhs_batch;
               rhs_batch = dims.lhs_batch;
+              dot_precision = dims.dot_precision;
             }
           in
           [

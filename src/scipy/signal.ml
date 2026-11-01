@@ -206,14 +206,14 @@ let slice_rows x lo hi =
 let add_rows x lo updates =
   let n = rank x in
   let dims =
-    Np_ints.mark_sorted_unique
-      {
-        update_window_dims = Array.init n Fun.id;
-        inserted_window_dims = [||];
-        scatter_dims_to_operand_dims = (if lo = 0 then [||] else [| 0 |]);
-        s_operand_batching_dims = [||];
-        s_scatter_indices_batching_dims = [||];
-      }
+    {
+      update_window_dims = Array.init n Fun.id;
+      inserted_window_dims = [||];
+      scatter_dims_to_operand_dims = (if lo = 0 then [||] else [| 0 |]);
+      s_operand_batching_dims = [||];
+      s_scatter_indices_batching_dims = [||];
+      s_sorted_unique = true;
+    }
   in
   let indices =
     if lo = 0 then Concrete (Ndarray.of_floats (index_dtype ()) [| 0 |] [||])
@@ -555,14 +555,14 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
         L.scatter_mul ~unique_indices:true result
           (L.broadcast_in_dim (int_literal (index_dtype ()) 1) [| 1 |] [||])
           (Numpy.Array_creation.full ~dtype:(dtype_of result) update_shape 2.0)
-          (Np_ints.mark_sorted_unique
-             {
-               update_window_dims = Array.init n Fun.id;
-               inserted_window_dims = [||];
-               scatter_dims_to_operand_dims = [| n - 1 |];
-               s_operand_batching_dims = [||];
-               s_scatter_indices_batching_dims = [||];
-             })
+          {
+            update_window_dims = Array.init n Fun.id;
+            inserted_window_dims = [||];
+            scatter_dims_to_operand_dims = [| n - 1 |];
+            s_operand_batching_dims = [||];
+            s_scatter_indices_batching_dims = [||];
+            s_sorted_unique = true;
+          }
       end
       else result
     in

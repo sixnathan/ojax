@@ -49,6 +49,7 @@ let dot_lhs () =
       rhs_contract = [| 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      dot_precision = None;
     }
   in
   check_grad "lhs" (fun a -> b1 (Dot_general dims) [ a; matrix ]) [| 2; 2 |];
@@ -58,6 +59,7 @@ let dot_lhs () =
       rhs_contract = [| 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      dot_precision = None;
     }
   in
   check_grad "rhs" (fun a -> b1 (Dot_general rhs_dims) [ matrix; a ]) [| 3; 2 |]
@@ -69,6 +71,7 @@ let dot_batched () =
       rhs_contract = [| 1 |];
       lhs_batch = [| 0 |];
       rhs_batch = [| 0 |];
+      dot_precision = None;
     }
   in
   let other = f64 [| 2; 3; 2 |] (Array.init 12 float_of_int) in
@@ -81,6 +84,7 @@ let dot_batched () =
       rhs_contract = [| 1; 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      dot_precision = None;
     }
   in
   let w = f64 [| 3; 2; 2 |] (Array.init 12 float_of_int) in
@@ -171,6 +175,7 @@ let spd_of a =
       rhs_contract = [| 1 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      dot_precision = None;
     }
   in
   let n = (Core.get_aval a).shape.(0) in

@@ -39,19 +39,6 @@ let triple_marked arr i j =
     (fun (other, predicate) -> other == arr && predicate i j)
     (Hashtbl.find_all marked_triples (Hashtbl.hash arr))
 
-let sorted_unique : (int, Obj.t) Hashtbl.t = Hashtbl.create 16
-
-let mark_sorted_unique dims =
-  let o = Obj.repr dims in
-  Hashtbl.add sorted_unique (Hashtbl.hash o) o;
-  dims
-
-let is_sorted_unique dims =
-  let o = Obj.repr dims in
-  List.exists
-    (fun other -> other == o)
-    (Hashtbl.find_all sorted_unique (Hashtbl.hash o))
-
 let sorted_scatters : (int, Obj.t) Hashtbl.t = Hashtbl.create 64
 
 let mark_scatter prim =

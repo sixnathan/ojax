@@ -8,8 +8,6 @@ val mark_triples_where :
   (int -> int -> bool) -> (int * int * int) array -> (int * int * int) array
 
 val triple_marked : (int * int * int) array -> int -> int -> bool
-val mark_sorted_unique : 'a -> 'a
-val is_sorted_unique : 'a -> bool
 val mark_scatter : 'a -> 'a
 val scatter_marked : 'a -> bool
 val mark_gather_fill : 'a -> string -> float option -> 'a

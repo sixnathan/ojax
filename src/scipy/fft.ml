@@ -136,14 +136,14 @@ let deinterleave x axis =
     L.scatter ~unique_indices:true target
       (L.broadcast_in_dim positions [| count; 1 |] [| 0 |])
       updates
-      (Np_ints.mark_sorted_unique
-         {
-           update_window_dims = other_axes (rank x) axis;
-           inserted_window_dims = [| axis |];
-           scatter_dims_to_operand_dims = [| axis |];
-           s_operand_batching_dims = [||];
-           s_scatter_indices_batching_dims = [||];
-         })
+      {
+        update_window_dims = other_axes (rank x) axis;
+        inserted_window_dims = [| axis |];
+        scatter_dims_to_operand_dims = [| axis |];
+        s_operand_batching_dims = [||];
+        s_scatter_indices_batching_dims = [||];
+        s_sorted_unique = true;
+      }
   in
   set_every (set_every out 0 v0) 1 v1
 

@@ -887,7 +887,7 @@ let do_split ~array_split ?(axis = 0) v s =
           Array.init nsec (fun i -> if i < r then part + 1 else part)
         else invalid_arg "array split does not result in an equal division"
   in
-  bind (T.Split { sizes; axis }) [ v ]
+  bind (T.Split { sizes = Np_ints.mark sizes; axis }) [ v ]
 
 let split ?axis v s = do_split ~array_split:false ?axis v s
 let array_split ?axis v s = do_split ~array_split:true ?axis v s

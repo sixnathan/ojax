@@ -857,12 +857,17 @@ let fori_loop lower upper body init =
       List.tl (Lax.scan ~length step (start :: init) [])
   | _ ->
       List.tl
-        (Lax.while_loop
-           (function i :: _ -> lt i upper | [] -> failwith "fori_loop: arity")
-           (function
-             | i :: rest -> add i (filled (dtype_of i) [||] 1.0) :: body i rest
-             | [] -> failwith "fori_loop: arity")
-           (lower :: init))
+        (List.tl
+           (Lax.while_loop
+              (function
+                | i :: upper :: _ -> lt i upper
+                | _ -> failwith "fori_loop: arity")
+              (function
+                | i :: upper :: rest ->
+                    add i (filled (dtype_of i) [||] 1.0)
+                    :: upper :: body i rest
+                | _ -> failwith "fori_loop: arity")
+              (lower :: upper :: init)))
 
 let custom_root f initial_guess solve tangent_solve =
   let avals = List.map aval initial_guess in

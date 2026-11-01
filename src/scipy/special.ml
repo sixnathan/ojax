@@ -949,7 +949,7 @@ let piecewise_body dt x condlist funclist extra =
       (fun piece ops ->
         match (piece, ops) with
         | Piece_fn f, [ v ] -> [ NL.astype (f (v :: extra)) dt ]
-        | Piece_const c, [ _ ] -> [ NL.astype c dt ]
+        | Piece_const c, [ _ ] -> [ C.convert_like ~weak:false (NL.copy c) dt ]
         | _ -> invalid_arg "piecewise: arity")
       funclist
   in
@@ -2157,28 +2157,27 @@ let expn1 x n =
   let z = neg_ x in
   let pk0 = one -! n in
   let ans0 = where_ (UF.equal n (cn 1.0)) zero (one /! (one -! n1)) in
-  let init =
-    [ ans0; pk0; C.py_scalar (dtype x) Float.infinity; x; zero; one ]
-  in
+  let init = [ ans0; pk0; py_float Float.infinity; x; zero; one; z ] in
   let d =
     L.while_loop
       (function
-        | [ _; _; t; x; _; _ ] ->
+        | [ _; _; t; x; _; _; _ ] ->
             let positive = UF.greater x (c 0.0) in
             band positive (UF.greater t (c machep))
         | _ -> assert false)
       (function
-        | [ ans; pk; _; x; xk; yk ] ->
+        | [ ans; pk; _; x; xk; yk; z ] ->
             let xk = xk +! one in
             let yk = yk *! (z /! xk) in
             let pk = pk +! one in
             let ans = ans +! where_ (UF.not_equal pk zero) (yk /! pk) zero in
             let t = where_ (UF.not_equal ans zero) (UF.abs (yk /! ans)) one in
-            [ ans; pk; t; x; xk; yk ]
+            [ ans; pk; t; x; xk; yk; z ]
         | _ -> assert false)
       init
   in
   let ans = List.hd d in
+  let z = List.nth d 6 in
   let t = n in
   let r = n -! cn 1.0 in
   (UF.power z r *! psi /! UF.exp (gammaln t)) -! ans

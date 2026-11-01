@@ -1109,6 +1109,10 @@ let batched_rule_id id axis_size =
   | Some batched -> batched
   | None ->
       let batched = Core.register_custom_rule (batch_custom_rule id) in
+      (match Core.custom_names_of id with
+      | Some (name, jvp_name) ->
+          Core.register_custom_names batched ~name ~jvp_name
+      | None -> ());
       Hashtbl.replace batched_custom_rules (id, axis_size) batched;
       batched
 

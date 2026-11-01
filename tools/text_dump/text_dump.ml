@@ -33,7 +33,10 @@ let guarded f =
   try `Ok (f ()) with
   | Stack_overflow -> `Err "Stack_overflow"
   | Out_of_memory -> `Err "Out_of_memory"
-  | e -> `Err (Printexc.to_string e)
+  | e -> (
+      match Ojax.Errors.message_of e with
+      | Some m -> `Err m
+      | None -> `Err (Printexc.to_string e))
 
 let field name = function
   | `Ok s -> [ (name, `String s) ]
@@ -159,7 +162,7 @@ let dump_arrays goldens out =
               let v = T.Concrete (nd_of_npz arr) in
               [
                 ("repr", `String (Ojax.Numpy.Extras.array_repr v));
-                ("str", `String (Ojax.Numpy.Extras.array_str v));
+                ("str", `String (Ojax.Numpy.Extras.array_str_jax v));
               ]
             with e -> [ ("error", `String (Printexc.to_string e)) ]
           in

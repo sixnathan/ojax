@@ -39,3 +39,4 @@ val tracer_bool_conversion_error :
 
 val unexpected_tracer_error : string -> exn
 val key_reuse_error : string -> exn
+val message_of : exn -> string option

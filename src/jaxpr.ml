@@ -372,6 +372,15 @@ let () =
       | _ -> ()
 
 let () = Core.call_inline := fun c args -> eval_closed_jaxpr c args
+
+let () =
+  Pretty_printer.custom_call :=
+    fun id avals ->
+      match Core.custom_names_of id with
+      | Some (name, jvp_name) ->
+          Option.map (fun c -> (name, jvp_name, c)) (custom_call_jaxpr id avals)
+      | None -> None
+
 let call_cache : (string, closed_jaxpr) Hashtbl.t = Hashtbl.create 64
 
 let call_key name key (avals : aval list) =

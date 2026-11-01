@@ -70,3 +70,19 @@ let unexpected_tracer_error (message : string) : exn =
 
 let key_reuse_error (message : string) : exn =
   Key_reuse_error (with_page "KeyReuseError" message)
+
+let message_of = function
+  | Jax_type_error m
+  | Jax_index_error m
+  | Concretization_type_error m
+  | Non_concrete_boolean_index_error m
+  | Tracer_array_conversion_error m
+  | Tracer_integer_conversion_error m
+  | Tracer_bool_conversion_error m
+  | Unexpected_tracer_error m
+  | Key_reuse_error m
+  | Inconclusive_dimension_operation m
+  | Jax_runtime_error m
+  | Jaxpr_type_error m ->
+      Some m
+  | _ -> None

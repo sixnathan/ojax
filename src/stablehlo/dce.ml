@@ -153,9 +153,9 @@ and rule used_outs (e : eqn) =
                 | None ->
                     let id' = Core.register_custom_rule (Core.custom_rule id) in
                     Core.note_custom_call_jaxpr id' avals c';
-                    (match Core.custom_rule_name id with
-                    | Some (name, rule_name) ->
-                        Core.name_custom_rule id' ~name ~rule_name
+                    (match Core.custom_names_of id with
+                    | Some (name, jvp_name) ->
+                        Core.register_custom_names id' ~name ~jvp_name
                     | None -> ());
                     Hashtbl.replace custom_cache key id';
                     id'

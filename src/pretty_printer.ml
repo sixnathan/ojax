@@ -363,6 +363,21 @@ let registered_call_name jid = Hashtbl.find_opt call_names jid
 let call_name jid =
   match Hashtbl.find_opt call_names jid with Some n -> n | None -> "jit"
 
+let custom_call :
+    (int -> aval list -> (string * string * closed_jaxpr) option) ref =
+  ref (fun _ _ -> None)
+
+let atom_type = function
+  | A_var (v : var) -> v.vaval
+  | A_lit nd ->
+      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+  | DropVar a -> a
+
+let custom_call_of (e : eqn) =
+  match e.prim with
+  | Custom_jvp_call id -> !custom_call id (List.map atom_type e.inputs)
+  | _ -> None
+
 let rec structure_of_jaxpr (jx : jaxpr) =
   String.concat " " (List.map structure_of_eqn jx.eqns)
 
@@ -378,6 +393,8 @@ and structure_of_eqn (e : eqn) =
     | While { cond; body } -> [ body; cond ]
     | Custom_linear_solve { solve; transpose_solve } ->
         solve :: Option.to_list transpose_solve
+    | Custom_jvp_call _ -> (
+        match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
     | _ -> []
   in
   let name = match e.prim with Xla_call _ -> "jit" | p -> prim_name p in
@@ -958,6 +975,16 @@ and pp_eqn ctx (e : eqn) =
           suggest_names ctx c.jaxpr.outs (List.map (fun v -> A_var v) e.outs)
         end;
         [ ("name", Plain (xla_call_name c)) ]
+    | Custom_jvp_call _ -> (
+        match custom_call_of e with
+        | Some (name, jvp_name, c) ->
+            [
+              ("name", Plain name);
+              ("call_jaxpr", Sub c);
+              ("jvp", Plain jvp_name);
+              ("symbolic_zeros", Plain "False");
+            ]
+        | None -> [])
     | _ -> []
   in
   let lhs = pp_binders ctx e.outs in

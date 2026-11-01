@@ -170,6 +170,13 @@ let register_custom_rule rule =
   Hashtbl.replace custom_rules id rule;
   id
 
+let custom_names : (int, string * string) Hashtbl.t = Hashtbl.create 16
+
+let register_custom_names id ~name ~jvp_name =
+  Hashtbl.replace custom_names id (name, jvp_name)
+
+let custom_names_of id = Hashtbl.find_opt custom_names id
+
 let custom_rule id =
   match Hashtbl.find_opt custom_rules id with
   | Some rule -> rule
@@ -177,8 +184,6 @@ let custom_rule id =
 
 let custom_call_jaxprs : (int * aval list, closed_jaxpr) Hashtbl.t =
   Hashtbl.create 64
-
-let custom_call_names : (int, string * string) Hashtbl.t = Hashtbl.create 64
 
 let note_custom_call_jaxpr id avals c =
   Hashtbl.replace custom_call_jaxprs (id, avals) c
@@ -191,10 +196,6 @@ let custom_call_jaxprs_of id =
     (fun (rule, _) c acc -> if rule = id then c :: acc else acc)
     custom_call_jaxprs []
 
-let name_custom_rule id ~name ~rule_name =
-  Hashtbl.replace custom_call_names id (name, rule_name)
-
-let custom_rule_name id = Hashtbl.find_opt custom_call_names id
 let with_eval_dynamic thunk = new_dynamic eval_trace thunk
 
 let ffi_impl : (primitive -> Ndarray.t list -> Ndarray.t list) ref =

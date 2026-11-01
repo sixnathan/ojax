@@ -26,14 +26,14 @@ let gaussian_kde ?(bw_method = "scott") ?weights dataset =
   let d = sh.(0) and n = sh.(1) in
   if n < 2 then invalid_arg "`dataset` input should have multiple elements.";
   let dt = dtype_of dataset in
-  let raw_weights =
+  let w =
     match weights with
-    | Some w -> NL.astype w dt
-    | None -> L.full [| n |] 1.0 dt
+    | Some raw ->
+        let raw = NL.astype raw dt in
+        U.divide raw (L.broadcast_in_dim (R.sum raw) [| n |] [||])
+    | None -> L.full [| n |] (1.0 /. float_of_int n) dt
   in
-  let total = R.sum raw_weights in
-  let w = U.divide raw_weights (L.broadcast_in_dim total [| n |] [||]) in
-  let sum_sq = R.sum (U.multiply w w) in
+  let sum_sq = R.sum (Core.bind1 (Integer_pow 2) [ w ]) in
   let neff = L.div (L.full_like sum_sq 1.0) sum_sq in
   let dim = float_of_int d in
   let exponent = L.full_like neff (-1.0 /. (dim +. 4.0)) in
@@ -45,21 +45,12 @@ let gaussian_kde ?(bw_method = "scott") ?weights dataset =
     | other ->
         invalid_arg ("`bw_method` should be 'scott' or 'silverman': " ^ other)
   in
-  let mean = NL.reshape (L.dot dataset w) [| d; 1 |] in
-  let centered = U.subtract dataset (NL.broadcast_to mean sh) in
-  let weighted =
-    U.multiply centered (NL.broadcast_to (NL.reshape w [| 1; n |]) sh)
-  in
-  let raw_cov = L.dot weighted (L.transpose centered [| 1; 0 |]) in
-  let denom = L.sub (L.full_like sum_sq 1.0) sum_sq in
-  let data_cov =
-    L.div raw_cov (L.broadcast_in_dim denom (shape raw_cov) [||])
-  in
-  let covariance =
-    L.mul data_cov
-      (L.broadcast_in_dim (L.mul factor factor) (shape data_cov) [||])
-  in
-  let inv_cov = LA.inv covariance in
+  let data_cov = NL.atleast_2d (NL.cov ~aweights:w dataset) in
+  let data_inv = LA.inv data_cov in
+  let squared = Core.bind1 (Integer_pow 2) [ factor ] in
+  let spread v = L.broadcast_in_dim squared (shape v) [||] in
+  let covariance = L.mul data_cov (spread data_cov) in
+  let inv_cov = L.div data_inv (spread data_inv) in
   { dataset; weights = w; neff; d; n; factor; covariance; inv_cov }
 
 let log_norm t =
@@ -119,22 +110,29 @@ let logpdf t points =
 
 let integrate_box_1d t low high =
   if t.d <> 1 then invalid_arg "integrate_box_1d() only handles 1D pdfs";
-  let variance =
-    L.index_in_dim ~keepdims:false
-      (L.index_in_dim ~keepdims:false t.covariance 0)
-      0
-  in
-  let sigma = L.sqrt variance in
-  let flat = NL.reshape t.dataset [| t.n |] in
-  let edge x =
-    U.divide
-      (U.subtract (L.full [| t.n |] x (dtype_of flat)) flat)
-      (L.broadcast_in_dim sigma [| t.n |] [||])
-  in
-  let cdf z =
-    let half = L.full_like z 0.5 in
-    let root2 = L.full_like z (sqrt 2.0) in
-    U.multiply half
-      (L.sub (L.full_like z 1.0) (Core.bind1 Erf [ L.neg (L.div z root2) ]))
-  in
-  R.sum (U.multiply t.weights (U.subtract (cdf (edge high)) (cdf (edge low))))
+  let dt = dtype_of t.dataset in
+  let bound v = L.full [||] v dt in
+  match
+    Jaxpr.named_jit ~name:"integrate_box_1d"
+      (function
+        | [ _neff; dataset; weights; covariance; _inv_cov; low; high ] ->
+            let sigma = NL.squeeze (L.sqrt covariance) in
+            let edge x = NL.squeeze (U.divide (U.subtract x dataset) sigma) in
+            let lower = edge low in
+            let upper = edge high in
+            let ndtr_upper = Special.ndtr upper in
+            let ndtr_lower = Special.ndtr lower in
+            [ R.sum (U.multiply weights (U.subtract ndtr_upper ndtr_lower)) ]
+        | _ -> invalid_arg "integrate_box_1d: arity")
+      [
+        t.neff;
+        t.dataset;
+        t.weights;
+        t.covariance;
+        t.inv_cov;
+        bound low;
+        bound high;
+      ]
+  with
+  | [ out ] -> out
+  | _ -> invalid_arg "integrate_box_1d: arity"

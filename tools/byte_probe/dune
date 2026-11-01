@@ -1,0 +1,3 @@
+(executable
+ (name byte_probe)
+ (libraries ojax))

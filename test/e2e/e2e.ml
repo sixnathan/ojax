@@ -18,7 +18,7 @@ let goldens_root =
 let e2e_dir = Filename.concat goldens_root "e2e"
 
 let plugin_present =
-  match Sys.getenv_opt D.env_var with
+  match D.find () with
   | Some p when (not (Filename.is_relative p)) && Sys.file_exists p -> true
   | _ -> false
 
@@ -333,6 +333,7 @@ let leak_smoke cases () =
   end
 
 let () =
+  Compare.set_suite "e2e";
   let cases = load_manifest () in
   let corpus =
     List.map (fun c -> Alcotest.test_case c.case_id `Quick (run_case c)) cases
@@ -348,4 +349,14 @@ let () =
       ("resident", resident);
       ( "leak",
         [ Alcotest.test_case "matmul_add 1000x" `Slow (leak_smoke cases) ] );
+      ( "exact_ratchet",
+        [
+          Alcotest.test_case "bit-identical floors" `Quick
+            (Compare.check_ratchet
+               ~floor_text:
+                 (String.concat "\n"
+                    (List.filter
+                       (String.starts_with ~prefix:"e2e\t")
+                       (String.split_on_char '\n' Exact_floor.data))));
+        ] );
     ]

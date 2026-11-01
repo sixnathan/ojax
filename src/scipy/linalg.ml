@@ -854,27 +854,23 @@ let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
     | [ out ] -> out
     | _ -> failwith "eigh_tridiagonal: arity"
   in
-  let solve_row v_row shift =
-    let d =
-      solve_dt_of (UF.subtract alpha (L.broadcast_in_dim shift [| n |] [||]))
-    in
-    let out =
-      LL.tridiagonal_solve ~perturb_singular:true (solve_dt_of dl) d
-        (solve_dt_of du)
-        (NL.reshape v_row [| n; 1 |])
-    in
-    NL.reshape out [| n |]
+  let batched v = L.broadcast_in_dim v [| k; n |] [| 1 |] in
+  let alpha_shifted =
+    UF.subtract
+      (L.broadcast_in_dim alpha [| 1; n |] [| 1 |])
+      (L.broadcast_in_dim eigvals [| k; 1 |] [| 0 |])
   in
+  let dl_batched = batched dl and du_batched = batched du in
   let step state =
     match state with
     | [ i; v; nrm; _ ] ->
-        let rows =
-          List.init k (fun j ->
-              solve_row
-                (L.index_in_dim ~keepdims:false v j)
-                (L.index_in_dim ~keepdims:false eigvals j))
+        let v_new =
+          LL.tridiagonal_solve ~perturb_singular:true (solve_dt_of dl_batched)
+            (solve_dt_of alpha_shifted)
+            (solve_dt_of du_batched)
+            (L.broadcast_in_dim (solve_dt_of v) [| k; n; 1 |] [| 0; 1 |])
         in
-        let v_new = NL.stack rows in
+        let v_new = NL.squeeze ~axis:[| -1 |] v_new in
         let nrm_new =
           LN.vector_norm ~axis:(Some [| -1 |]) ~keepdims:true v_new
         in

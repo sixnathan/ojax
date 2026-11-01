@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 void *ojax_lapack_symbol(char prec, const char *base);
+void ojax_tridiagonal_perturbed(char prec, int n, int k_rhs, const void *dl,
+                                const void *d, const void *du, const void *b,
+                                void *x);
 int32_t ojax_lapack_query_size(char prec, const void *q);
 int32_t ojax_lapack_syevd_work(int32_t n);
 int32_t ojax_lapack_heevd_work(int32_t n);

@@ -6,6 +6,10 @@
 #include <string.h>
 
 #include <dlfcn.h>
+#ifndef __APPLE__
+#include <glob.h>
+#include <unistd.h>
+#endif
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
@@ -22,19 +26,125 @@ typedef void *P;
 #define L1 ((P)(uintptr_t)1)
 #define OOM INT_MIN
 
+static char ojax_lapack_path[PATH_MAX];
+
+#ifndef __APPLE__
+#define SCIPY_LIBS "lib/python*/site-packages/scipy.libs/"
+
+static void *open_matching(const char *pattern) {
+  glob_t found;
+  void *lib = NULL;
+  if (glob(pattern, 0, NULL, &found) == 0) {
+    for (size_t i = 0; i < found.gl_pathc && !lib; i++) {
+      lib = dlopen(found.gl_pathv[i], RTLD_NOW | RTLD_LOCAL);
+      if (lib)
+        snprintf(ojax_lapack_path, sizeof ojax_lapack_path, "%s",
+                 found.gl_pathv[i]);
+    }
+  }
+  globfree(&found);
+  return lib;
+}
+
+static void *open_scipy_in(const char *dir, const char *sub) {
+  static const char *const names[] = {"libscipy_openblas-b7e2810b.so",
+                                      "libscipy_openblas-*.so"};
+  char pattern[PATH_MAX];
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+    int n = snprintf(pattern, sizeof pattern, "%s/%s%s", dir, sub, names[i]);
+    if (n > 0 && (size_t)n < sizeof pattern) {
+      void *lib = open_matching(pattern);
+      if (lib) return lib;
+    }
+  }
+  return NULL;
+}
+
+static void *open_venv_of(const char *dir) {
+  char venv[PATH_MAX];
+  int n = snprintf(venv, sizeof venv, "%s/.venv", dir);
+  if (n <= 0 || (size_t)n >= sizeof venv) return NULL;
+  return open_scipy_in(venv, SCIPY_LIBS);
+}
+
+static void *open_venv_of_worktree_main(const char *dir) {
+  char path[PATH_MAX], line[PATH_MAX];
+  int n = snprintf(path, sizeof path, "%s/.git", dir);
+  if (n <= 0 || (size_t)n >= sizeof path) return NULL;
+  FILE *f = fopen(path, "r");
+  if (!f) return NULL;
+  char *got = fgets(line, sizeof line, f);
+  fclose(f);
+  if (!got || strncmp(line, "gitdir: ", 8) != 0) return NULL;
+  char *mark = strstr(line, "/.git/worktrees/");
+  if (!mark) return NULL;
+  *mark = '\0';
+  return open_venv_of(line + 8);
+}
+
+static void *open_venv_above(const char *start) {
+  char dir[PATH_MAX];
+  int n = snprintf(dir, sizeof dir, "%s", start);
+  if (n <= 0 || (size_t)n >= sizeof dir) return NULL;
+  for (;;) {
+    void *lib = open_venv_of(dir);
+    if (!lib) lib = open_venv_of_worktree_main(dir);
+    if (lib) return lib;
+    char *slash = strrchr(dir, '/');
+    if (!slash || slash == dir) return NULL;
+    *slash = '\0';
+  }
+}
+
+static void *open_conventional_scipy(void) {
+  void *lib = NULL;
+  const char *venv = getenv("VIRTUAL_ENV");
+  if (venv && venv[0]) lib = open_scipy_in(venv, SCIPY_LIBS);
+  char here[PATH_MAX];
+  if (!lib && getcwd(here, sizeof here)) lib = open_venv_above(here);
+  if (!lib) {
+    ssize_t n = readlink("/proc/self/exe", here, sizeof here - 1);
+    if (n > 0) {
+      here[n] = '\0';
+      lib = open_venv_above(here);
+    }
+  }
+  const char *home = getenv("HOME");
+  if (home && home[0]) {
+    static const char *const subs[] = {".local/pjrt/", ".local/openblas/lib/",
+                                       ".local/lib/",
+                                       ".local/" SCIPY_LIBS};
+    for (size_t i = 0; i < sizeof(subs) / sizeof(subs[0]) && !lib; i++)
+      lib = open_scipy_in(home, subs[i]);
+  }
+  return lib;
+}
+#endif
+
 static void *ojax_lapack_library(void) {
   static int tried = 0;
   static void *lib = NULL;
   if (tried) return lib;
   tried = 1;
 #ifdef __APPLE__
-  lib = dlopen("/System/Library/Frameworks/Accelerate.framework/Accelerate",
-               RTLD_NOW | RTLD_LOCAL);
+  const char *accelerate =
+      "/System/Library/Frameworks/Accelerate.framework/Accelerate";
+  lib = dlopen(accelerate, RTLD_NOW | RTLD_LOCAL);
+  if (lib)
+    snprintf(ojax_lapack_path, sizeof ojax_lapack_path, "%s", accelerate);
 #else
   const char *env = getenv("OJAX_LAPACK_LIB");
-  const char *names[] = {env, "libopenblas.so.0", "liblapack.so.3"};
-  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && !lib; i++)
-    if (names[i] && names[i][0]) lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
+  if (env && env[0]) {
+    lib = dlopen(env, RTLD_NOW | RTLD_LOCAL);
+    if (lib) snprintf(ojax_lapack_path, sizeof ojax_lapack_path, "%s", env);
+  }
+  if (!lib) lib = open_conventional_scipy();
+  const char *names[] = {"libopenblas.so.0", "liblapack.so.3"};
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && !lib; i++) {
+    lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
+    if (lib)
+      snprintf(ojax_lapack_path, sizeof ojax_lapack_path, "%s", names[i]);
+  }
 #endif
   return lib;
 }
@@ -119,6 +229,12 @@ CAMLprim value ojax_lapack_single_routines(value v_unit) {
 CAMLprim value ojax_lapack_abi_int_size(value v_unit) {
   CAMLparam1(v_unit);
   CAMLreturn(Val_int(ojax_lapack_resolve() ? (int)sizeof(LI) : 0));
+}
+
+CAMLprim value ojax_lapack_library_path(value v_unit) {
+  CAMLparam1(v_unit);
+  (void)ojax_lapack_library();
+  CAMLreturn(caml_copy_string(ojax_lapack_path));
 }
 
 CAMLprim value ojax_lapack_backend(value v_unit) {

@@ -1151,6 +1151,11 @@ let jitted_keyed (name, statics) f args =
         | _ -> f args
         | exception Errors.Jax_runtime_error _ -> f args)
 
+let () =
+  Jaxpr.eager_jit :=
+    fun name key f args ->
+      jitted_keyed ("named_jit." ^ name, Obj.repr key) f args
+
 let executor ?options (cj : closed_jaxpr) : value list -> value list =
   let precision = Config.value Config.default_matmul_precision in
   let per_platform = Hashtbl.create 2 in

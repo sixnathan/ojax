@@ -2012,8 +2012,14 @@ let lapack_layout rank ~batch =
 
 let lapack_aval shape dtype = { shape; dtype; weak_type = false }
 
-let emit_lapack_call ctx ~base ~config ~aliases in_ids in_avals out_avals =
+let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
+    out_avals =
   let first = List.hd in_avals in
+  let target =
+    match target with
+    | Some name -> name
+    | None -> Printf.sprintf "lapack_%c%s_ffi" (lapack_prec first.dtype) base
+  in
   let batch =
     List.fold_left
       (fun acc (a : aval) -> max acc (Array.length a.shape - 2))
@@ -2047,13 +2053,13 @@ let emit_lapack_call ctx ~base ~config ~aliases in_ids in_avals out_avals =
   in
   Buffer.add_string ctx.buf
     (Printf.sprintf
-       "    %%%d%s = stablehlo.custom_call @lapack_%c%s_ffi(%s) \
-        {backend_config = \"\", mhlo.backend_config = {%s}, \
-        mhlo.frontend_attributes = {num_batch_dims = \"%d\"}, operand_layouts \
-        = [%s]%s, result_layouts = [%s]} : (%s) -> %s\n"
+       "    %%%d%s = stablehlo.custom_call @%s(%s) {backend_config = \"\", \
+        mhlo.backend_config = {%s}, mhlo.frontend_attributes = {num_batch_dims \
+        = \"%d\"}, operand_layouts = [%s]%s, result_layouts = [%s]} : (%s) -> \
+        %s\n"
        group
        (if n > 1 then Printf.sprintf ":%d" n else "")
-       (lapack_prec first.dtype) base
+       target
        (String.concat ", " (List.map name in_ids))
        config batch (layouts in_avals) alias_text (layouts out_avals)
        (types in_avals)
@@ -3318,6 +3324,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx [ a; taus ] ids eqn.outs
         (Native_lowering.qr_from_factors ~full_matrices)
+  | Tridiagonal_solve { perturb_singular = true } when lapack_ffi () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let b = List.nth inputs 3 in
+      let ids =
+        emit_lapack_call ctx ~target:"tridiagonal_solve_perturbed_ffi"
+          ~base:"tridiagonal_solve_perturbed" ~config:"" ~aliases:[] in_ids
+          inputs [ b ]
+      in
+      emit_traced ctx [ b ] ids eqn.outs Fun.id
   | Tridiagonal_solve { perturb_singular = false } when lapack_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let d = List.nth inputs 1 and b = List.nth inputs 3 in

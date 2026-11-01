@@ -14,7 +14,7 @@ let () =
 
 let f32 shape xs = Concrete (Ndarray.of_floats Dtype.F32 shape xs)
 let scalar x = f32 [||] [| x |]
-let plugin_present () = Sys.getenv_opt "OJAX_PJRT_PLUGIN" <> None
+let plugin_present () = Ojax.Pjrt.Discover.find () <> None
 
 let host = function
   | Concrete nd -> nd

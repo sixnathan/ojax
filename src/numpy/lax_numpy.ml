@@ -506,9 +506,17 @@ let rec round ?(decimals = 0) v =
       ]
   else if decimals = 0 then bind1 T.Round_nearest_even [ v ]
   else begin
-    let factor = full dt (shape v) (10.0 ** float_of_int decimals) in
-    bind1 T.Div
-      [ bind1 T.Round_nearest_even [ bind1 T.Mul [ v; factor ] ]; factor ]
+    let x =
+      if dt = D.F16 then bind1 (T.Convert_element_type D.F32) [ v ] else v
+    in
+    let factor () = full (dtype x) (shape x) (10.0 ** float_of_int decimals) in
+    let out =
+      bind1 T.Div
+        [
+          bind1 T.Round_nearest_even [ bind1 T.Mul [ x; factor () ] ]; factor ();
+        ]
+    in
+    if dt = D.F16 then bind1 (T.Convert_element_type D.F16) [ out ] else out
   end
 
 let around ?decimals v = round ?decimals v
@@ -1658,7 +1666,11 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   let dtin = to_inexact_dtype dt_common in
   let m = convert m dtin in
   let y = Option.map (fun v -> convert v dtin) y in
-  let x0 = atleast_2d m in
+  let x0 =
+    Jnp_util.jit1 "atleast_2d"
+      (function [ v ] -> atleast_2d v | _ -> invalid_arg "atleast_2d: arity")
+      [ m ]
+  in
   let x0 = if (not rowvar) && ndim m <> 1 then matrix_transpose x0 else x0 in
   let x =
     match y with
@@ -1703,11 +1715,35 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
     | Some f, Some a -> Some (bind1 T.Mul [ as_dt f; as_dt a ])
   in
   let sum_all v = bind1 (T.Reduce_sum (Array.init (ndim v) Fun.id)) [ v ] in
+  let weights_row = Option.map (fun wv -> reshape wv [| 1; nobs |]) w in
+  let weights_sum =
+    Option.map (fun row -> bind1 (T.Reduce_sum [| 1 |]) [ row ]) weights_row
+  in
+  let spread_row row sh =
+    if sh = shape row then row
+    else bind1 (T.Broadcast_in_dim { shape = sh; dims = [| 0; 1 |] }) [ row ]
+  in
+  let avg =
+    match (weights_row, weights_sum) with
+    | Some row, Some total ->
+        let sum1 =
+          bind1 (T.Reduce_sum [| 1 |])
+            [ bind1 T.Mul [ x; spread_row row (shape x) ] ]
+        in
+        let total =
+          if nvars = 1 then total
+          else
+            bind1
+              (T.Broadcast_in_dim { shape = [| nvars |]; dims = [| 0 |] })
+              [ total ]
+        in
+        bind1 T.Div [ sum1; total ]
+    | _ -> Reductions.mean ~axis:[| 1 |] x
+  in
   let divisor_of shape_out =
-    match w with
-    | None -> full dt shape_out (float_of_int (nobs - ddof))
-    | Some wv ->
-        let w_sum = sum_all wv in
+    match (w, weights_sum) with
+    | Some wv, Some total ->
+        let w_sum = bind1 (T.Squeeze [| 0 |]) [ total ] in
         let f =
           if ddof = 0 then w_sum
           else
@@ -1726,26 +1762,15 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
                   ]
         in
         bind1 (T.Broadcast_in_dim { shape = shape_out; dims = [||] }) [ f ]
+    | _ -> full dt shape_out (float_of_int (nobs - ddof))
   in
-  let avg =
-    match w with
-    | None ->
-        let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ x ] in
-        bind1 T.Div [ sum1; full dt [| nvars |] (float_of_int nobs) ]
-    | Some wv ->
-        let wb =
-          bind1 (T.Broadcast_in_dim { shape = shape x; dims = [| 1 |] }) [ wv ]
-        in
-        let sum1 = bind1 (T.Reduce_sum [| 1 |]) [ bind1 T.Mul [ x; wb ] ] in
-        bind1 T.Div
-          [
-            sum1;
-            bind1
-              (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
-              [ sum_all wv ];
-          ]
+  let xc =
+    let column = expand_dims avg [| 1 |] in
+    sub2 x
+      (bind1
+         (T.Broadcast_in_dim { shape = shape x; dims = [| 0; 1 |] })
+         [ column ])
   in
-  let xc = sub2 x (expand_dims avg [| 1 |]) in
   let xw =
     match w with
     | None -> xc
@@ -1758,20 +1783,21 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
               [ wv ];
           ]
   in
+  let xt = bind1 (T.Transpose [| 1; 0 |]) [ xw ] in
   let prod =
     bind1
       (T.Dot_general
          {
            lhs_contract = [| 1 |];
-           rhs_contract = [| 1 |];
+           rhs_contract = [| 0 |];
            lhs_batch = [||];
            rhs_batch = [||];
          })
       [
         xc;
         (match dt with
-        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xw ]
-        | _ -> xw);
+        | D.Complex64 | D.Complex128 -> bind1 T.Conj [ xt ]
+        | _ -> xt);
       ]
   in
   squeeze (bind1 T.Div [ prod; divisor_of (shape prod) ])
@@ -2043,17 +2069,19 @@ let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
   let y_given = y <> None in
   let fweights_given = fweights <> None in
   let aweights_given = aweights <> None in
-  if y_given || fweights_given || aweights_given then
+  if y_given || fweights_given then
     cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0
   else
     Jnp_util.jit1 "cov"
       ~key:
         (Digest.to_hex
-           (Digest.string (Marshal.to_string (rowvar, bias, ddof, dtype) [])))
+           (Digest.string
+              (Marshal.to_string (rowvar, bias, ddof, dtype, aweights_given) [])))
       (function
-        | [ p0 ] -> cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0
+        | [ p0 ] -> cov ?y ?rowvar ?bias ?ddof ?dtype p0
+        | [ p0; aweights ] -> cov ?y ?rowvar ?bias ?ddof ~aweights ?dtype p0
         | _ -> invalid_arg "cov: arity")
-      [ p0 ]
+      (p0 :: Option.to_list aweights)
 
 let corrcoef ?y ?rowvar ?dtype p0 =
   let y_given = y <> None in

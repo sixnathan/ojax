@@ -13,7 +13,7 @@ module Nd = Ojax.Ndarray
 let () = Ojax.Lax.install ()
 
 let real_plugin_path () =
-  match Sys.getenv_opt D.env_var with
+  match D.find () with
   | Some p when (not (Filename.is_relative p)) && Sys.file_exists p -> Some p
   | _ -> None
 

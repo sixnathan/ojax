@@ -184,6 +184,19 @@ let zgtsv ~n ~nrhs ~dl ~d ~du ~b ~ldb =
   guard "zgtsv";
   gtsv_ [| n; nrhs; ldb |] true dl d du b
 
+external tridiagonal_perturbed_ :
+  int array ->
+  bool ->
+  'k real ->
+  'k real ->
+  'k real ->
+  'k real ->
+  'k real ->
+  unit = "ojax_tridiagonal_perturbed_host_bc" "ojax_tridiagonal_perturbed_host"
+
+let tridiagonal_perturbed ~n ~nrhs ~complex ~dl ~d ~du ~b ~x =
+  tridiagonal_perturbed_ [| n; nrhs |] complex dl d du b x
+
 let trtrs ~uplo ~trans ~diag ~n ~nrhs ~a ~lda ~b ~ldb =
   guard "trtrs";
   trtrs_ [| code uplo; code trans; code diag; n; nrhs; lda; ldb |] false a b
@@ -243,4 +256,7 @@ let ffi_targets =
       ("sytrd", "hetrd", "sytrd");
       ("trsm", "trsm", "trsm");
       ("gtsv", "gtsv", "gtsv");
+    ]
+  @ [
+      ("tridiagonal_solve_perturbed_ffi", ffi_handler_ "tridiagonal_perturbed");
     ]

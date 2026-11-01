@@ -22,6 +22,10 @@ val make_jaxpr_hoisted :
 
 val install : unit -> unit
 
+val eager_jit :
+  (string -> string -> (value list -> value list) -> value list -> value list)
+  ref
+
 val named_jit :
   name:string ->
   ?key:string ->

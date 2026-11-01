@@ -1428,6 +1428,5 @@ let () =
           ("args specs", `Quick, args_specs);
         ] );
       ("dlpack dtypes", [ ("dtypes", `Quick, dlpack_dtypes) ]);
-      ( "pjrt",
-        if Sys.getenv_opt "OJAX_PJRT_PLUGIN" = None then [] else pjrt_cases );
+      ("pjrt", if Ojax.Pjrt.Discover.find () = None then [] else pjrt_cases);
     ]

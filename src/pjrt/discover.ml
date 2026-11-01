@@ -172,12 +172,37 @@ let sha256_file path =
     ~finally:(fun () -> close_in_noerr ic)
     (fun () -> sha256_hex (In_channel.input_all ic))
 
+let exact_sha256 =
+  "6852a300d723a8cb93e40fac89a87c1ab6cdc6b03a1ea9fd7350721c115dfe08"
+
+let conventional_names =
+  [
+    "pjrt_c_api_cpu_xla_5a9e73c_plugin.so";
+    "pjrt_c_api_cpu_v0.83.1_plugin.so";
+    "pjrt_c_api_cpu_plugin.so";
+  ]
+
+let conventional_dir () =
+  match Sys.getenv_opt "HOME" with
+  | Some home when home <> "" ->
+      Some (Filename.concat (Filename.concat home ".local") "pjrt")
+  | _ -> None
+
+let conventional_path () =
+  Option.bind (conventional_dir ()) (fun dir ->
+      List.find_map
+        (fun name ->
+          let path = Filename.concat dir name in
+          if Sys.file_exists path then Some path else None)
+        conventional_names)
+
 let validate_named name = function
   | None ->
       raise
         (Error
            (Printf.sprintf
-              "%s is not set; point it at an absolute path to the pinned PJRT \
+              "%s is not set and no pinned PJRT plugin was found in \
+               ~/.local/pjrt; point it at an absolute path to the pinned PJRT \
                plugin"
               name))
   | Some "" ->
@@ -192,7 +217,14 @@ let validate_named name = function
       else path
 
 let validate_path = validate_named env_var
-let resolve () = validate_path (Sys.getenv_opt env_var)
+
+let resolve () =
+  match Sys.getenv_opt env_var with
+  | Some _ as configured -> validate_path configured
+  | None -> validate_path (conventional_path ())
+
+let find () = try Some (resolve ()) with Error _ -> None
+let last_verified = ref None
 
 let verify_against pins path =
   if not (Sys.file_exists path) then
@@ -206,6 +238,7 @@ let verify_against pins path =
          (Printf.sprintf
             "PJRT plugin sha256 mismatch at %s: expected one of %s, got %s" path
             (String.concat ", " pins) actual));
+  last_verified := Some actual;
   path
 
 let verify_at = verify_against pinned_sha256
@@ -220,6 +253,10 @@ let preflight () =
       cached := Some p;
       p
 
+let available () =
+  match preflight () with _ -> true | exception Error _ -> false
+
+let is_exact () = available () && !last_verified = Some exact_sha256
 let gpu_configured () = Sys.getenv_opt gpu_env_var <> None
 let gpu_cached = ref None
 

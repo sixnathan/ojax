@@ -501,6 +501,22 @@ and qr ?(mode = "reduced") a =
     if mode = "r" then [ r ] else [ q; r ]
 
 and lstsq ?rcond ?(numpy_resid = false) a b =
+  if numpy_resid then lstsq_body ?rcond ~numpy_resid a b
+  else
+    match
+      Jnp_util.jit "_lstsq"
+        ~key:(Digest.to_hex (Digest.string (Marshal.to_string rcond [])))
+        (function
+          | [ a; b ] ->
+              let x, resid, rank, s = lstsq_body ?rcond ~numpy_resid a b in
+              [ x; resid; rank; s ]
+          | _ -> invalid_arg "_lstsq: arity")
+        [ a; b ]
+    with
+    | [ x; resid; rank; s ] -> (x, resid, rank, s)
+    | _ -> invalid_arg "_lstsq: arity"
+
+and lstsq_body ?rcond ~numpy_resid a b =
   let a = to_inexact a and b = to_inexact b in
   let b_vec = ndim b = 1 in
   let bm = if b_vec then NL.reshape b [| (shape b).(0); 1 |] else b in
@@ -514,7 +530,21 @@ and lstsq ?rcond ?(numpy_resid = false) a b =
     | None -> const dt (eps_of dt *. float_of_int (max n m))
   in
   let u, s, vt = svd_uv ~full_matrices:false a in
-  let s0 = RED.amax ~axis:[| -1 |] ~keepdims:true s in
+  let s0 =
+    if ndim s = 1 then
+      Core.bind1 (T.Squeeze [| 0 |])
+        [
+          Core.bind1
+            (T.Slice
+               {
+                 start_indices = [| 0 |];
+                 limit_indices = [| 1 |];
+                 strides = None;
+               })
+            [ s ];
+        ]
+    else RED.amax ~axis:[| -1 |] ~keepdims:true s
+  in
   let mask =
     UF.logical_and
       (UF.greater s (const dt 0.0))
@@ -530,7 +560,7 @@ and lstsq ?rcond ?(numpy_resid = false) a b =
   in
   let b_est = TC.matmul a x in
   let full_resid () =
-    UF.power (norm ~axis:(Aint 0) (UF.subtract bm b_est)) (const dt 2.0)
+    Core.bind1 (T.Integer_pow 2) [ norm ~axis:(Aint 0) (UF.subtract bm b_est) ]
   in
   let resid =
     if numpy_resid then

@@ -362,8 +362,13 @@ let call_key name key (avals : aval list) =
            ^ string_of_bool a.weak_type)
          avals)
 
+let eager_jit :
+    (string -> string -> (value list -> value list) -> value list -> value list)
+    ref =
+  ref (fun _ _ f args -> f args)
+
 let named_jit ~name ?(key = "") f args =
-  if not (Core.top_is_staging args) then f args
+  if not (Core.top_is_staging args) then !eager_jit name key f args
   else
     let avals = List.map Core.get_aval args in
     let ck = call_key name key avals in

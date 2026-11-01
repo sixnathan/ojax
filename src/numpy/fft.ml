@@ -258,7 +258,8 @@ let shift_with amount ?axes x =
     | Some a -> List.map (canon_axis ndim) a
     | None -> List.init ndim Fun.id
   in
-  List.fold_left (fun v ax -> roll_axis v ax (amount (shape_of x).(ax))) x axes
+  let shifts = List.map (fun ax -> amount (shape_of x).(ax)) axes in
+  Lax_numpy.roll ~axis:(Array.of_list axes) x (Array.of_list shifts)
 
 let fftshift ?axes x = shift_with (fun n -> n / 2) ?axes x
 let ifftshift ?axes x = shift_with (fun n -> -(n / 2)) ?axes x

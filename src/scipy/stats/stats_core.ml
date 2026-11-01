@@ -17,6 +17,10 @@ let sem ?(axis = 0) ?(ddof = 1) a =
   let denom = sc b (Float.sqrt (float_of_int size)) in
   UF.divide (RD.std ~axis:[| axis |] ~ddof b) denom
 
+let sem ?axis ?ddof a =
+  Eager_jit.one ~jit:"sem" "scipy.stats.sem" (axis, ddof) [] [ a ] (fun _ vals ->
+      match vals with [ a ] -> sem ?axis ?ddof a | _ -> assert false)
+
 let lane_mode x =
   let module L = Lax_api in
   let n = (shape x).(0) in
@@ -83,6 +87,13 @@ let mode ?(axis = Some 0) ?(nan_policy = "propagate") ?(keepdims = false) a =
   | [ v; c ] -> (NL.reshape v output_shape, NL.reshape c output_shape)
   | _ -> failwith "scipy.stats.mode: arity"
 
+let mode ?axis ?nan_policy ?keepdims a =
+  Eager_jit.pair ~jit:"mode" "scipy.stats.mode" (axis, nan_policy, keepdims) [] [ a ]
+    (fun _ vals ->
+      match vals with
+      | [ a ] -> mode ?axis ?nan_policy ?keepdims a
+      | _ -> assert false)
+
 let rec rankdata ?(method_ = "average") ?axis ?(nan_policy = "propagate") a =
   let module L = Lax_api in
   if nan_policy = "omit" then
@@ -134,19 +145,8 @@ let rec rankdata ?(method_ = "average") ?axis ?(nan_policy = "propagate") a =
               in
               L.mul sum (L.full_like sum 0.5))
 
-let sem ?axis ?ddof a =
-  Eager_jit.one "scipy.stats.sem" (axis, ddof) [] [ a ] (fun _ vals ->
-      match vals with [ a ] -> sem ?axis ?ddof a | _ -> assert false)
-
-let mode ?axis ?nan_policy ?keepdims a =
-  Eager_jit.pair "scipy.stats.mode" (axis, nan_policy, keepdims) [] [ a ]
-    (fun _ vals ->
-      match vals with
-      | [ a ] -> mode ?axis ?nan_policy ?keepdims a
-      | _ -> assert false)
-
 let rankdata ?method_ ?axis ?nan_policy a =
-  Eager_jit.one "scipy.stats.rankdata" (method_, axis, nan_policy) [] [ a ]
+  Eager_jit.one ~jit:"rankdata" "scipy.stats.rankdata" (method_, axis, nan_policy) [] [ a ]
     (fun _ vals ->
       match vals with
       | [ a ] -> rankdata ?method_ ?axis ?nan_policy a

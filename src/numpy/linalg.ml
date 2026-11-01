@@ -54,10 +54,135 @@ let symmetrize x = UF.divide (UF.add x (hconj x)) (const (dtype x) 2.0)
 let slogdet_lu_call : (T.value list -> T.value list) ref =
   ref (fun _ -> invalid_arg "slogdet_lu: not installed")
 
-let rec cholesky ?(upper = false) ?(symmetrize_input = true) a =
+let rec cholesky_body ?(upper = false) ?(symmetrize_input = true) a =
   let a = to_inexact a in
   let l = LL.cholesky ~symmetrize_input a in
   if upper then hconj l else l
+
+and cholesky ?upper ?symmetrize_input p0 =
+  Jnp_util.jit1 "cholesky"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (upper, symmetrize_input) [])))
+    (function
+      | [ p0 ] -> cholesky_body ?upper ?symmetrize_input p0
+      | _ -> invalid_arg "cholesky: arity")
+    [ p0 ]
+
+and svd ?full_matrices ?compute_uv ?hermitian p0 =
+  Jnp_util.jit "svd"
+    ~key:
+      (Digest.to_hex
+         (Digest.string
+            (Marshal.to_string (full_matrices, compute_uv, hermitian) [])))
+    (function
+      | [ p0 ] -> svd_body ?full_matrices ?compute_uv ?hermitian p0
+      | _ -> invalid_arg "svd: arity")
+    [ p0 ]
+
+and matrix_power p0 s1 =
+  Jnp_util.jit1 "matrix_power"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string s1 [])))
+    (function
+      | [ p0 ] -> matrix_power_body p0 s1 | _ -> invalid_arg "matrix_power: arity")
+    [ p0 ]
+
+and matrix_rank ?rtol ?hermitian ?tol p0 =
+  let rtol_given = rtol <> None in
+  let tol_given = tol <> None in
+  if rtol_given || tol_given then matrix_rank_body ?rtol ?hermitian ?tol p0
+  else
+    Jnp_util.jit1 "matrix_rank"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string hermitian [])))
+      (function
+        | [ p0 ] -> matrix_rank_body ?rtol ?hermitian ?tol p0
+        | _ -> invalid_arg "matrix_rank: arity")
+      [ p0 ]
+
+and slogdet ?method_ p0 =
+  match
+    Jnp_util.jit "slogdet"
+      ~key:(Digest.to_hex (Digest.string (Marshal.to_string method_ [])))
+      (function
+        | [ p0 ] ->
+            let a, b = slogdet_body ?method_ p0 in
+            [ a; b ]
+        | _ -> invalid_arg "slogdet: arity")
+      [ p0 ]
+  with
+  | [ a; b ] -> (a, b)
+  | _ -> invalid_arg "slogdet: arity"
+
+and det p0 =
+  Jnp_util.jit1 "det"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> det_body p0 | _ -> invalid_arg "det: arity")
+    [ p0 ]
+
+and eigvals p0 =
+  Jnp_util.jit1 "eigvals"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> eigvals_body p0 | _ -> invalid_arg "eigvals: arity")
+    [ p0 ]
+
+and eigh ?uplo ?symmetrize_input p0 =
+  match
+    Jnp_util.jit "eigh"
+      ~key:
+        (Digest.to_hex
+           (Digest.string (Marshal.to_string (uplo, symmetrize_input) [])))
+      (function
+        | [ p0 ] ->
+            let a, b = eigh_body ?uplo ?symmetrize_input p0 in
+            [ a; b ]
+        | _ -> invalid_arg "eigh: arity")
+      [ p0 ]
+  with
+  | [ a; b ] -> (a, b)
+  | _ -> invalid_arg "eigh: arity"
+
+and eigvalsh ?uplo ?symmetrize_input p0 =
+  Jnp_util.jit1 "eigvalsh"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (uplo, symmetrize_input) [])))
+    (function
+      | [ p0 ] -> eigvalsh_body ?uplo ?symmetrize_input p0
+      | _ -> invalid_arg "eigvalsh: arity")
+    [ p0 ]
+
+and inv p0 =
+  Jnp_util.jit1 "inv"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0 ] -> inv_body p0 | _ -> invalid_arg "inv: arity")
+    [ p0 ]
+
+and norm ?ord ?axis ?keepdims p0 =
+  Jnp_util.jit1 "norm"
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (ord, axis, keepdims) [])))
+    (function
+      | [ p0 ] -> norm_body ?ord ?axis ?keepdims p0 | _ -> invalid_arg "norm: arity")
+    [ p0 ]
+
+and qr ?mode p0 =
+  Jnp_util.jit "qr"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
+    (function [ p0 ] -> qr_body ?mode p0 | _ -> invalid_arg "qr: arity")
+    [ p0 ]
+
+and solve p0 p1 =
+  Jnp_util.jit1 "solve"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
+    (function [ p0; p1 ] -> solve_body p0 p1 | _ -> invalid_arg "solve: arity")
+    [ p0; p1 ]
+
+and cond ?p p0 =
+  Jnp_util.jit1 "cond"
+    ~key:(Digest.to_hex (Digest.string (Marshal.to_string p [])))
+    (function [ p0 ] -> cond_body ?p p0 | _ -> invalid_arg "cond: arity")
+    [ p0 ]
 
 and svd_uv ~full_matrices a =
   match LL.svd ~full_matrices ~compute_uv:true a with
@@ -69,7 +194,7 @@ and svd_values a =
   | [ s ] -> s
   | _ -> assert false
 
-and svd ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a =
+and svd_body ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a =
   let a = to_inexact a in
   if hermitian then svd_hermitian ~compute_uv a
   else if compute_uv then
@@ -82,7 +207,8 @@ and svd ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a =
       | _ -> assert false);
     ]
 
-and svdvals x = svd_values (to_inexact x)
+and svdvals x =
+  List.hd (svd ~compute_uv:false ~hermitian:false x)
 
 and svd_hermitian ~compute_uv a =
   let w, v = eigh a in
@@ -105,7 +231,7 @@ and svd_hermitian ~compute_uv a =
     in
     [ u; sorted_s; hconj scaled ]
 
-and solve a b =
+and solve_body a b =
   let a = to_inexact a and b = to_inexact b in
   let sa = shape a in
   let na = Array.length sa in
@@ -137,7 +263,7 @@ and solve a b =
   let x2 = LL.triangular_solve ~left_side:true ~lower:false lu x1 in
   if b_vec then NL.reshape x2 (Array.append batch [| m |]) else x2
 
-and inv a =
+and inv_body a =
   let sa = shape a in
   let na = Array.length sa in
   if na < 2 || sa.(na - 1) <> sa.(na - 2) then
@@ -145,7 +271,7 @@ and inv a =
   let n = sa.(na - 1) in
   solve a (NL.eye ~dtype:(dtype a) n)
 
-and slogdet ?(method_ = "lu") a =
+and slogdet_body ?(method_ = "lu") a =
   let a = to_inexact a in
   if method_ <> "lu" then
     invalid_arg "jnp.linalg.slogdet: only method='lu' supported in ojax";
@@ -169,7 +295,7 @@ and slogdet ?(method_ = "lu") a =
     | [ sign; logdet ] -> (sign, logdet)
     | _ -> assert false
 
-and det a =
+and det_body a =
   let a = to_inexact a in
   let sa = shape a in
   let na = Array.length sa in
@@ -228,7 +354,7 @@ and eig a =
   | [ w; v ] -> (w, v)
   | _ -> assert false
 
-and eigvals a =
+and eigvals_body a =
   let a = to_inexact a in
   match
     LL.eig ~compute_left_eigenvectors:false ~compute_right_eigenvectors:false a
@@ -236,7 +362,7 @@ and eigvals a =
   | [ w ] -> w
   | _ -> assert false
 
-and eigh ?(uplo = "L") ?(symmetrize_input = true) a =
+and eigh_body ?(uplo = "L") ?(symmetrize_input = true) a =
   let lower =
     match uplo with
     | "L" -> true
@@ -247,7 +373,7 @@ and eigh ?(uplo = "L") ?(symmetrize_input = true) a =
   let v, w = LL.eigh ~lower ~symmetrize_input a in
   (w, v)
 
-and eigvalsh ?(uplo = "L") ?(symmetrize_input = true) a =
+and eigvalsh_body ?(uplo = "L") ?(symmetrize_input = true) a =
   let w, _ = eigh ~uplo ~symmetrize_input a in
   w
 
@@ -297,7 +423,7 @@ and pinv ?rtol ?(hermitian = false) ?rcond a =
   let res = TC.matmul (matrix_transpose_v vh) scaled in
   NL.astype res dt
 
-and matrix_power a p =
+and matrix_power_body a p =
   let sa = shape a in
   let na = Array.length sa in
   if na < 2 then
@@ -328,7 +454,7 @@ and matrix_power a p =
     end
   end
 
-and matrix_rank ?rtol ?(hermitian = false) ?tol a =
+and matrix_rank_body ?rtol ?(hermitian = false) ?tol a =
   let rtol =
     match (tol, rtol) with
     | Some _, Some _ ->
@@ -432,7 +558,7 @@ and matrix_norm_impl x ord r c keepdims =
       end
       else invalid_arg "Invalid order for matrix norm."
 
-and norm ?(ord = Onone) ?(axis = Anone) ?(keepdims = false) x =
+and norm_body ?(ord = Onone) ?(axis = Anone) ?(keepdims = false) x =
   let x = to_inexact x in
   let nd = ndim x in
   match axis with
@@ -484,7 +610,7 @@ and raw_qr a =
     | [ h; t ] -> [ matrix_transpose_v h; t ]
     | _ -> failwith "jnp.linalg.qr: raw mode arity"
 
-and qr ?(mode = "reduced") a =
+and qr_body ?(mode = "reduced") a =
   let a = to_inexact a in
   if mode = "raw" then raw_qr a
   else
@@ -633,7 +759,7 @@ and multi_dot arrs =
   | [] | [ _ ] -> invalid_arg "multi_dot requires at least two arrays"
   | first :: rest -> List.fold_left (fun acc m -> TC.matmul acc m) first rest
 
-and cond ?(p = Onone) x =
+and cond_body ?(p = Onone) x =
   let arr = to_inexact x in
   let nd = ndim arr in
   if nd < 2 then invalid_arg "jnp.linalg.cond: input array must be at least 2D";
@@ -657,46 +783,6 @@ and cond ?(p = Onone) x =
         (UF.logical_not (RED.any ~axis:[| -2; -1 |] (UF.isnan arr)))
     in
     NL.where_ bad (const dt infinity) r
-
-let cholesky ?upper ?symmetrize_input p0 =
-  Jnp_util.jit1 "cholesky"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (upper, symmetrize_input) [])))
-    (function
-      | [ p0 ] -> cholesky ?upper ?symmetrize_input p0
-      | _ -> invalid_arg "cholesky: arity")
-    [ p0 ]
-
-let svd ?full_matrices ?compute_uv ?hermitian p0 =
-  Jnp_util.jit "svd"
-    ~key:
-      (Digest.to_hex
-         (Digest.string
-            (Marshal.to_string (full_matrices, compute_uv, hermitian) [])))
-    (function
-      | [ p0 ] -> svd ?full_matrices ?compute_uv ?hermitian p0
-      | _ -> invalid_arg "svd: arity")
-    [ p0 ]
-
-let matrix_power p0 s1 =
-  Jnp_util.jit1 "matrix_power"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string s1 [])))
-    (function
-      | [ p0 ] -> matrix_power p0 s1 | _ -> invalid_arg "matrix_power: arity")
-    [ p0 ]
-
-let matrix_rank ?rtol ?hermitian ?tol p0 =
-  let rtol_given = rtol <> None in
-  let tol_given = tol <> None in
-  if rtol_given || tol_given then matrix_rank ?rtol ?hermitian ?tol p0
-  else
-    Jnp_util.jit1 "matrix_rank"
-      ~key:(Digest.to_hex (Digest.string (Marshal.to_string hermitian [])))
-      (function
-        | [ p0 ] -> matrix_rank ?rtol ?hermitian ?tol p0
-        | _ -> invalid_arg "matrix_rank: arity")
-      [ p0 ]
 
 let slogdet_lu a =
   let dt = dtype a in
@@ -767,91 +853,6 @@ let () =
   in
   self := call;
   slogdet_lu_call := call
-
-let slogdet ?method_ p0 =
-  match
-    Jnp_util.jit "slogdet"
-      ~key:(Digest.to_hex (Digest.string (Marshal.to_string method_ [])))
-      (function
-        | [ p0 ] ->
-            let a, b = slogdet ?method_ p0 in
-            [ a; b ]
-        | _ -> invalid_arg "slogdet: arity")
-      [ p0 ]
-  with
-  | [ a; b ] -> (a, b)
-  | _ -> invalid_arg "slogdet: arity"
-
-let det p0 =
-  Jnp_util.jit1 "det"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> det p0 | _ -> invalid_arg "det: arity")
-    [ p0 ]
-
-let eigvals p0 =
-  Jnp_util.jit1 "eigvals"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> eigvals p0 | _ -> invalid_arg "eigvals: arity")
-    [ p0 ]
-
-let eigh ?uplo ?symmetrize_input p0 =
-  match
-    Jnp_util.jit "eigh"
-      ~key:
-        (Digest.to_hex
-           (Digest.string (Marshal.to_string (uplo, symmetrize_input) [])))
-      (function
-        | [ p0 ] ->
-            let a, b = eigh ?uplo ?symmetrize_input p0 in
-            [ a; b ]
-        | _ -> invalid_arg "eigh: arity")
-      [ p0 ]
-  with
-  | [ a; b ] -> (a, b)
-  | _ -> invalid_arg "eigh: arity"
-
-let eigvalsh ?uplo ?symmetrize_input p0 =
-  Jnp_util.jit1 "eigvalsh"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (uplo, symmetrize_input) [])))
-    (function
-      | [ p0 ] -> eigvalsh ?uplo ?symmetrize_input p0
-      | _ -> invalid_arg "eigvalsh: arity")
-    [ p0 ]
-
-let inv p0 =
-  Jnp_util.jit1 "inv"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> inv p0 | _ -> invalid_arg "inv: arity")
-    [ p0 ]
-
-let norm ?ord ?axis ?keepdims p0 =
-  Jnp_util.jit1 "norm"
-    ~key:
-      (Digest.to_hex
-         (Digest.string (Marshal.to_string (ord, axis, keepdims) [])))
-    (function
-      | [ p0 ] -> norm ?ord ?axis ?keepdims p0 | _ -> invalid_arg "norm: arity")
-    [ p0 ]
-
-let qr ?mode p0 =
-  Jnp_util.jit "qr"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
-    (function [ p0 ] -> qr ?mode p0 | _ -> invalid_arg "qr: arity")
-    [ p0 ]
-
-let solve p0 p1 =
-  Jnp_util.jit1 "solve"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0; p1 ] -> solve p0 p1 | _ -> invalid_arg "solve: arity")
-    [ p0; p1 ]
-
-let cond ?p p0 =
-  Jnp_util.jit1 "cond"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string p [])))
-    (function [ p0 ] -> cond ?p p0 | _ -> invalid_arg "cond: arity")
-    [ p0 ]
 
 let cholesky ?upper ?symmetrize_input a0 =
   Eager_jit.one "numpy.linalg.cholesky" (upper, symmetrize_input) [] [ a0 ]

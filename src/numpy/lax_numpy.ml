@@ -2197,13 +2197,13 @@ let digitize ?(right = false) ?(method_ = "scan") x bins =
     let side = if right then "left" else "right" in
     let inc = bind1 T.Ge [ index_at bins (-1); index_at bins 0 ] in
     let asc = searchsorted ~side ~method_ bins x in
-    let desc =
-      bind1 T.Sub
-        [
-          Jnp_util.py_int nb;
-          searchsorted ~side ~method_ (rev_dims bins [| 0 |]) x;
-        ]
+    let desc_search = searchsorted ~side ~method_ (rev_dims bins [| 0 |]) x in
+    let nb_lit =
+      T.Concrete
+        (Nd.as_weak
+           (Nd.of_floats (dtype desc_search) [||] [| float_of_int nb |]))
     in
+    let desc = bind1 T.Sub [ nb_lit; desc_search ] in
     where_ inc asc desc
   end
 
@@ -2361,7 +2361,7 @@ let corrcoef ?y ?(rowvar = true) ?dtype x =
     let complex =
       match dtype_of c with D.Complex64 | D.Complex128 -> true | _ -> false
     in
-    let d = diagonal c in
+    let d = diag c in
     let d = if complex then bind1 T.Real [ d ] else d in
     let stddev = convert (bind1 T.Sqrt [ d ]) (dtype_of c) in
     let n = (shape stddev).(0) in
@@ -2687,14 +2687,14 @@ let argmin ?axis ?keepdims a0 =
       | _ -> assert false)
 
 let nanargmax ?axis ?keepdims a0 =
-  Eager_jit.one "numpy.lax_numpy.nanargmax" (axis, keepdims) [] [ a0 ]
+  Eager_jit.one ~jit:"_nanargmax" "numpy.lax_numpy.nanargmax" (axis, keepdims) [] [ a0 ]
     (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> nanargmax ?axis ?keepdims a0
       | _ -> assert false)
 
 let nanargmin ?axis ?keepdims a0 =
-  Eager_jit.one "numpy.lax_numpy.nanargmin" (axis, keepdims) [] [ a0 ]
+  Eager_jit.one ~jit:"_nanargmin" "numpy.lax_numpy.nanargmin" (axis, keepdims) [] [ a0 ]
     (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> nanargmin ?axis ?keepdims a0

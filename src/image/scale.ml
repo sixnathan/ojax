@@ -252,7 +252,7 @@ let resize image ~shape:output_shape ~method_ ?(antialias = true) () =
         ~translation ~kernel ~antialias
 
 let resize image ~shape ~method_ ?antialias () =
-  Eager_jit.one "image.scale.resize" (shape, method_, antialias) [] [ image ]
+  Eager_jit.one ~jit:"_resize" "image.scale.resize" (shape, method_, antialias) [] [ image ]
     (fun _ vals ->
       match vals with
       | [ image ] -> resize image ~shape ~method_ ?antialias ()

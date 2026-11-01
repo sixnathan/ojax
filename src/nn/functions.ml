@@ -320,18 +320,36 @@ let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
     (bind1 T.Rsqrt [ UF.add variance (scalar_like variance epsilon) ])
 
 let logsumexp ?axis ?(keepdims = false) ?where:mask x =
+  let x = NL.astype x (Dtypes.to_inexact_dtype (dtype x)) in
   let ndim = Array.length (shape x) in
   let dims =
     match axis with
     | None -> Array.init ndim (fun i -> i)
     | Some a -> Array.map (canon_axis ndim) a
   in
-  let amax = masked_max dims mask x in
-  let amax = where3 (UF.isfinite amax) amax (scalar_like amax 0.0) in
-  let shifted = UF.subtract x amax in
-  let sumexp = RED.sum ~axis:dims ~keepdims:true ?where:mask (UF.exp shifted) in
-  let out = UF.add (UF.log sumexp) amax in
-  if keepdims then out else NL.squeeze ~axis:dims out
+  let x =
+    match mask with Some m -> where3 m x (Numpy.Jnp_util.py_int 0) | None -> x
+  in
+  let amax =
+    RED.max ~axis:dims ~keepdims ?where:mask
+      ~initial:(const_full (dtype x) [||] Float.neg_infinity)
+      x
+  in
+  let amax =
+    Custom_derivatives.stop_gradient
+      (bind1 T.Select_n
+         [
+           UF.isfinite amax; const_full (dtype amax) (shape amax) 0.0; amax;
+         ])
+  in
+  let amax_with_dims =
+    if keepdims then amax else NL.expand_dims amax dims
+  in
+  let exp_a = bind1 T.Exp [ bind1 T.Sub [ x; amax_with_dims ] ] in
+  let sumexp = RED.sum ~axis:dims ~keepdims ?where:mask exp_a in
+  let _sign = bind1 T.Sign [ sumexp ] in
+  let sumexp = bind1 T.Abs [ sumexp ] in
+  bind1 T.Add [ bind1 T.Log [ sumexp ]; amax ]
 
 let logmeanexp ?axis ?(keepdims = false) ?where:mask x =
   let ndim = Array.length (shape x) in
@@ -341,16 +359,16 @@ let logmeanexp ?axis ?(keepdims = false) ?where:mask x =
     | Some a -> Array.map (canon_axis ndim) a
   in
   let lse = logsumexp ?axis ~keepdims ?where:mask x in
-  match mask with
-  | Some m ->
-      UF.subtract lse
-        (UF.log
-           (RED.sum ~axis:dims ~keepdims ~dtype:(dtype lse)
-              (NL.broadcast_to m (shape x))))
-  | None ->
-      let n = Array.fold_left (fun acc d -> acc * (shape x).(d)) 1 dims in
-      UF.subtract lse
-        (const_full (dtype lse) (shape lse) (Float.log (float_of_int n)))
+  let count =
+    match mask with
+    | Some m ->
+        RED.sum ~axis:dims ~keepdims ~dtype:(dtype lse)
+          (NL.broadcast_to m (shape x))
+    | None ->
+        let n = Array.fold_left (fun acc d -> acc * (shape x).(d)) 1 dims in
+        T.Concrete (Ndarray.of_floats (dtype lse) [||] [| float_of_int n |])
+  in
+  bind1 T.Sub [ lse; bind1 T.Log [ count ] ]
 
 let one_hot ?(axis = -1) ?dtype:dt ~num_classes x =
   let ndim = Array.length (shape x) in
@@ -504,11 +522,6 @@ let as_int_if_bool x =
     NL.astype x (if Config.x64_enabled () then D.I64 else D.I32)
   else x
 
-let as_inexact_dtype x = NL.astype x (Dtypes.to_inexact_dtype (dtype x))
-
-let logmeanexp ?axis ?keepdims ?where:mask x =
-  logmeanexp ?axis ?keepdims ?where:mask (as_inexact_dtype x)
-
 let identity a0 =
   Eager_jit.one "nn.functions.identity" () [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> identity a0 | _ -> assert false)
@@ -628,7 +641,7 @@ let log1mexp a0 =
       match (opts, vals) with [], [ a0 ] -> log1mexp a0 | _ -> assert false)
 
 let one_hot ?axis ?dtype ~num_classes a1 =
-  Eager_jit.one "nn.functions.one_hot" (axis, dtype, num_classes) [] [ a1 ]
+  Eager_jit.one ~jit:"_one_hot" "nn.functions.one_hot" (axis, dtype, num_classes) [] [ a1 ]
     (fun opts vals ->
       match (opts, vals) with
       | [], [ a1 ] -> one_hot ?axis ?dtype ~num_classes a1

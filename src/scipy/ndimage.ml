@@ -166,7 +166,7 @@ let map_coordinates ?(mode = "constant") ?(cval = 0.0) input coordinates ~order
   NL.astype result idt
 
 let map_coordinates ?mode ?cval input coordinates ~order =
-  Eager_jit.one "scipy.ndimage.map_coordinates" (mode, cval, order) []
+  Eager_jit.one ~jit:"_map_coordinates" "scipy.ndimage.map_coordinates" (mode, cval, order) []
     (input :: coordinates) (fun _ vals ->
       match vals with
       | input :: coordinates ->

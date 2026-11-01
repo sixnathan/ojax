@@ -63,12 +63,13 @@ let scan_rule :
     (trace ->
     length:int ->
     reverse:bool ->
+    unroll:int ->
     num_carry:int ->
     closed_jaxpr ->
     tracer list ->
     value list)
     ref =
-  ref (fun _ ~length:_ ~reverse:_ ~num_carry:_ _ _ ->
+  ref (fun _ ~length:_ ~reverse:_ ~unroll:_ ~num_carry:_ _ _ ->
       failwith "partial_eval: scan rule not installed")
 
 let jit_rule : (trace -> closed_jaxpr -> tracer list -> value list) ref =
@@ -89,14 +90,14 @@ let process_primitive trace prim (args : value list) : value list =
     Core.bind prim consts
   else
     match prim with
-    | Scan { length; reverse; num_consts; num_carry; jaxpr; _ } ->
+    | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
         let lifted =
           if num_consts = 0 then jaxpr
           else Core.scan_lift_consts ~num_consts jaxpr
         in
         List.filteri
           (fun i _ -> i >= num_consts)
-          (!scan_rule trace ~length ~reverse
+          (!scan_rule trace ~length ~reverse ~unroll
              ~num_carry:(num_consts + num_carry) lifted tracers)
     | Xla_call c -> !jit_rule trace c tracers
     | _ -> record_unknown trace prim tracers
@@ -303,7 +304,8 @@ let split_at l n =
 
 let select flags l = List.filteri (fun i _ -> List.nth flags i) l
 
-let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
+let scan_partial_eval trace ~length ~reverse ~unroll ~num_carry
+    (body : closed_jaxpr)
     (tracers : tracer list) : value list =
   let carry, xs = split_at tracers num_carry in
   let unk (t : tracer) = is_unknown (pe_pval t) in
@@ -395,7 +397,7 @@ let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
            num_consts = 0;
            num_carry = n_known_carry;
            jaxpr = known_body;
-           unroll = 1;
+           unroll;
          })
       (List.map value_of known_carry @ List.map value_of known_xs)
   in
@@ -456,7 +458,7 @@ let scan_partial_eval trace ~length ~reverse ~num_carry (body : closed_jaxpr)
            num_consts = 0;
            num_carry = n_unk_carry;
            jaxpr = unknown_body;
-           unroll = 1;
+           unroll;
          })
       (unk_carry @ unk_xs @ List.map raise_known residual_out)
   in

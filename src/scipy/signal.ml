@@ -21,7 +21,7 @@ let promote a b =
   (NL.astype a dt, NL.astype b dt)
 
 let all_pairs test a b = Array.for_all (fun x -> x) (Array.map2 test a b)
-let flip_all v = L.rev v (Array.init (rank v) Fun.id)
+let flip_all v = NL.flip v
 let conj_of v = NL.astype (b1 Conj [ v ]) (dtype_of v)
 
 let conj_if_complex v =

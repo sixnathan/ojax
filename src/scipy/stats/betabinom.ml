@@ -35,7 +35,7 @@ let logpmf ?loc k n a b =
   | _ -> assert false
 
 let logpmf ?loc a0 a1 a2 a3 =
-  Eager_jit.one "scipy.stats.betabinom.logpmf" () [ loc ] [ a0; a1; a2; a3 ]
+  Eager_jit.one ~jit:"logpmf" "scipy.stats.betabinom.logpmf" () [ loc ] [ a0; a1; a2; a3 ]
     (fun opts vals ->
       match (opts, vals) with
       | [ loc ], [ a0; a1; a2; a3 ] -> logpmf ?loc a0 a1 a2 a3

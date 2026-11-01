@@ -1,5 +1,7 @@
 open Types
 
+val sin_complex : value list -> value list
+val cos_complex : value list -> value list
 val igamma : value list -> value list
 val igammac : value list -> value list
 val igamma_grad_a : value list -> value list

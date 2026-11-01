@@ -41,6 +41,4 @@ let logpmf ?loc a0 a1 a2 a3 =
       | [ loc ], [ a0; a1; a2; a3 ] -> logpmf ?loc a0 a1 a2 a3
       | _ -> assert false)
 
-let pmf ?loc k n a b =
-  let loc = Option.value loc ~default:(f32s 0.0) in
-  L.exp (logpmf ~loc k n a b)
+let pmf ?loc k n a b = L.exp (logpmf ?loc k n a b)

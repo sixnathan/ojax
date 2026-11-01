@@ -581,22 +581,39 @@ let hypot x1 x2 =
   let x = where x1_is0 x1m v in
   where idx_inf (const_full dt sh infinity) x
 
+let rec sinc_maclaurin k x =
+  List.hd
+    (Custom_derivatives.custom_jvp
+       (function
+         | [ x ] -> [ sinc_maclaurin_body k x ] | _ -> invalid_arg "sinc: arity")
+       ~jvp:(fun primals tangents ->
+         match (primals, tangents) with
+         | [ x ], [ t ] ->
+             let primal = sinc_maclaurin k x in
+             let next = sinc_maclaurin (k + 1) x in
+             ([ primal ], [ bind1 T.Mul [ next; t ] ])
+         | _ -> invalid_arg "sinc: arity")
+       [ x ])
+
+and sinc_maclaurin_body k x =
+  let dt = dtype x in
+  let product = bind1 T.Mul [ x; const_full dt [||] 0.0 ] in
+  if k mod 2 = 1 then product
+  else
+    let sign = if k / 2 mod 2 = 0 then 1.0 else -1.0 in
+    bind1 T.Add [ product; const_full dt [||] (sign /. float_of_int (k + 1)) ]
+
 let sinc x =
-  Jnp_util.jit1 "sinc"
-    (function
-      | [ x ] ->
-          let a = p1 (promote_inexact [ x ]) in
-          let dt = dtype a and sh = shape a in
-          let eq_zero = bind1 T.Eq [ a; const_full dt sh 0.0 ] in
-          let pi_x = bind1 T.Mul [ const_full dt sh Float.pi; a ] in
-          let safe = where eq_zero (const_full dt sh 1.0) pi_x in
-          let times_zero = bind1 T.Mul [ pi_x; const_full dt sh 0.0 ] in
-          let maclaurin = bind1 T.Add [ times_zero; const_full dt sh 1.0 ] in
-          let sin_safe = bind1 T.Sin [ safe ] in
-          let ratio = bind1 T.Div [ sin_safe; safe ] in
-          where eq_zero maclaurin ratio
-      | _ -> invalid_arg "sinc: arity")
-    [ x ]
+  let a = p1 (promote_inexact [ x ]) in
+  let dt = dtype a in
+  let lit v = const_full dt [||] v in
+  let eq_zero = bind1 T.Eq [ a; lit 0.0 ] in
+  let pi_x = bind1 T.Mul [ lit Float.pi; a ] in
+  let safe = where eq_zero (lit 1.0) pi_x in
+  let maclaurin = sinc_maclaurin 0 pi_x in
+  let sin_safe = bind1 T.Sin [ safe ] in
+  let ratio = bind1 T.Div [ sin_safe; safe ] in
+  where eq_zero maclaurin ratio
 
 let wrap_between x half =
   let sh = shape x in

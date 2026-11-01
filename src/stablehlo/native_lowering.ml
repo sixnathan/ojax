@@ -1053,3 +1053,41 @@ let lapack_schur ~compute_vectors outs =
   match lapack_guarded keep with
   | [ t; vs ] -> if compute_vectors then [ t; vs ] else [ t ]
   | _ -> invalid_arg "Native_lowering: gees arity"
+
+let sin_complex = function
+  | [ x ] ->
+      let a = L.real x in
+      let b = L.imag x in
+      let a_is_zero = L.eq a (scalar_const a 0.0) in
+      let two = scalar_const a 2.0 in
+      let sn = L.sin a in
+      let cs = L.cos a in
+      let e1m = L.expm1 b in
+      let e2m = L.expm1 (L.neg b) in
+      let snh = (e1m -: e2m) /: two in
+      let csh = (e1m +: e2m +: two) /: two in
+      let re = sn *: csh in
+      let im = cs *: snh in
+      let zero_case = L.complex (scalar_const a 0.0) im in
+      let general = L.complex re im in
+      [ select a_is_zero zero_case general ]
+  | _ -> invalid_arg "Native_lowering: sin arity"
+
+let cos_complex = function
+  | [ x ] ->
+      let a = L.real x in
+      let b = L.imag x in
+      let a_is_zero = L.eq a (scalar_const a 0.0) in
+      let two = scalar_const a 2.0 in
+      let sn = L.sin a in
+      let cs = L.cos a in
+      let e1m = L.expm1 b in
+      let e2m = L.expm1 (L.neg b) in
+      let snh = (e1m -: e2m) /: two in
+      let csh = (e1m +: e2m +: two) /: two in
+      let re = cs *: csh in
+      let im = L.neg sn *: snh in
+      let zero_case = L.complex re (scalar_const a 0.0) in
+      let general = L.complex re im in
+      [ select a_is_zero zero_case general ]
+  | _ -> invalid_arg "Native_lowering: cos arity"

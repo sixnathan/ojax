@@ -161,6 +161,11 @@ let id_of_atom ctx = function
 
 let sole = function [ x ] -> x | _ -> invalid_arg "Stablehlo.Emit: arity"
 
+let is_complex_atom atom =
+  match (atom_aval atom).dtype with
+  | Dtype.Complex64 | Dtype.Complex128 -> true
+  | _ -> false
+
 let emit_stablehlo_unary ctx (eqn : eqn) in_ids op =
   let x = sole in_ids in
   let out = sole eqn.outs in
@@ -2847,6 +2852,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Cbrt -> emit_stablehlo_unary ctx eqn in_ids "cbrt"
   | Ceil -> emit_stablehlo_unary ctx eqn in_ids "ceil"
   | Clz -> emit_stablehlo_unary ctx eqn in_ids "count_leading_zeros"
+  | Cos when is_complex_atom (sole eqn.inputs) ->
+      emit_inlined ctx eqn in_ids Native_lowering.cos_complex
   | Cos -> emit_stablehlo_unary ctx eqn in_ids "cosine"
   | Exp -> emit_stablehlo_unary ctx eqn in_ids "exponential"
   | Expm1 -> emit_stablehlo_unary ctx eqn in_ids "exponential_minus_one"
@@ -2911,6 +2918,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Sign when is_unsigned_dtype (atom_aval (sole eqn.inputs)).dtype ->
       emit_unsigned_sign ctx eqn in_ids
   | Sign -> emit_stablehlo_unary ctx eqn in_ids "sign"
+  | Sin when is_complex_atom (sole eqn.inputs) ->
+      emit_inlined ctx eqn in_ids Native_lowering.sin_complex
   | Sin -> emit_stablehlo_unary ctx eqn in_ids "sine"
   | Sqrt -> emit_stablehlo_unary ctx eqn in_ids "sqrt"
   | Tan -> emit_stablehlo_unary ctx eqn in_ids "tan"

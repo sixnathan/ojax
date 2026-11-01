@@ -1206,16 +1206,34 @@ let array_equiv a b =
   | exception Invalid_argument _ -> scalar D.Bool 0.0
   | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
 
-let arange ?(start = 0.0) ?(step = 1.0) ~dtype stop =
-  let size = max 0 (int_of_float (ceil ((stop -. start) /. step))) in
-  let idx = bind1 (T.Iota { dtype; shape = [| size |]; dimension = 0 }) [] in
-  if start = 0.0 && step = 1.0 then idx
-  else
-    bind1 T.Add
-      [
-        full dtype [| size |] start;
-        bind1 T.Mul [ full dtype [| size |] step; idx ];
-      ]
+let arange ?(start = 0.0) ?step ~dtype stop =
+  match step with
+  | Some step ->
+      let working =
+        match dtype with
+        | D.F16 | D.Bf16 | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4
+        | D.F8_e4m3 | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2
+        | D.F8_e5m2fnuz | D.F8_e8m0fnu ->
+            D.F32
+        | _ -> dtype
+      in
+      let size = max 0 (int_of_float (ceil ((stop -. start) /. step))) in
+      let idx =
+        bind1 (T.Iota { dtype = working; shape = [| size |]; dimension = 0 }) []
+      in
+      convert
+        (bind1 T.Add
+           [
+             scalar working start;
+             bind1 T.Mul [ scalar working step; idx ];
+           ])
+        dtype
+  | None ->
+      let size = max 0 (int_of_float (ceil (stop -. start))) in
+      let idx =
+        bind1 (T.Iota { dtype; shape = [| size |]; dimension = 0 }) []
+      in
+      if start = 0.0 then idx else bind1 T.Add [ scalar dtype start; idx ]
 
 let eye ?m ?(k = 0) ~dtype n =
   let m = Option.value m ~default:n in

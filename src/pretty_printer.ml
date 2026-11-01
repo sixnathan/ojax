@@ -572,6 +572,52 @@ let jax_prim_name = function
   | Xla_call _ -> "jit"
   | p -> prim_name p
 
+let next_reduction_id = ref min_int
+
+let reduction_id () =
+  incr next_reduction_id;
+  !next_reduction_id
+
+let reduction_jaxprs : (primitive * Dtype.t, closed_jaxpr) Hashtbl.t =
+  Hashtbl.create 8
+
+let reduction_jaxpr (prim, dtype) =
+  match Hashtbl.find_opt reduction_jaxprs (prim, dtype) with
+  | Some c -> c
+  | None ->
+      let aval = { shape = [||]; dtype; weak_type = false } in
+      let var () = { vid = reduction_id (); vaval = aval } in
+      let a = var () and b = var () and out = var () in
+      let c =
+        {
+          jid = reduction_id ();
+          consts = [];
+          jaxpr =
+            {
+              in_binders = [ a; b ];
+              eqns =
+                [
+                  {
+                    prim;
+                    inputs = [ A_var a; A_var b ];
+                    outs = [ out ];
+                    multiple_results = false;
+                  };
+                ];
+              outs = [ A_var out ];
+            };
+        }
+      in
+      Hashtbl.replace reduction_jaxprs (prim, dtype) c;
+      c
+
+let scatter_with_update d unique update =
+  List.map
+    (fun (name, p) ->
+      if name = "update_jaxpr" then (name, Sub (reduction_jaxpr update))
+      else (name, p))
+    (scatter_params d unique)
+
 let jax_params (e : eqn) =
   let in_dtype () =
     match e.inputs with
@@ -635,6 +681,22 @@ let jax_params (e : eqn) =
       ]
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
+  | Pad cfg as p when Np_ints.prim_marked p ->
+      [
+        ( "padding_config",
+          Plain
+            (py_tuple
+               (Array.to_list
+                  (Array.map
+                     (fun (x, y, z) ->
+                       py_tuple
+                         [
+                           Printf.sprintf "np.int64(%d)" x;
+                           Printf.sprintf "np.int64(%d)" y;
+                           string_of_int z;
+                         ])
+                     cfg))) );
+      ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]
@@ -690,14 +752,18 @@ let jax_params (e : eqn) =
         ("slice_sizes", Plain (py_ints slice_sizes));
         ("unique_indices", Plain "False");
       ]
-  | Scatter { dimension_numbers; unique_indices }
-  | Scatter_mul { dimension_numbers; unique_indices } ->
+  | Scatter { dimension_numbers; unique_indices } ->
       scatter_params dimension_numbers unique_indices
-  | Scatter_add { dimension_numbers }
-  | Scatter_sub { dimension_numbers }
-  | Scatter_min { dimension_numbers }
+  | Scatter_mul { dimension_numbers; unique_indices } ->
+      scatter_with_update dimension_numbers unique_indices (Mul, in_dtype ())
+  | Scatter_add { dimension_numbers } ->
+      scatter_with_update dimension_numbers false (Add, in_dtype ())
+  | Scatter_sub { dimension_numbers } ->
+      scatter_with_update dimension_numbers false (Types.Sub, in_dtype ())
+  | Scatter_min { dimension_numbers } ->
+      scatter_with_update dimension_numbers false (Min, in_dtype ())
   | Scatter_max { dimension_numbers } ->
-      scatter_params dimension_numbers false
+      scatter_with_update dimension_numbers false (Max, in_dtype ())
   | Conv_general_dilated c ->
       [
         ("batch_group_count", Plain (string_of_int c.batch_group_count));

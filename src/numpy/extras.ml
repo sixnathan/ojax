@@ -124,6 +124,7 @@ let normalised_indices ~extent indices =
   let negative = U.less indices (L.full [||] 0.0 dt) in
   let shifted = U.add indices (L.full [||] (float_of_int extent) dt) in
   let normalised = Core.bind1 Select_n [ negative; indices; shifted ] in
+  let normalised = Core.convert_like ~weak:false normalised Dtype.I32 in
   L.broadcast_in_dim normalised [| size_of indices; 1 |] [| 0 |]
 
 let bincount_length length weights x =
@@ -172,8 +173,7 @@ let nonzero ?size ?fill_value a =
               (Concrete
                  (Ndarray.of_floats fdt [||] [| float_of_int strides.(d) |]))
           in
-          U.remainder quotient
-            (Concrete (Ndarray.of_floats fdt [||] [| float_of_int sh.(d) |])))
+          U.remainder quotient (Core.py_scalar fdt (float_of_int sh.(d))))
     in
     match fill_value with
     | None -> out

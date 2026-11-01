@@ -87,24 +87,18 @@ let lexsort ?(axis = -1) keys =
       let nd = ndim k0 in
       let idt = Dtypes.default_int_dtype () in
       if nd = 0 then const_full idt [||] 0.0
-      else
+      else begin
         let ax = canonicalize_axis axis nd in
-        Jnp_util.jit1 "lexsort" ~key:(string_of_int ax)
-          (fun keys ->
-            let iota = broadcasted_iota idt (shape k0) ax in
-            let operands = List.rev keys @ [ iota ] in
-            let outs =
-              bind
-                (T.Sort
-                   {
-                     dimension = ax;
-                     is_stable = true;
-                     num_keys = List.length keys;
-                   })
-                operands
-            in
-            List.nth outs (List.length outs - 1))
-          keys
+        let iota = broadcasted_iota idt (shape k0) ax in
+        let operands = List.rev keys @ [ iota ] in
+        let outs =
+          bind
+            (T.Sort
+               { dimension = ax; is_stable = true; num_keys = List.length keys })
+            operands
+        in
+        List.nth outs (List.length outs - 1)
+      end
 
 let lexsort_impl = lexsort
 

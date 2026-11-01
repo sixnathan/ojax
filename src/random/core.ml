@@ -1191,7 +1191,7 @@ let fold_in k data =
 let prng_key seed =
   let raw = PR.random_seed seed in
   if Config.value Config.enable_custom_prng then Key_reuse.mark_typed raw
-  else match raw with Tracer _ -> PR.random_unwrap raw | _ -> raw
+  else raw
 
 let bits k ~shape = sampler ~name:"random_bits" k (fun () -> bits k ~shape)
 

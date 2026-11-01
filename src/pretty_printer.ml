@@ -648,6 +648,17 @@ let jax_params (e : eqn) =
       ]
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
+  | Pad cfg as p when Np_ints.prim_marked p ->
+      [
+        ( "padding_config",
+          Plain
+            (py_tuple
+               (Array.to_list
+                  (Array.map
+                     (fun (x, y, z) ->
+                       Printf.sprintf "(np.int64(%d), np.int64(%d), %d)" x y z)
+                     cfg))) );
+      ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]
@@ -727,7 +738,12 @@ let jax_params (e : eqn) =
         ("lhs_dilation", Plain (py_ints c.lhs_dilation));
         ("out_sharding", Plain "None");
         ("padding", Plain (py_pairs c.padding));
-        ("precision", Plain "None");
+        ( "precision",
+          Plain
+            (match c.conv_precision with
+            | Some (l, r) ->
+                Printf.sprintf "(Precision.%s, Precision.%s)" l r
+            | None -> "None") );
         ("preferred_element_type", Plain "None");
         ("rhs_dilation", Plain (py_ints c.rhs_dilation));
         ("window_strides", Plain (py_ints c.window_strides));

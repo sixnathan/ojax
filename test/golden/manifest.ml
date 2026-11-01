@@ -495,6 +495,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
             };
           feature_group_count = U.to_int (member "feature_group_count");
           batch_group_count = U.to_int (member "batch_group_count");
+          conv_precision = None;
         }
   | "reduce_window_sum" -> T.Reduce_window_sum (window_of params)
   | "reduce_window_max" -> T.Reduce_window_max (window_of params)

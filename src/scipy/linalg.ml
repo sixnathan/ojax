@@ -506,24 +506,7 @@ let block_diag arrs =
   in
   NL.concatenate ~axis:0 padded
 
-let toeplitz ?r c =
-  let c = NL.atleast_1d c in
-  let r = match r with None -> UF.conj c | Some r -> NL.atleast_1d r in
-  let m = (shape c).(0) and n = (shape r).(0) in
-  if m = 0 || n = 0 then
-    AC.zeros ~dtype:(Dtypes.promote_types (dtype c) (dtype r)) [| m; n |]
-  else begin
-    let r_tail =
-      if n = 1 then NL.reshape r [| 0 |]
-      else IDX.take_index r (UF.add (iota_idx (n - 1)) (i32_scalar 1))
-    in
-    let elems = NL.concatenate [ NL.flip c; r_tail ] in
-    let ii = NL.reshape (iota_idx m) [| m; 1 |] in
-    let jj = NL.reshape (iota_idx n) [| 1; n |] in
-    let idx = UF.add (UF.subtract (i32_scalar (m - 1)) ii) jj in
-    let flat = NL.reshape idx [| m * n |] in
-    NL.reshape (IDX.take_index elems flat) [| m; n |]
-  end
+let toeplitz = Linalg_special.toeplitz
 
 let hessenberg ?(calc_q = false) a =
   let a = to_inexact a in

@@ -235,6 +235,7 @@ val conv_general_permutations : String.t * String.t * String.t -> conv_dims
 val conv_dimension_numbers : String.t * String.t * String.t -> conv_dims
 
 val conv_general_dilated :
+  ?conv_precision:string * string ->
   ?lhs_dilation:int array ->
   ?rhs_dilation:int array ->
   ?dimension_numbers:conv_dims ->
@@ -358,6 +359,7 @@ val conv_general_dilated_patches :
   ?lhs_dilation:int array ->
   ?rhs_dilation:int array ->
   ?dimension_numbers:conv_dims ->
+  ?precision:string * string ->
   value ->
   filter_shape:int array ->
   value

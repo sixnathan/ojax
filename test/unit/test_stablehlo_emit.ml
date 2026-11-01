@@ -506,6 +506,7 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
                          };
                        feature_group_count = 1;
                        batch_group_count = 1;
+                       conv_precision = None;
                      })
                   [ l; r ]
             | _ -> assert false) );

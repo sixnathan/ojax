@@ -502,7 +502,7 @@ let scipy_run op p a b c =
       let shift v =
         let n = (shp v).(0) in
         let eye = NL.identity ~dtype:(dt_of v) n in
-        L.add v (L.mul eye (like eye 4.0))
+        L.add v (L.mul (like eye 4.0) eye)
       in
       Some [ SP.solve_sylvester (shift (a ())) (shift (b ())) (c ()) ]
   | "rnd_maxwell" -> Some [ RX.maxwell (seed_key p) ~shape:(ints "shape" p) ]

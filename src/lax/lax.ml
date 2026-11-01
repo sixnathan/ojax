@@ -1606,6 +1606,7 @@ let rec impl_base prim inputs =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        _;
       } ->
       let conv lhs rhs =
         Convolution.conv_impl dimension_numbers window_strides padding
@@ -2671,6 +2672,7 @@ let abstract_eval prim avals =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        _;
       } ->
       bin_aval
         (fun l r ->

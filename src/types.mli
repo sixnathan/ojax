@@ -183,6 +183,7 @@ and primitive =
       dimension_numbers : conv_dims;
       feature_group_count : int;
       batch_group_count : int;
+      conv_precision : (string * string) option;
     }
   | Reduce_window of { reducer : closed_jaxpr; window : window_dims }
   | Reduce_window_max of window_dims

@@ -1500,7 +1500,8 @@ let pad_pairs_str padding =
   ^ "]"
 
 let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
-    ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count =
+    ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count
+    ~conv_precision =
   let a, b = pair in_ids in
   let la, lb =
     match eqn.inputs with
@@ -1521,7 +1522,13 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
       (conv_spec_str dn.out_spec "b" "f")
   in
   let n = bind_var ctx out in
-  let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+  let level_l, level_r =
+    match conv_precision with
+    | Some pair -> pair
+    | None ->
+        let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+        (level, level)
+  in
   Buffer.add_string ctx.buf
     (Printf.sprintf
        "    %s = stablehlo.convolution(%s, %s) dim_numbers = %s, window = \
@@ -1534,7 +1541,7 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
        (pad_pairs_str padding)
        (Ir.int_array_attr lhs_dilation)
        (Ir.int_array_attr rhs_dilation)
-       reverse batch_group_count feature_group_count level level la lb
+       reverse batch_group_count feature_group_count level_l level_r la lb
        (Ir.tensor_type_of_aval out.vaval))
 
 let pad_dense_str padding =
@@ -3399,10 +3406,11 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        conv_precision;
       } ->
       emit_conv ctx eqn in_ids ~window_strides ~padding ~lhs_dilation
         ~rhs_dilation ~dn:dimension_numbers ~feature_group_count
-        ~batch_group_count
+        ~batch_group_count ~conv_precision
   | Ragged_dot_general ->
       failwith
         "Stablehlo.Emit: Ragged_dot_general non-representable (needs \

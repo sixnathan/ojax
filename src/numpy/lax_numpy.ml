@@ -434,6 +434,7 @@ let conv1d_body ~mode ~correlating a v =
              };
            feature_group_count = 1;
            batch_group_count = 1;
+           conv_precision = None;
          })
       [ lhs; rhs ]
   in
@@ -903,26 +904,18 @@ let select ?default condlist choicelist =
   if k = 0 then invalid_arg "select: condlist must be non-empty";
   if List.length choicelist <> k then
     invalid_arg "select: condlist and choicelist must have the same length";
-  let false0 = scalar D.Bool 0.0 in
-  let conds_b = broadcast_arrays (false0 :: condlist) in
-  let conds_i = List.map (fun c -> convert c D.I32) conds_b in
-  let stacked = bind1 (T.Stack 0) conds_i in
-  let idx =
-    bind1
-      (T.Argmax { axis = 0; index_dtype = Dtypes.default_int_dtype () })
-      [ stacked ]
-  in
   let default_v =
     match default with
     | Some d -> d
-    | None -> scalar (result_type choicelist) 0.0
+    | None -> Jnp_util.py_int 0
   in
-  let dt =
-    match default with
-    | Some d -> result_type (d :: choicelist)
-    | None -> result_type choicelist
-  in
+  let dt = result_type (default_v :: choicelist) in
   let cases = List.map (fun v -> convert v dt) (default_v :: choicelist) in
+  let conds_b = broadcast_arrays (scalar D.Bool 0.0 :: condlist) in
+  let stacked = bind1 (T.Stack 0) conds_b in
+  let idx =
+    bind1 (T.Argmax { axis = 0; index_dtype = D.I32 }) [ stacked ]
+  in
   bind1 T.Select_n (broadcast_arrays (idx :: cases))
 
 let all_reduce v =
@@ -1331,7 +1324,7 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even") v
             let cval =
               C.convert_like ~weak:(C.get_aval v).T.weak_type cval (dtype v)
             in
-            bind1 (T.Pad cfg) [ v; cval ]
+            bind1 (Np_ints.mark_prim (T.Pad cfg)) [ v; cval ]
         | _ -> invalid_arg "pad: arity")
       [ v; literal ]
   end
@@ -1645,8 +1638,11 @@ let take_trailing a indices =
   let wrapped =
     List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
   in
-  let start = bind1 (T.Concatenate 1) (List.map expand_last wrapped) in
-  let start = match wrapped with [ w ] -> expand_last w | _ -> start in
+  let start =
+    match wrapped with
+    | [ w ] -> expand_last w
+    | _ -> bind1 (T.Concatenate 1) (List.map expand_last wrapped)
+  in
   let batch = Array.length (shape (List.hd indices)) in
   let dnums =
     {

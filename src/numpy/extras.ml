@@ -1507,17 +1507,37 @@ let block tree =
     | Group (h :: _) -> 1 + depth h
   in
   let d = depth tree in
-  let rec go level = function
-    | Item v -> v
-    | Group items ->
-        let parts = List.map (go (level + 1)) items in
-        let target =
-          List.fold_left (fun m v -> Stdlib.max m (rank v)) (d - level) parts
-        in
-        let lifted = List.map (fun v -> L.broadcast_to_rank v target) parts in
-        NL.concatenate ~axis:(level - d) lifted
+  let rec leaves = function
+    | Item v -> [ v ]
+    | Group items -> List.concat_map leaves items
   in
-  go 0 tree
+  let rec shape_key = function
+    | Item _ -> "i"
+    | Group items -> "[" ^ String.concat "," (List.map shape_key items) ^ "]"
+  in
+  let flat = leaves tree in
+  let build values =
+    let rest = ref values in
+    let next () =
+      match !rest with
+      | v :: tl ->
+          rest := tl;
+          v
+      | [] -> invalid_arg "block: arity"
+    in
+    let rec go level = function
+      | Item _ -> next ()
+      | Group items ->
+          let parts = List.map (go (level + 1)) items in
+          let target =
+            List.fold_left (fun m v -> Stdlib.max m (rank v)) (d - level) parts
+          in
+          let lifted = List.map (fun v -> L.broadcast_to_rank v target) parts in
+          NL.concatenate ~axis:(level - d) lifted
+    in
+    go 0 tree
+  in
+  Jnp_util.jit1 "block" ~key:(shape_key tree) build flat
 
 let promote_types a b = Dtypes.promote_types a b
 

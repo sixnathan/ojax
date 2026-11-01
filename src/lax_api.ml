@@ -718,7 +718,7 @@ let default_conv_dims rank =
   let id = Array.init rank Fun.id in
   { lhs_spec = id; rhs_spec = id; out_spec = id }
 
-let conv_general_dilated ?lhs_dilation ?rhs_dilation ?dimension_numbers
+let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation ?dimension_numbers
     ?(feature_group_count = 1) ?(batch_group_count = 1) lhs rhs ~window_strides
     padding =
   let rank = ndim lhs in
@@ -751,6 +751,7 @@ let conv_general_dilated ?lhs_dilation ?rhs_dilation ?dimension_numbers
          dimension_numbers = dn;
          feature_group_count;
          batch_group_count;
+         conv_precision;
        })
     [ lhs; rhs ]
 
@@ -1045,30 +1046,63 @@ let conv_transpose_shape_tuple lhs_shape rhs_shape window_strides padding
   out
 
 let conv_general_dilated_patches ?window_strides ?(padding = Valid)
-    ?lhs_dilation ?rhs_dilation ?dimension_numbers lhs ~filter_shape =
+    ?lhs_dilation ?rhs_dilation ?dimension_numbers ?precision lhs ~filter_shape =
   let rank = ndim lhs in
   let k = Array.length filter_shape in
   let dn =
     match dimension_numbers with Some d -> d | None -> default_conv_dims rank
   in
-  let in_features = (shape lhs).(dn.lhs_spec.(1)) in
-  let window = product filter_shape in
-  let out_features = in_features * window in
-  let cell = window * in_features in
-  let kernel_shape = Array.append [| out_features; 1 |] filter_shape in
-  let kernel =
-    Concrete
-      (Ndarray.of_floats (dtype_of lhs) kernel_shape
-         (Array.init (out_features * window) (fun i ->
-              let row = i / window and col = i mod window in
-              if row mod window = col then 1.0 else 0.0)))
+  let n_channels = (shape lhs).(dn.lhs_spec.(1)) in
+  let spatial_size = product filter_shape in
+  let dt = dtype_of lhs in
+  let index = Dtype.I32 in
+  let grid d =
+    b1
+      (Iota
+         {
+           dtype = index;
+           shape = [| spatial_size; spatial_size |];
+           dimension = d;
+         })
+      []
   in
-  ignore cell;
+  let left = grid 0 in
+  let shifted = b1 Add [ left; Core.py_scalar index 0.0 ] in
+  let eye = b1 (Convert_element_type dt) [ b1 Eq [ shifted; grid 1 ] ] in
+  let rhs =
+    b1
+      (Broadcast_in_dim
+         {
+           shape = [| n_channels; spatial_size; spatial_size |];
+           dims = [| 1; 2 |];
+         })
+      [ eye ]
+  in
+  let rhs =
+    b1
+      (Reshape (Array.append [| n_channels * spatial_size; 1 |] filter_shape))
+      [ rhs ]
+  in
+  let total = k + 2 in
+  let perm = Array.make total (-1) in
+  perm.(dn.rhs_spec.(0)) <- 0;
+  perm.(dn.rhs_spec.(1)) <- 1;
+  let next = ref 2 in
+  Array.iteri
+    (fun i v ->
+      if v < 0 then begin
+        perm.(i) <- !next;
+        incr next
+      end)
+    perm;
+  let rhs =
+    if perm = Array.init total Fun.id then rhs
+    else b1 (Transpose perm) [ rhs ]
+  in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
-  let kernel_spec = Array.init (k + 2) Fun.id in
-  conv_general_dilated ?lhs_dilation ?rhs_dilation
-    ~dimension_numbers:{ dn with rhs_spec = kernel_spec }
-    ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
+  conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn
+    ?conv_precision:precision ~feature_group_count:n_channels lhs rhs
+    ~window_strides:strides padding
 
 let scatter_apply x indices func dimension_numbers =
   let updates_shape = shape indices in

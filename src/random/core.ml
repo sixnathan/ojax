@@ -1172,7 +1172,10 @@ let key_impl k =
 
 let key_data k =
   check_prng_key k;
-  key_data k
+  match k with
+  | Tracer _ when not (Key_reuse.is_typed k) ->
+      PR.random_unwrap (PR.random_wrap k)
+  | _ -> key_data k
 
 let clone k =
   check_prng_key k;
@@ -1189,7 +1192,7 @@ let fold_in k data =
 let prng_key seed =
   let raw = PR.random_seed seed in
   if Config.value Config.enable_custom_prng then Key_reuse.mark_typed raw
-  else raw
+  else match raw with Tracer _ -> PR.random_unwrap raw | _ -> raw
 
 let bits k ~shape = sampler ~name:"random_bits" k (fun () -> bits k ~shape)
 

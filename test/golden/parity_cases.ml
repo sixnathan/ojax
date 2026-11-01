@@ -1256,7 +1256,7 @@ let tracer_batch_run op params a b =
         ]
   | "tb_seed" ->
       let seed = NL.astype (RD.sum (a ())) Ojax.Dtype.I32 in
-      Some [ Ojax.Random.Threefry.threefry_seed seed ]
+      Some [ RC.key_data (RC.prng_key seed) ]
   | _ -> None
 
 let library_sweep op v =

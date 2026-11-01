@@ -1032,10 +1032,14 @@ let real_basetype v =
   | d -> d
 
 let nan_full v =
-  if is_complex v then
-    let part = L.full (shape v) Float.nan (real_basetype v) in
-    L.complex part part
-  else like v Float.nan
+  let dt = dtype v in
+  let literal =
+    if is_complex v then
+      Ndarray.of_complex dt [||]
+        [| { Complex.re = Float.nan; im = Float.nan } |]
+    else Ndarray.of_floats dt [||] [| Float.nan |]
+  in
+  L.broadcast_in_dim (Concrete literal) (shape v) [||]
 
 let nan_where_bad ok v =
   let batch = shape ok in
@@ -1094,10 +1098,13 @@ let lapack_eigen_values_real = function
 
 let lapack_eig ~real ~compute_left ~compute_right outs =
   let outs = if real then lapack_eigen_values_real outs else outs in
-  match lapack_guarded outs with
-  | [ w; vl; vr ] ->
-      (w :: (if compute_left then [ vl ] else []))
-      @ if compute_right then [ vr ] else []
+  match outs with
+  | [ w; vl; vr; info ] ->
+      let ok = info_ok info in
+      let w = nan_where_bad ok w in
+      let vl = if compute_left then [ nan_where_bad ok vl ] else [] in
+      let vr = if compute_right then [ nan_where_bad ok vr ] else [] in
+      (w :: vl) @ vr
   | _ -> invalid_arg "Native_lowering: geev arity"
 
 let lapack_schur ~compute_vectors outs =

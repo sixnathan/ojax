@@ -14,3 +14,9 @@ type lowered = { text : string; kept : int list }
 
 val lower : name:string -> Types.closed_jaxpr -> lowered
 val emit_jax_text : name:string -> Types.closed_jaxpr -> string
+
+val lower_partitioned :
+  name:string -> partition -> Types.closed_jaxpr -> lowered
+
+val emit_export_text :
+  name:string -> uses_shape_polymorphism:bool -> Types.closed_jaxpr -> lowered

@@ -103,6 +103,7 @@ val compress :
 
 val extract : ?size:int -> ?fill_value:float -> value -> value -> value
 val delete : ?axis:int -> value -> int list -> value
+val delete_array : ?axis:int -> value -> value -> value
 val insert : ?axis:int -> value -> int -> value -> value
 val place : value -> value -> value -> value
 val piecewise : value -> value list -> (value -> value) list -> value

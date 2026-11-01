@@ -325,19 +325,25 @@ let numpy_run op p a b c =
              (U.to_list (U.member "cond" p)))
       in
       let cond =
-        T.Concrete
-          (Ojax.Ndarray.of_floats Ojax.Dtype.Bool
-             [| Array.length bools |]
-             bools)
+        Ojax.Jaxpr.stage_constant
+          (T.Concrete
+             (Ojax.Ndarray.of_floats Ojax.Dtype.Bool
+                [| Array.length bools |]
+                bools))
       in
       Some [ E.compress ~axis:(int "axis" p) cond (a ()) ]
   | "np_extract" -> Some [ E.extract (binarize (a ())) (a ()) ]
   | "np_delete" ->
-      Some
-        [
-          E.delete ?axis:(opt_int "axis" p) (a ())
-            (Array.to_list (ints "obj" p));
-        ]
+      let obj = ints "obj" p in
+      let dt = Ojax.Dtypes.default_int_dtype () in
+      let obj =
+        Ojax.Jaxpr.stage_constant
+          (T.Concrete
+             (Ojax.Ndarray.of_floats dt
+                [| Array.length obj |]
+                (Array.map float_of_int obj)))
+      in
+      Some [ E.delete_array ?axis:(opt_int "axis" p) (a ()) obj ]
   | "np_insert" ->
       let v = L.full [||] (U.to_number (U.member "val" p)) (dt_of (a ())) in
       Some [ E.insert ?axis:(opt_int "axis" p) (a ()) (int "pos" p) v ]

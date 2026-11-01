@@ -18,12 +18,20 @@ and trace = { level : int; kind : trace_kind; global_data : global_data }
 and trace_kind = KEval | KJVP | KBatch | KJaxpr | KPE
 and global_data = GNone | GAxisSize of int | GBuilder of jaxpr_builder
 
+and trace_debug = {
+  func_src_info : string;
+  traced_for : string;
+  arg_names : string list option;
+}
+
 and jaxpr_builder = {
   mutable jb_eqns : eqn list;
   mutable jb_tracer_to_var : (int * var) list;
   mutable jb_const_tracers : (int * tracer) list;
   mutable jb_constvals : (var * value) list;
   mutable jb_tracers : tracer list;
+  mutable jb_invars : var list;
+  jb_debug : trace_debug;
 }
 
 and partial_val = { pv_aval : aval; pv_const : value option }
@@ -143,7 +151,11 @@ and primitive =
   | Optimization_barrier
   | Ragged_dot_general
   | Reduce_precision of { exponent_bits : int; mantissa_bits : int }
-  | Rng_bit_generator
+  | Rng_bit_generator of {
+      rbg_shape : int array;
+      rbg_dtype : Dtype.t;
+      rbg_algorithm : string;
+    }
   | Rng_uniform
   | Sort of { dimension : int; is_stable : bool; num_keys : int }
   | Tie
@@ -245,6 +257,10 @@ and primitive =
   | Lu
   | Lu_pivots_to_permutation of int
   | Qr of bool
+  | Qr_pivoted of bool
+  | Geqrf
+  | Geqp3
+  | Ormqr of { ormqr_left : bool; ormqr_transpose : bool }
   | Triangular_solve of {
       left_side : bool;
       lower : bool;

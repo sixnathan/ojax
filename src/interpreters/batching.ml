@@ -841,7 +841,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Custom_linear_solve _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
-  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator
+  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ ->
       failwith "batching: vmap of this primitive not supported in M1"
   | Dot_general dims -> dot_general_batch dims vals bdims
@@ -855,8 +855,9 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Threefry2x32 | Iota_2x32_shape _ | Random_seed | Random_split _
   | Random_fold_in | Random_bits _ | Random_wrap | Random_unwrap | While _
   | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
-  | Schur _ | Svd _ | Tridiagonal _ ->
+  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Triangular_solve _
+  | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _
+  | Tridiagonal _ ->
       failwith "batching: handled by unstacking in batch_process_primitive"
   | Collective _ ->
       failwith "batching: collectives handled by batch_process_primitive"
@@ -1229,7 +1230,7 @@ let unstacks_operands prim (bdims : int option list) =
       | Random_bits _ | Random_wrap | Random_unwrap | While _ | Cholesky
       | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
       | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _ | Hessenberg
-      | Schur _ | Svd _ | Tridiagonal _ ),
+      | Schur _ | Svd _ | Tridiagonal _ | Rng_bit_generator _ ),
       _ ) ->
       true
   | Custom_vjp_call id, _ -> (
@@ -1799,6 +1800,11 @@ let batch_process_primitive (trace : trace) (prim : primitive)
   | Triangular_solve _ when not (unstacks_operands prim bdims) ->
       let out, b = triangular_solve_batch prim vals bdims in
       [ Tracer (new_batch_tracer trace out b) ]
+  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ ->
+      let args = List.map2 (bdim_at_front axis_size) vals bdims in
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o (Some 0)))
+        (Core.bind prim args)
   | _ when unstacks_operands prim bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

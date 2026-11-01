@@ -623,34 +623,9 @@ and norm_body ?(ord = Onone) ?(axis = Anone) ?(keepdims = false) x =
 and matrix_transpose x = matrix_transpose_v x
 
 and raw_qr a =
-  let sh = shape a in
-  let nd = Array.length sh in
-  if nd > 2 then
-    let outs =
-      Interpreters.Batching.vmap
-        (fun args -> raw_qr (List.hd args))
-        [ Some 0 ] [ a ]
-    in
-    outs
-  else
-    let k = min sh.(0) sh.(1) in
-    let aval = Core.get_aval a in
-    match
-      Custom_derivatives.pure_callback
-        (fun args ->
-          match args with
-          | [ T.Concrete nd ] ->
-              List.map (fun x -> T.Concrete x) (Lax.Linalg.geqrf_impl nd)
-          | [ T.Device b ] ->
-              List.map
-                (fun x -> T.Concrete x)
-                (Lax.Linalg.geqrf_impl (Pjrt.Buffer.to_host b))
-          | _ -> failwith "jnp.linalg.qr: raw mode arity")
-        ~result_avals:[ aval; { aval with T.shape = [| k |] } ]
-        [ a ]
-    with
-    | [ h; t ] -> [ matrix_transpose_v h; t ]
-    | _ -> failwith "jnp.linalg.qr: raw mode arity"
+  match Core.bind T.Geqrf [ a ] with
+  | [ h; t ] -> [ matrix_transpose_v h; t ]
+  | _ -> failwith "jnp.linalg.qr: raw mode arity"
 
 and qr_body ?(mode = "reduced") a =
   let a = to_inexact a in

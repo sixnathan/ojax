@@ -1936,6 +1936,52 @@ let emit_rng_uniform ctx (eqn : eqn) in_ids =
        (name n) (name a) (name b) (name c) aty bty shty
        (Ir.tensor_type_of_aval out.vaval))
 
+let emit_rng_bit_generator ctx (eqn : eqn) in_ids algorithm =
+  let key = atom_aval (sole eqn.inputs) in
+  let key_id = sole in_ids in
+  let out_key, out_vals =
+    match eqn.outs with
+    | [ a; b ] -> (a, b)
+    | _ -> invalid_arg "Stablehlo.Emit: rng_bit_generator arity"
+  in
+  let wide = Ir.tensor_type Dtype.Uint64 [| 2 |] in
+  let pair = Ir.tensor_type Dtype.Uint32 [| 2; 2 |] in
+  let key_ty = Ir.tensor_type_of_aval key in
+  let narrow = key.dtype = Dtype.Uint32 in
+  let state =
+    if narrow then begin
+      let r = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name r)
+           (name key_id) key_ty pair);
+      let k = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.bitcast_convert %s : (%s) -> %s\n"
+           (name k) (name r) pair wide);
+      k
+    end
+    else key_id
+  in
+  let next = fresh ctx in
+  let vals = bind_var ctx out_vals in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s, %s = stablehlo.rng_bit_generator %s, algorithm = %s : (%s) -> \
+        (%s, %s)\n"
+       (name next) (name vals) (name state) algorithm wide wide
+       (Ir.tensor_type_of_aval out_vals.vaval));
+  if narrow then begin
+    let b = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.bitcast_convert %s : (%s) -> %s\n"
+         (name b) (name next) wide pair);
+    let ok = bind_var ctx out_key in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.reshape %s : (%s) -> %s\n" (name ok)
+         (name b) pair key_ty)
+  end
+  else Hashtbl.replace ctx.ids out_key.vid next
+
 let mlir_string s =
   let b = Buffer.create (String.length s + 2) in
   Buffer.add_char b '"';
@@ -2023,6 +2069,10 @@ let lapack_layout rank ~batch =
       (Array.init (rank - 2) (fun i -> rank - 3 - i))
   else Array.init rank (fun i -> rank - 1 - i)
 
+let sdy_factor_name i =
+  if i < 17 then String.make 1 (Char.chr (Char.code 'i' + i))
+  else Printf.sprintf "z_%d" (i - 17)
+
 let lapack_aval shape dtype = { shape; dtype; weak_type = false }
 
 let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
@@ -2033,11 +2083,12 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
     | Some name -> name
     | None -> Printf.sprintf "lapack_%c%s_ffi" (lapack_prec first.dtype) base
   in
-  let batch =
+  let max_rank =
     List.fold_left
-      (fun acc (a : aval) -> max acc (Array.length a.shape - 2))
+      (fun acc (a : aval) -> max acc (Array.length a.shape))
       0 in_avals
   in
+  let batch = max_rank - 2 in
   let group = fresh ctx in
   let n = List.length out_avals in
   let layouts avals =
@@ -2069,7 +2120,7 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
   let sizes = ref [] in
   let next_factor = ref 0 in
   let fresh_factor size =
-    let letter = Char.escaped (Char.chr (Char.code 'i' + !next_factor)) in
+    let letter = sdy_factor_name !next_factor in
     incr next_factor;
     sizes := (letter, size) :: !sizes;
     letter
@@ -2200,9 +2251,13 @@ let sdy_sharding_body spec =
 let sdy_sharding spec = "#sdy.sharding" ^ sdy_sharding_body spec
 
 let sdy_mesh mesh =
-  Printf.sprintf "  sdy.mesh @mesh = <[%s]>\n"
+  Printf.sprintf "  sdy.mesh @mesh = <[%s]> {stablehlo.mesh = {axes = [%s]}}\n"
     (String.concat ", "
        (List.map (fun (n, s) -> Printf.sprintf "\"%s\"=%d" n s) mesh))
+    (String.concat ", "
+       (List.map
+          (fun (n, s) -> Printf.sprintf "{name = \"%s\", size = %d : i64}" n s)
+          mesh))
 
 let list_index x l =
   let rec go i = function
@@ -2236,6 +2291,70 @@ let dense_i64_matrix rows =
           (fun r -> "[" ^ String.concat ", " (List.map string_of_int r) ^ "]")
           rows))
     n m
+
+let callback_seen = ref false
+let default_layout rank = Array.init rank (fun i -> rank - 1 - i)
+
+let emit_host_callback ctx (eqn : eqn) in_ids id =
+  if (not (lapack_ffi ())) || !active_mesh <> None then
+    failwith "Stablehlo.Emit: callbacks run on the host interpreter";
+  callback_seen := true;
+  let in_avals = List.map atom_aval eqn.inputs in
+  let out_avals = List.map (fun (v : var) -> v.vaval) eqn.outs in
+  let layouts avals =
+    String.concat ", "
+      (List.map
+         (fun (a : aval) ->
+           ffi_layout_text (default_layout (Array.length a.shape)))
+         avals)
+  in
+  let types avals =
+    String.concat ", " (List.map Ir.tensor_type_of_aval avals)
+  in
+  let per_value =
+    let n = max 1 (List.length out_avals) in
+    String.concat ", " (List.init n (fun _ -> "<@maximal_mesh_0, []>"))
+  in
+  let results =
+    match out_avals with
+    | [] -> "()"
+    | [ a ] -> Ir.tensor_type_of_aval a
+    | avals -> "(" ^ types avals ^ ")"
+  in
+  let attrs =
+    Printf.sprintf
+      "{backend_config = \"\", %smhlo.backend_config = {index = %d : ui64}, \
+       operand_layouts = [%s], result_layouts = [%s], sdy.sharding = \
+       #sdy.sharding_per_value<[%s]>} : (%s) -> %s\n"
+      (if out_avals = [] then "has_side_effect = true, " else "")
+      id (layouts in_avals) (layouts out_avals) per_value (types in_avals)
+      results
+  in
+  let args = String.concat ", " (List.map name in_ids) in
+  match eqn.outs with
+  | [] ->
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    stablehlo.custom_call @xla_ffi_python_cpu_callback(%s) %s" args
+           attrs)
+  | [ only ] ->
+      let n = bind_var ctx only in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.custom_call @xla_ffi_python_cpu_callback(%s) %s"
+           (name n) args attrs)
+  | outs ->
+      let group = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %%%d:%d = stablehlo.custom_call \
+            @xla_ffi_python_cpu_callback(%s) %s"
+           group (List.length outs) args attrs);
+      List.iteri
+        (fun i (v : var) ->
+          Hashtbl.replace ctx.ids v.vid
+            (alias_result (Printf.sprintf "%%%d#%d" group i)))
+        outs
 
 let next_channel () =
   incr channel;
@@ -2792,9 +2911,11 @@ and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
       in
       Buffer.add_string ctx.buf (reindent 2 text));
   Buffer.add_string ctx.buf
-    (Printf.sprintf "    } : (%s) -> (%s)\n"
+    (Printf.sprintf "    } : (%s) -> %s\n"
        (String.concat ", " in_types)
-       (String.concat ", " out_types))
+       (match out_types with
+       | [ t ] -> t
+       | ts -> "(" ^ String.concat ", " ts ^ ")"))
 
 and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
   let fname =
@@ -3303,12 +3424,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Regularized_incomplete_beta ->
       emit_inlined ctx eqn in_ids Native_lowering.betainc
   | Rng_uniform -> emit_rng_uniform ctx eqn in_ids
-  | Rng_bit_generator ->
-      failwith
-        "Stablehlo.Emit: Rng_bit_generator lowers via a u32[4] -> u64[2] \
-         bitcast_convert into stablehlo.rng_bit_generator; uint64 is not in \
-         the M4 dtype set (F32/F64/I32/I64/Bool/Uint32) and Ojax has no \
-         abstract_eval for it, so it is non-representable (M5)"
+  | Rng_bit_generator { rbg_algorithm; _ } ->
+      emit_rng_bit_generator ctx eqn in_ids rbg_algorithm
   | Threefry2x32 ->
       emit_inlined ctx eqn in_ids (function
         | [ k1; k2; c1; c2 ] -> Prng_lowering.threefry2x32 k1 k2 c1 c2
@@ -3445,6 +3562,62 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx [ a; taus ] ids eqn.outs
         (Native_lowering.qr_from_factors ~full_matrices)
+  | Qr_pivoted full_matrices ->
+      if Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape then
+        failwith "Stablehlo.Emit: an empty qr runs on the host";
+      emit_inlined ctx eqn in_ids (function
+        | [ a ] -> Native_lowering.qr_pivoted ~full_matrices a
+        | _ -> invalid_arg "Stablehlo.Emit: qr arity")
+  | Geqrf when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      let taus =
+        lapack_aval
+          (Array.append
+             (Array.sub a.shape 0 (rank - 2))
+             [| min a.shape.(rank - 2) a.shape.(rank - 1) |])
+          a.dtype
+      in
+      let ids =
+        emit_lapack_call ctx ~base:"geqrf" ~config:""
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] [ a; taus ]
+      in
+      List.iter2
+        (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
+        eqn.outs ids
+  | Geqp3 when lapack_ffi () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let a = List.hd inputs and jpvt = List.nth inputs 1 in
+      let rank = Array.length a.shape in
+      let taus =
+        lapack_aval
+          (Array.append
+             (Array.sub a.shape 0 (rank - 2))
+             [| min a.shape.(rank - 2) a.shape.(rank - 1) |])
+          a.dtype
+      in
+      let ids =
+        emit_lapack_call ctx ~base:"geqp3" ~config:""
+          ~aliases:[ (0, 0); (1, 1) ]
+          in_ids inputs [ a; jpvt; taus ]
+      in
+      List.iter2
+        (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
+        eqn.outs ids
+  | Ormqr { ormqr_left; ormqr_transpose } when lapack_ffi () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let a = List.hd inputs and c = List.nth inputs 2 in
+      let base = if is_complex_dtype a.dtype then "unmqr" else "ormqr" in
+      let ids =
+        emit_lapack_call ctx ~base
+          ~config:
+            (Printf.sprintf "left = %b, transpose = %b" ormqr_left
+               ormqr_transpose)
+          ~aliases:[ (2, 0) ]
+          in_ids inputs [ c ]
+      in
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid (List.hd ids)
   | Tridiagonal_solve { perturb_singular = true } when lapack_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let b = List.nth inputs 3 in
@@ -3571,8 +3744,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
       let n = a.shape.(rank - 1) in
-      if n < 2 then
-        failwith "Stablehlo.Emit: a small hessenberg runs on the host";
+      if n < 1 then
+        failwith "Stablehlo.Emit: an empty hessenberg runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let taus = lapack_aval (Array.append batch [| n - 1 |]) a.dtype in
       let info = lapack_aval batch Dtype.I32 in
@@ -3709,6 +3882,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Lu_pivots_to_permutation permutation_size ->
       emit_inlined ctx eqn in_ids
         (Native_lowering.lu_pivots_to_permutation ~permutation_size)
+  | Geqrf | Geqp3 | Ormqr _ ->
+      failwith "Stablehlo.Emit: this LAPACK target needs the scipy library"
   | Qr full_matrices ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
@@ -3820,8 +3995,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             (emit_closed_inline ctx c in_ids)
       | None -> (
           match Core.custom_rule id with
-          | Core.Callback_rule _ ->
-              failwith "Stablehlo.Emit: callbacks run on the host interpreter"
+          | Core.Callback_rule _ -> emit_host_callback ctx eqn in_ids id
           | _ -> invalid_arg "Stablehlo.Emit: linear rule has no primal call"))
   | Custom_lin { rule; n_res; _ } -> (
       match Core.custom_rule rule with
@@ -3867,6 +4041,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset call_symbols;
   symbol_counter := 0;
   seen_mesh := None;
+  callback_seen := false;
   channel := 0;
   manual_axes := [];
   active_mesh := Option.map (fun p -> p.pt_mesh) partition;
@@ -3934,7 +4109,13 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   in
   Printf.sprintf
     "module {\n%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
-    (match partition with Some p -> sdy_mesh p.pt_mesh | None -> "")
+    (match partition with
+    | Some p -> sdy_mesh p.pt_mesh
+    | None ->
+        if !callback_seen then
+          "  sdy.mesh @maximal_mesh_0 = <[], device_ids=[0]> {stablehlo.mesh = \
+           {axes = [], device_ids = dense<0> : tensor<1xi64>}}\n"
+        else "")
     (String.concat ", " params)
     (String.concat ", " out_attributes)
     (qualify_nested_calls ~depth:1 (Buffer.contents ctx.buf))
@@ -3955,4 +4136,29 @@ let lower ~name cj =
     kept;
   }
 
-let emit_jax_text ~name cj = (lower ~name cj).text
+let emit_jax_text ~name cj = Mlir_names.renumber_callbacks (lower ~name cj).text
+
+let emit_export_text ~name ~uses_shape_polymorphism cj =
+  let pruned, kept = Dce.prune_unused_inputs cj in
+  {
+    text =
+      Mlir_names.render ~module_name:name
+        ~module_attributes:
+          [
+            Printf.sprintf "jax.uses_shape_polymorphism = %b"
+              uses_shape_polymorphism;
+          ]
+        (Mlir_names.hoist_constants (emit_closed_jaxpr pruned));
+    kept;
+  }
+
+let lower_partitioned ~name partition cj =
+  let pruned, kept = Dce.prune_unused_inputs cj in
+  let pt_in = List.map (List.nth partition.pt_in) kept in
+  {
+    text =
+      Mlir_names.render ~module_name:name
+        ~num_partitions:(Array.length partition.pt_devices)
+        (emit_closed_jaxpr ~partition:{ partition with pt_in } pruned);
+    kept;
+  }

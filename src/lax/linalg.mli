@@ -19,7 +19,8 @@ val schur_impl : bool -> Ndarray.t list -> Ndarray.t list
 val svd_impl : ?gesvd:bool -> bool -> bool -> Ndarray.t list -> Ndarray.t list
 val tridiagonal_impl : bool -> Ndarray.t list -> Ndarray.t list
 val geqrf_impl : Ndarray.t -> Ndarray.t list
-val geqp3_impl : Ndarray.t -> Ndarray.t list
+val geqp3_impl : Ndarray.t -> Ndarray.t -> Ndarray.t list
+val qr_pivoted_impl : bool -> Ndarray.t list -> Ndarray.t list
 
 val ormqr_impl :
   left:bool ->
@@ -32,6 +33,10 @@ val ormqr_impl :
 val cholesky_aval : aval list -> aval list
 val lu_aval : aval list -> aval list
 val qr_aval : bool -> aval list -> aval list
+val qr_pivoted_aval : bool -> aval list -> aval list
+val geqrf_aval : aval list -> aval list
+val geqp3_aval : aval list -> aval list
+val ormqr_aval : left:bool -> aval list -> aval list
 val householder_product_aval : aval list -> aval list
 val lu_pivots_to_permutation_aval : int -> aval list -> aval list
 val triangular_solve_aval : aval list -> aval list

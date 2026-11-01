@@ -23,7 +23,7 @@ static float complex divide_c(float complex numerator, float complex divisor) {
     float ratio = d / c;
     float denominator = fmaf(d, ratio, c);
     re = fmaf(b, ratio, a) / denominator;
-    im = fmaf(-a, ratio, b) / denominator;
+    im = fmaf(a, -ratio, b) / denominator;
   }
   if (isnan(re) && isnan(im)) {
     if (c == 0.0f && d == 0.0f && (!isnan(a) || !isnan(b))) {
@@ -51,8 +51,11 @@ static float complex divide_c(float complex numerator, float complex divisor) {
 #define DIVIDE_D(a, b) ((a) / (b))
 #define DIVIDE_Z(a, b) ((a) / (b))
 
+#define NEGATE_FACTOR(f, s) (-(f) * (s))
+#define NEGATE_RIGHT(f, s) ((f) * -(s))
+
 #define DEFINE_SOLVER(NAME, SCALAR, REAL, ABS, RE, COPYSIGN, FMA_SUB, DIVIDE,  \
-                      TINY, HUGE_REAL, EPS)                                    \
+                      NEGATED, TINY, HUGE_REAL, EPS)                                    \
   static void NAME##_perturb_pivot(REAL perturb, SCALAR *pivot, SCALAR *row,   \
                                    int k_rhs) {                                \
     const REAL one = 1;                                                        \
@@ -142,7 +145,7 @@ static float complex divide_c(float complex numerator, float complex divisor) {
           u1[k] = diag[k + 1];                                                 \
           if (k < n - 2) {                                                     \
             u2[k] = super[k + 1];                                              \
-            u1[k + 1] = -factor * super[k + 1];                                \
+            u1[k + 1] = NEGATED(factor, super[k + 1]);                                \
           }                                                                    \
           for (int j = 0; j < k_rhs; j++) {                                    \
             SCALAR product = factor * rhs[k + 1 + j * n];                      \
@@ -195,13 +198,13 @@ static float complex divide_c(float complex numerator, float complex divisor) {
 #define PLAIN(a, f, b) ((a) - (f) * (b))
 
 DEFINE_SOLVER(solve_s, float, float, fabsf, IDENTITY, copysignf, FUSED_F,
-              DIVIDE_S, FLT_MIN, FLT_MAX, FLT_EPSILON)
+              DIVIDE_S, NEGATE_FACTOR, FLT_MIN, FLT_MAX, FLT_EPSILON)
 DEFINE_SOLVER(solve_d, double, double, fabs, IDENTITY, copysign, FUSED_D,
-              DIVIDE_D, DBL_MIN, DBL_MAX, DBL_EPSILON)
+              DIVIDE_D, NEGATE_FACTOR, DBL_MIN, DBL_MAX, DBL_EPSILON)
 DEFINE_SOLVER(solve_c, float complex, float, cabsf, crealf, copysignf, PLAIN,
-              divide_c, FLT_MIN, FLT_MAX, FLT_EPSILON)
+              divide_c, NEGATE_RIGHT, FLT_MIN, FLT_MAX, FLT_EPSILON)
 DEFINE_SOLVER(solve_z, double complex, double, cabs, creal, copysign, PLAIN,
-              DIVIDE_Z, DBL_MIN, DBL_MAX, DBL_EPSILON)
+              DIVIDE_Z, NEGATE_RIGHT, DBL_MIN, DBL_MAX, DBL_EPSILON)
 
 void ojax_tridiagonal_perturbed(char prec, int n, int k_rhs, const void *dl,
                                 const void *d, const void *du, const void *b,

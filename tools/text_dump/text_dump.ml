@@ -59,6 +59,13 @@ let record oc ~set ~case traced =
   output_char oc '\n';
   flush oc
 
+let traced_debug n =
+  {
+    T.func_src_info = Printf.sprintf "f at %s:%d" __FILE__ __LINE__;
+    traced_for = "jit";
+    arg_names = Some (List.init n (Printf.sprintf "xs[%d]"));
+  }
+
 let parity_case oc ~set case =
   let names =
     List.map
@@ -80,8 +87,11 @@ let parity_case oc ~set case =
   record oc ~set
     ~case:(U.to_string (U.member "case_id" case))
     (fun () ->
-      Ojax.Jaxpr.make_jaxpr avals (fun args ->
-          Parity_cases.run op params (lookup args)))
+      Ojax.Jaxpr.with_trace_debug
+        (traced_debug (List.length avals))
+        (fun () ->
+          Ojax.Jaxpr.make_jaxpr avals (fun args ->
+              Parity_cases.run op params (lookup args))))
 
 let f32 shape : T.aval = { shape; dtype = D.F32; weak_type = false }
 let of_dtype dtype shape : T.aval = { shape; dtype; weak_type = false }

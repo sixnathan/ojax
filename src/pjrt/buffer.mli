@@ -42,3 +42,9 @@ val shards_of_host :
   Client.t -> Ndarray.t -> ((int * int) array * int) array -> raw array
 
 val single_raw : t -> raw
+
+type bytebuf =
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+val host_of_bytes : Dtype.t -> int array -> bytebuf -> Ndarray.t
+val host_bytes : Ndarray.t -> bytebuf

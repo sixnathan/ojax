@@ -191,6 +191,28 @@ let top_k_results line =
     | _ -> None
   else None
 
+let manual_computation_args line =
+  if contains "sdy.manual_computation(" line then begin
+    let key = "manual_axes=" in
+    let n = String.length line and m = String.length key in
+    let rec find i =
+      if i + m > n then None
+      else if String.sub line i m = key then Some i
+      else find (i + 1)
+    in
+    match find 0 with
+    | Some at -> tokens_of (String.sub line at (n - at))
+    | None -> []
+  end
+  else []
+
+let rng_bit_generator_results line =
+  if contains "stablehlo.rng_bit_generator " line then
+    match tokens_of line with
+    | state :: output :: _ -> Some (state, output)
+    | _ -> None
+  else None
+
 let rec nearest_while lines i =
   if i < 0 then None
   else if contains "stablehlo.while(" lines.(i) then Some i
@@ -215,12 +237,17 @@ let rec number lines region st =
           st := bind_named region !st values "values";
           st := bind_named region !st indices "indices"
       | None -> (
-          match definition_of lines.(i) with
-          | Some (tok, rhs) -> (
-              match constant_base rhs with
-              | Some base -> st := bind_named region !st tok base
-              | None -> st := bind_numbered region !st tok)
-          | None -> ())
+          match rng_bit_generator_results lines.(i) with
+          | Some (state, output) ->
+              st := bind_named region !st state "output_state";
+              st := bind_named region !st output "output"
+          | None -> (
+              match definition_of lines.(i) with
+              | Some (tok, rhs) -> (
+                  match constant_base rhs with
+                  | Some base -> st := bind_named region !st tok base
+                  | None -> st := bind_numbered region !st tok)
+              | None -> ()))
   done;
   let finished = !st in
   List.iter
@@ -237,6 +264,9 @@ let rec number lines region st =
                 finished
                 (while_args lines.(header))
           | None -> finished
+        else if contains "sdy.manual_computation(" line then
+          List.fold_left (bind_arg child) finished
+            (manual_computation_args line)
         else List.fold_left (bind_arg child) finished (reducer_args line)
       in
       number lines child start)
@@ -302,9 +332,26 @@ let rec apply lines out region env =
     (fun (owner, child) ->
       apply lines out child env;
       let t = String.trim lines.(owner) in
-      if starts_with "func.func " t || starts_with "reducer(" t then
-        out.(owner) <- rewrite (overlay env child.names) lines.(owner))
+      if
+        starts_with "func.func " t || starts_with "reducer(" t
+        || contains "sdy.manual_computation(" t
+      then out.(owner) <- rewrite (overlay env child.names) lines.(owner))
     region.children
+
+let split_results body =
+  let parts = ref [] and depth = ref 0 and start = ref 0 in
+  String.iteri
+    (fun i c ->
+      match c with
+      | '<' | '{' | '[' | '(' -> incr depth
+      | '>' | '}' | ']' | ')' -> decr depth
+      | ',' when !depth = 0 ->
+          parts := String.sub body !start (i - !start) :: !parts;
+          start := i + 1
+      | _ -> ())
+    body;
+  parts := String.sub body !start (String.length body - !start) :: !parts;
+  List.rev_map String.trim !parts
 
 let add_result_info line =
   let t = String.trim line in
@@ -325,7 +372,7 @@ let add_result_info line =
         let body = String.sub line start (stop - start) in
         if body = "" then line
         else
-          let types = String.split_on_char ',' body |> List.map String.trim in
+          let types = split_results body in
           let many = List.length types > 1 in
           let annotated =
             List.mapi
@@ -333,7 +380,20 @@ let add_result_info line =
                 let label =
                   if many then Printf.sprintf "result[%d]" i else "result"
                 in
-                Printf.sprintf "%s {jax.result_info = \"%s\"}" ty label)
+                let key = " {" in
+                let k = String.length ty and m = String.length key in
+                let rec brace j =
+                  if j + m > k then None
+                  else if String.sub ty j m = key then Some j
+                  else brace (j + 1)
+                in
+                match brace 0 with
+                | Some j ->
+                    Printf.sprintf "%s {jax.result_info = \"%s\", %s"
+                      (String.sub ty 0 j) label
+                      (String.sub ty (j + m) (k - j - m))
+                | None ->
+                    Printf.sprintf "%s {jax.result_info = \"%s\"}" ty label)
               types
           in
           String.sub line 0 start
@@ -347,17 +407,178 @@ let symbol_name name =
   in
   if String.for_all bare name then name else "\"" ^ name ^ "\""
 
-let render ~module_name text =
+let splat_index_layouts line =
+  let open_key = "dense<[" and close_key = "]> : tensor<1xindex>" in
+  let b = Buffer.create (String.length line) in
+  let n = String.length line in
+  let m = String.length open_key and c = String.length close_key in
+  let rec go i =
+    if i >= n then ()
+    else if i + m <= n && String.sub line i m = open_key then begin
+      let j = ref (i + m) in
+      while !j < n && line.[!j] >= '0' && line.[!j] <= '9' do
+        incr j
+      done;
+      if !j + c <= n && String.sub line !j c = close_key then begin
+        Buffer.add_string b "dense<";
+        Buffer.add_string b (String.sub line (i + m) (!j - i - m));
+        Buffer.add_string b "> : tensor<1xindex>";
+        go (!j + c)
+      end
+      else begin
+        Buffer.add_char b line.[i];
+        go (i + 1)
+      end
+    end
+    else begin
+      Buffer.add_char b line.[i];
+      go (i + 1)
+    end
+  in
+  go 0;
+  Buffer.contents b
+
+let renumber_callbacks text =
+  let key = "mhlo.backend_config = {index = " in
+  let k = String.length key in
+  let seen = Hashtbl.create 4 in
+  let line_of line =
+    if not (contains "@xla_ffi_python_cpu_callback(" line) then line
+    else
+      let n = String.length line in
+      let rec find i =
+        if i + k > n then None
+        else if String.sub line i k = key then Some (i + k)
+        else find (i + 1)
+      in
+      match find 0 with
+      | None -> line
+      | Some start ->
+          let stop = ref start in
+          while !stop < n && line.[!stop] >= '0' && line.[!stop] <= '9' do
+            incr stop
+          done;
+          let id = String.sub line start (!stop - start) in
+          let index =
+            match Hashtbl.find_opt seen id with
+            | Some i -> i
+            | None ->
+                let i = Hashtbl.length seen in
+                Hashtbl.replace seen id i;
+                i
+          in
+          String.sub line 0 start ^ string_of_int index
+          ^ String.sub line !stop (n - !stop)
+  in
+  String.concat "\n" (List.map line_of (String.split_on_char '\n' text))
+
+let constant_of line =
+  let t = String.trim line in
+  if contains "stablehlo.constant " t then
+    match definition_of line with
+    | Some (tok, rhs) -> Some (tok, String.trim rhs)
+    | None -> None
+  else None
+
+let opens_isolated line =
+  let t = String.trim line in
+  starts_with "reducer(" t
+  || ends_with "({" t
+     && (not (contains "stablehlo.case" t))
+     && not (contains "stablehlo.if" t)
+
+let hoist_constants text =
+  let lines = Array.of_list (String.split_on_char '\n' text) in
+  let n = Array.length lines in
+  let rec scope i =
+    let kept = ref [] and constants = ref [] and renames = ref Tbl.empty in
+    let depth = ref 0 in
+    let rec walk i =
+      if i >= n then i
+      else
+        let line = lines.(i) in
+        match constant_of line with
+        | Some (tok, rhs) ->
+            (match List.assoc_opt rhs !constants with
+            | Some first -> renames := Tbl.add tok first !renames
+            | None -> constants := (rhs, tok) :: !constants);
+            walk (i + 1)
+        | None ->
+            if closes line && not (opens line) then
+              if !depth = 0 then i
+              else begin
+                decr depth;
+                kept := line :: !kept;
+                walk (i + 1)
+              end
+            else if opens_isolated line then begin
+              kept := line :: !kept;
+              let header, i' =
+                if i + 1 < n && starts_with "^bb0(" (String.trim lines.(i + 1))
+                then ([ lines.(i + 1) ], i + 2)
+                else ([], i + 1)
+              in
+              kept := List.rev_append header !kept;
+              let inner, next = scope i' in
+              kept := List.rev_append inner !kept;
+              walk next
+            end
+            else if closes line then begin
+              kept := line :: !kept;
+              walk (i + 1)
+            end
+            else begin
+              if opens line then incr depth;
+              kept := line :: !kept;
+              walk (i + 1)
+            end
+    in
+    let next = walk i in
+    let body = List.rev !kept in
+    let indent =
+      match body with
+      | first :: _ ->
+          let k = ref 0 in
+          while !k < String.length first && first.[!k] = ' ' do
+            incr k
+          done;
+          String.make !k ' '
+      | [] -> "    "
+    in
+    let hoisted =
+      List.map
+        (fun (rhs, tok) -> Printf.sprintf "%s%s = %s" indent tok rhs)
+        !constants
+    in
+    (List.map (rewrite !renames) (hoisted @ body), next)
+  in
+  let out = ref [] in
+  let i = ref 0 in
+  while !i < n do
+    let line = lines.(!i) in
+    out := line :: !out;
+    incr i;
+    if starts_with "func.func " (String.trim line) then begin
+      let inner, next = scope !i in
+      out := List.rev_append inner !out;
+      i := next
+    end
+  done;
+  String.concat "\n" (List.rev !out)
+
+let render ?(num_partitions = 1) ?(module_attributes = []) ~module_name text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let root = snd (build_regions lines) in
   number lines root fresh_state;
   let out = Array.copy lines in
   apply lines out root Tbl.empty;
-  let out = Array.map add_result_info out in
+  let out = Array.map (fun l -> splat_index_layouts (add_result_info l)) out in
   if Array.length out > 0 && String.trim out.(0) = "module {" then
     out.(0) <-
       Printf.sprintf
-        "module @%s attributes {mhlo.num_partitions = 1 : i32, \
+        "module @%s attributes {%smhlo.num_partitions = %d : i32, \
          mhlo.num_replicas = 1 : i32} {"
-        (symbol_name ("jit_" ^ module_name));
+        (symbol_name ("jit_" ^ module_name))
+        (String.concat "" (List.map (fun a -> a ^ ", ") module_attributes))
+        num_partitions;
   String.concat "\n" (Array.to_list out)

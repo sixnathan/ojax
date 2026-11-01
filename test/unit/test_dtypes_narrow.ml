@@ -6873,7 +6873,7 @@ let program_text () =
           (function [ x ] -> [ C.bind1 T.Mul [ x; x ] ] | _ -> assert false)
           [ aval ]
       in
-      let text = Ojax.Stages.as_text lowered in
+      let text = Ojax.Stages.raw_text lowered in
       let wanted = String.concat "%0" (String.split_on_char 'X' expected) in
       if not (contains text wanted) then
         Alcotest.failf "%s: %s not in %s" (D.numpy_name d) wanted text;
@@ -6898,7 +6898,7 @@ let program_text () =
         let wanted =
           Printf.sprintf "dense<5.000000e-01> : tensor<%s>" (Ir.element_type d)
         in
-        let text = Ojax.Stages.as_text lowered in
+        let text = Ojax.Stages.raw_text lowered in
         if not (contains text wanted) then
           Alcotest.failf "%s: %s not in %s" (D.numpy_name d) wanted text
       end)

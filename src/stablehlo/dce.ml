@@ -19,7 +19,7 @@ let rec has_effects = function
   | Scan { jaxpr; _ } -> closed_effects jaxpr
   | Custom_jvp_call id | Custom_vjp_call id -> (
       match Core.custom_rule id with
-      | Core.Callback_rule _ -> true
+      | Core.Callback_rule { result_avals; _ } -> result_avals = []
       | Core.Jvp_rule _ | Core.Vjp_rule _ | Core.Linear_rule _ -> (
           match Core.custom_call_jaxprs_of id with
           | [] -> false
@@ -144,6 +144,9 @@ and rule used_outs (e : eqn) =
     | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
         scan_rule e used_outs ~length ~reverse ~num_consts ~num_carry ~jaxpr
           ~unroll
+    | (Custom_jvp_call id | Custom_vjp_call id)
+      when Core.shard_rule id <> None || Core.constraint_rule id <> None ->
+        (everything, Some e)
     | Custom_jvp_call id | Custom_vjp_call id -> (
         let avals = eqn_avals e in
         match Core.find_custom_call_jaxpr id avals with

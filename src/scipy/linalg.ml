@@ -136,7 +136,7 @@ let lu_solve ?(trans = 0) (lu_, piv) b =
   in
   if bvec then NL.reshape out [| m |] else out
 
-let rec qr ?(mode = "full") ?(pivoting = false) a =
+let qr ?(mode = "full") ?(pivoting = false) a =
   let full_matrices =
     match mode with
     | "full" | "r" -> true
@@ -145,31 +145,20 @@ let rec qr ?(mode = "full") ?(pivoting = false) a =
         invalid_arg
           (Printf.sprintf "Unsupported QR decomposition mode '%s'" mode)
   in
-  let a = to_inexact a in
-  if not pivoting then
-    let q, r = LL.qr ~full_matrices a in
-    if mode = "r" then [ r ] else [ q; r ]
-  else if Array.length (shape a) > 2 then
-    Interpreters.Batching.vmap
-      (fun args -> qr ~mode ~pivoting (List.hd args))
-      [ Some 0 ] [ a ]
-  else begin
-    let sh = shape a in
-    let m = sh.(0) and n = sh.(1) in
-    let k = min m n in
-    let cols = if full_matrices then m else k in
-    let h, jpvt, taus = Linalg_extras.geqp3 a in
-    let perm = UF.subtract jpvt (i32_scalar 1) in
-    let r = NL.triu (Lax_api.slice h [| 0; 0 |] [| cols; n |]) in
-    if mode = "r" then [ r; perm ]
-    else
-      let dt = dtype a in
-      let base =
-        if cols <= n then Lax_api.slice h [| 0; 0 |] [| m; cols |]
-        else NL.concatenate ~axis:1 [ h; AC.zeros ~dtype:dt [| m; cols - n |] ]
-      in
-      [ LL.householder_product base taus; r; perm ]
-  end
+  Numpy.Jnp_util.jit "_qr"
+    ~key:(mode ^ if pivoting then "/p" else "")
+    (function
+      | [ a ] -> (
+          let a = to_inexact a in
+          if not pivoting then
+            let q, r = LL.qr ~full_matrices a in
+            if mode = "r" then [ r ] else [ q; r ]
+          else
+            match Core.bind (T.Qr_pivoted full_matrices) [ a ] with
+            | [ q; r; p ] -> if mode = "r" then [ r; p ] else [ q; r; p ]
+            | _ -> failwith "qr: arity")
+      | _ -> failwith "qr: arity")
+    [ a ]
 
 let qr ?mode ?pivoting a0 =
   Eager_jit.many ~jit:"_qr" "scipy.linalg.qr" (mode, pivoting) [] [ a0 ]
@@ -180,8 +169,6 @@ let qr ?mode ?pivoting a0 =
 
 let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
     c =
-  if mode <> "right" && mode <> "left" then
-    invalid_arg (Printf.sprintf "mode must be 'right' or 'left', got '%s'" mode);
   let a = to_inexact a and c = to_inexact c in
   let dt =
     if is_complex_dt (dtype a) || is_complex_dt (dtype c) then
@@ -196,56 +183,93 @@ let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
     else D.F32
   in
   let a = NL.astype a dt and c = NL.astype c dt in
-  if Array.length (shape a) > 2 then
-    Interpreters.Batching.vmap
-      (fun args ->
-        match args with
-        | [ a; c ] -> qr_multiply ~mode ~pivoting ~conjugate a c
-        | _ -> failwith "qr_multiply: arity")
-      [ Some 0; Some 0 ] [ a; c ]
-  else begin
-    let onedim = Array.length (shape c) = 1 in
-    let c =
-      if not onedim then c
-      else
-        let l = (shape c).(0) in
-        NL.reshape c (if mode = "left" then [| l; 1 |] else [| 1; l |])
-    in
-    let sh = shape a in
-    let m = sh.(0) and n = sh.(1) in
-    let k = min m n in
-    let cs = shape c in
-    if mode = "left" && cs.(0) <> k then
-      invalid_arg "Array shapes are not compatible for Q @ c operation";
-    if mode = "right" && cs.(1) <> m then
-      invalid_arg "Array shapes are not compatible for c @ Q operation";
-    let h, perm, taus =
-      if pivoting then
-        let h, p, t = Linalg_extras.geqp3 a in
-        (h, Some (UF.subtract p (i32_scalar 1)), t)
-      else
-        let h, t = Linalg_extras.geqrf a in
-        (h, None, t)
-    in
-    let c =
-      if m > n && mode = "left" then
-        NL.concatenate ~axis:0 [ c; AC.zeros ~dtype:dt [| m - k; cs.(1) |] ]
-      else c
-    in
-    let c = if conjugate then NL.matrix_transpose c else c in
-    let left = mode = "left" <> conjugate in
-    let cq = Linalg_extras.ormqr ~left ~transpose:conjugate h taus c in
-    let cq = if conjugate then NL.matrix_transpose cq else cq in
-    let cq =
-      if mode = "right" then Lax_api.slice_in_dim ~axis:1 cq 0 k else cq
-    in
-    let cq =
-      if onedim then NL.reshape cq [| Array.fold_left ( * ) 1 (shape cq) |]
-      else cq
-    in
-    let r = NL.triu (Lax_api.slice h [| 0; 0 |] [| k; n |]) in
-    match perm with None -> [ cq; r ] | Some p -> [ cq; r; p ]
-  end
+  if mode <> "right" && mode <> "left" then
+    invalid_arg (Printf.sprintf "mode must be 'right' or 'left', got '%s'" mode);
+  let onedim = Array.length (shape c) = 1 in
+  let c =
+    if not onedim then c
+    else
+      let l = (shape c).(0) in
+      NL.reshape c (if mode = "left" then [| l; 1 |] else [| 1; l |])
+  in
+  let sh = shape a in
+  let rank = Array.length sh in
+  let m = sh.(rank - 2) and n = sh.(rank - 1) in
+  let k = min m n in
+  let cs = shape c in
+  let crank = Array.length cs in
+  let shape_text s =
+    match s with
+    | [| x |] -> Printf.sprintf "(%d,)" x
+    | _ ->
+        "("
+        ^ String.concat ", " (Array.to_list (Array.map string_of_int s))
+        ^ ")"
+  in
+  if mode = "left" && cs.(crank - 2) <> k then
+    invalid_arg
+      (Printf.sprintf
+         "Array shapes are not compatible for Q @ c operation: a has shape %s \
+          so Q has %d columns, but c has %d rows (expected %d)."
+         (shape_text sh) k
+         cs.(crank - 2)
+         k);
+  if mode = "right" && cs.(crank - 1) <> m then
+    invalid_arg
+      (Printf.sprintf
+         "Array shapes are not compatible for c @ Q operation: a has shape %s \
+          so Q has %d rows, but c has %d columns (expected %d)."
+         (shape_text sh) m
+         cs.(crank - 1)
+         m);
+  let batch =
+    NL.broadcast_shapes_n
+      [ Array.sub sh 0 (rank - 2); Array.sub cs 0 (crank - 2) ]
+  in
+  let a = NL.broadcast_to a (Array.append batch [| m; n |]) in
+  let c =
+    NL.broadcast_to c (Array.append batch [| cs.(crank - 2); cs.(crank - 1) |])
+  in
+  let h, perm, taus =
+    if pivoting then
+      let jpvt = AC.zeros ~dtype:D.I32 (Array.append batch [| n |]) in
+      let h, p, t = Linalg_extras.geqp3 a jpvt in
+      (h, Some (UF.subtract p (i32_scalar 1)), t)
+    else
+      let h, t = Linalg_extras.geqrf a in
+      (h, None, t)
+  in
+  let c =
+    if m > n && mode = "left" then
+      let cs = shape c in
+      let r = Array.length cs in
+      let zeros =
+        AC.zeros ~dtype:(dtype c)
+          (Array.append (Array.sub cs 0 (r - 2)) [| m - k; cs.(r - 1) |])
+      in
+      NL.concatenate ~axis:(-2) [ c; zeros ]
+    else c
+  in
+  let c = if conjugate then NL.swapaxes (-1) (-2) c else c in
+  let left = mode = "left" <> conjugate in
+  let cq = Linalg_extras.ormqr ~left ~transpose:conjugate h taus c in
+  let cq = if conjugate then NL.swapaxes (-1) (-2) cq else cq in
+  let cq =
+    if mode = "right" then (
+      let r = Array.length (shape cq) in
+      let limits = Array.copy (shape cq) in
+      limits.(r - 1) <- k;
+      Lax_api.slice cq (Array.make r 0) limits)
+    else cq
+  in
+  let cq =
+    if onedim then NL.reshape cq [| Array.fold_left ( * ) 1 (shape cq) |]
+    else cq
+  in
+  let starts = Array.make rank 0 in
+  let limits = Array.append batch [| k; n |] in
+  let r = NL.triu (Lax_api.slice h starts limits) in
+  match perm with None -> [ cq; r ] | Some p -> [ cq; r; p ]
 
 let rec rsf2csf t z =
   let st = shape t and sz = shape z in

@@ -51,6 +51,13 @@ val jit :
   value Tree_util.t list ->
   value Tree_util.t
 
+val lower_text :
+  ?out_shardings:t list ->
+  name:string ->
+  (value Tree_util.t list -> value Tree_util.t) ->
+  value Tree_util.t list ->
+  string
+
 val auto_axes :
   ?axes:string list ->
   out_sharding:t list ->

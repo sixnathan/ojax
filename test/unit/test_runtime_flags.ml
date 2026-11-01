@@ -697,7 +697,7 @@ let f16_reductions () =
 let matrix = f32 [| 2; 2 |] [| 1.; 1.; 1.; 1. |]
 
 let dot_text () =
-  Stages.as_text
+  Stages.raw_text
     (Stages.lower
        (function [ a; b ] -> [ L.dot a b ] | _ -> Alcotest.fail "arity")
        (let a = { shape = [| 2; 2 |]; dtype = Dtype.F32; weak_type = false } in
@@ -751,7 +751,7 @@ let matmul_precision () =
       check_message "eager" unsupported (fun () -> L.dot matrix matrix));
   Api.default_matmul_precision "high" (fun () ->
       let conv =
-        Stages.as_text
+        Stages.raw_text
           (Stages.lower
              (function
                | [ a; b ] ->
@@ -1225,7 +1225,7 @@ let stages_surface () =
   let lowered = wrapped.Stages.wrapped_lower args in
   Alcotest.(check bool)
     "lowered text" true
-    (contains (Stages.as_text lowered) "stablehlo.reduce");
+    (contains (Stages.raw_text lowered) "stablehlo.reduce");
   let flat = [ scalar 1.; f32 [| 2 |] [| 1.; 1. |] ] in
   check_floats "compiled" [| 3. |]
     (floats (List.hd (Stages.call (Stages.compile lowered) flat)));

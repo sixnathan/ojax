@@ -33,6 +33,7 @@ val arg_info_shape : arg_info -> int array
 val arg_info_dtype : arg_info -> Dtype.t
 val lower : (value list -> value list) -> aval list -> lowered
 val as_text : lowered -> string
+val raw_text : lowered -> string
 val jaxpr_text : lowered -> string
 val as_jax_text : ?name:string -> lowered -> string
 val jax_jaxpr_text : lowered -> string

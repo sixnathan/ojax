@@ -5,6 +5,7 @@ type lowered = {
   in_avals : aval list;
   out_avals : aval list;
   module_name : string;
+  result_paths : string list option;
 }
 
 type compiled = { run : value list -> value list; source : lowered }
@@ -52,14 +53,20 @@ let lower f avals =
     in_avals = avals;
     out_avals = closed_out_avals closed;
     module_name = "_lambda";
+    result_paths = None;
   }
 
 let raw_text lowered = Stablehlo.Emit.emit_closed_jaxpr lowered.closed
 let jaxpr_text lowered = Pretty_printer.closed_jaxpr_to_string lowered.closed
 
-let as_jax_text ?name lowered =
+let as_jax_text ?name ?result_paths lowered =
   let name = Option.value name ~default:lowered.module_name in
-  Stablehlo.Emit.emit_jax_text ~name lowered.closed
+  let result_paths =
+    match result_paths with
+    | Some _ -> result_paths
+    | None -> lowered.result_paths
+  in
+  Stablehlo.Emit.emit_jax_text ?result_paths ~name lowered.closed
 
 let as_text lowered = as_jax_text lowered
 
@@ -85,6 +92,16 @@ let call compiled args =
   compiled.run args
 
 let cost_analysis _ = []
+
+let clean_key_entry = function
+  | Tree_util.Flattened_index_key i -> Tree_util.Sequence_key i
+  | entry -> entry
+
+let result_paths_of out_tree avals =
+  List.map
+    (fun (path, _) ->
+      "result" ^ Tree_util.keystr (List.map clean_key_entry path))
+    (Tree_util.tree_leaves_with_path (Tree_util.tree_unflatten out_tree avals))
 
 let trace_flat ~name f args =
   let flat_args, in_tree = Tree_util.tree_flatten (Tree_util.Tuple args) in
@@ -121,6 +138,7 @@ let trace_flat ~name f args =
           in_avals;
           out_avals = out_flat;
           module_name = (if name = "<fun>" then "_lambda" else name);
+          result_paths = Some (result_paths_of out_tree out_flat);
         });
   }
 

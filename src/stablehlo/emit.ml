@@ -3814,8 +3814,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Lu when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty lu runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let m = a.shape.(rank - 2) and n = a.shape.(rank - 1) in
       let pivots = lapack_aval (Array.append batch [| min m n |]) Dtype.I32 in
@@ -3827,11 +3825,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx [ a; pivots; info ] ids eqn.outs
         (Native_lowering.lapack_lu ~permutation_size:m)
+  | Qr full_matrices
+    when lapack_ffi ()
+         && Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a ] -> Native_lowering.qr_empty ~full_matrices a
+        | _ -> invalid_arg "Stablehlo.Emit: qr arity")
   | Qr full_matrices when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty qr runs on the host";
       let taus =
         lapack_aval
           (Array.append
@@ -3940,8 +3942,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | Dtype.Complex128 -> Dtype.F64
         | d -> d
       in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty eigh runs on the host";
       let w =
         lapack_aval (Array.append batch [| a.shape.(rank - 1) |]) real_dt
       in
@@ -3958,11 +3958,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in_ids [ a ] [ a; w; info ]
       in
       emit_traced ctx [ a; w; info ] ids eqn.outs Native_lowering.lapack_guarded
+  | Svd { full_matrices; compute_uv; _ }
+    when lapack_ffi ()
+         && Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a ] -> Native_lowering.svd_empty ~full_matrices ~compute_uv a
+        | _ -> invalid_arg "Stablehlo.Emit: svd arity")
   | Svd { full_matrices; compute_uv; gesvd } when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty svd runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let m = a.shape.(rank - 2) and n = a.shape.(rank - 1) in
       let mn = min m n in
@@ -4000,8 +4004,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Eig { compute_left; compute_right; _ } when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty eig runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let n = a.shape.(rank - 1) in
       let real = not (is_complex_dtype a.dtype) in
@@ -4044,8 +4046,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Schur { compute_vectors } when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty schur runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let w =
         lapack_aval (Array.append batch [| a.shape.(rank - 1) |]) a.dtype
@@ -4424,14 +4424,17 @@ let emit_closed_jaxpr ?partition cj =
 
 type lowered = { text : string; kept : int list }
 
-let lower ~name cj =
+let lower ?result_paths ~name cj =
   let pruned, kept = Dce.prune_unused_inputs cj in
   {
-    text = Mlir_names.render ~module_name:name (emit_closed_jaxpr pruned);
+    text =
+      Mlir_names.render ?result_paths ~module_name:name
+        (emit_closed_jaxpr pruned);
     kept;
   }
 
-let emit_jax_text ~name cj = Mlir_names.renumber_callbacks (lower ~name cj).text
+let emit_jax_text ?result_paths ~name cj =
+  Mlir_names.renumber_callbacks (lower ?result_paths ~name cj).text
 
 let emit_export_text ~name ~uses_shape_polymorphism cj =
   let pruned, kept = Dce.prune_unused_inputs cj in

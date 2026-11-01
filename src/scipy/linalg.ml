@@ -68,31 +68,36 @@ let det a = LN.det a
 let inv a = LN.inv a
 
 let lu ?(permute_l = false) a =
-  let a = to_inexact a in
-  let dt = dtype a in
-  let sa = shape a in
-  let m = sa.(0) and n = sa.(1) in
-  let k = min m n in
-  let lu_, _piv, permutation = LL.lu a in
-  let perm_row = NL.expand_dims permutation [| 0 |] in
-  let iota = NL.arange ~dtype:(dtype permutation) (float_of_int m) in
-  let iota_col = NL.expand_dims iota [| 1 |] in
-  let real_dt =
-    match dt with D.Complex64 -> D.F32 | D.Complex128 -> D.F64 | d -> d
+  let body a =
+    let a = to_inexact a in
+    let dt = dtype a in
+    let sa = shape a in
+    let m = sa.(0) and n = sa.(1) in
+    let k = min m n in
+    let lu_, _piv, permutation = LL.lu a in
+    let perm_row = NL.expand_dims permutation [| 0 |] in
+    let iota = NL.arange ~dtype:(dtype permutation) (float_of_int m) in
+    let iota_col = NL.expand_dims iota [| 1 |] in
+    let p = UF.real (NL.astype (UF.equal perm_row iota_col) dt) in
+    let cut axis size v =
+      if (shape v).(axis) = size then v else Lax_api.slice_in_dim ~axis v 0 size
+    in
+    let l_lower = cut 1 k (NL.tril ~k:(-1) lu_) in
+    let l = UF.add l_lower (NL.eye ~m:k ~dtype:dt m) in
+    let u = cut 0 k (NL.triu lu_) in
+    if permute_l then
+      [
+        TC.matmul
+          ~precision:
+            (Lax_config.precision_of_level Lax_config.Precision_highest)
+          p l;
+        u;
+      ]
+    else [ p; l; u ]
   in
-  let p = NL.astype (UF.equal perm_row iota_col) real_dt in
-  let kcols = iota_idx k in
-  let l_lower = IDX.take_index ~axis:1 (NL.tril ~k:(-1) lu_) kcols in
-  let l = UF.add l_lower (NL.eye ~m:k ~dtype:dt m) in
-  let u = IDX.take_index ~axis:0 (NL.triu lu_) kcols in
-  if permute_l then
-    [
-      TC.matmul
-        ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest)
-        p l;
-      u;
-    ]
-  else [ p; l; u ]
+  Numpy.Jnp_util.jit "_lu" ~key:(string_of_bool permute_l)
+    (function [ a ] -> body a | _ -> invalid_arg "lu: arity")
+    [ a ]
 
 let lu ?permute_l a0 =
   Eager_jit.many ~jit:"lu" "scipy.linalg.lu" permute_l [] [ a0 ]

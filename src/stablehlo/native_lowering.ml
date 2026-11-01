@@ -1021,6 +1021,52 @@ let qr_from_factors ~full_matrices = function
         [ q; triu (cut_to n n r) ]
   | _ -> invalid_arg "Native_lowering: qr arity"
 
+let lax_eye dt m k =
+  let dims = [| m; k |] in
+  let rows =
+    L.add (L.broadcasted_iota Dtype.I32 dims 0) (L.full dims 0.0 Dtype.I32)
+  in
+  L.convert_element_type (L.eq rows (L.broadcasted_iota Dtype.I32 dims 1)) dt
+
+let empty_batched_eye batch dt m k =
+  let nb = Array.length batch in
+  let eye = lax_eye dt m k in
+  if nb = 0 then eye
+  else L.broadcast_in_dim eye (Array.append batch [| m; k |]) [| nb; nb + 1 |]
+
+let qr_empty ~full_matrices a =
+  let dims = shape a in
+  let rank = Array.length dims in
+  let batch = Array.sub dims 0 (rank - 2) in
+  let m = dims.(rank - 2) and n = dims.(rank - 1) in
+  let k = if full_matrices then m else min m n in
+  let q = empty_batched_eye batch (dtype a) m k in
+  let r = L.full (Array.append batch [| k; n |]) 0.0 (dtype a) in
+  [ q; r ]
+
+let svd_empty ~full_matrices ~compute_uv a =
+  let dims = shape a in
+  let rank = Array.length dims in
+  let batch = Array.sub dims 0 (rank - 2) in
+  let m = dims.(rank - 2) and n = dims.(rank - 1) in
+  let real =
+    match dtype a with
+    | Dtype.Complex64 -> Dtype.F32
+    | Dtype.Complex128 -> Dtype.F64
+    | d -> d
+  in
+  let s = L.full (Array.append batch [| 0 |]) 0.0 real in
+  if not compute_uv then [ s ]
+  else
+    let u =
+      if full_matrices then
+        let size = max m n in
+        empty_batched_eye batch (dtype a) size size
+      else L.full (Array.append batch [| m; n |]) 0.0 (dtype a)
+    in
+    let v = L.full (Array.append batch [| 0; 0 |]) 0.0 (dtype a) in
+    if m < n then [ v; s; u ] else [ u; s; v ]
+
 let qr_pivoted ~full_matrices a =
   let dims = shape a in
   let rank = Array.length dims in

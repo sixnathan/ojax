@@ -283,17 +283,20 @@ and slogdet_body ?(method_ = "lu") a =
   let sa = shape a in
   let na = Array.length sa in
   let n = sa.(na - 1) in
-  let dt = dtype a in
   if n = 1 || n = 2 then begin
-    let d = if n = 1 then matrix_cell a 0 0 else det_2x2 a in
+    let d =
+      if n = 1 then matrix_cell a 0 0
+      else
+        let a00 = matrix_cell a 0 0 in
+        let a01 = matrix_cell a 0 1 in
+        let a10 = matrix_cell a 1 0 in
+        let a11 = matrix_cell a 1 1 in
+        let x = UF.multiply a00 a11 in
+        UF.subtract x (UF.multiply a01 a10)
+    in
     let magnitude = UF.abs d in
-    let log_abs = UF.log magnitude in
-    if dt = D.Complex64 || dt = D.Complex128 then
-      let rdt = dtype magnitude in
-      let zero = UF.equal magnitude (const rdt 0.0) in
-      let safe = NL.where_ zero (const rdt 1.0) magnitude in
-      (NL.where_ zero (const dt 0.0) (UF.divide d (NL.astype safe dt)), log_abs)
-    else (UF.sign d, log_abs)
+    let sign = UF.sign d in
+    (sign, UF.log magnitude)
   end
   else
     match !slogdet_lu_call [ a ] with
@@ -338,7 +341,9 @@ and matrix_cell a i j =
   start_indices.(na - 1) <- j;
   limit_indices.(na - 1) <- j + 1;
   let sliced =
-    C.bind1 (T.Slice { start_indices; limit_indices; strides = None }) [ a ]
+    if limit_indices = sh && Array.for_all (fun x -> x = 0) start_indices then a
+    else
+      C.bind1 (T.Slice { start_indices; limit_indices; strides = None }) [ a ]
   in
   C.bind1 (T.Squeeze [| na - 2; na - 1 |]) [ sliced ]
 

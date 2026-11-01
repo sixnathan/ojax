@@ -1448,11 +1448,6 @@ let frexp x =
   | [ m; e ] -> (m, e)
   | _ -> invalid_arg "frexp: arity"
 
-let frexp a0 =
-  Eager_jit.pair ~jit:"frexp" "numpy.extras.frexp" () [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with [], [ a0 ] -> frexp a0 | _ -> assert false)
-
 let ldexp x exponent =
   reject_complex "ldexp" x;
   let x = as_inexact x in
@@ -1870,13 +1865,6 @@ let packbits ?axis ?(bitorder = "big") a =
       | _ -> invalid_arg "packbits: arity")
     [ a ]
 
-let packbits ?axis ?bitorder a0 =
-  Eager_jit.one ~jit:"packbits" "numpy.extras.packbits" (axis, bitorder) []
-    [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> packbits ?axis ?bitorder a0
-      | _ -> assert false)
-
 let unpackbits ?axis ?count ?(bitorder = "big") a =
   if dtype_of a <> Dtype.Uint8 then
     invalid_arg "Expected an input array of unsigned byte data type";
@@ -1940,10 +1928,3 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
           NL.swapaxes ax (-1) unpacked
       | _ -> invalid_arg "unpackbits: arity")
     [ a ]
-
-let unpackbits ?axis ?count ?bitorder a0 =
-  Eager_jit.one ~jit:"unpackbits" "numpy.extras.unpackbits"
-    (axis, count, bitorder) [] [ a0 ] (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> unpackbits ?axis ?count ?bitorder a0
-      | _ -> assert false)

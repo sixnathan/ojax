@@ -160,13 +160,6 @@ let qr ?(mode = "full") ?(pivoting = false) a =
       | _ -> failwith "qr: arity")
     [ a ]
 
-let qr ?mode ?pivoting a0 =
-  Eager_jit.many ~jit:"_qr" "scipy.linalg.qr" (mode, pivoting) [] [ a0 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0 ] -> qr ?mode ?pivoting a0
-      | _ -> assert false)
-
 let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
     c =
   let a = to_inexact a and c = to_inexact c in

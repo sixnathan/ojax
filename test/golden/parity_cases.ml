@@ -1267,11 +1267,11 @@ let library_sweep op v =
   let u () = NF.sigmoid v in
   let q () =
     let s = NF.softplus v in
-    UF.add s (like s 0.1)
+    UF.add s (py 0.1)
   in
   let q1 () =
     let p = q () in
-    UF.add p (like p 1.0)
+    UF.add p (py 1.0)
   in
   match op with
   | "sw_nn_relu" -> Some (NF.relu v)

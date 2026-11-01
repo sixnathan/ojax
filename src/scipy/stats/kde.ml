@@ -83,52 +83,47 @@ let reshape_points t points =
   else points
 
 let kernel_eval in_log points values xi precision =
-  Eager_jit.one ~jit:"_gaussian_kernel_eval"
-    "scipy.stats.kde._gaussian_kernel_eval" in_log []
-    [ points; values; xi; precision ] (fun _ vals ->
-      JU.jit1 "_gaussian_kernel_eval" ~key:(string_of_bool in_log)
-        (fun args ->
-          match Dist_util.promote_dtypes args with
-          | [ points; values; xi; precision ] ->
-              let d = (shape points).(1) in
-              let whitening = LA.cholesky ~symmetrize_input:false precision in
-              let points = Numpy.Tensor_contractions.dot points whitening in
-              let xi = Numpy.Tensor_contractions.dot xi whitening in
-              let diag = NL.diag whitening in
-              let summed = R.sum (U.log diag) in
-              let two_pi = Numpy.Jnp_util.py_float (2.0 *. Float.pi) in
-              let lg = U.log two_pi in
-              let half_d = lit summed (0.5 *. float_of_int d) in
-              let log_norm =
-                U.subtract summed
-                  (U.multiply half_d (NL.astype lg (dtype_of summed)))
-              in
-              let kernel x_test x_train y_train =
-                let delta = U.subtract x_train x_test in
-                let total = R.sum (U.square delta) in
-                let arg =
-                  U.subtract log_norm (U.multiply (lit total 0.5) total)
-                in
-                if in_log then U.add (U.log y_train) arg
-                else U.multiply y_train (U.exp arg)
-              in
-              let reduced x =
-                let mapped =
-                  List.hd
-                    (Interpreters.Batching.vmap
-                       (function
-                         | [ tr; y ] -> [ kernel x tr y ] | _ -> assert false)
-                       [ Some 0; Some 0 ] [ points; values ])
-                in
-                if in_log then Ops.Special.logsumexp ~axis:[| 0 |] mapped
-                else R.sum ~axis:[| 0 |] mapped
-              in
+  JU.jit1 "_gaussian_kernel_eval" ~key:(string_of_bool in_log)
+    (fun args ->
+      match Dist_util.promote_dtypes args with
+      | [ points; values; xi; precision ] ->
+          let d = (shape points).(1) in
+          let whitening = LA.cholesky ~symmetrize_input:false precision in
+          let points = Numpy.Tensor_contractions.dot points whitening in
+          let xi = Numpy.Tensor_contractions.dot xi whitening in
+          let diag = NL.diag whitening in
+          let summed = R.sum (U.log diag) in
+          let two_pi = Numpy.Jnp_util.py_float (2.0 *. Float.pi) in
+          let lg = U.log two_pi in
+          let half_d = lit summed (0.5 *. float_of_int d) in
+          let log_norm =
+            U.subtract summed
+              (U.multiply half_d (NL.astype lg (dtype_of summed)))
+          in
+          let kernel x_test x_train y_train =
+            let delta = U.subtract x_train x_test in
+            let total = R.sum (U.square delta) in
+            let arg = U.subtract log_norm (U.multiply (lit total 0.5) total) in
+            if in_log then U.add (U.log y_train) arg
+            else U.multiply y_train (U.exp arg)
+          in
+          let reduced x =
+            let mapped =
               List.hd
                 (Interpreters.Batching.vmap
-                   (function [ x ] -> [ reduced x ] | _ -> assert false)
-                   [ Some 0 ] [ xi ])
-          | _ -> assert false)
-        vals)
+                   (function
+                     | [ tr; y ] -> [ kernel x tr y ] | _ -> assert false)
+                   [ Some 0; Some 0 ] [ points; values ])
+            in
+            if in_log then Ops.Special.logsumexp ~axis:[| 0 |] mapped
+            else R.sum ~axis:[| 0 |] mapped
+          in
+          List.hd
+            (Interpreters.Batching.vmap
+               (function [ x ] -> [ reduced x ] | _ -> assert false)
+               [ Some 0 ] [ xi ])
+      | _ -> assert false)
+    [ points; values; xi; precision ]
 
 let values_of t = L.expand_dims t.weights [| 1 |]
 

@@ -548,7 +548,7 @@ let scatter_numbers (d : scatter_dims) =
 let scatter_params d unique =
   [
     ("dimension_numbers", Plain (scatter_numbers d));
-    ("indices_are_sorted", Plain "False");
+    ("indices_are_sorted", Plain (py_bool unique));
     ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
     ("unique_indices", Plain (py_bool unique));
     ("update_consts", Plain "()");

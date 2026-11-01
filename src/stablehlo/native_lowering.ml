@@ -805,7 +805,7 @@ let qr_from_factors ~full_matrices = function
         let limits = Array.copy dims in
         limits.(rank - 2) <- rows;
         limits.(rank - 1) <- cols;
-        L.slice v starts limits
+        if limits = dims then v else L.slice v starts limits
       in
       let product v = Core.bind1 Householder_product [ v; taus ] in
       if m < n then [ product (cut_to m m r); triu r ]
@@ -834,7 +834,7 @@ let qr_pivoted ~full_matrices a =
         let limits = Array.copy dims in
         limits.(rank - 2) <- rows;
         limits.(rank - 1) <- cols;
-        L.slice v starts limits
+        if limits = dims then v else L.slice v starts limits
       in
       let product v = Core.bind1 Householder_product [ v; taus ] in
       if m < n then

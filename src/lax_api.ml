@@ -792,16 +792,7 @@ let cumlogsumexp = Lax.cumlogsumexp
 let custom_linear_solve = Lax.custom_linear_solve
 
 let map_scan f xs =
-  Lax.scan
-    (fun args ->
-      let n_x = List.length xs in
-      ignore n_x;
-      match args with
-      | _ :: slices -> index_scalar 0 :: f slices
-      | [] -> failwith "map: arity")
-    [ index_scalar 0 ]
-    xs
-  |> List.tl
+  Lax.scan f [] xs
 
 let switch = Lax.switch
 

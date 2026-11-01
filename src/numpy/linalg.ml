@@ -215,25 +215,35 @@ and svd_body ?(full_matrices = true) ?(compute_uv = true) ?(hermitian = false) a
 and svdvals x = List.hd (svd ~compute_uv:false ~hermitian:false x)
 
 and svd_hermitian ~compute_uv a =
-  let w, v = eigh a in
-  let rank = ndim a in
-  let magnitudes = UF.absolute w in
-  let order =
-    Sorting.argsort ~axis:(Some (rank - 2)) ~descending:true magnitudes
-  in
-  let sorted_s = IDX.take_along_axis ~axis:(rank - 2) magnitudes order in
-  if not compute_uv then [ sorted_s ]
+  let module L = Lax_api in
+  let w, v = LL.eigh a in
+  let magnitudes = L.abs v in
+  let last = ndim v - 1 in
+  if not compute_uv then
+    [ L.rev (List.hd (L.sort ~dimension:last [ magnitudes ])) [| last |] ]
   else
-    let sorted_w = IDX.take_along_axis ~axis:(rank - 2) w order in
-    let expanded = NL.expand_dims order [| rank - 2 |] in
-    let columns = NL.broadcast_to expanded (shape v) in
-    let u = IDX.take_along_axis ~axis:(rank - 1) v columns in
-    let signs = UF.sign sorted_w in
-    let scaled =
-      UF.multiply u
-        (NL.broadcast_to (NL.expand_dims signs [| rank - 2 |]) (shape u))
+    let sign = L.sign v in
+    let idx_dtype =
+      if (shape magnitudes).(last) > 4294967295 then D.Uint64 else D.Uint32
     in
-    [ u; sorted_s; hconj scaled ]
+    let idxs = L.broadcasted_iota idx_dtype (shape magnitudes) last in
+    match
+      L.sort ~dimension:last ~num_keys:1 [ magnitudes; idxs; sign ]
+    with
+    | [ s; idxs; sign ] ->
+        let s = L.rev s [| last |] in
+        let idxs = L.rev idxs [| last |] in
+        let sign = L.rev sign [| last |] in
+        let u =
+          IDX.take_along_axis ~axis:(-1) w (NL.expand_dims idxs [| last |])
+        in
+        let vh =
+          hconj
+            (UF.multiply u
+               (NL.astype (NL.expand_dims sign [| last |]) (dtype u)))
+        in
+        [ u; s; vh ]
+    | _ -> invalid_arg "svd: arity"
 
 and solve_body a b =
   let a = to_inexact a and b = to_inexact b in
@@ -382,6 +392,128 @@ and eigvalsh_body ?(uplo = "L") ?(symmetrize_input = true) a =
   let w, _ = eigh ~uplo ~symmetrize_input a in
   w
 
+and pinv_body ~hermitian ~rtol a =
+  let arr = to_inexact a in
+  let sa = shape arr in
+  let na = Array.length sa in
+  let m = sa.(na - 2) and n = sa.(na - 1) in
+  if m = 0 || n = 0 then
+    Array_creation.empty ~dtype:(dtype arr)
+      (Array.append (Array.sub sa 0 (na - 2)) [| n; m |])
+  else
+    let arr = UF.conj arr in
+    let dt = dtype arr in
+    let rtol =
+      match rtol with
+      | Some r -> r
+      | None ->
+          UF.multiply
+            (Jnp_util.py_float (10.0 *. float_of_int (max m n)))
+            (const
+               (match dt with
+               | D.Complex128 -> D.F64
+               | D.Complex64 -> D.F32
+               | d -> d)
+               (eps_of dt))
+    in
+    let u, s, vh =
+      match svd ~full_matrices:false ~hermitian arr with
+      | [ u; s; vh ] -> (u, s, vh)
+      | _ -> invalid_arg "pinv: svd arity"
+    in
+    let expanded = NL.expand_dims rtol [| ndim rtol |] in
+    let missing = ndim s - ndim rtol - 1 in
+    let rtol =
+      if missing > 0 then
+        Lax_api.expand_dims expanded (Array.init missing Fun.id)
+      else expanded
+    in
+    let last = ndim s - 1 in
+    let s0 =
+      Core.bind1
+        (Types.Slice
+           {
+             start_indices = Array.make (last + 1) 0;
+             limit_indices =
+               Array.mapi (fun i d -> if i = last then 1 else d) (shape s);
+             strides = None;
+           })
+        [ s ]
+    in
+    let cutoff = UF.multiply rtol s0 in
+    let s =
+      Jnp_util.where_weak ~y_weak:true (UF.greater s cutoff) s
+        (Jnp_util.py_float infinity)
+    in
+    let s = NL.astype s (dtype u) in
+    let scaled =
+      let vh_t = matrix_transpose_v vh in
+      let u_t = matrix_transpose_v u in
+      (vh_t, UF.divide u_t (NL.expand_dims s [| ndim s |]))
+    in
+    let res = TC.matmul ~precision:highest (fst scaled) (snd scaled) in
+    NL.astype res dt
+
+and pinv_jvp ~hermitian ~rtol a a_dot =
+  let p = pinv_custom ~hermitian ~rtol a in
+  let symmetrize x = UF.divide (UF.add x (hconj x)) (Jnp_util.py_int 2) in
+  let a, a_dot =
+    if hermitian then (symmetrize a, symmetrize a_dot) else (a, a_dot)
+  in
+  let sa = shape a in
+  let na = Array.length sa in
+  let ( @@@ ) x y = TC.matmul x y in
+  let ( +! ) = UF.add and ( -! ) = UF.subtract in
+  let h = hconj in
+  let p_dot =
+    if sa.(na - 2) >= sa.(na - 1) then
+      let s = (p @@@ h p) @@@ h a_dot in
+      let t = (h a_dot @@@ h p) @@@ p in
+      UF.negative (p @@@ a_dot) @@@ p
+      +! s
+      -! ((s @@@ a) @@@ p)
+      +! t
+      -! ((p @@@ a) @@@ t)
+    else
+      let s = p @@@ (h p @@@ h a_dot) in
+      let t = h a_dot @@@ (h p @@@ p) in
+      UF.negative p @@@ (a_dot @@@ p)
+      +! s
+      -! (s @@@ (a @@@ p))
+      +! t
+      -! (p @@@ (a @@@ t))
+  in
+  ([ p ], [ p_dot ])
+
+and pinv_custom ~hermitian ~rtol a =
+  let extra = match rtol with Some r -> [ r ] | None -> [] in
+  let key =
+    Digest.to_hex (Digest.string (Marshal.to_string (hermitian, extra = []) []))
+  in
+  let call =
+    Custom_derivatives.custom_jvp ~name:"_pinv" ~jvp_name:"_pinv_jvp"
+      (function
+        | [ a ] ->
+            [
+              Jnp_util.jit1 "_pinv" ~key
+                (function
+                  | a :: rest ->
+                      pinv_body ~hermitian
+                        ~rtol:(match rest with r :: _ -> Some r | [] -> None)
+                        a
+                  | [] -> invalid_arg "pinv: arity")
+                (a :: extra);
+            ]
+        | _ -> invalid_arg "pinv: arity")
+      ~jvp:(fun primals tangents ->
+        match (primals, tangents) with
+        | [ a ], [ a_dot ] ->
+            Config.with_value Config.default_matmul_precision (Some "float32")
+              (fun () -> pinv_jvp ~hermitian ~rtol a a_dot)
+        | _ -> invalid_arg "pinv: arity")
+  in
+  List.hd (call [ a ])
+
 and pinv ?rtol ?(hermitian = false) ?rcond a =
   let rtol =
     match (rcond, rtol) with
@@ -390,43 +522,7 @@ and pinv ?rtol ?(hermitian = false) ?rcond a =
     | Some r, None -> Some r
     | None, r -> r
   in
-  let a = to_inexact a in
-  let arr = UF.conj a in
-  let dt = dtype arr in
-  let sa = shape arr in
-  let na = Array.length sa in
-  let m = sa.(na - 2) and n = sa.(na - 1) in
-  let maxrc = max m n in
-  let rtol =
-    match rtol with
-    | Some r -> r
-    | None -> const dt (10.0 *. float_of_int maxrc *. eps_of dt)
-  in
-  let u, s, vh =
-    match svd ~full_matrices:false ~hermitian arr with
-    | [ u; s; vh ] -> (u, s, vh)
-    | _ -> invalid_arg "pinv: svd arity"
-  in
-  let rtolc = if ndim rtol = 0 then NL.expand_dims rtol [| 0 |] else rtol in
-  let last = Array.length (shape s) - 1 in
-  let s0 =
-    Core.bind1
-      (Types.Slice
-         {
-           start_indices = Array.make (last + 1) 0;
-           limit_indices =
-             Array.mapi (fun i d -> if i = last then 1 else d) (shape s);
-           strides = None;
-         })
-      [ s ]
-  in
-  let cutoff = UF.multiply rtolc s0 in
-  let s = NL.where_ (UF.greater s cutoff) s (const dt infinity) in
-  let s = NL.astype s (dtype u) in
-  let s_col = NL.expand_dims s [| ndim s |] in
-  let scaled = UF.divide (matrix_transpose_v u) s_col in
-  let res = TC.matmul ~precision:highest (matrix_transpose_v vh) scaled in
-  NL.astype res dt
+  pinv_custom ~hermitian ~rtol a
 
 and matrix_power_body a p =
   let sa = shape a in
@@ -491,11 +587,6 @@ and vector_norm ?(axis = None) ?(keepdims = false) ?(ord = Onum 2.0) x =
     | None -> RED.sum ~keepdims v
     | Some ax -> RED.sum ~axis:ax ~keepdims v
   in
-  let amaxf v =
-    match axis with
-    | None -> RED.amax ~keepdims v
-    | Some ax -> RED.amax ~axis:ax ~keepdims v
-  in
   let aminf v =
     match axis with
     | None -> RED.amin ~keepdims v
@@ -507,7 +598,11 @@ and vector_norm ?(axis = None) ?(keepdims = false) ?(ord = Onum 2.0) x =
   | Ofro | Onuc -> invalid_arg "Invalid order for vector norm."
   | Onum o ->
       if o = 2.0 then two_norm ()
-      else if o = infinity then amaxf (UF.abs x)
+      else if o = infinity then
+        match axis with
+        | None -> RED.amax ~keepdims ~initial:(Jnp_util.py_int 0) (UF.abs x)
+        | Some ax ->
+            RED.amax ~axis:ax ~keepdims ~initial:(Jnp_util.py_int 0) (UF.abs x)
       else if o = neg_infinity then aminf (UF.abs x)
       else if o = 0.0 then
         sumf (NL.astype (UF.not_equal x (const (dtype x) 0.0)) (dtype x))

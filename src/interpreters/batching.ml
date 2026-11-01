@@ -302,10 +302,29 @@ let concatenate_batch (axis_size : int) (dim : int) (vals : value list)
 
 let stack_batch (axis_size : int) (axis : int) (vals : value list)
     (bdims : int option list) : value * int option =
-  let aligned =
-    List.map2 (fun v b -> move_batch_axis axis_size b 0 v) vals bdims
-  in
-  (b1 (Stack (axis + 1)) aligned, Some 0)
+  match bdims with
+  | Some bdim :: rest when List.for_all (fun b -> b = Some bdim) rest ->
+      if axis <= bdim then (b1 (Stack axis) vals, Some (bdim + 1))
+      else (b1 (Stack (axis + 1)) vals, Some bdim)
+  | _ ->
+      let aligned =
+        List.map2
+          (fun v b ->
+            match b with
+            | Some d -> moveaxis d 0 v
+            | None ->
+                let a = Core.get_aval v in
+                let n = Array.length a.shape in
+                b1
+                  (Broadcast_in_dim
+                     {
+                       shape = Array.append [| axis_size |] a.shape;
+                       dims = Array.init n (fun i -> i + 1);
+                     })
+                  [ v ])
+          vals bdims
+      in
+      (b1 (Stack (axis + 1)) aligned, Some 0)
 
 let pad_batch (cfg : (int * int * int) array) (vals : value list)
     (bdims : int option list) : value * int option =

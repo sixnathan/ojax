@@ -50,12 +50,14 @@ let ppf ?loc ?scale q =
 let sf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
-  cdf ~loc:(UF.negative loc) ~scale (UF.negative x)
+  let neg_x = UF.negative x in
+  cdf ~loc:(UF.negative loc) ~scale neg_x
 
 let logsf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale = promote3 x loc scale in
-  logcdf ~loc:(UF.negative loc) ~scale (UF.negative x)
+  let neg_x = UF.negative x in
+  logcdf ~loc:(UF.negative loc) ~scale neg_x
 
 let isf ?loc ?scale q =
   let loc, scale = defaults loc scale in

@@ -90,7 +90,16 @@ let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
   List.iter
     (fun (e : eqn) ->
       let in_vals = List.map read e.inputs in
-      let outs = Core.bind e.prim in_vals in
+      let outs =
+        match (e.prim, e.outs) with
+        | Convert_element_type _, [ v ] when v.vaval.weak_type ->
+            let saved = !Core.weak_convert in
+            Core.weak_convert := true;
+            Fun.protect
+              ~finally:(fun () -> Core.weak_convert := saved)
+              (fun () -> Core.bind e.prim in_vals)
+        | _ -> Core.bind e.prim in_vals
+      in
       List.iter2 write e.outs outs)
     jx.eqns;
   List.map read jx.outs
@@ -613,13 +622,13 @@ let lift_while ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
     Array.length cond_out.shape
   in
   let cond' =
-    make_jaxpr avals (fun args ->
+    make_jaxpr_for_lowering avals (fun args ->
         let p = pred_of_cond args in
         if pred_rank = 0 then [ p ]
         else Core.bind (Reduce_or (Array.init pred_rank Fun.id)) [ p ])
   in
   let body' =
-    make_jaxpr avals (fun args ->
+    make_jaxpr_for_lowering avals (fun args ->
         let c, b, r = split args in
         let next = eval_closed_jaxpr body (b @ r) in
         if pred_rank = 0 then c @ b @ next

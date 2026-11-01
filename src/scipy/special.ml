@@ -762,8 +762,11 @@ let const_full dt sh x = Core.splat dt sh x
 
 let scalar_of v x =
   let literal = Nd.of_floats (dtype v) [||] [| x |] in
-  T.Concrete (if (C.get_aval v).weak_type then Nd.as_weak literal else literal)
+  T.Concrete
+    (if (C.get_aval v).weak_type then Nd.with_py_value (Nd.as_weak literal) x
+     else literal)
 
+let lax_const v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
 let coeff_of v a = T.Concrete (Nd.of_floats (dtype v) [| Array.length a |] a)
 let where_ = NL.where_
 let q32 v = Int32.float_of_bits (Int32.bits_of_float v)
@@ -794,7 +797,7 @@ let div_lit x v = x /! scalar_of x v
 let polyval = Poly.polyval
 let int_full dt v = T.Concrete (Nd.of_floats dt [||] [| float_of_int v |])
 let default_int () = Dts.default_int_dtype ()
-let py_int v = int_full (default_int ()) v
+let py_int = JU.py_int
 
 let to_inexact = function
   | D.I32 | D.Bool | D.Uint32 | D.I8 | D.I16 | D.I4 | D.Uint8 | D.Uint16
@@ -948,8 +951,9 @@ let piecewise_body dt x condlist funclist extra =
     List.map
       (fun piece ops ->
         match (piece, ops) with
-        | Piece_fn f, [ v ] -> [ NL.astype (f (v :: extra)) dt ]
-        | Piece_const c, [ _ ] -> [ NL.astype c dt ]
+        | Piece_fn f, [ v ] ->
+            [ C.convert_like ~weak:false (f (v :: extra)) dt ]
+        | Piece_const c, [ _ ] -> [ C.convert_like ~weak:false (NL.copy c) dt ]
         | _ -> invalid_arg "piecewise: arity")
       funclist
   in
@@ -969,6 +973,7 @@ let piecewise ~key ?(extra = []) x conds funcs =
   in
   let expand c =
     let sh = shape c in
+    let c = C.convert_like ~weak:false c D.Bool in
     bind1
       (T.Broadcast_in_dim
          {
@@ -1024,8 +1029,8 @@ let gammasgn x =
       (band x_negative (ne_ (UF.remainder floor_x (py_int 2)) 0.0))
       (band (eq_ x 0.0) (UF.signbit x))
   in
-  select_default (scalar_of x 1.0) [ c1; c2 ]
-    [ scalar_of x Float.nan; scalar_of x (-1.0) ]
+  select_default (lax_const x 1.0) [ c1; c2 ]
+    [ lax_const x Float.nan; lax_const x (-1.0) ]
 
 let lanczos_g = 7.0
 
@@ -1215,18 +1220,18 @@ let erfc x = bind1 T.Erfc [ promote1 x ]
 let erfinv x = bind1 T.Erf_inv [ real_only "erfinv" x ]
 let expit x = bind1 T.Logistic [ promote1 x ]
 
-let logit x =
-  let x = promote1 x in
+let rec logit x =
   List.hd
     (CD.custom_jvp ~name:"logit"
        (function
-         | [ x ] -> [ L.log (L.div x (L.sub (scalar_of x 1.0) x)) ]
+         | [ x ] ->
+             let x = promote1 x in
+             [ L.log (L.div x (L.sub (scalar_of x 1.0) x)) ]
          | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x ], [ g ] ->
-             ( [ L.log (L.div x (L.sub (scalar_of x 1.0) x)) ],
-               [ L.div g (L.mul x (L.sub (scalar_of x 1.0) x)) ] )
+             ([ logit x ], [ L.div g (L.mul x (L.sub (scalar_of x 1.0) x)) ])
          | _ -> assert false)
        [ x ])
 
@@ -1237,15 +1242,15 @@ let xlogy_primal = function
       [ where_ (bor x_ok (UF.isnan y)) (L.mul x (L.log y)) (AC.zeros_like x) ]
   | _ -> assert false
 
-let xlogy x y =
+let rec xlogy x y =
   List.hd
     (CD.custom_jvp ~name:"xlogy" ~jvp_name:"_xlogy_jvp" xlogy_primal
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x; y ], [ x_dot; y_dot ] ->
-             let result = xlogy_primal primals in
+             let result = xlogy x y in
              let out = (x_dot *! L.log y) +! (y_dot *! x /! y) in
-             (result, [ NL.astype out (dtype (List.hd result)) ])
+             ([ result ], [ NL.astype out (dtype result) ])
          | _ -> assert false)
        [ x; y ])
 
@@ -1256,26 +1261,25 @@ let xlog1py_primal = function
       [ where_ (bor x_ok (UF.isnan y)) (L.mul x (L.log1p y)) (AC.zeros_like x) ]
   | _ -> assert false
 
-let xlog1py x y =
+let rec xlog1py x y =
   List.hd
     (CD.custom_jvp ~name:"xlog1py" ~jvp_name:"_xlog1py_jvp" xlog1py_primal
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x; y ], [ x_dot; y_dot ] ->
-             let result = xlog1py_primal primals in
+             let result = xlog1py x y in
              let out = (x_dot *! L.log1p y) +! (y_dot *! x /! lit_add 1.0 y) in
-             (result, [ NL.astype out (dtype (List.hd result)) ])
+             ([ result ], [ NL.astype out (dtype result) ])
          | _ -> assert false)
        [ x; y ])
 
-let xlogx x =
+let rec xlogx x =
   List.hd
     (CD.custom_jvp ~name:"_xlogx" ~jvp_name:"_xlogx_jvp"
        (function [ x ] -> [ xlogy x x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
-         | [ x ], [ x_dot ] ->
-             ([ xlogy x x ], [ x_dot *! add_lit (L.log x) 1.0 ])
+         | [ x ], [ x_dot ] -> ([ xlogx x ], [ x_dot *! add_lit (L.log x) 1.0 ])
          | _ -> assert false)
        [ x ])
 
@@ -1324,7 +1328,7 @@ let multigammaln a d =
 
 let rel_entr p q =
   let p, q = real_only2 "rel_entr" p q in
-  let zero = scalar_of p 0.0 in
+  let zero = lax_const p 0.0 in
   let both = L.bitwise_and (L.gt p zero) (L.gt q zero) in
   let one_zero = L.bitwise_and (L.eq p zero) (L.ge q zero) in
   let safe_p = where_ both p (py_int 1) in
@@ -1366,14 +1370,14 @@ let wofz_primal z =
   let correction = lit_mul 2.0 (L.exp (L.neg (z *! z))) -! w_upper in
   L.select sign w_upper correction
 
-let wofz_custom z =
+let rec wofz_custom z =
   List.hd
     (CD.custom_jvp ~name:"_wofz"
        (function [ z ] -> [ wofz_primal z ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ z ], [ g ] ->
-             let ans = wofz_primal z in
+             let ans = wofz_custom z in
              let re = L.real z in
              ( [ ans ],
                [
@@ -1433,27 +1437,29 @@ let erfcx_real x =
   | D.F32 -> erfcx_impl x 5
   | d -> NL.astype (erfcx_impl (NL.astype x D.F32) 5) d
 
+let rec erfcx_custom x =
+  List.hd
+    (CD.custom_jvp ~name:"_erfcx"
+       (function [ x ] -> [ erfcx_real x ] | _ -> assert false)
+       ~jvp:(fun primals tangents ->
+         match (primals, tangents) with
+         | [ x ], [ g ] ->
+             let ans = erfcx_custom x in
+             ( [ ans ],
+               [
+                 g
+                 *! ((lit_mul 2.0 x *! ans)
+                    -! scalar_of x (2.0 /. sqrt Float.pi));
+               ] )
+         | _ -> assert false)
+       [ x ])
+
 let erfcx x =
   let x = promote1 x in
   if is_complex_dtype (dtype x) then
     let iz = L.complex (L.neg (L.imag x)) (L.real x) in
     wofz_custom iz
-  else
-    List.hd
-      (CD.custom_jvp ~name:"_erfcx"
-         (function [ x ] -> [ erfcx_real x ] | _ -> assert false)
-         ~jvp:(fun primals tangents ->
-           match (primals, tangents) with
-           | [ x ], [ g ] ->
-               let ans = erfcx_real x in
-               ( [ ans ],
-                 [
-                   g
-                   *! ((lit_mul 2.0 x *! ans)
-                      -! scalar_of x (2.0 /. sqrt Float.pi));
-                 ] )
-           | _ -> assert false)
-         [ x ])
+  else erfcx_custom x
 
 let dawsn_impl x =
   let sign = UF.sign x in
@@ -1497,19 +1503,20 @@ let dawsn_real x =
   | D.F32 | D.F64 -> dawsn_impl x
   | d -> NL.astype (dawsn_impl (NL.astype x D.F32)) d
 
-let dawsn x =
-  let x = real_only "dawsn" x in
+let rec dawsn_custom x =
   List.hd
     (CD.custom_jvp ~name:"_dawsn"
        (function [ x ] -> [ dawsn_real x ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x ], [ g ] ->
-             let ans = dawsn_real x in
+             let ans = dawsn_custom x in
              ( [ ans ],
                [ g *! (scalar_of x 1.0 -! (scalar_of x 2.0 *! x *! ans)) ] )
          | _ -> assert false)
        [ x ])
+
+let dawsn x = dawsn_custom (real_only "dawsn" x)
 
 let half_sqrt_2_of x =
   match dtype x with D.F32 -> 0.5 *. q32 (sqrt 2.0) | _ -> 0.5 *. sqrt 2.0
@@ -1542,7 +1549,7 @@ let ndtri p =
   and q1 = coeff_of p c_ndtri_q1
   and p2 = coeff_of p c_ndtri_p2
   and q2 = coeff_of p c_ndtri_q2 in
-  let c v = scalar_of p v in
+  let c v = lax_const p v in
   let maybe = where_ (UF.greater p (c (-.Float.expm1 (-2.0)))) (c 1.0 -! p) p in
   let sanitized =
     where_ (UF.equal maybe (c 0.0)) (L.broadcast (c 0.5) sh) maybe
@@ -1550,7 +1557,7 @@ let ndtri p =
   let w = sanitized -! c 0.5 in
   let ww = L.square w in
   let x_big = w +! (w *! ww *! (polyval p0 ww /! polyval q0 ww)) in
-  let x_big = x_big *! neg_ (c (sqrt (2.0 *. Float.pi))) in
+  let x_big = x_big *! c (-.sqrt (2.0 *. Float.pi)) in
   let z = L.sqrt (c (-2.0) *! L.log sanitized) in
   let first = z -! (L.log z /! z) in
   let inv () = lit_div 1.0 z in
@@ -1625,7 +1632,7 @@ let norm_logpdf x =
     (L.mul (scalar_of x (-0.5)) (L.square x))
     (scalar_of x norm_logpdf_constant)
 
-let log_ndtr ?(series_order = 3) x =
+let rec log_ndtr ?(series_order = 3) x =
   if series_order < 0 then invalid_arg "series_order must be non-negative.";
   if series_order > 30 then invalid_arg "series_order must be <= 30.";
   single_or_double x;
@@ -1636,7 +1643,7 @@ let log_ndtr ?(series_order = 3) x =
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ x ], [ t ] ->
-             let ans = log_ndtr_primal series_order x in
+             let ans = log_ndtr ~series_order x in
              ([ ans ], [ L.mul t (L.exp (L.sub (norm_logpdf x) ans)) ])
          | _ -> assert false)
        [ x ])
@@ -1680,7 +1687,7 @@ let zeta_series x q =
   strides.(rank - 1) <- 2;
   let t1 = L.slice ~strides t1 begins ends in
   let fmax = if is_f32 then 3.4028234663852886e38 else Float.max_float in
-  let t1 = NL.clip_strong_max (lit fmax) t1 in
+  let t1 = NL.clip_strong_max (lax_const a fmax) t1 in
   let terms = (shape t1).(rank - 1) in
   let coefs =
     T.Concrete
@@ -1736,22 +1743,19 @@ let log_softmax ?axis x =
 
 let poch_primal z m =
   let z, m = real_only2 "poch" z m in
-  where_ (eq_ m 0.0) (scalar_of z 1.0) (gamma (z +! m) /! gamma z)
+  where_ (eq_ m 0.0) (lax_const z 1.0) (gamma (z +! m) /! gamma z)
 
-let poch z m =
-  let z, m = real_only2 "poch" z m in
+let rec poch z m =
   List.hd
     (CD.custom_jvp ~name:"poch"
        (function [ z; m ] -> [ poch_primal z m ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ z; m ], [ dz; dm ] ->
-             let out = poch_primal z m in
-             let wrt_z =
-               (digamma (z +! m) -! digamma z) *! poch_primal z m *! dz
-             in
-             let wrt_m = digamma (z +! m) *! poch_primal z m *! dm in
-             ([ out ], [ L.add wrt_z wrt_m ])
+             let out = poch z m in
+             let wrt_z = (digamma (z +! m) -! digamma z) *! poch z m *! dz in
+             let wrt_m = digamma (z +! m) *! poch z m *! dm in
+             ([ out ], [ Ad_util.add_any wrt_z wrt_m ])
          | _ -> assert false)
        [ z; m ])
 
@@ -1916,7 +1920,7 @@ let owens_t_quadrature h a =
 let owens_t_primal h a =
   let h = UF.abs h in
   let abs_a = UF.abs a in
-  let root_2 = scalar_of h (sqrt 2.0) in
+  let root_2 = lax_const h (sqrt 2.0) in
   let h_normed = h /! root_2 in
   let modified_a = where_ (le_ abs_a 1.0) abs_a (UF.reciprocal abs_a) in
   let modified_h = where_ (le_ abs_a 1.0) h (abs_a *! h) in
@@ -1948,20 +1952,24 @@ let owens_t_primal h a =
   let result = L.sign a *! result in
   where_ (bor (UF.isnan a) (UF.isnan h)) (AC.full_like result Float.nan) result
 
-let owens_t h a =
-  let h, a = promote2 h a in
+let rec owens_t_custom h a =
   List.hd
     (CD.custom_jvp ~name:"_owens_t_impl" ~jvp_name:"_owens_t_jvp"
        (function [ h; a ] -> [ owens_t_primal h a ] | _ -> assert false)
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ h; a ], [ dh; da ] ->
-             let result = owens_t_primal h a in
-             let root_2 = scalar_of h (sqrt 2.0) in
+             let result = owens_t_custom h a in
+             let root_2 = lax_const h (sqrt 2.0) in
+             let rounded =
+               Nd.get_f
+                 (Nd.of_floats (dtype h) [||] [| sqrt (2.0 *. Float.pi) |])
+                 [||]
+             in
              let dout_dh =
                neg_ (L.exp (lit_mul (-0.5) (L.square h)))
                *! bind1 T.Erf [ a *! h /! root_2 ]
-               /! lit_mul 2.0 (scalar_of h (sqrt (2.0 *. Float.pi)))
+               /! lax_const h (2.0 *. rounded)
              in
              let sq_a1 () = add_lit (L.square a) 1.0 in
              let dout_da =
@@ -1973,6 +1981,10 @@ let owens_t h a =
              )
          | _ -> assert false)
        [ h; a ])
+
+let owens_t h a =
+  let h, a = promote2 h a in
+  owens_t_custom h a
 
 let rec bernoulli n =
   if n < 0 then invalid_arg "n must be a non-negative integer.";
@@ -2015,18 +2027,18 @@ let while3 cond body init =
     (function [ a; b; c ] -> body a b c | _ -> failwith "while: arity")
     init
 
-let hyp_cond x prec _ k term serie_abs =
-  band (UF.less k (py_int 250)) (UF.greater (L.div (L.abs term) serie_abs) prec)
-  |> fun v ->
-  ignore x;
-  v
+let hyp_cond prec k term serie =
+  let in_range = UF.less k (py_int 250) in
+  let abs_term = L.abs term in
+  let ratio = L.div abs_term (L.abs serie) in
+  band in_range (UF.greater ratio prec)
 
 let hyp1f1_serie a b x =
   let prec = scalar_of x (eps_of x) in
   let init = [ scalar_of x 1.0; py_int 1; a /! b *! x ] in
   List.hd
     (while3
-       (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
+       (fun serie k term -> hyp_cond prec k term serie)
        (fun serie k term ->
          let serie = serie +! term in
          let term = term *! ((a +! k) /! (b +! k) *! x /! (k +! py_int 1)) in
@@ -2039,7 +2051,7 @@ let hyp1f1_asymptotic a b x =
   let serie =
     List.hd
       (while3
-         (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
+         (fun serie k term -> hyp_cond prec k term serie)
          (fun serie k term ->
            let serie = serie +! term in
            let term =
@@ -2076,7 +2088,7 @@ let hyp1f1_deriv shifted a b x =
   let init = [ scalar_of x 0.0; py_int 1; a /! b *! x ] in
   List.hd
     (while3
-       (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
+       (fun serie k term -> hyp_cond prec k term serie)
        (fun serie k term ->
          let serie = serie +! (term *! shifted k) in
          let term = term *! ((a +! k) /! (b +! k) *! x /! (k +! py_int 1)) in
@@ -2100,7 +2112,7 @@ let rec hyp1f1_apply a b x =
        ~jvp:(fun primals tangents ->
          match (primals, tangents) with
          | [ a; b; x ], [ da; db; dx ] ->
-             let out = [ hyp1f1_jit primals ] in
+             let out = [ hyp1f1_apply a b x ] in
              let wrt_a =
                List.hd
                  (Eager_jit.many ~jit:"_hyp1f1_a_derivative"
@@ -2112,6 +2124,7 @@ let rec hyp1f1_apply a b x =
                             (fun k -> digamma (a +! k) -! digamma a)
                             a b x)
                         vals))
+               *! da
              in
              let wrt_b =
                List.hd
@@ -2124,6 +2137,7 @@ let rec hyp1f1_apply a b x =
                             (fun k -> digamma b -! digamma (b +! k))
                             a b x)
                         vals))
+               *! db
              in
              let wrt_x =
                JU.jit1 "_hyp1f1_x_derivative"
@@ -2132,8 +2146,9 @@ let rec hyp1f1_apply a b x =
                        a /! b *! hyp1f1_apply (add_lit a 1.0) (add_lit b 1.0) x
                    | _ -> assert false)
                  primals
+               *! dx
              in
-             (out, [ L.add (L.add (wrt_a *! da) (wrt_b *! db)) (wrt_x *! dx) ])
+             (out, [ Ad_util.add_any (Ad_util.add_any wrt_a wrt_b) wrt_x ])
          | _ -> failwith "hyp1f1: arity")
        [ a; b; x ])
 
@@ -2623,7 +2638,7 @@ let hyp2f1_deriv shifted a b c x =
   let init = [ scalar_of x 0.0; py_int 1; a *! b /! c *! x ] in
   List.hd
     (while3
-       (fun serie k term -> hyp_cond x prec () k term (L.abs serie))
+       (fun serie k term -> hyp_cond prec k term serie)
        (fun serie k term ->
          let serie = serie +! (term *! shifted k) in
          let term =

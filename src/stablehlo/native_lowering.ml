@@ -1,15 +1,35 @@
 open Types
 module L = Lax_api
 
-let ( +: ) = L.add
-let ( -: ) = L.sub
-let ( *: ) = L.mul
-let ( /: ) = L.div
+let weak v = (Core.get_aval v).weak_type
+
+let promoted op a b =
+  if weak a = weak b then op a b
+  else
+    let dt = (Core.get_aval a).dtype in
+    let a' = Core.convert_like ~weak:false a dt in
+    let b' = Core.convert_like ~weak:false b dt in
+    op a' b'
+
+let ( +: ) = promoted L.add
+let ( -: ) = promoted L.sub
+let ( *: ) = promoted L.mul
+let ( /: ) = promoted L.div
 let ( &&: ) = L.bitwise_and
 let ( ||: ) = L.bitwise_or
 let shape v = (Core.get_aval v).shape
 let dtype v = (Core.get_aval v).dtype
-let like = L.full_like
+
+let like v c =
+  let a = Core.get_aval v in
+  if a.weak_type then
+    let lit =
+      Concrete (Ndarray.as_weak (Ndarray.of_floats a.dtype [||] [| c |]))
+    in
+    if Array.length a.shape = 0 then lit
+    else Core.bind1 (Broadcast_in_dim { shape = a.shape; dims = [||] }) [ lit ]
+  else L.full_like v c
+
 let select = L.select
 let not_ = L.bitwise_not
 let is_nan x = L.ne x x
@@ -151,7 +171,7 @@ let igammac_continued_fraction ax x a enabled eps mode =
         let e3 = e2 -: (dqkm2_da *: yc) in
         let dqk_da = e3 +: (qkm2 *: c) in
         let dn = dpk_da -: (ans *: dqk_da) in
-        let dans_da_new = select nonzero (dn /: qk) dans_da0 in
+        let dans_da_new = select nonzero (L.div dn qk) dans_da0 in
         let gabs = L.abs (dans_da_new -: dans_da0) in
         let grad_conditional = select nonzero gabs (like dans_da0 1.0) in
         let npkm2 = pkm1
@@ -165,7 +185,7 @@ let igammac_continued_fraction ax x a enabled eps mode =
         let apk = L.abs pk in
         let rescale = L.gt apk (L.reciprocal (eps_of pk)) in
         let scaled v =
-          let m = v *: eps_of v in
+          let m = L.mul v (eps_of v) in
           select rescale m v
         in
         let npkm2 = scaled npkm2 in
@@ -366,42 +386,63 @@ let () =
   L.random_gamma_grad_hook :=
     fun a x -> List.hd (up_and_broadcast random_gamma_grad_impl [ a; x ])
 
-let lentz ~num_iterations ~small ~threshold ~numerator ~denominator ~first =
+let jnp_remainder : (value -> value -> value) ref =
+  ref (fun _ _ -> invalid_arg "Native_lowering: remainder not installed")
+
+let jnp_floor_divide : (value -> value -> value) ref =
+  ref (fun _ _ -> invalid_arg "Native_lowering: floor_divide not installed")
+
+let lentz ~num_iterations ~small ~threshold ~numerator ~denominator =
+  let weak_int x =
+    Concrete
+      (Ndarray.as_weak
+         (Ndarray.of_floats
+            (Dtypes.default_int_dtype ())
+            [||]
+            [| float_of_int x |]))
+  in
   let cond = function
     | iteration :: unconverged :: _ ->
-        L.lt iteration (int32 num_iterations) &&: unconverged
+        let remain = L.lt iteration (weak_int num_iterations) in
+        remain &&: unconverged
     | _ -> invalid_arg "Native_lowering: lentz state"
   in
   let body = function
     | [ iteration; _; c0; d0; h0 ] ->
         let num = numerator iteration in
         let den = denominator iteration in
-        let small_of v = like v small in
-        let c = den +: (num /: c0) in
-        let c = select (L.lt (L.abs c) (small_of c)) (small_of c) c in
-        let d = den +: (num *: d0) in
-        let d = select (L.lt (L.abs d) (small_of d)) (small_of d) d in
+        let q = num /: c0 in
+        let c = den +: q in
+        let small_constant = like c small in
+        let abs_c = L.abs c in
+        let c_small = L.lt abs_c small_constant in
+        let c = select c_small small_constant c in
+        let p = num *: d0 in
+        let d = den +: p in
+        let abs_d = L.abs d in
+        let d_small = L.lt abs_d small_constant in
+        let d = select d_small small_constant d in
         let d = L.reciprocal d in
         let delta = c *: d in
         let h = h0 *: delta in
-        [
-          iteration +: int32 1;
-          any (L.ge (L.abs (delta -: like delta 1.0)) (like delta threshold));
-          c;
-          d;
-          h;
-        ]
+        let next = iteration +: weak_int 1 in
+        let shifted = delta -: like delta 1.0 in
+        let magnitude = L.abs shifted in
+        let unconverged = any (L.ge magnitude (like delta threshold)) in
+        [ next; unconverged; c; d; h ]
     | _ -> invalid_arg "Native_lowering: lentz state"
   in
-  let h =
-    select (L.lt (L.abs first) (like first small)) (like first small) first
-  in
+  let first = denominator (weak_int 0) in
+  let abs_first = L.abs first in
+  let first_small = L.lt abs_first (like first small) in
+  let h = select first_small (like first small) first in
+  let zero = like h 0.0 in
   let init =
     [
-      int32 1;
+      weak_int 1;
       Concrete (Ndarray.of_floats Dtype.Bool [||] [| 1.0 |]);
       h;
-      like h 0.0;
+      zero;
       h;
     ]
   in
@@ -410,71 +451,157 @@ let lentz ~num_iterations ~small ~threshold ~numerator ~denominator ~first =
 let betainc_impl dt = function
   | [ a0; b0; x0 ] ->
       let target = shape a0 in
-      let a_zero = L.eq a0 (like a0 0.0) ||: L.eq b0 (like b0 Float.infinity) in
-      let b_zero = L.eq b0 (like b0 0.0) ||: L.eq a0 (like a0 Float.infinity) in
-      let x_zero = L.eq x0 (like x0 0.0) in
-      let x_one = L.eq x0 (like x0 1.0) in
-      let nan = is_nan a0 ||: is_nan b0 ||: is_nan x0 in
-      let result_zero = b_zero &&: not_ x_one ||: (a_zero &&: x_zero) in
-      let result_one = a_zero &&: not_ x_zero ||: (b_zero &&: x_one) in
-      let result_nan =
-        L.lt a0 (like a0 0.0)
-        ||: L.lt b0 (like b0 0.0)
-        ||: L.lt x0 (like x0 0.0)
-        ||: L.gt x0 (like x0 1.0)
-        ||: (a_zero &&: b_zero) ||: nan
+      let eq_like v c = L.eq v (like v c) in
+      let either p q =
+        let l = p () in
+        let r = q () in
+        l ||: r
       in
-      let converges =
-        L.lt x0 ((a0 +: like a0 1.0) /: (a0 +: b0 +: like b0 2.0))
+      let a_zero =
+        either (fun () -> eq_like a0 0.0) (fun () -> eq_like b0 Float.infinity)
       in
+      let b_zero =
+        either (fun () -> eq_like b0 0.0) (fun () -> eq_like a0 Float.infinity)
+      in
+      let x_zero = eq_like x0 0.0 in
+      let x_one = eq_like x0 1.0 in
+      let x_not_zero = not_ x_zero in
+      let x_not_one = not_ x_one in
+      let nan_a = is_nan a0 in
+      let nan_b = is_nan b0 in
+      let nan_ab = nan_a ||: nan_b in
+      let nan_x = is_nan x0 in
+      let nan = nan_ab ||: nan_x in
+      let zero_l = b_zero &&: x_not_one in
+      let zero_r = a_zero &&: x_zero in
+      let result_zero = zero_l ||: zero_r in
+      let one_l = a_zero &&: x_not_zero in
+      let one_r = b_zero &&: x_one in
+      let result_one = one_l ||: one_r in
+      let lt_a = L.lt a0 (like a0 0.0) in
+      let lt_b = L.lt b0 (like b0 0.0) in
+      let lt_ab = lt_a ||: lt_b in
+      let lt_x = L.lt x0 (like x0 0.0) in
+      let lt_abx = lt_ab ||: lt_x in
+      let gt_x = L.gt x0 (like x0 1.0) in
+      let out_of_range = lt_abx ||: gt_x in
+      let both_zero = a_zero &&: b_zero in
+      let degenerate = both_zero ||: nan in
+      let result_nan = out_of_range ||: degenerate in
+      let one_a = like a0 1.0 in
+      let num = a0 +: one_a in
+      let ab = a0 +: b0 in
+      let den = ab +: like b0 2.0 in
+      let ratio = num /: den in
+      let converges = L.lt x0 ratio in
       let a = select converges a0 b0 in
       let b = select converges b0 a0 in
-      let x = select converges x0 (like x0 1.0 -: x0) in
+      let one_x = like x0 1.0 in
+      let flipped = one_x -: x0 in
+      let x = select converges x0 flipped in
       let numerator iteration =
         let i = L.broadcast_in_dim iteration target [||] in
-        let even = L.eq (L.rem i (like i 2.0)) (like i 0.0) in
-        let is_one = L.eq i (like i 1.0) in
-        let m_int = (i -: like i 1.0) /: like i 2.0 in
-        let m_zero = L.eq m_int (like m_int 0.0) in
+        let int_like c =
+          L.broadcast_in_dim
+            (Concrete
+               (Ndarray.as_weak
+                  (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| c |])))
+            target [||]
+        in
+        let two_i = int_like 2.0 in
+        let r = !jnp_remainder i two_i in
+        let even = L.eq r (int_like 0.0) in
+        let is_one = L.eq i (int_like 1.0) in
+        let i_minus = i -: int_like 1.0 in
+        let two_m = int_like 2.0 in
+        let m_int = !jnp_floor_divide i_minus two_m in
+        let m_zero = L.eq m_int (int_like 0.0) in
         let m = L.convert_element_type m_int dt in
         let one = like a 1.0 in
         let two = like a 2.0 in
-        let zero_numerator = L.neg (a +: b) *: x /: (a +: one) in
+        let zero_numerator =
+          let s = a +: b in
+          let n = L.neg s in
+          let t = n *: x in
+          let d = a +: one in
+          t /: d
+        in
         let even_numerator =
-          select m_zero zero_numerator
-            (L.neg (a +: m)
-            *: (a +: b +: m)
-            *: x
-            /: ((a +: (two *: m)) *: (a +: (two *: m) +: one)))
+          let am = a +: m in
+          let n = L.neg am in
+          let ab = a +: b in
+          let abm = ab +: m in
+          let t = n *: abm in
+          let t = t *: x in
+          let tm = two *: m in
+          let l = a +: tm in
+          let tm2 = two *: m in
+          let r = a +: tm2 in
+          let r = r +: one in
+          let d = l *: r in
+          t /: d
         in
+        let even_value = select m_zero zero_numerator even_numerator in
         let odd_numerator =
-          m *: (b -: m) *: x /: ((a +: (two *: m) -: one) *: (a +: (two *: m)))
+          let bm = b -: m in
+          let t = m *: bm in
+          let t = t *: x in
+          let tm = two *: m in
+          let l = a +: tm in
+          let l = l -: one in
+          let tm2 = two *: m in
+          let r = a +: tm2 in
+          let d = l *: r in
+          t /: d
         in
-        select is_one (like x 1.0) (select even even_numerator odd_numerator)
+        let one_numerator = like x 1.0 in
+        let n = select even even_value odd_numerator in
+        select is_one one_numerator n
       in
       let denominator iteration =
         let i = L.broadcast_in_dim iteration target [||] in
-        select (L.eq i (like i 0.0)) (like x 0.0) (like x 1.0)
+        let is_zero = L.eq i (like i 0.0) in
+        let zero = like x 0.0 in
+        let one = like x 1.0 in
+        select is_zero zero one
       in
       let half_eps = finfo_eps dt /. 2.0 in
       let continued =
         lentz
           ~num_iterations:(if dt = Dtype.F32 then 200 else 600)
           ~small:half_eps ~threshold:half_eps ~numerator ~denominator
-          ~first:(like x 0.0)
       in
       let very_small = finfo_tiny dt *. 2.0 in
-      let lbeta_small = lgamma b -: lgamma (a +: b) in
-      let lbeta = lgamma a +: lbeta_small in
-      let log1p_neg_x = L.log1p (L.neg x) in
-      let factor =
-        select
-          (L.lt a (like a very_small))
-          (L.exp ((log1p_neg_x *: b) -: lbeta_small))
-          (L.exp ((L.log x *: a) +: (log1p_neg_x *: b) -: lbeta) /: a)
+      let lg_b = lgamma b in
+      let ab = a +: b in
+      let lg_ab = lgamma ab in
+      let lbeta_small = lg_b -: lg_ab in
+      let lg_a = lgamma a in
+      let lbeta = lg_a +: lbeta_small in
+      let tiny_a = L.lt a (like a very_small) in
+      let small_branch =
+        let n = L.neg x in
+        let l = L.log1p n in
+        let t = l *: b in
+        let t = t -: lbeta_small in
+        L.exp t
       in
+      let large_branch =
+        let lx = L.log x in
+        let t = lx *: a in
+        let n = L.neg x in
+        let l = L.log1p n in
+        let u = l *: b in
+        let v = t +: u in
+        let v = v -: lbeta in
+        let e = L.exp v in
+        e /: a
+      in
+      let factor = select tiny_a small_branch large_branch in
       let result = continued *: factor in
-      let result = select converges result (like result 1.0 -: result) in
+      let one_r = like result 1.0 in
+      let complement = one_r -: result in
+      let result = select converges result complement in
       let result = select result_zero (like a 0.0) result in
       let result = select result_one (like a 1.0) result in
       select result_nan (like a Float.nan) result

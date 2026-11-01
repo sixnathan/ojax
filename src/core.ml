@@ -588,7 +588,7 @@ let convert_like ~weak v dt =
     | Concrete a when Array.length (Ndarray.shape a) = 0 -> (
         match rules.impl (Convert_element_type dt) [ a ] with
         | [ r ] ->
-            let r = Ndarray.canonicalize dt r in
+            let r = Ndarray.without_py_value (Ndarray.canonicalize dt r) in
             Concrete (if weak then Ndarray.as_weak r else r)
         | _ -> invalid_arg "convert_like: arity")
     | _ ->
@@ -617,7 +617,8 @@ let splat dt sh x =
       (Broadcast_in_dim { shape = sh; dims = [||] })
       [ Concrete (splat_host dt [||] 1 x) ]
 
-let py_scalar dt x = Concrete (Ndarray.as_weak (splat_host dt [||] 1 x))
+let py_scalar dt x =
+  Concrete (Ndarray.with_py_value (Ndarray.as_weak (splat_host dt [||] 1 x)) x)
 
 let get_aval = function
   | Concrete a ->

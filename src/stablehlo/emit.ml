@@ -568,7 +568,7 @@ let emit_convert ctx (eqn : eqn) in_ids =
         (re, rdt, { in_aval with dtype = rdt })
     | _ -> (x, in_dt, in_aval)
   in
-  if out_dt = Dtype.Bool && in_dt <> Dtype.Bool then begin
+  if out_dt = Dtype.Bool then begin
     let inty = Ir.tensor_type_of_aval in_aval in
     let sty = Ir.tensor_type in_dt [||] in
     let c = fresh ctx in

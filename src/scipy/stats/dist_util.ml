@@ -48,11 +48,16 @@ let promote_dtypes_any vs =
     | D.Bool when List.length strong < List.length vs -> default_float ()
     | d -> to_inexact d
   in
+  let all_weak =
+    List.for_all (fun v -> is_weak_default v || (get_aval v).T.weak_type) vs
+  in
   List.map
     (fun v ->
       match default_value v with
-      | Some x -> T.Concrete (Nd.of_floats dt [||] [| x |])
-      | None -> if dtype v = dt then v else NL.astype v dt)
+      | Some x ->
+          let lit = Nd.of_floats dt [||] [| x |] in
+          T.Concrete (if all_weak then Nd.as_weak lit else lit)
+      | None -> C.convert_like ~weak:all_weak v dt)
     vs
 
 let promote_complex vs = Numpy.Ufuncs.promote_shapes (promote_dtypes_any vs)

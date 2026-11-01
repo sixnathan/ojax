@@ -904,7 +904,24 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       failwith "batching: collectives handled by batch_process_primitive"
   | Fft _ -> (
       match (vals, bdims) with
-      | [ x ], [ Some d ] -> (b1 prim [ moveaxis d 0 x ], Some 0)
+      | [ x ], [ Some d ] ->
+          let key =
+            match prim with
+            | Fft { fft_type; fft_lengths } ->
+                (match fft_type with
+                | Fft_forward -> "f"
+                | Fft_inverse -> "i"
+                | Fft_real -> "r"
+                | Fft_inverse_real -> "ir")
+                ^ String.concat ","
+                    (List.map string_of_int (Array.to_list fft_lengths))
+            | _ -> ""
+          in
+          ( List.hd
+              (Jaxpr.named_jit ~name:"fft" ~key
+                 (fun args -> [ b1 prim args ])
+                 [ moveaxis d 0 x ]),
+            Some 0 )
       | [ x ], [ None ] -> (b1 prim [ x ], None)
       | _ -> failwith "batching: fft arity")
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->

@@ -554,7 +554,8 @@ let emit_convert ctx (eqn : eqn) in_ids =
   let oty = Ir.tensor_type_of_aval out.vaval in
   let x, in_dt, in_aval =
     match (in_dt, out_dt) with
-    | (Dtype.Complex64 | Dtype.Complex128), Dtype.Bool ->
+    | (Dtype.Complex64 | Dtype.Complex128), d
+      when d <> Dtype.Complex64 && d <> Dtype.Complex128 ->
         let rdt = if in_dt = Dtype.Complex128 then Dtype.F64 else Dtype.F32 in
         let re = fresh ctx in
         Buffer.add_string ctx.buf

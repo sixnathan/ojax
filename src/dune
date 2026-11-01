@@ -3,6 +3,9 @@
 (library
  (name ojax)
  (libraries unix)
+ (preprocess
+  (action
+   (run %{exe:../tools/ltr/ltr.exe} %{input-file})))
  (foreign_stubs
   (language c)
   (names pjrt_shim lapack_shim lapack_ffi)

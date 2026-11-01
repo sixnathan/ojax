@@ -28,12 +28,14 @@ let rounds_b = [ 17; 29; 16; 24 ]
 
 let broadcast_to_shape v shape =
   let a = Core.get_aval v in
-  if a.shape = shape then v
+  if Array.length a.shape = Array.length shape then v
   else if Array.length a.shape = 0 then
     b1 (Broadcast_in_dim { shape; dims = [||] }) [ v ]
   else invalid_arg "Prng_lowering: incompatible threefry operands"
 
-let i32_scalar x = Concrete (Ndarray.of_floats Dtype.I32 [||] [| x |])
+let i32_scalar x =
+  Concrete (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| x |])
+
 let u32_scalar x = Concrete (Ndarray.of_floats u32 [||] [| x |])
 
 let rotation_array values =
@@ -87,11 +89,14 @@ let threefry_step = function
   | _ -> invalid_arg "Prng_lowering: threefry state"
 
 let threefry2x32_body key1 key2 c1 c2 =
-  let shape = (Core.get_aval c1).shape in
+  let shape =
+    Core.elementwise_shape
+      [ (Core.get_aval c1).shape; (Core.get_aval key1).shape ]
+  in
   let spread v = broadcast_to_shape v shape in
-  let key3 = xor (xor key1 key2) (like key1 466688986.0) in
-  let x0 = add c1 (spread key1) in
-  let x1 = add c2 (spread key2) in
+  let key3 = xor (xor key1 key2) (u32_scalar 466688986.0) in
+  let x0 = add (spread c1) (spread key1) in
+  let x1 = add (spread c2) (spread key2) in
   match
     Lax.scan ~length:5 threefry_step
       [
@@ -153,24 +158,58 @@ let iota_counters shape =
   end
 
 let key_words key =
+  let sh = (Core.get_aval key).shape in
+  let r = Array.length sh in
   let piece i =
-    b1 (Reshape [||])
-      [
-        b1
-          (Slice
-             {
-               start_indices = [| i |];
-               limit_indices = [| i + 1 |];
-               strides = None;
-             })
-          [ key ];
-      ]
+    let start_indices = Array.make r 0 and limit_indices = Array.copy sh in
+    start_indices.(r - 1) <- i;
+    limit_indices.(r - 1) <- i + 1;
+    b1
+      (Reshape (Array.sub sh 0 (r - 1)))
+      [ b1 (Slice { start_indices; limit_indices; strides = None }) [ key ] ]
   in
   (piece 0, piece 1)
 
+let batched_threefry k1 k2 c1 c2 =
+  let ka = (Core.get_aval k1).shape in
+  if Array.length ka = 0 then threefry2x32 k1 k2 c1 c2
+  else
+    let lift_count c =
+      let sh = (Core.get_aval c).shape in
+      let n = Array.length sh in
+      if n = 0 then c
+      else
+        b1
+          (Broadcast_in_dim
+             {
+               shape = Array.append [| 1 |] sh;
+               dims = Array.init n (fun d -> d + 1);
+             })
+          [ c ]
+    in
+    let c1 = lift_count c1 in
+    let c2 = lift_count c2 in
+    let nd =
+      Stdlib.max (Array.length ka) (Array.length (Core.get_aval c1).shape)
+    in
+    let lift_key k =
+      if Array.length ka = nd then k
+      else
+        b1
+          (Broadcast_in_dim
+             {
+               shape = Array.append ka (Array.make (nd - Array.length ka) 1);
+               dims = Array.init (Array.length ka) Fun.id;
+             })
+          [ k ]
+    in
+    let k1 = lift_key k1 in
+    let k2 = lift_key k2 in
+    threefry2x32 k1 k2 c1 c2
+
 let rec over_key_batch f key =
   let a = Core.get_aval key in
-  if Array.length a.shape = 1 then f key
+  if Array.length a.shape <= 2 then f key
   else
     let rows = Core.bind (Unstack 0) [ key ] in
     b1 (Stack 0) (List.map (over_key_batch f) rows)
@@ -180,7 +219,7 @@ let random_bits ~shape key =
     (fun k ->
       let k1, k2 = key_words k in
       let c1, c2 = iota_counters shape in
-      match threefry2x32 k1 k2 c1 c2 with
+      match batched_threefry k1 k2 c1 c2 with
       | [ x; y ] -> xor x y
       | _ -> invalid_arg "Prng_lowering: threefry arity")
     key
@@ -196,8 +235,10 @@ let random_split ~shape key =
              | [ k ] -> (
                  let k1, k2 = key_words k in
                  let c1, c2 = iota_counters shape in
-                 match threefry2x32 k1 k2 c1 c2 with
-                 | [ x; y ] -> [ b1 (Stack (Array.length shape)) [ x; y ] ]
+                 match batched_threefry k1 k2 c1 c2 with
+                 | [ x; y ] ->
+                     let n = Array.length (Core.get_aval x).shape in
+                     [ b1 (Stack n) [ x; y ] ]
                  | _ -> invalid_arg "Prng_lowering: threefry arity")
              | _ -> invalid_arg "Prng_lowering: split arity")
            [ k ]))
@@ -291,14 +332,12 @@ let random_bits64 ~shape key =
     (fun k ->
       let k1, k2 = key_words k in
       let c1, c2 = iota_counters shape in
-      match threefry2x32 k1 k2 c1 c2 with
+      match batched_threefry k1 k2 c1 c2 with
       | [ x; y ] ->
           let wide v = b1 (Convert_element_type Dtype.Uint64) [ v ] in
           let hi = wide x and lo = wide y in
           let thirty_two =
-            Concrete
-              (Ndarray.of_int64s Dtype.Uint64 shape
-                 (Array.make (Array.fold_left ( * ) 1 shape) 32L))
+            Concrete (Ndarray.of_int64s Dtype.Uint64 [||] [| 32L |])
           in
           b1 Or [ b1 Shift_left [ hi; thirty_two ]; lo ]
       | _ -> invalid_arg "Prng_lowering: threefry arity")

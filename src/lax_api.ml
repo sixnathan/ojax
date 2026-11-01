@@ -23,24 +23,7 @@ let broadcast_scalar v sh =
          (ndim v) (Array.length sh))
 
 let unify a b =
-  if shape a = shape b || ndim a = 0 then (a, b)
-  else if ndim a = ndim b then
-    let sh = Core.elementwise_shape [ shape a; shape b ] in
-    let widen v =
-      if shape v = sh then v
-      else
-        let kept = ref [] and squeezed = ref [] in
-        Array.iteri
-          (fun i d ->
-            if d = 1 && sh.(i) <> 1 then squeezed := i :: !squeezed
-            else kept := i :: !kept)
-          (shape v);
-        b1
-          (Broadcast_in_dim
-             { shape = sh; dims = Array.of_list (List.rev !kept) })
-          [ b1 (Squeeze (Array.of_list (List.rev !squeezed))) [ v ] ]
-    in
-    (widen a, widen b)
+  if shape a = shape b || ndim a = 0 || ndim a = ndim b then (a, b)
   else (a, broadcast_scalar b (if ndim b = 0 then shape b else shape a))
 
 let lift2 prim a b =
@@ -184,7 +167,20 @@ let select_n pred cases =
   b1 Select_n (broadcast_scalar pred sh :: cases)
 
 let full sh fill_value dt = filled dt sh fill_value
-let full_like x fill_value = filled (dtype_of x) (shape x) fill_value
+
+let full_like x fill_value =
+  let a = aval x in
+  if not a.weak_type then filled a.dtype a.shape fill_value
+  else if Array.length a.shape = 0 then Core.py_scalar a.dtype fill_value
+  else if Core.staging () then
+    b1
+      (Broadcast_in_dim { shape = a.shape; dims = [||] })
+      [ Core.py_scalar a.dtype fill_value ]
+  else
+    match filled a.dtype a.shape fill_value with
+    | Concrete nd -> Concrete (Ndarray.as_weak nd)
+    | other -> other
+
 let empty dt = filled dt [| 0 |] 0.0
 
 let iota dt size =
@@ -244,8 +240,7 @@ let broadcast x sizes =
 
 let broadcast_to_rank x rank =
   let missing = rank - ndim x in
-  if missing <= 0 then x
-  else b1 (Reshape (Array.append (Array.make missing 1) (shape x))) [ x ]
+  if missing <= 0 then x else expand_dims x (Array.init missing Fun.id)
 
 let broadcast_shapes shapes =
   let rank =

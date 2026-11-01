@@ -1691,6 +1691,15 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
       cumulative_jvp ~axis ~reverse primals tangents (fun a b ->
           Lax_other.logaddexp a b)
   | Igamma_grad_a -> failwith "ad: primitive has no jvp rule (matches jax)"
+  | Random_gamma { log_space } ->
+      let _, a = arg2 primals in
+      standard_jvp prim primals tangents
+        [
+          None;
+          Some
+            (fun g ans ->
+              lmul g (!Core.random_gamma_grad_hook ~log_space ans a));
+        ]
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
@@ -2420,6 +2429,110 @@ let trace_linearized_ref :
 let lin_call_cache : (int * bool list * bool, lin_call) Hashtbl.t =
   Hashtbl.create 64
 
+let hoist_scan_invariants (c : closed_jaxpr) =
+  let hoist_one (e : eqn) =
+    match e.prim with
+    | Scan ({ num_consts; jaxpr = body; _ } as scan) when body.consts = [] ->
+        let invariant : (int, atom) Hashtbl.t = Hashtbl.create 8 in
+        List.iteri
+          (fun i (v : var) ->
+            if i < num_consts then
+              Hashtbl.replace invariant v.vid (List.nth e.inputs i))
+          body.jaxpr.in_binders;
+        let outer_atom = function
+          | A_var (v : var) -> Hashtbl.find_opt invariant v.vid
+          | A_lit _ as a -> Some a
+          | DropVar _ -> None
+        in
+        let hoisted = ref [] and new_binders = ref [] and kept = ref [] in
+        List.iter
+          (fun (b : eqn) ->
+            let outer = List.map outer_atom b.inputs in
+            if
+              (not (Jaxpr.eqn_has_effect b))
+              && List.for_all Option.is_some outer
+              && b.outs <> []
+            then begin
+              let fresh =
+                List.map
+                  (fun (o : var) -> { vid = Core.fresh_id (); vaval = o.vaval })
+                  b.outs
+              in
+              List.iter2
+                (fun (o : var) (f : var) ->
+                  Hashtbl.replace invariant o.vid (A_var f);
+                  new_binders := (o, A_var f) :: !new_binders)
+                b.outs fresh;
+              hoisted :=
+                { b with inputs = List.map Option.get outer; outs = fresh }
+                :: !hoisted
+            end
+            else kept := b :: !kept)
+          body.jaxpr.eqns;
+        if !hoisted = [] then [ e ]
+        else
+          let kept = List.rev !kept in
+          let used (v : var) =
+            let mention = function
+              | A_var (u : var) -> u.vid = v.vid
+              | _ -> false
+            in
+            List.exists (fun (k : eqn) -> List.exists mention k.inputs) kept
+            || List.exists mention body.jaxpr.outs
+          in
+          let added =
+            List.filter (fun ((o : var), _) -> used o) (List.rev !new_binders)
+          in
+          let body' =
+            Jaxpr.dce_keep_args
+              {
+                body with
+                jid = Core.fresh_id ();
+                jaxpr =
+                  {
+                    body.jaxpr with
+                    in_binders = List.map fst added @ body.jaxpr.in_binders;
+                    eqns = kept;
+                  };
+              }
+          in
+          let used_vars : (int, unit) Hashtbl.t = Hashtbl.create 16 in
+          let note = function
+            | A_var (u : var) -> Hashtbl.replace used_vars u.vid ()
+            | _ -> ()
+          in
+          List.iter note body'.jaxpr.outs;
+          List.iter (fun (k : eqn) -> List.iter note k.inputs) body'.jaxpr.eqns;
+          List.iter
+            (fun (k : eqn) ->
+              List.iter
+                (fun (o : var) ->
+                  if not (Hashtbl.mem used_vars o.vid) then
+                    Pretty_printer.mark_dropped o)
+                k.outs)
+            body'.jaxpr.eqns;
+          List.rev !hoisted
+          @ [
+              {
+                e with
+                prim =
+                  Scan
+                    {
+                      scan with
+                      num_consts = num_consts + List.length added;
+                      jaxpr = body';
+                    };
+                inputs = List.map snd added @ e.inputs;
+              };
+            ]
+    | _ -> [ e ]
+  in
+  {
+    c with
+    jid = Core.fresh_id ();
+    jaxpr = { c.jaxpr with eqns = List.concat_map hoist_one c.jaxpr.eqns };
+  }
+
 let linearize_call (c : closed_jaxpr) primal_avals nzs =
   let key = (c.jid, nzs, Config.x64_enabled ()) in
   match Hashtbl.find_opt lin_call_cache key with
@@ -2482,7 +2595,7 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
         | None -> failwith "ad: linearized call was not traced"
       in
       let name = Pretty_printer.call_name c.jid in
-      let primal = Jaxpr.dce_keep_args primal in
+      let primal = hoist_scan_invariants (Jaxpr.dce_keep_args primal) in
       Pretty_printer.register_call_name primal.jid name;
       let tangent = { jid = Core.fresh_id (); jaxpr = jx; consts = [] } in
       Pretty_printer.register_call_name tangent.jid name;
@@ -4321,7 +4434,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Polygamma | Regularized_incomplete_beta | Zeta | Platform_index _
   | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ | Threefry2x32
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-  | Random_bits _ | Random_wrap | Random_unwrap ->
+  | Random_bits _ | Random_wrap | Random_unwrap | Random_gamma _ ->
       failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
   | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       let split_at l n =

@@ -101,7 +101,12 @@ let lowered_symbol key base =
 
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
 let while_depth = ref 0
-let call_symbol_key jid = if !while_depth > 0 then jid lxor (1 lsl 61) else jid
+let lowered_fun_depth = ref 0
+
+let call_symbol_key jid =
+  if !while_depth > 0 && !lowered_fun_depth = 0 then jid lxor (1 lsl 61)
+  else jid
+
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -2855,7 +2860,11 @@ and emit_traced ctx avals in_ids outs f =
     (emit_traced_ids ctx avals in_ids f)
 
 and emit_traced_ids ctx avals in_ids f =
-  emit_closed_inline ctx (Jaxpr.make_jaxpr_for_lowering avals f) in_ids
+  incr lowered_fun_depth;
+  Fun.protect
+    ~finally:(fun () -> decr lowered_fun_depth)
+    (fun () ->
+      emit_closed_inline ctx (Jaxpr.make_jaxpr_for_lowering avals f) in_ids)
 
 and hoist_custom_consts ctx (jx : jaxpr) =
   List.iter
@@ -3133,6 +3142,13 @@ and widen_operands ctx (eqn : eqn) (in_ids : int list) =
       ({ eqn with inputs = List.map fst widened }, List.map snd widened)
 
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
+  let prev = !Jaxpr.in_eqn_eval in
+  Jaxpr.in_eqn_eval := true;
+  Fun.protect
+    ~finally:(fun () -> Jaxpr.in_eqn_eval := prev)
+    (fun () -> emit_eqn_in_context ctx eqn in_ids)
+
+and emit_eqn_in_context ctx (eqn : eqn) (in_ids : int list) : unit =
   match (eqn.prim, eqn.inputs) with
   | Pow, [ l; r ] when (atom_aval l).dtype <> (atom_aval r).dtype ->
       emit_inlined ctx eqn in_ids (function
@@ -3526,6 +3542,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Random_bits { bit_width = 32; shape } ->
       emit_inlined ctx eqn in_ids (fun args ->
           [ Prng_lowering.random_bits ~shape (List.hd args) ])
+  | Random_bits { bit_width = (8 | 16) as w; shape } ->
+      let dt = if w = 8 then Dtype.Uint8 else Dtype.Uint16 in
+      emit_inlined ctx eqn in_ids (fun args ->
+          [
+            Core.bind1 (Convert_element_type dt)
+              [ Prng_lowering.random_bits ~shape (List.hd args) ];
+          ])
   | Random_bits { shape; _ } ->
       emit_inlined ctx eqn in_ids (fun args ->
           [ Prng_lowering.random_bits64 ~shape (List.hd args) ])
@@ -3540,6 +3563,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ key; data ] -> [ Prng_lowering.fold_in key data ]
         | _ -> invalid_arg "Stablehlo.Emit: fold_in arity")
   | Random_wrap | Random_unwrap -> emit_inlined ctx eqn in_ids Fun.id
+  | Random_gamma { log_space } ->
+      emit_inlined ctx eqn in_ids (function
+        | [ key; a ] -> [ !Core.random_gamma_hook ~log_space key a ]
+        | _ -> invalid_arg "Stablehlo.Emit: random_gamma arity")
   | Cond { branches; platforms } -> emit_cond ctx eqn in_ids ~platforms branches
   | Reduce { jaxpr; dimensions } ->
       emit_reduce_general ctx eqn in_ids jaxpr dimensions
@@ -4131,6 +4158,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset cum_symbols;
   Hashtbl.reset call_symbols;
   while_depth := 0;
+  lowered_fun_depth := 0;
   symbol_counter := 0;
   seen_mesh := None;
   callback_seen := false;

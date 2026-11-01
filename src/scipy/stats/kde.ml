@@ -95,7 +95,7 @@ let kernel_eval in_log points values xi precision =
           let summed = R.sum (U.log diag) in
           let two_pi = Numpy.Jnp_util.py_float (2.0 *. Float.pi) in
           let lg = U.log two_pi in
-          let half_d = Numpy.Jnp_util.py_float (0.5 *. float_of_int d) in
+          let half_d = JU.py_float (0.5 *. float_of_int d) in
           let log_norm = U.subtract summed (U.multiply half_d lg) in
           let kernel x_test x_train y_train =
             let delta = U.subtract x_train x_test in
@@ -130,7 +130,7 @@ let evaluate t points =
     kernel_eval false (NL.transpose t.dataset) (values_of t)
       (NL.transpose points) t.inv_cov
   in
-  L.index_in_dim ~axis:1 ~keepdims:false result 0
+  L.squeeze result [| 1 |]
 
 let pdf = evaluate
 
@@ -140,7 +140,7 @@ let logpdf t points =
     kernel_eval true (NL.transpose t.dataset) (values_of t)
       (NL.transpose points) t.inv_cov
   in
-  L.index_in_dim ~axis:1 ~keepdims:false result 0
+  L.squeeze result [| 1 |]
 
 let integrate_box_1d t low high =
   if t.d <> 1 then invalid_arg "integrate_box_1d() only handles 1D pdfs";
@@ -151,8 +151,6 @@ let integrate_box_1d t low high =
       match vals with
       | [ _; dataset; weights; covariance; _; low; high ] ->
           let sigma = NL.squeeze (U.sqrt covariance) in
-          let low = NL.astype low (dtype_of dataset) in
-          let high = NL.astype high (dtype_of dataset) in
           let low_z =
             NL.squeeze (U.true_divide (U.subtract low dataset) sigma)
           in

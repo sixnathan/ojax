@@ -160,6 +160,11 @@ let random_bits_impl bit_width shape key =
 
 let impl_rule prim inputs =
   match (prim, inputs) with
+  | Random_gamma { log_space }, [ key; a ] -> (
+      match !Core.random_gamma_hook ~log_space (Concrete key) (Concrete a) with
+      | Concrete nd -> [ nd ]
+      | Device b -> [ Pjrt.Buffer.to_host b ]
+      | Tracer _ -> failwith "prng: random_gamma produced a tracer")
   | Iota_2x32_shape shape, [] ->
       let hi, lo = iota_2x32_nd shape in
       [ hi; lo ]
@@ -168,6 +173,15 @@ let impl_rule prim inputs =
   | Random_fold_in, [ key; msg ] -> [ random_fold_in_impl key msg ]
   | Random_bits { bit_width = 64; shape }, [ key ] ->
       [ Nd.of_int64s Dtype.Uint64 shape (!bits64_hook key shape) ]
+  | Random_bits { bit_width = (8 | 16) as w; shape }, [ key ] ->
+      let dt = if w = 8 then Dtype.Uint8 else Dtype.Uint16 in
+      let m = (1 lsl w) - 1 in
+      let wide = random_bits_impl 32 shape key in
+      let s = Nd.shape wide in
+      [
+        Nd.of_floats dt s
+          (Array.init (prod s) (fun i -> float_of_int (geti wide i land m)));
+      ]
   | Random_bits { bit_width; shape }, [ key ] ->
       [ random_bits_impl bit_width shape key ]
   | Random_wrap, [ arr ] -> [ arr ]
@@ -178,6 +192,7 @@ let shaped shape = { shape; dtype = Dtype.Uint32; weak_type = false }
 
 let abstract_eval_rule prim avals =
   match (prim, avals) with
+  | Random_gamma _, [ _; a ] -> [ a ]
   | Iota_2x32_shape shape, [] -> [ shaped shape; shaped shape ]
   | Random_seed, [ a ] -> [ shaped (Array.append a.shape [| 2 |]) ]
   | Random_split shape, [ a ] ->
@@ -185,11 +200,15 @@ let abstract_eval_rule prim avals =
   | Random_fold_in, [ ka; ma ] ->
       let ob = broadcast_shapes [ drop_last ka.shape; ma.shape ] in
       [ shaped (Array.append ob [| 2 |]) ]
-  | Random_bits { bit_width = 64; shape }, [ a ] ->
+  | Random_bits { bit_width = (8 | 16 | 64) as w; shape }, [ a ] ->
       [
         {
           shape = Array.append (drop_last a.shape) shape;
-          dtype = Dtype.Uint64;
+          dtype =
+            (match w with
+            | 8 -> Dtype.Uint8
+            | 16 -> Dtype.Uint16
+            | _ -> Dtype.Uint64);
           weak_type = false;
         };
       ]
@@ -203,7 +222,7 @@ let abstract_eval_rule prim avals =
 
 let is_prng_prim = function
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
-  | Random_bits _ | Random_wrap | Random_unwrap ->
+  | Random_bits _ | Random_wrap | Random_unwrap | Random_gamma _ ->
       true
   | _ -> false
 
@@ -269,3 +288,6 @@ let random_bits key ~bit_width ~shape =
 
 let random_wrap arr = Core.bind1 Random_wrap [ arr ]
 let random_unwrap key = Core.bind1 Random_unwrap [ key ]
+
+let random_gamma ~log_space key a =
+  Core.bind1 (Random_gamma { log_space }) [ key; a ]

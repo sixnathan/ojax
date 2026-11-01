@@ -120,6 +120,7 @@ let jaxpr_builders =
                  lhs_batch = [||];
                  rhs_batch = [||];
                  untyped_dot = true;
+                 dot_precision = None;
                })
             a;
         ] );

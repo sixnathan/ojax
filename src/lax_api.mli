@@ -221,7 +221,7 @@ val dot_general :
   rhs_batch:int array ->
   value
 
-val batch_matmul : value -> value -> value
+val batch_matmul : ?precision:Lax_config.precision -> value -> value -> value
 val batch_matmul_typed : value -> value -> value
 val dot_typed : value -> value -> value
 

@@ -310,6 +310,7 @@ and dot_dims = {
   lhs_batch : int array;
   rhs_batch : int array;
   untyped_dot : bool;
+  dot_precision : (string * string) option;
 }
 
 and gather_dims = {
@@ -326,6 +327,7 @@ and scatter_dims = {
   scatter_dims_to_operand_dims : int array;
   s_operand_batching_dims : int array;
   s_scatter_indices_batching_dims : int array;
+  s_sorted_unique : bool;
 }
 
 and conv_dims = {

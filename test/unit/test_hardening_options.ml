@@ -490,6 +490,7 @@ module T5 = struct
         scatter_dims_to_operand_dims = [| 0 |];
         s_operand_batching_dims = [||];
         s_scatter_indices_batching_dims = [||];
+        s_sorted_unique = false;
       }
     in
     let fam n

@@ -433,6 +433,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
             ia (member "scatter_dims_to_operand_dims");
           s_operand_batching_dims = opt "operand_batching_dims";
           s_scatter_indices_batching_dims = opt "scatter_indices_batching_dims";
+          s_sorted_unique = false;
         }
       in
       let unique =
@@ -466,6 +467,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
           lhs_batch = ia (List.nth batch 0);
           rhs_batch = ia (List.nth batch 1);
           untyped_dot = false;
+          dot_precision = None;
         }
   | "conv_general_dilated" ->
       let dn = U.to_list (member "dimension_numbers") in
@@ -1530,6 +1532,7 @@ let jaxpr_builders :
                  lhs_batch = [||];
                  rhs_batch = [||];
                  untyped_dot = false;
+                 dot_precision = None;
                })
             args;
         ] );
@@ -1626,6 +1629,7 @@ let ad_builders : (string * (T.value list -> T.value list)) list =
                  lhs_batch = [||];
                  rhs_batch = [||];
                  untyped_dot = false;
+                 dot_precision = None;
                })
             a;
         ] );

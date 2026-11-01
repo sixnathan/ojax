@@ -76,6 +76,7 @@ type dot_dimension_numbers = Types.dot_dims = {
   lhs_batch : int array;
   rhs_batch : int array;
   untyped_dot : bool;
+  dot_precision : (string * string) option;
 }
 
 val dot_dimension_numbers :
@@ -109,6 +110,7 @@ type scatter_dimension_numbers = Types.scatter_dims = {
   scatter_dims_to_operand_dims : int array;
   s_operand_batching_dims : int array;
   s_scatter_indices_batching_dims : int array;
+  s_sorted_unique : bool;
 }
 
 val scatter_dimension_numbers :

@@ -1,9 +1,27 @@
 module T = Types
 module C = Core
+module Nd = Ndarray
+module D = Dtype
 module LN = Lax_numpy
 
 let get_aval = C.get_aval
 let shape_of v = (get_aval v).T.shape
+
+let concrete = function
+  | T.Concrete nd -> nd
+  | _ -> failwith "vectorize: forward-eval requires concrete inputs"
+
+let is_complex = function D.Complex64 | D.Complex128 -> true | _ -> false
+
+let unravel lin sh =
+  let n = Array.length sh in
+  let idx = Array.make n 0 in
+  let rem = ref lin in
+  for d = n - 1 downto 0 do
+    idx.(d) <- (if sh.(d) = 0 then 0 else !rem mod sh.(d));
+    rem := if sh.(d) = 0 then 0 else !rem / sh.(d)
+  done;
+  idx
 
 let parse_side (s : string) : string list list =
   let n = String.length s in
@@ -32,6 +50,52 @@ let parse_signature (s : string) : int list * int list =
   let lhs = String.sub s 0 arrow in
   let rhs = String.sub s (arrow + 2) (String.length s - arrow - 2) in
   (List.map List.length (parse_side lhs), List.map List.length (parse_side rhs))
+
+let extract_slice nd nc bidx =
+  let sh = Nd.shape nd in
+  let ndim = Array.length sh in
+  let nb = ndim - nc in
+  let batch_shape = Array.sub sh 0 nb in
+  let core_shape = Array.sub sh nb nc in
+  let bb = Array.length bidx in
+  let batch_idx =
+    Array.init nb (fun i ->
+        if batch_shape.(i) = 1 then 0 else bidx.(bb - nb + i))
+  in
+  let dt = Nd.dtype nd in
+  let csize = Array.fold_left ( * ) 1 core_shape in
+  let full_idx = Array.make ndim 0 in
+  Array.blit batch_idx 0 full_idx 0 nb;
+  if is_complex dt then (
+    let buf = Array.make csize Complex.zero in
+    for lin = 0 to csize - 1 do
+      Array.blit (unravel lin core_shape) 0 full_idx nb nc;
+      buf.(lin) <- Nd.get_c nd full_idx
+    done;
+    Nd.of_complex dt core_shape buf)
+  else
+    let buf = Array.make csize 0.0 in
+    for lin = 0 to csize - 1 do
+      Array.blit (unravel lin core_shape) 0 full_idx nb nc;
+      buf.(lin) <- Nd.get_f nd full_idx
+    done;
+    Nd.of_floats dt core_shape buf
+
+let flat_f nd =
+  let n = Array.fold_left ( * ) 1 (Nd.shape nd) in
+  let a = Array.make n 0.0 in
+  ignore
+    (Nd.fold
+       (fun i x ->
+         a.(i) <- x;
+         i + 1)
+       0 nd);
+  a
+
+let flat_c nd =
+  let sh = Nd.shape nd in
+  let n = Array.fold_left ( * ) 1 sh in
+  Array.init n (fun lin -> Nd.get_c nd (unravel lin sh))
 
 let vectorize ?(excluded = []) ?signature pyfunc raw_args =
   let n = List.length raw_args in
@@ -77,38 +141,78 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
          dyn_arr)
   in
   let broadcast_shape = LN.broadcast_shapes_n batch_shapes in
-  let rank = Array.length broadcast_shape in
-  let squeezed =
-    List.map2
-      (fun v noncore ->
-        let dims =
-          List.filter
-            (fun i -> noncore.(i) = 1)
-            (List.init (Array.length noncore) Fun.id)
-        in
-        if dims = [] then v else LN.squeeze ~axis:(Array.of_list dims) v)
-      (Array.to_list dyn_arr) batch_shapes
+  let bsize = Array.fold_left ( * ) 1 broadcast_shape in
+  let traced =
+    Array.exists (function T.Tracer _ -> true | _ -> false) dyn_arr
   in
-  let filled =
-    List.map
-      (fun noncore ->
-        Array.append (Array.make (rank - Array.length noncore) 1) noncore)
-      batch_shapes
-  in
-  let vectorized = ref (fun slices -> [ call_full slices ]) in
-  let to_expand = ref [] in
-  for negdim = 0 to rank - 1 do
-    let axis = rank - 1 - negdim in
-    let in_axes =
-      List.map (fun sh -> if sh.(axis) = 1 then None else Some 0) filled
+  if traced then begin
+    let nb = Array.length broadcast_shape in
+    let pieces =
+      Array.to_list
+        (Array.mapi
+           (fun idx v ->
+             let sh = shape_of v in
+             let noncore = Array.sub sh 0 (Array.length sh - ncs.(idx)) in
+             let filled =
+               Array.append (Array.make (nb - Array.length noncore) 1) noncore
+             in
+             let squeeze_axes =
+               List.filter
+                 (fun i -> noncore.(i) = 1)
+                 (List.init (Array.length noncore) Fun.id)
+             in
+             let squeezed =
+               if squeeze_axes = [] then v
+               else LN.squeeze ~axis:(Array.of_list squeeze_axes) v
+             in
+             (filled, squeezed))
+           dyn_arr)
     in
-    if List.for_all Option.is_none in_axes then
-      to_expand := !to_expand @ [ axis ]
-    else
-      let inner = !vectorized in
-      vectorized := fun args -> Interpreters.Batching.vmap inner in_axes args
-  done;
-  let result = List.hd (!vectorized squeezed) in
-  match !to_expand with
-  | [] -> result
-  | dims -> LN.expand_dims result (Array.of_list dims)
+    let filled = List.map fst pieces and squeezed = List.map snd pieces in
+    let func = ref (fun xs -> [ call_full xs ]) and expand = ref [] in
+    for pos = nb - 1 downto 0 do
+      let in_axes =
+        List.map (fun s -> if s.(pos) = 1 then None else Some 0) filled
+      in
+      if List.for_all Option.is_none in_axes then expand := pos :: !expand
+      else begin
+        let inner = !func in
+        func := fun xs -> Interpreters.Batching.vmap inner in_axes xs
+      end
+    done;
+    let result = List.hd (!func squeezed) in
+    match !expand with
+    | [] -> result
+    | dims -> LN.expand_dims result (Array.of_list dims)
+  end
+  else
+    let concretes = Array.map concrete dyn_arr in
+    let fbuf = ref [||] in
+    let cbuf = ref [||] in
+    let out_dt = ref D.F32 in
+    let out_shape = ref [||] in
+    let out_csize = ref 0 in
+    let cplx = ref false in
+    for lin = 0 to bsize - 1 do
+      let bidx = unravel lin broadcast_shape in
+      let dyn_slices =
+        Array.to_list
+          (Array.mapi
+             (fun idx nd -> T.Concrete (extract_slice nd ncs.(idx) bidx))
+             concretes)
+      in
+      let out = concrete (call_full dyn_slices) in
+      if lin = 0 then (
+        out_dt := Nd.dtype out;
+        out_shape := Nd.shape out;
+        out_csize := Array.fold_left ( * ) 1 !out_shape;
+        cplx := is_complex !out_dt;
+        if !cplx then cbuf := Array.make (bsize * !out_csize) Complex.zero
+        else fbuf := Array.make (bsize * !out_csize) 0.0);
+      let base = lin * !out_csize in
+      if !cplx then Array.blit (flat_c out) 0 !cbuf base !out_csize
+      else Array.blit (flat_f out) 0 !fbuf base !out_csize
+    done;
+    let final_shape = Array.append broadcast_shape !out_shape in
+    if !cplx then T.Concrete (Nd.of_complex !out_dt final_shape !cbuf)
+    else T.Concrete (Nd.of_floats !out_dt final_shape !fbuf)

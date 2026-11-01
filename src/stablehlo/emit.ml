@@ -49,7 +49,7 @@ let nested_literals nd =
 
 let dense_body nd =
   match all_literals nd with
-  | [] -> invalid_arg "Stablehlo.Emit: empty constant"
+  | [] -> ""
   | first :: rest when List.for_all (String.equal first) rest -> first
   | _ -> nested_literals nd
 
@@ -90,6 +90,8 @@ let unique_symbol base =
   probe base
 
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
+let while_depth = ref 0
+let call_symbol_key jid = if !while_depth > 0 then jid lxor (1 lsl 61) else jid
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -554,7 +556,8 @@ let emit_convert ctx (eqn : eqn) in_ids =
   let oty = Ir.tensor_type_of_aval out.vaval in
   let x, in_dt, in_aval =
     match (in_dt, out_dt) with
-    | (Dtype.Complex64 | Dtype.Complex128), Dtype.Bool ->
+    | (Dtype.Complex64 | Dtype.Complex128), o
+      when o <> Dtype.Complex64 && o <> Dtype.Complex128 ->
         let rdt = if in_dt = Dtype.Complex128 then Dtype.F64 else Dtype.F32 in
         let re = fresh ctx in
         Buffer.add_string ctx.buf
@@ -1122,7 +1125,8 @@ let cum_window_attrs shape axis reverse =
      window_dimensions = %s, window_strides = %s"
     (arr ones) pad_str (arr ones) (arr window_dims) (arr ones)
 
-let cum_functions : (string, string) Hashtbl.t = Hashtbl.create 8
+let cum_symbols : (string * string * int * bool, string) Hashtbl.t =
+  Hashtbl.create 8
 
 let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
@@ -1133,17 +1137,17 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
   let sty = Ir.tensor_type dt [||] in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
-  let attrs = cum_window_attrs in_aval.shape axis reverse in
-  let key = String.concat "|" [ base_name; ty; attrs ] in
-  let known = Hashtbl.find_opt cum_functions key in
+  let key = (base_name, ty, axis, reverse) in
+  let cached = Hashtbl.find_opt cum_symbols key in
   let fname =
-    match known with Some f -> f | None -> unique_symbol base_name
+    match cached with Some f -> f | None -> unique_symbol base_name
   in
-  Hashtbl.replace cum_functions key fname;
+  Hashtbl.replace cum_symbols key fname;
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
-  if known = None then begin
+  if cached = None then begin
+    let attrs = cum_window_attrs in_aval.shape axis reverse in
     let b = ctx.extras in
     Buffer.add_string b
       (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
@@ -1371,9 +1375,10 @@ let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
     (Printf.sprintf
        "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
         scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
-       (name n) (name op_id) (name idx_id) (name upd_id) unique
+       (name n) (name op_id) (name idx_id) (name upd_id)
+       (Np_ints.scatter_marked eqn.prim || dnums.s_sorted_unique)
        (scatter_dnums_attr dnums ivd)
-       unique);
+       (unique || Np_ints.scatter_marked eqn.prim || dnums.s_sorted_unique));
   let a = fresh ctx in
   let b = fresh ctx in
   Buffer.add_string ctx.buf
@@ -1405,11 +1410,17 @@ let dot_dims_str (dd : dot_dims) =
         (Ir.int_array_attr dd.rhs_batch)
     else ""
   in
-  let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+  let left, right =
+    match dd.dot_precision with
+    | Some pair -> pair
+    | None ->
+        let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+        (level, level)
+  in
   Printf.sprintf "%scontracting_dims = %s x %s, precision = [%s, %s]" batch
     (Ir.int_array_attr dd.lhs_contract)
     (Ir.int_array_attr dd.rhs_contract)
-    level level
+    left right
 
 let dot_preset_info = function
   | "F16_F16_F16" -> ("f16", "f16", "f16", 1, [ Dtype.F16 ], Dtype.F16)
@@ -1432,7 +1443,11 @@ let emit_dot_general ctx (eqn : eqn) in_ids dd =
   in
   let out = sole eqn.outs in
   Config.check_matmul_preset_on_cpu ();
-  match Config.matmul_preset () with
+  match
+    match dd.dot_precision with
+    | Some _ -> None
+    | None -> Config.matmul_preset ()
+  with
   | None ->
       let n = bind_var ctx out in
       Buffer.add_string ctx.buf
@@ -2778,6 +2793,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
   let cond_ids =
     List.filteri (fun i _ -> i < cond_nconsts || i >= n_consts) carry_ids
   in
+  incr while_depth;
   enter_region_later ctx cond cond_ids "    cond {\n";
   Buffer.add_string ctx.buf "    } do {\n";
   ctx.next <- start;
@@ -2799,6 +2815,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
       outs =
         List.map (fun v -> A_var v) (cond_fake @ body_consts) @ body.jaxpr.outs;
     };
+  decr while_depth;
   Buffer.add_string ctx.buf "    }\n"
 
 and enter_region_later ctx cj target_ids header =
@@ -2816,7 +2833,7 @@ and emit_traced ctx avals in_ids outs f =
     (emit_traced_ids ctx avals in_ids f)
 
 and emit_traced_ids ctx avals in_ids f =
-  emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids
+  emit_closed_inline ctx (Jaxpr.make_jaxpr_for_lowering avals f) in_ids
 
 and hoist_custom_consts ctx (jx : jaxpr) =
   List.iter
@@ -2963,14 +2980,14 @@ and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
 
 and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
   let fname =
-    match Hashtbl.find_opt call_symbols c.jid with
+    match Hashtbl.find_opt call_symbols (call_symbol_key c.jid) with
     | Some s -> s
     | None ->
         let s =
           Mlir_names.symbol_name
             (unique_symbol (Pretty_printer.call_name c.jid))
         in
-        Hashtbl.replace call_symbols c.jid s;
+        Hashtbl.replace call_symbols (call_symbol_key c.jid) s;
         emit_private_function ctx s c;
         s
   in
@@ -3329,7 +3346,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       failwith
         "Stablehlo.Emit: Dce_sink is a DCE-effect marker, non-representable"
   | Empty2 _ ->
-      failwith "Stablehlo.Emit: Empty2 (extended dtype) deferred to M5"
+      let out = sole eqn.outs in
+      let c = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+           (Ir.dense (zero_dense out.vaval.dtype))
+           (Ir.tensor_type_of_aval out.vaval));
+      Hashtbl.replace ctx.ids out.vid c
   | From_edtype _ ->
       failwith "Stablehlo.Emit: From_edtype (extended dtypes) deferred to M5"
   | To_edtype _ ->
@@ -3370,6 +3393,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Dynamic_slice { slice_sizes } ->
       emit_dynamic_slice ctx eqn in_ids slice_sizes
   | Dynamic_update_slice -> emit_dynamic_update_slice ctx eqn in_ids
+  | Gather _ as p when Np_ints.gather_fill_of p <> None ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a; i ] -> [ Lax.Slicing.gather_fill_lowered p a i ]
+        | _ -> invalid_arg "Stablehlo.Emit: gather arity")
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
   | Scatter { dimension_numbers; unique_indices } ->
@@ -3378,8 +3405,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_scatter ctx eqn in_ids dimension_numbers (Some "add")
   | Scatter_sub { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "subtract")
-  | Scatter_mul { dimension_numbers; _ } ->
-      emit_scatter ctx eqn in_ids dimension_numbers (Some "multiply")
+  | Scatter_mul { dimension_numbers; unique_indices } ->
+      emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers
+        (Some "multiply")
   | Scatter_min { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "minimum")
   | Scatter_max { dimension_numbers } ->
@@ -4082,8 +4110,9 @@ let emitting () = !emission_depth > 0
 
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
-  Hashtbl.reset cum_functions;
+  Hashtbl.reset cum_symbols;
   Hashtbl.reset call_symbols;
+  while_depth := 0;
   symbol_counter := 0;
   seen_mesh := None;
   callback_seen := false;

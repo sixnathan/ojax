@@ -358,6 +358,7 @@ let jaxpr_to_string jx = Doc.to_string (jaxpr_to_doc jx)
 let closed_jaxpr_to_string (cj : closed_jaxpr) = jaxpr_to_string cj.jaxpr
 let call_names : (int, string) Hashtbl.t = Hashtbl.create 64
 let register_call_name jid name = Hashtbl.replace call_names jid name
+let registered_call_name jid = Hashtbl.find_opt call_names jid
 
 let call_name jid =
   match Hashtbl.find_opt call_names jid with Some n -> n | None -> "jit"

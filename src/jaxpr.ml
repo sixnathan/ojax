@@ -156,10 +156,14 @@ let get_or_make_const_tracer trace v =
       | None -> plain_const_tracer trace v)
   | _ -> plain_const_tracer trace v
 
+let trace_custom_call : (primitive -> aval list -> unit) ref =
+  ref (fun _ _ -> ())
+
 let process_primitive trace prim args =
   let builder = builder_of trace in
   let tracers = List.map as_tracer args in
   let avals_in = List.map (fun (t : tracer) -> t.aval) tracers in
+  !trace_custom_call prim avals_in;
   let avals_out = Core.rules.abstract_eval prim avals_in in
   let out_tracers = List.map (new_tracer builder trace) avals_out in
   let inputs = List.map (fun t -> A_var (getvar builder t)) tracers in
@@ -347,6 +351,25 @@ let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
   match make_jaxpr_hoisted in_avals f with
   | closed, [] -> closed
   | _ -> invalid_arg "make_jaxpr: function closed over a tracer"
+
+let custom_call_jaxpr id avals =
+  match Core.find_custom_call_jaxpr id avals with
+  | Some c -> Some c
+  | None -> (
+      match Core.custom_rule id with
+      | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } ->
+          let c = make_jaxpr avals primal in
+          Core.note_custom_call_jaxpr id avals c;
+          Some c
+      | Core.Linear_rule _ | Core.Callback_rule _ -> None)
+
+let () =
+  trace_custom_call :=
+    fun prim avals ->
+      match prim with
+      | Custom_jvp_call id | Custom_vjp_call id ->
+          ignore (custom_call_jaxpr id avals)
+      | _ -> ()
 
 let () = Core.call_inline := fun c args -> eval_closed_jaxpr c args
 let call_cache : (string, closed_jaxpr) Hashtbl.t = Hashtbl.create 64

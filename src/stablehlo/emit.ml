@@ -2590,7 +2590,9 @@ and emit_traced ctx avals in_ids outs f =
     (emit_traced_ids ctx avals in_ids f)
 
 and emit_traced_ids ctx avals in_ids f =
-  let traced = Jaxpr.make_jaxpr avals f in
+  emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids
+
+and emit_closed_inline ctx (traced : closed_jaxpr) in_ids =
   let jx = traced.jaxpr in
   let const_binders, arg_binders =
     match Util.split_list jx.in_binders [ List.length traced.consts ] with
@@ -3675,16 +3677,18 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (Ir.tensor_type_of_aval (atom_aval (List.hd eqn.inputs)))
            (Ir.tensor_type_of_aval out.vaval))
   | Custom_jvp_call id when placed_call ctx eqn in_ids id -> ()
-  | Custom_jvp_call id | Custom_vjp_call id ->
-      let primal =
-        match Core.custom_rule id with
-        | Core.Jvp_rule { primal; _ } | Core.Vjp_rule { primal; _ } -> primal
-        | Core.Linear_rule _ ->
-            invalid_arg "Stablehlo.Emit: linear rule has no primal call"
-        | Core.Callback_rule _ ->
-            failwith "Stablehlo.Emit: callbacks run on the host interpreter"
-      in
-      emit_inlined ctx eqn in_ids primal
+  | Custom_jvp_call id | Custom_vjp_call id -> (
+      match Jaxpr.custom_call_jaxpr id (List.map atom_aval eqn.inputs) with
+      | Some c ->
+          List.iter2
+            (fun (v : var) out -> Hashtbl.replace ctx.ids v.vid out)
+            eqn.outs
+            (emit_closed_inline ctx c in_ids)
+      | None -> (
+          match Core.custom_rule id with
+          | Core.Callback_rule _ ->
+              failwith "Stablehlo.Emit: callbacks run on the host interpreter"
+          | _ -> invalid_arg "Stablehlo.Emit: linear rule has no primal call"))
   | Custom_lin { rule; n_res; _ } -> (
       match Core.custom_rule rule with
       | Core.Linear_rule { forward; _ } ->
@@ -3806,46 +3810,13 @@ let emit_closed_jaxpr ?partition cj =
     ~finally:(fun () -> decr emission_depth)
     (fun () -> emit_closed_jaxpr_body ?partition cj)
 
-let has_side_effect = function
-  | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
-  | Dce_sink | Rng_bit_generator | Create_token | After_all -> true
-  | _ -> false
+type lowered = { text : string; kept : int list }
 
-let prune_for_lowering (cj : closed_jaxpr) =
-  let jx = cj.jaxpr in
-  let used = Hashtbl.create 64 in
-  let note = function
-    | A_var (v : var) -> Hashtbl.replace used v.vid ()
-    | A_lit _ | DropVar _ -> ()
-  in
-  List.iter note jx.outs;
-  let kept =
-    List.fold_left
-      (fun acc (e : eqn) ->
-        if
-          has_side_effect e.prim
-          || List.exists (fun (v : var) -> Hashtbl.mem used v.vid) e.outs
-        then begin
-          List.iter note e.inputs;
-          e :: acc
-        end
-        else acc)
-      [] (List.rev jx.eqns)
-  in
-  let n_consts = List.length cj.consts in
-  let const_binders, arg_binders =
-    match Util.split_list jx.in_binders [ n_consts ] with
-    | [ cb; ab ] -> (cb, ab)
-    | _ -> invalid_arg "Stablehlo.Emit: binder split"
-  in
-  let kept_args =
-    List.filter (fun (v : var) -> Hashtbl.mem used v.vid) arg_binders
-  in
+let lower ~name cj =
+  let pruned, kept = Dce.prune_unused_inputs cj in
   {
-    cj with
-    jaxpr = { jx with in_binders = const_binders @ kept_args; eqns = kept };
+    text = Mlir_names.render ~module_name:name (emit_closed_jaxpr pruned);
+    kept;
   }
 
-let emit_jax_text ~name cj =
-  Mlir_names.render ~module_name:name
-    (emit_closed_jaxpr (prune_for_lowering cj))
+let emit_jax_text ~name cj = (lower ~name cj).text

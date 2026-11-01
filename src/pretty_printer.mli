@@ -10,3 +10,4 @@ val primitive_structure : closed_jaxpr -> string
 val closed_jaxpr_to_jax_string : closed_jaxpr -> string
 val register_call_name : int -> string -> unit
 val call_name : int -> string
+val registered_call_name : int -> string option

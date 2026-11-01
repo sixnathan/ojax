@@ -77,6 +77,11 @@ type custom_rule =
 
 val register_custom_rule : custom_rule -> int
 val custom_rule : int -> custom_rule
+val note_custom_call_jaxpr : int -> aval list -> closed_jaxpr -> unit
+val find_custom_call_jaxpr : int -> aval list -> closed_jaxpr option
+val custom_call_jaxprs_of : int -> closed_jaxpr list
+val name_custom_rule : int -> name:string -> rule_name:string -> unit
+val custom_rule_name : int -> (string * string) option
 val with_eval_dynamic : (unit -> 'a) -> 'a
 val ffi_impl : (primitive -> Ndarray.t list -> Ndarray.t list) ref
 val named_axis_trace : (string -> trace option) ref

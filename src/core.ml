@@ -175,6 +175,26 @@ let custom_rule id =
   | Some rule -> rule
   | None -> failwith "core: unknown custom derivative rule"
 
+let custom_call_jaxprs : (int * aval list, closed_jaxpr) Hashtbl.t =
+  Hashtbl.create 64
+
+let custom_call_names : (int, string * string) Hashtbl.t = Hashtbl.create 64
+
+let note_custom_call_jaxpr id avals c =
+  Hashtbl.replace custom_call_jaxprs (id, avals) c
+
+let find_custom_call_jaxpr id avals =
+  Hashtbl.find_opt custom_call_jaxprs (id, avals)
+
+let custom_call_jaxprs_of id =
+  Hashtbl.fold
+    (fun (rule, _) c acc -> if rule = id then c :: acc else acc)
+    custom_call_jaxprs []
+
+let name_custom_rule id ~name ~rule_name =
+  Hashtbl.replace custom_call_names id (name, rule_name)
+
+let custom_rule_name id = Hashtbl.find_opt custom_call_names id
 let with_eval_dynamic thunk = new_dynamic eval_trace thunk
 
 let ffi_impl : (primitive -> Ndarray.t list -> Ndarray.t list) ref =

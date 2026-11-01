@@ -546,14 +546,55 @@ let scatter_numbers (d : scatter_dims) =
     (py_ints d.s_operand_batching_dims)
     (py_ints d.s_scatter_indices_batching_dims)
 
-let scatter_params d unique =
+let update_counter = ref 0
+
+let fresh_update_id () =
+  decr update_counter;
+  !update_counter
+
+let update_jaxprs = Hashtbl.create 16
+
+let update_jaxpr prim dt =
+  match Hashtbl.find_opt update_jaxprs (prim, dt) with
+  | Some c -> c
+  | None ->
+      let var () =
+        {
+          vid = fresh_update_id ();
+          vaval = { dtype = dt; shape = [||]; weak_type = false };
+        }
+      in
+      let a = var () and b = var () and c = var () in
+      let jaxpr =
+        {
+          in_binders = [ a; b ];
+          eqns =
+            [
+              {
+                prim;
+                inputs = [ A_var a; A_var b ];
+                outs = [ c ];
+                multiple_results = false;
+              };
+            ];
+          outs = [ A_var c ];
+        }
+      in
+      let c = { jid = fresh_update_id (); jaxpr; consts = [] } in
+      Hashtbl.replace update_jaxprs (prim, dt) c;
+      c
+
+let scatter_params ?(sorted = false) ?update d unique =
   [
     ("dimension_numbers", Plain (scatter_numbers d));
-    ("indices_are_sorted", Plain (py_bool unique));
+    ("indices_are_sorted", Plain (py_bool (sorted || d.s_sorted_unique)));
     ("mode", Plain "GatherScatterMode.FILL_OR_DROP");
-    ("unique_indices", Plain (py_bool unique));
+    ("unique_indices", Plain (py_bool (unique || d.s_sorted_unique)));
     ("update_consts", Plain "()");
-    ("update_jaxpr", Plain "None");
+    ( "update_jaxpr",
+      match update with
+      | Some (prim, dt) -> Sub (update_jaxpr prim dt)
+      | None -> Plain "None" );
   ]
 
 let window_params (w : window_dims) =
@@ -573,52 +614,6 @@ let jax_prim_name = function
   | Scatter_max _ -> "scatter-max"
   | Xla_call _ -> "jit"
   | p -> prim_name p
-
-let next_reduction_id = ref min_int
-
-let reduction_id () =
-  incr next_reduction_id;
-  !next_reduction_id
-
-let reduction_jaxprs : (primitive * Dtype.t, closed_jaxpr) Hashtbl.t =
-  Hashtbl.create 8
-
-let reduction_jaxpr (prim, dtype) =
-  match Hashtbl.find_opt reduction_jaxprs (prim, dtype) with
-  | Some c -> c
-  | None ->
-      let aval = { shape = [||]; dtype; weak_type = false } in
-      let var () = { vid = reduction_id (); vaval = aval } in
-      let a = var () and b = var () and out = var () in
-      let c =
-        {
-          jid = reduction_id ();
-          consts = [];
-          jaxpr =
-            {
-              in_binders = [ a; b ];
-              eqns =
-                [
-                  {
-                    prim;
-                    inputs = [ A_var a; A_var b ];
-                    outs = [ out ];
-                    multiple_results = false;
-                  };
-                ];
-              outs = [ A_var out ];
-            };
-        }
-      in
-      Hashtbl.replace reduction_jaxprs (prim, dtype) c;
-      c
-
-let scatter_with_update d unique update =
-  List.map
-    (fun (name, p) ->
-      if name = "update_jaxpr" then (name, Sub (reduction_jaxpr update))
-      else (name, p))
-    (scatter_params d unique)
 
 let jax_params (e : eqn) =
   let in_dtype () =
@@ -665,8 +660,15 @@ let jax_params (e : eqn) =
             (Printf.sprintf "((%s, %s), (%s, %s))" (py_list d.lhs_contract)
                (py_list d.rhs_contract) (py_list d.lhs_batch)
                (py_list d.rhs_batch)) );
-        ("preferred_element_type", Plain (dn (out_dtype ())));
       ]
+      @ (match d.dot_precision with
+        | Some (l, r) ->
+            [
+              ( "precision",
+                Plain (Printf.sprintf "(Precision.%s, Precision.%s)" l r) );
+            ]
+        | None -> [])
+      @ [ ("preferred_element_type", Plain (dn (out_dtype ()))) ]
   | Iota { dtype; shape; dimension } ->
       [
         ("dimension", Plain (string_of_int dimension));
@@ -684,21 +686,14 @@ let jax_params (e : eqn) =
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
   | Pad cfg as p when Np_ints.prim_marked p ->
-      [
-        ( "padding_config",
-          Plain
-            (py_tuple
-               (Array.to_list
-                  (Array.map
-                     (fun (x, y, z) ->
-                       py_tuple
-                         [
-                           Printf.sprintf "np.int64(%d)" x;
-                           Printf.sprintf "np.int64(%d)" y;
-                           string_of_int z;
-                         ])
-                     cfg))) );
-      ]
+      let one (lo, hi, i) =
+        Printf.sprintf "(np.int64(%d), np.int64(%d), %d)" lo hi i
+      in
+      let items = Array.to_list (Array.map one cfg) in
+      let body =
+        match items with [ x ] -> x ^ "," | _ -> String.concat ", " items
+      in
+      [ ("padding_config", Plain ("(" ^ body ^ ")")) ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]
@@ -745,30 +740,39 @@ let jax_params (e : eqn) =
       ]
   | Top_k { k; axis } ->
       [ ("axis", Plain (string_of_int axis)); ("k", Plain (string_of_int k)) ]
-  | Gather { dimension_numbers; slice_sizes } as gather_prim ->
+  | Gather { dimension_numbers; slice_sizes } as p ->
+      let fill = Np_ints.gather_fill_of p in
+      let clip = Np_ints.gather_clip_of p in
+      let sorted = clip = Some true in
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
-        ("fill_value", Plain "None");
-        ("indices_are_sorted", Plain "False");
+        ( "fill_value",
+          Plain (match fill with Some (r, _) -> r | None -> "None") );
+        ("indices_are_sorted", Plain (py_bool sorted));
         ( "mode",
           Plain
-            (if Np_ints.prim_marked gather_prim then "GatherScatterMode.CLIP"
+            (if fill <> None then "GatherScatterMode.FILL_OR_DROP"
+             else if clip <> None then "GatherScatterMode.CLIP"
              else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
-        ("unique_indices", Plain "False");
+        ("unique_indices", Plain (py_bool sorted));
       ]
   | Scatter { dimension_numbers; unique_indices } ->
       scatter_params dimension_numbers unique_indices
   | Scatter_mul { dimension_numbers; unique_indices } ->
-      scatter_with_update dimension_numbers unique_indices (Mul, in_dtype ())
+      scatter_params ~update:(Mul, in_dtype ()) dimension_numbers unique_indices
+  | Scatter_add { dimension_numbers } as p when Np_ints.scatter_marked p ->
+      scatter_params ~sorted:true
+        ~update:(Add, in_dtype ())
+        dimension_numbers true
   | Scatter_add { dimension_numbers } ->
-      scatter_with_update dimension_numbers false (Add, in_dtype ())
+      scatter_params ~update:(Add, in_dtype ()) dimension_numbers false
   | Scatter_sub { dimension_numbers } ->
-      scatter_with_update dimension_numbers false (Types.Sub, in_dtype ())
+      scatter_params ~update:(Sub, in_dtype ()) dimension_numbers false
   | Scatter_min { dimension_numbers } ->
-      scatter_with_update dimension_numbers false (Min, in_dtype ())
+      scatter_params ~update:(Min, in_dtype ()) dimension_numbers false
   | Scatter_max { dimension_numbers } ->
-      scatter_with_update dimension_numbers false (Max, in_dtype ())
+      scatter_params ~update:(Max, in_dtype ()) dimension_numbers false
   | Conv_general_dilated c ->
       [
         ("batch_group_count", Plain (string_of_int c.batch_group_count));
@@ -1149,7 +1153,12 @@ and pp_eqn ctx (e : eqn) =
         | None -> [])
     | _ -> []
   in
-  let lhs = pp_binders ctx e.outs in
+  let binders =
+    match (e.prim, e.outs) with
+    | Svd _, [ u; s; v ] -> [ s; u; v ]
+    | _ -> e.outs
+  in
+  let lhs = pp_binders ctx binders in
   let params = pp_params ctx (name_param @ jax_params e) in
   let rhs =
     Layout.Concat

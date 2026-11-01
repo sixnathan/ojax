@@ -242,7 +242,8 @@ let numpy_run op p a b c =
   | "np_nonzero" -> Some (E.nonzero (binarize (a ())))
   | "np_nonzero_size" ->
       Some
-        (E.nonzero ~size:(int "size" p) ?fill_value:(opt_int "fill" p)
+        (E.nonzero ~size:(int "size" p)
+           ~fill_value:(Option.value (opt_int "fill" p) ~default:0)
            (binarize (a ())))
   | "np_flatnonzero" -> Some [ E.flatnonzero (binarize (a ())) ]
   | "np_argwhere" -> Some [ E.argwhere (binarize (a ())) ]
@@ -254,10 +255,8 @@ let numpy_run op p a b c =
       Some [ r.E.values; r.E.indices; r.E.inverse; r.E.counts ]
   | "np_unique_size" ->
       Some
-        [
-          E.unique_values ~size:(int "size" p) ?fill_value:(opt_number "fill" p)
-            (rounded (a ()));
-        ]
+        (E.unique ~size:(int "size" p) ?fill_value:(opt_number "fill" p)
+           (rounded (a ())))
   | "np_unique_axis" -> Some (E.unique ~axis:(int "axis" p) (rounded (a ())))
   | "np_union1d" -> Some [ E.union1d (rounded (a ())) (rounded (b ())) ]
   | "np_intersect1d" -> Some [ E.intersect1d (rounded (a ())) (rounded (b ())) ]
@@ -307,16 +306,15 @@ let numpy_run op p a b c =
             (Ojax.Numpy.Sorting.sort (b ()))
             (c ());
         ]
-  | "np_gradient" -> Some (E.gradient ?spacing:(opt_number "spacing" p) (a ()))
+  | "np_gradient" ->
+      let spacing = Option.value (opt_number "spacing" p) ~default:1.0 in
+      Some (E.gradient ~spacing (a ()))
   | "np_gradient_axis" -> Some (E.gradient ?axis:(opt_ints "axis" p) (a ()))
   | "np_choose" ->
-      let two = like (nonneg (a ())) 2.0 in
-      Some
-        [
-          E.choose ~mode:"clip"
-            (UF.remainder (nonneg (a ())) two)
-            [ b (); L.neg (b ()) ];
-        ]
+      let x = nonneg (a ()) in
+      let picks = UF.remainder x (Ojax.Numpy.Jnp_util.py_int 2) in
+      let y = b () in
+      Some [ E.choose ~mode:"clip" picks [ y; UF.negative y ] ]
   | "np_compress" ->
       let bools =
         Array.of_list
@@ -1186,14 +1184,22 @@ let tracer_batch_run op params a b =
            ?axis:(opt_int "axis") ~size:(int_p "size") ?fill_value (a ()))
   | "tb_lexsort" ->
       let v = a () in
-      Some
-        [
-          Ojax.Numpy.Sorting.lexsort
-            [
-              L.index_in_dim ~axis:1 ~keepdims:false v 0;
-              L.index_in_dim ~axis:1 ~keepdims:false v 1;
-            ];
-        ]
+      let column j =
+        let rows = (shp v).(0) in
+        L.squeeze
+          (Ojax.Core.bind1
+             (T.Slice
+                {
+                  start_indices = [| 0; j |];
+                  limit_indices = [| rows; j + 1 |];
+                  strides = None;
+                })
+             [ v ])
+          [| 1 |]
+      in
+      let first = column 0 in
+      let second = column 1 in
+      Some [ Ojax.Numpy.Sorting.lexsort [ first; second ] ]
   | "tb_poly_matrix" -> Some [ Ojax.Numpy.Polynomial.poly (a ()) ]
   | "tb_qr_raw" -> Some (LA.qr ~mode:"raw" (a ()))
   | "tb_vectorize" ->
@@ -1255,7 +1261,7 @@ let tracer_batch_run op params a b =
         ]
   | "tb_seed" ->
       let seed = NL.astype (RD.sum (a ())) Ojax.Dtype.I32 in
-      Some [ Ojax.Random.Threefry.threefry_seed seed ]
+      Some [ Ojax.Random.Core.key_data (Ojax.Random.Core.prng_key seed) ]
   | _ -> None
 
 let library_sweep op v =
@@ -1332,7 +1338,9 @@ let library_sweep op v =
         (SP.polygamma
            (T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| 1.0 |]))
            (q ()))
-  | "sw_sp_zeta" -> Some (SP.zeta ~q:(q ()) (q1 ()))
+  | "sw_sp_zeta" ->
+      let x = q1 () in
+      Some (SP.zeta ~q:(q ()) x)
   | "sw_sp_poch" -> Some (SP.poch (q ()) (py 2.0))
   | "sw_sp_spence" -> Some (SP.spence (q ()))
   | "sw_sp_owens_t" -> Some (SP.owens_t v (q ()))
@@ -1454,7 +1462,20 @@ let dtype_sweep_run op a =
           AC.geomspace_v ~num:3 lower upper)
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
   | "sw_polyval" ->
-      one (fun v -> PO.polyval (L.slice_in_dim ~axis:0 v 0 2) (row v 0))
+      one (fun v ->
+          let sh = (Ojax.Core.get_aval v).T.shape in
+          let top =
+            Ojax.Core.bind1
+              (T.Slice
+                 {
+                   start_indices = Array.map (fun _ -> 0) sh;
+                   limit_indices =
+                     Array.mapi (fun i d -> if i = 0 then 2 else d) sh;
+                   strides = None;
+                 })
+              [ v ]
+          in
+          PO.polyval top (row v 0))
   | "sw_polyder" -> one (fun v -> PO.polyder (row v 0))
   | "sw_polyint" -> one (fun v -> PO.polyint (row v 0))
   | "sw_polyadd" -> one (fun v -> PO.polyadd (row v 0) (row v 1))
@@ -1747,11 +1768,7 @@ let needs_concrete op =
       "np_compress";
       "np_extract";
       "np_delete";
-      "np_place";
       "np_trim_zeros";
-      "np_frexp";
       "np_polydiv";
       "np_roots";
-      "np_packbits";
-      "np_unpackbits";
     ]

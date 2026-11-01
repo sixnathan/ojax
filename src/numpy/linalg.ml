@@ -12,6 +12,7 @@ module LL = Lax.Linalg
 type ord = Onone | Ofro | Onuc | Onum of float
 type norm_axis = Anone | Aint of int | Apair of int * int
 
+let highest = Lax_config.precision_of_level Lax_config.Precision_highest
 let get_aval = C.get_aval
 let shape v = (get_aval v).T.shape
 let dtype v = (get_aval v).T.dtype
@@ -465,7 +466,7 @@ and pinv ?rtol ?(hermitian = false) ?rcond a =
   let s = NL.astype s (dtype u) in
   let s_col = NL.expand_dims s [| ndim s |] in
   let scaled = UF.divide (matrix_transpose_v u) s_col in
-  let res = TC.matmul (matrix_transpose_v vh) scaled in
+  let res = TC.matmul ~precision:highest (matrix_transpose_v vh) scaled in
   NL.astype res dt
 
 and matrix_power_body a p =
@@ -699,6 +700,12 @@ and lstsq_body ~rcond ~numpy_resid a b =
     | [ u; s; vh ] -> (u, s, vh)
     | _ -> invalid_arg "svd: arity"
   in
+  let positive = UF.greater s (const dt 0.0) in
+  let rcond =
+    match rcond with
+    | T.Tracer _ -> Core.bind1 T.Copy [ NL.astype rcond (dtype s) ]
+    | _ -> NL.astype rcond (dtype s)
+  in
   let s0 =
     if ndim s = 1 then
       Core.bind1 (T.Squeeze [| 0 |])
@@ -715,9 +722,7 @@ and lstsq_body ~rcond ~numpy_resid a b =
     else RED.amax ~axis:[| -1 |] ~keepdims:true s
   in
   let mask =
-    UF.logical_and
-      (UF.greater s (const dt 0.0))
-      (UF.greater_equal s (UF.multiply (NL.astype rcond (dtype s)) s0))
+    UF.logical_and positive (UF.greater_equal s (UF.multiply rcond s0))
   in
   let rank = RED.sum mask in
   let safe_s = NL.astype (NL.where_ mask s (Jnp_util.py_int 1)) dt in
@@ -725,11 +730,13 @@ and lstsq_body ~rcond ~numpy_resid a b =
     NL.where_ mask (UF.divide (Jnp_util.py_int 1) safe_s) (Jnp_util.py_int 0)
   in
   let s_inv_col = NL.expand_dims s_inv [| ndim s_inv |] in
-  let utb = TC.matmul (UF.conj (matrix_transpose_v u)) bm in
+  let utb = TC.matmul ~precision:highest (UF.conj (matrix_transpose_v u)) bm in
   let x =
-    TC.matmul (UF.conj (matrix_transpose_v vt)) (UF.multiply s_inv_col utb)
+    TC.matmul ~precision:highest
+      (UF.conj (matrix_transpose_v vt))
+      (UF.multiply s_inv_col utb)
   in
-  let b_est = TC.matmul a x in
+  let b_est = TC.matmul ~precision:highest a x in
   let full_resid () =
     Core.bind1 (T.Integer_pow 2) [ norm ~axis:(Aint 0) (UF.subtract bm b_est) ]
   in

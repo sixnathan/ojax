@@ -5,3 +5,9 @@ val mark_prim : 'a -> 'a
 val prim_marked : 'a -> bool
 val mark_exact : 'a -> float -> 'a
 val exact_of : 'a -> float option
+val mark_scatter : 'a -> 'a
+val scatter_marked : 'a -> bool
+val mark_gather_fill : 'a -> string -> float option -> 'a
+val gather_fill_of : 'a -> (string * float option) option
+val mark_gather_clip : sorted:bool -> 'a -> 'a
+val gather_clip_of : 'a -> bool option

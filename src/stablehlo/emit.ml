@@ -49,7 +49,7 @@ let nested_literals nd =
 
 let dense_body nd =
   match all_literals nd with
-  | [] -> invalid_arg "Stablehlo.Emit: empty constant"
+  | [] -> ""
   | first :: rest when List.for_all (String.equal first) rest -> first
   | _ -> nested_literals nd
 
@@ -100,6 +100,8 @@ let lowered_symbol key base =
       (fname, true)
 
 let call_symbols : (int, string) Hashtbl.t = Hashtbl.create 8
+let while_depth = ref 0
+let call_symbol_key jid = if !while_depth > 0 then jid lxor (1 lsl 61) else jid
 let result_aliases : (int, string) Hashtbl.t = Hashtbl.create 16
 let next_alias = ref (-1)
 
@@ -1144,6 +1146,9 @@ let cum_window_attrs shape axis reverse =
      window_dimensions = %s, window_strides = %s"
     (arr ones) pad_str (arr ones) (arr window_dims) (arr ones)
 
+let cum_symbols : (string * string * int * bool, string) Hashtbl.t =
+  Hashtbl.create 8
+
 let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
   let x = sole in_ids in
@@ -1153,15 +1158,16 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
   let sty = Ir.tensor_type dt [||] in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
-  let fname, fresh =
-    lowered_symbol
-      (Printf.sprintf "%s %d %b %s" base_name axis reverse ty)
-      base_name
+  let key = (base_name, ty, axis, reverse) in
+  let cached = Hashtbl.find_opt cum_symbols key in
+  let fname =
+    match cached with Some f -> f | None -> unique_symbol base_name
   in
+  Hashtbl.replace cum_symbols key fname;
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
-  if fresh then begin
+  if cached = None then begin
     let attrs = cum_window_attrs in_aval.shape axis reverse in
     let b = ctx.extras in
     Buffer.add_string b
@@ -1327,7 +1333,8 @@ let gather_dnums_attr (d : gather_dims) index_vector_dim =
         dim_field "operand_batching_dims" d.g_operand_batching_dims;
         dim_field "start_indices_batching_dims" d.g_start_indices_batching_dims;
         dim_field "start_index_map" d.start_index_map;
-        Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim);
+        (if index_vector_dim = 0 then None
+         else Some (Printf.sprintf "index_vector_dim = %d" index_vector_dim));
       ]
   in
   "#stablehlo.gather<" ^ String.concat ", " parts ^ ">"
@@ -1389,9 +1396,10 @@ let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
     (Printf.sprintf
        "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
         scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
-       (name n) (name op_id) (name idx_id) (name upd_id) unique
+       (name n) (name op_id) (name idx_id) (name upd_id)
+       (Np_ints.scatter_marked eqn.prim || dnums.s_sorted_unique)
        (scatter_dnums_attr dnums ivd)
-       unique);
+       (unique || Np_ints.scatter_marked eqn.prim || dnums.s_sorted_unique));
   let a = fresh ctx in
   let b = fresh ctx in
   Buffer.add_string ctx.buf
@@ -1423,11 +1431,17 @@ let dot_dims_str (dd : dot_dims) =
         (Ir.int_array_attr dd.rhs_batch)
     else ""
   in
-  let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+  let left, right =
+    match dd.dot_precision with
+    | Some pair -> pair
+    | None ->
+        let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+        (level, level)
+  in
   Printf.sprintf "%scontracting_dims = %s x %s, precision = [%s, %s]" batch
     (Ir.int_array_attr dd.lhs_contract)
     (Ir.int_array_attr dd.rhs_contract)
-    level level
+    left right
 
 let dot_preset_info = function
   | "F16_F16_F16" -> ("f16", "f16", "f16", 1, [ Dtype.F16 ], Dtype.F16)
@@ -1450,7 +1464,11 @@ let emit_dot_general ctx (eqn : eqn) in_ids dd =
   in
   let out = sole eqn.outs in
   Config.check_matmul_preset_on_cpu ();
-  match Config.matmul_preset () with
+  match
+    match dd.dot_precision with
+    | Some _ -> None
+    | None -> Config.matmul_preset ()
+  with
   | None ->
       let n = bind_var ctx out in
       Buffer.add_string ctx.buf
@@ -2768,6 +2786,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
   let cond_ids =
     List.filteri (fun i _ -> i < cond_nconsts || i >= n_consts) carry_ids
   in
+  incr while_depth;
   enter_region_later ctx cond cond_ids "    cond {\n";
   Buffer.add_string ctx.buf "    } do {\n";
   ctx.next <- start;
@@ -2789,6 +2808,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
       outs =
         List.map (fun v -> A_var v) (cond_fake @ body_consts) @ body.jaxpr.outs;
     };
+  decr while_depth;
   Buffer.add_string ctx.buf "    }\n"
 
 and enter_region_later ctx cj target_ids header =
@@ -2953,14 +2973,14 @@ and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
 
 and emit_call ctx (eqn : eqn) in_ids (c : closed_jaxpr) =
   let fname =
-    match Hashtbl.find_opt call_symbols c.jid with
+    match Hashtbl.find_opt call_symbols (call_symbol_key c.jid) with
     | Some s -> s
     | None ->
         let s =
           Mlir_names.symbol_name
             (unique_symbol (Pretty_printer.call_name c.jid))
         in
-        Hashtbl.replace call_symbols c.jid s;
+        Hashtbl.replace call_symbols (call_symbol_key c.jid) s;
         emit_private_function ctx s c;
         s
   in
@@ -3355,6 +3375,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Dynamic_slice { slice_sizes } ->
       emit_dynamic_slice ctx eqn in_ids slice_sizes
   | Dynamic_update_slice -> emit_dynamic_update_slice ctx eqn in_ids
+  | Gather _ as p when Np_ints.gather_fill_of p <> None ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a; i ] -> [ Lax.Slicing.gather_fill_lowered p a i ]
+        | _ -> invalid_arg "Stablehlo.Emit: gather arity")
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
   | Scatter { dimension_numbers; unique_indices } ->
@@ -4069,7 +4093,9 @@ let emitting () = !emission_depth > 0
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
   Hashtbl.reset lowered_symbols;
+  Hashtbl.reset cum_symbols;
   Hashtbl.reset call_symbols;
+  while_depth := 0;
   symbol_counter := 0;
   seen_mesh := None;
   callback_seen := false;

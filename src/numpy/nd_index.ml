@@ -244,7 +244,9 @@ let gather_take ?(clip = false) x idx =
           slice_sizes = ix.gather_slice_shape;
         }
     in
-    let prim = if clip then Np_ints.mark_prim prim else prim in
+    let prim =
+      if clip then Np_ints.mark_gather_clip ~sorted:false prim else prim
+    in
     C.bind1 prim [ x; ix.gather_indices ]
 
 let take_clip x idx = gather_take ~clip:true x (expand idx (rank x))
@@ -290,6 +292,7 @@ let set x idx y =
                  scatter_dims_to_operand_dims = ix.start_index_map;
                  s_operand_batching_dims = [||];
                  s_scatter_indices_batching_dims = [||];
+                 s_sorted_unique = ix.plain;
                };
              unique_indices = ix.plain;
            })

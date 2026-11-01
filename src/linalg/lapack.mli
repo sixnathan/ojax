@@ -1,102 +1,68 @@
-type f64 = (float, Bigarray.float64_elt, Bigarray.c_layout) Bigarray.Array1.t
+type 'k real = (float, 'k, Bigarray.c_layout) Bigarray.Array1.t
+type f64 = Bigarray.float64_elt real
 type i32 = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
 
 exception Unavailable of string
 
+val single_routines : bool
+val alloc : (float, 'k) Bigarray.kind -> int -> 'k real
 val alloc_f64 : int -> f64
 val alloc_i32 : int -> i32
-val potrf : uplo:char -> n:int -> a:f64 -> lda:int -> int
-val getrf : m:int -> n:int -> a:f64 -> lda:int -> ipiv:i32 -> int
-val geqrf : m:int -> n:int -> a:f64 -> lda:int -> tau:f64 -> int
-val orgqr : m:int -> n:int -> k:int -> a:f64 -> lda:int -> tau:f64 -> int
+val potrf : uplo:char -> n:int -> a:'k real -> lda:int -> int
+val zpotrf : uplo:char -> n:int -> a:'k real -> lda:int -> int
+val getrf : m:int -> n:int -> a:'k real -> lda:int -> ipiv:i32 -> int
+val zgetrf : m:int -> n:int -> a:'k real -> lda:int -> ipiv:i32 -> int
+val geqrf : m:int -> n:int -> a:'k real -> lda:int -> tau:'k real -> int
+val zgeqrf : m:int -> n:int -> a:'k real -> lda:int -> tau:'k real -> int
+
+val geqp3 :
+  m:int -> n:int -> a:'k real -> lda:int -> jpvt:i32 -> tau:'k real -> int
+
+val zgeqp3 :
+  m:int -> n:int -> a:'k real -> lda:int -> jpvt:i32 -> tau:'k real -> int
+
+val orgqr :
+  m:int -> n:int -> k:int -> a:'k real -> lda:int -> tau:'k real -> int
+
+val zungqr :
+  m:int -> n:int -> k:int -> a:'k real -> lda:int -> tau:'k real -> int
+
+val ormqr :
+  side:char ->
+  trans:char ->
+  m:int ->
+  n:int ->
+  k:int ->
+  a:'k real ->
+  lda:int ->
+  tau:'k real ->
+  c:'k real ->
+  ldc:int ->
+  int
+
+val zunmqr :
+  side:char ->
+  trans:char ->
+  m:int ->
+  n:int ->
+  k:int ->
+  a:'k real ->
+  lda:int ->
+  tau:'k real ->
+  c:'k real ->
+  ldc:int ->
+  int
 
 val gesdd :
   jobz:char ->
   m:int ->
   n:int ->
-  a:f64 ->
+  a:'k real ->
   lda:int ->
-  s:f64 ->
-  u:f64 ->
+  s:'k real ->
+  u:'k real ->
   ldu:int ->
-  vt:f64 ->
-  ldvt:int ->
-  int
-
-val syevd : jobz:char -> uplo:char -> n:int -> a:f64 -> lda:int -> w:f64 -> int
-
-val geev :
-  jobvl:char ->
-  jobvr:char ->
-  n:int ->
-  a:f64 ->
-  lda:int ->
-  wri:f64 ->
-  vl:f64 ->
-  ldvl:int ->
-  vr:f64 ->
-  ldvr:int ->
-  int
-
-val gees :
-  jobvs:char ->
-  n:int ->
-  a:f64 ->
-  lda:int ->
-  wri:f64 ->
-  vs:f64 ->
-  ldvs:int ->
-  sdim:i32 ->
-  int
-
-val gehrd : n:int -> ilo:int -> ihi:int -> a:f64 -> lda:int -> tau:f64 -> int
-
-val sytrd :
-  uplo:char -> n:int -> a:f64 -> lda:int -> d:f64 -> e:f64 -> tau:f64 -> int
-
-val trtrs :
-  uplo:char ->
-  trans:char ->
-  diag:char ->
-  n:int ->
-  nrhs:int ->
-  a:f64 ->
-  lda:int ->
-  b:f64 ->
-  ldb:int ->
-  int
-
-val gecon :
-  norm:char -> n:int -> a:f64 -> lda:int -> anorm:float -> rcond:f64 -> int
-
-val zpotrf : uplo:char -> n:int -> a:f64 -> lda:int -> int
-val zgetrf : m:int -> n:int -> a:f64 -> lda:int -> ipiv:i32 -> int
-val zgeqrf : m:int -> n:int -> a:f64 -> lda:int -> tau:f64 -> int
-val zungqr : m:int -> n:int -> k:int -> a:f64 -> lda:int -> tau:f64 -> int
-
-val gesvd :
-  jobz:char ->
-  m:int ->
-  n:int ->
-  a:f64 ->
-  lda:int ->
-  s:f64 ->
-  u:f64 ->
-  ldu:int ->
-  vt:f64 ->
-  ldvt:int ->
-  int
-
-val zgesvd :
-  jobz:char ->
-  m:int ->
-  n:int ->
-  a:f64 ->
-  lda:int ->
-  s:f64 ->
-  u:f64 ->
-  ldu:int ->
-  vt:f64 ->
+  vt:'k real ->
   ldvt:int ->
   int
 
@@ -104,28 +70,77 @@ val zgesdd :
   jobz:char ->
   m:int ->
   n:int ->
-  a:f64 ->
+  a:'k real ->
   lda:int ->
-  s:f64 ->
-  u:f64 ->
+  s:'k real ->
+  u:'k real ->
   ldu:int ->
-  vt:f64 ->
+  vt:'k real ->
   ldvt:int ->
   int
 
-val zheevd : jobz:char -> uplo:char -> n:int -> a:f64 -> lda:int -> w:f64 -> int
+val syevd :
+  jobz:char -> uplo:char -> n:int -> a:'k real -> lda:int -> w:'k real -> int
 
-val zgeev :
-  jobvl:char ->
-  jobvr:char ->
+val zheevd :
+  jobz:char -> uplo:char -> n:int -> a:'k real -> lda:int -> w:'k real -> int
+
+val gehrd :
+  n:int -> ilo:int -> ihi:int -> a:'k real -> lda:int -> tau:'k real -> int
+
+val zgehrd :
+  n:int -> ilo:int -> ihi:int -> a:'k real -> lda:int -> tau:'k real -> int
+
+val sytrd :
+  uplo:char ->
   n:int ->
-  a:f64 ->
+  a:'k real ->
   lda:int ->
-  w:f64 ->
-  vl:f64 ->
-  ldvl:int ->
-  vr:f64 ->
-  ldvr:int ->
+  d:'k real ->
+  e:'k real ->
+  tau:'k real ->
+  int
+
+val zhetrd :
+  uplo:char ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  d:'k real ->
+  e:'k real ->
+  tau:'k real ->
+  int
+
+val gtsv :
+  n:int ->
+  nrhs:int ->
+  dl:'k real ->
+  d:'k real ->
+  du:'k real ->
+  b:'k real ->
+  ldb:int ->
+  int
+
+val zgtsv :
+  n:int ->
+  nrhs:int ->
+  dl:'k real ->
+  d:'k real ->
+  du:'k real ->
+  b:'k real ->
+  ldb:int ->
+  int
+
+val trtrs :
+  uplo:char ->
+  trans:char ->
+  diag:char ->
+  n:int ->
+  nrhs:int ->
+  a:'k real ->
+  lda:int ->
+  b:'k real ->
+  ldb:int ->
   int
 
 val ztrtrs :
@@ -134,19 +149,116 @@ val ztrtrs :
   diag:char ->
   n:int ->
   nrhs:int ->
-  a:f64 ->
+  a:'k real ->
   lda:int ->
-  b:f64 ->
+  b:'k real ->
   ldb:int ->
   int
 
+val gesvd :
+  jobz:char ->
+  m:int ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  s:'k real ->
+  u:'k real ->
+  ldu:int ->
+  vt:'k real ->
+  ldvt:int ->
+  int
+
+val zgesvd :
+  jobz:char ->
+  m:int ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  s:'k real ->
+  u:'k real ->
+  ldu:int ->
+  vt:'k real ->
+  ldvt:int ->
+  int
+
+val trsm :
+  side:char ->
+  uplo:char ->
+  trans:char ->
+  diag:char ->
+  m:int ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  b:'k real ->
+  ldb:int ->
+  unit
+
+val ztrsm :
+  side:char ->
+  uplo:char ->
+  trans:char ->
+  diag:char ->
+  m:int ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  b:'k real ->
+  ldb:int ->
+  unit
+
+val geev :
+  jobvl:char ->
+  jobvr:char ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  wri:'k real ->
+  vl:'k real ->
+  ldvl:int ->
+  vr:'k real ->
+  ldvr:int ->
+  int
+
+val zgeev :
+  jobvl:char ->
+  jobvr:char ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  w:'k real ->
+  vl:'k real ->
+  ldvl:int ->
+  vr:'k real ->
+  ldvr:int ->
+  int
+
+val gees :
+  jobvs:char ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  wri:'k real ->
+  vs:'k real ->
+  ldvs:int ->
+  sdim:i32 ->
+  int
+
 val zgees :
-  jobvs:char -> n:int -> a:f64 -> lda:int -> w:f64 -> vs:f64 -> ldvs:int -> int
+  jobvs:char ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  w:'k real ->
+  vs:'k real ->
+  ldvs:int ->
+  int
 
-val zgehrd : n:int -> ilo:int -> ihi:int -> a:f64 -> lda:int -> tau:f64 -> int
-
-val zhetrd :
-  uplo:char -> n:int -> a:f64 -> lda:int -> d:f64 -> e:f64 -> tau:f64 -> int
-
-val geqp3 : m:int -> n:int -> a:f64 -> lda:int -> jpvt:i32 -> tau:f64 -> int
-val zgeqp3 : m:int -> n:int -> a:f64 -> lda:int -> jpvt:i32 -> tau:f64 -> int
+val gecon :
+  norm:char ->
+  n:int ->
+  a:'k real ->
+  lda:int ->
+  anorm:float ->
+  rcond:'k real ->
+  int

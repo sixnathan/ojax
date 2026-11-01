@@ -98,7 +98,6 @@ let rec ormqr ?(left = true) ?(transpose = false) a taus c =
          [ Some 0; Some 0; Some 0 ] [ a; taus; c ])
   else begin
     let m = (shape a).(0) in
-    let k = (shape taus).(0) in
     if left && (shape c).(0) <> m then
       invalid_arg
         "ormqr with left=True expects c to have the same number of rows as the \
@@ -107,26 +106,17 @@ let rec ormqr ?(left = true) ?(transpose = false) a taus c =
       invalid_arg
         "ormqr with left=False expects c to have the same number of columns as \
          the Householder matrix a has rows";
-    let dt = dtype a in
-    let v_all =
-      UF.add
-        (NL.tril ~k:(-1) (L.slice_in_dim ~axis:1 a 0 k))
-        (NL.eye ~m:k ~dtype:dt m)
-    in
-    let reverse = left <> transpose in
-    let conj_if v = if is_complex a then L.conj v else v in
-    let step c i =
-      let idx = if reverse then k - 1 - i else i in
-      let tau = L.index_in_dim ~axis:0 ~keepdims:false taus idx in
-      let tau = if transpose then conj_if tau else tau in
-      let v = L.slice_in_dim ~axis:1 v_all idx (idx + 1) in
-      let v_h = conj_if (NL.matrix_transpose v) in
-      let update =
-        if left then L.dot v (L.dot v_h c) else L.dot (L.dot c v) v_h
-      in
-      UF.subtract c (UF.multiply tau update)
-    in
-    List.fold_left step c (List.init k Fun.id)
+    List.hd
+      (Custom_derivatives.pure_callback
+         (fun args ->
+           match List.map host args with
+           | [ a; t; c ] ->
+               List.map
+                 (fun nd -> T.Concrete nd)
+                 (LL.ormqr_impl ~left ~transpose a t c)
+           | _ -> failwith "ormqr: arity")
+         ~result_avals:[ aval c ]
+         [ a; taus; c ])
   end
 
 let rec cholesky_update r w =

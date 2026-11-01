@@ -410,12 +410,28 @@ let float_divmod x1 x2 =
 
 let is_unsigned dt = Dtypes.issubdtype dt `Unsigned
 
+let full_keeping_weak v x =
+  let dt = dtype v and sh = shape v in
+  if not (weak v) then array_full dt sh x
+  else if C.staging () && Array.length sh > 0 then
+    bind1
+      (T.Broadcast_in_dim { shape = sh; dims = [||] })
+      [ T.Concrete (Ndarray.as_weak (Ndarray.of_floats dt [||] [| x |])) ]
+  else
+    match array_full dt sh x with
+    | T.Concrete nd -> T.Concrete (Ndarray.as_weak nd)
+    | other -> other
+
+let int_literal_like v x =
+  let lit = Ndarray.of_floats (dtype v) [||] [| x |] in
+  T.Concrete (if weak v then Ndarray.as_weak lit else lit)
+
 let floor_divide x1 x2 =
   Jnp_util.jit1 "floor_divide"
     (function
       | [ x1; x2 ] ->
           let a, b = p2 (promote_numeric [ x1; x2 ]) in
-          let dt = dtype a and sh = shape a in
+          let dt = dtype a in
           if is_unsigned dt then bind1 T.Div [ a; b ]
           else if is_integer dt then begin
             let q = bind1 T.Div [ a; b ] in
@@ -423,9 +439,9 @@ let floor_divide x1 x2 =
             let sign_b = bind1 T.Sign [ b ] in
             let differs = bind1 T.Ne [ sign_a; sign_b ] in
             let r = bind1 T.Rem [ a; b ] in
-            let r_nonzero = bind1 T.Ne [ r; const_full dt sh 0.0 ] in
-            let sel = bind1 T.And [ differs; r_nonzero ] in
-            let q1 = bind1 T.Sub [ q; const_full dt sh 1.0 ] in
+            let r_nonzero = bind1 T.Ne [ r; int_literal_like r 0.0 ] in
+            let sel = logical T.And differs r_nonzero in
+            let q1 = bind1 T.Sub [ q; int_literal_like q 1.0 ] in
             where sel q1 q
           end
           else fst (float_divmod a b)
@@ -441,8 +457,8 @@ let remainder x1 x2 =
           let zero = const_full dt sh 0.0 in
           let b =
             if is_integer dt then begin
-              let is_zero = bind1 T.Eq [ b0; const_full dt sh 0.0 ] in
-              where is_zero (array_full dt (shape b0) 1.0) b0
+              let is_zero = bind1 T.Eq [ b0; int_literal_like b0 0.0 ] in
+              where is_zero (full_keeping_weak b0 1.0) b0
             end
             else b0
           in
@@ -1046,6 +1062,10 @@ let remainder a0 a1 =
 let fmod a0 a1 =
   Eager_jit.one "numpy.ufuncs.fmod" () [] [ a0; a1 ] (fun opts vals ->
       match (opts, vals) with [], [ a0; a1 ] -> fmod a0 a1 | _ -> assert false)
+
+let () =
+  Stablehlo.Native_lowering.jnp_remainder := remainder;
+  Stablehlo.Native_lowering.jnp_floor_divide := floor_divide
 
 let square a0 =
   Eager_jit.one "numpy.ufuncs.square" () [] [ a0 ] (fun opts vals ->

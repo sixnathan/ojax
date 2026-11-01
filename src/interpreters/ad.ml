@@ -3320,6 +3320,13 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                 in
                 (start_indices.(i), os.(i) - real_limit, s - 1))
           in
+          let plain = Array.for_all (fun s -> s = 1) strides in
+          let cfg =
+            Np_ints.mark_triples
+              (fun k ->
+                if plain then k mod 3 = 1 else k mod 3 = 1 || k mod 3 = 2)
+              cfg
+          in
           [ Some (b1 (Pad cfg) [ ct; scalar_const ct 0.0 ]) ]
       | _ -> arity ())
   | Dynamic_slice _ -> (
@@ -3694,16 +3701,22 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           let t = ct1 () in
           let ndim = Array.length cfg in
           let t_operand () =
-            let unpad = Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg in
+            let unpad =
+              Np_ints.mark_triples
+                (fun _ -> true)
+                (Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg)
+            in
             let dt = (Core.get_aval t).dtype in
             let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
             let unpadded = b1 (Pad unpad) [ t; zero ] in
             b1
               (Slice
                  {
-                   start_indices = Array.make ndim 0;
+                   start_indices = Np_ints.mark (Array.make ndim 0);
                    limit_indices = (Core.get_aval unpadded).shape;
-                   strides = Some (Array.map (fun (_, _, i) -> i + 1) cfg);
+                   strides =
+                     Some
+                       (Np_ints.mark (Array.map (fun (_, _, i) -> i + 1) cfg));
                  })
               [ unpadded ]
           in

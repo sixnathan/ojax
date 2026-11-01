@@ -4,6 +4,8 @@ val igamma : value list -> value list
 val igammac : value list -> value list
 val igamma_grad_a : value list -> value list
 val betainc : value list -> value list
+val jnp_remainder : (value -> value -> value) ref
+val jnp_floor_divide : (value -> value -> value) ref
 val bessel_i0e : value list -> value list
 val complex_sin : value list -> value list
 val complex_cos : value list -> value list

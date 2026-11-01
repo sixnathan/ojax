@@ -12,6 +12,19 @@ let is_marked arr i =
     (fun (other, predicate) -> other == arr && predicate i)
     (Hashtbl.find_all table (Hashtbl.hash arr))
 
+let triples : (int, (int * int * int) array * (int -> bool)) Hashtbl.t =
+  Hashtbl.create 64
+
+let mark_triples predicate arr =
+  if Array.length arr > 0 then
+    Hashtbl.add triples (Hashtbl.hash arr) (arr, predicate);
+  arr
+
+let triple_marked arr k =
+  List.exists
+    (fun (other, predicate) -> other == arr && predicate k)
+    (Hashtbl.find_all triples (Hashtbl.hash arr))
+
 let marked_prims : (int, Obj.t) Hashtbl.t = Hashtbl.create 64
 
 let mark_prim prim =

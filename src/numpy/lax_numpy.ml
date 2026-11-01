@@ -1524,7 +1524,20 @@ let cross ?(axisa = -1) ?(axisb = -1) ?(axisc = -1) ?axis a b =
     let c0 = sub2 (mul2 a1 b2) (mul2 a2 b1) in
     let c1 = sub2 (mul2 a2 b0) (mul2 a0 b2) in
     let c2 = sub2 (mul2 a0 b1) (mul2 a1 b0) in
-    let c = stack ~axis:0 [ c0; c1; c2 ] in
+    let lead v =
+      let sh = shape v in
+      bind1
+        (T.Broadcast_in_dim
+           {
+             shape = Array.append [| 1 |] sh;
+             dims = Array.init (Array.length sh) (fun i -> i + 1);
+           })
+        [ v ]
+    in
+    let l0 = lead c0 in
+    let l1 = lead c1 in
+    let l2 = lead c2 in
+    let c = bind1 (T.Concatenate 0) [ l0; l1; l2 ] in
     moveaxis [| 0 |] [| axisc |] c
   end
 

@@ -194,7 +194,7 @@ let squareplus ?b x =
     x
 
 let log1mexp_primal x =
-  let c = scalar_like x (Float.log 2.0) in
+  let c = UF.log (py_float 2.0) in
   let pred = UF.less x c in
   let nx = UF.negative x in
   let a = UF.log (UF.negative (UF.expm1 nx)) in
@@ -223,7 +223,7 @@ let gelu ?(approximate = true) x =
     let half_x = UF.multiply (scalar_like x 0.5) x in
     let negated = UF.negative x in
     let e = bind1 T.Erfc [ UF.multiply negated sh ] in
-    UF.multiply half_x e
+    NL.copy (UF.multiply half_x e)
   end
 
 let glu ?(axis = -1) x =
@@ -233,19 +233,22 @@ let glu ?(axis = -1) x =
 
 let numpy_negative_infinity x =
   let dt = dtype x in
+  let small_int lowest = if Core.staging () then 0.0 else lowest in
   let value =
     match dt with
     | D.I32 -> -2147483648.0
     | D.I64 -> -9223372036854775808.0
-    | D.Bool | D.I8 | D.I16 | D.Uint8 | D.Uint16 | D.Uint32 -> 0.0
-    | D.Uint64 -> 9223372036854775808.0
+    | D.I8 -> small_int (-128.0)
+    | D.I16 -> small_int (-32768.0)
+    | D.Bool -> 1.0
+    | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> 0.0
     | _ -> Float.neg_infinity
   in
   const_full dt [||] value
 
 let masked_max ax mask x =
   RED.max ~axis:ax ~keepdims:true ?where:mask
-    ~initial:(Numpy.Jnp_util.py_float Float.neg_infinity)
+    ~initial:(numpy_negative_infinity x)
     x
 
 let softmax_body ~stop ax mask x =
@@ -254,16 +257,14 @@ let softmax_body ~stop ax mask x =
   let x_safe =
     match mask with
     | None -> x
-    | Some m -> where3 m x (scalar_like x Float.neg_infinity)
+    | Some m -> where3 m x (py_float Float.neg_infinity)
   in
   let unnormalized = UF.exp (UF.subtract x_safe x_max) in
   let result =
     UF.divide unnormalized
       (RED.sum ~axis:ax ~keepdims:true ?where:mask unnormalized)
   in
-  match mask with
-  | None -> result
-  | Some m -> where3 m result (scalar_like result 0.0)
+  match mask with None -> result | Some m -> where3 m result (py_int 0)
 
 let softmax ?(axis = -1) ?where:mask x =
   let ax = [| canon_axis (Array.length (shape x)) axis |] in
@@ -295,7 +296,7 @@ let log_softmax ?(axis = -1) ?where:mask x =
   let x_safe =
     match mask with
     | None -> x
-    | Some m -> where3 m x (scalar_like x Float.neg_infinity)
+    | Some m -> where3 m x (py_float Float.neg_infinity)
   in
   let shifted = UF.subtract x_safe (Custom_derivatives.stop_gradient x_max) in
   let lse =
@@ -304,7 +305,7 @@ let log_softmax ?(axis = -1) ?where:mask x =
   let result = UF.subtract shifted lse in
   match mask with
   | None -> result
-  | Some m -> where3 m result (scalar_like result Float.neg_infinity)
+  | Some m -> where3 m result (py_float Float.neg_infinity)
 
 let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
     ?(algorithm = "fast") x =
@@ -323,7 +324,7 @@ let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
             RED.mean ~axis:ax ~keepdims:true ?where:mask
               (UF.square (UF.subtract x mean))
         | "fast" ->
-            NL.clip ~min:0.0
+            NL.clip_values ~min:(py_int 0)
               (UF.subtract
                  (RED.mean ~axis:ax ~keepdims:true ?where:mask (UF.square x))
                  (UF.square mean))
@@ -496,33 +497,90 @@ let swish = silu
 let hard_swish = hard_silu
 let tanh x = Core.bind1 T.Tanh [ inexact x ]
 
-let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
+let large_negative dt =
+  let dtype_max =
+    match dt with
+    | D.F16 -> 65504.0
+    | D.Bf16 -> 3.3895313892515355e38
+    | _ -> 3.4028234663852886e38
+  in
+  const_full dt [||] (-0.7 *. dtype_max)
+
+let attention_core ~scale ~query ~key ~value ~bias ~mask =
   let module E = Numpy.Einsum in
-  let module L = Lax_api in
-  let q_shape = (Core.get_aval query).T.shape in
-  let d = q_shape.(Array.length q_shape - 1) in
-  let rank_of v = Array.length (Core.get_aval v).T.shape in
-  let lift v =
-    let r = rank_of v in
-    if r >= 4 then v else L.expand_dims v (Array.init (4 - r) Fun.id)
-  in
-  let squeeze_back v = L.reshape v q_shape in
-  let scale_value =
-    match scale with Some s -> s | None -> 1.0 /. sqrt (float_of_int d)
-  in
-  let logits = E.einsum "BTNH,BSNH->BNTS" [ lift query; lift key ] in
-  let logits = L.mul logits (L.full_like logits scale_value) in
-  let logits = match bias with Some b -> L.add logits b | None -> logits in
+  let logits = E.einsum "BTNH,BSNH->BNTS" [ query; key ] in
+  let logits = UF.multiply logits (const_full (dtype logits) [||] scale) in
   let logits =
-    match mask with
-    | Some m -> L.select m logits (L.full_like logits Float.neg_infinity)
+    match bias with
+    | Some b -> NL.astype (UF.add logits b) (dtype logits)
     | None -> logits
   in
-  let single = NL.astype logits D.F32 in
-  let probs =
-    NL.astype (softmax ~axis:(-1) single) (Core.get_aval key).T.dtype
+  let padded =
+    match mask with
+    | None -> logits
+    | Some m ->
+        let combined =
+          UF.logical_and (const_full D.Bool (shape logits) 1.0) m
+        in
+        where3 combined logits (large_negative (dtype logits))
   in
-  squeeze_back (E.einsum "BNTS,BSNH->BTNH" [ probs; lift value ])
+  let padded = NL.astype padded D.F32 in
+  let probs = NL.astype (softmax ~axis:(-1) padded) (dtype key) in
+  E.einsum "BNTS,BSNH->BTNH" [ probs; value ]
+
+let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
+  let output_shape = shape query in
+  let ensure_4d v =
+    let r = Array.length (shape v) in
+    if r < 4 then NL.expand_dims v (Array.init (4 - r) Fun.id) else v
+  in
+  let query = ensure_4d query in
+  let key = ensure_4d key in
+  let value = ensure_4d value in
+  let bias = Option.map ensure_4d bias in
+  let mask = Option.map ensure_4d mask in
+  let q_shape = shape query and k_shape = shape key in
+  let b, t, n, h = (q_shape.(0), q_shape.(1), q_shape.(2), q_shape.(3)) in
+  let k = k_shape.(2) in
+  if n mod k <> 0 then
+    invalid_arg
+      (Printf.sprintf
+         "The number of query heads must be a multiple of key/value heads, but \
+          got %d vs %d"
+         n k);
+  let g = n / k in
+  let scale =
+    match scale with Some s -> s | None -> 1.0 /. sqrt (float_of_int h)
+  in
+  let query = NL.reshape query [| b; t; k; g; h |] in
+  let to_grouped v =
+    let s = shape v in
+    let tb, tn, tt, ts = (s.(0), s.(1), s.(2), s.(3)) in
+    if tn = 1 then
+      NL.broadcast_to (NL.expand_dims v [| 2 |]) [| tb; tn; g; tt; ts |]
+    else NL.reshape v [| tb; k; g; tt; ts |]
+  in
+  let bias = Option.map to_grouped bias in
+  let mask = Option.map to_grouped mask in
+  let extras = Option.to_list bias @ Option.to_list mask in
+  let output =
+    Interpreters.Batching.vmap_flat ~out_axis:3
+      (fun args ->
+        match args with
+        | query :: key :: value :: rest ->
+            let bias, rest =
+              match (bias, rest) with
+              | Some _, b :: tl -> (Some b, tl)
+              | _ -> (None, rest)
+            in
+            let mask = match rest with m :: _ -> Some m | [] -> None in
+            [ attention_core ~scale ~query ~key ~value ~bias ~mask ]
+        | _ -> invalid_arg "dot_product_attention: arity")
+      ([ Some 3; None; None ] @ List.map (fun _ -> Some 2) extras)
+      ([ query; key; value ] @ extras)
+  in
+  let encoded = NL.reshape (List.hd output) [| b; t; n; h |] in
+  NL.reshape encoded output_shape
 
 let as_float x =
   match dtype x with

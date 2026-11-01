@@ -306,7 +306,10 @@ let lit_value nd =
   | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4 | Dtype.F8_e4m3
   | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2
   | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
-      python_repr_float (Ndarray.get_f nd scalar)
+      python_repr_float
+        (match Ndarray.py_value nd with
+        | Some x -> x
+        | None -> Ndarray.get_f nd scalar)
   | Dtype.Complex64 | Dtype.Complex128 ->
       let z = Ndarray.get_c nd scalar in
       let im = python_repr_float z.Complex.im in

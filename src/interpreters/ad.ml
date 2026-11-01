@@ -285,26 +285,28 @@ let lreshape shape x =
   else b1 (Reshape shape) [ x ]
 
 let expand_dims x dims =
-  let shape = (Core.get_aval x).shape in
-  let ndim_out = Array.length shape + Array.length dims in
-  let is_new = Array.make ndim_out false in
-  Array.iter (fun d -> is_new.(d) <- true) dims;
-  let next = ref 0 in
-  let out =
-    Array.init ndim_out (fun i ->
-        if is_new.(i) then 1
-        else begin
-          let d = shape.(!next) in
-          incr next;
-          d
-        end)
-  in
-  let kept =
-    List.filter (fun i -> not is_new.(i)) (List.init ndim_out Fun.id)
-  in
-  let bdims = Array.of_list kept in
-  if ndim_out = Array.length shape && Array.length bdims = 0 then x
-  else b1 (Broadcast_in_dim { shape = out; dims = bdims }) [ x ]
+  if Array.length dims = 0 then x
+  else
+    let shape = (Core.get_aval x).shape in
+    let ndim_out = Array.length shape + Array.length dims in
+    let is_new = Array.make ndim_out false in
+    Array.iter (fun d -> is_new.(d) <- true) dims;
+    let next = ref 0 in
+    let out =
+      Array.init ndim_out (fun i ->
+          if is_new.(i) then 1
+          else begin
+            let d = shape.(!next) in
+            incr next;
+            d
+          end)
+    in
+    let kept =
+      List.filter (fun i -> not is_new.(i)) (List.init ndim_out Fun.id)
+    in
+    let bdims = Array.of_list kept in
+    if ndim_out = Array.length shape && Array.length bdims = 0 then x
+    else b1 (Broadcast_in_dim { shape = out; dims = bdims }) [ x ]
 
 let maybe_broadcast target x =
   let shape = (Core.get_aval x).shape in
@@ -2913,7 +2915,8 @@ let reduce_sum_transpose (axes : int array) (in_shape : int array) ct =
     ct
   else
     b1
-      (Broadcast_in_dim { shape = in_shape; dims = Array.of_list !kept })
+      (Broadcast_in_dim
+         { shape = in_shape; dims = Np_ints.mark (Array.of_list !kept) })
       [ ct ]
 
 let argsort perm =

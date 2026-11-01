@@ -1715,6 +1715,10 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
             (fun g ans ->
               lmul g (!Core.random_gamma_grad_hook ~log_space ans a));
         ]
+  | Cholesky_update ->
+      failwith "Differentiation rule for 'cholesky_update' not implemented"
+  | Symmetric_product _ ->
+      failwith "Differentiation rule for 'symmetric_product' not implemented"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
@@ -4749,9 +4753,9 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Checkpoint_name _ -> [ Some (ct1 ()) ]
   | Xla_call c -> xla_call_transpose c cts primals
   | Stop_gradient -> failwith "ad: stop_gradient has no transpose rule"
-  | Cholesky | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _
-  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Eig _ | Eigh _ | Hessenberg
-  | Schur _ | Svd _ | Tridiagonal _ ->
+  | Cholesky | Cholesky_update | Symmetric_product _ | Householder_product | Lu
+  | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _
+  | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
       failwith "ad: nonlinear linalg primitive has no transpose rule"
   | Decomposable _ -> failwith "ad: decomposed before differentiation"
 

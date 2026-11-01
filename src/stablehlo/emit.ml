@@ -3751,6 +3751,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             (List.filteri
                (fun i _ -> (i >= before && i < last) || i >= total)
                args))
+  | Cholesky_update | Symmetric_product _ ->
+      emit_inlined ctx eqn in_ids (!Core.lowered_linalg_hook eqn.prim)
   | Cholesky when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let info =

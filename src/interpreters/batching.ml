@@ -1045,7 +1045,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
               [ bdim_at_front axis_size key bk; bdim_at_front axis_size a ba ],
             Some 0 )
       | _ -> failwith "batching: expected 2 prng operands")
-  | Threefry2x32 | Iota_2x32_shape _ | While _ | Cholesky | Householder_product
+  | Threefry2x32 | Iota_2x32_shape _ | While _ | Cholesky | Cholesky_update
+  | Symmetric_product _ | Householder_product
   | Lu | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3
   | Ormqr _ | Triangular_solve _ | Tridiagonal_solve _ | Eig _ | Eigh _
   | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
@@ -2415,16 +2416,18 @@ let batch_process_primitive (trace : trace) (prim : primitive)
   | Select_and_gather_add _ | Select_and_scatter_add _ ->
       let out, b = window_batch axis_size prim vals bdims in
       [ Tracer (new_batch_tracer trace out b) ]
-  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Cholesky | Householder_product | Lu
-  | Lu_pivots_to_permutation _ | Qr _ | Eig _ | Eigh _ | Hessenberg | Schur _
-  | Svd _ | Tridiagonal _
+  | Cholesky_update ->
+      failwith "Batching rule for 'cholesky_update' not implemented"
+  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Cholesky | Symmetric_product _
+  | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _ | Eig _
+  | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _
     when List.for_all (fun b -> b = None) bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o None))
         (Core.bind prim vals)
-  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Cholesky | Householder_product | Lu
-  | Lu_pivots_to_permutation _ | Qr _ | Eig _ | Eigh _ | Hessenberg | Schur _
-  | Svd _ | Tridiagonal _ ->
+  | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _ | Cholesky | Symmetric_product _
+  | Householder_product | Lu | Lu_pivots_to_permutation _ | Qr _ | Eig _
+  | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
       let args = List.map2 (bdim_at_front axis_size) vals bdims in
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

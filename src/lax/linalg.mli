@@ -94,3 +94,5 @@ val svd :
 
 val tridiagonal : ?lower:bool -> value -> value * value * value * value
 val lu_solve_vector : transpose:bool -> value -> value -> value -> value
+
+val tril : ?k:int -> value -> value

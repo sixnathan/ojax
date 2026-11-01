@@ -3528,17 +3528,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in_ids [ a ] [ a; info ]
       in
       emit_traced ctx [ a; info ] ids eqn.outs Native_lowering.lapack_cholesky
-  | Triangular_solve ({ transpose_a = false; conjugate_a = true; _ } as o)
-    when lapack_ffi () ->
-      emit_inlined ctx eqn in_ids (function
-        | [ a; b ] ->
-            let a =
-              if is_complex_dtype (Core.get_aval a).dtype then
-                Core.bind1 Conj [ a ]
-              else a
-            in
-            Core.bind (Triangular_solve { o with conjugate_a = false }) [ a; b ]
-        | _ -> invalid_arg "Stablehlo.Emit: triangular_solve arity")
   | Triangular_solve o when lapack_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let b = List.nth inputs 1 in
@@ -3556,6 +3545,21 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             char_attr "trans_x" trans;
             char_attr "uplo" (if o.lower then 'L' else 'U');
           ]
+      in
+      let in_ids =
+        if
+          o.conjugate_a && (not o.transpose_a)
+          && is_complex_dtype (List.hd inputs).dtype
+        then begin
+          let c = fresh ctx in
+          let ty = Ir.tensor_type_of_aval (List.hd inputs) in
+          Buffer.add_string ctx.buf
+            (Printf.sprintf "    %s = chlo.conj %s : %s -> %s\n" (name c)
+               (name (List.hd in_ids))
+               ty ty);
+          c :: List.tl in_ids
+        end
+        else in_ids
       in
       let ids =
         emit_lapack_call ctx ~base:"trsm" ~config

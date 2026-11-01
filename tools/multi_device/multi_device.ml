@@ -121,8 +121,68 @@ let cases () =
       None );
   ]
 
+let f32_aval shape : T.aval = { shape; dtype = D.F32; weak_type = false }
+
+let staged x =
+  let a = U.add (U.multiply (U.sin x) two) two in
+  let b =
+    NL.where_
+      (U.greater x (T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 0.0 |])))
+      x
+      (T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 1.0 |]))
+  in
+  let start = U.add a b in
+  let three = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 3.0 |]) in
+  let one = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 1.0 |]) in
+  match
+    L.scan ~length:2
+      (function
+        | [ c ] -> [ U.add (U.multiply c three) one ] | _ -> failwith "arity")
+      [ start ] []
+  with
+  | [ final ] -> final
+  | _ -> failwith "arity"
+
+let staged_where x =
+  let a = U.add (U.multiply (U.sin x) two) two in
+  let weak =
+    NL.where_
+      (U.greater x (T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 0.0 |])))
+      x
+      (Ojax.Numpy.Jnp_util.py_float 1.0)
+  in
+  U.add a weak
+
+let single_device oc =
+  let write name text =
+    Yojson.Safe.to_channel oc
+      (`Assoc
+         [
+           ("case", `String name); ("text", `String text); ("values", `List []);
+         ]);
+    output_char oc '\n'
+  in
+  let flat = function x :: _ -> [ staged x ] | [] -> failwith "arity" in
+  let avals = [ f32_aval [| 3 |]; f32_aval [| 3 |] ] in
+  let lowered = Ojax.Stages.lower flat avals in
+  write "stages_as_text" (Ojax.Stages.as_text lowered);
+  let exported = Ojax.Export.export ~fun_name:"f" flat avals in
+  write "export_scan" exported.Ojax.Export.mlir_module;
+  let plain = function
+    | x :: _ -> [ staged_where x ]
+    | [] -> failwith "arity"
+  in
+  write "stages_as_text_where"
+    (Ojax.Stages.as_text (Ojax.Stages.lower plain avals));
+  write "export_where"
+    (Ojax.Export.export ~fun_name:"f" plain avals).Ojax.Export.mlir_module;
+  write "export_kept"
+    (String.concat ","
+       (List.map string_of_int exported.Ojax.Export.module_kept_var_idx))
+
 let () =
   let oc = open_out Sys.argv.(1) in
+  single_device oc;
   List.iter
     (fun (name, f, args, out_shardings) ->
       let row =

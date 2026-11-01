@@ -48,11 +48,13 @@ let lower f avals =
   let closed = Jaxpr.make_jaxpr avals f in
   { closed; in_avals = avals; out_avals = closed_out_avals closed }
 
-let as_text lowered = Stablehlo.Emit.emit_closed_jaxpr lowered.closed
+let raw_text lowered = Stablehlo.Emit.emit_closed_jaxpr lowered.closed
 let jaxpr_text lowered = Pretty_printer.closed_jaxpr_to_string lowered.closed
 
 let as_jax_text ?(name = "_lambda") lowered =
   Stablehlo.Emit.emit_jax_text ~name lowered.closed
+
+let as_text lowered = as_jax_text lowered
 
 let jax_jaxpr_text lowered =
   Pretty_printer.closed_jaxpr_to_jax_string lowered.closed

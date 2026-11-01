@@ -407,18 +407,144 @@ let symbol_name name =
   in
   if String.for_all bare name then name else "\"" ^ name ^ "\""
 
-let render ?(num_partitions = 1) ~module_name text =
+let splat_index_layouts line =
+  let open_key = "dense<[" and close_key = "]> : tensor<1xindex>" in
+  let b = Buffer.create (String.length line) in
+  let n = String.length line in
+  let m = String.length open_key and c = String.length close_key in
+  let rec go i =
+    if i >= n then ()
+    else if i + m <= n && String.sub line i m = open_key then begin
+      let j = ref (i + m) in
+      while !j < n && line.[!j] >= '0' && line.[!j] <= '9' do
+        incr j
+      done;
+      if !j + c <= n && String.sub line !j c = close_key then begin
+        Buffer.add_string b "dense<";
+        Buffer.add_string b (String.sub line (i + m) (!j - i - m));
+        Buffer.add_string b "> : tensor<1xindex>";
+        go (!j + c)
+      end
+      else begin
+        Buffer.add_char b line.[i];
+        go (i + 1)
+      end
+    end
+    else begin
+      Buffer.add_char b line.[i];
+      go (i + 1)
+    end
+  in
+  go 0;
+  Buffer.contents b
+
+let constant_of line =
+  let t = String.trim line in
+  if contains "stablehlo.constant " t then
+    match definition_of line with
+    | Some (tok, rhs) -> Some (tok, String.trim rhs)
+    | None -> None
+  else None
+
+let opens_isolated line =
+  let t = String.trim line in
+  starts_with "reducer(" t
+  || ends_with "({" t
+     && (not (contains "stablehlo.case" t))
+     && not (contains "stablehlo.if" t)
+
+let hoist_constants text =
+  let lines = Array.of_list (String.split_on_char '\n' text) in
+  let n = Array.length lines in
+  let rec scope i =
+    let kept = ref [] and constants = ref [] and renames = ref Tbl.empty in
+    let depth = ref 0 in
+    let rec walk i =
+      if i >= n then i
+      else
+        let line = lines.(i) in
+        match constant_of line with
+        | Some (tok, rhs) ->
+            (match List.assoc_opt rhs !constants with
+            | Some first -> renames := Tbl.add tok first !renames
+            | None -> constants := (rhs, tok) :: !constants);
+            walk (i + 1)
+        | None ->
+            if closes line && not (opens line) then
+              if !depth = 0 then i
+              else begin
+                decr depth;
+                kept := line :: !kept;
+                walk (i + 1)
+              end
+            else if opens_isolated line then begin
+              kept := line :: !kept;
+              let header, i' =
+                if i + 1 < n && starts_with "^bb0(" (String.trim lines.(i + 1))
+                then ([ lines.(i + 1) ], i + 2)
+                else ([], i + 1)
+              in
+              kept := List.rev_append header !kept;
+              let inner, next = scope i' in
+              kept := List.rev_append inner !kept;
+              walk next
+            end
+            else if closes line then begin
+              kept := line :: !kept;
+              walk (i + 1)
+            end
+            else begin
+              if opens line then incr depth;
+              kept := line :: !kept;
+              walk (i + 1)
+            end
+    in
+    let next = walk i in
+    let body = List.rev !kept in
+    let indent =
+      match body with
+      | first :: _ ->
+          let k = ref 0 in
+          while !k < String.length first && first.[!k] = ' ' do
+            incr k
+          done;
+          String.make !k ' '
+      | [] -> "    "
+    in
+    let hoisted =
+      List.map
+        (fun (rhs, tok) -> Printf.sprintf "%s%s = %s" indent tok rhs)
+        !constants
+    in
+    (List.map (rewrite !renames) (hoisted @ body), next)
+  in
+  let out = ref [] in
+  let i = ref 0 in
+  while !i < n do
+    let line = lines.(!i) in
+    out := line :: !out;
+    incr i;
+    if starts_with "func.func " (String.trim line) then begin
+      let inner, next = scope !i in
+      out := List.rev_append inner !out;
+      i := next
+    end
+  done;
+  String.concat "\n" (List.rev !out)
+
+let render ?(num_partitions = 1) ?(module_attributes = []) ~module_name text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let root = snd (build_regions lines) in
   number lines root fresh_state;
   let out = Array.copy lines in
   apply lines out root Tbl.empty;
-  let out = Array.map add_result_info out in
+  let out = Array.map (fun l -> splat_index_layouts (add_result_info l)) out in
   if Array.length out > 0 && String.trim out.(0) = "module {" then
     out.(0) <-
       Printf.sprintf
-        "module @%s attributes {mhlo.num_partitions = %d : i32, \
+        "module @%s attributes {%smhlo.num_partitions = %d : i32, \
          mhlo.num_replicas = 1 : i32} {"
         (symbol_name ("jit_" ^ module_name))
+        (String.concat "" (List.map (fun a -> a ^ ", ") module_attributes))
         num_partitions;
   String.concat "\n" (Array.to_list out)

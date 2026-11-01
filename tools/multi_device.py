@@ -65,7 +65,42 @@ def reference():
             "text": jitted.lower(*args).as_text(),
             "values": [[str(int(np.float64(v).view(np.int64))) for v in np.asarray(leaf).ravel()] for leaf in leaves],
         }
+    from jax import export
+
+    def staged(x, y):
+        a = jnp.sin(x) * 2.0 + 2.0 + jnp.where(x > 0, x, 1.0)
+
+        def body(c, _):
+            return c * 3.0 + 1.0, None
+
+        return jax.lax.scan(body, a, None, length=2)[0]
+
+    zeros = np.zeros(3, np.float32)
+    lam = lambda x, y: staged(x, y)
+    rows["stages_as_text"] = {"text": jax.jit(lam).lower(zeros, zeros).as_text(), "values": []}
+    staged.__name__ = "f"
+    exported = export.export(jax.jit(staged))(zeros, zeros)
+    rows["export_scan"] = {"text": _strip_locations(exported.mlir_module()), "values": []}
+
+    def staged_where(x, y):
+        return jnp.sin(x) * 2.0 + 2.0 + jnp.where(x > 0, x, 1.0)
+
+    lam_where = lambda x, y: staged_where(x, y)
+    rows["stages_as_text_where"] = {"text": jax.jit(lam_where).lower(zeros, zeros).as_text(), "values": []}
+    staged_where.__name__ = "f"
+    rows["export_where"] = {
+        "text": _strip_locations(export.export(jax.jit(staged_where))(zeros, zeros).mlir_module()),
+        "values": [],
+    }
+    rows["export_kept"] = {"text": ",".join(map(str, exported.module_kept_var_idx)), "values": []}
     return rows
+
+
+def _strip_locations(text):
+    lines = [line for line in text.split("\n") if not line.startswith("#loc")]
+    text = "\n".join(lines)
+    text = re.sub(r" loc\((?:[^()]|\([^()]*\))*\)", "", text)
+    return text.rstrip("\n") + "\n"
 
 
 def main():

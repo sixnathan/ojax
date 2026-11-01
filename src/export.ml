@@ -172,9 +172,11 @@ let rec export_internal ~fun_name ~platforms ~disabled_checks ~in_tree ~out_tree
     match platforms with Some p -> p | None -> [ default_export_platform () ]
   in
   let lowered = Stages.lower f avals in
-  let kept = kept_indices lowered.Stages.closed in
-  let pruned = prune_unused lowered.Stages.closed kept in
-  let text = Stablehlo.Emit.emit_closed_jaxpr pruned in
+  let { Stablehlo.Emit.text; kept } =
+    Stablehlo.Emit.emit_export_text ~name:fun_name
+      ~uses_shape_polymorphism:(List.length platforms > 1)
+      lowered.Stages.closed
+  in
   check_module text disabled_checks;
   let out_tree =
     match out_tree with

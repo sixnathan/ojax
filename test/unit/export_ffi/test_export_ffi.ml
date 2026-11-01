@@ -967,7 +967,7 @@ let ffi_ad () =
 let ffi_lowering () =
   let lowered attrs extra =
     let f args = extra ?attributes:attrs args in
-    Stages.as_text (Stages.lower f [ f32a [| 3 |] ])
+    Stages.raw_text (Stages.lower f [ f32a [| 3 |] ])
   in
   let contains s sub =
     let n = String.length s and m = String.length sub in
@@ -1013,7 +1013,7 @@ let ffi_lowering () =
   check legacy
     "{api_version = 2 : i32, backend_config = \"xx\", operand_layouts";
   let two =
-    Stages.as_text
+    Stages.raw_text
       (Stages.lower
          (fun args ->
            Ffi.ffi_call

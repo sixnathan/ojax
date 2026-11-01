@@ -2036,7 +2036,6 @@ let ffi_layout_text layout =
   let n = Array.length layout in
   let body =
     if n = 0 then ""
-    else if n = 1 then string_of_int layout.(0)
     else
       "["
       ^ String.concat ", " (Array.to_list (Array.map string_of_int layout))
@@ -4017,6 +4016,20 @@ let lower ~name cj =
   }
 
 let emit_jax_text ~name cj = (lower ~name cj).text
+
+let emit_export_text ~name ~uses_shape_polymorphism cj =
+  let pruned, kept = Dce.prune_unused_inputs cj in
+  {
+    text =
+      Mlir_names.render ~module_name:name
+        ~module_attributes:
+          [
+            Printf.sprintf "jax.uses_shape_polymorphism = %b"
+              uses_shape_polymorphism;
+          ]
+        (Mlir_names.hoist_constants (emit_closed_jaxpr pruned));
+    kept;
+  }
 
 let lower_partitioned ~name partition cj =
   let pruned, kept = Dce.prune_unused_inputs cj in

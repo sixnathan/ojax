@@ -434,7 +434,9 @@ module NN = Ojax.Nn.Functions
 let seed_key p =
   Ojax.Random.Core.key
     (T.Concrete
-       (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||]
+       (Ojax.Ndarray.of_floats
+          (Ojax.Dtypes.default_int_dtype ())
+          [||]
           [| float_of_int (int "seed" p) |]))
 
 let required_string name p = U.to_string (U.member name p)

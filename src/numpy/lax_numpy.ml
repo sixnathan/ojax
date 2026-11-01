@@ -1185,13 +1185,10 @@ let arange ?(start = 0.0) ?(step = 1.0) ~dtype stop =
 
 let eye ?m ?(k = 0) ~dtype n =
   let m = Option.value m ~default:n in
-  let i =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 0 }) []
-  in
-  let j =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
-  in
-  let ik = bind1 T.Add [ i; C.splat D.I32 [||] (float_of_int k) ] in
+  let idt = Dtypes.default_int_dtype () in
+  let i = bind1 (T.Iota { dtype = idt; shape = [| n; m |]; dimension = 0 }) [] in
+  let j = bind1 (T.Iota { dtype = idt; shape = [| n; m |]; dimension = 1 }) [] in
+  let ik = bind1 T.Add [ i; C.splat idt [||] (float_of_int k) ] in
   convert (bind1 T.Eq [ ik; j ]) dtype
 
 let identity ~dtype n = eye ~dtype n
@@ -1325,14 +1322,15 @@ let diag_indices_from arr =
 
 let tri ?m ?(k = 0) ~dtype n =
   let m = Option.value m ~default:n in
-  let i =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 0 }) []
-  in
-  let j =
-    bind1 (T.Iota { dtype = D.I32; shape = [| n; m |]; dimension = 1 }) []
-  in
-  let ik = bind1 T.Add [ i; scalar D.I32 (float_of_int k) ] in
-  convert (bind1 T.Ge [ ik; j ]) dtype
+  convert (Lax.Linalg.tri_mask n m k) dtype
+
+let batch_mask mask s =
+  let nd = Array.length s in
+  if nd = 2 then mask
+  else
+    bind1
+      (T.Broadcast_in_dim { shape = s; dims = [| nd - 2; nd - 1 |] })
+      [ mask ]
 
 let tril ?(k = 0) m =
   let s = shape m in
@@ -1342,7 +1340,7 @@ let tril ?(k = 0) m =
     (function
       | [ m ] ->
           let mask = tri ~m:s.(nd - 1) ~k ~dtype:D.Bool s.(nd - 2) in
-          where_ mask m (scalar (dtype m) 0.0)
+          bind1 T.Select_n [ batch_mask mask s; zeros_like m; m ]
       | _ -> invalid_arg "tril: arity")
     [ m ]
 
@@ -1354,7 +1352,7 @@ let triu ?(k = 0) m =
     (function
       | [ m ] ->
           let mask = tri ~m:s.(nd - 1) ~k:(k - 1) ~dtype:D.Bool s.(nd - 2) in
-          where_ mask (scalar (dtype m) 0.0) m
+          bind1 T.Select_n [ batch_mask mask s; m; zeros_like m ]
       | _ -> invalid_arg "triu: arity")
     [ m ]
 

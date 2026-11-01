@@ -172,40 +172,49 @@ let random_split ~shape key =
       | _ -> invalid_arg "Prng_lowering: threefry arity")
     key
 
+let seed_const dt (a : aval) v =
+  let n = Array.fold_left ( * ) 1 a.shape in
+  Concrete
+    (match dt with
+    | Dtype.I64 | Dtype.Uint64 -> Ndarray.of_int64s dt a.shape (Array.make n v)
+    | Dtype.Uint32 ->
+        Ndarray.of_floats dt a.shape (Array.make n (Int64.to_float v))
+    | _ ->
+        let wrapped = Int32.to_float (Int64.to_int32 v) in
+        Ndarray.of_floats dt a.shape (Array.make n wrapped))
+
+let seed_wide_dtype dt =
+  Dtypes.canonicalize_dtype (Dtypes.promote_types dt Dtype.Uint32)
+
 let seed_words seed =
   let a = Core.get_aval seed in
   let convert v = b1 (Convert_element_type u32) [ v ] in
-  let low =
-    match a.dtype with
-    | Dtype.I64 | Dtype.Uint64 ->
-        convert
-          (b1 And
-             [
-               seed;
-               Concrete
-                 (Ndarray.of_int64s a.dtype a.shape
-                    (Array.make (Array.fold_left ( * ) 1 a.shape) 0xFFFFFFFFL));
-             ])
-    | _ -> convert seed
+  let high = convert (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ]) in
+  let wide = seed_wide_dtype a.dtype in
+  let widened =
+    if wide = a.dtype then seed else b1 (Convert_element_type wide) [ seed ]
   in
-  let high =
-    match a.dtype with
-    | Dtype.I64 | Dtype.Uint64 ->
-        convert
-          (b1 Shift_right_logical
-             [
-               seed;
-               Concrete
-                 (Ndarray.of_int64s a.dtype a.shape
-                    (Array.make (Array.fold_left ( * ) 1 a.shape) 32L));
-             ])
-    | _ -> fill a.shape 0.0
-  in
+  let low = convert (b1 And [ widened; seed_const wide a 0xFFFFFFFFL ]) in
   (high, low)
 
 let random_seed seed =
-  let high, low = seed_words seed in
-  b1 (Stack (Array.length (Core.get_aval seed).shape)) [ high; low ]
+  let a = Core.get_aval seed in
+  if Array.length a.shape = 0 then begin
+    let expand v =
+      b1 (Broadcast_in_dim { shape = [| 1 |]; dims = [||] }) [ v ]
+    in
+    let word v = expand (b1 (Convert_element_type u32) [ v ]) in
+    let high = word (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ]) in
+    let wide = seed_wide_dtype a.dtype in
+    let widened =
+      if wide = a.dtype then seed else b1 (Convert_element_type wide) [ seed ]
+    in
+    let low = word (b1 And [ widened; seed_const wide a 0xFFFFFFFFL ]) in
+    b1 (Concatenate 0) [ high; low ]
+  end
+  else
+    let high, low = seed_words seed in
+    b1 (Stack (Array.length a.shape)) [ high; low ]
 
 let rec fold_in key data =
   let ka = Core.get_aval key and da = Core.get_aval data in

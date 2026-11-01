@@ -49,6 +49,7 @@ let dot_lhs () =
       rhs_contract = [| 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      untyped_dot = false;
       dot_precision = None;
     }
   in
@@ -59,6 +60,7 @@ let dot_lhs () =
       rhs_contract = [| 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      untyped_dot = false;
       dot_precision = None;
     }
   in
@@ -71,6 +73,7 @@ let dot_batched () =
       rhs_contract = [| 1 |];
       lhs_batch = [| 0 |];
       rhs_batch = [| 0 |];
+      untyped_dot = false;
       dot_precision = None;
     }
   in
@@ -84,6 +87,7 @@ let dot_batched () =
       rhs_contract = [| 1; 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      untyped_dot = false;
       dot_precision = None;
     }
   in
@@ -175,6 +179,7 @@ let spd_of a =
       rhs_contract = [| 1 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      untyped_dot = false;
       dot_precision = None;
     }
   in

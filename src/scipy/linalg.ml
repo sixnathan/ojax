@@ -332,14 +332,14 @@ let rec rsf2csf t z =
       let g_h = L.conj (NL.matrix_transpose g) in
       let rows = L.slice_in_dim ~axis:0 tv (m - 1) (m + 1) in
       let kept = L.slice_in_dim ~axis:1 rows 0 (m - 1) in
-      let moved = L.dot g (L.slice_in_dim ~axis:1 rows (m - 1) n) in
+      let moved = L.dot_typed g (L.slice_in_dim ~axis:1 rows (m - 1) n) in
       let tv =
         L.dynamic_update_slice tv
           (L.concatenate [ kept; moved ] 1)
           [ idx (m - 1); idx 0 ]
       in
       let cols = L.slice_in_dim ~axis:1 tv (m - 1) (m + 1) in
-      let moved = L.dot (L.slice_in_dim ~axis:0 cols 0 (m + 1)) g_h in
+      let moved = L.dot_typed (L.slice_in_dim ~axis:0 cols 0 (m + 1)) g_h in
       let kept = L.slice_in_dim ~axis:0 cols (m + 1) n in
       let tv =
         L.dynamic_update_slice tv
@@ -348,7 +348,7 @@ let rec rsf2csf t z =
       in
       let zcols = L.slice_in_dim ~axis:1 zv (m - 1) (m + 1) in
       let zv =
-        L.dynamic_update_slice zv (L.dot zcols g_h) [ idx 0; idx (m - 1) ]
+        L.dynamic_update_slice zv (L.dot_typed zcols g_h) [ idx 0; idx (m - 1) ]
       in
       [ tv; zv ]
     in

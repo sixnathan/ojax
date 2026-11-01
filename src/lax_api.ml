@@ -306,31 +306,64 @@ let index_in_dim ?(axis = 0) ?(keepdims = true) x index =
 let index_scalar i =
   Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
 
+let normalized_start start size =
+  let aval = Core.get_aval start in
+  let dt = aval.dtype in
+  let literal v = Concrete (Ndarray.of_floats dt [||] [| v |]) in
+  if Dtypes.issubdtype dt `Unsigned then start
+  else
+    match start with
+    | Concrete nd when Array.length (Ndarray.shape nd) = 0 ->
+        let v = Ndarray.get_f nd [||] in
+        if v < 0.0 then literal (v +. float_of_int size) else start
+    | _ ->
+        let negative = b1 Lt [ start; literal 0.0 ] in
+        let widened =
+          if aval.weak_type then b1 (Convert_element_type dt) [ start ]
+          else start
+        in
+        let wrapped = b1 Add [ widened; literal (float_of_int size) ] in
+        b1 Select_n [ negative; start; wrapped ]
+
 let dynamic_slice x starts slice_sizes =
   b1 (Dynamic_slice { slice_sizes }) (x :: starts)
 
 let dynamic_update_slice x update starts =
   b1 Dynamic_update_slice (x :: update :: starts)
 
-let starts_in_dim n axis start =
-  List.init n (fun d -> if d = axis then start else index_scalar 0)
+let starts_in_dim x axis start =
+  let dt = (Core.get_aval start).dtype in
+  let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
+  let sh = shape x in
+  let start = normalized_start start sh.(axis) in
+  List.init (Array.length sh) (fun d -> if d = axis then start else zero)
 
 let dynamic_slice_in_dim ?(axis = 0) x start size =
   let n = ndim x in
   let axis = canon_axis n axis in
   let sizes = Array.copy (shape x) in
   sizes.(axis) <- size;
-  dynamic_slice x (starts_in_dim n axis start) sizes
+  dynamic_slice x (starts_in_dim x axis start) sizes
 
 let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
   let axis = canon_axis (ndim x) axis in
-  let v = dynamic_slice_in_dim ~axis x index 1 in
-  if keepdims then v else b1 (Squeeze [| axis |]) [ v ]
+  match
+    Jaxpr.named_jit ~name:"dynamic_index_in_dim"
+      ~key:(Printf.sprintf "%d %b" axis keepdims)
+      (function
+        | [ x; index ] ->
+            let v = dynamic_slice_in_dim ~axis x index 1 in
+            [ (if keepdims then v else b1 (Squeeze [| axis |]) [ v ]) ]
+        | _ -> invalid_arg "dynamic_index_in_dim: arity")
+      [ x; index ]
+  with
+  | [ v ] -> v
+  | _ -> invalid_arg "dynamic_index_in_dim: arity"
 
 let dynamic_update_slice_in_dim ?(axis = 0) x update start =
   let n = ndim x in
   let axis = canon_axis n axis in
-  dynamic_update_slice x update (starts_in_dim n axis start)
+  dynamic_update_slice x update (starts_in_dim x axis start)
 
 let dynamic_update_index_in_dim ?(axis = 0) x update index =
   let axis = canon_axis (ndim x) axis in
@@ -475,6 +508,32 @@ let reduce x init computation dimensions =
   let jaxpr = reducer_jaxpr (dtype_of x) computation in
   b1 (Reduce { jaxpr; dimensions }) [ x; init ]
 
+let get_max_identity dt =
+  match dt with
+  | Dtype.Bool -> 0.0
+  | _ when Dtypes.issubdtype dt `Inexact -> Float.neg_infinity
+  | _ -> (Dtypes.iinfo dt).imin
+
+let get_min_identity dt =
+  match dt with
+  | Dtype.Bool -> 1.0
+  | _ when Dtypes.issubdtype dt `Inexact -> Float.infinity
+  | _ -> (Dtypes.iinfo dt).imax
+
+let concrete_scalar v =
+  let read nd =
+    match Ndarray.dtype nd with
+    | Dtype.Complex64 | Dtype.Complex128 ->
+        let z = Ndarray.get_c nd [||] in
+        if z.Complex.im = 0.0 then Some z.Complex.re else Some Float.nan
+    | _ -> Some (Ndarray.get_f nd [||])
+  in
+  match v with
+  | Tracer _ -> None
+  | _ when ndim v <> 0 -> None
+  | Concrete nd -> read nd
+  | Device d -> read (Pjrt.Buffer.to_host d)
+
 let reduce_window x init computation ~window_dimensions ~window_strides
     ?base_dilation ?window_dilation padding_config =
   let n = ndim x in
@@ -488,12 +547,18 @@ let reduce_window x init computation ~window_dimensions ~window_strides
       window_dilation = Option.value window_dilation ~default:ones;
     }
   in
-  if computation == add then b1 (Reduce_window_sum window) [ x ]
-  else if computation == max then b1 (Reduce_window_max window) [ x ]
-  else if computation == min then b1 (Reduce_window_min window) [ x ]
-  else
+  let generic () =
     let reducer = reducer_jaxpr (dtype_of x) computation in
     b1 (Reduce_window { reducer; window }) [ x; init ]
+  in
+  match concrete_scalar init with
+  | Some v when computation == add && v = 0.0 ->
+      b1 (Reduce_window_sum window) [ x ]
+  | Some v when computation == max && v = get_max_identity (dtype_of init) ->
+      b1 (Reduce_window_max window) [ x ]
+  | Some v when computation == min && v = get_min_identity (dtype_of init) ->
+      b1 (Reduce_window_min window) [ x ]
+  | _ -> generic ()
 
 let argmax x ~axis ~index_dtype = b1 (Argmax { axis; index_dtype }) [ x ]
 let argmin x ~axis ~index_dtype = b1 (Argmin { axis; index_dtype }) [ x ]
@@ -585,7 +650,14 @@ let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
         | Some _ -> None
         | None -> Option.map (fun l -> (l, l)) (Config.matmul_level ()))
   in
-  let prim = Dot_general { dn with dot_precision } in
+  let prim =
+    Dot_general
+      {
+        dn with
+        dot_precision;
+        untyped_dot = preferred_element_type = None && precision = None;
+      }
+  in
   let lhs = dtype_of x and rhs = dtype_of y in
   let result = if lhs = rhs then lhs else Dtypes.promote_types lhs rhs in
   let has_algorithm =
@@ -636,6 +708,7 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
           rhs_contract;
           lhs_batch;
           rhs_batch;
+          untyped_dot = false;
           dot_precision = None;
         }
         x y
@@ -648,6 +721,7 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
             rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
             lhs_batch = [||];
             rhs_batch = [||];
+            untyped_dot = false;
             dot_precision = None;
           }
           x y
@@ -655,18 +729,37 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
 let dot_general ?precision ?preferred_element_type x y ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch =
   dot_with ?precision ?preferred_element_type
-    { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None }
+    {
+      lhs_contract;
+      rhs_contract;
+      lhs_batch;
+      rhs_batch;
+      dot_precision = None;
+      untyped_dot = false;
+    }
     x y
 
-let batch_matmul ?precision x y =
+let batch_matmul_with ?precision ?preferred_element_type x y =
   let n = ndim x in
   if ndim y <> n || n < 2 then
     invalid_arg "batch_matmul requires equal ranks of at least two";
   let batch = Array.init (n - 2) Fun.id in
-  dot_general ?precision x y
+  dot_general ?precision ?preferred_element_type x y
     ~lhs_contract:[| n - 1 |]
     ~rhs_contract:[| n - 2 |]
     ~lhs_batch:batch ~rhs_batch:batch
+
+let batch_matmul ?precision x y = batch_matmul_with ?precision x y
+
+let batch_matmul_typed x y =
+  batch_matmul_with
+    ~preferred_element_type:(Dtypes.promote_types (dtype_of x) (dtype_of y))
+    x y
+
+let dot_typed x y =
+  dot
+    ~preferred_element_type:(Dtypes.promote_types (dtype_of x) (dtype_of y))
+    x y
 
 let padtype_to_pads in_shape window_shape window_strides padding =
   match padding with
@@ -815,19 +908,7 @@ let cummax = Lax.cummax
 let cummin = Lax.cummin
 let cumlogsumexp = Lax.cumlogsumexp
 let custom_linear_solve = Lax.custom_linear_solve
-
-let map_scan f xs =
-  Lax.scan
-    (fun args ->
-      let n_x = List.length xs in
-      ignore n_x;
-      match args with
-      | _ :: slices -> index_scalar 0 :: f slices
-      | [] -> failwith "map: arity")
-    [ index_scalar 0 ]
-    xs
-  |> List.tl
-
+let map_scan f xs = Lax.scan f [] xs
 let switch = Lax.switch
 
 let map ?batch_size f xs =
@@ -891,28 +972,45 @@ let fori_loop lower upper body init =
 
 let custom_root f initial_guess solve tangent_solve =
   let avals = List.map aval initial_guess in
-  let closed, hoisted = Custom_derivatives.closure_convert f avals in
   let n = List.length initial_guess in
-  let split all =
-    match Util.split_list all [ n ] with
-    | [ x; h ] -> (x, h)
+  let closed_f, f_consts = Custom_derivatives.closure_convert f avals in
+  let closed_solve, solve_consts =
+    Custom_derivatives.closure_convert (solve f) avals
+  in
+  let linearize_and_solve args =
+    match Util.split_list args [ n ] with
+    | [ x; b ] ->
+        let matvec v = snd (Interpreters.Ad.jvp f x v) in
+        tangent_solve matvec b
     | _ -> failwith "custom_root: arity"
   in
-  let f_of h x = closed (x @ h) in
+  let closed_ls, ls_consts =
+    Custom_derivatives.closure_convert linearize_and_solve (avals @ avals)
+  in
+  let nf = List.length f_consts and ns = List.length solve_consts in
+  let nl = List.length ls_consts in
+  let split all =
+    match Util.split_list all [ nf; ns; nl ] with
+    | [ pf; ps; pl; x ] -> (pf, ps, pl, x)
+    | _ -> failwith "custom_root: arity"
+  in
   let primal all =
-    let x0, h = split all in
-    solve (f_of h) x0
+    let _, ps, _, x0 = split all in
+    closed_solve (x0 @ ps)
   in
   let jvp primals tangents =
-    let x0, h = split primals in
-    let _, th = split tangents in
-    let solution = solve (f_of h) x0 in
-    let _, rhs = Interpreters.Ad.jvp (fun hs -> f_of hs solution) h th in
-    let matvec v = snd (Interpreters.Ad.jvp (f_of h) solution v) in
-    let answer = tangent_solve matvec (List.map neg rhs) in
+    let pf, _, pl, _ = split primals in
+    let solution = primal primals in
+    let tf, _, _, _ = split tangents in
+    let _, rhs =
+      Interpreters.Ad.jvp (fun hs -> closed_f (solution @ hs)) pf tf
+    in
+    let answer = List.map neg (closed_ls (solution @ rhs @ pl)) in
     (solution, answer)
   in
-  Custom_derivatives.custom_jvp primal ~jvp (initial_guess @ hoisted)
+  Custom_derivatives.custom_jvp ~name:"_custom_root" ~jvp_name:"_root_jvp"
+    primal ~jvp
+    (f_consts @ solve_consts @ ls_consts @ initial_guess)
 
 let platform_dependent ?default ?cuda ~cpu () =
   match (Config.current_platform (), cuda, default) with
@@ -1056,21 +1154,33 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
   in
   let in_features = (shape lhs).(dn.lhs_spec.(1)) in
   let window = product filter_shape in
-  let out_features = in_features * window in
-  let cell = window * in_features in
-  let kernel_shape = Array.append [| out_features; 1 |] filter_shape in
-  let kernel =
-    Concrete
-      (Ndarray.of_floats (dtype_of lhs) kernel_shape
-         (Array.init (out_features * window) (fun i ->
-              let row = i / window and col = i mod window in
-              if row mod window = col then 1.0 else 0.0)))
+  let eye = Interpreters.Ad.lax_eye (dtype_of lhs) window window in
+  let spread =
+    b1
+      (Broadcast_in_dim
+         { shape = [| in_features; window; window |]; dims = [| 1; 2 |] })
+      [ eye ]
   in
-  ignore cell;
+  let kernel =
+    b1
+      (Reshape (Array.append [| in_features * window; 1 |] filter_shape))
+      [ spread ]
+  in
+  let kernel =
+    let rest =
+      List.filter
+        (fun d -> d <> dn.rhs_spec.(0) && d <> dn.rhs_spec.(1))
+        (List.init (k + 2) Fun.id)
+    in
+    let order = Array.make (k + 2) 0 in
+    order.(dn.rhs_spec.(0)) <- 0;
+    order.(dn.rhs_spec.(1)) <- 1;
+    List.iteri (fun i d -> order.(d) <- i + 2) rest;
+    if order = Array.init (k + 2) Fun.id then kernel
+    else b1 (Transpose order) [ kernel ]
+  in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
-  let kernel_spec = Array.init (k + 2) Fun.id in
-  conv_general_dilated ?lhs_dilation ?rhs_dilation
-    ~dimension_numbers:{ dn with rhs_spec = kernel_spec }
+  conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn
     ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
 
 let scatter_apply x indices func dimension_numbers =

@@ -132,6 +132,7 @@ let matmul_at dot_precision x y =
          rhs_contract = [| ndim - 2 |];
          lhs_batch = batch;
          rhs_batch = batch;
+         untyped_dot = false;
          dot_precision;
        })
     [ x; y ]
@@ -3439,6 +3440,7 @@ let dot_transpose_lhs g (x : aval) y (dims : dot_dims) swap_ans =
       rhs_contract = y_kept;
       lhs_batch = ans_batch;
       rhs_batch = dims.rhs_batch;
+      untyped_dot = dims.untyped_dot;
       dot_precision = dims.dot_precision;
     }
   in
@@ -4108,6 +4110,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               rhs_contract = dims.lhs_contract;
               lhs_batch = dims.rhs_batch;
               rhs_batch = dims.lhs_batch;
+              untyped_dot = dims.untyped_dot;
               dot_precision = dims.dot_precision;
             }
           in

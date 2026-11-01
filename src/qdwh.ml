@@ -95,13 +95,13 @@ let use_qr u (a_minus_e_by_sqrt_c, sqrt_c, e) =
   in
   let q2 = hconj (mask q2 [| n; n |] (index 0)) in
   let left = b1 T.Mul [ e; u ] in
-  let product = L.dot q1 q2 in
+  let product = L.dot_typed q1 q2 in
   b1 T.Add [ left; b1 T.Mul [ a_minus_e_by_sqrt_c; product ] ]
 
 let use_cholesky u (a_minus_e, c, e) =
   let n = (shape u).(1) in
   let dt = dtype u in
-  let gram = L.dot (hconj u) u in
+  let gram = L.dot_typed (hconj u) u in
   let scaled = b1 T.Mul [ c; gram ] in
   let x = b1 T.Add [ scaled; eye dt n ] in
   let alternative = eye dt n in
@@ -279,9 +279,9 @@ let qdwh_body max_iterations eps x =
   | [ num_iters; u; flag ] ->
       let left = b1 T.Mul [ scalar dt 1.5; u ] in
       let half = b1 T.Mul [ scalar dt 0.5; u ] in
-      let cube = L.dot half (L.dot (hconj u) u) in
+      let cube = L.dot_typed half (L.dot_typed (hconj u) u) in
       let u = b1 T.Sub [ left; cube ] in
-      let h = L.dot (hconj u) x in
+      let h = L.dot_typed (hconj u) x in
       let sum = b1 T.Add [ h; hconj h ] in
       let h = b1 T.Div [ sum; scalar dt 2.0 ] in
       [ u; h; num_iters; b1 T.Not [ flag ] ]

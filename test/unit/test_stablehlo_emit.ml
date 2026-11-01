@@ -459,6 +459,7 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
                        rhs_contract = [| 0 |];
                        lhs_batch = [||];
                        rhs_batch = [||];
+                       untyped_dot = false;
                        dot_precision = None;
                      })
                   [ a; b ]
@@ -477,6 +478,7 @@ let builders : (string * (unit -> T.closed_jaxpr)) list =
                        rhs_contract = [| 1 |];
                        lhs_batch = [| 0 |];
                        rhs_batch = [| 0 |];
+                       untyped_dot = false;
                        dot_precision = None;
                      })
                   [ a; b ]

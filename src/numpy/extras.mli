@@ -1,6 +1,7 @@
 open Types
 
 val nonzero : ?size:int -> ?fill_value:int -> value -> value list
+val fancy_take : value -> value list -> value
 val flatnonzero : ?size:int -> ?fill_value:int -> value -> value
 val argwhere : ?size:int -> ?fill_value:int -> value -> value
 

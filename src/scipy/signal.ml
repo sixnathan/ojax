@@ -233,7 +233,7 @@ let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
             b1 Sub
               [
                 part;
-                L.dot
+                L.dot ~preferred_element_type:(dtype_of design)
                   ~precision:
                     (Lax_config.precision_of_level Lax_config.Precision_highest)
                   design coef;

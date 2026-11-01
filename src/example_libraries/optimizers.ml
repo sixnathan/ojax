@@ -201,11 +201,14 @@ let adamax ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) (step_size : schedule) =
 let sm3 ?(momentum = 0.9) (step_size : schedule) =
   of_leaf_rules
     ~init:(fun x ->
+      let x = NL.atleast_1d x in
       let a = Core.get_aval x in
-      x :: zl x
-      :: List.map
-           (fun size -> L.full [| size |] 0.0 a.dtype)
-           (Array.to_list a.shape))
+      let vs =
+        List.map
+          (fun size -> L.full [| size |] 0.0 a.dtype)
+          (Array.to_list a.shape)
+      in
+      x :: zl x :: vs)
     ~update:(fun i g s ->
       match s with
       | x :: m :: vs ->
@@ -214,7 +217,11 @@ let sm3 ?(momentum = 0.9) (step_size : schedule) =
           let expand axis v =
             let sh = Array.make rank 1 in
             sh.(axis) <- shape.(axis);
-            L.reshape v sh
+            if rank = 1 then v
+            else
+              Core.bind1
+                (Types.Broadcast_in_dim { shape = sh; dims = [| axis |] })
+                [ v ]
           in
           let smallest =
             match List.mapi expand vs with

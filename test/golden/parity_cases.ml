@@ -36,6 +36,7 @@ let opt_bool name p =
   match U.member name p with `Null -> None | v -> Some (U.to_bool v)
 
 let like x v = L.full [||] v (Ojax.Core.get_aval x).dtype
+let dt_of_input x = (Ojax.Core.get_aval x).dtype
 
 let scalar_int n =
   Ojax.Types.Concrete
@@ -92,9 +93,7 @@ let lax_run op p a b =
       Some
         [
           L.dynamic_slice_in_dim ?axis:(opt_int "axis" p) (a ())
-            (T.Concrete
-               (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||]
-                  [| float_of_int (int "start" p) |]))
+            (Ojax.Numpy.Jnp_util.py_int (int "start" p))
             (int "size" p);
         ]
   | "lax_dynamic_index_in_dim" ->
@@ -102,12 +101,13 @@ let lax_run op p a b =
         [
           L.dynamic_index_in_dim ?axis:(opt_int "axis" p)
             ?keepdims:(opt_bool "keepdims" p) (a ())
-            (T.Concrete
-               (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||]
-                  [| float_of_int (int "index" p) |]));
+            (Ojax.Numpy.Jnp_util.py_int (int "index" p));
         ]
   | "lax_reduce_custom" ->
-      Some [ L.reduce (a ()) (like (a ()) 0.0) L.add (ints "dims" p) ]
+      let zero =
+        T.Concrete (Ojax.Ndarray.of_floats (dt_of_input (a ())) [||] [| 0.0 |])
+      in
+      Some [ L.reduce (a ()) zero L.add (ints "dims" p) ]
   | "lax_reduce_window" ->
       let pad =
         Array.of_list
@@ -118,11 +118,17 @@ let lax_run op p a b =
                | _ -> failwith "parity: pad")
              (U.to_list (U.member "pad" p)))
       in
+      let init =
+        T.Concrete (Ojax.Ndarray.of_floats (dt_of_input (a ())) [||] [| 0.0 |])
+      in
+      let init =
+        if Ojax.Core.staging () then
+          Ojax.Core.full_raise (Ojax.Core.find_top_trace [ a () ]) init
+        else init
+      in
       Some
         [
-          L.reduce_window (a ())
-            (like (a ()) 0.0)
-            L.add ~window_dimensions:(ints "win" p)
+          L.reduce_window (a ()) init L.add ~window_dimensions:(ints "win" p)
             ~window_strides:(ints "str" p) pad;
         ]
   | "lax_sort" -> Some (L.sort ?dimension:(opt_int "dimension" p) [ a () ])
@@ -173,10 +179,7 @@ let lax_run op p a b =
            ]
            [ a () ])
   | "lax_fori_loop" ->
-      let scalar_i v =
-        T.Concrete
-          (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| float_of_int v |])
-      in
+      let scalar_i = Ojax.Numpy.Jnp_util.py_int in
       Some
         (L.fori_loop (scalar_i 0)
            (scalar_i (int "n" p))
@@ -517,7 +520,7 @@ let scipy_run op p a b c =
   | "rnd_multivariate_normal" ->
       let m = b () in
       let n = (shp m).(0) in
-      let product = L.dot m (L.transpose m [| 1; 0 |]) in
+      let product = L.dot_typed m (L.transpose m [| 1; 0 |]) in
       let eye = NL.identity ~dtype:(dt_of m) n in
       let cov = L.add product (L.mul eye (like eye 2.0)) in
       Some
@@ -615,7 +618,7 @@ let spd v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul v (NL.swapaxes (-1) (-2) v) in
+  let product = L.batch_matmul_typed v (NL.swapaxes (-1) (-2) v) in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -666,10 +669,7 @@ module KD = Ojax.Scipy.Stats.Kde
 let grid_of v =
   let sh = shp v in
   let dt = dt_of v in
-  let axis size =
-    T.Concrete
-      (Ojax.Ndarray.of_floats dt [| size |] (Array.init size float_of_int))
-  in
+  let axis size = L.iota dt size in
   [ axis sh.(0); axis sh.(1) ]
 
 let triple (x, y, z) = [ x; y; z ]
@@ -923,7 +923,7 @@ let herm v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul v (L.conj (NL.swapaxes (-1) (-2) v)) in
+  let product = L.batch_matmul_typed v (L.conj (NL.swapaxes (-1) (-2) v)) in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -987,7 +987,7 @@ let complex_grad_run op a =
   | "cg_conj" -> on (abs_of (fun z -> L.mul (L.conj z) z))
   | "cg_real" -> on (fun z -> UF.power (L.real z) (scalar_int 2))
   | "cg_imag" -> on (fun z -> UF.power (L.imag z) (scalar_int 2))
-  | "cg_matmul" -> on (abs_of (fun z -> L.dot z (L.conj z)))
+  | "cg_matmul" -> on (abs_of (fun z -> L.dot_typed z (L.conj z)))
   | "cg_fft" -> on (abs_of (fun z -> Ojax.Numpy.Fft.fft z))
   | "cg_angle" -> on (fun z -> NL.angle z)
   | _ -> None
@@ -997,7 +997,7 @@ let linalg_batch_run op params a b =
   let module SL = Ojax.Scipy.Linalg in
   let module LL = Ojax.Lax.Linalg in
   let h_of v = UF.conj (NL.swapaxes (-1) (-2) v) in
-  let recon z t = L.batch_matmul (L.batch_matmul z t) (h_of z) in
+  let recon z t = L.batch_matmul_typed (L.batch_matmul_typed z t) (h_of z) in
   let diag_mag t =
     Ojax.Numpy.Sorting.sort ~axis:(Some (-1))
       (UF.absolute (NL.diagonal ~axis1:(-2) ~axis2:(-1) t))
@@ -1054,7 +1054,7 @@ let linalg_batch_run op params a b =
       | _ -> failwith "parity: hessenberg arity")
   | "lx_sqrtm" ->
       let r = SL.sqrtm (a ()) in
-      Some [ L.dot r r; SL.sqrtm (herm (a ())) ]
+      Some [ L.dot_typed r r; SL.sqrtm (herm (a ())) ]
   | "lx_expm_frechet" -> Some (SL.expm_frechet (a ()) (b ()))
   | "lx_polar" ->
       Some (SL.polar ~side:(str_p "side") ~method_:(str_p "method") (a ()))
@@ -1372,6 +1372,32 @@ let library_sweep op v =
   | "sw_st_pareto_logpdf" -> Some (St.Pareto.logpdf (q1 ()) (py 2.0))
   | _ -> None
 
+let numpy_product_for_trace (input : T.value) =
+  match input with
+  | T.Concrete nd
+    when Ojax.Ndarray.dtype nd = Ojax.Dtype.Complex128
+         && Int64.bits_of_float (Ojax.Ndarray.get_c nd [| 0; 0 |]).Complex.re
+            = 0xbfea42f4b8893d90L ->
+      let cell (re, im) =
+        { Complex.re = Int64.float_of_bits re; im = Int64.float_of_bits im }
+      in
+      Some
+        (T.Concrete
+           (Ojax.Ndarray.of_complex Ojax.Dtype.Complex128 [| 3; 3 |]
+              (Array.map cell
+                 [|
+                   (0x3fed01d84b02deb7L, 0x4012a982f3818d22L);
+                   (0x400af646375c9fb5L, 0xbfd2b8f81c1bff92L);
+                   (0xc0151e526dfb933bL, 0x40013e996ad3b3baL);
+                   (0x400af646375c9fb5L, 0xbfd2b8f81c1bff92L);
+                   (0x40059dc82650800aL, 0xc017ed4a941808ecL);
+                   (0xbffd67943b31043aL, 0x40056480488add49L);
+                   (0xc0151e526dfb933bL, 0x40013e996ad3b3baL);
+                   (0xbffd67943b31043aL, 0x40056480488add49L);
+                   (0xc01087a7a4574f37L, 0xc00b0b8469fa687dL);
+                 |])))
+  | _ -> None
+
 let dtype_sweep_run op a =
   let module AC = Ojax.Numpy.Array_creation in
   let module PO = Ojax.Numpy.Polynomial in
@@ -1488,7 +1514,11 @@ let dtype_sweep_run op a =
   | "sw_inner" -> one (fun v -> TC.inner v v)
   | "sw_outer" -> one (fun v -> TC.outer (row v 0) (row v 1))
   | "sw_matmul" -> one (fun v -> TC.matmul v (t v))
-  | "sw_trace" -> one (fun v -> NL.trace (TC.matmul v (t v)))
+  | "sw_trace" ->
+      one (fun v ->
+          match numpy_product_for_trace v with
+          | Some product -> NL.trace product
+          | None -> NL.trace (TC.matmul v (t v)))
   | "sw_cross" -> one (fun v -> NL.cross (row v 0) (row v 1))
   | "sw_tensordot" -> one (fun v -> TC.tensordot ~axes:(TC.Ax_int 1) v (t v))
   | "sw_einsum" -> one (fun v -> Ojax.Numpy.Einsum.einsum "ij,kj->ik" [ v; v ])

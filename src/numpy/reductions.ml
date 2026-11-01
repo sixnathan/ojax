@@ -193,7 +193,7 @@ let reduction ~name ~prim ~bool_prim ~combine ~bool_combine ~init ~has_identity
           invalid_arg
             (Printf.sprintf
                "initial value must be a scalar. Got array of rank %d" (ndim i));
-        let i = broadcast_to (convert i computation) (shape out) in
+        let i = convert i computation in
         bind1 (if is_bool then bool_combine else combine) [ i; out ]
   in
   let out = if keepdims then expand_dims out (shape a) axes else out in

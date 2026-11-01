@@ -676,7 +676,9 @@ let jax_params (e : eqn) =
                 Plain (Printf.sprintf "(Precision.%s, Precision.%s)" l r) );
             ]
         | None -> [])
-      @ [ ("preferred_element_type", Plain (dn (out_dtype ()))) ]
+      @
+      if d.untyped_dot then []
+      else [ ("preferred_element_type", Plain (dn (out_dtype ()))) ]
   | Iota { dtype; shape; dimension } ->
       [
         ("dimension", Plain (string_of_int dimension));
@@ -813,7 +815,19 @@ let jax_params (e : eqn) =
       window_params w
   | Reduce { jaxpr; dimensions } ->
       [
-        ("computation", Plain "<function>");
+        ( "computation",
+          Plain
+            (match jaxpr.jaxpr.eqns with
+            | [ { prim = (Add | Mul | And | Or | Xor | Max | Min) as p; _ } ] ->
+                let fname =
+                  match p with
+                  | And -> "bitwise_and"
+                  | Or -> "bitwise_or"
+                  | Xor -> "bitwise_xor"
+                  | p -> primitive_name p
+                in
+                Printf.sprintf "<function %s at 0xXXXXXXXXXXXX>" fname
+            | _ -> "<function>") );
         ("dimensions", Plain (py_ints dimensions));
         ("jaxpr", Sub jaxpr);
       ]

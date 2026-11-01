@@ -79,6 +79,7 @@ let dot_general_rules () =
       rhs_contract = [| 0 |];
       lhs_batch = [||];
       rhs_batch = [||];
+      untyped_dot = false;
       dot_precision = None;
     }
   in

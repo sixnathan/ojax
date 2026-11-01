@@ -424,7 +424,7 @@ let reduce_axes_batch (make : int array -> primitive) (axes : int array)
   | None -> (b1 (make axes) [ x ], None)
   | Some d ->
       let new_axes =
-        Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes
+        Np_ints.mark (Array.map (fun ax -> if d <= ax then ax + 1 else ax) axes)
       in
       let shift =
         Array.fold_left (fun acc ax -> if ax < d then acc + 1 else acc) 0 axes
@@ -714,6 +714,7 @@ let dot_general_batch (dims : dot_dims) (vals : value list)
           rhs_batch = Array.append [| r |] (bump dims.rhs_batch r);
           lhs_contract = bump dims.lhs_contract l;
           rhs_contract = bump dims.rhs_contract r;
+          untyped_dot = dims.untyped_dot;
           dot_precision = dims.dot_precision;
         }
       in

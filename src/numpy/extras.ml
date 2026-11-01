@@ -125,7 +125,12 @@ let normalised_indices ~extent indices =
   let negative = U.less indices (L.full [||] 0.0 dt) in
   let shifted = U.add indices (L.full [||] (float_of_int extent) dt) in
   let normalised = Core.bind1 Select_n [ negative; indices; shifted ] in
-  L.broadcast_in_dim normalised [| size_of indices; 1 |] [| 0 |]
+  let narrow =
+    if dt = Dtype.I64 then
+      Core.bind1 (Convert_element_type Dtype.I32) [ normalised ]
+    else normalised
+  in
+  L.broadcast_in_dim narrow [| size_of indices; 1 |] [| 0 |]
 
 let normalize_index idx extent =
   let dt = dtype_of idx in
@@ -302,6 +307,50 @@ let index_gather a idx =
          slice_sizes = Array.mapi (fun i d -> if i = 0 then 1 else d) sh;
        })
     [ a; indices ]
+
+let fancy_take x indices =
+  let sh = shape x in
+  let r = Array.length sh in
+  let d = List.length indices in
+  let normalised =
+    List.mapi
+      (fun k idx ->
+        let dt = dtype_of idx in
+        let negative = U.less idx (L.full [||] 0.0 dt) in
+        let shifted = U.add idx (L.full [||] (float_of_int sh.(k)) dt) in
+        Core.bind1 Select_n [ negative; idx; shifted ])
+      indices
+  in
+  let narrowed =
+    List.map
+      (fun idx ->
+        if dtype_of idx = Dtype.I64 then
+          Core.bind1 (Convert_element_type Dtype.I32) [ idx ]
+        else idx)
+      normalised
+  in
+  let lifted =
+    List.map
+      (fun idx -> L.broadcast_in_dim idx [| size_of idx; 1 |] [| 0 |])
+      narrowed
+  in
+  let start =
+    match lifted with [ only ] -> only | _ -> L.concatenate lifted 1
+  in
+  Core.bind1
+    (Gather
+       {
+         dimension_numbers =
+           {
+             offset_dims = Array.init (r - d) (fun i -> i + 1);
+             collapsed_slice_dims = Array.init d Fun.id;
+             start_index_map = Array.init d Fun.id;
+             g_operand_batching_dims = [||];
+             g_start_indices_batching_dims = [||];
+           };
+         slice_sizes = Array.mapi (fun i e -> if i < d then 1 else e) sh;
+       })
+    [ x; start ]
 
 let leading_slice v start stop =
   let sh = shape v in

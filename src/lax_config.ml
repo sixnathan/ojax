@@ -124,12 +124,20 @@ type dot_dimension_numbers = Types.dot_dims = {
   rhs_contract : int array;
   lhs_batch : int array;
   rhs_batch : int array;
+  untyped_dot : bool;
   dot_precision : (string * string) option;
 }
 
 let dot_dimension_numbers ?(lhs_batch = [||]) ?(rhs_batch = [||]) ~lhs_contract
     ~rhs_contract () =
-  { lhs_contract; rhs_contract; lhs_batch; rhs_batch; dot_precision = None }
+  {
+    lhs_contract;
+    rhs_contract;
+    lhs_batch;
+    rhs_batch;
+    untyped_dot = false;
+    dot_precision = None;
+  }
 
 type gather_dimension_numbers = Types.gather_dims = {
   offset_dims : int array;

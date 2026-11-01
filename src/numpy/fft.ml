@@ -53,7 +53,7 @@ let scale_const factor v =
   if factor = 1.0 then v
   else
     let aval = Core.get_aval v in
-    b1 Mul [ v; Core.splat aval.dtype aval.shape factor ]
+    b1 Mul [ v; Core.splat aval.dtype [||] factor ]
 
 let moved_perm ndim source destination =
   let perm =
@@ -111,7 +111,8 @@ let pad_zero v widths =
             else b1 (Convert_element_type dt) [ cval ]
           in
           b1
-            (Pad (Array.of_list (List.map (fun (l, h) -> (l, h, 0)) widths)))
+            (Np_ints.mark_prim
+               (Pad (Array.of_list (List.map (fun (l, h) -> (l, h, 0)) widths))))
             [ v; cval ]
       | _ -> invalid_arg "pad: arity")
     [ v; Concrete (Ndarray.of_floats default_int [||] [| 0.0 |]) ]

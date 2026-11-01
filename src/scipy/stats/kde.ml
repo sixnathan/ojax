@@ -88,18 +88,15 @@ let kernel_eval in_log points values xi precision =
       match Dist_util.promote_dtypes args with
       | [ points; values; xi; precision ] ->
           let d = (shape points).(1) in
-          let whitening = LA.cholesky ~symmetrize_input:false precision in
+          let whitening = Linalg.cholesky ~lower:true precision in
           let points = Numpy.Tensor_contractions.dot points whitening in
           let xi = Numpy.Tensor_contractions.dot xi whitening in
           let diag = NL.diag whitening in
           let summed = R.sum (U.log diag) in
           let two_pi = Numpy.Jnp_util.py_float (2.0 *. Float.pi) in
           let lg = U.log two_pi in
-          let half_d = lit summed (0.5 *. float_of_int d) in
-          let log_norm =
-            U.subtract summed
-              (U.multiply half_d (NL.astype lg (dtype_of summed)))
-          in
+          let half_d = Numpy.Jnp_util.py_float (0.5 *. float_of_int d) in
+          let log_norm = U.subtract summed (U.multiply half_d lg) in
           let kernel x_test x_train y_train =
             let delta = U.subtract x_train x_test in
             let total = R.sum (U.square delta) in
@@ -149,10 +146,10 @@ let integrate_box_1d t low high =
   if t.d <> 1 then invalid_arg "integrate_box_1d() only handles 1D pdfs";
   let pyf = JU.py_float in
   Eager_jit.one ~jit:"integrate_box_1d" "scipy.stats.kde.integrate_box_1d" () []
-    [ t.dataset; t.weights; t.covariance; pyf low; pyf high ]
+    [ t.neff; t.dataset; t.weights; t.covariance; t.inv_cov; pyf low; pyf high ]
     (fun _ vals ->
       match vals with
-      | [ dataset; weights; covariance; low; high ] ->
+      | [ _; dataset; weights; covariance; _; low; high ] ->
           let sigma = NL.squeeze (U.sqrt covariance) in
           let low = NL.astype low (dtype_of dataset) in
           let high = NL.astype high (dtype_of dataset) in

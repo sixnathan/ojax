@@ -1122,9 +1122,10 @@ let cum_window_attrs shape axis reverse =
      window_dimensions = %s, window_strides = %s"
     (arr ones) pad_str (arr ones) (arr window_dims) (arr ones)
 
+let cum_functions : (string, string) Hashtbl.t = Hashtbl.create 8
+
 let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
-  let fname = unique_symbol base_name in
   let x = sole in_ids in
   let in_aval = atom_aval (sole eqn.inputs) in
   let dt = in_aval.dtype in
@@ -1132,41 +1133,53 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
   let sty = Ir.tensor_type dt [||] in
   let out = sole eqn.outs in
   let n = bind_var ctx out in
+  let attrs = cum_window_attrs in_aval.shape axis reverse in
+  let key = String.concat "|" [ base_name; ty; attrs ] in
+  let known = Hashtbl.find_opt cum_functions key in
+  let fname =
+    match known with Some f -> f | None -> unique_symbol base_name
+  in
+  Hashtbl.replace cum_functions key fname;
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
-  let attrs = cum_window_attrs in_aval.shape axis reverse in
-  let b = ctx.extras in
-  Buffer.add_string b
-    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
-  Buffer.add_string b
-    (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
-  if broadcast then (
+  if known = None then begin
+    let b = ctx.extras in
     Buffer.add_string b
-      (Printf.sprintf
-         "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
-         sty sty);
+      (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
     Buffer.add_string b
-      (Printf.sprintf
-         "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
-    Buffer.add_string b (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
-    Buffer.add_string b (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
-    Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-    Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
-  else begin
-    Buffer.add_string b
-      (Printf.sprintf
-         "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
-    Buffer.add_string b (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
-    Buffer.add_string b (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
-    Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-    Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
-  end;
-  Buffer.add_string b "  }\n"
+      (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
+    if broadcast then (
+      Buffer.add_string b
+        (Printf.sprintf
+           "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
+           sty sty);
+      Buffer.add_string b
+        (Printf.sprintf
+           "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
+      Buffer.add_string b
+        (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
+      Buffer.add_string b
+        (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
+      Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+      Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
+    else begin
+      Buffer.add_string b
+        (Printf.sprintf
+           "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
+      Buffer.add_string b
+        (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
+      Buffer.add_string b
+        (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
+      Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+      Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
+    end;
+    Buffer.add_string b "  }\n"
+  end
 
 let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   let x = sole in_ids in
@@ -1336,7 +1349,7 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
        (Ir.tensor_type_of_aval idx_av)
        (Ir.tensor_type_of_aval out.vaval))
 
-let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
+let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
   let op_id, idx_id, upd_id =
     match in_ids with
     | [ a; b; c ] -> (a, b, c)
@@ -1354,10 +1367,11 @@ let emit_scatter ctx (eqn : eqn) in_ids dnums combiner =
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf
-       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = \
-        false, scatter_dimension_numbers = %s, unique_indices = false}> ({\n"
-       (name n) (name op_id) (name idx_id) (name upd_id)
-       (scatter_dnums_attr dnums ivd));
+       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
+        scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
+       (name n) (name op_id) (name idx_id) (name upd_id) unique
+       (scatter_dnums_attr dnums ivd)
+       unique);
   let a = fresh ctx in
   let b = fresh ctx in
   Buffer.add_string ctx.buf
@@ -3356,8 +3370,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Dynamic_update_slice -> emit_dynamic_update_slice ctx eqn in_ids
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
-  | Scatter { dimension_numbers; _ } ->
-      emit_scatter ctx eqn in_ids dimension_numbers None
+  | Scatter { dimension_numbers; unique_indices } ->
+      emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers None
   | Scatter_add { dimension_numbers } ->
       emit_scatter ctx eqn in_ids dimension_numbers (Some "add")
   | Scatter_sub { dimension_numbers } ->
@@ -4066,6 +4080,7 @@ let emitting () = !emission_depth > 0
 
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
+  Hashtbl.reset cum_functions;
   Hashtbl.reset call_symbols;
   symbol_counter := 0;
   seen_mesh := None;

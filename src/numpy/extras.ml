@@ -172,8 +172,7 @@ let nonzero ?size ?fill_value a =
               (Concrete
                  (Ndarray.of_floats fdt [||] [| float_of_int strides.(d) |]))
           in
-          U.remainder quotient
-            (Concrete (Ndarray.of_floats fdt [||] [| float_of_int sh.(d) |])))
+          U.remainder quotient (Jnp_util.py_int sh.(d)))
     in
     match fill_value with
     | None -> out
@@ -213,107 +212,182 @@ let compare_with_nan a b =
   | false, true -> -1
   | false, false -> compare a b
 
-let traced_unique_sized ?axis ~size ?fill_value a =
-  let module S = Sorting in
-  let axis =
-    match axis with None -> None | Some x -> Some (canon (rank a) x)
-  in
-  let rows, aux_source =
-    match axis with
-    | None ->
-        let flat_a = NL.reshape a [| size_of a |] in
-        (size_of a, flat_a)
-    | Some ax ->
-        let moved = NL.moveaxis [| ax |] [| 0 |] a in
-        ((shape moved).(0), moved)
-  in
-  let row_rest =
-    Array.sub (shape aux_source) 1 (Array.length (shape aux_source) - 1)
-  in
-  let row_len = Array.fold_left ( * ) 1 row_rest in
-  let flat_rows = NL.reshape aux_source [| rows; row_len |] in
-  let keys =
-    List.init row_len (fun j ->
-        L.index_in_dim ~axis:1 ~keepdims:false flat_rows j)
-  in
-  let perm =
-    match keys with
-    | [ only ] -> S.argsort only
-    | _ -> S.lexsort (List.rev keys)
-  in
-  let aux = I.take_index ~axis:0 aux_source perm in
-  let aux_flat = NL.reshape aux [| rows; row_len |] in
-  let tail = L.slice_in_dim ~axis:0 aux_flat 1 rows in
-  let head = L.slice_in_dim ~axis:0 aux_flat 0 (rows - 1) in
-  let differs =
-    let neq = L.ne tail head in
-    let dt = dtype_of a in
-    if Dtypes.isdtype dt "numeric" && not (Dtypes.isdtype dt "integral") then
-      L.bitwise_and neq
-        (L.bitwise_not (L.bitwise_and (L.ne tail tail) (L.ne head head)))
-    else neq
-  in
-  let any_diff = R.any ~axis:[| 1 |] differs in
-  let mask =
-    NL.concatenate ~axis:0
-      [ Concrete (Ndarray.of_floats Dtype.Bool [| 1 |] [| 1.0 |]); any_diff ]
-  in
+let advanced_take x indices =
+  let sh = shape x in
+  let r = Array.length sh in
+  let start = normalised_indices ~extent:sh.(0) indices in
+  let slice_sizes = Array.mapi (fun i d -> if i = 0 then 1 else d) sh in
+  Core.bind1
+    (Gather
+       {
+         dimension_numbers =
+           {
+             offset_dims = Array.init (r - 1) (fun i -> i + 1);
+             collapsed_slice_dims = [| 0 |];
+             start_index_map = [| 0 |];
+             g_operand_batching_dims = [||];
+             g_start_indices_batching_dims = [||];
+           };
+         slice_sizes;
+       })
+    [ x; start ]
+
+let set_tail base updates =
+  let dt = default_int () in
+  let start = L.full [| 1 |] 1.0 dt in
+  L.scatter ~unique_indices:true base start updates
+    {
+      update_window_dims = [| 0 |];
+      inserted_window_dims = [||];
+      scatter_dims_to_operand_dims = [| 0 |];
+      s_operand_batching_dims = [||];
+      s_scatter_indices_batching_dims = [||];
+    }
+
+let tail_slice ~first x =
+  let sh = shape x in
+  let start = Array.make (Array.length sh) 0 and limit = Array.copy sh in
+  if first then start.(0) <- 1 else limit.(0) <- sh.(0) - 1;
+  L.slice x start limit
+
+let lexsort_rows keys =
+  let sh = shape keys in
+  let idt = default_int () in
+  Jnp_util.jit1 "lexsort"
+    (fun args ->
+      let keys = List.hd args in
+      let columns =
+        List.init sh.(0) (fun i ->
+            let row =
+              L.slice ~strides:[| 1; 1 |] keys [| i; 0 |] [| i + 1; sh.(1) |]
+            in
+            L.squeeze row [| 0 |])
+      in
+      let iota = L.iota idt sh.(1) in
+      let outs =
+        Core.bind
+          (Sort { dimension = 0; is_stable = true; num_keys = sh.(0) })
+          (List.rev columns @ [ iota ])
+      in
+      List.nth outs (List.length outs - 1))
+    [ keys ]
+
+let unique_sorted_mask ~axis a =
+  match
+    Jnp_util.jit "_unique_sorted_mask" ~key:(string_of_int axis)
+      (fun args ->
+        let ar = List.hd args in
+        let aux = if axis = 0 then ar else NL.moveaxis [| axis |] [| 0 |] ar in
+        let sh = shape aux in
+        let rows = sh.(0) in
+        let width =
+          Array.fold_left ( * ) 1 (Array.sub sh 1 (Array.length sh - 1))
+        in
+        let flat_rows =
+          if shape aux = [| rows; width |] then aux
+          else Core.bind1 (Reshape [| rows; width |]) [ aux ]
+        in
+        let transposed = Core.bind1 (Transpose [| 1; 0 |]) [ flat_rows ] in
+        let reversed = Core.bind1 (Rev [| 0 |]) [ transposed ] in
+        let perm = lexsort_rows reversed in
+        let aux = advanced_take aux perm in
+        let ones = L.full [| rows |] 1.0 Dtype.Bool in
+        let tail = tail_slice ~first:true aux in
+        let head = tail_slice ~first:false aux in
+        let neq =
+          if Dtypes.isdtype (dtype_of a) "integral" || dtype_of a = Dtype.Bool
+          then L.ne tail head
+          else
+            let differ = L.ne tail head in
+            let tail_nan = U.isnan tail in
+            let head_nan = U.isnan head in
+            L.bitwise_and differ
+              (L.bitwise_not (L.bitwise_and tail_nan head_nan))
+        in
+        let rank = Array.length (shape aux) in
+        let any = R.any ~axis:(Array.init (rank - 1) (fun i -> i + 1)) neq in
+        let mask = set_tail ones any in
+        [ aux; mask; perm ])
+      [ a ]
+  with
+  | [ aux; mask; perm ] -> (aux, mask, perm)
+  | _ -> invalid_arg "unique: arity"
+
+let traced_unique_parts ?axis ~size ?fill_value ?(want_index = true)
+    ?(want_inverse = true) ?(want_counts = true) a =
+  let axis_int = match axis with None -> 0 | Some x -> canon (rank a) x in
+  let arr = match axis with None -> flat a | Some _ -> a in
+  let aux, mask, perm = unique_sorted_mask ~axis:axis_int arr in
+  let idt = default_int () in
   let ind = List.hd (nonzero ~size mask) in
-  let result = I.take_index ~axis:0 aux ind in
-  let idt = dtype_of ind in
-  let distinct = R.sum (NL.astype mask idt) in
+  let result = advanced_take aux ind in
+  let distinct () = R.sum mask in
   let result =
     match fill_value with
     | None -> result
     | Some fv ->
+        let fill = Concrete (Ndarray.of_floats idt [||] [| fv |]) in
+        let fill = NL.astype fill (dtype_of result) in
         let positions = NL.arange ~dtype:idt (float_of_int size) in
-        let valid = L.lt positions (NL.broadcast_to distinct [| size |]) in
-        let wide =
-          NL.reshape valid
-            (Array.append [| size |] (Array.map (fun _ -> 1) row_rest))
+        let below = U.less positions (distinct ()) in
+        let r = rank result in
+        let valid =
+          if r <= 1 then below
+          else L.expand_dims below (Array.init (r - 1) (fun i -> i + 1))
         in
-        NL.where_ wide result (L.full_like result fv)
+        NL.where_ valid result fill
   in
   let values =
-    match axis with
-    | None -> result
-    | Some ax -> NL.moveaxis [| 0 |] [| ax |] result
+    if axis_int = 0 then result else NL.moveaxis [| 0 |] [| axis_int |] result
   in
-  let indices = I.take_index ~axis:0 perm ind in
+  let indices = if want_index then advanced_take perm ind else ind in
   let inverse =
-    let imask =
-      L.sub (L.cumsum ~axis:0 (NL.astype mask idt)) (L.full_like distinct 1.0)
-    in
-    I.take_index ~axis:0 imask (S.argsort perm)
+    if want_inverse then begin
+      let imask = U.subtract (R.cumsum mask) (Jnp_util.py_int 1) in
+      let base = L.full (shape mask) 0.0 idt in
+      let at = normalised_indices ~extent:(shape mask).(0) perm in
+      L.scatter base at imask scatter_dims_1d
+    end
+    else ind
   in
   let counts =
-    let edges = List.hd (nonzero ~size:(size + 1) mask) in
-    let upper = L.slice_in_dim ~axis:0 edges 1 (size + 1) in
-    let stops =
-      NL.where_
-        (L.ne upper (L.full_like upper 0.0))
-        upper
-        (L.full_like upper (float_of_int rows))
-    in
-    let starts =
-      NL.concatenate ~axis:0
-        [
-          L.slice_in_dim ~axis:0 edges 0 1;
-          L.slice_in_dim ~axis:0 stops 0 (size - 1);
-        ]
-    in
-    L.sub stops starts
+    if want_counts then begin
+      let edges = List.hd (nonzero ~size:(size + 1) mask) in
+      let upper = tail_slice ~first:true edges in
+      let upper2 = tail_slice ~first:true edges in
+      let stops = NL.where_ upper upper2 (Jnp_util.py_int (shape mask).(0)) in
+      NL.diff (set_tail edges stops)
+    end
+    else ind
   in
   ({ values; indices; inverse; counts }, distinct)
 
-let traced_unique ?axis ~size ?fill_value a =
-  fst (traced_unique_sized ?axis ~size ?fill_value a)
+let traced_unique_sized ?axis ~size ?fill_value a =
+  let r, distinct = traced_unique_parts ?axis ~size ?fill_value a in
+  (r, distinct ())
 
-let rec unique_full ?axis ?size ?fill_value a =
+let traced_unique ?axis ~size ?fill_value ?want_index ?want_inverse ?want_counts
+    a =
+  fst
+    (traced_unique_parts ?axis ~size ?fill_value ?want_index ?want_inverse
+       ?want_counts a)
+
+let rec unique_full ?axis ?size ?fill_value ?want_index ?want_inverse
+    ?want_counts a =
   match size with
   | _ when is_complex_value a && axis = None ->
       unique_complex ?size ?fill_value a
-  | Some size when size_of a > 0 -> traced_unique ?axis ~size ?fill_value a
+  | Some size when size_of a > 0 ->
+      let sized =
+        traced_unique ?axis ~size ?fill_value ?want_index ?want_inverse
+          ?want_counts a
+      in
+      let inverse =
+        if axis = None && want_inverse <> Some false then
+          NL.reshape sized.inverse (shape a)
+        else sized.inverse
+      in
+      { sized with inverse }
   | _ ->
       let fill_value = Option.value fill_value ~default:0.0 in
       let nd = host "unique" a in
@@ -420,7 +494,10 @@ and unique_complex ?size ?fill_value a =
   ignore (n, rows);
   { r with values; inverse = NL.reshape r.inverse (shape a) }
 
-let unique_values ?size ?fill_value a = (unique_full ?size ?fill_value a).values
+let unique_values ?size ?fill_value a =
+  (unique_full ?size ?fill_value ~want_index:false ~want_inverse:false
+     ~want_counts:false a)
+    .values
 
 let unique_counts ?size ?fill_value a =
   let r = unique_full ?size ?fill_value a in
@@ -434,7 +511,10 @@ let unique_all ?size ?fill_value a = unique_full ?size ?fill_value a
 
 let unique ?(return_index = false) ?(return_inverse = false)
     ?(return_counts = false) ?axis ?size ?fill_value a =
-  let r = unique_full ?axis ?size ?fill_value a in
+  let r =
+    unique_full ?axis ?size ?fill_value ~want_index:return_index
+      ~want_inverse:return_inverse ~want_counts:return_counts a
+  in
   r.values
   :: List.concat
        [

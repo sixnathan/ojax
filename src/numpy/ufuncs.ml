@@ -146,7 +146,22 @@ let arctan x = unary_inexact T.Atan x
 let sinh x = unary_inexact T.Sinh x
 let cosh x = unary_inexact T.Cosh x
 let arcsinh x = unary_inexact T.Asinh x
-let arccosh x = unary_inexact T.Acosh x
+
+let arccosh x =
+  let result = unary_inexact T.Acosh x in
+  match dtype result with
+  | D.Complex64 | D.Complex128 ->
+      Jnp_util.where
+        (bind1 T.Lt
+           [
+             bind1 T.Real [ result ];
+             const_full
+               (if dtype result = D.Complex128 then D.F64 else D.F32)
+               [||] 0.0;
+           ])
+        (bind1 T.Neg [ result ]) result
+  | _ -> result
+
 let tanh x = unary_inexact T.Tanh x
 let arctanh x = unary_inexact T.Atanh x
 let sqrt x = unary_inexact T.Sqrt x
@@ -375,8 +390,7 @@ let concrete_integer_exponent x2 =
   | _ -> None
 
 let power_general x1 x2 =
-  let sh = broadcast_shapes (shape x1) (shape x2) in
-  let x1 = broadcast_to x1 sh and x2 = broadcast_to x2 sh in
+  let x1, x2 = p2 (promote_shapes [ x1; x2 ]) in
   let d1 = dtype x1 and d2 = dtype x2 in
   let a, b = p2 (promote_numeric [ x1; x2 ]) in
   if is_integer (dtype a) || dtype a = D.Bool then pow_int_int a b
@@ -542,7 +556,10 @@ let isinf_body x =
   in
   match dtype x with
   | D.Complex64 | D.Complex128 ->
-      bind1 T.Or [ of_real (bind1 T.Real [ x ]); of_real (bind1 T.Imag [ x ]) ]
+      let re = bind1 T.Real [ x ] in
+      let im = bind1 T.Imag [ x ] in
+      let re_inf = of_real re in
+      bind1 T.Or [ re_inf; of_real im ]
   | d when Dtypes.issubdtype d `Floating -> of_real x
   | _ -> array_full D.Bool (shape x) 0.0
 

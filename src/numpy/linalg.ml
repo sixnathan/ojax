@@ -659,6 +659,12 @@ and lstsq_body ~rcond ~numpy_resid a b =
     | [ u; s; vh ] -> (u, s, vh)
     | _ -> invalid_arg "svd: arity"
   in
+  let positive = UF.greater s (const dt 0.0) in
+  let rcond =
+    match rcond with
+    | T.Tracer _ -> Core.bind1 T.Copy [ NL.astype rcond (dtype s) ]
+    | _ -> NL.astype rcond (dtype s)
+  in
   let s0 =
     if ndim s = 1 then
       Core.bind1 (T.Squeeze [| 0 |])
@@ -675,9 +681,7 @@ and lstsq_body ~rcond ~numpy_resid a b =
     else RED.amax ~axis:[| -1 |] ~keepdims:true s
   in
   let mask =
-    UF.logical_and
-      (UF.greater s (const dt 0.0))
-      (UF.greater_equal s (UF.multiply (NL.astype rcond (dtype s)) s0))
+    UF.logical_and positive (UF.greater_equal s (UF.multiply rcond s0))
   in
   let rank = RED.sum mask in
   let safe_s = NL.astype (NL.where_ mask s (Jnp_util.py_int 1)) dt in

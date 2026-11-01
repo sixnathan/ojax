@@ -879,7 +879,7 @@ let fori_loop lower upper body init =
       let lower_ = int_of_float (Ndarray.get_f lo [||]) in
       let upper_ = int_of_float (Ndarray.get_f hi [||]) in
       let length = Stdlib.max (upper_ - lower_) 0 in
-      let dt = Dtypes.default_int_dtype () in
+      let dt = Ndarray.dtype lo in
       let start =
         Concrete
           (Ndarray.as_weak

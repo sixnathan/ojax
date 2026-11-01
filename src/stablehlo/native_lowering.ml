@@ -17,6 +17,11 @@ let lgamma x = Core.bind1 Lgamma [ x ]
 let digamma x = Core.bind1 Digamma [ x ]
 let any pred = L.reduce_or pred (Array.init (Array.length (shape pred)) Fun.id)
 let int32 x = Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int x |])
+
+let default_int x =
+  Concrete
+    (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| float_of_int x |])
+
 let finfo_eps = Lax.Special.finfo_eps
 let finfo_max = Lax.Special.finfo_max
 let finfo_tiny = Lax.Special.finfo_tiny
@@ -771,7 +776,9 @@ let lu_pivots_to_permutation ~permutation_size = function
           | _ -> invalid_arg "Native_lowering: pivots state"
         in
         [
-          List.hd (L.fori_loop (int32 0) (int32 k) body [ permutation; swaps ]);
+          List.hd
+            (L.fori_loop (default_int 0) (default_int k) body
+               [ permutation; swaps ]);
         ]
   | _ -> invalid_arg "Native_lowering: pivots arity"
 
@@ -1164,14 +1171,12 @@ let lapack_eigen_values_real = function
   | _ -> invalid_arg "Native_lowering: geev arity"
 
 let lapack_eig ~real ~compute_left ~compute_right outs =
-  let outs = if real then lapack_eigen_values_real outs else outs in
-  match outs with
+  match if real then lapack_eigen_values_real outs else outs with
   | [ w; vl; vr; info ] ->
-      let ok = info_ok info in
-      let w = nan_where_bad ok w in
-      let left = if compute_left then [ nan_where_bad ok vl ] else [] in
-      let right = if compute_right then [ nan_where_bad ok vr ] else [] in
-      (w :: left) @ right
+      lapack_guarded
+        ((w :: (if compute_left then [ vl ] else []))
+        @ (if compute_right then [ vr ] else [])
+        @ [ info ])
   | _ -> invalid_arg "Native_lowering: geev arity"
 
 let lapack_schur ~compute_vectors outs =

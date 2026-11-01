@@ -14,4 +14,10 @@ val partial_eval_flat :
   partial_val list ->
   jaxpr * value list * partial_val list
 
+val partial_eval_flat_instantiate :
+  instantiate:(int -> bool) ->
+  (value list -> value list) ->
+  partial_val list ->
+  jaxpr * value list * partial_val list
+
 val install : unit -> unit

@@ -520,8 +520,15 @@ let py_platforms platforms =
   | _ -> "(" ^ String.concat ", " items ^ ")"
 
 let py_triples a =
+  let one i j x =
+    if Np_ints.triple_marked a i j then Printf.sprintf "np.int64(%d)" x
+    else string_of_int x
+  in
   py_tuple
-    (Array.to_list (Array.map (fun (x, y, z) -> py_ints [| x; y; z |]) a))
+    (Array.to_list
+       (Array.mapi
+          (fun i (x, y, z) -> py_tuple [ one i 0 x; one i 1 y; one i 2 z ])
+          a))
 
 let gather_numbers (d : gather_dims) =
   Printf.sprintf
@@ -545,17 +552,55 @@ let scatter_numbers (d : scatter_dims) =
     (py_ints d.s_operand_batching_dims)
     (py_ints d.s_scatter_indices_batching_dims)
 
-let scatter_params d unique =
+let update_counter = ref 0
+
+let fresh_update_id () =
+  decr update_counter;
+  !update_counter
+
+let update_jaxprs = Hashtbl.create 16
+
+let update_jaxpr prim dt =
+  match Hashtbl.find_opt update_jaxprs (prim, dt) with
+  | Some c -> c
+  | None ->
+      let var () =
+        {
+          vid = fresh_update_id ();
+          vaval = { dtype = dt; shape = [||]; weak_type = false };
+        }
+      in
+      let a = var () and b = var () and c = var () in
+      let jaxpr =
+        {
+          in_binders = [ a; b ];
+          eqns =
+            [
+              {
+                prim;
+                inputs = [ A_var a; A_var b ];
+                outs = [ c ];
+                multiple_results = false;
+              };
+            ];
+          outs = [ A_var c ];
+        }
+      in
+      let c = { jid = fresh_update_id (); jaxpr; consts = [] } in
+      Hashtbl.replace update_jaxprs (prim, dt) c;
+      c
+
+let scatter_params ?(sorted = false) ?update ?(mode = "FILL_OR_DROP") d unique =
   [
     ("dimension_numbers", Plain (scatter_numbers d));
-    ("indices_are_sorted", Plain (py_bool d.s_sorted_unique));
-    ( "mode",
-      Plain
-        (if d.s_clip then "GatherScatterMode.CLIP"
-         else "GatherScatterMode.FILL_OR_DROP") );
+    ("indices_are_sorted", Plain (py_bool (sorted || d.s_sorted_unique)));
+    ("mode", Plain ("GatherScatterMode." ^ if d.s_clip then "CLIP" else mode));
     ("unique_indices", Plain (py_bool (unique || d.s_sorted_unique)));
     ("update_consts", Plain "()");
-    ("update_jaxpr", Plain "None");
+    ( "update_jaxpr",
+      match update with
+      | Some (prim, dt) -> Sub (update_jaxpr prim dt)
+      | None -> Plain "None" );
   ]
 
 let window_params (w : window_dims) =
@@ -651,17 +696,17 @@ let jax_params (e : eqn) =
       ]
   | Squeeze dims | Rev dims -> [ ("dimensions", Plain (py_ints dims)) ]
   | Concatenate d -> [ ("dimension", Plain (string_of_int d)) ]
+  | Empty2 dt ->
+      [ ("dtype", Plain (dn dt)); ("memory_space", Plain "MemorySpace.Device") ]
   | Pad cfg as p when Np_ints.prim_marked p ->
-      [
-        ( "padding_config",
-          Plain
-            (py_tuple
-               (Array.to_list
-                  (Array.map
-                     (fun (x, y, z) ->
-                       Printf.sprintf "(np.int64(%d), np.int64(%d), %d)" x y z)
-                     cfg))) );
-      ]
+      let one (lo, hi, i) =
+        Printf.sprintf "(np.int64(%d), np.int64(%d), %d)" lo hi i
+      in
+      let items = Array.to_list (Array.map one cfg) in
+      let body =
+        match items with [ x ] -> x ^ "," | _ -> String.concat ", " items
+      in
+      [ ("padding_config", Plain ("(" ^ body ^ ")")) ]
   | Pad cfg -> [ ("padding_config", Plain (py_triples cfg)) ]
   | Platform_index platforms ->
       [ ("platforms", Plain (py_platforms platforms)) ]
@@ -708,23 +753,44 @@ let jax_params (e : eqn) =
       ]
   | Top_k { k; axis } ->
       [ ("axis", Plain (string_of_int axis)); ("k", Plain (string_of_int k)) ]
-  | Gather { dimension_numbers; slice_sizes } ->
+  | Gather { dimension_numbers; slice_sizes } as p ->
+      let fill = Np_ints.gather_fill_of p in
+      let clip = Np_ints.gather_clip_of p in
+      let sorted = clip = Some true in
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
-        ("fill_value", Plain "None");
-        ("indices_are_sorted", Plain (py_bool dimension_numbers.g_sorted_unique));
-        ("mode", Plain "GatherScatterMode.PROMISE_IN_BOUNDS");
+        ( "fill_value",
+          Plain (match fill with Some (r, _) -> r | None -> "None") );
+        ( "indices_are_sorted",
+          Plain (py_bool (sorted || dimension_numbers.g_sorted_unique)) );
+        ( "mode",
+          Plain
+            (if fill <> None then "GatherScatterMode.FILL_OR_DROP"
+             else if clip <> None then "GatherScatterMode.CLIP"
+             else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
-        ("unique_indices", Plain (py_bool dimension_numbers.g_sorted_unique));
+        ( "unique_indices",
+          Plain (py_bool (sorted || dimension_numbers.g_sorted_unique)) );
       ]
-  | Scatter { dimension_numbers; unique_indices }
-  | Scatter_mul { dimension_numbers; unique_indices } ->
+  | Scatter { dimension_numbers; unique_indices } ->
       scatter_params dimension_numbers unique_indices
-  | Scatter_add { dimension_numbers }
-  | Scatter_sub { dimension_numbers }
-  | Scatter_min { dimension_numbers }
+  | Scatter_mul { dimension_numbers; unique_indices } ->
+      scatter_params ~update:(Mul, in_dtype ()) dimension_numbers unique_indices
+  | Scatter_add { dimension_numbers } as p when Np_ints.scatter_marked p ->
+      scatter_params ~sorted:true
+        ~update:(Add, in_dtype ())
+        dimension_numbers true
+  | Scatter_add { dimension_numbers } as p ->
+      let mode =
+        if Np_ints.prim_marked p then "PROMISE_IN_BOUNDS" else "FILL_OR_DROP"
+      in
+      scatter_params ~mode ~update:(Add, in_dtype ()) dimension_numbers false
+  | Scatter_sub { dimension_numbers } ->
+      scatter_params ~update:(Sub, in_dtype ()) dimension_numbers false
+  | Scatter_min { dimension_numbers } ->
+      scatter_params ~update:(Min, in_dtype ()) dimension_numbers false
   | Scatter_max { dimension_numbers } ->
-      scatter_params dimension_numbers false
+      scatter_params ~update:(Max, in_dtype ()) dimension_numbers false
   | Conv_general_dilated c ->
       [
         ("batch_group_count", Plain (string_of_int c.batch_group_count));
@@ -1131,7 +1197,12 @@ and pp_eqn ctx (e : eqn) =
         | None -> [])
     | _ -> []
   in
-  let lhs = pp_binders ctx e.outs in
+  let binders =
+    match (e.prim, e.outs) with
+    | Svd _, [ u; s; v ] -> [ s; u; v ]
+    | _ -> e.outs
+  in
+  let lhs = pp_binders ctx binders in
   let params = pp_params ctx (name_param @ jax_params e) in
   let rhs =
     Layout.Concat

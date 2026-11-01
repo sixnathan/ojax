@@ -271,7 +271,8 @@ let default_gather_fill dt sh =
       Ndarray.of_floats dt sh (Array.make n (Dtypes.iinfo d).imin)
   | d -> Ndarray.of_floats dt sh (Array.make n (Dtypes.iinfo d).imax)
 
-let gather_fill ?fill_value operand indices (gd : gather_dims) slice_sizes =
+let gather_fill_expanded ?fill_value operand indices (gd : gather_dims)
+    slice_sizes =
   let bind1 = Core.bind1 in
   let aval = Core.get_aval in
   let op_shape = (aval operand).shape and op_dt = (aval operand).dtype in
@@ -317,6 +318,124 @@ let gather_fill ?fill_value operand indices (gd : gather_dims) slice_sizes =
     | None -> Concrete (default_gather_fill op_dt out_shape)
   in
   bind1 Select_n [ mask; fill; gathered ]
+
+let fill_repr ?fill_value dt =
+  let of_float f =
+    if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.0f" f
+    else Printf.sprintf "%.17g" f
+  in
+  match fill_value with
+  | Some f -> of_float f
+  | None -> (
+      match dt with
+      | Dtype.Bool -> "True"
+      | d when Dtypes.issubdtype d `Inexact -> "nan"
+      | Dtype.I64 -> "-9223372036854775808"
+      | Dtype.Uint64 -> "18446744073709551615"
+      | d when Dtypes.issubdtype d `Signed -> of_float (Dtypes.iinfo d).imin
+      | d -> of_float (Dtypes.iinfo d).imax)
+
+let gather_fill ?fill_value operand indices (gd : gather_dims) slice_sizes =
+  let dt = (Core.get_aval operand).dtype in
+  Core.bind1
+    (Np_ints.mark_gather_fill
+       (Gather { dimension_numbers = gd; slice_sizes })
+       (fill_repr ?fill_value dt) fill_value)
+    [ operand; indices ]
+
+let gather_fill_lowered prim operand indices =
+  let bind1 = Core.bind1 in
+  let aval = Core.get_aval in
+  let gd, slice_sizes =
+    match prim with
+    | Gather { dimension_numbers; slice_sizes } ->
+        (dimension_numbers, slice_sizes)
+    | _ -> invalid_arg "gather_fill_lowered: not a gather"
+  in
+  let fill_value =
+    match Np_ints.gather_fill_of prim with
+    | Some (_, fill) -> fill
+    | None -> None
+  in
+  let op_shape = (aval operand).shape and op_dt = (aval operand).dtype in
+  let idt =
+    if Array.exists (fun d -> d >= 0x7fffffff) op_shape then Dtype.I64
+    else Dtype.I32
+  in
+  let indices =
+    if (aval indices).dtype = idt then indices
+    else bind1 (Convert_element_type idt) [ indices ]
+  in
+  let ish = (aval indices).shape in
+  let rank = Array.length ish in
+  let batch = rank - 1 in
+  let upper =
+    Array.map
+      (fun o -> float_of_int (op_shape.(o) - slice_sizes.(o)))
+      gd.start_index_map
+  in
+  let bound = Concrete (Ndarray.of_floats idt [| Array.length upper |] upper) in
+  let ge = bind1 Ge [ indices; Core.splat idt [||] 0.0 ] in
+  let bound =
+    if batch = 0 then bound
+    else
+      let expanded =
+        bind1
+          (Broadcast_in_dim
+             {
+               shape =
+                 Array.init rank (fun d ->
+                     if d = batch then Array.length upper else 1);
+               dims = [| batch |];
+             })
+          [ bound ]
+      in
+      bind1
+        (Broadcast_in_dim { shape = ish; dims = Array.init rank Fun.id })
+        [ expanded ]
+  in
+  let mask = bind1 And [ ge; bind1 Le [ indices; bound ] ] in
+  let mask = bind1 (Reduce_and [| batch |]) [ mask ] in
+  let gathered =
+    bind1 (Gather { dimension_numbers = gd; slice_sizes }) [ operand; indices ]
+  in
+  let out_shape = (aval gathered).shape in
+  let batch_dims =
+    Array.of_list
+      (List.filter
+         (fun d -> not (Array.exists (fun o -> o = d) gd.offset_dims))
+         (List.init (Array.length out_shape) Fun.id))
+  in
+  let mask =
+    bind1 (Broadcast_in_dim { shape = out_shape; dims = batch_dims }) [ mask ]
+  in
+  let fill =
+    match fill_value with
+    | Some f -> Ndarray.of_floats op_dt [||] [| f |]
+    | None -> default_gather_fill op_dt [||]
+  in
+  let fill =
+    bind1
+      (Broadcast_in_dim { shape = out_shape; dims = [||] })
+      [ Concrete fill ]
+  in
+  bind1 Select_n [ mask; fill; gathered ]
+
+let () =
+  Core.gather_fill_hook :=
+    fun prim args ->
+      match (prim, args) with
+      | Gather { dimension_numbers; slice_sizes }, [ operand; indices ] ->
+          let fill_value =
+            match Np_ints.gather_fill_of prim with
+            | Some (_, fill) -> fill
+            | None -> None
+          in
+          [
+            gather_fill_expanded ?fill_value operand indices dimension_numbers
+              slice_sizes;
+          ]
+      | _ -> invalid_arg "gather_fill_hook: arity"
 
 let clamp_scatter_indices operand indices updates (sd : scatter_dims) =
   let bind1 = Core.bind1 in

@@ -23,6 +23,8 @@ let dot x y =
          rhs_contract = [| 0 |];
          lhs_batch = [||];
          rhs_batch = [||];
+         dot_precision = None;
+         dot_preferred = true;
        })
     [ x; y ]
 

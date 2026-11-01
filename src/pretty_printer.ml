@@ -726,12 +726,15 @@ let jax_params (e : eqn) =
       ]
   | Top_k { k; axis } ->
       [ ("axis", Plain (string_of_int axis)); ("k", Plain (string_of_int k)) ]
-  | Gather { dimension_numbers; slice_sizes } ->
+  | Gather { dimension_numbers; slice_sizes } as p ->
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ("fill_value", Plain "None");
         ("indices_are_sorted", Plain "False");
-        ("mode", Plain "GatherScatterMode.PROMISE_IN_BOUNDS");
+        ( "mode",
+          Plain
+            (if Np_ints.prim_marked p then "GatherScatterMode.CLIP"
+             else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
         ("unique_indices", Plain "False");
       ]
@@ -1137,7 +1140,12 @@ and pp_eqn ctx (e : eqn) =
         | None -> [])
     | _ -> []
   in
-  let lhs = pp_binders ctx e.outs in
+  let binders =
+    match (e.prim, e.outs) with
+    | Svd _, [ u; s; v ] -> [ s; u; v ]
+    | _ -> e.outs
+  in
+  let lhs = pp_binders ctx binders in
   let params = pp_params ctx (name_param @ jax_params e) in
   let rhs =
     Layout.Concat

@@ -100,6 +100,42 @@ let lexsort ?(axis = -1) keys =
         List.nth outs (List.length outs - 1)
       end
 
+let lexsort_impl = lexsort
+
+let lexsort ?axis keys =
+  match keys with
+  | [] -> invalid_arg "need sequence of keys with len > 0 in lexsort"
+  | _ ->
+      let key =
+        "list," ^ string_of_int (List.length keys) ^ ","
+        ^ Option.fold ~none:"" ~some:string_of_int axis
+      in
+      Jnp_util.jit1 "lexsort" ~key (fun ks -> lexsort_impl ?axis ks) keys
+
+let lexsort_array ?axis keys =
+  let key = "array," ^ Option.fold ~none:"" ~some:string_of_int axis in
+  Jnp_util.jit1 "lexsort" ~key
+    (function
+      | [ arr ] ->
+          let n = (shape arr).(0) in
+          let row i =
+            let sh = shape arr in
+            let start = Array.make (Array.length sh) 0 in
+            start.(0) <- i;
+            let limit = Array.copy sh in
+            limit.(0) <- i + 1;
+            let strides = Some (Array.make (Array.length sh) 1) in
+            bind1 (T.Squeeze [| 0 |])
+              [
+                bind1
+                  (T.Slice { start_indices = start; limit_indices = limit; strides })
+                  [ arr ];
+              ]
+          in
+          lexsort_impl ?axis (List.init n row)
+      | _ -> invalid_arg "lexsort: arity")
+    [ keys ]
+
 let neg v = bind1 T.Neg [ v ]
 let topk_vals k axis v = List.hd (bind (T.Top_k { k; axis }) [ v ])
 

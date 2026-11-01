@@ -188,8 +188,15 @@ let poly seq =
   else begin
     let a = ref (const_full dt [| 1 |] 1.0) in
     for k = 0 to n - 1 do
-      let sk = slice_axis s 0 k (k + 1) in
-      let kernel = NL.concatenate [ const_full dt [| 1 |] 1.0; neg sk ] in
+      let negated = neg (NL.index_at s k) in
+      let one = const_full dt [| 1 |] 1.0 in
+      let kernel =
+        NL.concatenate
+          [
+            one;
+            bind1 (T.Broadcast_in_dim { shape = [| 1 |]; dims = [||] }) [ negated ];
+          ]
+      in
       a := NL.convolve ~mode:"full" !a kernel
     done;
     !a

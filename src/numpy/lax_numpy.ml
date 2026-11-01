@@ -437,8 +437,8 @@ let conv1d_body ~mode ~correlating a v =
          })
       [ lhs; rhs ]
   in
-  let flat = bind1 (T.Squeeze [| 0; 1 |]) [ out ] in
-  if correlating && swapped then rev_dims flat [| 0 |] else flat
+  let out = if correlating && swapped then rev_dims out [| 2 |] else out in
+  bind1 (T.Squeeze [| 0; 1 |]) [ out ]
 
 let conv1d ~mode ~correlating a v =
   Jnp_util.jit1 "_conv"
@@ -1650,8 +1650,11 @@ let take_trailing a indices =
   let wrapped =
     List.mapi (fun d i -> normalize_index i s.(nd - k + d)) indices
   in
-  let start = bind1 (T.Concatenate 1) (List.map expand_last wrapped) in
-  let start = match wrapped with [ w ] -> expand_last w | _ -> start in
+  let start =
+    match wrapped with
+    | [ w ] -> expand_last w
+    | _ -> bind1 (T.Concatenate 1) (List.map expand_last wrapped)
+  in
   let batch = Array.length (shape (List.hd indices)) in
   let dnums =
     {

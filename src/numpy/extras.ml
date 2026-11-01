@@ -1984,7 +1984,7 @@ let polyfit ?rcond ?w x y deg =
   let eps =
     match dtype_of x with
     | Dtype.F64 -> 2.220446049250313e-16
-    | _ -> 1.1920929e-07
+    | _ -> 1.1920928955078125e-07
   in
   let rcond =
     match rcond with Some r -> r | None -> float_of_int (size_of x) *. eps

@@ -81,11 +81,37 @@ let pad_leading v k =
     NL.pad v p 0.0
   end
 
+let tail_add x y =
+  let n = (shape x).(0) and k = (shape y).(0) in
+  let rank = Array.length (shape x) in
+  let indices, to_operand =
+    if k = n then (T.Concrete (Nd.of_floats D.I32 [| 0 |] [||]), [||])
+    else
+      ( bind1
+          (T.Broadcast_in_dim { shape = [| 1 |]; dims = [||] })
+          [ scalar D.I32 (float_of_int (n - k)) ],
+        [| 0 |] )
+  in
+  bind1
+    (Np_ints.mark_scatter
+       (T.Scatter_add
+          {
+            dimension_numbers =
+              {
+                T.update_window_dims = Array.init rank Fun.id;
+                inserted_window_dims = [||];
+                scatter_dims_to_operand_dims = to_operand;
+                s_operand_batching_dims = [||];
+                s_scatter_indices_batching_dims = [||];
+                s_sorted_unique = false;
+              };
+          }))
+    [ x; indices; y ]
+
 let polyadd a1 a2 =
   let a1, a2 = two (promote_dtypes [ a1; a2 ]) in
   let n1 = (shape a1).(0) and n2 = (shape a2).(0) in
-  let n = max n1 n2 in
-  bind1 T.Add [ pad_leading a1 (n - n1); pad_leading a2 (n - n2) ]
+  if n2 <= n1 then tail_add a1 a2 else tail_add a2 a1
 
 let polyadd p0 p1 =
   Jnp_util.jit1 "polyadd"
@@ -107,7 +133,9 @@ let polyint ?(m = 1) ?k p =
   if m < 0 then invalid_arg "polyint: order of integral must be non-negative";
   let k = match k with Some k -> k | None -> scalar D.I32 0.0 in
   let p =
-    if dtype p = D.Bool then NL.astype p (Dtypes.default_float_dtype ()) else p
+    if dtype p = D.Bool then
+      C.convert_like ~weak:true p (Dtypes.default_float_dtype ())
+    else p
   in
   let p, k = two (promote_dtypes_inexact [ p; k ]) in
   if m = 0 then p
@@ -133,7 +161,11 @@ let polyint ?(m = 1) ?k p =
       bind1 (T.Rev [| 0 |])
         [ R.prod ~axis:[| 0 |] (UF.maximum (scalar dt 1.0) grid) ]
     in
-    UF.true_divide (NL.concatenate [ p; k ]) coeff
+    let joined = NL.concatenate [ p; k ] in
+    let joined =
+      if weak p then bind1 (T.Convert_element_type dt) [ joined ] else joined
+    in
+    UF.true_divide joined coeff
   end
 
 let polyint ?m ?k p0 =

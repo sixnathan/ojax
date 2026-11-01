@@ -628,3 +628,90 @@ and cond ?(p = Onone) x =
         (UF.logical_not (RED.any ~axis:[| -2; -1 |] (UF.isnan arr)))
     in
     NL.where_ bad (const dt infinity) r
+
+let cholesky ?upper ?symmetrize_input a0 =
+  Eager_jit.one "numpy.linalg.cholesky" (upper, symmetrize_input) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> cholesky ?upper ?symmetrize_input a0
+      | _ -> assert false)
+
+let matrix_power a0 a1 =
+  Eager_jit.one "numpy.linalg.matrix_power" a1 [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> matrix_power a0 a1
+      | _ -> assert false)
+
+let matrix_rank ?rtol ?hermitian ?tol a0 =
+  Eager_jit.one "numpy.linalg.matrix_rank" hermitian [ rtol; tol ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ rtol; tol ], [ a0 ] -> matrix_rank ?rtol ?hermitian ?tol a0
+      | _ -> assert false)
+
+let slogdet ?method_ a0 =
+  Eager_jit.pair "numpy.linalg.slogdet" method_ [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> slogdet ?method_ a0
+      | _ -> assert false)
+
+let det a0 =
+  Eager_jit.one "numpy.linalg.det" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> det a0 | _ -> assert false)
+
+let eigvals a0 =
+  Eager_jit.one "numpy.linalg.eigvals" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> eigvals a0 | _ -> assert false)
+
+let eigh ?uplo ?symmetrize_input a0 =
+  Eager_jit.pair "numpy.linalg.eigh" (uplo, symmetrize_input) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> eigh ?uplo ?symmetrize_input a0
+      | _ -> assert false)
+
+let eigvalsh ?uplo ?symmetrize_input a0 =
+  Eager_jit.one "numpy.linalg.eigvalsh" (uplo, symmetrize_input) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> eigvalsh ?uplo ?symmetrize_input a0
+      | _ -> assert false)
+
+let inv a0 =
+  Eager_jit.one "numpy.linalg.inv" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> inv a0 | _ -> assert false)
+
+let norm ?ord ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.linalg.norm" (ord, axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> norm ?ord ?axis ?keepdims a0
+      | _ -> assert false)
+
+let qr ?mode a0 =
+  Eager_jit.many "numpy.linalg.qr" mode [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> qr ?mode a0 | _ -> assert false)
+
+let solve a0 a1 =
+  Eager_jit.one "numpy.linalg.solve" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> solve a0 a1
+      | _ -> assert false)
+
+let cond ?p a0 =
+  Eager_jit.one "numpy.linalg.cond" p [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> cond ?p a0 | _ -> assert false)
+
+let pinv ?rtol ?hermitian ?rcond a0 =
+  Eager_jit.one "numpy.linalg.pinv" hermitian [ rtol; rcond ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ rtol; rcond ], [ a0 ] -> pinv ?rtol ?hermitian ?rcond a0
+      | _ -> assert false)
+
+let svd ?full_matrices ?compute_uv ?hermitian a0 =
+  Eager_jit.many "numpy.linalg.svd" (full_matrices, compute_uv, hermitian)
+    [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> svd ?full_matrices ?compute_uv ?hermitian a0
+      | _ -> assert false)

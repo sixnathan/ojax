@@ -1672,6 +1672,44 @@ let emit_select_and_scatter_add ctx (eqn : eqn) in_ids ~select ~window =
   in
   Hashtbl.replace ctx.ids out.vid sliced
 
+let emit_sort_canonical_key ctx dt operand =
+  let sty = Ir.tensor_type dt [||] in
+  let bty = Ir.tensor_type Dtype.Bool [||] in
+  let c0 = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name c0)
+       (Ir.dense (Ir.float_literal dt 0.0))
+       sty);
+  let iszero = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "      %s = stablehlo.compare EQ, %s, %s, FLOAT : (%s, %s) -> %s\n"
+       (name iszero) (name operand) (name c0) sty sty bty);
+  let c0b = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name c0b)
+       (Ir.dense (Ir.float_literal dt 0.0))
+       sty);
+  let selz = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.select %s, %s, %s : %s, %s\n"
+       (name selz) (name iszero) (name c0b) (name operand) bty sty);
+  let isnan = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "      %s = stablehlo.compare NE, %s, %s, FLOAT : (%s, %s) -> %s\n"
+       (name isnan) (name operand) (name operand) sty sty bty);
+  let cnan = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name cnan)
+       (Ir.dense (Ir.float_literal dt Float.nan))
+       sty);
+  let cres = fresh ctx in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "      %s = stablehlo.select %s, %s, %s : %s, %s\n"
+       (name cres) (name isnan) (name cnan) (name selz) bty sty);
+  cres
+
 let emit_sort_comparator ctx dt =
   let sty = Ir.tensor_type dt [||] in
   let bty = Ir.tensor_type Dtype.Bool [||] in
@@ -1681,42 +1719,7 @@ let emit_sort_comparator ctx dt =
     (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name x) sty (name y) sty);
   match dt with
   | d when d <> Dtype.F4_e2m1fn && Dtypes.issubdtype d `Floating ->
-      let canon operand =
-        let c0 = fresh ctx in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name c0)
-             (Ir.dense (Ir.float_literal dt 0.0))
-             sty);
-        let iszero = fresh ctx in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf
-             "      %s = stablehlo.compare EQ, %s, %s, FLOAT : (%s, %s) -> %s\n"
-             (name iszero) (name operand) (name c0) sty sty bty);
-        let c0b = fresh ctx in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name c0b)
-             (Ir.dense (Ir.float_literal dt 0.0))
-             sty);
-        let selz = fresh ctx in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf "      %s = stablehlo.select %s, %s, %s : %s, %s\n"
-             (name selz) (name iszero) (name c0b) (name operand) bty sty);
-        let isnan = fresh ctx in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf
-             "      %s = stablehlo.compare NE, %s, %s, FLOAT : (%s, %s) -> %s\n"
-             (name isnan) (name operand) (name operand) sty sty bty);
-        let cnan = fresh ctx in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name cnan)
-             (Ir.dense (Ir.float_literal dt Float.nan))
-             sty);
-        let cres = fresh ctx in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf "      %s = stablehlo.select %s, %s, %s : %s, %s\n"
-             (name cres) (name isnan) (name cnan) (name selz) bty sty);
-        cres
-      in
+      let canon = emit_sort_canonical_key ctx dt in
       let cx = canon x in
       let cy = canon y in
       let p = fresh ctx in
@@ -1796,6 +1799,12 @@ let emit_sort_multi ctx (eqn : eqn) in_ids ~dimension ~is_stable ~num_keys =
       | Dtype.F32 | Dtype.F64 ->
           "TOTALORDER"
       | dt -> compare_type_of dt false
+    in
+    let x, y =
+      if cmp = "TOTALORDER" then
+        ( emit_sort_canonical_key ctx key.dtype x,
+          emit_sort_canonical_key ctx key.dtype y )
+      else (x, y)
     in
     let lt = compare_op "LT" x y sty cmp in
     if k = num_keys - 1 then lt
@@ -3225,7 +3234,10 @@ let qualify_nested_calls ~depth text =
       qualified)
   |> String.concat "\n"
 
-let emit_closed_jaxpr ?partition (cj : closed_jaxpr) : string =
+let emission_depth = ref 0
+let emitting () = !emission_depth > 0
+
+let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Hashtbl.reset used_symbols;
   seen_mesh := None;
   channel := 0;
@@ -3298,3 +3310,9 @@ let emit_closed_jaxpr ?partition (cj : closed_jaxpr) : string =
     (String.concat ", " out_attributes)
     (qualify_nested_calls ~depth:1 (Buffer.contents ctx.buf))
     (qualify_nested_calls ~depth:0 (Buffer.contents ctx.extras))
+
+let emit_closed_jaxpr ?partition cj =
+  incr emission_depth;
+  Fun.protect
+    ~finally:(fun () -> decr emission_depth)
+    (fun () -> emit_closed_jaxpr_body ?partition cj)

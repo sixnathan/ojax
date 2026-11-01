@@ -715,3 +715,229 @@ let median ?axis ?(keepdims = false) a =
 let nanmedian ?axis ?(keepdims = false) a =
   let q = const_full (to_inexact_dtype (dtype a)) [||] 0.5 in
   nanquantile ?axis ~keepdims ~method_:"midpoint" a q
+
+let count_nonzero ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.reductions.count_nonzero" (axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> count_nonzero ?axis ?keepdims a0
+      | _ -> assert false)
+
+let nanmin ?axis ?keepdims ?initial ?where a0 =
+  Eager_jit.one "numpy.reductions.nanmin" (axis, keepdims) [ initial; where ]
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] -> nanmin ?axis ?keepdims ?initial ?where a0
+      | _ -> assert false)
+
+let nanmax ?axis ?keepdims ?initial ?where a0 =
+  Eager_jit.one "numpy.reductions.nanmax" (axis, keepdims) [ initial; where ]
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] -> nanmax ?axis ?keepdims ?initial ?where a0
+      | _ -> assert false)
+
+let nansum ?dtype ?axis ?keepdims ?initial ?where a0 =
+  Eager_jit.one "numpy.reductions.nansum" (dtype, axis, keepdims)
+    [ initial; where ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] ->
+          nansum ?dtype ?axis ?keepdims ?initial ?where a0
+      | _ -> assert false)
+
+let nanprod ?dtype ?axis ?keepdims ?initial ?where a0 =
+  Eager_jit.one "numpy.reductions.nanprod" (dtype, axis, keepdims)
+    [ initial; where ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] ->
+          nanprod ?dtype ?axis ?keepdims ?initial ?where a0
+      | _ -> assert false)
+
+let nanmean ?dtype ?axis ?keepdims ?where a0 =
+  Eager_jit.one "numpy.reductions.nanmean" (dtype, axis, keepdims) [ where ]
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ where ], [ a0 ] -> nanmean ?dtype ?axis ?keepdims ?where a0
+      | _ -> assert false)
+
+let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean a0 =
+  Eager_jit.one "numpy.reductions.nanvar" (dtype, axis, keepdims, ddof)
+    [ where; mean ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ where; mean ], [ a0 ] ->
+          nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean a0
+      | _ -> assert false)
+
+let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean a0 =
+  Eager_jit.one "numpy.reductions.nanstd" (dtype, axis, keepdims, ddof)
+    [ where; mean ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ where; mean ], [ a0 ] ->
+          nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean a0
+      | _ -> assert false)
+
+let cumsum ?dtype ?axis a0 =
+  Eager_jit.one "numpy.reductions.cumsum" (dtype, axis) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> cumsum ?dtype ?axis a0
+      | _ -> assert false)
+
+let cumprod ?dtype ?axis a0 =
+  Eager_jit.one "numpy.reductions.cumprod" (dtype, axis) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> cumprod ?dtype ?axis a0
+      | _ -> assert false)
+
+let nancumsum ?dtype ?axis a0 =
+  Eager_jit.one "numpy.reductions.nancumsum" (dtype, axis) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> nancumsum ?dtype ?axis a0
+      | _ -> assert false)
+
+let nancumprod ?dtype ?axis a0 =
+  Eager_jit.one "numpy.reductions.nancumprod" (dtype, axis) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> nancumprod ?dtype ?axis a0
+      | _ -> assert false)
+
+let quantile ?axis ?keepdims ?method_ a0 a1 =
+  Eager_jit.one "numpy.reductions.quantile" (axis, keepdims, method_) []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> quantile ?axis ?keepdims ?method_ a0 a1
+      | _ -> assert false)
+
+let nanquantile ?axis ?keepdims ?method_ a0 a1 =
+  Eager_jit.one "numpy.reductions.nanquantile" (axis, keepdims, method_) []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> nanquantile ?axis ?keepdims ?method_ a0 a1
+      | _ -> assert false)
+
+let nanpercentile ?axis ?keepdims ?method_ a0 a1 =
+  Eager_jit.one "numpy.reductions.nanpercentile" (axis, keepdims, method_) []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> nanpercentile ?axis ?keepdims ?method_ a0 a1
+      | _ -> assert false)
+
+let median ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.reductions.median" (axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> median ?axis ?keepdims a0
+      | _ -> assert false)
+
+let nanmedian ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.reductions.nanmedian" (axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> nanmedian ?axis ?keepdims a0
+      | _ -> assert false)
+
+let sum ?dtype ?axis ?keepdims ?initial ?where ?promote_integers a0 =
+  Eager_jit.one "numpy.reductions.sum" (dtype, axis, keepdims, promote_integers)
+    [ initial; where ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] ->
+          sum ?dtype ?axis ?keepdims ?initial ?where ?promote_integers a0
+      | _ -> assert false)
+
+let prod ?dtype ?axis ?keepdims ?initial ?where ?promote_integers a0 =
+  Eager_jit.one "numpy.reductions.prod"
+    (dtype, axis, keepdims, promote_integers) [ initial; where ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] ->
+          prod ?dtype ?axis ?keepdims ?initial ?where ?promote_integers a0
+      | _ -> assert false)
+
+let max ?axis ?keepdims ?initial ?where a0 =
+  Eager_jit.one "numpy.reductions.max" (axis, keepdims) [ initial; where ]
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] -> max ?axis ?keepdims ?initial ?where a0
+      | _ -> assert false)
+
+let min ?axis ?keepdims ?initial ?where a0 =
+  Eager_jit.one "numpy.reductions.min" (axis, keepdims) [ initial; where ]
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] -> min ?axis ?keepdims ?initial ?where a0
+      | _ -> assert false)
+
+let amax ?axis ?keepdims ?initial ?where a0 =
+  Eager_jit.one "numpy.reductions.amax" (axis, keepdims) [ initial; where ]
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] -> amax ?axis ?keepdims ?initial ?where a0
+      | _ -> assert false)
+
+let amin ?axis ?keepdims ?initial ?where a0 =
+  Eager_jit.one "numpy.reductions.amin" (axis, keepdims) [ initial; where ]
+    [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ initial; where ], [ a0 ] -> amin ?axis ?keepdims ?initial ?where a0
+      | _ -> assert false)
+
+let all ?axis ?keepdims ?where a0 =
+  Eager_jit.one "numpy.reductions.all" (axis, keepdims) [ where ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ where ], [ a0 ] -> all ?axis ?keepdims ?where a0
+      | _ -> assert false)
+
+let any ?axis ?keepdims ?where a0 =
+  Eager_jit.one "numpy.reductions.any" (axis, keepdims) [ where ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ where ], [ a0 ] -> any ?axis ?keepdims ?where a0
+      | _ -> assert false)
+
+let mean ?dtype ?axis ?keepdims ?where a0 =
+  Eager_jit.one "numpy.reductions.mean" (dtype, axis, keepdims) [ where ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ where ], [ a0 ] -> mean ?dtype ?axis ?keepdims ?where a0
+      | _ -> assert false)
+
+let var ?dtype ?axis ?keepdims ?ddof ?where ?mean ?correction a0 =
+  Eager_jit.one "numpy.reductions.var" (dtype, axis, keepdims, ddof, correction)
+    [ where; mean ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ where; mean ], [ a0 ] ->
+          var ?dtype ?axis ?keepdims ?ddof ?where ?mean ?correction a0
+      | _ -> assert false)
+
+let std ?dtype ?axis ?keepdims ?ddof ?where ?mean ?correction a0 =
+  Eager_jit.one "numpy.reductions.std" (dtype, axis, keepdims, ddof, correction)
+    [ where; mean ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ where; mean ], [ a0 ] ->
+          std ?dtype ?axis ?keepdims ?ddof ?where ?mean ?correction a0
+      | _ -> assert false)
+
+let ptp ?axis ?keepdims a0 =
+  Eager_jit.one "numpy.reductions.ptp" (axis, keepdims) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> ptp ?axis ?keepdims a0
+      | _ -> assert false)
+
+let average ?axis ?keepdims ?weights a0 =
+  Eager_jit.one "numpy.reductions.average" (axis, keepdims) [ weights ] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ weights ], [ a0 ] -> average ?axis ?keepdims ?weights a0
+      | _ -> assert false)
+
+let percentile ?axis ?keepdims ?method_ a0 a1 =
+  Eager_jit.one "numpy.reductions.percentile" (axis, keepdims, method_) []
+    [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] -> percentile ?axis ?keepdims ?method_ a0 a1
+      | _ -> assert false)

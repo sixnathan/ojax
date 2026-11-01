@@ -107,3 +107,6 @@ val register_constraint_rule : int -> constraint_rule -> unit
 val mesh_axes : (string * int) list ref
 val with_mesh_axes : (string * int) list -> (unit -> 'a) -> 'a
 val placed_eval : (primitive -> value list -> value list option) ref
+val tracing_dynamically : unit -> bool
+val is_placed : value -> bool
+val eager_eval : (primitive -> value list -> value list option) ref

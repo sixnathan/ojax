@@ -58,6 +58,7 @@
   test_stablehlo_emit
   test_backend
   test_backend_native
+  test_eager_xla
   test_linalg_lapack
   test_lax_linalg
   test_scipy_linalg

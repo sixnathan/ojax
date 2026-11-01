@@ -44,3 +44,10 @@ let logpmf ?loc k n a b =
 let pmf ?loc k n a b =
   let loc = Option.value loc ~default:(f32s 0.0) in
   UF.exp (logpmf ~loc k n a b)
+
+let logpmf ?loc a0 a1 a2 a3 =
+  Eager_jit.one "scipy.stats.betabinom.logpmf" () [ loc ] [ a0; a1; a2; a3 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ loc ], [ a0; a1; a2; a3 ] -> logpmf ?loc a0 a1 a2 a3
+      | _ -> assert false)

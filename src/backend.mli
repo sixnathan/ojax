@@ -27,6 +27,22 @@ val run_text_forced : string -> Types.value list -> Types.value list
 val xla_plugin : unit -> Pjrt.Abi.plugin
 val xla_client : unit -> Pjrt.Client.t
 val stats : unit -> int * string list
+
+type eager_stats = {
+  eager_compiled : int;
+  eager_cache_hits : int;
+  eager_executions : int;
+  eager_fallbacks : (string * string * int) list;
+}
+
+val eager_stats : unit -> eager_stats
+
+val jitted_keyed :
+  string * Obj.t ->
+  (Types.value list -> Types.value list) ->
+  Types.value list ->
+  Types.value list
+
 val current_platform : unit -> string
 val default_backend : unit -> string
 val devices : ?backend:string -> unit -> string list

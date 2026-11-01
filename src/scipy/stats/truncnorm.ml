@@ -93,3 +93,38 @@ let logsf ?loc ?scale x a b =
 let sf ?loc ?scale x a b =
   let loc, scale = defaults loc scale in
   UF.exp (logsf ~loc ~scale x a b)
+
+let logpdf ?loc ?scale a0 a1 a2 =
+  Eager_jit.one "scipy.stats.truncnorm.logpdf" () [ loc; scale ] [ a0; a1; a2 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ loc; scale ], [ a0; a1; a2 ] -> logpdf ?loc ?scale a0 a1 a2
+      | _ -> assert false)
+
+let logsf ?loc ?scale a0 a1 a2 =
+  Eager_jit.one "scipy.stats.truncnorm.logsf" () [ loc; scale ] [ a0; a1; a2 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ loc; scale ], [ a0; a1; a2 ] -> logsf ?loc ?scale a0 a1 a2
+      | _ -> assert false)
+
+let sf ?loc ?scale a0 a1 a2 =
+  Eager_jit.one "scipy.stats.truncnorm.sf" () [ loc; scale ] [ a0; a1; a2 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ loc; scale ], [ a0; a1; a2 ] -> sf ?loc ?scale a0 a1 a2
+      | _ -> assert false)
+
+let logcdf ?loc ?scale a0 a1 a2 =
+  Eager_jit.one "scipy.stats.truncnorm.logcdf" () [ loc; scale ] [ a0; a1; a2 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ loc; scale ], [ a0; a1; a2 ] -> logcdf ?loc ?scale a0 a1 a2
+      | _ -> assert false)
+
+let cdf ?loc ?scale a0 a1 a2 =
+  Eager_jit.one "scipy.stats.truncnorm.cdf" () [ loc; scale ] [ a0; a1; a2 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [ loc; scale ], [ a0; a1; a2 ] -> cdf ?loc ?scale a0 a1 a2
+      | _ -> assert false)

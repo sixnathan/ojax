@@ -95,3 +95,24 @@ let partition ?(axis = -1) a ~kth =
   let top = topk_vals (n - kth - 1) last arr in
   let out = NL.concatenate ~axis:last [ bottom; top ] in
   NL.swapaxes last axis out
+
+let sort ?axis ?stable ?descending a0 =
+  Eager_jit.one "numpy.sorting.sort" (axis, stable, descending) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> sort ?axis ?stable ?descending a0
+      | _ -> assert false)
+
+let argsort ?axis ?stable ?descending ?dtype a0 =
+  Eager_jit.one "numpy.sorting.argsort" (axis, stable, descending, dtype)
+    [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> argsort ?axis ?stable ?descending ?dtype a0
+      | _ -> assert false)
+
+let partition ?axis a0 ~kth =
+  Eager_jit.one "numpy.sorting.partition" (axis, kth) [] [ a0 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0 ] -> partition ?axis a0 ~kth
+      | _ -> assert false)

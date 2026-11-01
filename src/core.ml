@@ -60,6 +60,10 @@ let interpreter_for trace =
 let eval_trace = { level = 0; kind = KEval; global_data = GNone }
 let trace_stack : trace list ref = ref [ eval_trace ]
 let dynamic_trace : trace option ref = ref None
+
+let tracing_dynamically () =
+  match !dynamic_trace with Some t -> t.level > 0 | None -> false
+
 let current_level () = List.length !trace_stack - 1
 
 let enter_main weak kind global_data f =
@@ -232,6 +236,9 @@ let placed_eval : (primitive -> value list -> value list option) ref =
 
 let is_placed = function Device (Pjrt.Buffer.Placed _) -> true | _ -> false
 
+let eager_eval : (primitive -> value list -> value list option) ref =
+  ref (fun _ _ -> None)
+
 let placed_dispatch (top : trace) prim args =
   if top.kind = KEval && List.exists is_placed args then !placed_eval prim args
   else None
@@ -403,11 +410,14 @@ let eval_process_primitive _trace prim args =
   | _ -> ());
   if Config.value Config.no_execution then
     failwith "JAX tried to execute a primitive, but no_execution is set";
-  let inputs = List.map as_concrete args in
-  let results = rules.impl prim inputs in
-  List.map
-    (fun r -> Concrete (Ndarray.canonicalize (Ndarray.dtype r) r))
-    results
+  match !eager_eval prim args with
+  | Some outs -> outs
+  | None ->
+      let inputs = List.map as_concrete args in
+      let results = rules.impl prim inputs in
+      List.map
+        (fun r -> Concrete (Ndarray.canonicalize (Ndarray.dtype r) r))
+        results
 
 let eval_interpreter =
   {

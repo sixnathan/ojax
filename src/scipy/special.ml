@@ -2686,3 +2686,39 @@ let fresnel x =
   match fresnel_rule [ x ] with
   | [ s; c ] -> (s, c)
   | _ -> invalid_arg "fresnel: arity"
+
+let gammasgn a0 =
+  Eager_jit.one "scipy.special.gammasgn" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> gammasgn a0 | _ -> assert false)
+
+let bessel_jn ?n_iter ~v a1 =
+  Eager_jit.one "scipy.special.bessel_jn" (n_iter, v) [] [ a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a1 ] -> bessel_jn ?n_iter ~v a1
+      | _ -> assert false)
+
+let expi a0 =
+  Eager_jit.one "scipy.special.expi" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> expi a0 | _ -> assert false)
+
+let sici a0 =
+  Eager_jit.many "scipy.special.sici" () [] [ a0 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0 ] -> sici a0 | _ -> assert false)
+
+let expn a0 a1 =
+  Eager_jit.one "scipy.special.expn" () [] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with [], [ a0; a1 ] -> expn a0 a1 | _ -> assert false)
+
+let hyp1f1 a0 a1 a2 =
+  Eager_jit.one "scipy.special.hyp1f1" () [] [ a0; a1; a2 ] (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1; a2 ] -> hyp1f1 a0 a1 a2
+      | _ -> assert false)
+
+let hyp2f1 a0 a1 a2 a3 =
+  Eager_jit.one "scipy.special.hyp2f1" () [] [ a0; a1; a2; a3 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1; a2; a3 ] -> hyp2f1 a0 a1 a2 a3
+      | _ -> assert false)

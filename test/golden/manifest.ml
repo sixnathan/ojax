@@ -4280,7 +4280,15 @@ let () =
         in
         List.iter
           (fun r -> Printf.eprintf "FALLBACK %s\n" (shorten r))
-          (List.sort_uniq compare fallbacks)
+          (List.sort_uniq compare fallbacks);
+        let eager = Ojax.Backend.eager_stats () in
+        Printf.eprintf "EAGER compiled %d, hits %d, executions %d\n"
+          eager.eager_compiled eager.eager_cache_hits eager.eager_executions;
+        List.iter
+          (fun (name, reason, count) ->
+            Printf.eprintf "EAGER_FALLBACK %s %d %s\n" name count
+              (shorten reason))
+          eager.eager_fallbacks
       end)
 
 let () =

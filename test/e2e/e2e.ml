@@ -214,7 +214,7 @@ let npz_of_ndarray nd : Npz.t =
         Npz.F (Array.init n (fun i -> Nd.get_f nd (unravel shape i)))
     | _ -> Npz.I (Array.init n (fun i -> Nd.get_i64 nd (unravel shape i)))
   in
-  { Npz.dtype = dtype_name; shape; data }
+  { Npz.dtype = dtype_name; shape; data; raw = Npz.raw_of_nd nd }
 
 type case = {
   case_id : string;
@@ -362,7 +362,9 @@ let () =
                ~floor_text:
                  (String.concat "\n"
                     (List.filter
-                       (String.starts_with ~prefix:"e2e\t")
+                       (fun line ->
+                         String.starts_with ~prefix:"e2e\t" line
+                         || String.starts_with ~prefix:"raw:e2e\t" line)
                        (String.split_on_char '\n' Exact_floor.data))));
         ] );
     ]

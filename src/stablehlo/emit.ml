@@ -1933,7 +1933,7 @@ let emit_sort_canonical_key ctx dt operand =
   let cnan = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name cnan)
-       (Ir.dense (Ir.float_literal dt Float.nan))
+       (Ir.dense (Ir.float_literal dt Float_format.nan))
        sty);
   let cres = fresh ctx in
   Buffer.add_string ctx.buf

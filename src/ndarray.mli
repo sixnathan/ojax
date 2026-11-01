@@ -1,5 +1,7 @@
 type t
 
+val f32_bits_of_float : float -> int32
+val float_of_f32_bits : int32 -> float
 val half_of_bits : int -> float
 val bits_of_half : float -> int
 val bfloat_of_bits : int -> float

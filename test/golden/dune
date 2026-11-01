@@ -1,6 +1,6 @@
 (test
  (name manifest)
- (modules npz compare exact_floor parity_cases manifest)
+ (modules npz compare exact_floor numpy_products parity_cases manifest)
  (libraries alcotest yojson ojax)
  (preprocess
   (action
@@ -8,6 +8,7 @@
  (deps
   (source_tree %{project_root}/goldens/dtypes)
   (source_tree %{project_root}/goldens/lax)
+  (source_tree %{project_root}/goldens/lax_smoke)
   (source_tree %{project_root}/goldens/jaxpr)
   (source_tree %{project_root}/goldens/ad)
   (source_tree %{project_root}/goldens/batching)

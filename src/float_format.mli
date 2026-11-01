@@ -9,6 +9,7 @@ type t = {
   special : special;
 }
 
+val nan : float
 val of_dtype : Dtype.t -> t option
 val round : t -> float -> float
 val encode : t -> float -> int

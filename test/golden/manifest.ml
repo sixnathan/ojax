@@ -579,7 +579,12 @@ let lax_check_case ~set_dir ~x64 c () =
         else Npz.F floats
       in
       let actual =
-        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data;
+          raw = Npz.raw_of_nd nd;
+        }
       in
       Compare.assert_tol_widened o.odtype oatol ortol oreason;
       Compare.check
@@ -974,7 +979,12 @@ let numpy_check_case ?(jit = true) ~fn ~set_dir ~x64 c () =
         else Npz.F floats
       in
       let actual =
-        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data;
+          raw = Npz.raw_of_nd nd;
+        }
       in
       Compare.assert_tol_widened o.odtype c.atol c.rtol c.treason;
       Compare.check
@@ -1480,8 +1490,10 @@ let reductions_suite_for set_name =
   in
   ("reductions:" ^ set_name, coverage :: case_tests)
 
-let lax_suite_for set_name =
-  let set_dir = Filename.concat (Filename.concat goldens_root "lax") set_name in
+let lax_suite_for ?(module_ = "lax") set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root module_) set_name
+  in
   let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
   let case_tests =
     List.map
@@ -1492,7 +1504,7 @@ let lax_suite_for set_name =
   let coverage =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
-  ("lax:" ^ set_name, coverage :: case_tests)
+  (module_ ^ ":" ^ set_name, coverage :: case_tests)
 
 module J = Ojax.Jaxpr
 module PP = Ojax.Pretty_printer
@@ -1754,6 +1766,7 @@ let ad_check_case ~set_dir ~x64 c () =
           Npz.dtype = golden.Npz.dtype;
           shape = Nd.shape nd;
           data = Npz.F (read_nd nd);
+          raw = Npz.raw_of_nd nd;
         }
       in
       Compare.assert_tol o.odtype c.a_atol c.a_rtol;
@@ -1898,7 +1911,12 @@ let batch_check_case ~set_dir ~x64 c () =
         else Npz.F floats
       in
       let actual =
-        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data;
+          raw = Npz.raw_of_nd nd;
+        }
       in
       Compare.assert_tol o.odtype c.b_atol c.b_rtol;
       Compare.check
@@ -2083,6 +2101,7 @@ let api_check_case ~set_dir ~x64 c () =
           Npz.dtype = golden.Npz.dtype;
           shape = Nd.shape nd;
           data = Npz.F (read_nd nd);
+          raw = Npz.raw_of_nd nd;
         }
       in
       Compare.assert_tol o.odtype c.ap_atol c.ap_rtol;
@@ -2244,7 +2263,12 @@ let cond_check_case ~set_dir ~x64 c () =
         else Npz.F floats
       in
       let actual =
-        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data;
+          raw = Npz.raw_of_nd nd;
+        }
       in
       Compare.assert_tol o.odtype c.cn_atol c.cn_rtol;
       Compare.check
@@ -2467,7 +2491,12 @@ let loops_check_case ~set_dir ~x64 c () =
         else Npz.F floats
       in
       let actual =
-        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data;
+          raw = Npz.raw_of_nd nd;
+        }
       in
       Compare.assert_tol o.odtype c.lp_atol c.lp_rtol;
       Compare.check
@@ -2608,7 +2637,12 @@ let solves_check_case ~set_dir ~x64 c () =
         else Npz.F floats
       in
       let actual =
-        { Npz.dtype = golden.Npz.dtype; shape = Nd.shape nd; data }
+        {
+          Npz.dtype = golden.Npz.dtype;
+          shape = Nd.shape nd;
+          data;
+          raw = Npz.raw_of_nd nd;
+        }
       in
       Compare.assert_tol o.odtype c.sv_atol c.sv_rtol;
       Compare.check
@@ -3284,11 +3318,23 @@ let must_fail msg f =
   | () -> Alcotest.failf "expected failure: %s" msg
   | exception Failure _ -> ()
 
+let no_raw = { Npz.raw_dtype = ""; bytes = "" }
+
 let f32 xs =
-  { Npz.dtype = "float32"; shape = [| Array.length xs |]; data = Npz.F xs }
+  {
+    Npz.dtype = "float32";
+    shape = [| Array.length xs |];
+    data = Npz.F xs;
+    raw = no_raw;
+  }
 
 let i32 xs =
-  { Npz.dtype = "int32"; shape = [| Array.length xs |]; data = Npz.I xs }
+  {
+    Npz.dtype = "int32";
+    shape = [| Array.length xs |];
+    data = Npz.I xs;
+    raw = no_raw;
+  }
 
 let chk ~compare ~atol ~rtol a b =
   Compare.check ~name:"compare_selftest" ~compare ~atol ~rtol ~expected:a
@@ -3337,6 +3383,299 @@ let compare_tests () =
     "a suite that did not run is ignored in a filtered run" 0
     (failures [ ("ratchet_absent", 1) ] false);
   Compare.set_suite "compare"
+
+let raw_row dtype hex =
+  let bytes = Parity_cases.bytebuf_of_hex hex in
+  {
+    Npz.dtype;
+    shape = [| Bigarray.Array1.dim bytes |];
+    data = Npz.I [||];
+    raw =
+      {
+        Npz.raw_dtype = dtype;
+        bytes =
+          String.init (Bigarray.Array1.dim bytes) (fun i ->
+              Char.chr (Bigarray.Array1.get bytes i));
+      };
+  }
+
+let check_status name expected a b =
+  let got = Compare.raw_status a b in
+  if not (String.starts_with ~prefix:expected got) then
+    Alcotest.failf "%s: raw status %s, wanted %s" name got expected
+
+let raw_status_tests () =
+  let q32 = "0000c07f" and s32 = "0100807f" and n32 = "0000c0ff" in
+  let p64 = "000000000000f87f" and p64b = "010000000000f87f" in
+  List.iter
+    (fun (name, dtype, a, b, want) ->
+      check_status name want (raw_row dtype a) (raw_row dtype b))
+    [
+      ("identical", "float32", q32, q32, "same");
+      ("signalling", "float32", s32, q32, "nan_sign=0,nan_payload=1");
+      ("sign", "float32", q32, n32, "nan_sign=1,nan_payload=0");
+      ( "c64 parts",
+        "complex64",
+        q32 ^ s32,
+        q32 ^ q32,
+        "nan_sign=0,nan_payload=1" );
+      ("payload", "float64", p64, p64b, "nan_sign=0,nan_payload=1");
+      ( "c128 sign",
+        "complex128",
+        p64 ^ "000000000000f8ff",
+        p64 ^ p64,
+        "nan_sign=1,nan_payload=0" );
+      ("f16", "float16", "007e", "ffff", "nan_sign=0,nan_payload=1");
+      ("bf16", "bfloat16", "c07f", "c0ff", "nan_sign=1,nan_payload=0");
+      ( "negative zero",
+        "float32",
+        "00000080",
+        "00000000",
+        "nan_sign=0,nan_payload=0,neg_zero=1" );
+      ( "uint8",
+        "uint8",
+        "01",
+        "02",
+        "nan_sign=0,nan_payload=0,neg_zero=0,value=1" );
+    ];
+  check_status "dtype" "dtype:float32!=float64" (raw_row "float64" p64)
+    (raw_row "float32" (q32 ^ q32));
+  check_status "length" "length" (raw_row "float32" q32)
+    { (raw_row "float32" (q32 ^ q32)) with shape = [| 4 |] }
+
+let hex_of_words width words =
+  String.concat ""
+    (List.map
+       (fun w ->
+         String.concat ""
+           (List.init width (fun k ->
+                Printf.sprintf "%02x"
+                  (Int64.to_int (Int64.shift_right_logical w (8 * k)) land 255))))
+       words)
+
+let all_words n = List.init n Int64.of_int
+
+let raw_patterns =
+  let f32 =
+    [
+      0x7f800001L;
+      0xff800001L;
+      0x7fc00000L;
+      0xffc00000L;
+      0x7fa12345L;
+      0xffffffffL;
+      0x7f800000L;
+      0xff800000L;
+      0x80000000L;
+      0L;
+      1L;
+      0x80000001L;
+      0x3f800000L;
+    ]
+  in
+  let f64 =
+    [
+      0x7ff0000000000001L;
+      0xfff0000000000001L;
+      0x7ff8000000000000L;
+      0x7ff8000000000001L;
+      0xfff8000000000000L;
+      0x7ff7ffffffffffffL;
+      0xffffffffffffffffL;
+      0x7ff0000000000000L;
+      0x8000000000000000L;
+      0L;
+      1L;
+      0x3ff0000000000000L;
+    ]
+  in
+  let signed bits =
+    List.init (1 lsl bits) (fun i ->
+        Int64.of_int
+          (if i >= 1 lsl (bits - 1) then (i - (1 lsl bits)) land 255 else i))
+  in
+  [
+    ("float32", 4, f32);
+    ("float64", 8, f64);
+    ("complex64", 4, f32 @ [ 0L ]);
+    ("complex128", 8, f64);
+    ("float16", 2, all_words 65536);
+    ("bfloat16", 2, all_words 65536);
+    ("bool", 1, [ 0L; 1L ]);
+    ("int8", 1, all_words 256);
+    ("uint8", 1, all_words 256);
+    ("int16", 2, all_words 65536);
+    ("uint16", 2, all_words 65536);
+    ("int32", 4, [ 0L; 1L; 0xffffffffL; 0x80000000L; 0x7fffffffL; 0x01000001L ]);
+    ("uint32", 4, [ 0L; 1L; 0xffffffffL; 0x80000000L; 0x7fffffffL; 0x01000001L ]);
+    ("int64", 8, [ 0L; -1L; Int64.min_int; Int64.max_int; 0x20000000000001L ]);
+    ("uint64", 8, [ 0L; -1L; Int64.min_int; Int64.max_int; 0x20000000000001L ]);
+    ("int2", 1, signed 2);
+    ("int4", 1, signed 4);
+    ("uint2", 1, all_words 4);
+    ("uint4", 1, all_words 16);
+    ("float4_e2m1fn", 1, all_words 16);
+    ("float6_e2m3fn", 1, all_words 64);
+    ("float6_e3m2fn", 1, all_words 64);
+    ("float8_e3m4", 1, all_words 256);
+    ("float8_e4m3", 1, all_words 256);
+    ("float8_e4m3b11fnuz", 1, all_words 256);
+    ("float8_e4m3fn", 1, all_words 256);
+    ("float8_e4m3fnuz", 1, all_words 256);
+    ("float8_e5m2", 1, all_words 256);
+    ("float8_e5m2fnuz", 1, all_words 256);
+    ("float8_e8m0fnu", 1, all_words 256);
+  ]
+
+let raw_pattern_nd dtype width words =
+  let hex = hex_of_words width words in
+  let total = List.length words in
+  let shape =
+    match dtype with
+    | "complex64" | "complex128" -> [| total / 2 |]
+    | _ -> [| total |]
+  in
+  (hex, Parity_cases.nd_of_hex dtype shape hex)
+
+let raw_host_round_trip () =
+  List.iter
+    (fun (dtype, width, words) ->
+      let hex, nd = raw_pattern_nd dtype width words in
+      let got = Parity_cases.hex_of_nd nd in
+      if got <> hex then (
+        let k = ref 0 in
+        while got.[!k] = hex.[!k] do
+          incr k
+        done;
+        Alcotest.failf "%s: byte %d wrote %s, read %s" dtype (!k / 2)
+          (String.sub got (!k / 2 * 2) 2)
+          (String.sub hex (!k / 2 * 2) 2)))
+    raw_patterns
+
+let raw_device_round_trip () =
+  let client = Ojax.Backend.client () in
+  List.iter
+    (fun dtype ->
+      let _, width, words =
+        List.find (fun (d, _, _) -> d = dtype) raw_patterns
+      in
+      let hex, nd = raw_pattern_nd dtype width words in
+      let buffer = Ojax.Pjrt.Buffer.of_host client nd in
+      let back = Ojax.Pjrt.Buffer.to_host buffer in
+      Ojax.Pjrt.Buffer.destroy buffer;
+      Alcotest.(check string) dtype hex (Parity_cases.hex_of_nd back))
+    [
+      "float32";
+      "float64";
+      "complex64";
+      "complex128";
+      "float16";
+      "bfloat16";
+      "bool";
+      "int8";
+      "uint8";
+      "int16";
+      "uint16";
+      "int32";
+      "uint32";
+      "int64";
+      "uint64";
+    ]
+
+let raw_jax_nan_rows =
+  [
+    ( "float32",
+      4,
+      [
+        0x7f800001L;
+        0xff800001L;
+        0x7fc00000L;
+        0xffc00000L;
+        0x7fa12345L;
+        0x80000000L;
+      ],
+      [ 0xff800001L; 0x7f800001L; 0xffc00000L; 0x7fc00000L; 0xffa12345L; 0L ],
+      [ 0x7fc00001L; 0xffc00001L; 0x7fc00000L; 0xffc00000L; 0x7fe12345L; 0L ] );
+    ( "float64",
+      8,
+      [
+        0x7ff0000000000001L;
+        0xfff0000000000001L;
+        0x7ff8000000000000L;
+        0x7ff8000000000001L;
+        0x8000000000000000L;
+      ],
+      [
+        0xfff0000000000001L;
+        0x7ff0000000000001L;
+        0xfff8000000000000L;
+        0xfff8000000000001L;
+        0L;
+      ],
+      [
+        0x7ff8000000000001L;
+        0xfff8000000000001L;
+        0x7ff8000000000000L;
+        0x7ff8000000000001L;
+        0L;
+      ] );
+    ( "float16",
+      2,
+      [ 0x7c01L; 0xfc01L; 0x7e00L; 0xffffL; 0x8000L ],
+      [ 0xfc01L; 0x7c01L; 0xfe00L; 0x7fffL; 0L ],
+      [ 0x7e01L; 0xfe01L; 0x7e00L; 0xffffL; 0L ] );
+  ]
+
+let raw_jax_nan_literals () =
+  List.iter
+    (fun (dtype, width, words) ->
+      List.iter
+        (fun word ->
+          let nd =
+            Parity_cases.nd_of_hex dtype [||] (hex_of_words width [ word ])
+          in
+          let want = Printf.sprintf "0x%0*LX" (2 * width) word in
+          let d = Nd.dtype nd in
+          Alcotest.(check string)
+            (dtype ^ " literal") want
+            (Ojax.Stablehlo.Ir.float_literal d (Nd.get_f nd [||])))
+        words)
+    [
+      ("float32", 4, [ 0x7fc00000L; 0xffc00000L; 0x7f800001L; 0x7fa12345L ]);
+      ( "float64",
+        8,
+        [
+          0x7ff8000000000000L;
+          0xfff8000000000000L;
+          0x7ff0000000000001L;
+          0x7ff8000000000001L;
+        ] );
+      ("float16", 2, [ 0x7e00L; 0xfe00L; 0x7c01L; 0xffffL ]);
+      ("bfloat16", 2, [ 0x7fc0L; 0xffc0L; 0x7f81L ]);
+      ("float8_e4m3", 1, [ 0x7cL; 0xfcL; 0x79L; 0x7fL ]);
+      ("float8_e4m3fn", 1, [ 0x7fL; 0xffL ]);
+    ]
+
+let raw_jax_nan_operations () =
+  Ojax.Config.with_value Ojax.Config.enable_x64 true (fun () ->
+      List.iter
+        (fun (dtype, width, words, negated, added) ->
+          let hex, nd = raw_pattern_nd dtype width words in
+          let run label want f =
+            let got = Parity_cases.hex_of_nd (concrete (f (T.Concrete nd))) in
+            Alcotest.(check string)
+              (dtype ^ " " ^ label)
+              (hex_of_words width want) got
+          in
+          ignore hex;
+          let identity v =
+            List.hd (Ojax.Api.jit_flat (fun args -> args) [ v ])
+          in
+          let zero = T.Concrete (Nd.of_floats (Nd.dtype nd) [||] [| 0.0 |]) in
+          run "jit identity" words identity;
+          run "negative" negated UF.negative;
+          run "add zero" added (fun v -> UF.add v zero))
+        raw_jax_nan_rows)
 
 module SI = Ojax.Scipy.Integrate
 module SN = Ojax.Scipy.Ndimage
@@ -3428,7 +3767,12 @@ let npz_of_nd nd golden_dtype compare =
   | D.Complex64 | D.Complex128 ->
       let n = Array.fold_left ( * ) 1 sh in
       let c = Array.init n (fun i -> Nd.get_c nd (flat_decode i sh)) in
-      { Npz.dtype = golden_dtype; shape = sh; data = Npz.C c }
+      {
+        Npz.dtype = golden_dtype;
+        shape = sh;
+        data = Npz.C c;
+        raw = Npz.raw_of_nd nd;
+      }
   | _ ->
       let data =
         if compare = "exact" then
@@ -3436,7 +3780,7 @@ let npz_of_nd nd golden_dtype compare =
           Npz.I (Array.init n (fun i -> Nd.get_i64 nd (flat_decode i sh)))
         else Npz.F (read_nd nd)
       in
-      { Npz.dtype = golden_dtype; shape = sh; data }
+      { Npz.dtype = golden_dtype; shape = sh; data; raw = Npz.raw_of_nd nd }
 
 let complex_fn c operands : T.value list =
   if String.length c.primitive >= 4 && String.sub c.primitive 0 4 = "lax." then
@@ -4356,13 +4700,6 @@ let jit_reference_coverage reference cases () =
   if List.sort compare (Lazy.force reference.jit_case_ids) <> expected then
     Alcotest.failf "%s does not cover the parity cases" reference.jit_set_dir
 
-let sampled_for_jit c =
-  let transformed =
-    String.length c.op > 4
-    && List.mem (String.sub c.op 0 4) [ "swv_"; "swg_"; "swj_" ]
-  in
-  (not transformed) || Hashtbl.hash c.case_id mod 5 = 0
-
 let composed_suite_for ?(keep = fun _ -> true) ~run module_name set_name =
   let set_dir =
     Filename.concat (Filename.concat goldens_root module_name) set_name
@@ -4394,13 +4731,93 @@ let parity_jit_suite_for set_name =
         Alcotest.test_case c.case_id `Quick
           (composed_check_case ~reference:(eager_suite, select)
              ~run:parity_jit_run ~set_dir ~x64 c))
-      (List.filter sampled_for_jit cases)
+      cases
   in
   ( "parity_jit:" ^ set_name,
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
     :: Alcotest.test_case "jit reference coverage" `Quick
          (jit_reference_coverage reference cases)
     :: case_tests )
+
+let dtypes_nd (a : Npz.t) weak =
+  let dt = dtype_of_string a.Npz.dtype in
+  let nd =
+    match (dt, a.Npz.data) with
+    | (D.I64 | D.Uint64), Npz.I i -> Nd.of_int64s dt a.Npz.shape i
+    | _ -> nd_of_npz_any a
+  in
+  if weak then Nd.as_weak nd else nd
+
+let dtypes_compute_case ~set_dir ~x64 j () =
+  let case_id = U.member "case_id" j |> U.to_string in
+  let member sub =
+    Npz.read (Filename.concat (Filename.concat set_dir sub) (case_id ^ ".npz"))
+  in
+  let inputs = member "inputs" and outputs = member "outputs" in
+  let operands =
+    List.map
+      (fun a ->
+        let name = U.member "name" a |> U.to_string in
+        T.Concrete
+          (dtypes_nd (find_member inputs name) (U.member "weak" a |> U.to_bool)))
+      (U.member "args" j |> U.to_list)
+  in
+  let add_all = function
+    | [] -> failwith "dtypes golden: no operands"
+    | first :: rest -> List.fold_left UF.add first rest
+  in
+  let result =
+    Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+        Ojax.Api.jit_flat (fun args -> [ add_all args ]) operands)
+  in
+  let out = List.hd (U.member "outputs" j |> U.to_list) in
+  let nd = concrete (List.hd result) in
+  let golden = find_member outputs "out0" in
+  let want_weak = U.member "weak" out |> U.to_bool in
+  if Nd.weak nd <> want_weak then
+    Alcotest.failf "%s: weak type %b, wanted %b" case_id (Nd.weak nd) want_weak;
+  let compare =
+    match golden.Npz.data with Npz.I _ -> "exact" | _ -> "allclose"
+  in
+  Compare.check ~name:(case_id ^ ":out0") ~compare ~atol:0.0 ~rtol:0.0
+    ~expected:golden
+    ~actual:(npz_of_nd nd golden.Npz.dtype compare)
+
+let dtypes_suite_for set_name =
+  let module_, tests = suite_for "dtypes" set_name in
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "dtypes") set_name
+  in
+  let path = Filename.concat set_dir "manifest.json" in
+  let x64 = U.member "x64" (Yojson.Safe.from_file path) |> U.to_bool in
+  let computed =
+    List.map
+      (fun j ->
+        Alcotest.test_case
+          (U.member "case_id" j |> U.to_string)
+          `Quick
+          (dtypes_compute_case ~set_dir ~x64 j))
+      (Yojson.Safe.from_file path |> U.member "cases" |> U.to_list)
+  in
+  (module_, tests @ computed)
+
+let numpy_product_rows () =
+  List.iter
+    (fun (case, x64, dtype, input, numpy, jax) ->
+      if numpy = jax then
+        Alcotest.failf "%s: NumPy's product no longer differs from JAX's" case;
+      let shape = [| 3; 3 |] in
+      Ojax.Config.with_value Ojax.Config.enable_x64 (x64 = "x64_on") (fun () ->
+          let v = T.Concrete (Parity_cases.nd_of_hex dtype shape input) in
+          let nd = concrete (Parity_cases.jnp_matmul_self v) in
+          let expected =
+            npz_of_nd (Parity_cases.nd_of_hex dtype shape jax) dtype "allclose"
+          in
+          Compare.check
+            ~name:(x64 ^ ":" ^ case)
+            ~compare:"allclose" ~atol:0.0 ~rtol:0.0 ~expected
+            ~actual:(npz_of_nd nd dtype "allclose")))
+    Numpy_products.rows
 
 let attributed (suite, tests) =
   ( suite,
@@ -4442,10 +4859,12 @@ let () =
   Alcotest.run "goldens"
     (List.map attributed
        [
-         suite_for "dtypes" "x64_off";
-         suite_for "dtypes" "x64_on";
+         dtypes_suite_for "x64_off";
+         dtypes_suite_for "x64_on";
          lax_suite_for "x64_off";
          lax_suite_for "x64_on";
+         lax_suite_for ~module_:"lax_smoke" "x64_off";
+         lax_suite_for ~module_:"lax_smoke" "x64_on";
          jaxpr_suite_for "x64_off";
          jaxpr_suite_for "x64_on";
          ad_suite_for "x64_off";
@@ -4525,6 +4944,20 @@ let () =
          composed_suite_for ~run:spatial_transform_run "spatial_transform"
            "x64_on";
          ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
+         ( "raw_bytes",
+           [
+             Alcotest.test_case "status" `Quick raw_status_tests;
+             Alcotest.test_case "host round trip" `Quick raw_host_round_trip;
+             Alcotest.test_case "device round trip" `Quick raw_device_round_trip;
+             Alcotest.test_case "jax nan operations" `Quick
+               raw_jax_nan_operations;
+             Alcotest.test_case "jax nan literals" `Quick raw_jax_nan_literals;
+           ] );
+         ( "numpy_product_jax",
+           [
+             Alcotest.test_case "ojax matmul against jax" `Quick
+               numpy_product_rows;
+           ] );
        ]
     @ [
         ( "exact_ratchet",
@@ -4535,7 +4968,9 @@ let () =
                    (String.concat "\n"
                       (List.filter
                          (fun line ->
-                           not (String.starts_with ~prefix:"e2e\t" line))
+                           not
+                             (String.starts_with ~prefix:"e2e\t" line
+                             || String.starts_with ~prefix:"raw:e2e\t" line))
                          (String.split_on_char '\n' Exact_floor.data))));
           ] );
       ])

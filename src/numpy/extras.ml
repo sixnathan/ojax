@@ -395,7 +395,7 @@ let unique_sorted_mask ar axis equal_nan =
           in
           let aux =
             if is_complex_value aux then
-              NL.where_ (U.isnan aux) (scalar_like aux Float.nan) aux
+              NL.where_ (U.isnan aux) (scalar_like aux Float_format.nan) aux
             else aux
           in
           let sh = shape aux in
@@ -2117,7 +2117,7 @@ let pi = 3.141592653589793
 let e = 2.718281828459045
 let euler_gamma = 0.5772156649015329
 let inf = Float.infinity
-let nan = Float.nan
+let nan = Float_format.nan
 
 type printoptions = {
   precision : int;

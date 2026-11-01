@@ -179,25 +179,85 @@ let measure_exact (expected : Npz.t) (actual : Npz.t) =
     end;
   (!count, !differing, !largest)
 
+let raw_format = function
+  | "float16" -> Some (2, 0x7C00L, 0x3FFL)
+  | "bfloat16" -> Some (2, 0x7F80L, 0x7FL)
+  | "float32" | "complex64" -> Some (4, 0x7F800000L, 0x7FFFFFL)
+  | "float64" | "complex128" -> Some (8, 0x7FF0000000000000L, 0xFFFFFFFFFFFFFL)
+  | _ -> None
+
+let raw_word s off = function
+  | 2 -> Int64.of_int (String.get_uint16_le s off)
+  | 4 -> Int64.logand (Int64.of_int32 (String.get_int32_le s off)) 0xFFFFFFFFL
+  | _ -> String.get_int64_le s off
+
+let raw_kinds dtype a b =
+  let nan_sign = ref 0 and nan_payload = ref 0 in
+  let neg_zero = ref 0 and value = ref 0 and first = ref "" in
+  begin match raw_format dtype with
+  | None -> String.iteri (fun i x -> if x <> b.[i] then incr value) a
+  | Some (width, exponent, mantissa) ->
+      let sign = Int64.shift_left 1L ((8 * width) - 1) in
+      let is_nan w =
+        Int64.logand w exponent = exponent && Int64.logand w mantissa <> 0L
+      in
+      for k = 0 to (String.length a / width) - 1 do
+        let x = raw_word a (k * width) width in
+        let y = raw_word b (k * width) width in
+        if x <> y && !first = "" then
+          first := Printf.sprintf "%d:%Lx!=%Lx" k x y;
+        if x <> y then
+          if is_nan x && is_nan y then
+            incr (if Int64.logxor x y = sign then nan_sign else nan_payload)
+          else if Int64.logor x y = sign then incr neg_zero
+          else incr value
+      done
+  end;
+  (!nan_sign, !nan_payload, !neg_zero, !value, !first)
+
+let raw_identical = "same"
+
+let raw_status (expected : Npz.t) (actual : Npz.t) =
+  let e = expected.raw and a = actual.raw in
+  if e.raw_dtype <> a.raw_dtype then
+    Printf.sprintf "dtype:%s!=%s" a.raw_dtype e.raw_dtype
+  else if not (shapes_equal expected.shape actual.shape) then "shape"
+  else if String.length e.bytes <> String.length a.bytes then "length"
+  else if String.equal e.bytes a.bytes then raw_identical
+  else
+    let nan_sign, nan_payload, neg_zero, value, first =
+      raw_kinds e.raw_dtype a.bytes e.bytes
+    in
+    Printf.sprintf "nan_sign=%d,nan_payload=%d,neg_zero=%d,value=%d,first=%s"
+      nan_sign nan_payload neg_zero value first
+
+let raw_prefix = "raw:"
+
+let tally_of suite =
+  match Hashtbl.find_opt tallies suite with
+  | Some tally -> tally
+  | None ->
+      let tally = (ref 0, ref 0) in
+      Hashtbl.replace tallies suite tally;
+      tally
+
+let bump suite same =
+  let identical, total = tally_of suite in
+  incr total;
+  if same then incr identical
+
 let record_exact ?suite:named name expected actual =
   let suite = Option.value named ~default:!suite in
   let count, differing, largest = measure_exact expected actual in
-  let identical, total =
-    match Hashtbl.find_opt tallies suite with
-    | Some tally -> tally
-    | None ->
-        let tally = (ref 0, ref 0) in
-        Hashtbl.replace tallies suite tally;
-        tally
-  in
-  incr total;
-  if differing = 0 then incr identical;
+  let status = raw_status expected actual in
+  bump suite (differing = 0);
+  bump (raw_prefix ^ suite) (status = raw_identical);
   match Lazy.force exact_log with
   | None -> ()
   | Some oc -> (
       try
-        Printf.fprintf oc "%s\t%d\t%d\t%g\t%s\n%!" name count differing largest
-          suite
+        Printf.fprintf oc "%s\t%d\t%d\t%g\t%s\t%s\n%!" name count differing
+          largest suite status
       with Sys_error _ -> ())
 
 let parse_floor text =

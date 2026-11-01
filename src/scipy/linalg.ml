@@ -782,7 +782,7 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
           | _ -> invalid_arg "expm: arity"
         in
         let nan = function
-          | a :: _ -> [ AC.full_like a Float.nan ]
+          | a :: _ -> [ AC.full_like a Float_format.nan ]
           | [] -> invalid_arg "expm: arity"
         in
         match

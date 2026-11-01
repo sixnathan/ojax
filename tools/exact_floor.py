@@ -28,10 +28,14 @@ def main():
                     continue
                 total[fields[4]] += 1
                 identical[fields[4]] += fields[2] == "0"
+                if len(fields) >= 6:
+                    total["raw:" + fields[4]] += 1
+                    identical["raw:" + fields[4]] += fields[5] == "same"
     for suite in sorted(total):
         floor = identical[suite]
-        if suite.startswith(SHADOW):
-            floor = min(floor, ceiling[suite[len(SHADOW) :]])
+        plain = suite.removeprefix("raw:")
+        if plain.startswith(SHADOW):
+            floor = min(floor, ceiling[plain[len(SHADOW) :]])
         print(f"{suite}\t{floor}\t{total[suite]}")
 
 

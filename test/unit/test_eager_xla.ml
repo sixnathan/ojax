@@ -62,6 +62,18 @@ let test_matches_exact_values () =
 
 let test_fallback_recorded () =
   need_plugin ();
+  let narrow =
+    Concrete (Ndarray.of_floats Dtype.F6_e2m3fn [| 2 |] [| 0.5; 1.0 |])
+  in
+  let outs = Core.bind Neg [ narrow ] in
+  Alcotest.(check bool) "host produced results" true (outs <> []);
+  let names =
+    List.map (fun (name, _, _) -> name) (Backend.eager_stats ()).eager_fallbacks
+  in
+  Alcotest.(check bool) "neg fell back" true (List.mem "neg" names)
+
+let test_hessenberg_matches_the_library () =
+  need_plugin ();
   let matrix = f32 [| 2; 2 |] [| 2.0; 1.0; 1.0; 3.0 |] in
   let outs = Core.bind Hessenberg [ matrix ] in
   Alcotest.(check bool) "host produced results" true (outs <> []);
@@ -69,7 +81,8 @@ let test_fallback_recorded () =
     List.map (fun (name, _, _) -> name) (Backend.eager_stats ()).eager_fallbacks
   in
   Alcotest.(check bool)
-    "hessenberg fell back" true
+    "hessenberg compiles only with the library jax's routines run on"
+    (not Lapack_seam.Lapack.single_routines)
     (List.mem "hessenberg" names)
 
 let test_region_compiles_whole_function () =
@@ -115,6 +128,8 @@ let () =
           Alcotest.test_case "cache key" `Quick test_key_has_shape_and_dtype;
           Alcotest.test_case "values" `Quick test_matches_exact_values;
           Alcotest.test_case "fallback" `Quick test_fallback_recorded;
+          Alcotest.test_case "hessenberg" `Quick
+            test_hessenberg_matches_the_library;
           Alcotest.test_case "region" `Quick test_region_compiles_whole_function;
           Alcotest.test_case "region options" `Quick
             test_region_key_tells_options_apart;

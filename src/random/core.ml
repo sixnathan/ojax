@@ -133,13 +133,21 @@ let uniform_unit k ~shape =
 
 let uniform k ~shape ~minval ~maxval =
   let dt = fdt () in
+  let ones = Array.make (Array.length shape) 1 in
+  let dims = Array.init (Array.length shape) Fun.id in
+  let unit_rank v =
+    C.bind1
+      (Broadcast_in_dim { shape = ones; dims = [||] })
+      [ const dt [||] (f32 v) ]
+  in
+  let spread v = C.bind1 (Broadcast_in_dim { shape; dims }) [ v ] in
+  let minv = unit_rank minval and maxv = unit_rank maxval in
   let floats_v = uniform_unit k ~shape in
-  let minv = f32 minval and maxv = f32 maxval in
-  let span = f32 (maxv -. minv) in
   let u = C.bind1 Sub [ floats_v; const dt shape 1.0 ] in
-  let scaled = C.bind1 Mul [ u; const dt shape span ] in
-  let y = C.bind1 Add [ scaled; const dt shape minv ] in
-  C.bind1 Max [ const dt shape minv; y ]
+  let span = C.bind1 Sub [ maxv; minv ] in
+  let scaled = C.bind1 Mul [ u; spread span ] in
+  let y = C.bind1 Add [ scaled; spread minv ] in
+  C.bind1 Max [ spread minv; y ]
 
 let scalar_f v = Nd.get_f (concrete v) [||]
 let eagerly thunk = C.with_eval_dynamic thunk

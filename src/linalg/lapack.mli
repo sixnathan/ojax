@@ -111,6 +111,17 @@ val zhetrd :
   tau:'k real ->
   int
 
+val tridiagonal_perturbed :
+  n:int ->
+  nrhs:int ->
+  complex:bool ->
+  dl:'k real ->
+  d:'k real ->
+  du:'k real ->
+  b:'k real ->
+  x:'k real ->
+  unit
+
 val gtsv :
   n:int ->
   nrhs:int ->

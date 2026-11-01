@@ -462,6 +462,16 @@ ENTER(h_gtsv)
   return NULL;
 }
 
+ENTER(h_tridiagonal_perturbed)
+  Buffer *dl = ARG(0), *d = ARG(1), *du = ARG(2), *b = ARG(3), *x = RET(0);
+  char prec = prec_of(b->dtype);
+  int n = (int)rows(b), k_rhs = (int)cols(b);
+  for (int64_t i = 0, count = batches(b, 2); i < count; i++)
+    ojax_tridiagonal_perturbed(prec, n, k_rhs, at(dl, 1, i), at(d, 1, i),
+                               at(du, 1, i), at(b, 2, i), at(x, 2, i));
+  return NULL;
+}
+
 CAMLprim value ojax_lapack_ffi_handler(value v_name) {
   CAMLparam1(v_name);
   CAMLlocal1(result);
@@ -473,7 +483,8 @@ CAMLprim value ojax_lapack_ffi_handler(value v_name) {
                {"geqp3", h_geqp3}, {"orgqr", h_orgqr}, {"ormqr", h_ormqr},
                {"gesdd", h_gesdd}, {"gesvd", h_gesvd}, {"syevd", h_syevd},
                {"geev", h_geev},   {"gees", h_gees},   {"gehrd", h_gehrd},
-               {"sytrd", h_sytrd}, {"trsm", h_trsm},   {"gtsv", h_gtsv}};
+               {"sytrd", h_sytrd}, {"trsm", h_trsm},   {"gtsv", h_gtsv},
+               {"tridiagonal_perturbed", h_tridiagonal_perturbed}};
   for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
     if (strcmp(table[i].name, name) == 0) {
       result = caml_copy_nativeint((intnat)table[i].fn);

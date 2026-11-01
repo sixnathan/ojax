@@ -33,23 +33,90 @@ let broadcast_to_shape v shape =
     b1 (Broadcast_in_dim { shape; dims = [||] }) [ v ]
   else invalid_arg "Prng_lowering: incompatible threefry operands"
 
+let i32_scalar x = Concrete (Ndarray.of_floats Dtype.I32 [||] [| x |])
+let u32_scalar x = Concrete (Ndarray.of_floats u32 [||] [| x |])
+
+let rotation_array values =
+  Concrete
+    (Ndarray.of_floats u32 [| 4 |]
+       (Array.of_list (List.map float_of_int values)))
+
+let rotate_scalar_left v rotation =
+  let shape = (Core.get_aval v).shape in
+  let spread r = broadcast_to_shape r shape in
+  b1 Or
+    [
+      b1 Shift_left [ v; spread rotation ];
+      b1 Shift_right_logical
+        [ v; spread (b1 Sub [ u32_scalar 32.0; rotation ]) ];
+    ]
+
+let rotation_at rotations i =
+  b1 (Reshape [||])
+    [
+      b1
+        (Slice
+           {
+             start_indices = [| i |];
+             limit_indices = [| i + 1 |];
+             strides = None;
+           })
+        [ rotations ];
+    ]
+
+let threefry_step = function
+  | [ i; x0; x1; k0; k1; k2; rotations; next_rotations ] ->
+      let one = i32_scalar 1.0 in
+      let next_i = b1 Add [ i; one ] in
+      let shape = (Core.get_aval x0).shape in
+      let spread v = broadcast_to_shape v shape in
+      let x0, x1 =
+        List.fold_left
+          (fun (x0, x1) index ->
+            let rotation = rotation_at rotations index in
+            let x0' = add x0 x1 in
+            (x0', xor x0' (rotate_scalar_left x1 rotation)))
+          (x0, x1) [ 0; 1; 2; 3 ]
+      in
+      let x0' = add x0 (spread k0) in
+      let x1' = add x1 (spread k1) in
+      let counter =
+        spread (b1 (Convert_element_type u32) [ b1 Add [ i; one ] ])
+      in
+      [ next_i; x0'; add x1' counter; k1; k2; k0; next_rotations; rotations ]
+  | _ -> invalid_arg "Prng_lowering: threefry state"
+
 let threefry2x32 key1 key2 c1 c2 =
   let shape = (Core.get_aval c1).shape in
-  let k0 = broadcast_to_shape key1 shape in
-  let k1 = broadcast_to_shape key2 shape in
-  let k2 = xor (xor k0 k1) (fill shape 466688986.0) in
-  let inc v n = add v (fill shape (float_of_int n)) in
-  let stage (x0, x1) ka kb rotations =
-    let x0 = add x0 ka and x1 = add x1 kb in
-    List.fold_left apply_round (x0, x1) rotations
+  let spread v = broadcast_to_shape v shape in
+  let key3 = xor (xor key1 key2) (like key1 466688986.0) in
+  let x0 = add c1 (spread key1) in
+  let x1 = add c2 (spread key2) in
+  let step state = Jaxpr.named_jit ~name:"closed_call" threefry_step state in
+  let cond = function
+    | counter :: _ -> b1 Lt [ counter; i32_scalar 5.0 ]
+    | [] -> invalid_arg "Prng_lowering: threefry state"
   in
-  let s = stage (c1, c2) k0 k1 rounds_a in
-  let s = stage s k1 (inc k2 1) rounds_b in
-  let s = stage s k2 (inc k0 2) rounds_a in
-  let s = stage s k0 (inc k1 3) rounds_b in
-  let s = stage s k1 (inc k2 4) rounds_a in
-  let x0, x1 = s in
-  [ add x0 k2; add x1 (inc k0 5) ]
+  let body = function
+    | counter :: state -> b1 Add [ counter; i32_scalar 1.0 ] :: step state
+    | [] -> invalid_arg "Prng_lowering: threefry state"
+  in
+  match
+    Lax_api.while_loop cond body
+      [
+        i32_scalar 0.0;
+        i32_scalar 0.0;
+        x0;
+        x1;
+        key2;
+        key3;
+        key1;
+        rotation_array rounds_a;
+        rotation_array rounds_b;
+      ]
+  with
+  | _ :: _ :: x0 :: x1 :: _ -> [ x0; x1 ]
+  | _ -> invalid_arg "Prng_lowering: threefry state"
 
 let iota_counters shape =
   let total = Array.fold_left ( * ) 1 shape in

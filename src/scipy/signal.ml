@@ -390,18 +390,23 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
   let result =
     if onesided && mode = "psd" then begin
       let sh = shape result in
-      let n_freq = sh.(Array.length sh - 1) in
-      let cdt = complex_dtype_of dt in
-      let lanes = Array.fold_left ( * ) 1 sh / Stdlib.max n_freq 1 in
-      let mask =
-        Concrete
-          (Ndarray.of_complex cdt sh
-             (Array.init (lanes * n_freq) (fun k ->
-                  let f = k mod n_freq in
-                  let doubled = f > 0 && (nfft mod 2 = 1 || f < n_freq - 1) in
-                  { Complex.re = (if doubled then 2.0 else 1.0); im = 0.0 })))
+      let n = Array.length sh in
+      let n_freq = sh.(n - 1) in
+      let stop = if nfft mod 2 = 1 then n_freq else n_freq - 1 in
+      let cdt = dtype_of result in
+      let update_shape =
+        Array.mapi (fun i d -> if i = n - 1 then stop - 1 else d) sh
       in
-      b1 Mul [ result; mask ]
+      L.scatter_mul ~unique_indices:true result
+        (Concrete (Ndarray.of_floats Dtype.I32 [| 1 |] [| 1.0 |]))
+        (L.full update_shape 2.0 cdt)
+        {
+          update_window_dims = Array.init n Fun.id;
+          inserted_window_dims = [||];
+          scatter_dims_to_operand_dims = [| n - 1 |];
+          s_operand_batching_dims = [||];
+          s_scatter_indices_batching_dims = [||];
+        }
     end
     else result
   in
@@ -456,34 +461,36 @@ let csd ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft
       match average with
       | "mean" -> Numpy.Reductions.mean ~axis:[| last |] swapped
       | "median" ->
-          let bias =
-            let total = ref 1.0 in
-            let k = ref 2 in
-            while !k < n do
-              total :=
-                !total
-                +. (1.0 /. float_of_int (!k + 1))
-                -. (1.0 /. float_of_int !k);
-              k := !k + 2
-            done;
-            !total
+          let dt = dtype_of swapped in
+          let real_dt = real_part_dtype dt in
+          let ii_2 =
+            NL.arange ~start:2.0 ~step:2.0 ~dtype:real_dt (float_of_int n)
           in
+          let py_float = Numpy.Jnp_util.py_float in
+          let bias =
+            Numpy.Ufuncs.add (py_float 1.0)
+              (Numpy.Reductions.sum
+                 (Numpy.Ufuncs.subtract
+                    (Numpy.Ufuncs.divide (py_float 1.0)
+                       (Numpy.Ufuncs.add ii_2 (py_float 1.0)))
+                    (Numpy.Ufuncs.divide (py_float 1.0) ii_2)))
+          in
+          let bias = NL.astype bias dt in
           let med =
             if is_complex swapped then
-              b1 Complex
-                [
-                  Numpy.Reductions.median ~axis:last (b1 Real [ swapped ]);
-                  Numpy.Reductions.median ~axis:last (b1 Imag [ swapped ]);
-                ]
+              let unit_i =
+                Concrete
+                  (Ndarray.of_complex dt [||]
+                     [| { Complex.re = 0.0; im = 1.0 } |])
+              in
+              Numpy.Ufuncs.add
+                (Numpy.Reductions.median ~axis:last (Numpy.Ufuncs.real swapped))
+                (Numpy.Ufuncs.multiply unit_i
+                   (Numpy.Reductions.median ~axis:last
+                      (Numpy.Ufuncs.imag swapped)))
             else Numpy.Reductions.median ~axis:last swapped
           in
-          b1 Div
-            [
-              med;
-              NL.astype
-                (L.full (shape med) bias (real_part_dtype (dtype_of med)))
-                (dtype_of med);
-            ]
+          Numpy.Ufuncs.divide med bias
       | other -> invalid_arg ("average must be 'median' or 'mean', got " ^ other)
   in
   (freqs, averaged)

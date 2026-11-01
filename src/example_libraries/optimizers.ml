@@ -217,7 +217,11 @@ let sm3 ?(momentum = 0.9) (step_size : schedule) =
           let expand axis v =
             let sh = Array.make rank 1 in
             sh.(axis) <- shape.(axis);
-            L.reshape v sh
+            if rank = 1 then v
+            else
+              Core.bind1
+                (Types.Broadcast_in_dim { shape = sh; dims = [| axis |] })
+                [ v ]
           in
           let smallest =
             match List.mapi expand vs with

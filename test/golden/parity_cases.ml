@@ -1187,10 +1187,13 @@ let tracer_batch_run op params a b =
       Some
         [
           Ojax.Numpy.Sorting.lexsort
-            [
-              L.index_in_dim ~axis:1 ~keepdims:false v 0;
-              L.index_in_dim ~axis:1 ~keepdims:false v 1;
-            ];
+            (let column j =
+               let sh = shp v in
+               L.squeeze (L.slice v [| 0; j |] [| sh.(0); j + 1 |]) [| 1 |]
+             in
+             let first = column 0 in
+             let second = column 1 in
+             [ first; second ]);
         ]
   | "tb_poly_matrix" -> Some [ Ojax.Numpy.Polynomial.poly (a ()) ]
   | "tb_qr_raw" -> Some (LA.qr ~mode:"raw" (a ()))

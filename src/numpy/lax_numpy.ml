@@ -437,8 +437,8 @@ let conv1d_body ~mode ~correlating a v =
          })
       [ lhs; rhs ]
   in
-  let flat = bind1 (T.Squeeze [| 0; 1 |]) [ out ] in
-  if correlating && swapped then rev_dims flat [| 0 |] else flat
+  let out = if correlating && swapped then rev_dims out [| 2 |] else out in
+  bind1 (T.Squeeze [| 0; 1 |]) [ out ]
 
 let conv1d ~mode ~correlating a v =
   Jnp_util.jit1 "_conv"

@@ -666,10 +666,7 @@ module KD = Ojax.Scipy.Stats.Kde
 let grid_of v =
   let sh = shp v in
   let dt = dt_of v in
-  let axis size =
-    T.Concrete
-      (Ojax.Ndarray.of_floats dt [| size |] (Array.init size float_of_int))
-  in
+  let axis size = L.iota dt size in
   [ axis sh.(0); axis sh.(1) ]
 
 let triple (x, y, z) = [ x; y; z ]

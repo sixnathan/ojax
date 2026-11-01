@@ -24,48 +24,68 @@ let regular_grid_interpolator ?(method_ = "linear") ?(bounds_error = false)
     invalid_arg "There are more dimensions in points than in values";
   { points; values; method_; bounds_error; fill_value }
 
-let find_indices point x =
-  let n = (shape point).(0) in
-  let i =
-    NL.clip ~min:1.0
-      ~max:(float_of_int (n - 1))
-      (NL.searchsorted ~side:"right" point x)
-  in
-  let lower = U.subtract i (L.full_like i 1.0) in
-  let lo = Numpy.Indexing.take_index ~axis:0 point lower in
-  let hi = Numpy.Indexing.take_index ~axis:0 point i in
-  let weight = U.divide (U.subtract x lo) (U.subtract hi lo) in
-  (lower, weight)
+let py_int = Numpy.Jnp_util.py_int
+let py_float = Numpy.Jnp_util.py_float
+let where = NL.where_
+let take1 g i = Numpy.Extras.fancy_take g [ i ]
 
-let unravel_grid t indices =
-  let out_shape = shape (List.hd indices) in
-  let n_points = Array.fold_left ( * ) 1 out_shape in
-  let vshape = shape t.values in
-  let d = List.length t.points in
-  let tail = Array.sub vshape d (Array.length vshape - d) in
-  let tail_size = Array.fold_left ( * ) 1 tail in
-  let grid = Array.sub vshape 0 d in
-  let strides = Array.make d 1 in
-  for k = d - 2 downto 0 do
-    strides.(k) <- strides.(k + 1) * grid.(k + 1)
-  done;
-  let flat_index =
-    List.fold_left
-      (fun acc (k, idx) ->
-        U.add acc
-          (U.multiply
-             (NL.reshape idx [| n_points |])
-             (L.full [| n_points |] (float_of_int strides.(k)) (dtype_of idx))))
-      (L.full [| n_points |] 0.0 (dtype_of (List.hd indices)))
-      (List.mapi (fun k idx -> (k, idx)) indices)
-  in
-  let cells = Array.fold_left ( * ) 1 grid in
-  let flat_values = NL.reshape t.values [| cells; tail_size |] in
-  let picked = Numpy.Indexing.take_index ~axis:0 flat_values flat_index in
-  (picked, out_shape, tail)
+let find_indices out_of_bounds x g =
+  let i = U.subtract (NL.searchsorted g x) (py_int 1) in
+  let i = where (U.less i (py_int 0)) (py_int 0) i in
+  let size = (shape g).(0) in
+  let i = where (U.greater i (py_int (size - 2))) (py_int (size - 2)) i in
+  let lower = take1 g i in
+  let delta = U.subtract x lower in
+  let next = take1 g (U.add i (py_int 1)) in
+  let base = take1 g i in
+  let norm = U.true_divide delta (U.subtract next base) in
+  let first = NL.index_at g 0 in
+  let bounds = U.add out_of_bounds (U.less x first) in
+  let last = NL.index_at g (size - 1) in
+  let bounds = U.add bounds (U.greater x last) in
+  (i, norm, bounds)
 
-let expand_weight w tail_rank =
-  NL.reshape w (Array.append (shape w) (Array.make tail_rank 1))
+let rec edge_product = function
+  | [] -> [ [] ]
+  | (i, up) :: rest ->
+      let later = edge_product rest in
+      List.map (fun tail -> i :: tail) later
+      @ List.map (fun tail -> up :: tail) later
+
+let weight_slice t d weight =
+  let extra = Array.length (shape t.values) - d in
+  if extra = 0 then weight
+  else L.expand_dims weight (Array.init extra (fun k -> k + 1))
+
+let evaluate_linear t indices norms =
+  let d = List.length indices in
+  let uppers = List.map (fun i -> U.add i (py_int 1)) indices in
+  let edges = edge_product (List.combine indices uppers) in
+  List.fold_left
+    (fun acc edge ->
+      let weight =
+        List.fold_left2
+          (fun w (ei, i) yi ->
+            let same = U.equal ei i in
+            let complement = U.subtract (py_float 1.0) yi in
+            U.multiply w (where same complement yi))
+          (py_float 1.0)
+          (List.combine edge indices)
+          norms
+      in
+      let picked = Numpy.Extras.fancy_take t.values edge in
+      U.add acc (U.multiply picked (weight_slice t d weight)))
+    (py_float 0.0) edges
+
+let evaluate_nearest t indices norms =
+  let chosen =
+    List.map2
+      (fun i yi ->
+        let near = U.less_equal yi (py_float 0.5) in
+        where near i (U.add i (py_int 1)))
+      indices norms
+  in
+  Numpy.Extras.fancy_take t.values chosen
 
 let evaluate t xi =
   let d = List.length t.points in
@@ -73,84 +93,49 @@ let evaluate t xi =
   let n = Array.length xshape in
   if xshape.(n - 1) <> d then
     invalid_arg "the requested sample points xi have the wrong dimension";
-  let coords =
-    List.init d (fun k ->
-        let c = L.index_in_dim ~axis:(n - 1) ~keepdims:false xi k in
-        NL.astype c (dtype_of (List.hd t.points)))
+  let flat_shape =
+    [| Array.fold_left ( * ) 1 xshape / xshape.(n - 1); xshape.(n - 1) |]
   in
-  let found = List.map2 find_indices t.points coords in
+  let xi_flat = if xshape = flat_shape then xi else NL.reshape xi flat_shape in
+  let rows = flat_shape.(0) in
+  let transposed = NL.transpose xi_flat in
+  let out_of_bounds = ref (L.full [| rows |] 0.0 Dtype.Bool) in
+  let found =
+    List.mapi
+      (fun k g ->
+        let sliced =
+          L.slice ~strides:[| 1; 1 |] transposed [| k; 0 |] [| k + 1; rows |]
+        in
+        let x = L.squeeze sliced [| 0 |] in
+        let i, norm, bounds = find_indices !out_of_bounds x g in
+        out_of_bounds := bounds;
+        (i, norm))
+      t.points
+  in
+  let indices = List.map fst found and norms = List.map snd found in
   let result =
     match t.method_ with
-    | "nearest" ->
-        let chosen =
-          List.map
-            (fun (lower, w) ->
-              NL.where_
-                (U.less_equal w (L.full_like w 0.5))
-                lower
-                (U.add lower (L.full_like lower 1.0)))
-            found
-        in
-        let picked, out_shape, tail = unravel_grid t chosen in
-        NL.reshape picked (Array.append out_shape tail)
-    | _ ->
-        let rec corners = function
-          | [] -> [ ([], None) ]
-          | (lower, w) :: rest ->
-              let later = corners rest in
-              let one = L.full_like w 1.0 in
-              List.concat_map
-                (fun (idx, weight) ->
-                  let combine extra =
-                    match weight with
-                    | None -> Some extra
-                    | Some acc -> Some (U.multiply extra acc)
-                  in
-                  [
-                    (lower :: idx, combine (U.subtract one w));
-                    (U.add lower (L.full_like lower 1.0) :: idx, combine w);
-                  ])
-                later
-        in
-        let terms =
-          List.map
-            (fun (idx, weight) ->
-              let picked, out_shape, tail = unravel_grid t idx in
-              let shaped = NL.reshape picked (Array.append out_shape tail) in
-              let w =
-                match weight with
-                | Some w -> w
-                | None -> failwith "interpolate: no dimensions"
-              in
-              let ew = expand_weight w (Array.length tail) in
-              U.multiply (NL.astype ew (dtype_of shaped)) shaped)
-            (corners found)
-        in
-        List.fold_left U.add (List.hd terms) (List.tl terms)
+    | "nearest" -> evaluate_nearest t indices norms
+    | _ -> evaluate_linear t indices norms
   in
-  match t.fill_value with
-  | None -> result
-  | Some fill ->
-      let tail_rank =
-        Array.length (shape result) - Array.length (shape (List.hd coords))
-      in
-      let outside =
-        List.fold_left2
-          (fun acc c point ->
-            let m = (shape point).(0) in
-            let low = L.index_in_dim ~keepdims:false point 0 in
-            let high = L.index_in_dim ~keepdims:false point (m - 1) in
-            let broad v = L.broadcast_in_dim v (shape c) [||] in
-            U.logical_or acc
-              (U.logical_or (U.less c (broad low)) (U.greater c (broad high))))
-          (L.full (shape (List.hd coords)) 0.0 Dtype.Bool)
-          coords t.points
-      in
-      let mask =
-        NL.reshape outside
-          (Array.append (shape outside) (Array.make tail_rank 1))
-      in
-      NL.where_
-        (NL.broadcast_to mask (shape result))
-        (L.full (shape result) fill (dtype_of result))
-        result
+  let result =
+    match t.fill_value with
+    | None -> result
+    | Some fill ->
+        let rs = shape result in
+        let bc =
+          Array.init (Array.length rs) (fun k -> if k = 0 then rs.(0) else 1)
+        in
+        let mask =
+          if bc = shape !out_of_bounds then !out_of_bounds
+          else NL.reshape !out_of_bounds bc
+        in
+        where mask (py_float fill) result
+  in
+  let vs = shape t.values in
+  let final =
+    Array.append
+      (Array.sub xshape 0 (n - 1))
+      (Array.sub vs d (Array.length vs - d))
+  in
+  if shape result = final then result else NL.reshape result final

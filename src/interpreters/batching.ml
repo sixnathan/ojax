@@ -503,14 +503,16 @@ let dynamic_update_slice_batch (axis_size : int) (vals : value list)
 
 let bump arr = Array.map (fun i -> i + 1) arr
 
-let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
-    (vals : value list) (bdims : int option list) : value * int option =
+let gather_batch ?(clip = false) (axis_size : int) (gd : gather_dims)
+    (slice_sizes : int array) (vals : value list) (bdims : int option list) :
+    value * int option =
+  let tag p = if clip then Np_ints.mark_prim p else p in
   match (vals, bdims) with
   | [ operand; indices ], [ ob; ib ] -> (
       match (ob, ib) with
       | None, None ->
           ( b1
-              (Gather { dimension_numbers = gd; slice_sizes })
+              (tag (Gather { dimension_numbers = gd; slice_sizes }))
               [ operand; indices ],
             None )
       | Some od, None ->
@@ -527,7 +529,7 @@ let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
             }
           in
           ( b1
-              (Gather { dimension_numbers = gd'; slice_sizes })
+              (tag (Gather { dimension_numbers = gd'; slice_sizes }))
               [ operand; indices ],
             Some 0 )
       | None, Some idd ->
@@ -543,7 +545,7 @@ let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
             }
           in
           ( b1
-              (Gather { dimension_numbers = gd'; slice_sizes })
+              (tag (Gather { dimension_numbers = gd'; slice_sizes }))
               [ operand; indices ],
             Some 0 )
       | Some od, Some idd ->
@@ -565,10 +567,51 @@ let gather_batch (axis_size : int) (gd : gather_dims) (slice_sizes : int array)
             }
           in
           ( b1
-              (Gather { dimension_numbers = gd'; slice_sizes })
+              (tag (Gather { dimension_numbers = gd'; slice_sizes }))
               [ operand; indices ],
             Some 0 ))
   | _ -> failwith "batching: gather expects operand and indices"
+
+let dynamic_slice_indices_batch (axis_size : int) (slice_sizes : int array)
+    (vals : value list) (bdims : int option list) : value * int option =
+  match (vals, bdims) with
+  | operand :: idx_vals, ob :: idx_bdims ->
+      let size =
+        List.find_map
+          (fun (x, b) -> Option.map (fun d -> (Core.get_aval x).shape.(d)) b)
+          (List.combine idx_vals idx_bdims)
+      in
+      let size =
+        match size with Some n -> n | None -> failwith "batching: no batch"
+      in
+      let lifted =
+        List.map2
+          (fun x b ->
+            b1
+              (Broadcast_in_dim
+                 {
+                   shape = [| size; 1 |];
+                   dims = (match b with Some _ -> [| 0 |] | None -> [||]);
+                 })
+              [ x ])
+          idx_vals idx_bdims
+      in
+      let index =
+        match lifted with [ only ] -> only | many -> b1 (Concatenate 1) many
+      in
+      let dims = Array.init (List.length idx_vals) Fun.id in
+      let gd =
+        {
+          offset_dims = dims;
+          collapsed_slice_dims = [||];
+          start_index_map = dims;
+          g_operand_batching_dims = [||];
+          g_start_indices_batching_dims = [||];
+        }
+      in
+      gather_batch ~clip:true axis_size gd slice_sizes [ operand; index ]
+        [ ob; Some 0 ]
+  | _ -> failwith "batching: dynamic_slice expects an operand"
 
 let scatter_dnums_of = function
   | Scatter { dimension_numbers; _ }
@@ -817,7 +860,12 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       | [ x ], [ b ] -> slice_batch start_indices limit_indices strides x b
       | _ -> failwith "batching: expected 1 operand")
   | Dynamic_slice { slice_sizes } ->
-      dynamic_slice_batch axis_size slice_sizes vals bdims
+      if
+        List.exists
+          (fun b -> b <> None)
+          (match bdims with _ :: rest -> rest | [] -> [])
+      then dynamic_slice_indices_batch axis_size slice_sizes vals bdims
+      else dynamic_slice_batch axis_size slice_sizes vals bdims
   | Dynamic_update_slice -> dynamic_update_slice_batch axis_size vals bdims
   | Gather { dimension_numbers; slice_sizes } ->
       gather_batch axis_size dimension_numbers slice_sizes vals bdims
@@ -1222,7 +1270,6 @@ let unstacks_operands prim (bdims : int option list) =
       true
   | Custom_vjp_call id, _ -> (
       match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
-  | Dynamic_slice _, _ :: indices -> any_batched indices
   | Dynamic_update_slice, _ :: _ :: indices -> any_batched indices
   | Reduce _, _ ->
       let n = List.length bdims / 2 in

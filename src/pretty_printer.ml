@@ -743,12 +743,15 @@ let jax_params (e : eqn) =
       ]
   | Top_k { k; axis } ->
       [ ("axis", Plain (string_of_int axis)); ("k", Plain (string_of_int k)) ]
-  | Gather { dimension_numbers; slice_sizes } ->
+  | Gather { dimension_numbers; slice_sizes } as p ->
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ("fill_value", Plain "None");
         ("indices_are_sorted", Plain "False");
-        ("mode", Plain "GatherScatterMode.PROMISE_IN_BOUNDS");
+        ( "mode",
+          Plain
+            (if Np_ints.prim_marked p then "GatherScatterMode.CLIP"
+             else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
         ("unique_indices", Plain "False");
       ]

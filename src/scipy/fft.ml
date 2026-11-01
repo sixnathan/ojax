@@ -115,6 +115,39 @@ let rec dct ?(type_ = 2) ?n ?(axis = -1) ?norm x =
     let out = two_real (UF.real out) in
     if norm = Some "ortho" then ortho_norm out axis else out
 
+let deinterleave x axis =
+  let size = (shape x).(axis) in
+  let half = (size + 1) / 2 in
+  let part lo hi =
+    let start = Array.make (rank x) 0 and limit = Array.copy (shape x) in
+    start.(axis) <- lo;
+    limit.(axis) <- hi;
+    L.slice x start limit
+  in
+  let v0 = part 0 half in
+  let v1 = L.rev (part half size) [| axis |] in
+  let out = Numpy.Array_creation.zeros ~dtype:(dtype_of x) (shape x) in
+  let set_every target first updates =
+    let count = (shape updates).(axis) in
+    let positions =
+      NL.arange ~start:(float_of_int first) ~step:2.0
+        ~dtype:(Dtypes.default_int_dtype ())
+        (float_of_int size)
+    in
+    L.scatter ~unique_indices:true target
+      (L.broadcast_in_dim positions [| count; 1 |] [| 0 |])
+      updates
+      (Np_ints.mark_sorted_unique
+         {
+           update_window_dims = other_axes (rank x) axis;
+           inserted_window_dims = [| axis |];
+           scatter_dims_to_operand_dims = [| axis |];
+           s_operand_batching_dims = [||];
+           s_scatter_indices_batching_dims = [||];
+         })
+  in
+  set_every (set_every out 0 v0) 1 v1
+
 let rec idct ?(type_ = 2) ?n ?(axis = -1) ?norm x =
   check_type type_;
   check_norm "idct" norm;
@@ -143,18 +176,7 @@ let rec idct ?(type_ = 2) ?n ?(axis = -1) ?norm x =
       Concrete (Ndarray.of_complex cdt [||] [| { Complex.re = v; im = 0.0 } |])
     in
     let x = UF.multiply (UF.multiply x (lit 2.0)) (lit (float_of_int size)) in
-    let inverse = UF.real (NF.ifft ~axis x) in
-    let half = (size + 1) / 2 in
-    let v0 = L.slice_in_dim ~axis inverse 0 half in
-    let v1 = L.rev (L.slice_in_dim ~axis inverse half size) [| axis |] in
-    let pieces0 = L.unstack v0 axis and pieces1 = L.unstack v1 axis in
-    let rec weave a b =
-      match (a, b) with
-      | x :: xs, y :: ys -> x :: y :: weave xs ys
-      | rest, [] -> rest
-      | [], rest -> rest
-    in
-    L.stack (weave pieces0 pieces1) axis
+    deinterleave (UF.real (NF.ifft ~axis x)) axis
 
 let dct2 x ~axes:(axis1, axis2) ~norm =
   let n1 = (shape x).(axis1) and n2 = (shape x).(axis2) in

@@ -2772,7 +2772,7 @@ and emit_traced ctx avals in_ids outs f =
     (emit_traced_ids ctx avals in_ids f)
 
 and emit_traced_ids ctx avals in_ids f =
-  emit_closed_inline ctx (Jaxpr.make_jaxpr avals f) in_ids
+  emit_closed_inline ctx (Jaxpr.make_jaxpr_for_lowering avals f) in_ids
 
 and hoist_custom_consts ctx (jx : jaxpr) =
   List.iter

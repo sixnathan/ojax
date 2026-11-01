@@ -190,15 +190,9 @@ let slice_in_dim ~axis ?(stride = 1) start stop x =
   let start_indices = Array.make n 0 and limit_indices = Array.copy shape in
   start_indices.(axis) <- start;
   limit_indices.(axis) <- stop;
-  let strides =
-    if stride = 1 then None
-    else begin
-      let st = Array.make n 1 in
-      st.(axis) <- stride;
-      Some st
-    end
-  in
-  b1 (Slice { start_indices; limit_indices; strides }) [ x ]
+  let st = Array.make n 1 in
+  st.(axis) <- stride;
+  b1 (Slice { start_indices; limit_indices; strides = Some st }) [ x ]
 
 let interleave a b axis =
   let an = (Core.get_aval a).shape.(axis) in
@@ -377,11 +371,32 @@ let standard_jvp prim primals tangents rules =
   in
   (out, List.fold_left add_tangents (p2tz out) terms)
 
+let lin_call_depth = ref 0
+let residual_zeros : Ndarray.t list ref = ref []
+
+let instantiate_residual t =
+  if is_zero t && !lin_call_depth > 0 then begin
+    let a = Core.get_aval t in
+    let zero = Core.splat a.dtype [||] 0.0 in
+    if Array.length a.shape = 0 then begin
+      (match zero with
+      | Concrete nd -> residual_zeros := nd :: !residual_zeros
+      | _ -> ());
+      zero
+    end
+    else b1 (Broadcast_in_dim { shape = a.shape; dims = [||] }) [ zero ]
+  end
+  else instantiate t
+
+let is_residual_zero = function
+  | Concrete nd -> List.memq nd !residual_zeros
+  | _ -> false
+
 let linear_jvp prim primals tangents =
   let out = b1 prim primals in
   if List.for_all is_zero tangents then (out, p2tz out)
   else
-    let ts = List.map instantiate tangents in
+    let ts = List.map instantiate_residual tangents in
     (out, b1 prim ts)
 
 let zero_jvp prim primals =
@@ -2178,7 +2193,9 @@ let same_const a b =
 
 let tape_const (b : jaxpr_builder) v =
   match v with
-  | Concrete nd when Array.length (Ndarray.shape nd) = 0 -> A_lit nd
+  | Concrete nd
+    when Array.length (Ndarray.shape nd) = 0 && not (is_residual_zero v) ->
+      A_lit nd
   | _ -> (
       match List.find_opt (fun (_, c) -> same_const c v) b.jb_constvals with
       | Some (var, _) -> A_var var
@@ -2360,10 +2377,14 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
       let holder = ref None in
       let primal =
         Jaxpr.make_jaxpr primal_avals (fun inputs ->
+            incr lin_call_depth;
             let pos, nzs_out, jx, consts =
-              !trace_linearized_ref
-                (fun a -> Jaxpr.eval_closed_jaxpr c a)
-                inputs nzs
+              Fun.protect
+                ~finally:(fun () -> decr lin_call_depth)
+                (fun () ->
+                  !trace_linearized_ref
+                    (fun a -> Jaxpr.eval_closed_jaxpr c a)
+                    inputs nzs)
             in
             let index_in l v =
               let rec go i = function
@@ -2383,7 +2404,9 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
               List.map
                 (fun v ->
                   match v with
-                  | Concrete _ | Device _ -> `Value v
+                  | (Concrete _ | Device _) when not (is_residual_zero v) ->
+                      `Value v
+                  | Concrete _ | Device _ -> `Output
                   | Tracer _ -> (
                       match index_in inputs v with
                       | Some i -> `Input i
@@ -2673,7 +2696,7 @@ let () =
                  {
                    start_indices = start;
                    limit_indices = limit;
-                   strides = None;
+                   strides = Some (Array.make (Array.length sh) 1);
                  })
               [ x ]
           in
@@ -2910,7 +2933,8 @@ let reduce_sum_transpose (axes : int array) (in_shape : int array) ct =
     ct
   else
     b1
-      (Broadcast_in_dim { shape = in_shape; dims = Array.of_list !kept })
+      (Broadcast_in_dim
+         { shape = in_shape; dims = Np_ints.mark (Array.of_list !kept) })
       [ ct ]
 
 let argsort perm =
@@ -3269,15 +3293,21 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
             match strides with Some s -> s | None -> Array.make n 1
           in
           let ct_shape = (Core.get_aval ct).shape in
+          let unit_strides = Array.for_all (fun s -> s = 1) strides in
           let cfg =
-            Array.init n (fun i ->
-                let s = strides.(i) in
-                let out_d = ct_shape.(i) in
-                let real_limit =
-                  start_indices.(i)
-                  + if out_d = 0 then 0 else 1 + ((out_d - 1) * s)
-                in
-                (start_indices.(i), os.(i) - real_limit, s - 1))
+            Np_ints.mark_triples
+              (fun i j ->
+                (j = 0 && Np_ints.is_marked start_indices i)
+                || j = 1
+                || (j = 2 && not unit_strides))
+              (Array.init n (fun i ->
+                   let s = strides.(i) in
+                   let out_d = ct_shape.(i) in
+                   let real_limit =
+                     start_indices.(i)
+                     + if out_d = 0 then 0 else 1 + ((out_d - 1) * s)
+                   in
+                   (start_indices.(i), os.(i) - real_limit, s - 1)))
           in
           [ Some (b1 (Pad cfg) [ ct; scalar_const ct 0.0 ]) ]
       | _ -> arity ())
@@ -3653,16 +3683,22 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           let t = ct1 () in
           let ndim = Array.length cfg in
           let t_operand () =
-            let unpad = Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg in
+            let unpad =
+              Np_ints.mark_triples
+                (fun _ _ -> true)
+                (Array.map (fun (lo, hi, _) -> (-lo, -hi, 0)) cfg)
+            in
             let dt = (Core.get_aval t).dtype in
             let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
             let unpadded = b1 (Pad unpad) [ t; zero ] in
             b1
               (Slice
                  {
-                   start_indices = Array.make ndim 0;
+                   start_indices = Np_ints.mark (Array.make ndim 0);
                    limit_indices = (Core.get_aval unpadded).shape;
-                   strides = Some (Array.map (fun (_, _, i) -> i + 1) cfg);
+                   strides =
+                     Some
+                       (Np_ints.mark (Array.map (fun (_, _, i) -> i + 1) cfg));
                  })
               [ unpadded ]
           in

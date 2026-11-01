@@ -345,6 +345,8 @@ let hoist_custom_consts prim (c : closed_jaxpr) args =
         fun avals -> Core.note_custom_call_jaxpr id' avals lifted )
   | _ -> (prim, args, c, fun _ -> ())
 
+let lowering = ref false
+
 let process_primitive trace prim args =
   let builder = builder_of trace in
   let avals_of l = List.map (fun (t : tracer) -> t.aval) l in
@@ -366,23 +368,33 @@ let process_primitive trace prim args =
   in
   let tracers = List.map as_tracer args in
   let avals_in = avals_of tracers in
-  let avals_out = Core.rules.abstract_eval prim avals_in in
-  let avals_out =
-    match prim with
-    | Convert_element_type _ when !Core.weak_convert ->
-        List.map (fun (a : aval) -> { a with weak_type = true }) avals_out
-    | _ -> avals_out
-  in
-  let out_tracers = List.map (new_tracer builder trace) avals_out in
-  let inputs = List.map (fun t -> A_var (getvar builder t)) tracers in
-  let outvars = List.map (add_var builder) out_tracers in
-  (match (custom_jaxpr, outvars) with
-  | Some c, (first : var) :: _ -> Core.note_custom_eqn_jaxpr first.vid c
-  | _ -> ());
-  builder.jb_eqns <-
-    { prim; inputs; outs = outvars; multiple_results = List.length outvars > 1 }
-    :: builder.jb_eqns;
-  List.map (fun t -> Tracer t) out_tracers
+  match (prim, tracers) with
+  | Broadcast_in_dim { shape; _ }, [ t ]
+    when t.aval.shape = shape && not !lowering ->
+      [ Tracer t ]
+  | _ ->
+      let avals_out = Core.rules.abstract_eval prim avals_in in
+      let avals_out =
+        match prim with
+        | Convert_element_type _ when !Core.weak_convert ->
+            List.map (fun (a : aval) -> { a with weak_type = true }) avals_out
+        | _ -> avals_out
+      in
+      let out_tracers = List.map (new_tracer builder trace) avals_out in
+      let inputs = List.map (fun t -> A_var (getvar builder t)) tracers in
+      let outvars = List.map (add_var builder) out_tracers in
+      (match (custom_jaxpr, outvars) with
+      | Some c, (first : var) :: _ -> Core.note_custom_eqn_jaxpr first.vid c
+      | _ -> ());
+      builder.jb_eqns <-
+        {
+          prim;
+          inputs;
+          outs = outvars;
+          multiple_results = List.length outvars > 1;
+        }
+        :: builder.jb_eqns;
+      List.map (fun t -> Tracer t) out_tracers
 
 let interpreter : Core.interpreter =
   {
@@ -564,6 +576,13 @@ let make_jaxpr (in_avals : aval list) (f : value list -> value list) :
   match make_jaxpr_hoisted in_avals f with
   | closed, [] -> closed
   | _ -> invalid_arg "make_jaxpr: function closed over a tracer"
+
+let make_jaxpr_for_lowering in_avals f =
+  let saved = !lowering in
+  lowering := true;
+  Fun.protect
+    ~finally:(fun () -> lowering := saved)
+    (fun () -> make_jaxpr in_avals f)
 
 let lift_while ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
     (body : closed_jaxpr) (avals : aval list) =

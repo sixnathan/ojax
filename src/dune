@@ -5,7 +5,7 @@
  (libraries unix)
  (foreign_stubs
   (language c)
-  (names pjrt_shim lapack_shim)
+  (names pjrt_shim lapack_shim lapack_ffi)
   (include_dirs %{project_root}/reference/pjrt))
  (c_library_flags
   (:include lapack_flags.sexp)))

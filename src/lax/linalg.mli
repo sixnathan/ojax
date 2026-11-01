@@ -20,6 +20,15 @@ val svd_impl : ?gesvd:bool -> bool -> bool -> Ndarray.t list -> Ndarray.t list
 val tridiagonal_impl : bool -> Ndarray.t list -> Ndarray.t list
 val geqrf_impl : Ndarray.t -> Ndarray.t list
 val geqp3_impl : Ndarray.t -> Ndarray.t list
+
+val ormqr_impl :
+  left:bool ->
+  transpose:bool ->
+  Ndarray.t ->
+  Ndarray.t ->
+  Ndarray.t ->
+  Ndarray.t list
+
 val cholesky_aval : aval list -> aval list
 val lu_aval : aval list -> aval list
 val qr_aval : bool -> aval list -> aval list

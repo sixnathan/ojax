@@ -1733,7 +1733,9 @@ let cpu_fallback_stays name f args () =
       Alcotest.(check bool)
         (name ^ " stays on LAPACK on cpu")
         true
-        (List.length after = List.length before + 1);
+        (List.length after
+        = List.length before
+          + if Ojax.Lapack_seam.Lapack.single_routines then 0 else 1);
       compare_outputs name (List.assoc name expected_cpu) outs)
 
 let eigh_outputs = function

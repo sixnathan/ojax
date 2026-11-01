@@ -1961,6 +1961,75 @@ let ffi_layout_text layout =
   in
   Printf.sprintf "dense<%s> : tensor<%dxindex>" body n
 
+let lapack_ffi_ready : (unit -> bool) ref = ref (fun () -> false)
+let lapack_ffi () = Config.current_platform () = "cpu" && !lapack_ffi_ready ()
+
+let lapack_prec dt =
+  match dt with
+  | Dtype.F32 -> 's'
+  | Dtype.F64 -> 'd'
+  | Dtype.Complex64 -> 'c'
+  | Dtype.Complex128 -> 'z'
+  | _ -> failwith "Stablehlo.Emit: LAPACK has no routine for this dtype"
+
+let lapack_layout rank ~batch =
+  if rank <= batch then Array.init rank Fun.id
+  else
+    Array.append
+      (Array.init (rank - batch) (fun i -> batch + i))
+      (Array.init batch Fun.id)
+
+let lapack_aval shape dtype = { shape; dtype; weak_type = false }
+
+let emit_lapack_call ctx ~base ~config ~aliases in_ids in_avals out_avals =
+  let first = List.hd in_avals in
+  let batch =
+    List.fold_left
+      (fun acc (a : aval) -> max acc (Array.length a.shape - 2))
+      0 in_avals
+  in
+  let group = fresh ctx in
+  let n = List.length out_avals in
+  let layouts avals =
+    String.concat ", "
+      (List.map
+         (fun (a : aval) ->
+           ffi_layout_text (lapack_layout (Array.length a.shape) ~batch))
+         avals)
+  in
+  let alias_text =
+    if aliases = [] then ""
+    else
+      Printf.sprintf ", output_operand_aliases = [%s]"
+        (String.concat ", "
+           (List.map
+              (fun (input, output) ->
+                Printf.sprintf
+                  "#stablehlo.output_operand_alias<output_tuple_indices = \
+                   [%s], operand_index = %d, operand_tuple_indices = []>"
+                  (if n > 1 then string_of_int output else "")
+                  input)
+              aliases))
+  in
+  let types avals =
+    String.concat ", " (List.map Ir.tensor_type_of_aval avals)
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %%%d%s = stablehlo.custom_call @lapack_%c%s_ffi(%s) \
+        {backend_config = \"\", mhlo.backend_config = {%s}, \
+        mhlo.frontend_attributes = {num_batch_dims = \"%d\"}, operand_layouts \
+        = [%s]%s, result_layouts = [%s]} : (%s) -> %s\n"
+       group
+       (if n > 1 then Printf.sprintf ":%d" n else "")
+       (lapack_prec first.dtype) base
+       (String.concat ", " (List.map name in_ids))
+       config batch (layouts in_avals) alias_text (layouts out_avals)
+       (types in_avals)
+       (if n > 1 then "(" ^ types out_avals ^ ")" else types out_avals));
+  if n = 1 then [ group ]
+  else List.init n (fun i -> alias_result (Printf.sprintf "%%%d#%d" group i))
+
 let emit_ffi_call ctx (eqn : eqn) in_ids (c : ffi_call) =
   let operand_types =
     List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) eqn.inputs
@@ -2998,6 +3067,276 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_inlined ctx eqn in_ids (Jaxpr.eval_closed_jaxpr decomposition)
   | Custom_linear_solve { solve; _ } ->
       emit_inlined ctx eqn in_ids (Jaxpr.eval_closed_jaxpr solve)
+  | Cholesky when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let info =
+        lapack_aval (Array.sub a.shape 0 (Array.length a.shape - 2)) Dtype.I32
+      in
+      let ids =
+        emit_lapack_call ctx ~base:"potrf" ~config:"uplo = 76 : ui8"
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] [ a; info ]
+      in
+      emit_traced ctx [ a; info ] ids eqn.outs Native_lowering.lapack_cholesky
+  | Triangular_solve ({ transpose_a = false; conjugate_a = true; _ } as o)
+    when lapack_ffi () ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a; b ] ->
+            let a =
+              if is_complex_dtype (Core.get_aval a).dtype then
+                Core.bind1 Conj [ a ]
+              else a
+            in
+            Core.bind (Triangular_solve { o with conjugate_a = false }) [ a; b ]
+        | _ -> invalid_arg "Stablehlo.Emit: triangular_solve arity")
+  | Triangular_solve o when lapack_ffi () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let b = List.nth inputs 1 in
+      let char_attr key c = Printf.sprintf "%s = %d : ui8" key (Char.code c) in
+      let trans =
+        if not o.transpose_a then 'N'
+        else if o.conjugate_a && is_complex_dtype b.dtype then 'C'
+        else 'T'
+      in
+      let config =
+        String.concat ", "
+          [
+            char_attr "diag" (if o.unit_diagonal then 'U' else 'N');
+            char_attr "side" (if o.left_side then 'L' else 'R');
+            char_attr "trans_x" trans;
+            char_attr "uplo" (if o.lower then 'L' else 'U');
+          ]
+      in
+      let ids =
+        emit_lapack_call ctx ~base:"trsm" ~config
+          ~aliases:[ (1, 0) ]
+          in_ids inputs [ b ]
+      in
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid (List.hd ids)
+  | Householder_product when lapack_ffi () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let a = List.hd inputs in
+      let base = if is_complex_dtype a.dtype then "ungqr" else "orgqr" in
+      let ids =
+        emit_lapack_call ctx ~base ~config:""
+          ~aliases:[ (0, 0) ]
+          in_ids inputs [ a ]
+      in
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid (List.hd ids)
+  | Lu when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      if Array.exists (fun d -> d = 0) a.shape then
+        failwith "Stablehlo.Emit: an empty lu runs on the host";
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let m = a.shape.(rank - 2) and n = a.shape.(rank - 1) in
+      let pivots = lapack_aval (Array.append batch [| min m n |]) Dtype.I32 in
+      let info = lapack_aval batch Dtype.I32 in
+      let ids =
+        emit_lapack_call ctx ~base:"getrf" ~config:""
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] [ a; pivots; info ]
+      in
+      emit_traced ctx [ a; pivots; info ] ids eqn.outs
+        (Native_lowering.lapack_lu ~permutation_size:m)
+  | Qr full_matrices when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      if Array.exists (fun d -> d = 0) a.shape then
+        failwith "Stablehlo.Emit: an empty qr runs on the host";
+      let taus =
+        lapack_aval
+          (Array.append
+             (Array.sub a.shape 0 (rank - 2))
+             [| min a.shape.(rank - 2) a.shape.(rank - 1) |])
+          a.dtype
+      in
+      let ids =
+        emit_lapack_call ctx ~base:"geqrf" ~config:""
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] [ a; taus ]
+      in
+      emit_traced ctx [ a; taus ] ids eqn.outs
+        (Native_lowering.qr_from_factors ~full_matrices)
+  | Tridiagonal_solve { perturb_singular = false } when lapack_ffi () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let d = List.nth inputs 1 and b = List.nth inputs 3 in
+      if Array.length b.shape <> Array.length d.shape + 1 then
+        failwith "Stablehlo.Emit: gtsv expects a matrix right-hand side";
+      let info =
+        lapack_aval (Array.sub b.shape 0 (Array.length b.shape - 2)) Dtype.I32
+      in
+      let out_avals = inputs @ [ info ] in
+      let ids =
+        emit_lapack_call ctx ~base:"gtsv" ~config:""
+          ~aliases:[ (0, 0); (1, 1); (2, 2); (3, 3) ]
+          in_ids inputs out_avals
+      in
+      emit_traced ctx out_avals ids eqn.outs (fun outs ->
+          match Native_lowering.lapack_guarded outs with
+          | [ _; _; _; x ] -> [ x ]
+          | _ -> invalid_arg "Stablehlo.Emit: gtsv arity")
+  | Eigh { lower } when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let c = is_complex_dtype a.dtype in
+      let real_dt =
+        match a.dtype with
+        | Dtype.Complex64 -> Dtype.F32
+        | Dtype.Complex128 -> Dtype.F64
+        | d -> d
+      in
+      if Array.exists (fun d -> d = 0) a.shape then
+        failwith "Stablehlo.Emit: an empty eigh runs on the host";
+      let w =
+        lapack_aval (Array.append batch [| a.shape.(rank - 1) |]) real_dt
+      in
+      let info = lapack_aval batch Dtype.I32 in
+      let config =
+        Printf.sprintf "mode = 86 : ui8, uplo = %d : ui8"
+          (Char.code (if lower then 'L' else 'U'))
+      in
+      let ids =
+        emit_lapack_call ctx
+          ~base:(if c then "heevd" else "syevd")
+          ~config
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] [ a; w; info ]
+      in
+      emit_traced ctx [ a; w; info ] ids eqn.outs Native_lowering.lapack_guarded
+  | Svd { full_matrices; compute_uv; gesvd } when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      if Array.exists (fun d -> d = 0) a.shape then
+        failwith "Stablehlo.Emit: an empty svd runs on the host";
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let m = a.shape.(rank - 2) and n = a.shape.(rank - 1) in
+      let mn = min m n in
+      let real_dt =
+        match a.dtype with
+        | Dtype.Complex64 -> Dtype.F32
+        | Dtype.Complex128 -> Dtype.F64
+        | d -> d
+      in
+      let s = lapack_aval (Array.append batch [| mn |]) real_dt in
+      let u =
+        lapack_aval
+          (Array.append batch [| m; (if full_matrices then m else mn) |])
+          a.dtype
+      in
+      let vt =
+        lapack_aval
+          (Array.append batch [| (if full_matrices then n else mn); n |])
+          a.dtype
+      in
+      let info = lapack_aval batch Dtype.I32 in
+      let mode =
+        if not compute_uv then 'N' else if full_matrices then 'A' else 'S'
+      in
+      let out_avals = [ a; s; u; vt; info ] in
+      let ids =
+        emit_lapack_call ctx
+          ~base:(if gesvd then "gesvd" else "gesdd")
+          ~config:(Printf.sprintf "mode = %d : ui8" (Char.code mode))
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] out_avals
+      in
+      emit_traced ctx out_avals ids eqn.outs
+        (Native_lowering.lapack_svd ~compute_uv)
+  | Eig { compute_left; compute_right; _ } when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      if Array.exists (fun d -> d = 0) a.shape then
+        failwith "Stablehlo.Emit: an empty eig runs on the host";
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let n = a.shape.(rank - 1) in
+      let real = not (is_complex_dtype a.dtype) in
+      let cdt =
+        match a.dtype with
+        | Dtype.F32 | Dtype.Complex64 -> Dtype.Complex64
+        | _ -> Dtype.Complex128
+      in
+      let w = lapack_aval (Array.append batch [| n |]) a.dtype in
+      let vec = lapack_aval a.shape cdt in
+      let info = lapack_aval batch Dtype.I32 in
+      let out_avals = (if real then [ w; w ] else [ w ]) @ [ vec; vec; info ] in
+      let flag b = Char.code (if b then 'V' else 'N') in
+      let ids =
+        emit_lapack_call ctx ~base:"geev"
+          ~config:
+            (Printf.sprintf "compute_left = %d : ui8, compute_right = %d : ui8"
+               (flag compute_left) (flag compute_right))
+          ~aliases:[] in_ids [ a ] out_avals
+      in
+      emit_traced ctx out_avals ids eqn.outs
+        (Native_lowering.lapack_eig ~real ~compute_left ~compute_right)
+  | Hessenberg when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      let n = a.shape.(rank - 1) in
+      if n < 2 then
+        failwith "Stablehlo.Emit: a small hessenberg runs on the host";
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let taus = lapack_aval (Array.append batch [| n - 1 |]) a.dtype in
+      let info = lapack_aval batch Dtype.I32 in
+      let out_avals = [ a; taus; info ] in
+      let ids =
+        emit_lapack_call ctx ~base:"gehrd"
+          ~config:(Printf.sprintf "high = %d : i32, low = 1 : i32" n)
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] out_avals
+      in
+      emit_traced ctx out_avals ids eqn.outs Native_lowering.lapack_guarded
+  | Schur { compute_vectors } when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      if Array.exists (fun d -> d = 0) a.shape then
+        failwith "Stablehlo.Emit: an empty schur runs on the host";
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let w =
+        lapack_aval (Array.append batch [| a.shape.(rank - 1) |]) a.dtype
+      in
+      let scalar = lapack_aval batch Dtype.I32 in
+      let values = if is_complex_dtype a.dtype then [ w ] else [ w; w ] in
+      let out_avals = [ a; a ] @ values @ [ scalar; scalar ] in
+      let mode = Char.code (if compute_vectors then 'V' else 'N') in
+      let ids =
+        emit_lapack_call ctx ~base:"gees"
+          ~config:(Printf.sprintf "mode = %d : ui8, sort = 78 : ui8" mode)
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] out_avals
+      in
+      emit_traced ctx out_avals ids eqn.outs
+        (Native_lowering.lapack_schur ~compute_vectors)
+  | Tridiagonal { lower } when lapack_ffi () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      let n = a.shape.(rank - 1) in
+      if n < 2 then
+        failwith "Stablehlo.Emit: a small tridiagonal runs on the host";
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let real_dt =
+        match a.dtype with
+        | Dtype.Complex64 -> Dtype.F32
+        | Dtype.Complex128 -> Dtype.F64
+        | d -> d
+      in
+      let d = lapack_aval (Array.append batch [| n |]) real_dt in
+      let e = lapack_aval (Array.append batch [| n - 1 |]) real_dt in
+      let taus = lapack_aval (Array.append batch [| n - 1 |]) a.dtype in
+      let info = lapack_aval batch Dtype.I32 in
+      let out_avals = [ a; d; e; taus; info ] in
+      let ids =
+        emit_lapack_call ctx
+          ~base:(if is_complex_dtype a.dtype then "hetrd" else "sytrd")
+          ~config:
+            (Printf.sprintf "uplo = %d : ui8"
+               (Char.code (if lower then 'L' else 'U')))
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] out_avals
+      in
+      emit_traced ctx out_avals ids eqn.outs Native_lowering.lapack_guarded
   | Cholesky ->
       let aval = atom_aval (sole eqn.inputs) in
       let ty = Ir.tensor_type_of_aval aval in
@@ -3127,7 +3466,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       let v1, _ = emit_eigh_call ctx input ~lower ~vectors ~values in
       emit_traced ctx [ a; v.vaval ] [ input; v1 ] [ v; w ]
         (Native_lowering.eigh_refined ~lower)
-  | Svd { full_matrices; compute_uv } ->
+  | Svd { full_matrices; compute_uv; _ } ->
       if Config.current_platform () = "cpu" then
         failwith
           "Stablehlo.Emit: svd on cpu uses LAPACK gesdd, whose singular vector \

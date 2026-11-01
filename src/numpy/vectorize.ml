@@ -142,7 +142,7 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
   in
   let broadcast_shape = LN.broadcast_shapes_n batch_shapes in
   let traced =
-    Array.exists (function T.Tracer _ -> true | _ -> false) dyn_arr
+    Array.exists (function T.Concrete _ -> false | _ -> true) dyn_arr
   in
   if traced then begin
     let nb = Array.length broadcast_shape in

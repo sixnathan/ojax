@@ -1805,7 +1805,10 @@ let batch_linear_part (c : closed_jaxpr) axis_size in_bat instantiate =
     if bat then { a with shape = Array.append [| axis_size |] a.shape } else a
   in
   let in_avals =
-    List.map2 (fun bat (v : var) -> lift bat v.vaval) in_bat c.jaxpr.in_binders
+    List.map2
+      (fun bat (v : var) -> lift bat v.vaval)
+      in_bat
+      (List.filteri (fun i _ -> i >= List.length c.consts) c.jaxpr.in_binders)
   in
   let out_bat = ref [] in
   let closed =

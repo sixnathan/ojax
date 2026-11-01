@@ -96,7 +96,12 @@ let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
       let prev = !in_eqn_eval in
       if not !eval_transparent then in_eqn_eval := true;
       let outs =
-        match Core.bind e.prim in_vals with
+        match
+          match (e.prim, in_vals, e.outs) with
+          | Convert_element_type dt, [ v ], [ o ] when o.vaval.weak_type ->
+              [ Core.convert_like ~weak:true v dt ]
+          | _ -> Core.bind e.prim in_vals
+        with
         | outs ->
             in_eqn_eval := prev;
             outs

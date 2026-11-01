@@ -6,9 +6,19 @@ let instantiate_zero t =
     Core.splat a.dtype a.shape 0.0
   else t
 
+let instantiate_zero_like primal t =
+  match instantiate_zero t with
+  | Concrete nd when Ad_util.is_symbolic_zero t && (Core.get_aval primal).weak_type ->
+      Concrete (Ndarray.as_weak nd)
+  | v -> v
+
 let custom_jvp ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =
   let rule primals tangents =
-    let tangents = List.map instantiate_zero tangents in
+    let tangents =
+      if List.compare_lengths primals tangents = 0 then
+        List.map2 instantiate_zero_like primals tangents
+      else List.map instantiate_zero tangents
+    in
     jvp primals tangents
   in
   let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp = rule }) in

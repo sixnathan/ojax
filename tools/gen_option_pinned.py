@@ -24,7 +24,12 @@ PINNED = [
     (71204459, "lax_linalg.schur_8e3527b8_float64"),
     (71204459, "sp_special.log_softmax_956c2041_float32"),
     (71204459, "sp_special.softmax_956c2041_float32"),
+    (71204459, "jnp.tensordot_71574931_float64"),
+    (71204459, "jnp.tensordot_e0c74ffd_float64"),
+    (71204459, "jnp.vecdot_68a9423f_float64"),
+    (71204459, "linalg.vecdot_aeb6496a_float64"),
     (66338877, "sp_special.sph_harm_y_a6f05c88_float32"),
+    (66338877, "jnp.tensordot_b5814664_float64"),
 ]
 
 

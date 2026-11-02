@@ -398,22 +398,24 @@ let leading_slice v start stop =
     [ v ]
 
 let at_leading_slice_set x start y =
-  let index =
-    L.broadcast_in_dim
-      (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
-      [| 1 |] [||]
-  in
-  let r = rank x in
-  L.scatter x index y
-    {
-      update_window_dims = Array.init r Fun.id;
-      inserted_window_dims = [||];
-      scatter_dims_to_operand_dims = [| 0 |];
-      s_operand_batching_dims = [||];
-      s_scatter_indices_batching_dims = [||];
-      s_sorted_unique = true;
-      s_clip = false;
-    }
+  if size_of y = 0 then x
+  else
+    let index =
+      L.broadcast_in_dim
+        (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
+        [| 1 |] [||]
+    in
+    let r = rank x in
+    L.scatter x index y
+      {
+        update_window_dims = Array.init r Fun.id;
+        inserted_window_dims = [||];
+        scatter_dims_to_operand_dims = [| 0 |];
+        s_operand_batching_dims = [||];
+        s_scatter_indices_batching_dims = [||];
+        s_sorted_unique = true;
+        s_clip = false;
+      }
 
 let unique_sorted_mask ar axis equal_nan =
   Jnp_util.jit "_unique_sorted_mask"

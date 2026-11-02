@@ -1,0 +1,4 @@
+jnp.put_mixed_full_bogus_float32:eager:error_text	1
+jnp.put_mixed_full_bogus_float32:jit:error_text	1
+jnp.put_mixed_full_raise_float32:eager:error_text	1
+jnp.put_mixed_full_raise_float32:jit:error_text	1

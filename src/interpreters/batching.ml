@@ -1302,7 +1302,7 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     let shape = (Core.get_aval x).shape in
     let rank = Array.length shape in
     if d >= rank || d < -rank then
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "vmap was requested to map its argument along axis %d, which \
             implies that its rank should be at least %d, but is only %d (its \
@@ -1337,8 +1337,13 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     in
     match sizes with
     | [ size ] -> size
-    | [] -> invalid_arg "vmap must have at least one non-None value in in_axes"
-    | _ -> invalid_arg "vmap got inconsistent sizes for array axes to be mapped"
+    | [] ->
+        Py_exn.value_error
+          "vmap must have at least one non-None value in in_axes or axis_size \
+           must be specified"
+    | _ ->
+        Py_exn.value_error
+          "vmap got inconsistent sizes for array axes to be mapped"
   in
   Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
       let tracers_in =
@@ -1372,7 +1377,7 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
             Array.length (Core.get_aval v).shape + if bdim = None then 1 else 0
           in
           if out_axis >= rank || out_axis < -rank then
-            invalid_arg
+            Py_exn.value_error
               (Printf.sprintf
                  "axis %d is out of bounds for array of dimension %d" out_axis
                  rank);

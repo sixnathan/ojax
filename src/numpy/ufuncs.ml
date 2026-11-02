@@ -74,15 +74,6 @@ let promote_shapes vs =
         else
           let _ = Validate.broadcast_shapes (List.map shape vs) in
           let n = List.fold_left (fun acc v -> max acc (rank v)) 0 vs in
-          let padded v = Array.append (Array.make (n - rank v) 1) (shape v) in
-          for d = 0 to n - 1 do
-            if Core.sizes_conflict (List.map (fun v -> (padded v).(d)) vs) then
-              invalid_arg
-                (Printf.sprintf
-                   "Incompatible shapes for broadcasting: shapes=[%s]"
-                   (String.concat ", "
-                      (List.map (fun v -> Core.py_shape (shape v)) vs)))
-          done;
           List.map
             (fun v ->
               let s = shape v in

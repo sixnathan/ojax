@@ -1390,7 +1390,16 @@ let default_device ?(new_val : string option) () thunk =
         (Py_exn.Type_error
            "Context manager for default_device config option requires an \
             argument representing the new value for the config option.")
-  | Some _ -> thunk ()
+  | Some v when List.mem v [ "cpu"; "gpu"; "tpu" ] -> thunk ()
+  | Some v ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "jax.default_device must be passed either a Device object (e.g. \
+            `jax.devices('cpu')[0]`) or a platform name string like 'cpu' or \
+            'gpu', got: %s"
+           (if String.contains v '\'' && not (String.contains v '"') then
+              "\"" ^ v ^ "\""
+            else "'" ^ v ^ "'"))
 
 let live_arrays ?(platform : string option) () =
   ignore platform;

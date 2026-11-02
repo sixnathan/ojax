@@ -174,7 +174,18 @@ let tanh ?accuracy x =
 let betainc a b x = b1 Regularized_incomplete_beta [ a; b; x ]
 let stop_gradient = Custom_derivatives.stop_gradient
 let optimization_barrier xs = Core.bind Optimization_barrier xs
-let convert_element_type x dt = b1 (Convert_element_type dt) [ x ]
+
+let convert_element_type x dt =
+  (match (dtype_of x, dt) with
+  | (Dtype.Complex64 | Dtype.Complex128), (Dtype.Complex64 | Dtype.Complex128)
+    ->
+      ()
+  | (Dtype.Complex64 | Dtype.Complex128), _ ->
+      Py_warnings.warn ~category:"ComplexWarning"
+        "Casting complex values to real discards the imaginary part"
+  | _ -> ());
+  b1 (Convert_element_type dt) [ x ]
+
 let bitcast_convert_type x dt = b1 (Bitcast_convert_type dt) [ x ]
 
 let reduce_precision x ~exponent_bits ~mantissa_bits =

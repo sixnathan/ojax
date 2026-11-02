@@ -549,11 +549,13 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
     in
     let scale = if mode = "stft" then Numpy.Ufuncs.sqrt scale else scale in
     let scale = NL.astype scale (complex_dtype_of (dtype_of scale)) in
-    let onesided =
-      return_onesided
-      && (not (is_complex x))
-      && not (match y with Some v -> is_complex v | None -> false)
+    let any_complex =
+      is_complex x || match y with Some v -> is_complex v | None -> false
     in
+    if return_onesided && any_complex then
+      Py_warnings.warn
+        "Input data is complex, switching to return_onesided=False";
+    let onesided = return_onesided && not any_complex in
     let freqs =
       if onesided then Numpy.Fft.rfftfreq ~d:(1.0 /. fs) ~dtype:freq_dt nfft
       else Numpy.Fft.fftfreq ~d:(1.0 /. fs) ~dtype:freq_dt nfft

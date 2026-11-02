@@ -1544,6 +1544,37 @@ let rec mark_key_operands keys (jx : jaxpr) =
             List.iter2
               (fun b input -> if is_key b then mark input)
               args e.inputs
+      | Scan { jaxpr = c; _ }, _ ->
+          mark_key_operands keys c.jaxpr;
+          let args =
+            List.filteri
+              (fun i _ -> i >= List.length c.consts)
+              c.jaxpr.in_binders
+          in
+          if List.compare_lengths args e.inputs = 0 then
+            List.iter2
+              (fun b input -> if is_key b then mark input)
+              args e.inputs
+      | While { cond_nconsts; body_nconsts; cond; body }, _ ->
+          let n = cond_nconsts + body_nconsts in
+          let back (c : closed_jaxpr) positions =
+            mark_key_operands keys c.jaxpr;
+            let binders =
+              List.filteri
+                (fun i _ -> i >= List.length c.consts)
+                c.jaxpr.in_binders
+            in
+            if List.compare_lengths binders positions = 0 then
+              List.iter2
+                (fun b input -> if is_key b then mark input)
+                binders positions
+          in
+          let slice lo hi =
+            List.filteri (fun i _ -> i >= lo && i < hi) e.inputs
+          in
+          let carry = List.filteri (fun i _ -> i >= n) e.inputs in
+          back cond (slice 0 cond_nconsts @ carry);
+          back body (slice cond_nconsts n @ carry)
       | _ -> ())
     (List.rev jx.eqns)
 
@@ -1682,4 +1713,11 @@ let eqn_to_jax_string (e : eqn) =
       keys = Hashtbl.create 1;
     }
   in
+  mark_keys ctx.keys
+    {
+      in_binders =
+        List.filter_map (function A_var v -> Some v | _ -> None) e.inputs;
+      eqns = [ e ];
+      outs = List.map (fun v -> A_var v) e.outs;
+    };
   Layout.render (pp_eqn ctx e)

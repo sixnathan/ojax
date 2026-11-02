@@ -48,18 +48,30 @@ let cholesky ?lower a0 =
 
 let cho_factor ?(lower = false) a = (cholesky ~lower a, lower)
 
-let triangular_signature ?(extra = "") a b =
+let triangular_signature ?(extra = "") ~name a b =
   let vector = Printf.sprintf "(n,n)%s,(n)->(n)" extra in
   if ndim b = 1 then vector
   else if
     ndim a = ndim b + 1
     && Validate.tuple_index (shape a) (-1) = Validate.tuple_index (shape b) (-1)
-  then vector
+  then begin
+    Py_warnings.warn ~category:"FutureWarning"
+      (Printf.sprintf
+         "jax.scipy.linalg.%s: batched 1D solves with b.ndim > 1 are \
+          deprecated, and in the future will be treated as a batched 2D solve. \
+          Use %s to avoid this warning."
+         name
+         (match name with
+         | "cho_solve" -> "cho_solve(c_and_lower, b[..., None]).squeeze(-1)"
+         | "lu_solve" -> "lu_solve(lu_and_piv, b[..., None]).squeeze(-1)"
+         | _ -> "solve_triangular(a, b[..., None]).squeeze(-1)"));
+    vector
+  end
   else Printf.sprintf "(n,n)%s,(n,k)->(n,k)" extra
 
 let cho_solve (c, lower) b =
   let c = to_inexact c and b = to_inexact b in
-  let signature = triangular_signature c b in
+  let signature = triangular_signature ~name:"cho_solve" c b in
   Numpy.Vectorize.vectorize ~signature
     (function
       | [ c; b ] ->
@@ -134,7 +146,7 @@ let lu_solve ?(trans = 0) (lu_, piv) b =
   let lu_ = to_inexact lu_ and b = to_inexact b in
   let m, _ = Validate.unpack_last_two (shape lu_) in
   let perm = LL.lu_pivots_to_permutation ~permutation_size:m piv in
-  let signature = triangular_signature ~extra:",(n)" lu_ b in
+  let signature = triangular_signature ~name:"lu_solve" ~extra:",(n)" lu_ b in
   Numpy.Vectorize.vectorize ~signature
     (function
       | [ lu_; perm; b ] ->
@@ -494,7 +506,7 @@ let solve_triangular ?(trans = 0) ?(lower = false) ?(unit_diagonal = false) a b
     | _ -> Py_exn.value_error (Printf.sprintf "Invalid 'trans' value %d" trans)
   in
   let a = to_inexact a and b = to_inexact b in
-  let signature = triangular_signature a b in
+  let signature = triangular_signature ~name:"solve_triangular" a b in
   Numpy.Vectorize.vectorize ~signature
     (function
       | [ a; b ] ->

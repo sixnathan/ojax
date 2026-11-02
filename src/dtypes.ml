@@ -25,8 +25,18 @@ let canonicalize_dtype (d : Dtype.t) : Dtype.t =
     | d -> d
 
 let check_and_canonicalize_user_dtype ?(fun_name = "") d =
-  let canonical = canonicalize_dtype d in
+  let mode = Config.value Config.explicit_x64_dtypes in
+  let canonical = if mode = "allow" then d else canonicalize_dtype d in
   if canonical = d then d
+  else if mode = "error" then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Explicitly requested dtype %s%s is not available. To enable more \
+          dtypes, set the jax_enable_x64 or allow_explicit_x64_dtypes \
+          configuration options.See \
+          https://github.com/jax-ml/jax#current-gotchas for more."
+         (Dtype.numpy_name d)
+         (if fun_name = "" then "" else " requested in " ^ fun_name))
   else begin
     Py_warnings.warn
       (Printf.sprintf

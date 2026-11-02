@@ -20,6 +20,7 @@
   compose_fuzz
   jit_opts
   docs_p2
+  docs_p2b
   aot_cost
   ordered_lowering
   vmap_coll
@@ -38,6 +39,7 @@
   (source_tree %{project_root}/goldens/jit_opts)
   (source_tree %{project_root}/goldens/user_dtype)
   (source_tree %{project_root}/goldens/docs_p2)
+  (source_tree %{project_root}/goldens/docs_p2b)
   (source_tree %{project_root}/goldens/aot_cost)
   (source_tree %{project_root}/goldens/ordered_lowering)
   (source_tree %{project_root}/goldens/lax)

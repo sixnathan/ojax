@@ -65,6 +65,11 @@ let numpy_dtype_promotion =
     ~validate:(enum_class "NumpyDtypePromotion" [ "standard"; "strict" ])
     "jax_numpy_dtype_promotion" "standard"
 
+let explicit_x64_dtypes =
+  make
+    ~validate:(enum_class "ExplicitX64Mode" [ "warn"; "error"; "allow" ])
+    "jax_explicit_x64_dtypes" "warn"
+
 let legacy_prng_key =
   make
     ~validate:(enum_class "LegacyPrngKeyState" [ "allow"; "warn"; "error" ])
@@ -188,6 +193,7 @@ let trace_context () =
       (random_seed_offset.name, string_of_int random_seed_offset.value);
       (high_dynamic_range_gumbel.name, py_bool high_dynamic_range_gumbel.value);
       (check_static_indices.name, py_bool check_static_indices.value);
+      (explicit_x64_dtypes.name, explicit_x64_dtypes.value);
     ]
 
 let export_calling_convention_version =
@@ -252,7 +258,13 @@ let bool_options =
 let string_options =
   List.map
     (fun f -> (f.name, f))
-    [ numpy_rank_promotion; numpy_dtype_promotion; legacy_prng_key; platforms ]
+    [
+      numpy_rank_promotion;
+      numpy_dtype_promotion;
+      legacy_prng_key;
+      explicit_x64_dtypes;
+      platforms;
+    ]
 
 let optional_options =
   List.map

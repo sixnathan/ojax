@@ -431,7 +431,10 @@ let get_scaled_dot_general_config ?global_scale mode =
 let scaled_dot_general ?(preferred_element_type = D.F32) ?configs
     ?(implementation : string option) ~lhs_contract ~rhs_contract ~lhs_batch
     ~rhs_batch a b =
-  ignore implementation;
+  if implementation <> None then
+    Py_warnings.warn ~category:"DeprecationWarning"
+      "Backend selector, now ignored. The system chooses the backend \
+       automatically.";
   (match configs with
   | Some (_ : block_scale_config list) ->
       (match preferred_element_type with
@@ -908,6 +911,14 @@ let log1mexp a0 =
       match (opts, vals) with [], [ a0 ] -> log1mexp a0 | _ -> assert false)
 
 let one_hot ?axis ?dtype ~num_classes a1 =
+  (match (get_aval a1).T.dtype with
+  | D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64
+  | D.I2 | D.I4 | D.Uint2 | D.Uint4 ->
+      ()
+  | d ->
+      Py_warnings.warn ~category:"DeprecationWarning"
+        ("jax.nn.one_hot input should be integer-typed; got dtype="
+       ^ D.numpy_name d));
   Eager_jit.one ~jit:"_one_hot" "nn.functions.one_hot"
     (axis, dtype, num_classes) [] [ a1 ] (fun opts vals ->
       match (opts, vals) with

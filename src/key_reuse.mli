@@ -26,6 +26,7 @@ val call_with_signature :
   signature -> value list -> (unit -> value list) -> value list
 
 val note_moved : bool list -> unit
+val note_while : primitive -> aval list -> aval list -> unit
 
 val cond_regions :
   (value list -> value list) list ->

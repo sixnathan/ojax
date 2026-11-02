@@ -47,7 +47,7 @@ let check_dtype msg expected v =
 let raises_msg msg expected f =
   match f () with
   | _ -> Alcotest.failf "%s: expected an error" msg
-  | exception (Invalid_argument m | Failure m) ->
+  | exception (Invalid_argument m | Failure m | Py_exn.Value_error m) ->
       Alcotest.(check string) msg expected m
 
 let raises_prefix msg prefix f =
@@ -56,6 +56,7 @@ let raises_prefix msg prefix f =
   | exception
       ( Invalid_argument m
       | Failure m
+      | Py_exn.Value_error m
       | P.Inconclusive_dimension_operation m
       | Pjrt.Abi.Error m
       | Errors.Jax_runtime_error m ) ->

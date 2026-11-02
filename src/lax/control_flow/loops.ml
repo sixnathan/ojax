@@ -144,6 +144,13 @@ let body_forwarded (body : closed_jaxpr) carry_binders =
 let shared_conds = Hashtbl.create 8
 let shared_final_conds = Hashtbl.create 8
 
+let bind_noted prim ins =
+  let outs = Core.bind prim ins in
+  Key_reuse.note_while prim
+    (List.map Core.get_aval ins)
+    (List.map Core.get_aval outs);
+  outs
+
 let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
     (body_fun : value list -> value list) (init : value list) : value list =
   let trace init =
@@ -248,7 +255,7 @@ let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
     in
     Key_reuse.note_moved move;
     if not (List.exists Fun.id move) then
-      Core.bind
+      bind_noted
         (While
            {
              cond_nconsts = List.length cond_consts;
@@ -303,7 +310,7 @@ let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
       in
       let moved = pick move init in
       let outs =
-        Core.bind
+        bind_noted
           (While
              {
                cond_nconsts = n_cond_consts;
@@ -486,7 +493,7 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
     let all_consts = new_consts @ consts in
     Key_reuse.note_moved move;
     let result =
-      Core.bind
+      bind_noted
         (Scan
            {
              length;

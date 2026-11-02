@@ -1472,11 +1472,11 @@ let legacy_message =
 let check_prng_key k =
   if Key_reuse.known_raw k then
     match Config.value Config.legacy_prng_key with
-    | "error" -> invalid_arg legacy_message
-    | "warn" -> Config.log legacy_message
+    | "error" -> Py_exn.value_error legacy_message
+    | "warn" -> Py_warnings.warn legacy_message
     | _ ->
         if Config.value Config.enable_custom_prng then
-          Config.log
+          Py_warnings.warn ~category:"FutureWarning"
             "Raw arrays as random keys to jax.random functions are deprecated. \
              Assuming valid threefry2x32 key for now."
 

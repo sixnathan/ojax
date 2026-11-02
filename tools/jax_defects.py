@@ -11,7 +11,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DEFECTS = os.path.join("test", "golden", "jax_defects.tsv")
-TRACK_DEFECTS = (os.path.join("test", "golden", "index_fuzz_defects.tsv"), os.path.join("test", "golden", "custom_ad_defects.tsv"))
+TRACK_DEFECTS = (os.path.join("test", "golden", "index_fuzz_defects.tsv"), os.path.join("test", "golden", "custom_ad_defects.tsv"), os.path.join("test", "golden", "docs_p2b_defects.tsv"))
 SETS = (("x64_off", False), ("x64_on", True))
 KINDS = {
     "a": "JAX is nondeterministic",

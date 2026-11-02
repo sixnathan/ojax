@@ -127,7 +127,11 @@ let process_primitive trace prim (args : value list) : value list =
     | Custom_jvp_call id -> (
         match !custom_call_rule trace id tracers with
         | Some outs -> outs
-        | None -> record_unknown trace prim tracers)
+        | None -> (
+            match (Core.custom_names_of id, Core.custom_rule id) with
+            | Some _, Core.Jvp_rule { primal; _ } ->
+                primal (List.map (fun t -> Tracer t) tracers)
+            | _ -> record_unknown trace prim tracers))
     | _ -> record_unknown trace prim tracers
 
 let full_lower_pe v =

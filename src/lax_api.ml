@@ -24,7 +24,8 @@ let broadcast_scalar v sh =
 
 let unify a b =
   if shape a = shape b || ndim a = 0 || ndim a = ndim b then (a, b)
-  else (a, broadcast_scalar b (if ndim b = 0 then shape b else shape a))
+  else if ndim b = 0 then (a, broadcast_scalar b (shape b))
+  else (a, b)
 
 let lift2 prim a b =
   let x, y = unify a b in
@@ -162,7 +163,9 @@ let select pred on_true on_false = b1 Select_n [ pred; on_false; on_true ]
 
 let select_n pred cases =
   let sh =
-    match cases with c :: _ -> shape c | [] -> invalid_arg "select_n"
+    match cases with
+    | c :: _ -> shape c
+    | [] -> Py_exn.value_error "select_n() must have at least one case"
   in
   b1 Select_n (broadcast_scalar pred sh :: cases)
 
@@ -623,7 +626,7 @@ let argmin x ~axis ~index_dtype = b1 (Argmin { axis; index_dtype }) [ x ]
 
 let sort ?(dimension = -1) ?(is_stable = true) ?(num_keys = 1) xs =
   match xs with
-  | [] -> invalid_arg "sort requires at least one operand"
+  | [] -> Py_exn.type_error "Sort requires at least one operand"
   | first :: _ ->
       let dimension = canon_axis (ndim first) dimension in
       Core.bind (Sort { dimension; is_stable; num_keys }) xs
@@ -1050,27 +1053,36 @@ let switch = Lax.switch
 let map ?batch_size f xs =
   match batch_size with
   | None -> map_scan f xs
-  | Some size when size <= 0 -> invalid_arg "map: batch_size must be positive"
+  | Some _ when xs = [] -> map_scan f xs
+  | Some 0 ->
+      ignore (Validate.tuple_index (shape (List.hd xs)) 0);
+      Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) xs
   | Some size ->
-      let total =
-        match xs with
-        | [] -> invalid_arg "map: no input"
-        | x :: _ -> (shape x).(0)
-      in
-      let rec chunks start =
-        if start >= total then []
-        else
-          let stop = Stdlib.min total (start + size) in
-          let slices = List.map (fun x -> slice_in_dim x start stop) xs in
-          Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) slices
-          :: chunks stop
-      in
-      let parts = chunks 0 in
-      List.mapi
-        (fun i _ ->
-          let column = List.map (fun part -> List.nth part i) parts in
-          match column with [ only ] -> only | _ -> concatenate column 0)
-        (List.hd parts)
+      let total = Validate.tuple_index (shape (List.hd xs)) 0 in
+      let num_batches = Validate.py_floordiv total size in
+      if size < 0 && num_batches <> 0 then
+        Py_exn.type_error
+          (Printf.sprintf "reshape new_sizes must all be positive, got %s."
+             (Validate.python_tuple
+                (Array.append [| num_batches; size |]
+                   (Array.sub (shape (List.hd xs)) 1 (ndim (List.hd xs) - 1)))));
+      if num_batches = 0 then
+        Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) xs
+      else
+        let rec chunks start =
+          if start >= total then []
+          else
+            let stop = Stdlib.min total (start + size) in
+            let slices = List.map (fun x -> slice_in_dim x start stop) xs in
+            Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) slices
+            :: chunks stop
+        in
+        let parts = chunks 0 in
+        List.mapi
+          (fun i _ ->
+            let column = List.map (fun part -> List.nth part i) parts in
+            match column with [ only ] -> only | _ -> concatenate column 0)
+          (List.hd parts)
 
 let fori_loop ?unroll lower upper body init =
   match (lower, upper) with
@@ -1158,10 +1170,13 @@ let platform_dependent ?default ?cuda ~cpu () =
   | "cuda", Some branch, _ -> branch ()
   | _, _, Some branch -> branch ()
   | platform, _, None ->
-      invalid_arg
-        (Printf.sprintf
-           "platform_dependent: no branch for platform %s and no default"
-           platform)
+      raise
+        (Py_exn.Not_implemented_error
+           (Printf.sprintf
+              "MLIR translation rule for primitive \
+               'platform_index(platforms=(('cpu',),))' not found for platform \
+               %s"
+              platform))
 
 let platform_dependent_args ?default ?cuda ~cpu args =
   let named =
@@ -1229,7 +1244,7 @@ let fft x ~fft_type ~fft_lengths =
     match fft_type with
     | Lax_config.Fft_real ->
         if is_complex then
-          invalid_arg "only real valued inputs supported for rfft";
+          Py_exn.value_error "only real valued inputs supported for rfft";
         Dtypes.to_inexact_dtype dt
     | _ ->
         if is_complex then dt

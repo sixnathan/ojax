@@ -85,16 +85,28 @@ let flipud v = rev_dims v [| 0 |]
 
 let reshape v sh =
   let total = size v in
+  let unknown = Array.fold_left (fun n d -> if d = -1 then n + 1 else n) 0 sh in
+  let tuple = Validate.python_tuple in
+  if unknown > 1 then
+    Py_exn.type_error
+      ("can only specify one unknown axis size with a `-1` value, got "
+     ^ tuple sh);
   let known =
     Array.fold_left (fun acc d -> if d = -1 then acc else acc * d) 1 sh
   in
-  if Array.mem (-1) sh && Validate.py_mod total known <> 0 then
+  if unknown = 1 && Validate.py_mod total known <> 0 then
     Py_exn.type_error
       (Printf.sprintf
          "cannot reshape array of shape %s (size %d) into shape %s because the \
           product of specified axis sizes (%d) does not evenly divide %d"
-         (Validate.python_tuple (shape v))
-         total (Validate.python_tuple sh) known total);
+         (tuple (shape v))
+         total (tuple sh) known total);
+  if unknown = 0 && total <> known then
+    Py_exn.type_error
+      (Printf.sprintf
+         "cannot reshape array of shape %s (size %d) into shape %s (size %d)"
+         (tuple (shape v))
+         total (tuple sh) known);
   let resolved = Array.map (fun d -> if d = -1 then total / known else d) sh in
   if Array.length resolved > 0 && resolved = shape v then v
   else bind1 (T.Reshape resolved) [ v ]
@@ -1408,7 +1420,7 @@ let array_equal ?(equal_nan = false) a b =
 
 let array_equiv a b =
   match promote2 a b with
-  | exception Invalid_argument _ -> scalar D.Bool 0.0
+  | exception (Invalid_argument _ | Py_exn.Value_error _) -> scalar D.Bool 0.0
   | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
 
 let arange ?(start = 0.0) ?step ~dtype stop =

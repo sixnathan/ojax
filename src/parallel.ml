@@ -8,7 +8,7 @@ let bound_axis_size axis_name =
   | exception Invalid_argument msg -> (
       match List.assoc_opt axis_name !Core.mesh_axes with
       | Some size -> size
-      | None -> invalid_arg msg)
+      | None -> raise (Py_exn.Name_error msg))
 
 let collective kind axis_name v =
   ignore (bound_axis_size axis_name);

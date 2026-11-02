@@ -73,11 +73,13 @@ let check_norm name norm =
   match norm with
   | None | Some "backward" | Some "ortho" -> ()
   | Some other ->
-      invalid_arg
-        (Printf.sprintf "jax.scipy.fft.%s: norm=%s is not implemented" name
+      Py_exn.value_error
+        (Printf.sprintf "jax.scipy.fft.%s: norm='%s' is not implemented" name
            other)
 
-let check_type t = if t <> 2 then invalid_arg "Only DCT type 2 is implemented."
+let check_type t =
+  if t <> 2 then
+    raise (Py_exn.Not_implemented_error "Only DCT type 2 is implemented.")
 
 let is_complex v =
   match dtype_of v with

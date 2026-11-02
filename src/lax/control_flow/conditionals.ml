@@ -165,7 +165,7 @@ let index_scalar i =
 let switch (index : value) (branches : (value list -> value list) list)
     (operands : value list) : value list =
   match branches with
-  | [] -> invalid_arg "Empty branch sequence"
+  | [] -> Py_exn.value_error "Empty branch sequence"
   | [ only ] -> only operands
   | _ ->
       let last = List.length branches - 1 in

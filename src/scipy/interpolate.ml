@@ -17,11 +17,15 @@ let dtype_of v = (Core.get_aval v).dtype
 let regular_grid_interpolator ?(method_ = "linear") ?(bounds_error = false)
     ?(fill_value = Some Float_format.nan) points values =
   if bounds_error then
-    invalid_arg "`bounds_error` takes no effect under GPU and TPU";
+    raise
+      (Py_exn.Not_implemented_error "`bounds_error` takes no effect under JIT");
   if method_ <> "linear" && method_ <> "nearest" then
-    invalid_arg ("method " ^ method_ ^ " is not defined");
+    Py_exn.value_error ("method '" ^ method_ ^ "' is not defined");
   if List.length points > Array.length (shape values) then
-    invalid_arg "There are more dimensions in points than in values";
+    Py_exn.value_error
+      (Printf.sprintf "There are %d point arrays, but values has %d dimensions"
+         (List.length points)
+         (Array.length (shape values)));
   { points; values; method_; bounds_error; fill_value }
 
 let py_int = Numpy.Jnp_util.py_int
@@ -91,8 +95,13 @@ let evaluate t xi =
   let d = List.length t.points in
   let xshape = shape xi in
   let n = Array.length xshape in
-  if xshape.(n - 1) <> d then
-    Py_exn.value_error "the requested sample points xi have the wrong dimension";
+  if Validate.tuple_index xshape (-1) <> d then
+    Py_exn.value_error
+      (Printf.sprintf
+         "the requested sample points xi have dimension %d, but this \
+          RegularGridInterpolator has dimension %d"
+         (Validate.tuple_index xshape 1)
+         d);
   let flat_shape =
     [| Array.fold_left ( * ) 1 xshape / xshape.(n - 1); xshape.(n - 1) |]
   in

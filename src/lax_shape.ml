@@ -148,9 +148,10 @@ let check_conv lhs rhs (dn : conv_dims) ~window_strides ~padding ~lhs_dilation
       ^ String.concat ", "
           (List.map (fun (l, h) -> fmt "(%d, %d)" l h) (Array.to_list padding))
       ^ (if Array.length padding = 1 then ",)" else ")")
-      ^ " for lhs_shape[2:]=["
-      ^ String.concat " " (List.map string_of_int (Array.to_list spatial))
-      ^ "]")
+      ^ " for lhs_shape[2:]=("
+      ^ String.concat ", "
+          (List.map (fmt "np.int64(%d)") (Array.to_list spatial))
+      ^ if Array.length spatial = 1 then ",)" else ")")
 
 let check prim avals =
   match prim with

@@ -229,8 +229,10 @@ let gelu ?(approximate = true) x =
 let glu ?(axis = -1) x =
   let sh = shape x in
   let n = Array.length sh in
-  if sh.(if axis < 0 then axis + n else axis) mod 2 <> 0 then
-    failwith "axis size must be divisible by 2";
+  ignore n;
+  Validate.assertion
+    (Validate.py_mod (Validate.tuple_index sh axis) 2 = 0)
+    ~message:"axis size must be divisible by 2";
   match NL.split ~axis x (NL.Count 2) with
   | [ x1; x2 ] -> UF.multiply x1 (sigmoid x2)
   | _ -> invalid_arg "glu: split did not produce two halves"
@@ -333,7 +335,7 @@ let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
                  (RED.mean ~axis:ax ~keepdims:true ?where:mask (UF.square x))
                  (UF.square mean))
         | a ->
-            invalid_arg
+            Py_exn.value_error
               ("Unknown algorithm '" ^ a ^ "'. Expected 'fast' or 'stable'."))
   in
   UF.multiply (UF.subtract x mean)
@@ -410,7 +412,7 @@ let get_scaled_dot_general_config ?global_scale mode =
         global_scale = None;
         infer_only = false;
       }
-  | other -> invalid_arg (Printf.sprintf "Unsupported mode: %s" other)
+  | other -> Py_exn.value_error (Printf.sprintf "Unsupported mode: %s" other)
 
 let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch a b =
@@ -419,10 +421,12 @@ let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
       (match preferred_element_type with
       | D.F32 | D.Bf16 | D.F16 -> ()
       | _ ->
-          invalid_arg "Only support preferred_element_type in (f32, bf16, f16)");
-      failwith
-        "MLIR translation rule for primitive 'scaled_matmul' not found for \
-         platform cpu"
+          Py_exn.type_error
+            "Only support preferred_element_type in (f32, bf16, f16)");
+      raise
+        (Py_exn.Not_implemented_error
+           "MLIR translation rule for primitive 'scaled_matmul' not found for \
+            platform cpu")
   | None -> ());
   Lax_api.dot_general ~preferred_element_type a b ~lhs_contract ~rhs_contract
     ~lhs_batch ~rhs_batch
@@ -435,23 +439,25 @@ let scaled_matmul ?(preferred_element_type = D.F32) lhs rhs lhs_scales
       (fun v -> Array.length (dims v) <> 3)
       [ lhs; rhs; lhs_scales; rhs_scales ]
   then
-    invalid_arg "scaled_matmul requires all inputs to be 3-dimensional arrays";
+    Py_exn.value_error
+      "scaled_matmul requires all inputs to be 3-dimensional arrays";
   let sa = dims lhs and sb = dims rhs in
   if sa.(2) <> sb.(2) || sa.(0) <> sb.(0) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires inputs a and b to have matching batch (B) and \
        contract (K) dimensions";
   let ssa = dims lhs_scales and ssb = dims rhs_scales in
   if ssa.(2) <> ssb.(2) || ssa.(0) <> ssb.(0) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires scales to have matching batch (B) and contract \
        (K) dimensions";
   if ssa.(1) <> sa.(1) || ssb.(1) <> sb.(1) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires scales to match non-contract dimensions of inputs";
   let k = sa.(2) in
   if ssa.(2) = 0 || k mod ssa.(2) <> 0 then
-    invalid_arg "scaled_matmul requires K to be divisible by the scale blocks";
+    Py_exn.value_error
+      "scaled_matmul requires K to be divisible by the scale blocks";
   let block = k / ssa.(2) in
   let scaled operand scales =
     let sh = dims scales in

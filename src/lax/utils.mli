@@ -1,6 +1,7 @@
 open Types
 
 val prod : int array -> int
+val check_conv_window : conv_dims -> int array -> unit
 val py_tuple : int array -> string
 
 val check_shapelike :

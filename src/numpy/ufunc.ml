@@ -164,28 +164,30 @@ let accumulate ?(axis = 0) u a =
       let a = List.hd vals in
       let axis = canonical_axis axis a in
       let dt = result_dtype u a in
-      let arr = front axis a in
-      let body = function
-        | [ i; x ] ->
-            let is_first = Core.bind1 T.Eq [ i; weak_int 0.0 ] in
-            let head = as_dtype (first arr) dt in
-            let y =
-              NL.where_ is_first head
-                (single u [ as_dtype x dt; as_dtype (at arr i) dt ])
-            in
-            [ bump i; y; y ]
-        | _ -> invalid_arg "ufunc.accumulate: arity"
-      in
-      match
-        Lax_api.scan
-          ~length:(shape arr).(0)
-          body
-          [ weak_int 0.0; as_dtype (first arr) dt ]
-          []
-      with
-      | [ _; _; stacked ] ->
-          if axis = 0 then stacked else NL.moveaxis [| 0 |] [| axis |] stacked
-      | _ -> invalid_arg "ufunc.accumulate: arity")
+      if Array.fold_left ( * ) 1 (shape a) = 0 then Core.splat dt (shape a) 0.0
+      else
+        let arr = front axis a in
+        let body = function
+          | [ i; x ] ->
+              let is_first = Core.bind1 T.Eq [ i; weak_int 0.0 ] in
+              let head = as_dtype (first arr) dt in
+              let y =
+                NL.where_ is_first head
+                  (single u [ as_dtype x dt; as_dtype (at arr i) dt ])
+              in
+              [ bump i; y; y ]
+          | _ -> invalid_arg "ufunc.accumulate: arity"
+        in
+        match
+          Lax_api.scan
+            ~length:(shape arr).(0)
+            body
+            [ weak_int 0.0; as_dtype (first arr) dt ]
+            []
+        with
+        | [ _; _; stacked ] ->
+            if axis = 0 then stacked else NL.moveaxis [| 0 |] [| axis |] stacked
+        | _ -> invalid_arg "ufunc.accumulate: arity")
 
 let outer u a b =
   check_binary u "outer";

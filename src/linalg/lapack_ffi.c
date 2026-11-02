@@ -112,6 +112,26 @@ static int metadata_query(Frame *f) {
   return 0;
 }
 
+typedef struct {
+  size_t struct_size;
+  Ext *extension_start;
+  const char *message;
+  int errc;
+} ErrorCreateArgs;
+
+typedef struct {
+  size_t struct_size;
+  Ext *extension_start;
+  Version api_version;
+  void *internal_api;
+  void *(*error_create)(ErrorCreateArgs *);
+} Api;
+
+static void *ffi_error(Frame *f, const char *message) {
+  ErrorCreateArgs args = {sizeof(ErrorCreateArgs), NULL, message, 2};
+  return ((const Api *)f->api)->error_create(&args);
+}
+
 #define ENTER(name)                                \
   static void *name(void *frame) {                 \
     Frame *f = frame;                              \
@@ -236,6 +256,8 @@ ENTER(h_geqrf)
 
 ENTER(h_geqp3)
   Buffer *a = RET(0), *jpvt = RET(1), *tau = RET(2);
+  if (batches(a, 2) > 0 && rows(a) == 0 && cols(a) > 0)
+    return ffi_error(f, "std::bad_alloc");
   copy_to(a, ARG(0));
   copy_to(jpvt, ARG(1));
   char prec = prec_of(a->dtype);

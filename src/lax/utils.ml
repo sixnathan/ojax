@@ -9,6 +9,19 @@ let py_tuple a =
 
 let type_error msg = raise (Errors.Jax_type_error msg)
 
+let check_conv_window (dn : conv_dims) rhs_shape =
+  let n = Array.length dn.rhs_spec - 2 in
+  for i = 0 to n - 1 do
+    let w = rhs_shape.(dn.rhs_spec.(i + 2)) in
+    if w <= 0 then
+      invalid_arg
+        (Printf.sprintf
+           "Cannot lower jaxpr with verifier errors:\n\
+            \texpects window to have positive value for %d-th window \
+            dimension, but got %d."
+           i w)
+  done
+
 let check_shapelike ?(non_zero_shape = false) fun_name arg_name obj =
   let lower, bound =
     if non_zero_shape then (1, "strictly positive") else (0, "nonnegative")

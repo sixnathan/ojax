@@ -1748,6 +1748,9 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
     ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count
     ~conv_precision =
   let a, b = pair in_ids in
+  (match eqn.inputs with
+  | [ _; r ] -> Lax.Utils.check_conv_window dn (atom_aval r).shape
+  | _ -> ());
   let la, lb =
     match eqn.inputs with
     | [ l; r ] ->

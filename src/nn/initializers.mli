@@ -53,3 +53,4 @@ val kaiming_normal :
 
 val orthogonal : ?scale:float -> ?column_axis:int -> unit -> t
 val delta_orthogonal : ?scale:float -> ?column_axis:int -> unit -> t
+val with_dtype : Dtype.t -> t -> t

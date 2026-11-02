@@ -161,3 +161,8 @@ val multinomial_full :
   n:value ->
   p:value ->
   value
+
+val truncated_normal_int :
+  value -> lower:int -> upper:int -> shape:int array -> value
+
+val uniform_int_low : value -> shape:int array -> minval:int -> value

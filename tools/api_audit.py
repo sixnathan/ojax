@@ -196,6 +196,8 @@ def main():
         if missing_loose:
             print("  loose: " + " ".join(missing_loose))
     print(f"TOTAL {tot} strict {strict_n} loose {loose_n}")
+    primitive = sum(1 for m in report.values() for n in m["missing_strict"] if n.endswith("_p"))
+    print(f"primitive objects among strict gaps (ojax has variant constructors for them): {primitive}")
     if args.options:
         rows = []
         for module, patterns in MAP.items():
@@ -212,6 +214,12 @@ def main():
                 for label_key, found in labels.items():
                     if label_key == key or label_key.startswith(key + "_"):
                         have |= {norm(l) for l in found}
+                if "preferred" in have:
+                    have.add("preferredelementtype")
+                if key + "_aux" in labels or key + "_returned" in labels:
+                    have |= {"hasaux", "returned"}
+                if key + "_holomorphic" in labels:
+                    have.add("holomorphic")
                 obj = getattr(mod, name, None)
                 lacking = [p for p, d in params if d is not None and norm(p) not in have and not p.startswith("_")]
                 real = [p for p in lacking if p not in NO_RESULT_EFFECT and not rejected_by_jax(module, name, obj, p)]

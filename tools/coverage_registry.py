@@ -237,3 +237,78 @@ _prior_all_cases = all_cases
 
 def all_cases():
     return _prior_all_cases() + _transform_cases() + _lax_cases()
+
+
+def _misc_ops():
+    from jax import nn, ops as jops
+    from jax.scipy import stats as jst
+
+    seg = lambda name: lambda a, p: getattr(jops, name)(a, jnp.asarray(p["ids"]), num_segments=p.get("n"), indices_are_sorted=p.get("sorted", False), unique_indices=p.get("unique", False), bucket_size=p.get("bucket"), mode=p.get("mode"))
+    out = {"cv_s_" + n: seg("segment_" + n) for n in "sum prod max min".split()}
+    out["cv_sem"] = lambda a, p: jst.sem(a, axis=p.get("axis", 0), ddof=p.get("ddof", 1), nan_policy=p.get("nan_policy", "propagate"), keepdims=p.get("keepdims", False))
+    out["cv_take_along"] = lambda a, p: jnp.take_along_axis(a, jnp.argsort(a, axis=0) - p["shift"], axis=0, mode=p.get("mode"), wrap_negative_indices=p["wrap"])
+    out["cv_tree_map_leaf"] = lambda a, p: tuple(jax.tree_util.tree_leaves(jax.tree_util.tree_map(lambda x: (x[0] + x[1]) if isinstance(x, tuple) else x * 2.0, {"p": (a, a * 3.0), "q": a}, is_leaf=lambda x: isinstance(x, tuple))))
+    out["cv_x_maxwell"] = lambda a, p: jr.maxwell(_k(p), _sh(p), dtype=p["dtype"])
+    out["cv_x_double_sided_maxwell"] = lambda a, p: jr.double_sided_maxwell(_k(p), 0.5, 2.0, _sh(p), dtype=p["dtype"])
+    out["cv_x_ball"] = lambda a, p: jr.ball(_k(p), p["d"], shape=_sh(p), dtype=p["dtype"])
+    out["cv_x_orthogonal"] = lambda a, p: jr.orthogonal(_k(p), p["n"], shape=_sh(p), dtype=p["dtype"])
+    init = nn.initializers
+    named = {
+        "normal": lambda d: init.normal(dtype=d),
+        "uniform": lambda d: init.uniform(dtype=d),
+        "truncated_normal": lambda d: init.truncated_normal(dtype=d),
+        "glorot_normal": lambda d: init.glorot_normal(dtype=d),
+        "glorot_uniform": lambda d: init.glorot_uniform(dtype=d),
+        "he_normal": lambda d: init.he_normal(dtype=d),
+        "he_uniform": lambda d: init.he_uniform(dtype=d),
+        "lecun_normal": lambda d: init.lecun_normal(dtype=d),
+        "lecun_uniform": lambda d: init.lecun_uniform(dtype=d),
+        "orthogonal": lambda d: init.orthogonal(dtype=d),
+        "delta_orthogonal": lambda d: init.delta_orthogonal(dtype=d),
+    }
+    for name, make in named.items():
+        out["cv_i_" + name] = lambda a, p, _m=make: _m(p["dtype"])(_k(p), _sh(p))
+    return out
+
+
+def _misc_cases():
+    r = lambda shape: {"a": {"kind": "real", "shape": shape}}
+    one = r([1])
+    out = []
+    ids = [0, 2, 1, 2, 0, 1]
+    for name in "sum prod max min".split():
+        op = "cv_s_" + name
+        out.append((op, r([6]), {"ids": ids, "n": 3}))
+        out.append((op, r([6]), {"ids": ids}))
+        out.append((op, r([6, 2]), {"ids": ids, "n": 3}))
+        out.append((op, r([6]), {"ids": sorted(ids), "n": 3, "sorted": True}))
+        out.append((op, r([3]), {"ids": [0, 1, 2], "n": 3, "unique": True}))
+        out.append((op, r([3]), {"ids": [0, 1, 2], "n": 3, "unique": True, "sorted": True}))
+        out.append((op, r([6]), {"ids": ids, "n": 2, "mode": "clip"}))
+        out.append((op, r([6]), {"ids": ids, "n": 3, "mode": "promise_in_bounds"}))
+        out.append((op, r([6]), {"ids": ids, "n": 2, "mode": "drop"}))
+        out.append((op, r([6]), {"ids": ids, "n": 3, "bucket": 2}))
+        out.append((op, r([6, 2]), {"ids": ids, "n": 3, "bucket": 4}))
+    for params in [{}, {"keepdims": True}, {"nan_policy": "omit"}, {"nan_policy": "omit", "keepdims": True}, {"ddof": 0, "nan_policy": "omit"}, {"axis": 1, "keepdims": True}]:
+        out.append(("cv_sem", r([3, 4]), params))
+    for wrap, shift in [(True, 0), (False, 0), (True, 1), (False, 1)]:
+        out.append(("cv_take_along", r([4, 2]), {"wrap": wrap, "shift": shift}))
+    out.append(("cv_tree_map_leaf", r([3]), {}))
+    for dt in ["float16", "float32"]:
+        out.append(("cv_x_maxwell", one, {"seed": 41, "shape": [3], "dtype": dt}))
+        out.append(("cv_x_double_sided_maxwell", one, {"seed": 42, "shape": [3], "dtype": dt}))
+        out.append(("cv_x_ball", one, {"seed": 43, "shape": [2], "d": 3, "dtype": dt}))
+        for name in "normal uniform truncated_normal glorot_normal glorot_uniform he_normal he_uniform lecun_normal lecun_uniform".split():
+            out.append(("cv_i_" + name, one, {"seed": 44, "shape": [3, 4], "dtype": dt}))
+    out.append(("cv_x_orthogonal", one, {"seed": 45, "n": 3, "shape": [], "dtype": "float32"}))
+    out.append(("cv_i_orthogonal", one, {"seed": 46, "shape": [3, 3], "dtype": "float32"}))
+    out.append(("cv_i_delta_orthogonal", one, {"seed": 47, "shape": [3, 3, 3], "dtype": "float32"}))
+    return out
+
+
+OPS.update(_misc_ops())
+_prior_all_cases_2 = all_cases
+
+
+def all_cases():
+    return _prior_all_cases_2() + _misc_cases()

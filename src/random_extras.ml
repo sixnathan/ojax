@@ -114,3 +114,17 @@ let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") key ~mean ~cov
         let product = Numpy.Einsum.einsum "...ij,...j->...i" [ factor; z ] in
         Numpy.Ufuncs.add mean product
     | _ -> assert false)
+
+let with_dt dtype f =
+  match dtype with None -> f () | Some d -> C.with_dtypes ~float_dtype:d f
+
+let maxwell ?dtype key ~shape = with_dt dtype (fun () -> maxwell key ~shape)
+
+let double_sided_maxwell ?dtype key ~loc ~scale ~shape =
+  with_dt dtype (fun () -> double_sided_maxwell key ~loc ~scale ~shape)
+
+let ball ?dtype ?p key ~d ~shape =
+  with_dt dtype (fun () -> ball ?p key ~d ~shape)
+
+let orthogonal ?dtype ?m key ~n ~shape =
+  with_dt dtype (fun () -> orthogonal ?m key ~n ~shape)

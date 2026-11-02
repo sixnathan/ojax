@@ -111,7 +111,8 @@ let take ?axis ?mode ?fill_value ?(unique_indices = false)
         (flag (T.Gather { dimension_numbers = dnums; slice_sizes }))
         [ a; gather_indices ]
 
-let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
+let take_along_axis ?(axis = -1) ?mode ?fill_value ?wrap_negative_indices a
+    indices =
   let rank = ndim a in
   if rank <> ndim indices then
     invalid_arg "take_along_axis: arr and indices must have the same ndim";
@@ -123,8 +124,19 @@ let take_along_axis ?(axis = -1) ?mode ?fill_value a indices =
   arr_shape.(axis_int) <- 1;
   let out_shape = broadcast_shapes idx_shape arr_shape in
   let indices =
-    if mode = Some "promise_in_bounds" then indices
-    else wrap_negative indices axis_size
+    let wrap =
+      match wrap_negative_indices with
+      | Some w -> w
+      | None -> mode <> Some "promise_in_bounds"
+    in
+    if wrap && not (Dtypes.issubdtype (dtype indices) `Unsigned) then
+      let idt = dtype indices in
+      let negative = bind1 T.Lt [ indices; full idt [||] 0.0 ] in
+      let shifted =
+        bind1 T.Add [ indices; full idt [||] (float_of_int axis_size) ]
+      in
+      bind1 T.Select_n [ negative; indices; shifted ]
+    else indices
   in
   let index_dims =
     List.filter
@@ -347,6 +359,15 @@ let put_along_axis ?axis ?mode a0 a1 a2 =
     (axis, mode) [] [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0; a1; a2 ] -> put_along_axis ?axis ?mode a0 a1 a2
+      | _ -> assert false)
+
+let take_along_axis ?axis ?mode ?fill_value ?wrap_negative_indices a0 a1 =
+  Eager_jit.one ~jit:"take_along_axis" "numpy.indexing.take_along_axis"
+    (axis, mode, fill_value, wrap_negative_indices) [] [ a0; a1 ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; a1 ] ->
+          take_along_axis ?axis ?mode ?fill_value ?wrap_negative_indices a0 a1
       | _ -> assert false)
 
 let take_index ?axis ?mode ?fill_value a i = take ?axis ?mode ?fill_value a i

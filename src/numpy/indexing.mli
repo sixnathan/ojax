@@ -20,6 +20,7 @@ val take_along_axis :
   ?axis:int ->
   ?mode:string ->
   ?fill_value:float ->
+  ?wrap_negative_indices:bool ->
   Types.value ->
   Types.value ->
   Types.value

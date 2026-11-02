@@ -412,6 +412,109 @@ let lax_run op p a =
   | "cv_l_collapse_from" -> Some [ LX.collapse_from (a ()) (PC.int "start" p) ]
   | _ -> None
 
+module SG = Ojax.Ops.Segment
+module STC = Ojax.Scipy.Stats.Stats_core
+module RX = Ojax.Random_extras
+module INI = Ojax.Nn.Initializers
+
+let segment_run op p a =
+  let call f =
+    let ids = int_list "ids" p in
+    Some
+      [
+        f ?num_segments:(opt_int "n" p)
+          ?indices_are_sorted:(opt_bool "sorted" p)
+          ?unique_indices:(opt_bool "unique" p)
+          ?bucket_size:(opt_int "bucket" p) ?mode:(opt_string "mode" p) (a ())
+          ids;
+      ]
+  in
+  match op with
+  | "cv_s_sum" -> call SG.segment_sum
+  | "cv_s_prod" -> call SG.segment_prod
+  | "cv_s_max" -> call SG.segment_max
+  | "cv_s_min" -> call SG.segment_min
+  | _ -> None
+
+let misc_run op p a =
+  let k () = PC.seed_key p in
+  let shape () = ints "shape" p in
+  let dtype = opt_dtype p in
+  let init_of = function
+    | "cv_i_normal" -> Some (INI.normal ())
+    | "cv_i_uniform" -> Some (INI.uniform ())
+    | "cv_i_truncated_normal" -> Some (INI.truncated_normal ())
+    | "cv_i_glorot_normal" -> Some (INI.glorot_normal ())
+    | "cv_i_glorot_uniform" -> Some (INI.glorot_uniform ())
+    | "cv_i_he_normal" -> Some (INI.he_normal ())
+    | "cv_i_he_uniform" -> Some (INI.he_uniform ())
+    | "cv_i_lecun_normal" -> Some (INI.lecun_normal ())
+    | "cv_i_lecun_uniform" -> Some (INI.lecun_uniform ())
+    | "cv_i_orthogonal" -> Some (INI.orthogonal ())
+    | "cv_i_delta_orthogonal" -> Some (INI.delta_orthogonal ())
+    | _ -> None
+  in
+  match init_of op with
+  | Some init ->
+      Some [ INI.with_dtype (Option.get dtype) init (k ()) ~shape:(shape ()) ]
+  | None -> (
+      match op with
+      | "cv_sem" ->
+          Some
+            [
+              STC.sem ?axis:(opt_int "axis" p) ?ddof:(opt_int "ddof" p)
+                ?nan_policy:(opt_string "nan_policy" p)
+                ?keepdims:(opt_bool "keepdims" p) (a ());
+            ]
+      | "cv_take_along" ->
+          let x = a () in
+          let sorted = Ojax.Numpy.Sorting.argsort ~axis:(Some 0) x in
+          let idx =
+            UF.subtract sorted (Ojax.Numpy.Jnp_util.py_int (PC.int "shift" p))
+          in
+          Some
+            [
+              IDX.take_along_axis ~axis:0 ?mode:(opt_string "mode" p)
+                ?wrap_negative_indices:(opt_bool "wrap" p) x idx;
+            ]
+      | "cv_tree_map_leaf" ->
+          let x = a () in
+          let tree =
+            TR.Dict
+              [
+                ( "p",
+                  TR.Tuple
+                    [
+                      TR.Leaf x;
+                      TR.Leaf (UF.multiply x (Ojax.Numpy.Jnp_util.py_float 3.0));
+                    ] );
+                ("q", TR.Leaf x);
+              ]
+          in
+          let mapped =
+            TR.tree_map_is_leaf
+              ~is_leaf:(function TR.Tuple _ -> true | _ -> false)
+              (function
+                | TR.Tuple [ TR.Leaf l; TR.Leaf r ] -> TR.Leaf (UF.add l r)
+                | TR.Leaf v -> TR.Leaf (doubled v)
+                | other -> other)
+              tree
+          in
+          Some (TR.tree_leaves mapped)
+      | "cv_x_maxwell" -> Some [ RX.maxwell ?dtype (k ()) ~shape:(shape ()) ]
+      | "cv_x_double_sided_maxwell" ->
+          Some
+            [
+              RX.double_sided_maxwell ?dtype (k ()) ~loc:0.5 ~scale:2.0
+                ~shape:(shape ());
+            ]
+      | "cv_x_ball" ->
+          Some [ RX.ball ?dtype (k ()) ~d:(PC.int "d" p) ~shape:(shape ()) ]
+      | "cv_x_orthogonal" ->
+          Some
+            [ RX.orthogonal ?dtype (k ()) ~n:(PC.int "n" p) ~shape:(shape ()) ]
+      | _ -> None)
+
 let run op params get =
   let a () = get "a" in
   let b () = get "b" in
@@ -421,6 +524,8 @@ let run op params get =
       (fun () -> gather_run op params a);
       (fun () -> transform_run op a);
       (fun () -> lax_run op params a);
+      (fun () -> segment_run op params a);
+      (fun () -> misc_run op params a);
     ]
   in
   match List.find_map (fun r -> r ()) runners with

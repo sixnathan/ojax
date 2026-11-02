@@ -434,16 +434,20 @@ let bernoulli_prob k ~shape ~p =
   ignore dt;
   bernoulli_v k ~p:shaped ~shape
 
-let rademacher_dt key ~shape ~dt =
+let rademacher_dt ?p_dt key ~shape ~dt =
+  let p_dt = match p_dt with Some d -> d | None -> fdt () in
   jit_region "_rademacher" (shape, dt) [ key ] (function
     | [ key ] ->
-        let b = conv (bernoulli_v key ~p:(npf (fdt ()) 0.5) ~shape) dt in
+        let b = conv (bernoulli_v key ~p:(npf p_dt 0.5) ~shape) dt in
         let doubled = npf dt 2.0 *! b in
         conv (doubled -! npf dt 1.0) dt
     | _ -> assert false)
 
 let float_dtype = fdt
-let rademacher_as = rademacher_dt
+
+let rademacher_as key ~shape ~dt =
+  rademacher_dt ~p_dt:(Dtypes.default_float_dtype ()) key ~shape ~dt
+
 let rademacher k ~shape = rademacher_dt k ~shape ~dt:(result_idt ())
 
 let exponential_dt key ~shape ~dt =
@@ -1327,7 +1331,9 @@ let generalized_normal_v key ~p ~shape =
         let inv = pyf 1.0 /! p in
         let g = gamma_v k0 ~a:inv ~shape ~dt ~log_space:false in
         let k1 = index_key keys 1 in
-        let r = rademacher_dt k1 ~shape ~dt in
+        let r =
+          rademacher_dt ~p_dt:(Dtypes.default_float_dtype ()) k1 ~shape ~dt
+        in
         let inv = pyf 1.0 /! p in
         r *! UF.power g inv
     | _ -> assert false)
@@ -1778,6 +1784,16 @@ let poisson_value k ~shape ~lam =
   sampler k (fun () -> poisson_value k ~shape ~lam)
 
 let bits_as k ~shape ~dtype = sampler k (fun () -> bits_as k ~shape ~dtype)
+
+let truncated_normal_int k ~lower ~upper ~shape =
+  sampler k (fun () ->
+      truncated_normal_v k ~lower:(JU.py_int lower) ~upper:(JU.py_int upper)
+        ~shape ~dt:(fdt ()))
+
+let uniform_int_low k ~shape ~minval =
+  sampler k (fun () ->
+      uniform_v k ~minval:(JU.py_int minval) ~maxval:(pyf 1.0) ~shape
+        ~dt:(fdt ()))
 
 let permutation_array ?axis ?independent k x =
   sampler k (fun () -> permutation_array ?axis ?independent k x)

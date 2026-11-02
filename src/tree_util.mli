@@ -32,7 +32,10 @@ val register_attribute_keys : string -> string list -> unit
 val tree_leaves_with_path : 'a t -> (key_path * 'a) list
 val tree_flatten_with_path : 'a t -> (key_path * 'a) list * treedef
 val tree_map_with_path : (key_path -> 'a -> 'b) -> 'a t -> 'b t
-val keystr : key_path -> string
+val keystr : ?simple:bool -> ?separator:string -> key_path -> string
+val tree_map_is_leaf : is_leaf:('a t -> bool) -> ('a t -> 'b t) -> 'a t -> 'b t
+val tree_leaves_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'a t list
+val tree_structure_is_leaf : is_leaf:('a t -> bool) -> 'a t -> treedef
 val tree_reduce : ('acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
 val tree_reduce_associative : ('a -> 'a -> 'a) -> ?identity:'a -> 'a t -> 'a
 val tree_all : bool t -> bool

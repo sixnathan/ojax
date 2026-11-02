@@ -1,12 +1,20 @@
 open Types
 
-val maxwell : value -> shape:int array -> value
+val maxwell : ?dtype:Dtype.t -> value -> shape:int array -> value
 
 val double_sided_maxwell :
-  value -> loc:float -> scale:float -> shape:int array -> value
+  ?dtype:Dtype.t ->
+  value ->
+  loc:float ->
+  scale:float ->
+  shape:int array ->
+  value
 
-val ball : ?p:float -> value -> d:int -> shape:int array -> value
-val orthogonal : ?m:int -> value -> n:int -> shape:int array -> value
+val ball :
+  ?dtype:Dtype.t -> ?p:float -> value -> d:int -> shape:int array -> value
+
+val orthogonal :
+  ?dtype:Dtype.t -> ?m:int -> value -> n:int -> shape:int array -> value
 
 val multivariate_normal :
   ?shape:int array ->

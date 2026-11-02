@@ -671,7 +671,7 @@ let lower_scan ~length ~reverse ~num_consts ~num_carry ~unroll
                     [ v ])
                 ys
             in
-            b1 (Concatenate 0) parts)
+            match parts with [ only ] -> only | _ -> b1 (Concatenate 0) parts)
           y_avals
       in
       (!carry, stacked)

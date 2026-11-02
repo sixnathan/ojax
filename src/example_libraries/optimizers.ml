@@ -198,26 +198,33 @@ let adamax ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) (step_size : schedule) =
       | _ -> invalid_arg "adamax: state")
     ~get:head
 
+let sm3_shape_leaf x_shape =
+  Concrete
+    (Ndarray.of_floats Dtype.I32
+       [| Array.length x_shape |]
+       (Array.map float_of_int x_shape))
+
 let sm3 ?(momentum = 0.9) (step_size : schedule) =
   of_leaf_rules
-    ~init:(fun x ->
-      let x = NL.atleast_1d x in
+    ~init:(fun x0 ->
+      let x_shape = (Core.get_aval x0).shape in
+      let x = NL.atleast_1d x0 in
       let a = Core.get_aval x in
       let vs =
         List.map
           (fun size -> L.full [| size |] 0.0 a.dtype)
           (Array.to_list a.shape)
       in
-      x :: zl x :: vs)
+      x :: zl x :: sm3_shape_leaf x_shape :: vs)
     ~update:(fun i g s ->
       match s with
-      | x :: m :: vs ->
+      | x :: m :: x_shape :: vs ->
           let shape = (Core.get_aval g).shape in
           let rank = Array.length shape in
           let expand axis v =
             let sh = Array.make rank 1 in
-            sh.(axis) <- shape.(axis);
-            if rank = 1 then v
+            if rank > 0 then sh.(axis) <- shape.(axis);
+            if rank <= 1 then v
             else
               Core.bind1
                 (Types.Broadcast_in_dim { shape = sh; dims = [| axis |] })
@@ -241,17 +248,24 @@ let sm3 ?(momentum = 0.9) (step_size : schedule) =
           let t1 = lit g (1.0 -. momentum) *! (g *! inverse) in
           let m' = t1 +! (lit m momentum *! m) in
           let x' = x -! (lit m' (step_size i) *! m') in
+          let x_rank = Array.length (Core.get_aval x').shape in
           let vs' =
-            List.init rank (fun j ->
+            List.init x_rank (fun j ->
                 let axes =
                   Array.of_list
-                    (List.filter (fun d -> d <> j) (List.init rank Fun.id))
+                    (List.filter (fun d -> d <> j) (List.init x_rank Fun.id))
                 in
                 RED.max ~axis:axes accum)
           in
-          x' :: m' :: vs'
+          x' :: m' :: x_shape :: vs'
       | _ -> invalid_arg "sm3: state")
-    ~get:head
+    ~get:(function
+      | x :: _ :: Concrete x_shape :: _ ->
+          NL.reshape x
+            (Array.init
+               (Ndarray.shape x_shape).(0)
+               (fun d -> Int64.to_int (Ndarray.get_i64 x_shape [| d |])))
+      | _ -> invalid_arg "sm3: state")
 
 let l2_norm tree =
   let total =

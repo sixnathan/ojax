@@ -421,10 +421,53 @@ let custom_call_of (e : eqn) =
       !custom_call id vid (List.map atom_type e.inputs)
   | _ -> None
 
+let update_counter = ref 0
+
+let fresh_update_id () =
+  decr update_counter;
+  !update_counter
+
+let update_jaxprs = Hashtbl.create 16
+
+let update_jaxpr prim dt =
+  match Hashtbl.find_opt update_jaxprs (prim, dt) with
+  | Some c -> c
+  | None ->
+      let var () =
+        {
+          vid = fresh_update_id ();
+          vaval = { dtype = dt; shape = [||]; weak_type = false };
+        }
+      in
+      let a = var () and b = var () and c = var () in
+      let jaxpr =
+        {
+          in_binders = [ a; b ];
+          eqns =
+            [
+              {
+                prim;
+                inputs = [ A_var a; A_var b ];
+                outs = [ c ];
+                multiple_results = false;
+              };
+            ];
+          outs = [ A_var c ];
+        }
+      in
+      let c = { jid = fresh_update_id (); jaxpr; consts = [] } in
+      Hashtbl.replace update_jaxprs (prim, dt) c;
+      c
+
 let rec structure_of_jaxpr (jx : jaxpr) =
   String.concat " " (List.map structure_of_eqn jx.eqns)
 
 and structure_of_eqn (e : eqn) =
+  let update_of prim =
+    match e.inputs with
+    | operand :: _ -> [ update_jaxpr prim (atom_type operand).dtype ]
+    | [] -> []
+  in
   let nested =
     match e.prim with
     | Reduce { jaxpr; _ } | Scan { jaxpr; _ } -> [ jaxpr ]
@@ -439,6 +482,11 @@ and structure_of_eqn (e : eqn) =
         @ (solve :: Option.to_list transpose_solve)
     | Custom_jvp_call _ -> (
         match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
+    | Scatter_add _ -> update_of Add
+    | Scatter_sub _ -> update_of Sub
+    | Scatter_mul _ -> update_of Mul
+    | Scatter_min _ -> update_of Min
+    | Scatter_max _ -> update_of Max
     | _ -> []
   in
   let name = match e.prim with Xla_call _ -> "jit" | p -> prim_name p in
@@ -587,46 +635,13 @@ let scatter_numbers (d : scatter_dims) =
     (py_ints d.s_operand_batching_dims)
     (py_ints d.s_scatter_indices_batching_dims)
 
-let update_counter = ref 0
-
-let fresh_update_id () =
-  decr update_counter;
-  !update_counter
-
-let update_jaxprs = Hashtbl.create 16
-
-let update_jaxpr prim dt =
-  match Hashtbl.find_opt update_jaxprs (prim, dt) with
-  | Some c -> c
-  | None ->
-      let var () =
-        {
-          vid = fresh_update_id ();
-          vaval = { dtype = dt; shape = [||]; weak_type = false };
-        }
-      in
-      let a = var () and b = var () and c = var () in
-      let jaxpr =
-        {
-          in_binders = [ a; b ];
-          eqns =
-            [
-              {
-                prim;
-                inputs = [ A_var a; A_var b ];
-                outs = [ c ];
-                multiple_results = false;
-              };
-            ];
-          outs = [ A_var c ];
-        }
-      in
-      let c = { jid = fresh_update_id (); jaxpr; consts = [] } in
-      Hashtbl.replace update_jaxprs (prim, dt) c;
-      c
-
 let scatter_flags p =
   Option.value (Np_ints.scatter_flags_of p) ~default:(false, false)
+
+let scatter_mode p =
+  if Np_ints.prim_marked p then "PROMISE_IN_BOUNDS"
+  else if Np_ints.scatter_one_hot p then "ONE_HOT"
+  else "FILL_OR_DROP"
 
 let scatter_params ?(flags = (false, false)) ?(sorted = false) ?update
     ?(mode = "FILL_OR_DROP") d unique =
@@ -823,9 +838,9 @@ let jax_params (e : eqn) =
       ]
   | Scatter { dimension_numbers; unique_indices } as p ->
       scatter_params ~flags:(scatter_flags p) ~sorted:(Np_ints.scatter_marked p)
-        dimension_numbers unique_indices
+        ~mode:(scatter_mode p) dimension_numbers unique_indices
   | Scatter_mul { dimension_numbers; unique_indices } as p ->
-      scatter_params ~flags:(scatter_flags p)
+      scatter_params ~flags:(scatter_flags p) ~mode:(scatter_mode p)
         ~update:(Mul, in_dtype ())
         dimension_numbers unique_indices
   | Scatter_add { dimension_numbers } as p when Np_ints.scatter_marked p ->
@@ -833,22 +848,19 @@ let jax_params (e : eqn) =
         ~update:(Add, in_dtype ())
         dimension_numbers true
   | Scatter_add { dimension_numbers } as p ->
-      let mode =
-        if Np_ints.prim_marked p then "PROMISE_IN_BOUNDS" else "FILL_OR_DROP"
-      in
-      scatter_params ~flags:(scatter_flags p) ~mode
+      scatter_params ~flags:(scatter_flags p) ~mode:(scatter_mode p)
         ~update:(Add, in_dtype ())
         dimension_numbers false
   | Scatter_sub { dimension_numbers } as p ->
-      scatter_params ~flags:(scatter_flags p)
+      scatter_params ~flags:(scatter_flags p) ~mode:(scatter_mode p)
         ~update:(Sub, in_dtype ())
         dimension_numbers false
   | Scatter_min { dimension_numbers } as p ->
-      scatter_params ~flags:(scatter_flags p)
+      scatter_params ~flags:(scatter_flags p) ~mode:(scatter_mode p)
         ~update:(Min, in_dtype ())
         dimension_numbers false
   | Scatter_max { dimension_numbers } as p ->
-      scatter_params ~flags:(scatter_flags p)
+      scatter_params ~flags:(scatter_flags p) ~mode:(scatter_mode p)
         ~update:(Max, in_dtype ())
         dimension_numbers false
   | Conv_general_dilated c ->

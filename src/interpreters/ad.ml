@@ -1782,6 +1782,11 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
   | Geqrf -> failwith "Differentiation rule for 'geqrf' not implemented"
   | Geqp3 -> failwith "Differentiation rule for 'geqp3' not implemented"
   | Ormqr _ -> failwith "Differentiation rule for 'ormqr' not implemented"
+  | Pmax_positional _ | Pmin_positional _ ->
+      Py_exn.not_implemented_error
+        ("Differentiation rule for '"
+        ^ Pretty_printer.primitive_name prim
+        ^ "' not implemented")
   | Collective { kind; _ } -> (
       match (kind, primals, tangents) with
       | ( ( Psum | Pbroadcast _ | Ppermute _ | All_gather _ | All_to_all _
@@ -5056,7 +5061,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
         ^ "' not implemented")
   | Cholesky | Cholesky_update | Symmetric_product _ | Householder_product | Lu
   | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _
-  | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
+  | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _
+  | Pmax_positional _ | Pmin_positional _ ->
       Py_exn.not_implemented_error
         ("Transpose rule (for reverse-mode differentiation) for '"
         ^ Pretty_printer.primitive_name prim

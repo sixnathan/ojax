@@ -20,6 +20,7 @@
   compose_fuzz
   jit_opts
   docs_p2
+  vmap_coll
   custom_ad
   keys_arrays
   index_fuzz
@@ -82,6 +83,7 @@
   (source_tree %{project_root}/goldens/option_fuzz)
   (source_tree %{project_root}/goldens/option_pinned)
   (source_tree %{project_root}/goldens/put_modes)
+  (source_tree %{project_root}/goldens/vmap_coll)
   (source_tree %{project_root}/goldens/compose_fuzz)
   (source_tree %{project_root}/goldens/custom_ad)
   (glob_files identical_rows/*.tsv)

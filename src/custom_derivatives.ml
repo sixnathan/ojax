@@ -207,25 +207,28 @@ let custom_vjp_symbolic primal ~fwd ~bwd =
     Core.bind (Custom_vjp_call (rule_for (List.map Core.get_aval args))) args
 
 let custom_gradient f =
-  let pullbacks = Hashtbl.create 16 in
-  let handle = ref 0 in
+  let rules = ref [] in
   let primal args = fst (f args) in
   let fwd args =
-    let outs, pullback = f args in
-    let key = !handle in
-    incr handle;
-    Hashtbl.replace pullbacks key pullback;
-    let residual =
-      Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int key |])
-    in
-    (outs, [ residual ])
+    let outs, rule = f args in
+    let avals = List.map Core.get_aval outs in
+    let closed, hoisted = Jaxpr.make_jaxpr_hoisted avals rule in
+    rules := (List.map Core.get_aval hoisted, closed) :: !rules;
+    (outs, hoisted)
   in
   let bwd res cts =
-    match res with
-    | [ Concrete nd ] ->
-        let key = int_of_float (Ndarray.get_f nd [||]) in
-        (Hashtbl.find pullbacks key) cts
-    | _ -> failwith "custom_gradient: residual was transformed"
+    let avals = List.map Core.get_aval res in
+    let strip (a : aval) = (a.shape, a.dtype) in
+    let closed =
+      match
+        List.find_opt
+          (fun (k, _) -> List.map strip k = List.map strip avals)
+          !rules
+      with
+      | Some (_, c) -> c
+      | None -> snd (List.hd !rules)
+    in
+    Jaxpr.eval_closed_jaxpr closed (cts @ res)
   in
   custom_vjp primal ~fwd ~bwd
 

@@ -16,6 +16,13 @@ val switch :
 
 val platform_index : platforms:string array option array -> value
 
+val branch_call :
+  ?platforms:string array option array ->
+  value ->
+  (value list -> value list) list ->
+  value list ->
+  value list
+
 val lower_scan :
   length:int ->
   reverse:bool ->

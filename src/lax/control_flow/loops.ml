@@ -238,6 +238,7 @@ let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
     let move =
       List.map2 (fun f used -> f && not used) forwarded cond_carry_used
     in
+    Key_reuse.note_moved move;
     if not (List.exists Fun.id move) then
       Core.bind
         (While
@@ -312,6 +313,15 @@ let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
         | _ -> failwith "while_loop: merge"
       in
       merge move outs init
+
+let while_loop_keyed ?cond_key cond_fun body_fun init =
+  Key_reuse.while_regions
+    (fun vs -> [ cond_fun vs ])
+    body_fun init
+    (fun wrapped_cond wrapped_body ->
+      while_loop_keyed ?cond_key
+        (fun vs -> List.hd (wrapped_cond vs))
+        wrapped_body init)
 
 let while_loop cond_fun body_fun init = while_loop_keyed cond_fun body_fun init
 
@@ -439,6 +449,7 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
       }
     in
     let all_consts = new_consts @ consts in
+    Key_reuse.note_moved move;
     let result =
       Core.bind
         (Scan
@@ -466,6 +477,10 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
       | None :: tl -> List.hd ys :: restore tl (List.tl ys)
     in
     merge move carry_out new_consts @ restore x_forward ys_out
+
+let scan ?length ?reverse ?unroll body init xs =
+  Key_reuse.scan_region ~num_carry:(List.length init) body (init @ xs)
+    (fun wrapped -> scan ?length ?reverse ?unroll wrapped init xs)
 
 let const_like v x =
   let a = Core.get_aval v in

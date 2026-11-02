@@ -150,6 +150,15 @@ let rec cond (pred : value) (true_fun : value list -> value list)
       (Cond { branches = [ f'; t' ]; platforms = None })
       ((index :: hoisted) @ operands)
 
+let cond pred true_fun false_fun operands =
+  Key_reuse.cond_regions [ true_fun; false_fun ] operands (function
+    | [ t; f ] -> cond pred t f operands
+    | _ -> failwith "cond: arity")
+
+let branch_call ?platforms index branches operands =
+  Key_reuse.cond_regions branches operands (fun wrapped ->
+      branch_call ?platforms index wrapped operands)
+
 let index_scalar i =
   Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int i |])
 

@@ -197,7 +197,8 @@ let jit_flat ?(name = "<lambda>") (f : value list -> value list) :
             entry
       in
       if cells = [] && Core.top_is_staging args then
-        bind_named_call ~name cj args
+        Key_reuse.call_with_signature signature args (fun () ->
+            bind_named_call ~name cj args)
       else
         Key_reuse.call_with_signature signature args (fun () ->
             run_with_refs cj cells args)

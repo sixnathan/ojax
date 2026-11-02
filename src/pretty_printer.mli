@@ -16,6 +16,13 @@ val custom_call :
   (int -> int option -> aval list -> (string * string * closed_jaxpr) option)
   ref
 
+type jax_param =
+  | Plain of string
+  | Sub of closed_jaxpr
+  | Subs of closed_jaxpr list
+
+val register_custom_view : int -> string -> (string * jax_param) list -> unit
+val note_varying : int -> string list -> unit
 val has_call_name : int -> bool
 val call_name : int -> string
 val registered_call_name : int -> string option

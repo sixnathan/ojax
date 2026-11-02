@@ -24,3 +24,25 @@ val instrument :
 
 val call_with_signature :
   signature -> value list -> (unit -> value list) -> value list
+
+val note_moved : bool list -> unit
+
+val cond_regions :
+  (value list -> value list) list ->
+  value list ->
+  ((value list -> value list) list -> value list) ->
+  value list
+
+val scan_region :
+  num_carry:int ->
+  (value list -> value list) ->
+  value list ->
+  ((value list -> value list) -> value list) ->
+  value list
+
+val while_regions :
+  (value list -> value list) ->
+  (value list -> value list) ->
+  value list ->
+  ((value list -> value list) -> (value list -> value list) -> value list) ->
+  value list

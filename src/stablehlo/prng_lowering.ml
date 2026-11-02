@@ -293,9 +293,13 @@ let seed_const dt (a : aval) v =
 let seed_wide_dtype dt =
   Dtypes.canonicalize_dtype (Dtypes.promote_types dt Dtype.Uint32)
 
+let to_u32 v =
+  if (Core.get_aval v).dtype = u32 then v
+  else b1 (Convert_element_type u32) [ v ]
+
 let seed_words seed =
   let a = Core.get_aval seed in
-  let convert v = b1 (Convert_element_type u32) [ v ] in
+  let convert = to_u32 in
   let high =
     convert (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ])
   in
@@ -311,7 +315,7 @@ let seed_scalar seed =
   let word v =
     b1
       (Broadcast_in_dim { shape = [| 1 |]; dims = [||] })
-      [ b1 (Convert_element_type u32) [ v ] ]
+      [ to_u32 v ]
   in
   let high = word (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ]) in
   let wide = seed_wide_dtype a.dtype in

@@ -439,6 +439,7 @@ cv_s_sum_6x2_61a31442_float64:out0	1
 cv_s_sum_6x2_a13717de_float32:out0	1
 cv_s_sum_6x2_a13717de_float64:out0	1
 cv_sem_3x4_0eb515fe_float32:out0	1
+cv_sem_3x4_0eb515fe_float64:out0	1
 cv_sem_3x4_2f391a41_float32:out0	1
 cv_sem_3x4_2f391a41_float64:out0	1
 cv_sem_3x4_386f0d7e_float32:out0	1

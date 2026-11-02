@@ -88,6 +88,38 @@ let threefry_step = function
       [ next_i; x0'; add x1' counter; k1; k2; k0; next_rotations; rotations ]
   | _ -> invalid_arg "Prng_lowering: threefry state"
 
+let unrolled_rounds spread key1 key2 key3 x0 x1 =
+  let apply_round (x0, x1) d =
+    let x0' = add x0 x1 in
+    let shifted =
+      b1 Or
+        [
+          b1 Shift_left [ x1; spread (u32_scalar (float_of_int d)) ];
+          b1 Shift_right_logical
+            [ x1; spread (u32_scalar (float_of_int (32 - d))) ];
+        ]
+    in
+    (x0', xor x0' shifted)
+  in
+  let keys = [| key1; key2; key3 |] in
+  let round (x0, x1) (rotations, k0, k1, count) =
+    let x0, x1 = List.fold_left apply_round (x0, x1) rotations in
+    ( add x0 (spread keys.(k0)),
+      add (add x1 (spread keys.(k1))) (spread (u32_scalar (float_of_int count)))
+    )
+  in
+  let x0, x1 =
+    List.fold_left round (x0, x1)
+      [
+        (rounds_a, 1, 2, 1);
+        (rounds_b, 2, 0, 2);
+        (rounds_a, 0, 1, 3);
+        (rounds_b, 1, 2, 4);
+        (rounds_a, 2, 0, 5);
+      ]
+  in
+  [ x0; x1 ]
+
 let threefry2x32_body key1 key2 c1 c2 =
   let shape =
     Core.elementwise_shape
@@ -97,22 +129,25 @@ let threefry2x32_body key1 key2 c1 c2 =
   let key3 = xor (xor key1 key2) (u32_scalar 466688986.0) in
   let x0 = add (spread c1) (spread key1) in
   let x1 = add (spread c2) (spread key2) in
-  match
-    Lax.scan ~length:5 threefry_step
-      [
-        i32_scalar 0.0;
-        x0;
-        x1;
-        key2;
-        key3;
-        key1;
-        rotation_array rounds_a;
-        rotation_array rounds_b;
-      ]
-      []
-  with
-  | _ :: x0 :: x1 :: _ -> [ x0; x1 ]
-  | _ -> invalid_arg "Prng_lowering: threefry state"
+  if Config.current_platform () <> "cpu" then
+    unrolled_rounds spread key1 key2 key3 x0 x1
+  else
+    match
+      Lax.scan ~length:5 threefry_step
+        [
+          i32_scalar 0.0;
+          x0;
+          x1;
+          key2;
+          key3;
+          key1;
+          rotation_array rounds_a;
+          rotation_array rounds_b;
+        ]
+        []
+    with
+    | _ :: x0 :: x1 :: _ -> [ x0; x1 ]
+    | _ -> invalid_arg "Prng_lowering: threefry state"
 
 let threefry2x32 key1 key2 c1 c2 =
   Jaxpr.named_jit ~name:"threefry2x32"

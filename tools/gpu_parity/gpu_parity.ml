@@ -105,13 +105,13 @@ let run_case oc case =
     in
     go names args
   in
-  let direct () = Parity_cases.run op params (lookup values) in
+  let direct () = Parity_cases.run_cases op params (lookup values) in
   let jitted () =
     if Parity_cases.needs_concrete op then
       failwith "gpu_parity: this operation needs concrete values"
     else
       Ojax.Api.jit_flat
-        (fun args -> Parity_cases.run op params (lookup args))
+        (fun args -> Parity_cases.run_cases op params (lookup args))
         values
   in
   Ojax.Config.with_value Ojax.Config.enable_x64 (set = "x64_on") (fun () ->

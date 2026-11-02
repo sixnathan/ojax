@@ -1,4 +1,5 @@
 type t = Types.value -> shape:int array -> Types.value
+type initializer_ = t
 type mode = Fan_in | Fan_out | Fan_avg | Fan_geo_avg
 type distribution = Truncated_normal | Normal | Uniform
 

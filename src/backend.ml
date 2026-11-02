@@ -420,7 +420,7 @@ let dispatch_host_callback id args rets =
   try
     let host, _ =
       match Core.custom_rule id with
-      | Core.Callback_rule { host; result_avals } -> (host, result_avals)
+      | Core.Callback_rule { host; result_avals; _ } -> (host, result_avals)
       | _ -> failwith "host callback: not a callback rule"
     in
     let inputs =

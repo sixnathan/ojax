@@ -5,6 +5,7 @@ module D = Dtype
 module RC = Random.Core
 
 type t = value -> shape:int array -> value
+type initializer_ = t
 type mode = Fan_in | Fan_out | Fan_avg | Fan_geo_avg
 type distribution = Truncated_normal | Normal | Uniform
 

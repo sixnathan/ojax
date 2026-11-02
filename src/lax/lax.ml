@@ -1561,7 +1561,7 @@ let rec impl_base prim inputs =
   | Empty { shape; dtype } -> [ empty_impl dtype shape ]
   | Empty2 dtype -> [ empty_impl dtype [||] ]
   | Composite cj -> composite_impl cj inputs
-  | Dce_sink -> []
+  | Dce_sink _ -> []
   | After_all | Create_token -> [ Ndarray.of_floats Dtype.F32 [| 0 |] [||] ]
   | Ffi_call _ -> !Core.ffi_impl prim inputs
   | From_edtype _ ->
@@ -2663,7 +2663,7 @@ let abstract_eval prim avals =
   | Empty { shape; dtype } -> [ shaped shape dtype false ]
   | Empty2 dtype -> [ shaped [||] dtype false ]
   | Composite cj -> List.map aval_of_atom cj.jaxpr.outs
-  | Dce_sink -> []
+  | Dce_sink _ -> []
   | After_all | Create_token -> [ shaped [| 0 |] Dtype.F32 false ]
   | Ffi_call c -> c.ffi_result_avals
   | From_edtype _ ->

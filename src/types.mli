@@ -150,7 +150,7 @@ and primitive =
   | Clamp
   | Composite of closed_jaxpr
   | Create_token
-  | Dce_sink
+  | Dce_sink of { prevent_mlir_dce : bool }
   | Empty of { shape : int array; dtype : Dtype.t }
   | Empty2 of Dtype.t
   | From_edtype of Dtype.t

@@ -353,6 +353,9 @@ type dtype_class =
   | Number
   | Generic
   | Cbool
+  | Flexible
+  | Character
+  | Object_
 
 let class_chain = function
   | Cdtype D.Bool | Cbool -> [ Cbool; Generic ]
@@ -372,6 +375,9 @@ let class_chain = function
   | Inexact -> [ Inexact; Number; Generic ]
   | Number -> [ Number; Generic ]
   | Generic -> [ Generic ]
+  | Flexible -> [ Flexible; Generic ]
+  | Character -> [ Character; Flexible; Generic ]
+  | Object_ -> [ Object_; Generic ]
   | Extended -> [ Extended; Generic ]
   | Prng_key_class -> [ Prng_key_class; Extended; Generic ]
 

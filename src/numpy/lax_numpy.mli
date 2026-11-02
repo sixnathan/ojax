@@ -11,6 +11,9 @@ type dtype_class =
   | Number
   | Generic
   | Cbool
+  | Flexible
+  | Character
+  | Object_
 
 type sections = Count of int | Indices of int array
 

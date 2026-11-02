@@ -68,6 +68,12 @@ let approx_min_k ?(reduction_dimension = -1) operand k =
 
 let broadcast_like arr like = NL.broadcast_to arr (shape like)
 let create_token () = Core.bind1 T.Create_token []
+
+let dce_sink ?(prevent_mlir_dce = false) v =
+  ignore (Core.bind (T.Dce_sink { prevent_mlir_dce }) [ v ])
+
+type precision_like = Lax_config.precision option
+type conv_general_dilated_dimension_numbers = Types.conv_dims option
 let after_all tokens = Core.bind1 T.After_all tokens
 
 type ragged_mode = Ragged_noncontracting | Ragged_contracting | Ragged_batch

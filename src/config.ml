@@ -49,6 +49,10 @@ let softmax_custom_jvp = make "jax_softmax_custom_jvp" false
 let threefry_partitionable = make "jax_threefry_partitionable" true
 let allow_f16_reductions = make "jax_allow_f16_reductions" true
 let thread_guard = make "jax_thread_guard" false
+let auto_pcast = make "jax_auto_pcast" true
+
+let remove_size_one_mesh_axis_from_type =
+  make "jax_remove_size_one_mesh_axis_from_type" false
 
 let jax2tf_associative_scan_reductions =
   make "jax2tf_associative_scan_reductions" false
@@ -163,8 +167,14 @@ let set_log_sink sink =
 let py_bool b = if b then "True" else "False"
 let py_opt = function None -> "None" | Some s -> s
 
+let user_contexts : (string * (unit -> string)) list ref = ref []
+
 let trace_context () =
-  [
+  List.map (fun (name, read) -> (name, read ())) !user_contexts
+  @ [
+    (auto_pcast.name, py_bool auto_pcast.value);
+    ( remove_size_one_mesh_axis_from_type.name,
+      py_bool remove_size_one_mesh_axis_from_type.value );
     (enable_x64.name, py_bool enable_x64.value);
     (debug_key_reuse.name, py_bool debug_key_reuse.value);
     (numpy_dtype_promotion.name, numpy_dtype_promotion.value);
@@ -185,3 +195,94 @@ let platforms =
 let platform_resolver = ref (fun () -> "cpu")
 let current_platform () = !platform_resolver ()
 let num_cpu_devices = make "jax_num_cpu_devices" (-1)
+
+type 'a user_context = 'a option flag
+
+let make_user_context ?default_value () =
+  let id = List.length !user_contexts in
+  let flag = make (Printf.sprintf "user_context_%d" id) default_value in
+  let read () =
+    Digest.to_hex
+      (Digest.string (Marshal.to_string flag.value [ Marshal.Closures ]))
+  in
+  user_contexts := !user_contexts @ [ (flag.name, read) ];
+  flag
+
+let with_user_context ctx v thunk = with_value ctx (Some v) thunk
+let user_context_value ctx = ctx.value
+
+type config_value =
+  | Config_bool of bool
+  | Config_int of int
+  | Config_string of string
+  | Config_optional_string of string option
+
+let bool_options =
+  List.map
+    (fun f -> (f.name, f))
+    [
+      enable_x64; disable_jit; debug_nans; debug_infs; log_compiles; no_tracing;
+      no_execution; enable_checks; debug_key_reuse; check_tracer_leaks;
+      explain_cache_misses; enable_custom_prng; softmax_custom_jvp;
+      threefry_partitionable; allow_f16_reductions; thread_guard;
+      jax2tf_associative_scan_reductions; auto_pcast;
+      remove_size_one_mesh_axis_from_type;
+    ]
+
+let string_options =
+  List.map
+    (fun f -> (f.name, f))
+    [ numpy_rank_promotion; numpy_dtype_promotion; legacy_prng_key; platforms ]
+
+let optional_options =
+  List.map
+    (fun f -> (f.name, f))
+    [
+      default_matmul_precision; transfer_guard_host_to_device;
+      transfer_guard_device_to_device; transfer_guard_device_to_host;
+      array_garbage_collection_guard;
+    ]
+
+let int_options =
+  List.map
+    (fun f -> (f.name, f))
+    [ export_calling_convention_version; num_cpu_devices ]
+
+let unrecognized name =
+  raise (Invalid_argument ("Unrecognized config option: " ^ name))
+
+let read name =
+  match List.assoc_opt name bool_options with
+  | Some f -> Config_bool f.value
+  | None -> (
+      match List.assoc_opt name string_options with
+      | Some f -> Config_string f.value
+      | None -> (
+          match List.assoc_opt name optional_options with
+          | Some f -> Config_optional_string f.value
+          | None -> (
+              match List.assoc_opt name int_options with
+              | Some f -> Config_int f.value
+              | None -> unrecognized name)))
+
+let update name v =
+  match v with
+  | Config_bool b -> (
+      match List.assoc_opt name bool_options with
+      | Some f -> set f b
+      | None -> unrecognized name)
+  | Config_int i -> (
+      match List.assoc_opt name int_options with
+      | Some f -> set f i
+      | None -> unrecognized name)
+  | Config_string s -> (
+      match
+        (List.assoc_opt name string_options, List.assoc_opt name optional_options)
+      with
+      | Some f, _ -> set f s
+      | None, Some f -> set f (Some s)
+      | None, None -> unrecognized name)
+  | Config_optional_string s -> (
+      match List.assoc_opt name optional_options with
+      | Some f -> set f s
+      | None -> unrecognized name)

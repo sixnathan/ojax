@@ -174,3 +174,13 @@ val array_repr : value -> string
 val array_str_jax : value -> string
 val packbits : ?axis:int -> ?bitorder:string -> value -> value
 val unpackbits : ?axis:int -> ?count:int -> ?bitorder:string -> value -> value
+
+val shape : value -> int array
+val broadcast_shapes : int array list -> int array
+val iterable : value -> bool
+val complex_ : value -> value
+val dtype : string -> Dtype.t
+
+type ndarray = value
+type ufunc = Ufunc.t
+type complex_warning = Complex_warning of string

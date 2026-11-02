@@ -335,38 +335,8 @@ let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
   UF.multiply (UF.subtract x mean)
     (bind1 T.Rsqrt [ UF.add variance (scalar_like variance epsilon) ])
 
-let logsumexp ?axis ?(keepdims = false) ?where:mask x =
-  let x = NL.astype x (Dtypes.to_inexact_dtype (dtype x)) in
-  let ndim = Array.length (shape x) in
-  let dims =
-    match axis with
-    | None -> Array.init ndim (fun i -> i)
-    | Some a -> Array.map (canon_axis ndim) a
-  in
-  let x =
-    match mask with None -> x | Some m -> where3 m x (Numpy.Jnp_util.py_int 0)
-  in
-  let amax =
-    RED.max ~axis:dims ~keepdims ?where:mask
-      ~initial:(Numpy.Jnp_util.py_float Float.neg_infinity)
-      (UF.real x)
-  in
-  let amax =
-    Custom_derivatives.stop_gradient
-      (Lax_api.select (UF.isfinite amax) amax (Lax_api.full_like amax 0.0))
-  in
-  let with_dims = if keepdims then amax else Lax_api.expand_dims amax dims in
-  let exp_a =
-    bind1 T.Exp [ bind1 T.Sub [ x; NL.astype with_dims (dtype x) ] ]
-  in
-  let sumexp = RED.sum ~axis:dims ~keepdims ?where:mask exp_a in
-  let _sign = bind1 T.Sign [ sumexp ] in
-  let sumexp =
-    match dtype sumexp with
-    | D.Complex64 | D.Complex128 -> sumexp
-    | _ -> UF.abs sumexp
-  in
-  bind1 T.Add [ bind1 T.Log [ sumexp ]; NL.astype amax (dtype sumexp) ]
+let logsumexp = Ops.Special.logsumexp
+let logsumexp_sign = Ops.Special.logsumexp_sign
 
 let logmeanexp ?axis ?(keepdims = false) ?where:mask x =
   let ndim = Array.length (shape x) in

@@ -142,6 +142,8 @@ let process_custom_jvp trace primal ~jvp args =
 let process_custom_vjp trace primal ~fwd ~bwd args =
   (interpreter_for trace).i_process_custom_vjp trace ~primal ~fwd ~bwd args
 
+type callback_effect = Callback_pure | Callback_io of { ordered : bool }
+
 type custom_rule =
   | Jvp_rule of {
       primal : value list -> value list;
@@ -162,6 +164,7 @@ type custom_rule =
   | Callback_rule of {
       host : value list -> value list;
       result_avals : aval list;
+      cb_effect : callback_effect;
     }
 
 let custom_rules : (int, custom_rule) Hashtbl.t = Hashtbl.create 16

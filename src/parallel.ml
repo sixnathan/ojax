@@ -33,6 +33,50 @@ let pbroadcast ?(source = 0) v ~axis_name =
 let ppermute v ~axis_name ~perm =
   collective (Ppermute (Array.of_list perm)) axis_name v
 
+let perm_string perm =
+  match perm with
+  | [ (a, b) ] -> Printf.sprintf "((%d, %d),)" a b
+  | _ ->
+      "("
+      ^ String.concat ", "
+          (List.map (fun (a, b) -> Printf.sprintf "(%d, %d)" a b) perm)
+      ^ ")"
+
+let single_side name axis_name params ~out v =
+  ignore (bound_axis_size axis_name);
+  Core.bind1
+    (Decomposable
+       {
+         dname = name;
+         dparams = params;
+         dimpl =
+           Core.register_decomposition (fun _ ->
+               raise
+                 (Failure (name ^ " is currently only implemented on GPU")));
+         davals = [ out ];
+       })
+    [ v ]
+
+let psend x ~axis_name ~perm =
+  single_side "psend" axis_name
+    [ ("axis_name", "('" ^ axis_name ^ "',)"); ("perm", perm_string perm) ]
+    ~out:{ shape = [| 0 |]; dtype = Dtype.F32; weak_type = false }
+    x
+
+let precv token ~out_shape ~axis_name ~perm =
+  let out = Shape_dtype_struct.traced_aval out_shape in
+  single_side "precv" axis_name
+    [
+      ("axis_name", "('" ^ axis_name ^ "',)");
+      ( "out_shape",
+        Ref_state.dtype_name out.dtype ^ "["
+        ^ String.concat ","
+            (List.map string_of_int (Array.to_list out.shape))
+        ^ "]" );
+      ("perm", perm_string perm);
+    ]
+    ~out token
+
 let axis_index ~axis_name =
   ignore (bound_axis_size axis_name);
   Core.bind1 (Collective { kind = Axis_index; axis_name }) []

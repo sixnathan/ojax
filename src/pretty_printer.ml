@@ -182,7 +182,7 @@ let prim_name = function
   | Clamp -> "clamp"
   | Composite _ -> "composite"
   | Create_token -> "create_token"
-  | Dce_sink -> "dce_sink"
+  | Dce_sink _ -> "dce_sink"
   | Empty _ -> "empty"
   | Empty2 _ -> "empty2"
   | From_edtype _ -> "from_edtype"
@@ -684,6 +684,8 @@ let jax_params (e : eqn) =
         ("sharding", Plain "None");
       ]
   | Decomposable { dparams; _ } -> List.map (fun (k, v) -> (k, Plain v)) dparams
+  | Dce_sink { prevent_mlir_dce } ->
+      [ ("prevent_mlir_dce", Plain (if prevent_mlir_dce then "True" else "False")) ]
   | Reshape_perm { new_sizes; dimensions } ->
       [
         ("dimensions", Plain (py_ints dimensions));
@@ -1154,11 +1156,14 @@ let key_short (a : aval) =
   let dims = Array.to_list (Array.sub a.shape 0 (max 0 (rank - 1))) in
   "key<fry>[" ^ String.concat "," (List.map string_of_int dims) ^ "]"
 
+let token_vars : (int, unit) Hashtbl.t = Hashtbl.create 8
+
 let pp_binders ctx (vars : var list) =
   let doc (v : var) =
     let name = name_of_var ctx v in
     let short =
-      if Hashtbl.mem ctx.keys v.vid then key_short v.vaval
+      if Hashtbl.mem token_vars v.vid then "Tok"
+      else if Hashtbl.mem ctx.keys v.vid then key_short v.vaval
       else aval_short v.vaval
     in
     let short =
@@ -1269,6 +1274,10 @@ and pp_params ctx params =
            ])
 
 and pp_eqn ctx (e : eqn) =
+  (match e.prim with
+  | Create_token | After_all | Decomposable { dname = "psend"; _ } ->
+      List.iter (fun (v : var) -> Hashtbl.replace token_vars v.vid ()) e.outs
+  | _ -> ());
   let name_param =
     match e.prim with
     | Xla_call c ->

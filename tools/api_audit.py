@@ -11,7 +11,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MAP = {
-    "jax": ["spmd", "parallel", "ref", "shape_dtype_struct", "api", "core", "ad_util", "custom_derivatives", "checkpoint", "tree_util", "flatten_util", "config", "sharding", "backend", "debugging", "basearray", "dtypes", "stages", "random/core", "profiler", "monitoring"],
+    "jax": ["spmd", "parallel", "ref", "shape_dtype_struct", "api", "core", "ad_util", "custom_derivatives", "checkpoint", "tree_util", "flatten_util", "config", "sharding", "backend", "debugging", "basearray", "dtypes", "stages", "random/core", "profiler", "monitoring", "jax_top"],
     "jax.numpy": ["numpy/*", "dtypes"],
     "jax.numpy.fft": ["numpy/fft"],
     "jax.numpy.linalg": ["numpy/linalg", "linalg_extras"],

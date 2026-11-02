@@ -2360,3 +2360,29 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
           NL.swapaxes ax (-1) unpacked
       | _ -> invalid_arg "unpackbits: arity")
     [ a ]
+
+let broadcast_shapes = function [] -> [||] | shapes -> L.broadcast_shapes shapes
+let iterable v = Array.length (shape v) > 0
+let complex_ = Scalar_types.complex128
+
+let dtype name =
+  match name with
+  | "bool" | "bool_" -> Dtype.Bool
+  | "int8" -> Dtype.I8
+  | "int16" -> Dtype.I16
+  | "int32" -> Dtype.I32
+  | "int64" -> Dtype.I64
+  | "uint8" -> Dtype.Uint8
+  | "uint16" -> Dtype.Uint16
+  | "uint32" -> Dtype.Uint32
+  | "uint64" -> Dtype.Uint64
+  | "float16" -> Dtype.F16
+  | "float32" -> Dtype.F32
+  | "float64" -> Dtype.F64
+  | "complex64" -> Dtype.Complex64
+  | "complex128" -> Dtype.Complex128
+  | other -> raise (Invalid_argument ("data type '" ^ other ^ "' not understood"))
+
+type ndarray = value
+type ufunc = Ufunc.t
+type complex_warning = Complex_warning of string

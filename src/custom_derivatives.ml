@@ -238,7 +238,7 @@ let closure_convert f avals =
   let closed, hoisted = Jaxpr.make_jaxpr_hoisted avals f in
   ((fun args -> Jaxpr.eval_closed_jaxpr closed args), hoisted)
 
-let pure_callback host_fun ~result_avals =
+let callback_rule cb_effect host_fun ~result_avals =
   let host args =
     host_fun
       (List.map
@@ -249,8 +249,15 @@ let pure_callback host_fun ~result_avals =
          args)
   in
   let id =
-    Core.register_custom_rule (Core.Callback_rule { host; result_avals })
+    Core.register_custom_rule
+      (Core.Callback_rule { host; result_avals; cb_effect })
   in
   fun args -> Core.bind (Custom_vjp_call id) args
+
+let pure_callback host_fun ~result_avals =
+  callback_rule Core.Callback_pure host_fun ~result_avals
+
+let io_callback ?(ordered = false) host_fun ~result_avals =
+  callback_rule (Core.Callback_io { ordered }) host_fun ~result_avals
 
 let zero_from_primal v = Ad_util.zeros_like_aval (Core.get_aval v)

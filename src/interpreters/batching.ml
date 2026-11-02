@@ -1014,7 +1014,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Custom_linear_solve _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
-  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
+  | Dce_sink _ | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ ->
       failwith "batching: vmap of this primitive not supported in M1"
   | Dot_general dims -> dot_general_batch dims vals bdims
@@ -1788,6 +1788,15 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   in
   (outs, out_bdims)
 
+let check_vmappable_callback = function
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule { cb_effect = Core.Callback_io { ordered = true }; _ }
+        ->
+          invalid_arg "Cannot `vmap` ordered IO callback."
+      | _ -> ())
+  | _ -> ()
+
 let unstacks_operands prim (bdims : int option list) =
   let any_batched = List.exists (fun b -> b <> None) in
   match (prim, bdims) with
@@ -1805,6 +1814,7 @@ let unstacks_operands prim (bdims : int option list) =
   | _ -> false
 
 let unstacked_batch axis_size prim vals bdims =
+  check_vmappable_callback prim;
   let per_element =
     List.map2
       (fun v b ->

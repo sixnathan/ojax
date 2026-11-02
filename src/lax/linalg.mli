@@ -1,3 +1,14 @@
+type eig_implementation = Lax_config.eig_implementation =
+  | Cusolver
+  | Magma
+  | Lapack
+
+type eigh_implementation = Lax_config.eigh_implementation =
+  | Eigh_qr
+  | Eigh_jacobi
+  | Eigh_qdwh
+
+type svd_algorithm = Lax_config.svd_algorithm
 open Types
 
 val cholesky_impl : Ndarray.t list -> Ndarray.t list

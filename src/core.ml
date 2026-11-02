@@ -389,6 +389,8 @@ let check_operands prim args =
       reject_bool_at_zero "add" "floating, complexfloating, integer"
   | Scatter_mul _ ->
       reject_bool_at_zero "mul" "complexfloating, floating, integer"
+  | Scatter_sub _ ->
+      reject_bool_at_zero "sub" "floating, complexfloating, integer"
   | And -> check_position "and"
   | Or -> check_position "or"
   | Xor -> check_position "xor"

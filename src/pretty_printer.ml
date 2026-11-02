@@ -489,6 +489,8 @@ and structure_of_eqn (e : eqn) =
         @ (solve :: Option.to_list transpose_solve)
     | Custom_jvp_call _ | Custom_vjp_call _ -> (
         match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
+    | Scatter _ as p when Scatter_apply.find p <> None -> (
+        match Scatter_apply.find p with Some (c, _) -> [ c ] | None -> [])
     | Scatter_add _ -> update_of Add
     | Scatter_sub _ -> update_of Sub
     | Scatter_mul _ -> update_of Mul
@@ -651,7 +653,7 @@ let scatter_mode p =
   else "FILL_OR_DROP"
 
 let scatter_params ?(flags = (false, false)) ?(sorted = false) ?update
-    ?(mode = "FILL_OR_DROP") d unique =
+    ?update_closed ?(mode = "FILL_OR_DROP") d unique =
   let sorted = sorted || fst flags and unique = unique || snd flags in
   [
     ("dimension_numbers", Plain (scatter_numbers d));
@@ -660,9 +662,10 @@ let scatter_params ?(flags = (false, false)) ?(sorted = false) ?update
     ("unique_indices", Plain (py_bool (unique || d.s_sorted_unique)));
     ("update_consts", Plain "()");
     ( "update_jaxpr",
-      match update with
-      | Some (prim, dt) -> Sub (update_jaxpr prim dt)
-      | None -> Plain "None" );
+      match (update_closed, update) with
+      | Some c, _ -> Sub c
+      | None, Some (prim, dt) -> Sub (update_jaxpr prim dt)
+      | None, None -> Plain "None" );
   ]
 
 let window_params (w : window_dims) =
@@ -854,6 +857,7 @@ let jax_params (e : eqn) =
       ]
   | Scatter { dimension_numbers; unique_indices } as p ->
       scatter_params ~flags:(scatter_flags p) ~sorted:(Np_ints.scatter_marked p)
+        ?update_closed:(Option.map fst (Scatter_apply.find p))
         ~mode:(scatter_mode p) dimension_numbers unique_indices
   | Scatter_mul { dimension_numbers; unique_indices } as p ->
       scatter_params ~flags:(scatter_flags p) ~mode:(scatter_mode p)

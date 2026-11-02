@@ -357,13 +357,36 @@ let scatter_impl combiner (sd : scatter_dims) operand indices updates =
   Ndarray.of_floats (Ndarray.dtype operand) op_shape out
 
 let scatter_combiner = function
-  | Scatter _ -> fun _ y -> y
+  | Scatter _ as p -> (
+      match Scatter_apply.find p with
+      | Some (_, host) -> fun x _ -> host x
+      | None -> fun _ y -> y)
   | Scatter_add _ -> ( +. )
   | Scatter_sub _ -> ( -. )
   | Scatter_mul _ -> ( *. )
   | Scatter_min _ -> Float.min
   | Scatter_max _ -> Float.max
   | _ -> failwith "lax: not a scatter primitive"
+
+let fill_cast dt f =
+  let saturate lo hi = Float.max lo (Float.min hi (Float.trunc f)) in
+  let wrap bits signed v =
+    let m = Float.of_int (1 lsl bits) in
+    let r = Float.rem v m in
+    let r = if r < 0.0 then r +. m else r in
+    if signed && r >= m /. 2.0 then r -. m else r
+  in
+  if Float.is_nan f then if Dtypes.issubdtype dt `Integer then 0.0 else f
+  else
+    match dt with
+    | Dtype.I8 -> wrap 8 true (saturate (-2147483648.0) 2147483647.0)
+    | Dtype.I16 -> wrap 16 true (saturate (-2147483648.0) 2147483647.0)
+    | Dtype.Uint8 -> wrap 8 false (saturate 0.0 4294967295.0)
+    | Dtype.Uint16 -> wrap 16 false (saturate 0.0 4294967295.0)
+    | d when Dtypes.issubdtype d `Integer ->
+        let info = Dtypes.iinfo d in
+        saturate info.imin info.imax
+    | _ -> f
 
 let default_gather_fill dt sh =
   let n = Array.fold_left ( * ) 1 sh in
@@ -429,6 +452,7 @@ let gather_fill_expanded ?fill_value operand indices (gd : gather_dims)
   let fill =
     match fill_value with
     | Some f ->
+        let f = fill_cast op_dt f in
         Concrete
           (Ndarray.of_floats op_dt out_shape
              (Array.make (Array.fold_left ( * ) 1 out_shape) f))
@@ -543,13 +567,15 @@ let gather_fill_lowered prim operand indices =
   in
   let fill =
     match fill_value with
-    | Some f -> Ndarray.of_floats op_dt [||] [| f |]
+    | Some f -> Ndarray.of_floats op_dt [||] [| fill_cast op_dt f |]
     | None -> default_gather_fill op_dt [||]
   in
   let fill =
-    bind1
-      (Broadcast_in_dim { shape = out_shape; dims = [||] })
-      [ Concrete fill ]
+    if out_shape = [||] then Concrete fill
+    else
+      bind1
+        (Broadcast_in_dim { shape = out_shape; dims = [||] })
+        [ Concrete fill ]
   in
   bind1 Select_n [ mask; fill; gathered ]
 
@@ -597,7 +623,10 @@ let clamp_scatter_indices operand indices updates (sd : scatter_dims) =
     if Array.exists (fun v -> v > 2147483647.0) upper then Dtype.I64
     else Dtype.I32
   in
-  let raw = Concrete (Ndarray.of_floats host [| Array.length upper |] upper) in
+  let raw =
+    if upper = [||] then Core.splat host [| 0 |] 0.0
+    else Concrete (Ndarray.of_floats host [| Array.length upper |] upper)
+  in
   let int_max dt =
     match dt with
     | Dtype.I64 | Dtype.Uint64 -> 9223372036854775807.0
@@ -654,4 +683,7 @@ let unclip_scatter p =
         Scatter_max { dimension_numbers = off d }
     | _ -> invalid_arg "unclip_scatter: not a scatter primitive"
   in
-  Np_ints.copy_scatter_marks ~from:p plain
+  let plain = Np_ints.copy_scatter_marks ~from:p plain in
+  match Scatter_apply.find p with
+  | Some (jaxpr, host) -> Scatter_apply.mark plain jaxpr host
+  | None -> plain

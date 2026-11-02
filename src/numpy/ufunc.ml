@@ -217,3 +217,63 @@ let outer u a b =
           in
           Lax_api.reshape (List.hd result) (Array.append sa sb)
       | _ -> assert false)
+
+let py_shape s =
+  match Array.to_list s with
+  | [ d ] -> Printf.sprintf "(%d,)" d
+  | ds -> "(" ^ String.concat ", " (List.map string_of_int ds) ^ ")"
+
+let reduceat ?(axis = 0) u a indices =
+  check_binary u "reduceat";
+  Eager_jit.one ~jit:"reduceat" "numpy.ufunc.reduceat" (u.id, axis) []
+    [ a; indices ] (fun _ vals ->
+      match vals with
+      | [ a; indices ] -> (
+          if Array.length (shape a) = 0 then
+            Py_exn.value_error
+              (Printf.sprintf
+                 "reduceat: a must have 1 or more dimension, got a.shape=%s"
+                 (py_shape (shape a)));
+          if Array.length (shape indices) <> 1 then
+            Py_exn.value_error
+              (Printf.sprintf
+                 "reduceat: indices must be one-dimensional, got \
+                  indices.shape=%s"
+                 (py_shape (shape indices)));
+          let axis = canonical_axis axis a in
+          let out = Indexing.take ~axis a indices in
+          let size = (shape a).(axis) in
+          let appended = NL.append indices (Jnp_util.py_int size) in
+          let rank = Array.length (shape out) in
+          let ind =
+            Lax_api.expand_dims appended
+              (Array.of_list
+                 (List.filter (fun d -> d <> axis) (List.init rank Fun.id)))
+          in
+          let len = (shape ind).(axis) in
+          let ind_start = Lax_api.slice_in_dim ~axis ind 0 (len - 1) in
+          let ind_end = Lax_api.slice_in_dim ~axis ind 1 len in
+          let body i = function
+            | [ out ] ->
+                let inside =
+                  Ufuncs.bitwise_and
+                    (Ufuncs.greater i ind_start)
+                    (Ufuncs.less i ind_end)
+                in
+                let step =
+                  single u
+                    [
+                      out; Indexing.take ~axis a (Lax_api.expand_dims i [| 0 |]);
+                    ]
+                in
+                [ Jnp_util.where inside step out ]
+            | _ -> invalid_arg "ufunc.reduceat: arity"
+          in
+          match
+            Lax_api.fori_loop (weak_int 0.0)
+              (weak_int (float_of_int size))
+              body [ out ]
+          with
+          | [ r ] -> r
+          | _ -> invalid_arg "ufunc.reduceat: arity")
+      | _ -> invalid_arg "ufunc.reduceat: arity")

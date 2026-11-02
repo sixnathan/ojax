@@ -2314,7 +2314,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
     in
     if (shape x).(1) = 0 then
       let n = (shape x).(0) in
-      C.splat (dtype_of x) (if n = 1 then [||] else [| n; n |]) Float.nan
+      C.splat (dtype_of x) (if n = 1 then [||] else [| n; n |]) Float_format.nan
     else
       let x = match dtype with Some d -> convert x d | None -> x in
       let dt = dtype_of x in

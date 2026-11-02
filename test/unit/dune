@@ -65,6 +65,7 @@
   test_linalg_lapack
   test_lax_linalg
   test_scipy_linalg
+  test_linalg_validation
   test_scipy_sparse_linalg
   test_numpy_vectorize
   test_scipy_spatial_transform

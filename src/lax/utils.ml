@@ -198,7 +198,16 @@ let remove_int arr idx =
 
 let stack_shape axis n in_shape = insert_int in_shape axis n
 let tile_shape reps in_shape = Array.mapi (fun i d -> d * reps.(i)) in_shape
-let transpose_shape perm in_shape = Array.map (fun p -> in_shape.(p)) perm
+
+let transpose_shape perm in_shape =
+  let rank = Array.length in_shape in
+  if List.sort compare (Array.to_list perm) <> List.init rank Fun.id then
+    type_error
+      (Printf.sprintf
+         "transpose permutation isn't a permutation of operand dimensions, got \
+          permutation %s for operand shape %s."
+         (py_tuple perm) (py_tuple in_shape));
+  Array.map (fun p -> in_shape.(p)) perm
 
 let squeeze_shape dims in_shape =
   let is_dropped = Array.make (Array.length in_shape) false in

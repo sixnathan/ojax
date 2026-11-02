@@ -229,8 +229,10 @@ let gelu ?(approximate = true) x =
 let glu ?(axis = -1) x =
   let sh = shape x in
   let n = Array.length sh in
-  if sh.(if axis < 0 then axis + n else axis) mod 2 <> 0 then
-    failwith "axis size must be divisible by 2";
+  ignore n;
+  Validate.assertion
+    (Validate.py_mod (Validate.tuple_index sh axis) 2 = 0)
+    ~message:"axis size must be divisible by 2";
   match NL.split ~axis x (NL.Count 2) with
   | [ x1; x2 ] -> UF.multiply x1 (sigmoid x2)
   | _ -> invalid_arg "glu: split did not produce two halves"
@@ -333,7 +335,7 @@ let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
                  (RED.mean ~axis:ax ~keepdims:true ?where:mask (UF.square x))
                  (UF.square mean))
         | a ->
-            invalid_arg
+            Py_exn.value_error
               ("Unknown algorithm '" ^ a ^ "'. Expected 'fast' or 'stable'."))
   in
   UF.multiply (UF.subtract x mean)
@@ -410,7 +412,7 @@ let get_scaled_dot_general_config ?global_scale mode =
         global_scale = None;
         infer_only = false;
       }
-  | other -> invalid_arg (Printf.sprintf "Unsupported mode: %s" other)
+  | other -> Py_exn.value_error (Printf.sprintf "Unsupported mode: %s" other)
 
 let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch a b =
@@ -419,10 +421,12 @@ let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
       (match preferred_element_type with
       | D.F32 | D.Bf16 | D.F16 -> ()
       | _ ->
-          invalid_arg "Only support preferred_element_type in (f32, bf16, f16)");
-      failwith
-        "MLIR translation rule for primitive 'scaled_matmul' not found for \
-         platform cpu"
+          Py_exn.type_error
+            "Only support preferred_element_type in (f32, bf16, f16)");
+      raise
+        (Py_exn.Not_implemented_error
+           "MLIR translation rule for primitive 'scaled_matmul' not found for \
+            platform cpu")
   | None -> ());
   Lax_api.dot_general ~preferred_element_type a b ~lhs_contract ~rhs_contract
     ~lhs_batch ~rhs_batch
@@ -435,23 +439,25 @@ let scaled_matmul ?(preferred_element_type = D.F32) lhs rhs lhs_scales
       (fun v -> Array.length (dims v) <> 3)
       [ lhs; rhs; lhs_scales; rhs_scales ]
   then
-    invalid_arg "scaled_matmul requires all inputs to be 3-dimensional arrays";
+    Py_exn.value_error
+      "scaled_matmul requires all inputs to be 3-dimensional arrays";
   let sa = dims lhs and sb = dims rhs in
   if sa.(2) <> sb.(2) || sa.(0) <> sb.(0) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires inputs a and b to have matching batch (B) and \
        contract (K) dimensions";
   let ssa = dims lhs_scales and ssb = dims rhs_scales in
   if ssa.(2) <> ssb.(2) || ssa.(0) <> ssb.(0) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires scales to have matching batch (B) and contract \
        (K) dimensions";
   if ssa.(1) <> sa.(1) || ssb.(1) <> sb.(1) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires scales to match non-contract dimensions of inputs";
   let k = sa.(2) in
   if ssa.(2) = 0 || k mod ssa.(2) <> 0 then
-    invalid_arg "scaled_matmul requires K to be divisible by the scale blocks";
+    Py_exn.value_error
+      "scaled_matmul requires K to be divisible by the scale blocks";
   let block = k / ssa.(2) in
   let scaled operand scales =
     let sh = dims scales in
@@ -516,10 +522,44 @@ let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
   let bias = Option.map ensure_4d bias in
   let mask = Option.map ensure_4d mask in
   let q_shape = shape query and k_shape = shape key in
+  if Array.length k_shape > 4 then
+    Py_exn.value_error
+      (Printf.sprintf "too many values to unpack (expected 4, got %d)"
+         (Array.length k_shape));
+  let check_rank name v =
+    if Array.length (shape v) <> 4 then
+      Py_exn.value_error
+        (Printf.sprintf "%s ndim should be 4, but got %d" name
+           (Array.length (shape v)))
+  in
+  check_rank "value" value;
+  check_rank "query" query;
+  let list_text l = Validate.python_list (Array.to_list l) in
+  let check_like name v expected =
+    Array.iteri
+      (fun i d ->
+        if d <> -1 && (shape v).(i) <> d then
+          Py_exn.value_error
+            (Printf.sprintf "%s shape should be %s: but got %s" name
+               (list_text expected)
+               (Validate.python_tuple (shape v))))
+      expected
+  in
+  let same_dtype name v =
+    if dtype v <> dtype key then
+      Py_exn.value_error
+        (Printf.sprintf "%s dtype should be %s, but got %s" name
+           (Dtype.numpy_name (dtype key))
+           (Dtype.numpy_name (dtype v)))
+  in
+  same_dtype "value" value;
+  check_like "value" value k_shape;
+  same_dtype "query" query;
+  check_like "query" query [| k_shape.(0); -1; -1; k_shape.(3) |];
   let b, t, n, h = (q_shape.(0), q_shape.(1), q_shape.(2), q_shape.(3)) in
   let k = k_shape.(2) in
-  if n mod k <> 0 then
-    invalid_arg
+  if Validate.py_mod n k <> 0 then
+    Py_exn.value_error
       (Printf.sprintf
          "The number of query heads must be a multiple of key/value heads, but \
           got %d vs %d"

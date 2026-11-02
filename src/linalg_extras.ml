@@ -30,14 +30,12 @@ let vmap_matrix f a =
        [ Some 0 ] [ a ])
 
 let geqrf a =
-  match Core.bind T.Geqrf [ a ] with
-  | [ r; t ] -> (r, t)
-  | _ -> failwith "geqrf: arity"
+  match Core.bind T.Geqrf [ a ] with [ r; t ] -> (r, t) | _ -> assert false
 
 let geqp3 a jpvt =
   match Core.bind T.Geqp3 [ a; jpvt ] with
   | [ r; p; t ] -> (r, p, t)
-  | _ -> failwith "geqp3: arity"
+  | _ -> assert false
 
 let ormqr ?(left = true) ?(transpose = false) a taus c =
   Core.bind1
@@ -57,7 +55,7 @@ let cholesky_update_jax_fn r w =
             L.div (const_like x 1.0) (L.sqrt (L.add (L.mul x x) (L.mul y y)))
           in
           [ L.mul x rh; L.mul (L.neg y) rh ]
-      | _ -> failwith "cholesky_update: arity"
+      | _ -> assert false
     in
     L.cond
       (L.eq y (const_like y 0.0))
@@ -107,7 +105,7 @@ let cholesky_update_jax_fn r w =
                  unique_indices = true;
                })
             [ !current; index; new_row ]
-    | _ -> failwith "cholesky_update: arity"
+    | _ -> assert false
   done;
   !current
 
@@ -128,22 +126,33 @@ let () =
       | T.Cholesky_update, [ r; w ] -> [ cholesky_update_jax_fn r w ]
       | T.Symmetric_product { alpha; beta }, [ a; c ] ->
           [ symmetric_product_jax_fn ~alpha ~beta a c ]
-      | _ -> failwith "lowered linalg: unexpected primitive"
+      | _ -> assert false
 
 let cholesky_update r w =
-  let check name v i expected =
-    if Array.length (shape v) <> expected then
-      invalid_arg
+  let check v i expected =
+    let text = Validate.python_tuple (shape v) in
+    if Array.length (shape v) < expected then
+      Py_exn.type_error
         (Printf.sprintf
-           "Input %d to %s must have a rank of exactly %d, but got shape=%s" i
-           name expected
-           ("("
-           ^ String.concat ", "
-               (List.map string_of_int (Array.to_list (shape v)))
-           ^ ")"))
+           "Input %d to cholesky_update must have rank at least %d, but got \
+            shape=%s"
+           i expected text);
+    if Array.length (shape v) <> expected then
+      Py_exn.type_error
+        (Printf.sprintf
+           "Input %d to cholesky_update must have a rank of exactly %d, but \
+            got shape=%s"
+           i expected text)
   in
-  check "cholesky_update" r 0 2;
-  check "cholesky_update" w 1 1;
+  check r 0 2;
+  check w 1 1;
+  if (shape r).(0) <> (shape r).(1) || (shape w).(0) <> (shape r).(1) then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Rank-1 update to Cholesky decomposition takes a square matrix and a \
+          vector of the same size as input. Got shapes %s and %s instead"
+         (Validate.python_tuple (shape r))
+         (Validate.python_tuple (shape w)));
   Eager_jit.one "lax.linalg.cholesky_update" () [] [ r; w ] (fun _ vals ->
       Core.bind1 T.Cholesky_update vals)
 

@@ -37,7 +37,7 @@ let fft_norm ~inverse sizes dt norm =
       if inverse then root else reciprocal root
   | "forward" -> if inverse then product () else reciprocal (product ())
   | other ->
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "Invalid norm value %s; should be \"backward\",\"ortho\" or \
             \"forward\"."
@@ -63,6 +63,19 @@ let moved_perm ndim source destination =
     (List.sort compare (List.combine destination source));
   Array.of_list !perm
 
+let moveaxis source destination v =
+  let ndim = rank_of v in
+  let source = List.map (fun i -> Validate.canonicalize_axis i ndim) source in
+  let destination =
+    List.map (fun i -> Validate.canonicalize_axis i ndim) destination
+  in
+  b1 (Transpose (moved_perm ndim source destination)) [ v ]
+
+let python_list items =
+  "[" ^ String.concat ", " (List.map string_of_int items) ^ "]"
+
+let range lo hi = List.init (max 0 (hi - lo)) (fun i -> lo + i)
+
 let lax_fft kind sizes v =
   let key =
     (match kind with
@@ -77,7 +90,13 @@ let lax_fft kind sizes v =
       | [ v ] ->
           let prepared =
             match kind with
-            | Fft_real -> as_real v
+            | Fft_real ->
+                (match (Core.get_aval v).dtype with
+                | Dtype.Complex64 | Dtype.Complex128 ->
+                    Py_exn.value_error
+                      "only real valued inputs supported for rfft"
+                | _ -> ());
+                as_real v
             | Fft_forward | Fft_inverse | Fft_inverse_real -> as_complex v
           in
           if sizes = [] then prepared
@@ -85,7 +104,7 @@ let lax_fft kind sizes v =
             b1
               (Fft { fft_type = kind; fft_lengths = Array.of_list sizes })
               [ prepared ]
-      | _ -> invalid_arg "fft: arity")
+      | _ -> assert false)
     [ v ]
 
 let pad_zero v widths =
@@ -109,41 +128,74 @@ let pad_zero v widths =
           b1
             (Pad (Lax_numpy.pad_widths_config (Array.of_list widths)))
             [ v; cval ]
-      | _ -> invalid_arg "pad: arity")
+      | _ -> assert false)
     [ v; Concrete (Ndarray.of_floats default_int [||] [| 0.0 |]) ]
 
-let fft_core kind ~inverse ?s ?axes ?norm a =
+let rec fft_core_nd arr kind sizes =
+  let count = List.length sizes in
+  if count <= 3 then lax_fft kind sizes arr
+  else
+    let n = if count = 4 then 2 else 3 in
+    let ndim = rank_of arr in
+    let src = range (ndim - count) (ndim - n) in
+    let dst = range (ndim - count + n) ndim in
+    let head = List.filteri (fun i _ -> i < count - n) sizes in
+    let tail = List.filteri (fun i _ -> i >= count - n) sizes in
+    match kind with
+    | Fft_real | Fft_forward ->
+        let arr = lax_fft kind tail arr in
+        let arr = moveaxis src dst arr in
+        let arr = fft_core_nd arr Fft_forward head in
+        moveaxis dst src arr
+    | Fft_inverse | Fft_inverse_real ->
+        let arr = moveaxis src dst arr in
+        let arr = fft_core_nd arr Fft_inverse head in
+        let arr = moveaxis dst src arr in
+        lax_fft kind tail arr
+
+let fft_core name kind ~inverse ?s ?axes ?norm a =
   let ndim = rank_of a in
-  let orig_axes = Option.map (List.map (canon_axis ndim)) axes in
-  let axes =
-    match (orig_axes, s) with
-    | Some ax, _ -> ax
-    | None, Some sizes ->
-        let k = List.length sizes in
-        List.init k (fun i -> ndim - k + i)
-    | None, None -> List.init ndim Fun.id
-  in
-  if List.length (List.sort_uniq compare axes) <> List.length axes then
-    invalid_arg "numpy.fft: repeated axis";
   (match s with
-  | Some sizes when List.length sizes <> List.length axes ->
-      invalid_arg "Shape and axes have different lengths."
+  | Some sizes when List.exists (fun x -> x <= 0) sizes ->
+      Py_exn.value_error "Shape should be positive."
   | _ -> ());
-  let k = List.length axes in
-  let last_axes = List.init k (fun i -> ndim - k + i) in
-  let arr =
-    match orig_axes with
-    | Some ax -> b1 (Transpose (moved_perm ndim ax last_axes)) [ a ]
-    | None -> a
+  (match (s, axes) with
+  | Some sizes, Some ax when List.length sizes <> List.length ax ->
+      Py_exn.value_error "Shape and axes have different lengths."
+  | _ -> ());
+  let given_axes =
+    match (axes, s) with
+    | Some ax, _ -> ax
+    | None, Some sizes -> range (ndim - List.length sizes) ndim
+    | None, None -> range 0 ndim
   in
+  if List.length (List.sort_uniq compare given_axes) <> List.length given_axes
+  then
+    Py_exn.value_error
+      (Printf.sprintf
+         "jax.numpy.fft.%s does not support repeated axes. Got axes %s." name
+         (python_list given_axes));
+  let inner_axes =
+    match axes with
+    | Some ax -> range (ndim - List.length ax) ndim
+    | None -> given_axes
+  in
+  let arr = match axes with Some ax -> moveaxis ax inner_axes a | None -> a in
   let shape = shape_of arr in
   let arr, sizes =
     match s with
     | Some sizes ->
+        if ndim = 0 && sizes = [] then
+          Py_exn.value_error
+            "jnp.pad: pad_width with nd=0 has unsupported shape (0,). Valid \
+             shapes are (0, 2), (1, 2), (2,), (1,), or ().";
         let in_s = Array.copy shape in
-        List.iter2 (fun ax n -> in_s.(ax) <- n) last_axes sizes;
+        List.iter2
+          (fun ax n -> in_s.(Validate.list_assign_index ndim ax) <- n)
+          inner_axes sizes;
         (match kind with
-        | Fft_inverse_real when ndim > 0 ->
+        | Fft_inverse_real ->
+            if ndim = 0 then Py_exn.index_error "list index out of range";
             in_s.(ndim - 1) <- (in_s.(ndim - 1) / 2) + 1
         | _ -> ());
         let limit = Array.mapi (fun i n -> min n shape.(i)) in_s in
@@ -164,70 +216,93 @@ let fft_core kind ~inverse ?s ?axes ?norm a =
     | None -> (
         match kind with
         | Fft_inverse_real ->
-            let n = List.length last_axes in
+            let n = List.length inner_axes in
             ( arr,
               List.mapi
                 (fun i ax ->
                   if i = n - 1 then max 0 (2 * (shape.(ax) - 1)) else shape.(ax))
-                last_axes )
+                inner_axes )
         | Fft_forward | Fft_inverse | Fft_real ->
-            (arr, List.map (fun ax -> shape.(ax)) last_axes))
+            (arr, List.map (fun ax -> shape.(ax)) inner_axes))
   in
-  let transformed = lax_fft kind sizes arr in
+  let transformed = fft_core_nd arr kind sizes in
   let scaled = apply_norm ~inverse sizes norm transformed in
-  match orig_axes with
-  | Some ax -> b1 (Transpose (moved_perm ndim last_axes ax)) [ scaled ]
-  | None -> scaled
+  match axes with Some ax -> moveaxis inner_axes ax scaled | None -> scaled
 
 let single_axis axis n = (Some [ axis ], Option.map (fun x -> [ x ]) n)
 
 let fft ?n ?(axis = -1) ?norm a =
   let axes, s = single_axis axis n in
-  fft_core Fft_forward ~inverse:false ?s ?axes ?norm a
+  fft_core "fft" Fft_forward ~inverse:false ?s ?axes ?norm a
 
 let ifft ?n ?(axis = -1) ?norm a =
   let axes, s = single_axis axis n in
-  fft_core Fft_inverse ~inverse:true ?s ?axes ?norm a
+  fft_core "ifft" Fft_inverse ~inverse:true ?s ?axes ?norm a
 
 let rfft ?n ?(axis = -1) ?norm a =
   let axes, s = single_axis axis n in
-  fft_core Fft_real ~inverse:false ?s ?axes ?norm a
+  fft_core "rfft" Fft_real ~inverse:false ?s ?axes ?norm a
 
 let irfft ?n ?(axis = -1) ?norm a =
   let axes, s = single_axis axis n in
-  fft_core Fft_inverse_real ~inverse:true ?s ?axes ?norm a
+  fft_core "irfft" Fft_inverse_real ~inverse:true ?s ?axes ?norm a
 
 let hfft ?n ?(axis = -1) ?norm a =
   let conj_a = b1 Conj [ as_complex a ] in
-  let ax = canon_axis (rank_of a) axis in
   let nn =
-    match n with Some x -> x | None -> ((shape_of conj_a).(ax) * 2) - 2
+    match n with
+    | Some x -> x
+    | None -> (Validate.tuple_index (shape_of conj_a) axis * 2) - 2
   in
   let axes, s = single_axis axis n in
   Ufuncs.multiply
-    (fft_core Fft_inverse_real ~inverse:false ?s ?axes ?norm conj_a)
+    (fft_core "hfft" Fft_inverse_real ~inverse:false ?s ?axes ?norm conj_a)
     (Jnp_util.py_int nn)
 
 let ihfft ?n ?(axis = -1) ?norm a =
-  let ax = canon_axis (rank_of a) axis in
-  let nn = match n with Some x -> x | None -> (shape_of a).(ax) in
+  let nn =
+    match n with Some x -> x | None -> Validate.tuple_index (shape_of a) axis
+  in
   let axes, s = single_axis axis n in
-  let output = b1 Conj [ fft_core Fft_real ~inverse:true ?s ?axes ?norm a ] in
-  if nn = 0 then invalid_arg "division by zero";
+  let output =
+    b1 Conj [ fft_core "ihfft" Fft_real ~inverse:true ?s ?axes ?norm a ]
+  in
+  if nn = 0 then raise (Py_exn.Zero_division_error "division by zero");
   Ufuncs.multiply output (Jnp_util.py_float (1.0 /. float_of_int nn))
 
-let fftn ?s ?axes ?norm a = fft_core Fft_forward ~inverse:false ?s ?axes ?norm a
-let ifftn ?s ?axes ?norm a = fft_core Fft_inverse ~inverse:true ?s ?axes ?norm a
-let rfftn ?s ?axes ?norm a = fft_core Fft_real ~inverse:false ?s ?axes ?norm a
+let fftn ?s ?axes ?norm a =
+  fft_core "fftn" Fft_forward ~inverse:false ?s ?axes ?norm a
+
+let ifftn ?s ?axes ?norm a =
+  fft_core "ifftn" Fft_inverse ~inverse:true ?s ?axes ?norm a
+
+let rfftn ?s ?axes ?norm a =
+  fft_core "rfftn" Fft_real ~inverse:false ?s ?axes ?norm a
 
 let irfftn ?s ?axes ?norm a =
-  fft_core Fft_inverse_real ~inverse:true ?s ?axes ?norm a
+  fft_core "irfftn" Fft_inverse_real ~inverse:true ?s ?axes ?norm a
 
 let two_d = [ -2; -1 ]
-let fft2 ?s ?(axes = two_d) ?norm a = fftn ?s ~axes ?norm a
-let ifft2 ?s ?(axes = two_d) ?norm a = ifftn ?s ~axes ?norm a
-let rfft2 ?s ?(axes = two_d) ?norm a = rfftn ?s ~axes ?norm a
-let irfft2 ?s ?(axes = two_d) ?norm a = irfftn ?s ~axes ?norm a
+
+let fft_core_2d name kind ~inverse ?s ~axes ?norm a =
+  if List.length axes <> 2 then
+    Py_exn.value_error
+      (Printf.sprintf "jax.numpy.fft.%s only supports 2 axes. Got axes = %s."
+         name (python_list axes));
+  fft_core name kind ~inverse ?s ~axes ?norm a
+
+let fft2 ?s ?(axes = two_d) ?norm a =
+  fft_core_2d "fft2" Fft_forward ~inverse:false ?s ~axes ?norm a
+
+let ifft2 ?s ?(axes = two_d) ?norm a =
+  fft_core_2d "ifft2" Fft_inverse ~inverse:true ?s ~axes ?norm a
+
+let rfft2 ?s ?(axes = two_d) ?norm a =
+  fft_core_2d "rfft2" Fft_real ~inverse:false ?s ~axes ?norm a
+
+let irfft2 ?s ?(axes = two_d) ?norm a =
+  fft_core_2d "irfft2" Fft_inverse_real ~inverse:true ?s ~axes ?norm a
+
 let default_real () = if Config.x64_enabled () then Dtype.F64 else Dtype.F32
 
 let fftfreq ?(d = 1.0) ?dtype n =
@@ -270,13 +345,19 @@ let roll_axis v axis shift =
       b1 (Concatenate axis) [ slice (n - shift) n; slice 0 (n - shift) ]
 
 let shift_with amount ?axes x =
-  let ndim = rank_of x in
-  let axes =
+  let shape = shape_of x in
+  let ndim = Array.length shape in
+  let shifts, axes =
     match axes with
-    | Some a -> List.map (canon_axis ndim) a
-    | None -> List.init ndim Fun.id
+    | Some a ->
+        let shifts =
+          List.map (fun ax -> amount (Validate.tuple_index shape ax)) a
+        in
+        (shifts, List.map (canon_axis ndim) a)
+    | None ->
+        let a = List.init ndim Fun.id in
+        (List.map (fun ax -> amount shape.(ax)) a, a)
   in
-  let shifts = List.map (fun ax -> amount (shape_of x).(ax)) axes in
   Lax_numpy.roll ~axis:(Array.of_list axes) x (Array.of_list shifts)
 
 let fftshift ?axes x = shift_with (fun n -> n / 2) ?axes x

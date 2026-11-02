@@ -16,10 +16,6 @@ let inexact x =
   | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> x
   | _ -> NL.astype x (Dtypes.default_float_dtype ())
 
-let require_vector name v =
-  if Array.length (shape v) <> 1 then
-    invalid_arg (name ^ ": only one dimensional input is supported")
-
 let float_matrix n m f =
   Concrete
     (Ndarray.of_floats
@@ -60,7 +56,7 @@ let binom n k =
           let b = b1 Lgamma [ b1 Add [ b1 Sub [ n; k ]; one ] ] in
           let c = b1 Lgamma [ b1 Add [ k; one ] ] in
           b1 Exp [ b1 Sub [ b1 Sub [ a; b ]; c ] ]
-      | _ -> invalid_arg "_binom: arity")
+      | _ -> assert false)
     [ n; k ]
 
 let comb big_n k =
@@ -82,6 +78,7 @@ let comb big_n k =
   where0 (b1 Exp [ b1 Sub [ ab; c ] ])
 
 let hilbert n =
+  Lax.Utils.check_shapelike "iota" "shape" [| n; 1 |];
   jit1 "hilbert"
     (fun _ ->
       let dt = default_float () in
@@ -94,14 +91,22 @@ let hilbert n =
 let weak_int v = Core.py_scalar (Dtypes.default_int_dtype ()) (float_of_int v)
 let int_iota n = iota (Dtypes.default_int_dtype ()) n
 
+let vectorized signature f args =
+  Numpy.Vectorize.vectorize ~signature (fun vals -> f vals) args
+
 let circulant c =
-  let c = NL.atleast_1d c in
-  require_vector "circulant" c;
-  let n = (shape c).(0) in
-  let idx =
-    U.remainder (b1 Sub [ column (int_iota n); row (int_iota n) ]) (weak_int n)
-  in
-  NL.take_trailing c [ idx ]
+  vectorized "(n)->(n,n)"
+    (function
+      | [ c ] ->
+          let n = (shape c).(0) in
+          let idx =
+            U.remainder
+              (b1 Sub [ column (int_iota n); row (int_iota n) ])
+              (weak_int n)
+          in
+          NL.take_trailing c [ idx ]
+      | _ -> assert false)
+    [ NL.atleast_1d c ]
 
 let hankel_patches c r =
   let nc = (shape c).(0) and nr = (shape r).(0) in
@@ -135,27 +140,43 @@ let hankel ?r c =
   if Array.length (shape c) = 0 then
     Py_exn.value_error "hankel: c must be at least 1-dimensional, got a scalar.";
   if Array.length (shape r) = 0 then
-    invalid_arg "hankel: r must be at least 1-dimensional, got a scalar.";
-  require_vector "hankel" c;
-  let nc = (shape c).(0) and nr = (shape r).(0) in
-  if nc = 0 || nr = 0 then
-    L.full [| nc; nr |] 0.0 (Dtypes.promote_types (dtype_of c) (dtype_of r))
-  else hankel_patches c r
+    Py_exn.value_error "hankel: r must be at least 1-dimensional, got a scalar.";
+  vectorized "(m),(n)->(m,n)"
+    (function
+      | [ c; r ] ->
+          let nc = (shape c).(0) and nr = (shape r).(0) in
+          if nc = 0 || nr = 0 then
+            L.full [| nc; nr |] 0.0
+              (Dtypes.promote_types (dtype_of c) (dtype_of r))
+          else hankel_patches c r
+      | _ -> assert false)
+    [ c; r ]
 
 let toeplitz ?r c =
   let r = match r with Some r -> r | None -> U.conj c in
   let c = NL.atleast_1d c and r = NL.atleast_1d r in
-  let m = (shape c).(0) and n = (shape r).(0) in
-  if m = 0 || n = 0 then
-    L.full [| m; n |] 0.0 (Dtypes.promote_types (dtype_of c) (dtype_of r))
-  else
-    let reversed = b1 (Rev [| 0 |]) [ c ] in
-    NL.flip ~axis:[| 0 |] (hankel_patches reversed r)
+  vectorized "(m),(n)->(m,n)"
+    (function
+      | [ c; r ] ->
+          let m = (shape c).(0) and n = (shape r).(0) in
+          if m = 0 || n = 0 then
+            L.full [| m; n |] 0.0
+              (Dtypes.promote_types (dtype_of c) (dtype_of r))
+          else
+            let reversed = b1 (Rev [| 0 |]) [ c ] in
+            NL.flip ~axis:[| 0 |] (hankel_patches reversed r)
+      | _ -> assert false)
+    [ c; r ]
 
 let fiedler a =
   let a = NL.atleast_1d a in
-  require_vector "fiedler" a;
-  U.abs (U.subtract (column a) (row a))
+  if Array.length (shape a) = 1 then U.abs (U.subtract (column a) (row a))
+  else
+    let rank = Array.length (shape a) in
+    U.abs
+      (U.subtract
+         (NL.expand_dims a [| rank |])
+         (NL.expand_dims a [| rank - 1 |]))
 
 let first_of a =
   b1 (Squeeze [| 0 |])
@@ -189,22 +210,33 @@ let set_first_row out row_values =
 
 let companion a =
   let a = inexact (NL.atleast_1d a) in
-  require_vector "companion" a;
-  let n = (shape a).(0) in
+  let n = (shape a).(Array.length (shape a) - 1) in
   if n < 2 then
     Py_exn.value_error
-      "The length of `a` along the last axis must be at least 2";
-  let rest =
-    b1
-      (Slice
-         { start_indices = [| 1 |]; limit_indices = [| n |]; strides = None })
-      [ a ]
-  in
-  let negated = b1 Neg [ rest ] in
-  let first_row = b1 Div [ negated; first_of a ] in
-  let m = n - 1 in
-  let out = NL.eye ~m ~k:(-1) ~dtype:(dtype_of first_row) m in
-  set_first_row out first_row
+      (Printf.sprintf
+         "The length of `a` along the last axis must be at least 2; got shape \
+          %s."
+         (Validate.python_tuple (shape a)));
+  vectorized "(n)->(m,m)"
+    (function
+      | [ a ] ->
+          let rest =
+            b1
+              (Slice
+                 {
+                   start_indices = [| 1 |];
+                   limit_indices = [| n |];
+                   strides = None;
+                 })
+              [ a ]
+          in
+          let negated = b1 Neg [ rest ] in
+          let first_row = b1 Div [ negated; first_of a ] in
+          let m = n - 1 in
+          let out = NL.eye ~m ~k:(-1) ~dtype:(dtype_of first_row) m in
+          set_first_row out first_row
+      | _ -> assert false)
+    [ a ]
 
 let fiedler_companion a =
   let a = inexact (NL.atleast_1d a) in
@@ -215,75 +247,93 @@ let fiedler_companion a =
           "fiedler_companion requires the last axis of 'a' to have nonzero \
            length, but got an array of shape %s."
           (Lax.Utils.py_tuple sh)));
-  require_vector "fiedler_companion" a;
-  let n = (shape a).(0) - 1 in
-  if n <= 0 then L.full [| 0; 0 |] 0.0 (dtype_of a)
-  else
-    let a = b1 Div [ a; first_of a ] in
-    let slice_from lo hi =
-      b1
-        (Slice
-           {
-             start_indices = [| lo |];
-             limit_indices = [| hi |];
-             strides = None;
-           })
-        [ a ]
-    in
-    if n = 1 then b1 Neg [ L.reshape (slice_from 1 2) [| 1; 1 |] ]
-    else
-      let dt = dtype_of a in
-      let i = column (int_iota n) in
-      let j = row (int_iota n) in
-      let add_int v k = U.add v (weak_int k) in
-      let sub_int v k = U.subtract v (weak_int k) in
-      let eq_int v k = U.equal v (weak_int k) in
-      let super_val =
-        U.negative (NL.take_trailing a [ U.minimum (add_int i 2) (weak_int n) ])
-      in
-      let sub_val =
-        U.negative (NL.take_trailing a [ U.minimum (add_int i 1) (weak_int n) ])
-      in
-      let i_even = eq_int (U.remainder i (weak_int 2)) 0 in
-      let i_odd = eq_int (U.remainder i (weak_int 2)) 1 in
-      let one = scalar dt 1.0 and zero = scalar dt 0.0 in
-      let c1 = U.logical_and (eq_int i 0) (eq_int j 0) in
-      let c2 = U.logical_and (eq_int i 1) (eq_int j 0) in
-      let c3 = U.logical_and (U.equal j (add_int i 1)) i_even in
-      let c4 = U.logical_and (U.equal j (add_int i 2)) i_even in
-      let c5 =
-        U.logical_and
-          (U.logical_and (U.equal j (sub_int i 1)) i_even)
-          (U.greater_equal i (weak_int 2))
-      in
-      let c6 =
-        U.logical_and
-          (U.logical_and (U.equal j (sub_int i 2)) i_odd)
-          (U.greater_equal i (weak_int 3))
-      in
-      let a1 = U.negative (b1 (Squeeze [| 0 |]) [ slice_from 1 2 ]) in
-      NL.select ~default:zero [ c1; c2; c3; c4; c5; c6 ]
-        [ a1; one; super_val; one; sub_val; one ]
+  vectorized "(n)->(m,m)"
+    (function
+      | [ a ] ->
+          let n = (shape a).(0) - 1 in
+          if n <= 0 then L.full [| 0; 0 |] 0.0 (dtype_of a)
+          else
+            let a = b1 Div [ a; first_of a ] in
+            let slice_from lo hi =
+              b1
+                (Slice
+                   {
+                     start_indices = [| lo |];
+                     limit_indices = [| hi |];
+                     strides = None;
+                   })
+                [ a ]
+            in
+            if n = 1 then b1 Neg [ L.reshape (slice_from 1 2) [| 1; 1 |] ]
+            else
+              let dt = dtype_of a in
+              let i = column (int_iota n) in
+              let j = row (int_iota n) in
+              let add_int v k = U.add v (weak_int k) in
+              let sub_int v k = U.subtract v (weak_int k) in
+              let eq_int v k = U.equal v (weak_int k) in
+              let super_val =
+                U.negative
+                  (NL.take_trailing a [ U.minimum (add_int i 2) (weak_int n) ])
+              in
+              let sub_val =
+                U.negative
+                  (NL.take_trailing a [ U.minimum (add_int i 1) (weak_int n) ])
+              in
+              let i_even = eq_int (U.remainder i (weak_int 2)) 0 in
+              let i_odd = eq_int (U.remainder i (weak_int 2)) 1 in
+              let one = scalar dt 1.0 and zero = scalar dt 0.0 in
+              let c1 = U.logical_and (eq_int i 0) (eq_int j 0) in
+              let c2 = U.logical_and (eq_int i 1) (eq_int j 0) in
+              let c3 = U.logical_and (U.equal j (add_int i 1)) i_even in
+              let c4 = U.logical_and (U.equal j (add_int i 2)) i_even in
+              let c5 =
+                U.logical_and
+                  (U.logical_and (U.equal j (sub_int i 1)) i_even)
+                  (U.greater_equal i (weak_int 2))
+              in
+              let c6 =
+                U.logical_and
+                  (U.logical_and (U.equal j (sub_int i 2)) i_odd)
+                  (U.greater_equal i (weak_int 3))
+              in
+              let a1 = U.negative (b1 (Squeeze [| 0 |]) [ slice_from 1 2 ]) in
+              NL.select ~default:zero [ c1; c2; c3; c4; c5; c6 ]
+                [ a1; one; super_val; one; sub_val; one ]
+      | _ -> assert false)
+    [ a ]
 
 let leslie f s =
   let f = NL.atleast_1d f and s = NL.atleast_1d s in
-  require_vector "leslie" f;
-  require_vector "leslie" s;
-  let n = (shape f).(0) in
-  if n < 2 then
-    Py_exn.value_error "The length of f along the last axis must be at least 2";
-  if (shape s).(0) <> n - 1 then
-    Py_exn.value_error "Incorrect lengths for f and s.";
-  let dt = NL.result_type [ f; s ] in
-  let f = NL.astype f dt and s = NL.astype s dt in
-  set_first_row (NL.diag ~k:(-1) s) f
+  let last v = (shape v).(Array.length (shape v) - 1) in
+  if last f < 2 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "The length of f along the last axis must be at least 2; got shape %s."
+         (Validate.python_tuple (shape f)));
+  if last s <> last f - 1 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Incorrect lengths for f and s. The length of s along the last axis \
+          must be one less than the length of f; got f shape %s and s shape \
+          %s."
+         (Validate.python_tuple (shape f))
+         (Validate.python_tuple (shape s)));
+  vectorized "(n),(m)->(n,n)"
+    (function
+      | [ f; s ] ->
+          let dt = NL.result_type [ f; s ] in
+          let f = NL.astype f dt and s = NL.astype s dt in
+          set_first_row (NL.diag ~k:(-1) s) f
+      | _ -> assert false)
+    [ f; s ]
 
 let dft ?scale ?dtype:requested n =
   (match scale with
   | None | Some "sqrtn" | Some "n" -> ()
   | Some other ->
-      invalid_arg
-        ("scale must be None, 'sqrtn', or 'n'; " ^ other ^ " is not valid."));
+      Py_exn.value_error
+        (Printf.sprintf "scale must be None, 'sqrtn', or 'n'; got '%s'." other));
   let dt =
     match requested with
     | Some d -> Dtypes.canonicalize_dtype d
@@ -324,7 +374,7 @@ let pascal ?(kind = "symmetric") n =
   (match kind with
   | "symmetric" | "lower" | "upper" -> ()
   | other ->
-      invalid_arg
+      Py_exn.value_error
         ("Expected kind to be on of: ['symmetric', 'lower', 'upper']; got "
        ^ other));
   jit1 "pascal" ~key:kind
@@ -345,7 +395,7 @@ let invpascal ?(kind = "symmetric") n =
   (match kind with
   | "symmetric" | "lower" | "upper" -> ()
   | other ->
-      invalid_arg
+      Py_exn.value_error
         ("Expected kind to be one of: ['symmetric', 'lower', 'upper']; got "
        ^ other));
   jit1 "invpascal" ~key:kind
@@ -368,7 +418,8 @@ let invpascal ?(kind = "symmetric") n =
 
 let helmert ?(full = false) n =
   if n < 1 then
-    invalid_arg (Printf.sprintf "n must be a positive integer; got %d." n);
+    Py_exn.value_error
+      (Printf.sprintf "n must be a positive integer; got %d." n);
   jit1 "helmert" ~key:(string_of_bool full)
     (fun _ ->
       let idt = Dtypes.default_int_dtype () in
@@ -400,7 +451,8 @@ let helmert ?(full = false) n =
 
 let hadamard ?dtype:requested n =
   if n <= 0 || n land (n - 1) <> 0 then
-    invalid_arg "n must be a positive power of 2 for this implementation";
+    Py_exn.value_error
+      (Printf.sprintf "n must be a positive power of 2; got %d." n);
   let dt =
     match requested with
     | Some d -> Dtypes.canonicalize_dtype d
@@ -429,7 +481,8 @@ let hadamard ?dtype:requested n =
 
 let convolution_matrix ?(mode = "full") a n =
   if n <= 0 then
-    invalid_arg (Printf.sprintf "n must be a positive integer; got %d." n);
+    Py_exn.value_error
+      (Printf.sprintf "n must be a positive integer; got %d." n);
   if Array.length (shape a) = 0 then
     Py_exn.value_error
       "convolution_matrix: a must be at least 1-dimensional, got a scalar.";
@@ -439,7 +492,7 @@ let convolution_matrix ?(mode = "full") a n =
       (Printf.sprintf "len(a) must be at least 1; got shape %s."
          (Lax.Utils.py_tuple (shape a)));
   if not (List.mem mode [ "full"; "valid"; "same" ]) then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf "mode must be one of 'full', 'valid', 'same'; got '%s'."
          mode);
   jit1 "convolution_matrix"
@@ -461,16 +514,14 @@ let convolution_matrix ?(mode = "full") a n =
                 (trim / 2, trim - (trim / 2))
             | "valid" -> (Stdlib.min n m - 1, Stdlib.min n m - 1)
             | "full" -> (0, 0)
-            | other ->
-                invalid_arg
-                  ("mode must be one of 'full', 'valid', 'same'; got " ^ other)
+            | _ -> assert false
           in
           let col0 = L.slice_in_dim ~axis:(-1) az tb (total - te) in
           let row0 =
             L.slice_in_dim ~axis:(-1) raz (total - n - tb) (total - tb)
           in
           toeplitz ~r:row0 col0
-      | _ -> invalid_arg "convolution_matrix: arity")
+      | _ -> assert false)
     [ a ]
 
 let invhilbert n =
@@ -587,13 +638,13 @@ let sylvester_triangular_scan r s f =
               s_clip = false;
             };
         ]
-    | _ -> invalid_arg "solve_sylvester: arity"
+    | _ -> assert false
   in
   match
     L.scan step [ Core.splat (dtype_of f) [| total |] 0.0 ] [ flat_indices ]
   with
   | [ final ] -> NL.reshape final [| m; n |]
-  | _ -> invalid_arg "solve_sylvester: arity"
+  | _ -> assert false
 
 let is_complex_dt = function
   | Dtype.Complex64 | Dtype.Complex128 -> true
@@ -608,7 +659,7 @@ let sylvester_schur a =
       | [ a ] ->
           Lax.Linalg.schur
             (if is_complex_dt (dtype_of a) then a else NL.astype a complex_dt)
-      | _ -> invalid_arg "schur: arity")
+      | _ -> assert false)
     [ a ]
 
 let solve_sylvester_2d a b c tol =
@@ -634,11 +685,23 @@ let solve_sylvester_2d a b c tol =
              ])
            (fun _ -> [ x ])
            [])
-  | _ -> invalid_arg "solve_sylvester: arity"
+  | _ -> assert false
 
 let solve_sylvester ?(tol = 1e-8) a b q =
   let dt = Dtypes.to_inexact_dtype (NL.result_type [ a; b; q ]) in
   let a = NL.astype a dt and b = NL.astype b dt and q = NL.astype q dt in
+  let m, n = Validate.unpack_last_two (shape q) in
+  let last_two s =
+    let r = Array.length s in
+    Array.sub s (max 0 (r - 2)) (min r 2)
+  in
+  if last_two (shape a) <> [| m; m |] || last_two (shape b) <> [| n; n |] then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Incompatible shapes for Sylvester equation:\nA: %s\nB: %s\nC: %s"
+         (Validate.python_tuple (shape a))
+         (Validate.python_tuple (shape b))
+         (Validate.python_tuple (shape q)));
   let tol = Numpy.Jnp_util.py_float tol in
   Numpy.Jnp_util.jit1 "solve_sylvester"
     (function
@@ -646,7 +709,7 @@ let solve_sylvester ?(tol = 1e-8) a b q =
           Numpy.Jnp_util.jit1 "_solve_sylvester_2d"
             (function
               | [ a; b; q; tol ] -> solve_sylvester_2d a b q tol
-              | _ -> invalid_arg "solve_sylvester: arity")
+              | _ -> assert false)
             [ a; b; q; tol ]
-      | _ -> invalid_arg "solve_sylvester: arity")
+      | _ -> assert false)
     [ a; b; q ]

@@ -48,21 +48,36 @@ let cholesky ?lower a0 =
 
 let cho_factor ?(lower = false) a = (cholesky ~lower a, lower)
 
+let triangular_signature ?(extra = "") a b =
+  let vector = Printf.sprintf "(n,n)%s,(n)->(n)" extra in
+  if ndim b = 1 then vector
+  else if
+    ndim a = ndim b + 1
+    && Validate.tuple_index (shape a) (-1) = Validate.tuple_index (shape b) (-1)
+  then vector
+  else Printf.sprintf "(n,n)%s,(n,k)->(n,k)" extra
+
 let cho_solve (c, lower) b =
   let c = to_inexact c and b = to_inexact b in
-  let sc = shape c in
-  let n = sc.(Array.length sc - 1) in
-  let bvec = ndim b = 1 in
-  let bm = if bvec then NL.reshape b [| n; 1 |] else b in
-  let x1 =
-    LL.triangular_solve ~left_side:true ~lower ~transpose_a:(not lower)
-      ~conjugate_a:(not lower) c bm
-  in
-  let x2 =
-    LL.triangular_solve ~left_side:true ~lower ~transpose_a:lower
-      ~conjugate_a:lower c x1
-  in
-  if bvec then NL.reshape x2 [| n |] else x2
+  let signature = triangular_signature c b in
+  Numpy.Vectorize.vectorize ~signature
+    (function
+      | [ c; b ] ->
+          let sc = shape c in
+          let n = sc.(Array.length sc - 1) in
+          let bvec = ndim b = 1 in
+          let bm = if bvec then NL.reshape b [| n; 1 |] else b in
+          let x1 =
+            LL.triangular_solve ~left_side:true ~lower ~transpose_a:(not lower)
+              ~conjugate_a:(not lower) c bm
+          in
+          let x2 =
+            LL.triangular_solve ~left_side:true ~lower ~transpose_a:lower
+              ~conjugate_a:lower c x1
+          in
+          if bvec then NL.reshape x2 [| n |] else x2
+      | _ -> assert false)
+    [ c; b ]
 
 let det a = LN.det a
 let inv a = LN.inv a
@@ -71,10 +86,9 @@ let lu ?(permute_l = false) a =
   let body a =
     let a = to_inexact a in
     let dt = dtype a in
-    let sa = shape a in
-    let m = sa.(0) and n = sa.(1) in
-    let k = min m n in
     let lu_, _piv, permutation = LL.lu a in
+    let m, n = Validate.unpack_exact_two (shape a) in
+    let k = min m n in
     let perm_row = NL.expand_dims permutation [| 0 |] in
     let iota = NL.arange ~dtype:(dtype permutation) (float_of_int m) in
     let iota_col = NL.expand_dims iota [| 1 |] in
@@ -96,7 +110,7 @@ let lu ?(permute_l = false) a =
     else [ p; l; u ]
   in
   Numpy.Jnp_util.jit "_lu" ~key:(string_of_bool permute_l)
-    (function [ a ] -> body a | _ -> invalid_arg "lu: arity")
+    (function [ a ] -> body a | _ -> assert false)
     [ a ]
 
 let lu ?permute_l a0 =
@@ -118,35 +132,43 @@ let lu_factor a0 =
 
 let lu_solve ?(trans = 0) (lu_, piv) b =
   let lu_ = to_inexact lu_ and b = to_inexact b in
-  let sa = shape lu_ in
-  let m = sa.(Array.length sa - 2) in
+  let m, _ = Validate.unpack_last_two (shape lu_) in
   let perm = LL.lu_pivots_to_permutation ~permutation_size:m piv in
-  let bvec = ndim b = 1 in
-  let x = if bvec then NL.reshape b [| m; 1 |] else b in
-  let out =
-    if trans = 0 then begin
-      let x = IDX.take_index ~axis:0 x perm in
-      let x =
-        LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu_
-          x
-      in
-      LL.triangular_solve ~left_side:true ~lower:false lu_ x
-    end
-    else if trans = 1 || trans = 2 then begin
-      let conj = trans = 2 in
-      let x =
-        LL.triangular_solve ~left_side:true ~lower:false ~transpose_a:true
-          ~conjugate_a:conj lu_ x
-      in
-      let x =
-        LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true
-          ~transpose_a:true ~conjugate_a:conj lu_ x
-      in
-      IDX.take_index ~axis:0 x (SORT.argsort perm)
-    end
-    else invalid_arg (Printf.sprintf "lu_solve: invalid trans value %d" trans)
-  in
-  if bvec then NL.reshape out [| m |] else out
+  let signature = triangular_signature ~extra:",(n)" lu_ b in
+  Numpy.Vectorize.vectorize ~signature
+    (function
+      | [ lu_; perm; b ] ->
+          let m = (shape lu_).(ndim lu_ - 2) in
+          let bvec = ndim b = 1 in
+          let x = if bvec then NL.reshape b [| m; 1 |] else b in
+          let out =
+            if trans = 0 then begin
+              let x = IDX.take_index ~axis:0 x perm in
+              let x =
+                LL.triangular_solve ~left_side:true ~lower:true
+                  ~unit_diagonal:true lu_ x
+              in
+              LL.triangular_solve ~left_side:true ~lower:false lu_ x
+            end
+            else if trans = 1 || trans = 2 then begin
+              let conj = trans = 2 in
+              let x =
+                LL.triangular_solve ~left_side:true ~lower:false
+                  ~transpose_a:true ~conjugate_a:conj lu_ x
+              in
+              let x =
+                LL.triangular_solve ~left_side:true ~lower:true
+                  ~unit_diagonal:true ~transpose_a:true ~conjugate_a:conj lu_ x
+              in
+              IDX.take_index ~axis:0 x (SORT.argsort perm)
+            end
+            else
+              Py_exn.value_error
+                (Printf.sprintf "'trans' value must be 0, 1, or 2, got %d" trans)
+          in
+          if bvec then NL.reshape out [| m |] else out
+      | _ -> assert false)
+    [ lu_; perm; b ]
 
 let qr ?(mode = "full") ?(pivoting = false) a =
   let full_matrices =
@@ -154,7 +176,7 @@ let qr ?(mode = "full") ?(pivoting = false) a =
     | "full" | "r" -> true
     | "economic" -> false
     | _ ->
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf "Unsupported QR decomposition mode '%s'" mode)
   in
   Numpy.Jnp_util.jit "_qr"
@@ -168,8 +190,8 @@ let qr ?(mode = "full") ?(pivoting = false) a =
           else
             match Core.bind (T.Qr_pivoted full_matrices) [ a ] with
             | [ q; r; p ] -> if mode = "r" then [ r; p ] else [ q; r; p ]
-            | _ -> failwith "qr: arity")
-      | _ -> failwith "qr: arity")
+            | _ -> assert false)
+      | _ -> assert false)
     [ a ]
 
 let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
@@ -189,7 +211,8 @@ let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
   in
   let a = NL.astype a dt and c = NL.astype c dt in
   if mode <> "right" && mode <> "left" then
-    invalid_arg (Printf.sprintf "mode must be 'right' or 'left', got '%s'" mode);
+    Py_exn.value_error
+      (Printf.sprintf "mode must be 'right' or 'left', got '%s'" mode);
   let onedim = Array.length (shape c) = 1 in
   let c =
     if not onedim then c
@@ -199,10 +222,11 @@ let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
   in
   let sh = shape a in
   let rank = Array.length sh in
-  let m = sh.(rank - 2) and n = sh.(rank - 1) in
+  let m, n = Validate.unpack_last_two sh in
   let k = min m n in
   let cs = shape c in
   let crank = Array.length cs in
+  ignore (Validate.tuple_index cs (if mode = "left" then -2 else -1));
   let shape_text s =
     match s with
     | [| x |] -> Printf.sprintf "(%d,)" x
@@ -220,7 +244,7 @@ let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
          cs.(crank - 2)
          k);
   if mode = "right" && cs.(crank - 1) <> m then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "Array shapes are not compatible for c @ Q operation: a has shape %s \
           so Q has %d rows, but c has %d columns (expected %d)."
@@ -379,31 +403,31 @@ let rsf2csf_2d t z =
           let threshold = UF.multiply (C.splat rdt [||] eps) (UF.add d0 d1) in
           match
             L.cond (UF.greater lhs threshold)
-              (function
-                | [ m; t; z ] -> update m t z | _ -> failwith "rsf2csf: arity")
-              (function
-                | [ _; t; z ] -> [ t; z ] | _ -> failwith "rsf2csf: arity")
+              (function [ m; t; z ] -> update m t z | _ -> assert false)
+              (function [ _; t; z ] -> [ t; z ] | _ -> assert false)
               [ m; t; z ]
           with
           | [ t; z ] ->
               let col = pred m in
               [ IDX.set_at2 t m col (C.splat cdt [||] 0.0); z ]
-          | _ -> failwith "rsf2csf: arity")
-      | _ -> failwith "rsf2csf: arity"
+          | _ -> assert false)
+      | _ -> assert false
     in
     match L.fori_loop (index 1) (index n) iter [ t; z ] with
     | [ t; z ] -> (t, z)
-    | _ -> failwith "rsf2csf: arity"
+    | _ -> assert false
 
 let rec rsf2csf t z =
   let st = shape t and sz = shape z in
   let nd = Array.length st in
   if nd < 2 || st.(nd - 1) <> st.(nd - 2) then
-    Py_exn.type_error "Input 'T' must be square.";
+    Py_exn.value_error "Input 'T' must be square.";
   if Array.length sz < 2 || sz.(Array.length sz - 1) <> sz.(Array.length sz - 2)
-  then invalid_arg "Input 'Z' must be square.";
+  then Py_exn.value_error "Input 'Z' must be square.";
   if st.(nd - 1) <> sz.(Array.length sz - 1) then
-    invalid_arg "Input array shapes must match";
+    Py_exn.value_error
+      (Printf.sprintf "Input array shapes must match: Z: %s vs. T: %s"
+         (Validate.python_tuple sz) (Validate.python_tuple st));
   if nd > 2 then
     let outs =
       Interpreters.Batching.vmap
@@ -412,7 +436,7 @@ let rec rsf2csf t z =
           | [ t; z ] ->
               let a, b = rsf2csf t z in
               [ a; b ]
-          | _ -> failwith "rsf2csf: arity")
+          | _ -> assert false)
         [ Some 0; Some 0 ] [ t; z ]
     in
     (List.nth outs 0, List.nth outs 1)
@@ -423,11 +447,11 @@ let rec rsf2csf t z =
           | [ t; z ] ->
               let a, b = rsf2csf_2d t z in
               [ a; b ]
-          | _ -> failwith "rsf2csf: arity")
+          | _ -> assert false)
         [ t; z ]
     with
     | [ a; b ] -> (a, b)
-    | _ -> failwith "rsf2csf: arity"
+    | _ -> assert false
 
 let rsf2csf a0 a1 =
   Eager_jit.pair ~jit:"rsf2csf" "scipy.linalg.rsf2csf" () [] [ a0; a1 ]
@@ -440,7 +464,7 @@ let solve ?(lower = false) ?(assume_a = "gen") a b =
   (match assume_a with
   | "gen" | "sym" | "her" | "pos" -> ()
   | _ ->
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "Expected assume_a to be one of ['gen', 'sym', 'her', 'pos']; got \
             '%s'"
@@ -461,18 +485,24 @@ let solve_triangular ?(trans = 0) ?(lower = false) ?(unit_diagonal = false) a b
     | 0 -> (false, false)
     | 1 -> (true, false)
     | 2 -> (true, true)
-    | _ -> invalid_arg (Printf.sprintf "Invalid 'trans' value %d" trans)
+    | _ -> Py_exn.value_error (Printf.sprintf "Invalid 'trans' value %d" trans)
   in
   let a = to_inexact a and b = to_inexact b in
-  let sa = shape a in
-  let n = sa.(Array.length sa - 1) in
-  let bvec = ndim b = 1 in
-  let bm = if bvec then NL.reshape b [| n; 1 |] else b in
-  let x =
-    LL.triangular_solve ~left_side:true ~lower ~transpose_a ~conjugate_a
-      ~unit_diagonal a bm
-  in
-  if bvec then NL.reshape x [| n |] else x
+  let signature = triangular_signature a b in
+  Numpy.Vectorize.vectorize ~signature
+    (function
+      | [ a; b ] ->
+          let sa = shape a in
+          let n = sa.(Array.length sa - 1) in
+          let bvec = ndim b = 1 in
+          let bm = if bvec then NL.reshape b [| n; 1 |] else b in
+          let x =
+            LL.triangular_solve ~left_side:true ~lower ~transpose_a ~conjugate_a
+              ~unit_diagonal a bm
+          in
+          if bvec then NL.reshape x [| n |] else x
+      | _ -> assert false)
+    [ a; b ]
 
 let solve_triangular ?trans ?lower ?unit_diagonal a0 a1 =
   Eager_jit.one ~jit:"_solve_triangular" "scipy.linalg.solve_triangular"
@@ -480,14 +510,6 @@ let solve_triangular ?trans ?lower ?unit_diagonal a0 a1 =
       match (opts, vals) with
       | [], [ a0; a1 ] -> solve_triangular ?trans ?lower ?unit_diagonal a0 a1
       | _ -> assert false)
-
-let host_nd = function
-  | T.Concrete nd -> nd
-  | _ ->
-      failwith "scipy/linalg: forward-eval only (concrete host inputs required)"
-
-let host_float v = Nd.get_f (host_nd v) [||]
-let scalar_of v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
 
 let svd ?(full_matrices = true) ?(compute_uv = true) a =
   let a = to_inexact a in
@@ -513,7 +535,6 @@ let eigh ?lower ?eigvals_only a0 =
       | _ -> assert false)
 
 let schur ?(output = "real") a =
-  let a = to_inexact a in
   let a =
     match output with
     | "real" -> a
@@ -521,8 +542,11 @@ let schur ?(output = "real") a =
         if is_complex_dt (dtype a) then a
         else NL.astype a (if dtype a = D.F64 then D.Complex128 else D.Complex64)
     | _ ->
-        invalid_arg
-          (Printf.sprintf "argument must be 'real' or 'complex', got %s" output)
+        Py_exn.value_error
+          (Printf.sprintf
+             "Expected 'output' to be either 'real' or 'complex', got \
+              output='%s'."
+             output)
   in
   LL.schur a
 
@@ -542,11 +566,14 @@ let block_diag arrs =
   List.iteri
     (fun i a ->
       if ndim a > 2 then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "Arguments to jax.scipy.linalg.block_diag must have at most 2 \
-              dimensions, got %d dimensions at argument %d."
-             (ndim a) i))
+              dimensions, got JitTracer(%s[%s]) at argument %d."
+             (D.numpy_name (dtype a))
+             (String.concat ","
+                (Array.to_list (Array.map string_of_int (shape a))))
+             i))
     arrs;
   let dt = NL.result_type arrs in
   let arrs = List.map (fun a -> NL.atleast_2d (NL.astype a dt)) arrs in
@@ -566,9 +593,8 @@ let block_diag arrs =
 let toeplitz = Linalg_special.toeplitz
 
 let hessenberg ?(calc_q = false) a =
-  let a = to_inexact a in
   let sh = shape a in
-  let n = sh.(Array.length sh - 1) in
+  let n = Validate.tuple_index sh (-1) in
   if n = 0 then
     if calc_q then [ AC.zeros_like a; AC.zeros_like a ] else [ AC.zeros_like a ]
   else begin
@@ -618,7 +644,7 @@ let expm_coefficient m c = C.bind1 T.Mul [ C.splat (dtype m) [||] c; m ]
 
 let expm_sum terms =
   match terms with
-  | [] -> invalid_arg "expm: empty sum"
+  | [] -> assert false
   | first :: rest ->
       List.fold_left
         (fun acc (c, m) -> C.bind1 T.Add [ acc; expm_coefficient m c ])
@@ -762,17 +788,14 @@ let calc_p_q a =
             T.Concrete (Nd.of_floats rdt [| Array.length conds |] conds)
           in
           let idx = NL.digitize a_l1 bins in
-          let wrap f = function
-            | [ a ] -> f a
-            | _ -> invalid_arg "expm: arity"
-          in
+          let wrap f = function [ a ] -> f a | _ -> assert false in
           match Lax_api.switch idx (List.map wrap branches) [ a ] with
           | [ u; v ] ->
               let p = C.bind1 T.Add [ u; v ] in
               let q = C.bind1 T.Add [ C.bind1 T.Neg [ u ]; v ] in
               [ p; q; n_squarings ]
-          | _ -> invalid_arg "expm: arity")
-      | _ -> invalid_arg "expm: arity")
+          | _ -> assert false)
+      | _ -> assert false)
     [ a ]
 
 let expm_squaring r n_squarings max_squarings =
@@ -794,16 +817,14 @@ let expm_squaring r n_squarings max_squarings =
             | [ c; i ] ->
                 Lax_api.cond
                   (C.bind1 T.Lt [ i; n_squarings ])
-                  (function
-                    | [ x ] -> [ precise_dot x x ]
-                    | _ -> invalid_arg "expm: arity")
+                  (function [ x ] -> [ precise_dot x x ] | _ -> assert false)
                   Fun.id [ c ]
-            | _ -> invalid_arg "expm: arity"
+            | _ -> assert false
           in
           match Lax_api.scan body [ r ] [ steps ] with
           | [ res ] -> res
-          | _ -> invalid_arg "expm: arity")
-      | _ -> invalid_arg "expm: arity")
+          | _ -> assert false)
+      | _ -> assert false)
     [ r; n_squarings ]
 
 let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
@@ -811,7 +832,10 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
   let sh = shape a in
   let nd = Array.length sh in
   if nd < 2 || sh.(nd - 1) <> sh.(nd - 2) then
-    Py_exn.value_error "expm: expected A to be a (batched) square matrix";
+    Py_exn.value_error
+      (Printf.sprintf
+         "Expected A to be a (batched) square matrix, got A.shape=%s."
+         (Validate.python_tuple sh));
   if nd > 2 then
     List.hd
       (Interpreters.Batching.vmap
@@ -830,11 +854,11 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
                 if upper_triangular then solve_triangular q p else LN.solve q p
               in
               [ expm_squaring r n_squarings max_squarings ]
-          | _ -> invalid_arg "expm: arity"
+          | _ -> assert false
         in
         let nan = function
           | a :: _ -> [ AC.full_like a Float_format.nan ]
-          | [] -> invalid_arg "expm: arity"
+          | [] -> assert false
         in
         match
           Lax_api.cond
@@ -842,8 +866,8 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
             nan compute [ a; p; q ]
         with
         | [ r ] -> r
-        | _ -> invalid_arg "expm: arity")
-    | _ -> invalid_arg "expm: arity"
+        | _ -> assert false)
+    | _ -> assert false
 
 and expm_jit ?upper_triangular ?max_squarings a0 =
   Eager_jit.one ~jit:"expm" "scipy.linalg.expm"
@@ -857,9 +881,23 @@ let expm = expm_jit
 let expm_frechet ?(compute_expm = true) a e =
   let a = to_inexact a and e = to_inexact e in
   let sa = shape a and se = shape e in
-  if Array.length sa < 2 || sa.(Array.length sa - 1) <> sa.(Array.length sa - 2)
-  then Py_exn.value_error "expected A to be a (batched) square matrix";
-  if sa <> se then invalid_arg "expected A and E to be the same shape";
+  let batched_square s =
+    let n = Array.length s in
+    n >= 2 && s.(n - 1) = s.(n - 2)
+  in
+  if Array.length sa < 2 || sa.(Array.length sa - 2) <> sa.(1) then
+    Py_exn.value_error
+      ("expected A to be a (batched) square matrix, got A.shape="
+     ^ Validate.python_tuple sa);
+  if not (batched_square se) then
+    Py_exn.value_error
+      ("expected E to be a (batched) square matrix, got E.shape="
+     ^ Validate.python_tuple se);
+  if sa <> se then
+    Py_exn.value_error
+      (Printf.sprintf
+         "expected A and E to be the same shape, got A.shape=%s E.shape=%s"
+         (Validate.python_tuple sa) (Validate.python_tuple se));
   let primal, tangent =
     Interpreters.Ad.jvp
       (fun args -> [ expm (List.hd args) ])
@@ -892,13 +930,16 @@ let polar_2d ~side ~method_ ?eps a =
       else
         raise
           (Py_exn.Not_implemented_error
-             "method='qdwh' only supports mxn matrices where m < n where \
-              side='right' and m >= n side='left'")
+             (Printf.sprintf
+                "method='qdwh' only supports mxn matrices where m < n where \
+                 side='right' and m >= n side='left', got %s with side='%s'"
+                (Validate.python_tuple (shape a))
+                side))
   | "svd" ->
       let u, s, vh =
         match LL.svd ~full_matrices:false a with
         | [ u; s; vh ] -> (u, s, vh)
-        | _ -> failwith "polar: svd arity"
+        | _ -> assert false
       in
       let s = NL.astype s (dtype u) in
       let unitary = TC.matmul u vh in
@@ -908,15 +949,15 @@ let polar_2d ~side ~method_ ?eps a =
         else TC.matmul (UF.multiply u s_row) (hconj u)
       in
       [ unitary; posdef ]
-  | _ -> invalid_arg "polar: method"
+  | _ -> assert false
 
 let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
-  let a = to_inexact a in
   if ndim a < 2 then
     Py_exn.value_error "The input `a` must be at least a 2-D array.";
   (match side with
   | "right" | "left" -> ()
-  | _ -> invalid_arg "The argument `side` must be either 'right' or 'left'.");
+  | _ ->
+      Py_exn.value_error "The argument `side` must be either 'right' or 'left'.");
   match method_ with
   | ("qdwh" | "svd") when ndim a > 2 ->
       Interpreters.Batching.vmap
@@ -925,12 +966,10 @@ let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
   | "qdwh" | "svd" ->
       Numpy.Jnp_util.jit "_polar_2d"
         ~key:(Printf.sprintf "%s,%s,%b" side method_ (eps <> None))
-        (function
-          | [ a ] -> polar_2d ~side ~method_ ?eps a
-          | _ -> invalid_arg "polar: arity")
+        (function [ a ] -> polar_2d ~side ~method_ ?eps a | _ -> assert false)
         [ a ]
   | _ ->
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf "Unknown polar decomposition method %s." method_)
 
 let polar ?side ?method_ ?eps a0 =
@@ -969,7 +1008,7 @@ let sqrtm_triu t =
                           (UF.multiply (IDX.dynamic_at2 u i k)
                              (IDX.dynamic_at2 u k j));
                       ]
-                  | _ -> invalid_arg "sqrtm: arity"
+                  | _ -> assert false
                 in
                 let s =
                   List.hd (L.fori_loop lo j inner [ C.splat dt [||] 0.0 ])
@@ -986,36 +1025,32 @@ let sqrtm_triu t =
                     quotient
                 in
                 [ IDX.set_at2 u i j value ]
-            | _ -> invalid_arg "sqrtm: arity"
+            | _ -> assert false
           in
           let j_loop j = function
             | [ u ] -> L.fori_loop (index 0) j (i_loop j) [ u ]
-            | _ -> invalid_arg "sqrtm: arity"
+            | _ -> assert false
           in
           List.hd (L.fori_loop (index 0) (index n) j_loop [ u0 ])
-      | _ -> invalid_arg "sqrtm: arity")
+      | _ -> assert false)
     [ t ]
 
-let rec sqrtm ?(blocksize = 1) a =
+let sqrtm ?(blocksize = 1) a =
   if blocksize > 1 then
-    failwith "scipy.linalg.sqrtm: Blocked version is not implemented yet.";
+    raise
+      (Py_exn.Not_implemented_error "Blocked version is not implemented yet.");
   let a = to_inexact a in
-  if ndim a > 2 then
-    List.hd
-      (Interpreters.Batching.vmap
-         (fun args -> [ sqrtm (List.hd args) ])
-         [ Some 0 ] [ a ])
-  else
-    match schur ~output:"complex" a with
-    | [ t; z ] ->
-        let root = sqrtm_triu t in
-        let highest =
-          Lax_config.precision_of_level Lax_config.Precision_highest
-        in
-        let product = TC.matmul ~precision:highest z root in
-        TC.matmul ~precision:highest product
-          (UF.conj (C.bind1 (T.Transpose [| 1; 0 |]) [ z ]))
-    | _ -> failwith "sqrtm: schur arity"
+  match schur ~output:"complex" a with
+  | [ t; z ] ->
+      if ndim t > 2 then Py_exn.value_error "diag input must be 1d or 2d";
+      let root = sqrtm_triu t in
+      let highest =
+        Lax_config.precision_of_level Lax_config.Precision_highest
+      in
+      let product = TC.matmul ~precision:highest z root in
+      TC.matmul ~precision:highest product
+        (UF.conj (C.bind1 (T.Transpose [| 1; 0 |]) [ z ]))
+  | _ -> assert false
 
 let sqrtm ?blocksize a0 =
   Eager_jit.one ~jit:"_sqrtm" "scipy.linalg.sqrtm" blocksize [] [ a0 ]
@@ -1024,13 +1059,10 @@ let sqrtm ?blocksize a0 =
       | [], [ a0 ] -> sqrtm ?blocksize a0
       | _ -> assert false)
 
-let funm ?(disp = true) a _func =
-  ignore disp;
-  ignore a;
-  failwith
-    "scipy.linalg.funm: unsupported in ojax (requires rsf2csf real->complex \
-     Schur-form conversion over the complex Schur machinery deferred with row \
-     99)"
+let funm ?disp:_ _a _func =
+  raise
+    (Py_exn.Not_implemented_error
+       "module 'jax.scipy.linalg' has no attribute 'funm'")
 
 let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
   let module L = Lax_api in
@@ -1137,7 +1169,7 @@ let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
         [ ev ]
     with
     | [ out ] -> out
-    | _ -> failwith "eigh_tridiagonal: arity"
+    | _ -> assert false
   in
   let batched v =
     let row = L.broadcast_in_dim v [| 1; n |] [| 1 |] in
@@ -1164,7 +1196,7 @@ let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
         let nrm_new = NL.squeeze ~axis:[| -1 |] nrm_new in
         let v_new = orthogonalize v_new in
         [ UF.add i (py_int 1); v_new; nrm_new; nrm ]
-    | _ -> failwith "eigh_tridiagonal: state"
+    | _ -> assert false
   in
   let keep_going state =
     match state with
@@ -1173,7 +1205,7 @@ let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
         let grown = UF.multiply (Numpy.Jnp_util.py_float (1.0 +. 0.1)) old in
         let any_grew = RED.any (UF.greater_equal nrm grown) in
         UF.logical_and more any_grew
-    | _ -> failwith "eigh_tridiagonal: state"
+    | _ -> assert false
   in
   let ones = AC.ones ~dtype:base_dtype [| k |] in
   let zeros = AC.zeros ~dtype:base_dtype [| k |] in
@@ -1212,7 +1244,7 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
         (Py_exn.Type_error
            ("Only float32 and float64 inputs are supported as inputs to \
              jax.scipy.linalg.eigh_tridiagonal, got " ^ D.short_name dt)));
-  let n = (shape alpha).(0) in
+  let n = Validate.tuple_index (shape alpha) 0 in
   let solve_dtype = dtype alpha in
   let is_complex = is_complex_dt solve_dtype in
   if n <= 1 then begin
@@ -1249,25 +1281,26 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
     in
     let c v = T.Concrete (Nd.of_floats base_dtype [||] [| v |]) in
     let static_slice v lo hi =
-      C.bind1
-        (T.Slice
-           {
-             start_indices = [| lo |];
-             limit_indices = [| hi |];
-             strides = None;
-           })
-        [ v ]
+      let sv = shape v in
+      if Array.length sv = 0 then
+        Py_exn.index_error
+          "Too many indices: array is 0-dimensional, but 1 were indexed";
+      let lo, hi = Validate.slice_indices ~start:lo ~stop:hi sv.(0) in
+      let start_indices = Array.make (Array.length sv) 0 in
+      start_indices.(0) <- lo;
+      let limit_indices = Array.copy sv in
+      limit_indices.(0) <- max lo hi;
+      C.bind1 (T.Slice { start_indices; limit_indices; strides = None }) [ v ]
     in
     let static_at v i =
       C.bind1 (T.Squeeze [| 0 |]) [ static_slice v i (i + 1) ]
     in
-    let m = (shape beta_abs).(0) in
     let row_sum =
       let head = static_slice beta_abs 0 1 in
-      let left = static_slice beta_abs 0 (m - 1) in
-      let right = static_slice beta_abs 1 m in
+      let left = static_slice beta_abs 0 (-1) in
+      let right = static_slice beta_abs 1 Stdlib.max_int in
       let middle = UF.add left right in
-      let tail = static_slice beta_abs (m - 1) m in
+      let tail = static_slice beta_abs (-1) Stdlib.max_int in
       NL.concatenate [ head; middle; tail ]
     in
     let lambda_max = RED.amax (UF.add alpha_real row_sum) in
@@ -1295,13 +1328,16 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
       match (select, select_range) with
       | "a", _ -> NL.arange ~dtype:D.I32 (float_of_int n)
       | "i", None ->
-          invalid_arg "for select='i', select_range must be specified."
+          Py_exn.value_error "for select='i', select_range must be specified."
       | "i", Some (l, h) ->
-          if l > h then invalid_arg "Got empty index range in select_range.";
+          if l > h then
+            Py_exn.value_error "Got empty index range in select_range.";
           NL.arange ~dtype:D.I32 ~start:l (h +. 1.0)
       | "v", _ ->
-          failwith "eigh_tridiagonal(..., select='v') is not implemented"
-      | _ -> invalid_arg "'select must have a value in {'a', 'i', 'v'}."
+          raise
+            (Py_exn.Not_implemented_error
+               "eigh_tridiagonal(..., select='v') is not implemented")
+      | _ -> Py_exn.value_error "'select must have a value in {'a', 'i', 'v'}."
     in
     let k = (shape target_counts).(0) in
     let fudge = 2.1 in
@@ -1359,7 +1395,7 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
       let q, count = !state in
       let cond = function
         | [ i; _; _ ] -> UF.less i (py_int n)
-        | _ -> failwith "eigh_tridiagonal: state"
+        | _ -> assert false
       in
       let body = function
         | [ start; q; count ] ->
@@ -1374,7 +1410,7 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
             done;
             let q, count = !state in
             [ UF.add start (py_int blocksize); q; count ]
-        | _ -> failwith "eigh_tridiagonal: state"
+        | _ -> assert false
       in
       List.nth (L.while_loop cond body [ py_int (1 + peel); q; count ]) 2
     in
@@ -1384,7 +1420,7 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
           let more = UF.less i (py_int max_it) in
           let wide = RED.amax (UF.subtract hi lo) in
           UF.logical_and more (UF.less abs_tol wide)
-      | _ -> failwith "eigh_tridiagonal: state"
+      | _ -> assert false
     in
     let body state =
       match state with
@@ -1394,7 +1430,7 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
           let hi = NL.where_ (UF.greater counts target_counts) mid hi in
           let mid = UF.multiply (py_float 0.5) (UF.add lo hi) in
           [ UF.add i (py_int 1); lo; mid; hi ]
-      | _ -> failwith "eigh_tridiagonal: state"
+      | _ -> assert false
     in
     let final = L.while_loop cond body [ py_int 0; lower; mid; upper ] in
     let eigvals = List.nth final 2 in

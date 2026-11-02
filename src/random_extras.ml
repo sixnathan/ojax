@@ -80,6 +80,27 @@ let orthogonal ?m key ~n ~shape:sh =
 
 let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") key ~mean ~cov
     =
+  let dims v = (Core.get_aval v).Types.shape in
+  let mean_rank = Array.length (dims mean)
+  and cov_rank = Array.length (dims cov) in
+  if mean_rank < 1 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "multivariate_normal requires mean.ndim >= 1, got mean.ndim == %d"
+         mean_rank);
+  if cov_rank < 2 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "multivariate_normal requires cov.ndim >= 2, got cov.ndim == %d"
+         cov_rank);
+  (let n = (dims mean).(mean_rank - 1) in
+   if (dims cov).(cov_rank - 1) <> n || (dims cov).(cov_rank - 2) <> n then
+     Py_exn.value_error
+       (Printf.sprintf
+          "multivariate_normal requires cov.shape == (..., n, n) for n=%d, but \
+           got cov.shape == %s."
+          n
+          (Validate.python_tuple (dims cov))));
   let mean_shape = shape mean in
   let rank = Array.length mean_shape in
   let event = mean_shape.(rank - 1) in

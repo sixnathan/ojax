@@ -22,7 +22,7 @@ let scalar dt x = Core.splat dt [||] x
 let jit1 name ?key f args =
   match Jaxpr.named_jit ~name ?key (fun a -> [ f a ]) args with
   | [ v ] -> v
-  | _ -> invalid_arg "Qdwh: arity"
+  | _ -> assert false
 
 let where c x y =
   jit1 "_where"
@@ -44,7 +44,7 @@ let where c x y =
           let x = widen x in
           let y = widen y in
           if Array.mem 0 (shape x) then x else b1 T.Select_n [ c; y; x ]
-      | _ -> invalid_arg "where: arity")
+      | _ -> assert false)
     [ c; x; y ]
 
 let index i = T.Concrete (Ndarray.of_floats D.I32 [||] [| float_of_int i |])
@@ -135,7 +135,7 @@ let matrix_norm name axis v =
           let summed = b1 (T.Reduce_sum [| axis |]) [ magnitude ] in
           let top = b1 (T.Reduce_max [| 0 |]) [ summed ] in
           b1 T.Max [ scalar (dtype top) 0.0; top ]
-      | _ -> invalid_arg "norm: arity")
+      | _ -> assert false)
     [ v ]
 
 let frobenius v =
@@ -148,7 +148,7 @@ let frobenius v =
           in
           let axes = Array.init (Array.length (shape squared)) Fun.id in
           b1 T.Sqrt [ b1 (T.Reduce_sum axes) [ squared ] ]
-      | _ -> invalid_arg "norm: arity")
+      | _ -> assert false)
     [ v ]
 
 let unpack_row row =
@@ -189,7 +189,7 @@ let dynamic_index coefs k =
               [ coefs; start; pyint 0 ]
           in
           b1 (T.Squeeze [| 0 |]) [ picked ]
-      | _ -> invalid_arg "dynamic_index_in_dim: arity")
+      | _ -> assert false)
     [ coefs; k ]
 
 let not_converged tol_norm next prev =
@@ -220,7 +220,7 @@ let iterate u flag coefs update test_convergence =
             let params = unpack_row row in
             let next = update u params in
             [ next_i; next; test_convergence next u ]
-        | _ -> invalid_arg "qdwh: arity"
+        | _ -> assert false
       in
       let start =
         T.Concrete
@@ -229,7 +229,7 @@ let iterate u flag coefs update test_convergence =
       in
       match Lax.scan ~length:n_rows body [ start; u; flag ] [] with
       | [ _; u; flag ] -> (u, flag)
-      | _ -> invalid_arg "qdwh: arity")
+      | _ -> assert false)
 
 let qdwh_body max_iterations eps x =
   let rdt = real_dtype x in
@@ -290,13 +290,13 @@ let qdwh_body max_iterations eps x =
         | [ k; _; flag ] ->
             let lt = b1 T.Lt [ k; pyint max_iterations ] in
             b1 T.And [ flag; b1 (T.Convert_element_type D.Bool) [ lt ] ]
-        | _ -> invalid_arg "qdwh: arity")
+        | _ -> assert false)
       (function
         | [ k; u; _ ] ->
             let next = use_cholesky u final_params in
             let flag = not_converged tol_norm next u in
             [ b1 T.Add [ k; pyint 1 ]; next; flag ]
-        | _ -> invalid_arg "qdwh: arity")
+        | _ -> assert false)
       [ pyint start; u; flag ]
   in
   match final with
@@ -309,14 +309,20 @@ let qdwh_body max_iterations eps x =
       let sum = b1 T.Add [ h; hconj h ] in
       let h = b1 T.Div [ sum; scalar dt 2.0 ] in
       [ u; h; num_iters; b1 T.Not [ flag ] ]
-  | _ -> invalid_arg "qdwh: arity"
+  | _ -> assert false
 
 let qdwh ?(is_hermitian = false) ?(max_iterations = 10) ?eps x =
   ignore is_hermitian;
   let sh = shape x in
-  if Array.length sh <> 2 then Py_exn.value_error "qdwh: expected a matrix";
-  if sh.(0) < sh.(1) then
-    Py_exn.value_error "The input matrix of shape M x N must have M >= N";
+  (match (Core.get_aval x).dtype with
+  | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> ()
+  | d ->
+      Py_exn.value_error
+        (Printf.sprintf "data type dtype('%s') not compatible with finfo"
+           (Dtype.numpy_name d)));
+  let m, n = Validate.unpack_exact_two sh in
+  if m < n then
+    Py_exn.value_error "The input matrix of shape M x N must have M >= N.";
   let key =
     Printf.sprintf "%d %s" max_iterations
       (match eps with Some e -> string_of_float e | None -> "none")
@@ -327,9 +333,9 @@ let qdwh ?(is_hermitian = false) ?(max_iterations = 10) ?eps x =
         | [ x ] ->
             Config.with_value Config.default_matmul_precision (Some "float32")
               (fun () -> qdwh_body max_iterations eps x)
-        | _ -> invalid_arg "qdwh: arity")
+        | _ -> assert false)
       [ x ]
   in
   match outs with
   | [ u; h; num_iters; ok ] -> (u, h, num_iters, ok)
-  | _ -> invalid_arg "qdwh: arity"
+  | _ -> assert false

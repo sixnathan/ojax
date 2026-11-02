@@ -22,6 +22,41 @@ let tuple_index tuple i =
   if i < -n || i >= n then Py_exn.index_error "tuple index out of range";
   tuple.(if i < 0 then i + n else i)
 
+let rfft_empty_verifier_message ~function_name ~location ~element shape =
+  let tensor dims =
+    let dims = Array.to_list dims |> List.map string_of_int in
+    Printf.sprintf "tensor<%sx%s>" (String.concat "x" dims) element
+  in
+  let result = Array.copy shape in
+  result.(Array.length shape - 1) <- 1;
+  let returned = tensor shape in
+  Printf.sprintf
+    "Cannot lower jaxpr with verifier errors:\n\
+     \ttype of return operand 0 ('%s') doesn't match function result type \
+     ('%s') in function @%s\n\
+     \t\tat %s\n\
+     \tsee current operation: \"func.return\"(%%0) : (%s) -> ()\n\
+     \t\tat %s\n\
+     Define JAX_DUMP_IR_TO to dump the module."
+    returned (tensor result) function_name location returned location
+
+let unpack_last_two shape =
+  let n = Array.length shape in
+  if n < 2 then
+    Py_exn.value_error
+      (Printf.sprintf "not enough values to unpack (expected 2, got %d)" n);
+  (shape.(n - 2), shape.(n - 1))
+
+let unpack_exact_two shape =
+  match shape with
+  | [| m; n |] -> (m, n)
+  | _ when Array.length shape > 2 ->
+      Py_exn.value_error "too many values to unpack (expected 2)"
+  | _ ->
+      Py_exn.value_error
+        (Printf.sprintf "not enough values to unpack (expected 2, got %d)"
+           (Array.length shape))
+
 let list_assign_index length i =
   if i < -length || i >= length then
     Py_exn.index_error "list assignment index out of range";
@@ -82,3 +117,34 @@ let lax_broadcast_shapes ~name shapes =
                      (String.concat ", " (List.map python_tuple shapes))))
 
 let require_same_shape a b message = if a <> b then Py_exn.value_error message
+
+let py_mod a b =
+  if b = 0 then raise (Py_exn.Zero_division_error "integer modulo by zero")
+  else
+    let r = a mod b in
+    if r <> 0 && r < 0 <> (b < 0) then r + b else r
+
+let py_floordiv a b =
+  if b = 0 then
+    raise (Py_exn.Zero_division_error "integer division or modulo by zero")
+  else
+    let q = a / b in
+    if a mod b <> 0 && a < 0 <> (b < 0) then q - 1 else q
+
+let python_list items =
+  "[" ^ String.concat ", " (List.map string_of_int items) ^ "]"
+
+let check_shapelike ~name ~arg shape =
+  if Array.exists (fun d -> d < 0) shape then
+    Py_exn.type_error
+      (Printf.sprintf "%s %s must have every element be nonnegative, got %s."
+         name arg (python_tuple shape))
+
+let aval_short ~dtype_name ~weak shape =
+  (if weak then "~" else "")
+  ^ dtype_name ^ "["
+  ^ String.concat "," (List.map string_of_int (Array.to_list shape))
+  ^ "]"
+
+let assertion ?(message = "") ok =
+  if not ok then raise (Py_exn.Assertion_error message)

@@ -60,7 +60,10 @@ let permute_dims v axes = transpose ~axes v
 let matrix_transpose v =
   let n = ndim v in
   if n < 2 then
-    invalid_arg (Printf.sprintf "matrix_transpose requires ndim >= 2; got %d" n);
+    Py_exn.value_error
+      (Printf.sprintf
+         "x must be at least two-dimensional for matrix_transpose; got ndim=%d"
+         n);
   let perm = Array.init n (fun i -> i) in
   perm.(n - 1) <- n - 2;
   perm.(n - 2) <- n - 1;
@@ -85,9 +88,28 @@ let flipud v = rev_dims v [| 0 |]
 
 let reshape v sh =
   let total = size v in
+  let unknown = Array.fold_left (fun n d -> if d = -1 then n + 1 else n) 0 sh in
+  let tuple = Validate.python_tuple in
+  if unknown > 1 then
+    Py_exn.type_error
+      ("can only specify one unknown axis size with a `-1` value, got "
+     ^ tuple sh);
   let known =
     Array.fold_left (fun acc d -> if d = -1 then acc else acc * d) 1 sh
   in
+  if unknown = 1 && Validate.py_mod total known <> 0 then
+    Py_exn.type_error
+      (Printf.sprintf
+         "cannot reshape array of shape %s (size %d) into shape %s because the \
+          product of specified axis sizes (%d) does not evenly divide %d"
+         (tuple (shape v))
+         total (tuple sh) known total);
+  if unknown = 0 && total <> known then
+    Py_exn.type_error
+      (Printf.sprintf
+         "cannot reshape array of shape %s (size %d) into shape %s (size %d)"
+         (tuple (shape v))
+         total (tuple sh) known);
   let resolved = Array.map (fun d -> if d = -1 then total / known else d) sh in
   if Array.length resolved > 0 && resolved = shape v then v
   else bind1 (T.Reshape resolved) [ v ]
@@ -759,7 +781,15 @@ let squeeze ?axis v =
 let swapaxes axis1 axis2 v =
   let n = ndim v in
   let perm = Array.init n (fun i -> i) in
-  let a1 = canonicalize_axis axis1 n and a2 = canonicalize_axis axis2 n in
+  let numpy_index axis =
+    if axis < -n || axis >= n then
+      Py_exn.index_error
+        (Printf.sprintf "index %d is out of bounds for axis 0 with size %d" axis
+           n);
+    if axis < 0 then axis + n else axis
+  in
+  let a2 = numpy_index axis2 in
+  let a1 = numpy_index axis1 in
   perm.(a1) <- a2;
   perm.(a2) <- a1;
   bind1 (T.Transpose perm) [ v ]
@@ -1401,7 +1431,7 @@ let array_equal ?(equal_nan = false) a b =
 
 let array_equiv a b =
   match promote2 a b with
-  | exception Invalid_argument _ -> scalar D.Bool 0.0
+  | exception (Invalid_argument _ | Py_exn.Value_error _) -> scalar D.Bool 0.0
   | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
 
 let arange ?(start = 0.0) ?step ~dtype stop =
@@ -1566,6 +1596,12 @@ let cross ?(axisa = -1) ?(axisb = -1) ?(axisc = -1) ?axis a b =
   let na = (shape a).(ndim a - 1) and nb = (shape b).(ndim b - 1) in
   if not ((na = 2 || na = 3) && (nb = 2 || nb = 3)) then
     Py_exn.value_error "Dimension must be either 2 or 3 for cross product";
+  if ndim a <> ndim b then
+    ignore
+      (Validate.broadcast_shapes
+         [
+           Array.sub (shape a) 0 (ndim a - 1); Array.sub (shape b) 0 (ndim b - 1);
+         ]);
   if na = 2 && nb = 2 then
     let a0 = last_index a 0 and a1 = last_index a 1 in
     let b0 = last_index b 0 and b1 = last_index b 1 in
@@ -1772,7 +1808,7 @@ let diagonal ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) a =
   let s = shape a in
   let nd = Array.length s in
   if nd < 2 then
-    invalid_arg "diagonal requires an array of at least two dimensions.";
+    Py_exn.value_error "diagonal requires an array of at least two dimensions.";
   if s.(0) <> s.(1) || nd <> 2 || offset <> 0 || is_bool (dtype a) then
     default_diag ~offset ~axis1 ~axis2 a
   else begin

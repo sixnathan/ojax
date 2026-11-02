@@ -9,13 +9,14 @@ type t = {
   nin : int;
   nout : int;
   identity : float option;
+  name : string;
 }
 
 let next_id = ref 0
 
-let frompyfunc ?identity func ~nin ~nout =
+let frompyfunc ?identity ?(name = "<lambda>") func ~nin ~nout =
   incr next_id;
-  { id = !next_id; func; nin; nout; identity }
+  { id = !next_id; func; nin; nout; identity; name }
 
 let shape v = (Core.get_aval v).T.shape
 let dtype v = (Core.get_aval v).T.dtype
@@ -70,8 +71,7 @@ let result_dtype u a =
 let as_dtype v dt = if dtype v = dt then v else NL.astype v dt
 
 let canonical_axis axis a =
-  let rank = Array.length (shape a) in
-  if axis < 0 then axis + rank else axis
+  Validate.canonicalize_axis axis (Array.length (shape a))
 
 let front axis a = if axis = 0 then a else NL.moveaxis [| axis |] [| 0 |] a
 let int_scalar v = Core.splat (Dtypes.default_int_dtype ()) [||] v
@@ -139,7 +139,10 @@ let reduce ?(axis = 0) u a =
       if n = 0 then
         match u.identity with
         | Some x -> Lax_api.full rest x dt
-        | None -> Py_exn.value_error "reduce: zero-size input needs an identity"
+        | None ->
+            Py_exn.value_error
+              ("zero-size array to reduction operation " ^ u.name
+             ^ " which has no identity")
       else
         let start_index, start_value =
           match u.identity with

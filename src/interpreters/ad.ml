@@ -3427,6 +3427,36 @@ let dce_tape (eqns : eqn list) (outs : atom list) =
             }
             :: kept
           end
+      | Custom_jvp_call id
+        when match !Jaxpr.remat_body id with
+             | Some body ->
+                 not (List.exists Jaxpr.eqn_has_effect body.jaxpr.eqns)
+             | None -> false ->
+          let used = List.map is_live e.outs in
+          if not (List.exists Fun.id used) then kept
+          else begin
+            let body = Option.get (!Jaxpr.remat_body id) in
+            let pruned, ins = Jaxpr.dce_closed body used in
+            let unchanged =
+              List.for_all Fun.id used && List.for_all Fun.id ins
+            in
+            let inputs =
+              List.concat
+                (List.map2
+                   (fun a keep -> if keep then [ a ] else [])
+                   e.inputs ins)
+            in
+            List.iter mark inputs;
+            if unchanged then e :: kept
+            else
+              {
+                e with
+                prim = Custom_jvp_call (!Jaxpr.remat_rebuild id pruned);
+                inputs;
+                outs = List.filter is_live e.outs;
+              }
+              :: kept
+          end
       | Cond { branches; platforms }
         when not
                (List.exists

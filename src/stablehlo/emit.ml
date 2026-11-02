@@ -393,11 +393,18 @@ let emit_logistic ctx (eqn : eqn) in_ids =
   let c1 = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c1) one sty);
-  let b1 = fresh ctx in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
-       (name b1) (name c1) sty xty);
+  let spread c =
+    if out.vaval.shape = [||] then c
+    else begin
+      let b = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+           (name b) (name c) sty xty);
+      b
+    end
+  in
+  let b1 = spread c1 in
   let a = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.add %s, %s : %s\n" (name a) (name b1)
@@ -405,11 +412,7 @@ let emit_logistic ctx (eqn : eqn) in_ids =
   let c2 = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c2) one sty);
-  let b2 = fresh ctx in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
-       (name b2) (name c2) sty xty);
+  let b2 = spread c2 in
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.divide %s, %s : %s\n" (name n) (name b2)
@@ -3555,10 +3558,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ x ] ->
             let positive = Core.bind1 (Integer_pow (-y)) [ x ] in
             let a = Core.get_aval x in
+            let scalar_one = Core.splat a.dtype [||] 1.0 in
             let one =
-              Core.bind1
-                (Broadcast_in_dim { shape = a.shape; dims = [||] })
-                [ Core.splat a.dtype [||] 1.0 ]
+              if a.shape = [||] && y <> -1 then scalar_one
+              else
+                Core.bind1
+                  (Broadcast_in_dim { shape = a.shape; dims = [||] })
+                  [ scalar_one ]
             in
             [ Core.bind1 Div [ one; positive ] ]
         | _ -> invalid_arg "Stablehlo.Emit: integer_pow arity")

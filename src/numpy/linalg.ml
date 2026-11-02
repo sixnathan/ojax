@@ -55,6 +55,9 @@ let symmetrize x = UF.divide (UF.add x (hconj x)) (const (dtype x) 2.0)
 let slogdet_lu_call : (T.value list -> T.value list) ref =
   ref (fun _ -> invalid_arg "slogdet_lu: not installed")
 
+let det_call : (T.value list -> T.value list) ref =
+  ref (fun _ -> invalid_arg "det: not installed")
+
 let rec cholesky_body ?(upper = false) ?(symmetrize_input = true) a =
   let a = to_inexact a in
   let l = LL.cholesky ~symmetrize_input a in
@@ -336,9 +339,13 @@ and det_body a =
     let t5 = product (0, 1) (1, 0) (2, 2) in
     UF.subtract s4 t5
   end
+  else if na >= 2 && sa.(na - 1) = sa.(na - 2) then List.hd (!det_call [ a ])
   else
-    let sign, logdet = slogdet a in
-    UF.multiply sign (NL.astype (UF.exp logdet) (dtype sign))
+    invalid_arg
+      (Printf.sprintf "Argument to _det() must have shape [..., n, n], got %s"
+         (Printf.sprintf "(%s)"
+            (String.concat ", " (Array.to_list (Array.map string_of_int sa))
+            ^ if na = 1 then "," else "")))
 
 and matrix_cell a i j =
   let na = ndim a in
@@ -948,6 +955,127 @@ let () =
         | _ -> invalid_arg "slogdet: arity")
   in
   slogdet_lu_call := call
+
+let cofactor_solve a b =
+  let module I = Nd_index in
+  let a = to_inexact a and b = to_inexact b in
+  let sa = shape a and sb = shape b in
+  let na = Array.length sa and nb = Array.length sb in
+  let n = sa.(na - 1) in
+  let every r = I.Range { start = None; stop = None } :: r in
+  let leading k tail =
+    let rec go i acc = if i = 0 then acc else go (i - 1) (every acc) in
+    go k tail
+  in
+  if n = 1 then (I.take a (leading (na - 2) [ I.Int 0; I.Int 0 ]), b)
+  else begin
+    let lu, pivots, permutation = LL.lu a in
+    let dt = dtype a in
+    let batch =
+      NL.broadcast_shapes_n
+        [ Array.sub (shape lu) 0 (na - 2); Array.sub sb 0 (nb - 2) ]
+    in
+    let nbatch = Array.length batch in
+    let x = NL.broadcast_to b (Array.append batch (Array.sub sb (nb - 2) 2)) in
+    let lu = NL.broadcast_to lu (Array.append batch [| n; n |]) in
+    let diag = NL.diagonal ~axis1:(-2) ~axis2:(-1) lu in
+    let iota =
+      NL.expand_dims
+        (NL.arange ~dtype:(dtype pivots) (float_of_int n))
+        (Array.init (ndim pivots - 1) Fun.id)
+    in
+    let parity = RED.count_nonzero ~axis:[| -1 |] (UF.not_equal pivots iota) in
+    let pdt = dtype parity in
+    let rem = UF.remainder parity (C.py_scalar pdt 2.0) in
+    let m = UF.multiply (const pdt (-2.0)) rem in
+    let sign = NL.astype (UF.add m (const pdt 1.0)) dt in
+    let cumulative = RED.cumprod ~axis:(-1) diag in
+    let sign_e = NL.expand_dims sign [| ndim sign |] in
+    let partial_det = UF.multiply cumulative sign_e in
+    let inv_part =
+      UF.divide (C.py_scalar dt 1.0)
+        (I.take partial_det (leading nbatch [ I.Int (-2) ]))
+    in
+    let lu = I.set lu (leading nbatch [ I.Int (-1); I.Int (-1) ]) inv_part in
+    let permutation =
+      NL.broadcast_to permutation (Array.append batch [| n |])
+    in
+    let iotas =
+      NL.ix_
+        (List.map
+           (fun d ->
+             C.bind1
+               (T.Iota { dtype = D.I32; shape = [| d |]; dimension = 0 })
+               [])
+           (Array.to_list batch @ [ 1 ]))
+    in
+    let batch_iotas = List.filteri (fun i _ -> i < nbatch) iotas in
+    let x_shape = shape x in
+    let d = C.splat (dtype x) (Array.sub x_shape 0 (nbatch + 1)) 1.0 in
+    let d_e = NL.expand_dims d [| ndim d |] in
+    let d =
+      I.take
+        (LL.triangular_solve ~left_side:true ~lower:false lu d_e)
+        (leading (nbatch + 1) [ I.Int 0 ])
+    in
+    let d = RED.any ~axis:[| -1 |] (UF.logical_or (UF.isnan d) (UF.isinf d)) in
+    let d_rank = ndim d in
+    let d =
+      NL.tile
+        (NL.expand_dims d [| d_rank; d_rank + 1 |])
+        (Array.append (Array.make d_rank 1) (Array.sub x_shape nbatch 2))
+    in
+    let x = NL.where_ d (C.splat (dtype x) (shape x) 0.0) x in
+    let x =
+      I.take x
+        (List.map (fun v -> I.Arr v) batch_iotas
+        @ [ I.Arr permutation; I.Range { start = None; stop = None } ])
+    in
+    let x =
+      LL.triangular_solve ~left_side:true ~lower:true ~unit_diagonal:true lu x
+    in
+    let head =
+      I.take x
+        (leading nbatch
+           [
+             I.Range { start = None; stop = Some (-1) };
+             I.Range { start = None; stop = None };
+           ])
+    in
+    let last_e =
+      NL.expand_dims
+        (I.take partial_det (leading nbatch [ I.Int (-1) ]))
+        [| nbatch; nbatch + 1 |]
+    in
+    let scaled = UF.multiply head last_e in
+    let tail =
+      I.take x
+        (leading nbatch
+           [
+             I.Range { start = Some (-1); stop = None };
+             I.Range { start = None; stop = None };
+           ])
+    in
+    let x = NL.concatenate ~axis:(-2) [ scaled; tail ] in
+    let x = LL.triangular_solve ~left_side:true ~lower:false lu x in
+    let x = NL.where_ d (C.splat (dtype x) (shape x) 0.0) x in
+    (I.take partial_det (leading nbatch [ I.Int (-1) ]), x)
+  end
+
+let () =
+  det_call :=
+    Custom_derivatives.custom_jvp ~name:"_det" ~jvp_name:"_det_jvp"
+      (function
+        | [ a ] ->
+            let sign, logdet = slogdet a in
+            [ UF.multiply sign (NL.astype (UF.exp logdet) (dtype sign)) ]
+        | _ -> invalid_arg "det: arity")
+      ~jvp:(fun primals tangents ->
+        match (primals, tangents) with
+        | [ x ], [ g ] ->
+            let y, z = cofactor_solve x g in
+            ([ y ], [ NL.trace ~axis1:(-1) ~axis2:(-2) z ])
+        | _ -> invalid_arg "det: arity")
 
 let cholesky ?upper ?symmetrize_input a0 =
   Eager_jit.one "numpy.linalg.cholesky" (upper, symmetrize_input) [] [ a0 ]

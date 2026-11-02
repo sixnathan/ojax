@@ -1743,7 +1743,10 @@ let zeta ?q x =
 
 let reject_bool x =
   if dtype x = D.Bool then
-    raise (Py_exn.Type_error "sub does not accept dtype bool.")
+    raise
+      (Py_exn.Type_error
+         "sub does not accept dtype bool at position 0. Accepted dtypes at \
+          position 0 are subtypes of complexfloating, floating, integer.")
 
 let softmax ?axis x =
   Option.iter
@@ -2070,7 +2073,7 @@ let while3 cond body init =
 let hyp_cond prec k term serie =
   let in_range = UF.less k (py_int 250) in
   let abs_term = L.abs term in
-  let ratio = L.div abs_term (L.abs serie) in
+  let ratio = abs_term /! L.abs serie in
   band in_range (UF.greater ratio prec)
 
 let hyp1f1_serie a b x =

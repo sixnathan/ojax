@@ -23,6 +23,7 @@ TRACED_AT = re.compile(r"The error occurred while tracing the function \S+ at \S
 PY_TYPE_ERRORS = ("'int' object is not iterable", "object of type 'int' has no len()")
 MLIR_LOC = re.compile(r"(?:UNKNOWN: |at loc\().*?([^\"\s(]+\.py)\"?:\d+")
 REPEATED_AXES = re.compile(r"does not support repeated axes\. Got axes \(")
+PY_ADDRESS = re.compile(r"<function ([A-Za-z_0-9]+) at (0x[0-9a-f]+)>")
 
 
 def jax_tree():
@@ -327,6 +328,10 @@ def build(log, varying_path, frames_path, goldens):
     axes = jax_line(tree, "numpy/fft.py", "does not support repeated axes. Got axes {axes}.")
     loc = jax_line(tree, "interpreters/mlir.py", "def source_info_to_location(")
     signature = jax_line(tree, "api.py", "ba = inspect.signature(fn).bind(*args, **kwargs)")
+    from jax._src.random import prng
+
+    impl_raise = jax_line(tree, "random/prng.py", "end with {impl.key_shape}; got shape={key_data.shape} for {impl=}")
+    impl_class = jax_line(tree, "random/prng.py", "class PRNGImpl(NamedTuple):")
     rows = read_log(log)
     out = {}
     with open(varying_path, encoding="utf-8") as fh:
@@ -377,6 +382,11 @@ def build(log, varying_path, frames_path, goldens):
             differ = eager_jit_differ(goldens, suite.split(":")[0], set_name, options.get((set_name, case_id)), case_id, name)
             if differ:
                 out[(suite, row)] = ("b", f"JAX's own eager and jit {name} differ in {differ[0]} of {differ[1]} elements (stored bytes in {suite.split(':')[0]}/{set_name}/ops); ojax's {mode} output differs from JAX's {mode} (log: {f[1]} compared, {f[2]} differing)")
+            continue
+        if suite.startswith("keys_arrays:") and len(f) >= 8 and PY_ADDRESS.search(f[6]) and PY_ADDRESS.sub(r"<function \1>", f[6]) == f[7]:
+            name, stored = PY_ADDRESS.search(f[6]).groups()
+            live = {fn.__name__: hex(id(fn)) for impl in prng.prngs.values() for fn in impl[1:5]}
+            out[(suite, row)] = ("a", f"CPython object addresses: JAX ends the text with {{impl=}} at {impl_raise}, the NamedTuple repr of {impl_class}, which prints every impl function as <function name at 0x...>; the stored golden has {name} at {stored} and this run has it at {live.get(name)}; ojax's text equals JAX's with the addresses removed")
             continue
         if len(f) < 8 or not suite.startswith(("text_option_fuzz:", "text_fuzz:", "text_fuzz_s2:", "text_compose_fuzz:")):
             continue

@@ -1097,76 +1097,106 @@ let conv_batch (prim : primitive) (vals : value list) (bdims : int option list)
           [ l; r ]
       in
       let shape v = (Core.get_aval v).shape in
-      match (lb, rb) with
-      | None, None -> (b1 prim vals, None)
-      | Some l, Some r ->
-          let size = (shape lhs).(l) in
-          let new_lhs, feature, batch =
-            if c.batch_group_count > 1 then
-              ( reshape_axis_into l dn.lhs_spec.(0) lhs,
-                c.feature_group_count,
-                c.batch_group_count * size )
-            else
-              ( reshape_axis_into l dn.lhs_spec.(1) lhs,
-                c.feature_group_count * size,
-                c.batch_group_count )
-          in
-          let new_rhs = reshape_axis_into r dn.rhs_spec.(0) rhs in
-          let out = bind_conv ~feature ~batch new_lhs new_rhs in
-          (reshape_axis_out_of dn.out_spec.(1) size out, Some dn.out_spec.(1))
-      | Some l, None ->
-          let size = (shape lhs).(l) in
-          if c.batch_group_count = 1 then
-            let new_lhs = reshape_axis_into l dn.lhs_spec.(0) lhs in
-            let out =
-              bind_conv ~feature:c.feature_group_count ~batch:1 new_lhs rhs
+      let batch_is_empty v = function
+        | Some d -> (shape v).(d) = 0
+        | None -> false
+      in
+      let unbatched v = function
+        | Some d ->
+            let dropped =
+              List.filteri (fun i _ -> i <> d) (Array.to_list (shape v))
             in
-            (reshape_axis_out_of dn.out_spec.(0) size out, Some dn.out_spec.(0))
-          else
-            let s0 = dn.lhs_spec.(0) in
-            let new_lhs =
-              reshape_axis_out_of
-                (s0 + if l <= s0 then 1 else 0)
-                c.batch_group_count lhs
+            Array.of_list dropped
+        | None -> shape v
+      in
+      if batch_is_empty lhs lb || batch_is_empty rhs rb then
+        let zero v bdim =
+          let aval = Core.get_aval v in
+          let dims = unbatched v bdim in
+          Concrete
+            (Ndarray.of_floats aval.dtype dims
+               (Array.make (Array.fold_left ( * ) 1 dims) 0.0))
+        in
+        let probe =
+          Core.get_aval
+            (bind_conv ~feature:c.feature_group_count ~batch:c.batch_group_count
+               (zero lhs lb) (zero rhs rb))
+        in
+        (Core.splat probe.dtype (Array.append [| 0 |] probe.shape) 0.0, Some 0)
+      else
+        match (lb, rb) with
+        | None, None -> (b1 prim vals, None)
+        | Some l, Some r ->
+            let size = (shape lhs).(l) in
+            let new_lhs, feature, batch =
+              if c.batch_group_count > 1 then
+                ( reshape_axis_into l dn.lhs_spec.(0) lhs,
+                  c.feature_group_count,
+                  c.batch_group_count * size )
+              else
+                ( reshape_axis_into l dn.lhs_spec.(1) lhs,
+                  c.feature_group_count * size,
+                  c.batch_group_count )
             in
-            let new_lhs =
-              reshape_axis_into (l + if s0 < l then 1 else 0) (s0 + 1) new_lhs
-            in
-            let new_lhs = reshape_axis_into s0 s0 new_lhs in
-            let out =
-              bind_conv ~feature:c.feature_group_count
-                ~batch:c.batch_group_count new_lhs rhs
-            in
-            (reshape_axis_out_of dn.out_spec.(0) size out, Some dn.out_spec.(0))
-      | None, Some r ->
-          let size = (shape rhs).(r) in
-          if c.feature_group_count = 1 && c.batch_group_count = 1 then
             let new_rhs = reshape_axis_into r dn.rhs_spec.(0) rhs in
-            let out = bind_conv ~feature:1 ~batch:1 lhs new_rhs in
+            let out = bind_conv ~feature ~batch new_lhs new_rhs in
             (reshape_axis_out_of dn.out_spec.(1) size out, Some dn.out_spec.(1))
-          else
-            let group_count =
-              if c.feature_group_count > 1 then c.feature_group_count
-              else c.batch_group_count
-            in
-            let s0 = dn.rhs_spec.(0) in
-            let new_rhs =
-              reshape_axis_out_of
-                (s0 + if r <= s0 then 1 else 0)
-                group_count rhs
-            in
-            let new_rhs =
-              reshape_axis_into (r + if s0 < r then 1 else 0) (s0 + 1) new_rhs
-            in
-            let new_rhs = reshape_axis_into s0 s0 new_rhs in
-            let out =
-              bind_conv ~feature:c.feature_group_count
-                ~batch:c.batch_group_count lhs new_rhs
-            in
-            let o1 = dn.out_spec.(1) in
-            let out = reshape_axis_out_of o1 group_count out in
-            let out = reshape_axis_out_of (o1 + 1) size out in
-            (reshape_axis_into o1 (o1 + 1) out, Some o1))
+        | Some l, None ->
+            let size = (shape lhs).(l) in
+            if c.batch_group_count = 1 then
+              let new_lhs = reshape_axis_into l dn.lhs_spec.(0) lhs in
+              let out =
+                bind_conv ~feature:c.feature_group_count ~batch:1 new_lhs rhs
+              in
+              ( reshape_axis_out_of dn.out_spec.(0) size out,
+                Some dn.out_spec.(0) )
+            else
+              let s0 = dn.lhs_spec.(0) in
+              let new_lhs =
+                reshape_axis_out_of
+                  (s0 + if l <= s0 then 1 else 0)
+                  c.batch_group_count lhs
+              in
+              let new_lhs =
+                reshape_axis_into (l + if s0 < l then 1 else 0) (s0 + 1) new_lhs
+              in
+              let new_lhs = reshape_axis_into s0 s0 new_lhs in
+              let out =
+                bind_conv ~feature:c.feature_group_count
+                  ~batch:c.batch_group_count new_lhs rhs
+              in
+              ( reshape_axis_out_of dn.out_spec.(0) size out,
+                Some dn.out_spec.(0) )
+        | None, Some r ->
+            let size = (shape rhs).(r) in
+            if c.feature_group_count = 1 && c.batch_group_count = 1 then
+              let new_rhs = reshape_axis_into r dn.rhs_spec.(0) rhs in
+              let out = bind_conv ~feature:1 ~batch:1 lhs new_rhs in
+              ( reshape_axis_out_of dn.out_spec.(1) size out,
+                Some dn.out_spec.(1) )
+            else
+              let group_count =
+                if c.feature_group_count > 1 then c.feature_group_count
+                else c.batch_group_count
+              in
+              let s0 = dn.rhs_spec.(0) in
+              let new_rhs =
+                reshape_axis_out_of
+                  (s0 + if r <= s0 then 1 else 0)
+                  group_count rhs
+              in
+              let new_rhs =
+                reshape_axis_into (r + if s0 < r then 1 else 0) (s0 + 1) new_rhs
+              in
+              let new_rhs = reshape_axis_into s0 s0 new_rhs in
+              let out =
+                bind_conv ~feature:c.feature_group_count
+                  ~batch:c.batch_group_count lhs new_rhs
+              in
+              let o1 = dn.out_spec.(1) in
+              let out = reshape_axis_out_of o1 group_count out in
+              let out = reshape_axis_out_of (o1 + 1) size out in
+              (reshape_axis_into o1 (o1 + 1) out, Some o1))
   | _ -> failwith "batching: conv arity"
 
 let window_insert (w : window_dims) (at : int) : window_dims =

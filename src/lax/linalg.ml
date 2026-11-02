@@ -882,9 +882,21 @@ let symmetrize x =
     | Dtype.Complex64 | Dtype.Complex128 -> Core.bind1 Conj [ flipped ]
     | _ -> flipped
   in
-  let half = Core.splat aval.dtype [||] 2.0 in
-  let sum = Core.bind1 Add [ x; flipped ] in
-  Core.bind1 Div [ sum; half ]
+  match aval.dtype with
+  | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 ->
+      let half = Core.splat aval.dtype [||] 2.0 in
+      let sum = Core.bind1 Add [ x; flipped ] in
+      Core.bind1 Div [ sum; half ]
+  | dtype ->
+      let sum =
+        Core.bind1 (if dtype = Dtype.Bool then Or else Add) [ x; flipped ]
+      in
+      let real = Dtypes.to_inexact_dtype dtype in
+      Core.bind1 Div
+        [
+          Core.bind1 (Convert_element_type real) [ sum ];
+          Core.splat real [||] 2.0;
+        ]
 
 let tri_mask n_rows n_cols k =
   let dtype = Dtypes.default_int_dtype () in

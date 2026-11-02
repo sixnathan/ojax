@@ -185,6 +185,10 @@ let fft_core name kind ~inverse ?s ?axes ?norm a =
   let arr, sizes =
     match s with
     | Some sizes ->
+        if ndim = 0 && sizes = [] then
+          Py_exn.value_error
+            "jnp.pad: pad_width with nd=0 has unsupported shape (0,). Valid \
+             shapes are (0, 2), (1, 2), (2,), (1,), or ().";
         let in_s = Array.copy shape in
         List.iter2
           (fun ax n -> in_s.(Validate.list_assign_index ndim ax) <- n)

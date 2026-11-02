@@ -48,13 +48,12 @@ let hconj x = UF.conj (matrix_transpose_v x)
 let symmetrize x = UF.divide (UF.add x (hconj x)) (const (dtype x) 2.0)
 
 let slogdet_lu_call : (T.value list -> T.value list) ref =
-  ref (fun _ -> invalid_arg "slogdet_lu: not installed")
+  ref (fun _ -> assert false)
 
-let det_call : (T.value list -> T.value list) ref =
-  ref (fun _ -> invalid_arg "det: not installed")
+let det_call : (T.value list -> T.value list) ref = ref (fun _ -> assert false)
 
 let slogdet_small_call : (T.value list -> T.value list) ref =
-  ref (fun _ -> invalid_arg "slogdet_small: not installed")
+  ref (fun _ -> assert false)
 
 let rec cholesky_body ?(upper = false) ?(symmetrize_input = true) a =
   let a = to_inexact a in
@@ -939,7 +938,7 @@ and tensorinv ?(ind = 2) a =
     Py_exn.value_error
       (Printf.sprintf
          "tensorinv is only possible when the product of the first `ind` \
-          dimensions equals that of the remaining dimensions. got a.shape=%s \
+          dimensions equals that of the remaining dimensions. got arr.shape=%s \
           with ind=%d."
          (Validate.python_tuple sa) ind);
   let flat = NL.reshape a [| p0; p1 |] in

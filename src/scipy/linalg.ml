@@ -511,14 +511,6 @@ let solve_triangular ?trans ?lower ?unit_diagonal a0 a1 =
       | [], [ a0; a1 ] -> solve_triangular ?trans ?lower ?unit_diagonal a0 a1
       | _ -> assert false)
 
-let host_nd = function
-  | T.Concrete nd -> nd
-  | _ ->
-      failwith "scipy/linalg: forward-eval only (concrete host inputs required)"
-
-let host_float v = Nd.get_f (host_nd v) [||]
-let scalar_of v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
-
 let svd ?(full_matrices = true) ?(compute_uv = true) a =
   let a = to_inexact a in
   LL.svd ~full_matrices ~compute_uv a
@@ -543,7 +535,6 @@ let eigh ?lower ?eigvals_only a0 =
       | _ -> assert false)
 
 let schur ?(output = "real") a =
-  let a = to_inexact a in
   let a =
     match output with
     | "real" -> a
@@ -578,8 +569,11 @@ let block_diag arrs =
         Py_exn.value_error
           (Printf.sprintf
              "Arguments to jax.scipy.linalg.block_diag must have at most 2 \
-              dimensions, got %d dimensions at argument %d."
-             (ndim a) i))
+              dimensions, got JitTracer(%s[%s]) at argument %d."
+             (D.numpy_name (dtype a))
+             (String.concat ","
+                (Array.to_list (Array.map string_of_int (shape a))))
+             i))
     arrs;
   let dt = NL.result_type arrs in
   let arrs = List.map (fun a -> NL.atleast_2d (NL.astype a dt)) arrs in
@@ -599,7 +593,6 @@ let block_diag arrs =
 let toeplitz = Linalg_special.toeplitz
 
 let hessenberg ?(calc_q = false) a =
-  let a = to_inexact a in
   let sh = shape a in
   let n = Validate.tuple_index sh (-1) in
   if n = 0 then
@@ -959,7 +952,6 @@ let polar_2d ~side ~method_ ?eps a =
   | _ -> assert false
 
 let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
-  let a = to_inexact a in
   if ndim a < 2 then
     Py_exn.value_error "The input `a` must be at least a 2-D array.";
   (match side with
@@ -1067,13 +1059,10 @@ let sqrtm ?blocksize a0 =
       | [], [ a0 ] -> sqrtm ?blocksize a0
       | _ -> assert false)
 
-let funm ?(disp = true) a _func =
-  ignore disp;
-  ignore a;
-  failwith
-    "scipy.linalg.funm: unsupported in ojax (requires rsf2csf real->complex \
-     Schur-form conversion over the complex Schur machinery deferred with row \
-     99)"
+let funm ?disp:_ _a _func =
+  raise
+    (Py_exn.Not_implemented_error
+       "module 'jax.scipy.linalg' has no attribute 'funm'")
 
 let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
   let module L = Lax_api in

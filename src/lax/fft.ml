@@ -142,9 +142,59 @@ let last_axes shape lengths =
   let rank = Array.length shape and k = Array.length lengths in
   List.init k (fun i -> rank - k + i)
 
+let check_fft_aval fft_type lengths (a : aval) =
+  let shape = a.shape in
+  let rank = Array.length shape and k = Array.length lengths in
+  let tuple = Validate.python_tuple in
+  if k > rank then
+    Py_exn.value_error
+      (Printf.sprintf
+         "FFT input shape %s must have at least as many input dimensions as \
+          fft_lengths %s."
+         (tuple shape) (tuple lengths));
+  let minor = Array.sub shape (rank - k) k in
+  let name = Dtype.numpy_name a.dtype in
+  let complex =
+    match a.dtype with Dtype.Complex64 | Complex128 -> true | _ -> false
+  in
+  match fft_type with
+  | Fft_real ->
+      (match a.dtype with
+      | Dtype.F32 | F64 -> ()
+      | _ ->
+          Py_exn.value_error
+            ("RFFT input must be float32 or float64, got " ^ name));
+      if minor <> lengths then
+        Py_exn.value_error
+          (Printf.sprintf
+             "RFFT input shape %s minor dimensions must be equal to \
+              fft_lengths %s"
+             (tuple shape) (tuple lengths))
+  | Fft_inverse_real ->
+      if not complex then
+        Py_exn.value_error
+          ("IRFFT input must be complex64 or complex128, got " ^ name);
+      if k > 0 && Array.sub minor 0 (k - 1) <> Array.sub lengths 0 (k - 1) then
+        Py_exn.value_error
+          (Printf.sprintf
+             "IRFFT input shape %s minor dimensions must be equal to all \
+              except the last fft_length, got fft_lengths=%s"
+             (tuple shape) (tuple lengths))
+  | Fft_forward | Fft_inverse ->
+      if not complex then
+        Py_exn.value_error
+          ("FFT input must be complex64 or complex128, got " ^ name);
+      if minor <> lengths then
+        Py_exn.value_error
+          (Printf.sprintf
+             "FFT input shape %s minor dimensions must be equal to fft_lengths \
+              %s"
+             (tuple shape) (tuple lengths))
+
 let fft_impl fft_type lengths x =
   let shape = Ndarray.shape x in
   let dt = Ndarray.dtype x in
+  check_fft_aval fft_type lengths { shape; dtype = dt; weak_type = false };
   match fft_type with
   | Fft_forward | Fft_inverse ->
       let data = read_complex x in
@@ -209,55 +259,6 @@ let fft_impl fft_type lengths x =
         done
       done;
       Ndarray.of_floats (real_of dt) out_shape out
-
-let check_fft_aval fft_type lengths (a : aval) =
-  let shape = a.shape in
-  let rank = Array.length shape and k = Array.length lengths in
-  let tuple = Validate.python_tuple in
-  if k > rank then
-    Py_exn.value_error
-      (Printf.sprintf
-         "FFT input shape %s must have at least as many input dimensions as \
-          fft_lengths %s."
-         (tuple shape) (tuple lengths));
-  let minor = Array.sub shape (rank - k) k in
-  let name = Dtype.numpy_name a.dtype in
-  let complex =
-    match a.dtype with Dtype.Complex64 | Complex128 -> true | _ -> false
-  in
-  match fft_type with
-  | Fft_real ->
-      (match a.dtype with
-      | Dtype.F32 | F64 -> ()
-      | _ ->
-          Py_exn.value_error
-            ("RFFT input must be float32 or float64, got " ^ name));
-      if minor <> lengths then
-        Py_exn.value_error
-          (Printf.sprintf
-             "RFFT input shape %s minor dimensions must be equal to \
-              fft_lengths %s"
-             (tuple shape) (tuple lengths))
-  | Fft_inverse_real ->
-      if not complex then
-        Py_exn.value_error
-          ("IRFFT input must be complex64 or complex128, got " ^ name);
-      if k > 0 && Array.sub minor 0 (k - 1) <> Array.sub lengths 0 (k - 1) then
-        Py_exn.value_error
-          (Printf.sprintf
-             "IRFFT input shape %s minor dimensions must be equal to all \
-              except the last fft_length, got fft_lengths=%s"
-             (tuple shape) (tuple lengths))
-  | Fft_forward | Fft_inverse ->
-      if not complex then
-        Py_exn.value_error
-          ("FFT input must be complex64 or complex128, got " ^ name);
-      if minor <> lengths then
-        Py_exn.value_error
-          (Printf.sprintf
-             "FFT input shape %s minor dimensions must be equal to fft_lengths \
-              %s"
-             (tuple shape) (tuple lengths))
 
 let fft_aval fft_type lengths (a : aval) =
   check_fft_aval fft_type lengths a;

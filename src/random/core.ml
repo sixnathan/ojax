@@ -1670,8 +1670,9 @@ let with_it dtype f =
   match dtype with
   | None -> f ()
   | Some d ->
+      let d = Dtypes.canonicalize_dtype d in
       let saved = !explicit_int in
-      explicit_int := Some (Dtypes.canonicalize_dtype d);
+      explicit_int := Some d;
       Fun.protect
         ~finally:(fun () -> explicit_int := saved)
         (fun () -> with_dtypes ~int_dtype:d f)

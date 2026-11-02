@@ -795,16 +795,35 @@ let fill_or_extremes ~fill_value vals valid_count =
       let high = NL.where_ (positions_below n valid_count) vals (R.max vals) in
       NL.where_ (positions_below n valid_count) high (R.min high)
 
+let rec mask_take arr mask =
+  match mask with
+  | Tracer { payload = JVP { primal; _ }; _ } -> mask_take arr primal
+  | Tracer _ ->
+      raise
+        (Errors.non_concrete_boolean_index_error
+           ~tracer:(Lax_shape.aval_string (Core.get_aval mask))
+           ())
+  | _ ->
+      let flags = flat_floats (host "mask" mask) in
+      let picked =
+        List.filteri
+          (fun _ i -> flags.(i) <> 0.0)
+          (List.init (Array.length flags) Fun.id)
+      in
+      I.take ~axis:0 arr
+        (ints_value (default_int ())
+           [| List.length picked |]
+           (Array.of_list picked))
+
 let union1d ?size ?fill_value a b =
   let a, b = same_dtype a b in
   match size with
   | Some n ->
       unique_values_full ~size:n ?fill_value (NL.concatenate [ flat a; flat b ])
   | None ->
-      let first = sorted_unique_floats "union1d" a in
-      let second = sorted_unique_floats "union1d" b in
-      let xs = List.sort_uniq compare_with_nan (first @ second) in
-      sized_result (dtype_of a) xs ~size ~fill_value
+      ignore (host "union1d" a);
+      ignore (host "union1d" b);
+      unique_values_full (NL.concatenate [ flat a; flat b ])
 
 let flat_float_list name v = Array.to_list (flat_floats (host name v))
 
@@ -1072,14 +1091,11 @@ let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
       in
       NL.where_ (positions_below n (R.sum mask)) picked (lit_of fill dt)
   | None ->
-      let source =
-        if assume_unique then flat_float_list "setdiff1d" a
-        else sorted_unique_floats "setdiff1d" a
-      in
-      let ys = flat_float_list "setdiff1d" b in
-      sized_result dt
-        (List.filter (fun x -> not (List.exists (fun y -> x = y) ys)) source)
-        ~size ~fill_value:(Some fill)
+      ignore (host "setdiff1d" a);
+      if size_of a = 0 then L.full [| 0 |] fill dt
+      else
+        let arr = if assume_unique then a else unique_values_full a in
+        mask_take arr (Setops.in1d ~invert:true arr b)
 
 let setxor1d_sized ~assume_unique ~size ~fill_value a b =
   let bool_lit v = Concrete (Ndarray.of_floats Dtype.Bool [| 1 |] [| v |]) in
@@ -1151,24 +1167,31 @@ let setxor1d ?(assume_unique = false) ?size ?fill_value a b =
   match size with
   | Some n -> setxor1d_sized ~assume_unique ~size:n ~fill_value a b
   | None ->
-      let values v =
-        if assume_unique then flat_float_list "setxor1d" v
-        else sorted_unique_floats "setxor1d" v
+      let a, b =
+        if assume_unique then (a, b)
+        else (unique_values_full a, unique_values_full b)
       in
-      let first = values a in
-      let second = values b in
-      let sorted = List.sort compare_with_nan (first @ second) in
-      let rec singles = function
-        | p :: q :: rest when p = q ->
-            let rec drop = function
-              | r :: tl when p = r -> drop tl
-              | tl -> tl
-            in
-            singles (drop rest)
-        | p :: rest -> p :: singles rest
-        | [] -> []
-      in
-      sized_result (dtype_of a) (singles sorted) ~size ~fill_value
+      let aux = NL.concatenate [ a; b ] in
+      let n = size_of aux in
+      if n = 0 then aux
+      else
+        let aux = Sorting.sort ~axis:(Some 0) aux in
+        let bool_lit v =
+          Concrete (Ndarray.of_floats Dtype.Bool [| 1 |] [| v |])
+        in
+        let flag =
+          NL.concatenate
+            [
+              bool_lit 1.0;
+              Core.bind1 Ne
+                [ L.slice aux [| 1 |] [| n |]; L.slice aux [| 0 |] [| n - 1 |] ];
+              bool_lit 1.0;
+            ]
+        in
+        mask_take aux
+          (U.logical_and
+             (L.slice flag [| 1 |] [| n + 1 |])
+             (L.slice flag [| 0 |] [| n |]))
 
 let sum_at n data ids =
   let m = size_of ids in

@@ -16,9 +16,7 @@ val transpose : treedef -> treedef -> 'a t -> 'a t
 val unflatten : treedef -> 'b list -> 'b t
 val all_is_leaf : is_leaf:('a t -> bool) -> ('a t -> bool) -> 'a t -> bool
 val broadcast_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'b t -> 'a t
-
-val flatten_is_leaf :
-  is_leaf:('a t -> bool) -> 'a t -> 'a t list * treedef
+val flatten_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'a t list * treedef
 
 val flatten_with_path_is_leaf :
   ?is_leaf:('a t -> bool) ->

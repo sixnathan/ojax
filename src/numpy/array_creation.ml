@@ -245,9 +245,7 @@ let linspace ?num ?endpoint ?dtype start stop =
     (float_bound dtype stop)
 
 let linspace_retstep ?num ?endpoint ?axis ?dtype start stop =
-  match
-    linspace_parts ~retstep:true ?num ?endpoint ?axis ?dtype start stop
-  with
+  match linspace_parts ~retstep:true ?num ?endpoint ?axis ?dtype start stop with
   | [ out; delta ] -> (out, delta)
   | _ -> assert false
 

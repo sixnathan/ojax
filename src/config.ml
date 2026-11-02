@@ -166,24 +166,23 @@ let set_log_sink sink =
 
 let py_bool b = if b then "True" else "False"
 let py_opt = function None -> "None" | Some s -> s
-
 let user_contexts : (string * (unit -> string)) list ref = ref []
 
 let trace_context () =
   List.map (fun (name, read) -> (name, read ())) !user_contexts
   @ [
-    (auto_pcast.name, py_bool auto_pcast.value);
-    ( remove_size_one_mesh_axis_from_type.name,
-      py_bool remove_size_one_mesh_axis_from_type.value );
-    (enable_x64.name, py_bool enable_x64.value);
-    (debug_key_reuse.name, py_bool debug_key_reuse.value);
-    (numpy_dtype_promotion.name, numpy_dtype_promotion.value);
-    (numpy_rank_promotion.name, numpy_rank_promotion.value);
-    (default_matmul_precision.name, py_opt default_matmul_precision.value);
-    (allow_f16_reductions.name, py_bool allow_f16_reductions.value);
-    (softmax_custom_jvp.name, py_bool softmax_custom_jvp.value);
-    (threefry_partitionable.name, py_bool threefry_partitionable.value);
-  ]
+      (auto_pcast.name, py_bool auto_pcast.value);
+      ( remove_size_one_mesh_axis_from_type.name,
+        py_bool remove_size_one_mesh_axis_from_type.value );
+      (enable_x64.name, py_bool enable_x64.value);
+      (debug_key_reuse.name, py_bool debug_key_reuse.value);
+      (numpy_dtype_promotion.name, numpy_dtype_promotion.value);
+      (numpy_rank_promotion.name, numpy_rank_promotion.value);
+      (default_matmul_precision.name, py_opt default_matmul_precision.value);
+      (allow_f16_reductions.name, py_bool allow_f16_reductions.value);
+      (softmax_custom_jvp.name, py_bool softmax_custom_jvp.value);
+      (threefry_partitionable.name, py_bool threefry_partitionable.value);
+    ]
 
 let export_calling_convention_version =
   make "jax_export_calling_convention_version" 10
@@ -221,11 +220,24 @@ let bool_options =
   List.map
     (fun f -> (f.name, f))
     [
-      enable_x64; disable_jit; debug_nans; debug_infs; log_compiles; no_tracing;
-      no_execution; enable_checks; debug_key_reuse; check_tracer_leaks;
-      explain_cache_misses; enable_custom_prng; softmax_custom_jvp;
-      threefry_partitionable; allow_f16_reductions; thread_guard;
-      jax2tf_associative_scan_reductions; auto_pcast;
+      enable_x64;
+      disable_jit;
+      debug_nans;
+      debug_infs;
+      log_compiles;
+      no_tracing;
+      no_execution;
+      enable_checks;
+      debug_key_reuse;
+      check_tracer_leaks;
+      explain_cache_misses;
+      enable_custom_prng;
+      softmax_custom_jvp;
+      threefry_partitionable;
+      allow_f16_reductions;
+      thread_guard;
+      jax2tf_associative_scan_reductions;
+      auto_pcast;
       remove_size_one_mesh_axis_from_type;
     ]
 
@@ -238,8 +250,10 @@ let optional_options =
   List.map
     (fun f -> (f.name, f))
     [
-      default_matmul_precision; transfer_guard_host_to_device;
-      transfer_guard_device_to_device; transfer_guard_device_to_host;
+      default_matmul_precision;
+      transfer_guard_host_to_device;
+      transfer_guard_device_to_device;
+      transfer_guard_device_to_host;
       array_garbage_collection_guard;
     ]
 
@@ -277,7 +291,8 @@ let update name v =
       | None -> unrecognized name)
   | Config_string s -> (
       match
-        (List.assoc_opt name string_options, List.assoc_opt name optional_options)
+        ( List.assoc_opt name string_options,
+          List.assoc_opt name optional_options )
       with
       | Some f, _ -> set f s
       | None, Some f -> set f (Some s)

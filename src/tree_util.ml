@@ -343,9 +343,7 @@ let rec with_path_is_leaf ~is_leaf_takes_path prefix tree =
 let rec structure_is_leaf_path ~is_leaf_takes_path prefix tree =
   if is_leaf_takes_path (List.rev prefix) tree then Leaf_def
   else
-    let go key =
-      structure_is_leaf_path ~is_leaf_takes_path (key :: prefix)
-    in
+    let go key = structure_is_leaf_path ~is_leaf_takes_path (key :: prefix) in
     match tree with
     | Leaf _ -> Leaf_def
     | Null -> Null_def
@@ -354,7 +352,8 @@ let rec structure_is_leaf_path ~is_leaf_takes_path prefix tree =
     | Tuple children ->
         Tuple_def (List.mapi (fun i c -> go (Sequence_key i) c) children)
     | Dict kvs ->
-        Dict_def (List.map (fun (k, c) -> (k, go (Dict_key k) c)) (sort_dict kvs))
+        Dict_def
+          (List.map (fun (k, c) -> (k, go (Dict_key k) c)) (sort_dict kvs))
     | Custom (name, aux, children) ->
         Custom_def
           ( name,
@@ -371,8 +370,7 @@ let rec structure_is_leaf_path ~is_leaf_takes_path prefix tree =
 
 let path_predicate ?is_leaf ?is_leaf_takes_path () =
   match (is_leaf, is_leaf_takes_path) with
-  | Some _, Some _ ->
-      invalid_arg "is_leaf and is_leaf_takes_path are exclusive"
+  | Some _, Some _ -> invalid_arg "is_leaf and is_leaf_takes_path are exclusive"
   | Some f, None -> fun _ x -> f x
   | None, Some f -> f
   | None, None -> fun _ _ -> false
@@ -418,7 +416,9 @@ let tree_all_is_leaf ~is_leaf pred tree =
 
 let tree_reduce_no_init f tree =
   match tree_leaves tree with
-  | [] -> raise (Invalid_argument "reduce() of empty iterable with no initial value")
+  | [] ->
+      raise
+        (Invalid_argument "reduce() of empty iterable with no initial value")
   | x :: rest -> List.fold_left f x rest
 
 let tree_reduce_associative_is_leaf ~is_leaf f ?identity tree =
@@ -426,8 +426,7 @@ let tree_reduce_associative_is_leaf ~is_leaf f ?identity tree =
 
 let all_leaves_is_leaf ~is_leaf trees =
   List.for_all
-    (fun t ->
-      is_leaf t || match t with Leaf _ -> true | _ -> false)
+    (fun t -> is_leaf t || match t with Leaf _ -> true | _ -> false)
     trees
 
 type py_tree_def = treedef
@@ -443,7 +442,8 @@ let rec treedef_body = function
   | Null_def -> "None"
   | List_def defs -> "[" ^ String.concat ", " (List.map treedef_body defs) ^ "]"
   | Tuple_def [ one ] -> "(" ^ treedef_body one ^ ",)"
-  | Tuple_def defs -> "(" ^ String.concat ", " (List.map treedef_body defs) ^ ")"
+  | Tuple_def defs ->
+      "(" ^ String.concat ", " (List.map treedef_body defs) ^ ")"
   | Dict_def kvs ->
       "{"
       ^ String.concat ", "
@@ -482,9 +482,7 @@ let register_pytree_node ?flatten_with_keys name ~flatten ~unflatten =
     node_flatten = flatten;
     node_unflatten = unflatten;
     node_keys =
-      Option.map
-        (fun f node -> List.map fst (fst (f node)))
-        flatten_with_keys;
+      Option.map (fun f node -> List.map fst (fst (f node))) flatten_with_keys;
   }
 
 let register_pytree_node_class name ~tree_flatten ~tree_unflatten =
@@ -525,7 +523,7 @@ let register_dataclass ?(meta_fields = []) ?(drop_fields = []) name ~data_fields
   if overlap <> [] then
     invalid_arg
       ("data_fields and meta_fields must not overlap: "
-      ^ String.concat ", " overlap);
+     ^ String.concat ", " overlap);
   register_attribute_keys name data_fields;
   register_pytree_node name
     ~flatten:(fun node -> (List.map (get node) data_fields, meta node))

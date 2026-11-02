@@ -693,7 +693,10 @@ let jax_params (e : eqn) =
       ]
   | Decomposable { dparams; _ } -> List.map (fun (k, v) -> (k, Plain v)) dparams
   | Dce_sink { prevent_mlir_dce } ->
-      [ ("prevent_mlir_dce", Plain (if prevent_mlir_dce then "True" else "False")) ]
+      [
+        ( "prevent_mlir_dce",
+          Plain (if prevent_mlir_dce then "True" else "False") );
+      ]
   | Reshape_perm { new_sizes; dimensions } ->
       [
         ("dimensions", Plain (py_ints dimensions));

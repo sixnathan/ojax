@@ -51,9 +51,7 @@ val tree_broadcast : 'a t -> 'b t -> 'a t
 val count_leaves : treedef -> int
 val tree_transpose : treedef -> treedef -> 'a t -> 'a t
 val tree_broadcast_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'b t -> 'a t
-
-val tree_flatten_is_leaf :
-  is_leaf:('a t -> bool) -> 'a t -> 'a t list * treedef
+val tree_flatten_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'a t list * treedef
 
 val tree_leaves_with_path_is_leaf :
   ?is_leaf:('a t -> bool) ->
@@ -77,9 +75,7 @@ val tree_map_with_path_is_leaf :
 val tree_reduce_is_leaf :
   is_leaf:('a t -> bool) -> ('acc -> 'a t -> 'acc) -> 'acc -> 'a t -> 'acc
 
-val tree_all_is_leaf :
-  is_leaf:('a t -> bool) -> ('a t -> bool) -> 'a t -> bool
-
+val tree_all_is_leaf : is_leaf:('a t -> bool) -> ('a t -> bool) -> 'a t -> bool
 val tree_reduce_no_init : ('a -> 'a -> 'a) -> 'a t -> 'a
 
 val tree_reduce_associative_is_leaf :

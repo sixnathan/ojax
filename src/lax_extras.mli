@@ -28,6 +28,7 @@ val dce_sink : ?prevent_mlir_dce:bool -> Types.value -> unit
 
 type precision_like = Lax_config.precision option
 type conv_general_dilated_dimension_numbers = Types.conv_dims option
+
 val after_all : Types.value list -> Types.value
 
 val ragged_dot :

@@ -10,7 +10,13 @@
 
 (executable
  (name text_dump)
- (modules npz numpy_products parity_cases coverage_cases apicov_cases text_dump)
+ (modules
+  npz
+  numpy_products
+  parity_cases
+  coverage_cases
+  apicov_cases
+  text_dump)
  (libraries yojson ojax)
  (preprocess
   (action

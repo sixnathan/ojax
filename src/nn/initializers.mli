@@ -5,7 +5,10 @@ type distribution = Truncated_normal | Normal | Uniform
 
 val zeros : t
 val ones : t
-val zeros_dtype : ?dtype:Dtype.t -> Types.value -> shape:int array -> Types.value
+
+val zeros_dtype :
+  ?dtype:Dtype.t -> Types.value -> shape:int array -> Types.value
+
 val ones_dtype : ?dtype:Dtype.t -> Types.value -> shape:int array -> Types.value
 val constant : float -> t
 val uniform : ?scale:float -> unit -> t

@@ -70,9 +70,7 @@ let approx_top_k ~is_max_k ~reduction_dimension ~recall_target
       k,
       recall_target,
       reduction_input_size_override,
-      aggregate_to_topk )
-    [] [ operand ]
-    (fun _ vals ->
+      aggregate_to_topk ) [] [ operand ] (fun _ vals ->
       approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
         ~reduction_input_size_override ~aggregate_to_topk (List.hd vals) k)
 
@@ -96,6 +94,7 @@ let dce_sink ?(prevent_mlir_dce = false) v =
 
 type precision_like = Lax_config.precision option
 type conv_general_dilated_dimension_numbers = Types.conv_dims option
+
 let after_all tokens = Core.bind1 T.After_all tokens
 
 type ragged_mode = Ragged_noncontracting | Ragged_contracting | Ragged_batch

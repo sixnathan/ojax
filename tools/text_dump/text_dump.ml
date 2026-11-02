@@ -256,8 +256,8 @@ let () =
             List.iteri
               (fun i case ->
                 if in_shard ~shard ~shards i then
-                  parity_case ~run:Apicov_cases.run oc
-                    ~set:("apicov/" ^ set) case)
+                  parity_case ~run:Apicov_cases.run oc ~set:("apicov/" ^ set)
+                    case)
               (cases_of apicov);
           if shard = 0 then
             List.iter

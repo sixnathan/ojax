@@ -54,6 +54,7 @@ let ones_dtype ?dtype _key ~shape =
   match dtype with
   | None -> const shape 1.0
   | Some d -> Lax_api.full shape 1.0 (Dtypes.canonicalize_dtype d)
+
 let constant value : t = fun _key ~shape -> const shape (f32 value)
 let dtype_of v = (C.get_aval v).dtype
 let like v x = Concrete (Nd.of_floats (dtype_of v) [||] [| x |])

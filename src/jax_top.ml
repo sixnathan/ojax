@@ -24,9 +24,7 @@ let p_to_string p =
     | Spmd.Unconstrained -> "None"
     | Spmd.Axes [ one ] -> "('" ^ one ^ "',)"
     | Spmd.Axes names ->
-        "("
-        ^ String.concat ", " (List.map (Printf.sprintf "'%s'") names)
-        ^ ")"
+        "(" ^ String.concat ", " (List.map (Printf.sprintf "'%s'") names) ^ ")"
   in
   let items = List.map axis p.partitions in
   let body =
@@ -52,9 +50,16 @@ module Checkpoint_policies = struct
   let nothing_saveable = Checkpoint.nothing_saveable
   let dots_saveable = Checkpoint.dots_saveable
   let checkpoint_dots = Checkpoint.checkpoint_dots
-  let dots_with_no_batch_dims_saveable = Checkpoint.dots_with_no_batch_dims_saveable
-  let checkpoint_dots_with_no_batch_dims = Checkpoint.checkpoint_dots_with_no_batch_dims
-  let save_anything_except_these_names = Checkpoint.save_anything_except_these_names
+
+  let dots_with_no_batch_dims_saveable =
+    Checkpoint.dots_with_no_batch_dims_saveable
+
+  let checkpoint_dots_with_no_batch_dims =
+    Checkpoint.checkpoint_dots_with_no_batch_dims
+
+  let save_anything_except_these_names =
+    Checkpoint.save_anything_except_these_names
+
   let save_any_names_but_these = Checkpoint.save_any_names_but_these
   let save_only_these_names = Checkpoint.save_only_these_names
   let save_from_both_policies = Checkpoint.save_from_both_policies
@@ -70,7 +75,10 @@ module Memory = struct
 end
 
 let auto_pcast = Config.auto_pcast
-let remove_size_one_mesh_axis_from_type = Config.remove_size_one_mesh_axis_from_type
+
+let remove_size_one_mesh_axis_from_type =
+  Config.remove_size_one_mesh_axis_from_type
+
 let make_user_context = Config.make_user_context
 let config_read = Config.read
 let config_update = Config.update
@@ -90,10 +98,8 @@ let short_dtype_name d =
       by ^ String.sub s n (String.length s - n)
     else s
   in
-  Ref_state.dtype_name d
-  |> replace_prefix "float" "f"
-  |> replace_prefix "uint" "u"
-  |> replace_prefix "int" "i"
+  Ref_state.dtype_name d |> replace_prefix "float" "f"
+  |> replace_prefix "uint" "u" |> replace_prefix "int" "i"
   |> replace_prefix "complex" "c"
 
 let primal_tangent_dtype ?name primal_dtype tangent_dtype =
@@ -119,6 +125,7 @@ let e_array_shape e = e.e_aval.shape
 let e_array_dtype e = e.e_aval.dtype
 let e_array_ndim e = Array.length e.e_aval.shape
 let e_array_size e = Array.fold_left ( * ) 1 e.e_aval.shape
+
 let e_array_to_string e =
   match e.e_data with
   | Concrete nd -> "E" ^ Numpy.Array_print.array_repr nd

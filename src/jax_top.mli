@@ -35,6 +35,7 @@ module Checkpoint_policies : sig
   val save_anything_except_these_names : string list -> Checkpoint.policy
   val save_any_names_but_these : string list -> Checkpoint.policy
   val save_only_these_names : string list -> Checkpoint.policy
+
   val save_from_both_policies :
     Checkpoint.policy -> Checkpoint.policy -> Checkpoint.policy
 end

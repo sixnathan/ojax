@@ -392,8 +392,7 @@ let dslice_index x slices =
           in
           let shifted =
             Lax_api.add start
-              (T.Concrete
-                 (Nd.of_floats d [||] [| float_of_int sh.(axis) |]))
+              (T.Concrete (Nd.of_floats d [||] [| float_of_int sh.(axis) |]))
           in
           bind1 T.Select_n [ negative; start; shifted ])
         starts
@@ -428,15 +427,16 @@ let dslice_index x slices =
             slice_shape := size :: !slice_shape
         | Dslice { start; size; stride } ->
             let begin_at =
-              bind1
-                (T.Convert_element_type idx_dtype)
+              bind1 (T.Convert_element_type idx_dtype)
                 [ bind1 T.Copy [ start ] ]
             in
             let steps =
               Lax_api.mul
-                (T.Concrete (Nd.of_floats idx_dtype [||] [| float_of_int stride |]))
+                (T.Concrete
+                   (Nd.of_floats idx_dtype [||] [| float_of_int stride |]))
                 (bind1
-                   (T.Iota { dtype = idx_dtype; shape = [| size |]; dimension = 0 })
+                   (T.Iota
+                      { dtype = idx_dtype; shape = [| size |]; dimension = 0 })
                    [])
             in
             let indices = Lax_api.add begin_at steps in
@@ -592,5 +592,4 @@ let () =
               (Array.map float_of_int indices)))
 
 let () =
-  Reductions.take_along_axis_hook :=
-    fun ~axis a i -> take_along_axis ~axis a i
+  Reductions.take_along_axis_hook := fun ~axis a i -> take_along_axis ~axis a i

@@ -1302,14 +1302,13 @@ let vmap_flat ?axis_name ?(out_axis = 0) ?axis_size
     | Some found, Some given when found <> given ->
         invalid_arg
           (Printf.sprintf
-             "vmap got inconsistent sizes for array axes to be mapped:\n  * \
-              axis_size is %d but an array axis has size %d"
+             "vmap got inconsistent sizes for array axes to be mapped:\n\
+             \  * axis_size is %d but an array axis has size %d"
              given found)
     | Some found, _ -> found
     | None, Some given -> given
     | None, None ->
-        invalid_arg
-          "vmap must have at least one non-None value in in_axes"
+        invalid_arg "vmap must have at least one non-None value in in_axes"
   in
   Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
       let tracers_in =
@@ -1803,8 +1802,8 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
 let check_vmappable_callback = function
   | Custom_vjp_call id -> (
       match Core.custom_rule id with
-      | Core.Callback_rule { cb_effect = Core.Callback_io { ordered = true }; _ }
-        ->
+      | Core.Callback_rule
+          { cb_effect = Core.Callback_io { ordered = true }; _ } ->
           invalid_arg "Cannot `vmap` ordered IO callback."
       | _ -> ())
   | _ -> ()

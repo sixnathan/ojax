@@ -853,7 +853,9 @@ let intersect1d_indices ?(assume_unique = false) a b =
           else None)
         (sorted_unique_floats "intersect1d" a)
   in
-  let idt = Nd_index.index_dtype (shape a) in
+  let idt =
+    if assume_unique then Nd_index.index_dtype (shape a) else default_int ()
+  in
   let count = List.length triples in
   let of_ints f =
     ints_value idt [| count |] (Array.of_list (List.map f triples))
@@ -1532,9 +1534,7 @@ let delete ?axis a obj =
 
 let delete_array ?axis ?(assume_unique_indices = false) a obj =
   let a, ax =
-    match axis with
-    | Some x -> (a, canon (rank a) x)
-    | None -> (flat a, 0)
+    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
   in
   if assume_unique_indices && Dtypes.issubdtype (dtype_of obj) `Integer then begin
     let extent = (shape a).(ax) in
@@ -1543,9 +1543,7 @@ let delete_array ?axis ?(assume_unique_indices = false) a obj =
     let negative = U.less idx (Jnp_util.py_int 0) in
     let wrapped = U.add idx (Jnp_util.py_int extent) in
     let normal = NL.where_ negative wrapped idx in
-    let clipped =
-      NL.clip ~min:0.0 ~max:(float_of_int extent) normal
-    in
+    let clipped = NL.clip ~min:0.0 ~max:(float_of_int extent) normal in
     let sorted = Sorting.sort clipped in
     let count = size_of sorted in
     let ramp n =
@@ -2155,8 +2153,7 @@ let polyfit_parts ?rcond ?w x y deg =
   let c, resids, rank_, s = Linalg.lstsq ~rcond scaled y in
   let c =
     if rank c > 1 then
-      NL.transpose
-        (U.divide (NL.transpose c) (L.expand_dims scale [| 0 |]))
+      NL.transpose (U.divide (NL.transpose c) (L.expand_dims scale [| 0 |]))
     else U.divide c scale
   in
   (c, resids, rank_, s, rcond, scaled, scale)
@@ -2510,7 +2507,10 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
       | _ -> invalid_arg "unpackbits: arity")
     [ a ]
 
-let broadcast_shapes = function [] -> [||] | shapes -> L.broadcast_shapes shapes
+let broadcast_shapes = function
+  | [] -> [||]
+  | shapes -> L.broadcast_shapes shapes
+
 let iterable v = Array.length (shape v) > 0
 let complex_ = Scalar_types.complex128
 
@@ -2530,7 +2530,8 @@ let dtype name =
   | "float64" -> Dtype.F64
   | "complex64" -> Dtype.Complex64
   | "complex128" -> Dtype.Complex128
-  | other -> raise (Invalid_argument ("data type '" ^ other ^ "' not understood"))
+  | other ->
+      raise (Invalid_argument ("data type '" ^ other ^ "' not understood"))
 
 type ndarray = value
 type ufunc = Ufunc.t

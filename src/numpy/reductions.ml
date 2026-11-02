@@ -1005,10 +1005,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
     match weights with
     | None -> (to_inexact a, None)
     | Some w ->
-        if
-          match dtype w with
-          | D.Complex64 | D.Complex128 -> true
-          | _ -> false
+        if match dtype w with D.Complex64 | D.Complex128 -> true | _ -> false
         then invalid_arg "Weights cannot be complex types.";
         let a = to_inexact a and w = to_inexact w in
         let dt = Dtypes.promote_types (dtype a) (dtype w) in
@@ -1024,8 +1021,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
         let ax = canonicalize_axis ax (ndim a) in
         if shape w <> [| (shape a).(ax) |] then
           invalid_arg
-            (Printf.sprintf
-               "Weights shape (%s) must match reduction axes (%d,)"
+            (Printf.sprintf "Weights shape (%s) must match reduction axes (%d,)"
                (String.concat ", "
                   (List.map string_of_int (Array.to_list (shape w))))
                (shape a).(ax));
@@ -1084,9 +1080,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   let cum = cumsum ~axis:ax clean in
   let total = Lax_api.index_in_dim ~axis:ax ~keepdims cum (extent - 1) in
   let tw_f = Lax_api.expand_dims total (ints q_ndim 0) in
-  let q_f =
-    reshape q (Array.append (shape q) (Array.make (ndim total) 1))
-  in
+  let q_f = reshape q (Array.append (shape q) (Array.make (ndim total) 1)) in
   let target = Lax_api.mul q_f tw_f in
   let aligned =
     if keepdims then target else Lax_api.expand_dims target [| ax + q_ndim |]
@@ -1109,9 +1103,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   let max_idx = convert limit int_dt in
   let max_idx_f = Lax_api.expand_dims max_idx (ints q_ndim 0) in
   let max_idx_f = convert max_idx_f (dtype idx) in
-  let idx =
-    Lax_api.max (const_of idx 0.0) (Lax_api.min idx max_idx_f)
-  in
+  let idx = Lax_api.max (const_of idx 0.0) (Lax_api.min idx max_idx_f) in
   let idx_take =
     if keepdims then Lax_api.squeeze idx [| q_ndim + ax |] else idx
   in
@@ -1233,8 +1225,7 @@ let nanpercentile ?axis ?keepdims ?method_ ?weights p0 p1 =
             (Marshal.to_string (axis, keepdims, method_, weights <> None) [])))
     (function
       | [ p0; p1 ] -> nanpercentile ?axis ?keepdims ?method_ ?weights p0 p1
-      | [ p0; p1; w ] ->
-          nanpercentile ?axis ?keepdims ?method_ ~weights:w p0 p1
+      | [ p0; p1; w ] -> nanpercentile ?axis ?keepdims ?method_ ~weights:w p0 p1
       | _ -> invalid_arg "nanpercentile: arity")
     (match weights with None -> [ p0; p1 ] | Some w -> [ p0; p1; w ])
 
@@ -1358,25 +1349,31 @@ let nancumprod ?dtype ?axis a0 =
 let quantile ?axis ?keepdims ?method_ ?weights a0 a1 =
   Eager_jit.one "numpy.reductions.quantile"
     (axis, keepdims, method_, weights <> None)
-    [ weights ] [ a0; a1 ] (fun opts vals ->
+    [ weights ] [ a0; a1 ]
+    (fun opts vals ->
       match (opts, vals) with
-      | [ weights ], [ a0; a1 ] -> quantile ?axis ?keepdims ?method_ ?weights a0 a1
+      | [ weights ], [ a0; a1 ] ->
+          quantile ?axis ?keepdims ?method_ ?weights a0 a1
       | _ -> assert false)
 
 let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
   Eager_jit.one "numpy.reductions.nanquantile"
     (axis, keepdims, method_, weights <> None)
-    [ weights ] [ a0; a1 ] (fun opts vals ->
+    [ weights ] [ a0; a1 ]
+    (fun opts vals ->
       match (opts, vals) with
-      | [ weights ], [ a0; a1 ] -> nanquantile ?axis ?keepdims ?method_ ?weights a0 a1
+      | [ weights ], [ a0; a1 ] ->
+          nanquantile ?axis ?keepdims ?method_ ?weights a0 a1
       | _ -> assert false)
 
 let nanpercentile ?axis ?keepdims ?method_ ?weights a0 a1 =
   Eager_jit.one "numpy.reductions.nanpercentile"
     (axis, keepdims, method_, weights <> None)
-    [ weights ] [ a0; a1 ] (fun opts vals ->
+    [ weights ] [ a0; a1 ]
+    (fun opts vals ->
       match (opts, vals) with
-      | [ weights ], [ a0; a1 ] -> nanpercentile ?axis ?keepdims ?method_ ?weights a0 a1
+      | [ weights ], [ a0; a1 ] ->
+          nanpercentile ?axis ?keepdims ?method_ ?weights a0 a1
       | _ -> assert false)
 
 let median ?axis ?keepdims a0 =
@@ -1476,7 +1473,9 @@ let average ?axis ?keepdims ?weights a0 =
 let percentile ?axis ?keepdims ?method_ ?weights a0 a1 =
   Eager_jit.one "numpy.reductions.percentile"
     (axis, keepdims, method_, weights <> None)
-    [ weights ] [ a0; a1 ] (fun opts vals ->
+    [ weights ] [ a0; a1 ]
+    (fun opts vals ->
       match (opts, vals) with
-      | [ weights ], [ a0; a1 ] -> percentile ?axis ?keepdims ?method_ ?weights a0 a1
+      | [ weights ], [ a0; a1 ] ->
+          percentile ?axis ?keepdims ?method_ ?weights a0 a1
       | _ -> assert false)

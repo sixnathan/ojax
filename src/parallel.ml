@@ -51,8 +51,7 @@ let single_side name axis_name params ~out v =
          dparams = params;
          dimpl =
            Core.register_decomposition (fun _ ->
-               raise
-                 (Failure (name ^ " is currently only implemented on GPU")));
+               raise (Failure (name ^ " is currently only implemented on GPU")));
          davals = [ out ];
        })
     [ v ]
@@ -69,9 +68,9 @@ let precv token ~out_shape ~axis_name ~perm =
     [
       ("axis_name", "('" ^ axis_name ^ "',)");
       ( "out_shape",
-        Ref_state.dtype_name out.dtype ^ "["
-        ^ String.concat ","
-            (List.map string_of_int (Array.to_list out.shape))
+        Ref_state.dtype_name out.dtype
+        ^ "["
+        ^ String.concat "," (List.map string_of_int (Array.to_list out.shape))
         ^ "]" );
       ("perm", perm_string perm);
     ]

@@ -280,9 +280,8 @@ let make_jaxpr_shape ?(axis_env = []) ?(static_argnums = [])
     Api_util.flatten_fun (fun xs -> f (merge xs)) in_tree
   in
   let closed =
-    Core.with_mesh_axes
-      (axis_env @ !Core.mesh_axes)
-      (fun () -> Jaxpr.make_jaxpr avals (Linear_util.call_wrapped flat_fun))
+    Core.with_mesh_axes (axis_env @ !Core.mesh_axes) (fun () ->
+        Jaxpr.make_jaxpr avals (Linear_util.call_wrapped flat_fun))
   in
   let out_avals =
     List.map
@@ -375,8 +374,7 @@ let jit ?(static_argnums = []) f =
       let key =
         String.concat ";"
           (List.mapi
-             (fun i a ->
-               if List.mem i static_argnums then static_key a else "")
+             (fun i a -> if List.mem i static_argnums then static_key a else "")
              args)
       in
       let compiled =
@@ -536,9 +534,8 @@ let grad ?allow_int ?argnums (f : value Tree.t list -> value Tree.t)
     (args : value Tree.t list) : value Tree.t =
   snd (value_and_grad ?allow_int ?argnums f args)
 
-let vmap ?axis_name ?out_axes ?axis_size
-    (f : value Tree.t list -> value Tree.t) (in_axes : int option list)
-    (args : value Tree.t list) : value Tree.t =
+let vmap ?axis_name ?out_axes ?axis_size (f : value Tree.t list -> value Tree.t)
+    (in_axes : int option list) (args : value Tree.t list) : value Tree.t =
   let flat_args, in_tree = flatten_args args in
   let flat_axes =
     List.concat
@@ -820,12 +817,12 @@ let is_complex_dtype dt = dt = Dtype.Complex64 || dt = Dtype.Complex128
 let check_input_jacfwd holomorphic v =
   let dt = (Core.get_aval v).dtype in
   let name = Dtype.numpy_name dt in
-  if holomorphic then begin
-    if not (is_complex_dtype dt) then
+  if holomorphic then
+    begin if not (is_complex_dtype dt) then
       invalid_arg
         ("jacfwd with holomorphic=True requires inputs with complex dtype, but \
           got " ^ name ^ ".")
-  end
+    end
   else if not (Dtypes.issubdtype dt `Floating) then
     invalid_arg
       ("jacfwd requires real-valued inputs (input dtype that is a sub-dtype of \
@@ -858,12 +855,12 @@ let check_input_jacrev holomorphic allow_int v =
 let check_output_jacrev holomorphic v =
   let dt = (Core.get_aval v).dtype in
   let name = Dtype.numpy_name dt in
-  if holomorphic then begin
-    if not (is_complex_dtype dt) then
+  if holomorphic then
+    begin if not (is_complex_dtype dt) then
       invalid_arg
         ("jacrev with holomorphic=True requires outputs with complex dtype, \
           but got " ^ name ^ ".")
-  end
+    end
   else if is_complex_dtype dt then
     invalid_arg
       ("jacrev requires real-valued outputs (output dtype that is a sub-dtype \
@@ -975,9 +972,7 @@ let jacrev ?(argnums = 0) ?(holomorphic = false) ?(allow_int = false) f args =
 let jacobian = jacrev
 
 let hessian ?(argnums = 0) ?holomorphic f args =
-  jacfwd ~argnums ?holomorphic
-    (fun a -> jacrev ~argnums ?holomorphic f a)
-    args
+  jacfwd ~argnums ?holomorphic (fun a -> jacrev ~argnums ?holomorphic f a) args
 
 let eval_shape f args =
   let flat, in_tree = flatten_args args in

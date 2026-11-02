@@ -9,6 +9,7 @@ type eigh_implementation = Lax_config.eigh_implementation =
   | Eigh_qdwh
 
 type svd_algorithm = Lax_config.svd_algorithm
+
 open Types
 
 val cholesky_impl : Ndarray.t list -> Ndarray.t list

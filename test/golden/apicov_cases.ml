@@ -26,10 +26,11 @@ let int32s values =
   T.Concrete
     (Nd.of_floats D.I32 [| Array.length a |] (Array.map float_of_int a))
 
-let flag b = T.Concrete (Nd.of_floats D.Bool [||] [| (if b then 1.0 else 0.0) |])
+let flag b =
+  T.Concrete (Nd.of_floats D.Bool [||] [| (if b then 1.0 else 0.0) |])
+
 let times v f = UF.multiply v (JU.py_float f)
 let plus v f = UF.add v (JU.py_float f)
-
 let dtype_named name = X.dtype name
 
 let cls = function
@@ -80,7 +81,8 @@ let class_node =
 
 let class_keyed =
   TR.register_pytree_with_keys_class "ClassKeyedNode"
-    ~tree_flatten_with_keys:(fun v -> ([ (TR.Get_attr_key "inner", v) ], "None"))
+    ~tree_flatten_with_keys:(fun v ->
+      ([ (TR.Get_attr_key "inner", v) ], "None"))
     ~tree_unflatten:(fun _ children -> List.hd children)
 
 let data_class =
@@ -152,9 +154,7 @@ let rec run op p get =
       let axis = axis_of p in
       match PC.opt_bool "return_sign" p with
       | Some true ->
-          let out, sign =
-            Ojax.Scipy.Special.logsumexp_sign ?axis (a ())
-          in
+          let out, sign = Ojax.Scipy.Special.logsumexp_sign ?axis (a ()) in
           [ out; sign ]
       | _ -> [ Ojax.Nn.Functions.logsumexp ?axis (a ()) ])
   | "ap_shape" -> [ int32s (Array.to_list (X.shape (a ()))) ]
@@ -186,7 +186,9 @@ let rec run op p get =
         else
           let start =
             T.Concrete
-              (Nd.of_floats (Ojax.Dtypes.default_int_dtype ()) [||]
+              (Nd.of_floats
+                 (Ojax.Dtypes.default_int_dtype ())
+                 [||]
                  [| float_of_int (PC.int "start" p) |])
           in
           J.ds ?size:(PC.opt_int "size" p) ?stride:(PC.opt_int "stride" p)
@@ -200,13 +202,14 @@ let rec run op p get =
   | "ap_io_callback" ->
       let x = a () in
       let aval = Ojax.Core.get_aval x in
-      J.io_callback
-        ?ordered:(PC.opt_bool "ordered" p)
+      J.io_callback ?ordered:(PC.opt_bool "ordered" p)
         (fun vs -> List.map (fun v -> times v 2.0) vs)
         ~result_avals:[ { aval with T.weak_type = false } ]
         [ x ]
   | "ap_tree_flatten_is_leaf" ->
-      let leaves, td = TR.tree_flatten_is_leaf ~is_leaf:is_tuple (tree_of (a ())) in
+      let leaves, td =
+        TR.tree_flatten_is_leaf ~is_leaf:is_tuple (tree_of (a ()))
+      in
       List.map leaf_sum leaves
       @ [
           text (TR.treedef_to_string td);
@@ -216,10 +219,7 @@ let rec run op p get =
       let tree = tree_of (a ()) in
       let paths =
         match pstr "mode" p with
-        | "plain" ->
-            List.map
-              (fun (k, _) -> k)
-              (TR.tree_leaves_with_path tree)
+        | "plain" -> List.map (fun (k, _) -> k) (TR.tree_leaves_with_path tree)
         | "is_leaf" ->
             List.map fst
               (TR.tree_leaves_with_path_is_leaf ~is_leaf:is_tuple tree)
@@ -269,8 +269,7 @@ let rec run op p get =
           (TR.tree_all_is_leaf
              ~is_leaf:(function TR.List _ -> true | _ -> false)
              (function TR.List [] -> false | _ -> true)
-             (TR.Tuple
-                [ TR.Leaf true; TR.List [ TR.Leaf true; TR.Leaf false ] ]));
+             (TR.Tuple [ TR.Leaf true; TR.List [ TR.Leaf true; TR.Leaf false ] ]));
       ]
   | "ap_tree_broadcast" ->
       let x = a () in
@@ -281,10 +280,7 @@ let rec run op p get =
               [
                 TR.List [ TR.Leaf 1; TR.Leaf 2 ];
                 TR.Dict
-                  [
-                    ("k", TR.Leaf 3);
-                    ("j", TR.Tuple [ TR.Leaf 4; TR.Leaf 5 ]);
-                  ];
+                  [ ("k", TR.Leaf 3); ("j", TR.Tuple [ TR.Leaf 4; TR.Leaf 5 ]) ];
               ]))
   | "ap_all_leaves" ->
       let of_bool b = if b then 1 else 0 in
@@ -425,10 +421,7 @@ and run_options op p a b =
   let module A = Ojax.Api in
   let module R = Ojax.Numpy.Reductions in
   let module AC = Ojax.Numpy.Array_creation in
-  let leaf_list = function
-    | TR.Leaf v -> [ v ]
-    | t -> TR.tree_leaves t
-  in
+  let leaf_list = function TR.Leaf v -> [ v ] | t -> TR.tree_leaves t in
   let two = function
     | [ TR.Leaf x; TR.Leaf y ] ->
         TR.Leaf (R.sum (UF.multiply (UF.multiply (UF.sin x) y) y))
@@ -471,14 +464,11 @@ and run_options op p a b =
   | "ap_grad_argnums" ->
       leaf_list (A.grad ~argnums:(PC.int "argnums" p) two (args ()))
   | "ap_value_and_grad_argnums" ->
-      let v, g =
-        A.value_and_grad ~argnums:(PC.int "argnums" p) two (args ())
-      in
+      let v, g = A.value_and_grad ~argnums:(PC.int "argnums" p) two (args ()) in
       leaf_list v @ leaf_list g
   | "ap_vmap_out_axes" ->
       leaf_list
-        (A.vmap
-           ~out_axes:(PC.int "out_axes" p)
+        (A.vmap ~out_axes:(PC.int "out_axes" p)
            (function
              | [ TR.Leaf x ] -> TR.Leaf (times x 2.0)
              | _ -> failwith "apicov: vmap")
@@ -531,7 +521,8 @@ and run_options op p a b =
       leaf_list
         (A.hessian ~holomorphic:true
            (function
-             | [ TR.Leaf x ] -> TR.Leaf (R.sum (UF.multiply (UF.multiply x x) x))
+             | [ TR.Leaf x ] ->
+                 TR.Leaf (R.sum (UF.multiply (UF.multiply x x) x))
              | _ -> failwith "apicov: holo")
            [ TR.Leaf (a ()) ])
   | "ap_jacobian_argnums" ->
@@ -555,17 +546,14 @@ and run_options op p a b =
           [ TR.Leaf (a ()) ]
       in
       let leaves = TR.tree_leaves shapes in
-      List.map
-        (fun (s : T.aval) -> int32s (Array.to_list s.T.shape))
-        leaves
+      List.map (fun (s : T.aval) -> int32s (Array.to_list s.T.shape)) leaves
       @ List.map
           (fun (s : T.aval) -> text (Ojax.Ref_state.dtype_name s.T.dtype))
           leaves
   | "ap_unique" ->
-      X.unique
-        ~equal_nan:(pbool "equal_nan" p)
-        ?return_counts:(PC.opt_bool "counts" p)
-        ~sorted:true (float_list "values")
+      X.unique ~equal_nan:(pbool "equal_nan" p)
+        ?return_counts:(PC.opt_bool "counts" p) ~sorted:true
+        (float_list "values")
   | "ap_intersect_indices" ->
       let v, i, j =
         X.intersect1d_indices
@@ -576,8 +564,7 @@ and run_options op p a b =
   | "ap_delete" ->
       [
         X.delete_array ?axis:(PC.opt_int "axis" p)
-          ~assume_unique_indices:(pbool "unique" p)
-          (a ()) (int_list "obj");
+          ~assume_unique_indices:(pbool "unique" p) (a ()) (int_list "obj");
       ]
   | "ap_bin_edges" ->
       let x = a () in
@@ -622,8 +609,7 @@ and run_options op p a b =
         f
           ~recall_target:(U.to_number (U.member "recall" p))
           ~reduction_input_size_override:(PC.int "override" p)
-          ~aggregate_to_topk:(pbool "agg" p)
-          (a ()) 2
+          ~aggregate_to_topk:(pbool "agg" p) (a ()) 2
       in
       [ values; indices ]
   | "ap_full_like_opts" ->
@@ -646,8 +632,10 @@ and run_options op p a b =
       [
         f
           ~dtype:(X.dtype (pstr "dtype" p))
-          (Ojax.Random.Core.key (T.Concrete (Nd.of_floats D.I32 [||] [| 0.0 |])))
-          ~shape:(Array.of_list (List.map U.to_int (U.to_list (U.member "shape" p))));
+          (Ojax.Random.Core.key
+             (T.Concrete (Nd.of_floats D.I32 [||] [| 0.0 |])))
+          ~shape:
+            (Array.of_list (List.map U.to_int (U.to_list (U.member "shape" p))));
       ]
   | "ap_jacobian_aux" ->
       let jac, aux =
@@ -688,18 +676,13 @@ and run_options op p a b =
       let q =
         match U.member "q" p with
         | `List vs ->
-            let values =
-              Array.of_list (List.map U.to_number vs)
-            in
+            let values = Array.of_list (List.map U.to_number vs) in
             T.Concrete (Nd.of_floats dt [| Array.length values |] values)
         | v -> T.Concrete (Nd.of_floats dt [||] [| U.to_number v |])
       in
-      let weights =
-        if kind = "w" then Some (UF.abs (b ())) else None
-      in
+      let weights = if kind = "w" then Some (UF.abs (b ())) else None in
       [
-        f ?axis:(PC.opt_int "axis" p)
-          ?keepdims:(PC.opt_bool "keepdims" p)
+        f ?axis:(PC.opt_int "axis" p) ?keepdims:(PC.opt_bool "keepdims" p)
           ~method_:"inverted_cdf" ?weights x q;
       ]
   | other -> failwith ("apicov: unknown op " ^ other)

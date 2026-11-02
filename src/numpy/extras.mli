@@ -59,6 +59,7 @@ val setxor1d :
   value
 
 val bincount : ?weights:value -> ?minlength:int -> ?length:int -> value -> value
+
 val histogram_bin_edges :
   ?bins:int -> ?range:float * float -> ?weights:value -> value -> value
 
@@ -115,8 +116,10 @@ val compress :
 
 val extract : ?size:int -> ?fill_value:float -> value -> value -> value
 val delete : ?axis:int -> value -> int list -> value
+
 val delete_array :
   ?axis:int -> ?assume_unique_indices:bool -> value -> value -> value
+
 val insert : ?axis:int -> value -> int -> value -> value
 val place : value -> value -> value -> value
 val piecewise : value -> value list -> (value -> value) list -> value
@@ -165,6 +168,7 @@ val polyfit_cov :
   value ->
   int ->
   value * value
+
 val roots : ?strip_zeros:bool -> value -> value
 val fromfunction : (value list -> 'a) -> int array -> dtype:Dtype.t -> 'a
 val pi : float
@@ -199,14 +203,23 @@ val with_printoptions :
   'a
 
 val array_str : value -> string
+
 val array_repr :
-  ?max_line_width:int -> ?precision:int -> ?suppress_small:bool -> value -> string
+  ?max_line_width:int ->
+  ?precision:int ->
+  ?suppress_small:bool ->
+  value ->
+  string
 
 val array_str_jax :
-  ?max_line_width:int -> ?precision:int -> ?suppress_small:bool -> value -> string
+  ?max_line_width:int ->
+  ?precision:int ->
+  ?suppress_small:bool ->
+  value ->
+  string
+
 val packbits : ?axis:int -> ?bitorder:string -> value -> value
 val unpackbits : ?axis:int -> ?count:int -> ?bitorder:string -> value -> value
-
 val shape : value -> int array
 val broadcast_shapes : int array list -> int array
 val iterable : value -> bool

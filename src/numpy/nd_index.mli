@@ -9,4 +9,5 @@ val set : Types.value -> index list -> Types.value -> Types.value
 
 val set_stepped :
   Types.value -> start:int -> step:int -> Types.value -> Types.value
+
 val index_dtype : int array -> Dtype.t

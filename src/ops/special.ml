@@ -70,7 +70,9 @@ let logsumexp_parts ?axis ?b ?(keepdims = false) ?where a ~return_sign =
   (L.add lg (NL.astype amax (dtype sumexp)), sign)
 
 let logsumexp ?axis ?b ?keepdims ?where a =
-  let out, sign = logsumexp_parts ?axis ?b ?keepdims ?where a ~return_sign:false in
+  let out, sign =
+    logsumexp_parts ?axis ?b ?keepdims ?where a ~return_sign:false
+  in
   match (b, dtype out) with
   | Some _, (D.F16 | D.Bf16 | D.F32 | D.F64) ->
       let neg = UF.less sign (scalar_of sign 0.0) in

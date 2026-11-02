@@ -27,6 +27,10 @@ X64_FNS = [("zeros", "float64"), ("zeros", "int64"), ("full", "float64"),
            ("asarray", "float64"), ("zeros", "float32")]
 LEGACY_MODES = ["allow", "warn", "error"]
 LEGACY_FNS = ["normal", "split", "typed_normal"]
+SIGNAL_CASES = [("welch", "complex", True), ("welch", "real", True),
+                ("welch", "complex", False), ("csd", "complex_y", True),
+                ("csd", "real", True), ("stft", "complex", True),
+                ("stft", "real", True)]
 REUSE_CASES = ["twice_eager", "twice_jit", "consumed_eager", "consumed_jit",
                "split_once", "split_twice", "split_twice_jit", "bits_fold_in",
                "clone", "off_twice", "while_reuse", "cond_branches",
@@ -259,6 +263,25 @@ def reuse_thunk(jax, jnp, name):
     return run
 
 
+def signal_thunk(jax, jnp, fn, kind, onesided):
+    k = np.arange(16)
+    re = jnp.asarray(((k * 7 % 11) / 4 - 1).astype(np.float32))
+    im = jnp.asarray(((k * 5 % 13) / 8 - 0.5).astype(np.float32))
+    x = jax.lax.complex(re, im) if kind == "complex" else re
+    y = jax.lax.complex(im, re) if kind == "complex_y" else im
+    sg = jax.scipy.signal
+
+    def run():
+        if fn == "welch":
+            out = sg.welch(x, nperseg=8, return_onesided=onesided)
+        elif fn == "csd":
+            out = sg.csd(x, y, nperseg=8, return_onesided=onesided)
+        else:
+            out = sg.stft(x, nperseg=8, return_onesided=onesided)
+        return "\n".join(text_of(o) for o in out)
+    return run
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -303,6 +326,10 @@ def main():
         for fn in LEGACY_FNS:
             add(run_case(jax, legacy_thunk(jax, jnp, mode, fn)),
                 id=f"legacy_{mode}_{fn}", group="legacy", mode=mode, case=fn)
+    for fn, kind, onesided in SIGNAL_CASES:
+        add(run_case(jax, signal_thunk(jax, jnp, fn, kind, onesided)),
+            id=f"signal_{fn}_{kind}_{onesided}", group="signal", case=fn,
+            input=kind, onesided=onesided)
     for name in REUSE_CASES:
         add(run_case(jax, reuse_thunk(jax, jnp, name)),
             id=f"reuse_{name}", group="reuse", case=name)

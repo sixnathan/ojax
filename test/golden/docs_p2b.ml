@@ -230,6 +230,31 @@ let reuse_thunk name () =
                 [ key 9.0 ]
           | other -> failwith ("docs_p2b: unknown reuse " ^ other)))
 
+let signal_thunk fn kind onesided () =
+  let re =
+    f32 [| 16 |]
+      (Array.init 16 (fun k -> (float_of_int (k * 7 mod 11) /. 4.0) -. 1.0))
+  and im =
+    f32 [| 16 |]
+      (Array.init 16 (fun k -> (float_of_int (k * 5 mod 13) /. 8.0) -. 0.5))
+  in
+  let x = if kind = "complex" then Ojax.Lax_api.complex re im else re in
+  let y = if kind = "complex_y" then Ojax.Lax_api.complex im re else im in
+  let module S = Ojax.Scipy.Signal in
+  Ojax.Api.clear_caches ();
+  String.concat "\n"
+    (List.map Docs_p2.text_of
+       (match fn with
+       | "welch" ->
+           let f, p = S.welch ~nperseg:8 ~return_onesided:onesided x in
+           [ f; p ]
+       | "csd" ->
+           let f, p = S.csd ~nperseg:8 ~return_onesided:onesided x (Some y) in
+           [ f; p ]
+       | _ ->
+           let f, tt, z = S.stft ~nperseg:8 ~return_onesided:onesided x in
+           [ f; tt; z ]))
+
 let actual_of row =
   let thunk =
     match str row "group" with
@@ -241,6 +266,9 @@ let actual_of row =
     | "x64mode" -> x64_thunk (str row "mode") (str row "case") (str row "dtype")
     | "legacy" -> legacy_thunk (str row "mode") (str row "case")
     | "reuse" -> reuse_thunk (str row "case")
+    | "signal" ->
+        signal_thunk (str row "case") (str row "input")
+          (U.to_bool (U.member "onesided" row))
     | g -> failwith ("docs_p2b: unknown group " ^ g)
   in
   Docs_p2.run_case thunk

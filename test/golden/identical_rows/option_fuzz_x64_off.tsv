@@ -3576,6 +3576,7 @@ linalg.vecdot_26833a37_float32:eager:out0	1
 linalg.vecdot_26833a37_float32:jit:out0	1
 linalg.vecdot_98454605_float32:eager:out0	1
 linalg.vecdot_98454605_float32:jit:out0	1
+linalg.vecdot_c8be4521_float32:eager:out0	1
 linalg.vecdot_c8be4521_float32:jit:out0	1
 linalg.vecdot_dda6311a_float32:eager:out0	1
 linalg.vecdot_dda6311a_float32:jit:out0	1

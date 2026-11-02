@@ -159,6 +159,7 @@ custom_00032_float64:jaxpr	1
 custom_00032_float64:jit:out0	1
 custom_00032_float64:text	1
 custom_00033_float64:eager:out0	1
+custom_00033_float64:jaxpr	1
 custom_00033_float64:jit:out0	1
 custom_00033_float64:text	1
 custom_00034_float64:eager:out0	1
@@ -339,6 +340,7 @@ custom_00069_float64:jit:both_raise	0
 custom_00069_float64:text	0
 custom_00070_float64:eager:out0	1
 custom_00070_float64:eager:out1	1
+custom_00070_float64:jaxpr	1
 custom_00070_float64:jit:out0	1
 custom_00070_float64:jit:out1	1
 custom_00070_float64:text	1
@@ -1125,6 +1127,7 @@ custom_00227_float64:jaxpr	1
 custom_00227_float64:jit:out0	1
 custom_00227_float64:text	1
 custom_00228_float64:eager:out0	1
+custom_00228_float64:jaxpr	1
 custom_00228_float64:jit:out0	1
 custom_00228_float64:text	1
 custom_00229_float64:eager:out0	1
@@ -1461,6 +1464,7 @@ custom_00298_float64:jit:out1	1
 custom_00298_float64:jit:out2	1
 custom_00298_float64:text	1
 custom_00299_float64:eager:out0	1
+custom_00299_float64:jaxpr	1
 custom_00299_float64:jit:out0	1
 custom_00299_float64:text	1
 cvmap_00000_float64:eager:out0	1

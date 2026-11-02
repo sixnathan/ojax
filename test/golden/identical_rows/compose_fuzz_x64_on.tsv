@@ -15,6 +15,7 @@ compose_00002_float64:jaxpr	1
 compose_00002_float64:jit:out0	1
 compose_00002_float64:text	1
 compose_00003_float64:eager:out0	1
+compose_00003_float64:jaxpr	1
 compose_00003_float64:jit:out0	1
 compose_00003_float64:text	1
 compose_00004_float64:eager:out0	1
@@ -867,6 +868,7 @@ compose_00178_float64:jit:out0	1
 compose_00178_float64:text	1
 compose_00179_float64:eager:out0	1
 compose_00179_float64:eager:out1	1
+compose_00179_float64:jaxpr	1
 compose_00179_float64:jit:out0	1
 compose_00179_float64:jit:out1	1
 compose_00179_float64:text	1
@@ -1203,6 +1205,7 @@ compose_00247_float64:jaxpr	1
 compose_00247_float64:jit:out0	1
 compose_00247_float64:text	1
 compose_00248_float64:eager:out0	1
+compose_00248_float64:jaxpr	1
 compose_00248_float64:jit:out0	1
 compose_00248_float64:text	1
 compose_00249_float64:eager:out0	1
@@ -1694,7 +1697,9 @@ compose_00345_float64:jaxpr	1
 compose_00345_float64:jit:out0	1
 compose_00345_float64:text	1
 compose_00346_float64:eager:out0	1
+compose_00346_float64:jaxpr	1
 compose_00346_float64:jit:out0	1
+compose_00346_float64:text	1
 compose_00347_float64:eager:out0	1
 compose_00347_float64:jaxpr	1
 compose_00347_float64:jit:out0	1
@@ -1957,6 +1962,7 @@ compose_00401_float64:jit:out0	1
 compose_00401_float64:text	1
 compose_00402_float64:eager:out0	1
 compose_00402_float64:eager:out1	1
+compose_00402_float64:jaxpr	1
 compose_00402_float64:jit:out0	1
 compose_00402_float64:jit:out1	1
 compose_00402_float64:text	1
@@ -2359,10 +2365,12 @@ compose_00486_float64:jaxpr	1
 compose_00486_float64:jit:out0	1
 compose_00486_float64:text	1
 compose_00487_float64:eager:out0	1
+compose_00487_float64:jaxpr	1
 compose_00487_float64:jit:out0	1
 compose_00487_float64:text	1
 compose_00488_float64:eager:out0	1
 compose_00488_float64:eager:out1	1
+compose_00488_float64:jaxpr	1
 compose_00488_float64:jit:out0	1
 compose_00488_float64:jit:out1	1
 compose_00488_float64:text	1
@@ -2689,6 +2697,7 @@ compose_00552_float64:jit:out1	1
 compose_00552_float64:jit:out2	1
 compose_00552_float64:text	1
 compose_00553_float64:eager:out0	1
+compose_00553_float64:jaxpr	1
 compose_00553_float64:jit:out0	1
 compose_00553_float64:text	1
 compose_00554_float64:eager:out0	1
@@ -3549,6 +3558,7 @@ compose_00724_float64:jaxpr	1
 compose_00724_float64:jit:out0	1
 compose_00724_float64:text	1
 compose_00725_float64:eager:out0	1
+compose_00725_float64:jaxpr	1
 compose_00725_float64:jit:out0	1
 compose_00725_float64:text	1
 compose_00726_float64:eager:both_raise	0
@@ -3730,6 +3740,7 @@ compose_00759_float64:jaxpr	1
 compose_00759_float64:jit:out0	1
 compose_00759_float64:text	1
 compose_00760_float64:eager:out0	1
+compose_00760_float64:jaxpr	1
 compose_00760_float64:jit:out0	1
 compose_00760_float64:text	1
 compose_00761_float64:eager:out0	1
@@ -3769,6 +3780,7 @@ compose_00768_float64:jaxpr	0
 compose_00768_float64:jit:both_raise	0
 compose_00768_float64:text	0
 compose_00769_float64:eager:out0	1
+compose_00769_float64:jaxpr	1
 compose_00769_float64:jit:out0	1
 compose_00769_float64:text	1
 compose_00770_float64:eager:out0	1
@@ -3908,6 +3920,7 @@ compose_00799_float64:jaxpr	1
 compose_00799_float64:jit:out0	1
 compose_00799_float64:text	1
 compose_00800_float64:eager:out0	1
+compose_00800_float64:jaxpr	1
 compose_00800_float64:jit:out0	1
 compose_00800_float64:text	1
 compose_00801_float64:eager:out0	1
@@ -4004,8 +4017,10 @@ compose_00816_float64:jit:out1	1
 compose_00816_float64:text	1
 compose_00817_float64:eager:out0	1
 compose_00817_float64:eager:out1	1
+compose_00817_float64:jaxpr	1
 compose_00817_float64:jit:out0	1
 compose_00817_float64:jit:out1	1
+compose_00817_float64:text	1
 compose_00818_float64:eager:out0	1
 compose_00818_float64:eager:out1	1
 compose_00818_float64:jaxpr	1
@@ -4305,6 +4320,7 @@ compose_00876_float64:jaxpr	0
 compose_00876_float64:jit:both_raise	0
 compose_00876_float64:text	0
 compose_00877_float64:eager:out0	1
+compose_00877_float64:jaxpr	1
 compose_00877_float64:jit:out0	1
 compose_00877_float64:text	1
 compose_00878_float64:eager:out0	1

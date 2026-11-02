@@ -4891,6 +4891,7 @@ sp_special.softmax_2bd627dd_float64:jit:out0	1
 sp_special.softmax_b87422c6_float64:eager:both_raise	0
 sp_special.softmax_b87422c6_float64:jit:both_raise	0
 sp_special.softmax_c8e725a3_float64:eager:out0	1
+sp_special.softmax_c8e725a3_float64:jit:out0	1
 sp_special.sph_harm_y_15c1592f_float64:eager:both_raise	0
 sp_special.sph_harm_y_15c1592f_float64:jit:both_raise	0
 sp_special.sph_harm_y_18435601_float64:eager:both_raise	0

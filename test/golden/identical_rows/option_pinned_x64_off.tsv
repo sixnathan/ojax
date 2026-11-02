@@ -1,0 +1,12 @@
+jnp.corrcoef_be522b5f_float32:eager:out0	1
+jnp.corrcoef_be522b5f_float32:jit:out0	1
+jnp.setxor1d_6b174152_float32:eager:out0	1
+jnp.setxor1d_6b174152_float32:jit:out0	1
+jnp.unique_43b835c6_float32:eager:out0	1
+jnp.unique_43b835c6_float32:jit:both_raise	0
+sp_special.log_softmax_956c2041_float32:eager:out0	1
+sp_special.log_softmax_956c2041_float32:jit:out0	1
+sp_special.softmax_956c2041_float32:eager:out0	1
+sp_special.softmax_956c2041_float32:jit:out0	1
+sp_special.sph_harm_y_a6f05c88_float32:eager:both_raise	0
+sp_special.sph_harm_y_a6f05c88_float32:jit:both_raise	0

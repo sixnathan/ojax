@@ -1,0 +1,4 @@
+lax_linalg.eigh_aaee3655_float64:eager:error_text	1
+lax_linalg.eigh_aaee3655_float64:jit:error_text	1
+lax_linalg.schur_8e3527b8_float64:eager:error_text	1
+lax_linalg.schur_8e3527b8_float64:jit:error_text	1

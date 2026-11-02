@@ -41,6 +41,14 @@ UFUNC_AT_IDX = ["scalar", "dup", "two_d", "two_d_row"]
 INT_UFUNCS = {"bitwise_and", "bitwise_or", "bitwise_xor"}
 API_CASES = ["flat", "like_f32", "like_weak", "like_int", "like_bool",
              "like_scalar_int", "like_jit"]
+X64WARN_CASES = [
+    ("zeros", "int64"), ("ones", "float64"), ("empty", "float64"),
+    ("full", "float64"), ("zeros_like", "float64"), ("ones_like", "int64"),
+    ("empty_like", "float64"), ("full_like", "complex128"),
+    ("linspace", "float64"), ("logspace", "float64"),
+    ("geomspace", "float64"), ("zeros", "uint64"), ("ones", "float32"),
+    ("full_like", "int32"),
+]
 AOT_CASES = ["sin_dot", "add", "reduce", "exp_log", "matmul", "cumsum",
              "where", "int_mul", "two_out", "tanh_big"]
 
@@ -396,6 +404,25 @@ def api_thunk(jax, jnp, name):
     return lambda: str(table[name]()) if name != "flat" else table[name]()
 
 
+def x64warn_thunk(jax, jnp, fn, dt):
+    x = jnp.arange(3.0, dtype=jnp.float32)
+    d = np.dtype(dt)
+    table = {
+        "zeros": lambda: jnp.zeros((2,), dtype=d),
+        "ones": lambda: jnp.ones((2,), dtype=d),
+        "empty": lambda: jnp.empty((2,), dtype=d),
+        "full": lambda: jnp.full((2,), 3.0, dtype=d),
+        "zeros_like": lambda: jnp.zeros_like(x, dtype=d),
+        "ones_like": lambda: jnp.ones_like(x, dtype=d),
+        "empty_like": lambda: jnp.empty_like(x, dtype=d),
+        "full_like": lambda: jnp.full_like(x, 2.0, dtype=d),
+        "linspace": lambda: jnp.linspace(0.0, 1.0, 5, dtype=d),
+        "logspace": lambda: jnp.logspace(0.0, 1.0, 4, dtype=d),
+        "geomspace": lambda: jnp.geomspace(1.0, 8.0, 4, dtype=d),
+    }
+    return lambda: text_of(table[fn]())
+
+
 def aot_fn(jax, jnp, name):
     x34 = jnp.asarray(np.arange(12, dtype=np.float32).reshape(3, 4) / 7)
     y42 = jnp.asarray(np.arange(8, dtype=np.float32).reshape(4, 2) / 5)
@@ -494,6 +521,11 @@ def main():
             continue
         r = run_case(jax, api_thunk(jax, jnp, name))
         r.update({"id": f"api_{name}", "group": "api", "case": name})
+        rows.append(r)
+    for fn, dt in X64WARN_CASES:
+        r = run_case(jax, x64warn_thunk(jax, jnp, fn, dt))
+        r.update({"id": f"x64warn_{fn}_{dt}", "group": "x64warn",
+                  "case": fn, "dtype": dt})
         rows.append(r)
     rows.extend(aot_rows(jax, jnp))
     with open(args.out, "w") as fh:

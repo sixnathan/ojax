@@ -53,3 +53,4 @@ type scalar_type = Scalar_bool | Scalar_int | Scalar_float | Scalar_complex
 val scalar_type_of : Dtype.t -> scalar_type
 val isdtype : Dtype.t -> string -> bool
 val to_inexact_dtype : Dtype.t -> Dtype.t
+val check_and_canonicalize_user_dtype : ?fun_name:string -> Dtype.t -> Dtype.t

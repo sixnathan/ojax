@@ -708,6 +708,25 @@ let api_thunk name () =
   | "like_scalar_int" -> like (py_int 3.0)
   | other -> failwith ("docs_p2: unknown api case " ^ other)
 
+let x64warn_thunk fn dt () =
+  let module A = Ojax.Numpy.Array_creation in
+  let x = Ojax.Numpy.Lax_numpy.arange ~dtype:Ojax.Dtype.F32 3.0 in
+  let dtype = Option.get (Ojax.Dtype.of_numpy_name dt) in
+  text_of
+    (match fn with
+    | "zeros" -> A.zeros ~dtype [| 2 |]
+    | "ones" -> A.ones ~dtype [| 2 |]
+    | "empty" -> A.empty ~dtype [| 2 |]
+    | "full" -> A.full ~dtype [| 2 |] 3.0
+    | "zeros_like" -> A.zeros_like ~dtype x
+    | "ones_like" -> A.ones_like ~dtype x
+    | "empty_like" -> A.empty_like ~dtype x
+    | "full_like" -> A.full_like ~dtype x 2.0
+    | "linspace" -> A.linspace ~num:5 ~dtype 0.0 1.0
+    | "logspace" -> A.logspace ~num:4 ~dtype 0.0 1.0
+    | "geomspace" -> A.geomspace ~num:4 ~dtype 1.0 8.0
+    | other -> failwith ("docs_p2: unknown x64warn case " ^ other))
+
 let actual_of row =
   match U.to_string (U.member "group" row) with
   | "dprint" ->
@@ -726,6 +745,11 @@ let actual_of row =
            (U.to_string (U.member "case" row))
            (U.to_string (U.member "idx" row))
            (U.to_string (U.member "mode" row)))
+  | "x64warn" ->
+      run_case
+        (x64warn_thunk
+           (U.to_string (U.member "case" row))
+           (U.to_string (U.member "dtype" row)))
   | "api" -> run_case (api_thunk (U.to_string (U.member "case" row)))
   | "static_index" ->
       run_case

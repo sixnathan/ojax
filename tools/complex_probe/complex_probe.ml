@@ -11,8 +11,7 @@ let grid =
   Array.concat
     (Array.to_list
        (Array.map
-          (fun re ->
-            Array.map (fun im -> { Complex.re; im }) specials)
+          (fun re -> Array.map (fun im -> { Complex.re; im }) specials)
           specials))
 
 let hex_of nd =
@@ -69,23 +68,49 @@ let row v =
 
 let unary =
   [
-    ("sin", U.sin); ("cos", U.cos); ("tan", U.tan); ("sinh", U.sinh);
-    ("cosh", U.cosh); ("tanh", U.tanh); ("arcsin", U.arcsin);
-    ("arccos", U.arccos); ("arctan", U.arctan); ("arcsinh", U.arcsinh);
-    ("arccosh", U.arccosh); ("arctanh", U.arctanh); ("exp", U.exp);
-    ("expm1", U.expm1); ("log", U.log); ("log1p", U.log1p); ("log2", U.log2);
-    ("log10", U.log10); ("sqrt", U.sqrt); ("square", U.square);
-    ("sign", U.sign); ("abs", U.abs); ("conj", U.conj); ("real", U.real);
-    ("imag", U.imag); ("negative", U.negative); ("positive", U.positive);
-    ("reciprocal", U.reciprocal); ("angle", fun x -> NL.angle x);
-    ("exp2", U.exp2); ("isnan", U.isnan); ("isinf", U.isinf);
+    ("sin", U.sin);
+    ("cos", U.cos);
+    ("tan", U.tan);
+    ("sinh", U.sinh);
+    ("cosh", U.cosh);
+    ("tanh", U.tanh);
+    ("arcsin", U.arcsin);
+    ("arccos", U.arccos);
+    ("arctan", U.arctan);
+    ("arcsinh", U.arcsinh);
+    ("arccosh", U.arccosh);
+    ("arctanh", U.arctanh);
+    ("exp", U.exp);
+    ("expm1", U.expm1);
+    ("log", U.log);
+    ("log1p", U.log1p);
+    ("log2", U.log2);
+    ("log10", U.log10);
+    ("sqrt", U.sqrt);
+    ("square", U.square);
+    ("sign", U.sign);
+    ("abs", U.abs);
+    ("conj", U.conj);
+    ("real", U.real);
+    ("imag", U.imag);
+    ("negative", U.negative);
+    ("positive", U.positive);
+    ("reciprocal", U.reciprocal);
+    ("angle", fun x -> NL.angle x);
+    ("exp2", U.exp2);
+    ("isnan", U.isnan);
+    ("isinf", U.isinf);
     ("isfinite", U.isfinite);
   ]
 
 let binary =
   [
-    ("add", U.add); ("subtract", U.subtract); ("multiply", U.multiply);
-    ("divide", U.divide); ("power", U.power); ("equal", U.equal);
+    ("add", U.add);
+    ("subtract", U.subtract);
+    ("multiply", U.multiply);
+    ("divide", U.divide);
+    ("power", U.power);
+    ("equal", U.equal);
     ("not_equal", U.not_equal);
   ]
 
@@ -104,11 +129,15 @@ let () =
       let swapped =
         T.Concrete
           (Nd.of_complex dt [| n |]
-             (Array.init n (fun i -> grid.((i * 37) mod n))))
+             (Array.init n (fun i -> grid.(i * 37 mod n))))
       in
-      let jit1 f = Ojax.Api.jit_flat (function [ a ] -> [ f a ] | _ -> failwith "arity") in
+      let jit1 f =
+        Ojax.Api.jit_flat (function [ a ] -> [ f a ] | _ -> failwith "arity")
+      in
       let jit2 f =
-        Ojax.Api.jit_flat (function [ a; b ] -> [ f a b ] | _ -> failwith "arity")
+        Ojax.Api.jit_flat (function
+          | [ a; b ] -> [ f a b ]
+          | _ -> failwith "arity")
       in
       List.iter
         (fun (name, f) ->

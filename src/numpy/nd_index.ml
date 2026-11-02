@@ -18,7 +18,7 @@ let expand idx n =
   let k = List.length idx in
   if k > n then
     raise
-      (Errors.Jax_index_error
+      (Py_exn.Index_error
          (Printf.sprintf
             "Too many indices: array is %d-dimensional, but %d were indexed" n k));
   idx @ List.init (n - k) (fun _ -> full)
@@ -264,7 +264,7 @@ let check_scalar_indices sh idx =
         match i with
         | (Int _ | Arr _) when sh.(axis) = 0 ->
             raise
-              (Errors.Jax_index_error
+              (Py_exn.Index_error
                  (Printf.sprintf
                     "index is out of bounds for axis %d with size 0" axis))
         | _ -> ())

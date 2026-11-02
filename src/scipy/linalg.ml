@@ -212,7 +212,7 @@ let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
         ^ ")"
   in
   if mode = "left" && cs.(crank - 2) <> k then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "Array shapes are not compatible for Q @ c operation: a has shape %s \
           so Q has %d columns, but c has %d rows (expected %d)."
@@ -399,7 +399,7 @@ let rec rsf2csf t z =
   let st = shape t and sz = shape z in
   let nd = Array.length st in
   if nd < 2 || st.(nd - 1) <> st.(nd - 2) then
-    invalid_arg "Input 'T' must be square.";
+    Py_exn.type_error "Input 'T' must be square.";
   if Array.length sz < 2 || sz.(Array.length sz - 1) <> sz.(Array.length sz - 2)
   then invalid_arg "Input 'Z' must be square.";
   if st.(nd - 1) <> sz.(Array.length sz - 1) then
@@ -811,7 +811,7 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
   let sh = shape a in
   let nd = Array.length sh in
   if nd < 2 || sh.(nd - 1) <> sh.(nd - 2) then
-    invalid_arg "expm: expected A to be a (batched) square matrix";
+    Py_exn.value_error "expm: expected A to be a (batched) square matrix";
   if nd > 2 then
     List.hd
       (Interpreters.Batching.vmap
@@ -858,7 +858,7 @@ let expm_frechet ?(compute_expm = true) a e =
   let a = to_inexact a and e = to_inexact e in
   let sa = shape a and se = shape e in
   if Array.length sa < 2 || sa.(Array.length sa - 1) <> sa.(Array.length sa - 2)
-  then invalid_arg "expected A to be a (batched) square matrix";
+  then Py_exn.value_error "expected A to be a (batched) square matrix";
   if sa <> se then invalid_arg "expected A and E to be the same shape";
   let primal, tangent =
     Interpreters.Ad.jvp
@@ -890,9 +890,10 @@ let polar_2d ~side ~method_ ?eps a =
         let unitary = hconj unitary in
         [ unitary; posdef ]
       else
-        invalid_arg
-          "method='qdwh' only supports mxn matrices where m < n where \
-           side='right' and m >= n side='left'"
+        raise
+          (Py_exn.Not_implemented_error
+             "method='qdwh' only supports mxn matrices where m < n where \
+              side='right' and m >= n side='left'")
   | "svd" ->
       let u, s, vh =
         match LL.svd ~full_matrices:false a with
@@ -911,7 +912,8 @@ let polar_2d ~side ~method_ ?eps a =
 
 let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
   let a = to_inexact a in
-  if ndim a < 2 then invalid_arg "The input `a` must be at least a 2-D array.";
+  if ndim a < 2 then
+    Py_exn.value_error "The input `a` must be at least a 2-D array.";
   (match side with
   | "right" | "left" -> ()
   | _ -> invalid_arg "The argument `side` must be either 'right' or 'left'.");
@@ -1197,7 +1199,7 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
   let alpha = d and beta = e in
   if dtype alpha <> dtype beta then
     raise
-      (Errors.jax_type_error
+      (Py_exn.Type_error
          (Printf.sprintf
             "diagonal and off-diagonal values must have same dtype, got %s and \
              %s"
@@ -1207,7 +1209,7 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
   | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> ()
   | dt ->
       raise
-        (Errors.jax_type_error
+        (Py_exn.Type_error
            ("Only float32 and float64 inputs are supported as inputs to \
              jax.scipy.linalg.eigh_tridiagonal, got " ^ D.short_name dt)));
   let n = (shape alpha).(0) in

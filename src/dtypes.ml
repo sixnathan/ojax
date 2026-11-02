@@ -254,7 +254,7 @@ let is_weak_node = function
   | Weak_int | Weak_float | Weak_complex -> true
   | _ -> false
 
-exception Type_promotion_error of string
+exception Type_promotion_error = Py_exn.Type_promotion_error
 
 let node_name = function
   | Weak_int -> "<class 'int'>"

@@ -2686,7 +2686,7 @@ let abstract_eval prim avals =
       match avals with
       | [ a ] ->
           if a.shape.(axis) < k then
-            invalid_arg
+            Py_exn.value_error
               (Printf.sprintf
                  "k argument to top_k must be no larger than size along axis; \
                   got k=%d with shape=[%s] and axis=%d"

@@ -105,3 +105,26 @@ let scatter_flags_of prim =
     (fun (other, sorted, unique) ->
       if other == o then Some (sorted, unique) else None)
     (Hashtbl.find_all scatter_flags (Hashtbl.hash o))
+
+let one_hot_scatters : (int, Obj.t) Hashtbl.t = Hashtbl.create 16
+
+let mark_scatter_one_hot prim =
+  let o = Obj.repr prim in
+  Hashtbl.add one_hot_scatters (Hashtbl.hash o) o;
+  prim
+
+let scatter_one_hot prim =
+  let o = Obj.repr prim in
+  List.exists
+    (fun other -> other == o)
+    (Hashtbl.find_all one_hot_scatters (Hashtbl.hash o))
+
+let copy_scatter_marks ~from prim =
+  let prim =
+    match scatter_flags_of from with
+    | Some (sorted, unique) -> mark_scatter_flags ~sorted ~unique prim
+    | None -> prim
+  in
+  let prim = if scatter_marked from then mark_scatter prim else prim in
+  let prim = if prim_marked from then mark_prim prim else prim in
+  if scatter_one_hot from then mark_scatter_one_hot prim else prim

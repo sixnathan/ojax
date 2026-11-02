@@ -301,12 +301,13 @@ let var_promote a_dtype dt =
         (upcast_f16 d, d)
       else (upcast_f16 a_dtype, real_of_dtype a_dtype)
 
-let correction_of ddof correction =
+let correction_of ?ddof_value ddof correction =
   let integer c =
     let dt = Dtypes.default_int_dtype () in
     T.Concrete (Nd.of_floats dt [||] [| c |])
   in
   match (correction, ddof) with
+  | None, _ when ddof_value <> None -> Option.get ddof_value
   | None, d -> integer (float_of_int (Option.value d ~default:0))
   | Some c, (None | Some 0) ->
       T.Concrete (Nd.of_floats (Dtypes.default_float_dtype ()) [||] [| c |])
@@ -373,7 +374,8 @@ let var ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
     (correction_of ddof correction)
     a
 
-let std ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
+let std ?dtype:dt ?axis ?keepdims ?ddof ?ddof_value ?where:mask ?mean:a_mean
+    ?correction a =
   let dt = Option.map Dtypes.canonicalize_dtype dt in
   (match dt with
   | Some d when not (is_inexact d) ->
@@ -393,7 +395,7 @@ let std ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
                 correction a;
             ]
       | _ -> invalid_arg "std: arity")
-    (a :: correction_of ddof correction :: optional_args mask a_mean)
+    (a :: correction_of ?ddof_value ddof correction :: optional_args mask a_mean)
 
 let ptp ?axis ?(keepdims = false) a =
   bind1 T.Sub [ amax ?axis ~keepdims a; amin ?axis ~keepdims a ]
@@ -577,7 +579,12 @@ let nanmean ?dtype ?axis ?keepdims ?where p0 =
         | _ -> invalid_arg "nanmean: arity")
       [ p0 ]
 
-let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
+let ddof_argument ddof ddof_value =
+  match ddof_value with
+  | Some _ -> ddof_value
+  | None -> Option.map Jnp_util.py_int ddof
+
+let nanvar ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a =
   let mask = check_where "nanvar" mask in
   let dt = Option.map Dtypes.canonicalize_dtype dt in
   let computation, result_dtype = var_promote (dtype a) dt in
@@ -593,7 +600,9 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
   let centered = squared_magnitude computation centered in
   let notnan = bind1 T.Not [ isnan af ] in
   let count = sum ?axis ?keepdims ?where:mask notnan in
-  let nz = Ufuncs.subtract count (Jnp_util.py_int ddof) in
+  let nz =
+    Ufuncs.subtract count (Option.value ddof ~default:(Jnp_util.py_int 0))
+  in
   let bad = bind1 T.Le [ nz; const_full (dtype nz) [||] 0.0 ] in
   let result = sum ?axis ?keepdims ?where:mask centered in
   let result = where bad (Jnp_util.py_float Float_format.nan) result in
@@ -601,39 +610,37 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
   ignore rdt;
   convert (bind1 T.Div [ result; convert divisor (dtype result) ]) result_dtype
 
+let jit_with_ddof name ?dtype ?axis ?keepdims ddof body p0 =
+  Jnp_util.jit1 name
+    ~key:
+      (Digest.to_hex
+         (Digest.string
+            (Marshal.to_string (dtype, axis, keepdims, ddof <> None) [])))
+    (function
+      | [ p0 ] -> body None p0
+      | [ p0; d ] -> body (Some d) p0
+      | _ -> invalid_arg (name ^ ": arity"))
+    (p0 :: Option.to_list ddof)
+
 let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
-  let where_given = where <> None in
-  let mean_given = mean <> None in
-  if where_given || mean_given then
+  if where <> None || mean <> None then
     nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
   else
-    Jnp_util.jit1 "nanvar"
-      ~key:
-        (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
-      (function
-        | [ p0 ] -> nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
-        | _ -> invalid_arg "nanvar: arity")
-      [ p0 ]
+    jit_with_ddof "nanvar" ?dtype ?axis ?keepdims ddof
+      (fun ddof p0 -> nanvar ?dtype ?axis ?keepdims ?ddof p0)
+      p0
 
 let nanstd ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a =
   bind1 T.Sqrt
     [ nanvar ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a ]
 
 let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
-  let where_given = where <> None in
-  let mean_given = mean <> None in
-  if where_given || mean_given then
+  if where <> None || mean <> None then
     nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
   else
-    Jnp_util.jit1 "nanstd"
-      ~key:
-        (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
-      (function
-        | [ p0 ] -> nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
-        | _ -> invalid_arg "nanstd: arity")
-      [ p0 ]
+    jit_with_ddof "nanstd" ?dtype ?axis ?keepdims ddof
+      (fun ddof p0 -> nanstd ?dtype ?axis ?keepdims ?ddof p0)
+      p0
 
 let cumulative ~fill ~promote ~make ?dtype:dt ?axis a =
   let a, ax =
@@ -1123,19 +1130,23 @@ let nanmean ?dtype ?axis ?keepdims ?where a0 =
       | [ where ], [ a0 ] -> nanmean ?dtype ?axis ?keepdims ?where a0
       | _ -> assert false)
 
-let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean a0 =
-  Eager_jit.one "numpy.reductions.nanvar" (dtype, axis, keepdims, ddof)
-    [ where; mean ] [ a0 ] (fun opts vals ->
+let nanvar ?dtype ?axis ?keepdims ?ddof ?ddof_value ?where ?mean a0 =
+  Eager_jit.one "numpy.reductions.nanvar" (dtype, axis, keepdims)
+    [ where; mean; ddof_argument ddof ddof_value ]
+    [ a0 ]
+    (fun opts vals ->
       match (opts, vals) with
-      | [ where; mean ], [ a0 ] ->
+      | [ where; mean; ddof ], [ a0 ] ->
           nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean a0
       | _ -> assert false)
 
-let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean a0 =
-  Eager_jit.one "numpy.reductions.nanstd" (dtype, axis, keepdims, ddof)
-    [ where; mean ] [ a0 ] (fun opts vals ->
+let nanstd ?dtype ?axis ?keepdims ?ddof ?ddof_value ?where ?mean a0 =
+  Eager_jit.one "numpy.reductions.nanstd" (dtype, axis, keepdims)
+    [ where; mean; ddof_argument ddof ddof_value ]
+    [ a0 ]
+    (fun opts vals ->
       match (opts, vals) with
-      | [ where; mean ], [ a0 ] ->
+      | [ where; mean; ddof ], [ a0 ] ->
           nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean a0
       | _ -> assert false)
 

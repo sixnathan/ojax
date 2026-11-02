@@ -1072,15 +1072,11 @@ let qr_pivoted ~full_matrices a =
   let rank = Array.length dims in
   let batch = Array.sub dims 0 (rank - 2) in
   let m = dims.(rank - 2) and n = dims.(rank - 1) in
-  let jpvt = L.full (Array.append batch [| n |]) 0.0 Dtype.I32 in
   if m = 0 || n = 0 then
-    let k = if full_matrices then m else min m n in
-    [
-      empty_batched_eye batch (dtype a) m k;
-      L.full (Array.append batch [| k; n |]) 0.0 (dtype a);
-      jpvt;
-    ]
+    qr_empty ~full_matrices a
+    @ [ L.full (Array.append batch [| n |]) 0.0 Dtype.I32 ]
   else
+    let jpvt = L.full (Array.append batch [| n |]) 0.0 Dtype.I32 in
     match Core.bind Geqp3 [ a; jpvt ] with
     | [ r; p; taus ] ->
         let p = L.sub p (L.full (shape p) 1.0 Dtype.I32) in

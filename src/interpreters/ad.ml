@@ -65,6 +65,12 @@ let scatter_to_gather (sd : scatter_dims) : gather_dims =
     g_sorted_unique = false;
   }
 
+let update_gather prim (sd : scatter_dims) gd slice_sizes =
+  let g = Gather { dimension_numbers = gd; slice_sizes } in
+  if Np_ints.prim_marked prim then g
+  else if sd.s_clip then Np_ints.mark_gather_clip ~sorted:false g
+  else Np_ints.mark_gather_fill g "0" (Some 0.0)
+
 let scatter_gather_slice_sizes (sd : scatter_dims) operand_shape updates_shape =
   let op_rank = Array.length operand_shape in
   let wod =
@@ -4039,12 +4045,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                 scatter_gather_slice_sizes dimension_numbers
                   (in_aval operand).shape (in_aval updates).shape
               in
-              let g = Gather { dimension_numbers = gd; slice_sizes = ss } in
-              let g =
-                if Np_ints.prim_marked prim then g
-                else Np_ints.mark_gather_fill g "0" (Some 0.0)
-              in
-              Some (Core.bind1 g [ ct; prim_val indices ])
+              Some
+                (Core.bind1
+                   (update_gather prim dimension_numbers gd ss)
+                   [ ct; prim_val indices ])
             else None
           in
           [ op_t; None; up_t ]
@@ -4064,7 +4068,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               Some
                 (lneg
                    (Core.bind1
-                      (Gather { dimension_numbers = gd; slice_sizes = ss })
+                      (update_gather prim dimension_numbers gd ss)
                       [ ct; prim_val indices ]))
             else None
           in
@@ -4093,7 +4097,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               in
               Some
                 (Core.bind1
-                   (Gather { dimension_numbers = gd; slice_sizes = ss })
+                   (update_gather prim dimension_numbers gd ss)
                    [ lmul ct (prim_val operand); prim_val indices ])
             end
             else None
@@ -4128,7 +4132,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                 in
                 Some
                   (Core.bind1
-                     (Gather { dimension_numbers = gd; slice_sizes = ss })
+                     (update_gather prim dimension_numbers gd ss)
                      [ ct; prim_val indices ])
               else None
             in

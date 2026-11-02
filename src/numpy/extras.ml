@@ -1175,6 +1175,8 @@ let histogram2d ?(bins = [| 10; 10 |]) ?range ?weights ?(density = false) x y =
   | _ -> failwith "histogram2d: arity"
 
 let interp_body ?left ?right ?period x xp fp =
+  if shape xp <> shape fp || rank xp <> 1 then
+    invalid_arg "xp and fp must be one-dimensional arrays of equal size";
   let x, xp =
     match NL.promote_values [ as_inexact x; as_inexact xp ] with
     | [ a; b ] -> (a, b)

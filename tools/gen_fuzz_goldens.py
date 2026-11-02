@@ -263,7 +263,8 @@ def run_case(case, arrays):
     }
     saved = {"in_" + k: arrays[k] for k in names}
     try:
-        eager = to_outputs(case, arrays, op(**arrays, p=params))
+        devices = {k: jax.numpy.asarray(v) for k, v in arrays.items()}
+        eager = to_outputs(case, arrays, op(**devices, p=params))
         entry["eager"] = meta(eager)
         saved.update({"eager_" + k: v for k, v in eager.items()})
     except Exception as error:

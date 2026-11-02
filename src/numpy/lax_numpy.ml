@@ -1511,6 +1511,8 @@ let argmax ?axis ?(keepdims = false) a =
         let c = canonicalize_axis x orig_nd in
         (a, c, [| c |])
   in
+  if (shape a2).(ax) = 0 then
+    invalid_arg "attempt to get argmax of an empty sequence";
   let r =
     bind1
       (T.Argmax { axis = ax; index_dtype = Dtypes.default_int_dtype () })
@@ -1691,6 +1693,7 @@ let take_trailing a indices =
 
 let index_at a i =
   let s = shape a in
+  if s.(0) = 0 then invalid_arg "index is out of bounds for axis 0 with size 0";
   let i = if i < 0 then i + s.(0) else i in
   let n = Array.length s in
   let start = Array.init n (fun d -> if d = 0 then i else 0) in
@@ -1916,6 +1919,8 @@ let argmin ?axis ?(keepdims = false) a =
         let c = canonicalize_axis x orig_nd in
         (a, c, [| c |])
   in
+  if (shape a2).(ax) = 0 then
+    invalid_arg "attempt to get argmin of an empty sequence";
   let r =
     bind1
       (T.Argmin { axis = ax; index_dtype = Dtypes.default_int_dtype () })

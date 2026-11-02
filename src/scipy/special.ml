@@ -1762,9 +1762,7 @@ let softmax ?axis x =
   match axis with
   | Some (Numpy.Reductions.Axis ax) -> NN.softmax ~axis:ax x
   | Some (Numpy.Reductions.Axes axes) -> NN.softmax_axes ~axes x
-  | None ->
-      let sh = shape x in
-      NL.reshape (NN.softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
+  | None -> NN.softmax_axes ~axes:(Array.init (ndim x) Fun.id) x
 
 let log_softmax ?axis x =
   Option.iter
@@ -1780,9 +1778,7 @@ let log_softmax ?axis x =
   match axis with
   | Some (Numpy.Reductions.Axis ax) -> NN.log_softmax ~axis:ax x
   | Some (Numpy.Reductions.Axes axes) -> NN.log_softmax_axes ~axes x
-  | None ->
-      let sh = shape x in
-      NL.reshape (NN.log_softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
+  | None -> NN.log_softmax_axes ~axes:(Array.init (ndim x) Fun.id) x
 
 let poch_primal z m =
   let z, m = real_only2 "jnp.poch" z m in

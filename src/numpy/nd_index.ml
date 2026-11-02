@@ -75,7 +75,9 @@ let dynamic_take x idx =
           starts := const dt v :: !starts;
           sizes := 1 :: !sizes
       | Arr v ->
-          starts := C.convert_like ~weak:false v dt :: !starts;
+          starts :=
+            (if List.length idx > 1 then C.convert_like ~weak:false v dt else v)
+            :: !starts;
           sizes := 1 :: !sizes
       | Range { start; stop } ->
           let lo, hi = range_of sh.(axis) start stop in

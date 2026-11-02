@@ -1,0 +1,6 @@
+(executable
+ (name paths_probe)
+ (libraries yojson ojax)
+ (preprocess
+  (action
+   (run %{exe:../ltr/ltr.exe} %{input-file}))))

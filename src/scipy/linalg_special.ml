@@ -486,25 +486,28 @@ let sylvester_triangular_scan r s f =
       (L.add ind (Core.splat (dtype_of ind) [||] (float_of_int size)))
       ind
   in
-  let element v i j =
-    let i = wrap_index i (shape v).(0) in
-    let j = wrap_index j (shape v).(1) in
-    NL.reshape (L.dynamic_slice v [ i; j ] [| 1; 1 |]) [||]
-  in
+  let element = Numpy.Indexing.dynamic_at2 in
   let line v ~row idx =
-    let zero = Core.splat (dtype_of idx) [||] 0.0 in
-    if row then
-      let i = wrap_index idx (shape v).(0) in
-      let j = wrap_index zero (shape v).(1) in
-      NL.reshape
-        (L.dynamic_slice v [ i; j ] [| 1; (shape v).(1) |])
-        [| (shape v).(1) |]
-    else
-      let i = wrap_index zero (shape v).(0) in
-      let j = wrap_index idx (shape v).(1) in
-      NL.reshape
-        (L.dynamic_slice v [ i; j ] [| (shape v).(0); 1 |])
-        [| (shape v).(0) |]
+    let idx =
+      if (Core.get_aval idx).weak_type || dtype_of idx <> Dtype.I32 then
+        L.convert_element_type idx Dtype.I32
+      else idx
+    in
+    let zero = Core.splat Dtype.I32 [||] 0.0 in
+    let starts, sizes, axis =
+      if row then begin
+        let i = wrap_index idx (shape v).(0) in
+        let j = wrap_index zero (shape v).(1) in
+        ([ i; j ], [| 1; (shape v).(1) |], 0)
+      end
+      else begin
+        let i = wrap_index zero (shape v).(0) in
+        let j = wrap_index idx (shape v).(1) in
+        ([ i; j ], [| (shape v).(0); 1 |], 1)
+      end
+    in
+    Core.bind1 (Types.Squeeze [| axis |])
+      [ L.dynamic_slice_normalized v starts sizes ]
   in
   let masked_sum mask v =
     Numpy.Reductions.sum
@@ -537,7 +540,8 @@ let sylvester_triangular_scan r s f =
         let wrapped = wrap_index flat total in
         let index =
           L.broadcast_in_dim
-            (L.convert_element_type wrapped Dtype.I32)
+            (if dtype_of wrapped = Dtype.I32 then wrapped
+             else L.convert_element_type wrapped Dtype.I32)
             [| 1 |] [||]
         in
         [
@@ -595,7 +599,7 @@ let solve_sylvester_2d a b c tol =
              [
                U.multiply
                  (Numpy.Array_creation.zeros_like x)
-                 (Numpy.Jnp_util.py_float Float.nan);
+                 (Numpy.Jnp_util.py_float Float_format.nan);
              ])
            (fun _ -> [ x ])
            [])

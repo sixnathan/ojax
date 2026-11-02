@@ -15,7 +15,7 @@ let shape v = (Core.get_aval v).shape
 let dtype_of v = (Core.get_aval v).dtype
 
 let regular_grid_interpolator ?(method_ = "linear") ?(bounds_error = false)
-    ?(fill_value = Some Float.nan) points values =
+    ?(fill_value = Some Float_format.nan) points values =
   if bounds_error then
     invalid_arg "`bounds_error` takes no effect under GPU and TPU";
   if method_ <> "linear" && method_ <> "nearest" then

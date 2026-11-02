@@ -415,7 +415,7 @@ let clamp_indices indices dims window =
     ]
 
 let gather_default_fill dt =
-  if Dtypes.issubdtype dt `Inexact then Float.nan
+  if Dtypes.issubdtype dt `Inexact then Float_format.nan
   else if dt = Dtype.Bool then 1.0
   else if Dtypes.issubdtype dt `Signed then (Dtypes.iinfo dt).imin
   else (Dtypes.iinfo dt).imax
@@ -551,7 +551,7 @@ let concrete_scalar v =
     match Ndarray.dtype nd with
     | Dtype.Complex64 | Dtype.Complex128 ->
         let z = Ndarray.get_c nd [||] in
-        if z.Complex.im = 0.0 then Some z.Complex.re else Some Float.nan
+        if z.Complex.im = 0.0 then Some z.Complex.re else Some Float_format.nan
     | _ -> Some (Ndarray.get_f nd [||])
   in
   match v with
@@ -1047,6 +1047,30 @@ let platform_dependent ?default ?cuda ~cpu () =
         (Printf.sprintf
            "platform_dependent: no branch for platform %s and no default"
            platform)
+
+let platform_dependent_args ?default ?cuda ~cpu args =
+  let named =
+    match cuda with
+    | None -> [ ([ "cpu" ], cpu) ]
+    | Some g when g == cpu -> [ ([ "cpu"; "cuda" ], cpu) ]
+    | Some g -> [ ([ "cpu" ], cpu); ([ "cuda" ], g) ]
+  in
+  let platforms =
+    List.map (fun (names, _) -> Some (Array.of_list names)) named
+    @ match default with None -> [] | Some _ -> [ None ]
+  in
+  let branches =
+    List.map snd named @ match default with None -> [] | Some d -> [ d ]
+  in
+  let platforms = Array.of_list platforms in
+  match Lax.platform_index ~platforms with
+  | Concrete nd ->
+      let i = int_of_float (Ndarray.fold (fun _ x -> x) 0.0 nd) in
+      (List.nth branches i) args
+  | index -> (
+      match branches with
+      | [ only ] -> only args
+      | _ -> Lax.branch_call ~platforms index branches args)
 
 let associative_scan ?(axis = 0) ?(reverse = false) fn xs =
   let axis = canon_axis (ndim xs) axis in

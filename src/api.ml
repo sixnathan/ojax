@@ -58,6 +58,15 @@ let staged_under_transform cells args =
   | KJVP | KBatch | KPE -> true
   | KEval | KJaxpr -> false
 
+let keep_out_weak (cj : closed_jaxpr) results =
+  List.mapi
+    (fun i result ->
+      match (result, List.nth_opt cj.jaxpr.outs i) with
+      | Concrete nd, Some (A_var { vaval = { weak_type = true; _ }; _ }) ->
+          Concrete (Ndarray.as_weak nd)
+      | _ -> result)
+    results
+
 let run_with_refs cj cells args =
   if staged_under_transform cells args then Core.bind (Xla_call cj) args
   else
@@ -67,7 +76,7 @@ let run_with_refs cj cells args =
     match Util.split_list outs [ n_out ] with
     | [ results; finals ] ->
         List.iter2 Ref_state.write cells finals;
-        results
+        keep_out_weak cj results
     | _ -> failwith "jit: output arity"
 
 let context_key () =
@@ -197,7 +206,8 @@ let jit_flat ?(name = "<lambda>") (f : value list -> value list) :
             entry
       in
       if cells = [] && Core.top_is_staging args then
-        bind_named_call ~name cj args
+        Key_reuse.call_with_signature signature args (fun () ->
+            bind_named_call ~name cj args)
       else
         Key_reuse.call_with_signature signature args (fun () ->
             run_with_refs cj cells args)

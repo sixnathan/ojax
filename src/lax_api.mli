@@ -364,6 +364,13 @@ val custom_root :
 val platform_dependent :
   ?default:(unit -> 'b) -> ?cuda:(unit -> 'b) -> cpu:(unit -> 'b) -> unit -> 'b
 
+val platform_dependent_args :
+  ?default:(value list -> value list) ->
+  ?cuda:(value list -> value list) ->
+  cpu:(value list -> value list) ->
+  value list ->
+  value list
+
 val associative_scan :
   ?axis:int -> ?reverse:bool -> (value -> value -> value) -> value -> value
 

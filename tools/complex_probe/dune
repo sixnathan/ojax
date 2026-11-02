@@ -1,0 +1,3 @@
+(executable
+ (name complex_probe)
+ (libraries yojson ojax))

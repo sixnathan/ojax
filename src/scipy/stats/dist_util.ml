@@ -11,7 +11,7 @@ let shape v = (get_aval v).T.shape
 let ndim v = Array.length (shape v)
 let sc v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
 let ninf v = sc v Float.neg_infinity
-let nan v = sc v Float.nan
+let nan v = sc v Float_format.nan
 let weak_defaults : (float * T.value) list ref = ref []
 
 let f32s x =
@@ -81,9 +81,9 @@ let py_float = JU.py_float
 let where_px c v y = JU.where_weak ~x_weak:true c (JU.py_float v) y
 let where_py c x v = JU.where_weak ~y_weak:true c x (JU.py_float v)
 let where_ninf c y = where_px c Float.neg_infinity y
-let where_nan c y = where_px c Float.nan y
+let where_nan c y = where_px c Float_format.nan y
 let where_or_ninf c x = where_py c x Float.neg_infinity
-let where_or_nan c x = where_py c x Float.nan
+let where_or_nan c x = where_py c x Float_format.nan
 
 let defaults loc scale =
   (Option.value loc ~default:(f32s 0.0), Option.value scale ~default:(f32s 1.0))

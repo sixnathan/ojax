@@ -56,7 +56,7 @@ let lgamma x =
   else lgamma_positive (x -. 1.0)
 
 let digamma x =
-  if x <= 0.0 && Float.floor x = x then Float.nan
+  if x <= 0.0 && Float.floor x = x then Float_format.nan
   else begin
     let reflect = x < 0.5 in
     let z = if reflect then -.x else x -. 1.0 in
@@ -414,7 +414,7 @@ let igamma dtype a x =
   let a_is_zero = a = 0.0 in
   let x_is_zero = x = 0.0 in
   let domain_error = x < 0.0 || a < 0.0 || (a_is_zero && x_is_zero) || is_nan in
-  if domain_error then Float.nan
+  if domain_error then Float_format.nan
   else if x_is_zero then 0.0
   else if x_is_infinity then 1.0
   else begin
@@ -439,7 +439,7 @@ let igammac dtype a x =
   let x_is_zero = x = 0.0 in
   let x_is_infinity = x = Float.infinity in
   let domain_error = x < 0.0 || a < 0.0 || (a_is_zero && x_is_zero) || is_nan in
-  if domain_error then Float.nan
+  if domain_error then Float_format.nan
   else if x_is_infinity || a_is_zero then 0.0
   else begin
     let use_igamma = x < 1.0 || x < a in
@@ -456,7 +456,7 @@ let igamma_grad_a dtype a x =
   let is_nan = Float.is_nan a || Float.is_nan x in
   let x_is_zero = x = 0.0 in
   let domain_error = x < 0.0 || a <= 0.0 in
-  if domain_error || is_nan then Float.nan
+  if domain_error || is_nan then Float_format.nan
   else if x_is_zero then 0.0
   else begin
     let ax = (a *. Float.log x) -. x -. lgamma a in
@@ -492,12 +492,13 @@ let rec zeta dtype s a =
   let s_is_integer = Float.is_integer s in
   let nonpositive_integer_a = a <= 0.0 && Float.floor a = a in
   if s = 1.0 then Float.infinity
-  else if Float.is_nan s || Float.abs s = Float.infinity then Float.nan
+  else if Float.is_nan s || Float.abs s = Float.infinity then Float_format.nan
   else if nonpositive_integer_a then
-    if s_is_integer && Float.rem s 2.0 = 0.0 then Float.infinity else Float.nan
-  else if s < 1.0 then Float.nan
-  else if a <= 0.0 && not s_is_integer then Float.nan
-  else if Float.is_nan a || a = Float.infinity then Float.nan
+    if s_is_integer && Float.rem s 2.0 = 0.0 then Float.infinity
+    else Float_format.nan
+  else if s < 1.0 then Float_format.nan
+  else if a <= 0.0 && not s_is_integer then Float_format.nan
+  else if Float.is_nan a || a = Float.infinity then Float_format.nan
   else zeta_series dtype s a
 
 and zeta_series dtype s a =
@@ -522,7 +523,7 @@ and zeta_series dtype s a =
   done;
   let tail = t0 *. (0.5 +. !t1_sum) in
   let result = !series +. integral +. tail in
-  if s < 1.0 then Float.nan else result
+  if s < 1.0 then Float_format.nan else result
 
 let polygamma dtype m x =
   let n = int_of_float (Float.round m) in
@@ -570,7 +571,7 @@ let regularized_incomplete_beta dtype a b x =
     a < 0.0 || b < 0.0 || x < 0.0 || x > 1.0 || (a_is_zero && b_is_zero)
     || is_nan
   in
-  if result_is_nan then Float.nan
+  if result_is_nan then Float_format.nan
   else if result_is_zero then 0.0
   else if result_is_one then 1.0
   else begin
@@ -619,7 +620,7 @@ let regularized_incomplete_beta dtype a b x =
 let erf_inv x =
   let start = erf_inv_single x in
   if Float.abs x = 1.0 then Float.copy_sign Float.infinity x
-  else if Float.abs x > 1.0 then Float.nan
+  else if Float.abs x > 1.0 then Float_format.nan
   else if not (Float.is_finite start) then start
   else
     let two_over_sqrt_pi = 1.1283791670955126 in

@@ -111,7 +111,7 @@ let take ?axis ?mode ?fill_value ?(unique_indices = false)
         (flag (T.Gather { dimension_numbers = dnums; slice_sizes }))
         [ a; gather_indices ]
 
-let take_along_axis ?(axis = -1) ?mode ?fill_value ?wrap_negative_indices a
+let take_along_axis_body ~axis ?mode ?fill_value ?wrap_negative_indices a
     indices =
   let rank = ndim a in
   if rank <> ndim indices then
@@ -123,90 +123,115 @@ let take_along_axis ?(axis = -1) ?mode ?fill_value ?wrap_negative_indices a
   let arr_shape = Array.copy ash in
   arr_shape.(axis_int) <- 1;
   let out_shape = broadcast_shapes idx_shape arr_shape in
-  let indices =
+  if axis_size = 0 then full (dtype a) out_shape 0.0
+  else
     let wrap =
       match wrap_negative_indices with
       | Some w -> w
       | None -> mode <> Some "promise_in_bounds"
     in
-    if wrap && not (Dtypes.issubdtype (dtype indices) `Unsigned) then
-      let idt = dtype indices in
-      let negative = bind1 T.Lt [ indices; full idt [||] 0.0 ] in
-      let shifted =
-        bind1 T.Add [ indices; full idt [||] (float_of_int axis_size) ]
-      in
-      bind1 T.Select_n [ negative; indices; shifted ]
-    else indices
-  in
-  let index_dims =
-    List.filter
-      (fun i -> i = axis_int || idx_shape.(i) <> 1)
-      (List.init rank Fun.id)
-  in
-  let gather_index_shape =
-    Array.append
-      (Array.of_list (List.map (fun i -> out_shape.(i)) index_dims))
-      [| 1 |]
-  in
-  let gather_indices = NL.reshape indices gather_index_shape in
-  let slice_sizes = ref []
-  and offset_dims = ref []
-  and start_index_map = ref []
-  and collapsed = ref []
-  and op_batch = ref []
-  and idx_batch = ref []
-  and dims_to_squeeze = ref [] in
-  let new_i = ref 0 and j = ref 0 in
-  for i = 0 to rank - 1 do
-    if i = axis_int then begin
-      slice_sizes := 1 :: !slice_sizes;
-      start_index_map := !new_i :: !start_index_map;
-      collapsed := !new_i :: !collapsed;
-      incr new_i;
-      incr j
-    end
-    else if idx_shape.(i) = 1 then begin
-      offset_dims := i :: !offset_dims;
-      slice_sizes := arr_shape.(i) :: !slice_sizes;
-      incr new_i
-    end
-    else if arr_shape.(i) = 1 then begin
-      dims_to_squeeze := i :: !dims_to_squeeze;
-      incr j
-    end
-    else begin
-      if arr_shape.(i) = 0 then slice_sizes := 0 :: !slice_sizes
-      else slice_sizes := 1 :: !slice_sizes;
-      op_batch := !new_i :: !op_batch;
-      idx_batch := !j :: !idx_batch;
-      incr new_i;
-      incr j
-    end
-  done;
-  let asc l = Array.of_list (List.rev l) in
-  let a =
-    if !dims_to_squeeze = [] then a
-    else bind1 (T.Squeeze (asc !dims_to_squeeze)) [ a ]
-  in
-  let dnums =
-    {
-      T.offset_dims = asc !offset_dims;
-      collapsed_slice_dims = asc !collapsed;
-      start_index_map = asc !start_index_map;
-      g_operand_batching_dims = asc !op_batch;
-      g_start_indices_batching_dims = asc !idx_batch;
-      g_sorted_unique = false;
-    }
-  in
-  match mode with
-  | None | Some "fill" ->
-      Lax.Slicing.gather_fill ?fill_value a gather_indices dnums
-        (asc !slice_sizes)
-  | Some ("clip" | "promise_in_bounds") ->
-      bind1
-        (T.Gather { dimension_numbers = dnums; slice_sizes = asc !slice_sizes })
-        [ a; gather_indices ]
-  | Some m -> invalid_arg ("Unknown gather mode \"" ^ m ^ "\"")
+    let indices =
+      if not wrap then indices
+      else begin
+        let index_dtype = if axis_size > 2147483647 then D.I64 else D.I32 in
+        let indices =
+          if dtype indices = index_dtype then indices
+          else bind1 (T.Convert_element_type index_dtype) [ indices ]
+        in
+        let negative = bind1 T.Lt [ indices; full index_dtype [||] 0.0 ] in
+        let shifted =
+          bind1 T.Add
+            [ indices; full index_dtype [||] (float_of_int axis_size) ]
+        in
+        bind1 T.Select_n [ negative; indices; shifted ]
+      end
+    in
+    let index_dims =
+      List.filter
+        (fun i -> i = axis_int || idx_shape.(i) <> 1)
+        (List.init rank Fun.id)
+    in
+    let gather_index_shape =
+      Array.append
+        (Array.of_list (List.map (fun i -> out_shape.(i)) index_dims))
+        [| 1 |]
+    in
+    let gather_indices = NL.reshape indices gather_index_shape in
+    let slice_sizes = ref []
+    and offset_dims = ref []
+    and start_index_map = ref []
+    and collapsed = ref []
+    and op_batch = ref []
+    and idx_batch = ref []
+    and dims_to_squeeze = ref [] in
+    let new_i = ref 0 and j = ref 0 in
+    for i = 0 to rank - 1 do
+      if i = axis_int then begin
+        slice_sizes := 1 :: !slice_sizes;
+        start_index_map := !new_i :: !start_index_map;
+        collapsed := !new_i :: !collapsed;
+        incr new_i;
+        incr j
+      end
+      else if idx_shape.(i) = 1 then begin
+        offset_dims := i :: !offset_dims;
+        slice_sizes := arr_shape.(i) :: !slice_sizes;
+        incr new_i
+      end
+      else if arr_shape.(i) = 1 then begin
+        dims_to_squeeze := i :: !dims_to_squeeze;
+        incr j
+      end
+      else begin
+        if arr_shape.(i) = 0 then slice_sizes := 0 :: !slice_sizes
+        else slice_sizes := 1 :: !slice_sizes;
+        op_batch := !new_i :: !op_batch;
+        idx_batch := !j :: !idx_batch;
+        incr new_i;
+        incr j
+      end
+    done;
+    let asc l = Array.of_list (List.rev l) in
+    let a =
+      if !dims_to_squeeze = [] then a
+      else bind1 (T.Squeeze (asc !dims_to_squeeze)) [ a ]
+    in
+    let dnums =
+      {
+        T.offset_dims = asc !offset_dims;
+        collapsed_slice_dims = asc !collapsed;
+        start_index_map = asc !start_index_map;
+        g_operand_batching_dims = asc !op_batch;
+        g_start_indices_batching_dims = asc !idx_batch;
+        g_sorted_unique = false;
+      }
+    in
+    match mode with
+    | None | Some "fill" ->
+        Lax.Slicing.gather_fill ?fill_value a gather_indices dnums
+          (asc !slice_sizes)
+    | Some ("clip" | "promise_in_bounds") ->
+        bind1
+          (T.Gather
+             { dimension_numbers = dnums; slice_sizes = asc !slice_sizes })
+          [ a; gather_indices ]
+    | Some m -> invalid_arg ("Unknown gather mode \"" ^ m ^ "\"")
+
+let take_along_axis ?(axis = -1) ?mode ?fill_value ?wrap_negative_indices a
+    indices =
+  Jnp_util.jit1 "take_along_axis"
+    ~key:
+      (Digest.to_hex
+         (Digest.string
+            (Marshal.to_string
+               (axis, mode, fill_value, wrap_negative_indices)
+               [])))
+    (function
+      | [ a; indices ] ->
+          take_along_axis_body ~axis ?mode ?fill_value ?wrap_negative_indices a
+            indices
+      | _ -> invalid_arg "take_along_axis: arity")
+    [ a; indices ]
 
 let tile_to_size v n =
   let m = size v in
@@ -361,15 +386,6 @@ let put_along_axis ?axis ?mode a0 a1 a2 =
       | [], [ a0; a1; a2 ] -> put_along_axis ?axis ?mode a0 a1 a2
       | _ -> assert false)
 
-let take_along_axis ?axis ?mode ?fill_value ?wrap_negative_indices a0 a1 =
-  Eager_jit.one ~jit:"take_along_axis" "numpy.indexing.take_along_axis"
-    (axis, mode, fill_value, wrap_negative_indices) [] [ a0; a1 ]
-    (fun opts vals ->
-      match (opts, vals) with
-      | [], [ a0; a1 ] ->
-          take_along_axis ?axis ?mode ?fill_value ?wrap_negative_indices a0 a1
-      | _ -> assert false)
-
 let take_index ?axis ?mode ?fill_value a i = take ?axis ?mode ?fill_value a i
 
 let take ?axis ?mode ?fill_value ?unique_indices ?indices_are_sorted a0 a1 =
@@ -411,7 +427,13 @@ let dynamic_at x i =
 
 let dynamic_at2 x i j =
   let sh = shape x in
-  let i = strong_index i and j = strong_index j in
+  let dt = if Array.exists (fun d -> d > 2147483647) sh then D.I64 else D.I32 in
+  let to_dt v =
+    if is_weak v || dtype v <> dt then bind1 (T.Convert_element_type dt) [ v ]
+    else v
+  in
+  let i = to_dt i in
+  let j = to_dt j in
   let start_i = select_negative i sh.(0) in
   let start_j = select_negative j sh.(1) in
   let sizes = Array.mapi (fun d s -> if d < 2 then 1 else s) sh in

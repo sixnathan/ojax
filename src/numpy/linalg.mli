@@ -57,6 +57,7 @@ val norm :
 val matrix_norm : ?keepdims:bool -> ?ord:ord -> Types.value -> Types.value
 val matrix_transpose : Types.value -> Types.value
 val qr : ?mode:string -> Types.value -> Types.value list
+val qr_result_def : Tree_util.treedef
 
 val lstsq :
   ?rcond:float ->

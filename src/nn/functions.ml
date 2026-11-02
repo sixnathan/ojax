@@ -356,7 +356,9 @@ let logsumexp ?axis ?(keepdims = false) ?where:mask x =
       (Lax_api.select (UF.isfinite amax) amax (Lax_api.full_like amax 0.0))
   in
   let with_dims = if keepdims then amax else Lax_api.expand_dims amax dims in
-  let exp_a = bind1 T.Exp [ bind1 T.Sub [ x; with_dims ] ] in
+  let exp_a =
+    bind1 T.Exp [ bind1 T.Sub [ x; NL.astype with_dims (dtype x) ] ]
+  in
   let sumexp = RED.sum ~axis:dims ~keepdims ?where:mask exp_a in
   let _sign = bind1 T.Sign [ sumexp ] in
   let sumexp =
@@ -364,7 +366,7 @@ let logsumexp ?axis ?(keepdims = false) ?where:mask x =
     | D.Complex64 | D.Complex128 -> sumexp
     | _ -> UF.abs sumexp
   in
-  bind1 T.Add [ bind1 T.Log [ sumexp ]; amax ]
+  bind1 T.Add [ bind1 T.Log [ sumexp ]; NL.astype amax (dtype sumexp) ]
 
 let logmeanexp ?axis ?(keepdims = false) ?where:mask x =
   let ndim = Array.length (shape x) in

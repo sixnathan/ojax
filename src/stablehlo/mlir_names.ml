@@ -353,7 +353,7 @@ let split_results body =
   parts := String.sub body !start (String.length body - !start) :: !parts;
   List.rev_map String.trim !parts
 
-let add_result_info line =
+let add_result_info ?names line =
   let t = String.trim line in
   if not (starts_with "func.func public @main(" t) then line
   else
@@ -378,7 +378,10 @@ let add_result_info line =
             List.mapi
               (fun i ty ->
                 let label =
-                  if many then Printf.sprintf "result[%d]" i else "result"
+                  match names with
+                  | Some names when i < List.length names -> List.nth names i
+                  | _ ->
+                      if many then Printf.sprintf "result[%d]" i else "result"
                 in
                 let key = " {" in
                 let k = String.length ty and m = String.length key in
@@ -487,12 +490,81 @@ let opens_isolated line =
      && (not (contains "stablehlo.case" t))
      && not (contains "stablehlo.if" t)
 
+let replace_first ~sub ~by line =
+  let n = String.length line and m = String.length sub in
+  let rec find i =
+    if i + m > n then None
+    else if String.sub line i m = sub then Some i
+    else find (i + 1)
+  in
+  match find 0 with
+  | None -> None
+  | Some i ->
+      Some (String.sub line 0 i ^ by ^ String.sub line (i + m) (n - i - m))
+
+let add_platform_index_arg ~arg text =
+  let param = Printf.sprintf "%%%d" arg in
+  let scalar = "tensor<i32>" in
+  let attr =
+    Printf.sprintf "%s: %s {jax.global_constant = \"_platform_index\"}" param
+      scalar
+  in
+  let first_paren line =
+    let i = String.index line '(' in
+    ( String.sub line 0 (i + 1),
+      String.sub line (i + 1) (String.length line - i - 1) )
+  in
+  let with_first x rest =
+    if String.length rest > 0 && rest.[0] = ')' then x ^ rest
+    else x ^ ", " ^ rest
+  in
+  let rewrite line =
+    let t = String.trim line in
+    if starts_with "func.func " t then
+      let head, rest = first_paren line in
+      head ^ with_first attr rest
+    else
+      let is_call =
+        starts_with "call @" t
+        || starts_with "func.call @" t
+        || contains " = call @" t
+        || contains " = func.call @" t
+      in
+      if not is_call then line
+      else
+        let head, rest = first_paren line in
+        let line = head ^ with_first param rest in
+        match replace_first ~sub:" : (" ~by:" : (\000" line with
+        | None -> line
+        | Some marked ->
+            let i = String.index marked '\000' in
+            let before = String.sub marked 0 i in
+            let after =
+              String.sub marked (i + 1) (String.length marked - i - 1)
+            in
+            before ^ with_first scalar after
+  in
+  String.concat "\n" (List.map rewrite (String.split_on_char '\n' text))
+
+let mentions_host_callback text = contains "@xla_ffi_python_cpu_callback" text
+
+let drop_empty_backend_config text =
+  let sub = "{backend_config = \"\", " in
+  String.concat "\n"
+    (List.map
+       (fun line ->
+         if contains "stablehlo.custom_call" line then
+           Option.value (replace_first ~sub ~by:"{" line) ~default:line
+         else line)
+       (String.split_on_char '\n' text))
+
 let hoist_constants text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let n = Array.length lines in
   let rec scope i =
     let kept = ref [] and constants = ref [] and renames = ref Tbl.empty in
     let depth = ref 0 in
+    let at_head = ref true in
     let rec walk i =
       if i >= n then i
       else
@@ -501,9 +573,13 @@ let hoist_constants text =
         | Some (tok, rhs) ->
             (match List.assoc_opt rhs !constants with
             | Some first -> renames := Tbl.add tok first !renames
-            | None -> constants := (rhs, tok) :: !constants);
+            | None ->
+                if !at_head && !depth = 0 then
+                  constants := !constants @ [ (rhs, tok) ]
+                else constants := (rhs, tok) :: !constants);
             walk (i + 1)
         | None ->
+            at_head := false;
             if closes line && not (opens line) then
               if !depth = 0 then i
               else begin
@@ -566,13 +642,18 @@ let hoist_constants text =
   done;
   String.concat "\n" (List.rev !out)
 
-let render ?(num_partitions = 1) ?(module_attributes = []) ~module_name text =
+let render ?(num_partitions = 1) ?(module_attributes = []) ?result_names
+    ~module_name text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let root = snd (build_regions lines) in
   number lines root fresh_state;
   let out = Array.copy lines in
   apply lines out root Tbl.empty;
-  let out = Array.map (fun l -> splat_index_layouts (add_result_info l)) out in
+  let out =
+    Array.map
+      (fun l -> splat_index_layouts (add_result_info ?names:result_names l))
+      out
+  in
   if Array.length out > 0 && String.trim out.(0) = "module {" then
     out.(0) <-
       Printf.sprintf

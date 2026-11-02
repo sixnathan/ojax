@@ -210,7 +210,7 @@ let shift_right_logical_f dt x y =
         (Int64.shift_right_logical (low_bits nbits (Int64.of_float x)) s)
 
 let f64_nextafter x y =
-  if x <> x || y <> y then Float.nan
+  if x <> x || y <> y then Float_format.nan
   else if x = y then y
   else if y > x then Float.succ x
   else Float.pred x
@@ -230,13 +230,13 @@ let f32_next_down x =
     Int32.float_of_bits (if x > 0.0 then Int32.sub b 1l else Int32.add b 1l)
 
 let f32_nextafter x y =
-  if x <> x || y <> y then Float.nan
+  if x <> x || y <> y then Float_format.nan
   else if x = y then y
   else if y > x then f32_next_up x
   else f32_next_down x
 
 let narrow_nextafter ~precision ~min_exp x y =
-  if x <> x || y <> y then Float.nan
+  if x <> x || y <> y then Float_format.nan
   else if x = y then y
   else
     let smallest = Float.ldexp 1.0 (min_exp - precision + 1) in
@@ -841,7 +841,7 @@ let bitcast_impl new_dt operand =
   in
   let as_narrow =
     match Ndarray.dtype operand with
-    | Dtype.F32 -> fun i -> Int32.bits_of_float (value i)
+    | Dtype.F32 -> fun i -> Ndarray.f32_bits_of_float (value i)
     | Dtype.I32 | Dtype.Uint32 -> fun i -> Int64.to_int32 (word i)
     | _ -> fun _ -> 0l
   in
@@ -853,7 +853,7 @@ let bitcast_impl new_dt operand =
       Ndarray.of_int64s new_dt shape (Array.init n as_wide)
   | (Dtype.F32 | Dtype.I32 | Dtype.Uint32), Dtype.F32 ->
       Ndarray.of_floats new_dt shape
-        (Array.init n (fun i -> Int32.float_of_bits (as_narrow i)))
+        (Array.init n (fun i -> Ndarray.float_of_f32_bits (as_narrow i)))
   | (Dtype.F32 | Dtype.I32 | Dtype.Uint32), Dtype.I32 ->
       Ndarray.of_floats new_dt shape
         (Array.init n (fun i -> Int32.to_float (as_narrow i)))
@@ -1796,7 +1796,7 @@ let rec impl_base prim inputs =
       un
         (fun a ->
           if Ndarray.dtype a = Dtype.F8_e8m0fnu then
-            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float_format.nan) a
           else
             let step = small_step (Ndarray.dtype a) in
             Control_flow.Loops.cumred_impl ~axis ~reverse
@@ -1815,7 +1815,7 @@ let rec impl_base prim inputs =
       un
         (fun a ->
           if Ndarray.dtype a = Dtype.F8_e8m0fnu then
-            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float_format.nan) a
           else
             Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.max a)
         inputs
@@ -1823,7 +1823,7 @@ let rec impl_base prim inputs =
       un
         (fun a ->
           if Ndarray.dtype a = Dtype.F8_e8m0fnu then
-            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float_format.nan) a
           else
             Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.min a)
         inputs
@@ -1844,6 +1844,14 @@ let rec impl_base prim inputs =
   | Random_gamma _ ->
       failwith "lax: prng primitive handled by the random module"
   | Cholesky -> Linalg.cholesky_impl inputs
+  | Cholesky_update | Symmetric_product _ ->
+      List.map
+        (function
+          | Concrete nd -> nd
+          | Device b -> Pjrt.Buffer.to_host b
+          | Tracer _ -> failwith "lax: lowered linalg produced a tracer")
+        (!Core.lowered_linalg_hook prim
+           (List.map (fun nd -> Concrete nd) inputs))
   | Lu -> Linalg.lu_impl inputs
   | Qr full_matrices -> Linalg.qr_impl full_matrices inputs
   | Qr_pivoted full_matrices -> Linalg.qr_pivoted_impl full_matrices inputs
@@ -2378,6 +2386,11 @@ let complex_elementwise prim inputs =
   | Ne -> compare_with (fun a b -> a <> b) inputs
   | _ -> None
 
+let shape_tuple shape =
+  match Array.to_list shape with
+  | [ d ] -> Printf.sprintf "(%d,)" d
+  | ds -> "(" ^ String.concat ", " (List.map string_of_int ds) ^ ")"
+
 let linalg_core_ranks = function
   | Cholesky | Lu | Qr _ | Qr_pivoted _ | Geqrf | Eigh _ | Eig _ | Hessenberg
   | Schur _ | Svd _ | Tridiagonal _ ->
@@ -2387,6 +2400,7 @@ let linalg_core_ranks = function
   | Lu_pivots_to_permutation _ -> Some [ 1 ]
   | Triangular_solve _ -> Some [ 2; 2 ]
   | Tridiagonal_solve _ -> Some [ 1; 1; 1; 2 ]
+  | Symmetric_product _ -> Some [ 2; 2 ]
   | _ -> None
 
 let batch_prefix ranks shapes =
@@ -2793,6 +2807,45 @@ let abstract_eval prim avals =
   | Random_gamma _ ->
       failwith "lax: prng primitive handled by the random module"
   | Cholesky -> Linalg.cholesky_aval avals
+  | Cholesky_update -> (
+      match avals with
+      | [ r; w ] ->
+          let rank name (a : aval) i expected =
+            if Array.length a.shape <> expected then
+              invalid_arg
+                (Printf.sprintf
+                   "Input %d to %s must have a rank of exactly %d, but got \
+                    shape=%s"
+                   i name expected (shape_tuple a.shape))
+          in
+          rank "cholesky_update" r 0 2;
+          rank "cholesky_update" w 1 1;
+          if r.shape.(0) <> r.shape.(1) || w.shape.(0) <> r.shape.(1) then
+            invalid_arg
+              (Printf.sprintf
+                 "Rank-1 update to Cholesky decomposition takes a square \
+                  matrix and a vector of the same size as input. Got shapes %s \
+                  and %s instead"
+                 (shape_tuple r.shape) (shape_tuple w.shape));
+          [ r ]
+      | _ -> failwith "linalg: cholesky_update expects two avals")
+  | Symmetric_product _ -> (
+      match avals with
+      | [ a; c ] ->
+          let ra = Array.length a.shape and rc = Array.length c.shape in
+          if
+            ra < 2 || rc < 2
+            || a.shape.(ra - 2) <> c.shape.(rc - 1)
+            || c.shape.(rc - 2) <> c.shape.(rc - 1)
+          then
+            invalid_arg
+              (Printf.sprintf
+                 "symmetric_update expects a rectangular matrix of shape (m, \
+                  n) and a square matrix of shape (n, n). Got shapes %s and \
+                  %s."
+                 (shape_tuple a.shape) (shape_tuple c.shape));
+          [ c ]
+      | _ -> failwith "linalg: symmetric_product expects two avals")
   | Lu -> Linalg.lu_aval avals
   | Qr full_matrices -> Linalg.qr_aval full_matrices avals
   | Qr_pivoted full_matrices -> Linalg.qr_pivoted_aval full_matrices avals
@@ -2905,6 +2958,7 @@ let () = install ()
 let cond = Control_flow.Conditionals.cond
 let switch = Control_flow.Conditionals.switch
 let platform_index = Control_flow.Conditionals.platform_index
+let branch_call = Control_flow.Conditionals.branch_call
 let scan = Control_flow.Loops.scan
 let lower_scan = Control_flow.Loops.lower_scan
 let dynamic_index_in_dim = Control_flow.Loops.dynamic_index_in_dim

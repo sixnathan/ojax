@@ -48,6 +48,13 @@ SPECIAL_FNS = ["betaln", "beta", "betainc", "gammainc", "gammaincc", "xlogy",
                "xlog1py", "boxcox", "boxcox1p", "rel_entr", "kl_div",
                "polygamma", "zeta", "poch", "owens_t", "expn"]
 SPECIAL_SHAPES = [((3,), (2, 3)), ((2, 3), (3,)), ((1, 2), (4, 3, 2))]
+STATS_FNS = {
+    "norm": ["logpdf", "pdf", "cdf", "logcdf", "ppf", "sf", "logsf", "isf"],
+    "cauchy": ["logpdf", "pdf", "cdf", "logcdf", "sf", "logsf", "isf", "ppf"],
+    "logistic": ["logpdf", "pdf", "cdf", "sf", "ppf", "isf"],
+    "expon": ["logpdf", "pdf", "cdf", "logsf", "sf", "logcdf", "ppf"],
+    "uniform": ["logpdf", "pdf", "cdf", "ppf"],
+}
 FLAGS = [("nans", True, False), ("infs", False, True), ("both", True, True)]
 
 
@@ -283,6 +290,21 @@ def main():
                           "group": "rank_special", "mode": mode, "fn": fn,
                           "shapes": [list(sa), list(sb)]})
                 rows.append(r)
+    import jax.scipy.stats as jst
+    for mode in ["raise", "warn"]:
+        for dist, fns in STATS_FNS.items():
+            for fn in fns:
+                for i, (sa, sb) in enumerate(SPECIAL_SHAPES[:2]):
+                    a = jnp.asarray(operand(sa, np.float32, 0) * 0.1)
+                    b = jnp.asarray(operand(sb, np.float32, 1) * 0.05)
+                    f = getattr(getattr(jst, dist), fn)
+                    with jax.numpy_rank_promotion(mode):
+                        r = run_case(lambda f=f, a=a, b=b: f(a, b))
+                    r.update({"id": f"rank_stats_{mode}_{dist}_{fn}_{i}",
+                              "group": "rank_stats", "mode": mode,
+                              "dist": dist, "fn": fn,
+                              "shapes": [list(sa), list(sb)]})
+                    rows.append(r)
     x = jnp.asarray(np.array([-1.0, 2.0], np.float32))
     z = jnp.asarray(np.array([0.0], np.float32))
     n = jnp.asarray(np.array([np.nan], np.float32))

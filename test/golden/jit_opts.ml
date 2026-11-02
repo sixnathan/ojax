@@ -440,6 +440,64 @@ let special_fn name a b =
   | "expn" -> S.expn a b
   | other -> failwith ("jit_opts: unknown special " ^ other)
 
+let stats_fn dist fn x loc =
+  let module S = Ojax.Scipy.Stats in
+  let pick = function
+    | "logpdf" -> `Logpdf
+    | "pdf" -> `Pdf
+    | "cdf" -> `Cdf
+    | "logcdf" -> `Logcdf
+    | "ppf" -> `Ppf
+    | "sf" -> `Sf
+    | "logsf" -> `Logsf
+    | "isf" -> `Isf
+    | other -> failwith ("jit_opts: unknown stats function " ^ other)
+  in
+  match (dist, pick fn) with
+  | "norm", `Logpdf -> S.Norm.logpdf ~loc x
+  | "norm", `Pdf -> S.Norm.pdf ~loc x
+  | "norm", `Cdf -> S.Norm.cdf ~loc x
+  | "norm", `Logcdf -> S.Norm.logcdf ~loc x
+  | "norm", `Ppf -> S.Norm.ppf ~loc x
+  | "norm", `Sf -> S.Norm.sf ~loc x
+  | "norm", `Logsf -> S.Norm.logsf ~loc x
+  | "norm", `Isf -> S.Norm.isf ~loc x
+  | "cauchy", `Logpdf -> S.Cauchy.logpdf ~loc x
+  | "cauchy", `Pdf -> S.Cauchy.pdf ~loc x
+  | "cauchy", `Cdf -> S.Cauchy.cdf ~loc x
+  | "cauchy", `Logcdf -> S.Cauchy.logcdf ~loc x
+  | "cauchy", `Sf -> S.Cauchy.sf ~loc x
+  | "cauchy", `Logsf -> S.Cauchy.logsf ~loc x
+  | "cauchy", `Isf -> S.Cauchy.isf ~loc x
+  | "cauchy", `Ppf -> S.Cauchy.ppf ~loc x
+  | "logistic", `Logpdf -> S.Logistic.logpdf ~loc x
+  | "logistic", `Pdf -> S.Logistic.pdf ~loc x
+  | "logistic", `Cdf -> S.Logistic.cdf ~loc x
+  | "logistic", `Sf -> S.Logistic.sf ~loc x
+  | "logistic", `Ppf -> S.Logistic.ppf ~loc x
+  | "logistic", `Isf -> S.Logistic.isf ~loc x
+  | "expon", `Logpdf -> S.Expon.logpdf ~loc x
+  | "expon", `Pdf -> S.Expon.pdf ~loc x
+  | "expon", `Cdf -> S.Expon.cdf ~loc x
+  | "expon", `Logsf -> S.Expon.logsf ~loc x
+  | "expon", `Sf -> S.Expon.sf ~loc x
+  | "expon", `Logcdf -> S.Expon.logcdf ~loc x
+  | "expon", `Ppf -> S.Expon.ppf ~loc x
+  | "uniform", `Logpdf -> S.Uniform.logpdf ~loc x
+  | "uniform", `Pdf -> S.Uniform.pdf ~loc x
+  | "uniform", `Cdf -> S.Uniform.cdf ~loc x
+  | "uniform", `Ppf -> S.Uniform.ppf ~loc x
+  | _ -> failwith ("jit_opts: unknown stats case " ^ dist ^ "." ^ fn)
+
+let scaled shape offset factor =
+  let f32 v = Int32.float_of_bits (Int32.bits_of_float v) in
+  let factor = f32 factor in
+  let n = Array.fold_left ( * ) 1 shape in
+  T.Concrete
+    (Ojax.Ndarray.of_floats Ojax.Dtype.F32 shape
+       (Array.init n (fun i ->
+            f32 (float_of_int ((i mod 5) + 1 + offset) *. factor))))
+
 let strings j = List.map U.to_string (U.to_list j)
 
 let expected_of row =
@@ -527,6 +585,22 @@ let actual_of row =
       in
       Ojax.Config.with_value Ojax.Config.numpy_rank_promotion mode (fun () ->
           run_case (fun () -> [ special_fn fn a b ]))
+  | "rank_stats" ->
+      let dist = U.to_string (U.member "dist" row) in
+      let fn = U.to_string (U.member "fn" row) in
+      let mode = U.to_string (U.member "mode" row) in
+      let shapes =
+        List.map
+          (fun s -> Array.of_list (List.map U.to_int (U.to_list s)))
+          (U.to_list (U.member "shapes" row))
+      in
+      let a, b =
+        match shapes with
+        | [ sa; sb ] -> (scaled sa 0 0.1, scaled sb 1 0.05)
+        | _ -> failwith "jit_opts: shapes"
+      in
+      Ojax.Config.with_value Ojax.Config.numpy_rank_promotion mode (fun () ->
+          run_case (fun () -> [ stats_fn dist fn a b ]))
   | "copts" -> run_case (copts_thunk (U.to_string (U.member "case" row)))
   | "text" ->
       let thunk = text_thunk (U.to_string (U.member "case" row)) in

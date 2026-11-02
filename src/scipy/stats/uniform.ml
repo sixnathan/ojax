@@ -3,12 +3,14 @@ module NL = Numpy.Lax_numpy
 module L = Lax_api
 open Dist_util
 
-let promote3 a b c =
-  match promote [ a; b; c ] with [ a; b; c ] -> (a, b, c) | _ -> assert false
+let promote3 ?name a b c =
+  match promote ?name [ a; b; c ] with
+  | [ a; b; c ] -> (a, b, c)
+  | _ -> assert false
 
 let logpdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  let x, loc, scale = promote3 x loc scale in
+  let x, loc, scale = promote3 ~name:"uniform.logpdf" x loc scale in
   let log_probs = L.neg (L.log scale) in
   where_ninf (UF.logical_or (L.gt x (L.add loc scale)) (L.lt x loc)) log_probs
 
@@ -18,7 +20,7 @@ let pdf ?loc ?scale x =
 
 let cdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  let x, loc, scale = promote3 x loc scale in
+  let x, loc, scale = promote3 ~name:"uniform.cdf" x loc scale in
   let zero = sc x 0.0 in
   let one = sc x 1.0 in
   let conds =
@@ -34,7 +36,7 @@ let cdf ?loc ?scale x =
 let ppf ?loc ?scale q =
   let loc, scale = defaults loc scale in
   let q, loc, scale =
-    match promote_complex [ q; loc; scale ] with
+    match promote_complex ~name:"uniform.ppf" [ q; loc; scale ] with
     | [ q; loc; scale ] -> (q, loc, scale)
     | _ -> assert false
   in

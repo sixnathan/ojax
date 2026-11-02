@@ -4098,6 +4098,7 @@ fuzz/x64_on	lax_patches_1x2x6_f59c1aad_float64_shape_small	i	i
 fuzz/x64_on	lax_reciprocal_3_5b8a0ecd_float64_shape_other	i	i
 fuzz/x64_on	lax_reciprocal_3_5b8a0ecd_float64_shape_small	i	i
 fuzz/x64_on	lax_reduce_custom_2x3_dd9210b0_float64_shape_other	i	i
+fuzz/x64_on	lax_reduce_custom_2x3_dd9210b0_float64_shape_small	b	b
 fuzz/x64_on	lax_reduce_window_2x6_50951a67_float64_shape_other	i	i
 fuzz/x64_on	lax_reduce_window_2x6_50951a67_float64_shape_small	i	i
 fuzz/x64_on	lax_slice_in_dim_2x6_877a165a_float64_shape_other	i	i

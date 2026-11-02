@@ -394,12 +394,42 @@ let check_operands prim args =
   | Symmetric_product _ -> check "symmetric_product" is_float_dtype floating
   | Cholesky | Lu | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Eig _ | Eigh _ | Svd _
   | Schur _ | Hessenberg | Triangular_solve _ | Tridiagonal _
-  | Tridiagonal_solve _ ->
-      check "linalg"
-        (function
-          | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> true
-          | _ -> false)
-        "float32, float64, complex64, complex128"
+  | Tridiagonal_solve _ -> (
+      let name =
+        match prim with
+        | Cholesky -> "cholesky"
+        | Lu -> "lu"
+        | Qr _ | Qr_pivoted _ -> "qr"
+        | Geqrf -> "geqrf"
+        | Geqp3 -> "geqp3"
+        | Eig _ -> "eig"
+        | Eigh _ -> "eigh"
+        | Svd _ -> "svd"
+        | Schur _ -> "schur"
+        | Hessenberg -> "hessenberg"
+        | Triangular_solve _ -> "triangular_solve"
+        | Tridiagonal _ -> "tridiagonal"
+        | _ -> "tridiagonal_solve"
+      in
+      match args with
+      | first :: _ -> (
+          let dt =
+            match first with
+            | Concrete a -> Ndarray.dtype a
+            | Tracer t -> t.aval.dtype
+            | Device b -> Pjrt.Buffer.element_type b
+          in
+          match dt with
+          | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> ()
+          | d ->
+              raise
+                (Py_exn.Type_error
+                   (Printf.sprintf
+                      "%s does not accept dtype %s at position 0. Accepted \
+                       dtypes at position 0 are subtypes of complexfloating, \
+                       floating."
+                      name (Dtype.numpy_name d))))
+      | [] -> ())
   | Rem -> check "rem" (fun d -> not_bool d && not_complex d) real_numeric
   | Lt -> check "lt" not_complex real
   | Gt -> check "gt" not_complex real

@@ -1,4 +1,5 @@
 exception Value_error of string
+exception Mlir_error of string
 exception Type_error of string
 exception Index_error of string
 exception Key_error of string
@@ -35,6 +36,7 @@ let classify = function
   | Assertion_error m -> Some ("AssertionError", m)
   | Runtime_error m -> Some ("RuntimeError", m)
   | Zero_division_error m -> Some ("ZeroDivisionError", m)
+  | Mlir_error m -> Some ("MLIRError", m)
   | Jax_type_error m -> Some ("JAXTypeError", m)
   | Jax_index_error m -> Some ("JAXIndexError", m)
   | Concretization_type_error m -> Some ("ConcretizationTypeError", m)
@@ -59,7 +61,8 @@ let message_of e = Option.map snd (classify e)
 
 let parent = function
   | "ValueError" | "TypeError" | "LookupError" | "ArithmeticError"
-  | "AssertionError" | "RuntimeError" | "InconclusiveDimensionOperation" ->
+  | "AssertionError" | "RuntimeError" | "InconclusiveDimensionOperation"
+  | "MLIRError" ->
       Some "Exception"
   | "IndexError" | "KeyError" -> Some "LookupError"
   | "OverflowError" | "ZeroDivisionError" -> Some "ArithmeticError"

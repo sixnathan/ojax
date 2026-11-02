@@ -4690,15 +4690,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Fft { fft_type = Fft_real; fft_lengths }
     when Array.length fft_lengths > 0
          && fft_lengths.(Array.length fft_lengths - 1) = 0 ->
+      let input = atom_aval (List.hd eqn.inputs) in
       let out = sole eqn.outs in
-      failwith
-        (Printf.sprintf
-           "Cannot lower jaxpr with verifier errors:\n\
-            \ttype of return operand 0 ('%s') doesn't match function result \
-            type ('%s') in function @fft"
-           (Ir.tensor_type out.vaval.dtype
-              (Array.map (fun _ -> 0) out.vaval.shape))
-           (Ir.tensor_type_of_aval out.vaval))
+      Py_exn.value_error
+        (Validate.rfft_empty_verifier_message ~function_name:"fft"
+           ~location:"loc(unknown)"
+           ~element:(Ir.element_type out.vaval.dtype)
+           input.shape)
   | Fft { fft_type; fft_lengths } ->
       let out = sole eqn.outs in
       let n = bind_var ctx out in

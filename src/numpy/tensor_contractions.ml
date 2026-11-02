@@ -151,6 +151,26 @@ let vdot ?precision ?preferred a b =
   dot ?precision ?preferred (NL.ravel a) (NL.ravel b)
 
 let vecdot ?(axis = -1) ?precision ?preferred x1 x2 =
+  if
+    Validate.tuple_index (shape x1) axis <> Validate.tuple_index (shape x2) axis
+  then
+    Py_exn.value_error
+      (Printf.sprintf "axes must match; got shapes %s and %s with axis=%d"
+         (Validate.python_tuple (shape x1))
+         (Validate.python_tuple (shape x2))
+         axis);
+  ignore
+    (Validate.broadcast_shapes
+       [
+         Array.of_list
+           (List.filteri
+              (fun i _ -> i <> Validate.canonicalize_axis axis (ndim x1))
+              (Array.to_list (shape x1)));
+         Array.of_list
+           (List.filteri
+              (fun i _ -> i <> Validate.canonicalize_axis axis (ndim x2))
+              (Array.to_list (shape x2)));
+       ]);
   let pdt = pref preferred [ x1; x2 ] in
   let x1 = NL.moveaxis [| axis |] [| ndim x1 - 1 |] x1 in
   let x2 = NL.moveaxis [| axis |] [| ndim x2 - 1 |] x2 in
@@ -178,7 +198,13 @@ let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
     match axes with
     | Ax_int k ->
         if k > min na nb then
-          Py_exn.type_error "tensordot: number of axes exceeds input ranks";
+          Py_exn.type_error
+            (Printf.sprintf
+               "Number of tensordot axes (axes %d) exceeds input ranks (%s and \
+                %s)"
+               k
+               (Validate.python_tuple (shape a))
+               (Validate.python_tuple (shape b)));
         (Array.init k (fun i -> na - k + i), Array.init k Fun.id)
     | Ax_pair (ax1, ax2) ->
         if Array.length ax1 <> Array.length ax2 then

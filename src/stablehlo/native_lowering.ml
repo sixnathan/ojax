@@ -1072,6 +1072,10 @@ let qr_pivoted ~full_matrices a =
   let rank = Array.length dims in
   let batch = Array.sub dims 0 (rank - 2) in
   let m = dims.(rank - 2) and n = dims.(rank - 1) in
+  if m = 0 || n = 0 then
+    qr_empty ~full_matrices a
+    @ [ L.full (Array.append batch [| n |]) 0.0 Dtype.I32 ]
+  else
   let jpvt = L.full (Array.append batch [| n |]) 0.0 Dtype.I32 in
   match Core.bind Geqp3 [ a; jpvt ] with
   | [ r; p; taus ] ->

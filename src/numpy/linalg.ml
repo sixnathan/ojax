@@ -58,6 +58,9 @@ let slogdet_lu_call : (T.value list -> T.value list) ref =
 let det_call : (T.value list -> T.value list) ref =
   ref (fun _ -> invalid_arg "det: not installed")
 
+let slogdet_small_call : (T.value list -> T.value list) ref =
+  ref (fun _ -> invalid_arg "slogdet_small: not installed")
+
 let rec cholesky_body ?(upper = false) ?(symmetrize_input = true) a =
   let a = to_inexact a in
   let l = LL.cholesky ~symmetrize_input a in
@@ -294,21 +297,10 @@ and slogdet_body ?(method_ = "lu") a =
   let sa = shape a in
   let na = Array.length sa in
   let n = sa.(na - 1) in
-  if n = 1 || n = 2 then begin
-    let d =
-      if n = 1 then matrix_cell a 0 0
-      else
-        let a00 = matrix_cell a 0 0 in
-        let a01 = matrix_cell a 0 1 in
-        let a10 = matrix_cell a 1 0 in
-        let a11 = matrix_cell a 1 1 in
-        let x = UF.multiply a00 a11 in
-        UF.subtract x (UF.multiply a01 a10)
-    in
-    let magnitude = UF.abs d in
-    let sign = UF.sign d in
-    (sign, UF.log magnitude)
-  end
+  if n = 1 || n = 2 then
+    match !slogdet_small_call [ a ] with
+    | [ sign; logdet ] -> (sign, logdet)
+    | _ -> invalid_arg "slogdet: arity"
   else
     match !slogdet_lu_call [ a ] with
     | [ sign; logdet ] -> (sign, logdet)
@@ -955,6 +947,71 @@ let () =
         | _ -> invalid_arg "slogdet: arity")
   in
   slogdet_lu_call := call
+
+let slogdet_small a =
+  let n = (shape a).(ndim a - 1) in
+  let d =
+    if n = 1 then matrix_cell a 0 0
+    else
+      let a00 = matrix_cell a 0 0 in
+      let a01 = matrix_cell a 0 1 in
+      let a10 = matrix_cell a 1 0 in
+      let a11 = matrix_cell a 1 1 in
+      let x = UF.multiply a00 a11 in
+      UF.subtract x (UF.multiply a01 a10)
+  in
+  let magnitude = UF.abs d in
+  let sign = UF.sign d in
+  [ sign; UF.log magnitude ]
+
+let () =
+  slogdet_small_call :=
+    Custom_derivatives.custom_jvp ~name:"_slogdet_small"
+      ~jvp_name:"_slogdet_small_jvp"
+      (function [ a ] -> slogdet_small a | _ -> invalid_arg "slogdet: arity")
+      ~jvp:(fun primals tangents ->
+        match (primals, tangents) with
+        | [ x ], [ g ] -> (
+            let n = (shape x).(ndim x - 1) in
+            match !slogdet_small_call [ x ] with
+            | [ sign; ans ] ->
+                let ans_dot =
+                  if n = 1 then
+                    let gc = matrix_cell g 0 0 in
+                    UF.divide gc (matrix_cell x 0 0)
+                  else begin
+                    let x00 = matrix_cell x 0 0 in
+                    let x01 = matrix_cell x 0 1 in
+                    let x10 = matrix_cell x 1 0 in
+                    let x11 = matrix_cell x 1 1 in
+                    let p = UF.multiply x00 x11 in
+                    let q = UF.multiply x01 x10 in
+                    let det = UF.subtract p q in
+                    let g00 = matrix_cell g 0 0 in
+                    let t0 = UF.multiply g00 x11 in
+                    let g01 = matrix_cell g 0 1 in
+                    let t1 = UF.multiply g01 x10 in
+                    let s0 = UF.subtract t0 t1 in
+                    let g10 = matrix_cell g 1 0 in
+                    let t2 = UF.multiply g10 x01 in
+                    let s1 = UF.subtract s0 t2 in
+                    let g11 = matrix_cell g 1 1 in
+                    let t3 = UF.multiply g11 x00 in
+                    UF.divide (UF.add s1 t3) det
+                  end
+                in
+                if dtype x = D.Complex64 || dtype x = D.Complex128 then begin
+                  let re = UF.real ans_dot in
+                  let conv = NL.astype re (dtype ans_dot) in
+                  let diff = UF.subtract ans_dot conv in
+                  let sign_dot = UF.multiply diff sign in
+                  ([ sign; ans ], [ sign_dot; UF.real ans_dot ])
+                end
+                else
+                  ( [ sign; ans ],
+                    [ C.splat (dtype sign) (shape sign) 0.0; ans_dot ] )
+            | _ -> invalid_arg "slogdet: arity")
+        | _ -> invalid_arg "slogdet: arity")
 
 let cofactor_solve a b =
   let module I = Nd_index in

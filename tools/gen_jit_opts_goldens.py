@@ -168,29 +168,32 @@ def text_case(jax, jnp, name):
     return lambda: jit(f, **kw).lower(*a).as_text()
 
 
-def random_case(jax, jnp, name, arg):
+DEFAULT_SEED = 0
+
+
+def random_case(jax, jnp, name, arg, seed=DEFAULT_SEED):
     r = jax.random
     offset = arg if isinstance(arg, int) else 0
 
     def body():
         if name == "key_data":
-            return r.key_data(r.key(11))
+            return r.key_data(r.key(11 + seed))
         if name == "prng_key":
-            return r.PRNGKey(11)
+            return r.PRNGKey(11 + seed)
         if name == "uniform":
-            return r.uniform(r.key(3), (4,))
+            return r.uniform(r.key(3 + seed), (4,))
         if name == "jit_key_data":
             return jax.jit(lambda s: r.key_data(r.key(s)))(
-                jnp.asarray(np.int32(11)))
+                jnp.asarray(np.int32(11 + seed)))
         if name == "gumbel":
-            return r.gumbel(r.key(1), (5,))
+            return r.gumbel(r.key(1 + seed), (5,))
         if name == "gumbel_f64":
-            return r.gumbel(r.key(1), (5,), dtype=jnp.float64)
+            return r.gumbel(r.key(1 + seed), (5,), dtype=jnp.float64)
         if name == "categorical":
             logits = jnp.asarray(np.array([[0.1, -2.0, 3.0, 0.5],
                                            [1.0, 1.0, -30.0, 2.0]],
                                           np.float32))
-            return r.categorical(r.key(2), logits, shape=(6, 2))
+            return r.categorical(r.key(2 + seed), logits, shape=(6, 2))
         raise KeyError(name)
 
     def run():
@@ -250,6 +253,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--x64", action="store_true")
+    ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = ap.parse_args()
     import jax
     jax.config.update("jax_enable_x64", args.x64)
@@ -321,11 +325,13 @@ def main():
         prev = jax.config.jax_high_dynamic_range_gumbel
         jax.config.update("jax_high_dynamic_range_gumbel", arg == "high")
         try:
-            r = run_case(random_case(jax, jnp, name, arg))
+            r = run_case(random_case(jax, jnp, name, arg, args.seed))
         finally:
             jax.config.update("jax_high_dynamic_range_gumbel", prev)
         r.update({"id": f"random_{name}_{arg}", "group": "random",
                   "case": name, "arg": str(arg)})
+        if args.seed != DEFAULT_SEED:
+            r["seed"] = args.seed
         rows.append(r)
     for name in DONATE_RUN_CASES:
         r = run_case(donate_run_case(jax, jnp, name))

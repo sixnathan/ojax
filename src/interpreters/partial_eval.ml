@@ -76,6 +76,27 @@ let scan_rule :
 let jit_rule : (trace -> closed_jaxpr -> tracer list -> value list) ref =
   ref (fun _ _ _ -> failwith "partial_eval: jit rule not installed")
 
+let cond_rule :
+    (trace ->
+    closed_jaxpr list ->
+    string array option array option ->
+    tracer list ->
+    value list)
+    ref =
+  ref (fun _ _ _ _ -> failwith "partial_eval: cond rule not installed")
+
+let while_rule :
+    (trace ->
+    cond_nconsts:int ->
+    body_nconsts:int ->
+    closed_jaxpr ->
+    closed_jaxpr ->
+    tracer list ->
+    value list)
+    ref =
+  ref (fun _ ~cond_nconsts:_ ~body_nconsts:_ _ _ _ ->
+      failwith "partial_eval: while rule not installed")
+
 let process_primitive trace prim (args : value list) : value list =
   let tracers = List.map as_tracer args in
   let pvals = List.map pe_pval tracers in
@@ -96,6 +117,10 @@ let process_primitive trace prim (args : value list) : value list =
         !scan_rule trace ~length ~reverse ~unroll ~num_consts ~num_carry jaxpr
           tracers
     | Xla_call c -> !jit_rule trace c tracers
+    | Cond { branches; platforms } ->
+        !cond_rule trace branches platforms tracers
+    | While { cond_nconsts; body_nconsts; cond; body } ->
+        !while_rule trace ~cond_nconsts ~body_nconsts cond body tracers
     | _ -> record_unknown trace prim tracers
 
 let full_lower_pe v =
@@ -810,3 +835,286 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
     pvals_out
 
 let () = jit_rule := jit_partial_eval
+
+let known_partial (c : closed_jaxpr) (unknowns : bool list) known_args =
+  let rest = ref known_args in
+  let pvals =
+    List.map2
+      (fun (v : var) u ->
+        if u then partial_val_unknown v.vaval
+        else
+          match !rest with
+          | a :: tl ->
+              rest := tl;
+              partial_val_known a
+          | [] -> failwith "partial_eval: known arity")
+      c.jaxpr.in_binders unknowns
+  in
+  let _, _, pvals_out =
+    partial_eval_flat (fun a -> Jaxpr.eval_closed_jaxpr c a) pvals
+  in
+  pvals_out
+
+let known_avals_of (c : closed_jaxpr) unknowns =
+  List.concat
+    (List.map2
+       (fun (v : var) u -> if u then [] else [ v.vaval ])
+       c.jaxpr.in_binders unknowns)
+
+let unknown_outputs (c : closed_jaxpr) unknowns =
+  let observed = ref [] in
+  let _ =
+    Jaxpr.make_jaxpr (known_avals_of c unknowns) (fun known_args ->
+        observed := List.map is_unknown (known_partial c unknowns known_args);
+        [])
+  in
+  !observed
+
+let known_closed (c : closed_jaxpr) unknowns keep =
+  Jaxpr.make_jaxpr (known_avals_of c unknowns) (fun known_args ->
+      let pvals_out = known_partial c unknowns known_args in
+      List.concat
+        (List.map2
+           (fun pv k ->
+             if not k then []
+             else
+               match pv.pv_const with
+               | Some v -> [ v ]
+               | None -> failwith "partial_eval: expected a known while output")
+           pvals_out keep))
+
+let while_partial_eval trace ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
+    (body : closed_jaxpr) (tracers : tracer list) : value list =
+  let unknowns = List.map (fun t -> is_unknown (pe_pval t)) tracers in
+  let cond_consts_uk, body_consts_uk, carry_init_uk =
+    match Util.split_list unknowns [ cond_nconsts; body_nconsts ] with
+    | [ a; b; c ] -> (a, b, c)
+    | _ -> failwith "partial_eval: while arity"
+  in
+  let rec fixpoint carry_uk fuel =
+    let carry_out_uk =
+      List.map2 ( || ) carry_uk
+        (unknown_outputs body (body_consts_uk @ carry_uk))
+    in
+    if carry_out_uk = carry_uk then carry_uk
+    else if fuel = 0 then failwith "Fixpoint not reached"
+    else fixpoint (List.map2 ( || ) carry_uk carry_out_uk) (fuel - 1)
+  in
+  let carry_uk = fixpoint carry_init_uk (List.length carry_init_uk) in
+  let cond_uk =
+    List.exists Fun.id (unknown_outputs cond (cond_consts_uk @ carry_uk))
+  in
+  let params = While { cond_nconsts; body_nconsts; cond; body } in
+  if cond_uk || List.for_all not unknowns || List.for_all Fun.id unknowns then
+    record_unknown trace params tracers
+  else
+    let cond_known = known_closed cond (cond_consts_uk @ carry_uk) [ true ] in
+    let body_known =
+      known_closed body (body_consts_uk @ carry_uk) (List.map not carry_uk)
+    in
+    let in_consts =
+      List.concat
+        (List.map2
+           (fun uk (t : tracer) ->
+             if uk then []
+             else
+               match (pe_pval t).pv_const with
+               | Some v -> [ v ]
+               | None -> failwith "partial_eval: known while input")
+           (cond_consts_uk @ body_consts_uk @ carry_uk)
+           tracers)
+    in
+    let count_known l = List.length (List.filter not l) in
+    let out_known =
+      Core.bind
+        (While
+           {
+             cond_nconsts = count_known cond_consts_uk;
+             body_nconsts = count_known body_consts_uk;
+             cond = cond_known;
+             body = body_known;
+           })
+        in_consts
+    in
+    let all_out = record_unknown trace params tracers in
+    let k = ref out_known in
+    List.map2
+      (fun uk o ->
+        if uk then o
+        else
+          match !k with
+          | v :: tl ->
+              k := tl;
+              v
+          | [] -> failwith "partial_eval: while merge arity")
+      carry_uk all_out
+
+let () = while_rule := while_partial_eval
+
+let cond_partial_eval trace (branches : closed_jaxpr list) platforms
+    (tracers : tracer list) : value list =
+  let in_unknowns = List.map (fun t -> is_unknown (pe_pval t)) tracers in
+  match in_unknowns with
+  | [] -> failwith "partial_eval: cond arity"
+  | true :: _ -> record_unknown trace (Cond { branches; platforms }) tracers
+  | false :: ops_uk ->
+      let op_tracers = List.tl tracers in
+      let known_op_avals =
+        List.concat
+          (List.map2
+             (fun (t : tracer) u -> if u then [] else [ t.aval ])
+             op_tracers ops_uk)
+      in
+      let branch_pvals known_args =
+        let rest = ref known_args in
+        List.map2
+          (fun (t : tracer) u ->
+            if u then partial_val_unknown t.aval
+            else
+              match !rest with
+              | a :: tl ->
+                  rest := tl;
+                  partial_val_known a
+              | [] -> failwith "partial_eval: cond known arity")
+          op_tracers ops_uk
+      in
+      let branch_out_uks (branch : closed_jaxpr) =
+        let observed = ref [] in
+        let _ =
+          Jaxpr.make_jaxpr known_op_avals (fun known_args ->
+              let _, _, pvals_out =
+                partial_eval_flat
+                  (fun a -> Jaxpr.eval_closed_jaxpr branch a)
+                  (branch_pvals known_args)
+              in
+              observed := List.map is_unknown pvals_out;
+              [])
+        in
+        !observed
+      in
+      let out_uks =
+        match List.map branch_out_uks branches with
+        | [] -> []
+        | first :: others -> List.fold_left (List.map2 ( || )) first others
+      in
+      let split_branch (branch : closed_jaxpr) =
+        let holder = ref None in
+        let known =
+          Jaxpr.make_jaxpr known_op_avals (fun known_args ->
+              let jx, res, pvals_out =
+                partial_eval_flat_instantiate
+                  ~instantiate:(fun i -> List.nth out_uks i)
+                  (fun a -> Jaxpr.eval_closed_jaxpr branch a)
+                  (branch_pvals known_args)
+              in
+              let known_outs =
+                List.filter_map (fun pv -> pv.pv_const) pvals_out
+              in
+              holder := Some (jx, List.map Core.get_aval res);
+              known_outs @ res)
+        in
+        match !holder with
+        | Some (jx, res_avals) -> (known, jx, res_avals)
+        | None -> failwith "partial_eval: cond branch was not traced"
+      in
+      let splits = List.map split_branch branches in
+      let tag avals =
+        let seen = ref [] in
+        List.map
+          (fun a ->
+            let n = List.length (List.filter (fun x -> x = a) !seen) in
+            seen := a :: !seen;
+            (a, n))
+          avals
+      in
+      let tagged = List.map (fun (_, _, res) -> tag res) splits in
+      let all_res =
+        List.fold_left
+          (fun acc t ->
+            List.fold_left
+              (fun acc x -> if List.mem x acc then acc else acc @ [ x ])
+              acc t)
+          [] tagged
+      in
+      let slot_of branch_tags =
+        List.map
+          (fun slot ->
+            let rec go i = function
+              | [] -> None
+              | x :: tl -> if x = slot then Some i else go (i + 1) tl
+            in
+            go 0 branch_tags)
+          all_res
+      in
+      let slots = List.map slot_of tagged in
+      let num_known_outs = List.length (List.filter not out_uks) in
+      let branches_known =
+        List.map2
+          (fun ((known : closed_jaxpr), _, _) slot ->
+            Jaxpr.make_jaxpr known_op_avals (fun inputs ->
+                let outs, res =
+                  split_at (Jaxpr.eval_closed_jaxpr known inputs) num_known_outs
+                in
+                outs
+                @ List.map2
+                    (fun ((a : aval), _) pos ->
+                      match pos with
+                      | Some i -> List.nth res i
+                      | None ->
+                          let e = Core.bind1 (Empty2 a.dtype) [] in
+                          if Array.length a.shape = 0 then e
+                          else
+                            Core.bind1
+                              (Broadcast_in_dim { shape = a.shape; dims = [||] })
+                              [ e ])
+                    all_res slot))
+          splits slots
+      in
+      let branches_unknown =
+        List.map2
+          (fun (_, (jx : jaxpr), res) slot ->
+            let res_b, op_b = split_at jx.in_binders (List.length res) in
+            let slot_b =
+              List.map2
+                (fun ((a : aval), _) pos ->
+                  match pos with
+                  | Some i -> List.nth res_b i
+                  | None -> { vid = Core.fresh_id (); vaval = a })
+                all_res slot
+            in
+            {
+              jid = Core.fresh_id ();
+              consts = [];
+              jaxpr = { jx with in_binders = slot_b @ op_b };
+            })
+          splits slots
+      in
+      let in_consts = List.filter_map (fun t -> (pe_pval t).pv_const) tracers in
+      let out_consts_res =
+        Core.bind (Cond { branches = branches_known; platforms }) in_consts
+      in
+      let out_consts, res = split_at out_consts_res num_known_outs in
+      let unknown_ops =
+        List.concat
+          (List.map2 (fun t u -> if u then [ t ] else []) op_tracers ops_uk)
+      in
+      let res_tracers =
+        List.map (fun r -> as_tracer (Core.full_raise trace r)) res
+      in
+      let out_tracers =
+        record_unknown trace
+          (Cond { branches = branches_unknown; platforms })
+          ((List.hd tracers :: res_tracers) @ unknown_ops)
+      in
+      let k = ref out_consts and u = ref out_tracers in
+      List.map
+        (fun uk ->
+          let source = if uk then u else k in
+          match !source with
+          | v :: tl ->
+              source := tl;
+              v
+          | [] -> failwith "partial_eval: cond merge arity")
+        out_uks
+
+let () = cond_rule := cond_partial_eval

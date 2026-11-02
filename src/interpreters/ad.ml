@@ -2067,12 +2067,12 @@ let rec jvp_pairs prim primals tangents =
             observed := List.map2 ( || ) carry_nz (nz tcarry_o);
             ys_nz := nz tys;
             carry_o
-            @ keep carry_nz (List.map instantiate_traced tcarry_o)
+            @ List.map instantiate_traced (keep carry_nz tcarry_o)
             @ ys
             @ List.filter (fun t -> not (is_zero t)) tys)
       in
       let carry_nz, new_body = carry_zero_fixpoint trace_body (nz carry_t) in
-      let init_dot = keep carry_nz (List.map instantiate_traced carry_t) in
+      let init_dot = List.map instantiate_traced (keep carry_nz carry_t) in
       let consts_dot = keep const_nz consts_t in
       let out =
         Core.bind
@@ -2137,10 +2137,10 @@ let rec jvp_pairs prim primals tangents =
                 (restore bconst_nz pb tb @ restore carry_nz pc tc)
             in
             observed := List.map2 ( || ) carry_nz (nz to_);
-            po @ keep carry_nz (List.map instantiate_traced to_))
+            po @ List.map instantiate_traced (keep carry_nz to_))
       in
       let carry_nz, new_body = carry_zero_fixpoint trace_body (nz init_t) in
-      let init_dot = keep carry_nz (List.map instantiate_traced init_t) in
+      let init_dot = List.map instantiate_traced (keep carry_nz init_t) in
       let bconst_dot = keep bconst_nz bconst_t in
       let new_cond =
         {
@@ -3186,7 +3186,7 @@ let joint_branch_jvp rebuild branches primals tangents =
           (fun branch ->
             Jaxpr.make_jaxpr in_avals (fun args ->
                 let pos, tos = run branch args in
-                pos @ keep out_nzs (List.map instantiate tos)))
+                pos @ List.map instantiate (keep out_nzs tos)))
           branches
       in
       let outs =

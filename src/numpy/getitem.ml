@@ -59,7 +59,14 @@ let item_ndim = function
   | Host nd -> Array.length (Ndarray.shape nd)
   | _ -> 0
 
+let canon = function
+  | T.Concrete nd ->
+      T.Concrete
+        (Ndarray.canonicalize (Dtypes.canonicalize_dtype (Ndarray.dtype nd)) nd)
+  | v -> v
+
 let parse indices sh =
+  let indices = List.map (function Arr v -> Arr (canon v) | i -> i) indices in
   let rank = Array.length sh in
   let types = List.map index_type indices in
   let consumed =
@@ -460,12 +467,6 @@ type gather_indexer = {
 }
 
 let host_value nd = T.Concrete nd
-
-let canon = function
-  | T.Concrete nd ->
-      T.Concrete
-        (Ndarray.canonicalize (Dtypes.canonicalize_dtype (Ndarray.dtype nd)) nd)
-  | v -> v
 
 let normalize_item sh p =
   let p =

@@ -265,7 +265,8 @@ let tile_to_size v n =
   let m = size v in
   let v = if m < n then NL.tile v [| (n + m - 1) / m |] else v in
   if size v > n then
-    Getitem.take v [ Getitem.Slice { start = None; stop = Some n; step = None } ]
+    Getitem.take v
+      [ Getitem.Slice { start = None; stop = Some n; step = None } ]
   else v
 
 let identity_scatter_dims r =

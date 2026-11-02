@@ -934,8 +934,7 @@ let unravel_index indices dims =
   done;
   let oob_pos = Ufuncs.greater !cur (py 0) in
   let oob_neg =
-    if Dtypes.issubdtype (dtype !cur) `Unsigned then
-      full D.Bool [||] 0.0
+    if Dtypes.issubdtype (dtype !cur) `Unsigned then full D.Bool [||] 0.0
     else Ufuncs.less !cur (py (-1))
   in
   List.init n (fun i ->

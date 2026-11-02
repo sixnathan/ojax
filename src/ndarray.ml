@@ -48,16 +48,27 @@ let bf16_round v = round_significant ~bits:8 ~min_exp:(-126) ~max_exp:127 v
 let half_of_bits bits =
   let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
   let exponent = (bits lsr 10) land 0x1F and mantissa = bits land 0x3FF in
-  let magnitude =
-    if exponent = 0x1F then if mantissa = 0 then Float.infinity else Float.nan
-    else if exponent = 0 then Float.ldexp (float_of_int mantissa) (-24)
-    else Float.ldexp (float_of_int (mantissa + 1024)) (exponent - 25)
-  in
-  Float.copy_sign magnitude sign
+  if exponent = 0x1F && mantissa <> 0 then
+    Int64.float_of_bits
+      (Int64.logor
+         (Int64.shift_left (Int64.of_int (((bits lsr 15) lsl 11) lor 0x7FF)) 52)
+         (Int64.shift_left (Int64.of_int mantissa) 42))
+  else
+    let magnitude =
+      if exponent = 0x1F then Float.infinity
+      else if exponent = 0 then Float.ldexp (float_of_int mantissa) (-24)
+      else Float.ldexp (float_of_int (mantissa + 1024)) (exponent - 25)
+    in
+    Float.copy_sign magnitude sign
 
 let bits_of_half v =
   let sign = if Float.sign_bit v then 0x8000 else 0 in
-  if Float.is_nan v then sign lor 0x7E00
+  if Float.is_nan v then
+    sign lor 0x7C00
+    lor Int64.to_int
+          (Int64.logand
+             (Int64.shift_right_logical (Int64.bits_of_float v) 42)
+             0x3FFL)
   else if Float.abs v = Float.infinity then sign lor 0x7C00
   else if v = 0.0 then sign
   else

@@ -26,7 +26,7 @@ TRANSFORMED = ("swv_", "swg_", "swj_")
 VALUE_VARIANTS = ("edge", "wide")
 SHAPE_VARIANTS = ("shape_small", "shape_other")
 CASE_TIMEOUT = 45
-JAX_DOES_NOT_FINISH = re.compile(r"^(?:sw[gjv]?_)?(?:sx_)?(?:exp1|expi|expn)_.*_(?:edge|wide)$|^(?:sw[gjv]?_)?(?:gcd|lcm)_.*_edge$")
+JAX_DOES_NOT_FINISH = re.compile(r"^(?:sw[gjv]?_)?(?:sx_)?(?:exp1|expi|expn)_.*_(?:edge|wide)$|^(?:sw[gjv]?_)?(?:gcd|lcm)_.*_edge$|^swv_sp_gammainc_.*_edge$")
 
 
 def digest(text):

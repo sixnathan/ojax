@@ -108,13 +108,18 @@ let read_half b o =
   let bits = Bytes.get_uint16_le b o in
   let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
   let exponent = (bits lsr 10) land 0x1f and fraction = bits land 0x3ff in
-  let magnitude =
-    if exponent = 0 then Float.ldexp (float_of_int fraction) (-24)
-    else if exponent = 31 then
-      if fraction = 0 then Float.infinity else Float.nan
-    else Float.ldexp (float_of_int (fraction + 1024)) (exponent - 25)
-  in
-  sign *. magnitude
+  if exponent = 31 && fraction <> 0 then
+    Int64.float_of_bits
+      (Int64.logor
+         (Int64.shift_left (Int64.of_int (((bits lsr 15) lsl 11) lor 0x7FF)) 52)
+         (Int64.shift_left (Int64.of_int fraction) 42))
+  else
+    let magnitude =
+      if exponent = 0 then Float.ldexp (float_of_int fraction) (-24)
+      else if exponent = 31 then Float.infinity
+      else Float.ldexp (float_of_int (fraction + 1024)) (exponent - 25)
+    in
+    sign *. magnitude
 
 let read_bfloat b o =
   let bits = Bytes.get_uint16_le b o in

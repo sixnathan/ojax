@@ -151,6 +151,24 @@ let log_row ~suite name count differing largest classes =
           largest suite classes
       with Sys_error _ -> ())
 
+let dump_channel =
+  lazy
+    (Option.map
+       (open_out_gen [ Open_append; Open_creat ] 0o644)
+       (Sys.getenv_opt "OJAX_FUZZ_DUMP"))
+
+let dump name i b e actual a step =
+  match Lazy.force dump_channel with
+  | None -> ()
+  | Some oc ->
+      let hex bytes off =
+        String.concat ""
+          (List.init step (fun k ->
+               Printf.sprintf "%02x" (Bytes.get_uint8 bytes (off + step - 1 - k))))
+      in
+      Printf.fprintf oc "%s %d jax=%s ojax=%s\n%!" name i (hex b e)
+        (hex actual a)
+
 let compare_output ~suite ~name ~string_of_dtype b (m : member) nd =
   let expected_dtype = fst (Npz.elem_kind m.descr) in
   let got_dtype = string_of_dtype (Nd.dtype nd) in
@@ -180,7 +198,8 @@ let compare_output ~suite ~name ~string_of_dtype b (m : member) nd =
             classify ~dtype:expected_dtype ~width:step b e actual a
           in
           Hashtbl.replace classes cls ();
-          if rel > !largest then largest := rel
+          if rel > !largest then largest := rel;
+          dump name i b e actual a step
         end
       done;
     let names =

@@ -98,7 +98,12 @@ let get_u16 buf off =
 let half_bits v =
   let sign = if Float.sign_bit v then 0x8000 else 0 in
   let m = Float.abs v in
-  if Float.is_nan v then 0x7e00
+  if Float.is_nan v then
+    sign lor 0x7c00
+    lor Int64.to_int
+          (Int64.logand
+             (Int64.shift_right_logical (Int64.bits_of_float v) 42)
+             0x3ffL)
   else if m = Float.infinity || m >= 65536.0 then sign lor 0x7c00
   else if m = 0.0 then sign
   else
@@ -112,11 +117,17 @@ let half_bits v =
 let half_value bits =
   let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
   let exponent = (bits lsr 10) land 0x1f and fraction = bits land 0x3ff in
-  sign
-  *.
-  if exponent = 0 then Float.ldexp (float_of_int fraction) (-24)
-  else if exponent = 31 then if fraction = 0 then Float.infinity else Float.nan
-  else Float.ldexp (float_of_int (fraction + 1024)) (exponent - 25)
+  if exponent = 31 && fraction <> 0 then
+    Int64.float_of_bits
+      (Int64.logor
+         (Int64.shift_left (Int64.of_int (((bits lsr 15) lsl 11) lor 0x7FF)) 52)
+         (Int64.shift_left (Int64.of_int fraction) 42))
+  else
+    sign
+    *.
+    if exponent = 0 then Float.ldexp (float_of_int fraction) (-24)
+    else if exponent = 31 then Float.infinity
+    else Float.ldexp (float_of_int (fraction + 1024)) (exponent - 25)
 
 let bfloat_bits v =
   Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float v) 16)

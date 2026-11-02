@@ -180,7 +180,7 @@ let tagged ~unsafe v =
 
 let rbg_rule prim inputs =
   match (prim, inputs) with
-  | Random_seed tag, [ seeds ] ->
+  | Random_seed (("rbg" | "urbg") as tag), [ seeds ] ->
       Some
         [
           tagged ~unsafe:(tag = "urbg")

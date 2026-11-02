@@ -149,27 +149,27 @@ let create_buffer dtype n =
 
 let complex64_get a i =
   {
-    Complex.re = float_of_f32_bits (Array1.unsafe_get a (2 * i));
-    im = float_of_f32_bits (Array1.unsafe_get a ((2 * i) + 1));
+    Complex.re = float_of_f32_bits (Array1.get a (2 * i));
+    im = float_of_f32_bits (Array1.get a ((2 * i) + 1));
   }
 
 let complex64_set a i (z : Complex.t) =
-  Array1.unsafe_set a (2 * i) (f32_bits_of_float z.re);
-  Array1.unsafe_set a ((2 * i) + 1) (f32_bits_of_float z.im)
+  Array1.set a (2 * i) (f32_bits_of_float z.re);
+  Array1.set a ((2 * i) + 1) (f32_bits_of_float z.im)
 
 let read_float dtype data i =
   match data with
-  | Float_buf a -> Array1.unsafe_get a i
+  | Float_buf a -> Array1.get a i
   | Int32_buf a ->
-      let v = Int32.to_int (Array1.unsafe_get a i) in
+      let v = Int32.to_int (Array1.get a i) in
       if dtype = Dtype.Uint32 then float_of_int (v land uint32_mask)
       else float_of_int v
   | Int64_buf a ->
-      let v = Array1.unsafe_get a i in
+      let v = Array1.get a i in
       if dtype = Dtype.Uint64 then uint64_to_float v else Int64.to_float v
-  | Int8_buf a -> float_of_int (Array1.unsafe_get a i)
-  | Complex64_buf a -> float_of_f32_bits (Array1.unsafe_get a (2 * i))
-  | Complex128_buf a -> (Array1.unsafe_get a i).Complex.re
+  | Int8_buf a -> float_of_int (Array1.get a i)
+  | Complex64_buf a -> float_of_f32_bits (Array1.get a (2 * i))
+  | Complex128_buf a -> (Array1.get a i).Complex.re
 
 let write_float dtype data i v =
   match data with
@@ -184,7 +184,7 @@ let write_float dtype data i v =
             | Some f -> Float_format.round f v
             | None -> v)
       in
-      Array1.unsafe_set a i stored
+      Array1.set a i stored
   | Int32_buf a ->
       let stored =
         match dtype with
@@ -199,41 +199,40 @@ let write_float dtype data i v =
         | Dtype.Uint4 -> Int32.of_int (wrap_int ~bits:4 ~signed:false v)
         | _ -> Int32.of_int (wrap_int ~bits:32 ~signed:true v)
       in
-      Array1.unsafe_set a i stored
+      Array1.set a i stored
   | Int64_buf a ->
-      Array1.unsafe_set a i
+      Array1.set a i
         (if dtype = Dtype.Uint64 then uint64_of_float v else Int64.of_float v)
   | Int8_buf a ->
-      Array1.unsafe_set a i (if v = 0.0 || dtype = Dtype.Float0 then 0 else 1)
+      Array1.set a i (if v = 0.0 || dtype = Dtype.Float0 then 0 else 1)
   | Complex64_buf a -> complex64_set a i { Complex.re = v; im = 0.0 }
-  | Complex128_buf a -> Array1.unsafe_set a i { Complex.re = v; im = 0.0 }
+  | Complex128_buf a -> Array1.set a i { Complex.re = v; im = 0.0 }
 
 let read_int64 dtype data i =
   match data with
-  | Float_buf a -> Int64.of_float (Array1.unsafe_get a i)
+  | Float_buf a -> Int64.of_float (Array1.get a i)
   | Int32_buf a ->
-      let v = Int32.to_int (Array1.unsafe_get a i) in
+      let v = Int32.to_int (Array1.get a i) in
       if dtype = Dtype.Uint32 then Int64.of_int (v land uint32_mask)
       else Int64.of_int v
-  | Int64_buf a -> Array1.unsafe_get a i
-  | Int8_buf a -> Int64.of_int (Array1.unsafe_get a i)
-  | Complex64_buf a ->
-      Int64.of_float (float_of_f32_bits (Array1.unsafe_get a (2 * i)))
-  | Complex128_buf a -> Int64.of_float (Array1.unsafe_get a i).Complex.re
+  | Int64_buf a -> Array1.get a i
+  | Int8_buf a -> Int64.of_int (Array1.get a i)
+  | Complex64_buf a -> Int64.of_float (float_of_f32_bits (Array1.get a (2 * i)))
+  | Complex128_buf a -> Int64.of_float (Array1.get a i).Complex.re
 
 let read_complex data i =
   match data with
   | Complex64_buf a -> complex64_get a i
-  | Complex128_buf a -> Array1.unsafe_get a i
-  | Float_buf a -> { Complex.re = Array1.unsafe_get a i; im = 0.0 }
+  | Complex128_buf a -> Array1.get a i
+  | Float_buf a -> { Complex.re = Array1.get a i; im = 0.0 }
   | Int32_buf _ | Int64_buf _ | Int8_buf _ ->
       { Complex.re = Int64.to_float (read_int64 Dtype.I64 data i); im = 0.0 }
 
 let write_complex data i (z : Complex.t) =
   match data with
   | Complex64_buf a -> complex64_set a i z
-  | Complex128_buf a -> Array1.unsafe_set a i z
-  | Float_buf a -> Array1.unsafe_set a i z.Complex.re
+  | Complex128_buf a -> Array1.set a i z
+  | Float_buf a -> Array1.set a i z.Complex.re
   | Int32_buf _ | Int64_buf _ | Int8_buf _ ->
       write_float Dtype.I64 data i z.Complex.re
 
@@ -260,7 +259,7 @@ let of_int64s dtype shape values =
     invalid_arg "Ndarray.of_int64s: length mismatch";
   match create_buffer dtype n with
   | Int64_buf a as data ->
-      Array.iteri (fun i v -> Array1.unsafe_set a i v) values;
+      Array.iteri (fun i v -> Array1.set a i v) values;
       { dtype; shape = Array.copy shape; data; weak = false; py_value = None }
   | _ -> invalid_arg "Ndarray.of_int64s: not a 64-bit integer dtype"
 

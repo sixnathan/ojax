@@ -1500,7 +1500,7 @@ let last_index v i =
   let n = ndim v in
   if (shape v).(n - 1) = 0 then
     raise
-      (Errors.jax_index_error
+      (Errors.Jax_index_error
          (Printf.sprintf "index is out of bounds for axis %d with size 0" (n - 1)));
   squeeze_last (slice_axis v (n - 1) i (i + 1))
 
@@ -1711,7 +1711,9 @@ let take_trailing a indices =
 
 let index_at a i =
   let s = shape a in
-  if s.(0) = 0 then invalid_arg "index is out of bounds for axis 0 with size 0";
+  if s.(0) = 0 then
+    raise
+      (Errors.Jax_index_error "index is out of bounds for axis 0 with size 0");
   let i = if i < 0 then i + s.(0) else i in
   let n = Array.length s in
   let start = Array.init n (fun d -> if d = 0 then i else 0) in

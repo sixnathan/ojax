@@ -2699,10 +2699,18 @@ let abstract_eval prim avals =
         avals
   | Dynamic_slice { slice_sizes } -> (
       match avals with
-      | operand :: _ -> [ shaped slice_sizes operand.dtype operand.weak_type ]
+      | operand :: _ ->
+          [
+            shaped
+              (Slicing.dynamic_slice_shape slice_sizes operand.shape)
+              operand.dtype operand.weak_type;
+          ]
       | [] -> failwith "lax: dynamic_slice expects an operand")
   | Dynamic_update_slice -> (
       match avals with
+      | operand :: update :: _ ->
+          Slicing.dynamic_update_slice_check update.shape operand.shape;
+          [ operand ]
       | operand :: _ -> [ operand ]
       | [] -> failwith "lax: dynamic_update_slice expects an operand")
   | Gather { dimension_numbers; slice_sizes } -> (

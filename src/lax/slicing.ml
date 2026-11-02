@@ -60,6 +60,38 @@ let slice_shape start_indices limit_indices strides ishape =
       let d = limit_indices.(i) - start_indices.(i) in
       if d <= 0 then 0 else (d + strides.(i) - 1) / strides.(i))
 
+let dynamic_slice_shape slice_sizes ishape =
+  if not (array_for_all2 ( >= ) ishape slice_sizes) then
+    raise
+      (Errors.Jax_type_error
+         (Printf.sprintf
+            "slice slice_sizes must be less than or equal to operand shape, \
+             got slice_sizes %s for operand shape %s."
+            (python_tuple slice_sizes) (python_tuple ishape)));
+  if not (Array.for_all (fun s -> s >= 0) slice_sizes) then
+    raise
+      (Errors.Jax_type_error
+         (Printf.sprintf
+            "slice slice_sizes must be greater than or equal to zero, got \
+             slice_sizes of %s."
+            (python_tuple slice_sizes)));
+  slice_sizes
+
+let dynamic_update_slice_check ushape ishape =
+  let fail fmt =
+    Printf.ksprintf (fun m -> raise (Errors.Jax_type_error m)) fmt
+  in
+  if Array.length ishape <> Array.length ushape then
+    fail
+      "dynamic_update_slice update must have the same rank as operand, got \
+       update shape %s for operand shape %s."
+      (python_tuple ushape) (python_tuple ishape);
+  if not (array_for_all2 ( >= ) ishape ushape) then
+    fail
+      "dynamic_update_slice update shape must be smaller than operand shape, \
+       got update shape %s for operand shape %s."
+      (python_tuple ushape) (python_tuple ishape)
+
 let slice_impl start_indices limit_indices strides operand =
   let os = Ndarray.shape operand in
   let n = Array.length os in
@@ -86,6 +118,7 @@ let dynamic_slice_impl slice_sizes inputs =
   match inputs with
   | operand :: idx_nds ->
       let os = Ndarray.shape operand in
+      let slice_sizes = dynamic_slice_shape slice_sizes os in
       let n = Array.length os in
       let starts =
         Array.init n (fun d ->
@@ -119,6 +152,7 @@ let dynamic_update_slice_impl inputs =
   | operand :: update :: idx_nds ->
       let os = Ndarray.shape operand in
       let us = Ndarray.shape update in
+      dynamic_update_slice_check us os;
       let n = Array.length os in
       let ostr = Utils.strides os in
       let starts =

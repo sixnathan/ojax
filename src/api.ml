@@ -67,11 +67,27 @@ let keep_out_weak (cj : closed_jaxpr) results =
       | _ -> result)
     results
 
-let run_with_refs cj cells args =
+let compiled_with_options : (int, value list -> value list) Hashtbl.t =
+  Hashtbl.create 8
+
+let compile_with ?compiler_options cj =
+  match compiler_options with
+  | None | Some [] -> compile cj
+  | Some options -> (
+      match Hashtbl.find_opt compiled_with_options cj.jid with
+      | Some executable -> executable
+      | None ->
+          if Config.value Config.enable_checks then
+            Jaxpr.typecheck_jaxpr cj.jaxpr;
+          let executable = Backend.executor ~options cj in
+          Hashtbl.replace compiled_with_options cj.jid executable;
+          executable)
+
+let run_with_refs ?compiler_options cj cells args =
   if staged_under_transform cells args then Core.bind (Xla_call cj) args
   else
     let state = List.map Ref_state.read cells in
-    let outs = (compile cj) (args @ state) in
+    let outs = (compile_with ?compiler_options cj) (args @ state) in
     let n_out = List.length outs - List.length cells in
     match Util.split_list outs [ n_out ] with
     | [ results; finals ] ->
@@ -316,8 +332,9 @@ let make_jaxpr_shape ?(axis_env = []) ?(static_argnums = [])
 let make_jaxpr ?axis_env ?static_argnums f args =
   fst (make_jaxpr_shape ?axis_env ?static_argnums f args)
 
-let jit_plain (f : value Tree.t list -> value Tree.t) :
-    value Tree.t list -> value Tree.t =
+let jit_plain ?(inline = false) ?compiler_options
+    (f : value Tree.t list -> value Tree.t) : value Tree.t list -> value Tree.t
+    =
   let cache :
       ( string,
         closed_jaxpr * Ref_state.cell list * Tree.treedef * Key_reuse.signature
@@ -354,15 +371,21 @@ let jit_plain (f : value Tree.t list -> value Tree.t) :
                     (Key_reuse.instrument signature kinds
                        (Linear_util.call_wrapped flat_fun)))
             in
+            if inline then Core.mark_inline_call cj.jid;
             let entry = (cj, cells, out_tree_get (), signature) in
             Hashtbl.replace cache key entry;
             entry
       in
-      Tree.tree_unflatten out_tree
-        (check_jit_outputs ~name:"<lambda>"
-           ~rerun:(fun () -> ignore (f args))
-           (Key_reuse.call_with_signature signature flat_args (fun () ->
-                run_with_refs cj cells flat_args)))
+      if cells = [] && Core.top_is_staging flat_args then
+        Tree.tree_unflatten out_tree
+          (Key_reuse.call_with_signature signature flat_args (fun () ->
+               bind_named_call ~name:"<lambda>" cj flat_args))
+      else
+        Tree.tree_unflatten out_tree
+          (check_jit_outputs ~name:"<lambda>"
+             ~rerun:(fun () -> ignore (f args))
+             (Key_reuse.call_with_signature signature flat_args (fun () ->
+                  run_with_refs ?compiler_options cj cells flat_args)))
 
 let static_key tree =
   String.concat ","
@@ -382,7 +405,9 @@ let static_key tree =
                "Non-hashable static arguments are used in a jit function")
        (Tree.tree_leaves tree))
 
-let jit ?(static_argnums = []) f =
+let jit ?(static_argnums = []) ?donate_argnums:_ ?keep_unused:_ ?inline
+    ?compiler_options f =
+  let jit_plain = jit_plain ?inline ?compiler_options in
   if static_argnums = [] then jit_plain f
   else
     let per_key = Hashtbl.create 8 in

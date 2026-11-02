@@ -21,6 +21,10 @@ val make_jaxpr_shape :
 
 val jit :
   ?static_argnums:int list ->
+  ?donate_argnums:int list ->
+  ?keep_unused:bool ->
+  ?inline:bool ->
+  ?compiler_options:(string * Pjrt.Executable.compiler_option) list ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t

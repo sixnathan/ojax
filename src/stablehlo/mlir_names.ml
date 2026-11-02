@@ -404,6 +404,45 @@ let add_result_info ?names line =
           ^ String.concat ", " annotated
           ^ String.sub line stop (n - stop)
 
+let find_from line key from =
+  let n = String.length line and m = String.length key in
+  let rec go i =
+    if i + m > n then None
+    else if String.sub line i m = key then Some i
+    else go (i + 1)
+  in
+  go from
+
+let merge_attribute arg attr =
+  match find_from arg " {" 0 with
+  | None -> arg ^ " {" ^ attr ^ "}"
+  | Some j ->
+      let inner = String.sub arg (j + 2) (String.length arg - j - 3) in
+      let attrs = List.sort compare (attr :: split_results inner) in
+      String.sub arg 0 j ^ " {" ^ String.concat ", " attrs ^ "}"
+
+let add_arg_attributes attribute_of line =
+  let t = String.trim line in
+  if not (starts_with "func.func public @main(" t) then line
+  else
+    match (find_from line "@main(" 0, find_from line ") -> (" 0) with
+    | Some open_at, Some close_at ->
+        let start = open_at + String.length "@main(" in
+        let body = String.sub line start (close_at - start) in
+        if String.trim body = "" then line
+        else
+          let args =
+            List.mapi
+              (fun i arg ->
+                match attribute_of i with
+                | Some attr -> merge_attribute arg attr
+                | None -> arg)
+              (split_results body)
+          in
+          String.sub line 0 start ^ String.concat ", " args
+          ^ String.sub line close_at (String.length line - close_at)
+    | _ -> line
+
 let symbol_name name =
   let bare = function
     | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '$' | '.' -> true
@@ -653,7 +692,7 @@ let hoist_constants text =
   String.concat "\n" (List.rev !out)
 
 let render ?(num_partitions = 1) ?(module_attributes = []) ?result_names
-    ~module_name text =
+    ?(arg_attribute = fun _ -> None) ~module_name text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let root = snd (build_regions lines) in
   number lines root fresh_state;
@@ -661,7 +700,10 @@ let render ?(num_partitions = 1) ?(module_attributes = []) ?result_names
   apply lines out root Tbl.empty;
   let out =
     Array.map
-      (fun l -> splat_index_layouts (add_result_info ?names:result_names l))
+      (fun l ->
+        splat_index_layouts
+          (add_arg_attributes arg_attribute
+             (add_result_info ?names:result_names l)))
       out
   in
   if Array.length out > 0 && String.trim out.(0) = "module {" then

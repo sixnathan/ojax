@@ -6,6 +6,8 @@ type lowered = {
   out_avals : aval list;
   module_name : string;
   result_names : string list option;
+  keep_unused : bool;
+  donated : bool list;
 }
 
 type compiled = { run : value list -> value list; source : lowered }
@@ -72,6 +74,8 @@ let lower f avals =
     out_avals = closed_out_avals closed;
     module_name = "_lambda";
     result_names = None;
+    keep_unused = false;
+    donated = [];
   }
 
 let raw_text lowered = Stablehlo.Emit.emit_closed_jaxpr lowered.closed
@@ -84,7 +88,8 @@ let as_jax_text ?name ?result_names lowered =
     | Some _ -> result_names
     | None -> lowered.result_names
   in
-  Stablehlo.Emit.emit_jax_text ?result_names ~name lowered.closed
+  Stablehlo.Emit.emit_jax_text ~keep_unused:lowered.keep_unused
+    ~donated:lowered.donated ?result_names ~name lowered.closed
 
 let as_text lowered = as_jax_text lowered
 
@@ -111,7 +116,17 @@ let call compiled args =
 
 let cost_analysis _ = []
 
-let trace_flat ~name f args =
+let donated_leaves donate_argnums args =
+  List.concat
+    (List.mapi
+       (fun i arg ->
+         List.map
+           (fun _ -> List.mem i donate_argnums)
+           (Tree_util.tree_leaves arg))
+       args)
+
+let trace_flat ?(donate_argnums = []) ?(keep_unused = false) ~name f args =
+  let donated = donated_leaves donate_argnums args in
   let flat_args, in_tree = Tree_util.tree_flatten (Tree_util.Tuple args) in
   let in_avals = List.map Core.get_aval flat_args in
   let flat_fun, out_tree_get = Api_util.flatten_fun f in_tree in
@@ -134,26 +149,30 @@ let trace_flat ~name f args =
     fun_name = name;
     args_info =
       Tree_util.tree_unflatten in_tree
-        (List.map (fun a -> { arg_aval = a; donated = false }) in_avals);
+        (List.map2 (fun a d -> { arg_aval = a; donated = d }) in_avals donated);
     in_tree;
     out_tree;
     out_avals = Tree_util.tree_unflatten out_tree out_flat;
     call = call_args;
     trace_lower =
       (fun () ->
+        Stablehlo.Emit.warn_unusable_donations ~keep_unused ~donated closed;
         {
           closed;
           in_avals;
           out_avals = out_flat;
           module_name = (if name = "<fun>" then "_lambda" else name);
           result_names = Some (result_names_of_tree out_tree);
+          keep_unused;
+          donated;
         });
   }
 
-let jit ?(name = "<fun>") f =
-  let trace args = trace_flat ~name f args in
+let jit ?(name = "<fun>") ?donate_argnums ?keep_unused ?inline ?compiler_options
+    f =
+  let trace args = trace_flat ?donate_argnums ?keep_unused ~name f args in
   {
-    apply = Api.jit f;
+    apply = Api.jit ?donate_argnums ?keep_unused ?inline ?compiler_options f;
     trace;
     wrapped_lower = (fun args -> (trace args).trace_lower ());
   }

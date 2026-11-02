@@ -156,6 +156,126 @@ let special_thunk name =
         [ L.div (i 1.0) (i 0.0) ]
   | other -> failwith ("jit_opts: unknown case " ^ other)
 
+let py_float x =
+  Ojax.Core.py_scalar
+    (if Ojax.Config.x64_enabled () then Ojax.Dtype.F64 else Ojax.Dtype.F32)
+    x
+
+let leaves_of = function
+  | Ojax.Tree_util.Tuple l -> List.map (fun t -> Ojax.Tree_util.tree_leaves t) l
+  | t -> [ Ojax.Tree_util.tree_leaves t ]
+
+let two f = function
+  | [ Ojax.Tree_util.Leaf a; Ojax.Tree_util.Leaf b ] -> f a b
+  | _ -> failwith "jit_opts: arity"
+
+let one f = function
+  | [ Ojax.Tree_util.Leaf a ] -> f a
+  | _ -> failwith "jit_opts: arity"
+
+let ones shape =
+  T.Concrete
+    (Ojax.Ndarray.of_floats Ojax.Dtype.F32 shape
+       (Array.make (Array.fold_left ( * ) 1 shape) 1.0))
+
+let pair a b = Ojax.Tree_util.Tuple [ leaf a; leaf b ]
+
+let lowered_text ?donate_argnums ?keep_unused f args =
+  let wrapped = Ojax.Stages.jit ?donate_argnums ?keep_unused f in
+  Ojax.Stages.as_text (wrapped.Ojax.Stages.wrapped_lower (List.map leaf args))
+
+let inner_sin ?inline () = Ojax.Api.jit ?inline (one (fun b -> leaf (F.sin b)))
+
+let text_thunk name =
+  ignore leaves_of;
+  let x3 = ones [| 3 |] and y2 = ones [| 2 |] and m23 = ones [| 2; 3 |] in
+  let two_f = two and mul2 a = F.multiply a (py_float 2.0) in
+  match name with
+  | "don_mul" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 0 ]
+          (two_f (fun a _ -> leaf (mul2 a)))
+          [ x3; y2 ]
+  | "keep_unused" ->
+      fun () ->
+        lowered_text ~keep_unused:true
+          (two_f (fun a _ -> leaf (mul2 a)))
+          [ x3; y2 ]
+  | "don_pair" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 0; 1 ]
+          (two_f (fun a b -> pair (mul2 a) (F.add b (py_float 1.0))))
+          [ x3; y2 ]
+  | "don_sum" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 0; 1 ]
+          (two_f (fun a _ -> leaf (Ojax.Numpy.Reductions.sum a)))
+          [ x3; y2 ]
+  | "don_reshape" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 0 ]
+          (one (fun a -> leaf (Ojax.Numpy.Lax_numpy.reshape a [| 6 |])))
+          [ m23 ]
+  | "don_astype" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 0 ]
+          (one (fun a -> leaf (Ojax.Numpy.Lax_numpy.astype a Ojax.Dtype.I32)))
+          [ m23 ]
+  | "don_weak" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 0; 1 ]
+          (two_f (fun a s -> leaf (F.multiply a s)))
+          [ y2; py_float 2.0 ]
+  | "don_swap" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 0 ]
+          (two_f (fun a b -> pair b a))
+          [ y2; y2 ]
+  | "don_dup" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 0; 1 ]
+          (two_f (fun a _ -> pair a a))
+          [ y2; y2 ]
+  | "keep_don" ->
+      fun () ->
+        lowered_text ~donate_argnums:[ 1 ] ~keep_unused:true
+          (two_f (fun a _ -> leaf a))
+          [ y2; y2 ]
+  | "keep_unused_none" ->
+      fun () ->
+        lowered_text ~keep_unused:false
+          (two_f (fun a _ -> leaf (F.add a (py_float 1.0))))
+          [ y2; x3 ]
+  | "don_none" ->
+      fun () ->
+        lowered_text ~donate_argnums:[]
+          (two_f (fun a b -> leaf (F.add a b)))
+          [ y2; y2 ]
+  | "inline_lowered" | "noinline_lowered" ->
+      let inline = name = "inline_lowered" in
+      fun () ->
+        lowered_text
+          (one (fun a ->
+               match
+                 Ojax.Tree_util.tree_leaves (inner_sin ~inline () [ leaf a ])
+               with
+               | [ r ] -> leaf (F.add r (py_float 1.0))
+               | _ -> failwith "jit_opts: arity"))
+          [ x3 ]
+  | "inline_jaxpr" | "noinline_jaxpr" ->
+      let inline = name = "inline_jaxpr" in
+      fun () ->
+        Ojax.Pretty_printer.closed_jaxpr_to_jax_string
+          (Ojax.Api.make_jaxpr
+             (one (fun a ->
+                  match
+                    Ojax.Tree_util.tree_leaves (inner_sin ~inline () [ leaf a ])
+                  with
+                  | [ r ] -> leaf (F.add r (py_float 1.0))
+                  | _ -> failwith "jit_opts: arity"))
+             [ leaf x3 ])
+  | other -> failwith ("jit_opts: unknown text case " ^ other)
+
 let strings j = List.map U.to_string (U.to_list j)
 
 let expected_of row =
@@ -164,7 +284,8 @@ let expected_of row =
   {
     kind;
     cls = str "class";
-    message = str "message";
+    message =
+      (if kind = "ok" && str "group" = "text" then str "text" else str "message");
     outs =
       (match U.member "outs" row with
       | `List l ->
@@ -217,6 +338,15 @@ let actual_of row =
       Ojax.Config.with_value Ojax.Config.debug_nans nans (fun () ->
           Ojax.Config.with_value Ojax.Config.debug_infs infs (fun () ->
               run_case thunk))
+  | "text" ->
+      let thunk = text_thunk (U.to_string (U.member "case" row)) in
+      let text = ref "" in
+      let r =
+        run_case (fun () ->
+            text := thunk ();
+            [])
+      in
+      { r with message = (if r.kind = "ok" then !text else r.message) }
   | g -> failwith ("jit_opts: unknown group " ^ g)
 
 let same_main e a =

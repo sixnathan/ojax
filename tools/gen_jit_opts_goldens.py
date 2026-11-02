@@ -26,6 +26,12 @@ NAN_CASES = [
     "jit_pair_nan", "jit_nested_log", "jit_div_one_zero", "jit_clean",
     "eager_int_div",
 ]
+TEXT_CASES = [
+    "don_mul", "keep_unused", "don_pair", "don_sum", "don_reshape",
+    "don_astype", "don_weak", "don_swap", "don_dup", "keep_don",
+    "keep_unused_none", "don_none", "inline_lowered", "noinline_lowered",
+    "inline_jaxpr", "noinline_jaxpr",
+]
 FLAGS = [("nans", True, False), ("infs", False, True), ("both", True, True)]
 
 
@@ -83,6 +89,48 @@ def nan_thunk(jax, jnp, lax, name, x, z, n, one):
     return table[name]
 
 
+def text_case(jax, jnp, name):
+    x3 = jnp.ones((3,), jnp.float32)
+    y2 = jnp.ones((2,), jnp.float32)
+    m23 = jnp.ones((2, 3), jnp.float32)
+    jit = jax.jit
+    table = {
+        "don_mul": (lambda a, b: a * 2.0, (x3, y2), dict(donate_argnums=(0,))),
+        "keep_unused": (lambda a, b: a * 2.0, (x3, y2),
+                        dict(keep_unused=True)),
+        "don_pair": (lambda a, b: (a * 2.0, b + 1.0), (x3, y2),
+                     dict(donate_argnums=(0, 1))),
+        "don_sum": (lambda a, b: jnp.sum(a), (x3, y2),
+                    dict(donate_argnums=(0, 1))),
+        "don_reshape": (lambda a: a.reshape(6), (m23,),
+                        dict(donate_argnums=(0,))),
+        "don_astype": (lambda a: a.astype(jnp.int32), (m23,),
+                       dict(donate_argnums=(0,))),
+        "don_weak": (lambda a, s: a * s, (y2, 2.0),
+                     dict(donate_argnums=(0, 1))),
+        "don_swap": (lambda a, b: (b, a), (y2, y2), dict(donate_argnums=(0,))),
+        "don_dup": (lambda a, b: (a, a), (y2, y2),
+                    dict(donate_argnums=(0, 1))),
+        "keep_don": (lambda a, b: a, (y2, y2),
+                     dict(donate_argnums=(1,), keep_unused=True)),
+        "keep_unused_none": (lambda a, b: a + 1.0, (y2, x3),
+                             dict(keep_unused=False)),
+        "don_none": (lambda a, b: a + b, (y2, y2), dict(donate_argnums=())),
+        "inline_lowered": (lambda a: jit(lambda b: jnp.sin(b), inline=True)(a)
+                           + 1.0, (x3,), {}),
+        "noinline_lowered": (lambda a: jit(lambda b: jnp.sin(b))(a) + 1.0,
+                             (x3,), {}),
+    }
+    if name == "inline_jaxpr":
+        return lambda: str(jax.make_jaxpr(
+            lambda a: jit(lambda b: jnp.sin(b), inline=True)(a) + 1.0)(x3))
+    if name == "noinline_jaxpr":
+        return lambda: str(jax.make_jaxpr(
+            lambda a: jit(lambda b: jnp.sin(b))(a) + 1.0)(x3))
+    f, a, kw = table[name]
+    return lambda: jit(f, **kw).lower(*a).as_text()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -120,6 +168,17 @@ def main():
             r.update({"id": f"special_{flag}_{name}", "group": "special",
                       "flag": flag, "case": name})
             rows.append(r)
+    for name in TEXT_CASES:
+        thunk = text_case(jax, jnp, name)
+        holder = {}
+
+        def run():
+            holder["text"] = thunk()
+            return []
+        r = run_case(run)
+        r.update({"id": f"text_{name}", "group": "text", "case": name,
+                  "text": holder.get("text", "")})
+        rows.append(r)
     with open(args.out, "w") as fh:
         json.dump({"jax": jax.__version__, "x64": args.x64, "rows": rows},
                   fh, indent=1, sort_keys=True)

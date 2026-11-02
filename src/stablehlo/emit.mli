@@ -14,10 +14,23 @@ val emitting : unit -> bool
 type lowered = { text : string; kept : int list }
 
 val lower :
-  ?result_names:string list -> name:string -> Types.closed_jaxpr -> lowered
+  ?keep_unused:bool ->
+  ?donated:bool list ->
+  ?result_names:string list ->
+  name:string ->
+  Types.closed_jaxpr ->
+  lowered
+
+val warn_unusable_donations :
+  ?keep_unused:bool -> donated:bool list -> Types.closed_jaxpr -> unit
 
 val emit_jax_text :
-  ?result_names:string list -> name:string -> Types.closed_jaxpr -> string
+  ?keep_unused:bool ->
+  ?donated:bool list ->
+  ?result_names:string list ->
+  name:string ->
+  Types.closed_jaxpr ->
+  string
 
 val lower_partitioned :
   name:string -> partition -> Types.closed_jaxpr -> lowered

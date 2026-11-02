@@ -879,12 +879,19 @@ let checkpoint ?policy ?(prevent_cse = true) f =
         in
         let chosen = Option.value policy ~default:nothing_saveable in
         match hoisted with
-        | [] ->
+        | [] when traced.consts = [] ->
             let id =
               remat_id ~cfg:{ policy; prevent_cse } ~differentiated:false traced
             in
             Hashtbl.replace closed_rules avals id;
             Core.bind (Custom_jvp_call id) args
+        | [] ->
+            let consts = List.map (fun nd -> Concrete nd) traced.consts in
+            let id =
+              remat_id ~cfg:{ policy; prevent_cse } ~differentiated:false
+                { traced with consts = [] }
+            in
+            Core.bind (Custom_jvp_call id) (consts @ args)
         | _ ->
             let hoisted_avals = List.map Core.get_aval hoisted in
             let id =
@@ -902,8 +909,21 @@ let saved_residuals f args =
   in
   let jx = traced.jaxpr in
   let n_const = List.length traced.consts in
+  let subst = Hashtbl.create 16 in
+  List.iter
+    (fun (e : eqn) ->
+      match (e.prim, e.outs, e.inputs) with
+      | Reduce_precision _, [ o ], [ A_var i ] ->
+          Hashtbl.replace subst o.vid i.vid
+      | _ -> ())
+    jx.eqns;
   let wanted = Hashtbl.create 16 in
-  List.iter (fun vid -> Hashtbl.replace wanted vid ()) (atom_vars jx.outs);
+  List.iter
+    (fun vid ->
+      Hashtbl.replace wanted
+        (Option.value (Hashtbl.find_opt subst vid) ~default:vid)
+        ())
+    (atom_vars jx.outs);
   let literals =
     List.filter_map
       (function

@@ -103,7 +103,7 @@ let vjp_grad_of_vmap () =
 let vjp_forward_raises () =
   match Ad.jvp clipped [ scalar 2.0 ] [ scalar 1.0 ] with
   | _ -> Alcotest.fail "expected forward mode to raise"
-  | exception Failure msg ->
+  | exception Ojax.Py_exn.Type_error msg ->
       Alcotest.(check string)
         "message"
         "can't apply forward-mode autodiff (jvp) to a custom_vjp function." msg

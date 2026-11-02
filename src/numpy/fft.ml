@@ -74,10 +74,6 @@ let moveaxis source destination v =
 let python_list items =
   "[" ^ String.concat ", " (List.map string_of_int items) ^ "]"
 
-let python_tuple = function
-  | [ x ] -> Printf.sprintf "(%d,)" x
-  | items -> "(" ^ String.concat ", " (List.map string_of_int items) ^ ")"
-
 let range lo hi = List.init (max 0 (hi - lo)) (fun i -> lo + i)
 
 let lax_fft kind sizes v =
@@ -178,7 +174,7 @@ let fft_core name kind ~inverse ?s ?axes ?norm a =
     Py_exn.value_error
       (Printf.sprintf
          "jax.numpy.fft.%s does not support repeated axes. Got axes %s." name
-         (python_tuple given_axes));
+         (python_list given_axes));
   let inner_axes =
     match axes with
     | Some ax -> range (ndim - List.length ax) ndim

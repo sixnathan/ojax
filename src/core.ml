@@ -590,6 +590,7 @@ let check_same_dtypes prim args =
             | Tracer t -> t.aval.dtype
             | Device b -> Pjrt.Buffer.element_type b)
           args
+        |> List.map Dtypes.canonicalize_dtype
       in
       let first = List.hd dtypes in
       if List.exists (fun d -> d <> first) dtypes then

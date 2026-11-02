@@ -17,6 +17,6 @@ val array2string :
   Ndarray.t ->
   string
 
-val array_repr : ?options:options -> Ndarray.t -> string
+val array_repr : ?options:options -> ?weak_type:bool -> Ndarray.t -> string
 val array_str : ?options:options -> Ndarray.t -> string
 val numpy_array_repr : ?options:options -> Ndarray.t -> string

@@ -412,12 +412,31 @@ let verifier_diagnostic reason =
     | _ -> None
   else None
 
+let custom_call_diagnostic reason =
+  let line =
+    match String.index_opt reason '\n' with
+    | Some i -> String.sub reason 0 i
+    | None -> reason
+  in
+  let marker = ": error: 'stablehlo.custom_call' op " in
+  let n = String.length marker in
+  let rec find i =
+    if i + n > String.length line then None
+    else if String.sub line i n = marker then
+      Some (String.sub line (i + n) (String.length line - i - n))
+    else find (i + 1)
+  in
+  if String.starts_with ~prefix:"-:" line then find 0 else None
+
 let compile_failure reason =
-  match verifier_diagnostic reason with
-  | Some message ->
+  match (verifier_diagnostic reason, custom_call_diagnostic reason) with
+  | Some message, _ ->
       Py_exn.value_error
-        ("Cannot lower jaxpr with verifier errors:\n\t" ^ message)
-  | None -> runtime_error reason
+        ("Cannot lower jaxpr with verifier errors:\n\t" ^ message
+       ^ "\nDefine JAX_DUMP_IR_TO to dump the module.")
+  | None, Some message ->
+      runtime_error ("UNKNOWN: error: 'stablehlo.custom_call' op " ^ message)
+  | None, None -> runtime_error reason
 
 let guard_implicit_args args =
   List.iter
@@ -1226,6 +1245,15 @@ let output_matches outs avals_out =
          | Device _ | Tracer _ -> false)
        outs avals_out
 
+let with_weak outs avals_out =
+  List.map2
+    (fun out (aval : aval) ->
+      match out with
+      | Concrete nd when aval.weak_type && not (Ndarray.weak nd) ->
+          Concrete (Ndarray.as_weak nd)
+      | _ -> out)
+    outs avals_out
+
 let eager_eval prim args =
   if eager_runs_impl prim || Stablehlo.Emit.emitting () || not (use_xla ()) then
     None
@@ -1237,7 +1265,7 @@ let eager_eval prim args =
         match xla_run exec (select_kept kept args) false with
         | outs when output_matches outs avals_out ->
             incr eager_executions;
-            Some outs
+            Some (with_weak outs avals_out)
         | _ ->
             note_eager_fallback prim "compiled output type differs";
             None)
@@ -1385,7 +1413,7 @@ and jitted_eval (name, statics) f args =
         match xla_run exec (select_kept kept args) false with
         | outs when output_matches outs wanted ->
             incr eager_executions;
-            outs
+            with_weak outs wanted
         | _ -> f args)
 
 let () =

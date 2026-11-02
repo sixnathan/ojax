@@ -65,7 +65,12 @@ let resolve_prng_impl = function
   | None -> TF.threefry_prng_impl
   | Some "threefry2x32" -> TF.threefry_prng_impl
   | Some (("rbg" | "unsafe_rbg") as name) ->
-      { TF.threefry_prng_impl with PR.name; key_shape = [| 4 |] }
+      {
+        TF.threefry_prng_impl with
+        PR.name;
+        key_shape = [| 4 |];
+        tag = (if name = "rbg" then "rbg" else "urbg");
+      }
   | Some name ->
       raise
         (Py_exn.Value_error
@@ -86,14 +91,65 @@ let resolve_key_spec name impl dtype =
     | None, Some d -> Some d
     | given, None -> given
   in
-  ignore (resolve_prng_impl spec)
+  ignore (resolve_prng_impl spec);
+  spec
 
 let key_impl keys =
   if not (PR.is_rbg_key keys) then TF.threefry_prng_impl.PR.name
   else if Rbg.is_unsafe keys then "unsafe_rbg"
   else "rbg"
 
-let key_dtype _impl_spec = D.Uint32
+type key_dtype = { impl_name : string; tag : string; key_shape : int array }
+
+let key_dtype_of_impl (impl : PR.prng_impl) =
+  { impl_name = impl.PR.name; tag = impl.PR.tag; key_shape = impl.PR.key_shape }
+
+let key_dtype impl_spec = key_dtype_of_impl (resolve_prng_impl impl_spec)
+let key_dtype_name d = "key<" ^ d.tag ^ ">"
+let key_dtype_itemsize d = prod d.key_shape * 4
+
+let impl_functions = function
+  | "rbg" -> ("_rbg_seed", "_rbg_split", "_rbg_random_bits", "_rbg_fold_in")
+  | "unsafe_rbg" ->
+      ( "_rbg_seed",
+        "_unsafe_rbg_split",
+        "_rbg_random_bits",
+        "_unsafe_rbg_fold_in" )
+  | _ ->
+      ( "threefry_seed",
+        "threefry_split",
+        "threefry_random_bits",
+        "threefry_fold_in" )
+
+let tuple_repr sh =
+  match Array.to_list sh with
+  | [ d ] -> Printf.sprintf "(%d,)" d
+  | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
+
+let impl_repr d =
+  let seed, split, bits, fold_in = impl_functions d.impl_name in
+  Printf.sprintf
+    "PRNGImpl(key_shape=%s, seed=<function %s>, split=<function %s>, \
+     random_bits=<function %s>, fold_in=<function %s>, name='%s', tag='%s')"
+    (tuple_repr d.key_shape) seed split bits fold_in d.impl_name d.tag
+
+let check_prng_key_data d data =
+  let a = C.get_aval data in
+  let ndim = Array.length d.key_shape in
+  let n = Array.length a.shape in
+  let invalid msg =
+    raise (Py_exn.Type_error ("JAX encountered invalid PRNG key data: " ^ msg))
+  in
+  if n < 1 then
+    invalid (Printf.sprintf "expected key_data.ndim >= 1; got ndim=%d" n);
+  if n < ndim || Array.sub a.shape (n - ndim) ndim <> d.key_shape then
+    invalid
+      (Printf.sprintf
+         "expected key_data.shape to end with %s; got shape=%s for impl=%s"
+         (tuple_repr d.key_shape) (tuple_repr a.shape) (impl_repr d));
+  if a.dtype <> D.Uint32 && a.dtype <> D.Float0 then
+    invalid
+      ("expected key_data.dtype = uint32; got dtype=" ^ D.numpy_name a.dtype)
 
 let copy_nd nd =
   let shape = Nd.shape nd in
@@ -107,7 +163,7 @@ let raw_copy = function
   | Tracer _ as v -> C.bind1 Copy [ v ]
 
 let key ?impl ?dtype seed =
-  resolve_key_spec "key" impl dtype;
+  ignore (resolve_key_spec "key" impl dtype);
   let impl = match dtype with Some _ -> dtype | None -> impl in
   match (resolve_prng_impl impl).PR.name with
   | "rbg" -> PR.random_seed ~impl:"rbg" seed
@@ -117,8 +173,17 @@ let key ?impl ?dtype seed =
 let key_data keys = Key_reuse.suspended (fun () -> raw_copy (unwrap keys))
 
 let wrap_key_data ?impl ?dtype data =
-  resolve_key_spec "wrap_key_data" impl dtype;
-  Key_reuse.mark_typed (Key_reuse.suspended (fun () -> raw_copy (wrap data)))
+  let d = key_dtype (resolve_key_spec "wrap_key_data" impl dtype) in
+  check_prng_key_data d data;
+  match data with
+  | Tracer _ when d.impl_name = "threefry2x32" ->
+      Key_reuse.mark_typed (PR.random_wrap data)
+  | _ -> (
+      let copy = Key_reuse.suspended (fun () -> raw_copy (wrap data)) in
+      match (d.impl_name, copy) with
+      | "rbg", _ -> copy
+      | "unsafe_rbg", Concrete nd -> Concrete (Nd.as_weak nd)
+      | _ -> Key_reuse.mark_typed copy)
 
 let clone k = Key_reuse.mark_typed (Key_reuse.suspended (fun () -> raw_copy k))
 
@@ -1967,3 +2032,29 @@ let categorical_full ?axis ?shape ?replace ?mode k logits =
 
 let multinomial_full ?shape ?dtype ?unroll k ~n ~p =
   sampler k (fun () -> multinomial_full ?shape ?dtype ?unroll k ~n ~p)
+
+let dtype_of_key k = key_dtype (Some (key_impl k))
+
+let key_shape k =
+  let d = dtype_of_key k in
+  let s = (C.get_aval k).shape in
+  Array.sub s 0 (Array.length s - Array.length d.key_shape)
+
+let key_size k = prod (key_shape k)
+let key_ndim k = Array.length (key_shape k)
+let key_itemsize k = key_dtype_itemsize (dtype_of_key k)
+let key_nbytes k = key_itemsize k * key_size k
+
+let key_repr k =
+  let d = dtype_of_key k in
+  Printf.sprintf "Array(%s, dtype=%s) overlaying:\n%s"
+    (tuple_repr (key_shape k))
+    (key_dtype_name d)
+    (Numpy.Extras.array_str_jax (key_data k))
+
+let key_typeof k =
+  Validate.aval_short
+    ~dtype_name:(key_dtype_name (dtype_of_key k))
+    ~weak:false (key_shape k)
+
+let key_dtype_class d = NL.Ckey d.tag

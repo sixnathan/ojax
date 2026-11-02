@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 
+import jax_defects
 import row_ratchet
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -128,6 +129,8 @@ def row_classes(log):
                 group = "fuzz_s2_error_text"
             elif suite.startswith("compose_fuzz:"):
                 group = "compose_fuzz"
+            elif suite.startswith("text_compose_fuzz:"):
+                group = "compose_fuzz_error_text"
             elif suite.startswith("custom_ad:"):
                 group = "custom_ad"
             else:
@@ -157,6 +160,7 @@ def print_row_classes(log):
         "option_fuzz_error_text",
         "fuzz_error_text",
         "fuzz_s2_error_text",
+        "compose_fuzz_error_text",
     ):
         c = groups.get(name)
         if c:
@@ -352,7 +356,7 @@ def main():
     option_rows = [s for s in totals if s.startswith(("option_fuzz:", "text_option_fuzz:", "option_pinned:", "text_option_pinned:"))]
     composed = [s for s in totals if s.startswith("compose_fuzz:")]
     custom = [s for s in totals if s.startswith("custom_ad:")]
-    message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:"))]
+    message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:", "text_compose_fuzz:"))]
     uncounted = (
         set(shadow) | set(second_seed) | set(option_rows) | set(composed) | set(custom) | set(message_rows) | {"compare", "ratchet_selftest"}
     )
@@ -360,6 +364,7 @@ def main():
     rows = sum(n for s, n in totals.items() if s not in uncounted)
     raw_identical = sum(n for s, n in counts.items() if s.startswith("raw:") and s[4:] not in uncounted)
     print_row_classes(log)
+    jax_defects.report(root, log)
     if second_seed:
         print(f"fuzz_s2, not in the totals below: {sum(counts[s] for s in second_seed)}/{sum(totals[s] for s in second_seed)} bit-identical, {sum(counts['raw:' + s] for s in second_seed)} in raw bytes")
     for s in sorted(option_rows):

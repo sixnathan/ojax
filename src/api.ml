@@ -1250,6 +1250,12 @@ let pure_callback host_fun ~result_avals args =
   Custom_derivatives.pure_callback host_fun ~result_avals args
 
 let typeof v = Core.get_aval v
+
+let typeof_text v =
+  let a = Core.get_aval v in
+  Validate.aval_short ~dtype_name:(Dtype.numpy_name a.dtype) ~weak:a.weak_type
+    a.shape
+
 let effects_barrier () = ()
 let copy_to_host_async x = x
 

@@ -73,3 +73,23 @@ val or_ : Types.value -> Types.value -> Types.value
 val xor : Types.value -> Types.value -> Types.value
 val lshift : Types.value -> Types.value -> Types.value
 val rshift : Types.value -> Types.value -> Types.value
+val view : Types.value -> Dtype.t -> Types.value
+val byteswap : Types.value -> Types.value
+
+type py_scalar =
+  | Py_bool of bool
+  | Py_int of string
+  | Py_float of float
+  | Py_complex of Complex.t
+
+type py_list = Py_item of py_scalar | Py_list of py_list list
+
+val item : ?args:int list -> Types.value -> py_scalar
+val tolist : Types.value -> py_list
+val tobytes : Types.value -> string
+val itemsize : Types.value -> int
+val nbytes : Types.value -> int
+val flat : Types.value -> 'a
+val float_repr : ?dot0:bool -> float -> string
+val py_scalar_repr : py_scalar -> string
+val py_list_repr : py_list -> string

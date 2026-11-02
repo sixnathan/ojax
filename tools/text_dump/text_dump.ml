@@ -85,9 +85,16 @@ let parity_case ?(run = Parity_cases.run_cases) oc ~set case =
     in
     go names args
   in
-  record
-    ?result_names:(Parity_cases.result_names op)
-    oc ~set
+  let result_names =
+    match op with
+    | "ap_indices_sparse" ->
+        Some
+          (List.init
+             (List.length (U.to_list (U.member "dims" params)))
+             (Printf.sprintf "result[%d]"))
+    | _ -> Parity_cases.result_names op
+  in
+  record ?result_names oc ~set
     ~case:(U.to_string (U.member "case_id" case))
     (fun () ->
       Ojax.Jaxpr.with_trace_debug
@@ -276,7 +283,14 @@ let verdict reference ours field =
   | a, Some b when a <> `Null && a = b -> "i"
   | _ -> "-"
 
-let check_text_baseline ~path ~references ~ours =
+let error_verdict reference ours field =
+  match (U.member field reference, Option.map (U.member field) ours) with
+  | `Null, _ -> "n"
+  | a, Some b when a = b -> "i"
+  | _ -> "-"
+
+let check_text_baseline ?(fields = [ ("text", verdict); ("jaxpr", verdict) ])
+    ~path ~references ~ours () =
   let failures = ref [] in
   In_channel.with_open_text path (fun ic ->
       let rec go () =
@@ -284,10 +298,11 @@ let check_text_baseline ~path ~references ~ours =
         | None -> ()
         | Some line ->
             (match String.split_on_char '\t' line with
-            | [ set; case; text; jaxpr ] ->
+            | set :: case :: wanted when List.length wanted = List.length fields
+              ->
                 let got = Hashtbl.find_opt ours (set, case) in
-                let check field wanted =
-                  if wanted <> "-" then
+                let check (field, verdict) wanted =
+                  if wanted <> "-" && wanted <> "n" then
                     let have =
                       match
                         List.find_map
@@ -303,8 +318,7 @@ let check_text_baseline ~path ~references ~ours =
                           wanted have
                         :: !failures
                 in
-                check "text" text;
-                check "jaxpr" jaxpr
+                List.iter2 check fields wanted
             | _ -> failwith ("text ratchet: bad line in " ^ path));
             go ()
       in
@@ -317,6 +331,7 @@ let ratchet goldens baseline_dir =
     [
       path "text/reference.jsonl";
       path "coverage/text_ref.jsonl";
+      path "apicov/text_ref.jsonl";
       path "fuzz/text/reference.jsonl";
     ]
   in
@@ -335,12 +350,25 @@ let ratchet goldens baseline_dir =
   let references = List.map load_rows reference_files in
   let failures =
     List.concat_map
-      (fun name ->
+      (fun (name, fields) ->
         let file = Filename.concat baseline_dir (name ^ ".tsv") in
         if Sys.file_exists file then
-          check_text_baseline ~path:file ~references ~ours
+          check_text_baseline ?fields ~path:file ~references ~ours ()
         else [ "no baseline " ^ file ])
-      [ "text_parity"; "text_coverage"; "text_fuzz" ]
+      [
+        ("text_parity", None);
+        ("text_coverage", None);
+        ("text_apicov", None);
+        ("text_fuzz", None);
+        ( "text_errors",
+          Some
+            [
+              ("text_error", error_verdict);
+              ("jaxpr_error", error_verdict);
+              ("structure_error", error_verdict);
+            ] );
+        ("text_structure", Some [ ("structure", verdict) ]);
+      ]
   in
   if failures <> [] then begin
     List.iteri

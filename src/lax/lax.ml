@@ -842,6 +842,33 @@ let small_of_bits dt bits =
   | Some f -> Float_format.decode f bits
   | None -> float_of_int bits
 
+let python_tuple shape =
+  match Array.to_list shape with
+  | [ d ] -> Printf.sprintf "(%d,)" d
+  | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
+
+let bitcast_shape old_dtype new_dtype shape =
+  let old_nbits = Dtypes.itemsize_bits old_dtype in
+  let new_nbits = Dtypes.itemsize_bits new_dtype in
+  let n = Array.length shape in
+  if old_nbits = new_nbits then shape
+  else if old_nbits > new_nbits then
+    Array.append shape [| old_nbits / new_nbits |]
+  else
+    let dim_size = if n > 0 then shape.(n - 1) else 1 in
+    if dim_size * old_nbits <> new_nbits then
+      raise
+        (Py_exn.Value_error
+           (Printf.sprintf
+              "Attempting to convert array of shape %s from %s of size %d bits \
+               to %s of size %d, bits but %d * %d != %d"
+              (python_tuple shape)
+              (Dtype.numpy_name old_dtype)
+              old_nbits
+              (Dtype.numpy_name new_dtype)
+              new_nbits dim_size old_nbits new_nbits))
+    else Array.sub shape 0 (n - 1)
+
 let bitcast_impl new_dt operand =
   let shape = Ndarray.shape operand in
   let n = Utils.prod shape in
@@ -900,8 +927,9 @@ let bitcast_impl new_dt operand =
                  float_of_int (if b >= 0x8000 then b - 0x10000 else b)
              | _ -> float_of_int b))
   | _ ->
-      invalid_arg
-        "lax.bitcast_convert_type: operand and target must have the same width"
+      Pjrt.Buffer.host_of_bytes new_dt
+        (bitcast_shape (Ndarray.dtype operand) new_dt shape)
+        (Pjrt.Buffer.host_bytes operand)
 
 let iota_impl dtype shape dimension =
   let n = Utils.prod shape in
@@ -2716,7 +2744,9 @@ let abstract_eval prim avals =
       | [ _; x; _ ] -> [ shaped x.shape x.dtype (Utils.all_weak avals) ]
       | _ -> failwith "lax: clamp expects 3 avals")
   | Bitcast_convert_type new_dt ->
-      un_aval (fun a -> shaped a.shape new_dt false) avals
+      un_aval
+        (fun a -> shaped (bitcast_shape a.dtype new_dt a.shape) new_dt false)
+        avals
   | Iota { dtype; shape; _ } -> [ shaped shape dtype false ]
   | Empty { shape; dtype } -> [ shaped shape dtype false ]
   | Empty2 dtype -> [ shaped [||] dtype false ]

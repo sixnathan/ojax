@@ -59,6 +59,10 @@ let concretization name v =
       own
         "The error occurred because of argument 'x' of jnp.bincount. To avoid \
          this error, pass a static `length` argument."
+  | "array_str" | "array_repr" ->
+      Errors.tracer_array_conversion_error
+        ~error_repr:(traced_shape_repr aval.dtype aval.shape)
+        ~origin_msg:(Jaxpr.origin_msg v) ()
   | "compress" ->
       Errors.tracer_bool_conversion_error
         ~error_repr:(traced_shape_repr aval.dtype aval.shape)
@@ -2769,6 +2773,10 @@ let array_repr ?max_line_width ?precision ?suppress_small a =
   Array_print.array_repr
     ~options:(print_options_with ?max_line_width ?precision ?suppress_small ())
     (host "array_repr" a)
+
+let repr a =
+  Array_print.array_repr ~options:(print_options ())
+    ~weak_type:(Core.get_aval a).weak_type (host "repr" a)
 
 let array_str_jax ?max_line_width ?precision ?suppress_small a =
   Array_print.array_str

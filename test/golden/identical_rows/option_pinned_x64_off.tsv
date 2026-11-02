@@ -6,6 +6,12 @@ jnp.setxor1d_6b174152_float32:eager:out0	1
 jnp.setxor1d_6b174152_float32:jit:out0	1
 jnp.unique_43b835c6_float32:eager:out0	1
 jnp.unique_43b835c6_float32:jit:both_raise	0
+jnp.unique_inverse_26ce29c6_float32:eager:out0	1
+jnp.unique_inverse_26ce29c6_float32:eager:out1	1
+jnp.unique_inverse_26ce29c6_float32:jit:out0	1
+jnp.unique_inverse_26ce29c6_float32:jit:out1	1
+lax.conv_with_general_padding_934d5428_float32:eager:out0	1
+lax.conv_with_general_padding_934d5428_float32:jit:out0	1
 sp_special.log_softmax_956c2041_float32:eager:out0	1
 sp_special.log_softmax_956c2041_float32:jit:out0	1
 sp_special.softmax_956c2041_float32:eager:out0	1

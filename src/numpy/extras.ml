@@ -608,11 +608,8 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
           fill_value must be specified"
    | _ -> ());
   match size with
-  | Some size when size_of a = 0 ->
-      traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
-  | _ when is_complex_value a && axis = None ->
-      unique_complex ?size ?fill_value a
   | Some size -> traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
+  | None when is_complex_value a && axis = None -> unique_complex a
   | _ ->
       let fill_value = Option.value fill_value ~default:0.0 in
       let nd = host "unique" a in
@@ -730,8 +727,7 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
         counts = ints_value idt [| out_rows |] (pad_or_cut counts_arr 0);
       }
 
-and unique_complex ?size ?fill_value a =
-  let n = size_of a in
+and unique_complex a =
   let source = flat a in
   let parts =
     NL.stack ~axis:1
@@ -740,12 +736,9 @@ and unique_complex ?size ?fill_value a =
         NL.astype (U.imag source) (real_of_complex a);
       ]
   in
-  let r = unique_full ~axis:0 ?size parts in
-  ignore fill_value;
-  let rows = (shape r.values).(0) in
+  let r = unique_full ~axis:0 parts in
   let column j = L.index_in_dim ~axis:1 ~keepdims:false r.values j in
   let values = NL.astype (L.complex (column 0) (column 1)) (dtype_of a) in
-  ignore (n, rows);
   { r with values; inverse = NL.reshape r.inverse (shape a) }
 
 let unique_values ?size ?fill_value a =

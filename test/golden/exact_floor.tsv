@@ -49,7 +49,7 @@ numpy_linalg:x64_on	176	176
 numpy_product_jax	4	4
 option_fuzz:x64_off	5668	5708
 option_fuzz:x64_on	5446	5482
-option_pinned:x64_off	14	14
+option_pinned:x64_off	20	20
 option_pinned:x64_on	32	32
 put_modes:x64_off	94	94
 put_modes:x64_on	188	188
@@ -146,7 +146,7 @@ raw:numpy_linalg:x64_on	176	176
 raw:numpy_product_jax	4	4
 raw:option_fuzz:x64_off	4061	5708
 raw:option_fuzz:x64_on	3756	5482
-raw:option_pinned:x64_off	11	14
+raw:option_pinned:x64_off	17	20
 raw:option_pinned:x64_on	19	32
 raw:put_modes:x64_off	90	94
 raw:put_modes:x64_on	180	188

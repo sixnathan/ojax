@@ -4335,7 +4335,23 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_inlined ctx eqn in_ids (function
         | [ x; y ] ->
             let b1 = Core.bind1 in
-            let conv a b = b1 eqn.prim [ a; b ] in
+            let prim =
+              match eqn.prim with
+              | Conv_general_dilated c ->
+                  Conv_general_dilated
+                    {
+                      c with
+                      conv_preferred =
+                        Option.map
+                          (function
+                            | Dtype.Complex64 -> Dtype.F32
+                            | Dtype.Complex128 -> Dtype.F64
+                            | d -> d)
+                          c.conv_preferred;
+                    }
+              | p -> p
+            in
+            let conv a b = b1 prim [ a; b ] in
             let x_re = b1 Real [ x ] in
             let x_im = b1 Imag [ x ] in
             let y_re = b1 Real [ y ] in

@@ -82,7 +82,9 @@ let raw_copy = function
   | Device b -> Concrete (copy_nd (Pjrt.Buffer.to_host b))
   | Tracer _ as v -> C.bind1 Copy [ v ]
 
-let key seed = Key_reuse.mark_typed (PR.random_seed seed)
+let key ?impl seed =
+  ignore (resolve_prng_impl impl);
+  Key_reuse.mark_typed (PR.random_seed seed)
 let key_data keys = Key_reuse.suspended (fun () -> raw_copy (unwrap keys))
 
 let wrap_key_data data =

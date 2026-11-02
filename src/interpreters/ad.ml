@@ -2345,47 +2345,51 @@ let tape_const (b : jaxpr_builder) v =
           b.jb_constvals <- (var, v) :: b.jb_constvals;
           A_var var)
 
-let rec tape_eval_atoms ?(pending = []) (b : jaxpr_builder) (jx : jaxpr) args =
-  let env : (int, atom) Hashtbl.t = Hashtbl.create 16 in
-  let binders =
-    List.filteri (fun i _ -> i >= List.length pending) jx.in_binders
+let rec tape_eval_slots (b : jaxpr_builder) (jx : jaxpr) slots =
+  let env : (int, [ `Atom of atom | `Pending of value ]) Hashtbl.t =
+    Hashtbl.create 16
   in
-  let waiting : (int, value) Hashtbl.t = Hashtbl.create 16 in
-  List.iteri
-    (fun i c -> Hashtbl.replace waiting (List.nth jx.in_binders i).vid c)
-    pending;
-  List.iter2 (fun (v : var) a -> Hashtbl.replace env v.vid a) binders args;
-  let read = function
-    | A_var v -> (
-        match Hashtbl.find_opt waiting v.vid with
-        | Some c -> tape_const b c
-        | None -> Hashtbl.find env v.vid)
-    | a -> a
+  List.iter2
+    (fun (v : var) s -> Hashtbl.replace env v.vid s)
+    jx.in_binders slots;
+  let slot = function A_var v -> Hashtbl.find env v.vid | a -> `Atom a in
+  let read a =
+    match slot a with `Atom a -> a | `Pending c -> tape_const b c
   in
   List.iter
     (fun (e : eqn) ->
-      let inputs = List.map read e.inputs in
       match e.prim with
       | Xla_call c when Core.is_inline_call c.jid ->
-          let const_atoms =
-            List.map (fun nd -> tape_const b (Concrete nd)) c.consts
+          let const_slots =
+            List.map (fun nd -> `Pending (Concrete nd)) c.consts
           in
-          let outs = tape_eval_atoms b c.jaxpr (const_atoms @ inputs) in
+          let outs =
+            tape_eval_slots b c.jaxpr (const_slots @ List.map slot e.inputs)
+          in
           List.iter2
-            (fun (v : var) a -> Hashtbl.replace env v.vid a)
+            (fun (v : var) s -> Hashtbl.replace env v.vid s)
             e.outs outs
       | _ ->
+          let inputs = List.map read e.inputs in
           let outs =
             List.map
               (fun (v : var) ->
                 let fresh = { vid = Core.fresh_id (); vaval = v.vaval } in
-                Hashtbl.replace env v.vid (A_var fresh);
+                Hashtbl.replace env v.vid (`Atom (A_var fresh));
                 fresh)
               e.outs
           in
           b.jb_eqns <- { e with inputs; outs } :: b.jb_eqns)
     jx.eqns;
-  List.map read jx.outs
+  List.map slot jx.outs
+
+let tape_eval_atoms ?(pending = []) (b : jaxpr_builder) (jx : jaxpr) args =
+  let slots =
+    List.map (fun c -> `Pending c) pending @ List.map (fun a -> `Atom a) args
+  in
+  List.map
+    (function `Atom a -> a | `Pending c -> tape_const b c)
+    (tape_eval_slots b jx slots)
 
 let tape_eval (b : jaxpr_builder) (jx : jaxpr) consts tangents =
   let args =
@@ -2496,6 +2500,8 @@ let lin_process (trace : trace) (b : jaxpr_builder) prim primals tangents =
         (pos, List.map Option.is_some classified, consts, jx))
   in
   let nz_in = List.filter (fun t -> not (is_zero t)) tangents in
+  if Sys.getenv_opt "ZZDBG" <> None then
+    prerr_endline (Pretty_printer.jaxpr_to_string jx);
   let atoms = tape_eval b jx consts nz_in in
   let rest = ref atoms in
   List.map2

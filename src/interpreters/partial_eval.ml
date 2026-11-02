@@ -97,6 +97,9 @@ let while_rule :
   ref (fun _ ~cond_nconsts:_ ~body_nconsts:_ _ _ _ ->
       failwith "partial_eval: while rule not installed")
 
+let custom_call_rule : (trace -> int -> tracer list -> value list option) ref =
+  ref (fun _ _ _ -> None)
+
 let process_primitive trace prim (args : value list) : value list =
   let tracers = List.map as_tracer args in
   let pvals = List.map pe_pval tracers in
@@ -121,11 +124,14 @@ let process_primitive trace prim (args : value list) : value list =
         !cond_rule trace branches platforms tracers
     | While { cond_nconsts; body_nconsts; cond; body } ->
         !while_rule trace ~cond_nconsts ~body_nconsts cond body tracers
-    | Custom_jvp_call id when Option.is_some (Core.custom_names_of id) -> (
-        match Core.custom_rule id with
-        | Core.Jvp_rule { primal; _ } ->
-            primal (List.map (fun t -> Tracer t) tracers)
-        | _ -> record_unknown trace prim tracers)
+    | Custom_jvp_call id -> (
+        match !custom_call_rule trace id tracers with
+        | Some outs -> outs
+        | None -> (
+            match (Core.custom_names_of id, Core.custom_rule id) with
+            | Some _, Core.Jvp_rule { primal; _ } ->
+                primal (List.map (fun t -> Tracer t) tracers)
+            | _ -> record_unknown trace prim tracers))
     | _ -> record_unknown trace prim tracers
 
 let full_lower_pe v =

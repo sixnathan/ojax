@@ -3805,6 +3805,10 @@ let conv_transpose_rhs g lhs (rhs : aval) ~window_strides ~padding ~lhs_dilation
        })
     [ lhs; g ]
 
+let custom_call_transpose :
+    (int -> value list -> tval list -> value option list option) ref =
+  ref (fun _ _ _ -> None)
+
 let transpose_cache :
     ( int * bool list * aval list * bool list * bool,
       closed_jaxpr * bool list )
@@ -4198,56 +4202,104 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
               rest
           in
           let n_res = List.length residuals in
-          let cts = List.map instantiate_traced cts in
+          let ct_nz = List.map (fun c -> not (is_zero c)) cts in
+          let nz_cts = List.filter (fun c -> not (is_zero c)) cts in
           let avals =
-            List.map Core.get_aval residuals @ List.map Core.get_aval cts
+            List.map Core.get_aval residuals @ List.map Core.get_aval nz_cts
           in
-          let transposed (branch : closed_jaxpr) =
-            Jaxpr.make_jaxpr avals (fun args ->
-                let res, body_cts =
-                  match Util.split_list args [ n_res ] with
-                  | [ a; b ] -> (a, b)
-                  | _ -> arity ()
-                in
-                let remaining = ref res in
-                let n_consts = List.length branch.consts in
-                let binders =
-                  List.filteri
-                    (fun i _ -> i >= n_consts)
-                    branch.jaxpr.in_binders
-                in
-                let inner =
-                  List.map2
-                    (fun tv (v : var) ->
-                      if is_undef tv then Undef v.vaval
-                      else
-                        match !remaining with
-                        | r :: tl ->
-                            remaining := tl;
-                            Prim r
-                        | [] -> arity ())
-                    rest binders
-                in
-                List.map instantiate_traced
-                  (eval_jaxpr_transposed branch.jaxpr
-                     (List.map (fun c -> Prim (Concrete c)) branch.consts
-                     @ inner)
-                     body_cts))
+          let transposed_with inst (branch : closed_jaxpr) =
+            let out_nz = ref [] in
+            let closed =
+              Jaxpr.make_jaxpr avals (fun args ->
+                  let res, given_cts =
+                    match Util.split_list args [ n_res ] with
+                    | [ a; b ] -> (a, b)
+                    | _ -> arity ()
+                  in
+                  let given = ref given_cts in
+                  let body_cts =
+                    List.map2
+                      (fun nz c ->
+                        if nz then
+                          begin match !given with
+                          | g :: tl ->
+                              given := tl;
+                              g
+                          | [] -> arity ()
+                          end
+                        else c)
+                      ct_nz cts
+                  in
+                  let remaining = ref res in
+                  let n_consts = List.length branch.consts in
+                  let binders =
+                    List.filteri
+                      (fun i _ -> i >= n_consts)
+                      branch.jaxpr.in_binders
+                  in
+                  let inner =
+                    List.map2
+                      (fun tv (v : var) ->
+                        if is_undef tv then Undef v.vaval
+                        else
+                          match !remaining with
+                          | r :: tl ->
+                              remaining := tl;
+                              Prim r
+                          | [] -> arity ())
+                      rest binders
+                  in
+                  let outs =
+                    eval_jaxpr_transposed branch.jaxpr
+                      (List.map (fun c -> Prim (Concrete c)) branch.consts
+                      @ inner)
+                      body_cts
+                  in
+                  out_nz := List.map (fun o -> not (is_zero o)) outs;
+                  match inst with
+                  | None -> List.filter (fun o -> not (is_zero o)) outs
+                  | Some flags ->
+                      List.concat
+                        (List.map2
+                           (fun keep o ->
+                             if keep then [ instantiate_traced o ] else [])
+                           flags outs))
+            in
+            (closed, !out_nz)
+          in
+          let out_nz =
+            match List.map (fun b -> snd (transposed_with None b)) branches with
+            | first :: others -> List.fold_left (List.map2 ( || )) first others
+            | [] -> arity ()
           in
           let in_cts =
             Core.bind
-              (Cond { branches = List.map transposed branches; platforms })
-              ((prim_val pred :: residuals) @ cts)
+              (Cond
+                 {
+                   branches =
+                     List.map
+                       (fun b -> fst (transposed_with (Some out_nz) b))
+                       branches;
+                   platforms;
+                 })
+              ((prim_val pred :: residuals) @ nz_cts)
           in
-          let remaining = ref in_cts in
+          let remaining = ref in_cts and flags = ref out_nz in
           let rest_cts =
             List.map
               (fun tv ->
                 if is_undef tv then
-                  match !remaining with
-                  | c :: tl ->
-                      remaining := tl;
-                      Some c
+                  match !flags with
+                  | true :: ftl -> (
+                      flags := ftl;
+                      match !remaining with
+                      | c :: tl ->
+                          remaining := tl;
+                          Some c
+                      | [] -> None)
+                  | _ :: ftl ->
+                      flags := ftl;
+                      None
                   | [] -> None
                 else None)
               rest
@@ -4559,12 +4611,18 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       in
       List.map (fun _ -> None) res_tv @ keep
   | Custom_jvp_call id -> (
-      let avals =
-        List.map (function Prim v -> Core.get_aval v | Undef a -> a) primals
-      in
-      match Jaxpr.custom_call_jaxpr id avals with
-      | Some c -> xla_call_transpose c cts primals
-      | None -> failwith "ad: custom call cannot appear in a linear program")
+      match !custom_call_transpose id cts primals with
+      | Some r -> r
+      | None -> (
+          let avals =
+            List.map
+              (function Prim v -> Core.get_aval v | Undef a -> a)
+              primals
+          in
+          match Jaxpr.custom_call_jaxpr id avals with
+          | Some c -> xla_call_transpose c cts primals
+          | None -> failwith "ad: custom call cannot appear in a linear program"
+          ))
   | Custom_vjp_call _ ->
       failwith "ad: custom call cannot appear in a linear program"
   | Ffi_call c -> ffi_not_differentiable c

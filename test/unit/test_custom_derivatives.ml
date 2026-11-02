@@ -151,7 +151,7 @@ let checkpoint_recomputes () =
   let f = checkpointed calls in
   let g = grad_of f (scalar 2.0) in
   check "grad" 12.0 (value g);
-  Alcotest.(check bool) "forward ran again on the way back" true (!calls >= 2)
+  Alcotest.(check int) "traced once, recomputed from its jaxpr" 1 !calls
 
 let checkpoint_orders () =
   let f = checkpointed (ref 0) in

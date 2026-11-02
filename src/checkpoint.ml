@@ -1,5 +1,6 @@
 open Types
 module Ad = Interpreters.Ad
+module Partial_eval = Interpreters.Partial_eval
 
 type policy = primitive -> aval list -> bool
 
@@ -299,42 +300,348 @@ let staged_rule policy (primal_jaxpr : closed_jaxpr) (avals : aval list) =
 let refs_forbidden =
   "a Ref closed over by a function under checkpoint is not supported"
 
-let legacy_rule f =
-  let linear =
-    Core.register_custom_rule
-      (Core.Linear_rule
-         {
-           forward = (fun res ts -> snd (Ad.jvp f res ts));
-           transpose =
-             (fun res cts ->
-               let _, pull = Ad.vjp f res in
-               pull cts);
-           res_differentiable = true;
-         })
-  in
-  Core.Jvp_rule
-    {
-      primal = f;
-      jvp =
-        (fun primals tangents ->
-          let outs = f primals in
-          let out_avals = List.map Core.get_aval outs in
-          ( outs,
-            Core.bind
-              (Custom_lin
-                 { rule = linear; n_res = List.length primals; out_avals })
-              (primals @ tangents) ));
-    }
+type remat = { body : closed_jaxpr; differentiated : bool }
 
-let remat_view id traced =
+let remats : (int, remat) Hashtbl.t = Hashtbl.create 16
+
+let remat_view id ~differentiated traced =
   Pretty_printer.register_custom_view id "remat2"
     [
-      ("differentiated", Pretty_printer.Plain "False");
+      ( "differentiated",
+        Pretty_printer.Plain (if differentiated then "True" else "False") );
       ("jaxpr", Pretty_printer.Sub traced);
       ("policy", Pretty_printer.Plain "None");
       ("prevent_cse", Pretty_printer.Plain "True");
     ];
   id
+
+let rec remat_rule ~differentiated (body : closed_jaxpr) =
+  let avals = List.map (fun (v : var) -> v.vaval) body.jaxpr.in_binders in
+  let avals = List.filteri (fun i _ -> i >= List.length body.consts) avals in
+  let by_nonzero : (bool list, closed_jaxpr * bool list) Hashtbl.t =
+    Hashtbl.create 4
+  in
+  let n = List.length avals in
+  let build nonzero =
+    let tangent_avals =
+      List.concat
+        (List.map2 (fun nz a -> if nz then [ a ] else []) nonzero avals)
+    in
+    let out_nz = ref [] in
+    let traced =
+      Jaxpr.make_jaxpr (avals @ tangent_avals) (fun all ->
+          match Util.split_list all [ n ] with
+          | [ primals; tangents ] ->
+              let rest = ref tangents in
+              let full =
+                List.map2
+                  (fun nz (a : aval) ->
+                    if nz then begin
+                      let t = List.hd !rest in
+                      rest := List.tl !rest;
+                      t
+                    end
+                    else Ad_util.symbolic_zero_of_aval a)
+                  nonzero avals
+              in
+              let po, to_ =
+                Ad.jvp (Jaxpr.eval_closed_jaxpr body) primals full
+              in
+              out_nz := List.map (fun t -> not (Ad_util.is_symbolic_zero t)) to_;
+              po @ List.filter (fun t -> not (Ad_util.is_symbolic_zero t)) to_
+          | _ -> failwith "checkpoint: arity")
+    in
+    (traced, !out_nz)
+  in
+  Core.Jvp_rule
+    {
+      primal = Jaxpr.eval_closed_jaxpr body;
+      jvp =
+        (fun primals tangents ->
+          let nonzero =
+            List.map (fun t -> not (Ad_util.is_symbolic_zero t)) tangents
+          in
+          let traced, out_nz =
+            match Hashtbl.find_opt by_nonzero nonzero with
+            | Some entry -> entry
+            | None ->
+                let entry = build nonzero in
+                Hashtbl.replace by_nonzero nonzero entry;
+                entry
+          in
+          let nz_tangents =
+            List.filter (fun t -> not (Ad_util.is_symbolic_zero t)) tangents
+          in
+          let outs =
+            remat_call ~differentiated traced (primals @ nz_tangents)
+          in
+          let n_out = List.length out_nz in
+          let primal_out, tangent_out =
+            match Util.split_list outs [ n_out ] with
+            | [ a; b ] -> (a, b)
+            | _ -> failwith "checkpoint: output arity"
+          in
+          let rest = ref tangent_out in
+          ( primal_out,
+            List.map2
+              (fun nz p ->
+                if nz then begin
+                  let t = List.hd !rest in
+                  rest := List.tl !rest;
+                  t
+                end
+                else Ad_util.symbolic_zero_like_value p)
+              out_nz primal_out ));
+    }
+
+and remat_id ~differentiated body =
+  let id = Core.register_custom_rule (remat_rule ~differentiated body) in
+  Hashtbl.replace remats id { body; differentiated };
+  if differentiated then Hashtbl.replace Jaxpr.barrier_calls id ();
+  remat_view id ~differentiated body
+
+and remat_call ~differentiated body args =
+  Core.bind (Custom_jvp_call (remat_id ~differentiated body)) args
+
+let eval_subset (env : (int, value) Hashtbl.t) eqns outs =
+  let read = function
+    | A_var v -> Hashtbl.find env v.vid
+    | A_lit nd -> Concrete nd
+    | DropVar _ -> failwith "checkpoint: dropvar read"
+  in
+  List.iter
+    (fun (e : eqn) ->
+      let ins = List.map read e.inputs in
+      let res = Core.bind e.prim ins in
+      List.iter2 (fun (v : var) r -> Hashtbl.replace env v.vid r) e.outs res)
+    eqns;
+  List.map read outs
+
+let remat_partial_eval trace id (tracers : tracer list) =
+  match Hashtbl.find_opt remats id with
+  | None -> None
+  | Some { body; _ } ->
+      let jx = body.jaxpr in
+      let n_const = List.length body.consts in
+      let const_binders, binders =
+        match Util.split_list jx.in_binders [ n_const ] with
+        | [ a; b ] -> (a, b)
+        | _ -> failwith "checkpoint: binder arity"
+      in
+      let known_flags =
+        List.map
+          (fun (t : tracer) ->
+            match t.payload with
+            | PE { pval = { pv_const = Some c; _ }; _ } -> Some c
+            | _ -> None)
+          tracers
+      in
+      let out_unknown = ref [] in
+      ignore
+        (Jaxpr.make_jaxpr
+           (List.map (fun (v : var) -> v.vaval) binders)
+           (fun args ->
+             let pvals =
+               List.map2
+                 (fun k x ->
+                   match k with
+                   | Some _ -> Partial_eval.partial_val_known x
+                   | None -> Partial_eval.partial_val_unknown (Core.get_aval x))
+                 known_flags args
+             in
+             let _, _, out_pvals =
+               Partial_eval.partial_eval_flat
+                 (Jaxpr.eval_closed_jaxpr body)
+                 pvals
+             in
+             out_unknown := List.map Partial_eval.is_unknown out_pvals;
+             []));
+      let out_unknown = !out_unknown in
+      let pick flag =
+        List.filteri (fun i _ -> List.nth out_unknown i = flag) jx.outs
+      in
+      let known_outs = pick false and unknown_outs = pick true in
+      let known_eqns = live_eqns (atom_vars known_outs) jx.eqns in
+      let pvals =
+        List.map2
+          (fun (v : var) k ->
+            match k with
+            | Some c -> Partial_eval.partial_val_known c
+            | None -> Partial_eval.partial_val_unknown v.vaval)
+          binders known_flags
+      in
+      let _, _, known_pvals =
+        Partial_eval.partial_eval_flat
+          (fun args ->
+            let env = Hashtbl.create 64 in
+            List.iter2
+              (fun (v : var) nd -> Hashtbl.replace env v.vid (Concrete nd))
+              const_binders body.consts;
+            List.iter2
+              (fun (v : var) x -> Hashtbl.replace env v.vid x)
+              binders args;
+            eval_subset env known_eqns known_outs)
+          pvals
+      in
+      let known_values =
+        List.map
+          (fun (pv : partial_val) ->
+            match pv.pv_const with
+            | Some c -> c
+            | None -> failwith "checkpoint: known output became unknown")
+          known_pvals
+      in
+      let staged_eqns = live_eqns (atom_vars unknown_outs) jx.eqns in
+      let used = Hashtbl.create 64 in
+      List.iter
+        (fun vid -> Hashtbl.replace used vid ())
+        (atom_vars unknown_outs);
+      List.iter
+        (fun (e : eqn) ->
+          List.iter
+            (fun vid -> Hashtbl.replace used vid ())
+            (atom_vars e.inputs))
+        staged_eqns;
+      let used_inputs =
+        List.filter
+          (fun ((v : var), _) -> Hashtbl.mem used v.vid)
+          (List.combine binders tracers)
+      in
+      let staged =
+        Jaxpr.make_jaxpr
+          (List.map (fun ((v : var), _) -> v.vaval) used_inputs)
+          (fun ins ->
+            let env = Hashtbl.create 64 in
+            List.iter2
+              (fun (v : var) nd -> Hashtbl.replace env v.vid (Concrete nd))
+              const_binders body.consts;
+            List.iter2
+              (fun ((v : var), _) x -> Hashtbl.replace env v.vid x)
+              used_inputs ins;
+            eval_subset env staged_eqns unknown_outs)
+      in
+      let staged_id = remat_id ~differentiated:true staged in
+      let unknown_values =
+        Partial_eval.record_unknown trace (Custom_jvp_call staged_id)
+          (List.map snd used_inputs)
+      in
+      let k = ref known_values and u = ref unknown_values in
+      let take r =
+        let x = List.hd !r in
+        r := List.tl !r;
+        x
+      in
+      Some (List.map (fun unk -> if unk then take u else take k) out_unknown)
+
+let remat_transpose id cts (primals : Ad.tval list) =
+  match Hashtbl.find_opt remats id with
+  | None -> None
+  | Some { body; _ } ->
+      let nonlinear =
+        List.filter_map
+          (function Ad.Prim v -> Some v | Ad.Undef _ -> None)
+          primals
+      in
+      let ct_nz = List.map (fun c -> not (Ad_util.is_symbolic_zero c)) cts in
+      let nz_cts =
+        List.filter (fun c -> not (Ad_util.is_symbolic_zero c)) cts
+      in
+      let n_nonlin = List.length nonlinear in
+      let in_zero = ref [] in
+      let out_avals = List.map atom_aval body.jaxpr.outs in
+      let transposed =
+        Jaxpr.make_jaxpr
+          (List.map Core.get_aval nonlinear @ List.map Core.get_aval nz_cts)
+          (fun all ->
+            match Util.split_list all [ n_nonlin ] with
+            | [ ins; cts_in ] ->
+                let rest_ins = ref ins and rest_cts = ref cts_in in
+                let take r =
+                  let x = List.hd !r in
+                  r := List.tl !r;
+                  x
+                in
+                let pvals =
+                  List.map
+                    (function
+                      | Ad.Prim _ ->
+                          Partial_eval.partial_val_known (take rest_ins)
+                      | Ad.Undef a -> Partial_eval.partial_val_unknown a)
+                    primals
+                in
+                let full_cts =
+                  List.map2
+                    (fun nz a ->
+                      if nz then take rest_cts
+                      else Ad_util.symbolic_zero_of_aval a)
+                    ct_nz out_avals
+                in
+                let lin, consts, out_pvals =
+                  Partial_eval.partial_eval_flat
+                    (Jaxpr.eval_closed_jaxpr body)
+                    pvals
+                in
+                let lin_cts =
+                  List.filteri
+                    (fun i _ -> Partial_eval.is_unknown (List.nth out_pvals i))
+                    full_cts
+                in
+                let undefs =
+                  List.filter_map
+                    (function
+                      | Ad.Undef a -> Some (Ad.Undef a) | Ad.Prim _ -> None)
+                    primals
+                in
+                let in_cts =
+                  Ad.eval_jaxpr_transposed lin
+                    (List.map (fun c -> Ad.Prim c) consts @ undefs)
+                    lin_cts
+                in
+                in_zero := List.map Ad_util.is_symbolic_zero in_cts;
+                List.filter (fun c -> not (Ad_util.is_symbolic_zero c)) in_cts
+            | _ -> failwith "checkpoint: arity")
+      in
+      let outs =
+        remat_call ~differentiated:true transposed (nonlinear @ nz_cts)
+      in
+      let rest = ref outs and zeros = ref !in_zero in
+      Some
+        (List.map
+           (function
+             | Ad.Prim _ -> None
+             | Ad.Undef _ ->
+                 let z = List.hd !zeros in
+                 zeros := List.tl !zeros;
+                 if z then None
+                 else begin
+                   let x = List.hd !rest in
+                   rest := List.tl !rest;
+                   Some x
+                 end)
+           primals)
+
+let remat_vmap id axis_size vals bdims =
+  match Hashtbl.find_opt remats id with
+  | None -> None
+  | Some { body; differentiated } ->
+      let batched, out_batched =
+        Interpreters.Batching.batch_jaxpr_axes axis_size body
+          (List.map Core.get_aval vals)
+          bdims
+      in
+      let outs = remat_call ~differentiated batched vals in
+      Some (outs, List.map (fun b -> if b then Some 0 else None) out_batched)
+
+let () =
+  (Jaxpr.remat_body :=
+     fun id -> Option.map (fun r -> r.body) (Hashtbl.find_opt remats id));
+  (Jaxpr.remat_rebuild :=
+     fun id body ->
+       let { differentiated; _ } = Hashtbl.find remats id in
+       remat_id ~differentiated body);
+  Interpreters.Batching.custom_call_batch := remat_vmap;
+  Partial_eval.custom_call_rule := remat_partial_eval;
+  Ad.custom_call_transpose := remat_transpose
 
 let checkpoint ?policy f =
   let closed_rules : (aval list, int) Hashtbl.t = Hashtbl.create 4 in
@@ -349,9 +656,7 @@ let checkpoint ?policy f =
         let chosen = Option.value policy ~default:nothing_saveable in
         match (hoisted, policy) with
         | [], None ->
-            let id =
-              remat_view (Core.register_custom_rule (legacy_rule f)) traced
-            in
+            let id = remat_id ~differentiated:false traced in
             Hashtbl.replace closed_rules avals id;
             Core.bind (Custom_jvp_call id) args
         | [], Some _ ->

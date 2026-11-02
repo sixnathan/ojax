@@ -137,6 +137,21 @@ and rule used_outs (e : eqn) =
     | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
         scan_rule e used_outs ~length ~reverse ~num_consts ~num_carry ~jaxpr
           ~unroll
+    | Custom_jvp_call id when !Jaxpr.remat_body id <> None ->
+        let body = Option.get (!Jaxpr.remat_body id) in
+        let n = List.length e.inputs in
+        let body', used_ins =
+          dce_closed body used_outs ~instantiate:(List.init n (fun _ -> false))
+        in
+        ( used_ins,
+          if
+            (not (List.exists Fun.id used_ins))
+            && (not (List.exists Fun.id used_outs))
+            && not (closed_effects body')
+          then None
+          else
+            with_prim (Custom_jvp_call (!Jaxpr.remat_rebuild id body')) used_ins
+        )
     | Custom_jvp_call id when Core.shard_rule id <> None ->
         shard_map_rule e used_outs id (Option.get (Core.shard_rule id))
     | (Custom_jvp_call id | Custom_vjp_call id)
@@ -160,6 +175,8 @@ and rule used_outs (e : eqn) =
                 | None ->
                     let id' = Core.register_custom_rule (Core.custom_rule id) in
                     Core.note_custom_call_jaxpr id' avals c';
+                    if Hashtbl.mem Jaxpr.barrier_calls id then
+                      Hashtbl.replace Jaxpr.barrier_calls id' ();
                     (match Core.custom_names_of id with
                     | Some (name, jvp_name) ->
                         Core.register_custom_names id' ~name ~jvp_name

@@ -1013,8 +1013,16 @@ let tokenize s =
     (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
   in
   let depth = ref 0 in
+  let blank =
+    n > 0 && String.for_all (fun c -> c = ' ' || c = '\t' || c = '\012') s
+  in
   let rec go i acc =
-    if i >= n then
+    if blank then
+      [
+        { kind = Other "NL"; text = ""; col = n; line = s };
+        { kind = Endmarker; text = ""; col = 0; line = "" };
+      ]
+    else if i >= n then
       let tail =
         if !depth > 0 then
           [
@@ -1094,7 +1102,7 @@ let parse_err p tok detail =
           (String.sub t.line t.col (String.length t.line - t.col))
     | None -> ""
   in
-  Invalid_argument
+  Py_exn.Value_error
     (Printf.sprintf "syntax error in symbolic shape %s in dimension %d: %s. %s"
        p.spec_repr n detail tail)
 

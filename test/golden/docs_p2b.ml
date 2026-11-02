@@ -255,6 +255,50 @@ let signal_thunk fn kind onesided () =
            let f, tt, z = S.stft ~nperseg:8 ~return_onesided:onesided x in
            [ f; tt; z ]))
 
+let poly_thunk name () =
+  let module P = Ojax.Shape_poly in
+  let s ?constraints ?like str =
+    P.symbolic_shape ?constraints ?like (Some str)
+  in
+  let shape = P.shape_to_string in
+  let d = P.dim_to_string in
+  let b2 v = if v then "True" else "False" in
+  let i = P.of_int in
+  let pair (x, y) = "(" ^ d x ^ ", " ^ d y ^ ")" in
+  match s "a, b" with
+  | [| a; b |] -> (
+      match name with
+      | "parse" -> shape (s "a, b+1, 2*a")
+      | "parse_bad" -> shape (s "a + ")
+      | "parse_bad2" -> shape (s "a, b)")
+      | "ge1" -> b2 (P.ge a (i 1))
+      | "ge2" -> b2 (P.ge a (i 2))
+      | "eq" -> b2 (P.equal a b)
+      | "eq_self" -> b2 (P.equal a a)
+      | "eq_const" -> b2 (P.equal a (i 3))
+      | "lt" -> b2 (P.lt a b)
+      | "mul" -> d (P.sub (P.mul a b) a)
+      | "pow" -> d (P.pow (P.add a (i 1)) 2)
+      | "divmod" -> pair (P.divmod (P.add (P.mul a (i 4)) (i 2)) (i 2))
+      | "floordiv" -> d (P.floordiv_dim a (i 2))
+      | "divmod_sym" -> pair (P.divmod (P.mul a b) b)
+      | "mod" -> d (P.mod_dim a (i 3))
+      | "jmax" -> shape (s "max(a, b)")
+      | "min3" -> shape (s "min(a, 3)")
+      | "cons" -> b2 (P.ge (s ~constraints:[ "c >= 4" ] "c").(0) (i 3))
+      | "cons_bad" -> shape (s ~constraints:[ "c >= " ] "c")
+      | "neg_ge" -> b2 (P.ge (P.neg a) (i 0))
+      | "sub_ge" -> b2 (P.ge (P.sub a b) (i 0))
+      | "like" -> shape (s ~like:[| None; Some 4 |] "a, _")
+      | "like_bad" -> shape (s ~like:[| None; Some 4 |] "a, 3")
+      | "gt_const" -> b2 (P.gt (P.add a (i 3)) (i 3))
+      | "le_self" -> b2 (P.le a (P.mul a b))
+      | "mod_sym" -> d (P.mod_dim (P.add (P.mul a b) (i 1)) b)
+      | "cons_eq" ->
+          b2 (P.ge (s ~constraints:[ "c == d + 2" ] "c, d").(0) (i 3))
+      | other -> failwith ("docs_p2b: unknown poly " ^ other))
+  | _ -> failwith "docs_p2b: poly scope"
+
 let actual_of row =
   let thunk =
     match str row "group" with
@@ -266,6 +310,7 @@ let actual_of row =
     | "x64mode" -> x64_thunk (str row "mode") (str row "case") (str row "dtype")
     | "legacy" -> legacy_thunk (str row "mode") (str row "case")
     | "reuse" -> reuse_thunk (str row "case")
+    | "poly" -> poly_thunk (str row "case")
     | "signal" ->
         signal_thunk (str row "case") (str row "input")
           (U.to_bool (U.member "onesided" row))

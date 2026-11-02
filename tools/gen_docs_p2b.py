@@ -31,6 +31,11 @@ SIGNAL_CASES = [("welch", "complex", True), ("welch", "real", True),
                 ("welch", "complex", False), ("csd", "complex_y", True),
                 ("csd", "real", True), ("stft", "complex", True),
                 ("stft", "real", True)]
+POLY_CASES = ["parse", "parse_bad", "parse_bad2", "ge1", "ge2", "eq",
+              "eq_self", "eq_const", "lt", "mul", "pow", "divmod", "floordiv",
+              "divmod_sym", "mod", "jmax", "min3", "cons", "cons_bad",
+              "neg_ge", "sub_ge", "like", "like_bad", "gt_const", "le_self",
+              "mod_sym", "cons_eq"]
 REUSE_CASES = ["twice_eager", "twice_jit", "consumed_eager", "consumed_jit",
                "split_once", "split_twice", "split_twice_jit", "bits_fold_in",
                "clone", "off_twice", "while_reuse", "cond_branches",
@@ -282,6 +287,45 @@ def signal_thunk(jax, jnp, fn, kind, onesided):
     return run
 
 
+def poly_thunk(name):
+    from jax import export
+    S = export.symbolic_shape
+
+    def run():
+        a, b = S("a, b")
+        out = {
+            "parse": lambda: S("a, b+1, 2*a"),
+            "parse_bad": lambda: S("a + "),
+            "parse_bad2": lambda: S("a, b)"),
+            "ge1": lambda: a >= 1,
+            "ge2": lambda: a >= 2,
+            "eq": lambda: a == b,
+            "eq_self": lambda: a == a,
+            "eq_const": lambda: a == 3,
+            "lt": lambda: a < b,
+            "mul": lambda: a * b - a,
+            "pow": lambda: (a + 1) ** 2,
+            "divmod": lambda: divmod(a * 4 + 2, 2),
+            "floordiv": lambda: a // 2,
+            "divmod_sym": lambda: divmod(a * b, b),
+            "mod": lambda: a % 3,
+            "jmax": lambda: S("max(a, b)"),
+            "min3": lambda: S("min(a, 3)"),
+            "cons": lambda: S("c", constraints=("c >= 4",))[0] >= 3,
+            "cons_bad": lambda: S("c", constraints=("c >= ",)),
+            "neg_ge": lambda: (-a) >= 0,
+            "sub_ge": lambda: (a - b) >= 0,
+            "like": lambda: S("a, _", like=(None, 4)),
+            "like_bad": lambda: S("a, 3", like=(None, 4)),
+            "gt_const": lambda: (a + 3) > 3,
+            "le_self": lambda: a <= a * b,
+            "mod_sym": lambda: (a * b + 1) % b,
+            "cons_eq": lambda: S("c, d", constraints=("c == d + 2",))[0] >= 3,
+        }[name]()
+        return str(out)
+    return run
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -330,6 +374,9 @@ def main():
         add(run_case(jax, signal_thunk(jax, jnp, fn, kind, onesided)),
             id=f"signal_{fn}_{kind}_{onesided}", group="signal", case=fn,
             input=kind, onesided=onesided)
+    for name in POLY_CASES:
+        add(run_case(jax, poly_thunk(name)), id=f"poly_{name}", group="poly",
+            case=name)
     for name in REUSE_CASES:
         add(run_case(jax, reuse_thunk(jax, jnp, name)),
             id=f"reuse_{name}", group="reuse", case=name)

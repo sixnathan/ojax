@@ -941,7 +941,7 @@ ENTER(h_syevd)
     CHECK("syevBatched_bufferSize",
           size(handle, params, EIG_VECTOR, uplo, n, a_type, NULL, n, w_type, NULL, a_type,
                &on_device, &on_host, first));
-    void *device_work = scratch(k, on_device, 64);
+    void *device_work = scratch(k, on_device, 16);
     CHECK_PTR(device_work);
     char *host_work = malloc(on_host ? on_host : 1);
     int (*batched)(void *, void *, int, int, int64_t, int, void *, int64_t, int, void *, int,
@@ -1134,7 +1134,7 @@ ENTER(h_geev)
           lib_solver, "cusolverDnXgeev_bufferSize");
   CHECK("geev_bufferSize", size(handle, params, jobvl, jobvr, n, a_type, NULL, n, w_type, NULL,
                                 a_type, NULL, n, a_type, NULL, n, a_type, &on_device, &on_host));
-  void *device_work = scratch(k, on_device, 64);
+  void *device_work = scratch(k, on_device, 16);
   CHECK_PTR(device_work);
   char *host_work = malloc(on_host ? on_host : 1);
   CHECK("copy", copy_input(k, out->data, a));

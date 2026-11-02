@@ -1409,6 +1409,57 @@ let lapack_eig ~real ~compute_left ~compute_right outs =
         @ [ info ])
   | _ -> invalid_arg "Native_lowering: geev arity"
 
+let unpack_conjugate_pairs w vr =
+  let w_shape = shape w and vr_shape = shape vr in
+  if Array.fold_left ( * ) 1 w_shape = 0 then L.complex vr (L.full_like vr 0.0)
+  else
+    let imag () = L.imag w in
+    let first = imag () in
+    let zero = L.eq first (like first 0.0) in
+    let second = imag () in
+    let nan_value = Int64.float_of_bits 0x7FF8000000000000L in
+    let is_nan = L.eq second (like second nan_value) in
+    let is_real = L.bitwise_or zero is_nan in
+    let rank_w = Array.length w_shape and rank = Array.length vr_shape in
+    let counted =
+      L.cumsum ~axis:(rank_w - 1)
+        (L.convert_element_type (L.bitwise_not is_real)
+           (Dtypes.default_int_dtype ()))
+    in
+    let parity =
+      !jnp_remainder counted
+        (Concrete
+           (Ndarray.as_weak
+              (Ndarray.of_floats (Dtypes.default_int_dtype ()) [||] [| 2.0 |])))
+    in
+    let conj_pair_start = L.eq parity (like parity 1.0) in
+    let zero_scalar () = Core.splat (dtype vr) [||] 0.0 in
+    let pads low high =
+      Array.init rank (fun d ->
+          if d = rank - 1 then (low, high, 0) else (0, 0, 0))
+    in
+    let shifted_left = L.pad vr (zero_scalar ()) (pads (-1) 1) in
+    let shifted_right = L.pad vr (zero_scalar ()) (pads 1 (-1)) in
+    let dims =
+      Array.of_list
+        (List.filter (fun d -> d <> rank - 2) (List.init rank Fun.id))
+    in
+    let is_real = L.broadcast_in_dim is_real vr_shape dims in
+    let conj_pair_start = L.broadcast_in_dim conj_pair_start vr_shape dims in
+    let re = L.select (L.bitwise_or is_real conj_pair_start) vr shifted_right in
+    let im = L.select conj_pair_start shifted_left (L.neg vr) in
+    let im = L.select is_real (L.full_like vr 0.0) im in
+    L.complex re im
+
+let cuda_eig ~real ~compute_right = function
+  | [ _; w; _; vr; info ] ->
+      let vectors =
+        if not compute_right then []
+        else [ (if real then unpack_conjugate_pairs w vr else vr) ]
+      in
+      lapack_guarded ((w :: vectors) @ [ info ])
+  | _ -> invalid_arg "Native_lowering: geev arity"
+
 let lapack_schur ~compute_vectors outs =
   let keep =
     match outs with

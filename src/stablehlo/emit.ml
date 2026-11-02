@@ -1626,48 +1626,82 @@ let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
     | [ a; b; c ] -> (atom_aval a, atom_aval b, atom_aval c)
     | _ -> invalid_arg "Stablehlo.Emit: scatter arity"
   in
-  let dt = op_av.dtype in
-  let sty = Ir.tensor_type dt [||] in
   let ivd = Array.length idx_av.shape - 1 in
   let out = sole eqn.outs in
-  let n = bind_var ctx out in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
-        scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
-       (name n) (name op_id) (name idx_id) (name upd_id)
-       (Np_ints.scatter_marked eqn.prim
-       || dnums.s_sorted_unique
-       || Option.fold ~none:false ~some:fst (Np_ints.scatter_flags_of eqn.prim)
-       )
-       (scatter_dnums_attr dnums ivd)
-       (unique
-       || Np_ints.scatter_marked eqn.prim
-       || dnums.s_sorted_unique
-       || Option.fold ~none:false ~some:snd (Np_ints.scatter_flags_of eqn.prim)
-       ));
-  let a = fresh ctx in
-  let b = fresh ctx in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name a) sty (name b) sty);
-  let ret =
-    match combiner with
-    | None -> b
-    | Some op ->
-        let c = fresh ctx in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf "      %s = stablehlo.%s %s, %s : %s\n" (name c) op
-             (name a) (name b) sty);
-        c
+  let sorted =
+    Np_ints.scatter_marked eqn.prim
+    || dnums.s_sorted_unique
+    || Option.fold ~none:false ~some:fst (Np_ints.scatter_flags_of eqn.prim)
   in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf "      stablehlo.return %s : %s\n" (name ret) sty);
-  Buffer.add_string ctx.buf
-    (Printf.sprintf "    }) : (%s, %s, %s) -> %s\n"
-       (Ir.tensor_type_of_aval op_av)
-       (Ir.tensor_type_of_aval idx_av)
-       (Ir.tensor_type_of_aval upd_av)
-       (Ir.tensor_type_of_aval out.vaval))
+  let unique =
+    unique
+    || Np_ints.scatter_marked eqn.prim
+    || dnums.s_sorted_unique
+    || Option.fold ~none:false ~some:snd (Np_ints.scatter_flags_of eqn.prim)
+  in
+  let scatter_part dt n operand updates =
+    let sty = Ir.tensor_type dt [||] in
+    let part (a : aval) = Ir.tensor_type dt a.shape in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = \
+          %b, scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
+         (name n) (name operand) (name idx_id) (name updates) sorted
+         (scatter_dnums_attr dnums ivd)
+         unique);
+    let a = fresh ctx in
+    let b = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name a) sty (name b) sty);
+    let ret =
+      match combiner with
+      | None -> b
+      | Some op ->
+          let c = fresh ctx in
+          Buffer.add_string ctx.buf
+            (Printf.sprintf "      %s = stablehlo.%s %s, %s : %s\n" (name c) op
+               (name a) (name b) sty);
+          c
+    in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "      stablehlo.return %s : %s\n" (name ret) sty);
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    }) : (%s, %s, %s) -> %s\n" (part op_av)
+         (Ir.tensor_type_of_aval idx_av)
+         (part upd_av) (part out.vaval))
+  in
+  let complex_addsub_on_gpu =
+    op_av.dtype = Dtype.Complex128
+    && Config.current_platform () <> "cpu"
+    && match combiner with Some ("add" | "subtract") -> true | _ -> false
+  in
+  if complex_addsub_on_gpu then begin
+    let part op_name =
+      let extract (a : aval) id =
+        let r = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    %s = stablehlo.%s %s : (%s) -> %s\n" (name r)
+             op_name (name id) (Ir.tensor_type_of_aval a)
+             (Ir.tensor_type Dtype.F64 a.shape));
+        r
+      in
+      let operand = extract op_av op_id in
+      let updates = extract upd_av upd_id in
+      let r = fresh ctx in
+      scatter_part Dtype.F64 r operand updates;
+      r
+    in
+    let re = part "real" in
+    let im = part "imag" in
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.complex %s, %s : %s\n" (name n)
+         (name re) (name im)
+         (Ir.tensor_type_of_aval out.vaval))
+  end
+  else
+    let n = bind_var ctx out in
+    scatter_part op_av.dtype n op_id upd_id
 
 let dot_dims_str (dd : dot_dims) =
   let batch =
@@ -4385,6 +4419,28 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx out_avals ids eqn.outs
         (Native_lowering.lapack_svd ~compute_uv)
+  | Eig { compute_left = false; compute_right; _ } when cuda_solver () ->
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let n = a.shape.(rank - 1) in
+      let real = not (is_complex_dtype a.dtype) in
+      let cdt =
+        match a.dtype with
+        | Dtype.F32 | Dtype.Complex64 -> Dtype.Complex64
+        | _ -> Dtype.Complex128
+      in
+      let w = lapack_aval (Array.append batch [| n |]) cdt in
+      let arr = lapack_aval a.shape a.dtype in
+      let info = lapack_aval batch Dtype.I32 in
+      let out_avals = [ arr; w; arr; arr; info ] in
+      let ids =
+        emit_lapack_call ctx ~target:"cusolver_geev_ffi" ~base:"geev"
+          ~config:(Printf.sprintf "left = false, right = %b" compute_right)
+          ~aliases:[] in_ids [ a ] out_avals
+      in
+      emit_traced ctx out_avals ids eqn.outs
+        (Native_lowering.cuda_eig ~real ~compute_right)
   | Eig { compute_left; compute_right; _ } when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in

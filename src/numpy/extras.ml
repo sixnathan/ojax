@@ -45,6 +45,14 @@ let concretization name v =
   | "unique" | "intersect1d" | "setxor1d" -> own unique_context
   | "union1d" -> own "The error arose in union1d()"
   | "setdiff1d" -> own "The error arose in setdiff1d()"
+  | "ravel_multi_index" ->
+      own
+        "The error occurred because ravel_multi_index was jit-compiled with \
+         mode='raise'. Use mode='wrap' or mode='clip' instead."
+  | "choose" ->
+      own
+        "The error occurred because jnp.choose was jit-compiled with \
+         mode='raise'. Use mode='wrap' or mode='clip' instead."
   | "trim_zeros" -> own "Error arose in the `filt` argument of trim_zeros()"
   | "delete" -> own "'obj' array argument of jnp.delete()"
   | "bincount" ->
@@ -1238,6 +1246,12 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
                     (a.dtype, a.weak_type))
                   coords))
   in
+  List.iter
+    (fun c ->
+      if mode = "raise" then ignore (host "ravel_multi_index" c);
+      if not (Dtypes.issubdtype (Core.get_aval c).dtype `Integer) then
+        Py_exn.type_error "only int indices permitted")
+    coords;
   let check c d =
     let values = flat_floats (host "ravel_multi_index" c) in
     if Array.exists (fun v -> v < 0.0 || v >= float_of_int d) values then
@@ -1255,7 +1269,11 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
     | "wrap" ->
         List.mapi (fun i c -> U.remainder c (Jnp_util.py_int dims.(i))) coords
     | "ignore" -> coords
-    | other -> Py_exn.value_error ("invalid mode=" ^ other)
+    | other ->
+        Py_exn.value_error
+          (Printf.sprintf
+             "invalid mode='%s'. Expected 'raise', 'wrap', 'clip', or 'ignore'."
+             other)
   in
   let strides =
     match order with
@@ -1266,7 +1284,9 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
           s.(d) <- s.(d - 1) * dims.(d - 1)
         done;
         s
-    | other -> Py_exn.value_error ("invalid order=" ^ other)
+    | other ->
+        Py_exn.value_error
+          (Printf.sprintf "invalid order='%s'. Expected 'C' or 'F'" other)
   in
   let start = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
   let _, result =
@@ -1292,6 +1312,9 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
     match weights with
     | None -> (as_inexact sample, None)
     | Some w -> (
+        let sh = shape sample in
+        if shape w <> Array.sub sh 0 (min 1 (Array.length sh)) then
+          Py_exn.value_error "should have one weight for each sample.";
         match NL.promote_values [ as_inexact sample; as_inexact w ] with
         | [ s; w ] -> (s, Some w)
         | _ -> assert false)
@@ -1528,7 +1551,11 @@ let choose ?(mode = "raise") a choices =
         a
     | "wrap" -> U.remainder a (Jnp_util.py_int n)
     | "clip" -> NL.clip ~min:0.0 ~max:(float_of_int (n - 1)) a
-    | other -> Py_exn.value_error ("invalid mode=" ^ other)
+    | other ->
+        Py_exn.value_error
+          (Printf.sprintf
+             "mode='%s' not understood. Must be 'raise', 'wrap', or 'clip'"
+             other)
   in
   match NL.broadcast_arrays (arr :: choices) with
   | [] -> invalid_arg "choose: arity"

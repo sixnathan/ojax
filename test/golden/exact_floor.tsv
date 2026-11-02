@@ -45,7 +45,7 @@ nn:x64_on	77	77
 numpy_linalg:x64_off	84	84
 numpy_linalg:x64_on	176	176
 numpy_product_jax	4	4
-option_fuzz:x64_off	5361	5648
+option_fuzz:x64_off	5364	5648
 option_fuzz:x64_on	5128	5438
 parity:x64_off	2565	2565
 parity:x64_on	5123	5123
@@ -164,8 +164,8 @@ raw:special_values_eager:x64_off	901	901
 raw:special_values_eager:x64_on	582	582
 raw:special_values_jit:x64_off	896	896
 raw:special_values_jit:x64_on	578	578
-raw:text_option_fuzz:x64_off	1021	1497
-raw:text_option_fuzz:x64_on	1092	1582
+raw:text_option_fuzz:x64_off	1298	1500
+raw:text_option_fuzz:x64_on	1370	1582
 raw:ufuncs:x64_off	141	141
 raw:ufuncs:x64_on	193	193
 raw:vectorize:x64_off	8	8
@@ -202,8 +202,8 @@ special_values_eager:x64_off	901	901
 special_values_eager:x64_on	582	582
 special_values_jit:x64_off	896	896
 special_values_jit:x64_on	578	578
-text_option_fuzz:x64_off	1021	1497
-text_option_fuzz:x64_on	1092	1582
+text_option_fuzz:x64_off	1298	1500
+text_option_fuzz:x64_on	1370	1582
 ufuncs:x64_off	141	141
 ufuncs:x64_on	193	193
 vectorize:x64_off	8	8
@@ -216,3 +216,11 @@ apicov:x64_off	306	306
 apicov:x64_on	612	612
 raw:apicov:x64_off	306	306
 raw:apicov:x64_on	612	612
+raw:text_fuzz:x64_off	816	822
+raw:text_fuzz:x64_on	831	837
+raw:text_fuzz_s2:x64_off	837	842
+raw:text_fuzz_s2:x64_on	820	826
+text_fuzz:x64_off	816	822
+text_fuzz:x64_on	831	837
+text_fuzz_s2:x64_off	837	842
+text_fuzz_s2:x64_on	820	826

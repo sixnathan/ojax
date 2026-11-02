@@ -2549,6 +2549,7 @@ lax.conv_with_general_padding_ae8443c7_float32:eager:out0	1
 lax.conv_with_general_padding_ae8443c7_float32:jit:out0	1
 lax.cumlogsumexp_3da4286a_float32:eager:out0	1
 lax.cumlogsumexp_3da4286a_float32:jit:out0	1
+lax.cumlogsumexp_409e2872_float32:eager:both_raise	0
 lax.cumlogsumexp_409e2872_float32:jit:both_raise	0
 lax.cumlogsumexp_5936288a_float32:eager:both_raise	0
 lax.cumlogsumexp_5936288a_float32:jit:both_raise	0
@@ -2568,7 +2569,9 @@ lax.cummax_956c2041_float32:eager:out0	1
 lax.cummax_956c2041_float32:jit:out0	1
 lax.cummax_af7b2299_float32:eager:both_raise	0
 lax.cummax_af7b2299_float32:jit:both_raise	0
+lax.cummax_b9be25a3_float32:eager:both_raise	0
 lax.cummax_b9be25a3_float32:jit:both_raise	0
+lax.cummax_bac122cd_float32:eager:both_raise	0
 lax.cummax_bac122cd_float32:jit:both_raise	0
 lax.cummin_3dda286b_float32:eager:out0	1
 lax.cummin_3dda286b_float32:jit:out0	1

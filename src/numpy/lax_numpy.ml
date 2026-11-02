@@ -759,7 +759,15 @@ let squeeze ?axis v =
 let swapaxes axis1 axis2 v =
   let n = ndim v in
   let perm = Array.init n (fun i -> i) in
-  let a1 = canonicalize_axis axis1 n and a2 = canonicalize_axis axis2 n in
+  let numpy_index axis =
+    if axis < -n || axis >= n then
+      Py_exn.index_error
+        (Printf.sprintf "index %d is out of bounds for axis 0 with size %d" axis
+           n);
+    if axis < 0 then axis + n else axis
+  in
+  let a2 = numpy_index axis2 in
+  let a1 = numpy_index axis1 in
   perm.(a1) <- a2;
   perm.(a2) <- a1;
   bind1 (T.Transpose perm) [ v ]

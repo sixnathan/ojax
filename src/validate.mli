@@ -4,6 +4,13 @@ val canonicalize_axis_tuple :
   ?allow_duplicate:bool -> int array -> int -> int array
 
 val tuple_index : int array -> int -> int
+val rfft_empty_verifier_message :
+  function_name:string ->
+  location:string ->
+  element:string ->
+  int array ->
+  string
+
 val list_assign_index : int -> int -> int
 val python_tuple : int array -> string
 val slice_indices : ?start:int -> ?stop:int -> int -> int * int

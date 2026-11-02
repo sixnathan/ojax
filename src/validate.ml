@@ -22,6 +22,24 @@ let tuple_index tuple i =
   if i < -n || i >= n then Py_exn.index_error "tuple index out of range";
   tuple.(if i < 0 then i + n else i)
 
+let rfft_empty_verifier_message ~function_name ~location ~element shape =
+  let tensor dims =
+    let dims = Array.to_list dims |> List.map string_of_int in
+    Printf.sprintf "tensor<%sx%s>" (String.concat "x" dims) element
+  in
+  let result = Array.copy shape in
+  result.(Array.length shape - 1) <- 1;
+  let returned = tensor shape in
+  Printf.sprintf
+    "Cannot lower jaxpr with verifier errors:\n\
+     \ttype of return operand 0 ('%s') doesn't match function result type \
+     ('%s') in function @%s\n\
+     \t\tat %s\n\
+     \tsee current operation: \"func.return\"(%%0) : (%s) -> ()\n\
+     \t\tat %s\n\
+     Define JAX_DUMP_IR_TO to dump the module."
+    returned (tensor result) function_name location returned location
+
 let list_assign_index length i =
   if i < -length || i >= length then
     Py_exn.index_error "list assignment index out of range";

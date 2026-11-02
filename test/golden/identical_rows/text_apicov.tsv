@@ -73,6 +73,7 @@ apicov/x64_off	ap_jacfwd_holo_3_48530e52_float32	i	i
 apicov/x64_off	ap_jacobian_argnums_2_2_9f1a1752_float32	i	i
 apicov/x64_off	ap_jacobian_aux_3_15650cfe_float32	i	i
 apicov/x64_off	ap_jacrev_holo_3_48530e52_float32	i	i
+apicov/x64_off	ap_jit_static_3_15650cfe_float32	i	i
 apicov/x64_off	ap_keyed_node_2_155c0cfd_float32	i	i
 apicov/x64_off	ap_lax_dtype_2_07650ca4_float32	i	i
 apicov/x64_off	ap_lax_dtype_2_155c0cfd_float32	i	i
@@ -348,6 +349,8 @@ apicov/x64_on	ap_jacobian_aux_3_15650cfe_float32	i	i
 apicov/x64_on	ap_jacobian_aux_3_15650cfe_float64	i	i
 apicov/x64_on	ap_jacrev_holo_3_48530e52_float32	i	i
 apicov/x64_on	ap_jacrev_holo_3_48530e52_float64	i	i
+apicov/x64_on	ap_jit_static_3_15650cfe_float32	i	i
+apicov/x64_on	ap_jit_static_3_15650cfe_float64	i	i
 apicov/x64_on	ap_keyed_node_2_155c0cfd_float32	i	i
 apicov/x64_on	ap_keyed_node_2_155c0cfd_float64	i	i
 apicov/x64_on	ap_lax_dtype_2_07650ca4_float32	i	i

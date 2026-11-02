@@ -85,6 +85,14 @@ keys_arrays:x64_off	316	318
 keys_arrays:x64_on	315	317
 raw:keys_arrays:x64_off	316	318
 raw:keys_arrays:x64_on	315	317
+jit_opts:x64_off	724	726
+jit_opts:x64_on	725	726
+jit_opts_notices:x64_off	726	726
+jit_opts_notices:x64_on	726	726
+raw:jit_opts:x64_off	724	726
+raw:jit_opts:x64_on	725	726
+raw:jit_opts_notices:x64_off	726	726
+raw:jit_opts_notices:x64_on	726	726
 raw:conditionals:x64_off	19	19
 raw:conditionals:x64_on	23	23
 raw:contractions:x64_off	47	47

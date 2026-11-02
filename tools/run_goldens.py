@@ -68,9 +68,17 @@ def list_cases(exe, cwd, env):
     return cases
 
 
+IN_ORDER_GROUPS = ("jit_opts_x64_off", "jit_opts_x64_on")
+
+
 def make_jobs(cases, count):
+    whole = collections.OrderedDict()
+    for group, index in cases:
+        if group in IN_ORDER_GROUPS:
+            whole.setdefault(group, []).append(index)
+    cases = [c for c in cases if c[0] not in IN_ORDER_GROUPS]
+    jobs = [(g, min(v), max(v)) for g, v in whole.items()]
     size = max(1, len(cases) // count)
-    jobs = []
     for start in range(0, len(cases), size):
         by_group = collections.OrderedDict()
         for group, index in cases[start : start + size]:

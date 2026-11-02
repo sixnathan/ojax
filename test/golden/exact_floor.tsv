@@ -19,8 +19,8 @@ creation:x64_on	32	32
 dtypes:x64_off	7	7
 dtypes:x64_on	9	9
 e2e	36	36
-fuzz:x64_off	15133	15593
-fuzz:x64_on	16664	17164
+fuzz:x64_off	15254	15613
+fuzz:x64_on	16798	17189
 image:x64_off	34	34
 image:x64_on	37	37
 indexing:x64_off	17	17
@@ -82,8 +82,8 @@ raw:creation:x64_on	32	32
 raw:dtypes:x64_off	7	7
 raw:dtypes:x64_on	9	9
 raw:e2e	36	36
-raw:fuzz:x64_off	14675	15593
-raw:fuzz:x64_on	16218	17164
+raw:fuzz:x64_off	14790	15613
+raw:fuzz:x64_on	16344	17189
 raw:image:x64_off	34	34
 raw:image:x64_on	37	37
 raw:indexing:x64_off	17	17
@@ -196,7 +196,7 @@ ufuncs:x64_off	141	141
 ufuncs:x64_on	193	193
 vectorize:x64_off	8	8
 vectorize:x64_on	16	16
-fuzz_s2:x64_off	15109	15619
-fuzz_s2:x64_on	16687	17165
-raw:fuzz_s2:x64_off	14671	15619
-raw:fuzz_s2:x64_on	16224	17165
+fuzz_s2:x64_off	15223	15632
+fuzz_s2:x64_on	16822	17188
+raw:fuzz_s2:x64_off	14783	15632
+raw:fuzz_s2:x64_on	16355	17188

@@ -130,7 +130,7 @@ coverage/x64_off	cv_r_lognormal_1_633a1953_float32	i	i
 coverage/x64_off	cv_r_lognormal_1_63741955_float32	i	i
 coverage/x64_off	cv_r_lognormal_1_80a619b7_float32	i	i
 coverage/x64_off	cv_r_multinomial_2x3_6cf3120e_float32	i	i
-coverage/x64_off	cv_r_multinomial_3_3b4c1547_float32	-	i
+coverage/x64_off	cv_r_multinomial_3_3b4c1547_float32	i	i
 coverage/x64_off	cv_r_multinomial_3_507311bc_float32	i	i
 coverage/x64_off	cv_r_multinomial_3_a0e71620_float32	i	i
 coverage/x64_off	cv_r_multinomial_3_f4f6175e_float32	i	i
@@ -512,8 +512,8 @@ coverage/x64_on	cv_r_lognormal_1_80a619b7_float32	i	i
 coverage/x64_on	cv_r_lognormal_1_80a619b7_float64	i	i
 coverage/x64_on	cv_r_multinomial_2x3_6cf3120e_float32	i	i
 coverage/x64_on	cv_r_multinomial_2x3_6cf3120e_float64	i	i
-coverage/x64_on	cv_r_multinomial_3_3b4c1547_float32	-	i
-coverage/x64_on	cv_r_multinomial_3_3b4c1547_float64	-	i
+coverage/x64_on	cv_r_multinomial_3_3b4c1547_float32	i	i
+coverage/x64_on	cv_r_multinomial_3_3b4c1547_float64	i	i
 coverage/x64_on	cv_r_multinomial_3_507311bc_float32	i	i
 coverage/x64_on	cv_r_multinomial_3_507311bc_float64	i	i
 coverage/x64_on	cv_r_multinomial_3_a0e71620_float32	i	i

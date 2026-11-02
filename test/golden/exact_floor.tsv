@@ -190,3 +190,5 @@ ufuncs:x64_off	141	141
 ufuncs:x64_on	193	193
 vectorize:x64_off	8	8
 vectorize:x64_on	16	16
+fuzz:x64_off	15431	15593
+fuzz:x64_on	16985	17164

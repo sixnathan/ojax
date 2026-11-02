@@ -197,9 +197,31 @@ let () =
     dump_arrays goldens out;
     exit 0
   end;
+  let fuzz = Array.length Sys.argv > 5 && Sys.argv.(5) = "fuzz" in
   let shard = int_of_string Sys.argv.(3) in
   let shards = int_of_string Sys.argv.(4) in
   let oc = open_out out in
+  if fuzz then begin
+    List.iter
+      (fun (set, x64) ->
+        Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+            let manifest =
+              Filename.concat
+                (Filename.concat (Filename.concat goldens "fuzz") set)
+                "manifest.json"
+            in
+            List.iteri
+              (fun i case ->
+                if
+                  in_shard ~shard ~shards i
+                  && String.starts_with ~prefix:"shape"
+                       (U.to_string (U.member "variant" case))
+                then parity_case oc ~set:("fuzz/" ^ set) case)
+              (cases_of manifest)))
+      [ ("x64_off", false); ("x64_on", true) ];
+    close_out oc;
+    exit 0
+  end;
   List.iter
     (fun (set, x64) ->
       Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->

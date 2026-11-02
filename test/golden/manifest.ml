@@ -5264,6 +5264,8 @@ let () =
         (concrete_jit_suite_for "x64_off"
         :: concrete_jit_suite_for "x64_on"
         :: special_values_suites ())
+    @ Fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
+        ~concrete
     @ [
         ( "exact_ratchet",
           [
@@ -5275,7 +5277,9 @@ let () =
                          (fun line ->
                            not
                              (String.starts_with ~prefix:"e2e\t" line
-                             || String.starts_with ~prefix:"raw:e2e\t" line))
+                             || String.starts_with ~prefix:"raw:e2e\t" line
+                             || String.starts_with ~prefix:"fuzz:" line
+                                && not (Fuzz.available ~goldens_root)))
                          (String.split_on_char '\n' Exact_floor.data))));
           ] );
       ])

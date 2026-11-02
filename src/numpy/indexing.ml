@@ -590,3 +590,7 @@ let () =
               (if Config.value Config.enable_x64 then D.I64 else D.I32)
               [| Array.length indices |]
               (Array.map float_of_int indices)))
+
+let () =
+  Reductions.take_along_axis_hook :=
+    fun ~axis a i -> take_along_axis ~axis a i

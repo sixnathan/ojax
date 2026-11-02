@@ -281,6 +281,9 @@ def _numpy_ops():
     ops["ap_linspace_retstep"] = lambda a, p: list(jnp.linspace(a[0], a[1], p["num"], endpoint=p.get("endpoint", True), retstep=True))
     ops["ap_indices_sparse"] = lambda a, p: list(jnp.indices(tuple(p["dims"]), sparse=True))
     ops["ap_array_str"] = lambda a, p: [_text(jnp.array_str(jnp.asarray(a), max_line_width=p.get("width"), precision=p.get("precision"), suppress_small=p.get("suppress"))), _text(jnp.array_repr(jnp.asarray(a), max_line_width=p.get("width"), precision=p.get("precision"), suppress_small=p.get("suppress")))]
+    for name in "quantile nanquantile percentile nanpercentile".split():
+        ops["ap_" + name + "_w"] = lambda a, b, p, _n=name: getattr(jnp, _n)(a, jnp.asarray(p["q"], dtype=a.dtype), axis=p.get("axis"), method="inverted_cdf", keepdims=p.get("keepdims", False), weights=jnp.abs(b))
+        ops["ap_" + name + "_cdf"] = lambda a, p, _n=name: getattr(jnp, _n)(a, jnp.asarray(p["q"], dtype=a.dtype), axis=p.get("axis"), method="inverted_cdf", keepdims=p.get("keepdims", False))
     ops["ap_ravel_dtype"] = lambda a, p: jnp.ravel_multi_index((jnp.asarray(p["i"]), jnp.asarray(p["j"])), tuple(p["dims"]), mode="clip", dtype=p["dtype"])
     return ops
 
@@ -384,6 +387,14 @@ def _option_cases():
     for params in [{}, {"precision": 2}, {"width": 20}, {"suppress": True}, {"precision": 1, "width": 30, "suppress": True}]:
         out.append(("ap_array_str", _r([6]), params))
         out.append(("ap_array_str", _r([2, 3]), params))
+    for name, qs in [("quantile", [0.5, [0.1, 0.9]]), ("nanquantile", [0.5, [0.1, 0.9]]), ("percentile", [50.0, [10.0, 90.0]]), ("nanpercentile", [50.0, [10.0, 90.0]])]:
+        for q in qs:
+            out.append(("ap_" + name + "_w", _ab([6], [6]), {"q": q}))
+            out.append(("ap_" + name + "_w", _ab([3, 4], [3, 4]), {"q": q, "axis": 0}))
+            out.append(("ap_" + name + "_w", _ab([3, 4], [4]), {"q": q, "axis": 1, "keepdims": True}))
+            out.append(("ap_" + name + "_w", _ab([3, 4], [3, 4]), {"q": q, "keepdims": True}))
+            out.append(("ap_" + name + "_cdf", _r([3, 4]), {"q": q, "axis": 0}))
+            out.append(("ap_" + name + "_cdf", _r([5]), {"q": q}))
     out.append(("ap_ravel_dtype", one, {"i": [0, 1], "j": [2, 7], "dims": [2, 3], "dtype": "int16"}))
     out.append(("ap_ravel_dtype", one, {"i": [0, 1], "j": [2, 7], "dims": [2, 3], "dtype": "uint8"}))
     return out

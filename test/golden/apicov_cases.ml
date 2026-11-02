@@ -620,4 +620,40 @@ and run_options op p a b =
           [ int_list "i"; int_list "j" ]
           (Array.of_list (List.map U.to_int (U.to_list (U.member "dims" p))));
       ]
+  | other when String.length other > 3 ->
+      let body = String.sub other 3 (String.length other - 3) in
+      let name, kind =
+        match String.rindex_opt body '_' with
+        | Some i ->
+            ( String.sub body 0 i,
+              String.sub body (i + 1) (String.length body - i - 1) )
+        | None -> failwith ("apicov: unknown op " ^ other)
+      in
+      let f =
+        match name with
+        | "quantile" -> R.quantile
+        | "nanquantile" -> R.nanquantile
+        | "percentile" -> R.percentile
+        | "nanpercentile" -> R.nanpercentile
+        | _ -> failwith ("apicov: unknown op " ^ other)
+      in
+      let x = a () in
+      let dt = (Ojax.Core.get_aval x).T.dtype in
+      let q =
+        match U.member "q" p with
+        | `List vs ->
+            let values =
+              Array.of_list (List.map U.to_number vs)
+            in
+            T.Concrete (Nd.of_floats dt [| Array.length values |] values)
+        | v -> T.Concrete (Nd.of_floats dt [||] [| U.to_number v |])
+      in
+      let weights =
+        if kind = "w" then Some (UF.abs (b ())) else None
+      in
+      [
+        f ?axis:(PC.opt_int "axis" p)
+          ?keepdims:(PC.opt_bool "keepdims" p)
+          ~method_:"inverted_cdf" ?weights x q;
+      ]
   | other -> failwith ("apicov: unknown op " ^ other)

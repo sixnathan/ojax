@@ -1925,6 +1925,7 @@ jnp.select_3cc45764_float32:eager:out0	1
 jnp.select_3cc45764_float32:jit:out0	1
 jnp.select_d9965a0b_float32:eager:out0	1
 jnp.select_d9965a0b_float32:jit:out0	1
+jnp.setdiff1d_197c3914_float32:eager:out0	1
 jnp.setdiff1d_197c3914_float32:jit:both_raise	0
 jnp.setdiff1d_44523a97_float32:eager:out0	1
 jnp.setdiff1d_44523a97_float32:jit:both_raise	0
@@ -2866,8 +2867,12 @@ lax.full_05541bb4_float32:eager:out0	1
 lax.full_05541bb4_float32:jit:out0	1
 lax.full_13c01b67_float32:eager:out0	1
 lax.full_13c01b67_float32:jit:out0	1
+lax.full_14551b6a_float32:eager:out0	1
+lax.full_14551b6a_float32:jit:out0	1
 lax.full_21381bad_float32:eager:out0	1
 lax.full_21381bad_float32:jit:out0	1
+lax.full_cfd71b55_float32:eager:out0	1
+lax.full_cfd71b55_float32:jit:out0	1
 lax.full_d20b1b31_float32:eager:out0	1
 lax.full_d20b1b31_float32:jit:out0	1
 lax.full_de031b03_float32:eager:out0	1

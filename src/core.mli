@@ -94,6 +94,7 @@ val custom_call_jaxprs_of : int -> closed_jaxpr list
 val with_eval_dynamic : (unit -> 'a) -> 'a
 val ffi_impl : (primitive -> Ndarray.t list -> Ndarray.t list) ref
 val named_axis_trace : (string -> trace option) ref
+val check_operands : primitive -> value list -> unit
 val bind : primitive -> value list -> value list
 val bind1 : primitive -> value list -> value
 val get_aval : value -> aval

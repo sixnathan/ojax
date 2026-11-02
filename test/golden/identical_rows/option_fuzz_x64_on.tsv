@@ -442,6 +442,7 @@ jnp.average_b4292950_float64:eager:out0	1
 jnp.average_b4292950_float64:jit:out0	1
 jnp.average_ce4a2931_float64:eager:out0	1
 jnp.average_ce4a2931_float64:jit:out0	1
+jnp.average_fd5531b2_float64:eager:out0	1
 jnp.average_fd5531b2_float64:eager:out1	1
 jnp.average_fd5531b2_float64:jit:out0	1
 jnp.average_fd5531b2_float64:jit:out1	1
@@ -1833,6 +1834,7 @@ jnp.setdiff1d_f2443bd2_float64:jit:out0	1
 jnp.setdiff1d_f9d93eb0_float64:eager:out0	1
 jnp.setdiff1d_f9d93eb0_float64:jit:both_raise	0
 jnp.setxor1d_488e42c5_float64:eager:out0	1
+jnp.setxor1d_488e42c5_float64:jit:both_raise	0
 jnp.setxor1d_493c36e2_float64:eager:out0	1
 jnp.setxor1d_493c36e2_float64:jit:both_raise	0
 jnp.setxor1d_7cef4405_float64:eager:out0	1
@@ -2119,6 +2121,7 @@ jnp.union1d_2ac73637_float64:eager:out0	1
 jnp.union1d_2ac73637_float64:jit:both_raise	0
 jnp.union1d_5988352c_float64:eager:out0	1
 jnp.union1d_5988352c_float64:jit:both_raise	0
+jnp.union1d_5b1d3d74_float64:eager:out0	1
 jnp.union1d_5b1d3d74_float64:jit:both_raise	0
 jnp.union1d_78503acc_float64:eager:out0	1
 jnp.union1d_78503acc_float64:jit:both_raise	0

@@ -2072,12 +2072,12 @@ let rec jvp_pairs prim primals tangents =
             observed := List.map2 ( || ) carry_nz (nz tcarry_o);
             ys_nz := nz tys;
             carry_o
-            @ keep carry_nz (List.map instantiate_traced tcarry_o)
+            @ List.map instantiate_traced (keep carry_nz tcarry_o)
             @ ys
             @ List.filter (fun t -> not (is_zero t)) tys)
       in
       let carry_nz, new_body = carry_zero_fixpoint trace_body (nz carry_t) in
-      let init_dot = keep carry_nz (List.map instantiate_traced carry_t) in
+      let init_dot = List.map instantiate_traced (keep carry_nz carry_t) in
       let consts_dot = keep const_nz consts_t in
       let out =
         Core.bind
@@ -2142,10 +2142,10 @@ let rec jvp_pairs prim primals tangents =
                 (restore bconst_nz pb tb @ restore carry_nz pc tc)
             in
             observed := List.map2 ( || ) carry_nz (nz to_);
-            po @ keep carry_nz (List.map instantiate_traced to_))
+            po @ List.map instantiate_traced (keep carry_nz to_))
       in
       let carry_nz, new_body = carry_zero_fixpoint trace_body (nz init_t) in
-      let init_dot = keep carry_nz (List.map instantiate_traced init_t) in
+      let init_dot = List.map instantiate_traced (keep carry_nz init_t) in
       let bconst_dot = keep bconst_nz bconst_t in
       let new_cond =
         {
@@ -2438,7 +2438,7 @@ let lin_process (trace : trace) (b : jaxpr_builder) prim primals tangents =
                   match known_of_pe main p with
                   | `Known c -> c
                   | `Unknown _ ->
-                      failwith
+                      Py_exn.value_error
                         "Linearization failed to produce known values for all \
                          output primals. This is typically caused by \
                          attempting to differentiate a function uses an \
@@ -2458,7 +2458,9 @@ let lin_process (trace : trace) (b : jaxpr_builder) prim primals tangents =
             tos
         in
         let out_tracers = List.filter_map Fun.id classified in
-        let jx, consts = Partial_eval.tracers_to_jaxpr in_tracers out_tracers in
+        let jx, consts =
+          Partial_eval.tracers_to_jaxpr ~literals:false in_tracers out_tracers
+        in
         (pos, List.map Option.is_some classified, consts, jx))
   in
   let nz_in = List.filter (fun t -> not (is_zero t)) tangents in
@@ -3190,7 +3192,7 @@ let joint_branch_jvp rebuild branches primals tangents =
           (fun branch ->
             Jaxpr.make_jaxpr in_avals (fun args ->
                 let pos, tos = run branch args in
-                pos @ keep out_nzs (List.map instantiate tos)))
+                pos @ List.map instantiate (keep out_nzs tos)))
           branches
       in
       let outs =
@@ -4599,7 +4601,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ | Threefry2x32
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap | Random_gamma _ ->
-      failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
+      Py_exn.not_implemented_error
+        ("Transpose rule (for reverse-mode differentiation) for '"
+        ^ Pretty_printer.primitive_name prim
+        ^ "' not implemented")
   | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       let split_at l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
@@ -4771,8 +4776,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           carry_tv carry_out
       @ xs_cts
   | While _ ->
-      failwith
-        "ad: reverse-mode differentiation does not work for lax.while_loop"
+      Py_exn.value_error
+        "Reverse-mode differentiation does not work for lax.while_loop or \
+         lax.fori_loop with dynamic start/stop values. Try using lax.scan, or \
+         using fori_loop with static start/stop."
   | Triangular_solve o -> (
       match primals with
       | [ a; b ] when is_undef b && not (is_undef a) ->
@@ -4818,11 +4825,18 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       | _ -> failwith "ad: tridiagonal_solve is linear only in its right side")
   | Checkpoint_name _ -> [ Some (ct1 ()) ]
   | Xla_call c -> xla_call_transpose c cts primals
-  | Stop_gradient -> failwith "ad: stop_gradient has no transpose rule"
+  | Stop_gradient ->
+      Py_exn.not_implemented_error
+        ("Transpose rule (for reverse-mode differentiation) for '"
+        ^ Pretty_printer.primitive_name prim
+        ^ "' not implemented")
   | Cholesky | Cholesky_update | Symmetric_product _ | Householder_product | Lu
   | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _
   | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
-      failwith "ad: nonlinear linalg primitive has no transpose rule"
+      Py_exn.not_implemented_error
+        ("Transpose rule (for reverse-mode differentiation) for '"
+        ^ Pretty_printer.primitive_name prim
+        ^ "' not implemented")
   | Decomposable _ -> failwith "ad: decomposed before differentiation"
 
 and xla_call_transpose (c : closed_jaxpr) cts primals =

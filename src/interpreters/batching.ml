@@ -909,10 +909,15 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       | [ x; y ], [ Some d; None ] ->
           (Core.bind1 Add_any [ x; move_batch_axis axis_size None d y ], Some d)
       | _ -> bin ())
-  | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le
-  | Eq_to | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or
-  | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie
-    ->
+  | Add_any -> (
+      match (vals, bdims) with
+      | [ x; y ], [ Some dx; Some dy ] when dx <> dy ->
+          ( Core.bind1 Add_any [ move_batch_axis axis_size (Some dx) dy x; y ],
+            Some dy )
+      | _ -> bin ())
+  | Add | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le | Eq_to
+  | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or | Rem
+  | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie ->
       bin ()
   | Select_n -> select_rule axis_size vals bdims
   | Convert_element_type dt -> (
@@ -1913,7 +1918,9 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
     else a
   in
   let binder_avals =
-    List.map (fun (v : var) -> v.vaval) jaxpr.jaxpr.in_binders
+    List.filteri
+      (fun i _ -> i >= List.length jaxpr.consts)
+      (List.map (fun (v : var) -> v.vaval) jaxpr.jaxpr.in_binders)
   in
   let build carry_batched =
     let flags = const_batched @ carry_batched @ xs_batched in

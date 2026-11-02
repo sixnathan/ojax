@@ -500,6 +500,8 @@ def generic_values(param, text):
         if "tuple" in text or "Sequence" in text or "Axis" in text or param.name == "axes":
             values += [(0, 1), (1, 0), (0, 0)]
         return values
+    if "Sequence[int]" in text and default is None:
+        return [None, (1,), (2,)]
     if "int" in text and default is None:
         return [None, 1, 2]
     if "bool" in text and default is None:
@@ -621,5 +623,5 @@ def call(module_short, name, positional, options, arrays):
 
 
 def flatten_output(result):
-    leaves = jax.tree_util.tree_leaves(result)
+    leaves = [jnp.asarray(leaf) if isinstance(leaf, (bool, int, float, complex)) else leaf for leaf in jax.tree_util.tree_leaves(result)]
     return [np.asarray(jax.random.key_data(leaf) if jnp.issubdtype(jnp.result_type(leaf), jax.dtypes.prng_key) else leaf, order="C") for leaf in leaves]

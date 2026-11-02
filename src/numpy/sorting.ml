@@ -47,7 +47,9 @@ let argsort ?(axis = Some (-1)) ?(stable = true) ?(descending = false) ?dtype a
     | Some ax -> (a, canonicalize_axis ax (ndim a))
   in
   let idx_dtype =
-    match dtype with Some d -> d | None -> Dtypes.default_int_dtype ()
+    match dtype with
+    | Some d -> Dtypes.canonicalize_dtype d
+    | None -> Dtypes.default_int_dtype ()
   in
   let iota = broadcasted_iota idx_dtype (shape arr) dim in
   let arr, iota =

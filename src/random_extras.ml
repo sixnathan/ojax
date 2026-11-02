@@ -124,7 +124,9 @@ let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") ?dtype key
     | _ -> assert false)
 
 let with_dt dtype f =
-  match dtype with None -> f () | Some d -> C.with_dtypes ~float_dtype:d f
+  match dtype with
+  | None -> f ()
+  | Some d -> C.with_dtypes ~float_dtype:(Dtypes.canonicalize_dtype d) f
 
 let maxwell ?dtype key ~shape =
   C.check_float_dtype "maxwell" dtype;

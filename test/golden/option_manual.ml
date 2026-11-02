@@ -127,6 +127,11 @@ let run op positional options arr =
           (v positional.(0))
       in
       Some [ r.X.values; r.X.indices; r.X.inverse; r.X.counts ]
+  | "jnp.indices" when flag options "sparse" ->
+      Some
+        (Ojax.Numpy.Lax_numpy.indices_sparse
+           ~dtype:(A.default_int (A.get options "dtype" `Null))
+           (A.int_array positional.(0)))
   | "jnp.size" ->
       let n = X.size ?axis:(A.opt options "axis" A.int_) (v positional.(0)) in
       Some [ Ojax.Numpy.Jnp_util.py_int n ]

@@ -1679,11 +1679,12 @@ let run op positional options arr =
           ((A.value arr) positional.(1));
       ]
   | "lax.dynamic_index_in_dim" ->
-      A.refuse options [ "allow_negative_indices" ];
       [
         Ojax.Lax_api.dynamic_index_in_dim
           ?axis:(A.opt options "axis" A.int_)
           ?keepdims:(A.opt options "keepdims" A.bool_)
+          ?allow_negative_indices:
+            (A.opt options "allow_negative_indices" A.bool_)
           ((A.value arr) positional.(0))
           ((A.value arr) positional.(1));
       ]
@@ -1707,10 +1708,11 @@ let run op positional options arr =
           (A.int_ positional.(2));
       ]
   | "lax.dynamic_update_index_in_dim" ->
-      A.refuse options [ "allow_negative_indices" ];
       [
         Ojax.Lax_api.dynamic_update_index_in_dim
           ?axis:(Some (A.int_ positional.(3)))
+          ?allow_negative_indices:
+            (A.opt options "allow_negative_indices" A.bool_)
           ((A.value arr) positional.(0))
           ((A.value arr) positional.(1))
           ((A.value arr) positional.(2));

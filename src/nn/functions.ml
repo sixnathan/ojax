@@ -605,7 +605,7 @@ let attention_full ?bias ?mask ?scale ?is_causal ?query_seq_lengths
       raise (Py_exn.Value_error ("Unsupported implementation option: " ^ other)));
   let output_shape = shape query in
   let residual_shape =
-    Array.sub output_shape 0 (Array.length output_shape - 1)
+    Array.sub output_shape 0 (Stdlib.max 0 (Array.length output_shape - 1))
   in
   let ensure_4d v =
     let r = Array.length (shape v) in

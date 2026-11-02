@@ -118,12 +118,18 @@ val dynamic_slice_in_dim :
   ?axis:int -> ?allow_negative_indices:bool -> value -> value -> int -> value
 
 val dynamic_index_in_dim :
-  ?axis:int -> ?keepdims:bool -> value -> value -> value
+  ?axis:int ->
+  ?keepdims:bool ->
+  ?allow_negative_indices:bool ->
+  value ->
+  value ->
+  value
 
 val dynamic_update_slice_in_dim :
   ?axis:int -> ?allow_negative_indices:bool -> value -> value -> value -> value
 
-val dynamic_update_index_in_dim : ?axis:int -> value -> value -> value -> value
+val dynamic_update_index_in_dim :
+  ?axis:int -> ?allow_negative_indices:bool -> value -> value -> value -> value
 
 val gather :
   ?mode:Lax_config.gather_scatter_mode ->

@@ -1453,6 +1453,7 @@ let array_equiv a b =
   | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
 
 let arange ?(start = 0.0) ?step ~dtype stop =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   match step with
   | Some step ->
       let working =
@@ -1479,6 +1480,7 @@ let arange ?(start = 0.0) ?step ~dtype stop =
       if start = 0.0 then idx else bind1 T.Add [ scalar dtype start; idx ]
 
 let eye ?m ?(k = 0) ~dtype n =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   let m = Option.value m ~default:n in
   let idt = Dtypes.default_int_dtype () in
   let i =
@@ -1493,6 +1495,7 @@ let eye ?m ?(k = 0) ~dtype n =
 let identity ~dtype n = eye ~dtype n
 
 let indices_sparse ~dtype dims =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   let n = Array.length dims in
   List.init n (fun i ->
       let idx =
@@ -1507,6 +1510,7 @@ let indices_sparse ~dtype dims =
         [ idx ])
 
 let indices ~dtype dims =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   let n = Array.length dims in
   let outs =
     List.init n (fun i ->
@@ -1518,6 +1522,17 @@ let indices ~dtype dims =
   stack ~axis:0 outs
 
 let meshgrid ?(indexing = "xy") ?(sparse = false) xs =
+  if indexing <> "xy" && indexing <> "ij" then
+    raise
+      (Py_exn.Value_error
+         ("Valid values for indexing are 'xy' and 'ij', got " ^ indexing));
+  if List.exists (fun a -> ndim a <> 1) xs then
+    raise
+      (Py_exn.Value_error
+         ("Arguments to jax.numpy.meshgrid must be 1D, got shapes ["
+         ^ String.concat ", "
+             (List.map (fun a -> Validate.python_tuple (shape a)) xs)
+         ^ "]"));
   let args = Array.of_list xs in
   let n = Array.length args in
   let swap = indexing = "xy" && n >= 2 in
@@ -1667,6 +1682,7 @@ let diag_indices_from arr =
   diag_indices ~ndim:nd s.(0)
 
 let tri ?m ?(k = 0) ~dtype n =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   let m = Option.value m ~default:n in
   convert (Lax.Linalg.tri_mask n m k) dtype
 
@@ -2288,6 +2304,10 @@ let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
     [ sorted_arr; query ]
 
 let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
+  if side <> "left" && side <> "right" then
+    raise
+      (Py_exn.Value_error
+         ("invalid argument side='" ^ side ^ "', expected 'left' or 'right'"));
   if ndim a <> 1 then invalid_arg "a should be 1-dimensional";
   check_search_method method_;
   let args = [ a; v ] @ Option.to_list sorter in

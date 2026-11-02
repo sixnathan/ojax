@@ -20,4 +20,4 @@ let array ?dtype ?(ndmin = 0) v =
 
 let asarray ?dtype ?order v =
   NL.check_array_order order;
-  array ?dtype v
+  array ?dtype:(Option.map Dtypes.canonicalize_dtype dtype) v

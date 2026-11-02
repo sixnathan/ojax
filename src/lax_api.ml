@@ -178,7 +178,7 @@ let select_n pred cases =
   in
   b1 Select_n (broadcast_scalar pred sh :: cases)
 
-let full sh fill_value dt = filled dt sh fill_value
+let full sh fill_value dt = filled (Dtypes.canonicalize_dtype dt) sh fill_value
 
 let rec full_like ?dtype ?shape x fill_value =
   match (dtype, shape) with
@@ -296,7 +296,21 @@ let concatenate xs dimension =
 
 let stack xs axis = b1 (Stack axis) xs
 let unstack x axis = Core.bind (Unstack axis) [ x ]
-let split x sizes axis = Core.bind (Split { sizes; axis }) [ x ]
+
+let split x sizes axis =
+  let sh = shape x in
+  let axis = Validate.canonicalize_axis axis (Array.length sh) in
+  let total = Array.fold_left ( + ) 0 sizes in
+  if total <> sh.(axis) then
+    raise
+      (Py_exn.Value_error
+         (Printf.sprintf
+            "Sum of sizes %d must be equal to dimension %d of the operand \
+             shape [%s]"
+            total axis
+            (String.concat ", " (Array.to_list (Array.map string_of_int sh)))));
+  Core.bind (Split { sizes; axis }) [ x ]
+
 let pad x value config = b1 (Pad config) [ x; value ]
 
 let slice ?strides x start_indices limit_indices =
@@ -384,14 +398,17 @@ let dynamic_slice_in_dim ?(axis = 0) ?allow_negative_indices x start size =
     (starts_in_dim ?allow_negative_indices x axis start)
     sizes
 
-let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
+let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true)
+    ?(allow_negative_indices = true) x index =
   let axis = Validate.list_assign_index (ndim x) axis in
   match
     Jaxpr.named_jit ~name:"dynamic_index_in_dim"
-      ~key:(Printf.sprintf "%d %b" axis keepdims)
+      ~key:(Printf.sprintf "%d %b %b" axis keepdims allow_negative_indices)
       (function
         | [ x; index ] ->
-            let v = dynamic_slice_in_dim ~axis x index 1 in
+            let v =
+              dynamic_slice_in_dim ~axis ~allow_negative_indices x index 1
+            in
             [ (if keepdims then v else b1 (Squeeze [| axis |]) [ v ]) ]
         | _ -> invalid_arg "dynamic_index_in_dim: arity")
       [ x; index ]
@@ -406,12 +423,13 @@ let dynamic_update_slice_in_dim ?(axis = 0) ?allow_negative_indices x update
   dynamic_update_slice x update
     (starts_in_dim ?allow_negative_indices x axis start)
 
-let dynamic_update_index_in_dim ?(axis = 0) x update index =
+let dynamic_update_index_in_dim ?(axis = 0) ?allow_negative_indices x update
+    index =
   let axis = canon_axis (ndim x) axis in
   let update =
     if ndim update = ndim x then update else expand_dims update [| axis |]
   in
-  dynamic_update_slice_in_dim ~axis x update index
+  dynamic_update_slice_in_dim ~axis ?allow_negative_indices x update index
 
 let index_upper_bound indices dims window =
   let idx_shape = shape indices in
@@ -675,6 +693,9 @@ let dot_accumulate prim x y acc =
   else convert_to acc (b1 prim [ x; y ])
 
 let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
+  let preferred_element_type =
+    Option.map Dtypes.canonicalize_dtype preferred_element_type
+  in
   let level_name = function
     | Lax_config.Precision_default -> "DEFAULT"
     | Lax_config.Precision_high -> "HIGH"

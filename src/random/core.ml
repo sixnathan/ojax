@@ -1621,14 +1621,16 @@ let multinomial_full ?shape ?dtype ?(unroll = 1) k ~n ~p =
   NL.astype out (match dtype with None -> fdt () | Some d -> d)
 
 let with_dt dtype f =
-  match dtype with None -> f () | Some d -> with_dtypes ~float_dtype:d f
+  match dtype with
+  | None -> f ()
+  | Some d -> with_dtypes ~float_dtype:(Dtypes.canonicalize_dtype d) f
 
 let with_it dtype f =
   match dtype with
   | None -> f ()
   | Some d ->
       let saved = !explicit_int in
-      explicit_int := Some d;
+      explicit_int := Some (Dtypes.canonicalize_dtype d);
       Fun.protect
         ~finally:(fun () -> explicit_int := saved)
         (fun () -> with_dtypes ~int_dtype:d f)

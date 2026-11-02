@@ -69,6 +69,8 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
 
 let approx_top_k ~is_max_k ~reduction_dimension ~recall_target
     ~reduction_input_size_override ~aggregate_to_topk operand k =
+  if not (Dtypes.issubdtype (aval operand).T.dtype `Floating) then
+    raise (Py_exn.Value_error "operand must be a floating type");
   Eager_jit.pair "lax.approx_top_k"
     ( is_max_k,
       reduction_dimension,

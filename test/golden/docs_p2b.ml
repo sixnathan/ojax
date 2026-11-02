@@ -221,6 +221,39 @@ let reuse_thunk name () =
                   [ Docs_p2.py_int 0.0; key 8.0; Docs_p2.py_float 0.0 ]
               in
               match out with [ _; _; s ] -> [ s ] | _ -> assert false)
+          | "scan_const" ->
+              let k = key 10.0 in
+              Ojax.Lax_api.scan ~length:2
+                (function
+                  | [ c ] -> [ F.add c (uniform k) ] | _ -> assert false)
+                [ Docs_p2.py_float 0.0 ]
+                []
+          | "scan_moved" -> (
+              match
+                Ojax.Lax_api.scan ~length:2
+                  (function
+                    | [ k; s ] -> [ k; F.add s (uniform k) ] | _ -> assert false)
+                  [ key 11.0; Docs_p2.py_float 0.0 ]
+                  []
+              with
+              | [ _; s ] -> [ s ]
+              | _ -> assert false)
+          | "scan_ok" -> (
+              match
+                Ojax.Lax_api.scan ~length:2
+                  (function
+                    | [ k; s ] ->
+                        let ks = RC.split k 2 in
+                        let at i =
+                          Ojax.Lax_api.index_in_dim ~keepdims:false ks i
+                        in
+                        [ at 0; F.add s (uniform (at 1)) ]
+                    | _ -> assert false)
+                  [ key 12.0; Docs_p2.py_float 0.0 ]
+                  []
+              with
+              | [ _; s ] -> [ s ]
+              | _ -> assert false)
           | "cond_branches" ->
               Ojax.Lax_api.cond
                 (T.Concrete

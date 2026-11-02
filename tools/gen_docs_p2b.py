@@ -41,7 +41,7 @@ DEVICE_CASES = ["cpu", "bogus", "", "CPU", "it's"]
 REUSE_CASES = ["twice_eager", "twice_jit", "consumed_eager", "consumed_jit",
                "split_once", "split_twice", "split_twice_jit", "bits_fold_in",
                "clone", "off_twice", "while_reuse", "cond_branches",
-               "bool_index_jit"]
+               "bool_index_jit", "scan_const", "scan_moved", "scan_ok"]
 
 
 def run_case(jax, thunk):
@@ -260,6 +260,20 @@ def reuse_thunk(jax, jnp, name):
                     return i + 1, k, s + r.uniform(k)
                 out = jax.lax.while_loop(lambda c: c[0] < 2, body,
                                          (0, r.key(8), 0.0))[2:]
+            elif name == "scan_const":
+                k = r.key(10)
+                out = jax.lax.scan(lambda c, x: (c + r.uniform(k), None), 0.0,
+                                   None, length=2)[:1]
+            elif name == "scan_moved":
+                out = jax.lax.scan(
+                    lambda c, x: ((c[0], c[1] + r.uniform(c[0])), None),
+                    (r.key(11), 0.0), None, length=2)[0][1:]
+            elif name == "scan_ok":
+                def body(c, x):
+                    k1, k2 = r.split(c[0])
+                    return (k1, c[1] + r.uniform(k2)), None
+                out = jax.lax.scan(body, (r.key(12), 0.0), None,
+                                   length=2)[0][1:]
             elif name == "cond_branches":
                 k = r.key(9)
                 out = (jax.lax.cond(True, lambda k: r.normal(k),

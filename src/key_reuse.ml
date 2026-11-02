@@ -598,11 +598,35 @@ let moved_of ~num_carry slot =
   | Some flags when List.length flags = num_carry -> flags
   | _ -> List.init num_carry (fun _ -> false)
 
+let last_while : (primitive * aval list * aval list) option ref = ref None
+let note_while prim ins outs = last_while := Some (prim, ins, outs)
+
+let while_eqn_suffix () =
+  match !last_while with
+  | None -> ""
+  | Some (prim, ins, outs) -> (
+      let var k vaval = { vid = k; vaval } in
+      let n = List.length ins in
+      "\n  eqn="
+      ^ Pretty_printer.eqn_to_jax_string
+          {
+            prim;
+            inputs = List.mapi (fun k a -> A_var (var k a)) ins;
+            outs = List.mapi (fun k a -> var (n + k) a) outs;
+            multiple_results = true;
+          }
+      ^
+      match prim with
+      | Scan { jaxpr; _ } ->
+          "\n  jaxpr=" ^ Pretty_printer.closed_jaxpr_to_jax_string jaxpr
+      | _ -> "")
+
 let scan_region ~num_carry body operands run =
   if idle () then run body
   else
     let level = !suspension in
     let holder = ref None in
+    last_while := None;
     let wrapped = traced_region ~level holder (arg_kinds operands) body in
     let outs, slot =
       with_moved_slot (fun () -> suspended (fun () -> run wrapped))
@@ -624,8 +648,8 @@ let scan_region ~num_carry body operands run =
                (Printf.sprintf
                   "scan body function leads to key reuse when repeatedly \
                    executed, because key constants are repeatedly consumed:\n\
-                  \  signature=%s"
-                  (signature_repr ~moved r)))
+                  \  signature=%s%s"
+                  (signature_repr ~moved r) (while_eqn_suffix ())))
         else if
           not
             (List.for_all
@@ -643,27 +667,9 @@ let scan_region ~num_carry body operands run =
                   "scan body function leads to key reuse when repeatedly \
                    executed, because consumed inputs don't match sourced \
                    outputs:\n\
-                  \  signature=%s"
-                  (signature_repr ~moved r)))
+                  \  signature=%s%s"
+                  (signature_repr ~moved r) (while_eqn_suffix ())))
         else finish_loop ~name:"scan" operands r outs
-
-let last_while : (primitive * aval list * aval list) option ref = ref None
-let note_while prim ins outs = last_while := Some (prim, ins, outs)
-
-let while_eqn_suffix () =
-  match !last_while with
-  | None -> ""
-  | Some (prim, ins, outs) ->
-      let var k vaval = { vid = k; vaval } in
-      let n = List.length ins in
-      "\n  eqn="
-      ^ Pretty_printer.eqn_to_jax_string
-          {
-            prim;
-            inputs = List.mapi (fun k a -> A_var (var k a)) ins;
-            outs = List.mapi (fun k a -> var (n + k) a) outs;
-            multiple_results = true;
-          }
 
 let while_regions cond_fun body operands run =
   if idle () then run cond_fun body

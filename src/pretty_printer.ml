@@ -1529,6 +1529,17 @@ let rec mark_key_operands keys (jx : jaxpr) =
             List.iter2
               (fun b input -> if is_key b then mark input)
               args e.inputs
+      | Scan { jaxpr = c; _ }, _ ->
+          mark_key_operands keys c.jaxpr;
+          let args =
+            List.filteri
+              (fun i _ -> i >= List.length c.consts)
+              c.jaxpr.in_binders
+          in
+          if List.compare_lengths args e.inputs = 0 then
+            List.iter2
+              (fun b input -> if is_key b then mark input)
+              args e.inputs
       | While { cond_nconsts; body_nconsts; cond; body }, _ ->
           let n = cond_nconsts + body_nconsts in
           let back (c : closed_jaxpr) positions =

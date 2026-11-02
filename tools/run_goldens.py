@@ -110,7 +110,7 @@ def tally(log):
 
 
 def is_fuzz_suite(group):
-    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "option_pinned:", "compose_fuzz:", "custom_ad:"))
+    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "option_pinned:", "put_modes:", "compose_fuzz:", "custom_ad:"))
 
 
 def row_classes(log):
@@ -127,9 +127,9 @@ def row_classes(log):
                 group = "fuzz"
             elif suite.startswith("fuzz_s2:"):
                 group = "fuzz_s2"
-            elif suite.startswith(("option_fuzz:", "option_pinned:")):
+            elif suite.startswith(("option_fuzz:", "option_pinned:", "put_modes:")):
                 group = "option_fuzz"
-            elif suite.startswith(("text_option_fuzz:", "text_option_pinned:")):
+            elif suite.startswith(("text_option_fuzz:", "text_option_pinned:", "text_put_modes:")):
                 group = "option_fuzz_error_text"
             elif suite.startswith("text_fuzz:"):
                 group = "fuzz_error_text"

@@ -5452,6 +5452,8 @@ let () =
             ~string_of_dtype ~concrete ()
         @ Option_fuzz.suites ~module_name:"option_pinned" ~goldens_root
             ~nd_of_npz:nd_of_npz_any ~string_of_dtype ~concrete ()
+        @ Option_fuzz.suites ~module_name:"put_modes" ~goldens_root
+            ~nd_of_npz:nd_of_npz_any ~string_of_dtype ~concrete ()
         @ Compose_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
             ~string_of_dtype ~concrete ()
         @ Custom_ad.suites ~goldens_root ~nd_of_npz:nd_of_npz_any

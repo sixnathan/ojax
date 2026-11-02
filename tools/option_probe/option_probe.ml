@@ -98,7 +98,12 @@ let cases =
       two (fun x y -> [ E.intersect1d ~size:3 x y ]),
       [ x9; y6 ] );
     ( "intersect1d_size_fill",
-      two (fun x y -> [ E.intersect1d ~size:6 ~fill_value:(-1.) x y ]),
+      two (fun x y ->
+          [
+            E.intersect1d ~size:6
+              ~fill_value:(Ojax.Numpy.Jnp_util.py_int (-1))
+              x y;
+          ]),
       [ x9; y6 ] );
     ("setdiff1d_size", two (fun x y -> [ E.setdiff1d ~size:3 x y ]), [ x9; y6 ]);
     ( "setdiff1d_size_fill",
@@ -106,7 +111,10 @@ let cases =
       [ x9; y6 ] );
     ("setxor1d_size", two (fun x y -> [ E.setxor1d ~size:4 x y ]), [ x9; y6 ]);
     ( "setxor1d_size_fill",
-      two (fun x y -> [ E.setxor1d ~size:9 ~fill_value:(-1.) x y ]),
+      two (fun x y ->
+          [
+            E.setxor1d ~size:9 ~fill_value:(Ojax.Numpy.Jnp_util.py_int (-1)) x y;
+          ]),
       [ x9; y6 ] );
     ( "compress_size",
       two (fun c x -> [ E.compress ~size:4 ~fill_value:(-5.) c x ]),

@@ -160,7 +160,7 @@ let run op positional options arr =
         X.intersect1d_indices
           ?assume_unique:(A.opt options "assume_unique" A.bool_)
           ?size:(A.opt options "size" A.int_)
-          ?fill_value:(A.opt options "fill_value" A.float_)
+          ?fill_value:(A.opt options "fill_value" (A.value arr))
           (v positional.(0))
           (v positional.(1))
       in

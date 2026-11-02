@@ -254,7 +254,7 @@ module T3 = struct
     b "union1d.cut" (fun a c -> X.union1d ~size:2 a c);
     b "intersect1d.size" (fun a c -> X.intersect1d ~size:4 a c);
     b "intersect1d.size_fill" (fun a c ->
-        X.intersect1d ~size:4 ~fill_value:(-1.) a c);
+        X.intersect1d ~size:4 ~fill_value:(Ojax.Numpy.Jnp_util.py_int (-1)) a c);
     b "intersect1d.assume" (fun a c -> X.intersect1d ~assume_unique:true a c);
     b "setdiff1d.size" (fun a c -> X.setdiff1d ~size:5 a c);
     b "setdiff1d.size_fill" (fun a c ->
@@ -262,7 +262,8 @@ module T3 = struct
     b "setdiff1d.assume" (fun a c -> X.setdiff1d ~assume_unique:true a c);
     b "setdiff1d.cut" (fun a c -> X.setdiff1d ~size:1 a c);
     b "setxor1d.size" (fun a c -> X.setxor1d ~size:6 a c);
-    b "setxor1d.fill" (fun a c -> X.setxor1d ~size:6 ~fill_value:(-1.) a c);
+    b "setxor1d.fill" (fun a c ->
+        X.setxor1d ~size:6 ~fill_value:(Ojax.Numpy.Jnp_util.py_int (-1)) a c);
     b "setxor1d.assume" (fun a c -> X.setxor1d ~assume_unique:true a c);
     u "bincount.min" (fun a -> X.bincount ~minlength:9 a);
     u "bincount.neg" (fun a -> X.bincount a);

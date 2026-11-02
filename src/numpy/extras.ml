@@ -623,7 +623,20 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
             (n, 1, [| n |], fun i -> [| data.(i) |])
         | Some ax ->
             let moved = NL.moveaxis [| ax |] [| 0 |] a in
-            let mdata = flat_floats (host "unique" moved) in
+            let mdata =
+              if is_complex_value a then
+                let re = flat_floats (host "unique" (U.real moved))
+                and im = flat_floats (host "unique" (U.imag moved)) in
+                Array.init
+                  (2 * Array.length re)
+                  (fun i ->
+                    let k = i / 2 in
+                    if Float.is_nan re.(k) || Float.is_nan im.(k) then
+                      if i mod 2 = 0 then Float.nan else 0.0
+                    else if i mod 2 = 0 then re.(k)
+                    else im.(k))
+              else flat_floats (host "unique" moved)
+            in
             let msh = shape moved in
             let r = msh.(0) in
             let len = if r = 0 then 0 else Array.length mdata / r in
@@ -683,11 +696,19 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
         match axis with
         | None -> Concrete (Ndarray.of_floats dt [| out_rows |] values_flat)
         | Some ax ->
+            let out_shape = Array.append [| out_rows |] row_shape in
             let moved =
-              Concrete
-                (Ndarray.of_floats dt
-                   (Array.append [| out_rows |] row_shape)
-                   values_flat)
+              if is_complex_value a then
+                Concrete
+                  (Ndarray.of_complex dt out_shape
+                     (Array.init
+                        (Array.length values_flat / 2)
+                        (fun i ->
+                          {
+                            Complex.re = values_flat.(2 * i);
+                            im = values_flat.((2 * i) + 1);
+                          })))
+              else Concrete (Ndarray.of_floats dt out_shape values_flat)
             in
             NL.moveaxis [| 0 |] [| ax |] moved
       in
@@ -795,9 +816,8 @@ let positions_below n bound =
 
 let fill_or_extremes ~fill_value vals valid_count =
   let n = size_of vals in
-  let dt = dtype_of vals in
   match fill_value with
-  | Some f -> NL.where_ (positions_below n valid_count) vals (lit_of f dt)
+  | Some f -> NL.where_ (positions_below n valid_count) vals f
   | None ->
       let high = NL.where_ (positions_below n valid_count) vals (R.max vals) in
       NL.where_ (positions_below n valid_count) high (R.min high)
@@ -938,7 +958,7 @@ let intersect1d ?(assume_unique = false) ?size ?fill_value a b =
           let ys = sorted_unique_floats "intersect1d" b in
           List.filter (fun x -> List.exists (fun y -> x = y) ys) first
       in
-      sized_result (dtype_of a) xs ~size ~fill_value
+      sized_result (dtype_of a) xs ~size ~fill_value:None
 
 let intersect1d_indices ?(assume_unique = false) a b =
   let a, b = same_dtype a b in

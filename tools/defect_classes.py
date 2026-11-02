@@ -8,6 +8,27 @@ import re
 import sys
 
 SAME = {"same", "both_raise"}
+PRECISION_NAMES = {"highest", "float32", "high", "bfloat16_3x", "tensorfloat32", "default", "bfloat16", "fastest"}
+DTYPE_LIST = re.compile(r"subtypes of ([A-Za-z_]+(?:, [A-Za-z_]+)+)")
+PRECISION_GOT = re.compile(r"but got \(?'?([^',()]+?)'?(?:, Precision\.DEFAULT\))?\.$")
+
+
+def sorted_dtype_lists(text):
+    return DTYPE_LIST.sub(lambda m: "subtypes of " + ", ".join(sorted(m.group(1).split(", "))), text)
+
+
+def dtype_order_only(rest):
+    parts = rest.split("\t")
+    return len(parts) >= 3 and parts[1] != parts[2] and sorted_dtype_lists(parts[1]) == sorted_dtype_lists(parts[2])
+
+
+def unknown_precision_string(rest):
+    parts = rest.split("\t")
+    got = PRECISION_GOT.search(parts[1].replace("\\n", "\n")) if len(parts) >= 2 else None
+    return got is not None and got.group(1) not in PRECISION_NAMES
+
+
+CHECKS = {"accepted_dtypes_order": dtype_order_only, "invalid_precision_string": unknown_precision_string}
 
 
 def load_classes(path):
@@ -23,7 +44,9 @@ def load_classes(path):
 def classify(classes, suite, row, rest):
     for c in classes:
         if c["suite_re"].search(suite) and c["row_re"].search(row) and c["text_re"].search(rest):
-            return c["class"]
+            check = CHECKS.get(c["class"])
+            if check is None or check(rest):
+                return c["class"]
     return None
 
 

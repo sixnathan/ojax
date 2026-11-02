@@ -71,6 +71,49 @@ let defjvps ?name primal rules =
   self := call;
   call
 
+let aval_str = Ref_state.aval_string
+let same_type (a : aval) (b : aval) = a.shape = b.shape && a.dtype = b.dtype
+
+let mismatch_extra (a : aval) (b : aval) =
+  let mismatches =
+    (if a.dtype <> b.dtype then [ "the dtypes do not match" ] else [])
+    @ if a.shape <> b.shape then [ "the shapes do not match" ] else []
+  in
+  match List.rev mismatches with
+  | [] -> ""
+  | [ only ] -> ", so " ^ only
+  | last :: rest ->
+      ", so " ^ String.concat ", " (List.rev rest) ^ ", and " ^ last
+
+let tuple_def n =
+  Tree_util.Tuple_def (List.init n (fun _ -> Tree_util.Leaf_def))
+
+let check_bwd_count outs avals =
+  let n_out = List.length outs and n_in = List.length avals in
+  if n_out <> n_in then
+    raise
+      (Py_exn.Type_error
+         (Printf.sprintf
+            "Custom VJP bwd rule must produce an output with the same \
+             container (pytree) structure as the args tuple of the primal \
+             function, and in particular must produce a tuple of length equal \
+             to the number of arguments to the primal function, but got bwd \
+             output structure %s for primal input structure %s."
+            (Tree_util.treedef_to_string (tuple_def n_out))
+            (Tree_util.treedef_to_string (tuple_def n_in))))
+
+let check_bwd_tangent index (input : aval) v =
+  let got = Core.get_aval v in
+  if Dtypes.issubdtype input.dtype `Inexact && got.shape <> input.shape then
+    raise
+      (Py_exn.Value_error
+         (Printf.sprintf
+            "Custom VJP bwd rule must produce an output with the same type as \
+             the args tuple of the primal function, but at output[%d] the bwd \
+             rule produced an output of type %s corresponding to an input of \
+             type %s%s"
+            index (aval_str got) (aval_str input) (mismatch_extra input got)))
+
 let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f") primal ~fwd ~bwd =
   if nondiff_argnums <> [] then fun args ->
     let kept, diff = split_nondiff nondiff_argnums args in
@@ -80,12 +123,29 @@ let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f") primal ~fwd ~bwd =
       ~bwd:(fun res ct -> bwd (kept @ res) ct)
       diff
   else
-    let id =
-      Core.register_custom_rule
-        (Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed = None })
+    let rules : (aval list, int) Hashtbl.t = Hashtbl.create 4 in
+    let rule_for avals =
+      match Hashtbl.find_opt rules avals with
+      | Some id -> id
+      | None ->
+          let bwd res cts =
+            let outs = bwd res cts in
+            check_bwd_count outs avals;
+            List.iteri
+              (fun i (out, input) -> check_bwd_tangent i input out)
+              (List.combine outs avals);
+            outs
+          in
+          let id =
+            Core.register_custom_rule
+              (Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed = None })
+          in
+          Core.register_custom_names id ~name ~jvp_name:"fwd";
+          Hashtbl.replace rules avals id;
+          id
     in
-    Core.register_custom_names id ~name ~jvp_name:"fwd";
-    fun args -> Core.bind (Custom_vjp_call id) args
+    fun args ->
+      Core.bind (Custom_vjp_call (rule_for (List.map Core.get_aval args))) args
 
 type symbolic_zero = { aval : aval }
 type tangent = Symbolic_zero of symbolic_zero | Tangent of value
@@ -107,20 +167,6 @@ let tangent_of_internal t =
 let internal_of_tangent = function
   | Symbolic_zero { aval } -> Ad_util.symbolic_zero_of_aval aval
   | Tangent v -> v
-
-let aval_str = Ref_state.aval_string
-let same_type (a : aval) (b : aval) = a.shape = b.shape && a.dtype = b.dtype
-
-let mismatch_extra (a : aval) (b : aval) =
-  let mismatches =
-    (if a.dtype <> b.dtype then [ "the dtypes do not match" ] else [])
-    @ if a.shape <> b.shape then [ "the shapes do not match" ] else []
-  in
-  match List.rev mismatches with
-  | [] -> ""
-  | [ only ] -> ", so " ^ only
-  | last :: rest ->
-      ", so " ^ String.concat ", " (List.rev rest) ^ ", and " ^ last
 
 let custom_jvp_symbolic ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =
   let jvp_name = jvp_name ^ "\000symbolic" in
@@ -170,15 +216,7 @@ let bwd_output index (input : aval) = function
              index (aval_str aval) (aval_str input));
       Ad_util.symbolic_zero_of_aval aval
   | Some (Tangent v) ->
-      let got = Core.get_aval v in
-      if not (same_type got input) then
-        invalid_arg
-          (Printf.sprintf
-             "Custom VJP bwd rule must produce an output with the same type as \
-              the args tuple of the primal function, but at output[%d] the bwd \
-              rule produced an output of type %s corresponding to an input of \
-              type %s%s"
-             index (aval_str got) (aval_str input) (mismatch_extra input got));
+      check_bwd_tangent index input v;
       v
 
 let custom_vjp_symbolic primal ~fwd ~bwd =
@@ -195,11 +233,7 @@ let custom_vjp_symbolic primal ~fwd ~bwd =
         in
         let rule_bwd res cts =
           let outs = bwd res (List.map tangent_of_internal cts) in
-          if List.compare_lengths outs avals <> 0 then
-            invalid_arg
-              "Custom VJP bwd rule must produce an output with the same \
-               container (pytree) structure as the args tuple of the primal \
-               function";
+          check_bwd_count outs avals;
           List.mapi
             (fun i (out, input) -> bwd_output i input out)
             (List.combine outs avals)

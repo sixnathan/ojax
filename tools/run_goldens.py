@@ -291,12 +291,12 @@ def main():
     rows = sum(n for s, n in totals.items() if s not in uncounted)
     raw_identical = sum(n for s, n in counts.items() if s.startswith("raw:") and s[4:] not in uncounted)
     print_row_classes(log)
+    if second_seed:
+        print(f"fuzz_s2, not in the totals below: {sum(counts[s] for s in second_seed)}/{sum(totals[s] for s in second_seed)} bit-identical, {sum(counts['raw:' + s] for s in second_seed)} in raw bytes")
     print(f"raw npz bytes and dtype: {raw_identical}/{rows} identical")
     print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {identical}/{rows} bit-identical")
     if shadow:
         print(f"parity_jit against the eager goldens: {sum(counts[s] for s in shadow)}/{sum(totals[s] for s in shadow)} bit-identical, {sum(counts['raw:' + s] for s in shadow)} in raw bytes")
-    if second_seed:
-        print(f"fuzz_s2, not in the totals above: {sum(counts[s] for s in second_seed)}/{sum(totals[s] for s in second_seed)} bit-identical, {sum(counts['raw:' + s] for s in second_seed)} in raw bytes")
     shutil.rmtree(work, ignore_errors=True)
     nan_uses = float_nan_uses(root)
     if nan_uses:

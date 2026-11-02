@@ -5217,7 +5217,7 @@ let error_types_selftest () =
     (tier "OverflowError" (Failure "out of bounds for int32"))
 
 let selected_range () =
-  Array.to_list Sys.argv
+  Option.to_list (Sys.getenv_opt "OJAX_TEST_RANGE") @ Array.to_list Sys.argv
   |> List.find_map (fun a ->
       match String.split_on_char '.' a with
       | [ low; ""; high ] -> (
@@ -5230,6 +5230,15 @@ let selected_range () =
 let reorder tests =
   match Sys.getenv_opt "OJAX_TEST_ORDER" with
   | None | Some "" | Some "normal" -> tests
+  | Some "fresh" ->
+      List.map
+        (fun (name, speed, run) ->
+          ( name,
+            speed,
+            fun arg ->
+              Ojax.Api.clear_caches ();
+              run arg ))
+        tests
   | Some order ->
       let low, high = selected_range () in
       let inside i = i >= low && i <= high in
@@ -5237,7 +5246,7 @@ let reorder tests =
       let block = List.filter (fun (i, _) -> inside i) indexed in
       let permuted =
         match String.split_on_char ':' order with
-        | [ "reverse" ] -> List.rev block
+        | [ "reverse" ] | [ "repeat" ] -> List.rev block
         | [ "shuffle"; seed ] ->
             let state = Random.State.make [| int_of_string seed |] in
             let arr = Array.of_list block in
@@ -5250,17 +5259,25 @@ let reorder tests =
             Array.to_list arr
         | _ -> failwith ("OJAX_TEST_ORDER: " ^ order)
       in
-      let rest = ref permuted in
-      List.map
-        (fun (i, t) ->
-          if inside i then
-            match !rest with
-            | (_, p) :: tl ->
-                rest := tl;
-                p
-            | [] -> t
-          else t)
-        indexed
+      if order = "repeat" then
+        List.map snd
+          (List.filter (fun (i, _) -> i < low) indexed
+          @ block @ List.rev block
+          @ List.filter (fun (i, _) -> i > high) indexed)
+      else
+        let rest = ref permuted in
+        List.map
+          (fun (i, t) ->
+            if inside i then
+              match !rest with
+              | (_, p) :: tl ->
+                  rest := tl;
+                  p
+              | [] -> t
+            else t)
+          indexed
+
+let reordered (suite, tests) = (suite, reorder tests)
 
 let rec attributed_with_coverage suites =
   List.map attributed (coverage_suites @ apicov_suites @ suites)
@@ -5423,12 +5440,13 @@ let () =
         (concrete_jit_suite_for "x64_off"
         :: concrete_jit_suite_for "x64_on"
         :: special_values_suites ())
-    @ Fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
-        ~concrete
-    @ Option_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
-        ~concrete
-    @ Compose_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
-        ~string_of_dtype ~concrete
+    @ List.map reordered
+        (Fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
+           ~concrete
+        @ Option_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
+            ~string_of_dtype ~concrete
+        @ Compose_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
+            ~string_of_dtype ~concrete)
     @ [
         ( "exact_ratchet",
           [

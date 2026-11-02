@@ -894,6 +894,7 @@ let dce_keep_args (c : closed_jaxpr) =
   }
 
 let call_cache : (string, closed_jaxpr) Hashtbl.t = Hashtbl.create 64
+let clear_call_cache () = Hashtbl.reset call_cache
 
 let call_key name key (avals : aval list) =
   String.concat "|"

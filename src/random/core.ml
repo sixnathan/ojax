@@ -110,8 +110,8 @@ let key ?impl ?dtype seed =
   resolve_key_spec "key" impl dtype;
   let impl = match dtype with Some _ -> dtype | None -> impl in
   match (resolve_prng_impl impl).PR.name with
-  | "rbg" -> Rbg.seed ~unsafe:false seed
-  | "unsafe_rbg" -> Rbg.seed ~unsafe:true seed
+  | "rbg" -> PR.random_seed ~impl:"rbg" seed
+  | "unsafe_rbg" -> PR.random_seed ~impl:"urbg" seed
   | _ -> Key_reuse.mark_typed (PR.random_seed seed)
 
 let key_data keys = Key_reuse.suspended (fun () -> raw_copy (unwrap keys))
@@ -1756,7 +1756,7 @@ let key_impl k =
 let key_data k =
   check_prng_key k;
   match k with
-  | _ when PR.is_rbg_key k -> Rbg.key_data k
+  | _ when PR.is_rbg_key k -> PR.random_unwrap k
   | Tracer _ when Key_reuse.known_raw k -> PR.random_unwrap (PR.random_wrap k)
   | Tracer _ -> PR.random_unwrap k
   | _ -> key_data k

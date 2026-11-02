@@ -3262,6 +3262,17 @@ and enter_region_later ctx cj target_ids header =
   enter_region ctx cj target_ids;
   emit_region_returning ctx cj.jaxpr
 
+and rbg_key_input (eqn : eqn) =
+  match eqn.inputs with
+  | key :: _ ->
+      let a = atom_aval key in
+      let n = Array.length a.shape in
+      n >= 1 && a.shape.(n - 1) = 4 && a.dtype = Dtype.Uint32
+  | [] -> false
+
+and unsafe_key_input (eqn : eqn) =
+  match eqn.inputs with key :: _ -> (atom_aval key).weak_type | [] -> false
+
 and emit_inlined ctx (eqn : eqn) in_ids f =
   emit_traced ctx (List.map atom_aval eqn.inputs) in_ids eqn.outs f
 
@@ -4124,6 +4135,25 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_inlined ctx eqn in_ids (fun _ ->
           let hi, lo = Prng_lowering.iota_counters shape in
           [ hi; lo ])
+  | Random_bits { bit_width; shape } when rbg_key_input eqn ->
+      emit_inlined ctx eqn in_ids (fun args ->
+          [ Prng_lowering.rbg_random_bits ~bit_width ~shape (List.hd args) ])
+  | Random_split shape when rbg_key_input eqn ->
+      emit_inlined ctx eqn in_ids (fun args ->
+          [
+            Prng_lowering.rbg_random_split ~unsafe:(unsafe_key_input eqn) ~shape
+              (List.hd args);
+          ])
+  | Random_fold_in when rbg_key_input eqn ->
+      emit_inlined ctx eqn in_ids (function
+        | [ key; data ] ->
+            [
+              Prng_lowering.rbg_fold_in ~unsafe:(unsafe_key_input eqn) key data;
+            ]
+        | _ -> invalid_arg "Stablehlo.Emit: fold_in arity")
+  | Random_seed ("rbg" | "urbg") ->
+      emit_inlined ctx eqn in_ids (fun args ->
+          [ Prng_lowering.rbg_random_seed (List.hd args) ])
   | Random_bits { bit_width = 32; shape } ->
       emit_inlined ctx eqn in_ids (fun args ->
           [ Prng_lowering.random_bits ~shape (List.hd args) ])
@@ -4137,7 +4167,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Random_bits { shape; _ } ->
       emit_inlined ctx eqn in_ids (fun args ->
           [ Prng_lowering.random_bits64 ~shape (List.hd args) ])
-  | Random_seed ->
+  | Random_seed _ ->
       emit_inlined ctx eqn in_ids (fun args ->
           [ Prng_lowering.random_seed (List.hd args) ])
   | Random_split shape ->

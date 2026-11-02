@@ -1763,7 +1763,7 @@ let choose ?(mode = "raise") a choices =
              })
           [ stacked; indices ]
 
-let compress ?axis ?size ?(fill_value = 0.0) condition a =
+let compress ?axis ?size ?fill_value condition a =
   let condition = Jaxpr.stage_constant condition in
   let cond =
     if dtype_of condition = Dtype.Bool then condition
@@ -1778,20 +1778,11 @@ let compress ?axis ?size ?(fill_value = 0.0) condition a =
         (NL.moveaxis [| x |] [| 0 |] a, x)
   in
   let extent = (shape arr).(0) in
-  let length = (shape cond).(0) in
-  let usable = min extent length in
-  let piece v start stop =
-    if start = 0 && stop = (shape v).(0) then v
-    else
-      let hi = Array.copy (shape v) in
-      hi.(0) <- stop;
-      let lo = Array.make (rank v) 0 in
-      lo.(0) <- start;
-      L.slice v lo hi
-  in
-  let extra = piece cond usable length in
-  let cond = piece cond 0 usable in
-  let arr = piece arr 0 usable in
+  let span start stop = [ Getitem.Slice { start; stop; step = None } ] in
+  let head = Getitem.take cond (span None (Some extent)) in
+  let extra = Getitem.take cond (span (Some extent) None) in
+  let cond = head in
+  let arr = Getitem.take arr (span None (Some (shape cond).(0))) in
   let finish result = NL.moveaxis [| 0 |] [| ax |] result in
   match size with
   | None ->
@@ -1826,13 +1817,18 @@ let compress ?axis ?size ?(fill_value = 0.0) condition a =
       in
       let arr =
         NL.where_ mask arr
-          (Concrete (Ndarray.of_floats (dtype_of arr) [||] [| fill_value |]))
+          (Core.convert_like ~weak:false
+             (NL.copy
+                (match fill_value with
+                | Some f -> Jnp_util.py_float f
+                | None -> Jnp_util.py_int 0))
+             (dtype_of arr))
       in
       let order =
         Sorting.argsort ~axis:(Some 0) ~stable:true ~descending:true cond
       in
-      let picked = I.take ~mode:"fill" ~axis:0 arr order in
-      finish (piece picked 0 n)
+      let picked = Getitem.take arr [ Getitem.Arr order ] in
+      finish (Getitem.take picked (span None (Some n)))
 
 let extract ?size ?fill_value condition a =
   compress ?size ?fill_value (flat condition) (flat a)

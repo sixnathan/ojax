@@ -263,17 +263,11 @@ let take_along_axis ?(axis = -1) ?mode ?fill_value ?wrap_negative_indices a
 
 let tile_to_size v n =
   let m = size v in
-  if m = n then v
-  else begin
-    let reps = (n + m - 1) / m in
-    let tiled = NL.concatenate ~axis:0 (List.init reps (fun _ -> v)) in
-    if size tiled = n then tiled
-    else
-      bind1
-        (T.Slice
-           { start_indices = [| 0 |]; limit_indices = [| n |]; strides = None })
-        [ tiled ]
-  end
+  let v = if m < n then NL.tile v [| (n + m - 1) / m |] else v in
+  if size v > n then
+    Getitem.take v
+      [ Getitem.Slice { start = None; stop = Some n; step = None } ]
+  else v
 
 let identity_scatter_dims r =
   {
@@ -298,15 +292,16 @@ let put ?mode ?(inplace = true) a ind v =
   let vv = NL.ravel v in
   let n = size ind in
   if asize = 0 || n = 0 || size vv = 0 then a
-  else begin
-    let vv = convert (tile_to_size vv n) (dtype a) in
-    let idt = dtype ind in
-    let ind =
+  else
+    let vv = tile_to_size vv n in
+    let ind, scatter_mode =
       match mode with
-      | None -> ind
-      | Some "clip" -> NL.clip ~min:0.0 ~max:(float_of_int (asize - 1)) ind
+      | None -> (ind, "drop")
+      | Some "clip" ->
+          ( NL.clip ~min:0.0 ~max:(float_of_int (asize - 1)) ind,
+            "promise_in_bounds" )
       | Some "wrap" ->
-          bind1 T.Rem [ ind; full idt (shape ind) (float_of_int asize) ]
+          (Ufuncs.remainder ind (Jnp_util.py_int asize), "promise_in_bounds")
       | Some "raise" ->
           Py_exn.not_implemented_error
             "The 'raise' mode to jnp.put is not supported."
@@ -315,17 +310,9 @@ let put ?mode ?(inplace = true) a ind v =
             (Printf.sprintf
                "mode should be one of 'wrap' or 'clip'; got mode='%s'" m)
     in
-    let coords = NL.unravel_index ind ash in
-    let r = Array.length ash in
-    let scatter_indices =
-      NL.concatenate ~axis:1
-        (List.map (fun c -> NL.reshape c [| n; 1 |]) coords)
-    in
-    let dnums = identity_scatter_dims r in
-    bind1
-      (T.Scatter { dimension_numbers = dnums; unique_indices = false })
-      [ a; scatter_indices; vv ]
-  end
+    Getitem.at_set ~mode:scatter_mode a
+      (List.map (fun c -> Getitem.Arr c) (NL.unravel_index ind ash))
+      vv
 
 let put_along_axis ?axis ?mode arr indices values =
   let arr, indices, values, axis, orig_shape =

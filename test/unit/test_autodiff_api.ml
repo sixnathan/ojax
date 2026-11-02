@@ -317,7 +317,7 @@ let symbolic_bwd_shape_message () =
   in
   let total a = Core.bind1 (Reduce_sum [| 0 |]) (f [ a ]) in
   Alcotest.check_raises "message"
-    (Invalid_argument
+    (Ojax.Py_exn.Value_error
        "Custom VJP bwd rule must produce an output with the same type as the \
         args tuple of the primal function, but at output[0] the bwd rule \
         produced an output of type float32[2] corresponding to an input of \

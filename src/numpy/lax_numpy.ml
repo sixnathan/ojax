@@ -922,23 +922,25 @@ let mod_floor a b =
 
 let unravel_index indices dims =
   let n = Array.length dims in
-  let dt = dtype indices in
-  let ish = shape indices in
+  let py = Jnp_util.py_int in
   let out = Array.make n indices in
   let cur = ref indices in
   for i = n - 1 downto 0 do
-    let s = full dt ish (float_of_int dims.(i)) in
-    let r = mod_floor !cur s in
-    out.(i) <- r;
-    cur := bind1 T.Div [ bind1 T.Sub [ !cur; r ]; s ]
+    match Ufuncs.divmod !cur (py dims.(i)) with
+    | [ q; r ] ->
+        out.(i) <- r;
+        cur := q
+    | _ -> invalid_arg "unravel_index: divmod arity"
   done;
-  let zero = full dt ish 0.0 in
-  let negone = full dt ish (-1.0) in
-  let oob_pos = bind1 T.Gt [ !cur; zero ] in
-  let oob_neg = bind1 T.Lt [ !cur; negone ] in
+  let oob_pos = Ufuncs.greater !cur (py 0) in
+  let oob_neg =
+    if Dtypes.issubdtype (dtype !cur) `Unsigned then full D.Bool [||] 0.0
+    else Ufuncs.less !cur (py (-1))
+  in
   List.init n (fun i ->
-      let smax = full dt ish (float_of_int (dims.(i) - 1)) in
-      where_ oob_pos smax (where_ oob_neg zero out.(i)))
+      Jnp_util.where oob_pos
+        (py (dims.(i) - 1))
+        (Jnp_util.where oob_neg (py 0) out.(i)))
 
 let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
   if is_complex_dtype (dtype p) then

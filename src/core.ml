@@ -590,9 +590,25 @@ let check_broadcast prim args =
              (first :: rest))
     | _ -> ()
 
+let value_aval = function
+  | Concrete a ->
+      {
+        shape = Ndarray.shape a;
+        dtype = Ndarray.dtype a;
+        weak_type = Ndarray.weak a;
+      }
+  | Tracer t -> t.aval
+  | Device b ->
+      {
+        shape = Pjrt.Buffer.dimensions b;
+        dtype = Pjrt.Buffer.element_type b;
+        weak_type = false;
+      }
+
 let bind prim args =
   check_broadcast prim args;
   Linalg_shape.check prim (fun () -> List.map value_shape args);
+  Lax_shape.check prim (fun () -> List.map value_aval args);
   check_operands prim args;
   (match prim with
   | Reduce_sum axes when not (Config.value Config.allow_f16_reductions) ->
@@ -653,20 +669,7 @@ let splat dt sh x =
 let py_scalar dt x =
   Concrete (Ndarray.with_py_value (Ndarray.as_weak (splat_host dt [||] 1 x)) x)
 
-let get_aval = function
-  | Concrete a ->
-      {
-        shape = Ndarray.shape a;
-        dtype = Ndarray.dtype a;
-        weak_type = Ndarray.weak a;
-      }
-  | Tracer t -> t.aval
-  | Device b ->
-      {
-        shape = Pjrt.Buffer.dimensions b;
-        dtype = Pjrt.Buffer.element_type b;
-        weak_type = false;
-      }
+let get_aval = value_aval
 
 let as_concrete = function
   | Concrete a -> a

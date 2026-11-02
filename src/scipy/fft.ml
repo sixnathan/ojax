@@ -6,7 +6,7 @@ let b1 = Core.bind1
 let shape v = (Core.get_aval v).shape
 let dtype_of v = (Core.get_aval v).dtype
 let rank v = Array.length (shape v)
-let canon n a = if a < 0 then a + n else a
+let canon n a = Validate.canonicalize_axis a n
 
 let real_of = function
   | Dtype.Complex128 | Dtype.F64 -> Dtype.F64

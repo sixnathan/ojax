@@ -2,6 +2,7 @@ type t
 
 val frompyfunc :
   ?identity:float ->
+  ?name:string ->
   (Types.value list -> Types.value list) ->
   nin:int ->
   nout:int ->

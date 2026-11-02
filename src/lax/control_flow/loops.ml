@@ -371,9 +371,19 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
   let length =
     match (length, xs) with
     | Some n, _ -> n
-    | None, x :: _ -> (Core.get_aval x).shape.(0)
+    | None, x :: rest ->
+        let leading v = Validate.tuple_index (Core.get_aval v).shape 0 in
+        let first = leading x in
+        let lengths = first :: List.map leading rest in
+        if List.exists (fun l -> l <> first) lengths then
+          Py_exn.value_error
+            ("scan got values with different leading axis sizes: "
+            ^ String.concat ", " (List.map string_of_int lengths)
+            ^ ".");
+        first
     | None, [] ->
-        invalid_arg "scan got no values to scan over and `length` not provided."
+        Py_exn.value_error
+          "scan got no values to scan over and `length` not provided."
   in
   let carry_avals = List.map Core.get_aval init in
   let x_slice_avals = List.map (fun x -> mapped_leading (Core.get_aval x)) xs in

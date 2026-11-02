@@ -154,7 +154,9 @@ let lax_run op p a b =
   | "lax_conv_transpose" ->
       Some
         [
-          L.conv_transpose ?transpose_kernel:(opt_bool "tk" p) (a ()) (b ())
+          L.conv_transpose
+            ~dimension_numbers:(L.conv_dimension_numbers ("NCH", "OIH", "NCH"))
+            ?transpose_kernel:(opt_bool "tk" p) (a ()) (b ())
             ~strides:(ints "str" p) (padding_of p);
         ]
   | "lax_map" ->

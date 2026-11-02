@@ -518,8 +518,8 @@ let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
   let q_shape = shape query and k_shape = shape key in
   let b, t, n, h = (q_shape.(0), q_shape.(1), q_shape.(2), q_shape.(3)) in
   let k = k_shape.(2) in
-  if n mod k <> 0 then
-    invalid_arg
+  if Validate.py_mod n k <> 0 then
+    Py_exn.value_error
       (Printf.sprintf
          "The number of query heads must be a multiple of key/value heads, but \
           got %d vs %d"

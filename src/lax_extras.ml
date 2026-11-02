@@ -16,6 +16,14 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
     ~reduction_input_size_override ~aggregate_to_topk operand k =
   let a = aval operand in
   let rank = Array.length a.T.shape in
+  if k <= 0 then
+    Py_exn.value_error (Printf.sprintf "k must be positive, got %d" k);
+  if rank = 0 then
+    Py_exn.type_error
+      ("approx_top_k operand must have >= 1 dimension, got "
+      ^ Validate.python_tuple a.T.shape);
+  if reduction_dimension < -rank || reduction_dimension >= rank then
+    Py_exn.index_error "list index out of range";
   let axis =
     if reduction_dimension < 0 then rank + reduction_dimension
     else reduction_dimension
@@ -25,6 +33,8 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
       (Printf.sprintf
          "k must be smaller than the size of reduction_dim %d, got %d"
          a.T.shape.(axis) k);
+  if not (Dtypes.issubdtype a.T.dtype `Floating) then
+    Py_exn.value_error "operand must be a floating type";
   let returned = if aggregate_to_topk then k else a.T.shape.(axis) in
   let exact = function
     | [ x ] ->
@@ -495,6 +505,10 @@ let scaled_dot ?lhs_scale ?rhs_scale ?dimension_numbers ?preferred_element_type
 
 let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
     ?rhs_dilation ?dimension_numbers lhs rhs ~filter_shape =
+  let patches =
+    L.conv_general_dilated_patches ?window_strides ?padding ?lhs_dilation
+      ?rhs_dilation ?dimension_numbers lhs ~filter_shape
+  in
   let rank = Array.length (shape lhs) in
   let identity = Array.init rank Fun.id in
   let dn =
@@ -502,10 +516,6 @@ let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
     | Some d -> d
     | None ->
         { T.lhs_spec = identity; rhs_spec = identity; out_spec = identity }
-  in
-  let patches =
-    L.conv_general_dilated_patches ?window_strides ?padding ?lhs_dilation
-      ?rhs_dilation ~dimension_numbers:dn lhs ~filter_shape
   in
   let spatial = Array.length filter_shape in
   let lhs_b = Array.sub dn.out_spec 2 spatial in

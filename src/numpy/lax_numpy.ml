@@ -88,6 +88,13 @@ let reshape v sh =
   let known =
     Array.fold_left (fun acc d -> if d = -1 then acc else acc * d) 1 sh
   in
+  if Array.mem (-1) sh && Validate.py_mod total known <> 0 then
+    Py_exn.type_error
+      (Printf.sprintf
+         "cannot reshape array of shape %s (size %d) into shape %s because the \
+          product of specified axis sizes (%d) does not evenly divide %d"
+         (Validate.python_tuple (shape v))
+         total (Validate.python_tuple sh) known total);
   let resolved = Array.map (fun d -> if d = -1 then total / known else d) sh in
   if Array.length resolved > 0 && resolved = shape v then v
   else bind1 (T.Reshape resolved) [ v ]

@@ -1512,6 +1512,12 @@ let gradient ?spacing ?axis ?(edge_order : int option) a =
         [ a; Jnp_util.py_float spacing ]
 
 let choose ?(mode = "raise") a choices =
+  (match dtype_of a with
+  | Dtype.I2 | Dtype.I4 | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64
+  | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32
+  | Dtype.Uint64 ->
+      ()
+  | _ -> Py_exn.value_error "`a` array must be integer typed");
   let n = List.length choices in
   let arr =
     match mode with
@@ -1932,6 +1938,7 @@ let mask_indices ?(k = 0) ?size n mask_func =
   | _ -> failwith "mask_indices: arity"
 
 let trim_zeros ?(trim = "fb") ?axis a =
+  ignore (host "trim_zeros" a);
   let lowered = String.lowercase_ascii trim in
   let front = String.contains lowered 'f'
   and back = String.contains lowered 'b' in

@@ -772,7 +772,12 @@ let rec round ?(decimals = 0) v =
   let dt = dtype v in
   if is_bool dt then
     Py_exn.value_error "data type dtype('bool') not compatible with finfo";
-  if is_integral dt then v
+  if is_integral dt then begin
+    if decimals < 0 then
+      Py_exn.not_implemented_error
+        "integer np.round not implemented for decimals < 0";
+    v
+  end
   else if dt = D.Complex64 || dt = D.Complex128 then
     bind1 T.Complex
       [
@@ -939,7 +944,8 @@ let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
   let nd = ndim p in
   let axis = canonicalize_axis axis nd in
   let dt =
-    if is_bool (dtype p) then Dtypes.default_float_dtype ()
+    if is_bool (dtype p) || is_integral (dtype p) then
+      Dtypes.default_float_dtype ()
     else to_inexact_dtype (dtype p)
   in
   let p = convert p dt in
@@ -983,14 +989,50 @@ let unwrap ?discont ?axis ?period p0 =
       | _ -> invalid_arg "unwrap: arity")
     [ p0 ]
 
-type sections = Count of int | Indices of int array
+type sections = Count of int | Indices of int array | Index_array of T.value
+
+let split_traced op v element_shape =
+  raise
+    (Errors.concretization_type_error
+       ~context:(Printf.sprintf "in jax.numpy.%s argument 1\n" op)
+       ~error_repr:
+         (Printf.sprintf "traced array with shape %s[%s]"
+            (D.numpy_name (dtype v))
+            (String.concat ","
+               (Array.to_list (Array.map string_of_int element_shape))))
+       ~origin_msg:(Jaxpr.origin_msg v) ())
+
+let split_host = function
+  | T.Concrete nd -> nd
+  | T.Device b -> Pjrt.Buffer.to_host b
+  | T.Tracer _ -> assert false
+
+let split_sections op = function
+  | Index_array arr when ndim arr > 0 ->
+      let sh = shape arr in
+      let element_shape = Array.sub sh 1 (Array.length sh - 1) in
+      (match arr with
+      | T.Tracer _ -> split_traced op arr element_shape
+      | _ -> ());
+      let host = split_host arr in
+      if Array.length element_shape > 0 || not (is_integral (dtype arr)) then
+        Py_exn.type_error
+          "Only integer scalar arrays can be converted to a scalar index.";
+      Indices
+        (Array.init sh.(0) (fun i -> int_of_float (Nd.get_f host [| i |])))
+  | Index_array arr ->
+      (match arr with T.Tracer _ -> split_traced op arr [||] | _ -> ());
+      Count (int_of_float (Nd.get_f (split_host arr) [||]))
+  | s -> s
 
 let do_split ~array_split ?(axis = 0) v s =
   let nd = ndim v in
   let axis = canonicalize_axis axis nd in
   let size = (shape v).(axis) in
+  let s = split_sections (if array_split then "array_split" else "split") s in
   let sizes =
     match s with
+    | Index_array _ -> assert false
     | Indices idx ->
         let bounds = Array.concat [ [| 0 |]; idx; [| size |] ] in
         Array.init
@@ -1171,6 +1213,9 @@ and repeat_to_total ?axis a repeats total =
       const_full (dtype a) sh 0.0
     end
     else if (shape a).(ax) = 0 then a
+    else if n = 0 then
+      let len = (shape a).(ax) in
+      repeat_scalar ~axis:ax (slice_axis a ax (len - 1) len) total
     else if total <= n then slice_axis full ax 0 total
     else begin
       let last = slice_axis full ax (n - 1) n in
@@ -1433,7 +1478,8 @@ let pad_body ?(mode = "constant") ?stat_length ?end_values
                Reductions.mean ~axis:[| axis |] ~keepdims:true a))
     | "median" ->
         pad_stats v pad_width stat_length
-          (keep_stat (fun a axis -> Reductions.median ~axis ~keepdims:true a))
+          (keep_stat (fun a axis ->
+               Reductions.median ~axis:(Reductions.Axis axis) ~keepdims:true a))
     | "empty" -> pad_constant v pad_width 0.0
     | m ->
         Py_exn.not_implemented_error
@@ -1759,7 +1805,7 @@ let diag_indices_from arr =
     s;
   diag_indices ~ndim:nd s.(0)
 
-let tri ?m ?(k = 0) ~dtype n =
+let tri ?m ?(k = 0) ?(dtype = D.F32) n =
   let dtype = Dtypes.canonicalize_dtype dtype in
   let m = Option.value m ~default:n in
   convert (Lax.Linalg.tri_mask n m k) dtype

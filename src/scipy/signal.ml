@@ -132,7 +132,7 @@ let fftconvolve ?(mode = "full") ?axes in1 in2 =
   | None -> fftconvolve_unbatched in1 in2 mode
   | Some axes ->
       let n = rank in1 in
-      let axes = List.map (fun a -> if a < 0 then a + n else a) axes in
+      let axes = List.map (fun a -> Validate.canonicalize_axis a n) axes in
       let mapped =
         List.filter (fun i -> not (List.mem i axes)) (List.init n Fun.id)
       in
@@ -668,11 +668,11 @@ let csd ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft
             let bias = NL.astype (median_bias sh.(r - 1)) (dtype_of pxy) in
             let med =
               if is_complex pxy then
-                let re = R.median ~axis:(-1) (Numpy.Ufuncs.real pxy) in
-                let im = R.median ~axis:(-1) (Numpy.Ufuncs.imag pxy) in
+                let re = R.median ~axis:(R.Axis (-1)) (Numpy.Ufuncs.real pxy) in
+                let im = R.median ~axis:(R.Axis (-1)) (Numpy.Ufuncs.imag pxy) in
                 Numpy.Ufuncs.add re
                   (Numpy.Ufuncs.multiply (py_complex 0.0 1.0) im)
-              else R.median ~axis:(-1) pxy
+              else R.median ~axis:(R.Axis (-1)) pxy
             in
             Numpy.Ufuncs.divide med bias
         | "mean" -> R.mean ~axis:[| -1 |] pxy

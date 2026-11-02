@@ -15,7 +15,10 @@ type dtype_class =
   | Character
   | Object_
 
-type sections = Count of int | Indices of int array
+type sections =
+  | Count of int
+  | Indices of int array
+  | Index_array of Types.value
 
 val transpose : ?axes:int array -> Types.value -> Types.value
 val permute_dims : Types.value -> int array -> Types.value
@@ -215,7 +218,7 @@ val trace :
 val trapezoid :
   ?x:Types.value -> ?dx:float -> ?axis:int -> Types.value -> Types.value
 
-val tri : ?m:int -> ?k:int -> dtype:Dtype.t -> int -> Types.value
+val tri : ?m:int -> ?k:int -> ?dtype:Dtype.t -> int -> Types.value
 val tril : ?k:int -> Types.value -> Types.value
 val triu : ?k:int -> Types.value -> Types.value
 val vander : ?n:int -> ?increasing:bool -> Types.value -> Types.value

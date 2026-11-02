@@ -83,7 +83,20 @@ let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") ?dtype key
   if not (List.mem method_ [ "svd"; "eigh"; "cholesky" ]) then
     raise
       (Py_exn.Value_error "method must be one of {'svd', 'eigh', 'cholesky'}");
-  C.check_float_dtype "multivariate_normal" dtype;
+  (match dtype with
+  | Some _ -> C.check_float_dtype "multivariate_normal" dtype
+  | None ->
+      let promoted =
+        Dtypes.to_inexact_dtype
+          (Dtypes.promote_types (Core.get_aval mean).Types.dtype
+             (Core.get_aval cov).Types.dtype)
+      in
+      if not (Dtypes.issubdtype promoted `Floating) then
+        Py_exn.value_error
+          (Printf.sprintf
+             "dtype argument to `multivariate_normal` must be a float dtype, \
+              got %s"
+             (Dtype.numpy_name promoted)));
   let dims v = (Core.get_aval v).Types.shape in
   let mean_rank = Array.length (dims mean)
   and cov_rank = Array.length (dims cov) in

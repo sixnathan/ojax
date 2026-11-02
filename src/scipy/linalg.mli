@@ -24,6 +24,8 @@ val rsf2csf : Types.value -> Types.value -> Types.value * Types.value
 val solve :
   ?lower:bool -> ?assume_a:string -> Types.value -> Types.value -> Types.value
 
+val trans_of_string : string -> int
+
 val solve_triangular :
   ?trans:int ->
   ?lower:bool ->

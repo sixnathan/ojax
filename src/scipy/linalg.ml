@@ -478,6 +478,12 @@ let solve ?lower ?assume_a a0 a1 =
       | [], [ a0; a1 ] -> solve ?lower ?assume_a a0 a1
       | _ -> assert false)
 
+let trans_of_string = function
+  | "N" -> 0
+  | "T" -> 1
+  | "C" -> 2
+  | other -> Py_exn.value_error ("Invalid 'trans' value " ^ other)
+
 let solve_triangular ?(trans = 0) ?(lower = false) ?(unit_diagonal = false) a b
     =
   let transpose_a, conjugate_a =
@@ -892,8 +898,8 @@ and expm_jit ?upper_triangular ?max_squarings a0 =
 
 let expm = expm_jit
 
-let expm_frechet ?(compute_expm = true) a e =
-  let a = to_inexact a and e = to_inexact e in
+let expm_frechet ?(compute_expm = true) a0 e0 =
+  let a = to_inexact a0 and e = to_inexact e0 in
   let sa = shape a and se = shape e in
   let batched_square s =
     let n = Array.length s in
@@ -912,6 +918,21 @@ let expm_frechet ?(compute_expm = true) a e =
       (Printf.sprintf
          "expected A and E to be the same shape, got A.shape=%s E.shape=%s"
          (Validate.python_tuple sa) (Validate.python_tuple se));
+  let primal_dtype = dtype a0 and tangent_dtype = dtype e0 in
+  let integral =
+    primal_dtype = Dtype.Bool || Dtypes.issubdtype primal_dtype `Integer
+  in
+  if integral || tangent_dtype <> primal_dtype then
+    Py_exn.type_error
+      (Printf.sprintf
+         "primal and tangent arguments to jax.jvp do not match; dtypes must be \
+          equal, or in case of int/bool primal dtype the tangent dtype must be \
+          float0.Got primal dtype %s and so expected tangent dtype %s, but got \
+          tangent dtype %s instead."
+         (Dtype.numpy_name primal_dtype)
+         (if integral then "[('float0', 'V')]"
+          else Dtype.numpy_name primal_dtype)
+         (Dtype.numpy_name tangent_dtype));
   let primal, tangent =
     Interpreters.Ad.jvp
       (fun args -> [ expm (List.hd args) ])
@@ -929,15 +950,30 @@ let expm_frechet ?(method_ : string option) ?compute_expm a0 a1 =
       | [], [ a0; a1 ] -> expm_frechet ?compute_expm a0 a1
       | _ -> assert false)
 
+let traced_static_eps eps =
+  match eps with
+  | None -> ()
+  | Some _ ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "Non-hashable static arguments are not supported. An error occurred \
+            while trying to hash an object of type <class \
+            'jax._src.interpreters.partial_eval.DynamicJaxprTracer'>, \
+            JitTracer(~%s[]). The error was:\n\
+            TypeError: unhashable type: 'DynamicJaxprTracer'\n"
+           (Dtype.numpy_name (Dtypes.default_float_dtype ())))
+
 let polar_2d ~side ~method_ ?eps a =
   match method_ with
   | "qdwh" ->
       let sh = shape a in
       let m = sh.(0) and n = sh.(1) in
       if m >= n && side = "right" then
+        let () = traced_static_eps eps in
         let unitary, posdef, _, _ = Linalg_extras.qdwh ?eps a in
         [ unitary; posdef ]
       else if m < n && side = "left" then
+        let () = traced_static_eps eps in
         let unitary, posdef, _, _ = Linalg_extras.qdwh ?eps (hconj a) in
         let posdef = hconj posdef in
         let unitary = hconj unitary in

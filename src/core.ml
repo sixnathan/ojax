@@ -347,7 +347,29 @@ let check_operands prim args =
       (fun dt -> dt = Dtype.Bool || Dtypes.issubdtype dt `Integer)
       "subtypes of bool, integer"
   in
+  let reject_bool_at_zero name classes =
+    match args with
+    | first :: _
+      when (match first with
+             | Concrete a -> Ndarray.dtype a
+             | Tracer t -> t.aval.dtype
+             | Device b -> Pjrt.Buffer.element_type b)
+           = Dtype.Bool ->
+        Py_exn.type_error
+          (Printf.sprintf
+             "%s does not accept dtype bool at position 0. Accepted dtypes at \
+              position 0 are subtypes of %s."
+             name classes)
+    | _ -> ()
+  in
   match prim with
+  | Iota { dtype = Dtype.Bool; _ } ->
+      rejected_dtype "iota" Dtype.Bool
+        "subtypes of complexfloating, floating, integer"
+  | Scatter_add _ ->
+      reject_bool_at_zero "add" "floating, complexfloating, integer"
+  | Scatter_mul _ ->
+      reject_bool_at_zero "mul" "complexfloating, floating, integer"
   | And -> check_position "and"
   | Or -> check_position "or"
   | Xor -> check_position "xor"
@@ -478,6 +500,11 @@ let check_operands prim args =
                       name (Dtype.numpy_name d))))
       | [] -> ())
   | Rem -> nary_same "rem" (fun d -> not_bool d && not_complex d) real_numeric
+  | Cumsum _ -> check "cumsum" not_bool "subtypes of number"
+  | Cumprod _ -> check "cumprod" not_bool "subtypes of number"
+  | Cummax _ -> check "cummax" not_bool "subtypes of number"
+  | Cummin _ -> check "cummin" not_bool "subtypes of number"
+  | Cumlogsumexp _ -> check "cumlogsumexp" not_bool "subtypes of number"
   | Lt -> nary_same "lt" not_complex real
   | Gt -> nary_same "gt" not_complex real
   | Le -> nary_same "le" not_complex real

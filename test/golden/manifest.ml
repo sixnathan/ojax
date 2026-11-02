@@ -1056,6 +1056,7 @@ let reductions_fn op params operands : T.value list =
     match opt_s params "method" with Some m -> m | None -> "linear"
   in
   let dopt params = match opt_i params "ddof" with Some d -> d | None -> 0 in
+  let qaxi = Option.map (fun n -> RED.Axis n) axi in
   match (op, operands) with
   | "cumprod", [ x ] -> one (RED.cumprod ?axis:axi x)
   | "nancumsum", [ x ] -> one (RED.nancumsum ?axis:axi x)
@@ -1064,19 +1065,21 @@ let reductions_fn op params operands : T.value list =
       one (RED.cumulative_sum ?axis:axi ~include_initial:ii x)
   | "cumulative_prod", [ x ] ->
       one (RED.cumulative_prod ?axis:axi ~include_initial:ii x)
-  | "median", [ x ] -> one (RED.median ?axis:axi ~keepdims:kd x)
-  | "nanmedian", [ x ] -> one (RED.nanmedian ?axis:axi ~keepdims:kd x)
+  | "median", [ x ] -> one (RED.median ?axis:qaxi ~keepdims:kd x)
+  | "nanmedian", [ x ] -> one (RED.nanmedian ?axis:qaxi ~keepdims:kd x)
   | "quantile", [ x ] ->
-      one (RED.quantile ?axis:axi ~keepdims:kd ~method_:meth x (q_value params))
+      one
+        (RED.quantile ?axis:qaxi ~keepdims:kd ~method_:meth x (q_value params))
   | "nanquantile", [ x ] ->
       one
-        (RED.nanquantile ?axis:axi ~keepdims:kd ~method_:meth x (q_value params))
+        (RED.nanquantile ?axis:qaxi ~keepdims:kd ~method_:meth x
+           (q_value params))
   | "percentile", [ x ] ->
       one
-        (RED.percentile ?axis:axi ~keepdims:kd ~method_:meth x (q_value params))
+        (RED.percentile ?axis:qaxi ~keepdims:kd ~method_:meth x (q_value params))
   | "nanpercentile", [ x ] ->
       one
-        (RED.nanpercentile ?axis:axi ~keepdims:kd ~method_:meth x
+        (RED.nanpercentile ?axis:qaxi ~keepdims:kd ~method_:meth x
            (q_value params))
   | "sum", [ x ] -> one (RED.sum ?axis:ax ~keepdims:kd x)
   | "prod", [ x ] -> one (RED.prod ?axis:ax ~keepdims:kd x)
@@ -3145,11 +3148,11 @@ let scipy_special_fn op params operands : T.value list =
   | "softmax", [ x ] -> (
       match U.member "axis" params with
       | `Null -> one (SP.softmax x)
-      | j -> one (SP.softmax ~axis:(U.to_int j) x))
+      | j -> one (SP.softmax ~axis:(RED.Axis (U.to_int j)) x))
   | "log_softmax", [ x ] -> (
       match U.member "axis" params with
       | `Null -> one (SP.log_softmax x)
-      | j -> one (SP.log_softmax ~axis:(U.to_int j) x))
+      | j -> one (SP.log_softmax ~axis:(RED.Axis (U.to_int j)) x))
   | "poch", [ z; m ] -> one (SP.poch z m)
   | "spence", [ x ] -> one (SP.spence x)
   | "sici", [ x ] -> SP.sici x

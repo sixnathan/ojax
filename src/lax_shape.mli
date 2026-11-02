@@ -1,4 +1,5 @@
 val aval_string : Types.aval -> string
+val validate_preferred_element_type : Dtype.t -> Dtype.t -> unit
 val check : Types.primitive -> (unit -> Types.aval list) -> unit
 
 val verify_conv :

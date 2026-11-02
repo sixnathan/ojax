@@ -272,8 +272,7 @@ let softmax_body ~stop ax mask x =
   in
   match mask with None -> result | Some m -> where3 m result (py_int 0)
 
-let softmax ?(axis = -1) ?where:mask x =
-  let ax = [| canon_axis (Array.length (shape x)) axis |] in
+let softmax_over ax mask x =
   if Config.value Config.softmax_custom_jvp then
     let primal = function
       | [ a ] -> [ softmax_body ~stop:false ax mask a ]
@@ -292,8 +291,12 @@ let softmax ?(axis = -1) ?where:mask x =
     List.hd (Custom_derivatives.custom_jvp primal ~jvp [ x ])
   else softmax_body ~stop:true ax mask x
 
-let log_softmax ?(axis = -1) ?where:mask x =
-  let ax = [| canon_axis (Array.length (shape x)) axis |] in
+let softmax ?(axis = -1) ?where:mask x =
+  softmax_over [| canon_axis (Array.length (shape x)) axis |] mask x
+
+let softmax_axes ~axes ?where:mask x = softmax_over axes mask x
+
+let log_softmax_over ax mask x =
   let x_max =
     RED.max ~axis:ax ~keepdims:true ?where:mask
       ~initial:(numpy_negative_infinity x)
@@ -312,6 +315,11 @@ let log_softmax ?(axis = -1) ?where:mask x =
   match mask with
   | None -> result
   | Some m -> where3 m result (py_float Float.neg_infinity)
+
+let log_softmax ?(axis = -1) ?where:mask x =
+  log_softmax_over [| canon_axis (Array.length (shape x)) axis |] mask x
+
+let log_softmax_axes ~axes ?where:mask x = log_softmax_over axes mask x
 
 let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
     ?(algorithm = "fast") x =
@@ -657,6 +665,32 @@ let attention_full ?bias ?mask ?scale ?is_causal ?query_seq_lengths
   check_like "value" value k_shape;
   same_dtype "query" query;
   check_like "query" query [| k_shape.(0); -1; -1; k_shape.(3) |];
+  let check_optional name v expected expected_dtype =
+    match v with
+    | None -> ()
+    | Some v ->
+        if Array.length (shape v) <> Array.length expected then
+          Py_exn.value_error
+            (Printf.sprintf "%s ndim should be %d, but got %d" name
+               (Array.length expected)
+               (Array.length (shape v)));
+        (match expected_dtype with
+        | Some d when dtype v <> d ->
+            Py_exn.value_error
+              (Printf.sprintf "%s dtype should be %s, but got %s" name
+                 (Dtype.numpy_name d)
+                 (Dtype.numpy_name (dtype v)))
+        | _ -> ());
+        check_like name v expected
+  in
+  check_optional "mask" mask (Array.make 4 (-1)) (Some D.Bool);
+  check_optional "bias" bias (Array.make 4 (-1)) None;
+  check_optional "query_seq_lengths" query_seq_lengths
+    [| k_shape.(0) |]
+    (Some D.I32);
+  check_optional "key_value_seq_lengths" key_value_seq_lengths
+    [| k_shape.(0) |]
+    (Some D.I32);
   let b, t, n, h = (q_shape.(0), q_shape.(1), q_shape.(2), q_shape.(3)) in
   let k = k_shape.(2) in
   if Validate.py_mod n k <> 0 then
@@ -824,6 +858,13 @@ let log_softmax ?axis ?where a0 =
     axis [ where ] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [ where ], [ a0 ] -> log_softmax ?axis ?where a0
+      | _ -> assert false)
+
+let log_softmax_axes ~axes ?where a0 =
+  Eager_jit.one ~jit:"log_softmax" ~vals_first:true "nn.functions.log_softmax"
+    (`Axes, axes) [ where ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ where ], [ a0 ] -> log_softmax_axes ~axes ?where a0
       | _ -> assert false)
 
 let standardize ?axis ?mean ?variance ?epsilon ?where ?algorithm a0 =

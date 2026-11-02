@@ -47,6 +47,7 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
     in
     go names args
   in
+  let options = Option_manual.normalize op options in
   let run args =
     let arr = lookup args in
     match Option_manual.run op positional options arr with

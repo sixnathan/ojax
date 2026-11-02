@@ -7,6 +7,7 @@ type optimize =
   | Branch_1
   | Unoptimized
   | Path of int list list
+  | Named of string
 
 val optimize_of_string : string -> optimize
 

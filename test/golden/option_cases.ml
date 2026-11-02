@@ -98,7 +98,7 @@ let run op positional options arr =
       [
         Ojax.Numpy.Extras.argwhere
           ?size:(A.opt options "size" A.int_)
-          ?fill_value:(A.opt options "fill_value" A.int_)
+          ?fill_value:(A.opt options "fill_value" (A.value arr))
           ((A.value arr) positional.(0));
       ]
   | "jnp.around" ->
@@ -118,7 +118,7 @@ let run op positional options arr =
       Ojax.Numpy.Lax_numpy.array_split
         ?axis:(A.opt options "axis" A.int_)
         ((A.value arr) positional.(0))
-        (A.sections positional.(1))
+        ((A.sections arr) positional.(1))
   | "jnp.asarray" ->
       [
         Ojax.Numpy.Array_constructors.asarray
@@ -340,9 +340,9 @@ let run op positional options arr =
           ((A.value arr) positional.(0));
       ]
   | "jnp.einsum" ->
-      A.refuse options [ "optimize" ];
       [
         Ojax.Numpy.Einsum.einsum
+          ?optimize:(A.opt options "optimize" A.einsum_optimize)
           ?precision:(A.opt options "precision" A.precision)
           ?preferred_element_type:
             (A.opt options "preferred_element_type" A.dtype)
@@ -389,7 +389,7 @@ let run op positional options arr =
       [
         Ojax.Numpy.Extras.flatnonzero
           ?size:(A.opt options "size" A.int_)
-          ?fill_value:(A.opt options "fill_value" A.int_)
+          ?fill_value:(A.opt options "fill_value" (A.value arr))
           ((A.value arr) positional.(0));
       ]
   | "jnp.flip" ->
@@ -432,6 +432,7 @@ let run op positional options arr =
       let a, b =
         Ojax.Numpy.Extras.histogram
           ?bins:(A.opt options "bins" A.int_)
+          ?range:(A.opt options "range" A.float_pair)
           ?weights:(A.opt options "weights" (A.value arr))
           ?density:(A.opt options "density" A.bool_)
           ((A.value arr) positional.(0))
@@ -451,6 +452,7 @@ let run op positional options arr =
       [
         Ojax.Numpy.Extras.histogram_bin_edges
           ?bins:(A.opt options "bins" A.int_)
+          ?range:(A.opt options "range" A.float_pair)
           ?weights:(A.opt options "weights" (A.value arr))
           ((A.value arr) positional.(0));
       ]
@@ -584,7 +586,7 @@ let run op positional options arr =
   | "jnp.median" ->
       [
         Ojax.Numpy.Reductions.median
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ((A.value arr) positional.(0));
       ]
@@ -659,7 +661,7 @@ let run op positional options arr =
   | "jnp.nanmedian" ->
       [
         Ojax.Numpy.Reductions.nanmedian
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ((A.value arr) positional.(0));
       ]
@@ -675,7 +677,7 @@ let run op positional options arr =
   | "jnp.nanpercentile" ->
       [
         Ojax.Numpy.Reductions.nanpercentile
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ?method_:(A.opt options "method" A.string_)
           ?weights:(A.opt options "weights" (A.value arr))
@@ -695,7 +697,7 @@ let run op positional options arr =
   | "jnp.nanquantile" ->
       [
         Ojax.Numpy.Reductions.nanquantile
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ?method_:(A.opt options "method" A.string_)
           ?weights:(A.opt options "weights" (A.value arr))
@@ -737,7 +739,7 @@ let run op positional options arr =
   | "jnp.nonzero" ->
       Ojax.Numpy.Extras.nonzero
         ?size:(A.opt options "size" A.int_)
-        ?fill_value:(A.opt options "fill_value" A.int_)
+        ?fill_value:(A.opt options "fill_value" (A.value arr))
         ((A.value arr) positional.(0))
   | "jnp.ones" ->
       [
@@ -762,7 +764,7 @@ let run op positional options arr =
   | "jnp.percentile" ->
       [
         Ojax.Numpy.Reductions.percentile
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ?method_:(A.opt options "method" A.string_)
           ?weights:(A.opt options "weights" (A.value arr))
@@ -860,7 +862,7 @@ let run op positional options arr =
   | "jnp.quantile" ->
       [
         Ojax.Numpy.Reductions.quantile
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ?method_:(A.opt options "method" A.string_)
           ?weights:(A.opt options "weights" (A.value arr))
@@ -977,7 +979,7 @@ let run op positional options arr =
       Ojax.Numpy.Lax_numpy.split
         ?axis:(A.opt options "axis" A.int_)
         ((A.value arr) positional.(0))
-        (A.sections positional.(1))
+        ((A.sections arr) positional.(1))
   | "jnp.squeeze" ->
       [
         Ojax.Numpy.Lax_numpy.squeeze
@@ -1071,7 +1073,7 @@ let run op positional options arr =
       [
         Ojax.Numpy.Lax_numpy.tri ?m:(A.opt options "M" A.int_)
           ?k:(A.opt options "k" A.int_)
-          ~dtype:(A.default_float (A.get options "dtype" `Null))
+          ?dtype:(A.opt options "dtype" A.dtype)
           (A.int_ positional.(0));
       ]
   | "jnp.tril" ->
@@ -1602,7 +1604,7 @@ let run op positional options arr =
           ?padding:(Some (A.padding positional.(3)))
           ?lhs_dilation:(A.opt options "lhs_dilation" A.int_array)
           ?rhs_dilation:(A.opt options "rhs_dilation" A.int_array)
-          ?precision:(A.opt options "precision" A.string_pair)
+          ?precision:(A.opt options "precision" A.precision)
           ?preferred_element_type:
             (A.opt options "preferred_element_type" A.dtype)
           ~filter_shape:(A.int_array positional.(1))
@@ -1835,8 +1837,8 @@ let run op positional options arr =
           ((A.value arr) positional.(0));
       ]
   | "lax_linalg.eig" ->
-      A.refuse options [ "implementation" ];
       Ojax.Lax.Linalg.eig
+        ?implementation:(A.opt options "implementation" A.eig_implementation)
         ?compute_left_eigenvectors:
           (A.opt options "compute_left_eigenvectors" A.bool_)
         ?compute_right_eigenvectors:
@@ -1844,9 +1846,9 @@ let run op positional options arr =
         ?enable_eigvec_derivs:(A.opt options "enable_eigvec_derivs" A.bool_)
         ((A.value arr) positional.(0))
   | "lax_linalg.eigh" ->
-      A.refuse options [ "implementation" ];
       let a, b =
         Ojax.Lax.Linalg.eigh
+          ?implementation:(A.opt options "implementation" A.eigh_implementation)
           ?lower:(A.opt options "lower" A.bool_)
           ?symmetrize_input:(A.opt options "symmetrize_input" A.bool_)
           ?sort_eigenvalues:(A.opt options "sort_eigenvalues" A.bool_)
@@ -1944,7 +1946,7 @@ let run op positional options arr =
           ?query_seq_lengths:(A.opt options "query_seq_lengths" (A.value arr))
           ?key_value_seq_lengths:
             (A.opt options "key_value_seq_lengths" (A.value arr))
-          ?local_window_size:(A.opt options "local_window_size" A.int_pair)
+          ?local_window_size:(A.opt options "local_window_size" A.window_pair)
           ?implementation:(A.opt options "implementation" A.string_)
           ~query:((A.value arr) positional.(0))
           ~key:((A.value arr) positional.(1))
@@ -2463,10 +2465,10 @@ let run op positional options arr =
         ?type_:(A.opt options "type" A.int_)
         ((A.value arr) positional.(0))
   | "sp_linalg.eigh_tridiagonal" ->
-      A.refuse options [ "select_range" ];
       Ojax.Scipy.Linalg.eigh_tridiagonal
         ?eigvals_only:(A.opt options "eigvals_only" A.bool_)
         ?select:(A.opt options "select" A.string_)
+        ?select_range:(A.opt options "select_range" A.float_pair)
         ?tol:(A.opt options "tol" A.float_)
         ?key:(A.opt options "key" (A.value arr))
         ((A.value arr) positional.(0))
@@ -2615,6 +2617,23 @@ let run op positional options arr =
           ((A.value arr) positional.(0))
           ((A.value arr) positional.(1));
       ]
+  | "sp_signal.csd" ->
+      let a, b =
+        Ojax.Scipy.Signal.csd
+          ?fs:(A.opt options "fs" A.float_)
+          ?window:(A.opt options "window" (A.value arr))
+          ?nperseg:(A.opt options "nperseg" A.int_)
+          ?noverlap:(A.opt options "noverlap" A.int_)
+          ?nfft:(A.opt options "nfft" A.int_)
+          ?detrend:(A.opt_keep options "detrend" A.string_option)
+          ?return_onesided:(A.opt options "return_onesided" A.bool_)
+          ?scaling:(A.opt options "scaling" A.string_)
+          ?axis:(A.opt options "axis" A.int_)
+          ?average:(A.opt options "average" A.string_)
+          ((A.value arr) positional.(0))
+          ((A.value_option arr) positional.(1))
+      in
+      [ a; b ]
   | "sp_signal.detrend" ->
       [
         Ojax.Scipy.Signal.detrend
@@ -2700,7 +2719,7 @@ let run op positional options arr =
   | "sp_special.log_softmax" ->
       [
         Ojax.Scipy.Special.log_softmax
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ((A.value arr) positional.(0));
       ]
   | "sp_special.logsumexp" ->
@@ -2716,7 +2735,7 @@ let run op positional options arr =
   | "sp_special.softmax" ->
       [
         Ojax.Scipy.Special.softmax
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ((A.value arr) positional.(0));
       ]
   | "sp_special.sph_harm_y" ->

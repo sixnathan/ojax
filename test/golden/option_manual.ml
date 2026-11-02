@@ -33,9 +33,88 @@ let without_false_flags options =
            fields)
   | other -> other
 
+let signal_option op (name, value) =
+  let signal = String.length op > 10 && String.sub op 0 10 = "sp_signal." in
+  match (name, value) with
+  | "window", `String "hann" when signal -> None
+  | "detrend", `Bool false when signal -> Some (name, `Null)
+  | "detrend", `Bool true when signal -> Some (name, `String "True")
+  | _ -> Some (name, value)
+
+let normalize op options =
+  match options with
+  | `Assoc fields -> `Assoc (List.filter_map (signal_option op) fields)
+  | other -> other
+
+let scalar_dtype : A.json -> Ojax.Dtype.t = function
+  | `Bool _ -> Ojax.Dtype.Bool
+  | `Int _ -> Ojax.Dtypes.default_int_dtype ()
+  | `Float _ -> Ojax.Dtypes.default_float_dtype ()
+  | _ -> A.no "type:dtype"
+
+let operands arr =
+  List.concat_map (function
+    | `Assoc [ (("$list" | "$star"), _) ] as j -> A.value_list arr j
+    | j -> [ A.value arr j ])
+
 let run op positional options arr =
   let v j = A.value arr j in
   match op with
+  | "lax.collapse" -> (
+      let operand = v positional.(0) and start = A.int_ positional.(1) in
+      match A.get options "stop_dimension" `Null with
+      | `Null -> Some [ Ojax.Lax_api.collapse_from operand start ]
+      | j -> Some [ Ojax.Lax_api.collapse operand start (A.int_ j) ])
+  | "lax.full" ->
+      let dtype =
+        match A.get options "dtype" `Null with
+        | `Null -> scalar_dtype positional.(1)
+        | j -> A.dtype j
+      in
+      Some
+        [
+          Ojax.Lax_api.full
+            (A.int_array positional.(0))
+            (A.float_ positional.(1))
+            dtype;
+        ]
+  | "jnp.einsum" ->
+      let operands = operands arr (List.tl (Array.to_list positional)) in
+      Some
+        [
+          Ojax.Numpy.Einsum.einsum
+            ?optimize:(A.opt options "optimize" A.einsum_optimize)
+            ?precision:(A.opt options "precision" A.precision)
+            ?preferred_element_type:
+              (A.opt options "preferred_element_type" A.dtype)
+            (A.string_ positional.(0))
+            operands;
+        ]
+  | "jnp.einsum_path" ->
+      let operands = operands arr (List.tl (Array.to_list positional)) in
+      ignore
+        (Ojax.Numpy.Einsum.einsum_path
+           ?optimize:(A.opt options "optimize" A.einsum_optimize)
+           (A.string_ positional.(0))
+           operands);
+      A.no "result:einsum_path"
+  | "jnp.histogramdd" ->
+      let range =
+        A.opt options "range" (fun j ->
+            Array.of_list (List.map A.float_pair (A.elements j)))
+      in
+      let weights = A.opt options "weights" v in
+      let density = A.opt options "density" A.bool_ in
+      let sample = v positional.(0) in
+      let hist, edges =
+        match A.get options "bins" `Null with
+        | `Null -> X.histogramdd_uniform ?range ?weights ?density sample
+        | `Int n ->
+            X.histogramdd_uniform ~bins:n ?range ?weights ?density sample
+        | j ->
+            X.histogramdd ~bins:(A.int_array j) ?range ?weights ?density sample
+      in
+      Some (hist :: edges)
   | "nn.dot_product_attention" when flag options "return_residual" ->
       Some
         (pair
@@ -78,9 +157,10 @@ let run op positional options arr =
               (v positional.(1))))
   | "jnp.intersect1d" when flag options "return_indices" ->
       let a, b, c =
-        A.refuse options [ "size"; "fill_value" ];
         X.intersect1d_indices
           ?assume_unique:(A.opt options "assume_unique" A.bool_)
+          ?size:(A.opt options "size" A.int_)
+          ?fill_value:(A.opt options "fill_value" A.float_)
           (v positional.(0))
           (v positional.(1))
       in
@@ -149,7 +229,9 @@ let run op positional options arr =
       in
       Some [ c; v (`Bool lower) ]
   | "jnp.size" ->
-      let n = X.size ?axis:(A.opt options "axis" A.int_) (v positional.(0)) in
+      let n =
+        X.size ?axis:(A.opt options "axis" A.int_array) (v positional.(0))
+      in
       Some [ Ojax.Numpy.Jnp_util.py_int n ]
   | "jnp.arange" ->
       let start = A.float_ positional.(0) in

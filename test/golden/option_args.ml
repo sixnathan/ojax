@@ -83,19 +83,13 @@ let string_pair j =
 
 let trans : json -> int = function
   | `Int n -> n
-  | `String "N" -> 0
-  | `String "T" -> 1
-  | `String "C" -> 2
+  | `String s -> Ojax.Scipy.Linalg.trans_of_string s
   | _ -> no "type:trans"
 
 let rounding_method : json -> Ojax.Lax_config.rounding_method = function
   | `Int 0 -> Ojax.Lax_config.Away_from_zero
   | `Int 1 -> Ojax.Lax_config.To_nearest_even
   | _ -> no "type:rounding_method"
-
-let sections : json -> Ojax.Numpy.Lax_numpy.sections = function
-  | `Int n -> Ojax.Numpy.Lax_numpy.Count n
-  | j -> Ojax.Numpy.Lax_numpy.Indices (int_array j)
 
 let dtype : json -> D.t = function
   | `String s -> Ojax.Numpy.Extras.dtype s
@@ -178,3 +172,36 @@ let value_list arr : json -> T.value list = function
   | `Assoc [ ("$arr", `String name) ] -> [ arr name ]
   | `List items -> List.map (value arr) items
   | _ -> no "type:value_list"
+
+let value_option arr : json -> T.value option = function
+  | `Null -> None
+  | j -> Some (value arr j)
+
+let einsum_optimize : json -> Ojax.Numpy.Einsum_paths.optimize = function
+  | `Bool true -> Ojax.Numpy.Einsum_paths.Optimal
+  | `Bool false -> Ojax.Numpy.Einsum_paths.Unoptimized
+  | `String s -> Ojax.Numpy.Einsum_paths.Named s
+  | j -> Ojax.Numpy.Einsum_paths.Path (List.map int_list (elements j))
+
+let axis_arg : json -> Ojax.Numpy.Reductions.axis_arg = function
+  | `Int n -> Ojax.Numpy.Reductions.Axis n
+  | j -> Ojax.Numpy.Reductions.Axes (int_array j)
+
+let eig_implementation : json -> Ojax.Lax_config.eig_implementation = function
+  | _ -> no "type:enum"
+
+let eigh_implementation : json -> Ojax.Lax_config.eigh_implementation = function
+  | _ -> no "type:enum"
+
+let float_pair j =
+  match elements j with [ a; b ] -> (float_ a, float_ b) | _ -> no "type:pair"
+
+let sections arr : json -> Ojax.Numpy.Lax_numpy.sections = function
+  | `Int n -> Ojax.Numpy.Lax_numpy.Count n
+  | `Assoc [ ("$arr", _) ] as j ->
+      Ojax.Numpy.Lax_numpy.Index_array (value arr j)
+  | j -> Ojax.Numpy.Lax_numpy.Indices (int_array j)
+
+let window_pair : json -> int * int = function
+  | `Int n -> (n, n)
+  | j -> int_pair j

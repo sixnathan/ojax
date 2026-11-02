@@ -248,7 +248,9 @@ let numpy_run op p a b c =
   | "np_nonzero_size" ->
       Some
         (E.nonzero ~size:(int "size" p)
-           ~fill_value:(Option.value (opt_int "fill" p) ~default:0)
+           ~fill_value:
+             (Ojax.Numpy.Jnp_util.py_int
+                (Option.value (opt_int "fill" p) ~default:0))
            (binarize (a ())))
   | "np_flatnonzero" -> Some [ E.flatnonzero (binarize (a ())) ]
   | "np_argwhere" -> Some [ E.argwhere (binarize (a ())) ]

@@ -103,6 +103,16 @@ let mul_with ?out_dtype x y =
   match out_dtype with
   | None -> mul x y
   | Some d ->
+      List.iteri
+        (fun i v ->
+          if (Core.get_aval v).dtype = Dtype.Bool then
+            Py_exn.type_error
+              (Printf.sprintf
+                 "mul does not accept dtype bool at position %d. Accepted \
+                  dtypes at position %d are subtypes of floating, \
+                  complexfloating, integer."
+                 i i))
+        [ x; y ];
       let d = Dtypes.canonicalize_dtype d in
       let cast v =
         if (Core.get_aval v).dtype = d then v
@@ -693,6 +703,12 @@ let top_k ?(axis = -1) x k =
 
 let dtype_bits = Dtypes.itemsize_bits
 
+let dot_bit_width = function
+  | Dtype.Bool -> 1
+  | Dtype.Complex64 -> 32
+  | Dtype.Complex128 -> 64
+  | dt -> dtype_bits dt
+
 let convert_to dt v =
   if dtype_of v = dt then v else b1 (Convert_element_type dt) [ v ]
 
@@ -775,7 +791,7 @@ let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
   | Some p
     when (not has_algorithm)
          && (not (Dtypes.issubdtype result `Floating))
-         && dtype_bits p < dtype_bits result ->
+         && dot_bit_width p < dot_bit_width result ->
       invalid_arg
         (Printf.sprintf
            "`preferred_element_type` must not be narrower than the original \
@@ -1515,8 +1531,8 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
   in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
   conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn
-    ?conv_precision:precision ?preferred_element_type
-    ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
+    ?precision ?preferred_element_type ~feature_group_count:in_features lhs
+    kernel ~window_strides:strides padding
 
 let scatter_apply ?(update_shape : int array option) ?indices_are_sorted
     ?unique_indices ?mode x indices func dimension_numbers =

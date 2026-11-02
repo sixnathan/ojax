@@ -56,6 +56,8 @@ def normalise(ty):
 DECODERS = {
     "value": "(A.value arr)",
     "value list": "(A.value_list arr)",
+    "value option": "(A.value_option arr)",
+    "Einsum_paths.optimize": "A.einsum_optimize",
     "int": "A.int_",
     "bool": "A.bool_",
     "float": "A.float_",
@@ -70,15 +72,21 @@ DECODERS = {
     "int array option": "A.int_array_option",
     "(int * int) array": "A.int_pairs",
     "int * int": "A.int_pair",
+    "float * float": "A.float_pair",
     "string * string": "A.string_pair",
     "Dtype.t": "A.dtype",
     "padding": "A.padding",
     "Lax_config.precision": "A.precision",
     "Lax_config.rounding_method": "A.rounding_method",
     "rounding_method": "A.rounding_method",
-    "sections": "A.sections",
+    "sections": "(A.sections arr)",
     "Tensor_contractions.td_axes": "A.td_axes",
     "ord": "A.ord",
+    "Lax_config.eig_implementation": "A.eig_implementation",
+    "Lax_config.eigh_implementation": "A.eigh_implementation",
+    "axis_arg": "A.axis_arg",
+    "Reductions.axis_arg": "A.axis_arg",
+    "Numpy.Reductions.axis_arg": "A.axis_arg",
     "norm_axis": "A.norm_axis",
     "td_axes": "A.td_axes",
     "Tensor_contractions.td_axes": "A.td_axes",
@@ -174,10 +182,14 @@ def arm(spec, parts, module):
         if ty == "Dtype.t" and not optional and spec["name"] in ("eye", "tri", "identity", "indices", "full"):
             default = "A.default_int" if spec["name"] == "indices" else "A.default_float"
             args.append("~" + label + ":(" + default + " " + param_source(target) + ")")
+        elif target.name == "local_window_size" and ty == "int * int":
+            args.append("?" + label + ':(A.opt options "local_window_size" A.window_pair)')
         elif target.name == "trans" and ty == "int":
             args.append("?" + label + ':(A.opt options "trans" A.trans)')
         elif not optional:
             args.append("~" + label + ":(" + decoder + " " + param_source(target) + ")")
+        elif target.name in required_index and ty == "int array" and target.name in ("lhs_dilation", "rhs_dilation"):
+            args.append("?" + label + ":(A.int_array_option " + param_source(target) + ")")
         elif target.name in required_index:
             args.append("?" + label + ":(Some (" + decoder + " " + param_source(target) + "))")
         elif ty.endswith(" option"):

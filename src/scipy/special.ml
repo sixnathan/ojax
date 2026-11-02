@@ -1746,19 +1746,37 @@ let reject_bool x =
     raise (Py_exn.Type_error "sub does not accept dtype bool.")
 
 let softmax ?axis x =
-  Option.iter (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x))) axis;
+  Option.iter
+    (function
+      | Numpy.Reductions.Axis ax ->
+          ignore (Validate.canonicalize_axis ax (ndim x))
+      | Numpy.Reductions.Axes axes ->
+          Array.iter
+            (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x)))
+            axes)
+    axis;
   reject_bool x;
   match axis with
-  | Some ax -> NN.softmax ~axis:ax x
+  | Some (Numpy.Reductions.Axis ax) -> NN.softmax ~axis:ax x
+  | Some (Numpy.Reductions.Axes axes) -> NN.softmax_axes ~axes x
   | None ->
       let sh = shape x in
       NL.reshape (NN.softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
 
 let log_softmax ?axis x =
-  Option.iter (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x))) axis;
+  Option.iter
+    (function
+      | Numpy.Reductions.Axis ax ->
+          ignore (Validate.canonicalize_axis ax (ndim x))
+      | Numpy.Reductions.Axes axes ->
+          Array.iter
+            (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x)))
+            axes)
+    axis;
   reject_bool x;
   match axis with
-  | Some ax -> NN.log_softmax ~axis:ax x
+  | Some (Numpy.Reductions.Axis ax) -> NN.log_softmax ~axis:ax x
+  | Some (Numpy.Reductions.Axes axes) -> NN.log_softmax_axes ~axes x
   | None ->
       let sh = shape x in
       NL.reshape (NN.log_softmax ~axis:0 (NL.reshape x [| numel sh |])) sh

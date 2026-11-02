@@ -338,14 +338,21 @@ let fftfreq ?(d = 1.0) ?dtype n =
        (Concrete (Ndarray.of_floats dt [||] [| d *. float_of_int n |])))
     out
 
+let scalar_of_dtype dt x =
+  let dt = Dtypes.canonicalize_dtype dt in
+  let x =
+    if dt = Dtype.Bool then if x <> 0.0 then 1.0 else 0.0
+    else if Dtypes.issubdtype dt `Integer then Float.trunc x
+    else x
+  in
+  Concrete (Ndarray.of_floats dt [||] [| x |])
+
 let rfftfreq ?(d = 1.0) ?dtype n =
-  let out, dt = freq_dtypes dtype in
+  let dt = Option.value dtype ~default:(default_real ()) in
   let count = if n mod 2 = 0 then (n / 2) + 1 else ((n - 1) / 2) + 1 in
-  Lax_numpy.astype
-    (Ufuncs.divide
-       (Lax_numpy.arange ~dtype:dt (float_of_int count))
-       (Concrete (Ndarray.of_floats dt [||] [| d *. float_of_int n |])))
-    out
+  Ufuncs.divide
+    (Lax_numpy.arange ~dtype:dt (float_of_int count))
+    (scalar_of_dtype dt (d *. float_of_int n))
 
 let roll_axis v axis shift =
   let shape = shape_of v in

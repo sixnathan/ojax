@@ -682,7 +682,9 @@ and run_options op p a b =
       in
       let weights = if kind = "w" then Some (UF.abs (b ())) else None in
       [
-        f ?axis:(PC.opt_int "axis" p) ?keepdims:(PC.opt_bool "keepdims" p)
-          ~method_:"inverted_cdf" ?weights x q;
+        f
+          ?axis:(Option.map (fun n -> R.Axis n) (PC.opt_int "axis" p))
+          ?keepdims:(PC.opt_bool "keepdims" p) ~method_:"inverted_cdf" ?weights
+          x q;
       ]
   | other -> failwith ("apicov: unknown op " ^ other)

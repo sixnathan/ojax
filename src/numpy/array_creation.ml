@@ -178,8 +178,11 @@ let linspace_parts ~retstep ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype
             else const_full out_dt (insert 0) 0.0
           in
           let out =
-            if is_inexact out_dt || not (is_inexact (dtype_of out)) then out
-            else bind1 T.Floor [ out ]
+            if
+              Dtypes.issubdtype out_dt `Integer
+              && not (Dtypes.issubdtype (dtype_of out) `Integer)
+            then bind1 T.Floor [ out ]
+            else out
           in
           if retstep then [ convert out out_dt; !delta ]
           else [ convert out out_dt ]

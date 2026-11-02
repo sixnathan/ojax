@@ -604,7 +604,11 @@ and matrix_rank_body ?rtol ?(hermitian = false) ?tol a =
   if ndim a < 2 then
     NL.astype (RED.any (UF.not_equal a (Jnp_util.py_int 0))) D.I32
   else
-    let s = if hermitian then UF.abs (svdvals a) else svdvals a in
+    let s =
+      if hermitian then
+        List.hd (svd ~full_matrices:false ~compute_uv:false ~hermitian a)
+      else svdvals a
+    in
     let sa = shape a in
     let na = Array.length sa in
     let maxdim = max sa.(na - 1) sa.(na - 2) in
@@ -884,7 +888,7 @@ and lstsq_body ~rcond ~numpy_resid a b =
                  ~origin_msg:(Jaxpr.origin_msg rank) ())
       in
       if Int64.to_int concrete_rank < n || m <= n then
-        T.Concrete (Nd.of_floats dt [| 0 |] [||])
+        T.Concrete (Nd.of_floats (Dtypes.default_float_dtype ()) [| 0 |] [||])
       else full_resid ()
     else full_resid ()
   in

@@ -129,7 +129,10 @@ let hankel_patches c r =
             rhs_spec = [| 1; 0; 2 |];
             out_spec = [| 0; 2; 1 |];
           }
-        ~precision:("HIGHEST", "DEFAULT") lifted ~filter_shape:[| nr |]
+        ~precision:
+          (Lax_config.Precision
+             (Lax_config.Precision_highest, Lax_config.Precision_default))
+        lifted ~filter_shape:[| nr |]
     in
     b1 (Squeeze [| 0 |]) [ patches ]
 

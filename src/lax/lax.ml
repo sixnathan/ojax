@@ -25,30 +25,7 @@ let clz_nbits = function
   | Dtype.I64 | Dtype.Uint64 -> 64
   | _ -> failwith "lax: clz requires an integer operand"
 
-let validate_preferred_element_type input preferred =
-  let sub d k = Dtypes.issubdtype d k in
-  if not (sub input `Integer && sub preferred `Floating) then begin
-    if
-      List.exists
-        (fun k -> sub input k && not (sub preferred k))
-        [ `Integer; `Floating; `Complex ]
-    then
-      raise
-        (Py_exn.Type_error
-           "Input type is incompatible with `preferred_element_type`. The \
-            compatible combinations of (input_type, preferred_element_type) \
-            are (integral, integral), (integral, floating), (floating, \
-            floating), (complex, complex.");
-    if sub input `Signed && not (sub preferred `Signed) then
-      raise
-        (Py_exn.Type_error
-           "`preferred_element_type` must have the same signedness as the \
-            original type.")
-  end;
-  if Dtypes.itemsize_bits preferred < Dtypes.itemsize_bits input then
-    raise
-      (Py_exn.Type_error
-         "`preferred_element_type` must not be narrower than the original type.")
+let validate_preferred_element_type = Lax_shape.validate_preferred_element_type
 
 let low_bits nbits m =
   if nbits >= 64 then m
@@ -1872,6 +1849,17 @@ let rec impl_base prim inputs =
             Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.min a)
         inputs
   | Cumlogsumexp { axis; reverse } ->
+      List.iter
+        (fun nd ->
+          let dt = Ndarray.dtype nd in
+          let rank = Array.length (Ndarray.shape nd) in
+          if
+            axis >= 0 && axis < rank
+            && (dt = Dtype.Bool || Dtypes.issubdtype dt `Integer)
+          then
+            raise
+              (Py_exn.Overflow_error "cannot convert float infinity to integer"))
+        inputs;
       un
         (Control_flow.Loops.cumred_impl ~axis ~reverse
            ~combine:Control_flow.Loops.logaddexp)

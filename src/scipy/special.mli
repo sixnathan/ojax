@@ -36,8 +36,8 @@ val log_ndtr : ?series_order:int -> Types.value -> Types.value
 val polygamma : Types.value -> Types.value -> Types.value
 val zeta : ?q:Types.value -> Types.value -> Types.value
 val wofz : Types.value -> Types.value
-val softmax : ?axis:int -> Types.value -> Types.value
-val log_softmax : ?axis:int -> Types.value -> Types.value
+val softmax : ?axis:Numpy.Reductions.axis_arg -> Types.value -> Types.value
+val log_softmax : ?axis:Numpy.Reductions.axis_arg -> Types.value -> Types.value
 val poch : Types.value -> Types.value -> Types.value
 val spence : Types.value -> Types.value
 val sici : Types.value -> Types.value list

@@ -546,14 +546,12 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
   let axis_size = (shape arr).(ax) in
   let inverse =
     if flags.want_inverse && aux_empty then begin
-      let inv = L.full [| axis_size |] 0.0 idt in
-      if reshape_inverse then NL.reshape inv (shape a) else inv
+      L.full [| axis_size |] 0.0 idt
     end
     else if flags.want_inverse then begin
       let imask = U.subtract (R.cumsum mask) (Jnp_util.py_int 1) in
       let zeros = L.full (shape mask) 0.0 idt in
-      let inv = at_set zeros [ perm ] imask in
-      if reshape_inverse then NL.reshape inv (shape a) else inv
+      at_set zeros [ perm ] imask
     end
     else empty
   in
@@ -569,6 +567,10 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
       NL.diff (at_leading_slice_set idx 1 stops)
     end
     else empty
+  in
+  let inverse =
+    if flags.want_inverse && reshape_inverse then NL.reshape inverse (shape a)
+    else inverse
   in
   ({ values; indices; inverse; counts }, fun () -> R.sum mask)
 

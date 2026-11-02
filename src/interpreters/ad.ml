@@ -2658,7 +2658,11 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
         | None -> failwith "ad: linearized call was not traced"
       in
       let name = Pretty_printer.call_name c.jid in
-      let primal = hoist_scan_invariants (Jaxpr.dce_keep_args primal) in
+      let primal =
+        hoist_scan_invariants
+          (if Core.is_inline_call c.jid then primal
+           else Jaxpr.dce_keep_args primal)
+      in
       Pretty_printer.register_call_name primal.jid name;
       let tangent = { jid = Core.fresh_id (); jaxpr = jx; consts = [] } in
       Pretty_printer.register_call_name tangent.jid name;

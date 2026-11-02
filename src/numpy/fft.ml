@@ -212,9 +212,9 @@ let ihfft ?n ?(axis = -1) ?norm a =
   let ax = canon_axis (rank_of a) axis in
   let nn = match n with Some x -> x | None -> (shape_of a).(ax) in
   let axes, s = single_axis axis n in
-  Ufuncs.multiply
-    (b1 Conj [ fft_core Fft_real ~inverse:true ?s ?axes ?norm a ])
-    (Jnp_util.py_float (1.0 /. float_of_int nn))
+  let output = b1 Conj [ fft_core Fft_real ~inverse:true ?s ?axes ?norm a ] in
+  if nn = 0 then invalid_arg "division by zero";
+  Ufuncs.multiply output (Jnp_util.py_float (1.0 /. float_of_int nn))
 
 let fftn ?s ?axes ?norm a = fft_core Fft_forward ~inverse:false ?s ?axes ?norm a
 let ifftn ?s ?axes ?norm a = fft_core Fft_inverse ~inverse:true ?s ?axes ?norm a

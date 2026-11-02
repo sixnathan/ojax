@@ -2563,6 +2563,7 @@ let abstract_eval prim avals =
       | _ -> failwith "lax: select_n expects a predicate and cases")
   | Convert_element_type dt -> un_aval (fun a -> shaped a.shape dt false) avals
   | Broadcast_in_dim { shape; _ } ->
+      Utils.check_shapelike "broadcast_in_dim" "shape" shape;
       un_aval (fun a -> shaped shape a.dtype a.weak_type) avals
   | Reshape ns -> un_aval (fun a -> shaped ns a.dtype a.weak_type) avals
   | Reshape_perm { new_sizes; _ } ->
@@ -2684,6 +2685,15 @@ let abstract_eval prim avals =
   | Top_k { k; axis } -> (
       match avals with
       | [ a ] ->
+          if a.shape.(axis) < k then
+            invalid_arg
+              (Printf.sprintf
+                 "k argument to top_k must be no larger than size along axis; \
+                  got k=%d with shape=[%s] and axis=%d"
+                 k
+                 (String.concat ", "
+                    (Array.to_list (Array.map string_of_int a.shape)))
+                 axis);
           let s = Array.mapi (fun i d -> if i = axis then k else d) a.shape in
           [ shaped s a.dtype a.weak_type; shaped s Dtype.I32 a.weak_type ]
       | _ -> failwith "lax: top_k expects 1 operand")

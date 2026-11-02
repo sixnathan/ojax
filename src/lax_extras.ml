@@ -29,6 +29,11 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension operand k =
     if reduction_dimension < 0 then rank + reduction_dimension
     else reduction_dimension
   in
+  if a.T.shape.(axis) < k then
+    invalid_arg
+      (Printf.sprintf
+         "k must be smaller than the size of reduction_dim %d, got %d"
+         a.T.shape.(axis) k);
   let out_shape = Array.mapi (fun i d -> if i = axis then k else d) a.T.shape in
   let prim =
     T.Decomposable

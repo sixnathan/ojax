@@ -7,7 +7,14 @@ let aval v = Core.get_aval v
 let shape v = (aval v).shape
 let dtype_of v = (aval v).dtype
 let ndim v = Array.length (shape v)
-let canon_axis n a = if a < 0 then a + n else a
+
+let canon_axis n a =
+  let c = if a < 0 then a + n else a in
+  if c < 0 || c >= n then
+    invalid_arg
+      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" a n);
+  c
+
 let product a = Array.fold_left ( * ) 1 a
 let filled dt sh x = Core.splat dt sh x
 
@@ -835,6 +842,12 @@ let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation
     ?dimension_numbers ?(feature_group_count = 1) ?(batch_group_count = 1) lhs
     rhs ~window_strides padding =
   let rank = ndim lhs in
+  if feature_group_count <= 0 then
+    invalid_arg
+      (Printf.sprintf
+         "conv_general_dilated feature_group_count must be a positive integer, \
+          got %d."
+         feature_group_count);
   let sdims = rank - 2 in
   let ones = Array.make sdims 1 in
   let dn =
@@ -1213,9 +1226,8 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
       [ eye ]
   in
   let kernel =
-    b1
-      (Reshape (Array.append [| in_features * window; 1 |] filter_shape))
-      [ spread ]
+    let target = Array.append [| in_features * window; 1 |] filter_shape in
+    if target = shape spread then spread else b1 (Reshape target) [ spread ]
   in
   let kernel =
     let rest =

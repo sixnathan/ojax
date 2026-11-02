@@ -393,11 +393,18 @@ let emit_logistic ctx (eqn : eqn) in_ids =
   let c1 = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c1) one sty);
-  let b1 = fresh ctx in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
-       (name b1) (name c1) sty xty);
+  let spread c =
+    if out.vaval.shape = [||] then c
+    else begin
+      let b = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+           (name b) (name c) sty xty);
+      b
+    end
+  in
+  let b1 = spread c1 in
   let a = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.add %s, %s : %s\n" (name a) (name b1)
@@ -405,11 +412,7 @@ let emit_logistic ctx (eqn : eqn) in_ids =
   let c2 = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c2) one sty);
-  let b2 = fresh ctx in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
-       (name b2) (name c2) sty xty);
+  let b2 = spread c2 in
   let n = bind_var ctx out in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = stablehlo.divide %s, %s : %s\n" (name n) (name b2)
@@ -1381,37 +1384,42 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     let b = ctx.extras in
     Buffer.add_string b
       (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
-    Buffer.add_string b
-      (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
-    if broadcast then (
+    if in_aval.shape.(axis) = 0 then
+      Buffer.add_string b (Printf.sprintf "    return %%0 : %s\n" ty)
+    else (
       Buffer.add_string b
-        (Printf.sprintf
-           "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
-           sty sty);
-      Buffer.add_string b
-        (Printf.sprintf
-           "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
-      Buffer.add_string b
-        (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
-      Buffer.add_string b
-        (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
-      Buffer.add_string b
-        (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
-      Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-      Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
-    else begin
-      Buffer.add_string b
-        (Printf.sprintf
-           "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
-      Buffer.add_string b
-        (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
-      Buffer.add_string b
-        (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
-      Buffer.add_string b
-        (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
-      Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-      Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
-    end;
+        (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
+      if broadcast then (
+        Buffer.add_string b
+          (Printf.sprintf
+             "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
+             sty sty);
+        Buffer.add_string b
+          (Printf.sprintf
+             "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
+        Buffer.add_string b
+          (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
+        Buffer.add_string b
+          (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
+        Buffer.add_string b
+          (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
+        Buffer.add_string b
+          (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+        Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
+      else begin
+        Buffer.add_string b
+          (Printf.sprintf
+             "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
+        Buffer.add_string b
+          (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
+        Buffer.add_string b
+          (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
+        Buffer.add_string b
+          (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
+        Buffer.add_string b
+          (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+        Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
+      end);
     Buffer.add_string b "  }\n"
   end
 
@@ -1576,20 +1584,36 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
   in
   let ivd = Array.length idx_av.shape - 1 in
   let out = sole eqn.outs in
-  let n = bind_var ctx out in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = \"stablehlo.gather\"(%s, %s) <{dimension_numbers = %s, \
-        indices_are_sorted = %b, slice_sizes = %s}> : (%s, %s) -> %s\n"
-       (name n) (name op_id) (name idx_id)
-       (gather_dnums_attr dnums ivd)
-       (dnums.g_sorted_unique
-       || Np_ints.gather_clip_of eqn.prim = Some true
-       || Option.fold ~none:false ~some:fst (Np_ints.gather_flags_of eqn.prim))
-       (array_i64 slice_sizes)
-       (Ir.tensor_type_of_aval op_av)
-       (Ir.tensor_type_of_aval idx_av)
-       (Ir.tensor_type_of_aval out.vaval))
+  if Array.mem 0 out.vaval.shape then begin
+    let dt = out.vaval.dtype in
+    let sty = Ir.tensor_type dt [||] in
+    let c = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+         (reduce_zero dt) sty);
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+         (name n) (name c) sty
+         (Ir.tensor_type_of_aval out.vaval))
+  end
+  else
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = \"stablehlo.gather\"(%s, %s) <{dimension_numbers = %s, \
+          indices_are_sorted = %b, slice_sizes = %s}> : (%s, %s) -> %s\n"
+         (name n) (name op_id) (name idx_id)
+         (gather_dnums_attr dnums ivd)
+         (dnums.g_sorted_unique
+         || Np_ints.gather_clip_of eqn.prim = Some true
+         || Option.fold ~none:false ~some:fst (Np_ints.gather_flags_of eqn.prim)
+         )
+         (array_i64 slice_sizes)
+         (Ir.tensor_type_of_aval op_av)
+         (Ir.tensor_type_of_aval idx_av)
+         (Ir.tensor_type_of_aval out.vaval))
 
 let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
   let op_id, idx_id, upd_id =
@@ -1775,6 +1799,19 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
   in
   let out = sole eqn.outs in
   let n_spatial = Array.length window_strides in
+  (match eqn.inputs with
+  | [ _; r ] ->
+      Array.iteri
+        (fun i d ->
+          if (atom_aval r).shape.(d) = 0 then
+            failwith
+              (Printf.sprintf
+                 "Cannot lower jaxpr with verifier errors:\n\
+                  \texpects window to have positive value for %d-th window \
+                  dimension, but got 0."
+                 i))
+        (Array.sub dn.rhs_spec 2 n_spatial)
+  | _ -> ());
   let reverse =
     "[" ^ String.concat ", " (List.init n_spatial (fun _ -> "false")) ^ "]"
   in
@@ -3568,10 +3605,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ x ] ->
             let positive = Core.bind1 (Integer_pow (-y)) [ x ] in
             let a = Core.get_aval x in
+            let scalar_one = Core.splat a.dtype [||] 1.0 in
             let one =
-              Core.bind1
-                (Broadcast_in_dim { shape = a.shape; dims = [||] })
-                [ Core.splat a.dtype [||] 1.0 ]
+              if a.shape = [||] && y <> -1 then scalar_one
+              else
+                Core.bind1
+                  (Broadcast_in_dim { shape = a.shape; dims = [||] })
+                  [ scalar_one ]
             in
             [ Core.bind1 Div [ one; positive ] ]
         | _ -> invalid_arg "Stablehlo.Emit: integer_pow arity")
@@ -4476,6 +4516,18 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
                 [ x ];
             ]
         | _ -> invalid_arg "Stablehlo.Emit: fft arity")
+  | Fft { fft_type = Fft_real; fft_lengths }
+    when Array.length fft_lengths > 0
+         && fft_lengths.(Array.length fft_lengths - 1) = 0 ->
+      let out = sole eqn.outs in
+      failwith
+        (Printf.sprintf
+           "Cannot lower jaxpr with verifier errors:\n\
+            \ttype of return operand 0 ('%s') doesn't match function result \
+            type ('%s') in function @fft"
+           (Ir.tensor_type out.vaval.dtype
+              (Array.map (fun _ -> 0) out.vaval.shape))
+           (Ir.tensor_type_of_aval out.vaval))
   | Fft { fft_type; fft_lengths } ->
       let out = sole eqn.outs in
       let n = bind_var ctx out in
@@ -4657,7 +4709,8 @@ let lower ?result_names ~name cj =
   }
 
 let emit_jax_text ?result_names ~name cj =
-  Mlir_names.renumber_callbacks (lower ?result_names ~name cj).text
+  Mlir_names.print_empty_dynamic_slices
+    (Mlir_names.renumber_callbacks (lower ?result_names ~name cj).text)
 
 let emit_export_text ?(platforms = []) ?result_names ~name
     ~uses_shape_polymorphism cj =

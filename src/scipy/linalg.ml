@@ -264,7 +264,7 @@ let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
       let r = Array.length (shape cq) in
       let limits = Array.copy (shape cq) in
       limits.(r - 1) <- k;
-      Lax_api.slice cq (Array.make r 0) limits)
+      if limits = shape cq then cq else Lax_api.slice cq (Array.make r 0) limits)
     else cq
   in
   let cq =
@@ -273,7 +273,9 @@ let rec qr_multiply ?(mode = "right") ?(pivoting = false) ?(conjugate = false) a
   in
   let starts = Array.make rank 0 in
   let limits = Array.append batch [| k; n |] in
-  let r = NL.triu (Lax_api.slice h starts limits) in
+  let r =
+    NL.triu (if limits = shape h then h else Lax_api.slice h starts limits)
+  in
   match perm with None -> [ cq; r ] | Some p -> [ cq; r; p ]
 
 let rsf2csf_2d t z =

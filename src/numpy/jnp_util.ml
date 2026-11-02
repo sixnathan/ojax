@@ -64,6 +64,9 @@ let broadcast_arrays vs =
         let sh = C.elementwise_shape (List.map shape vs) in
         List.map (fun v -> broadcast_to v sh) vs
 
+let select_unless_empty c a b =
+  if Array.mem 0 (shape a) then a else C.bind1 T.Select_n [ c; b; a ]
+
 let where c x y =
   jit1 "_where"
     (function
@@ -80,11 +83,11 @@ let where c x y =
           let y = conv y in
           if Array.length (shape c) = 0 then
             match broadcast_arrays [ x; y ] with
-            | [ a; b ] -> C.bind1 T.Select_n [ c; b; a ]
+            | [ a; b ] -> select_unless_empty c a b
             | _ -> assert false
           else
             match broadcast_arrays [ c; x; y ] with
-            | [ c; a; b ] -> C.bind1 T.Select_n [ c; b; a ]
+            | [ c; a; b ] -> select_unless_empty c a b
             | _ -> assert false)
       | _ -> invalid_arg "where: arity")
     [ c; x; y ]
@@ -107,11 +110,11 @@ let where_weak ?(x_weak = false) ?(y_weak = false) c x y =
           let y = conv y in
           if Array.length (shape c) = 0 then
             match broadcast_arrays [ x; y ] with
-            | [ a; b ] -> C.bind1 T.Select_n [ c; b; a ]
+            | [ a; b ] -> select_unless_empty c a b
             | _ -> assert false
           else
             match broadcast_arrays [ c; x; y ] with
-            | [ c; a; b ] -> C.bind1 T.Select_n [ c; b; a ]
+            | [ c; a; b ] -> select_unless_empty c a b
             | _ -> assert false)
       | _ -> invalid_arg "where: arity")
     [ c; x; y ]

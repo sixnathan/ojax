@@ -110,8 +110,9 @@ let at arr i =
 let first arr =
   let dims = shape arr in
   let limit = Array.mapi (fun d n -> if d = 0 then 1 else n) dims in
-  Core.bind1 (T.Squeeze [| 0 |])
-    [
+  let sliced =
+    if limit = dims then arr
+    else
       Core.bind1
         (T.Slice
            {
@@ -119,8 +120,9 @@ let first arr =
              limit_indices = limit;
              strides = None;
            })
-        [ arr ];
-    ]
+        [ arr ]
+  in
+  Core.bind1 (T.Squeeze [| 0 |]) [ sliced ]
 
 let bump i = Core.bind1 T.Add [ i; weak_int 1.0 ]
 

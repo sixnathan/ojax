@@ -201,33 +201,39 @@ let at_update ?(axis = 0) build x idxs y =
   let m = Array.length idx_shape in
   let trailing = Array.sub sh (axis + k) (Array.length sh - axis - k) in
   let slice_shape = Array.concat [ Array.sub sh 0 axis; idx_shape; trailing ] in
-  let dt, weak =
-    Dtypes.result_type [ (xa.dtype, xa.weak_type); (ya.dtype, ya.weak_type) ]
-  in
-  let x' = Core.convert_like ~weak x dt in
-  let y' = Core.convert_like ~weak y dt in
-  let y' = NL.broadcast_to y' slice_shape in
-  let dims =
-    {
-      update_window_dims =
-        Array.append (Array.init axis Fun.id)
-          (Array.init (Array.length trailing) (fun i -> axis + m + i));
-      inserted_window_dims = Array.init k (fun j -> axis + j);
-      scatter_dims_to_operand_dims = Array.init k (fun j -> axis + j);
-      s_operand_batching_dims = [||];
-      s_scatter_indices_batching_dims = [||];
-      s_sorted_unique = false;
-      s_clip = false;
-    }
-  in
-  let out = build x' indices y' dims in
-  Core.convert_like ~weak:xa.weak_type out xa.dtype
+  if Array.mem 0 slice_shape then x
+  else
+    let dt, weak =
+      Dtypes.result_type [ (xa.dtype, xa.weak_type); (ya.dtype, ya.weak_type) ]
+    in
+    let x' = Core.convert_like ~weak x dt in
+    let y' = Core.convert_like ~weak y dt in
+    let y' = NL.broadcast_to y' slice_shape in
+    let dims =
+      {
+        update_window_dims =
+          Array.append (Array.init axis Fun.id)
+            (Array.init (Array.length trailing) (fun i -> axis + m + i));
+        inserted_window_dims = Array.init k (fun j -> axis + j);
+        scatter_dims_to_operand_dims = Array.init k (fun j -> axis + j);
+        s_operand_batching_dims = [||];
+        s_scatter_indices_batching_dims = [||];
+        s_sorted_unique = m = 0;
+        s_clip = false;
+      }
+    in
+    let out = build x' indices y' dims in
+    Core.convert_like ~weak:xa.weak_type out xa.dtype
 
 let at_set ?axis x idxs y =
-  at_update ?axis (fun a i u d -> L.scatter a i u d) x idxs y
+  at_update ?axis
+    (fun a i u d -> L.scatter ~unique_indices:d.s_sorted_unique a i u d)
+    x idxs y
 
 let at_add ?axis x idxs y =
-  at_update ?axis (fun a i u d -> L.scatter_add a i u d) x idxs y
+  at_update ?axis
+    (fun a i u d -> L.scatter_add ~unique_indices:d.s_sorted_unique a i u d)
+    x idxs y
 
 let array_of_values vs =
   let lift v =
@@ -411,17 +417,19 @@ let at_leading_slice_set x start y =
       (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
       [| 1 |] [||]
   in
-  let r = rank x in
-  L.scatter x index y
-    {
-      update_window_dims = Array.init r Fun.id;
-      inserted_window_dims = [||];
-      scatter_dims_to_operand_dims = [| 0 |];
-      s_operand_batching_dims = [||];
-      s_scatter_indices_batching_dims = [||];
-      s_sorted_unique = true;
-      s_clip = false;
-    }
+  if size_of y = 0 then x
+  else
+    let r = rank x in
+    L.scatter x index y
+      {
+        update_window_dims = Array.init r Fun.id;
+        inserted_window_dims = [||];
+        scatter_dims_to_operand_dims = [| 0 |];
+        s_operand_batching_dims = [||];
+        s_scatter_indices_batching_dims = [||];
+        s_sorted_unique = true;
+        s_clip = false;
+      }
 
 let unique_sorted_mask ar axis equal_nan =
   Jnp_util.jit "_unique_sorted_mask"
@@ -495,6 +503,10 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
   let reshape_inverse = axis = None in
   let arr = match axis with None -> NL.ravel a | Some _ -> a in
   let ax = match axis with None -> 0 | Some x -> canon (rank a) x in
+  if (shape arr).(ax) = 0 && size <> 0 && fill_value = None then
+    invalid_arg
+      "jnp.unique: for zero-sized input with nonzero size argument, fill_value \
+       must be specified";
   let aux, mask, perm =
     match unique_sorted_mask arr ax equal_nan with
     | [ aux; mask; perm ] -> (aux, mask, perm)
@@ -1031,6 +1043,7 @@ let sum_at n data ids =
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims
 
 let bincount ?weights ?(minlength = 0) ?length x =
+  if rank x <> 1 then invalid_arg "only 1-dimensional input supported.";
   let x =
     if dtype_of x = Dtype.Bool then L.convert_element_type x Dtype.I32 else x
   in
@@ -1426,6 +1439,10 @@ let choose ?(mode = "raise") a choices =
   in
   match NL.broadcast_arrays (arr :: choices) with
   | [] -> invalid_arg "choose: arity"
+  | arr :: choices when rank arr = 0 ->
+      Nd_index.take (array_of_values choices) [ Nd_index.Arr arr ]
+  | arr :: choices when Array.mem 0 (shape arr) ->
+      L.full (shape arr) 0.0 (dtype_of (List.hd choices))
   | arr :: choices ->
       let sh = shape arr in
       let r = Array.length sh in

@@ -619,23 +619,26 @@ let diagonal_indices n =
 let extract_diagonal s =
   let sh = shape_of s and r = ndim_of s in
   let n = min sh.(r - 2) sh.(r - 1) in
-  let idx = diagonal_indices n in
-  let b = r - 2 in
-  b1
-    (Gather
-       {
-         dimension_numbers =
-           {
-             offset_dims = Array.init b Fun.id;
-             collapsed_slice_dims = [| b; b + 1 |];
-             start_index_map = [| b; b + 1 |];
-             g_operand_batching_dims = [||];
-             g_start_indices_batching_dims = [||];
-             g_sorted_unique = false;
-           };
-         slice_sizes = Array.init r (fun i -> if i < b then sh.(i) else 1);
-       })
-    [ s; idx ]
+  if Array.mem 0 (Array.append (Array.sub sh 0 (r - 2)) [| n |]) then
+    Core.splat (dtype_of s) (Array.append (Array.sub sh 0 (r - 2)) [| n |]) 0.0
+  else
+    let idx = diagonal_indices n in
+    let b = r - 2 in
+    b1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = Array.init b Fun.id;
+               collapsed_slice_dims = [| b; b + 1 |];
+               start_index_map = [| b; b + 1 |];
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+               g_sorted_unique = false;
+             };
+           slice_sizes = Array.init r (fun i -> if i < b then sh.(i) else 1);
+         })
+      [ s; idx ]
 
 let construct_diagonal s =
   let sh = shape_of s and r = ndim_of s in

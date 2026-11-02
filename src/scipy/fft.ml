@@ -122,7 +122,7 @@ let deinterleave x axis =
     let start = Array.make (rank x) 0 and limit = Array.copy (shape x) in
     start.(axis) <- lo;
     limit.(axis) <- hi;
-    L.slice x start limit
+    if limit = shape x && lo = 0 then x else L.slice x start limit
   in
   let v0 = part 0 half in
   let v1 = L.rev (part half size) [| axis |] in
@@ -133,18 +133,19 @@ let deinterleave x axis =
       NL.arange ~start:(float_of_int first) ~step:2.0 ~dtype:Dtype.I32
         (float_of_int size)
     in
-    L.scatter ~unique_indices:true target
-      (L.broadcast_in_dim positions [| count; 1 |] [| 0 |])
-      updates
-      {
-        update_window_dims = other_axes (rank x) axis;
-        inserted_window_dims = [| axis |];
-        scatter_dims_to_operand_dims = [| axis |];
-        s_operand_batching_dims = [||];
-        s_scatter_indices_batching_dims = [||];
-        s_sorted_unique = true;
-        s_clip = false;
-      }
+    let lifted = L.broadcast_in_dim positions [| count; 1 |] [| 0 |] in
+    if Array.mem 0 (shape updates) then target
+    else
+      L.scatter ~unique_indices:true target lifted updates
+        {
+          update_window_dims = other_axes (rank x) axis;
+          inserted_window_dims = [| axis |];
+          scatter_dims_to_operand_dims = [| axis |];
+          s_operand_batching_dims = [||];
+          s_scatter_indices_batching_dims = [||];
+          s_sorted_unique = true;
+          s_clip = false;
+        }
   in
   set_every (set_every out 0 v0) 1 v1
 

@@ -195,12 +195,15 @@ let slice_axis v axis lo hi =
   let n = Array.length sh in
   let start = Array.make n 0 in
   let limit = Array.copy sh in
-  let lo = Stdlib.min lo sh.(axis) in
+  let lo = max 0 (min lo sh.(axis)) in
+  let hi = max lo (min hi sh.(axis)) in
   start.(axis) <- lo;
-  limit.(axis) <- Stdlib.max lo (Stdlib.min hi sh.(axis));
-  bind1
-    (T.Slice { start_indices = start; limit_indices = limit; strides = None })
-    [ v ]
+  limit.(axis) <- hi;
+  if lo = 0 && hi = sh.(axis) then v
+  else
+    bind1
+      (T.Slice { start_indices = start; limit_indices = limit; strides = None })
+      [ v ]
 
 let slice_tail v axis =
   let d = (shape v).(axis) in
@@ -1051,6 +1054,8 @@ let tile v reps =
 let rec repeat ?axis ?total_repeat_length a repeats =
   match total_repeat_length with
   | Some total -> repeat_to_total ?axis a repeats total
+  | None when ndim a = 0 ->
+      bind1 (T.Broadcast_in_dim { shape = [| repeats |]; dims = [||] }) [ a ]
   | None -> repeat_scalar ?axis a repeats
 
 and repeat_to_total ?axis a repeats total =
@@ -1352,7 +1357,7 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
   let body v =
     pad_body ~mode ?stat_length ?end_values ~reflect_type v pad_width 0.0
   in
-  if ndim v = 0 then v
+  if ndim v = 0 && mode <> "constant" then v
   else if mode = "constant" then begin
     let literal =
       if bool_literal then
@@ -1363,6 +1368,7 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
     in
     Jnp_util.jit1 "_pad" ~key
       (function
+        | [ v; _ ] when ndim v = 0 -> v
         | [ v; cval ] ->
             let cfg = pad_widths_config pad_width in
             let cval =
@@ -1509,7 +1515,9 @@ let squeeze_last v = bind1 (T.Squeeze [| ndim v - 1 |]) [ v ]
 
 let last_index v i =
   let n = ndim v in
-  squeeze_last (slice_axis v (n - 1) i (i + 1))
+  Nd_index.take v
+    (List.init (n - 1) (fun _ -> Nd_index.Range { start = None; stop = None })
+    @ [ Nd_index.Int i ])
 
 let append ?axis arr values =
   match axis with
@@ -1722,22 +1730,7 @@ let take_trailing a indices =
          })
       [ a; start ]
 
-let index_at a i =
-  let s = shape a in
-  if s.(0) = 0 then invalid_arg "index is out of bounds for axis 0 with size 0";
-  let i = if i < 0 then i + s.(0) else i in
-  let n = Array.length s in
-  let start = Array.init n (fun d -> if d = 0 then i else 0) in
-  let limit = Array.init n (fun d -> if d = 0 then i + 1 else s.(d)) in
-  let sliced =
-    if s.(0) = 1 then a
-    else
-      bind1
-        (T.Slice
-           { start_indices = start; limit_indices = limit; strides = None })
-        [ a ]
-  in
-  bind1 (T.Squeeze [| 0 |]) [ sliced ]
+let index_at a i = Nd_index.take a [ Nd_index.Int i ]
 
 let default_diag ~offset ~axis1 ~axis2 a =
   let s = shape a in

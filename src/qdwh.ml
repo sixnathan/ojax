@@ -43,7 +43,7 @@ let where c x y =
           in
           let x = widen x in
           let y = widen y in
-          b1 T.Select_n [ c; y; x ]
+          if Array.mem 0 (shape x) then x else b1 T.Select_n [ c; y; x ]
       | _ -> invalid_arg "where: arity")
     [ c; x; y ]
 

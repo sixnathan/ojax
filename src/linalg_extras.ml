@@ -65,14 +65,23 @@ let cholesky_update_jax_fn r w =
       nonzero [ x; y ]
   in
   let at_scalar v starts =
-    L.reshape (L.slice v starts (Array.map (fun i -> i + 1) starts)) [||]
+    let limits = Array.map (fun i -> i + 1) starts in
+    let trivial =
+      Array.for_all (fun i -> i = 0) starts
+      && limits = (Core.get_aval v).Types.shape
+    in
+    L.reshape (if trivial then v else L.slice v starts limits) [||]
   in
   let current = ref r and z = ref w in
   for k = 0 to n - 1 do
     let x = at_scalar !current [| k; k |] and y = at_scalar !z [| k |] in
     match rotation x y with
     | [ c; s ] ->
-        let row = L.index_in_dim ~axis:0 ~keepdims:false !current k in
+        let row =
+          if (Core.get_aval !current).Types.shape.(0) = 1 then
+            Core.bind1 (T.Squeeze [| 0 |]) [ !current ]
+          else L.index_in_dim ~axis:0 ~keepdims:false !current k
+        in
         let spread v = L.broadcast_in_dim v [| n |] [||] in
         let new_row = L.sub (L.mul (spread c) row) (L.mul (spread s) !z) in
         z := L.add (L.mul (spread c) !z) (L.mul (spread s) row);

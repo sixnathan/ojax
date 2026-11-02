@@ -213,23 +213,25 @@ let slice_rows x lo hi =
     L.slice x start limit
 
 let add_rows x lo updates =
-  let n = rank x in
-  let dims =
-    {
-      update_window_dims = Array.init n Fun.id;
-      inserted_window_dims = [||];
-      scatter_dims_to_operand_dims = (if lo = 0 then [||] else [| 0 |]);
-      s_operand_batching_dims = [||];
-      s_scatter_indices_batching_dims = [||];
-      s_sorted_unique = true;
-      s_clip = false;
-    }
-  in
-  let indices =
-    if lo = 0 then Concrete (Ndarray.of_floats (index_dtype ()) [| 0 |] [||])
-    else L.broadcast_in_dim (int_literal (index_dtype ()) lo) [| 1 |] [||]
-  in
-  L.scatter_add x indices updates dims
+  if Array.mem 0 (shape updates) then x
+  else
+    let n = rank x in
+    let dims =
+      {
+        update_window_dims = Array.init n Fun.id;
+        inserted_window_dims = [||];
+        scatter_dims_to_operand_dims = (if lo = 0 then [||] else [| 0 |]);
+        s_operand_batching_dims = [||];
+        s_scatter_indices_batching_dims = [||];
+        s_sorted_unique = true;
+        s_clip = false;
+      }
+    in
+    let indices =
+      if lo = 0 then Concrete (Ndarray.of_floats (index_dtype ()) [| 0 |] [||])
+      else L.broadcast_in_dim (int_literal (index_dtype ()) lo) [| 1 |] [||]
+    in
+    L.scatter_add x indices updates dims
 
 let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
   if type_ <> "constant" && type_ <> "linear" then
@@ -562,18 +564,22 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
         let update_shape =
           Array.mapi (fun i d -> if i = n - 1 then stop - 1 else d) sh
         in
-        L.scatter_mul ~unique_indices:true result
-          (L.broadcast_in_dim (int_literal (index_dtype ()) 1) [| 1 |] [||])
-          (Numpy.Array_creation.full ~dtype:(dtype_of result) update_shape 2.0)
-          {
-            update_window_dims = Array.init n Fun.id;
-            inserted_window_dims = [||];
-            scatter_dims_to_operand_dims = [| n - 1 |];
-            s_operand_batching_dims = [||];
-            s_scatter_indices_batching_dims = [||];
-            s_sorted_unique = true;
-            s_clip = false;
-          }
+        let index =
+          L.broadcast_in_dim (int_literal (index_dtype ()) 1) [| 1 |] [||]
+        in
+        if Array.mem 0 update_shape then result
+        else
+          L.scatter_mul ~unique_indices:true result index
+            (Numpy.Array_creation.full ~dtype:(dtype_of result) update_shape 2.0)
+            {
+              update_window_dims = Array.init n Fun.id;
+              inserted_window_dims = [||];
+              scatter_dims_to_operand_dims = [| n - 1 |];
+              s_operand_batching_dims = [||];
+              s_scatter_indices_batching_dims = [||];
+              s_sorted_unique = true;
+              s_clip = false;
+            }
       end
       else result
     in

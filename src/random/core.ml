@@ -1770,6 +1770,7 @@ let prng_key seed =
     | _ -> raw
 
 let bits ?dtype k ~shape =
+  Option.iter check_uint_dtype dtype;
   sampler ~name:"random_bits" k (fun () -> bits ?dtype k ~shape)
 
 let randint ?dtype k ~shape ~minval ~maxval =

@@ -35,6 +35,12 @@ let instantiate_const trace (t : tracer) : tracer =
   | Some c ->
       new_pe_tracer trace (partial_val_unknown t.aval) (Some (ConstRecipe c))
 
+let is_unknown_value = function
+  | Tracer ({ payload = PE _; _ } as t) -> is_unknown (pe_pval t)
+  | _ -> false
+
+let known_tracer trace v = new_pe_tracer trace (partial_val_known v) None
+
 let record_unknown trace prim (tracers : tracer list) : value list =
   let tracers_in = List.map (instantiate_const trace) tracers in
   let avals_in = List.map (fun (t : tracer) -> t.aval) tracers_in in

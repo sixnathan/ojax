@@ -1045,8 +1045,13 @@ let ufunc_jit name f a idx b =
            | Ellipsis -> bad "ellipsis"
            | Newaxis -> []
            | Int i -> [ py_int i ]
-           | Bool b -> [ C.py_scalar D.Bool (if b then 1.0 else 0.0) ]
-           | Arr v -> [ v ])
+           | Bool b ->
+               [
+                 T.Concrete
+                   (Ndarray.of_floats D.Bool [||]
+                      [| (if b then 1.0 else 0.0) |]);
+               ]
+           | Arr v -> [ canon v ])
          idx)
   in
   let shape_key =

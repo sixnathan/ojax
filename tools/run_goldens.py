@@ -128,6 +128,10 @@ def row_classes(log):
                 group = "fuzz_s2_error_text"
             elif suite.startswith("compose_fuzz:"):
                 group = "compose_fuzz"
+            elif suite.startswith("index_fuzz:"):
+                group = "index_fuzz"
+            elif suite.startswith("text_index_fuzz:"):
+                group = "index_fuzz_error_text"
             else:
                 group = "fixed"
             counter = groups[group]
@@ -154,6 +158,8 @@ def print_row_classes(log):
         "option_fuzz_error_text",
         "fuzz_error_text",
         "fuzz_s2_error_text",
+        "index_fuzz",
+        "index_fuzz_error_text",
     ):
         c = groups.get(name)
         if c:
@@ -349,8 +355,9 @@ def main():
     option_rows = [s for s in totals if s.startswith(("option_fuzz:", "text_option_fuzz:"))]
     composed = [s for s in totals if s.startswith("compose_fuzz:")]
     message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:"))]
+    indexed = [s for s in totals if s.startswith(("index_fuzz:", "text_index_fuzz:"))]
     uncounted = (
-        set(shadow) | set(second_seed) | set(option_rows) | set(composed) | set(message_rows) | {"compare", "ratchet_selftest"}
+        set(shadow) | set(second_seed) | set(option_rows) | set(composed) | set(message_rows) | set(indexed) | {"compare", "ratchet_selftest"}
     )
     identical = sum(n for s, n in counts.items() if s not in uncounted and not s.startswith("raw:"))
     rows = sum(n for s, n in totals.items() if s not in uncounted)
@@ -364,6 +371,8 @@ def main():
         print(f"{s}, raw error message, not in the totals below: {counts[s]}/{totals[s]} identical")
     if composed:
         print(f"compose_fuzz, not in the totals below: {sum(counts[s] for s in composed)}/{sum(totals[s] for s in composed)} bit-identical, {sum(counts['raw:' + s] for s in composed)} in raw bytes")
+    for s in sorted(indexed):
+        print(f"{s}, not in the totals below: {counts[s]}/{totals[s]} bit-identical, {counts['raw:' + s]} in raw bytes")
     print(f"raw npz bytes and dtype: {raw_identical}/{rows} identical")
     print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {identical}/{rows} bit-identical")
     if shadow:

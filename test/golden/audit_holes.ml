@@ -118,6 +118,25 @@ let traced =
       ])
     [ ("none", None); ("clip", Some "clip"); ("wrap", Some "wrap") ]
 
+let compress ?axis ?size ?fill_value () = function
+  | [ c; x ] -> [ Ojax.Numpy.Extras.compress ?axis ?size ?fill_value c x ]
+  | _ -> failwith "arity"
+
+let extract ?size () = function
+  | [ c; x ] -> [ Ojax.Numpy.Extras.extract ?size c x ]
+  | _ -> failwith "arity"
+
+let traced =
+  traced
+  @ [
+      ("compress_size", compress ~size:4 ~fill_value:(-5.0) ());
+      ("compress_size_long_cond", compress ~size:3 ());
+      ("compress_size_short_cond", compress ~size:3 ());
+      ("compress_size_axis1", compress ~axis:1 ~size:2 ~fill_value:7.0 ());
+      ("compress_size_int", compress ~size:2 ~fill_value:(-1.0) ());
+      ("extract_size", extract ~size:5 ());
+    ]
+
 let aval_of_arg a : Ojax.Types.aval =
   match U.to_list a with
   | [ dt; shape ] ->

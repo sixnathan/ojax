@@ -93,6 +93,14 @@ def traced_cases():
         out["put_%s" % tag] = (put_fn(mode), [a, i, v])
         out["put_%s_1d_int" % tag] = (put_fn(mode), [a1, i, a1[:4]])
         out["put_%s_tiled" % tag] = (put_fn(mode), [a, i, v2])
+    b9 = jnp.zeros((9,), jnp.bool_)
+    f9 = jnp.zeros((9,), jnp.float32)
+    out["compress_size"] = (lambda c, x: jnp.compress(c, x, size=4, fill_value=-5.0), [b9, f9])
+    out["compress_size_long_cond"] = (lambda c, x: jnp.compress(c, x, size=3), [jnp.zeros((11,), jnp.bool_), f9])
+    out["compress_size_short_cond"] = (lambda c, x: jnp.compress(c, x, size=3), [jnp.zeros((5,), jnp.bool_), f9])
+    out["compress_size_axis1"] = (lambda c, x: jnp.compress(c, x, axis=1, size=2, fill_value=7.0), [jnp.zeros((3,), jnp.bool_), a])
+    out["compress_size_int"] = (lambda c, x: jnp.compress(c, x, size=2, fill_value=-1.0), [b9, jnp.zeros((9,), jnp.int32)])
+    out["extract_size"] = (lambda c, x: jnp.extract(c, x, size=5), [jnp.zeros((2, 3), jnp.bool_), a])
     return out
 
 

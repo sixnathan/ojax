@@ -20,6 +20,8 @@ creation:x64_off	32	32
 creation:x64_on	32	32
 docs_p2:x64_off	366	366
 docs_p2:x64_on	366	366
+docs_p2b:x64_off	196	208
+docs_p2b:x64_on	195	208
 aot_cost:x64_off	1107	1107
 aot_cost:x64_on	1104	1104
 aot_mem:x64_off	1107	1107
@@ -101,6 +103,8 @@ index_fuzz:x64_off	4608	4608
 index_fuzz:x64_on	4608	4608
 raw:docs_p2:x64_off	366	366
 raw:docs_p2:x64_on	366	366
+raw:docs_p2b:x64_off	196	208
+raw:docs_p2b:x64_on	195	208
 raw:aot_cost:x64_off	1107	1107
 raw:aot_cost:x64_on	1104	1104
 raw:aot_mem:x64_off	1107	1107

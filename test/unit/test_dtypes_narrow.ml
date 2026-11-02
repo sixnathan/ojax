@@ -7098,7 +7098,7 @@ let float0_jvp () =
   let real = T.Concrete (Nd.of_floats D.F32 [||] [| 1.0 |]) in
   match Api.jvp f [ leaf real ] [ leaf tangent ] with
   | _ -> Alcotest.fail "float0 tangent for a float primal should raise"
-  | exception Invalid_argument _ -> ()
+  | exception Ojax.Py_exn.Type_error _ -> ()
 
 let float0_vjp () =
   let ints = T.Concrete (Nd.of_floats D.I32 [| 2 |] [| 1.0; 2.0 |]) in

@@ -1204,7 +1204,11 @@ let eager_program prim avals_in =
         ek_prim = prim;
         ek_avals = avals_in;
         ek_platform = platform;
-        ek_context = Config.trace_context ();
+        ek_context =
+          (match Scatter_apply.find prim with
+            | Some (cj, _) -> [ ("scatter_apply", string_of_int cj.jid) ]
+            | None -> [])
+          @ Config.trace_context ();
       }
     in
     match Eager_cache.find_opt eager_programs key with

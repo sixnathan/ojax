@@ -547,9 +547,11 @@ let gather_fill_lowered prim operand indices =
     | None -> default_gather_fill op_dt [||]
   in
   let fill =
-    bind1
-      (Broadcast_in_dim { shape = out_shape; dims = [||] })
-      [ Concrete fill ]
+    if out_shape = [||] then Concrete fill
+    else
+      bind1
+        (Broadcast_in_dim { shape = out_shape; dims = [||] })
+        [ Concrete fill ]
   in
   bind1 Select_n [ mask; fill; gathered ]
 
@@ -597,7 +599,10 @@ let clamp_scatter_indices operand indices updates (sd : scatter_dims) =
     if Array.exists (fun v -> v > 2147483647.0) upper then Dtype.I64
     else Dtype.I32
   in
-  let raw = Concrete (Ndarray.of_floats host [| Array.length upper |] upper) in
+  let raw =
+    if upper = [||] then Core.splat host [| 0 |] 0.0
+    else Concrete (Ndarray.of_floats host [| Array.length upper |] upper)
+  in
   let int_max dt =
     match dt with
     | Dtype.I64 | Dtype.Uint64 -> 9223372036854775807.0

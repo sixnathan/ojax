@@ -2759,6 +2759,10 @@ let array_repr ?max_line_width ?precision ?suppress_small a =
     ~options:(print_options_with ?max_line_width ?precision ?suppress_small ())
     (host "array_repr" a)
 
+let repr a =
+  Array_print.array_repr ~options:(print_options ())
+    ~weak_type:(Core.get_aval a).weak_type (host "repr" a)
+
 let array_str_jax ?max_line_width ?precision ?suppress_small a =
   Array_print.array_str
     ~options:

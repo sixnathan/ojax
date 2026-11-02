@@ -1500,6 +1500,43 @@ let rec mark_keys keys (jx : jaxpr) =
       | _ -> ())
     jx.eqns
 
+let rec mark_key_operands keys (jx : jaxpr) =
+  let mark = function
+    | A_var (v : var) -> Hashtbl.replace keys v.vid ()
+    | A_lit _ | DropVar _ -> ()
+  in
+  let is_key (v : var) = Hashtbl.mem keys v.vid in
+  List.iter
+    (fun (e : eqn) ->
+      match (e.prim, e.inputs) with
+      | ( (Random_split _ | Random_fold_in | Random_bits _ | Random_unwrap),
+          k :: _ ) ->
+          mark k
+      | (Slice _ | Squeeze _ | Reshape _ | Copy | Stop_gradient), x :: _ ->
+          if List.exists is_key e.outs then mark x
+      | Xla_call c, _ ->
+          mark_key_operands keys c.jaxpr;
+          let args =
+            List.filteri
+              (fun i _ -> i >= List.length c.consts)
+              c.jaxpr.in_binders
+          in
+          if List.compare_lengths args e.inputs = 0 then
+            List.iter2
+              (fun b input -> if is_key b then mark input)
+              args e.inputs
+      | _ -> ())
+    (List.rev jx.eqns)
+
+let mark_keys keys jx =
+  mark_key_operands keys jx;
+  mark_keys keys jx
+
+let key_vars jx =
+  let keys = Hashtbl.create 8 in
+  mark_keys keys jx;
+  keys
+
 let dropvars ctx (jx : jaxpr) =
   let used = Hashtbl.create 64 in
   let note = function

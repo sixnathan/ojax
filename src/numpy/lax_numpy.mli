@@ -1,5 +1,6 @@
 type dtype_class =
   | Cdtype of Dtype.t
+  | Ckey of string
   | Signedinteger
   | Unsignedinteger
   | Complexfloating

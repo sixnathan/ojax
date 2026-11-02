@@ -226,6 +226,8 @@ val array_repr :
   value ->
   string
 
+val repr : value -> string
+
 val numpy_array_repr :
   ?max_line_width:int ->
   ?precision:int ->

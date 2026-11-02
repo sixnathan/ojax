@@ -382,6 +382,7 @@ let result_type vs =
 
 type dtype_class =
   | Cdtype of D.t
+  | Ckey of string
   | Signedinteger
   | Unsignedinteger
   | Complexfloating
@@ -420,6 +421,7 @@ let class_chain = function
   | Object_ -> [ Object_; Generic ]
   | Extended -> [ Extended; Generic ]
   | Prng_key_class -> [ Prng_key_class; Extended; Generic ]
+  | Ckey _ -> [ Prng_key_class; Extended; Generic ]
 
 let complexfloating = Complexfloating
 let unsignedinteger = Unsignedinteger

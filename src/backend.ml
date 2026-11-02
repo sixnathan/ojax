@@ -1236,9 +1236,6 @@ let eager_eval prim args =
             Some outs
         | _ ->
             note_eager_fallback prim "compiled output type differs";
-            None
-        | exception Errors.Jax_runtime_error reason ->
-            note_eager_fallback prim reason;
             None)
 
 let () = Core.eager_eval := eager_eval

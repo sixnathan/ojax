@@ -751,10 +751,13 @@ let gamma_grad sample a ~log_space =
       (safe, fun alpha s -> random_gamma_grad_prim alpha s /! s)
     else (samples, random_gamma_grad_prim)
   in
+  let body = function
+    | [ alpha; s ] -> [ grad_fn alpha s ]
+    | _ -> assert false
+  in
   let grads =
-    L.map
-      (function [ alpha; s ] -> [ grad_fn alpha s ] | _ -> assert false)
-      [ alphas; samples ]
+    if Config.current_platform () = "cpu" then L.map body [ alphas; samples ]
+    else Interpreters.Batching.vmap body [ Some 0; Some 0 ] [ alphas; samples ]
   in
   L.reshape (List.hd grads) sh
 

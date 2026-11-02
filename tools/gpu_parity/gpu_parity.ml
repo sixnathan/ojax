@@ -85,9 +85,14 @@ let guarded f =
   | Stack_overflow -> `String "Stack_overflow"
   | Out_of_memory -> `String "Out_of_memory"
   | e -> (
-      match Ojax.Errors.message_of e with
-      | Some m -> `String m
-      | None -> `String (Printexc.to_string e))
+      let text =
+        match Ojax.Errors.message_of e with
+        | Some m -> m
+        | None -> Printexc.to_string e
+      in
+      match Ojax.Py_exn.class_name e with
+      | Some c -> `String (c ^ ": " ^ text)
+      | None -> `String text)
 
 let run_case oc case =
   let set = U.to_string (U.member "set" case) in
@@ -107,12 +112,9 @@ let run_case oc case =
   in
   let direct () = Parity_cases.run_cases op params (lookup values) in
   let jitted () =
-    if Parity_cases.cannot_trace op then
-      failwith "gpu_parity: this operation needs concrete values"
-    else
-      Ojax.Api.jit_flat
-        (fun args -> Parity_cases.run_cases op params (lookup args))
-        values
+    Ojax.Api.jit_flat
+      (fun args -> Parity_cases.run_cases op params (lookup args))
+      values
   in
   Ojax.Config.with_value Ojax.Config.enable_x64 (set = "x64_on") (fun () ->
       List.iter

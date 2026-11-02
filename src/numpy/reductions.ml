@@ -1597,6 +1597,13 @@ let average ?axis ?keepdims ?weights a0 =
       | [ weights ], [ a0 ] -> average ?axis ?keepdims ?weights a0
       | _ -> assert false)
 
+let average_returned ?axis ?keepdims ?weights a0 =
+  Eager_jit.pair "numpy.reductions.average_returned" (axis, keepdims)
+    [ weights ] [ a0 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ weights ], [ a0 ] -> average_returned ?axis ?keepdims ?weights a0
+      | _ -> assert false)
+
 let percentile ?axis ?keepdims ?method_ ?weights a0 a1 =
   Eager_jit.one "numpy.reductions.percentile"
     (axis, keepdims, method_, weights <> None)

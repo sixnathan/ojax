@@ -1111,3 +1111,20 @@ let ufunc_subtract_at ?(inplace = true) a idx b =
       check_inplace inplace;
       at_subtract a idx b)
     a idx b
+
+let of_nd_index = function
+  | Nd_index.Int i -> Int i
+  | Nd_index.Range { start; stop } -> Slice { start; stop; step = None }
+  | Nd_index.Arr v -> Arr v
+
+let () =
+  Nd_index.take_hook :=
+    Some (fun mode x idx -> take ?mode x (List.map of_nd_index idx));
+  Nd_index.set_hook :=
+    Some (fun x idx y -> at_set x (List.map of_nd_index idx) y);
+  Nd_index.set_stepped_hook :=
+    Some
+      (fun x ~start ~step y ->
+        at_set x
+          [ Slice { start = Some start; stop = None; step = Some step } ]
+          y)

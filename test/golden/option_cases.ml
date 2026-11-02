@@ -400,10 +400,10 @@ let run op positional options arr =
       ]
   | "jnp.full" ->
       [
-        Ojax.Numpy.Array_creation.full
+        Ojax.Numpy.Array_creation.full_v
           ?dtype:(A.opt options "dtype" A.dtype)
           (A.int_array positional.(0))
-          (A.float_ positional.(1));
+          ((A.value arr) positional.(1));
       ]
   | "jnp.full_like" ->
       [

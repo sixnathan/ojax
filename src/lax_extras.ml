@@ -542,7 +542,7 @@ let scaled_dot ?lhs_scale ?rhs_scale ?dimension_numbers ?preferred_element_type
 let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
     ?rhs_dilation ?dimension_numbers ?precision lhs rhs ~filter_shape =
   let patch_precision =
-    match precision with
+    match Option.map Lax_config.canonicalize_precision precision with
     | None -> None
     | Some (Lax_config.Precision (l, _)) -> Some (Lax_config.Precision (l, l))
     | Some _ ->

@@ -896,12 +896,13 @@ let symmetrize x =
       let sum =
         Core.bind1 (if dtype = Dtype.Bool then Or else Add) [ x; flipped ]
       in
-      let real = Dtypes.to_inexact_dtype dtype in
+      let weak = dtype = Dtype.Bool in
+      let real =
+        Dtypes.to_inexact_dtype
+          (if weak then Dtypes.default_int_dtype () else dtype)
+      in
       Core.bind1 Div
-        [
-          Core.bind1 (Convert_element_type real) [ sum ];
-          Core.splat real [||] 2.0;
-        ]
+        [ Core.convert_like ~weak sum real; Core.splat real [||] 2.0 ]
 
 let tri_mask n_rows n_cols k =
   let dtype = Dtypes.default_int_dtype () in

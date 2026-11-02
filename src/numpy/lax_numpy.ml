@@ -499,7 +499,7 @@ let conv1d_body ~mode ~correlating ?precision ?preferred a v =
                 | Lax_config.Precision_high -> "HIGH"
                 | Lax_config.Precision_highest -> "HIGHEST"
               in
-              match precision with
+              match Option.map Lax_config.canonicalize_precision precision with
               | Some (Lax_config.Precision (l, r)) -> Some (level l, level r)
               | _ -> None);
            conv_preferred = preferred;
@@ -2178,14 +2178,6 @@ let argmin ?axis ?(keepdims = false) a =
   if keepdims then expand_dims r dims else r
 
 let nanargmax ?axis ?(keepdims = false) a =
-  (match dtype a with
-  | D.Complex64 | D.Complex128 ->
-      Py_exn.type_error
-        (Printf.sprintf
-           "gt does not accept dtype %s at position 0. Accepted dtypes at \
-            position 0 are subtypes of bool, floating, integer."
-           (D.numpy_name (dtype a)))
-  | _ -> ());
   if not (is_inexact (dtype a)) then argmax ?axis ~keepdims a
   else begin
     let nan_mask = isnan a in
@@ -2196,14 +2188,6 @@ let nanargmax ?axis ?(keepdims = false) a =
   end
 
 let nanargmin ?axis ?(keepdims = false) a =
-  (match dtype a with
-  | D.Complex64 | D.Complex128 ->
-      Py_exn.type_error
-        (Printf.sprintf
-           "lt does not accept dtype %s at position 0. Accepted dtypes at \
-            position 0 are subtypes of bool, floating, integer."
-           (D.numpy_name (dtype a)))
-  | _ -> ());
   if not (is_inexact (dtype a)) then argmin ?axis ~keepdims a
   else begin
     let nan_mask = isnan a in

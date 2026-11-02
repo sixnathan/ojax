@@ -50,10 +50,13 @@ type precision =
   | Precision of precision_level * precision_level
   | Algorithm of dot_algorithm
   | Preset of dot_algorithm_preset
+  | Named of string
+  | Named_pair of string * string
 
 val precision_of_level : precision_level -> precision
 val precision_argument_message : string -> string
 val precision_of_string : string -> precision
+val canonicalize_precision : precision -> precision
 
 type fft_type = Types.fft_kind =
   | Fft_forward

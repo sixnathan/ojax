@@ -37,6 +37,17 @@ let full ?dtype shape fill =
   in
   const_full dt shape fill
 
+let full_v ?dtype shape fill =
+  let a = get_aval fill in
+  if Array.length a.T.shape = 0 then
+    let dt, weak =
+      match dtype with
+      | Some d -> (Dtypes.canonicalize_dtype d, false)
+      | None -> (Dtypes.canonicalize_dtype a.T.dtype, a.T.weak_type)
+    in
+    Lax_api.broadcast (C.convert_like ~weak fill dt) shape
+  else NL.broadcast_to (Array_constructors.asarray ?dtype fill) shape
+
 let zeros ?dtype shape = full ?dtype shape 0.0
 let ones ?dtype shape = full ?dtype shape 1.0
 let empty ?dtype shape = zeros ?dtype shape

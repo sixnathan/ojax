@@ -1,4 +1,5 @@
 val full : ?dtype:Dtype.t -> int array -> float -> Types.value
+val full_v : ?dtype:Dtype.t -> int array -> Types.value -> Types.value
 val zeros : ?dtype:Dtype.t -> int array -> Types.value
 val ones : ?dtype:Dtype.t -> int array -> Types.value
 val empty : ?dtype:Dtype.t -> int array -> Types.value

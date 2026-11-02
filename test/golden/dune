@@ -15,6 +15,7 @@
   fuzz
   option_args
   option_cases
+  option_manual
   option_fuzz
   manifest)
  (libraries alcotest yojson ojax)

@@ -108,7 +108,7 @@ val interp :
   value ->
   value
 
-val gradient : ?spacing:float -> ?axis:int list -> value -> value list
+val gradient : ?spacing:float -> ?axis:int list -> ?edge_order:int -> value -> value list
 val choose : ?mode:string -> value -> value list -> value
 
 val compress :
@@ -121,9 +121,9 @@ val delete_array :
   ?axis:int -> ?assume_unique_indices:bool -> value -> value -> value
 
 val insert : ?axis:int -> value -> int -> value -> value
-val place : value -> value -> value -> value
+val place : ?inplace:bool -> value -> value -> value -> value
 val piecewise : value -> value list -> (value -> value) list -> value
-val fill_diagonal : ?wrap:bool -> value -> value -> value
+val fill_diagonal : ?wrap:bool -> ?inplace:bool -> value -> value -> value
 val tril_indices : ?k:int -> ?m:int -> int -> value * value
 val triu_indices : ?k:int -> ?m:int -> int -> value * value
 val tril_indices_from : ?k:int -> value -> value * value

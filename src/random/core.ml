@@ -1611,6 +1611,81 @@ let with_it dtype f =
         ~finally:(fun () -> explicit_int := saved)
         (fun () -> with_dtypes ~int_dtype:d f)
 
+let check_float_dtype name dtype =
+  match dtype with
+  | None -> ()
+  | Some d ->
+      let d = Dtypes.canonicalize_dtype d in
+      if not (Dtypes.issubdtype d `Floating) then
+        raise
+          (Py_exn.Value_error
+             (Printf.sprintf
+                "dtype argument to `%s` must be a float dtype, got %s" name
+                (Dtype.short_name d)))
+
+let check_inexact_dtype name dtype =
+  match dtype with
+  | None -> ()
+  | Some d ->
+      let d = Dtypes.canonicalize_dtype d in
+      if not (Dtypes.issubdtype d `Inexact) then
+        raise
+          (Py_exn.Value_error
+             (Printf.sprintf
+                "dtype argument to `%s` must be a float or complex dtype, got \
+                 %s"
+                name (Dtype.short_name d)))
+
+let check_randint_dtype dtype =
+  match dtype with
+  | None -> ()
+  | Some d ->
+      let d = Dtypes.canonicalize_dtype d in
+      if not (Dtypes.issubdtype d `Integer) then
+        raise
+          (Py_exn.Type_error
+             (Printf.sprintf "randint only accepts integer dtypes, got %s"
+                (Dtype.short_name d)))
+
+let check_geometric_dtype dtype =
+  match dtype with
+  | None -> ()
+  | Some d ->
+      let d = Dtypes.canonicalize_dtype d in
+      if not (Dtypes.issubdtype d `Integer) then
+        raise
+          (Py_exn.Value_error
+             (Printf.sprintf
+                "dtype argument to `geometric` must be an int dtype, got %s"
+                (Dtype.short_name d)))
+
+let check_poisson_dtype dtype =
+  match dtype with
+  | None -> ()
+  | Some d -> (
+      let kind =
+        match Dtypes.canonicalize_dtype d with
+        | D.Bool -> Some 'b'
+        | D.F16 | D.F32 | D.F64 | D.Bf16 -> Some 'f'
+        | D.Complex64 | D.Complex128 -> Some 'c'
+        | _ -> None
+      in
+      match kind with
+      | Some c ->
+          raise
+            (Py_exn.Value_error
+               (Printf.sprintf "Invalid integer data type '%c'." c))
+      | None -> ())
+
+let check_uint_dtype dtype =
+  let d = Dtypes.canonicalize_dtype dtype in
+  if not (Dtypes.issubdtype d `Unsigned) then
+    raise
+      (Py_exn.Value_error
+         (Printf.sprintf
+            "dtype argument to `bits` must be an unsigned int dtype, got %s"
+            (Dtype.short_name d)))
+
 let sampler ?(name = "jit-compiled function") k thunk =
   check_prng_key k;
   Key_reuse.consume name k;
@@ -1652,20 +1727,30 @@ let prng_key seed =
     | Tracer _ -> Key_reuse.mark_raw (PR.random_unwrap raw)
     | _ -> raw
 
-let bits k ~shape = sampler ~name:"random_bits" k (fun () -> bits k ~shape)
+let bits ?dtype k ~shape =
+  sampler ~name:"random_bits" k (fun () ->
+      match dtype with
+      | None -> bits k ~shape
+      | Some d ->
+          check_uint_dtype d;
+          bits_as k ~shape ~dtype:d)
 
 let randint ?dtype k ~shape ~minval ~maxval =
+  check_randint_dtype dtype;
   sampler k (fun () ->
       with_it dtype (fun () -> randint k ~shape ~minval ~maxval))
 
 let uniform ?dtype k ~shape ~minval ~maxval =
+  check_float_dtype "uniform" dtype;
   sampler k (fun () ->
       with_dt dtype (fun () -> uniform k ~shape ~minval ~maxval))
 
 let normal ?dtype k ~shape =
+  check_inexact_dtype "normal" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> normal k ~shape))
 
 let truncated_normal ?dtype k ~lower ~upper ~shape =
+  check_float_dtype "truncated_normal" dtype;
   sampler k (fun () ->
       with_dt dtype (fun () -> truncated_normal k ~lower ~upper ~shape))
 
@@ -1675,42 +1760,54 @@ let choice k ~n ~shape ~replace =
   sampler k (fun () -> choice k ~n ~shape ~replace)
 
 let exponential ?dtype k ~shape =
+  check_float_dtype "exponential" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> exponential k ~shape))
 
 let cauchy ?dtype k ~shape =
+  check_float_dtype "cauchy" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> cauchy k ~shape))
 
 let laplace ?dtype k ~shape =
+  check_float_dtype "laplace" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> laplace k ~shape))
 
 let logistic ?dtype k ~shape =
+  check_float_dtype "logistic" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> logistic k ~shape))
 
 let gumbel ?dtype ?mode k ~shape =
+  check_float_dtype "gumbel" dtype;
   sampler k (fun () ->
       with_dt dtype (fun () -> gumbel_any k ~shape ~dt:(fdt ()) ~mode))
 
 let pareto ?dtype k ~shape ~b =
+  check_float_dtype "pareto" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> pareto k ~shape ~b))
 
 let rayleigh ?dtype k ~shape ~scale =
+  check_float_dtype "rayleigh" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> rayleigh k ~shape ~scale))
 
 let weibull_min ?dtype k ~shape ~scale ~concentration =
+  check_float_dtype "weibull_min" dtype;
   sampler k (fun () ->
       with_dt dtype (fun () -> weibull_min k ~shape ~scale ~concentration))
 
 let lognormal ?dtype k ~shape ~sigma =
+  check_inexact_dtype "lognormal" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> lognormal k ~shape ~sigma))
 
 let triangular ?dtype k ~shape ~left ~mode ~right =
+  check_float_dtype "triangular" dtype;
   sampler k (fun () ->
       with_dt dtype (fun () -> triangular k ~shape ~left ~mode ~right))
 
 let wald ?dtype k ~shape ~mean =
+  check_float_dtype "wald" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> wald k ~shape ~mean))
 
 let geometric ?dtype k ~shape ~p =
+  check_geometric_dtype dtype;
   sampler k (fun () -> with_it dtype (fun () -> geometric k ~shape ~p))
 
 let bernoulli ?(mode = "low") k ~shape ~p =
@@ -1727,36 +1824,46 @@ let categorical k ~logits ~axis =
   sampler k (fun () -> categorical k ~logits ~axis)
 
 let gamma ?dtype k ~shape ~a =
+  check_float_dtype "gamma" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> gamma k ~shape ~a))
 
 let loggamma ?dtype k ~shape ~a =
+  check_float_dtype "gamma" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> loggamma k ~shape ~a))
 
 let beta ?dtype k ~shape ~a ~b =
+  check_float_dtype "beta" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> beta k ~shape ~a ~b))
 
 let chisquare ?dtype k ~shape ~df =
+  check_float_dtype "chisquare" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> chisquare k ~shape ~df))
 
 let t ?dtype k ~shape ~df =
+  check_float_dtype "t" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> t k ~shape ~df))
 
 let f ?dtype k ~shape ~dfnum ~dfden =
+  check_float_dtype "f" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> f k ~shape ~dfnum ~dfden))
 
 let generalized_normal ?dtype k ~shape ~p =
+  check_float_dtype "gamma" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> generalized_normal k ~shape ~p))
 
 let generalized_normal_value k ~shape ~p =
   sampler k (fun () -> generalized_normal_v k ~p ~shape)
 
 let dirichlet ?dtype k ~alpha ~shape =
+  check_float_dtype "dirichlet" dtype;
   sampler k (fun () -> with_dt dtype (fun () -> dirichlet k ~alpha ~shape))
 
 let poisson ?dtype k ~shape ~lam =
+  check_poisson_dtype dtype;
   sampler k (fun () -> with_it dtype (fun () -> poisson k ~shape ~lam))
 
 let binomial ?dtype k ~shape ~count ~prob =
+  check_float_dtype "binomial" dtype;
   sampler k (fun () ->
       match dtype with
       | None -> binomial k ~shape ~count ~prob

@@ -118,13 +118,18 @@ let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") key ~mean ~cov
 let with_dt dtype f =
   match dtype with None -> f () | Some d -> C.with_dtypes ~float_dtype:d f
 
-let maxwell ?dtype key ~shape = with_dt dtype (fun () -> maxwell key ~shape)
+let maxwell ?dtype key ~shape =
+  C.check_float_dtype "maxwell" dtype;
+  with_dt dtype (fun () -> maxwell key ~shape)
 
 let double_sided_maxwell ?dtype key ~loc ~scale ~shape =
+  C.check_float_dtype "double_sided_maxwell" dtype;
   with_dt dtype (fun () -> double_sided_maxwell key ~loc ~scale ~shape)
 
 let ball ?dtype ?p key ~d ~shape =
+  C.check_float_dtype "gamma" dtype;
   with_dt dtype (fun () -> ball ?p key ~d ~shape)
 
 let orthogonal ?dtype ?m key ~n ~shape =
+  C.check_inexact_dtype "normal" dtype;
   with_dt dtype (fun () -> orthogonal ?m key ~n ~shape)

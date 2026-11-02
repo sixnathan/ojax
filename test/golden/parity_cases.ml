@@ -350,7 +350,7 @@ let numpy_run op p a b c =
       Some [ E.insert ?axis:(opt_int "axis" p) (a ()) (int "pos" p) v ]
   | "np_place" ->
       let v = L.full [||] (U.to_number (U.member "val" p)) (dt_of (a ())) in
-      Some [ E.place (a ()) (binarize (a ())) v ]
+      Some [ E.place ~inplace:false (a ()) (binarize (a ())) v ]
   | "np_piecewise" ->
       let x = a () in
       Some
@@ -361,7 +361,7 @@ let numpy_run op p a b c =
         ]
   | "np_fill_diagonal" ->
       let v = L.full [||] (U.to_number (U.member "val" p)) (dt_of (a ())) in
-      Some [ E.fill_diagonal (a ()) v ]
+      Some [ E.fill_diagonal ~inplace:false (a ()) v ]
   | "np_tril_indices" ->
       Some
         (pair

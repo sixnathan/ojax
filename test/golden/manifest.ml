@@ -1110,9 +1110,9 @@ let indexing_fn op params operands : T.value list =
       [ IDX.take ?axis:(opt_i params "axis") ?mode:(opt_s params "mode") a ind ]
   | "take_along_axis", [ a; ind ] ->
       [ IDX.take_along_axis ?axis:(opt_i params "axis") a ind ]
-  | "put", [ a; ind; v ] -> [ IDX.put ?mode:(opt_s params "mode") a ind v ]
+  | "put", [ a; ind; v ] -> [ IDX.put ?mode:(opt_s params "mode") ~inplace:false a ind v ]
   | "put_along_axis", [ arr; ind; v ] ->
-      [ IDX.put_along_axis ?axis:(opt_i params "axis") arr ind v ]
+      [ IDX.put_along_axis ?axis:(opt_i params "axis") ~inplace:false arr ind v ]
   | _ -> failwith ("indexing golden: unknown op " ^ op)
 
 let indexing_suite_for set_name =

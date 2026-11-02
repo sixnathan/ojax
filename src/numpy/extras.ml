@@ -1426,7 +1426,11 @@ let gradient_along_axis a h axis =
   let upper = U.divide upper_edge h in
   NL.concatenate ~axis [ upper; inner; lower ]
 
-let gradient ?spacing ?axis a =
+let gradient ?spacing ?axis ?(edge_order : int option) a =
+  if edge_order <> None then
+    raise
+      (Py_exn.Not_implemented_error
+         "The 'edge_order' argument to jnp.gradient is not supported.");
   let n = rank a in
   let axes =
     match axis with
@@ -1704,8 +1708,13 @@ let insert ?axis a position values =
   let out = at_set ~axis:ax out [ values_ind ] values in
   at_set ~axis:ax out [ arr_ind ] a
 
-let place a mask values =
+let place ?(inplace = true) a mask values =
   let vals = NL.ravel values in
+  if inplace then
+    raise
+      (Py_exn.Value_error
+         "jax.numpy.place cannot modify arrays in-place, because JAX arrays \
+          are immutable. Pass inplace=False to instead return an updated array.");
   if size_of a <> size_of mask then
     invalid_arg "place: arr and mask must be the same size";
   if size_of vals = 0 then invalid_arg "Cannot place values from an empty array";
@@ -1809,8 +1818,15 @@ let piecewise x condlist funclist =
       List.hd (vectorize_scalar switch [ indices; x ]))
     ([ x; conds ] @ Option.to_list leading)
 
-let fill_diagonal ?(wrap = false) a value =
-  if wrap then invalid_arg "wrap=True is not implemented, must use wrap=False";
+let fill_diagonal ?(wrap = false) ?(inplace = true) a value =
+  if inplace then
+    raise
+      (Py_exn.Not_implemented_error
+         "JAX arrays are immutable, must use inplace=False");
+  if wrap then
+    raise
+      (Py_exn.Not_implemented_error
+         "wrap=True is not implemented, must use wrap=False");
   let sh = shape a in
   if Array.length sh < 2 then Py_exn.value_error "array must be at least 2-d";
   let is_2d = Array.length sh = 2 in

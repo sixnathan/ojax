@@ -269,7 +269,12 @@ let identity_scatter_dims r =
     s_clip = false;
   }
 
-let put ?mode a ind v =
+let put ?mode ?(inplace = true) a ind v =
+  if inplace then
+    raise
+      (Py_exn.Value_error
+         "jax.numpy.put cannot modify arrays in-place, because JAX arrays are \
+          immutable. Pass inplace=False to instead return an updated array.");
   let ash = shape a in
   let asize = Array.fold_left ( * ) 1 ash in
   let ind = NL.ravel ind in
@@ -285,7 +290,14 @@ let put ?mode a ind v =
       | Some "clip" -> NL.clip ~min:0.0 ~max:(float_of_int (asize - 1)) ind
       | Some "wrap" ->
           bind1 T.Rem [ ind; full idt (shape ind) (float_of_int asize) ]
-      | Some m -> invalid_arg ("put: unsupported mode " ^ m)
+      | Some "raise" ->
+          raise
+            (Py_exn.Not_implemented_error
+               "The 'raise' mode to jnp.put is not supported.")
+      | Some m ->
+          raise
+            (Py_exn.Value_error
+               ("mode should be one of 'wrap' or 'clip'; got mode='" ^ m ^ "'"))
     in
     let coords = NL.unravel_index ind ash in
     let r = Array.length ash in
@@ -496,7 +508,13 @@ let dslice_index x slices =
       (Np_ints.mark_gather_flags ~sorted:true ~unique:true prim)
       [ x; gather_array ]
 
-let put_along_axis ?axis ?mode a0 a1 a2 =
+let put_along_axis ?axis ?mode ?(inplace = true) a0 a1 a2 =
+  if inplace then
+    raise
+      (Py_exn.Value_error
+         "jax.numpy.put_along_axis cannot modify arrays in-place, because JAX \
+          arraysare immutable. Pass inplace=False to instead return an updated \
+          array.");
   Eager_jit.one ~jit:"put_along_axis" "numpy.indexing.put_along_axis"
     (axis, mode) [] [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with

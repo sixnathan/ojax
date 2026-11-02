@@ -26,11 +26,13 @@ val take_along_axis :
   Types.value
 
 val put :
-  ?mode:string -> Types.value -> Types.value -> Types.value -> Types.value
+  ?mode:string ->
+  ?inplace:bool -> Types.value -> Types.value -> Types.value -> Types.value
 
 val put_along_axis :
   ?axis:int ->
   ?mode:string ->
+  ?inplace:bool ->
   Types.value ->
   Types.value ->
   Types.value ->

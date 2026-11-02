@@ -85,9 +85,33 @@ let string_pair j =
   | [ a; b ] -> (string_ a, string_ b)
   | _ -> no "type:pair"
 
+let trans : json -> int = function
+  | `Int n -> n
+  | `String "N" -> 0
+  | `String "T" -> 1
+  | `String "C" -> 2
+  | _ -> no "type:trans"
+
+let rounding_method : json -> Ojax.Lax_config.rounding_method = function
+  | `Int 0 -> Ojax.Lax_config.Away_from_zero
+  | `Int 1 -> Ojax.Lax_config.To_nearest_even
+  | _ -> no "type:rounding_method"
+
+let sections : json -> Ojax.Numpy.Lax_numpy.sections = function
+  | `Int n -> Ojax.Numpy.Lax_numpy.Count n
+  | j -> Ojax.Numpy.Lax_numpy.Indices (int_array j)
+
 let dtype : json -> D.t = function
   | `String s -> Ojax.Numpy.Extras.dtype s
   | _ -> no "type:dtype"
+
+let default_float : json -> D.t = function
+  | `Null -> Ojax.Dtypes.default_float_dtype ()
+  | j -> dtype j
+
+let default_int : json -> D.t = function
+  | `Null -> Ojax.Dtypes.default_int_dtype ()
+  | j -> dtype j
 
 let padding : json -> Ojax.Lax_api.padding = function
   | `String "SAME" -> Ojax.Lax_api.Same
@@ -136,4 +160,6 @@ let value arr : json -> T.value = function
 let value_list arr : json -> T.value list = function
   | `Assoc [ (("$list" | "$star"), `List names) ] ->
       List.map (fun n -> arr (string_ n)) names
+  | `Assoc [ ("$arr", `String name) ] -> [ arr name ]
+  | `List items -> List.map (value arr) items
   | _ -> no "type:value_list"

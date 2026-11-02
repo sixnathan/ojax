@@ -15,24 +15,22 @@ let run op positional options arr =
 | "jnp.arange" -> [ (Ojax.Numpy.Lax_numpy.arange ?start:(Some (A.float_ (positional.(0)))) ?step:(A.opt options "step" A.float_) ~dtype:(A.dtype (A.get options "dtype" `Null)) (A.float_ (A.get options "stop" `Null))) ]
 | "jnp.argmax" -> [ (Ojax.Numpy.Lax_numpy.argmax ?axis:(A.opt options "axis" A.int_) ?keepdims:(A.opt options "keepdims" A.bool_) ((A.value arr) (positional.(0)))) ]
 | "jnp.argmin" -> [ (Ojax.Numpy.Lax_numpy.argmin ?axis:(A.opt options "axis" A.int_) ?keepdims:(A.opt options "keepdims" A.bool_) ((A.value arr) (positional.(0)))) ]
-| "jnp.argsort" -> A.refuse options ["order"];
-[ (Ojax.Numpy.Sorting.argsort ?axis:(A.opt_keep options "axis" A.int_option) ?stable:(A.opt options "stable" A.bool_) ?descending:(A.opt options "descending" A.bool_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value arr) (positional.(0)))) ]
+| "jnp.argsort" -> [ (Ojax.Numpy.Sorting.argsort ?axis:(A.opt_keep options "axis" A.int_option) ?kind:(A.opt options "kind" A.string_) ?order:(A.opt options "order" A.string_) ?stable:(A.opt options "stable" A.bool_) ?descending:(A.opt options "descending" A.bool_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value arr) (positional.(0)))) ]
 | "jnp.argwhere" -> [ (Ojax.Numpy.Extras.argwhere ?size:(A.opt options "size" A.int_) ?fill_value:(A.opt options "fill_value" A.int_) ((A.value arr) (positional.(0)))) ]
 | "jnp.around" -> [ (Ojax.Numpy.Lax_numpy.around ?decimals:(A.opt options "decimals" A.int_) ((A.value arr) (positional.(0)))) ]
 | "jnp.array_equal" -> [ (Ojax.Numpy.Lax_numpy.array_equal ?equal_nan:(A.opt options "equal_nan" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
-| "jnp.asarray" -> A.refuse options ["order"];
-[ (Ojax.Numpy.Array_constructors.asarray ?dtype:(A.opt options "dtype" A.dtype) ((A.value arr) (positional.(0)))) ]
+| "jnp.array_split" -> (Ojax.Numpy.Lax_numpy.array_split ?axis:(A.opt options "axis" A.int_) ((A.value arr) (positional.(0))) (A.sections (positional.(1))))
+| "jnp.asarray" -> [ (Ojax.Numpy.Array_constructors.asarray ?dtype:(A.opt options "dtype" A.dtype) ?order:(A.opt options "order" A.string_) ((A.value arr) (positional.(0)))) ]
 | "jnp.average" -> A.refuse options ["returned"];
 [ (Ojax.Numpy.Reductions.average ?axis:(A.opt options "axis" A.int_array) ?keepdims:(A.opt options "keepdims" A.bool_) ?weights:(A.opt options "weights" (A.value arr)) ((A.value arr) (positional.(0)))) ]
 | "jnp.bincount" -> [ (Ojax.Numpy.Extras.bincount ?weights:(A.opt options "weights" (A.value arr)) ?minlength:(A.opt options "minlength" A.int_) ?length:(A.opt options "length" A.int_) ((A.value arr) (positional.(0)))) ]
 | "jnp.choose" -> [ (Ojax.Numpy.Extras.choose ?mode:(A.opt options "mode" A.string_) ((A.value arr) (positional.(0))) ((A.value_list arr) (positional.(1)))) ]
-| "jnp.clip" -> [ (Ojax.Numpy.Lax_numpy.clip ?min:(A.opt options "min" A.float_) ?max:(A.opt options "max" A.float_) ((A.value arr) (A.get options "arr" `Null))) ]
+| "jnp.clip" -> [ (Ojax.Numpy.Lax_numpy.clip ?min:(A.opt options "min" A.float_) ?max:(A.opt options "max" A.float_) ((A.value arr) (positional.(0)))) ]
 | "jnp.compress" -> [ (Ojax.Numpy.Extras.compress ?axis:(A.opt options "axis" A.int_) ?size:(A.opt options "size" A.int_) ?fill_value:(A.opt options "fill_value" A.float_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.concat" -> [ (Ojax.Numpy.Lax_numpy.concat ?axis:(A.opt options "axis" A.int_) ((A.value_list arr) (positional.(0)))) ]
 | "jnp.concatenate" -> [ (Ojax.Numpy.Lax_numpy.concatenate ?axis:(A.opt options "axis" A.int_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value_list arr) (positional.(0)))) ]
 | "jnp.convolve" -> [ (Ojax.Numpy.Lax_numpy.convolve ?mode:(A.opt options "mode" A.string_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
-| "jnp.copy" -> A.refuse options ["order"];
-[ (Ojax.Numpy.Lax_numpy.copy ((A.value arr) (positional.(0)))) ]
+| "jnp.copy" -> [ (Ojax.Numpy.Lax_numpy.copy ?order:(A.opt options "order" A.string_) ((A.value arr) (positional.(0)))) ]
 | "jnp.corrcoef" -> [ (Ojax.Numpy.Lax_numpy.corrcoef ?y:(A.opt options "y" (A.value arr)) ?rowvar:(A.opt options "rowvar" A.bool_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value arr) (positional.(0)))) ]
 | "jnp.correlate" -> [ (Ojax.Numpy.Lax_numpy.correlate ?mode:(A.opt options "mode" A.string_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.count_nonzero" -> [ (Ojax.Numpy.Reductions.count_nonzero ?axis:(A.opt options "axis" A.int_array) ?keepdims:(A.opt options "keepdims" A.bool_) ((A.value arr) (positional.(0)))) ]
@@ -42,8 +40,7 @@ let run op positional options arr =
 | "jnp.cumsum" -> [ (Ojax.Numpy.Reductions.cumsum ?dtype:(A.opt options "dtype" A.dtype) ?axis:(A.opt options "axis" A.int_) ((A.value arr) (positional.(0)))) ]
 | "jnp.cumulative_prod" -> [ (Ojax.Numpy.Reductions.cumulative_prod ?dtype:(A.opt options "dtype" A.dtype) ?axis:(A.opt options "axis" A.int_) ?include_initial:(A.opt options "include_initial" A.bool_) ((A.value arr) (positional.(0)))) ]
 | "jnp.cumulative_sum" -> [ (Ojax.Numpy.Reductions.cumulative_sum ?dtype:(A.opt options "dtype" A.dtype) ?axis:(A.opt options "axis" A.int_) ?include_initial:(A.opt options "include_initial" A.bool_) ((A.value arr) (positional.(0)))) ]
-| "jnp.delete" -> A.refuse options ["assume_unique_indices"];
-[ (Ojax.Numpy.Extras.delete ?axis:(A.opt options "axis" A.int_) ((A.value arr) (positional.(0))) (A.int_list (positional.(1)))) ]
+| "jnp.delete" -> [ (Ojax.Numpy.Extras.delete_array ?axis:(A.opt options "axis" A.int_) ?assume_unique_indices:(A.opt options "assume_unique_indices" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.diag" -> [ (Ojax.Numpy.Lax_numpy.diag ?k:(A.opt options "k" A.int_) ((A.value arr) (positional.(0)))) ]
 | "jnp.diag_indices" -> (Ojax.Numpy.Lax_numpy.diag_indices ?ndim:(A.opt options "ndim" A.int_) (A.int_ (positional.(0))))
 | "jnp.diagflat" -> [ (Ojax.Numpy.Lax_numpy.diagflat ?k:(A.opt options "k" A.int_) ((A.value arr) (positional.(0)))) ]
@@ -53,28 +50,25 @@ let run op positional options arr =
 | "jnp.dstack" -> [ (Ojax.Numpy.Lax_numpy.dstack ?dtype:(A.opt options "dtype" A.dtype) ((A.value_list arr) (positional.(0)))) ]
 | "jnp.ediff1d" -> [ (Ojax.Numpy.Lax_numpy.ediff1d ?to_end:(A.opt options "to_end" (A.value arr)) ?to_begin:(A.opt options "to_begin" (A.value arr)) ((A.value arr) (positional.(0)))) ]
 | "jnp.einsum" -> A.refuse options ["optimize"];
-[ (Ojax.Numpy.Einsum.einsum ?preferred_element_type:(A.opt options "preferred_element_type" A.dtype) (A.string_ (positional.(0))) ((A.value_list arr) (A.get options "operands" `Null))) ]
+[ (Ojax.Numpy.Einsum.einsum ?preferred_element_type:(A.opt options "preferred_element_type" A.dtype) (A.string_ (positional.(0))) ((A.value_list arr) (A.get options "out" `Null))) ]
 | "jnp.empty" -> [ (Ojax.Numpy.Array_creation.empty ?dtype:(A.opt options "dtype" A.dtype) (A.int_array (positional.(0)))) ]
 | "jnp.empty_like" -> [ (Ojax.Numpy.Array_creation.empty_like ?dtype:(A.opt options "dtype" A.dtype) ?shape:(A.opt options "shape" A.int_array) ((A.value arr) (positional.(0)))) ]
 | "jnp.extract" -> [ (Ojax.Numpy.Extras.extract ?size:(A.opt options "size" A.int_) ?fill_value:(A.opt options "fill_value" A.float_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
-| "jnp.eye" -> [ (Ojax.Numpy.Lax_numpy.eye ?m:(A.opt options "M" A.int_) ?k:(A.opt options "k" A.int_) ~dtype:(A.dtype (A.get options "dtype" `Null)) (A.int_ (positional.(0)))) ]
-| "jnp.fill_diagonal" -> A.refuse options ["inplace"];
-[ (Ojax.Numpy.Extras.fill_diagonal ?wrap:(A.opt options "wrap" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
+| "jnp.eye" -> [ (Ojax.Numpy.Lax_numpy.eye ?m:(A.opt options "M" A.int_) ?k:(A.opt options "k" A.int_) ~dtype:(A.default_float (A.get options "dtype" `Null)) (A.int_ (positional.(0)))) ]
+| "jnp.fill_diagonal" -> [ (Ojax.Numpy.Extras.fill_diagonal ?wrap:(A.opt options "wrap" A.bool_) ?inplace:(A.opt options "inplace" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.flatnonzero" -> [ (Ojax.Numpy.Extras.flatnonzero ?size:(A.opt options "size" A.int_) ?fill_value:(A.opt options "fill_value" A.int_) ((A.value arr) (positional.(0)))) ]
 | "jnp.flip" -> [ (Ojax.Numpy.Lax_numpy.flip ?axis:(A.opt options "axis" A.int_array) ((A.value arr) (positional.(0)))) ]
 | "jnp.full" -> [ (Ojax.Numpy.Array_creation.full ?dtype:(A.opt options "dtype" A.dtype) (A.int_array (positional.(0))) (A.float_ (positional.(1)))) ]
 | "jnp.full_like" -> [ (Ojax.Numpy.Array_creation.full_like ?dtype:(A.opt options "dtype" A.dtype) ?shape:(A.opt options "shape" A.int_array) ((A.value arr) (positional.(0))) (A.float_ (positional.(1)))) ]
-| "jnp.geomspace" -> A.refuse options ["axis"];
-[ (Ojax.Numpy.Array_creation.geomspace ?num:(A.opt options "num" A.int_) ?endpoint:(A.opt options "endpoint" A.bool_) ?dtype:(A.opt options "dtype" A.dtype) (A.float_ (positional.(0))) (A.float_ (positional.(1)))) ]
-| "jnp.gradient" -> A.refuse options ["edge_order"];
-(Ojax.Numpy.Extras.gradient ?axis:(A.opt options "axis" A.int_list) ((A.value arr) (positional.(0))))
+| "jnp.geomspace" -> [ (Ojax.Numpy.Array_creation.geomspace_v ?num:(A.opt options "num" A.int_) ?endpoint:(A.opt options "endpoint" A.bool_) ?axis:(A.opt options "axis" A.int_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
+| "jnp.gradient" -> (Ojax.Numpy.Extras.gradient ?axis:(A.opt options "axis" A.int_list) ?edge_order:(A.opt options "edge_order" A.int_) ((A.value arr) (positional.(0))))
 | "jnp.histogram" -> (let a, b = (Ojax.Numpy.Extras.histogram ?bins:(A.opt options "bins" A.int_) ?weights:(A.opt options "weights" (A.value arr)) ?density:(A.opt options "density" A.bool_) ((A.value arr) (positional.(0)))) in [ a; b ])
 | "jnp.histogram2d" -> (let a, b, c = (Ojax.Numpy.Extras.histogram2d ?bins:(A.opt options "bins" A.int_array) ?weights:(A.opt options "weights" (A.value arr)) ?density:(A.opt options "density" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) in [ a; b; c ])
 | "jnp.histogram_bin_edges" -> [ (Ojax.Numpy.Extras.histogram_bin_edges ?bins:(A.opt options "bins" A.int_) ?weights:(A.opt options "weights" (A.value arr)) ((A.value arr) (positional.(0)))) ]
 | "jnp.hstack" -> [ (Ojax.Numpy.Lax_numpy.hstack ?dtype:(A.opt options "dtype" A.dtype) ((A.value_list arr) (positional.(0)))) ]
-| "jnp.identity" -> [ (Ojax.Numpy.Lax_numpy.identity ~dtype:(A.dtype (A.get options "dtype" `Null)) (A.int_ (positional.(0)))) ]
+| "jnp.identity" -> [ (Ojax.Numpy.Lax_numpy.identity ~dtype:(A.default_float (A.get options "dtype" `Null)) (A.int_ (positional.(0)))) ]
 | "jnp.indices" -> A.refuse options ["sparse"];
-[ (Ojax.Numpy.Lax_numpy.indices ~dtype:(A.dtype (A.get options "dtype" `Null)) (A.int_array (positional.(0)))) ]
+[ (Ojax.Numpy.Lax_numpy.indices ~dtype:(A.default_int (A.get options "dtype" `Null)) (A.int_array (positional.(0)))) ]
 | "jnp.insert" -> [ (Ojax.Numpy.Extras.insert ?axis:(A.opt options "axis" A.int_) ((A.value arr) (positional.(0))) (A.int_ (positional.(1))) ((A.value arr) (positional.(2)))) ]
 | "jnp.interp" -> [ (Ojax.Numpy.Extras.interp ?left:(A.opt options "left" A.float_) ?right:(A.opt options "right" A.float_) ?period:(A.opt options "period" A.float_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1))) ((A.value arr) (positional.(2)))) ]
 | "jnp.intersect1d" -> A.refuse options ["return_indices"];
@@ -82,14 +76,13 @@ let run op positional options arr =
 | "jnp.isclose" -> [ (Ojax.Numpy.Lax_numpy.isclose ?rtol:(A.opt options "rtol" A.float_) ?atol:(A.opt options "atol" A.float_) ?equal_nan:(A.opt options "equal_nan" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.isin" -> [ (Ojax.Numpy.Setops.isin ?assume_unique:(A.opt options "assume_unique" A.bool_) ?invert:(A.opt options "invert" A.bool_) ?method_:(A.opt options "method" A.string_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.lexsort" -> [ (Ojax.Numpy.Sorting.lexsort ?axis:(A.opt options "axis" A.int_) ((A.value_list arr) (positional.(0)))) ]
-| "jnp.linspace" -> A.refuse options ["axis"; "retstep"];
-[ (Ojax.Numpy.Array_creation.linspace ?num:(A.opt options "num" A.int_) ?endpoint:(A.opt options "endpoint" A.bool_) ?dtype:(A.opt options "dtype" A.dtype) (A.float_ (positional.(0))) (A.float_ (positional.(1)))) ]
-| "jnp.logspace" -> A.refuse options ["axis"];
-[ (Ojax.Numpy.Array_creation.logspace ?num:(A.opt options "num" A.int_) ?endpoint:(A.opt options "endpoint" A.bool_) ?base:(A.opt options "base" A.float_) ?dtype:(A.opt options "dtype" A.dtype) (A.float_ (positional.(0))) (A.float_ (positional.(1)))) ]
+| "jnp.linspace" -> A.refuse options ["retstep"];
+[ (Ojax.Numpy.Array_creation.linspace_v ?num:(A.opt options "num" A.int_) ?endpoint:(A.opt options "endpoint" A.bool_) ?axis:(A.opt options "axis" A.int_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
+| "jnp.logspace" -> [ (Ojax.Numpy.Array_creation.logspace_v ?num:(A.opt options "num" A.int_) ?endpoint:(A.opt options "endpoint" A.bool_) ?base:(A.opt options "base" A.float_) ?axis:(A.opt options "axis" A.int_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.max" -> [ (Ojax.Numpy.Reductions.max ?axis:(A.opt options "axis" A.int_array) ?keepdims:(A.opt options "keepdims" A.bool_) ?initial:(A.opt options "initial" (A.value arr)) ?where:(A.opt options "where" (A.value arr)) ((A.value arr) (positional.(0)))) ]
 | "jnp.mean" -> [ (Ojax.Numpy.Reductions.mean ?dtype:(A.opt options "dtype" A.dtype) ?axis:(A.opt options "axis" A.int_array) ?keepdims:(A.opt options "keepdims" A.bool_) ?where:(A.opt options "where" (A.value arr)) ((A.value arr) (positional.(0)))) ]
 | "jnp.median" -> [ (Ojax.Numpy.Reductions.median ?axis:(A.opt options "axis" A.int_) ?keepdims:(A.opt options "keepdims" A.bool_) ((A.value arr) (positional.(0)))) ]
-| "jnp.meshgrid" -> (Ojax.Numpy.Lax_numpy.meshgrid ?indexing:(A.opt options "indexing" A.string_) ?sparse:(A.opt options "sparse" A.bool_) ((A.value_list arr) (A.get options "xi" `Null)))
+| "jnp.meshgrid" -> (Ojax.Numpy.Lax_numpy.meshgrid ?indexing:(A.opt options "indexing" A.string_) ?sparse:(A.opt options "sparse" A.bool_) ((A.value_list arr) (positional.(0))))
 | "jnp.min" -> [ (Ojax.Numpy.Reductions.min ?axis:(A.opt options "axis" A.int_array) ?keepdims:(A.opt options "keepdims" A.bool_) ?initial:(A.opt options "initial" (A.value arr)) ?where:(A.opt options "where" (A.value arr)) ((A.value arr) (positional.(0)))) ]
 | "jnp.nan_to_num" -> [ (Ojax.Numpy.Lax_numpy.nan_to_num ?nan:(A.opt options "nan" A.float_) ?posinf:(A.opt options "posinf" A.float_) ?neginf:(A.opt options "neginf" A.float_) ((A.value arr) (positional.(0)))) ]
 | "jnp.nanargmax" -> [ (Ojax.Numpy.Lax_numpy.nanargmax ?axis:(A.opt options "axis" A.int_) ?keepdims:(A.opt options "keepdims" A.bool_) ((A.value arr) (positional.(0)))) ]
@@ -111,8 +104,7 @@ let run op positional options arr =
 | "jnp.ones_like" -> [ (Ojax.Numpy.Array_creation.ones_like ?dtype:(A.opt options "dtype" A.dtype) ?shape:(A.opt options "shape" A.int_array) ((A.value arr) (positional.(0)))) ]
 | "jnp.packbits" -> [ (Ojax.Numpy.Extras.packbits ?axis:(A.opt options "axis" A.int_) ?bitorder:(A.opt options "bitorder" A.string_) ((A.value arr) (positional.(0)))) ]
 | "jnp.percentile" -> [ (Ojax.Numpy.Reductions.percentile ?axis:(A.opt options "axis" A.int_) ?keepdims:(A.opt options "keepdims" A.bool_) ?method_:(A.opt options "method" A.string_) ?weights:(A.opt options "weights" (A.value arr)) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
-| "jnp.place" -> A.refuse options ["inplace"];
-[ (Ojax.Numpy.Extras.place ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1))) ((A.value arr) (positional.(2)))) ]
+| "jnp.place" -> [ (Ojax.Numpy.Extras.place ?inplace:(A.opt options "inplace" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1))) ((A.value arr) (positional.(2)))) ]
 | "jnp.polyder" -> [ (Ojax.Numpy.Polynomial.polyder ?m:(A.opt options "m" A.int_) ((A.value arr) (positional.(0)))) ]
 | "jnp.polydiv" -> (let a, b = (Ojax.Numpy.Extras.polydiv ?trim_leading_zeros:(A.opt options "trim_leading_zeros" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) in [ a; b ])
 | "jnp.polyfit" -> A.refuse options ["cov"; "full"];
@@ -124,8 +116,7 @@ let run op positional options arr =
 | "jnp.ptp" -> [ (Ojax.Numpy.Reductions.ptp ?axis:(A.opt options "axis" A.int_array) ?keepdims:(A.opt options "keepdims" A.bool_) ((A.value arr) (positional.(0)))) ]
 | "jnp.put" -> A.refuse options ["inplace"];
 [ (Ojax.Numpy.Indexing.put ?mode:(A.opt options "mode" A.string_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1))) ((A.value arr) (positional.(2)))) ]
-| "jnp.put_along_axis" -> A.refuse options ["inplace"];
-[ (Ojax.Numpy.Indexing.put_along_axis ?axis:(Some (A.int_ (positional.(3)))) ?mode:(A.opt options "mode" A.string_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1))) ((A.value arr) (positional.(2)))) ]
+| "jnp.put_along_axis" -> [ (Ojax.Numpy.Indexing.put_along_axis ?axis:(Some (A.int_ (positional.(3)))) ?mode:(A.opt options "mode" A.string_) ?inplace:(A.opt options "inplace" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1))) ((A.value arr) (positional.(2)))) ]
 | "jnp.quantile" -> [ (Ojax.Numpy.Reductions.quantile ?axis:(A.opt options "axis" A.int_) ?keepdims:(A.opt options "keepdims" A.bool_) ?method_:(A.opt options "method" A.string_) ?weights:(A.opt options "weights" (A.value arr)) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.ravel" -> [ (Ojax.Numpy.Lax_numpy.ravel ?order:(A.opt options "order" A.string_) ((A.value arr) (positional.(0)))) ]
 | "jnp.ravel_multi_index" -> [ (Ojax.Numpy.Extras.ravel_multi_index ?mode:(A.opt options "mode" A.string_) ?order:(A.opt options "order" A.string_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value_list arr) (positional.(0))) (A.int_array (positional.(1)))) ]
@@ -140,8 +131,8 @@ let run op positional options arr =
 | "jnp.select" -> [ (Ojax.Numpy.Lax_numpy.select ?default:(A.opt options "default" (A.value arr)) ((A.value_list arr) (positional.(0))) ((A.value_list arr) (positional.(1)))) ]
 | "jnp.setdiff1d" -> [ (Ojax.Numpy.Extras.setdiff1d ?assume_unique:(A.opt options "assume_unique" A.bool_) ?size:(A.opt options "size" A.int_) ?fill_value:(A.opt options "fill_value" A.float_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.setxor1d" -> [ (Ojax.Numpy.Extras.setxor1d ?assume_unique:(A.opt options "assume_unique" A.bool_) ?size:(A.opt options "size" A.int_) ?fill_value:(A.opt options "fill_value" A.float_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
-| "jnp.sort" -> A.refuse options ["order"];
-[ (Ojax.Numpy.Sorting.sort ?axis:(A.opt_keep options "axis" A.int_option) ?stable:(A.opt options "stable" A.bool_) ?descending:(A.opt options "descending" A.bool_) ((A.value arr) (positional.(0)))) ]
+| "jnp.sort" -> [ (Ojax.Numpy.Sorting.sort ?axis:(A.opt_keep options "axis" A.int_option) ?kind:(A.opt options "kind" A.string_) ?order:(A.opt options "order" A.string_) ?stable:(A.opt options "stable" A.bool_) ?descending:(A.opt options "descending" A.bool_) ((A.value arr) (positional.(0)))) ]
+| "jnp.split" -> (Ojax.Numpy.Lax_numpy.split ?axis:(A.opt options "axis" A.int_) ((A.value arr) (positional.(0))) (A.sections (positional.(1))))
 | "jnp.squeeze" -> [ (Ojax.Numpy.Lax_numpy.squeeze ?axis:(A.opt options "axis" A.int_array) ((A.value arr) (positional.(0)))) ]
 | "jnp.stack" -> [ (Ojax.Numpy.Lax_numpy.stack ?axis:(A.opt options "axis" A.int_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value_list arr) (positional.(0)))) ]
 | "jnp.std" -> [ (Ojax.Numpy.Reductions.std ?dtype:(A.opt options "dtype" A.dtype) ?axis:(A.opt options "axis" A.int_array) ?keepdims:(A.opt options "keepdims" A.bool_) ?ddof:(A.opt options "ddof" A.int_) ?where:(A.opt options "where" (A.value arr)) ?mean:(A.opt options "mean" (A.value arr)) ?correction:(A.opt options "correction" A.float_) ((A.value arr) (positional.(0)))) ]
@@ -152,7 +143,7 @@ let run op positional options arr =
 | "jnp.trace" -> [ (Ojax.Numpy.Lax_numpy.trace ?offset:(A.opt options "offset" A.int_) ?axis1:(A.opt options "axis1" A.int_) ?axis2:(A.opt options "axis2" A.int_) ?dtype:(A.opt options "dtype" A.dtype) ((A.value arr) (positional.(0)))) ]
 | "jnp.transpose" -> [ (Ojax.Numpy.Lax_numpy.transpose ?axes:(A.opt options "axes" A.int_array) ((A.value arr) (positional.(0)))) ]
 | "jnp.trapezoid" -> [ (Ojax.Numpy.Lax_numpy.trapezoid ?x:(A.opt options "x" (A.value arr)) ?dx:(A.opt options "dx" A.float_) ?axis:(A.opt options "axis" A.int_) ((A.value arr) (positional.(0)))) ]
-| "jnp.tri" -> [ (Ojax.Numpy.Lax_numpy.tri ?m:(A.opt options "M" A.int_) ?k:(A.opt options "k" A.int_) ~dtype:(A.dtype (A.get options "dtype" `Null)) (A.int_ (positional.(0)))) ]
+| "jnp.tri" -> [ (Ojax.Numpy.Lax_numpy.tri ?m:(A.opt options "M" A.int_) ?k:(A.opt options "k" A.int_) ~dtype:(A.default_float (A.get options "dtype" `Null)) (A.int_ (positional.(0)))) ]
 | "jnp.tril" -> [ (Ojax.Numpy.Lax_numpy.tril ?k:(A.opt options "k" A.int_) ((A.value arr) (positional.(0)))) ]
 | "jnp.tril_indices" -> (let a, b = (Ojax.Numpy.Extras.tril_indices ?k:(A.opt options "k" A.int_) ?m:(A.opt options "m" A.int_) (A.int_ (positional.(0)))) in [ a; b ])
 | "jnp.tril_indices_from" -> (let a, b = (Ojax.Numpy.Extras.tril_indices_from ?k:(A.opt options "k" A.int_) ((A.value arr) (positional.(0)))) in [ a; b ])
@@ -172,8 +163,7 @@ let run op positional options arr =
 | "jnp.var" -> [ (Ojax.Numpy.Reductions.var ?dtype:(A.opt options "dtype" A.dtype) ?axis:(A.opt options "axis" A.int_array) ?keepdims:(A.opt options "keepdims" A.bool_) ?ddof:(A.opt options "ddof" A.int_) ?where:(A.opt options "where" (A.value arr)) ?mean:(A.opt options "mean" (A.value arr)) ?correction:(A.opt options "correction" A.float_) ((A.value arr) (positional.(0)))) ]
 | "jnp.vecdot" -> [ (Ojax.Numpy.Tensor_contractions.vecdot ?axis:(A.opt options "axis" A.int_) ?preferred:(A.opt options "preferred_element_type" A.dtype) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "jnp.vstack" -> [ (Ojax.Numpy.Lax_numpy.vstack ?dtype:(A.opt options "dtype" A.dtype) ((A.value_list arr) (positional.(0)))) ]
-| "jnp.where" -> A.refuse options ["fill_value"; "size"];
-[ (Ojax.Numpy.Lax_numpy.where_ ((A.value arr) (positional.(0))) ((A.value arr) (A.get options "x" `Null)) ((A.value arr) (A.get options "y" `Null))) ]
+| "jnp.where" -> [ (Ojax.Numpy.Lax_numpy.where_ ?size:(A.opt options "size" A.int_) ?fill_value:(A.opt options "fill_value" A.float_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1))) ((A.value arr) (positional.(2)))) ]
 | "jnp.zeros" -> [ (Ojax.Numpy.Array_creation.zeros ?dtype:(A.opt options "dtype" A.dtype) (A.int_array (positional.(0)))) ]
 | "jnp.zeros_like" -> [ (Ojax.Numpy.Array_creation.zeros_like ?dtype:(A.opt options "dtype" A.dtype) ?shape:(A.opt options "shape" A.int_array) ((A.value arr) (positional.(0)))) ]
 | "linalg.cholesky" -> [ (Ojax.Numpy.Linalg.cholesky ?upper:(A.opt options "upper" A.bool_) ?symmetrize_input:(A.opt options "symmetrize_input" A.bool_) ((A.value arr) (positional.(0)))) ]
@@ -237,8 +227,7 @@ let run op positional options arr =
 | "lax.full" -> [ (Ojax.Lax_api.full (A.int_array (positional.(0))) (A.float_ (positional.(1))) (A.dtype (A.get options "dtype" `Null))) ]
 | "lax.full_like" -> [ (Ojax.Lax_api.full_like ?dtype:(A.opt options "dtype" A.dtype) ?shape:(A.opt options "shape" A.int_array) ((A.value arr) (positional.(0))) (A.float_ (positional.(1)))) ]
 | "lax.reshape" -> [ (Ojax.Lax_api.reshape ?dimensions:(A.opt options "dimensions" A.int_array) ((A.value arr) (positional.(0))) (A.int_array (positional.(1)))) ]
-| "lax.round" -> A.refuse options ["rounding_method"];
-[ (Ojax.Lax_api.round ((A.value arr) (positional.(0)))) ]
+| "lax.round" -> [ (Ojax.Lax_api.round ?rounding_method:(A.opt options "rounding_method" A.rounding_method) ((A.value arr) (positional.(0)))) ]
 | "lax.slice" -> [ (Ojax.Lax_api.slice ?strides:(A.opt options "strides" A.int_array) ((A.value arr) (positional.(0))) (A.int_array (positional.(1))) (A.int_array (positional.(2)))) ]
 | "lax.slice_in_dim" -> [ (Ojax.Lax_api.slice_in_dim ?stride:(A.opt options "stride" A.int_) ?axis:(A.opt options "axis" A.int_) ((A.value arr) (positional.(0))) (A.int_ (positional.(1))) (A.int_ (positional.(2)))) ]
 | "lax.sort" -> (Ojax.Lax_api.sort ?dimension:(A.opt options "dimension" A.int_) ?is_stable:(A.opt options "is_stable" A.bool_) ?num_keys:(A.opt options "num_keys" A.int_) ((A.value_list arr) (positional.(0))))
@@ -280,12 +269,11 @@ let run op positional options arr =
 | "random.ball" -> [ (Ojax.Random_extras.ball ?dtype:(A.opt options "dtype" A.dtype) ?p:(A.opt options "p" A.float_) ~d:(A.int_ (positional.(1))) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
 | "random.bernoulli" -> [ (Ojax.Random.Core.bernoulli ?mode:(A.opt options "mode" A.string_) ~shape:(A.int_array (A.get options "shape" `Null)) ~p:(A.float_ (A.get options "p" (`Float (0.5)))) ((A.value arr) (positional.(0)))) ]
 | "random.beta" -> [ (Ojax.Random.Core.beta ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" `Null)) ~a:(A.float_ (positional.(1))) ~b:(A.float_ (positional.(2))) ((A.value arr) (positional.(0)))) ]
-| "random.bits" -> A.refuse options ["dtype"];
-[ (Ojax.Random.Core.bits ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
-| "random.categorical" -> A.refuse options ["replace"; "shape"];
-[ (Ojax.Random.Core.categorical ~logits:((A.value arr) (positional.(1))) ~axis:(A.int_ (A.get options "axis" (`Int (-1)))) ((A.value arr) (positional.(0)))) ]
+| "random.bits" -> [ (Ojax.Random.Core.bits ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
+| "random.categorical" -> [ (Ojax.Random.Core.categorical_full ?axis:(A.opt options "axis" A.int_) ?shape:(A.opt options "shape" A.int_array) ?replace:(A.opt options "replace" A.bool_) ?mode:(A.opt options "mode" A.string_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "random.cauchy" -> [ (Ojax.Random.Core.cauchy ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
 | "random.chisquare" -> [ (Ojax.Random.Core.chisquare ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" `Null)) ~df:(A.float_ (positional.(1))) ((A.value arr) (positional.(0)))) ]
+| "random.choice" -> [ (Ojax.Random.Core.choice_array ?shape:(A.opt options "shape" A.int_array) ?replace:(A.opt options "replace" A.bool_) ?p:(A.opt options "p" (A.value arr)) ?axis:(A.opt options "axis" A.int_) ?mode:(A.opt options "mode" A.string_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "random.dirichlet" -> [ (Ojax.Random.Core.dirichlet ?dtype:(A.opt options "dtype" A.dtype) ~alpha:((A.value arr) (positional.(1))) ~shape:(A.int_array (A.get options "shape" `Null)) ((A.value arr) (positional.(0)))) ]
 | "random.double_sided_maxwell" -> [ (Ojax.Random_extras.double_sided_maxwell ?dtype:(A.opt options "dtype" A.dtype) ~loc:(A.float_ (positional.(1))) ~scale:(A.float_ (positional.(2))) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
 | "random.exponential" -> [ (Ojax.Random.Core.exponential ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
@@ -299,15 +287,14 @@ let run op positional options arr =
 | "random.laplace" -> [ (Ojax.Random.Core.laplace ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
 | "random.loggamma" -> [ (Ojax.Random.Core.loggamma ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" `Null)) ~a:(A.float_ (positional.(1))) ((A.value arr) (positional.(0)))) ]
 | "random.logistic" -> [ (Ojax.Random.Core.logistic ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
-| "random.lognormal" -> [ (Ojax.Random.Core.lognormal ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" `Null)) ~sigma:(A.float_ (A.get options "sigma" `Null)) ((A.value arr) (positional.(0)))) ]
+| "random.lognormal" -> [ (Ojax.Random.Core.lognormal ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" `Null)) ~sigma:(A.float_ (A.get options "sigma" (`Float (1.0)))) ((A.value arr) (positional.(0)))) ]
 | "random.maxwell" -> [ (Ojax.Random_extras.maxwell ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
 | "random.multivariate_normal" -> A.refuse options ["dtype"];
 [ (Ojax.Random_extras.multivariate_normal ?shape:(A.opt options "shape" A.int_array) ?method_:(A.opt options "method" A.string_) ~mean:((A.value arr) (positional.(1))) ~cov:((A.value arr) (positional.(2))) ((A.value arr) (positional.(0)))) ]
 | "random.normal" -> [ (Ojax.Random.Core.normal ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
 | "random.orthogonal" -> [ (Ojax.Random_extras.orthogonal ?dtype:(A.opt options "dtype" A.dtype) ?m:(A.opt options "m" A.int_) ~n:(A.int_ (positional.(1))) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
 | "random.pareto" -> [ (Ojax.Random.Core.pareto ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" `Null)) ~b:(A.float_ (positional.(1))) ((A.value arr) (positional.(0)))) ]
-| "random.permutation" -> A.refuse options ["axis"; "independent"];
-[ (Ojax.Random.Core.permutation ((A.value arr) (positional.(0))) (A.int_ (positional.(1)))) ]
+| "random.permutation" -> [ (Ojax.Random.Core.permutation_array ?axis:(A.opt options "axis" A.int_) ?independent:(A.opt options "independent" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "random.poisson" -> [ (Ojax.Random.Core.poisson ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" `Null)) ~lam:(A.float_ (positional.(1))) ((A.value arr) (positional.(0)))) ]
 | "random.rademacher" -> [ (Ojax.Random.Core.rademacher ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (A.get options "shape" (`List []))) ((A.value arr) (positional.(0)))) ]
 | "random.randint" -> [ (Ojax.Random.Core.randint ?dtype:(A.opt options "dtype" A.dtype) ~shape:(A.int_array (positional.(1))) ~minval:(A.int_ (positional.(2))) ~maxval:(A.int_ (positional.(3))) ((A.value arr) (positional.(0)))) ]
@@ -349,7 +336,7 @@ let run op positional options arr =
 | "sp_linalg.solve" -> [ (Ojax.Scipy.Linalg.solve ?lower:(A.opt options "lower" A.bool_) ?assume_a:(A.opt options "assume_a" A.string_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "sp_linalg.solve_sylvester" -> A.refuse options ["method"];
 [ (Ojax.Scipy.Linalg_special.solve_sylvester ?tol:(A.opt options "tol" A.float_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1))) ((A.value arr) (positional.(2)))) ]
-| "sp_linalg.solve_triangular" -> [ (Ojax.Scipy.Linalg.solve_triangular ?trans:(A.opt options "trans" A.int_) ?lower:(A.opt options "lower" A.bool_) ?unit_diagonal:(A.opt options "unit_diagonal" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
+| "sp_linalg.solve_triangular" -> [ (Ojax.Scipy.Linalg.solve_triangular ?trans:(A.opt options "trans" A.trans) ?lower:(A.opt options "lower" A.bool_) ?unit_diagonal:(A.opt options "unit_diagonal" A.bool_) ((A.value arr) (positional.(0))) ((A.value arr) (positional.(1)))) ]
 | "sp_linalg.sqrtm" -> [ (Ojax.Scipy.Linalg.sqrtm ?blocksize:(A.opt options "blocksize" A.int_) ((A.value arr) (positional.(0)))) ]
 | "sp_linalg.svd" -> A.refuse options ["lapack_driver"];
 (Ojax.Scipy.Linalg.svd ?full_matrices:(A.opt options "full_matrices" A.bool_) ?compute_uv:(A.opt options "compute_uv" A.bool_) ((A.value arr) (positional.(0))))

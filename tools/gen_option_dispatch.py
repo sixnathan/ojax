@@ -73,6 +73,10 @@ DECODERS = {
     "string * string": "A.string_pair",
     "Dtype.t": "A.dtype",
     "padding": "A.padding",
+    "Lax_config.rounding_method": "A.rounding_method",
+    "rounding_method": "A.rounding_method",
+    "sections": "A.sections",
+    "Tensor_contractions.td_axes": "A.td_axes",
     "ord": "A.ord",
     "norm_axis": "A.norm_axis",
     "td_axes": "A.td_axes",
@@ -104,6 +108,8 @@ def declarations(path):
 def json_literal(value):
     if value is None:
         return "`Null"
+    if hasattr(value, "item") and not isinstance(value, (bool, int, float, str)):
+        value = value.item()
     if isinstance(value, bool):
         return "(`Bool " + ("true" if value else "false") + ")"
     if isinstance(value, int):
@@ -124,6 +130,7 @@ def arm(spec, parts, module):
     if result not in RESULTS:
         return None
     required_index = {name: i for i, (name, _) in enumerate(spec["required"])}
+    params = [p for p in params if p.kind != p.VAR_POSITIONAL or p.name in required_index]
     labelled = {}
     positional = []
     for part in parts[:-1]:
@@ -163,7 +170,12 @@ def arm(spec, parts, module):
             if not optional:
                 return None
             continue
-        if not optional:
+        if ty == "Dtype.t" and not optional and spec["name"] in ("eye", "tri", "identity", "indices", "full"):
+            default = "A.default_int" if spec["name"] == "indices" else "A.default_float"
+            args.append("~" + label + ":(" + default + " " + param_source(target) + ")")
+        elif target.name == "trans" and ty == "int":
+            args.append("?" + label + ':(A.opt options "trans" A.trans)')
+        elif not optional:
             args.append("~" + label + ":(" + decoder + " " + param_source(target) + ")")
         elif target.name in required_index:
             args.append("?" + label + ":(Some (" + decoder + " " + param_source(target) + "))")
@@ -216,7 +228,11 @@ def main():
         for path in files_for(spec["module"]):
             decls = declarations(path)
             key = None
-            for candidate in (spec["name"], spec["name"] + "_", spec["name"] + "'", spec["name"].lower()):
+            names = (spec["name"], spec["name"] + "_", spec["name"] + "'", spec["name"].lower())
+            variant = registry.VARIANT_NAMES.get((spec["module"], spec["name"]))
+            if variant:
+                names = (variant,) + names
+            for candidate in names:
                 if candidate in decls:
                     key = candidate
                     break

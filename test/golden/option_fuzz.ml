@@ -50,7 +50,12 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
     in
     go names args
   in
-  let run args = Option_cases.run op positional options (lookup args) in
+  let run args =
+    let arr = lookup args in
+    match Option_manual.run op positional options arr with
+    | Some result -> result
+    | None -> Option_cases.run op positional options arr
+  in
   let jax_error key =
     match U.member key case with `String name -> name | _ -> "unknown"
   in

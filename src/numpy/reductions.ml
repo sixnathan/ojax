@@ -67,7 +67,14 @@ let all_axes v = Array.init (ndim v) (fun i -> i)
 
 let resolve_axes v = function
   | None -> all_axes v
-  | Some ax -> Array.map (fun i -> canonicalize_axis i (ndim v)) ax
+  | Some ax ->
+      let axes = Array.map (fun i -> canonicalize_axis i (ndim v)) ax in
+      let unique = List.sort_uniq compare (Array.to_list axes) in
+      if List.length unique <> Array.length axes then
+        raise
+          (Py_exn.Value_error
+             ("duplicate value in 'axis': " ^ Validate.python_tuple axes));
+      axes
 
 let mem_axis axes i = Array.exists (fun a -> a = i) axes
 

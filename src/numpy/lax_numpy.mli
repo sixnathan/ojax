@@ -54,7 +54,13 @@ val issubdtype : dtype_class -> dtype_class -> bool
 val result_type : Types.value list -> Dtype.t
 val convolve : ?mode:string -> Types.value -> Types.value -> Types.value
 val correlate : ?mode:string -> Types.value -> Types.value -> Types.value
-val where_ : Types.value -> Types.value -> Types.value -> Types.value
+val where_ :
+  ?size:int ->
+  ?fill_value:float ->
+  Types.value ->
+  Types.value ->
+  Types.value ->
+  Types.value
 val promote_values : Types.value list -> Types.value list
 val take_trailing : Types.value -> Types.value list -> Types.value
 val index_at : Types.value -> int -> Types.value
@@ -113,7 +119,8 @@ val select :
   ?default:Types.value -> Types.value list -> Types.value list -> Types.value
 
 val astype : Types.value -> Dtype.t -> Types.value
-val copy : Types.value -> Types.value
+val check_array_order : string option -> unit
+val copy : ?order:string -> Types.value -> Types.value
 val atleast_1d : Types.value -> Types.value
 val atleast_2d : Types.value -> Types.value
 val atleast_3d : Types.value -> Types.value

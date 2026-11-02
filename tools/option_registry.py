@@ -68,6 +68,18 @@ FUNCTION_SAMPLES = {
     ("jnp", "convolve", "mode"): ["full", "same", "valid", "bogus"],
     ("jnp", "correlate", "mode"): ["full", "same", "valid", "bogus"],
     ("jnp", "gradient", "edge_order"): [1, 2],
+    ("jnp", "clip", "min"): [None, -0.5, 0.5],
+    ("jnp", "clip", "max"): [None, 0.5, 1.5],
+    ("jnp", "interp", "left"): [None, 0.5],
+    ("jnp", "interp", "right"): [None, 0.5],
+    ("jnp", "interp", "period"): [None, 2.0],
+    ("nn", "squareplus", "b"): [4, 0.5],
+    ("random", "lognormal", "sigma"): [1.0, 0.5],
+    ("sp_linalg", "dft", "scale"): [None, "sqrtn", "n", "bogus"],
+    ("sp_signal", "welch", "window"): ["hann"],
+    ("sp_signal", "stft", "window"): ["hann"],
+    ("sp_signal", "csd", "window"): ["hann"],
+    ("sp_signal", "istft", "window"): ["hann"],
     ("linalg", "qr", "mode"): ["reduced", "complete", "r", "raw", "bogus"],
     ("sp_linalg", "qr", "mode"): ["full", "r", "economic", "raw", "bogus"],
     ("sp_linalg", "schur", "output"): ["real", "complex", "bogus"],
@@ -209,7 +221,7 @@ REQUIRED_VALUES = {
     "permutation": [(1, 0), (0, 1)],
     "source": [0, 1],
     "destination": [1, 0],
-    "indices_or_sections": [2, 3, [1]],
+    "indices_or_sections": [2, 3, (1,)],
     "reps": [2, (2, 1)],
     "pad_width": [1, ((1, 0), (0, 2))],
     "pad_widths": [1],
@@ -227,6 +239,18 @@ REQUIRED_VALUES = {
 
 REQUIRED_BY_FUNCTION = {
     ("lax", "collapse", "start_dimension"): [0, 1],
+    ("jnp", "repeat", "repeats"): [1, 2, 0],
+    ("jnp", "insert", "obj"): [0, 1],
+    ("jnp", "delete", "obj"): [0, 1],
+    ("jnp", "rollaxis", "axis"): [0, 1],
+    ("jnp", "roll", "shift"): [1, -2, (1, 1)],
+    ("jnp", "ravel_multi_index", "dims"): [(4, 4)],
+    ("jnp", "unravel_index", "shape"): [(3, 3)],
+    ("jnp", "polyfit", "deg"): [1, 2],
+    ("jnp", "tril_indices", "n"): [2, 3],
+    ("jnp", "triu_indices", "n"): [2, 3],
+    ("jnp", "fill_diagonal", "val"): [1.5, 0],
+    ("jnp", "put", "ind"): [],
     ("lax", "dynamic_index_in_dim", "index"): [0, 1, 5],
     ("lax", "dynamic_slice_in_dim", "start_index"): [0, 1],
     ("lax", "dynamic_slice_in_dim", "slice_size"): [1, 2],
@@ -297,6 +321,32 @@ REQUIRED_BY_FUNCTION = {
     ("random", "triangular", "right"): [1.0],
     ("random", "choice", "a"): [3, 5],
     ("random", "key", "seed"): [0, 7],
+}
+
+FORCED_REQUIRED = {
+    ("jnp", "clip"): ["arr"],
+    ("jnp", "where"): ["x", "y"],
+}
+
+LIST_ARGS = {
+    ("jnp", "ravel_multi_index", "multi_index"), ("jnp", "select", "condlist"), ("jnp", "select", "choicelist"),
+    ("jnp", "lexsort", "keys"), ("jnp", "choose", "choices"),
+}
+
+BOOL_ARGS = {("jnp", "select", "condlist"), ("jnp", "where", "condition"), ("jnp", "where", "condlist")}
+
+INT_ARGS = {("jnp", "ravel_multi_index", "multi_index"), ("jnp", "searchsorted", "sorter")}
+
+VARIANT_NAMES = {
+    ("jnp", "linspace"): "linspace_v",
+    ("jnp", "logspace"): "logspace_v",
+    ("jnp", "geomspace"): "geomspace_v",
+    ("jnp", "where"): "where_",
+    ("jnp", "delete"): "delete_array",
+    ("random", "choice"): "choice_array",
+    ("random", "permutation"): "permutation_array",
+    ("random", "categorical"): "categorical_full",
+    ("random", "multinomial"): "multinomial_full",
 }
 
 SKIPPED = {
@@ -372,10 +422,14 @@ def spec_of(module_short, name, obj):
     except (TypeError, ValueError):
         return None
     required, options, array_options = [], {}, {}
+    forced = FORCED_REQUIRED.get((module_short, name), [])
     for param in signature.parameters.values():
+        if param.name in forced:
+            required.append((param.name, "array"))
+            continue
         if param.kind in (param.VAR_KEYWORD, param.VAR_POSITIONAL):
             if param.kind == param.VAR_POSITIONAL and name in ("broadcast_arrays", "meshgrid", "ix_", "block"):
-                required.append(("arrays", "star"))
+                required.append((param.name, "star"))
             continue
         text = annotation_text(param)
         if param.default is inspect.Parameter.empty:
@@ -389,7 +443,7 @@ def spec_of(module_short, name, obj):
                 required.append((param.name, "key"))
             elif param.name in REQUIRED_VALUES and not is_array_annotation(text):
                 required.append((param.name, "value"))
-            elif param.name in ARRAY_LIST:
+            elif param.name in ARRAY_LIST or (module_short, name, param.name) in LIST_ARGS:
                 required.append((param.name, "list"))
             elif param.name in ("dtype",):
                 required.append((param.name, "value"))
@@ -441,7 +495,7 @@ def generic_values(param, text):
     if "float" in text and default is None:
         return [None, 0.5]
     if is_array_annotation(text) and default is None:
-        return [None, "$scalar"]
+        return [None, 0.5]
     return None
 
 
@@ -472,14 +526,17 @@ def sample_case(spec, rng, index):
     for position, (arg, role) in enumerate(spec["required"]):
         if role == "array":
             key = "arg" + str(position)
-            if arg in ("segment_ids", "indices", "indices_or_sections", "condlist", "condition", "mask") or arg.startswith("bins"):
+            if arg == "segment_ids":
+                inputs[key] = {"shape": [2], "kind": "int"}
+            elif arg in ("indices", "indices_or_sections", "condlist", "condition", "mask") or arg.startswith("bins"):
                 inputs[key] = {"shape": list(override.get(arg, base_shape)), "kind": "int" if arg != "condition" and arg != "mask" else "bool"}
             else:
                 inputs[key] = {"shape": list(override.get(arg, base_shape)), "kind": kind}
             positional.append({"$arr": key})
         elif role == "list":
+            list_kind = "bool" if (module_short, spec["name"], arg) in BOOL_ARGS else "int" if (module_short, spec["name"], arg) in INT_ARGS else kind
             for k in ("arg" + str(position) + "_0", "arg" + str(position) + "_1"):
-                inputs[k] = {"shape": list(base_shape), "kind": kind}
+                inputs[k] = {"shape": list(base_shape), "kind": list_kind}
             positional.append({"$list": ["arg" + str(position) + "_0", "arg" + str(position) + "_1"]})
         elif role == "star":
             for k in ("arg" + str(position) + "_0", "arg" + str(position) + "_1"):

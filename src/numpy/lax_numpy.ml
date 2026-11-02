@@ -494,7 +494,13 @@ let minimum a b =
   let a, b = promote_scalar_kept a b in
   bind1 T.Min [ a; b ]
 
-let where_ = Jnp_util.where
+let where_ ?(size : int option) ?(fill_value : float option) c x y =
+  if size <> None || fill_value <> None then
+    raise
+      (Py_exn.Value_error
+         "size and fill_value arguments cannot be used in three-term where \
+          function.");
+  Jnp_util.where c x y
 
 let finfo_max = function
   | D.F64 | D.Complex128 -> Float.max_float
@@ -953,7 +959,14 @@ let astype v dt =
   | (D.Complex64 | D.Complex128), D.Bool -> bind1 T.Ne [ v; zeros_like v ]
   | _ -> convert v dt
 
-let copy v = bind1 T.Copy [ v ]
+let check_array_order = function
+  | Some order when order <> "K" ->
+      raise (Py_exn.Not_implemented_error "Only implemented for order='K'")
+  | _ -> ()
+
+let copy ?order v =
+  check_array_order order;
+  bind1 T.Copy [ v ]
 
 let atleast_1d v =
   Jnp_util.jit1 "atleast_1d"

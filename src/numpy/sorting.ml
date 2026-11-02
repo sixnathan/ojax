@@ -155,14 +155,29 @@ let partition ?axis p0 ~kth =
       | [ p0 ] -> partition ?axis p0 ~kth | _ -> invalid_arg "partition: arity")
     [ p0 ]
 
-let sort ?axis ?stable ?descending a0 =
+let reject_kind_order name kind order =
+  if kind <> None then
+    raise
+      (Py_exn.Type_error
+         ("'kind' argument to " ^ name
+        ^ " is not supported. Use stable=True or stable=False to specify sort \
+           stability."));
+  if order <> None then
+    raise
+      (Py_exn.Type_error ("'order' argument to " ^ name ^ " is not supported."))
+
+let sort ?axis ?(kind : string option) ?(order : string option) ?stable
+    ?descending a0 =
+  reject_kind_order "sort" kind order;
   Eager_jit.one "numpy.sorting.sort" (axis, stable, descending) [] [ a0 ]
     (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> sort ?axis ?stable ?descending a0
       | _ -> assert false)
 
-let argsort ?axis ?stable ?descending ?dtype a0 =
+let argsort ?axis ?(kind : string option) ?(order : string option) ?stable
+    ?descending ?dtype a0 =
+  reject_kind_order "argsort" kind order;
   Eager_jit.one "numpy.sorting.argsort" (axis, stable, descending, dtype)
     [] [ a0 ] (fun opts vals ->
       match (opts, vals) with

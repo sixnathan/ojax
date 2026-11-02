@@ -10,7 +10,7 @@ let invert_permutation i =
   let size = Array.fold_left ( * ) 1 (shape i) in
   let base = AC.zeros_like i in
   let vals = NL.arange ~dtype:(dtype i) (float_of_int size) in
-  IX.put base i vals
+  IX.put ~inplace:false base i vals
 
 let sem ?(axis = Some 0) ~ddof ?(nan_policy = "propagate") ?(keepdims = false) a
     =

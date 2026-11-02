@@ -710,17 +710,17 @@ let ffi_multi () =
 
 let ffi_errors () =
   register_all ();
-  raises_prefix "handler error" "ojax_fail was asked to fail" (fun () ->
-      Ffi.ffi_call1 "ojax_fail" (f32a [||]) [ f32 [||] [| 1. |] ]);
+  raises_prefix "handler error" "INVALID_ARGUMENT: ojax_fail was asked to fail"
+    (fun () -> Ffi.ffi_call1 "ojax_fail" (f32a [||]) [ f32 [||] [| 1. |] ]);
   raises_prefix "unregistered"
-    "No FFI handler registered for ojax_nope on a platform Host (canonical \
-     host)" (fun () ->
+    "NOT_FOUND: No FFI handler registered for ojax_nope on a platform Host \
+     (canonical host)" (fun () ->
       Ffi.ffi_call1 "ojax_nope" (f32a [||]) [ f32 [||] [| 1. |] ]);
   Ffi.register_ffi_target ~platform:"cuda" "ojax_only_gpu"
     (Ffi.dlsym (Lazy.force lib) "ojax_scale");
   raises_prefix "other platform"
-    "No FFI handler registered for ojax_only_gpu on a platform Host (canonical \
-     host)" (fun () ->
+    "NOT_FOUND: No FFI handler registered for ojax_only_gpu on a platform Host \
+     (canonical host)" (fun () ->
       Ffi.ffi_call1 "ojax_only_gpu" (f32a [||]) [ f32 [||] [| 1. |] ]);
   raises_msg "bad vmap method"
     "vmap_method must be on of the allowed methods ['sequential', \
@@ -865,7 +865,7 @@ let ffi_attrs () =
        ());
   check_floats "none" [| 0.; -1.; -1.; -1.; -1.; 0. |] (probe ());
   raises_prefix "sequence attribute"
-    "Unsupported attribute type for attribute: l" (fun () ->
+    "INVALID_ARGUMENT: Unsupported attribute type for attribute: l" (fun () ->
       probe
         ~attributes:[ ("l", Ffi.Ffi_seq [ Ffi.Ffi_int 1L; Ffi.Ffi_int 2L ]) ]
         ())
@@ -890,7 +890,8 @@ let ffi_types () =
   let again = Config.with_value Config.enable_x64 true read in
   Alcotest.(check (float 0.0)) "known id is kept" assigned again;
   raises_prefix "name bound to another id"
-    "Type name ojax_test_type already registered with type id" (fun () ->
+    "INTERNAL: Type name ojax_test_type already registered with type id"
+    (fun () ->
       Ffi.register_ffi_type "ojax_test_type"
         { type_id = Ffi.dlsym lib "ojax_test_other_type_id"; type_info = None })
 

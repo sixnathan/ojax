@@ -170,6 +170,28 @@ CAMLprim value ojax_pjrt_maxrss(value v_unit) {
   CAMLreturn(Val_long(bytes));
 }
 
+static const char *ojax_pjrt_code_name(PJRT_Error_Code code) {
+  switch (code) {
+  case PJRT_Error_Code_CANCELLED: return "CANCELLED";
+  case PJRT_Error_Code_UNKNOWN: return "UNKNOWN";
+  case PJRT_Error_Code_INVALID_ARGUMENT: return "INVALID_ARGUMENT";
+  case PJRT_Error_Code_DEADLINE_EXCEEDED: return "DEADLINE_EXCEEDED";
+  case PJRT_Error_Code_NOT_FOUND: return "NOT_FOUND";
+  case PJRT_Error_Code_ALREADY_EXISTS: return "ALREADY_EXISTS";
+  case PJRT_Error_Code_PERMISSION_DENIED: return "PERMISSION_DENIED";
+  case PJRT_Error_Code_RESOURCE_EXHAUSTED: return "RESOURCE_EXHAUSTED";
+  case PJRT_Error_Code_FAILED_PRECONDITION: return "FAILED_PRECONDITION";
+  case PJRT_Error_Code_ABORTED: return "ABORTED";
+  case PJRT_Error_Code_OUT_OF_RANGE: return "OUT_OF_RANGE";
+  case PJRT_Error_Code_UNIMPLEMENTED: return "UNIMPLEMENTED";
+  case PJRT_Error_Code_INTERNAL: return "INTERNAL";
+  case PJRT_Error_Code_UNAVAILABLE: return "UNAVAILABLE";
+  case PJRT_Error_Code_DATA_LOSS: return "DATA_LOSS";
+  case PJRT_Error_Code_UNAUTHENTICATED: return "UNAUTHENTICATED";
+  default: return NULL;
+  }
+}
+
 static void ojax_pjrt_check(const PJRT_Api *api, PJRT_Error *err) {
   if (err == NULL) return;
   PJRT_Error_Message_Args ma;
@@ -177,12 +199,25 @@ static void ojax_pjrt_check(const PJRT_Api *api, PJRT_Error *err) {
   ma.struct_size = PJRT_Error_Message_Args_STRUCT_SIZE;
   ma.error = err;
   api->PJRT_Error_Message(&ma);
+  const char *code_name = NULL;
+  if (api->PJRT_Error_GetCode != NULL) {
+    PJRT_Error_GetCode_Args ga;
+    memset(&ga, 0, sizeof ga);
+    ga.struct_size = PJRT_Error_GetCode_Args_STRUCT_SIZE;
+    ga.error = err;
+    if (api->PJRT_Error_GetCode(&ga) == NULL)
+      code_name = ojax_pjrt_code_name(ga.code);
+  }
   char buf[1024];
-  size_t n = ma.message_size < 1023 ? ma.message_size : 1023;
-  if (ma.message != NULL && n > 0)
-    memcpy(buf, ma.message, n);
-  else
-    n = 0;
+  size_t n = 0;
+  if (code_name != NULL)
+    n = (size_t)snprintf(buf, sizeof buf, "%s: ", code_name);
+  size_t room = sizeof buf - 1 - n;
+  size_t m = ma.message_size < room ? ma.message_size : room;
+  if (ma.message != NULL && m > 0) {
+    memcpy(buf + n, ma.message, m);
+    n += m;
+  }
   buf[n] = '\0';
   PJRT_Error_Destroy_Args da;
   memset(&da, 0, sizeof da);

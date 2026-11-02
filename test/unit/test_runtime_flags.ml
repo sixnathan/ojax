@@ -1242,14 +1242,14 @@ let stages_surface () =
             (Stages.call
                (Stages.compile ~compiler_options:options lowered)
                flat)));
-    check_message "unknown option" "No such compile option: 'no_such'"
-      (fun () ->
+    check_message "unknown option"
+      "INVALID_ARGUMENT: No such compile option: 'no_such'" (fun () ->
         Stages.compile
           ~compiler_options:[ ("no_such", Pjrt.Executable.Option_bool true) ]
           lowered);
     check_message "bad option value"
-      "While setting option xla_cpu_enable_fast_math, 'x' is not a valid bool \
-       value." (fun () ->
+      "INVALID_ARGUMENT: While setting option xla_cpu_enable_fast_math, 'x' is \
+       not a valid bool value." (fun () ->
         Stages.compile
           ~compiler_options:
             [ ("xla_cpu_enable_fast_math", Pjrt.Executable.Option_string "x") ]

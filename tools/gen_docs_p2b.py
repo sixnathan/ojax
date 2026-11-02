@@ -38,6 +38,7 @@ POLY_CASES = ["parse", "parse_bad", "parse_bad2", "ge1", "ge2", "eq",
               "mod_sym", "cons_eq"]
 OOM_CASES = [("zeros", 40), ("zeros", 43), ("broadcast", 40), ("broadcast", 43)]
 DEVICE_CASES = ["cpu", "bogus", "", "CPU", "it's"]
+SDG_CASES = ["cudnn", "none"]
 REUSE_CASES = ["twice_eager", "twice_jit", "consumed_eager", "consumed_jit",
                "split_once", "split_twice", "split_twice_jit", "bits_fold_in",
                "clone", "off_twice", "while_reuse", "cond_branches",
@@ -363,6 +364,16 @@ def device_thunk(jax, jnp, name):
     return run
 
 
+def sdg_thunk(jax, jnp, impl):
+    a = jnp.asarray((np.arange(6, dtype=np.float32) / 4).reshape(2, 3))
+    b = jnp.asarray((np.arange(6, dtype=np.float32) - 2).reshape(3, 2))
+
+    def run():
+        kw = {"implementation": impl} if impl != "none" else {}
+        return text_of(jax.nn.scaled_dot_general(a, b, (((1,), (0,)), ((), ())), **kw))
+    return run
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -421,6 +432,9 @@ def main():
         add(run_case(jax, device_thunk(jax, jnp, name)),
             id=f"device_{name.replace(chr(39), '_') or 'empty'}",
             group="device", case=name)
+    for impl in SDG_CASES:
+        add(run_case(jax, sdg_thunk(jax, jnp, impl)), id=f"sdg_{impl}",
+            group="sdg", case=impl)
     for name in REUSE_CASES:
         add(run_case(jax, reuse_thunk(jax, jnp, name)),
             id=f"reuse_{name}", group="reuse", case=name)

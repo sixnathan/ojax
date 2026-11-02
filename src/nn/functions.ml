@@ -431,7 +431,10 @@ let get_scaled_dot_general_config ?global_scale mode =
 let scaled_dot_general ?(preferred_element_type = D.F32) ?configs
     ?(implementation : string option) ~lhs_contract ~rhs_contract ~lhs_batch
     ~rhs_batch a b =
-  ignore implementation;
+  if implementation <> None then
+    Py_warnings.warn ~category:"DeprecationWarning"
+      "Backend selector, now ignored. The system chooses the backend \
+       automatically.";
   (match configs with
   | Some (_ : block_scale_config list) ->
       (match preferred_element_type with

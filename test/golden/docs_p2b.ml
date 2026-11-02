@@ -354,6 +354,15 @@ let device_thunk name () =
            (NL.arange ~dtype:(Docs_p2.float_dt ()) 3.0)
            (Docs_p2.py_float 1.0)))
 
+let sdg_thunk impl () =
+  let a = f32 [| 2; 3 |] (Array.init 6 (fun k -> float_of_int k /. 4.0))
+  and b = f32 [| 3; 2 |] (Array.init 6 (fun k -> float_of_int (k - 2))) in
+  Docs_p2.text_of
+    (Ojax.Nn.Functions.scaled_dot_general
+       ?implementation:(if impl = "none" then None else Some impl)
+       ~lhs_contract:[| 1 |] ~rhs_contract:[| 0 |] ~lhs_batch:[||]
+       ~rhs_batch:[||] a b)
+
 let actual_of row =
   let thunk =
     match str row "group" with
@@ -367,6 +376,7 @@ let actual_of row =
     | "reuse" -> reuse_thunk (str row "case")
     | "poly" -> poly_thunk (str row "case")
     | "device" -> device_thunk (str row "case")
+    | "sdg" -> sdg_thunk (str row "case")
     | "oom" -> oom_thunk (str row "case") (U.to_int (U.member "log2" row))
     | "signal" ->
         signal_thunk (str row "case") (str row "input")

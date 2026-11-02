@@ -3682,16 +3682,25 @@ and emit_private_function ctx fname (c : closed_jaxpr) =
     List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) c.jaxpr.outs
   in
   let results =
-    match out_types with [ t ] -> t | ts -> "(" ^ String.concat ", " ts ^ ")"
+    match out_types with
+    | [] -> ""
+    | [ t ] -> " -> " ^ t
+    | ts -> " -> (" ^ String.concat ", " ts ^ ")"
+  in
+  let return =
+    match out_names with
+    | [] -> "    return\n"
+    | _ ->
+        Printf.sprintf "    return %s : %s\n"
+          (String.concat ", " out_names)
+          (String.concat ", " out_types)
   in
   Buffer.add_string ctx.extras
-    (Printf.sprintf
-       "  func.func private @%s(%s) -> %s {\n%s    return %s : %s\n  }\n" fname
+    (Printf.sprintf "  func.func private @%s(%s)%s {\n%s%s  }\n" fname
        (String.concat ", " params)
        results
        (Buffer.contents inner.buf)
-       (String.concat ", " out_names)
-       (String.concat ", " out_types));
+       return);
   Buffer.add_buffer ctx.extras inner.extras
 
 and widen_operands ctx (eqn : eqn) (in_ids : int list) =

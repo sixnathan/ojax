@@ -73,6 +73,8 @@ let python_repr_float x =
 let shape_str shape =
   "[" ^ String.concat "," (Array.to_list (Array.map string_of_int shape)) ^ "]"
 
+let custom_view_names : (int, string) Hashtbl.t = Hashtbl.create 8
+let varying_axes : (int, string list) Hashtbl.t = Hashtbl.create 16
 let aval_short (a : aval) = Dtype.short_name a.dtype ^ shape_str a.shape
 
 let int_tuple arr =
@@ -229,6 +231,8 @@ let prim_name = function
   | Xla_call _ -> "xla_call"
   | Collective _ -> "collective"
   | Fft _ -> "fft"
+  | Custom_jvp_call id when Hashtbl.mem custom_view_names id ->
+      Hashtbl.find custom_view_names id
   | Custom_jvp_call _ -> "custom_jvp_call"
   | Custom_vjp_call _ -> "custom_vjp_call"
   | Custom_lin _ -> "custom_lin"
@@ -494,6 +498,15 @@ type jax_param =
   | Plain of string
   | Sub of closed_jaxpr
   | Subs of closed_jaxpr list
+
+let custom_view_params : (int, (string * jax_param) list) Hashtbl.t =
+  Hashtbl.create 8
+
+let register_custom_view id name params =
+  Hashtbl.replace custom_view_names id name;
+  Hashtbl.replace custom_view_params id params
+
+let note_varying vid axes = Hashtbl.replace varying_axes vid axes
 
 let py_tuple items =
   match items with
@@ -991,6 +1004,11 @@ let insertion_order (e : eqn) =
   | Cond { branches; _ } -> branches
   | Select_and_scatter { select_jaxpr; scatter_jaxpr; _ } ->
       [ select_jaxpr; scatter_jaxpr ]
+  | Custom_jvp_call id when Hashtbl.mem custom_view_params id ->
+      List.concat_map
+        (fun (_, p) ->
+          match p with Sub c -> [ c ] | Subs cs -> cs | Plain _ -> [])
+        (Hashtbl.find custom_view_params id)
   | Custom_jvp_call _ -> (
       match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
   | _ ->
@@ -1114,6 +1132,11 @@ let pp_binders ctx (vars : var list) =
       if Hashtbl.mem ctx.keys v.vid then key_short v.vaval
       else aval_short v.vaval
     in
+    let short =
+      match Hashtbl.find_opt varying_axes v.vid with
+      | Some (_ :: _ as axes) -> short ^ "{V:" ^ String.concat "," axes ^ "}"
+      | _ -> short
+    in
     Layout.Text (name ^ ":" ^ short)
   in
   Layout.Nest
@@ -1229,6 +1252,8 @@ and pp_eqn ctx (e : eqn) =
           suggest_names ctx c.jaxpr.outs (List.map (fun v -> A_var v) e.outs)
         end;
         [ ("name", Plain (xla_call_name c)) ]
+    | Custom_jvp_call id when Hashtbl.mem custom_view_params id ->
+        Hashtbl.find custom_view_params id
     | Custom_jvp_call _ -> (
         match custom_call_of e with
         | Some (name, jvp_name, c) ->

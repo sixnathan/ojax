@@ -158,6 +158,20 @@ def reference():
         "text": _strip_locations(export.export(jax.jit(h2), platforms=["cpu"])(z3).mlir_module()),
         "values": [],
     }
+    z8 = np.zeros(8, np.float32)
+    rows["jaxpr_dependent"] = {"text": str(jax.make_jaxpr(h2)(z8)), "values": []}
+    rows["jaxpr_shard_map"] = {
+        "text": str(jax.make_jaxpr(lambda x: jax.shard_map(jnp.sin, mesh=mesh4, in_specs=P("i"), out_specs=P("i"))(x))(z8)),
+        "values": [],
+    }
+    rows["jaxpr_shard_psum"] = {
+        "text": str(jax.make_jaxpr(lambda x: jax.shard_map(lambda y: jnp.sin(y) + jax.lax.psum(y, "i"), mesh=mesh4, in_specs=P("i"), out_specs=P("i"))(x))(z8)),
+        "values": [],
+    }
+    rows["jaxpr_constraint"] = {
+        "text": str(jax.make_jaxpr(lambda x: jax.lax.with_sharding_constraint(x, NamedSharding(mesh4, P("i"))))(z8)),
+        "values": [],
+    }
     rows["lower_dependent"] = {"text": jax.jit(h2).lower(z3).as_text(), "values": []}
     multi = export.export(jax.jit(staged), platforms=platforms)(zeros, zeros)
     rows["export_multi_scan"] = {"text": _strip_locations(multi.mlir_module()), "values": []}

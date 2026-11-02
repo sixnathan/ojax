@@ -33,7 +33,9 @@ let vector8 =
 
 let mesh22 = lazy (S.make_mesh [ 2; 2 ] [ "a"; "b" ])
 let mesh2 = lazy (S.make_mesh [ 2 ] [ "x" ])
-let mesh4 = lazy (S.make_mesh [ 4 ] [ "i" ])
+
+let mesh4 =
+  lazy (Ojax.Spmd.make_mesh ~axis_types:[ Ojax.Spmd.Auto ] [ 4 ] [ "i" ])
 
 let mesh_tail =
   lazy
@@ -290,6 +292,39 @@ let single_device oc =
   write "export_single_dependent"
     (Ojax.Export.export ~fun_name:"h2" ~platforms:[ "cpu" ] dependent z3)
       .Ojax.Export.mlir_module;
+  write "jaxpr_dependent"
+    (Ojax.Pretty_printer.closed_jaxpr_to_jax_string
+       (Ojax.Jaxpr.make_jaxpr [ f32_aval [| 8 |] ] dependent));
+  let jaxpr_of f =
+    let flat, tree = Tr.tree_flatten (Tr.Tuple [ Tr.Leaf vector8 ]) in
+    let wrapped, _ = Ojax.Api_util.flatten_fun f tree in
+    Ojax.Pretty_printer.closed_jaxpr_to_jax_string
+      (Ojax.Jaxpr.make_jaxpr
+         (List.map Ojax.Core.get_aval flat)
+         (Ojax.Linear_util.call_wrapped wrapped))
+  in
+  write "jaxpr_shard_map"
+    (jaxpr_of
+       (unary (fun x ->
+            leaf
+              (S.shard_map ~mesh:(Lazy.force mesh4)
+                 ~in_specs:[ [ S.Named "i" ] ] ~out_specs:[ [ S.Named "i" ] ]
+                 (unary U.sin) [ Tr.Leaf x ]))));
+  write "jaxpr_shard_psum"
+    (jaxpr_of
+       (unary (fun x ->
+            leaf
+              (S.shard_map ~mesh:(Lazy.force mesh4)
+                 ~in_specs:[ [ S.Named "i" ] ] ~out_specs:[ [ S.Named "i" ] ]
+                 (unary (fun y ->
+                      U.add (U.sin y) (Ojax.Parallel.psum y ~axis_name:"i")))
+                 [ Tr.Leaf x ]))));
+  write "jaxpr_constraint"
+    (jaxpr_of
+       (unary (fun x ->
+            leaf
+              (S.with_sharding_constraint (Tr.Leaf x)
+                 (S.named_sharding (Lazy.force mesh4) [ S.Named "i" ])))));
   write "lower_dependent"
     (Ojax.Stages.as_jax_text ~name:"h2" (Ojax.Stages.lower dependent z3));
   let scan_where = function x :: _ -> [ staged x ] | [] -> failwith "arity" in

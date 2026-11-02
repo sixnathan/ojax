@@ -20,6 +20,7 @@
   compose_fuzz
   jit_opts
   docs_p2
+  aot_cost
   custom_ad
   keys_arrays
   index_fuzz
@@ -34,6 +35,7 @@
   (source_tree %{project_root}/goldens/jit_opts)
   (source_tree %{project_root}/goldens/user_dtype)
   (source_tree %{project_root}/goldens/docs_p2)
+  (source_tree %{project_root}/goldens/aot_cost)
   (source_tree %{project_root}/goldens/lax)
   (source_tree %{project_root}/goldens/lax_smoke)
   (source_tree %{project_root}/goldens/jaxpr)

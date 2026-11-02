@@ -5419,6 +5419,8 @@ let () =
          Jit_opts.suite_for ~set:"user_dtype" true;
          Docs_p2.suite_for false;
          Docs_p2.suite_for true;
+         Aot_cost.suite_for false;
+         Aot_cost.suite_for true;
          ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
          ( "row_ratchet",
            [

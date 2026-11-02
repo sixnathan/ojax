@@ -230,6 +230,8 @@ bl_svdvals_2x3x3_5cd50dfb_float32_edge:eager:out0	1
 bl_svdvals_2x3x3_5cd50dfb_float32_edge:jit:out0	1
 bl_svdvals_2x3x3_5cd50dfb_float32_shape_other:eager:out0	1
 bl_svdvals_2x3x3_5cd50dfb_float32_shape_other:jit:out0	1
+bl_svdvals_2x3x3_5cd50dfb_float32_shape_small:eager:both_raise	0
+bl_svdvals_2x3x3_5cd50dfb_float32_shape_small:jit:both_raise	0
 bl_svdvals_2x3x3_5cd50dfb_float32_wide:eager:out0	1
 bl_svdvals_2x3x3_5cd50dfb_float32_wide:jit:out0	1
 bl_svdvals_3x3_38660d7d_float32_edge:eager:out0	1
@@ -446,6 +448,8 @@ cl_grad_eigvals_3x3_6f500ed1_float32_edge:eager:out0	1
 cl_grad_eigvals_3x3_6f500ed1_float32_edge:jit:out0	1
 cl_grad_eigvals_3x3_6f500ed1_float32_shape_other:eager:out0	1
 cl_grad_eigvals_3x3_6f500ed1_float32_shape_other:jit:out0	1
+cl_grad_eigvals_3x3_6f500ed1_float32_shape_small:eager:both_raise	0
+cl_grad_eigvals_3x3_6f500ed1_float32_shape_small:jit:both_raise	0
 cl_grad_eigvals_3x3_6f500ed1_float32_wide:eager:out0	1
 cl_grad_eigvals_3x3_6f500ed1_float32_wide:jit:out0	1
 cl_grad_eigvalsh_2x3x3_97bb0f4f_float32_edge:eager:out0	1
@@ -498,6 +502,8 @@ cl_grad_svdvals_4x2_6f530ed1_float32_edge:eager:out0	1
 cl_grad_svdvals_4x2_6f530ed1_float32_edge:jit:out0	1
 cl_grad_svdvals_4x2_6f530ed1_float32_shape_other:eager:out0	1
 cl_grad_svdvals_4x2_6f530ed1_float32_shape_other:jit:out0	1
+cl_grad_svdvals_4x2_6f530ed1_float32_shape_small:eager:both_raise	0
+cl_grad_svdvals_4x2_6f530ed1_float32_shape_small:jit:both_raise	0
 cl_grad_svdvals_4x2_6f530ed1_float32_wide:eager:out0	1
 cl_grad_svdvals_4x2_6f530ed1_float32_wide:jit:out0	1
 cl_inv_2x3x3_97bb0f4f_float32_edge:eager:out0	1
@@ -598,6 +604,8 @@ cl_svdvals_2x4_6f4d0ed1_float32_edge:eager:out0	1
 cl_svdvals_2x4_6f4d0ed1_float32_edge:jit:out0	1
 cl_svdvals_2x4_6f4d0ed1_float32_shape_other:eager:out0	1
 cl_svdvals_2x4_6f4d0ed1_float32_shape_other:jit:out0	1
+cl_svdvals_2x4_6f4d0ed1_float32_shape_small:eager:both_raise	0
+cl_svdvals_2x4_6f4d0ed1_float32_shape_small:jit:both_raise	0
 cl_svdvals_2x4_6f4d0ed1_float32_wide:eager:out0	1
 cl_svdvals_2x4_6f4d0ed1_float32_wide:jit:out0	1
 cl_svdvals_3x3_6f500ed1_float32_edge:eager:out0	1
@@ -1060,6 +1068,8 @@ gp_qr_full_4x2_38690d7d_float32_shape_other:eager:out0	1
 gp_qr_full_4x2_38690d7d_float32_shape_other:eager:out1	1
 gp_qr_full_4x2_38690d7d_float32_shape_other:jit:out0	1
 gp_qr_full_4x2_38690d7d_float32_shape_other:jit:out1	1
+gp_qr_full_4x2_38690d7d_float32_shape_small:eager:both_raise	0
+gp_qr_full_4x2_38690d7d_float32_shape_small:jit:both_raise	0
 gp_qr_full_4x2_38690d7d_float32_wide:eager:out0	1
 gp_qr_full_4x2_38690d7d_float32_wide:eager:out1	1
 gp_qr_full_4x2_38690d7d_float32_wide:jit:out0	1
@@ -1794,6 +1804,8 @@ lx_ormqr_4x3_2x4_0c0c2623_float32_edge:eager:out0	1
 lx_ormqr_4x3_2x4_0c0c2623_float32_edge:jit:out0	1
 lx_ormqr_4x3_2x4_0c0c2623_float32_shape_other:eager:out0	1
 lx_ormqr_4x3_2x4_0c0c2623_float32_shape_other:jit:out0	1
+lx_ormqr_4x3_2x4_0c0c2623_float32_shape_small:eager:both_raise	0
+lx_ormqr_4x3_2x4_0c0c2623_float32_shape_small:jit:both_raise	0
 lx_ormqr_4x3_2x4_0c0c2623_float32_wide:eager:out0	1
 lx_ormqr_4x3_2x4_0c0c2623_float32_wide:jit:out0	1
 lx_ormqr_4x3_2x4_ca0c2330_float32_edge:eager:out0	1
@@ -1808,6 +1820,8 @@ lx_ormqr_4x3_2x4_e68d25d8_float32_edge:eager:out0	1
 lx_ormqr_4x3_2x4_e68d25d8_float32_edge:jit:out0	1
 lx_ormqr_4x3_2x4_e68d25d8_float32_shape_other:eager:out0	1
 lx_ormqr_4x3_2x4_e68d25d8_float32_shape_other:jit:out0	1
+lx_ormqr_4x3_2x4_e68d25d8_float32_shape_small:eager:both_raise	0
+lx_ormqr_4x3_2x4_e68d25d8_float32_shape_small:jit:both_raise	0
 lx_ormqr_4x3_2x4_e68d25d8_float32_wide:eager:out0	1
 lx_ormqr_4x3_2x4_e68d25d8_float32_wide:jit:out0	1
 lx_ormqr_4x3_2x4_ecd4237b_float32_edge:eager:out0	1
@@ -1838,12 +1852,16 @@ lx_ormqr_4x3_4x2_cb0a2330_float32_edge:eager:out0	1
 lx_ormqr_4x3_4x2_cb0a2330_float32_edge:jit:out0	1
 lx_ormqr_4x3_4x2_cb0a2330_float32_shape_other:eager:out0	1
 lx_ormqr_4x3_4x2_cb0a2330_float32_shape_other:jit:out0	1
+lx_ormqr_4x3_4x2_cb0a2330_float32_shape_small:eager:both_raise	0
+lx_ormqr_4x3_4x2_cb0a2330_float32_shape_small:jit:both_raise	0
 lx_ormqr_4x3_4x2_cb0a2330_float32_wide:eager:out0	1
 lx_ormqr_4x3_4x2_cb0a2330_float32_wide:jit:out0	1
 lx_ormqr_4x3_4x2_e78b25d8_float32_edge:eager:out0	1
 lx_ormqr_4x3_4x2_e78b25d8_float32_edge:jit:out0	1
 lx_ormqr_4x3_4x2_e78b25d8_float32_shape_other:eager:out0	1
 lx_ormqr_4x3_4x2_e78b25d8_float32_shape_other:jit:out0	1
+lx_ormqr_4x3_4x2_e78b25d8_float32_shape_small:eager:both_raise	0
+lx_ormqr_4x3_4x2_e78b25d8_float32_shape_small:jit:both_raise	0
 lx_ormqr_4x3_4x2_e78b25d8_float32_wide:eager:out0	1
 lx_ormqr_4x3_4x2_e78b25d8_float32_wide:jit:out0	1
 lx_polar_2x3x3_354b1957_float32_edge:eager:out0	1
@@ -2484,6 +2502,8 @@ lx_qr_pivot_4x3_226111cb_float32_shape_other:eager:out0	1
 lx_qr_pivot_4x3_226111cb_float32_shape_other:eager:out1	1
 lx_qr_pivot_4x3_226111cb_float32_shape_other:jit:out0	1
 lx_qr_pivot_4x3_226111cb_float32_shape_other:jit:out1	1
+lx_qr_pivot_4x3_226111cb_float32_shape_small:eager:both_raise	0
+lx_qr_pivot_4x3_226111cb_float32_shape_small:jit:both_raise	0
 lx_qr_pivot_4x3_226111cb_float32_wide:eager:out0	1
 lx_qr_pivot_4x3_226111cb_float32_wide:eager:out1	1
 lx_qr_pivot_4x3_226111cb_float32_wide:jit:out0	1
@@ -2568,6 +2588,8 @@ lx_qr_pivot_4x3_dccc1077_float32_shape_other:eager:out0	1
 lx_qr_pivot_4x3_dccc1077_float32_shape_other:eager:out1	1
 lx_qr_pivot_4x3_dccc1077_float32_shape_other:jit:out0	1
 lx_qr_pivot_4x3_dccc1077_float32_shape_other:jit:out1	1
+lx_qr_pivot_4x3_dccc1077_float32_shape_small:eager:both_raise	0
+lx_qr_pivot_4x3_dccc1077_float32_shape_small:jit:both_raise	0
 lx_qr_pivot_4x3_dccc1077_float32_wide:eager:out0	1
 lx_qr_pivot_4x3_dccc1077_float32_wide:eager:out1	1
 lx_qr_pivot_4x3_dccc1077_float32_wide:jit:out0	1
@@ -2580,6 +2602,7 @@ lx_rsf2csf_4x4_387b0d7f_float32_shape_other:eager:out0	1
 lx_rsf2csf_4x4_387b0d7f_float32_shape_other:eager:out1	1
 lx_rsf2csf_4x4_387b0d7f_float32_shape_other:jit:out0	1
 lx_rsf2csf_4x4_387b0d7f_float32_shape_other:jit:out1	1
+lx_rsf2csf_4x4_387b0d7f_float32_shape_small:eager:both_raise	0
 lx_rsf2csf_4x4_387b0d7f_float32_shape_small:jit:both_raise	0
 lx_rsf2csf_4x4_387b0d7f_float32_wide:eager:out0	1
 lx_rsf2csf_4x4_387b0d7f_float32_wide:eager:out1	1
@@ -2609,6 +2632,7 @@ lx_schur_complex_3x3_6f500ed1_float32_shape_other:eager:out0	1
 lx_schur_complex_3x3_6f500ed1_float32_shape_other:eager:out1	1
 lx_schur_complex_3x3_6f500ed1_float32_shape_other:jit:out0	1
 lx_schur_complex_3x3_6f500ed1_float32_shape_other:jit:out1	1
+lx_schur_complex_3x3_6f500ed1_float32_shape_small:eager:both_raise	0
 lx_schur_complex_3x3_6f500ed1_float32_shape_small:jit:both_raise	0
 lx_schur_complex_3x3_6f500ed1_float32_wide:eager:out0	1
 lx_schur_complex_3x3_6f500ed1_float32_wide:eager:out1	1
@@ -2636,6 +2660,7 @@ lx_sqrtm_3x3_6f500ed1_float32_shape_other:eager:out0	1
 lx_sqrtm_3x3_6f500ed1_float32_shape_other:eager:out1	1
 lx_sqrtm_3x3_6f500ed1_float32_shape_other:jit:out0	1
 lx_sqrtm_3x3_6f500ed1_float32_shape_other:jit:out1	1
+lx_sqrtm_3x3_6f500ed1_float32_shape_small:eager:both_raise	0
 lx_sqrtm_3x3_6f500ed1_float32_shape_small:jit:both_raise	0
 lx_sqrtm_3x3_6f500ed1_float32_wide:eager:out0	1
 lx_sqrtm_3x3_6f500ed1_float32_wide:eager:out1	1
@@ -2665,6 +2690,8 @@ lx_tridiagonal_4x4_6f650ed3_float32_shape_other:eager:out0	1
 lx_tridiagonal_4x4_6f650ed3_float32_shape_other:eager:out1	1
 lx_tridiagonal_4x4_6f650ed3_float32_shape_other:jit:out0	1
 lx_tridiagonal_4x4_6f650ed3_float32_shape_other:jit:out1	1
+lx_tridiagonal_4x4_6f650ed3_float32_shape_small:eager:both_raise	0
+lx_tridiagonal_4x4_6f650ed3_float32_shape_small:jit:both_raise	0
 lx_tridiagonal_4x4_6f650ed3_float32_wide:eager:out0	1
 lx_tridiagonal_4x4_6f650ed3_float32_wide:eager:out1	1
 lx_tridiagonal_4x4_6f650ed3_float32_wide:jit:out0	1
@@ -4794,6 +4821,8 @@ sp_detrend_3x5_0951156d_float32_edge:eager:out0	1
 sp_detrend_3x5_0951156d_float32_edge:jit:out0	1
 sp_detrend_3x5_0951156d_float32_shape_other:eager:out0	1
 sp_detrend_3x5_0951156d_float32_shape_other:jit:out0	1
+sp_detrend_3x5_0951156d_float32_shape_small:eager:both_raise	0
+sp_detrend_3x5_0951156d_float32_shape_small:jit:both_raise	0
 sp_detrend_3x5_0951156d_float32_wide:eager:out0	1
 sp_detrend_3x5_0951156d_float32_wide:jit:out0	1
 sp_detrend_6_3410130f_float32_edge:eager:out0	1
@@ -15107,6 +15136,7 @@ sx_lpmn_values_4_596512ef_float32_wide:eager:out0	1
 sx_lpmn_values_4_596512ef_float32_wide:jit:out0	1
 sx_sph_3_fa591691_float32_edge:eager:out0	1
 sx_sph_3_fa591691_float32_edge:jit:out0	1
+sx_sph_3_fa591691_float32_shape_other:eager:both_raise	0
 sx_sph_3_fa591691_float32_shape_other:jit:both_raise	0
 sx_sph_3_fa591691_float32_shape_small:eager:both_raise	0
 sx_sph_3_fa591691_float32_shape_small:jit:both_raise	0

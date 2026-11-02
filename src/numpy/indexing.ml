@@ -10,14 +10,7 @@ let dtype v = (get_aval v).T.dtype
 let ndim v = Array.length (shape v)
 let size v = Array.fold_left ( * ) 1 (shape v)
 let bind1 = C.bind1
-
-let canonicalize_axis ax n =
-  let a = if ax < 0 then ax + n else ax in
-  if a < 0 || a >= n then
-    invalid_arg
-      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" ax n);
-  a
-
+let canonicalize_axis = Validate.canonicalize_axis
 let full dt sh x = Core.splat dt sh x
 
 let iota dt sh dim =
@@ -57,8 +50,7 @@ let take ?axis ?mode ?fill_value ?(unique_indices = false)
   let axis_size = ash.(axis_idx) in
   if axis_size = 0 && Array.fold_left ( * ) 1 ish <> 0 then
     raise
-      (Errors.Jax_index_error
-         "Cannot do a non-empty jnp.take() from an empty axis.");
+      (Py_exn.Index_error "Cannot do a non-empty jnp.take() from an empty axis.");
   let indices =
     match mode with
     | Some "clip" -> indices
@@ -72,8 +64,7 @@ let take ?axis ?mode ?fill_value ?(unique_indices = false)
   let indices_size = Array.fold_left ( * ) 1 ish in
   if axis_size = 0 && indices_size <> 0 then
     raise
-      (Errors.Jax_index_error
-         "Cannot do a non-empty jnp.take() from an empty axis.");
+      (Py_exn.Index_error "Cannot do a non-empty jnp.take() from an empty axis.");
   if axis_size = 0 then a
   else if indices_size = 0 then
     full (dtype a)
@@ -541,7 +532,7 @@ let check_nonempty_axes sh count =
   for axis = 0 to count - 1 do
     if sh.(axis) = 0 then
       raise
-        (Errors.Jax_index_error
+        (Py_exn.Index_error
            (Printf.sprintf "index is out of bounds for axis %d with size 0" axis))
   done
 

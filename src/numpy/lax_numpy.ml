@@ -8,14 +8,7 @@ let shape v = (get_aval v).T.shape
 let dtype v = (get_aval v).T.dtype
 let ndim v = Array.length (shape v)
 let size v = Array.fold_left ( * ) 1 (shape v)
-
-let canonicalize_axis ax n =
-  let a = if ax < 0 then ax + n else ax in
-  if a < 0 || a >= n then
-    invalid_arg
-      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" ax n);
-  a
-
+let canonicalize_axis = Validate.canonicalize_axis
 let const_full dt sh x = Core.splat dt sh x
 let zeros_like v = const_full (dtype v) (shape v) 0.0
 let bind1 = C.bind1
@@ -40,17 +33,7 @@ let convert v dt =
   if dtype v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
 
 let broadcast_to = Jnp_util.broadcast_to
-
-let broadcast_shapes a b =
-  let na = Array.length a and nb = Array.length b in
-  let n = max na nb in
-  Array.init n (fun i ->
-      let da = if i < n - na then 1 else a.(i - (n - na)) in
-      let db = if i < n - nb then 1 else b.(i - (n - nb)) in
-      if da = db then da
-      else if da = 1 then db
-      else if db = 1 then da
-      else invalid_arg "broadcast: incompatible shapes")
+let broadcast_shapes a b = Validate.broadcast_shapes [ a; b ]
 
 let promote2 x y =
   let dt, _ =
@@ -218,7 +201,7 @@ let diff ?(n = 1) ?(axis = -1) ?prepend ?append v =
   else begin
     if n < 0 then invalid_arg "diff: order must be non-negative";
     let nd = ndim v in
-    if nd = 0 then invalid_arg "diff requires at least one dimension";
+    if nd = 0 then Py_exn.value_error "diff requires at least one dimension";
     let axis = canonicalize_axis axis nd in
     let edge w =
       if ndim w = 0 then begin
@@ -411,7 +394,7 @@ let conv1d_body ~mode ~correlating a v =
   in
   let a = convert a dt and v = convert v dt in
   let la = (shape a).(0) and lv = (shape v).(0) in
-  if la = 0 || lv = 0 then invalid_arg "conv: inputs cannot be empty";
+  if la = 0 || lv = 0 then Py_exn.value_error "conv: inputs cannot be empty";
   let v =
     match dtype v with
     | (D.Complex64 | D.Complex128) when correlating -> bind1 T.Conj [ v ]
@@ -801,7 +784,7 @@ let moveaxis source destination v =
   List.iter (fun (d, s) -> perm := insert !perm d s) pairs;
   bind1 (T.Transpose (Array.of_list !perm)) [ v ]
 
-let broadcast_shapes_n shapes = List.fold_left broadcast_shapes [||] shapes
+let broadcast_shapes_n = Validate.broadcast_shapes
 
 let broadcast_arrays vs =
   let sh =
@@ -1554,18 +1537,19 @@ let append ?axis p0 p1 =
 let argmax ?axis ?(keepdims = false) a =
   (match dtype a with
   | D.Complex64 | D.Complex128 ->
-      raise (Errors.jax_type_error "argmax does not accept complex input.")
+      raise (Py_exn.Type_error "argmax does not accept complex input.")
   | _ -> ());
   let orig_nd = ndim a in
   let a2, ax, dims =
     match axis with
     | None -> (ravel a, 0, Array.init orig_nd Fun.id)
     | Some x ->
+        ignore (Validate.tuple_index (shape a) x);
         let c = canonicalize_axis x orig_nd in
         (a, c, [| c |])
   in
   if (shape a2).(ax) = 0 then
-    invalid_arg "attempt to get argmax of an empty sequence";
+    Py_exn.value_error "attempt to get argmax of an empty sequence";
   let r =
     bind1
       (T.Argmax { axis = ax; index_dtype = Dtypes.default_int_dtype () })
@@ -1581,7 +1565,7 @@ let cross ?(axisa = -1) ?(axisb = -1) ?(axisc = -1) ?axis a b =
   let b = moveaxis [| axisb |] [| ndim b - 1 |] b in
   let na = (shape a).(ndim a - 1) and nb = (shape b).(ndim b - 1) in
   if not ((na = 2 || na = 3) && (nb = 2 || nb = 3)) then
-    invalid_arg "Dimension must be either 2 or 3 for cross product";
+    Py_exn.value_error "Dimension must be either 2 or 3 for cross product";
   if na = 2 && nb = 2 then
     let a0 = last_index a 0 and a1 = last_index a 1 in
     let b0 = last_index b 0 and b1 = last_index b 1 in
@@ -1649,7 +1633,8 @@ let batch_mask mask s =
 let tril ?(k = 0) m =
   let s = shape m in
   let nd = Array.length s in
-  if nd < 2 then invalid_arg "Argument to jax.numpy.tril must be at least 2D";
+  if nd < 2 then
+    Py_exn.value_error "Argument to jax.numpy.tril must be at least 2D";
   Jnp_util.jit1 "tril" ~key:(string_of_int k)
     (function
       | [ m ] ->
@@ -1838,7 +1823,7 @@ let diag ?(k = 0) v =
       in
       where_ mask col (zero ())
   | 2 -> diagonal ~offset:k v
-  | _ -> invalid_arg "diag input must be 1d or 2d"
+  | _ -> Py_exn.value_error "diag input must be 1d or 2d"
 
 let diag ?k a0 =
   Eager_jit.one ~jit:"_diag" "numpy.lax_numpy.diag" k [] [ a0 ]
@@ -1912,7 +1897,7 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
   | None ->
       if l = 0 then
         raise
-          (Errors.Jax_index_error
+          (Py_exn.Index_error
              (Printf.sprintf "index is out of bounds for axis %d with size 0"
                 (nd - 1)));
       let s = Reductions.sum ~axis:[| nd - 1 |] y in
@@ -1958,18 +1943,19 @@ let scalar_at v i = squeeze (slice_axis v 0 i (i + 1))
 let argmin ?axis ?(keepdims = false) a =
   (match dtype a with
   | D.Complex64 | D.Complex128 ->
-      raise (Errors.jax_type_error "argmin does not accept complex input.")
+      raise (Py_exn.Type_error "argmin does not accept complex input.")
   | _ -> ());
   let orig_nd = ndim a in
   let a2, ax, dims =
     match axis with
     | None -> (ravel a, 0, Array.init orig_nd Fun.id)
     | Some x ->
+        ignore (Validate.tuple_index (shape a) x);
         let c = canonicalize_axis x orig_nd in
         (a, c, [| c |])
   in
   if (shape a2).(ax) = 0 then
-    invalid_arg "attempt to get argmin of an empty sequence";
+    Py_exn.value_error "attempt to get argmin of an empty sequence";
   let r =
     bind1
       (T.Argmin { axis = ax; index_dtype = Dtypes.default_int_dtype () })
@@ -1980,7 +1966,7 @@ let argmin ?axis ?(keepdims = false) a =
 let nanargmax ?axis ?(keepdims = false) a =
   (match dtype a with
   | D.Complex64 | D.Complex128 ->
-      raise (Errors.jax_type_error "nanargmax does not accept complex input.")
+      raise (Py_exn.Type_error "nanargmax does not accept complex input.")
   | _ -> ());
   if not (is_inexact (dtype a)) then argmax ?axis ~keepdims a
   else begin
@@ -1994,7 +1980,7 @@ let nanargmax ?axis ?(keepdims = false) a =
 let nanargmin ?axis ?(keepdims = false) a =
   (match dtype a with
   | D.Complex64 | D.Complex128 ->
-      raise (Errors.jax_type_error "nanargmin does not accept complex input.")
+      raise (Py_exn.Type_error "nanargmin does not accept complex input.")
   | _ -> ());
   if not (is_inexact (dtype a)) then argmin ?axis ~keepdims a
   else begin
@@ -2376,7 +2362,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
       Option.iter (check_weights "aweights") aweights;
       (match fweights with
       | Some f when not (is_integral (dtype_of f)) ->
-          raise (Errors.jax_type_error "fweights must be integer.")
+          raise (Py_exn.Type_error "fweights must be integer.")
       | _ -> ());
       let magnitude w =
         match dtype_of w with

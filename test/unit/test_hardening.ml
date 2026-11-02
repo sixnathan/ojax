@@ -65,7 +65,11 @@ let complexes name ?(tol = 1e-4) dt expected v =
 let raises name f =
   match f () with
   | _ -> Alcotest.failf "%s should raise" name
-  | exception (Failure _ | Invalid_argument _ | Errors.Jax_type_error _) -> ()
+  | exception
+      ( Failure _ | Invalid_argument _ | Py_exn.Type_error _
+      | Py_exn.Value_error _ | Py_exn.Index_error _ | Py_exn.Overflow_error _
+      | Py_exn.Not_implemented_error _ ) ->
+      ()
 
 let unhex s =
   String.init

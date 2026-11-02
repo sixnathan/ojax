@@ -46,7 +46,7 @@ let matmul ?precision ?preferred a b =
       List.iteri
         (fun i n ->
           if n < 1 then
-            invalid_arg
+            Py_exn.value_error
               (Printf.sprintf
                  "matmul input operand %d must have ndim at least 1, but it \
                   has ndim %d"
@@ -178,7 +178,7 @@ let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
     match axes with
     | Ax_int k ->
         if k > min na nb then
-          invalid_arg "tensordot: number of axes exceeds input ranks";
+          Py_exn.type_error "tensordot: number of axes exceeds input ranks";
         (Array.init k (fun i -> na - k + i), Array.init k Fun.id)
     | Ax_pair (ax1, ax2) ->
         if Array.length ax1 <> Array.length ax2 then

@@ -100,7 +100,7 @@ let raises name f =
     try
       ignore (f ());
       false
-    with Failure _ | Invalid_argument _ -> true
+    with Failure _ | Invalid_argument _ | Py_exn.Value_error _ -> true
   in
   Alcotest.(check bool) name true failed
 

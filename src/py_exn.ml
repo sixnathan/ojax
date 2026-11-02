@@ -26,6 +26,9 @@ exception Type_promotion_error of string
 let value_error message = raise (Value_error message)
 let type_error message = raise (Type_error message)
 let index_error message = raise (Index_error message)
+let not_implemented_error message = raise (Not_implemented_error message)
+let runtime_error message = raise (Runtime_error message)
+let key_error message = raise (Key_error message)
 
 let classify = function
   | Value_error m -> Some ("ValueError", m)

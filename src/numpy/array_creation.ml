@@ -77,7 +77,9 @@ let statics_key statics =
 
 let linspace_parts ~retstep ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype
     start stop =
-  if num < 0 then invalid_arg "linspace: num must be non-negative";
+  if num < 0 then
+    Py_exn.value_error
+      (Printf.sprintf "Number of samples, %d, must be non-negative." num);
   let key =
     Printf.sprintf "%d %b %d %s %b" num endpoint axis (dtype_key dtype) retstep
   in

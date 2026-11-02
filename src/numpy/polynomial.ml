@@ -55,7 +55,10 @@ let neg v = bind1 T.Neg [ v ]
 let polyval ?(unroll = 16) p x =
   let p, x = two (promote_dtypes [ p; x ]) in
   let sh_p = shape p in
-  let tail = Array.sub sh_p 1 (Array.length sh_p - 1) in
+  let tail =
+    if Array.length sh_p = 0 then [||]
+    else Array.sub sh_p 1 (Array.length sh_p - 1)
+  in
   let out_sh = NL.broadcast_shapes_n [ tail; shape x ] in
   let y0 = const_full (dtype x) out_sh 0.0 in
   let body carry =
@@ -109,9 +112,15 @@ let tail_add x y =
           }))
     [ x; indices; y ]
 
+let py_len v =
+  match shape v with
+  | [||] -> Py_exn.type_error "len() of unsized object"
+  | dims -> dims.(0)
+
 let polyadd a1 a2 =
   let a1, a2 = two (promote_dtypes [ a1; a2 ]) in
-  let n1 = (shape a1).(0) and n2 = (shape a2).(0) in
+  let n2 = Validate.tuple_index (shape a2) 0 in
+  let n1 = Validate.tuple_index (shape a1) 0 in
   if n2 <= n1 then tail_add a1 a2 else tail_add a2 a1
 
 let polyadd p0 p1 =
@@ -131,7 +140,8 @@ let polysub p0 p1 =
     [ p0; p1 ]
 
 let polyint ?(m = 1) ?k p =
-  if m < 0 then invalid_arg "polyint: order of integral must be non-negative";
+  if m < 0 then
+    Py_exn.value_error "Order of integral must be positive (see polyder)";
   let k = match k with Some k -> k | None -> scalar D.I32 0.0 in
   let p =
     if dtype p = D.Bool then
@@ -142,7 +152,7 @@ let polyint ?(m = 1) ?k p =
   if m = 0 then p
   else begin
     let dt = dtype p in
-    let np_ = (shape p).(0) in
+    let np_ = py_len p in
     let k = NL.atleast_1d k in
     let k =
       if (shape k).(0) = 1 then
@@ -150,7 +160,8 @@ let polyint ?(m = 1) ?k p =
       else k
     in
     if (shape k).(0) <> m then
-      invalid_arg "polyint: k must be a scalar or a rank-1 array of length m";
+      Py_exn.value_error
+        "k must be a scalar or a rank-1 array of length 1 or m.";
     let grid_a =
       NL.expand_dims (NL.arange ~dtype:dt (float_of_int (np_ + m))) [| 0 |]
     in
@@ -180,12 +191,12 @@ let polyint ?m ?k p0 =
       [ p0 ]
 
 let polyder ?(m = 1) p =
-  if m < 0 then invalid_arg "polyder: order of derivative must be non-negative";
+  if m < 0 then Py_exn.value_error "Order of derivative must be positive";
   let p = List.hd (promote_dtypes_inexact [ p ]) in
   if m = 0 then p
   else begin
     let dt = dtype p in
-    let np_ = (shape p).(0) in
+    let np_ = py_len p in
     let grid_a =
       NL.expand_dims
         (NL.arange ~start:(float_of_int m) ~dtype:dt (float_of_int np_))
@@ -246,7 +257,10 @@ let poly p0 =
 let trim_front v =
   match v with
   | T.Tracer _ ->
-      invalid_arg "polymul: trim_leading_zeros needs a concrete array"
+      raise
+        (Py_exn.Concretization_type_error
+           "Abstract tracer value encountered where concrete value is expected\n\
+            Error arose in the `filt` argument of trim_zeros()")
   | _ ->
       let n = (shape v).(0) in
       let nd =
@@ -273,16 +287,12 @@ let trim_front v =
 let polymul ?(trim_leading_zeros = false) a1 a2 =
   let a1, a2 = two (promote_dtypes_inexact [ a1; a2 ]) in
   let a1, a2 =
-    if trim_leading_zeros && ((shape a1).(0) > 1 || (shape a2).(0) > 1) then
+    if trim_leading_zeros && (py_len a1 > 1 || py_len a2 > 1) then
       (trim_front a1, trim_front a2)
     else (a1, a2)
   in
-  let a1 =
-    if (shape a1).(0) = 0 then const_full (dtype a2) [| 1 |] 0.0 else a1
-  in
-  let a2 =
-    if (shape a2).(0) = 0 then const_full (dtype a1) [| 1 |] 0.0 else a2
-  in
+  let a1 = if py_len a1 = 0 then const_full (dtype a2) [| 1 |] 0.0 else a1 in
+  let a2 = if py_len a2 = 0 then const_full (dtype a1) [| 1 |] 0.0 else a2 in
   NL.convolve ~mode:"full" a1 a2
 
 let poly a0 =

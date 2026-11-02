@@ -1989,14 +1989,20 @@ let owens_t h a =
   let h, a = promote2 h a in
   owens_t_custom h a
 
-let rec bernoulli n =
+let bernoulli n =
   if n < 0 then invalid_arg "n must be a non-negative integer.";
   let dt = Dts.default_float_dtype () in
   let b3 = T.Concrete (Nd.of_floats dt [| 3 |] [| 1.0; -0.5; 1.0 /. 6.0 |]) in
-  if n < 3 then L.slice_in_dim b3 0 (n + 1)
+  let module NI = Numpy.Nd_index in
+  if n < 3 then NI.take b3 [ NI.Range { start = None; stop = Some (n + 1) } ]
   else begin
-    ignore bernoulli;
     let dyn v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
+    let bn =
+      NI.set
+        (AC.zeros ~dtype:dt [| n + 1 |])
+        [ NI.Range { start = None; stop = Some 3 } ]
+        b3
+    in
     let m = NL.arange ~start:4.0 ~step:2.0 ~dtype:dt (float_of_int (n + 1)) in
     let pi2 = Float.pi ** 2.0 in
     let term = neg_ (sub_lit m 1.0) *! m /! dyn 4.0 /! dyn pi2 in
@@ -2006,22 +2012,7 @@ let rec bernoulli n =
       RED.sum ~axis:[| 0 |]
         (UF.power (NL.expand_dims k [| 1 |]) (neg_ (NL.expand_dims m [| 0 |])))
     in
-    let vals = q1 *! lit_add 1.0 q2 in
-    let bn =
-      L.dynamic_update_slice
-        (L.full [| n + 1 |] 0.0 dt)
-        b3
-        [ int_full (default_int ()) 0 ]
-    in
-    let even = (n + 1 - 4 + 1) / 2 in
-    let out = ref bn in
-    for i = 0 to even - 1 do
-      out :=
-        L.dynamic_update_slice !out
-          (L.slice_in_dim vals i (i + 1))
-          [ int_full (default_int ()) (4 + (2 * i)) ]
-    done;
-    !out
+    NI.set_stepped bn ~start:4 ~step:2 (q1 *! lit_add 1.0 q2)
   end
 
 let while3 cond body init =

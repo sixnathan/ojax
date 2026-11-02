@@ -412,13 +412,13 @@ let leading_slice v start stop =
     [ v ]
 
 let at_leading_slice_set x start y =
+  let index =
+    L.broadcast_in_dim
+      (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
+      [| 1 |] [||]
+  in
   if size_of y = 0 then x
   else
-    let index =
-      L.broadcast_in_dim
-        (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
-        [| 1 |] [||]
-    in
     let r = rank x in
     L.scatter x index y
       {

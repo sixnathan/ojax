@@ -87,8 +87,7 @@ let fftconvolve_unbatched in1 in2 mode =
   let s1 = shape in1 and s2 = shape in2 in
   let conv =
     if all_pairs (fun a b -> a = 1 || b = 1) s1 s2 then
-      NL.broadcast_to in1 full_shape |> fun big ->
-      b1 Mul [ big; NL.broadcast_to in2 full_shape ]
+      Numpy.Ufuncs.multiply in1 in2
     else
       let sizes = Array.to_list full_shape in
       let is_complex =

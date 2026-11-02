@@ -1085,7 +1085,7 @@ let cofactor_solve a b =
     let d = RED.any ~axis:[| -1 |] (UF.logical_or (UF.isnan d) (UF.isinf d)) in
     let d =
       NL.tile
-        (last_axis (last_axis d))
+        (Lax_api.expand_dims d [| ndim d; ndim d + 1 |])
         (Array.append (Array.make (ndim d) 1) (last2 sx))
     in
     let zeros v = C.splat (dtype v) (shape v) 0.0 in
@@ -1103,7 +1103,7 @@ let cofactor_solve a b =
           UF.multiply
             (I.take x
                (leading @ [ I.Range { start = None; stop = Some (-1) }; all ]))
-            (last_axis (last_axis last_det));
+            (Lax_api.expand_dims last_det [| ndim last_det; ndim last_det + 1 |]);
           I.take x
             (leading @ [ I.Range { start = Some (-1); stop = None }; all ]);
         ]
@@ -1111,7 +1111,7 @@ let cofactor_solve a b =
     in
     let x = LL.triangular_solve ~left_side:true ~lower:false lu x in
     let x = NL.where_ d (zeros x) x in
-    (last_det, x)
+    (I.take partial_det (leading @ [ I.Int (-1) ]), x)
 
 let () =
   det_call :=

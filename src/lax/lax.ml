@@ -1923,15 +1923,17 @@ let rec impl_base prim inputs =
   | Eigh { lower } -> Linalg.eigh_impl lower inputs
   | Hessenberg ->
       if Config.current_platform () = "cuda" then
-        failwith
-          "MLIR translation rule for primitive 'hessenberg' not found for \
-           platform cuda";
+        raise
+          (Py_exn.Not_implemented_error
+             "MLIR translation rule for primitive 'hessenberg' not found for \
+              platform cuda");
       Linalg.hessenberg_impl inputs
   | Schur { compute_vectors } ->
       if Config.current_platform () = "cuda" then
-        failwith
-          "MLIR translation rule for primitive 'schur' not found for platform \
-           cuda";
+        raise
+          (Py_exn.Not_implemented_error
+             "MLIR translation rule for primitive 'schur' not found for \
+              platform cuda");
       Linalg.schur_impl compute_vectors inputs
   | Svd { full_matrices; compute_uv; gesvd } ->
       Linalg.svd_impl ~gesvd full_matrices compute_uv inputs

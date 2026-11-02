@@ -9,21 +9,27 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def write_cases(goldens, out, modulus, remainder, modes):
+def write_cases(goldens, out, modulus, remainder, modes, suite="parity"):
     import numpy as np
 
     with open(out, "w", encoding="utf-8") as sink:
         for set_name in ("x64_off", "x64_on"):
-            set_dir = os.path.join(goldens, "parity", set_name)
+            set_dir = os.path.join(goldens, suite, set_name)
             with open(os.path.join(set_dir, "manifest.json"), encoding="utf-8") as fh:
                 cases = json.load(fh)["cases"]
             for case in cases:
                 if zlib.adler32(case["case_id"].encode("utf-8")) % modulus != remainder:
                     continue
                 inputs = []
-                with np.load(os.path.join(set_dir, "inputs", case["case_id"] + ".npz")) as z:
+                single = os.path.join(set_dir, "inputs", case["case_id"] + ".npz")
+                if os.path.exists(single):
+                    source, prefix = single, ""
+                else:
+                    source = os.path.join(set_dir, "ops", case["op"] + ".npz")
+                    prefix = case["case_id"] + "/in_"
+                with np.load(source) as z:
                     for arg in case["args"]:
-                        value = z[arg["name"]]
+                        value = z[prefix + arg["name"]]
                         inputs.append(
                             {
                                 "name": arg["name"],
@@ -43,7 +49,7 @@ def write_cases(goldens, out, modulus, remainder, modes):
                 sink.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def reference(cases, out, shard, shards):
+def reference(cases, out, shard, shards, device_inputs=False):
     sys.path.insert(0, HERE)
     import numpy as np
     import jax
@@ -76,7 +82,12 @@ def reference(cases, out, shard, shards):
                     continue
                 row = {"set": case["set"], "case": case["case"], "mode": mode}
                 try:
-                    result = jax.jit(fn)(*arrays) if mode == "jit" else fn(*arrays)
+                    if mode == "jit":
+                        result = jax.jit(fn)(*arrays)
+                    elif device_inputs:
+                        result = fn(*[jax.numpy.asarray(a) for a in arrays])
+                    else:
+                        result = fn(*arrays)
                     outs = list(result) if isinstance(result, (tuple, list)) else [result]
                     row["outs"] = []
                     for i, value in enumerate(outs):
@@ -137,7 +148,11 @@ def ulp_gap(dtype, a, b):
 def classify(ref, ours):
     if "error" in ref or "error" in ours:
         if "error" in ref and "error" in ours:
-            return "both_raise", ""
+            if ref["error"] == ours["error"]:
+                return "both_raise", ""
+            if ref["error"].split(":")[0] == ours["error"].split(":")[0]:
+                return "both_raise_class", ""
+            return "both_raise_other", ours["error"][:120]
         if "error" in ref:
             return "only_jax_raises", ref["error"][:120]
         return "only_ojax_raises", ours["error"][:160]
@@ -173,7 +188,7 @@ def compare(ref_paths, our_paths, verbose):
             continue
         kind, detail = classify(refs[key], ours[key])
         totals[(key[2], kind)] += 1
-        if kind not in ("identical", "both_raise"):
+        if kind not in ("identical", "both_raise", "both_raise_class"):
             family = key[1].split("_")[0] + "_" + key[1].split("_")[1] if "_" in key[1] else key[1]
             families[(key[2], kind, family)] += 1
             rows.append(f"{key[2]}\t{key[0]}\t{key[1]}\t{kind}\t{detail}")
@@ -196,20 +211,22 @@ def main():
     p.add_argument("--modulus", type=int, default=15)
     p.add_argument("--remainder", type=int, default=0)
     p.add_argument("--modes", default="jit,eager")
+    p.add_argument("--suite", default="parity")
     p = sub.add_parser("reference")
     p.add_argument("--cases", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--shards", type=int, default=1)
+    p.add_argument("--device-inputs", action="store_true")
     p = sub.add_parser("compare")
     p.add_argument("--ref", nargs="+", required=True)
     p.add_argument("--ours", nargs="+", required=True)
     p.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     if args.command == "cases":
-        write_cases(args.goldens, args.out, args.modulus, args.remainder, args.modes.split(","))
+        write_cases(args.goldens, args.out, args.modulus, args.remainder, args.modes.split(","), args.suite)
     elif args.command == "reference":
-        reference(args.cases, args.out, args.shard, args.shards)
+        reference(args.cases, args.out, args.shard, args.shards, args.device_inputs)
     else:
         compare(args.ref, args.ours, args.verbose)
 

@@ -1236,9 +1236,6 @@ let eager_eval prim args =
             Some outs
         | _ ->
             note_eager_fallback prim "compiled output type differs";
-            None
-        | exception Errors.Jax_runtime_error reason ->
-            note_eager_fallback prim reason;
             None)
 
 let () = Core.eager_eval := eager_eval
@@ -1287,6 +1284,7 @@ let build_region name f avals =
     None
   in
   match Jaxpr.make_jaxpr avals f with
+  | exception error when Py_exn.class_name error <> None -> raise error
   | exception error when eager_rejection error ->
       fall_back (Printexc.to_string error)
   | cj -> (
@@ -1384,8 +1382,7 @@ and jitted_eval (name, statics) f args =
         | outs when output_matches outs wanted ->
             incr eager_executions;
             outs
-        | _ -> f args
-        | exception Errors.Jax_runtime_error _ -> f args)
+        | _ -> f args)
 
 let () =
   Jaxpr.eager_jit :=

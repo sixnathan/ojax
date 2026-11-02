@@ -84,6 +84,12 @@ let dot_dims_str (dd : dot_dims) =
   "((" ^ int_tuple dd.lhs_contract ^ "," ^ int_tuple dd.rhs_contract ^ "),("
   ^ int_tuple dd.lhs_batch ^ "," ^ int_tuple dd.rhs_batch ^ "))"
 
+let callback_views : (int, string * (string * string) list) Hashtbl.t =
+  Hashtbl.create 8
+
+let register_callback_view id name params =
+  Hashtbl.replace callback_views id (name, params)
+
 let prim_name = function
   | Add -> "add"
   | Add_any -> "add_any"
@@ -234,6 +240,8 @@ let prim_name = function
   | Custom_jvp_call id when Hashtbl.mem custom_view_names id ->
       Hashtbl.find custom_view_names id
   | Custom_jvp_call _ -> "custom_jvp_call"
+  | Custom_vjp_call id when Hashtbl.mem callback_views id ->
+      fst (Hashtbl.find callback_views id)
   | Custom_vjp_call _ -> "custom_vjp_call"
   | Custom_lin _ -> "custom_lin"
   | Checkpoint_name _ -> "name"
@@ -1290,6 +1298,10 @@ and pp_eqn ctx (e : eqn) =
           suggest_names ctx c.jaxpr.outs (List.map (fun v -> A_var v) e.outs)
         end;
         [ ("name", Plain (xla_call_name c)) ]
+    | Custom_vjp_call id when Hashtbl.mem callback_views id ->
+        List.map
+          (fun (k, v) -> (k, Plain v))
+          (snd (Hashtbl.find callback_views id))
     | Custom_jvp_call id when Hashtbl.mem custom_view_params id ->
         Hashtbl.find custom_view_params id
     | Custom_jvp_call _ -> (

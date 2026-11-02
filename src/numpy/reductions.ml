@@ -178,9 +178,7 @@ let reduction ~name ~prim ~bool_prim ~combine ~bool_combine ~init ~has_identity
   let filled =
     match mask with
     | None -> a
-    | Some m ->
-        let m = broadcast_to m (shape a) in
-        where m a (init_array computation (shape a) init)
+    | Some m -> where m a (init_array computation [||] init)
   in
   let is_bool = computation = D.Bool in
   let chosen = if is_bool then bool_prim else prim in

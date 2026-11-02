@@ -190,12 +190,22 @@ let keystr ?(simple = false) ?(separator = "") path =
 
 let tree_reduce f init tree = List.fold_left f init (tree_leaves tree)
 
+let rec parallel_reduce f identity = function
+  | [] -> (
+      match identity with
+      | Some i -> i
+      | None ->
+          invalid_arg
+            "Must specify identity for parallel reduction of empty sequence.")
+  | [ x ] -> x
+  | xs ->
+      let n = List.length xs / 2 in
+      let left = List.filteri (fun i _ -> i < n) xs in
+      let right = List.filteri (fun i _ -> i >= n) xs in
+      f (parallel_reduce f identity left) (parallel_reduce f identity right)
+
 let tree_reduce_associative f ?identity tree =
-  match (tree_leaves tree, identity) with
-  | [], Some id -> id
-  | [], None ->
-      invalid_arg "Must specify identity for parallel reduction of empty tree"
-  | first :: rest, _ -> List.fold_left f first rest
+  parallel_reduce f identity (tree_leaves tree)
 
 let tree_all tree = List.for_all Fun.id (tree_leaves tree)
 
@@ -412,20 +422,7 @@ let tree_reduce_no_init f tree =
   | x :: rest -> List.fold_left f x rest
 
 let tree_reduce_associative_is_leaf ~is_leaf f ?identity tree =
-  let rec reduce = function
-    | [] -> (
-        match identity with
-        | Some i -> i
-        | None ->
-            invalid_arg "Must specify identity for parallel reduction of empty sequence.")
-    | [ x ] -> x
-    | xs ->
-        let n = List.length xs / 2 in
-        let left = List.filteri (fun i _ -> i < n) xs in
-        let right = List.filteri (fun i _ -> i >= n) xs in
-        f (reduce left) (reduce right)
-  in
-  reduce (tree_leaves_is_leaf ~is_leaf tree)
+  parallel_reduce f identity (tree_leaves_is_leaf ~is_leaf tree)
 
 let all_leaves_is_leaf ~is_leaf trees =
   List.for_all

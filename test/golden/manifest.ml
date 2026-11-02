@@ -4625,6 +4625,10 @@ let coverage_run c inputs =
   let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
   Coverage_cases.run c.op c.params get
 
+let apicov_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  Apicov_cases.run c.op c.params get
+
 let parity_jit_run c inputs =
   let names = List.map (fun (a : arg) -> a.name) c.args in
   let values =
@@ -4727,6 +4731,19 @@ let coverage_suites =
       in
       if Sys.file_exists manifest then
         Some (composed_suite_for ~run:coverage_run "coverage" set_name)
+      else None)
+    [ "x64_off"; "x64_on" ]
+
+let apicov_suites =
+  List.filter_map
+    (fun set_name ->
+      let manifest =
+        Filename.concat
+          (Filename.concat (Filename.concat goldens_root "apicov") set_name)
+          "manifest.json"
+      in
+      if Sys.file_exists manifest then
+        Some (composed_suite_for ~run:apicov_run "apicov" set_name)
       else None)
     [ "x64_off"; "x64_on" ]
 
@@ -5113,7 +5130,7 @@ let numpy_product_rows () =
     Numpy_products.rows
 
 let rec attributed_with_coverage suites =
-  List.map attributed (coverage_suites @ suites)
+  List.map attributed (coverage_suites @ apicov_suites @ suites)
 
 and attributed (suite, tests) =
   ( suite,

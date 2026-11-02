@@ -30,6 +30,12 @@ STATIC_INDEX_CASES = [
     ("at_fill", "eager"), ("at_nonorm", "eager"), ("slice_mix", "eager"),
     ("at_set", "eager"), ("int_arr_idx", "eager"),
 ]
+UFUNC_AT_BINARY = ["maximum", "minimum", "logaddexp", "logaddexp2",
+                   "bitwise_and", "bitwise_or", "bitwise_xor", "logical_and",
+                   "logical_or", "logical_xor"]
+UFUNC_AT_UNARY = ["negative"]
+UFUNC_AT_IDX = ["scalar", "dup", "two_d", "two_d_row"]
+INT_UFUNCS = {"bitwise_and", "bitwise_or", "bitwise_xor"}
 AOT_CASES = ["sin_dot", "add", "reduce", "exp_log", "matmul", "cumsum",
              "where", "int_mul", "two_out", "tanh_big"]
 
@@ -267,6 +273,43 @@ def xform_thunk(jax, jnp, name, mode):
     return run
 
 
+def ufunc_at_thunk(jax, jnp, fn, idx_kind, mode):
+    integer = fn in INT_UFUNCS
+    dt = np.int32 if integer else np.float32
+    v = jnp.asarray((np.arange(5) + 1).astype(dt))
+    m = jnp.asarray((np.arange(6).reshape(2, 3) + 1).astype(dt))
+    i = lambda *xs: jnp.asarray(np.array(xs, np.int32))
+    u = getattr(jnp, fn)
+    unary = fn in UFUNC_AT_UNARY
+
+    def operands():
+        if idx_kind == "scalar":
+            return v, 2, jnp.asarray(dt(3))
+        if idx_kind == "dup":
+            return v, i(0, 2, 2), jnp.asarray(np.array([2, 3, 4], dt))
+        if idx_kind == "two_d":
+            return m, (i(0, 1, 1), i(2, 0, 0)), jnp.asarray(dt(2))
+        return m, i(1, 1), jnp.asarray(np.array([2, 3, 1], dt))
+
+    def call():
+        a, idx, b = operands()
+        if unary:
+            return u.at(a, idx, inplace=False)
+        return u.at(a, idx, b, inplace=False)
+
+    def run():
+        if mode == "jaxpr":
+            a, idx, b = operands()
+            idx = idx if isinstance(idx, tuple) else (idx,)
+            if unary:
+                return str(jax.make_jaxpr(
+                    lambda a, *ix: u.at(a, ix, inplace=False))(a, *idx))
+            return str(jax.make_jaxpr(
+                lambda a, b, *ix: u.at(a, ix, b, inplace=False))(a, b, *idx))
+        return text_of(call())
+    return run
+
+
 def aot_fn(jax, jnp, name):
     x34 = jnp.asarray(np.arange(12, dtype=np.float32).reshape(3, 4) / 7)
     y42 = jnp.asarray(np.arange(8, dtype=np.float32).reshape(4, 2) / 5)
@@ -352,6 +395,14 @@ def main():
                       "group": "static_index", "case": name, "mode": mode,
                       "flag": flag})
             rows.append(r)
+    for fn in UFUNC_AT_BINARY + UFUNC_AT_UNARY:
+        for idx_kind in UFUNC_AT_IDX:
+            for mode in ["value", "jaxpr"]:
+                r = run_case(jax, ufunc_at_thunk(jax, jnp, fn, idx_kind, mode))
+                r.update({"id": f"ufunc_at_{fn}_{idx_kind}_{mode}",
+                          "group": "ufunc_at", "case": fn, "idx": idx_kind,
+                          "mode": mode})
+                rows.append(r)
     rows.extend(aot_rows(jax, jnp))
     with open(args.out, "w") as fh:
         json.dump({"jax": jax.__version__, "x64": args.x64, "rows": rows},

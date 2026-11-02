@@ -479,6 +479,83 @@ let static_index_thunk name mode flag () =
         | _ -> failwith "docs_p2: jit result"
       else text_of (f v))
 
+let ufunc_of = function
+  | "maximum" -> (
+      fun l -> match l with [ a; b ] -> F.maximum a b | _ -> assert false)
+  | "minimum" -> (
+      fun l -> match l with [ a; b ] -> F.minimum a b | _ -> assert false)
+  | "logaddexp" -> (
+      fun l -> match l with [ a; b ] -> F.logaddexp a b | _ -> assert false)
+  | "logaddexp2" -> (
+      fun l -> match l with [ a; b ] -> F.logaddexp2 a b | _ -> assert false)
+  | "bitwise_and" -> (
+      fun l -> match l with [ a; b ] -> F.bitwise_and a b | _ -> assert false)
+  | "bitwise_or" -> (
+      fun l -> match l with [ a; b ] -> F.bitwise_or a b | _ -> assert false)
+  | "bitwise_xor" -> (
+      fun l -> match l with [ a; b ] -> F.bitwise_xor a b | _ -> assert false)
+  | "logical_and" -> (
+      fun l -> match l with [ a; b ] -> F.logical_and a b | _ -> assert false)
+  | "logical_or" -> (
+      fun l -> match l with [ a; b ] -> F.logical_or a b | _ -> assert false)
+  | "logical_xor" -> (
+      fun l -> match l with [ a; b ] -> F.logical_xor a b | _ -> assert false)
+  | "negative" -> (
+      fun l -> match l with [ a ] -> F.negative a | _ -> assert false)
+  | other -> failwith ("docs_p2: unknown ufunc " ^ other)
+
+let ufunc_at_thunk fn idx_kind mode () =
+  let integer = List.mem fn [ "bitwise_and"; "bitwise_or"; "bitwise_xor" ] in
+  let dt = if integer then Ojax.Dtype.I32 else Ojax.Dtype.F32 in
+  let arr shape vals = T.Concrete (Ojax.Ndarray.of_floats dt shape vals) in
+  let v = arr [| 5 |] (Array.init 5 (fun k -> float_of_int (k + 1))) in
+  let m = arr [| 2; 3 |] (Array.init 6 (fun k -> float_of_int (k + 1))) in
+  let i l =
+    G.Arr
+      (T.Concrete
+         (Ojax.Ndarray.of_floats Ojax.Dtype.I32
+            [| List.length l |]
+            (Array.of_list (List.map float_of_int l))))
+  in
+  let unary = fn = "negative" in
+  let operands () =
+    match idx_kind with
+    | "scalar" -> (v, [ G.Int 2 ], arr [||] [| 3.0 |])
+    | "dup" -> (v, [ i [ 0; 2; 2 ] ], arr [| 3 |] [| 2.0; 3.0; 4.0 |])
+    | "two_d" -> (m, [ i [ 0; 1; 1 ]; i [ 2; 0; 0 ] ], arr [||] [| 2.0 |])
+    | _ -> (m, [ i [ 1; 1 ] ], arr [| 3 |] [| 2.0; 3.0; 1.0 |])
+  in
+  let run a idx b =
+    G.ufunc_at ~inplace:false ~name:fn (ufunc_of fn) a idx
+      (if unary then [] else [ b ])
+  in
+  let a, idx, b = operands () in
+  if mode = "jaxpr" then
+    let idx_vals =
+      List.map
+        (function
+          | G.Int k -> py_int (float_of_int k)
+          | G.Arr v -> v
+          | _ -> assert false)
+        idx
+    in
+    let lead = if unary then [ a ] else [ a; b ] in
+    Ojax.Pretty_printer.closed_jaxpr_to_jax_string
+      (Ojax.Api.make_jaxpr
+         (fun leaves ->
+           let vals =
+             List.map
+               (function Ojax.Tree_util.Leaf v -> v | _ -> assert false)
+               leaves
+           in
+           let nl = List.length lead in
+           let a = List.hd vals in
+           let b = if unary then a else List.nth vals 1 in
+           let ix = List.filteri (fun k _ -> k >= nl) vals in
+           leaf (run a (List.map (fun v -> G.Arr v) ix) b))
+         (List.map leaf (lead @ idx_vals)))
+  else text_of (run a idx b)
+
 let actual_of row =
   match U.to_string (U.member "group" row) with
   | "dprint" ->
@@ -490,6 +567,12 @@ let actual_of row =
       run_case
         (xform_thunk
            (U.to_string (U.member "case" row))
+           (U.to_string (U.member "mode" row)))
+  | "ufunc_at" ->
+      run_case
+        (ufunc_at_thunk
+           (U.to_string (U.member "case" row))
+           (U.to_string (U.member "idx" row))
            (U.to_string (U.member "mode" row)))
   | "static_index" ->
       run_case

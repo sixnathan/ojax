@@ -1109,3 +1109,140 @@ let ufunc_subtract_at ?(inplace = true) a idx b =
       check_inplace inplace;
       at_subtract a idx b)
     a idx b
+
+let ufunc_at_operands ~name idx =
+  let leaves =
+    List.concat
+      (List.mapi
+         (fun k item ->
+           let bad ty =
+             raise
+               (Py_exn.Type_error
+                  (Printf.sprintf
+                     "Error interpreting argument to <function ufunc.at> as an \
+                      abstract array. The problematic value is of type <class \
+                      '%s'> and was passed to the function at path indices[%d].\n\
+                      This typically means that a jit-wrapped function was \
+                      called with a non-array argument, and this argument was \
+                      not marked as static using the static_argnums or \
+                      static_argnames parameters of jax.jit."
+                     ty k))
+           in
+           match item with
+           | Slice _ -> bad "slice"
+           | Ellipsis -> bad "ellipsis"
+           | Newaxis -> []
+           | Int i -> [ py_int i ]
+           | Bool b ->
+               [
+                 T.Concrete
+                   (Ndarray.of_floats D.Bool [||]
+                      [| (if b then 1.0 else 0.0) |]);
+               ]
+           | Arr v -> [ canon v ])
+         idx)
+  in
+  let key =
+    String.concat ","
+      (List.map
+         (function
+           | Newaxis -> "n"
+           | Int _ -> "i"
+           | Bool _ -> "b"
+           | Arr _ -> "a"
+           | _ -> "?")
+         idx)
+  in
+  (leaves, name ^ ":scan:" ^ key)
+
+let at_via_scan ufn a idx args =
+  let one v = Array_creation.ones_like ~shape:[||] v in
+  let dt =
+    match
+      Api.eval_shape
+        (fun leaves ->
+          Tree_util.Leaf
+            (ufn (List.map (function Tree_util.Leaf v -> v | _ -> a) leaves)))
+        (List.map (fun v -> Tree_util.Leaf (one v)) (a :: args))
+    with
+    | Tree_util.Leaf av -> av.T.dtype
+    | _ -> invalid_arg "ufunc.at"
+  in
+  let a = Lax_numpy.astype a dt in
+  let args = List.map (fun v -> Lax_numpy.astype v dt) args in
+  if idx = [] then a
+  else
+    let shapes =
+      List.filter_map
+        (function Arr v -> Some (shape v) | Slice _ -> None | _ -> Some [||])
+        idx
+    in
+    let bshape =
+      match shapes with [] -> [||] | l -> Extras.broadcast_shapes l
+    in
+    if bshape = [||] then at_set a idx (ufn (take a idx :: args))
+    else
+      let n = prod bshape in
+      let nb = Array.length bshape in
+      let args =
+        List.map
+          (fun arg ->
+            let s = shape arg in
+            let tail =
+              if Array.length s > nb then Array.sub s nb (Array.length s - nb)
+              else [||]
+            in
+            Lax_numpy.reshape
+              (Jnp_util.broadcast_to arg (Array.append bshape tail))
+              (Array.append [| n |] tail))
+          args
+      in
+      let idx =
+        List.map
+          (function
+            | Arr v -> Arr (Lax_numpy.ravel (Jnp_util.broadcast_to v bshape))
+            | item -> item)
+          idx
+      in
+      match
+        L.scan ~length:n
+          (function
+            | [ i; acc ] ->
+                let pick = function
+                  | Arr v -> Arr (take v [ Arr i ])
+                  | item -> item
+                in
+                let idx_i = List.map pick idx in
+                let current = take acc idx_i in
+                let vals = List.map (fun arg -> take arg [ Arr i ]) args in
+                let updated = at_set acc idx_i (ufn (current :: vals)) in
+                let next_i = C.bind1 T.Add [ i; py_int 1 ] in
+                [ next_i; updated ]
+            | _ -> invalid_arg "ufunc.at scan")
+          [ py_int 0; a ]
+          []
+      with
+      | [ _; r ] -> r
+      | _ -> invalid_arg "ufunc.at scan"
+
+let ufunc_at ?(inplace = true) ~name ufn a idx args =
+  let leaves, key = ufunc_at_operands ~name idx in
+  Jnp_util.jit1 "at" ~key
+    (fun operands ->
+      check_inplace inplace;
+      match operands with
+      | a :: rest ->
+          let rest = ref rest in
+          let next () =
+            match !rest with
+            | v :: tl ->
+                rest := tl;
+                v
+            | [] -> invalid_arg "ufunc.at"
+          in
+          let idx =
+            List.map (function Newaxis -> Newaxis | _ -> Arr (next ())) idx
+          in
+          at_via_scan ufn a idx !rest
+      | [] -> invalid_arg "ufunc.at")
+    ((a :: leaves) @ args)

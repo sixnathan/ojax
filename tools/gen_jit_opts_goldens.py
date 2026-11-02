@@ -38,6 +38,8 @@ RANDOM_CASES = [
     ("gumbel", "low"), ("gumbel", "high"), ("categorical", "low"),
     ("categorical", "high"), ("gumbel_f64", "high"),
 ]
+DONATE_RUN_CASES = ["run_ok", "run_use", "run_again", "run_unusable",
+                    "run_static", "run_keep"]
 FLAGS = [("nans", True, False), ("infs", False, True), ("both", True, True)]
 
 
@@ -172,6 +174,37 @@ def random_case(jax, jnp, name, arg):
     return run
 
 
+def donate_run_case(jax, jnp, name):
+    def run():
+        x = jnp.ones((3,), jnp.float32)
+        f = jax.jit(lambda a: a * 2.0, donate_argnums=0)
+        if name == "run_ok":
+            y = f(x)
+            return [y, np.array(x.is_deleted())]
+        if name == "run_use":
+            f(x)
+            return [jnp.add(x, 1.0)]
+        if name == "run_again":
+            f(x)
+            return [f(x)]
+        if name == "run_unusable":
+            g = jax.jit(lambda a: jnp.sum(a), donate_argnums=0)
+            return [g(x), np.array(x.is_deleted())]
+        if name == "run_static":
+            h = jax.jit(lambda n, a: a * n, static_argnums=0,
+                        donate_argnums=1)
+            y = h(3.0, x)
+            return [y, np.array(x.is_deleted())]
+        if name == "run_keep":
+            w = jnp.ones((2,), jnp.float32)
+            k = jax.jit(lambda a, b: a * 2.0, donate_argnums=(0, 1),
+                        keep_unused=True)
+            y = k(x, w)
+            return [y, np.array(x.is_deleted()), np.array(w.is_deleted())]
+        raise KeyError(name)
+    return run
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -218,6 +251,10 @@ def main():
             jax.config.update("jax_high_dynamic_range_gumbel", prev)
         r.update({"id": f"random_{name}_{arg}", "group": "random",
                   "case": name, "arg": str(arg)})
+        rows.append(r)
+    for name in DONATE_RUN_CASES:
+        r = run_case(donate_run_case(jax, jnp, name))
+        r.update({"id": f"donate_{name}", "group": "donate_run", "case": name})
         rows.append(r)
     for name in TEXT_CASES:
         thunk = text_case(jax, jnp, name)

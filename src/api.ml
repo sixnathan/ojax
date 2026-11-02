@@ -209,6 +209,7 @@ let jit_flat ?(name = "<lambda>") (f : value list -> value list) :
   in
   let seen = ref [] in
   fun args ->
+    List.iter Core.check_not_deleted args;
     if Config.value Config.disable_jit then f args
     else
       let avals = List.map Core.get_aval args in
@@ -332,9 +333,38 @@ let make_jaxpr_shape ?(axis_env = []) ?(static_argnums = [])
 let make_jaxpr ?axis_env ?static_argnums f args =
   fst (make_jaxpr_shape ?axis_env ?static_argnums f args)
 
-let jit_plain ?(inline = false) ?compiler_options
-    (f : value Tree.t list -> value Tree.t) : value Tree.t list -> value Tree.t
-    =
+let donated_flags donate_argnums args =
+  List.concat
+    (List.mapi
+       (fun i arg ->
+         List.map (fun _ -> List.mem i donate_argnums) (Tree.tree_leaves arg))
+       args)
+
+let check_live_arguments kept flat_args =
+  List.iteri
+    (fun position i ->
+      match List.nth flat_args i with
+      | Concrete a when Ndarray.is_deleted a ->
+          Py_exn.value_error
+            (Printf.sprintf
+               "INVALID_ARGUMENT: Invalid buffer passed to Execute() as \
+                argument %d to replica 0: INVALID_ARGUMENT: Buffer has been \
+                deleted or donated."
+               position)
+      | _ -> ())
+    kept
+
+let delete_donated usable flat_args =
+  List.iter2
+    (fun use v ->
+      match v with Concrete a when use -> Ndarray.delete a | _ -> ())
+    usable flat_args
+
+let is_deleted = function Concrete a -> Ndarray.is_deleted a | _ -> false
+
+let jit_plain ?(inline = false) ?compiler_options ?(donate_argnums = [])
+    ?(keep_unused = false) (f : value Tree.t list -> value Tree.t) :
+    value Tree.t list -> value Tree.t =
   let cache :
       ( string,
         closed_jaxpr * Ref_state.cell list * Tree.treedef * Key_reuse.signature
@@ -372,6 +402,10 @@ let jit_plain ?(inline = false) ?compiler_options
                        (Linear_util.call_wrapped flat_fun)))
             in
             if inline then Core.mark_inline_call cj.jid;
+            if donate_argnums <> [] then
+              Stablehlo.Emit.warn_unusable_donations ~keep_unused
+                ~donated:(donated_flags donate_argnums args)
+                cj;
             let entry = (cj, cells, out_tree_get (), signature) in
             Hashtbl.replace cache key entry;
             entry
@@ -381,11 +415,24 @@ let jit_plain ?(inline = false) ?compiler_options
           (Key_reuse.call_with_signature signature flat_args (fun () ->
                bind_named_call ~name:"<lambda>" cj flat_args))
       else
-        Tree.tree_unflatten out_tree
-          (check_jit_outputs ~name:"<lambda>"
-             ~rerun:(fun () -> ignore (f args))
-             (Key_reuse.call_with_signature signature flat_args (fun () ->
-                  run_with_refs ?compiler_options cj cells flat_args)))
+        let usable, kept =
+          if donate_argnums = [] then ([], [])
+          else
+            Stablehlo.Emit.usable_donations ~keep_unused
+              ~donated:(donated_flags donate_argnums args)
+              cj
+        in
+        if donate_argnums <> [] then check_live_arguments kept flat_args;
+        let outs =
+          Tree.tree_unflatten out_tree
+            (check_jit_outputs ~name:"<lambda>"
+               ~rerun:(fun () -> ignore (f args))
+               (Key_reuse.call_with_signature signature flat_args (fun () ->
+                    run_with_refs ?compiler_options cj cells flat_args)))
+        in
+        if usable <> [] && not (Config.value Config.debug_nans) then
+          delete_donated usable flat_args;
+        outs
 
 let static_key tree =
   String.concat ","
@@ -405,9 +452,19 @@ let static_key tree =
                "Non-hashable static arguments are used in a jit function")
        (Tree.tree_leaves tree))
 
-let jit ?(static_argnums = []) ?donate_argnums:_ ?keep_unused:_ ?inline
+let jit ?(static_argnums = []) ?donate_argnums ?keep_unused ?inline
     ?compiler_options f =
-  let jit_plain = jit_plain ?inline ?compiler_options in
+  let donate_argnums =
+    Option.map
+      (List.filter_map (fun i ->
+           if List.mem i static_argnums then None
+           else
+             Some (i - List.length (List.filter (fun s -> s < i) static_argnums))))
+      donate_argnums
+  in
+  let jit_plain =
+    jit_plain ?inline ?compiler_options ?donate_argnums ?keep_unused
+  in
   if static_argnums = [] then jit_plain f
   else
     let per_key = Hashtbl.create 8 in

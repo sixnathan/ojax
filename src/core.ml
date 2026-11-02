@@ -805,7 +805,22 @@ let value_aval = function
         weak_type = false;
       }
 
+let check_not_deleted = function
+  | Concrete a when Ndarray.is_deleted a ->
+      let shape =
+        String.concat ","
+          (Array.to_list (Array.map string_of_int (Ndarray.shape a)))
+      in
+      raise
+        (Py_exn.Runtime_error
+           (Printf.sprintf "Array has been deleted with shape=%s%s[%s]."
+              (if Ndarray.weak a then "~" else "")
+              (Dtype.numpy_name (Ndarray.dtype a))
+              shape))
+  | _ -> ()
+
 let bind prim args =
+  List.iter check_not_deleted args;
   check_broadcast prim args;
   Linalg_shape.check prim (fun () -> List.map value_shape args);
   Lax_shape.check prim (fun () -> List.map value_aval args);
@@ -876,7 +891,9 @@ let py_scalar dt x =
 let get_aval = value_aval
 
 let as_concrete = function
-  | Concrete a -> a
+  | Concrete a ->
+      check_not_deleted (Concrete a);
+      a
   | Device b -> Pjrt.Buffer.to_host b
   | Tracer _ -> failwith "eval: expected a concrete value"
 
@@ -899,6 +916,7 @@ let retag_urbg prim args outs =
   else outs
 
 let eval_untagged prim args =
+  List.iter check_not_deleted args;
   (match prim with
   | Dot_general _ -> Config.check_matmul_preset_on_cpu ()
   | _ -> ());

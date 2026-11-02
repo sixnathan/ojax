@@ -16,6 +16,9 @@ type t = {
   py_value : float option;
 }
 
+let deleted : t list ref = ref []
+let delete t = if not (List.memq t !deleted) then deleted := t :: !deleted
+let is_deleted t = !deleted <> [] && List.memq t !deleted
 let uint32_mask = 0xFFFF_FFFF
 let double_exponent = 0x7FF0000000000000L
 let double_mantissa = 0xFFFFFFFFFFFFFL

@@ -29,6 +29,7 @@ val jit :
   value Tree_util.t list ->
   value Tree_util.t
 
+val is_deleted : value -> bool
 val device_put : value Tree_util.t -> value Tree_util.t
 val to_host : value Tree_util.t -> value Tree_util.t
 

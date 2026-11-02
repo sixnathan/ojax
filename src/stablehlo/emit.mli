@@ -24,6 +24,12 @@ val lower :
 val warn_unusable_donations :
   ?keep_unused:bool -> donated:bool list -> Types.closed_jaxpr -> unit
 
+val usable_donations :
+  ?keep_unused:bool ->
+  donated:bool list ->
+  Types.closed_jaxpr ->
+  bool list * int list
+
 val emit_jax_text :
   ?keep_unused:bool ->
   ?donated:bool list ->

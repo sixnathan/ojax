@@ -5152,6 +5152,20 @@ let warn_unusable_donations ?(keep_unused = false) ~donated cj =
   | None -> ()
   | Some (avals_in, d) -> Donation.warn_unusable avals_in d
 
+let usable_donations ?(keep_unused = false) ~donated cj =
+  let pruned, kept = kept_inputs ~keep_unused cj in
+  let n = List.length cj.jaxpr.in_binders in
+  let usable = Array.make n false in
+  (match donation_of ~kept ~donated pruned with
+  | None -> ()
+  | Some (_, d) ->
+      List.iteri
+        (fun j i ->
+          if d.Donation.aliases.(j) <> None || d.Donation.buffer_donor.(j) then
+            usable.(i) <- true)
+        kept);
+  (Array.to_list usable, kept)
+
 let emit_jax_text ?keep_unused ?donated ?result_names ~name cj =
   Mlir_names.print_empty_dynamic_slices
     (Mlir_names.renumber_callbacks

@@ -313,6 +313,54 @@ let random_thunk name =
         [ R.categorical_full ~shape:[| 6; 2 |] (R.key (int_seed 2.0)) logits ]
   | other -> failwith ("jit_opts: unknown random case " ^ other)
 
+let deleted v =
+  T.Concrete
+    (Ojax.Ndarray.of_floats Ojax.Dtype.Bool [||]
+       [| (if Ojax.Api.is_deleted v then 1.0 else 0.0) |])
+
+let donate_run_thunk name () =
+  let x = ones [| 3 |] in
+  let mul2 a = F.multiply a (py_float 2.0) in
+  let call ?static_argnums ?keep_unused ~donate_argnums f args =
+    Ojax.Tree_util.tree_leaves
+      (Ojax.Api.jit ?static_argnums ?keep_unused ~donate_argnums f
+         (List.map leaf args))
+  in
+  let f args = call ~donate_argnums:[ 0 ] (one (fun a -> leaf (mul2 a))) args in
+  match name with
+  | "run_ok" ->
+      let y = f [ x ] in
+      y @ [ deleted x ]
+  | "run_use" ->
+      ignore (f [ x ]);
+      [ F.add x (py_float 1.0) ]
+  | "run_again" ->
+      ignore (f [ x ]);
+      f [ x ]
+  | "run_unusable" ->
+      let y =
+        call ~donate_argnums:[ 0 ]
+          (one (fun a -> leaf (Ojax.Numpy.Reductions.sum a)))
+          [ x ]
+      in
+      y @ [ deleted x ]
+  | "run_static" ->
+      let y =
+        call ~static_argnums:[ 0 ] ~donate_argnums:[ 1 ]
+          (two (fun n a -> leaf (F.multiply a n)))
+          [ py_float 3.0; x ]
+      in
+      y @ [ deleted x ]
+  | "run_keep" ->
+      let w = ones [| 2 |] in
+      let y =
+        call ~keep_unused:true ~donate_argnums:[ 0; 1 ]
+          (two (fun a _ -> leaf (mul2 a)))
+          [ x; w ]
+      in
+      y @ [ deleted x; deleted w ]
+  | other -> failwith ("jit_opts: unknown donate case " ^ other)
+
 let strings j = List.map U.to_string (U.to_list j)
 
 let expected_of row =
@@ -382,6 +430,8 @@ let actual_of row =
       Ojax.Config.with_value Ojax.Config.random_seed_offset offset (fun () ->
           Ojax.Config.with_value Ojax.Config.high_dynamic_range_gumbel
             (arg = "high") (fun () -> run_case thunk))
+  | "donate_run" ->
+      run_case (donate_run_thunk (U.to_string (U.member "case" row)))
   | "text" ->
       let thunk = text_thunk (U.to_string (U.member "case" row)) in
       let text = ref "" in

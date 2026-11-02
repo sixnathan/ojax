@@ -148,6 +148,7 @@ let many ?jit ?(vals_first = false) name statics opts vals f =
     else rebuild opts (List.length vals) flat
   in
   let args = if vals_first then vals @ present else present @ vals in
+  List.iter Core.check_not_deleted args;
   match jit with
   | Some jname when Core.top_is_staging args ->
       Jaxpr.named_jit ~name:jname ~key:(static_key statics opts)

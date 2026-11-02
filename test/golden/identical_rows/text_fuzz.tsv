@@ -20,6 +20,7 @@ fuzz/x64_off	bl_grad_det_2x2x3x3_82be0e79_float32_shape_other	i	i
 fuzz/x64_off	bl_grad_det_2x2x3x3_82be0e79_float32_shape_small	i	i
 fuzz/x64_off	bl_grad_det_2x3x3_5cd50dfb_float32_shape_other	i	i
 fuzz/x64_off	bl_grad_det_2x3x3_5cd50dfb_float32_shape_small	b	b
+fuzz/x64_off	bl_grad_det_3x3_38660d7d_float32_shape_other	i	i
 fuzz/x64_off	bl_grad_det_3x3_38660d7d_float32_shape_small	b	b
 fuzz/x64_off	bl_inv_2x2x3x3_82be0e79_float32_shape_other	i	i
 fuzz/x64_off	bl_inv_2x2x3x3_82be0e79_float32_shape_small	i	i
@@ -116,7 +117,7 @@ fuzz/x64_off	cl_grad_eigvalsh_2x3x3_97bb0f4f_float32_shape_small	i	i
 fuzz/x64_off	cl_grad_eigvalsh_3x3_6f500ed1_float32_shape_other	i	i
 fuzz/x64_off	cl_grad_eigvalsh_3x3_6f500ed1_float32_shape_small	i	i
 fuzz/x64_off	cl_grad_logdet_2x3x3_97bb0f4f_float32_shape_other	i	i
-fuzz/x64_off	cl_grad_logdet_2x3x3_97bb0f4f_float32_shape_small	i	-
+fuzz/x64_off	cl_grad_logdet_2x3x3_97bb0f4f_float32_shape_small	i	i
 fuzz/x64_off	cl_grad_logdet_3x3_6f500ed1_float32_shape_other	i	i
 fuzz/x64_off	cl_grad_logdet_3x3_6f500ed1_float32_shape_small	b	b
 fuzz/x64_off	cl_grad_svdvals_2x4_6f4d0ed1_float32_shape_other	i	i
@@ -455,6 +456,7 @@ fuzz/x64_off	lx_ormqr_4x3_4x2_cb0a2330_float32_shape_other	i	i
 fuzz/x64_off	lx_ormqr_4x3_4x2_cb0a2330_float32_shape_small	i	i
 fuzz/x64_off	lx_ormqr_4x3_4x2_e78b25d8_float32_shape_other	i	i
 fuzz/x64_off	lx_ormqr_4x3_4x2_e78b25d8_float32_shape_small	i	i
+fuzz/x64_off	lx_polar_2x3x3_354b1957_float32_shape_other	i	i
 fuzz/x64_off	lx_polar_2x3x3_354b1957_float32_shape_small	b	b
 fuzz/x64_off	lx_polar_2x3x3_ce821803_float32_shape_other	i	i
 fuzz/x64_off	lx_polar_2x3x3_ce821803_float32_shape_small	b	b
@@ -1028,13 +1030,14 @@ fuzz/x64_off	sp_fftconvolve_6_3_02a41b84_float32_shape_other	i	i
 fuzz/x64_off	sp_fftconvolve_6_3_02a41b84_float32_shape_small	b	b
 fuzz/x64_off	sp_fftconvolve_6_3_02d81b91_float32_shape_other	i	i
 fuzz/x64_off	sp_fftconvolve_6_3_02d81b91_float32_shape_small	i	i
-fuzz/x64_off	sp_fftconvolve_6_3_1ee21bee_float32_shape_other	i	-
+fuzz/x64_off	sp_fftconvolve_6_3_1ee21bee_float32_shape_other	i	i
 fuzz/x64_off	sp_fftconvolve_6_3_1ee21bee_float32_shape_small	i	i
 fuzz/x64_off	sp_fresnel_8_15920d03_float32_shape_other	i	i
 fuzz/x64_off	sp_fresnel_8_15920d03_float32_shape_small	i	i
 fuzz/x64_off	sp_fresnel_8_c581103d_float32_shape_other	i	i
 fuzz/x64_off	sp_fresnel_8_c581103d_float32_shape_small	i	i
 fuzz/x64_off	sp_fresnel_grad_4_156e0cff_float32_shape_other	i	i
+fuzz/x64_off	sp_fresnel_grad_4_156e0cff_float32_shape_small	i	i
 fuzz/x64_off	sp_fresnel_jit_4_156e0cff_float32_shape_other	i	i
 fuzz/x64_off	sp_fresnel_jit_4_156e0cff_float32_shape_small	i	i
 fuzz/x64_off	sp_idct_3x4_bd161001_float32_shape_other	i	i
@@ -2672,6 +2675,7 @@ fuzz/x64_off	sw_sp_logit_3x3_9fc813d0_float32_shape_small	i	i
 fuzz/x64_off	sw_sp_owens_t_3x3_603812d6_float32_shape_other	i	i
 fuzz/x64_off	sw_sp_owens_t_3x3_603812d6_float32_shape_small	i	i
 fuzz/x64_off	sw_sp_owens_t_3x3_670312ff_float32_shape_other	i	i
+fuzz/x64_off	sw_sp_owens_t_3x3_670312ff_float32_shape_small	i	i
 fuzz/x64_off	sw_sp_owens_t_3x3_6ed01305_float32_shape_other	i	i
 fuzz/x64_off	sw_sp_owens_t_3x3_6ed01305_float32_shape_small	i	i
 fuzz/x64_off	sw_sp_owens_t_3x3_7aea134b_float32_shape_other	i	i
@@ -3129,7 +3133,7 @@ fuzz/x64_off	swg_cov_3x3_38660d7d_float32_shape_other	i	i
 fuzz/x64_off	swg_cov_3x3_6f500ed1_float32_shape_other	i	i
 fuzz/x64_off	swg_cross_3x3_38660d7d_float32_shape_other	b	b
 fuzz/x64_off	swg_cross_3x3_6f500ed1_float32_shape_other	b	b
-fuzz/x64_off	swg_cumprod_3x3_38660d7d_float32_shape_other	i	-
+fuzz/x64_off	swg_cumprod_3x3_38660d7d_float32_shape_other	i	i
 fuzz/x64_off	swg_cumprod_3x3_6f500ed1_float32_shape_other	i	i
 fuzz/x64_off	swg_cumsum_3x3_38660d7d_float32_shape_other	i	i
 fuzz/x64_off	swg_cumsum_3x3_6f500ed1_float32_shape_other	i	i
@@ -3711,9 +3715,11 @@ fuzz/x64_on	bl_eigvalsh_2x3x3_5cd50dfb_float64_shape_other	i	i
 fuzz/x64_on	bl_eigvalsh_2x3x3_5cd50dfb_float64_shape_small	i	i
 fuzz/x64_on	bl_eigvalsh_3x3_38660d7d_float64_shape_other	i	i
 fuzz/x64_on	bl_eigvalsh_3x3_38660d7d_float64_shape_small	i	i
+fuzz/x64_on	bl_grad_det_2x2x3x3_82be0e79_float64_shape_other	i	i
 fuzz/x64_on	bl_grad_det_2x2x3x3_82be0e79_float64_shape_small	b	b
 fuzz/x64_on	bl_grad_det_2x3x3_5cd50dfb_float64_shape_other	i	i
 fuzz/x64_on	bl_grad_det_2x3x3_5cd50dfb_float64_shape_small	i	i
+fuzz/x64_on	bl_grad_det_3x3_38660d7d_float64_shape_other	i	i
 fuzz/x64_on	bl_grad_det_3x3_38660d7d_float64_shape_small	b	b
 fuzz/x64_on	bl_inv_2x2x3x3_82be0e79_float64_shape_other	i	i
 fuzz/x64_on	bl_inv_2x2x3x3_82be0e79_float64_shape_small	b	b
@@ -3810,7 +3816,7 @@ fuzz/x64_on	cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_shape_small	b	b
 fuzz/x64_on	cl_grad_eigvalsh_3x3_6f500ed1_float64_shape_other	i	i
 fuzz/x64_on	cl_grad_eigvalsh_3x3_6f500ed1_float64_shape_small	i	i
 fuzz/x64_on	cl_grad_logdet_2x3x3_97bb0f4f_float64_shape_other	i	i
-fuzz/x64_on	cl_grad_logdet_2x3x3_97bb0f4f_float64_shape_small	i	-
+fuzz/x64_on	cl_grad_logdet_2x3x3_97bb0f4f_float64_shape_small	i	i
 fuzz/x64_on	cl_grad_logdet_3x3_6f500ed1_float64_shape_other	i	i
 fuzz/x64_on	cl_grad_logdet_3x3_6f500ed1_float64_shape_small	b	b
 fuzz/x64_on	cl_grad_svdvals_2x4_6f4d0ed1_float64_shape_other	i	i
@@ -3947,11 +3953,11 @@ fuzz/x64_on	gp_init_orthogonal_1_be2e13d3_float64_shape_other	i	i
 fuzz/x64_on	gp_init_orthogonal_1_be2e13d3_float64_shape_small	i	i
 fuzz/x64_on	gp_int_pow_neg_4_5b930ece_float64_shape_other	i	i
 fuzz/x64_on	gp_int_pow_neg_4_5b930ece_float64_shape_small	i	i
-fuzz/x64_on	gp_mode_6x2_3dbe132f_float64_shape_other	i	-
+fuzz/x64_on	gp_mode_6x2_3dbe132f_float64_shape_other	i	i
 fuzz/x64_on	gp_mode_6x2_3dbe132f_float64_shape_small	i	i
 fuzz/x64_on	gp_mode_7_15890d02_float64_shape_other	i	i
 fuzz/x64_on	gp_mode_7_15890d02_float64_shape_small	i	i
-fuzz/x64_on	gp_pinv_hermitian_3x3_38660d7d_float64_shape_other	-	i
+fuzz/x64_on	gp_pinv_hermitian_3x3_38660d7d_float64_shape_other	i	i
 fuzz/x64_on	gp_pinv_hermitian_3x3_38660d7d_float64_shape_small	b	b
 fuzz/x64_on	gp_qr_full_4x2_38690d7d_float64_shape_other	i	i
 fuzz/x64_on	gp_qr_full_4x2_38690d7d_float64_shape_small	i	i
@@ -4369,7 +4375,7 @@ fuzz/x64_on	np_unique_counts_9_159b0d04_float64_shape_other	b	b
 fuzz/x64_on	np_unique_counts_9_159b0d04_float64_shape_small	b	b
 fuzz/x64_on	np_unique_inverse_2x5_386c0d7e_float64_shape_other	b	b
 fuzz/x64_on	np_unique_inverse_2x5_386c0d7e_float64_shape_small	b	b
-fuzz/x64_on	np_unique_size_9_6ff612ae_float64_shape_other	i	-
+fuzz/x64_on	np_unique_size_9_6ff612ae_float64_shape_other	i	i
 fuzz/x64_on	np_unique_size_9_6ff612ae_float64_shape_small	i	i
 fuzz/x64_on	np_unique_size_9_948e1315_float64_shape_other	i	i
 fuzz/x64_on	np_unique_size_9_948e1315_float64_shape_small	i	i
@@ -4675,7 +4681,7 @@ fuzz/x64_on	sp_convolve_3_6_02691b91_float64_shape_other	i	i
 fuzz/x64_on	sp_convolve_3_6_02691b91_float64_shape_small	b	b
 fuzz/x64_on	sp_convolve_3_6_1e731bee_float64_shape_other	i	i
 fuzz/x64_on	sp_convolve_3_6_1e731bee_float64_shape_small	i	i
-fuzz/x64_on	sp_convolve_6_3_00ac2080_float64_shape_other	i	-
+fuzz/x64_on	sp_convolve_6_3_00ac2080_float64_shape_other	i	i
 fuzz/x64_on	sp_convolve_6_3_00ac2080_float64_shape_small	i	i
 fuzz/x64_on	sp_convolve_6_3_02a41b84_float64_shape_other	i	i
 fuzz/x64_on	sp_convolve_6_3_02a41b84_float64_shape_small	i	i
@@ -4713,7 +4719,7 @@ fuzz/x64_on	sp_detrend_6_3410130f_float64_shape_other	i	i
 fuzz/x64_on	sp_detrend_6_3410130f_float64_shape_small	i	i
 fuzz/x64_on	sp_detrend_8_0d9c1222_float64_shape_other	i	i
 fuzz/x64_on	sp_detrend_8_0d9c1222_float64_shape_small	b	b
-fuzz/x64_on	sp_fftconvolve_6_3_02a41b84_float64_shape_other	i	-
+fuzz/x64_on	sp_fftconvolve_6_3_02a41b84_float64_shape_other	i	i
 fuzz/x64_on	sp_fftconvolve_6_3_02a41b84_float64_shape_small	b	b
 fuzz/x64_on	sp_fftconvolve_6_3_02d81b91_float64_shape_other	i	i
 fuzz/x64_on	sp_fftconvolve_6_3_02d81b91_float64_shape_small	i	i
@@ -6250,7 +6256,7 @@ fuzz/x64_on	sw_sp_gamma_3x3_9fc813d0_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_gammainc_3x3_603812d6_float64_shape_other	i	i
 fuzz/x64_on	sw_sp_gammainc_3x3_603812d6_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_gammainc_3x3_670312ff_float64_shape_other	i	i
-fuzz/x64_on	sw_sp_gammainc_3x3_670312ff_float64_shape_small	-	i
+fuzz/x64_on	sw_sp_gammainc_3x3_670312ff_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_gammainc_3x3_6ed01305_float64_shape_other	i	i
 fuzz/x64_on	sw_sp_gammainc_3x3_6ed01305_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_gammainc_3x3_7aea134b_float64_shape_other	i	i
@@ -6262,7 +6268,7 @@ fuzz/x64_on	sw_sp_gammainc_3x3_9fc813d0_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_gammaincc_3x3_603812d6_float64_shape_other	i	i
 fuzz/x64_on	sw_sp_gammaincc_3x3_603812d6_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_gammaincc_3x3_670312ff_float64_shape_other	i	i
-fuzz/x64_on	sw_sp_gammaincc_3x3_670312ff_float64_shape_small	-	i
+fuzz/x64_on	sw_sp_gammaincc_3x3_670312ff_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_gammaincc_3x3_6ed01305_float64_shape_other	i	i
 fuzz/x64_on	sw_sp_gammaincc_3x3_6ed01305_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_gammaincc_3x3_7aea134b_float64_shape_other	i	i
@@ -6348,6 +6354,7 @@ fuzz/x64_on	sw_sp_i1e_3x3_9fc813d0_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_kl_div_3x3_603812d6_float64_shape_other	i	i
 fuzz/x64_on	sw_sp_kl_div_3x3_603812d6_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_kl_div_3x3_670312ff_float64_shape_other	i	i
+fuzz/x64_on	sw_sp_kl_div_3x3_670312ff_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_kl_div_3x3_6ed01305_float64_shape_other	i	i
 fuzz/x64_on	sw_sp_kl_div_3x3_6ed01305_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_kl_div_3x3_7aea134b_float64_shape_other	i	i
@@ -6361,6 +6368,7 @@ fuzz/x64_on	sw_sp_logit_3x3_9fc813d0_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_owens_t_3x3_603812d6_float64_shape_other	i	i
 fuzz/x64_on	sw_sp_owens_t_3x3_603812d6_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_owens_t_3x3_670312ff_float64_shape_other	i	i
+fuzz/x64_on	sw_sp_owens_t_3x3_670312ff_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_owens_t_3x3_6ed01305_float64_shape_other	i	i
 fuzz/x64_on	sw_sp_owens_t_3x3_6ed01305_float64_shape_small	i	i
 fuzz/x64_on	sw_sp_owens_t_3x3_7aea134b_float64_shape_other	i	i
@@ -6882,7 +6890,7 @@ fuzz/x64_on	swg_repeat_3x3_6f500ed1_float64_shape_other	i	i
 fuzz/x64_on	swg_roll_3x3_38660d7d_float64_shape_other	i	i
 fuzz/x64_on	swg_roll_3x3_6f500ed1_float64_shape_other	i	i
 fuzz/x64_on	swg_roots_3x3_38660d7d_float64_shape_other	b	b
-fuzz/x64_on	swg_roots_3x3_6f500ed1_float64_shape_other	i	-
+fuzz/x64_on	swg_roots_3x3_6f500ed1_float64_shape_other	i	i
 fuzz/x64_on	swg_sign_3x3_38660d7d_float64_shape_other	i	i
 fuzz/x64_on	swg_sign_3x3_6f500ed1_float64_shape_other	i	i
 fuzz/x64_on	swg_sinc_3x3_38660d7d_float64_shape_other	i	i
@@ -7353,11 +7361,11 @@ fuzz/x64_on	tb_seed_3_15650cfe_float64_shape_other	i	i
 fuzz/x64_on	tb_seed_3_15650cfe_float64_shape_small	i	i
 fuzz/x64_on	tb_unique_6x2_65061284_float64_shape_other	i	i
 fuzz/x64_on	tb_unique_6x2_65061284_float64_shape_small	i	i
-fuzz/x64_on	tb_unique_8_49271225_float64_shape_other	i	-
+fuzz/x64_on	tb_unique_8_49271225_float64_shape_other	i	i
 fuzz/x64_on	tb_unique_8_49271225_float64_shape_small	i	i
-fuzz/x64_on	tb_unique_8_4a6f122c_float64_shape_other	i	-
+fuzz/x64_on	tb_unique_8_4a6f122c_float64_shape_other	i	i
 fuzz/x64_on	tb_unique_8_4a6f122c_float64_shape_small	i	i
-fuzz/x64_on	tb_unique_8_85390f3b_float64_shape_other	i	-
+fuzz/x64_on	tb_unique_8_85390f3b_float64_shape_other	i	i
 fuzz/x64_on	tb_unique_8_85390f3b_float64_shape_small	b	b
 fuzz/x64_on	tb_vectorize_2x1_3_d42017d0_float64_shape_other	b	b
 fuzz/x64_on	tb_vectorize_2x1_3_d42017d0_float64_shape_small	i	i

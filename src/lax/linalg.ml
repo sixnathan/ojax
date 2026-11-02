@@ -872,7 +872,7 @@ let tridiagonal_aval = function
   | [ a ] ->
       let n = a.shape.(0) in
       if n <> a.shape.(1) || a.shape.(1) = 0 then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "The input to tridiagonal must be a square matrix. Got shape %s."
              (Utils.py_tuple a.shape));

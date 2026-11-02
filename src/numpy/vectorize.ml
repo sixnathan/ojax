@@ -70,7 +70,7 @@ let vectorize_many ?(excluded = []) ?signature pyfunc raw_args =
            let ndim = Array.length sh in
            let nc = ncs.(idx) in
            if ndim < nc then
-             invalid_arg
+             Py_exn.value_error
                "vectorize: input has too few dimensions for its core dimensions";
            Array.sub sh 0 (ndim - nc))
          dyn_arr)

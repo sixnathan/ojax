@@ -2661,11 +2661,9 @@ let abstract_eval prim avals =
               Array.iter
                 (fun d ->
                   if d >= n || d < -n then
-                    raise
-                      (Errors.jax_index_error
-                         (Printf.sprintf
-                            "index %d is out of bounds for axis 0 with size %d"
-                            d n)))
+                    Py_exn.index_error
+                      (Printf.sprintf
+                         "index %d is out of bounds for axis 0 with size %d" d n))
                 dimensions;
               shaped
                 (Utils.reduce_shape op.shape dimensions)
@@ -2696,7 +2694,7 @@ let abstract_eval prim avals =
       match avals with
       | [ a ] ->
           if a.shape.(axis) < k then
-            invalid_arg
+            Py_exn.value_error
               (Printf.sprintf
                  "k argument to top_k must be no larger than size along axis; \
                   got k=%d with shape=[%s] and axis=%d"

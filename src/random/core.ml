@@ -152,9 +152,7 @@ let float_info dt =
   | D.F64 -> (64, 52, 0x3FF0000000000000L, D.Uint64)
   | D.F16 -> (16, 10, 0x3C00L, D.Uint16)
   | D.Bf16 -> (16, 7, 0x3F80L, D.Uint16)
-  | _ ->
-      raise
-        (Errors.jax_type_error "uniform only accepts floating point dtypes.")
+  | _ -> raise (Py_exn.Type_error "uniform only accepts floating point dtypes.")
 
 let tiny_of dt = (Dtypes.finfo dt).tiny
 let eps_of dt = (Dtypes.finfo dt).eps

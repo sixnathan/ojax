@@ -17,13 +17,7 @@ let get_aval = C.get_aval
 let shape v = (get_aval v).T.shape
 let dtype v = (get_aval v).T.dtype
 let ndim v = Array.length (shape v)
-
-let canon_axis ax n =
-  let a = if ax < 0 then ax + n else ax in
-  if a < 0 || a >= n then
-    invalid_arg
-      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" ax n);
-  a
+let canon_axis = Validate.canonicalize_axis
 
 let is_inexact = function
   | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> true
@@ -522,7 +516,7 @@ and matrix_power_body a p =
   let sa = shape a in
   let na = Array.length sa in
   if na < 2 then
-    invalid_arg "matrix_power: array must be at least two-dimensional";
+    Py_exn.type_error "matrix_power: array must be at least two-dimensional";
   if sa.(na - 1) <> sa.(na - 2) then
     invalid_arg "matrix_power: last 2 dimensions of the array must be square";
   let m = sa.(na - 1) in

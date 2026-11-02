@@ -531,7 +531,7 @@ let collect_sizes terms shapes =
     (fun tnum term ->
       let sh = List.nth shapes tnum in
       if Array.length sh <> String.length term then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "Einstein sum subscript '%s' does not contain the correct number \
               of indices for operand %d."

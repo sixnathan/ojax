@@ -36,7 +36,7 @@ let convolve_nd in1 in2 mode =
     invalid_arg "in1 and in2 must have the same number of dimensions";
   if Array.exists (( = ) 0) (shape in1) || Array.exists (( = ) 0) (shape in2)
   then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "zero-size arrays not supported in convolutions, got shapes %s and %s."
          (Lax.Utils.py_tuple (shape in1))
@@ -45,7 +45,8 @@ let convolve_nd in1 in2 mode =
   let s1 = shape in1 and s2 = shape in2 in
   let no_swap = all_pairs ( >= ) s1 s2 and swap = all_pairs ( <= ) s1 s2 in
   if not (no_swap || swap) then
-    invalid_arg "One input must be smaller than the other in every dimension.";
+    Py_exn.value_error
+      "One input must be smaller than the other in every dimension.";
   let shape_o = s2 in
   let big, small = if swap then (in2, in1) else (in1, in2) in
   let small_shape = shape small in
@@ -172,7 +173,7 @@ let convolve2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0) in1 in2
     =
   check_boundary "convolve2d" boundary fillvalue;
   if rank in1 <> 2 || rank in2 <> 2 then
-    invalid_arg "convolve2d() only supports 2-dimensional inputs.";
+    Py_exn.value_error "convolve2d() only supports 2-dimensional inputs.";
   convolve_nd in1 in2 mode
 
 let correlate ?(mode = "full") ?method_ in1 in2 =
@@ -182,7 +183,7 @@ let correlate2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0) in1 in2
     =
   check_boundary "correlate2d" boundary fillvalue;
   if rank in1 <> 2 || rank in2 <> 2 then
-    invalid_arg "correlate2d() only supports 2-dimensional inputs.";
+    Py_exn.value_error "correlate2d() only supports 2-dimensional inputs.";
   let s1 = shape in1 and s2 = shape in2 in
   let swap = all_pairs ( <= ) s1 s2 and same_shape = s1 = s2 in
   let flipped_first () =
@@ -239,8 +240,7 @@ let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
   if type_ = "constant" then
     Numpy.Ufuncs.subtract data (R.mean ~axis:[| axis |] ~keepdims:true data)
   else begin
-    let axis_c = if axis < 0 then axis + rank data else axis in
-    let n = (shape data).(axis_c) in
+    let n = Validate.tuple_index (shape data) axis in
     let bounds = List.sort_uniq compare ((0 :: bp) @ [ n ]) in
     if List.hd bounds < 0 || List.nth bounds (List.length bounds - 1) > n then
       invalid_arg
@@ -496,7 +496,7 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
     if nfft < nperseg then
       invalid_arg "nfft must be greater than or equal to nperseg.";
     if noverlap >= nperseg then
-      invalid_arg "noverlap must be less than nperseg.";
+      Py_exn.value_error "noverlap must be less than nperseg.";
     let nstep = nperseg - noverlap in
     let extend v =
       match boundary with Some m -> pad_edges m v (nperseg / 2) | None -> v
@@ -717,7 +717,7 @@ let trim_edges v k =
 let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
     ?(boundary = true) ?(time_axis = -1) ?(freq_axis = -2) zxx =
   let rankz = rank zxx in
-  if rankz < 2 then invalid_arg "Input stft must be at least 2d!";
+  if rankz < 2 then Py_exn.value_error "Input stft must be at least 2d!";
   let canon a = if a < 0 then a + rankz else a in
   let freq_axis = canon freq_axis and time_axis = canon time_axis in
   if freq_axis = time_axis then
@@ -746,7 +746,7 @@ let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
     match noverlap with Some 0 | None -> nperseg_int / 2 | Some n -> n
   in
   if noverlap_int >= nperseg_int then
-    invalid_arg "noverlap must be less than nperseg.";
+    Py_exn.value_error "noverlap must be less than nperseg.";
   let nstep = nperseg_int - noverlap_int in
   let zxx =
     if time_axis <> rankz - 1 || freq_axis <> rankz - 2 then

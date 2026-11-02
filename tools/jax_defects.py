@@ -298,6 +298,26 @@ def option_cases(goldens):
     return cases
 
 
+def eager_jit_differ(goldens, suite, set_name, case, case_id, name):
+    import numpy as np
+
+    if case is None:
+        return None
+    path = os.path.join(goldens, suite, set_name, "ops", case["op"] + ".npz")
+    with np.load(path) as z:
+        eager, jit = z.files and (case_id + "/eager_" + name, case_id + "/jit_" + name)
+        if eager not in z.files or jit not in z.files:
+            return None
+        a, b = z[eager], z[jit]
+    if a.shape != b.shape or a.dtype != b.dtype:
+        return (a.size, a.size)
+    width = a.dtype.itemsize
+    left = a.reshape(-1).view(np.uint8).reshape(-1, width)
+    right = b.reshape(-1).view(np.uint8).reshape(-1, width)
+    count = int((left != right).any(axis=1).sum())
+    return (count, a.size) if count else None
+
+
 def build(log, varying_path, frames_path, goldens):
     import jax
 
@@ -346,6 +366,13 @@ def build(log, varying_path, frames_path, goldens):
                 if bad:
                     k, v, (where, members) = bad[0]
                     out[(suite, row)] = ("d", f"{k}={v!r} is a string outside the enum at {where} (members {', '.join(members)}), so OCaml's variant cannot hold it; options {opts}: {said}")
+            continue
+        if suite.startswith(("option_fuzz:", "compose_fuzz:", "fuzz:", "fuzz_s2:")) and f[5] == "ulps":
+            set_name = suite.split(":", 1)[1]
+            case_id, mode, name = row.rsplit(":", 2)
+            differ = eager_jit_differ(goldens, suite.split(":")[0], set_name, options.get((set_name, case_id)), case_id, name)
+            if differ:
+                out[(suite, row)] = ("b", f"JAX's own eager and jit {name} differ in {differ[0]} of {differ[1]} elements (stored bytes in {suite.split(':')[0]}/{set_name}/ops); ojax's {mode} output differs from JAX's {mode} (log: {f[1]} compared, {f[2]} differing)")
             continue
         if len(f) < 8 or not suite.startswith(("text_option_fuzz:", "text_fuzz:", "text_fuzz_s2:", "text_compose_fuzz:")):
             continue

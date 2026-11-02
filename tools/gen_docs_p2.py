@@ -16,10 +16,13 @@ DPRINT_EXTRA = [
     "f16_scalar", "bf16_arr", "big_arr", "complex_scalar", "u8_arr",
     "bool_scalar_spec", "repr_conv", "str_conv", "i64_arr", "f16_spec",
     "hex_spec", "center_spec", "zero_pad", "int_as_float_spec", "neg_zero",
-    "empty_arr", "two_d_int", "inf_scalar",
+    "empty_arr", "two_d_int", "inf_scalar", "i8_arr", "f16_arr",
+    "u32_hex", "big_scalar", "tiny_scalar", "tenth_scalar", "printopts",
+    "suppress_opts",
 ]
 DPRINT_XFORMS = ["vmap", "grad", "cond", "fori", "scan", "nested_jit",
-                 "vmap_ordered", "jvp"]
+                 "vmap_ordered", "jvp", "while", "remat", "vmap_unbatched",
+                 "grad_scan", "jit_grad", "nested_vmap", "cond_ordered"]
 DPRINT_MODES = ["eager", "jit", "jaxpr", "lowered"]
 DPRINT_ERRORS = ["missing_kw", "missing_pos", "spec_on_array",
                  "mixed_numbering"]
@@ -148,6 +151,24 @@ def dprint_body(jax, jnp, name):
             p("{}", jnp.outer(i, i) - 3)
         elif name == "inf_scalar":
             p("{} {:.2f} {:e}", 1 / x[0], -1 / x[0], jnp.log(x[0] - 1))
+        elif name == "i8_arr":
+            p("{}", (i - 1).astype(jnp.int8))
+        elif name == "f16_arr":
+            p("{}", (x / 3).astype(jnp.float16))
+        elif name == "u32_hex":
+            p("{:08x}", (i[2] * 1000).astype(jnp.uint32))
+        elif name == "big_scalar":
+            p("{} {}", x[1] * 1e16, x[2] * 1e20)
+        elif name == "tiny_scalar":
+            p("{} {}", x[1] * 1e-5, x[2] * 1e-30)
+        elif name == "tenth_scalar":
+            p("{} {}", x[1] / 10, x / 10)
+        elif name == "printopts":
+            with np.printoptions(precision=3):
+                p("{} {}", x / 3, x[1] / 3)
+        elif name == "suppress_opts":
+            with np.printoptions(suppress=True, threshold=5, edgeitems=2):
+                p("{}", jnp.arange(8, dtype=jnp.float32) * 1e-9 + x[1])
         elif name == "missing_kw":
             p("{y}", x)
         elif name == "missing_pos":
@@ -255,6 +276,49 @@ def xform_thunk(jax, jnp, name, mode):
                     return c + e, c * e
                 return lax.scan(body, a[0], a)
             fn, args = f, (x,)
+        elif name == "while":
+            def f(a):
+                def body(c):
+                    p("w {}", c)
+                    return c + 1
+                return lax.while_loop(lambda c: c[0] < 2, body, a)
+            fn, args = f, (x,)
+        elif name == "remat":
+            def f(a):
+                def g(b):
+                    p("r {}", b)
+                    return jnp.sin(b)
+                return jnp.sum(jax.checkpoint(g)(a))
+            fn, args = jax.grad(f), (x,)
+        elif name == "vmap_unbatched":
+            def f(a, b):
+                p("{} {}", a, b)
+                return a + b
+            fn, args = jax.vmap(f, in_axes=(0, None)), (m, x)
+        elif name == "grad_scan":
+            def f(a):
+                def body(c, e):
+                    p("c={}", c)
+                    return c * e, e
+                return lax.scan(body, 1.0, a)[0]
+            fn, args = jax.grad(f), (x + 1,)
+        elif name == "jit_grad":
+            def f(a):
+                p("a={}", a)
+                return jnp.sum(a * a)
+            fn, args = jax.jit(jax.grad(f)), (x,)
+        elif name == "nested_vmap":
+            def f(a):
+                p("e {}", a)
+                return a * 2
+            fn, args = jax.vmap(jax.vmap(f)), (m,)
+        elif name == "cond_ordered":
+            def f(a):
+                return lax.cond(a[0] < 1,
+                                lambda b: (p("yes {}", b, ordered=True), b)[1],
+                                lambda b: (p("no {}", b, ordered=True), -b)[1],
+                                a)
+            fn, args = f, (x,)
         elif name == "nested_jit":
             def f(a):
                 def g(b):
@@ -266,6 +330,9 @@ def xform_thunk(jax, jnp, name, mode):
         else:
             raise KeyError(name)
         if mode == "eager":
+            fn(*args)
+            return ""
+        if mode == "jit" and name == "jit_grad":
             fn(*args)
             return ""
         if mode == "jit":

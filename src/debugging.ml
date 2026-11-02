@@ -371,7 +371,7 @@ let format_int sp (x : int64) =
       in
       pad sp ~default_align:'>' (with_sign sp neg body)
 
-let format_value v spec =
+let format_value ?(options = Numpy.Array_print.default_options) v spec =
   let nd =
     match v with
     | Concrete nd -> nd
@@ -379,13 +379,14 @@ let format_value v spec =
     | Tracer _ -> failwith "debug.print: expected a concrete value"
   in
   if Array.length (Ndarray.shape nd) > 0 then
-    if spec = "" then Numpy.Array_print.array_str nd
+    if spec = "" then Numpy.Array_print.array_str ~options nd
     else
       Py_exn.type_error
         "unsupported format string passed to numpy.ndarray.__format__"
   else
     let dt = Ndarray.dtype nd in
-    if Dtypes.isdtype dt "complex floating" then Numpy.Array_print.array_str nd
+    if Dtypes.isdtype dt "complex floating" then
+      Numpy.Array_print.array_str ~options nd
     else if dt = Dtype.Bool then
       let b = Ndarray.get_f nd [||] <> 0.0 in
       if spec = "" then if b then "True" else "False"
@@ -407,11 +408,23 @@ let host_nd = function
 
 let print_sink : (string -> unit) ref = ref print_endline
 
-let np_printoptions_text =
-  "(('edgeitems', 3), ('threshold', 1000), ('floatmode', 'maxprec'), \
-   ('precision', 8), ('suppress', False), ('linewidth', 75), ('nanstr', \
-   'nan'), ('infstr', 'inf'), ('sign', '-'), ('formatter', None), ('legacy', \
-   False), ('override_repr', None))"
+let np_printoptions_text (o : Numpy.Extras.printoptions) =
+  Printf.sprintf
+    "(('edgeitems', %d), ('threshold', %d), ('floatmode', 'maxprec'), \
+     ('precision', %d), ('suppress', %s), ('linewidth', 75), ('nanstr', \
+     'nan'), ('infstr', 'inf'), ('sign', '-'), ('formatter', None), ('legacy', \
+     False), ('override_repr', None))"
+    o.edgeitems o.threshold o.precision
+    (if o.suppress then "True" else "False")
+
+let array_options (o : Numpy.Extras.printoptions) =
+  {
+    Numpy.Array_print.default_options with
+    precision = o.precision;
+    threshold = o.threshold;
+    edgeitems = o.edgeitems;
+    suppress = o.suppress;
+  }
 
 let in_tree_text nargs kw_names =
   let pos =
@@ -450,6 +463,8 @@ let print ?(ordered = false) ?(kwargs = []) fmt args =
   let has_placeholders =
     match chunks with (_, Some _) :: _ -> true | _ -> false
   in
+  let popts = Numpy.Extras.get_printoptions () in
+  let options = array_options popts in
   let render values =
     let pos = List.filteri (fun i _ -> i < nargs) values in
     let kw = List.filteri (fun i _ -> i >= nargs) values in
@@ -469,14 +484,18 @@ let print ?(ordered = false) ?(kwargs = []) fmt args =
                  let shown =
                    match f.conv with
                    | Some 'r' -> Numpy.Extras.repr v
-                   | Some 's' -> Numpy.Array_print.array_str (host_nd v)
-                   | _ -> format_value v f.spec
+                   | Some 's' ->
+                       Numpy.Array_print.array_str ~options (host_nd v)
+                   | _ -> format_value ~options v f.spec
                  in
                  lit ^ shown)
            fields)
     else
       String.concat " "
-        (fmt :: List.map (fun v -> Numpy.Array_print.array_str (host_nd v)) pos)
+        (fmt
+        :: List.map
+             (fun v -> Numpy.Array_print.array_str ~options (host_nd v))
+             pos)
   in
   let params =
     [
@@ -484,7 +503,7 @@ let print ?(ordered = false) ?(kwargs = []) fmt args =
       ("has_placeholders", if has_placeholders then "True" else "False");
       ("in_tree", in_tree_text nargs kw_names);
       ("logging_record", "None");
-      ("np_printoptions", np_printoptions_text);
+      ("np_printoptions", np_printoptions_text popts);
       ("ordered", if ordered then "True" else "False");
       ("partitioned", "False");
       ("static_args", "()");

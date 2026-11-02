@@ -131,6 +131,7 @@ let reshape ?(order = "C") v sh =
 
 let ravel ?(order = "C") v =
   match order with
+  | "K" -> Py_exn.not_implemented_error "Ravel not implemented for order='K'."
   | "C" -> reshape v [| size v |]
   | "F" -> reshape (bind1 (T.Transpose (reverse_axes v)) [ v ]) [| size v |]
   | "A" -> Py_exn.not_implemented_error "np.reshape order=A is not implemented."
@@ -1723,6 +1724,13 @@ let cross ?axisa ?axisb ?axisc ?axis p0 p1 =
     [ p0; p1 ]
 
 let diag_indices ?(ndim = 2) n =
+  if n < 0 then
+    Py_exn.value_error
+      (Printf.sprintf "n argument to diag_indices must be nonnegative, got %d" n);
+  if ndim < 0 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "ndim argument to diag_indices must be nonnegative, got %d" ndim);
   let dt = Dtypes.default_int_dtype () in
   let one = bind1 (T.Iota { dtype = dt; shape = [| n |]; dimension = 0 }) [] in
   List.init ndim (fun _ -> one)
@@ -1785,7 +1793,10 @@ let trace ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) ?dtype a =
   let s = shape a in
   let nd = Array.length s in
   let a1 = canonicalize_axis axis1 nd and a2 = canonicalize_axis axis2 nd in
-  if a1 = a2 then Py_exn.value_error "axis1 and axis2 can not be same";
+  if a1 = a2 then
+    Py_exn.value_error
+      (Printf.sprintf "axis1 and axis2 can not be same. axis1=%d and axis2=%d"
+         axis1 axis2);
   let na = s.(a1) and ma = s.(a2) in
   let am = moveaxis [| axis1; axis2 |] [| nd - 2; nd - 1 |] a in
   let mask = eye ~m:ma ~k:offset ~dtype:D.Bool na in
@@ -2451,6 +2462,13 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
       Py_exn.value_error "y has more than 2 dimensions"
   | _ -> ());
   if ndim m > 2 then Py_exn.value_error "m has more than 2 dimensions";
+  (match dtype with
+  | Some d when not (Dtypes.issubdtype d `Inexact) ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "cov: dtype must be a subclass of float or complex; got dtype='%s'"
+           (D.numpy_name d))
+  | _ -> ());
   let dt_common =
     match y with
     | None -> dtype_of m
@@ -2620,6 +2638,14 @@ let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
       (p0 :: Option.to_list aweights)
 
 let corrcoef ?y ?(rowvar = true) ?dtype x =
+  (match dtype with
+  | Some d when not (Dtypes.issubdtype d `Inexact) ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "corrcoef: dtype must be a subclass of float or complex; got \
+            dtype='%s'"
+           (D.numpy_name d))
+  | _ -> ());
   let c = cov ?y ~rowvar ?dtype x in
   if ndim c = 0 then bind1 T.Div [ c; c ]
   else begin

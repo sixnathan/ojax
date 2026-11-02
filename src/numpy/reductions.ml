@@ -389,7 +389,8 @@ let std ?dtype:dt ?axis ?keepdims ?ddof ?ddof_value ?where:mask ?mean:a_mean
   let dt = Option.map Dtypes.canonicalize_dtype dt in
   (match dt with
   | Some d when not (is_inexact d) ->
-      Py_exn.value_error "dtype argument to jnp.std must be inexact"
+      Py_exn.value_error
+        ("dtype argument to jnp.std must be inexact; got " ^ D.numpy_name d)
   | _ -> ());
   Jnp_util.jit1 "_std"
     ~key:

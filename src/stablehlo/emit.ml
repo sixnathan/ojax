@@ -2890,6 +2890,13 @@ let is_ordered_callback id =
       true
   | _ -> false
 
+let is_ordered_debug_callback id =
+  match Core.custom_rule id with
+  | Core.Callback_rule { cb_effect = Core.Callback_debug { ordered = true }; _ }
+    ->
+      true
+  | _ -> false
+
 let ordered_token ctx =
   match List.assq_opt ctx.buf !ordered_tokens with
   | Some t -> t
@@ -2923,12 +2930,22 @@ let emit_ordered_callback ctx (eqn : eqn) in_ids id =
     | [] -> "!stablehlo.token"
     | avals -> "(" ^ types avals ^ ")"
   in
+  let sharding =
+    if is_ordered_debug_callback id then ""
+    else
+      Printf.sprintf ", sdy.sharding = #sdy.sharding_per_value<[%s]>"
+        (String.concat ", "
+           (List.init
+              (List.length out_avals + 1)
+              (fun _ -> "<@maximal_mesh_0, []>")))
+  in
   let attrs =
     Printf.sprintf
       "{backend_config = \"\", has_side_effect = true, mhlo.backend_config = \
-       {index = %d : ui64}, operand_layouts = [%s], result_layouts = [%s]} : \
+       {index = %d : ui64}, operand_layouts = [%s], result_layouts = [%s]%s} : \
        (%s) -> %s\n"
-      id (layouts in_avals) (layouts out_avals) (types in_avals) results
+      id (layouts in_avals) (layouts out_avals) sharding (types in_avals)
+      results
   in
   let args = String.concat ", " (token :: List.map name in_ids) in
   let group = fresh ctx in
@@ -2963,7 +2980,7 @@ let emit_ordered_callback ctx (eqn : eqn) in_ids id =
 let emit_host_callback ctx (eqn : eqn) in_ids id =
   if not (lapack_ffi ()) then
     failwith "Stablehlo.Emit: callbacks run on the host interpreter";
-  callback_seen := true;
+  if not (is_ordered_debug_callback id) then callback_seen := true;
   if is_ordered_callback id then emit_ordered_callback ctx eqn in_ids id
   else
     let in_avals = List.map atom_aval eqn.inputs in
@@ -5351,6 +5368,27 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
         Hashtbl.replace ctx.ids v.vid (key_constraint source v.vaval)
       end)
     arg_binders;
+  let main_token =
+    if
+      partition = None && !emission_depth = 1
+      && List.exists
+           (fun (e : eqn) ->
+             match e.prim with
+             | Custom_jvp_call id | Custom_vjp_call id -> is_ordered_callback id
+             | _ -> false)
+           jx.eqns
+    then begin
+      let t = name (fresh ctx) in
+      ordered_tokens := [ (ctx.buf, t) ];
+      Some t
+    end
+    else None
+  in
+  let params =
+    match main_token with
+    | Some t -> (t ^ ": !stablehlo.token {jax.token = true}") :: params
+    | None -> params
+  in
   in_function "main" (fun () ->
       List.iter
         (fun (e : eqn) ->
@@ -5370,6 +5408,13 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   let out_types =
     List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) jx.outs
   in
+  let out_names, out_types =
+    match main_token with
+    | Some _ ->
+        ( List.assq ctx.buf !ordered_tokens :: out_names,
+          "!stablehlo.token" :: out_types )
+    | None -> (out_names, out_types)
+  in
   if out_names = [] then Buffer.add_string ctx.buf "    return\n"
   else
     Buffer.add_string ctx.buf
@@ -5380,7 +5425,10 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
     match partition with
     | Some { pt_out; _ } when pt_out <> [] ->
         List.map2 (fun ty spec -> ty ^ attribute spec) out_types pt_out
-    | _ -> out_types
+    | _ -> (
+        match (main_token, out_types) with
+        | Some _, _ :: rest -> "!stablehlo.token {jax.token = true}" :: rest
+        | _ -> out_types)
   in
   Printf.sprintf
     "module {\n%s%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"

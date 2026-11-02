@@ -1109,6 +1109,10 @@ let bincount ?weights ?(minlength = 0) ?length x =
            "type of weights must match type of x. Got typeof(x)=%s and \
             typeof(weights)=%s"
            (typeof x) (typeof w))
+  | Some w when dtype_of w = Dtype.Bool ->
+      Py_exn.type_error
+        "add does not accept dtype bool at position 0. Accepted dtypes at \
+         position 0 are subtypes of complexfloating, floating, integer."
   | _ -> ());
   let n =
     match length with
@@ -1355,6 +1359,10 @@ let interp_body ?left ?right ?period x xp fp =
     | _ -> assert false
   in
   let fp = as_inexact fp in
+  (match dtype_of x with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      Py_exn.value_error "jnp.interp: complex x values not supported."
+  | _ -> ());
   let idx = NL.take_trailing in
   let int_lit = Jnp_util.py_int in
   let x, xp, fp =
@@ -2056,16 +2064,22 @@ let frexp x =
   | _ -> invalid_arg "frexp: arity"
 
 let ldexp x1 x2 =
-  reject_complex "ldexp" x1;
-  (match dtype_of x2 with
-  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
-  | Dtype.Complex128 ->
-      Py_exn.value_error
-        (Printf.sprintf
-           "ldexp not supported for input types (dtype('%s'), dtype('%s'))"
-           (Dtype.numpy_name (dtype_of x1))
-           (Dtype.numpy_name (dtype_of x2)))
-  | _ -> ());
+  let is_complex = function
+    | Dtype.Complex64 | Dtype.Complex128 -> true
+    | _ -> false
+  in
+  let is_inexact = function
+    | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
+    | Dtype.Complex128 ->
+        true
+    | _ -> false
+  in
+  if is_complex (dtype_of x1) || is_inexact (dtype_of x2) then
+    Py_exn.value_error
+      (Printf.sprintf
+         "ldexp not supported for input types (dtype('%s'), dtype('%s'))"
+         (Dtype.numpy_name (dtype_of x1))
+         (Dtype.numpy_name (dtype_of x2)));
   let x1 = as_inexact x1 in
   let dt = dtype_of x1 in
   let x2 = L.convert_element_type x2 dt in
@@ -2269,6 +2283,14 @@ let polyfit_parts ?rcond ?w x y deg =
   if rank y < 1 || rank y > 2 then type_error "expected 1D or 2D array for y";
   if (shape x).(0) <> (shape y).(0) then
     type_error "expected x and y to have same length";
+  (match (rcond, dtype_of x) with
+  | ( None,
+      (( Dtype.Bool | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8
+       | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 ) as d) ) ->
+      Py_exn.value_error
+        (Printf.sprintf "data type dtype('%s') not compatible with finfo"
+           (Dtype.numpy_name d))
+  | _ -> ());
   let x = as_inexact x and y = as_inexact y in
   let lhs = NL.vander ~n:order x in
   let lhs, y =

@@ -83,9 +83,7 @@ let string_pair j =
 
 let trans : json -> int = function
   | `Int n -> n
-  | `String "N" -> 0
-  | `String "T" -> 1
-  | `String "C" -> 2
+  | `String s -> Ojax.Scipy.Linalg.trans_of_string s
   | _ -> no "type:trans"
 
 let rounding_method : json -> Ojax.Lax_config.rounding_method = function
@@ -178,3 +176,17 @@ let value_list arr : json -> T.value list = function
   | `Assoc [ ("$arr", `String name) ] -> [ arr name ]
   | `List items -> List.map (value arr) items
   | _ -> no "type:value_list"
+
+let value_option arr : json -> T.value option = function
+  | `Null -> None
+  | j -> Some (value arr j)
+
+let einsum_optimize : json -> Ojax.Numpy.Einsum_paths.optimize = function
+  | `Bool true -> Ojax.Numpy.Einsum_paths.Optimal
+  | `Bool false -> Ojax.Numpy.Einsum_paths.Unoptimized
+  | `String s -> Ojax.Numpy.Einsum_paths.Named s
+  | j -> Ojax.Numpy.Einsum_paths.Path (List.map int_list (elements j))
+
+let axis_arg : json -> Ojax.Numpy.Reductions.axis_arg = function
+  | `Int n -> Ojax.Numpy.Reductions.Axis n
+  | j -> Ojax.Numpy.Reductions.Axes (int_array j)

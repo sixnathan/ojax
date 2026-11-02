@@ -478,6 +478,12 @@ let solve ?lower ?assume_a a0 a1 =
       | [], [ a0; a1 ] -> solve ?lower ?assume_a a0 a1
       | _ -> assert false)
 
+let trans_of_string = function
+  | "N" -> 0
+  | "T" -> 1
+  | "C" -> 2
+  | other -> Py_exn.value_error ("Invalid 'trans' value " ^ other)
+
 let solve_triangular ?(trans = 0) ?(lower = false) ?(unit_diagonal = false) a b
     =
   let transpose_a, conjugate_a =

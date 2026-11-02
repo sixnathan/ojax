@@ -1,9 +1,9 @@
 open Types
 
-val nonzero : ?size:int -> ?fill_value:int -> value -> value list
+val nonzero : ?size:int -> ?fill_value:value -> value -> value list
 val fancy_take : value -> value list -> value
-val flatnonzero : ?size:int -> ?fill_value:int -> value -> value
-val argwhere : ?size:int -> ?fill_value:int -> value -> value
+val flatnonzero : ?size:int -> ?fill_value:value -> value -> value
+val argwhere : ?size:int -> ?fill_value:value -> value -> value
 
 type unique_result = {
   values : value;
@@ -90,6 +90,14 @@ val histogramdd :
   value ->
   value * value list
 
+val histogramdd_uniform :
+  ?bins:int ->
+  ?range:(float * float) array ->
+  ?weights:value ->
+  ?density:bool ->
+  value ->
+  value * value list
+
 val histogram2d :
   ?bins:int array ->
   ?range:(float * float) array ->
@@ -149,7 +157,7 @@ val block : nested -> value
 val promote_types : Dtype.t -> Dtype.t -> Dtype.t
 val can_cast : ?casting:string -> Dtype.t -> Dtype.t -> bool
 val shape_of : value -> int array
-val size : ?axis:int -> value -> int
+val size : ?axis:int array -> value -> int
 val ndim : value -> int
 val polydiv : ?trim_leading_zeros:bool -> value -> value -> value * value
 val polyfit : ?rcond:float -> ?w:value -> value -> value -> int -> value

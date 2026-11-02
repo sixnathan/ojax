@@ -1172,7 +1172,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   in
   convert result (dtype a)
 
-let quantile_core ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
+let quantile_int_axis ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
   if method_ = "inverted_cdf" then
     quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights
   else begin
@@ -1187,6 +1187,97 @@ let quantile_core ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
     if squash_nans then quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans
     else quantile_plain a q ~axis ~method_ ~keepdims
   end
+
+type axis_arg = Axis of int | Axes of int array
+
+let quantile_methods =
+  [ "linear"; "lower"; "higher"; "midpoint"; "nearest"; "inverted_cdf" ]
+
+let quantile_axes ?weights a q ~axes ~method_ ~keepdims ~squash_nans =
+  if not (List.mem method_ quantile_methods) then
+    Py_exn.value_error
+      "method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest' \
+       or 'inverted_cdf'";
+  let a, weights =
+    match weights with
+    | None -> (to_inexact a, None)
+    | Some w ->
+        if is_complex_dtype (dtype w) then
+          Py_exn.value_error "Weights cannot be complex types.";
+        if method_ <> "inverted_cdf" then
+          raise
+            (Failure
+               (method_
+              ^ " doesn't support weights. Only method 'inverted_cdf' supports \
+                 weights."));
+        let a = to_inexact a and w = to_inexact w in
+        let dt = Dtypes.promote_types (dtype a) (dtype w) in
+        let a = convert a dt and w = convert w dt in
+        if shape w <> shape a then begin
+          let ax_tuple = Validate.canonicalize_axis_tuple axes (ndim a) in
+          let reduced = Array.map (fun ax -> (shape a).(ax)) ax_tuple in
+          if shape w <> reduced then
+            Py_exn.value_error
+              (Printf.sprintf "Weights shape %s must match reduction axes %s"
+                 (Validate.python_tuple (shape w))
+                 (Validate.python_tuple reduced));
+          (a, Some (Lax_api.broadcast_in_dim w (shape a) ax_tuple))
+        end
+        else (a, Some w)
+  in
+  if is_complex_dtype (dtype a) then
+    Py_exn.value_error
+      "quantile does not support complex input, as the operation is poorly \
+       defined.";
+  let nd = ndim a in
+  let sh = shape a in
+  let axes = Array.map (fun ax -> canonicalize_axis ax nd) axes in
+  if
+    List.length (List.sort_uniq compare (Array.to_list axes))
+    <> Array.length axes
+  then Py_exn.value_error "repeated axis";
+  let keepdim = Array.copy sh in
+  Array.iter (fun ax -> keepdim.(ax) <- 1) axes;
+  let touched i = Array.mem i axes in
+  let keep = List.filter (fun i -> not (touched i)) (List.init nd Fun.id) in
+  let dimensions = Array.init nd Fun.id in
+  List.iteri
+    (fun i k ->
+      let t = dimensions.(i) in
+      dimensions.(i) <- dimensions.(k);
+      dimensions.(k) <- t)
+    keep;
+  let untouched = Array.of_list (List.map (fun i -> sh.(i)) keep) in
+  let touch_size =
+    Array.fold_left ( * ) 1
+      (Array.of_list
+         (List.filter_map
+            (fun i -> if touched i then Some sh.(i) else None)
+            (List.init nd Fun.id)))
+  in
+  let new_shape = Array.append untouched [| touch_size |] in
+  let a = Lax_api.reshape ~dimensions a new_shape in
+  let weights =
+    Option.map (fun w -> Lax_api.reshape ~dimensions w new_shape) weights
+  in
+  let result =
+    quantile_int_axis ?weights a q ~axis:(Some (-1)) ~method_ ~keepdims
+      ~squash_nans
+  in
+  if keepdims && nd > 0 then
+    reshape result
+      (if ndim q > 0 then Array.append [| (shape q).(0) |] keepdim else keepdim)
+  else result
+
+let quantile_core ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
+  match axis with
+  | Some (Axes axes) ->
+      quantile_axes ?weights a q ~axes ~method_ ~keepdims ~squash_nans
+  | Some (Axis n) ->
+      quantile_int_axis ?weights a q ~axis:(Some n) ~method_ ~keepdims
+        ~squash_nans
+  | None ->
+      quantile_int_axis ?weights a q ~axis:None ~method_ ~keepdims ~squash_nans
 
 let quantile ?axis ?(keepdims = false) ?(method_ = "linear") ?weights a q =
   quantile_core ?weights a q ~axis ~method_ ~keepdims ~squash_nans:false

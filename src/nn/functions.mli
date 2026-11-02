@@ -23,6 +23,12 @@ val glu : ?axis:int -> Types.value -> Types.value
 val softmax : ?axis:int -> ?where:Types.value -> Types.value -> Types.value
 val log_softmax : ?axis:int -> ?where:Types.value -> Types.value -> Types.value
 
+val softmax_axes :
+  axes:int array -> ?where:Types.value -> Types.value -> Types.value
+
+val log_softmax_axes :
+  axes:int array -> ?where:Types.value -> Types.value -> Types.value
+
 val standardize :
   ?axis:int ->
   ?mean:Types.value ->

@@ -67,7 +67,9 @@ let () =
             (fun v -> List.hd (E.unique ~size:2 ~fill_value:7.0 v))
             empty1;
           case "nonzero" D.I32 [| 2 |] [| 0.0; 0.0 |]
-            (fun v -> List.hd (E.nonzero ~size:2 ~fill_value:1 v))
+            (fun v ->
+              List.hd
+                (E.nonzero ~size:2 ~fill_value:(Ojax.Numpy.Jnp_util.py_int 1) v))
             (f32 [| 3; 0 |] [||]);
           case "hankel" D.F32 [| 0; 0 |] [||]
             (fun v -> Ojax.Scipy.Linalg_special.hankel v)

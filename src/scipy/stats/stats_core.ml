@@ -153,7 +153,8 @@ let rankdata_body method_ a =
         NL.astype
           (List.hd
              (Numpy.Extras.nonzero ~size:(n + 1)
-                ~fill_value:(Array.fold_left ( * ) 1 (shape obs))
+                ~fill_value:
+                  (Numpy.Jnp_util.py_int (Array.fold_left ( * ) 1 (shape obs)))
                 obs))
           out_dt
       in

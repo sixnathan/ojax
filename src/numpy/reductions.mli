@@ -200,8 +200,10 @@ val cumulative_prod :
   Types.value ->
   Types.value
 
+type axis_arg = Axis of int | Axes of int array
+
 val quantile :
-  ?axis:int ->
+  ?axis:axis_arg ->
   ?keepdims:bool ->
   ?method_:string ->
   ?weights:Types.value ->
@@ -210,7 +212,7 @@ val quantile :
   Types.value
 
 val nanquantile :
-  ?axis:int ->
+  ?axis:axis_arg ->
   ?keepdims:bool ->
   ?method_:string ->
   ?weights:Types.value ->
@@ -219,7 +221,7 @@ val nanquantile :
   Types.value
 
 val percentile :
-  ?axis:int ->
+  ?axis:axis_arg ->
   ?keepdims:bool ->
   ?method_:string ->
   ?weights:Types.value ->
@@ -228,7 +230,7 @@ val percentile :
   Types.value
 
 val nanpercentile :
-  ?axis:int ->
+  ?axis:axis_arg ->
   ?keepdims:bool ->
   ?method_:string ->
   ?weights:Types.value ->
@@ -236,8 +238,8 @@ val nanpercentile :
   Types.value ->
   Types.value
 
-val median : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
-val nanmedian : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
+val median : ?axis:axis_arg -> ?keepdims:bool -> Types.value -> Types.value
+val nanmedian : ?axis:axis_arg -> ?keepdims:bool -> Types.value -> Types.value
 
 val take_along_axis_hook :
   (axis:int -> Types.value -> Types.value -> Types.value) ref

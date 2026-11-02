@@ -1423,7 +1423,8 @@ let pad_body ?(mode = "constant") ?stat_length ?end_values
                Reductions.mean ~axis:[| axis |] ~keepdims:true a))
     | "median" ->
         pad_stats v pad_width stat_length
-          (keep_stat (fun a axis -> Reductions.median ~axis ~keepdims:true a))
+          (keep_stat (fun a axis ->
+               Reductions.median ~axis:(Reductions.Axis axis) ~keepdims:true a))
     | "empty" -> pad_constant v pad_width 0.0
     | m ->
         Py_exn.not_implemented_error

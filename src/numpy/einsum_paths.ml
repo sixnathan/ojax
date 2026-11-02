@@ -7,6 +7,7 @@ type optimize =
   | Branch_1
   | Unoptimized
   | Path of int list list
+  | Named of string
 
 let optimize_of_string s =
   match String.lowercase_ascii s with
@@ -588,10 +589,10 @@ let contract_path ?(optimize = Auto) subscripts shapes =
   in
   let naive_cost = flop_count indices inner num_ops sizes in
   let output_set = canon output_subscript in
-  let path =
-    match optimize with
+  let rec choose = function
     | Path p -> p
     | _ when num_ops <= 2 -> [ List.init num_ops Fun.id ]
+    | Named name -> choose (optimize_of_string name)
     | Unoptimized -> List.init (num_ops - 1) (fun _ -> [ 0; 1 ])
     | Auto -> auto_path sets output_set sizes
     | Optimal -> optimal sets output_set sizes
@@ -600,6 +601,7 @@ let contract_path ?(optimize = Auto) subscripts shapes =
     | Branch_2 -> branch (Some 2) sets output_set sizes
     | Branch_1 -> branch (Some 1) sets output_set sizes
   in
+  let path = choose optimize in
   let num_steps = List.length path in
   let input_sets = ref sets in
   let input_list = ref terms in

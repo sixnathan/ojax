@@ -290,9 +290,7 @@ let nonzero ?size ?fill_value a =
     | Some fill ->
         let idx = NL.arange ~dtype:(default_int ()) (float_of_int k) in
         let fill_mask = U.greater_equal idx (count ()) in
-        List.map
-          (fun entry -> NL.where_ fill_mask (Jnp_util.py_int fill) entry)
-          out
+        List.map (fun entry -> NL.where_ fill_mask fill entry) out
   end
 
 let flatnonzero ?size ?fill_value a =
@@ -863,7 +861,9 @@ let intersect1d_sized ~assume_unique ~size ~fill_value a b =
   in
   let num_results = R.sum aux_mask in
   let vals =
-    if n > 0 then take_fill aux (List.hd (nonzero ~size ~fill_value:n aux_mask))
+    if n > 0 then
+      take_fill aux
+        (List.hd (nonzero ~size ~fill_value:(Jnp_util.py_int n) aux_mask))
     else L.full [| size |] 0.0 (dtype_of aux)
   in
   fill_or_extremes ~fill_value vals num_results
@@ -1039,7 +1039,9 @@ let setxor1d_sized ~assume_unique ~size ~fill_value a b =
   let num_results = R.sum aux_mask in
   let n = size_of aux in
   let vals =
-    if n > 0 then take_fill aux (List.hd (nonzero ~size ~fill_value:n aux_mask))
+    if n > 0 then
+      take_fill aux
+        (List.hd (nonzero ~size ~fill_value:(Jnp_util.py_int n) aux_mask))
     else L.full [| size |] 0.0 (dtype_of aux)
   in
   fill_or_extremes ~fill_value vals num_results
@@ -1292,6 +1294,9 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
     match weights with
     | None -> (as_inexact sample, None)
     | Some w -> (
+        let leading = Array.sub (shape sample) 0 (min 1 (rank sample)) in
+        if shape w <> leading then
+          Py_exn.value_error "should have one weight for each sample.";
         match NL.promote_values [ as_inexact sample; as_inexact w ] with
         | [ s; w ] -> (s, Some w)
         | _ -> assert false)
@@ -1347,6 +1352,16 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
     else core
   in
   (out, edges)
+
+let histogramdd_uniform ?(bins = 10) ?range ?weights ?density sample =
+  (match weights with
+  | Some w ->
+      let leading = Array.sub (shape sample) 0 (min 1 (rank sample)) in
+      if shape w <> leading then
+        Py_exn.value_error "should have one weight for each sample."
+  | None -> ());
+  let n_dims = unpack_sample_shape (shape sample) in
+  histogramdd ~bins:(Array.make n_dims bins) ?range ?weights ?density sample
 
 let histogram2d ?(bins = [| 10; 10 |]) ?range ?weights ?(density = false) x y =
   let sample = NL.transpose (array_of_values (NL.promote_values [ x; y ])) in
@@ -1769,7 +1784,9 @@ let place ?(inplace = true) a mask values =
   if size_of a = 0 then a
   else begin
     let n = size_of mask in
-    let indices = List.hd (nonzero ~size:n ~fill_value:n (NL.ravel mask)) in
+    let indices =
+      List.hd (nonzero ~size:n ~fill_value:(Jnp_util.py_int n) (NL.ravel mask))
+    in
     let vals = tile_to_size vals n in
     NL.reshape (at_set (NL.ravel a) [ indices ] vals) (shape a)
   end
@@ -2234,7 +2251,14 @@ let can_cast ?(casting = "safe") a b =
 let shape_of = shape
 
 let size ?axis a =
-  match axis with None -> size_of a | Some ax -> (shape a).(canon (rank a) ax)
+  match axis with
+  | None -> size_of a
+  | Some axes ->
+      let sh = shape a in
+      Array.fold_left
+        (fun acc ax -> acc * sh.(ax))
+        1
+        (Validate.canonicalize_axis_tuple axes (rank a))
 
 let ndim = rank
 

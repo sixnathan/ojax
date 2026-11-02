@@ -98,7 +98,7 @@ let run op positional options arr =
       [
         Ojax.Numpy.Extras.argwhere
           ?size:(A.opt options "size" A.int_)
-          ?fill_value:(A.opt options "fill_value" A.int_)
+          ?fill_value:(A.opt options "fill_value" (A.value arr))
           ((A.value arr) positional.(0));
       ]
   | "jnp.around" ->
@@ -340,9 +340,9 @@ let run op positional options arr =
           ((A.value arr) positional.(0));
       ]
   | "jnp.einsum" ->
-      A.refuse options [ "optimize" ];
       [
         Ojax.Numpy.Einsum.einsum
+          ?optimize:(A.opt options "optimize" A.einsum_optimize)
           ?precision:(A.opt options "precision" A.precision)
           ?preferred_element_type:
             (A.opt options "preferred_element_type" A.dtype)
@@ -389,7 +389,7 @@ let run op positional options arr =
       [
         Ojax.Numpy.Extras.flatnonzero
           ?size:(A.opt options "size" A.int_)
-          ?fill_value:(A.opt options "fill_value" A.int_)
+          ?fill_value:(A.opt options "fill_value" (A.value arr))
           ((A.value arr) positional.(0));
       ]
   | "jnp.flip" ->
@@ -584,7 +584,7 @@ let run op positional options arr =
   | "jnp.median" ->
       [
         Ojax.Numpy.Reductions.median
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ((A.value arr) positional.(0));
       ]
@@ -659,7 +659,7 @@ let run op positional options arr =
   | "jnp.nanmedian" ->
       [
         Ojax.Numpy.Reductions.nanmedian
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ((A.value arr) positional.(0));
       ]
@@ -675,7 +675,7 @@ let run op positional options arr =
   | "jnp.nanpercentile" ->
       [
         Ojax.Numpy.Reductions.nanpercentile
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ?method_:(A.opt options "method" A.string_)
           ?weights:(A.opt options "weights" (A.value arr))
@@ -695,7 +695,7 @@ let run op positional options arr =
   | "jnp.nanquantile" ->
       [
         Ojax.Numpy.Reductions.nanquantile
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ?method_:(A.opt options "method" A.string_)
           ?weights:(A.opt options "weights" (A.value arr))
@@ -737,7 +737,7 @@ let run op positional options arr =
   | "jnp.nonzero" ->
       Ojax.Numpy.Extras.nonzero
         ?size:(A.opt options "size" A.int_)
-        ?fill_value:(A.opt options "fill_value" A.int_)
+        ?fill_value:(A.opt options "fill_value" (A.value arr))
         ((A.value arr) positional.(0))
   | "jnp.ones" ->
       [
@@ -762,7 +762,7 @@ let run op positional options arr =
   | "jnp.percentile" ->
       [
         Ojax.Numpy.Reductions.percentile
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ?method_:(A.opt options "method" A.string_)
           ?weights:(A.opt options "weights" (A.value arr))
@@ -860,7 +860,7 @@ let run op positional options arr =
   | "jnp.quantile" ->
       [
         Ojax.Numpy.Reductions.quantile
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ?keepdims:(A.opt options "keepdims" A.bool_)
           ?method_:(A.opt options "method" A.string_)
           ?weights:(A.opt options "weights" (A.value arr))
@@ -2615,6 +2615,23 @@ let run op positional options arr =
           ((A.value arr) positional.(0))
           ((A.value arr) positional.(1));
       ]
+  | "sp_signal.csd" ->
+      let a, b =
+        Ojax.Scipy.Signal.csd
+          ?fs:(A.opt options "fs" A.float_)
+          ?window:(A.opt options "window" (A.value arr))
+          ?nperseg:(A.opt options "nperseg" A.int_)
+          ?noverlap:(A.opt options "noverlap" A.int_)
+          ?nfft:(A.opt options "nfft" A.int_)
+          ?detrend:(A.opt_keep options "detrend" A.string_option)
+          ?return_onesided:(A.opt options "return_onesided" A.bool_)
+          ?scaling:(A.opt options "scaling" A.string_)
+          ?axis:(A.opt options "axis" A.int_)
+          ?average:(A.opt options "average" A.string_)
+          ((A.value arr) positional.(0))
+          ((A.value_option arr) positional.(1))
+      in
+      [ a; b ]
   | "sp_signal.detrend" ->
       [
         Ojax.Scipy.Signal.detrend
@@ -2700,7 +2717,7 @@ let run op positional options arr =
   | "sp_special.log_softmax" ->
       [
         Ojax.Scipy.Special.log_softmax
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ((A.value arr) positional.(0));
       ]
   | "sp_special.logsumexp" ->
@@ -2716,7 +2733,7 @@ let run op positional options arr =
   | "sp_special.softmax" ->
       [
         Ojax.Scipy.Special.softmax
-          ?axis:(A.opt options "axis" A.int_)
+          ?axis:(A.opt options "axis" A.axis_arg)
           ((A.value arr) positional.(0));
       ]
   | "sp_special.sph_harm_y" ->

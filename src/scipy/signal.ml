@@ -668,11 +668,11 @@ let csd ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft
             let bias = NL.astype (median_bias sh.(r - 1)) (dtype_of pxy) in
             let med =
               if is_complex pxy then
-                let re = R.median ~axis:(-1) (Numpy.Ufuncs.real pxy) in
-                let im = R.median ~axis:(-1) (Numpy.Ufuncs.imag pxy) in
+                let re = R.median ~axis:(R.Axis (-1)) (Numpy.Ufuncs.real pxy) in
+                let im = R.median ~axis:(R.Axis (-1)) (Numpy.Ufuncs.imag pxy) in
                 Numpy.Ufuncs.add re
                   (Numpy.Ufuncs.multiply (py_complex 0.0 1.0) im)
-              else R.median ~axis:(-1) pxy
+              else R.median ~axis:(R.Axis (-1)) pxy
             in
             Numpy.Ufuncs.divide med bias
         | "mean" -> R.mean ~axis:[| -1 |] pxy

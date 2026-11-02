@@ -56,6 +56,8 @@ def normalise(ty):
 DECODERS = {
     "value": "(A.value arr)",
     "value list": "(A.value_list arr)",
+    "value option": "(A.value_option arr)",
+    "Einsum_paths.optimize": "A.einsum_optimize",
     "int": "A.int_",
     "bool": "A.bool_",
     "float": "A.float_",
@@ -79,6 +81,9 @@ DECODERS = {
     "sections": "A.sections",
     "Tensor_contractions.td_axes": "A.td_axes",
     "ord": "A.ord",
+    "axis_arg": "A.axis_arg",
+    "Reductions.axis_arg": "A.axis_arg",
+    "Numpy.Reductions.axis_arg": "A.axis_arg",
     "norm_axis": "A.norm_axis",
     "td_axes": "A.td_axes",
     "Tensor_contractions.td_axes": "A.td_axes",

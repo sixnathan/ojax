@@ -66,7 +66,8 @@ let cases =
   [
     ("nonzero_size", one (fun x -> E.nonzero ~size:4 x), [ m23 ]);
     ( "nonzero_size_fill",
-      one (fun x -> E.nonzero ~size:5 ~fill_value:7 x),
+      one (fun x ->
+          E.nonzero ~size:5 ~fill_value:(Ojax.Numpy.Jnp_util.py_int 7) x),
       [ m23 ] );
     ("flatnonzero_size", one (fun x -> [ E.flatnonzero ~size:3 x ]), [ x9 ]);
     ("argwhere_size", one (fun x -> [ E.argwhere ~size:4 x ]), [ m23 ]);

@@ -223,7 +223,12 @@ and primitive =
   | Fft of { fft_type : fft_kind; fft_lengths : int array }
   | Custom_jvp_call of int
   | Custom_vjp_call of int
-  | Custom_lin of { rule : int; n_res : int; out_avals : aval list }
+  | Custom_lin of {
+      rule : int;
+      n_res : int;
+      out_avals : aval list;
+      in_zeros : bool list;
+    }
   | Checkpoint_name of string
   | Cond of {
       branches : closed_jaxpr list;

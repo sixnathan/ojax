@@ -84,6 +84,8 @@ let dot_dims_str (dd : dot_dims) =
   "((" ^ int_tuple dd.lhs_contract ^ "," ^ int_tuple dd.rhs_contract ^ "),("
   ^ int_tuple dd.lhs_batch ^ "," ^ int_tuple dd.rhs_batch ^ "))"
 
+let custom_lin_vjp : (int -> bool) ref = ref (fun _ -> false)
+
 let callback_views : (int, string * (string * string) list) Hashtbl.t =
   Hashtbl.create 8
 
@@ -1343,6 +1345,24 @@ and pp_eqn ctx (e : eqn) =
           (snd (Hashtbl.find callback_views id))
     | Custom_jvp_call id when Hashtbl.mem custom_view_params id ->
         Hashtbl.find custom_view_params id
+    | Checkpoint_name name -> [ ("name", Plain name) ]
+    | Custom_lin { rule; n_res; in_zeros; _ } -> (
+        match !custom_lin_vjp rule with
+        | true ->
+            [
+              ("bwd", Plain "bwd");
+              ( "in_zeros",
+                Plain
+                  ("["
+                  ^ String.concat ", "
+                      (List.map
+                         (fun z -> if z then "True" else "False")
+                         in_zeros)
+                  ^ "]") );
+              ("num_res", Plain (string_of_int n_res));
+              ("symbolic_zeros", Plain "False");
+            ]
+        | false -> [])
     | Custom_jvp_call _ -> (
         match custom_call_of e with
         | Some (name, jvp_name, c) ->

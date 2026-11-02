@@ -2257,10 +2257,14 @@ let rec jvp_pairs prim primals tangents =
                 rule perturbed primals
           in
           let out_avals = List.map Core.get_aval po in
+          let in_zeros = List.map Ad_util.is_symbolic_zero tangents in
           let to_ =
             Core.bind
-              (Custom_lin { rule = id; n_res = List.length res; out_avals })
-              (res @ List.map instantiate tangents)
+              (Custom_lin
+                 { rule = id; n_res = List.length res; out_avals; in_zeros })
+              (res
+              @ List.filter (fun t -> not (Ad_util.is_symbolic_zero t)) tangents
+              )
           in
           (po, to_)
       | Core.Callback_rule { cb_effect = Core.Callback_io _; _ } ->
@@ -4594,7 +4598,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           in
           [ Some result; None ]
       | _ -> failwith "ad: select_and_gather transpose expects linear tangents")
-  | Custom_lin { rule; n_res; _ } ->
+  | Custom_lin { rule; n_res; in_zeros; _ } ->
       let transpose =
         match Core.custom_rule rule with
         | Core.Vjp_rule { bwd; _ } -> bwd
@@ -4608,6 +4612,12 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
         | _ -> arity ()
       in
       let cts_out = transpose (List.map prim_val res_tv) cts in
+      let cts_out =
+        if in_zeros = [] then cts_out
+        else
+          List.concat
+            (List.map2 (fun z c -> if z then [] else [ c ]) in_zeros cts_out)
+      in
       let keep =
         List.map2
           (fun tv ct -> if is_undef tv then Some ct else None)
@@ -5122,3 +5132,8 @@ let grad (f : value list -> value) (xs : value list) : value list =
     | _ -> failwith "ad.grad: expected a single output"
   in
   f_vjp [ Core.splat (Core.get_aval y).dtype [||] 1.0 ]
+
+let () =
+  Pretty_printer.custom_lin_vjp :=
+    fun id ->
+      match Core.custom_rule id with Core.Vjp_rule _ -> true | _ -> false

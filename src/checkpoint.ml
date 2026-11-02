@@ -357,7 +357,13 @@ let staged_rule policy (primal_jaxpr : closed_jaxpr) (avals : aval list) =
     let out_avals = List.map Core.get_aval primal_out in
     let tangent_out =
       Core.bind
-        (Custom_lin { rule = linear; n_res = List.length residuals; out_avals })
+        (Custom_lin
+           {
+             rule = linear;
+             n_res = List.length residuals;
+             out_avals;
+             in_zeros = [];
+           })
         (residuals @ nz_tangents)
     in
     ( primal_out,

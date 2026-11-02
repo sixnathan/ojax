@@ -257,7 +257,8 @@ let linear_call ~forward ~transpose =
         traced.jaxpr.outs
     in
     Core.bind
-      (Custom_lin { rule = id; n_res = List.length res; out_avals })
+      (Custom_lin
+         { rule = id; n_res = List.length res; out_avals; in_zeros = [] })
       (res @ linear)
 
 let rec stop_gradient v =

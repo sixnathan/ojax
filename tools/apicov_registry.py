@@ -284,6 +284,10 @@ def _numpy_ops():
     for name in "quantile nanquantile percentile nanpercentile".split():
         ops["ap_" + name + "_w"] = lambda a, b, p, _n=name: getattr(jnp, _n)(a, jnp.asarray(p["q"], dtype=a.dtype), axis=p.get("axis"), method="inverted_cdf", keepdims=p.get("keepdims", False), weights=jnp.abs(b))
         ops["ap_" + name + "_cdf"] = lambda a, p, _n=name: getattr(jnp, _n)(a, jnp.asarray(p["q"], dtype=a.dtype), axis=p.get("axis"), method="inverted_cdf", keepdims=p.get("keepdims", False))
+    ops["ap_approx_opts"] = lambda a, p: list(getattr(lax, p["fn"])(a, 2, recall_target=p["recall"], reduction_input_size_override=p["override"], aggregate_to_topk=p["agg"]))
+    ops["ap_full_like_opts"] = lambda a, p: lax.full_like(a, 2.0, dtype=p.get("dtype"), shape=None if "shape" not in p else tuple(p["shape"]))
+    ops["ap_init_dtype"] = lambda a, p: getattr(jax.nn.initializers, p["fn"])(jax.random.key(0), tuple(p["shape"]), dtype=p["dtype"])
+    ops["ap_jacobian_aux"] = lambda a, p: list(jax.jacobian(lambda x: (x * x, x + 1.0), has_aux=True)(a))
     ops["ap_ravel_dtype"] = lambda a, p: jnp.ravel_multi_index((jnp.asarray(p["i"]), jnp.asarray(p["j"])), tuple(p["dims"]), mode="clip", dtype=p["dtype"])
     return ops
 
@@ -395,6 +399,15 @@ def _option_cases():
             out.append(("ap_" + name + "_w", _ab([3, 4], [3, 4]), {"q": q, "keepdims": True}))
             out.append(("ap_" + name + "_cdf", _r([3, 4]), {"q": q, "axis": 0}))
             out.append(("ap_" + name + "_cdf", _r([5]), {"q": q}))
+    for fn in ["approx_max_k", "approx_min_k"]:
+        out.append(("ap_approx_opts", _r([5]), {"fn": fn, "recall": 0.9, "override": -1, "agg": False}))
+    out.append(("ap_full_like_opts", _r([2, 3]), {"dtype": "int16"}))
+    out.append(("ap_full_like_opts", _r([2, 3]), {"shape": [4]}))
+    out.append(("ap_full_like_opts", _r([2, 3]), {"dtype": "float16", "shape": [1, 2]}))
+    for fn in ["zeros", "ones"]:
+        for dt in ["float32", "int8", "complex64"]:
+            out.append(("ap_init_dtype", one, {"fn": fn, "shape": [2, 2], "dtype": dt}))
+    out.append(("ap_jacobian_aux", _r([3]), {}))
     out.append(("ap_ravel_dtype", one, {"i": [0, 1], "j": [2, 7], "dims": [2, 3], "dtype": "int16"}))
     out.append(("ap_ravel_dtype", one, {"i": [0, 1], "j": [2, 7], "dims": [2, 3], "dtype": "uint8"}))
     return out

@@ -613,6 +613,52 @@ and run_options op p a b =
         text (X.array_str_jax ?max_line_width ?precision ?suppress_small x);
         text (X.array_repr ?max_line_width ?precision ?suppress_small x);
       ]
+  | "ap_approx_opts" ->
+      let f =
+        if pstr "fn" p = "approx_max_k" then Ojax.Lax_extras.approx_max_k
+        else Ojax.Lax_extras.approx_min_k
+      in
+      let values, indices =
+        f
+          ~recall_target:(U.to_number (U.member "recall" p))
+          ~reduction_input_size_override:(PC.int "override" p)
+          ~aggregate_to_topk:(pbool "agg" p)
+          (a ()) 2
+      in
+      [ values; indices ]
+  | "ap_full_like_opts" ->
+      let dtype =
+        match PC.opt_string "dtype" p with
+        | Some d -> Some (X.dtype d)
+        | None -> None
+      in
+      let shape =
+        match U.member "shape" p with
+        | `Null -> None
+        | v -> Some (Array.of_list (List.map U.to_int (U.to_list v)))
+      in
+      [ Ojax.Lax_api.full_like ?dtype ?shape (a ()) 2.0 ]
+  | "ap_init_dtype" ->
+      let f =
+        if pstr "fn" p = "zeros" then Ojax.Nn.Initializers.zeros_dtype
+        else Ojax.Nn.Initializers.ones_dtype
+      in
+      [
+        f
+          ~dtype:(X.dtype (pstr "dtype" p))
+          (Ojax.Random.Core.key (T.Concrete (Nd.of_floats D.I32 [||] [| 0.0 |])))
+          ~shape:(Array.of_list (List.map U.to_int (U.to_list (U.member "shape" p))));
+      ]
+  | "ap_jacobian_aux" ->
+      let jac, aux =
+        A.jacobian_aux
+          (function
+            | [ TR.Leaf x ] ->
+                TR.Tuple [ TR.Leaf (UF.multiply x x); TR.Leaf (plus x 1.0) ]
+            | _ -> failwith "apicov: jacobian")
+          [ TR.Leaf (a ()) ]
+      in
+      leaf_list jac @ leaf_list aux
   | "ap_ravel_dtype" ->
       [
         X.ravel_multi_index ~mode:"clip"

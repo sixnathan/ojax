@@ -853,7 +853,7 @@ let intersect1d_indices ?(assume_unique = false) a b =
           else None)
         (sorted_unique_floats "intersect1d" a)
   in
-  let idt = default_int () in
+  let idt = Nd_index.index_dtype (shape a) in
   let count = List.length triples in
   let of_ints f =
     ints_value idt [| count |] (Array.of_list (List.map f triples))
@@ -2167,7 +2167,7 @@ let polyfit ?rcond ?w x y deg =
 
 let polyfit_full_body ?rcond ?w x y deg =
   let c, resids, rank_, s, rcond, _, _ = polyfit_parts ?rcond ?w x y deg in
-  let dt = dtype_of (as_inexact x) in
+  let dt = Dtypes.default_float_dtype () in
   [ c; resids; rank_; s; Concrete (Ndarray.of_floats dt [||] [| rcond |]) ]
 
 let polyfit_full ?rcond ?w a0 a1 a2 =

@@ -159,6 +159,12 @@ val linearize_aux :
   * (value Tree_util.t list -> value Tree_util.t)
   * value Tree_util.t
 
+val jacobian_aux :
+  ?argnums:int ->
+  (value Tree_util.t list -> value Tree_util.t) ->
+  value Tree_util.t list ->
+  value Tree_util.t * value Tree_util.t
+
 val jacfwd_aux :
   ?argnums:int ->
   tree_fn ->
@@ -205,7 +211,7 @@ val remat :
   value list ->
   value list
 
-val named_call : 'a -> 'a
+val named_call : ?name:string -> 'a -> 'a
 val named_scope : string -> (unit -> 'a) -> 'a
 val device_get : value Tree_util.t -> value Tree_util.t
 val block_until_ready : 'a -> 'a

@@ -1086,6 +1086,11 @@ let linearize_aux f primals =
   let y, lin = linearize g primals in
   (y, lin, !aux)
 
+let jacobian_aux ?argnums f args =
+  let g, aux = split_aux f in
+  let jac = jacrev ?argnums g args in
+  (jac, !aux)
+
 let jacfwd_aux ?argnums f args =
   let g, aux = split_aux f in
   let jac = jacfwd ?argnums g args in
@@ -1119,7 +1124,7 @@ let linear_transpose f primals =
 
 let checkpoint ?policy f = Checkpoint.checkpoint ?policy f
 let remat ?policy f = Checkpoint.checkpoint ?policy f
-let named_call f = f
+let named_call ?name:_ f = f
 let named_scope _name f = f ()
 let device_get = to_host
 let block_until_ready x = x

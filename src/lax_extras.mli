@@ -4,10 +4,22 @@ type rng_algorithm = Lax_config.random_algorithm =
   | Philox
 
 val approx_max_k :
-  ?reduction_dimension:int -> Types.value -> int -> Types.value * Types.value
+  ?reduction_dimension:int ->
+  ?recall_target:float ->
+  ?reduction_input_size_override:int ->
+  ?aggregate_to_topk:bool ->
+  Types.value ->
+  int ->
+  Types.value * Types.value
 
 val approx_min_k :
-  ?reduction_dimension:int -> Types.value -> int -> Types.value * Types.value
+  ?reduction_dimension:int ->
+  ?recall_target:float ->
+  ?reduction_input_size_override:int ->
+  ?aggregate_to_topk:bool ->
+  Types.value ->
+  int ->
+  Types.value * Types.value
 
 val broadcast_like : Types.value -> Types.value -> Types.value
 val create_token : unit -> Types.value

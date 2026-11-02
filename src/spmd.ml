@@ -813,7 +813,9 @@ let check_explicit_input mesh manual specs flat =
                    (spec_to_string (spec_of_array actual))))
       specs flat
 
-let shard_map ?mesh ?axis_names ?in_specs ~out_specs f args =
+let shard_map ?mesh ?axis_names ?in_specs ?(check_vma : bool option) ~out_specs
+    f args =
+  ignore check_vma;
   (match (mesh, !abstract_context) with
   | Some m, Some ctx
     when ctx.abstract_axis_names <> []
@@ -893,7 +895,7 @@ let leaf_axes args in_axes =
        (fun axis arg -> List.map (fun _ -> axis) (Tree.tree_leaves arg))
        per_arg args)
 
-let pmap ?axis_name ?in_axes ?(out_axes = 0) f args =
+let pmap ?axis_name ?in_axes ?(out_axes = 0) ?axis_size f args =
   let flat, tree = flatten_tree_args args in
   let axes = leaf_axes args in_axes in
   if flat = [] then invalid_arg "pmap requires at least one argument";
@@ -916,7 +918,10 @@ let pmap ?axis_name ?in_axes ?(out_axes = 0) f args =
         if List.exists (fun m -> m <> n) rest then
           invalid_arg "pmap got inconsistent sizes for array axes to be mapped";
         n
-    | [] -> invalid_arg "pmap requires at least one mapped argument"
+    | [] -> (
+        match axis_size with
+        | Some n -> n
+        | None -> invalid_arg "pmap requires at least one mapped argument")
   in
   if n > device_count () then
     invalid_arg "pmap got more replicas than the number of available devices";

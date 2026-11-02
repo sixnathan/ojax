@@ -17,5 +17,20 @@ val minimize :
   ?maxiter:int ->
   ?gtol:float ->
   ?norm:float ->
+  ?tol:float ->
+  ?options:(string * float) list ->
+  unit ->
+  optimize_results
+
+val minimize_args :
+  (Types.value -> Types.value list -> Types.value) ->
+  Types.value ->
+  ?args:Types.value list ->
+  method_:string ->
+  ?maxiter:int ->
+  ?gtol:float ->
+  ?norm:float ->
+  ?tol:float ->
+  ?options:(string * float) list ->
   unit ->
   optimize_results

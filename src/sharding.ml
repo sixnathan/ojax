@@ -455,7 +455,27 @@ let explicit_axes ?axes ~in_sharding f args =
       in
       Tree.tree_map (reshard_modified next) out
 
-let make_array_from_single_device_arrays shape sharding arrays =
+let check_user_dtype fname dtype arrays =
+  match (dtype, arrays) with
+  | None, [] ->
+      raise
+        (Py_exn.Value_error
+           ("If the Array has no addressable shards, `dtype` must be provided \
+             via the `dtype` argument to `jax." ^ fname ^ "`."))
+  | Some d, first :: _
+    when (Core.get_aval first).dtype <> Dtypes.canonicalize_dtype d ->
+      raise
+        (Py_exn.Value_error
+           (Printf.sprintf
+              "If `dtype` is provided to `jax.%s`, it must match the dtype of \
+               the addressable shards. Got dtype=%s and shard dtype=%s"
+              fname
+              (Dtype.short_name (Dtypes.canonicalize_dtype d))
+              (Dtype.short_name (Core.get_aval first).dtype)))
+  | _ -> ()
+
+let make_array_from_single_device_arrays ?dtype shape sharding arrays =
+  check_user_dtype "make_array_from_single_device_arrays" dtype arrays;
   let expected = devices_indices_map sharding shape in
   let count = List.length expected in
   if List.length arrays <> count then
@@ -542,7 +562,8 @@ let make_array_from_process_local_data ?global_shape sharding local =
   | Tree.Leaf placed -> placed
   | _ -> invalid_arg "make_array_from_process_local_data"
 
-let make_array_from_callback shape sharding callback =
+let make_array_from_callback ?(dtype : Dtype.t option) shape sharding callback =
+  ignore dtype;
   if not (Backend.multi_device_available ()) then
     invalid_arg "make_array_from_callback needs the PJRT plugin";
   let entries = devices_indices_map sharding shape in

@@ -19,6 +19,7 @@ val orthogonal :
 val multivariate_normal :
   ?shape:int array ->
   ?method_:string ->
+  ?dtype:Dtype.t ->
   value ->
   mean:value ->
   cov:value ->

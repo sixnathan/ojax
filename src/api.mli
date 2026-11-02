@@ -65,6 +65,8 @@ val vmap :
   ?axis_name:string ->
   ?out_axes:int ->
   ?axis_size:int ->
+  ?spmd_axis_name:string list ->
+  ?sum_match:bool ->
   (value Tree_util.t list -> value Tree_util.t) ->
   int option list ->
   value Tree_util.t list ->
@@ -201,12 +203,18 @@ val linear_transpose :
 
 val checkpoint :
   ?policy:Checkpoint.policy ->
+  ?prevent_cse:bool ->
+  ?static_argnums:int list ->
+  ?concrete:bool ->
   (value list -> value list) ->
   value list ->
   value list
 
 val remat :
   ?policy:Checkpoint.policy ->
+  ?prevent_cse:bool ->
+  ?static_argnums:int list ->
+  ?concrete:bool ->
   (value list -> value list) ->
   value list ->
   value list
@@ -216,7 +224,10 @@ val named_scope : string -> (unit -> 'a) -> 'a
 val device_get : value Tree_util.t -> value Tree_util.t
 val block_until_ready : 'a -> 'a
 val devices : ?backend:string -> unit -> string list
-val local_devices : ?backend:string -> unit -> string list
+
+val local_devices :
+  ?process_index:int -> ?backend:string -> ?host_id:int -> unit -> string list
+
 val device_count : ?backend:string -> unit -> int
 val local_device_count : ?backend:string -> unit -> int
 val process_count : unit -> int
@@ -253,6 +264,8 @@ val pmap :
   ?axis_name:string ->
   ?in_axes:int option list ->
   ?out_axes:int ->
+  ?static_broadcasted_argnums:int list ->
+  ?axis_size:int ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t
@@ -266,7 +279,10 @@ val pure_callback :
 val typeof : value -> aval
 val effects_barrier : unit -> unit
 val copy_to_host_async : 'a -> 'a
-val default_device : unit -> string
-val live_arrays : unit -> value list
-val make_array_from_callback : int array -> ((int * int) array -> 'a) -> 'a
-val print_environment_info : unit -> unit
+val default_device : ?new_val:string -> unit -> (unit -> 'a) -> 'a
+val live_arrays : ?platform:string -> unit -> value list
+
+val make_array_from_callback :
+  ?dtype:Dtype.t -> int array -> ((int * int) array -> 'a) -> 'a
+
+val print_environment_info : ?return_string:bool -> unit -> string option

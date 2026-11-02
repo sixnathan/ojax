@@ -14,9 +14,12 @@ let stopped kind v =
   | Default -> v
   | No_grad_no_remat -> Custom_derivatives.stop_gradient v
 
-let new_ref ?(kind = Default) v = Ref_state.make_cell ~kind (stopped kind v)
+let new_ref ?(memory_space : string option) ?(kind = Default) v =
+  ignore memory_space;
+  Ref_state.make_cell ~kind (stopped kind v)
 
-let empty_ref (a : aval) =
+let empty_ref ?(memory_space : string option) (a : aval) =
+  ignore memory_space;
   if not (Ref_state.in_trace ()) then
     failwith "Evaluation rule for 'empty_ref' not implemented";
   Ref_state.make_cell ~kind:Default

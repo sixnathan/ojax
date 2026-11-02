@@ -72,10 +72,11 @@ val explicit_axes :
   value Tree_util.t list ->
   value Tree_util.t
 
-val make_array_from_single_device_arrays : int array -> t -> value list -> value
+val make_array_from_single_device_arrays :
+  ?dtype:Dtype.t -> int array -> t -> value list -> value
 
 val make_array_from_process_local_data :
   ?global_shape:int array -> t -> value -> value
 
 val make_array_from_callback :
-  int array -> t -> ((int * int) array -> value) -> value
+  ?dtype:Dtype.t -> int array -> t -> ((int * int) array -> value) -> value

@@ -25,6 +25,31 @@ let clz_nbits = function
   | Dtype.I64 | Dtype.Uint64 -> 64
   | _ -> failwith "lax: clz requires an integer operand"
 
+let validate_preferred_element_type input preferred =
+  let sub d k = Dtypes.issubdtype d k in
+  if not (sub input `Integer && sub preferred `Floating) then begin
+    if
+      List.exists
+        (fun k -> sub input k && not (sub preferred k))
+        [ `Integer; `Floating; `Complex ]
+    then
+      raise
+        (Py_exn.Type_error
+           "Input type is incompatible with `preferred_element_type`. The \
+            compatible combinations of (input_type, preferred_element_type) \
+            are (integral, integral), (integral, floating), (floating, \
+            floating), (complex, complex.");
+    if sub input `Signed && not (sub preferred `Signed) then
+      raise
+        (Py_exn.Type_error
+           "`preferred_element_type` must have the same signedness as the \
+            original type.")
+  end;
+  if Dtypes.itemsize_bits preferred < Dtypes.itemsize_bits input then
+    raise
+      (Py_exn.Type_error
+         "`preferred_element_type` must not be narrower than the original type.")
+
 let low_bits nbits m =
   if nbits >= 64 then m
   else Int64.logand m (Int64.sub (Int64.shift_left 1L nbits) 1L)
@@ -2755,15 +2780,23 @@ let abstract_eval prim avals =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        conv_preferred;
         _;
       } ->
       bin_aval
         (fun l r ->
-          shaped
-            (Convolution.conv_shape dimension_numbers window_strides padding
-               lhs_dilation rhs_dilation feature_group_count batch_group_count
-               l.shape r.shape)
-            l.dtype (Utils.all_weak avals))
+          (match conv_preferred with
+          | None -> ()
+          | Some d -> validate_preferred_element_type l.dtype d);
+          (fun (a : aval) ->
+            match conv_preferred with
+            | None -> a
+            | Some d -> { a with dtype = d })
+          @@ shaped
+               (Convolution.conv_shape dimension_numbers window_strides padding
+                  lhs_dilation rhs_dilation feature_group_count
+                  batch_group_count l.shape r.shape)
+               l.dtype (Utils.all_weak avals))
         avals
   | Reduce_window_sum window
   | Reduce_window_max window

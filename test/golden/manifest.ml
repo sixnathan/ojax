@@ -497,6 +497,7 @@ let prim_of ?(element = D.F32) op params : T.primitive =
           feature_group_count = U.to_int (member "feature_group_count");
           batch_group_count = U.to_int (member "batch_group_count");
           conv_precision = None;
+          conv_preferred = None;
         }
   | "reduce_window_sum" -> T.Reduce_window_sum (window_of params)
   | "reduce_window_max" -> T.Reduce_window_max (window_of params)
@@ -1110,9 +1111,12 @@ let indexing_fn op params operands : T.value list =
       [ IDX.take ?axis:(opt_i params "axis") ?mode:(opt_s params "mode") a ind ]
   | "take_along_axis", [ a; ind ] ->
       [ IDX.take_along_axis ?axis:(opt_i params "axis") a ind ]
-  | "put", [ a; ind; v ] -> [ IDX.put ?mode:(opt_s params "mode") ~inplace:false a ind v ]
+  | "put", [ a; ind; v ] ->
+      [ IDX.put ?mode:(opt_s params "mode") ~inplace:false a ind v ]
   | "put_along_axis", [ arr; ind; v ] ->
-      [ IDX.put_along_axis ?axis:(opt_i params "axis") ~inplace:false arr ind v ]
+      [
+        IDX.put_along_axis ?axis:(opt_i params "axis") ~inplace:false arr ind v;
+      ]
   | _ -> failwith ("indexing golden: unknown op " ^ op)
 
 let indexing_suite_for set_name =
@@ -2760,7 +2764,7 @@ and random_core_fn_pinned op params operands : T.value list =
   | "permutation", [ k ] -> [ RC.permutation k (ip "n") ]
   | "choice", [ k ] ->
       [
-        RC.choice k ~n:(ip "n") ~shape:(shape ())
+        RC.choice k ~a:(ip "n") ~shape:(shape ())
           ~replace:(U.to_bool (member "replace"));
       ]
   | "exponential", [ k ] -> [ RC.exponential k ~shape:(shape ()) ]
@@ -2800,7 +2804,7 @@ and random_core_fn_pinned op params operands : T.value list =
   | "dirichlet", [ k; alpha ] -> [ RC.dirichlet k ~alpha ~shape:[||] ]
   | "poisson", [ k ] -> [ RC.poisson k ~shape:(shape ()) ~lam:(fp "lam") ]
   | "binomial", [ k ] ->
-      [ RC.binomial k ~shape:(shape ()) ~count:(fp "n") ~prob:(fp "p") ]
+      [ RC.binomial k ~shape:(shape ()) ~n:(fp "n") ~p:(fp "p") ]
   | "multinomial", [ k; p ] -> [ RC.multinomial k ~p ~n_trials:(fp "n") ]
   | _ -> failwith ("random_core golden: unknown op " ^ op)
 

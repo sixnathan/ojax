@@ -41,6 +41,7 @@ val lt : value -> value -> value
 val max : value -> value -> value
 val min : value -> value -> value
 val mul : value -> value -> value
+val mul_with : ?out_dtype:Dtype.t -> value -> value -> value
 val mulhi : value -> value -> value
 val ne : value -> value -> value
 val neg : value -> value
@@ -261,8 +262,24 @@ val padtype_to_pads :
 val conv_general_permutations : String.t * String.t * String.t -> conv_dims
 val conv_dimension_numbers : String.t * String.t * String.t -> conv_dims
 
+val conv_dimension_numbers_of :
+  lhs_shape:int array ->
+  rhs_shape:int array ->
+  dimension_numbers:(String.t * String.t * String.t) option ->
+  conv_dims
+
+val dot_general_dimension_numbers :
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
+  value ->
+  value ->
+  dimension_numbers:(int array * int array) * (int array * int array) ->
+  value
+
 val conv_general_dilated :
   ?conv_precision:string * string ->
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
   ?lhs_dilation:int array ->
   ?rhs_dilation:int array ->
   ?dimension_numbers:conv_dims ->
@@ -279,6 +296,8 @@ val conv : value -> value -> window_strides:int array -> padding -> value
 val conv_with_general_padding :
   ?lhs_dilation:int array ->
   ?rhs_dilation:int array ->
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
   value ->
   value ->
   window_strides:int array ->
@@ -289,6 +308,9 @@ val conv_transpose :
   ?rhs_dilation:int array ->
   ?dimension_numbers:conv_dims ->
   ?transpose_kernel:bool ->
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
+  ?use_consistent_padding:bool ->
   value ->
   value ->
   strides:int array ->
@@ -324,6 +346,7 @@ val cummin : ?axis:int -> ?reverse:bool -> value -> value
 val cumlogsumexp : ?axis:int -> ?reverse:bool -> value -> value
 
 val custom_linear_solve :
+  ?has_aux:bool ->
   ?symmetric:bool ->
   ?transpose_solve:((value list -> value list) -> value list -> value list) ->
   ?linear_matvec:(value list -> value list) ->
@@ -347,6 +370,7 @@ val fori_loop :
   value list
 
 val custom_root :
+  ?has_aux:bool ->
   (value list -> value list) ->
   value list ->
   ((value list -> value list) -> value list -> value list) ->
@@ -380,7 +404,12 @@ val reduce_window_shape_tuple :
   int array
 
 val conv_shape_tuple :
-  int array -> int array -> int array -> (int * int) array -> int array
+  ?batch_group_count:int ->
+  int array ->
+  int array ->
+  int array ->
+  (int * int) array ->
+  int array
 
 val conv_general_shape_tuple :
   int array -> int array -> int array -> padding -> conv_dims -> int array
@@ -395,13 +424,24 @@ val conv_general_dilated_patches :
   ?rhs_dilation:int array ->
   ?dimension_numbers:conv_dims ->
   ?precision:string * string ->
+  ?preferred_element_type:Dtype.t ->
   value ->
   filter_shape:int array ->
   value
 
-val scatter_apply : value -> value -> (value -> value) -> scatter_dims -> value
+val scatter_apply :
+  ?update_shape:int array ->
+  ?indices_are_sorted:bool ->
+  ?unique_indices:bool ->
+  ?mode:Lax_config.gather_scatter_mode ->
+  value ->
+  value ->
+  (value -> value) ->
+  scatter_dims ->
+  value
+
 val with_sharding_constraint : value -> 'a -> value
-val pcast : value -> dtype:'a -> value
+val pcast : value -> axis_name:string -> to_:string -> value
 
 val composite :
   (value list -> value list) ->

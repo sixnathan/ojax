@@ -155,8 +155,11 @@ let compute_weight_mat ~input_size ~output_size ~scale ~translation ~kernel
   in
   normalize weights sample_f input_size
 
-let scale_and_translate_internal image ~output_shape ~spatial_dims ~scale
-    ~translation ~kernel ~antialias =
+let highest_precision =
+  Lax_config.precision_of_level Lax_config.Precision_highest
+
+let scale_and_translate_internal ?(precision = highest_precision) image
+    ~output_shape ~spatial_dims ~scale ~translation ~kernel ~antialias =
   if Array.length spatial_dims = 0 then image
   else begin
     let input_shape = shape image in
@@ -185,10 +188,7 @@ let scale_and_translate_internal image ~output_shape ~spatial_dims ~scale
       ^ "->"
       ^ String.concat "" (Array.to_list out_indices)
     in
-    Numpy.Einsum.einsum
-      ~precision:(Lax_config.precision_of_level Lax_config.Precision_highest)
-      subscripts
-      (image :: List.map fst weights)
+    Numpy.Einsum.einsum ~precision subscripts (image :: List.map fst weights)
   end
 
 let resolve_kernel method_ antialias =
@@ -202,7 +202,7 @@ let resolve_kernel method_ antialias =
   snd (kernels method_)
 
 let scale_and_translate image ~shape:output_shape ~spatial_dims ~scale
-    ~translation ~method_ ?(antialias = true) () =
+    ~translation ~method_ ?(antialias = true) ?precision () =
   if Array.length output_shape <> ndim image then
     invalid_arg "shape must have length equal to the number of dimensions of x";
   if method_ = Nearest then
@@ -211,8 +211,8 @@ let scale_and_translate image ~shape:output_shape ~spatial_dims ~scale
        scale_and_translate.";
   let kernel = resolve_kernel method_ antialias in
   let image = promote_inexact image in
-  scale_and_translate_internal image ~output_shape ~spatial_dims ~scale
-    ~translation ~kernel ~antialias
+  scale_and_translate_internal ?precision image ~output_shape ~spatial_dims
+    ~scale ~translation ~kernel ~antialias
 
 let resize_nearest image ~output_shape =
   let input_shape = shape image in
@@ -234,7 +234,8 @@ let resize_nearest image ~output_shape =
     output_shape;
   !result
 
-let resize image ~shape:output_shape ~method_ ?(antialias = true) () =
+let resize image ~shape:output_shape ~method_ ?(antialias = true) ?precision ()
+    =
   if Array.length output_shape <> ndim image then
     invalid_arg "shape must have length equal to the number of dimensions of x";
   match method_ with
@@ -257,12 +258,12 @@ let resize image ~shape:output_shape ~method_ ?(antialias = true) () =
           spatial_dims
       in
       let translation = Array.make (Array.length spatial_dims) 0.0 in
-      scale_and_translate_internal image ~output_shape ~spatial_dims ~scale
-        ~translation ~kernel ~antialias
+      scale_and_translate_internal ?precision image ~output_shape ~spatial_dims
+        ~scale ~translation ~kernel ~antialias
 
-let resize image ~shape ~method_ ?antialias () =
-  Eager_jit.one ~jit:"_resize" "image.scale.resize" (shape, method_, antialias)
-    [] [ image ] (fun _ vals ->
+let resize image ~shape ~method_ ?antialias ?precision () =
+  Eager_jit.one ~jit:"_resize" "image.scale.resize"
+    (shape, method_, antialias, precision) [] [ image ] (fun _ vals ->
       match vals with
-      | [ image ] -> resize image ~shape ~method_ ?antialias ()
+      | [ image ] -> resize image ~shape ~method_ ?antialias ?precision ()
       | _ -> assert false)

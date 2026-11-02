@@ -412,8 +412,10 @@ let get_scaled_dot_general_config ?global_scale mode =
       }
   | other -> invalid_arg (Printf.sprintf "Unsupported mode: %s" other)
 
-let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
-    ~rhs_contract ~lhs_batch ~rhs_batch a b =
+let scaled_dot_general ?(preferred_element_type = D.F32) ?configs
+    ?(implementation : string option) ~lhs_contract ~rhs_contract ~lhs_batch
+    ~rhs_batch a b =
+  ignore implementation;
   (match configs with
   | Some (_ : block_scale_config list) ->
       (match preferred_element_type with
@@ -426,6 +428,13 @@ let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
   | None -> ());
   Lax_api.dot_general ~preferred_element_type a b ~lhs_contract ~rhs_contract
     ~lhs_batch ~rhs_batch
+
+let scaled_dot_general_dimension_numbers ?preferred_element_type ?configs
+    ?implementation
+    ~dimension_numbers:((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)) a
+    b =
+  scaled_dot_general ?preferred_element_type ?configs ?implementation
+    ~lhs_contract ~rhs_contract ~lhs_batch ~rhs_batch a b
 
 let scaled_matmul ?(preferred_element_type = D.F32) lhs rhs lhs_scales
     rhs_scales =
@@ -482,7 +491,75 @@ let large_negative dt =
   in
   const_full dt [||] (-0.7 *. dtype_max)
 
-let attention_core ~scale ~query ~key ~value ~bias ~mask =
+let attention_masks logits ~mask ~is_causal ~q_seqlen ~kv_seqlen
+    ~local_window_size =
+  if
+    mask = None && (not is_causal) && q_seqlen = None && kv_seqlen = None
+    && local_window_size = None
+  then logits
+  else begin
+    let combined = const_full D.Bool (shape logits) 1.0 in
+    let combined =
+      match mask with None -> combined | Some m -> UF.logical_and combined m
+    in
+    let lsh = shape logits in
+    let t = lsh.(2) and s = lsh.(3) in
+    let ints n =
+      NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int n)
+    in
+    let combined =
+      if not is_causal then combined
+      else
+        let m = NL.tril (const_full D.Bool [| t; s |] 1.0) in
+        UF.logical_and combined (NL.expand_dims m [| 0; 1 |])
+    in
+    let combined =
+      match local_window_size with
+      | None -> combined
+      | Some (left, right) ->
+          let q = NL.expand_dims (ints t) [| 1 |] in
+          let k = NL.expand_dims (ints s) [| 0 |] in
+          let py = Numpy.Jnp_util.py_int in
+          let lm = UF.less_equal q (UF.add k (py left)) in
+          let rm = UF.greater_equal q (UF.subtract k (py right)) in
+          UF.logical_and combined
+            (NL.expand_dims (UF.logical_and rm lm) [| 0; 1 |])
+    in
+    let combined =
+      if q_seqlen = None && kv_seqlen = None then combined
+      else begin
+        let q_mask =
+          match q_seqlen with
+          | None -> None
+          | Some l ->
+              Some
+                (UF.less
+                   (NL.expand_dims (ints t) [| 0; 2 |])
+                   (NL.expand_dims l [| 1; 2 |]))
+        in
+        let kv_mask =
+          match kv_seqlen with
+          | None -> None
+          | Some l ->
+              Some
+                (UF.less
+                   (NL.expand_dims (ints s) [| 0; 1 |])
+                   (NL.expand_dims l [| 1; 2 |]))
+        in
+        let both =
+          match (q_mask, kv_mask) with
+          | Some a, Some b -> UF.logical_and a b
+          | Some a, None | None, Some a -> a
+          | None, None -> assert false
+        in
+        UF.logical_and combined (NL.expand_dims both [| 1 |])
+      end
+    in
+    where3 combined logits (large_negative (dtype logits))
+  end
+
+let attention_core ?(is_causal = false) ?q_seqlen ?kv_seqlen ?local_window_size
+    ~scale ~query ~key ~value ~bias ~mask () =
   let module E = Numpy.Einsum in
   let logits = E.einsum "BTNH,BSNH->BNTS" [ query; key ] in
   let logits = UF.multiply logits (const_full (dtype logits) [||] scale) in
@@ -492,20 +569,44 @@ let attention_core ~scale ~query ~key ~value ~bias ~mask =
     | None -> logits
   in
   let padded =
-    match mask with
-    | None -> logits
-    | Some m ->
-        let combined =
-          UF.logical_and (const_full D.Bool (shape logits) 1.0) m
-        in
-        where3 combined logits (large_negative (dtype logits))
+    attention_masks logits ~mask ~is_causal ~q_seqlen ~kv_seqlen
+      ~local_window_size
   in
   let padded = NL.astype padded D.F32 in
   let probs = NL.astype (softmax ~axis:(-1) padded) (dtype key) in
-  E.einsum "BNTS,BSNH->BTNH" [ probs; value ]
+  let encoded = E.einsum "BNTS,BSNH->BTNH" [ probs; value ] in
+  let encoded =
+    match q_seqlen with
+    | None -> encoded
+    | Some l ->
+        let t = (shape encoded).(1) in
+        let m =
+          UF.less
+            (NL.expand_dims
+               (NL.arange ~dtype:(Dtypes.default_int_dtype ()) (float_of_int t))
+               [| 0 |])
+            (NL.expand_dims l [| 1 |])
+        in
+        UF.multiply encoded
+          (NL.astype (NL.expand_dims m [| 2; 3 |]) (dtype encoded))
+  in
+  (encoded, padded)
 
-let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
+let attention_full ?bias ?mask ?scale ?is_causal ?query_seq_lengths
+    ?key_value_seq_lengths ?local_window_size ?implementation
+    ?(return_residual = false) ~query ~key ~value () =
+  (match implementation with
+  | None | Some "xla" -> ()
+  | Some "cudnn" ->
+      raise
+        (Py_exn.Not_implemented_error
+           "cuDNN dot product attention needs the GPU backend")
+  | Some other ->
+      raise (Py_exn.Value_error ("Unsupported implementation option: " ^ other)));
   let output_shape = shape query in
+  let residual_shape =
+    Array.sub output_shape 0 (Array.length output_shape - 1)
+  in
   let ensure_4d v =
     let r = Array.length (shape v) in
     if r < 4 then NL.expand_dims v (Array.init (4 - r) Fun.id) else v
@@ -550,13 +651,54 @@ let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
               | _ -> (None, rest)
             in
             let mask = match rest with m :: _ -> Some m | [] -> None in
-            [ attention_core ~scale ~query ~key ~value ~bias ~mask ]
+            let encoded, padded =
+              attention_core ?is_causal ?q_seqlen:query_seq_lengths
+                ?kv_seqlen:key_value_seq_lengths ?local_window_size ~scale
+                ~query ~key ~value ~bias ~mask ()
+            in
+            if not return_residual then [ encoded ]
+            else
+              let residual =
+                NL.astype (logsumexp ~axis:[| -1 |] padded) (dtype key)
+              in
+              [
+                encoded;
+                Lax_api.stop_gradient
+                  (NL.transpose ~axes:[| 0; 2; 1 |] residual);
+              ]
         | _ -> invalid_arg "dot_product_attention: arity")
       ([ Some 3; None; None ] @ List.map (fun _ -> Some 2) extras)
       ([ query; key; value ] @ extras)
   in
-  let encoded = NL.reshape (List.hd output) [| b; t; n; h |] in
-  NL.reshape encoded output_shape
+  match output with
+  | [ encoded ] ->
+      let encoded = NL.reshape encoded [| b; t; n; h |] in
+      (NL.reshape encoded output_shape, None)
+  | [ encoded; residual ] ->
+      let encoded = NL.reshape encoded [| b; t; n; h |] in
+      let residual = NL.reshape residual [| b; t; n |] in
+      ( NL.reshape encoded output_shape,
+        Some (NL.reshape residual residual_shape) )
+  | _ -> invalid_arg "dot_product_attention: arity"
+
+let dot_product_attention ?bias ?mask ?scale ?is_causal ?query_seq_lengths
+    ?key_value_seq_lengths ?local_window_size ?implementation ~query ~key ~value
+    () =
+  fst
+    (attention_full ?bias ?mask ?scale ?is_causal ?query_seq_lengths
+       ?key_value_seq_lengths ?local_window_size ?implementation ~query ~key
+       ~value ())
+
+let dot_product_attention_residual ?bias ?mask ?scale ?is_causal
+    ?query_seq_lengths ?key_value_seq_lengths ?local_window_size ?implementation
+    ?(return_residual = true) ~query ~key ~value () =
+  match
+    attention_full ?bias ?mask ?scale ?is_causal ?query_seq_lengths
+      ?key_value_seq_lengths ?local_window_size ?implementation ~return_residual
+      ~query ~key ~value ()
+  with
+  | encoded, Some residual -> (encoded, residual)
+  | _, None -> invalid_arg "dot_product_attention: return_residual=False"
 
 let as_float x =
   match dtype x with

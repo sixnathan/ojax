@@ -59,8 +59,8 @@ type node = { x : T.value TR.t; y : T.value TR.t; label : string }
 
 let node_class =
   TR.register_pytree_node "Node"
-    ~flatten:(fun n -> ([ n.x; n.y ], n.label))
-    ~unflatten:(fun label children ->
+    ~flatten_func:(fun n -> ([ n.x; n.y ], n.label))
+    ~unflatten_func:(fun label children ->
       match children with
       | [ x; y ] -> { x; y; label }
       | _ -> failwith "apicov: node")
@@ -69,7 +69,7 @@ let keyed_class =
   TR.register_pytree_with_keys "KeyedNode"
     ~flatten_with_keys:(fun n ->
       ([ (TR.Get_attr_key "x", n.x); (TR.Dict_key "why", n.y) ], "None"))
-    ~unflatten:(fun _ children ->
+    ~unflatten_func:(fun _ children ->
       match children with
       | [ x; y ] -> { x; y; label = "" }
       | _ -> failwith "apicov: keyed")

@@ -12,7 +12,30 @@ type optimize_results = {
   nit : int;
 }
 
-let minimize f x0 ~method_ ?maxiter ?gtol ?norm () =
+let bfgs_option_names = [ "maxiter"; "norm"; "gtol"; "line_search_maxiter" ]
+
+let minimize f x0 ~method_ ?maxiter ?gtol ?norm ?(tol : float option)
+    ?(options = ([] : (string * float) list)) () =
+  ignore tol;
+  List.iter
+    (fun (name, _) ->
+      if not (List.mem name bfgs_option_names) then
+        raise
+          (Py_exn.Type_error
+             ("minimize_bfgs() got an unexpected keyword argument '" ^ name
+            ^ "'")))
+    options;
+  let option_int name given =
+    match List.assoc_opt name options with
+    | Some v -> Some (int_of_float v)
+    | None -> given
+  in
+  let option_float name given =
+    match List.assoc_opt name options with Some v -> Some v | None -> given
+  in
+  let maxiter = option_int "maxiter" maxiter in
+  let gtol = option_float "gtol" gtol in
+  let norm = option_float "norm" norm in
   match String.lowercase_ascii method_ with
   | "bfgs" ->
       let r = Bfgs.minimize_bfgs f x0 ?maxiter ?norm ?gtol () in
@@ -41,3 +64,7 @@ let minimize f x0 ~method_ ?maxiter ?gtol ?norm () =
         nit = r.Lbfgs.k;
       }
   | _ -> invalid_arg (Printf.sprintf "Method %s not recognized" method_)
+
+let minimize_args f x0 ?(args = ([] : T.value list)) ~method_ ?maxiter ?gtol
+    ?norm ?tol ?options () =
+  minimize (fun x -> f x args) x0 ~method_ ?maxiter ?gtol ?norm ?tol ?options ()

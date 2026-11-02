@@ -87,20 +87,31 @@ val eig :
   value ->
   value list
 
+val qr_full : ?pivoting:bool -> ?full_matrices:bool -> value -> value list
+
 val eigh :
   ?implementation:Lax_config.eigh_implementation ->
   ?lower:bool ->
   ?symmetrize_input:bool ->
+  ?sort_eigenvalues:bool ->
+  ?subset_by_index:int * int ->
   value ->
   value * value
 
 val hessenberg : value -> value * value
-val schur : ?compute_schur_vectors:bool -> value -> value list
+
+val schur :
+  ?compute_schur_vectors:bool ->
+  ?sort_eig_vals:bool ->
+  ?select_callable:(value -> value) ->
+  value ->
+  value list
 
 val svd :
   ?algorithm:Lax_config.svd_algorithm ->
   ?full_matrices:bool ->
   ?compute_uv:bool ->
+  ?subset_by_index:int * int ->
   value ->
   value list
 

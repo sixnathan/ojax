@@ -65,6 +65,7 @@ val conv_general_dilated_local :
   ?lhs_dilation:int array ->
   ?rhs_dilation:int array ->
   ?dimension_numbers:Types.conv_dims ->
+  ?precision:Lax_config.precision ->
   Types.value ->
   Types.value ->
   filter_shape:int array ->

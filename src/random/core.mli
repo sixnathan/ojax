@@ -12,9 +12,9 @@ val resolve_prng_impl : string option -> Prng.prng_impl
 val key_impl : value -> string
 val is_key : value -> bool
 val key_dtype : string option -> Dtype.t
-val key : value -> value
+val key : ?impl:string -> ?dtype:string -> value -> value
 val key_data : value -> value
-val wrap_key_data : value -> value
+val wrap_key_data : ?impl:string -> ?dtype:string -> value -> value
 val clone : value -> value
 val fold_in : value -> value -> value
 val split : value -> int -> value
@@ -49,7 +49,7 @@ val truncated_normal :
   value
 
 val permutation : value -> int -> value
-val choice : value -> n:int -> shape:int array -> replace:bool -> value
+val choice : value -> a:int -> shape:int array -> replace:bool -> value
 val exponential : ?dtype:Dtype.t -> value -> shape:int array -> value
 val cauchy : ?dtype:Dtype.t -> value -> shape:int array -> value
 val laplace : ?dtype:Dtype.t -> value -> shape:int array -> value
@@ -111,12 +111,7 @@ val dirichlet :
 val poisson : ?dtype:Dtype.t -> value -> shape:int array -> lam:float -> value
 
 val binomial :
-  ?dtype:Dtype.t ->
-  value ->
-  shape:int array ->
-  count:float ->
-  prob:float ->
-  value
+  ?dtype:Dtype.t -> value -> shape:int array -> n:float -> p:float -> value
 
 val multinomial : value -> p:value -> n_trials:float -> value
 val bernoulli_prob : value -> shape:int array -> p:value -> value

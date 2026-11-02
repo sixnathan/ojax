@@ -475,20 +475,25 @@ let claim name =
      ^ "'>.");
   Hashtbl.replace default_registry name ()
 
-let register_pytree_node ?flatten_with_keys name ~flatten ~unflatten =
+let register_pytree_node ?flatten_with_keys_func name ~flatten_func
+    ~unflatten_func =
   claim name;
   {
     node_name = name;
-    node_flatten = flatten;
-    node_unflatten = unflatten;
+    node_flatten = flatten_func;
+    node_unflatten = unflatten_func;
     node_keys =
-      Option.map (fun f node -> List.map fst (fst (f node))) flatten_with_keys;
+      Option.map
+        (fun f node -> List.map fst (fst (f node)))
+        flatten_with_keys_func;
   }
 
 let register_pytree_node_class name ~tree_flatten ~tree_unflatten =
-  register_pytree_node name ~flatten:tree_flatten ~unflatten:tree_unflatten
+  register_pytree_node name ~flatten_func:tree_flatten
+    ~unflatten_func:tree_unflatten
 
-let register_pytree_with_keys ?flatten_func name ~flatten_with_keys ~unflatten =
+let register_pytree_with_keys ?flatten_func name ~flatten_with_keys
+    ~unflatten_func =
   let flatten =
     match flatten_func with
     | Some f -> f
@@ -497,17 +502,18 @@ let register_pytree_with_keys ?flatten_func name ~flatten_with_keys ~unflatten =
           let pairs, aux = flatten_with_keys node in
           (List.map snd pairs, aux)
   in
-  register_pytree_node ~flatten_with_keys name ~flatten ~unflatten
+  register_pytree_node ~flatten_with_keys_func:flatten_with_keys name
+    ~flatten_func:flatten ~unflatten_func
 
 let register_pytree_with_keys_class name ~tree_flatten_with_keys ~tree_unflatten
     =
   register_pytree_with_keys name ~flatten_with_keys:tree_flatten_with_keys
-    ~unflatten:tree_unflatten
+    ~unflatten_func:tree_unflatten
 
 let register_static name ~to_aux ~of_aux =
   register_pytree_node name
-    ~flatten:(fun node -> ([], to_aux node))
-    ~unflatten:(fun aux _ -> of_aux aux)
+    ~flatten_func:(fun node -> ([], to_aux node))
+    ~unflatten_func:(fun aux _ -> of_aux aux)
 
 type field_kind = Data_field | Static_field
 
@@ -526,8 +532,8 @@ let register_dataclass ?(meta_fields = []) ?(drop_fields = []) name ~data_fields
      ^ String.concat ", " overlap);
   register_attribute_keys name data_fields;
   register_pytree_node name
-    ~flatten:(fun node -> (List.map (get node) data_fields, meta node))
-    ~unflatten:make
+    ~flatten_func:(fun node -> (List.map (get node) data_fields, meta node))
+    ~unflatten_func:make
 
 let node_to_tree cls node =
   let children, aux = cls.node_flatten node in

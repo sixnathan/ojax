@@ -52,8 +52,23 @@ val unsignedinteger : dtype_class
 val extended : dtype_class
 val issubdtype : dtype_class -> dtype_class -> bool
 val result_type : Types.value list -> Dtype.t
-val convolve : ?mode:string -> Types.value -> Types.value -> Types.value
-val correlate : ?mode:string -> Types.value -> Types.value -> Types.value
+
+val convolve :
+  ?mode:string ->
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
+val correlate :
+  ?mode:string ->
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value
+
 val where_ :
   ?size:int ->
   ?fill_value:float ->
@@ -61,6 +76,7 @@ val where_ :
   Types.value ->
   Types.value ->
   Types.value
+
 val promote_values : Types.value list -> Types.value list
 val take_trailing : Types.value -> Types.value list -> Types.value
 val index_at : Types.value -> int -> Types.value

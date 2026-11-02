@@ -101,7 +101,7 @@ let random_run op p a b =
   | "cv_r_poisson" ->
       Some [ RC.poisson ?dtype (k ()) ~shape:(shape ()) ~lam:3.0 ]
   | "cv_r_binomial" ->
-      Some [ RC.binomial ?dtype (k ()) ~shape:(shape ()) ~count:10.0 ~prob:0.3 ]
+      Some [ RC.binomial ?dtype (k ()) ~shape:(shape ()) ~n:10.0 ~p:0.3 ]
   | "cv_r_dirichlet" ->
       let dt = Option.get dtype in
       let alpha =

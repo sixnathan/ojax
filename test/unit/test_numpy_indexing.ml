@@ -54,7 +54,9 @@ let test_put () =
   let a = f32 [| 5 |] [| 0.; 0.; 0.; 0.; 0. |] in
   let ind = i32 [| 3 |] [| 0.; 2.; 4. |] in
   let v = f32 [| 3 |] [| 10.; 20.; 30. |] in
-  Alcotest.check farr "put" [| 10.; 0.; 20.; 0.; 30. |] (read (IDX.put ~inplace:false a ind v));
+  Alcotest.check farr "put"
+    [| 10.; 0.; 20.; 0.; 30. |]
+    (read (IDX.put ~inplace:false a ind v));
   let a2 = f32 [| 2; 3 |] [| 0.; 0.; 0.; 0.; 0.; 0. |] in
   let ind2 = i32 [| 2 |] [| 0.; 4. |] in
   let v2 = f32 [| 2 |] [| 7.; 9. |] in

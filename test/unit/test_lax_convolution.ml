@@ -35,6 +35,7 @@ let conv ~ws ~pad ~ld ~rd ~dims ?(fgc = 1) lhs rhs =
          feature_group_count = fgc;
          batch_group_count = 1;
          conv_precision = None;
+         conv_preferred = None;
        })
     [ lhs; rhs ]
 

@@ -73,6 +73,7 @@ DECODERS = {
     "string * string": "A.string_pair",
     "Dtype.t": "A.dtype",
     "padding": "A.padding",
+    "Lax_config.precision": "A.precision",
     "Lax_config.rounding_method": "A.rounding_method",
     "rounding_method": "A.rounding_method",
     "sections": "A.sections",

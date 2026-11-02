@@ -29,7 +29,7 @@ let conj_if_complex v =
   | Dtype.Complex64 | Dtype.Complex128 -> conj_of v
   | _ -> v
 
-let convolve_nd in1 in2 mode =
+let convolve_nd ?precision in1 in2 mode =
   if not (List.mem mode [ "full"; "same"; "valid" ]) then
     invalid_arg "mode must be one of ['full', 'same', 'valid']";
   if rank in1 <> rank in2 then
@@ -65,7 +65,7 @@ let convolve_nd in1 in2 mode =
   in
   let lift v = L.expand_dims v [| 0; 1 |] in
   let out =
-    L.conv_general_dilated (lift big) (lift kernel)
+    L.conv_general_dilated ?precision (lift big) (lift kernel)
       ~window_strides:(Array.map (fun _ -> 1) small_shape)
       (L.Explicit padding)
   in
@@ -159,29 +159,32 @@ let fftconvolve ?(mode = "full") ?axes in1 in2 =
       in
       apply mapped in1 in2
 
-let convolve ?(mode = "full") ?(method_ = "auto") in1 in2 =
+let convolve ?(mode = "full") ?(method_ = "auto") ?precision in1 in2 =
   match method_ with
   | "fft" -> fftconvolve ~mode in1 in2
-  | "direct" | "auto" -> convolve_nd in1 in2 mode
+  | "direct" | "auto" -> convolve_nd ?precision in1 in2 mode
   | other ->
       invalid_arg ("Got method=" ^ other ^ "; expected auto, fft, or direct.")
 
 let check_boundary name boundary fillvalue =
   if boundary <> "fill" || fillvalue <> 0.0 then
-    failwith (name ^ "() only supports boundary='fill', fillvalue=0")
+    raise
+      (Py_exn.Not_implemented_error
+         (name ^ "() only supports boundary='fill', fillvalue=0"))
 
-let convolve2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0) in1 in2
-    =
+let convolve2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0)
+    ?precision in1 in2 =
   check_boundary "convolve2d" boundary fillvalue;
   if rank in1 <> 2 || rank in2 <> 2 then
     Py_exn.value_error "convolve2d() only supports 2-dimensional inputs.";
   convolve_nd in1 in2 mode
 
-let correlate ?(mode = "full") ?method_ in1 in2 =
-  convolve ~mode ?method_ in1 (flip_all (conj_if_complex in2))
+let correlate ?(mode = "full") ?method_ ?precision in1 in2 =
+  convolve ~mode ?method_ ?precision in1 (flip_all (conj_if_complex in2))
 
-let correlate2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0) in1 in2
-    =
+let correlate2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0)
+    ?precision in1 in2 =
+  let convolve_nd = convolve_nd ?precision in
   check_boundary "correlate2d" boundary fillvalue;
   if rank in1 <> 2 || rank in2 <> 2 then
     Py_exn.value_error "correlate2d() only supports 2-dimensional inputs.";

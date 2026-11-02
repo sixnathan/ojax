@@ -1714,7 +1714,8 @@ let place ?(inplace = true) a mask values =
     raise
       (Py_exn.Value_error
          "jax.numpy.place cannot modify arrays in-place, because JAX arrays \
-          are immutable. Pass inplace=False to instead return an updated array.");
+          are immutable. Pass inplace=False to instead return an updated \
+          array.");
   if size_of a <> size_of mask then
     invalid_arg "place: arr and mask must be the same size";
   if size_of vals = 0 then invalid_arg "Cannot place values from an empty array";
@@ -2629,7 +2630,8 @@ let broadcast_shapes = function
 let iterable v = Array.length (shape v) > 0
 let complex_ = Scalar_types.complex128
 
-let dtype name =
+let dtype ?(align : bool option) name =
+  ignore align;
   match name with
   | "bool" | "bool_" -> Dtype.Bool
   | "int8" -> Dtype.I8

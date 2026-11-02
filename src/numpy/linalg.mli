@@ -8,6 +8,7 @@ val svd :
   ?full_matrices:bool ->
   ?compute_uv:bool ->
   ?hermitian:bool ->
+  ?subset_by_index:int * int ->
   Types.value ->
   Types.value list
 
@@ -68,12 +69,24 @@ val lstsq :
 
 val cross : ?axis:int -> Types.value -> Types.value -> Types.value
 val outer : Types.value -> Types.value -> Types.value
-val matmul : ?preferred:Dtype.t -> Types.value -> Types.value -> Types.value
+
+val matmul :
+  ?precision:Lax_config.precision ->
+  ?preferred:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value
 
 val vecdot :
-  ?axis:int -> ?preferred:Dtype.t -> Types.value -> Types.value -> Types.value
+  ?axis:int ->
+  ?precision:Lax_config.precision ->
+  ?preferred:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value
 
 val tensordot :
+  ?precision:Lax_config.precision ->
   ?preferred:Dtype.t ->
   ?axes:Tensor_contractions.td_axes ->
   Types.value ->
@@ -84,5 +97,8 @@ val diagonal : ?offset:int -> Types.value -> Types.value
 val trace : ?offset:int -> ?dtype:Dtype.t -> Types.value -> Types.value
 val tensorinv : ?ind:int -> Types.value -> Types.value
 val tensorsolve : ?axes:int array -> Types.value -> Types.value -> Types.value
-val multi_dot : Types.value list -> Types.value
+
+val multi_dot :
+  ?precision:Lax_config.precision -> Types.value list -> Types.value
+
 val cond : ?p:ord -> Types.value -> Types.value

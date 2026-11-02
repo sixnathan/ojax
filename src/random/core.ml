@@ -65,8 +65,26 @@ let resolve_prng_impl = function
   | None -> TF.threefry_prng_impl
   | Some "threefry2x32" -> TF.threefry_prng_impl
   | Some name ->
-      invalid_arg
-        (Printf.sprintf "unrecognized PRNG implementation \"%s\"" name)
+      raise
+        (Py_exn.Value_error
+           (Printf.sprintf
+              "unrecognized PRNG implementation \"%s\". Did you mean one of: \
+               \"philox2x32\", \"philox4x32\", \"threefry2x32\", \"rbg\", \
+               \"unsafe_rbg\", \"threefry4x32\"?"
+              name))
+
+let resolve_key_spec name impl dtype =
+  let spec =
+    match (impl, dtype) with
+    | Some _, Some _ ->
+        raise
+          (Py_exn.Value_error
+             ("Cannot specify both `impl` and `dtype` arguments to jax.random."
+            ^ name))
+    | None, Some d -> Some d
+    | given, None -> given
+  in
+  ignore (resolve_prng_impl spec)
 
 let key_impl _keys = TF.threefry_prng_impl.PR.name
 let key_dtype _impl_spec = D.Uint32
@@ -82,10 +100,14 @@ let raw_copy = function
   | Device b -> Concrete (copy_nd (Pjrt.Buffer.to_host b))
   | Tracer _ as v -> C.bind1 Copy [ v ]
 
-let key seed = Key_reuse.mark_typed (PR.random_seed seed)
+let key ?impl ?dtype seed =
+  resolve_key_spec "key" impl dtype;
+  Key_reuse.mark_typed (PR.random_seed seed)
+
 let key_data keys = Key_reuse.suspended (fun () -> raw_copy (unwrap keys))
 
-let wrap_key_data data =
+let wrap_key_data ?impl ?dtype data =
+  resolve_key_spec "wrap_key_data" impl dtype;
   Key_reuse.mark_typed (Key_reuse.suspended (fun () -> raw_copy (wrap data)))
 
 let clone k = Key_reuse.mark_typed (Key_reuse.suspended (fun () -> raw_copy k))
@@ -1756,8 +1778,8 @@ let truncated_normal ?dtype k ~lower ~upper ~shape =
 
 let permutation k x0 = sampler k (fun () -> permutation k x0)
 
-let choice k ~n ~shape ~replace =
-  sampler k (fun () -> choice k ~n ~shape ~replace)
+let choice k ~a ~shape ~replace =
+  sampler k (fun () -> choice k ~n:a ~shape ~replace)
 
 let exponential ?dtype k ~shape =
   check_float_dtype "exponential" dtype;
@@ -1862,7 +1884,7 @@ let poisson ?dtype k ~shape ~lam =
   check_poisson_dtype dtype;
   sampler k (fun () -> with_it dtype (fun () -> poisson k ~shape ~lam))
 
-let binomial ?dtype k ~shape ~count ~prob =
+let binomial ?dtype k ~shape ~n:count ~p:prob =
   check_float_dtype "binomial" dtype;
   sampler k (fun () ->
       match dtype with

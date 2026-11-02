@@ -108,7 +108,9 @@ val interp :
   value ->
   value
 
-val gradient : ?spacing:float -> ?axis:int list -> ?edge_order:int -> value -> value list
+val gradient :
+  ?spacing:float -> ?axis:int list -> ?edge_order:int -> value -> value list
+
 val choose : ?mode:string -> value -> value list -> value
 
 val compress :
@@ -231,7 +233,7 @@ val shape : value -> int array
 val broadcast_shapes : int array list -> int array
 val iterable : value -> bool
 val complex_ : value -> value
-val dtype : string -> Dtype.t
+val dtype : ?align:bool -> string -> Dtype.t
 
 type ndarray = value
 type ufunc = Ufunc.t

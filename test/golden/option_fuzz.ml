@@ -1,7 +1,6 @@
 module U = Yojson.Safe.Util
 
 let text_suite suite = "text_" ^ suite
-
 let same_message ~jax ~ojax = String.trim jax = String.trim ojax
 
 let log_text ~suite ~row ~jax e =
@@ -38,9 +37,7 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
     let m = Hashtbl.find table (case_id ^ "/in_" ^ name) in
     nd_of_npz (Npz.decode b m.Fuzz.start m.Fuzz.descr m.Fuzz.shape)
   in
-  let values =
-    List.map (fun n -> Ojax.Types.Concrete (input n)) names
-  in
+  let values = List.map (fun n -> Ojax.Types.Concrete (input n)) names in
   let lookup args name =
     let rec go ns vs =
       match (ns, vs) with
@@ -54,7 +51,10 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
     let arr = lookup args in
     match Option_manual.run op positional options arr with
     | Some result -> result
-    | None -> Option_cases.run op positional options arr
+    | None ->
+        Option_cases.run op positional
+          (Option_manual.without_false_flags options)
+          arr
   in
   let jax_error key =
     match U.member key case with `String name -> name | _ -> "unknown"
@@ -65,24 +65,26 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
       try
         ignore (call ());
         None
-      with Option_args.No_binding name -> Some name | _ -> None
+      with
+      | Option_args.No_binding name -> Some name
+      | _ -> None
     with
     | Some name ->
         Fuzz.log_row ~suite (prefix ^ ":no_binding") 0 (-9) 0.0
           ("no_binding:" ^ name)
-    | None ->
+    | None -> (
         Fuzz.check_mode ~suite ~case_id ~mode:mode_name ~string_of_dtype
           ~concrete
           ~jax_error:(jax_error (mode_name ^ "_error"))
           b table
           (Fuzz.output_names case mode_name)
           call;
-        (match
-           try
-             ignore (call ());
-             None
-           with e -> Some e
-         with
+        match
+          try
+            ignore (call ());
+            None
+          with e -> Some e
+        with
         | Some e when U.member (mode_name ^ "_error") case <> `Null ->
             log_text ~suite ~row:prefix
               ~jax:(U.member (mode_name ^ "_error_text") case)

@@ -935,6 +935,10 @@ let qr ?(full_matrices = true) x =
   | [ q; r ] -> (q, r)
   | _ -> failwith "linalg: qr arity"
 
+let qr_full ?(pivoting = false) ?(full_matrices = true) x =
+  if pivoting then Core.bind (Qr_pivoted full_matrices) [ x ]
+  else Core.bind (Qr full_matrices) [ x ]
+
 let householder_product a taus = Core.bind1 Householder_product [ a; taus ]
 
 let lu_pivots_to_permutation ~permutation_size p =
@@ -966,7 +970,17 @@ let eig ?implementation ?(compute_left_eigenvectors = true)
        })
     [ x ]
 
-let eigh ?implementation ?(lower = true) ?(symmetrize_input = true) x =
+let eigh ?implementation ?(lower = true) ?(symmetrize_input = true)
+    ?(sort_eigenvalues = true) ?subset_by_index x =
+  ignore (sort_eigenvalues : bool);
+  (match subset_by_index with
+  | Some (lo, hi)
+    when let sh = (Core.get_aval x).shape in
+         Array.length sh < 1 || (lo, hi) <> (0, sh.(Array.length sh - 1)) ->
+      raise
+        (Py_exn.Not_implemented_error
+           "subset_by_index not supported on CPU and GPU")
+  | _ -> ());
   (match implementation with
   | None | Some Lax_config.Eigh_qr -> ()
   | Some Lax_config.Eigh_jacobi ->
@@ -983,10 +997,32 @@ let hessenberg x =
   | [ a; taus ] -> (a, taus)
   | _ -> failwith "linalg: hessenberg arity"
 
-let schur ?(compute_schur_vectors = true) x =
+let schur ?(compute_schur_vectors = true) ?(sort_eig_vals = false)
+    ?(select_callable : (value -> value) option) x =
+  ignore select_callable;
+  if sort_eig_vals then
+    raise
+      (Py_exn.Not_implemented_error
+         "The sort feature of LAPACK's gees routine is not implemented.");
   Core.bind (Schur { compute_vectors = compute_schur_vectors }) [ x ]
 
-let svd ?algorithm ?(full_matrices = true) ?(compute_uv = true) x =
+let svd ?algorithm ?(full_matrices = true) ?(compute_uv = true) ?subset_by_index
+    x =
+  (match subset_by_index with
+  | None -> ()
+  | Some (lo, hi) ->
+      let sh = (Core.get_aval x).shape in
+      let r = Array.length sh in
+      let rank = if r < 2 then 0 else Stdlib.min sh.(r - 1) sh.(r - 2) in
+      if (lo, hi) <> (0, rank) then begin
+        if full_matrices then
+          raise
+            (Py_exn.Value_error
+               "full_matrices and subset_by_index cannot both be set");
+        raise
+          (Py_exn.Not_implemented_error
+             "subset_by_index not implemented for CPU and GPU")
+      end);
   let gesvd =
     match algorithm with
     | None

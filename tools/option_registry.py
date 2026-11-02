@@ -39,10 +39,10 @@ NEVER_SAMPLED = {
     "device", "out_sharding", "sharding", "copy", "overwrite_a", "overwrite_b", "overwrite_c", "overwrite_input",
     "overwrite_data", "overwrite_x", "check_finite", "debug", "lwork", "use_magma", "dynamic_shape", "allow_pickle",
     "donate", "may_alias", "src", "backend", "compiler_options", "turbo", "out", "subok", "like", "casting",
-    "use_fortran_order", "fft_output", "workers", "plan", "x_is_sorted", "implementation", "algorithm", "precision",
+    "use_fortran_order", "fft_output", "workers", "plan", "x_is_sorted", "algorithm",
 }
 
-SKIP_ANNOTATION = ("Callable", "Mapping", "Sharding", "PRNGSpecDesc", "Sequence[Array", "PrecisionLike", "Precision")
+SKIP_ANNOTATION = ("Callable", "Mapping", "Sharding", "PRNGSpecDesc", "Sequence[Array")
 SKIP_NAMES = {
     "fun", "func", "function", "f", "fn", "body_fun", "cond_fun", "kernel", "impl", "callback", "matvec", "solve",
     "tangent_solve", "pyfunc", "computation", "select_prng", "true_fun", "false_fun", "body", "jvp", "vjp", "cond",
@@ -94,6 +94,14 @@ FUNCTION_SAMPLES = {
 
 BY_NAME = {
     "keepdims": [True, False],
+    "precision": [None, "default", "high", "highest", ("high", "default"), "bogus"],
+    "preferred_element_type": [None, "float32", "float64", "int32", "complex64"],
+    "out_dtype": ["float32", "float64", "int32"],
+    "implementation": [None, "xla", "bogus"],
+    "lapack_driver": ["gesdd", "gesvd"],
+    "max_iterations": [None, 5],
+    "subset_by_index": [None, (0, 1), (0, 3), (0, 2)],
+    "sort_eig_vals": [True, False],
     "keepdim": [True, False],
     "dtype": ["float32", "float64", "int32", "int64", "uint8", "int16", "complex64", "bool"],
     "order": ["C", "F", "A", "K", "bogus"],
@@ -143,6 +151,9 @@ BY_NAME = {
     "sparse": [True, False],
     "base": [2.0, 10.0],
     "s": [None, (2,), (2, 2), (3, 4)],
+    "is_causal": [True, False],
+    "local_window_size": [None, 1, (1, 0)],
+    "return_residual": [True, False],
     "promote_integers": [True, False],
     "equal_nan": [True, False],
     "equal_nans": [True, False],
@@ -338,6 +349,7 @@ BOOL_ARGS = {("jnp", "select", "condlist"), ("jnp", "where", "condition"), ("jnp
 INT_ARGS = {("jnp", "ravel_multi_index", "multi_index"), ("jnp", "searchsorted", "sorter")}
 
 VARIANT_NAMES = {
+    ("lax", "mul"): "mul_with",
     ("jnp", "linspace"): "linspace_v",
     ("jnp", "logspace"): "logspace_v",
     ("jnp", "geomspace"): "geomspace_v",

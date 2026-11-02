@@ -800,11 +800,13 @@ and lstsq_body ~rcond ~numpy_resid a b =
 
 and cross ?(axis = -1) x1 x2 = NL.cross ~axis x1 x2
 and outer x1 x2 = TC.outer x1 x2
-and matmul ?preferred x1 x2 = TC.matmul ?preferred x1 x2
-and vecdot ?(axis = -1) ?preferred x1 x2 = TC.vecdot ~axis ?preferred x1 x2
+and matmul ?precision ?preferred x1 x2 = TC.matmul ?precision ?preferred x1 x2
 
-and tensordot ?preferred ?(axes = TC.Ax_int 2) x1 x2 =
-  TC.tensordot ?preferred ~axes x1 x2
+and vecdot ?(axis = -1) ?precision ?preferred x1 x2 =
+  TC.vecdot ~axis ?precision ?preferred x1 x2
+
+and tensordot ?precision ?preferred ?(axes = TC.Ax_int 2) x1 x2 =
+  TC.tensordot ?precision ?preferred ~axes x1 x2
 
 and diagonal ?(offset = 0) x = NL.diagonal ~offset ~axis1:(-2) ~axis2:(-1) x
 
@@ -1184,16 +1186,50 @@ let norm ?ord ?axis ?keepdims a0 =
 let matrix_norm ?(keepdims = false) ?(ord = Ofro) x =
   norm ~ord ~axis:(Apair (-2, -1)) ~keepdims x
 
-let multi_dot arrs =
-  (match arrs with
-  | [] | [ _ ] -> invalid_arg "multi_dot requires at least two arrays"
-  | _ -> ());
+let multi_dot ?precision arrs =
+  let count = List.length arrs in
+  if count < 2 then
+    raise
+      (Py_exn.Value_error
+         (Printf.sprintf
+            "multi_dot requires at least two arrays; got len(arrays)=%d" count));
+  let shapes () =
+    "["
+    ^ String.concat ", "
+        (List.map (fun a -> Validate.python_tuple (shape a)) arrs)
+    ^ "]"
+  in
+  let last = count - 1 in
+  if
+    List.exists Fun.id
+      (List.mapi
+         (fun i a ->
+           let d = ndim a in
+           if i = 0 || i = last then d <> 1 && d <> 2 else d <> 2)
+         arrs)
+  then
+    raise
+      (Py_exn.Value_error
+         ("multi_dot: input arrays must all be two-dimensional, except for the \
+           first and last array which may be 1 or 2 dimensional. Got array \
+           shapes " ^ shapes ()));
+  let rec mismatch = function
+    | a :: (b :: _ as rest) ->
+        let sa = shape a in
+        sa.(Array.length sa - 1) <> (shape b).(0) || mismatch rest
+    | _ -> false
+  in
+  if mismatch arrs then
+    raise
+      (Py_exn.Value_error
+         ("multi_dot: last dimension of each array must match first dimension \
+           of following array. Got array shapes " ^ shapes ()));
   let letter i = String.make 1 (Char.chr (Char.code 'a' + i)) in
   let term i arr =
     let left = letter i and right = letter (i + 1) in
     if ndim arr = 1 then if i = 0 then right else left else left ^ right
   in
-  Einsum.einsum (String.concat "," (List.mapi term arrs)) arrs
+  Einsum.einsum ?precision (String.concat "," (List.mapi term arrs)) arrs
 
 let () = Tree_util.register_attribute_keys "QRResult" [ "Q"; "R" ]
 
@@ -1222,7 +1258,14 @@ let pinv ?rtol ?hermitian ?rcond a0 =
       | [ rtol; rcond ], [ a0 ] -> pinv ?rtol ?hermitian ?rcond a0
       | _ -> assert false)
 
-let svd ?full_matrices ?compute_uv ?hermitian a0 =
+let svd ?full_matrices ?compute_uv ?hermitian ?subset_by_index a0 =
+  (match subset_by_index with
+  | None -> ()
+  | Some _ when hermitian = Some true -> ignore (LL.eigh ?subset_by_index a0)
+  | Some _ ->
+      ignore
+        (LL.svd ?full_matrices ~compute_uv:false ?subset_by_index
+           (to_inexact a0)));
   Eager_jit.many "numpy.linalg.svd" (full_matrices, compute_uv, hermitian)
     [] [ a0 ] (fun opts vals ->
       match (opts, vals) with

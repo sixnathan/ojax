@@ -138,3 +138,14 @@ let e_array_to_string e =
   | Concrete nd -> "E" ^ Numpy.Array_print.array_repr nd
   | Device b -> "E" ^ Numpy.Array_print.array_repr (Pjrt.Buffer.to_host b)
   | Tracer _ -> invalid_arg "EArray: a tracer has no printed value"
+
+let default_prng_impl ?(new_val : string option) () thunk =
+  match new_val with
+  | None ->
+      raise
+        (Py_exn.Type_error
+           "Context manager for default_prng_impl config option requires an \
+            argument representing the new value for the config option.")
+  | Some impl ->
+      ignore (Random.Core.resolve_prng_impl (Some impl));
+      thunk ()

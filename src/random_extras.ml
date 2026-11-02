@@ -78,14 +78,22 @@ let orthogonal ?m key ~n ~shape:sh =
         if n < m then NL.matrix_transpose x else x
     | _ -> assert false)
 
-let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") key ~mean ~cov
-    =
+let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") ?dtype key
+    ~mean ~cov =
+  if not (List.mem method_ [ "svd"; "eigh"; "cholesky" ]) then
+    raise
+      (Py_exn.Value_error "method must be one of {'svd', 'eigh', 'cholesky'}");
+  C.check_float_dtype "multivariate_normal" dtype;
   let mean_shape = shape mean in
   let rank = Array.length mean_shape in
   let event = mean_shape.(rank - 1) in
   let batch = Array.sub mean_shape 0 (rank - 1) in
   let sh = Option.value shape_opt ~default:batch in
-  let float_dtype = NL.result_type [ mean; cov ] in
+  let float_dtype =
+    match dtype with
+    | Some d -> Dtypes.canonicalize_dtype d
+    | None -> Dtypes.to_inexact_dtype (NL.result_type [ mean; cov ])
+  in
   C.jit_region "_multivariate_normal" (sh, float_dtype, method_)
     [ key; mean; cov ] (function
     | [ key; mean; cov ] ->

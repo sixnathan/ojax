@@ -493,7 +493,8 @@ let svd ?(full_matrices = true) ?(compute_uv = true) a =
   let a = to_inexact a in
   LL.svd ~full_matrices ~compute_uv a
 
-let svd ?full_matrices ?compute_uv a0 =
+let svd ?full_matrices ?compute_uv ?(lapack_driver : string option) a0 =
+  ignore lapack_driver;
   Eager_jit.many ~jit:"_svd" "scipy.linalg.svd" (full_matrices, compute_uv)
     [] [ a0 ] (fun opts vals ->
       match (opts, vals) with
@@ -505,7 +506,20 @@ let eigh ?(lower = true) ?(eigvals_only = false) a =
   let v, w = LL.eigh ~lower a in
   if eigvals_only then [ w ] else [ w; v ]
 
-let eigh ?lower ?eigvals_only a0 =
+let eigh ?b ?lower ?eigvals_only ?(eigvals : (int * int) option) ?(type_ = 1) a0
+    =
+  if b <> None then
+    raise
+      (Py_exn.Not_implemented_error
+         "Only the b=None case of eigh is implemented");
+  if type_ <> 1 then
+    raise
+      (Py_exn.Not_implemented_error
+         "Only the type=1 case of eigh is implemented.");
+  if eigvals <> None then
+    raise
+      (Py_exn.Not_implemented_error
+         "Only the eigvals=None case of eigh is implemented.");
   Eager_jit.many ~jit:"_eigh" "scipy.linalg.eigh" (lower, eigvals_only) []
     [ a0 ] (fun opts vals ->
       match (opts, vals) with
@@ -869,7 +883,8 @@ let expm_frechet ?(compute_expm = true) a e =
   if compute_expm then [ List.hd primal; List.hd tangent ]
   else [ List.hd tangent ]
 
-let expm_frechet ?compute_expm a0 a1 =
+let expm_frechet ?(method_ : string option) ?compute_expm a0 a1 =
+  ignore method_;
   Eager_jit.many ~jit:"expm_frechet" "scipy.linalg.expm_frechet" compute_expm []
     [ a0; a1 ] (fun opts vals ->
       match (opts, vals) with
@@ -933,7 +948,8 @@ let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
       invalid_arg
         (Printf.sprintf "Unknown polar decomposition method %s." method_)
 
-let polar ?side ?method_ ?eps a0 =
+let polar ?side ?method_ ?eps ?(max_iterations : int option) a0 =
+  ignore max_iterations;
   Eager_jit.many ~jit:"polar" "scipy.linalg.polar" (side, method_, eps) []
     [ a0 ] (fun opts vals ->
       match (opts, vals) with

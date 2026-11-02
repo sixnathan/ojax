@@ -33,9 +33,21 @@ val solve_triangular :
   Types.value
 
 val svd :
-  ?full_matrices:bool -> ?compute_uv:bool -> Types.value -> Types.value list
+  ?full_matrices:bool ->
+  ?compute_uv:bool ->
+  ?lapack_driver:string ->
+  Types.value ->
+  Types.value list
 
-val eigh : ?lower:bool -> ?eigvals_only:bool -> Types.value -> Types.value list
+val eigh :
+  ?b:Types.value ->
+  ?lower:bool ->
+  ?eigvals_only:bool ->
+  ?eigvals:int * int ->
+  ?type_:int ->
+  Types.value ->
+  Types.value list
+
 val schur : ?output:string -> Types.value -> Types.value list
 val block_diag : Types.value list -> Types.value
 val toeplitz : ?r:Types.value -> Types.value -> Types.value
@@ -45,12 +57,17 @@ val expm :
   ?upper_triangular:bool -> ?max_squarings:int -> Types.value -> Types.value
 
 val expm_frechet :
-  ?compute_expm:bool -> Types.value -> Types.value -> Types.value list
+  ?method_:string ->
+  ?compute_expm:bool ->
+  Types.value ->
+  Types.value ->
+  Types.value list
 
 val polar :
   ?side:string ->
   ?method_:string ->
   ?eps:float ->
+  ?max_iterations:int ->
   Types.value ->
   Types.value list
 

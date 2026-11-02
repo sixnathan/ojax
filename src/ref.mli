@@ -9,8 +9,8 @@ type index_item =
   | All
   | Dynamic of value
 
-val new_ref : ?kind:kind -> value -> t
-val empty_ref : aval -> t
+val new_ref : ?memory_space:string -> ?kind:kind -> value -> t
+val empty_ref : ?memory_space:string -> aval -> t
 val free_ref : t -> unit
 val freeze : t -> value
 val get : ?index:index_item list -> t -> value

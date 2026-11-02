@@ -13,9 +13,7 @@ let member options name =
   match options with `Assoc l -> List.assoc_opt name l | _ -> None
 
 let refuse options names =
-  List.iter
-    (fun n -> if member options n <> None then no ("option:" ^ n))
-    names
+  List.iter (fun n -> if member options n <> None then no ("option:" ^ n)) names
 
 let get options name default =
   match member options name with Some j -> j | None -> default
@@ -28,10 +26,7 @@ let opt options name decode =
 let opt_keep options name decode =
   match member options name with None -> None | Some j -> Some (decode j)
 
-let int_ : json -> int = function
-  | `Int n -> n
-  | _ -> no "type:int"
-
+let int_ : json -> int = function `Int n -> n | _ -> no "type:int"
 let bool_ : json -> bool = function `Bool b -> b | _ -> no "type:bool"
 
 let float_ : json -> float = function
@@ -41,9 +36,7 @@ let float_ : json -> float = function
   | `String "-inf" -> Float.neg_infinity
   | _ -> no "type:float"
 
-let string_ : json -> string = function
-  | `String s -> s
-  | _ -> no "type:string"
+let string_ : json -> string = function `String s -> s | _ -> no "type:string"
 
 let elements : json -> json list = function
   | `List l -> l
@@ -57,7 +50,10 @@ let int_list : json -> int list = function
 
 let int_array j = Array.of_list (int_list j)
 let float_array j = Array.of_list (List.map float_ (elements j))
-let int_option : json -> int option = function `Null -> None | j -> Some (int_ j)
+
+let int_option : json -> int option = function
+  | `Null -> None
+  | j -> Some (int_ j)
 
 let float_option : json -> float option = function
   | `Null -> None
@@ -104,6 +100,24 @@ let sections : json -> Ojax.Numpy.Lax_numpy.sections = function
 let dtype : json -> D.t = function
   | `String s -> Ojax.Numpy.Extras.dtype s
   | _ -> no "type:dtype"
+
+let precision : json -> Ojax.Lax_config.precision =
+  let level = function
+    | `String "default" -> Ojax.Lax_config.Precision_default
+    | `String "high" -> Ojax.Lax_config.Precision_high
+    | `String "highest" -> Ojax.Lax_config.Precision_highest
+    | _ -> no "type:precision"
+  in
+  function
+  | `String s when not (List.mem s [ "default"; "high"; "highest" ]) ->
+      Ojax.Lax_config.precision_of_string s
+  | `String _ as j ->
+      let l = level j in
+      Ojax.Lax_config.Precision (l, l)
+  | j -> (
+      match elements j with
+      | [ a; b ] -> Ojax.Lax_config.Precision (level a, level b)
+      | _ -> no "type:precision")
 
 let default_float : json -> D.t = function
   | `Null -> Ojax.Dtypes.default_float_dtype ()
@@ -154,7 +168,8 @@ let value arr : json -> T.value = function
   | `Assoc [ ("$key", `Int n) ] -> seed_key n
   | `Int n -> JU.py_int n
   | `Float f -> JU.py_float f
-  | `Bool b -> T.Concrete (N.of_floats D.Bool [||] [| (if b then 1.0 else 0.0) |])
+  | `Bool b ->
+      T.Concrete (N.of_floats D.Bool [||] [| (if b then 1.0 else 0.0) |])
   | _ -> no "type:value"
 
 let value_list arr : json -> T.value list = function

@@ -611,14 +611,39 @@ let sylvester_schur a =
       | _ -> invalid_arg "schur: arity")
     [ a ]
 
-let solve_sylvester_2d a b c tol =
+let solve_sylvester_2d ~method_ a b c tol =
   let hermitian v = NL.transpose (U.conj v) in
   let mm = Numpy.Tensor_contractions.matmul in
-  match (sylvester_schur a, sylvester_schur (NL.transpose (U.conj b))) with
-  | [ r; u ], [ s; v ] ->
-      let f = mm (mm (hermitian u) (NL.astype c (dtype_of r))) v in
-      let y = sylvester_triangular_scan r (hermitian s) f in
-      let x = mm (mm u y) (hermitian v) in
+  let x_of =
+    match method_ with
+    | "schur" -> (
+        fun () ->
+          match
+            (sylvester_schur a, sylvester_schur (NL.transpose (U.conj b)))
+          with
+          | [ r; u ], [ s; v ] ->
+              let f = mm (mm (hermitian u) (NL.astype c (dtype_of r))) v in
+              let y = sylvester_triangular_scan r (hermitian s) f in
+              mm (mm u y) (hermitian v)
+          | _ -> invalid_arg "solve_sylvester: schur arity")
+    | "eigen" ->
+        fun () ->
+          let ra, ua = Numpy.Linalg.eig a in
+          let rb, ub = Numpy.Linalg.eig b in
+          let f = Numpy.Linalg.solve ua (mm (NL.astype c (dtype_of ra)) ub) in
+          let w =
+            U.add (NL.expand_dims ra [| 1 |]) (NL.expand_dims rb [| 0 |])
+          in
+          let y = U.divide f w in
+          mm (mm ua y) (Numpy.Linalg.inv ub)
+    | other ->
+        raise
+          (Py_exn.Value_error
+             ("Unrecognized method " ^ other
+            ^ ". The two valid methods are either \"schur\" or \"eigen\"."))
+  in
+  match [ x_of () ] with
+  | [ x ] ->
       let x = if is_complex_dt (dtype_of c) then x else U.real x in
       let ea = NL.expand_dims (Numpy.Linalg.eigvals a) [| 1 |] in
       let eb = NL.expand_dims (Numpy.Linalg.eigvals b) [| 0 |] in
@@ -636,7 +661,7 @@ let solve_sylvester_2d a b c tol =
            [])
   | _ -> invalid_arg "solve_sylvester: arity"
 
-let solve_sylvester ?(tol = 1e-8) a b q =
+let solve_sylvester ?(method_ = "schur") ?(tol = 1e-8) a b q =
   let dt = Dtypes.to_inexact_dtype (NL.result_type [ a; b; q ]) in
   let a = NL.astype a dt and b = NL.astype b dt and q = NL.astype q dt in
   let tol = Numpy.Jnp_util.py_float tol in
@@ -645,7 +670,7 @@ let solve_sylvester ?(tol = 1e-8) a b q =
       | [ a; b; q ] ->
           Numpy.Jnp_util.jit1 "_solve_sylvester_2d"
             (function
-              | [ a; b; q; tol ] -> solve_sylvester_2d a b q tol
+              | [ a; b; q; tol ] -> solve_sylvester_2d ~method_ a b q tol
               | _ -> invalid_arg "solve_sylvester: arity")
             [ a; b; q; tol ]
       | _ -> invalid_arg "solve_sylvester: arity")

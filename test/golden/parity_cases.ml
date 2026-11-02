@@ -794,14 +794,12 @@ let default_random_run op p =
   | "rd_wald" -> Some [ RC.wald (k ()) ~shape ~mean:1.5 ]
   | "rd_geometric" -> Some [ RC.geometric (k ()) ~shape ~p:0.3 ]
   | "rd_poisson" -> Some [ RC.poisson (k ()) ~shape ~lam:3.0 ]
-  | "rd_binomial" -> Some [ RC.binomial (k ()) ~shape ~count:10.0 ~prob:0.3 ]
+  | "rd_binomial" -> Some [ RC.binomial (k ()) ~shape ~n:10.0 ~p:0.3 ]
   | "rd_poisson_large" -> Some [ RC.poisson (k ()) ~shape ~lam:30.0 ]
-  | "rd_binomial_large" ->
-      Some [ RC.binomial (k ()) ~shape ~count:100.0 ~prob:0.3 ]
-  | "rd_binomial_flip" ->
-      Some [ RC.binomial (k ()) ~shape ~count:100.0 ~prob:0.7 ]
+  | "rd_binomial_large" -> Some [ RC.binomial (k ()) ~shape ~n:100.0 ~p:0.3 ]
+  | "rd_binomial_flip" -> Some [ RC.binomial (k ()) ~shape ~n:100.0 ~p:0.7 ]
   | "rd_permutation" -> Some [ RC.permutation (k ()) 6 ]
-  | "rd_choice" -> Some [ RC.choice (k ()) ~n:6 ~shape ~replace:true ]
+  | "rd_choice" -> Some [ RC.choice (k ()) ~a:6 ~shape ~replace:true ]
   | _ -> None
 
 let array_random_run op p a b =

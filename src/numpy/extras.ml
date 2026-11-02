@@ -585,6 +585,7 @@ let traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a =
   fst (traced_unique_sized ?flags ?equal_nan ?axis ~size ?fill_value a)
 
 let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
+  (match (size, a) with None, Tracer _ -> ignore (host "unique" a) | _ -> ());
   (let extent =
      match axis with
      | None -> size_of a

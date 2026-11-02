@@ -585,6 +585,7 @@ let traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a =
   fst (traced_unique_sized ?flags ?equal_nan ?axis ~size ?fill_value a)
 
 let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
+  (match (size, a) with None, Tracer _ -> ignore (host "unique" a) | _ -> ());
   (let extent =
      match axis with
      | None -> size_of a
@@ -827,6 +828,19 @@ let union1d ?size ?fill_value a b =
 
 let flat_float_list name v = Array.to_list (flat_floats (host name v))
 
+let rec abstract v =
+  match v with
+  | Concrete _ | Device _ -> false
+  | Tracer { payload = JVP { primal; _ }; _ } -> abstract primal
+  | Tracer _ -> true
+
+let boolean_mask_index a b mask_size =
+  if abstract a || abstract b then
+    raise
+      (Errors.non_concrete_boolean_index_error
+         ~tracer:(Printf.sprintf "bool[%d]" mask_size)
+         ())
+
 let concat_sorted_keys ~keys ~payload =
   Core.bind
     (Sort { dimension = 0; is_stable = true; num_keys = List.length keys })
@@ -903,6 +917,7 @@ let intersect1d ?(assume_unique = false) ?size ?fill_value a b =
   | None ->
       let xs =
         if assume_unique then
+          let () = boolean_mask_index a b (max 0 (size_of a + size_of b - 1)) in
           let first = flat_float_list "intersect1d" a in
           let second = flat_float_list "intersect1d" b in
           let sorted = List.sort compare_with_nan (first @ second) in
@@ -923,6 +938,8 @@ let intersect1d_indices ?(assume_unique = false) a b =
   let a, b = same_dtype a b in
   let a = flat a and b = flat b in
   let dt = dtype_of a in
+  if assume_unique then
+    boolean_mask_index a b (max 0 (size_of a + size_of b - 1));
   let first = flat_floats (host "intersect1d" a) in
   let second = flat_floats (host "intersect1d" b) in
   let first_at arr x =

@@ -14,7 +14,7 @@ val register_prng : prng_impl -> unit
 val seed_with_impl : prng_impl -> Ndarray.t -> Ndarray.t
 val iota_2x32_nd : int array -> Ndarray.t * Ndarray.t
 val iota_2x32_shape : int array -> value * value
-val random_seed : value -> value
+val random_seed : ?impl:string -> value -> value
 val random_split : value -> int array -> value
 val random_fold_in : value -> value -> value
 val random_bits : value -> bit_width:int -> shape:int array -> value
@@ -26,6 +26,3 @@ val legacy_split_hook : (value -> int array -> value) ref
 val legacy_bits_hook : (value -> int -> int array -> value) ref
 val random_gamma : log_space:bool -> value -> value -> value
 val is_rbg_key : value -> bool
-val rbg_split_hook : (value -> int array -> value) ref
-val rbg_fold_in_hook : (value -> value -> value) ref
-val rbg_bits_hook : (value -> int -> int array -> value) ref

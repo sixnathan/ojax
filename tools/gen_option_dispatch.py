@@ -93,6 +93,19 @@ DECODERS = {
 }
 
 
+STRICT_MODULES = ("jnp", "linalg", "fft")
+STRICT = {"A.int_array": "A.int_sequence_array", "A.int_list": "A.int_sequence"}
+
+
+def sequence_only(annotation):
+    if annotation is inspect.Parameter.empty or not isinstance(annotation, str):
+        return False
+    parts = [p.strip() for p in annotation.split("|")]
+    parts = [p for p in parts if p != "None"]
+    sequences = ("Sequence[int]", "collections.abc.Sequence[int]", "tuple[int, ...]", "Shape")
+    return bool(parts) and all(p in sequences for p in parts)
+
+
 RESULTS = {
     "value": "[ {} ]",
     "value list": "{}",
@@ -173,6 +186,8 @@ def arm(spec, parts, module):
             continue
         used.add(target.name)
         decoder = DECODERS.get(ty)
+        if decoder in STRICT and spec["module"] in STRICT_MODULES and sequence_only(target.annotation):
+            decoder = STRICT[decoder]
         if decoder is None:
             if target.name in spec["options"]:
                 args.append(("refuse", target.name))

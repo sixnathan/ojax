@@ -1058,7 +1058,7 @@ let run op positional options arr =
   | "jnp.transpose" ->
       [
         Ojax.Numpy.Lax_numpy.transpose
-          ?axes:(A.opt options "axes" A.int_array)
+          ?axes:(A.opt options "axes" A.int_sequence_array)
           ((A.value arr) positional.(0));
       ]
   | "jnp.trapezoid" ->
@@ -1362,7 +1362,7 @@ let run op positional options arr =
   | "linalg.tensorsolve" ->
       [
         Ojax.Numpy.Linalg.tensorsolve
-          ?axes:(A.opt options "axes" A.int_array)
+          ?axes:(A.opt options "axes" A.int_sequence_array)
           ((A.value arr) positional.(0))
           ((A.value arr) positional.(1));
       ]
@@ -1400,8 +1400,8 @@ let run op positional options arr =
   | "fft.fft2" ->
       [
         Ojax.Numpy.Fft.fft2
-          ?s:(A.opt options "s" A.int_list)
-          ?axes:(A.opt options "axes" A.int_list)
+          ?s:(A.opt options "s" A.int_sequence)
+          ?axes:(A.opt options "axes" A.int_sequence)
           ?norm:(A.opt options "norm" A.string_)
           ((A.value arr) positional.(0));
       ]
@@ -1415,8 +1415,8 @@ let run op positional options arr =
   | "fft.fftn" ->
       [
         Ojax.Numpy.Fft.fftn
-          ?s:(A.opt options "s" A.int_list)
-          ?axes:(A.opt options "axes" A.int_list)
+          ?s:(A.opt options "s" A.int_sequence)
+          ?axes:(A.opt options "axes" A.int_sequence)
           ?norm:(A.opt options "norm" A.string_)
           ((A.value arr) positional.(0));
       ]
@@ -1443,16 +1443,16 @@ let run op positional options arr =
   | "fft.ifft2" ->
       [
         Ojax.Numpy.Fft.ifft2
-          ?s:(A.opt options "s" A.int_list)
-          ?axes:(A.opt options "axes" A.int_list)
+          ?s:(A.opt options "s" A.int_sequence)
+          ?axes:(A.opt options "axes" A.int_sequence)
           ?norm:(A.opt options "norm" A.string_)
           ((A.value arr) positional.(0));
       ]
   | "fft.ifftn" ->
       [
         Ojax.Numpy.Fft.ifftn
-          ?s:(A.opt options "s" A.int_list)
-          ?axes:(A.opt options "axes" A.int_list)
+          ?s:(A.opt options "s" A.int_sequence)
+          ?axes:(A.opt options "axes" A.int_sequence)
           ?norm:(A.opt options "norm" A.string_)
           ((A.value arr) positional.(0));
       ]
@@ -1479,16 +1479,16 @@ let run op positional options arr =
   | "fft.irfft2" ->
       [
         Ojax.Numpy.Fft.irfft2
-          ?s:(A.opt options "s" A.int_list)
-          ?axes:(A.opt options "axes" A.int_list)
+          ?s:(A.opt options "s" A.int_sequence)
+          ?axes:(A.opt options "axes" A.int_sequence)
           ?norm:(A.opt options "norm" A.string_)
           ((A.value arr) positional.(0));
       ]
   | "fft.irfftn" ->
       [
         Ojax.Numpy.Fft.irfftn
-          ?s:(A.opt options "s" A.int_list)
-          ?axes:(A.opt options "axes" A.int_list)
+          ?s:(A.opt options "s" A.int_sequence)
+          ?axes:(A.opt options "axes" A.int_sequence)
           ?norm:(A.opt options "norm" A.string_)
           ((A.value arr) positional.(0));
       ]
@@ -1502,8 +1502,8 @@ let run op positional options arr =
   | "fft.rfft2" ->
       [
         Ojax.Numpy.Fft.rfft2
-          ?s:(A.opt options "s" A.int_list)
-          ?axes:(A.opt options "axes" A.int_list)
+          ?s:(A.opt options "s" A.int_sequence)
+          ?axes:(A.opt options "axes" A.int_sequence)
           ?norm:(A.opt options "norm" A.string_)
           ((A.value arr) positional.(0));
       ]
@@ -1517,8 +1517,8 @@ let run op positional options arr =
   | "fft.rfftn" ->
       [
         Ojax.Numpy.Fft.rfftn
-          ?s:(A.opt options "s" A.int_list)
-          ?axes:(A.opt options "axes" A.int_list)
+          ?s:(A.opt options "s" A.int_sequence)
+          ?axes:(A.opt options "axes" A.int_sequence)
           ?norm:(A.opt options "norm" A.string_)
           ((A.value arr) positional.(0));
       ]

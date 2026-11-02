@@ -314,6 +314,25 @@ let check_operands prim args =
         in
         if not (accepted dt) then rejected_dtype name dt classes
   in
+  let cumulative name axis =
+    (match args with
+    | [] -> ()
+    | first :: _ ->
+        let shape =
+          match first with
+          | Concrete a -> Ndarray.shape a
+          | Tracer t -> t.aval.shape
+          | Device b -> Pjrt.Buffer.dimensions b
+        in
+        if axis < 0 then
+          Py_exn.value_error "XLA operations do not allow negative axes"
+        else if axis >= Array.length shape then
+          Py_exn.value_error
+            (Printf.sprintf "axis %d is out of bounds for array of shape %s"
+               axis
+               (Validate.python_tuple shape)));
+    check name (fun d -> d <> Dtype.Bool) "subtypes of number"
+  in
   let floating = "subtypes of floating" in
   let inexact = "subtypes of complexfloating, floating" in
   let numeric = "subtypes of complexfloating, floating, integer" in
@@ -500,11 +519,11 @@ let check_operands prim args =
                       name (Dtype.numpy_name d))))
       | [] -> ())
   | Rem -> nary_same "rem" (fun d -> not_bool d && not_complex d) real_numeric
-  | Cumsum _ -> check "cumsum" not_bool "subtypes of number"
-  | Cumprod _ -> check "cumprod" not_bool "subtypes of number"
-  | Cummax _ -> check "cummax" not_bool "subtypes of number"
-  | Cummin _ -> check "cummin" not_bool "subtypes of number"
-  | Cumlogsumexp _ -> check "cumlogsumexp" not_bool "subtypes of number"
+  | Cumsum { axis; _ } -> cumulative "cumsum" axis
+  | Cumprod { axis; _ } -> cumulative "cumprod" axis
+  | Cummax { axis; _ } -> cumulative "cummax" axis
+  | Cummin { axis; _ } -> cumulative "cummin" axis
+  | Cumlogsumexp { axis; _ } -> cumulative "cumlogsumexp" axis
   | Lt -> nary_same "lt" not_complex real
   | Gt -> nary_same "gt" not_complex real
   | Le -> nary_same "le" not_complex real
@@ -783,7 +802,25 @@ let as_concrete = function
   | Device b -> Pjrt.Buffer.to_host b
   | Tracer _ -> failwith "eval: expected a concrete value"
 
-let eval_process_primitive _trace prim args =
+let urbg_shaped (a : aval) =
+  let n = Array.length a.shape in
+  a.weak_type && a.dtype = Dtype.Uint32 && n >= 1 && a.shape.(n - 1) = 4
+
+let retag_urbg prim args outs =
+  let seeded = match prim with Random_seed "urbg" -> true | _ -> false in
+  if seeded || List.exists (fun v -> urbg_shaped (value_aval v)) args then
+    match rules.abstract_eval prim (List.map value_aval args) with
+    | avals when List.compare_lengths avals outs = 0 ->
+        List.map2
+          (fun out a ->
+            if urbg_shaped a then Concrete (Ndarray.as_weak (as_concrete out))
+            else out)
+          outs avals
+    | _ -> outs
+    | exception _ -> outs
+  else outs
+
+let eval_untagged prim args =
   (match prim with
   | Dot_general _ -> Config.check_matmul_preset_on_cpu ()
   | _ -> ());
@@ -818,6 +855,9 @@ let eval_process_primitive _trace prim args =
       List.map
         (fun r -> Concrete (Ndarray.canonicalize (Ndarray.dtype r) r))
         results
+
+let eval_process_primitive _trace prim args =
+  retag_urbg prim args (eval_untagged prim args)
 
 let eval_interpreter =
   {

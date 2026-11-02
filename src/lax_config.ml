@@ -80,6 +80,19 @@ type precision =
 
 let precision_of_level level = Precision (level, level)
 
+let precision_argument_message got =
+  Printf.sprintf
+    "Precision argument must be one of:\n\
+     - None,\n\
+     - a string in ['highest', 'float32', 'high', 'bfloat16_3x', \
+     'tensorfloat32', 'default', 'bfloat16', 'fastest', None],\n\
+     - a lax.Precision value,\n\
+     - a tuple of two lax.Precision values or strings,\n\
+     - a lax.DotAlgorithmPreset or the name of one of these presets, or\n\
+     - a lax.DotAlgorithm value;\n\
+     but got %s."
+    got
+
 let precision_of_string s =
   match s with
   | "highest" | "float32" -> precision_of_level Precision_highest
@@ -89,20 +102,7 @@ let precision_of_string s =
   | _ -> (
       match List.find_opt (fun (_, name) -> name = s) preset_names with
       | Some (preset, _) -> Preset preset
-      | None ->
-          invalid_arg
-            (Printf.sprintf
-               "Precision argument must be one of:\n\
-                - None,\n\
-                - a string in ['highest', 'float32', 'high', 'bfloat16_3x', \
-                'tensorfloat32', 'default', 'bfloat16', 'fastest', None],\n\
-                - a lax.Precision value,\n\
-                - a tuple of two lax.Precision values or strings,\n\
-                - a lax.DotAlgorithmPreset or the name of one of these \
-                presets, or\n\
-                - a lax.DotAlgorithm value;\n\
-                but got %s."
-               s))
+      | None -> invalid_arg (precision_argument_message s))
 
 type fft_type = Types.fft_kind =
   | Fft_forward

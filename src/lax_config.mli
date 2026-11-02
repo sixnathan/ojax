@@ -52,6 +52,7 @@ type precision =
   | Preset of dot_algorithm_preset
 
 val precision_of_level : precision_level -> precision
+val precision_argument_message : string -> string
 val precision_of_string : string -> precision
 
 type fft_type = Types.fft_kind =

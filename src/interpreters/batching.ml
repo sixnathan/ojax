@@ -1053,7 +1053,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Platform_index _ ->
       failwith "batching: vmap of platform_index not supported"
   | Cond _ -> failwith "batching: cond handled by batch_process_primitive"
-  | Random_seed | Random_split _ | Random_bits _ | Random_wrap | Random_unwrap
+  | Random_seed _ | Random_split _ | Random_bits _ | Random_wrap | Random_unwrap
     -> (
       match (vals, bdims) with
       | [ x ], [ b ] -> (b1 prim [ bdim_at_front axis_size x b ], Some 0)

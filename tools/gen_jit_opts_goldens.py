@@ -42,6 +42,8 @@ RANDOM_CASES = [
 ]
 DONATE_RUN_CASES = ["run_ok", "run_use", "run_again", "run_unusable",
                     "run_static", "run_keep"]
+COPTS_CASES = ["none", "fast_min_max_on", "fast_min_max_off",
+               "fast_math_on", "bogus"]
 FLAGS = [("nans", True, False), ("infs", False, True), ("both", True, True)]
 
 
@@ -221,6 +223,18 @@ def donate_run_case(jax, jnp, name):
     return run
 
 
+def copts_case(jax, jnp, name):
+    opts = {
+        "none": None,
+        "fast_min_max_on": {"xla_cpu_enable_fast_min_max": True},
+        "fast_min_max_off": {"xla_cpu_enable_fast_min_max": False},
+        "fast_math_on": {"xla_cpu_enable_fast_math": True},
+        "bogus": {"xla_bogus_flag": 1},
+    }[name]
+    x = jnp.asarray(np.array([np.nan, 1.0, 2.0], np.float32))
+    return lambda: jax.jit(lambda a: jnp.max(a), compiler_options=opts)(x)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -271,6 +285,10 @@ def main():
     for name in DONATE_RUN_CASES:
         r = run_case(donate_run_case(jax, jnp, name))
         r.update({"id": f"donate_{name}", "group": "donate_run", "case": name})
+        rows.append(r)
+    for name in COPTS_CASES:
+        r = run_case(copts_case(jax, jnp, name))
+        r.update({"id": f"copts_{name}", "group": "copts", "case": name})
         rows.append(r)
     for name in TEXT_CASES:
         thunk = text_case(jax, jnp, name)

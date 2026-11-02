@@ -399,6 +399,26 @@ let donate_run_thunk name () =
       y @ [ deleted x; deleted w ]
   | other -> failwith ("jit_opts: unknown donate case " ^ other)
 
+let copts_thunk name () =
+  let module E = Ojax.Pjrt.Executable in
+  let options =
+    match name with
+    | "none" -> None
+    | "fast_min_max_on" ->
+        Some [ ("xla_cpu_enable_fast_min_max", E.Option_bool true) ]
+    | "fast_min_max_off" ->
+        Some [ ("xla_cpu_enable_fast_min_max", E.Option_bool false) ]
+    | "fast_math_on" ->
+        Some [ ("xla_cpu_enable_fast_math", E.Option_bool true) ]
+    | "bogus" -> Some [ ("xla_bogus_flag", E.Option_int 1) ]
+    | other -> failwith ("jit_opts: unknown copts case " ^ other)
+  in
+  let x = f32 [| Float.nan; 1.0; 2.0 |] in
+  Ojax.Tree_util.tree_leaves
+    (Ojax.Api.jit ?compiler_options:options
+       (unary (fun a -> leaf (Ojax.Numpy.Reductions.max a)))
+       [ leaf x ])
+
 let strings j = List.map U.to_string (U.to_list j)
 
 let expected_of row =
@@ -470,6 +490,7 @@ let actual_of row =
             (arg = "high") (fun () -> run_case thunk))
   | "donate_run" ->
       run_case (donate_run_thunk (U.to_string (U.member "case" row)))
+  | "copts" -> run_case (copts_thunk (U.to_string (U.member "case" row)))
   | "text" ->
       let thunk = text_thunk (U.to_string (U.member "case" row)) in
       let text = ref "" in

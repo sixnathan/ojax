@@ -336,33 +336,52 @@ let threefry_2x32 key count =
   let x = Core.bind (Split { sizes = [| half; half |]; axis = 0 }) [ count ] in
   match x with
   | [ x0; x1 ] -> (
-      match threefry2x32 k1 k2 x0 x1 with
+      match Core.bind Threefry2x32 [ k1; k2; x0; x1 ] with
       | [ a; b ] -> b1 (Concatenate 0) [ a; b ]
       | _ -> invalid_arg "Prng_lowering: threefry arity")
   | _ -> invalid_arg "Prng_lowering: split arity"
 
-let rec fold_in key data =
-  let ka = Core.get_aval key and da = Core.get_aval data in
-  if Array.length ka.shape = 1 && Array.length da.shape = 0 then
-    List.hd
-      (Jaxpr.named_jit ~name:"_threefry_fold_in"
-         (function
-           | [ key; data ] -> [ threefry_2x32 key (seed_scalar data) ]
-           | _ -> invalid_arg "Prng_lowering: fold_in arity")
-         [ key; data ])
-  else if Array.length ka.shape = 1 then
-    let k1, k2 = key_words key in
-    let high, low = seed_words data in
-    match threefry2x32 k1 k2 high low with
-    | [ x; y ] -> b1 (Stack (Array.length (Core.get_aval x).shape)) [ x; y ]
-    | _ -> invalid_arg "Prng_lowering: threefry arity"
+let vmap1 ?(axes = [ Some 0 ]) f args =
+  List.hd (Interpreters.Batching.vmap_flat (fun xs -> [ f xs ]) axes args)
+
+let rec iterated_vmap_unary n f x =
+  if n = 0 then f x
   else
-    let keys = Core.bind (Unstack 0) [ key ] in
-    let datas =
-      if Array.length da.shape = 0 then List.map (fun _ -> data) keys
-      else Core.bind (Unstack 0) [ data ]
+    vmap1
+      (function
+        | [ x ] -> iterated_vmap_unary (n - 1) f x
+        | _ -> invalid_arg "Prng_lowering: vmap arity")
+      [ x ]
+
+let rec iterated_vmap_binary_bcast shape1 shape2 f x y =
+  let n1 = Array.length shape1 and n2 = Array.length shape2 in
+  if n1 = 0 && n2 = 0 then f x y
+  else if n1 = 0 then iterated_vmap_unary n2 (fun y -> f x y) y
+  else if n2 = 0 then iterated_vmap_unary n1 (fun x -> f x y) x
+  else
+    let rest a = Array.sub a 1 (Array.length a - 1) in
+    let inner = iterated_vmap_binary_bcast (rest shape1) (rest shape2) f in
+    let pair = function
+      | [ x; y ] -> inner x y
+      | _ -> invalid_arg "Prng_lowering: vmap arity"
     in
-    b1 (Stack 0) (List.map2 fold_in keys datas)
+    if shape1.(0) = shape2.(0) then vmap1 pair [ x; y ]
+    else if shape1.(0) = 1 then
+      vmap1 ~axes:[ None; Some 0 ] pair [ b1 (Squeeze [| 0 |]) [ x ]; y ]
+    else vmap1 ~axes:[ Some 0; None ] pair [ x; b1 (Squeeze [| 0 |]) [ y ] ]
+
+let threefry_fold_in key data =
+  List.hd
+    (Jaxpr.named_jit ~name:"_threefry_fold_in"
+       (function
+         | [ key; data ] -> [ threefry_2x32 key (seed_scalar data) ]
+         | _ -> invalid_arg "Prng_lowering: fold_in arity")
+       [ key; data ])
+
+let fold_in key data =
+  let ka = Core.get_aval key and da = Core.get_aval data in
+  let key_batch = Array.sub ka.shape 0 (Array.length ka.shape - 1) in
+  iterated_vmap_binary_bcast key_batch da.shape threefry_fold_in key data
 
 let random_bits64 ~shape key =
   over_key_batch

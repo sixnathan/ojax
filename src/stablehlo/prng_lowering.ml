@@ -313,9 +313,7 @@ let seed_words seed =
 let seed_scalar seed =
   let a = Core.get_aval seed in
   let word v =
-    b1
-      (Broadcast_in_dim { shape = [| 1 |]; dims = [||] })
-      [ to_u32 v ]
+    b1 (Broadcast_in_dim { shape = [| 1 |]; dims = [||] }) [ to_u32 v ]
   in
   let high = word (b1 Shift_right_logical [ seed; seed_const a.dtype a 32L ]) in
   let wide = seed_wide_dtype a.dtype in

@@ -64,8 +64,7 @@ let unary op x =
   | "softplus" -> NN.softplus x
   | "erf" -> SS.erf x
   | "gammaln" -> SS.gammaln x
-  | "where_sq" ->
-      JU.where (UF.greater x (JU.py_float 0.0)) (UF.square x) x
+  | "where_sq" -> JU.where (UF.greater x (JU.py_float 0.0)) (UF.square x) x
   | "clip" -> NL.clip ~min:(-1.0) ~max:1.0 x
   | "flip" -> NL.flip x
   | "ravel" -> NL.ravel x
@@ -105,8 +104,7 @@ let base op = function
 let scalarized f args = leaf (tree_sum (f args))
 
 let step_value f c rest =
-  UF.add c
-    (UF.multiply (JU.py_float 0.125) (tree_sum (f (arrays (c :: rest)))))
+  UF.add c (UF.multiply (JU.py_float 0.125) (tree_sum (f (arrays (c :: rest)))))
 
 let flat_call f =
   let shape = ref TU.Null_def in
@@ -128,9 +126,7 @@ let apply_layer layer f =
         let out = A.jit_flat ~name:"g" flat (values args) in
         TU.tree_unflatten !shape out
   | "vmap" ->
-      let in_axes =
-        List.map axis_of (U.to_list (U.member "in_axes" layer))
-      in
+      let in_axes = List.map axis_of (U.to_list (U.member "in_axes" layer)) in
       let out_axes = U.to_int (U.member "out_axes" layer) in
       fun args -> A.vmap ~out_axes f in_axes args
   | "grad" -> fun args -> A.grad ~argnums:(argnum ()) (scalarized f) args
@@ -165,15 +161,13 @@ let apply_layer layer f =
           let y, dy = A.jvp f (arrays primals) (arrays tangents) in
           shape := TU.tree_structure y;
           ( leaves y,
-            List.map
-              (fun v -> UF.multiply v (JU.py_float 1.5))
-              (leaves dy) )
+            List.map (fun v -> UF.multiply v (JU.py_float 1.5)) (leaves dy) )
         in
         let out =
           CD.custom_jvp ~name:"g" ~jvp_name:"rule" flat ~jvp:rule (values args)
         in
         TU.tree_unflatten !shape out
-  | "scan" ->
+  | "scan" -> (
       let length = U.to_int (U.member "length" layer) in
       fun args ->
         let a = values args in
@@ -184,7 +178,7 @@ let apply_layer layer f =
               [ s; RD.sum s ]
           | [] -> failwith "compose: scan body"
         in
-        (match CF.scan ~length body [ List.hd a ] [] with
+        match CF.scan ~length body [ List.hd a ] [] with
         | [ c; ys ] -> TU.Tuple [ leaf c; leaf ys ]
         | _ -> failwith "compose: scan arity")
   | "while_loop" ->
@@ -296,8 +290,7 @@ let ints_of v = Array.of_list (List.map U.to_int (U.to_list v))
 let prng_program params =
   let impl = U.to_string (U.member "impl" params) in
   let u32 n =
-    T.Concrete
-      (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| float_of_int n |])
+    T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| float_of_int n |])
   in
   fun args ->
     let seed = as_leaf (List.hd args) in
@@ -310,9 +303,7 @@ let prng_program params =
         | "fold_in" -> key := RC.fold_in !key (u32 (member "data" step))
         | "split" ->
             key :=
-              getitem
-                (RC.split !key (member "num" step))
-                (member "index" step)
+              getitem (RC.split !key (member "num" step)) (member "index" step)
         | "vmap_fold_in" ->
             let data = u32 (member "data" step) in
             let folded =
@@ -321,9 +312,7 @@ let prng_program params =
                 [ Some 0 ]
                 [ leaf (RC.split !key (member "num" step)) ]
             in
-            key :=
-              getitem (as_leaf folded)
-                (member "index" step)
+            key := getitem (as_leaf folded) (member "index" step)
         | other -> failwith ("compose: prng step " ^ other));
         outs := RC.key_data !key :: !outs)
       (U.to_list (U.member "steps" params));
@@ -357,7 +346,8 @@ let references = Hashtbl.create 1024
 let load_references root =
   if Hashtbl.length references = 0 then
     let path =
-      Filename.concat (Filename.concat (Filename.concat root name) "text")
+      Filename.concat
+        (Filename.concat (Filename.concat root name) "text")
         "reference.jsonl"
     in
     In_channel.with_open_text path (fun ic ->
@@ -388,7 +378,9 @@ let dump_channel =
   lazy
     (Option.map
        (fun dir ->
-         open_out_gen [ Open_append; Open_creat ] 0o644
+         open_out_gen
+           [ Open_append; Open_creat ]
+           0o644
            (Filename.concat dir (Printf.sprintf "%d.jsonl" (Unix.getpid ()))))
        (Sys.getenv_opt "OJAX_COMPOSE_DUMP"))
 
@@ -403,7 +395,9 @@ let dump_text row field ours =
       in
       Yojson.Safe.to_channel oc
         (`Assoc
-           [ ("case", `String row); ("field", `String field); ("v", `String text) ]);
+           [
+             ("case", `String row); ("field", `String field); ("v", `String text);
+           ]);
       output_char oc '\n';
       flush oc
 
@@ -458,9 +452,7 @@ let check_case ~suite ~root ~set ~set_dir ~x64 ~nd_of_npz ~string_of_dtype
   let case_id = U.to_string (U.member "case_id" case) in
   let family = U.to_string (U.member "op" case) in
   let args = U.to_list (U.member "args" case) in
-  let arg_names =
-    List.map (fun a -> U.to_string (U.member "name" a)) args
-  in
+  let arg_names = List.map (fun a -> U.to_string (U.member "name" a)) args in
   let b, table =
     Fuzz.bundle
       (Filename.concat (Filename.concat set_dir "ops") (family ^ ".npz"))
@@ -476,13 +468,10 @@ let check_case ~suite ~root ~set ~set_dir ~x64 ~nd_of_npz ~string_of_dtype
   in
   Fuzz.check_mode ~suite ~case_id ~mode:"eager" ~string_of_dtype ~concrete
     ~jax_error:(jax_error "eager_error") b table
-    (Fuzz.output_names case "eager")
-    (fun () -> leaves (run (arrays inputs)));
+    (Fuzz.output_names case "eager") (fun () -> leaves (run (arrays inputs)));
   Fuzz.check_mode ~suite ~case_id ~mode:"jit" ~string_of_dtype ~concrete
-    ~jax_error:(jax_error "jit_error") b table
-    (Fuzz.output_names case "jit")
-    (fun () ->
-      A.jit_flat (fun a -> leaves ((program case) (arrays a))) inputs);
+    ~jax_error:(jax_error "jit_error") b table (Fuzz.output_names case "jit")
+    (fun () -> A.jit_flat (fun a -> leaves ((program case) (arrays a))) inputs);
   check_text ~suite ~set ~root case
     (List.map (fun v -> C.get_aval v) inputs)
     (program case)
@@ -490,9 +479,7 @@ let check_case ~suite ~root ~set ~set_dir ~x64 ~nd_of_npz ~string_of_dtype
 let suites ~goldens_root ~nd_of_npz ~string_of_dtype ~concrete =
   List.filter_map
     (fun (set, x64) ->
-      let set_dir =
-        Filename.concat (Filename.concat goldens_root name) set
-      in
+      let set_dir = Filename.concat (Filename.concat goldens_root name) set in
       let path = Filename.concat set_dir "manifest.json" in
       if not (Sys.file_exists path) then None
       else

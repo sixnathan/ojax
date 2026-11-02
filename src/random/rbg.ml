@@ -12,7 +12,6 @@ let key_data k = if is_unsafe k then bitcast Dtype.Uint32 k else k
 let wrap ~unsafe k = if unsafe then bitcast Dtype.I32 k else k
 let reshape dims v = Core.bind1 (Reshape dims) [ v ]
 let prod a = Array.fold_left ( * ) 1 a
-
 let halves key = reshape [| 2; 2 |] key
 
 let rec iterated f key =
@@ -20,9 +19,7 @@ let rec iterated f key =
   else
     List.hd
       (B.vmap_flat
-         (function
-           | [ k ] -> [ iterated f k ]
-           | _ -> failwith "rbg: arity")
+         (function [ k ] -> [ iterated f k ] | _ -> failwith "rbg: arity")
          [ Some 0 ] [ key ])
 
 let half_seed seed = TF.threefry_seed seed
@@ -45,8 +42,7 @@ let rbg_split shape key =
     List.hd
       (B.vmap_flat ~out_axis:(Array.length shape)
          (function
-           | [ half ] -> [ split half shape ]
-           | _ -> failwith "rbg: split arity")
+           | [ half ] -> [ split half shape ] | _ -> failwith "rbg: split arity")
          [ Some 0 ]
          [ halves key ])
   in
@@ -110,7 +106,9 @@ let random_bits key bit_width out_shape =
     | 16 -> Dtype.Uint16
     | 32 -> Dtype.Uint32
     | 64 -> Dtype.Uint64
-    | _ -> raise (Errors.jax_type_error "requires 8-, 16-, 32- or 64-bit field width.")
+    | _ ->
+        raise
+          (Errors.jax_type_error "requires 8-, 16-, 32- or 64-bit field width.")
   in
   iterated (fun k -> bit_generator ~dtype:element k out_shape) (key_data key)
 

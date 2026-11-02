@@ -2740,7 +2740,7 @@ and random_core_fn_pinned op params operands : T.value list =
   | "clone", [ k ] -> [ RC.key_data (RC.clone (PR.random_wrap k)) ]
   | "fold_in", [ k; d ] -> [ RC.fold_in k d ]
   | "split", [ k ] -> [ RC.split k (ip "num") ]
-  | "bits", [ k ] -> [ RC.bits k ~shape:(shape ()) ]
+  | "bits", [ k ] -> [ RC.bits ~dtype:Ojax.Dtype.Uint32 k ~shape:(shape ()) ]
   | "randint", [ k ] ->
       [
         RC.randint k ~shape:(shape ()) ~minval:(ip "minval")

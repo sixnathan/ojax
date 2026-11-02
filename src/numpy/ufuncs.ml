@@ -83,9 +83,7 @@ let promote_shapes vs =
         if List.length nonscalar < 2 then vs
         else
           let n = List.fold_left (fun acc v -> max acc (rank v)) 0 vs in
-          let padded v =
-            Array.append (Array.make (n - rank v) 1) (shape v)
-          in
+          let padded v = Array.append (Array.make (n - rank v) 1) (shape v) in
           for d = 0 to n - 1 do
             if Core.sizes_conflict (List.map (fun v -> (padded v).(d)) vs) then
               invalid_arg
@@ -640,10 +638,7 @@ let hypot x1 x2 =
   let squared = bind1 T.Square [ ratio ] in
   let v =
     bind1 T.Mul
-      [
-        x1m;
-        bind1 T.Sqrt [ bind1 T.Add [ const_full dt sh 1.0; squared ] ];
-      ]
+      [ x1m; bind1 T.Sqrt [ bind1 T.Add [ const_full dt sh 1.0; squared ] ] ]
   in
   let x = where outer_zero x1m v in
   where idx_inf (const_full dt sh infinity) x

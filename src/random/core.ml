@@ -74,6 +74,7 @@ let key_impl keys =
   if not (PR.is_rbg_key keys) then TF.threefry_prng_impl.PR.name
   else if Rbg.is_unsafe keys then "unsafe_rbg"
   else "rbg"
+
 let key_dtype _impl_spec = D.Uint32
 
 let copy_nd nd =
@@ -92,6 +93,7 @@ let key ?impl seed =
   | "rbg" -> Rbg.seed ~unsafe:false seed
   | "unsafe_rbg" -> Rbg.seed ~unsafe:true seed
   | _ -> Key_reuse.mark_typed (PR.random_seed seed)
+
 let key_data keys = Key_reuse.suspended (fun () -> raw_copy (unwrap keys))
 
 let wrap_key_data data =
@@ -105,16 +107,14 @@ let fold_in k data =
        (C.bind1 (Convert_element_type D.Uint32) [ data ]))
 
 let split k num = unwrap (PR.random_split (wrap k) [| num |])
+
 let bits ?dtype k ~shape =
   let element =
     match dtype with
     | Some d -> d
-    | None ->
-        if Config.value Config.enable_x64 then D.Uint64 else D.Uint32
+    | None -> if Config.value Config.enable_x64 then D.Uint64 else D.Uint32
   in
-  PR.random_bits (wrap k)
-    ~bit_width:(Dtypes.itemsize_bits element)
-    ~shape
+  PR.random_bits (wrap k) ~bit_width:(Dtypes.itemsize_bits element) ~shape
 
 module L = Lax_api
 module UF = Numpy.Ufuncs

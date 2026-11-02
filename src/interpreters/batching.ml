@@ -888,11 +888,9 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Add_any when List.exists Option.is_none bdims -> (
       match (vals, bdims) with
       | [ x; y ], [ None; Some d ] ->
-          ( Core.bind1 Add_any [ move_batch_axis axis_size None d x; y ],
-            Some d )
+          (Core.bind1 Add_any [ move_batch_axis axis_size None d x; y ], Some d)
       | [ x; y ], [ Some d; None ] ->
-          ( Core.bind1 Add_any [ x; move_batch_axis axis_size None d y ],
-            Some d )
+          (Core.bind1 Add_any [ x; move_batch_axis axis_size None d y ], Some d)
       | _ -> bin ())
   | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le
   | Eq_to | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or
@@ -1320,7 +1318,9 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     else if d < 0 then d + rank
     else d
   in
-  let in_axes = List.map2 (fun d x -> Option.map (mapped_size x) d) in_axes args in
+  let in_axes =
+    List.map2 (fun d x -> Option.map (mapped_size x) d) in_axes args
+  in
   let axis_size =
     let sizes =
       List.concat
@@ -1369,13 +1369,13 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
       List.map
         (fun (v, bdim) ->
           let rank =
-            Array.length (Core.get_aval v).shape
-            + if bdim = None then 1 else 0
+            Array.length (Core.get_aval v).shape + if bdim = None then 1 else 0
           in
           if out_axis >= rank || out_axis < -rank then
             invalid_arg
-              (Printf.sprintf "axis %d is out of bounds for array of dimension %d"
-                 out_axis rank);
+              (Printf.sprintf
+                 "axis %d is out of bounds for array of dimension %d" out_axis
+                 rank);
           let dest = if out_axis >= 0 then out_axis else out_axis + rank in
           move_batch_axis axis_size bdim dest v)
         vals_bdims)

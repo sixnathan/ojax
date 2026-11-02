@@ -355,9 +355,7 @@ let check_broadcasting prim args =
       match shapes with
       | [] | [ _ ] -> ()
       | first :: _ ->
-          let ranks =
-            List.sort_uniq compare (List.map Array.length shapes)
-          in
+          let ranks = List.sort_uniq compare (List.map Array.length shapes) in
           if List.length ranks <> 1 then
             raise
               (Errors.jax_type_error

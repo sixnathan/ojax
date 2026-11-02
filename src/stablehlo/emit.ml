@@ -4135,7 +4135,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       List.iter2
         (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
         eqn.outs ids
-  | Geqp3 when lapack_ffi () ->
+  | Geqp3 when solver_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let a = List.hd inputs and jpvt = List.nth inputs 1 in
       let rank = Array.length a.shape in
@@ -4147,7 +4147,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           a.dtype
       in
       let ids =
-        emit_lapack_call ctx ~base:"geqp3" ~config:""
+        emit_lapack_call
+          ?target:(if cuda_solver () then Some "cuhybrid_geqp3" else None)
+          ctx ~base:"geqp3"
+          ~config:(if cuda_solver () then "magma = \"auto\"" else "")
           ~aliases:[ (0, 0); (1, 1) ]
           in_ids inputs [ a; jpvt; taus ]
       in
@@ -4422,15 +4425,22 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (name (sole in_ids))
            ty (name n) (name raw) (name mask_id) ty)
   | Triangular_solve ({ transpose_a = false; conjugate_a = true; _ } as o) ->
-      emit_inlined ctx eqn in_ids (function
-        | [ a; b ] ->
-            let a =
-              if is_complex_dtype (Core.get_aval a).dtype then
-                Core.bind1 Conj [ a ]
-              else a
-            in
-            Core.bind (Triangular_solve { o with conjugate_a = false }) [ a; b ]
-        | _ -> invalid_arg "Stablehlo.Emit: triangular_solve arity")
+      let inputs = List.map atom_aval eqn.inputs in
+      if is_complex_dtype (List.hd inputs).dtype then begin
+        let c = fresh ctx in
+        let ty = Ir.tensor_type_of_aval (List.hd inputs) in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    %s = chlo.conj %s : %s -> %s\n" (name c)
+             (name (List.hd in_ids))
+             ty ty);
+        emit_eqn_in_context ctx
+          { eqn with prim = Triangular_solve { o with conjugate_a = false } }
+          (c :: List.tl in_ids)
+      end
+      else
+        emit_eqn_in_context ctx
+          { eqn with prim = Triangular_solve { o with conjugate_a = false } }
+          in_ids
   | Triangular_solve o ->
       let a, b = pair in_ids in
       let inputs = List.map atom_aval eqn.inputs in

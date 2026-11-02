@@ -19,4 +19,5 @@ let ffi_targets () =
       "cusolver_geev_ffi";
       "cu_lu_pivots_to_permutation";
       "cu_cholesky_update_ffi";
+      "cuhybrid_geqp3";
     ]

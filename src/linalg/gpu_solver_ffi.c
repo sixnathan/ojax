@@ -13,6 +13,8 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
+#include "lapack_shim.h"
+
 typedef struct Ext {
   size_t struct_size;
   int type;
@@ -1238,6 +1240,34 @@ ENTER(h_cholesky_update)
   return finish(k);
 }
 
+ENTER(h_hybrid_geqp3)
+  Buffer *a = ARG(0), *jp = ARG(1), *out = RET(0), *jout = RET(1), *tau = RET(2);
+  int64_t batch = batch_of(a, 2);
+  int m = (int)a->dims[a->rank - 2], n = (int)a->dims[a->rank - 1];
+  int mn = m < n ? m : n;
+  size_t elt = elt_bytes(a->dtype);
+  size_t a_bytes = byte_size(a), j_bytes = byte_size(jp), t_bytes = byte_size(tau);
+  char *ha = malloc(a_bytes ? a_bytes : 1);
+  char *hj = malloc(j_bytes ? j_bytes : 1);
+  char *ht = malloc(t_bytes ? t_bytes : 1);
+  CHECK("sync", stream_sync(k));
+  CHECK("copy", device_copy(k, ha, a->data, a_bytes, COPY_DEVICE_TO_HOST));
+  CHECK("copy", device_copy(k, hj, jp->data, j_bytes, COPY_DEVICE_TO_HOST));
+  CHECK("sync", stream_sync(k));
+  char prec = (char)(prec_of(a->dtype) - 'A' + 'a');
+  for (int64_t b = 0; b < batch; b++)
+    ojax_lapack_call_geqp3(prec, m, n, ha + (size_t)b * elt * (size_t)m * (size_t)n, m,
+                           (int32_t *)hj + b * n, ht + (size_t)b * elt * (size_t)mn);
+  CHECK("copy", device_copy(k, out->data, ha, a_bytes, COPY_HOST_TO_DEVICE));
+  CHECK("copy", device_copy(k, jout->data, hj, j_bytes, COPY_HOST_TO_DEVICE));
+  CHECK("copy", device_copy(k, tau->data, ht, t_bytes, COPY_HOST_TO_DEVICE));
+  CHECK("sync", stream_sync(k));
+  free(ha);
+  free(hj);
+  free(ht);
+  return finish(k);
+}
+
 CAMLprim value ojax_gpu_solver_available(value unit) {
   (void)unit;
   return Val_bool(load_libraries());
@@ -1261,7 +1291,8 @@ CAMLprim value ojax_gpu_solver_handler(value v_name) {
                {"cusolver_sytrd_ffi", h_sytrd},
                {"cusolver_geev_ffi", h_geev},
                {"cu_lu_pivots_to_permutation", h_lu_pivots},
-               {"cu_cholesky_update_ffi", h_cholesky_update}};
+               {"cu_cholesky_update_ffi", h_cholesky_update},
+               {"cuhybrid_geqp3", h_hybrid_geqp3}};
   for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
     if (strcmp(table[i].name, name) == 0) {
       result = caml_copy_nativeint((intnat)table[i].fn);

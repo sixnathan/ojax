@@ -47,8 +47,7 @@ let identity_max dt =
   | D.I64 -> -9223372036854775808.0
   | D.Uint32 -> 0.0
   | D.Bool -> 0.0
-  | D.Complex64 | D.Complex128 ->
-      invalid_arg "segment: complex has no max identity"
+  | D.Complex64 | D.Complex128 -> Float.neg_infinity
 
 let identity_min dt =
   match dt with
@@ -70,8 +69,7 @@ let identity_min dt =
   | D.I64 -> 9223372036854775807.0
   | D.Uint32 -> 4294967295.0
   | D.Bool -> 1.0
-  | D.Complex64 | D.Complex128 ->
-      invalid_arg "segment: complex has no min identity"
+  | D.Complex64 | D.Complex128 -> Float.infinity
 
 let segment_dnums rank =
   {

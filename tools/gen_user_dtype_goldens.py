@@ -6,6 +6,8 @@ import warnings
 
 import numpy as np
 
+DEFAULT_SEED = 1
+
 DTYPES = ["float64", "float32", "float16", "int64", "int32", "uint64",
           "uint32", "complex128"]
 
@@ -42,9 +44,9 @@ def run_case(thunk):
     return result
 
 
-def call(jax, name, dtype):
+def call(jax, name, dtype, seed=DEFAULT_SEED):
     r = jax.random
-    k = r.key(1)
+    k = r.key(seed)
     s = (3,)
     calls = {
         "bits": lambda: r.bits(k, s, dtype),
@@ -116,15 +118,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--x64", action="store_true")
+    ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = ap.parse_args()
     import jax
     jax.config.update("jax_enable_x64", args.x64)
     rows = []
     for name in FUNCTIONS:
         for dtype in DTYPES:
-            r = run_case(call(jax, name, np.dtype(dtype)))
+            r = run_case(call(jax, name, np.dtype(dtype), args.seed))
             r.update({"id": f"user_dtype_{name}_{dtype}",
                       "group": "user_dtype", "fn": name, "dtype": dtype})
+            if args.seed != DEFAULT_SEED:
+                r["seed"] = args.seed
             rows.append(r)
     for name in LINALG:
         for dtype in ["float16", "bfloat16"]:

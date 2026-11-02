@@ -3,6 +3,7 @@ val validate_preferred_element_type : Dtype.t -> Dtype.t -> unit
 val check : Types.primitive -> (unit -> Types.aval list) -> unit
 
 val verify_conv :
+  ?name:string ->
   int array ->
   Types.conv_dims ->
   window_strides:int array ->

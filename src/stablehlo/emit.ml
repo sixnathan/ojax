@@ -1937,14 +1937,16 @@ let pad_pairs_str padding =
     |> String.concat ", ")
   ^ "]"
 
+let lowering_name = ref "conv_general_dilated"
+
 let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
     ~rhs_dilation ~(dn : conv_dims) ~feature_group_count ~batch_group_count
     ~conv_precision =
   let a, b = pair in_ids in
   (match eqn.inputs with
   | [ _; r ] ->
-      Lax_shape.verify_conv (atom_aval r).shape dn ~window_strides ~lhs_dilation
-        ~rhs_dilation
+      Lax_shape.verify_conv ~name:!lowering_name (atom_aval r).shape dn
+        ~window_strides ~lhs_dilation ~rhs_dilation
   | _ -> ());
   let la, lb =
     match eqn.inputs with
@@ -1965,9 +1967,9 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
                  "Cannot lower jaxpr with verifier errors:\n\
                   \texpects window to have positive value for %d-th window \
                   dimension, but got 0.\n\
-                  \t\tat loc(\"jit(conv_general_dilated)/conv_general_dilated\")\n\
+                  \t\tat loc(\"jit(%s)/conv_general_dilated\")\n\
                   Define JAX_DUMP_IR_TO to dump the module."
-                 i))
+                 i !lowering_name))
         (Array.sub dn.rhs_spec 2 n_spatial)
   | _ -> ());
   let reverse =
@@ -5484,6 +5486,9 @@ let donation_of ~kept ~donated (pruned : closed_jaxpr) =
     Some (avals_in, Donation.set_up_aliases avals_in avals_out flags)
 
 let lower ?(keep_unused = false) ?(donated = []) ?result_names ~name cj =
+  let saved_name = !lowering_name in
+  lowering_name := name;
+  Fun.protect ~finally:(fun () -> lowering_name := saved_name) @@ fun () ->
   let pruned, kept = kept_inputs ~keep_unused cj in
   let arg_attribute =
     match donation_of ~kept ~donated pruned with

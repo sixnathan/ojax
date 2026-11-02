@@ -1003,6 +1003,7 @@ let sum_at n data ids =
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims
 
 let bincount ?weights ?(minlength = 0) ?length x =
+  if rank x <> 1 then invalid_arg "only 1-dimensional input supported.";
   let x =
     if dtype_of x = Dtype.Bool then L.convert_element_type x Dtype.I32 else x
   in
@@ -1176,6 +1177,8 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
         | _ -> assert false)
   in
   let n_dims = (shape sample).(1) in
+  if Array.length bins <> 0 && Array.length bins <> n_dims then
+    invalid_arg "should be a bin for each dimension.";
   let bins_for i = if Array.length bins = 0 then 10 else bins.(i) in
   let column i =
     let sh = shape sample in
@@ -1927,6 +1930,10 @@ let argpartition ?(axis = -1) a kth =
 let apply_along_axis f axis arr =
   let n = rank arr in
   let axis = canon n axis in
+  if axis < 0 || axis >= n then
+    invalid_arg
+      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" axis
+         n);
   let func = ref (fun xs -> [ f (List.hd xs) ]) in
   for i = 1 to n - axis - 1 do
     let inner = !func in
@@ -2080,6 +2087,7 @@ let polydiv ?(trim_leading_zeros = false) u v =
   end
 
 let polyfit ?rcond ?w x y deg =
+  if size_of x = 0 then invalid_arg "expected non-empty vector for x";
   let x = as_inexact x and y = as_inexact y in
   let order = deg + 1 in
   let lhs = NL.vander ~n:order x in

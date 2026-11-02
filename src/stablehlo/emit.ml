@@ -1781,6 +1781,19 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
   in
   let out = sole eqn.outs in
   let n_spatial = Array.length window_strides in
+  (match eqn.inputs with
+  | [ _; r ] ->
+      Array.iteri
+        (fun i d ->
+          if (atom_aval r).shape.(d) = 0 then
+            failwith
+              (Printf.sprintf
+                 "Cannot lower jaxpr with verifier errors:\n\
+                  \texpects window to have positive value for %d-th window \
+                  dimension, but got 0."
+                 i))
+        (Array.sub dn.rhs_spec 2 n_spatial)
+  | _ -> ());
   let reverse =
     "[" ^ String.concat ", " (List.init n_spatial (fun _ -> "false")) ^ "]"
   in
@@ -4485,6 +4498,16 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
                 [ x ];
             ]
         | _ -> invalid_arg "Stablehlo.Emit: fft arity")
+  | Fft { fft_type = Fft_real; fft_lengths } when Array.mem 0 fft_lengths ->
+      let out = sole eqn.outs in
+      failwith
+        (Printf.sprintf
+           "Cannot lower jaxpr with verifier errors:\n\
+            \ttype of return operand 0 ('%s') doesn't match function result \
+            type ('%s') in function @fft"
+           (Ir.tensor_type out.vaval.dtype
+              (Array.map (fun _ -> 0) out.vaval.shape))
+           (Ir.tensor_type_of_aval out.vaval))
   | Fft { fft_type; fft_lengths } ->
       let out = sole eqn.outs in
       let n = bind_var ctx out in

@@ -2575,6 +2575,15 @@ let abstract_eval prim avals =
   | Dot_general dd ->
       bin_aval
         (fun l r ->
+          let pick shape dims = Array.map (fun d -> shape.(d)) dims in
+          let lc = pick l.shape dd.lhs_contract
+          and rc = pick r.shape dd.rhs_contract in
+          if lc <> rc then
+            invalid_arg
+              (Printf.sprintf
+                 "dot_general requires contracting dimensions to have the same \
+                  shape, got %s and %s."
+                 (Util.tuple_string lc) (Util.tuple_string rc));
           shaped
             (Utils.dot_general_shape dd l.shape r.shape)
             l.dtype (Utils.all_weak avals))

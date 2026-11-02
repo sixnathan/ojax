@@ -1202,17 +1202,8 @@ let tracer_batch_run op params a b =
   | "tb_lexsort" ->
       let v = a () in
       let column j =
-        let rows = (shp v).(0) in
-        L.squeeze
-          (Ojax.Core.bind1
-             (T.Slice
-                {
-                  start_indices = [| 0; j |];
-                  limit_indices = [| rows; j + 1 |];
-                  strides = None;
-                })
-             [ v ])
-          [| 1 |]
+        let module I = Ojax.Numpy.Nd_index in
+        I.take v [ I.Range { start = None; stop = None }; I.Int j ]
       in
       let first = column 0 in
       let second = column 1 in

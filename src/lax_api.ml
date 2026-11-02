@@ -7,7 +7,14 @@ let aval v = Core.get_aval v
 let shape v = (aval v).shape
 let dtype_of v = (aval v).dtype
 let ndim v = Array.length (shape v)
-let canon_axis n a = if a < 0 then a + n else a
+
+let canon_axis n a =
+  let c = if a < 0 then a + n else a in
+  if c < 0 || c >= n then
+    invalid_arg
+      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" a n);
+  c
+
 let product a = Array.fold_left ( * ) 1 a
 let filled dt sh x = Core.splat dt sh x
 
@@ -287,10 +294,7 @@ let slice_in_dim ?(stride = 1) ?(axis = 0) x start stop =
   let sh = shape x in
   let n = Array.length sh in
   let axis = canon_axis n axis in
-  let bound v =
-    let v = if v < 0 then v + sh.(axis) else v in
-    Stdlib.min (Stdlib.max v 0) sh.(axis)
-  in
+  let bound v = if v < 0 then v + sh.(axis) else v in
   let lo = Array.make n 0 and hi = Array.copy sh and st = Array.make n 1 in
   lo.(axis) <- bound start;
   hi.(axis) <- bound stop;
@@ -735,7 +739,17 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
         }
         x y
   | None ->
-      if nx = 0 || ny = 0 then mul x y
+      if
+        nx < 1 || nx > 2 || ny < 1 || ny > 2
+        || (shape x).(nx - 1) <> (shape y).(0)
+      then
+        invalid_arg
+          (Printf.sprintf
+             "jax.lax.dot: dimension_numbers must be specified when not \
+              performing simple un-batched matrix-matrix, matrix-vector, or \
+              vector-vector products; got lhs_shape=%s rhs_shape=%s"
+             (Util.tuple_string (shape x))
+             (Util.tuple_string (shape y)))
       else
         dot_with ?precision ?preferred_element_type
           {
@@ -834,6 +848,12 @@ let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation
     ?dimension_numbers ?(feature_group_count = 1) ?(batch_group_count = 1) lhs
     rhs ~window_strides padding =
   let rank = ndim lhs in
+  if feature_group_count <= 0 then
+    invalid_arg
+      (Printf.sprintf
+         "conv_general_dilated feature_group_count must be a positive integer, \
+          got %d."
+         feature_group_count);
   let sdims = rank - 2 in
   let ones = Array.make sdims 1 in
   let dn =

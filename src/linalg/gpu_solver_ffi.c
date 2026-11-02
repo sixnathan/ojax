@@ -1,4 +1,5 @@
 #include <dlfcn.h>
+#include <elf.h>
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
@@ -1191,6 +1192,160 @@ ENTER(h_lu_pivots)
   return finish(k);
 }
 
+#define JAX_KERNEL_CHOLESKY_F "_ZN3jax4cuda53_GLOBAL__N__75f7ebbb_20_linalg_kernels_cu_cc_6e69a2b320CholeskyUpdateKernelIfEEvPT_S4_i"
+#define JAX_KERNEL_CHOLESKY_D "_ZN3jax4cuda53_GLOBAL__N__75f7ebbb_20_linalg_kernels_cu_cc_6e69a2b320CholeskyUpdateKernelIdEEvPT_S4_i"
+#define JAX_KERNEL_TRI_S "_ZN3jax4cuda53_GLOBAL__N__75f7ebbb_20_linalg_kernels_cu_cc_6e69a2b331TridiagonalSolvePerturbedKernelIfEEvliiPKT_S5_S5_S5_PS3_Pv"
+#define JAX_KERNEL_TRI_D "_ZN3jax4cuda53_GLOBAL__N__75f7ebbb_20_linalg_kernels_cu_cc_6e69a2b331TridiagonalSolvePerturbedKernelIdEEvliiPKT_S5_S5_S5_PS3_Pv"
+#define JAX_KERNEL_TRI_C "_ZN3jax4cuda53_GLOBAL__N__75f7ebbb_20_linalg_kernels_cu_cc_6e69a2b331TridiagonalSolvePerturbedKernelIN4cuda3std3__47complexIfEEEEvliiPKT_SA_SA_SA_PS8_Pv"
+#define JAX_KERNEL_TRI_Z "_ZN3jax4cuda53_GLOBAL__N__75f7ebbb_20_linalg_kernels_cu_cc_6e69a2b331TridiagonalSolvePerturbedKernelIN4cuda3std3__47complexIdEEEEvliiPKT_SA_SA_SA_PS8_Pv"
+
+static pthread_mutex_t jax_kernels_lock = PTHREAD_MUTEX_INITIALIZER;
+static void *jax_kernels_image;
+static void *jax_kernels_module;
+static void *jax_kernels_context;
+static void *lib_driver;
+
+static void *read_fatbin_section(const char *path) {
+  FILE *file = fopen(path, "rb");
+  if (!file) return NULL;
+  fseek(file, 0, SEEK_END);
+  long size = ftell(file);
+  fseek(file, 0, SEEK_SET);
+  char *bytes = malloc((size_t)size);
+  void *found = NULL;
+  if (bytes && fread(bytes, 1, (size_t)size, file) == (size_t)size &&
+      (size_t)size > sizeof(Elf64_Ehdr) && memcmp(bytes, ELFMAG, SELFMAG) == 0) {
+    Elf64_Ehdr *header = (Elf64_Ehdr *)bytes;
+    Elf64_Shdr *sections = (Elf64_Shdr *)(bytes + header->e_shoff);
+    const char *names = bytes + sections[header->e_shstrndx].sh_offset;
+    for (int i = 0; i < header->e_shnum && !found; i++)
+      if (strcmp(names + sections[i].sh_name, ".nv_fatbin") == 0) {
+        void *image = NULL;
+        if (posix_memalign(&image, 256, sections[i].sh_size) == 0) {
+          memcpy(image, bytes + sections[i].sh_offset, sections[i].sh_size);
+          found = image;
+        }
+      }
+  }
+  free(bytes);
+  fclose(file);
+  return found;
+}
+
+static void *try_kernels_at(const char *base, int levels) {
+  if (!base) return NULL;
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "%s", base);
+  for (int i = 0; i < levels; i++) {
+    char *slash = strrchr(path, '/');
+    if (!slash) return NULL;
+    *slash = 0;
+  }
+  size_t used = strlen(path);
+  snprintf(path + used, sizeof(path) - used, "/jax_cuda13_plugin/_linalg.so");
+  return read_fatbin_section(path);
+}
+
+static void *jax_kernel(Kernel *k, const char *symbol) {
+  void *found = NULL;
+  pthread_mutex_lock(&jax_kernels_lock);
+  if (!jax_kernels_image) {
+    jax_kernels_image = try_kernels_at(getenv("CUDA_ROOT"), 2);
+    if (!jax_kernels_image)
+      jax_kernels_image = try_kernels_at(getenv("OJAX_PJRT_GPU_PLUGIN"), 3);
+  }
+  if (!lib_driver) lib_driver = dlopen("libcuda.so.1", RTLD_NOW | RTLD_GLOBAL);
+  if (jax_kernels_image && lib_driver) {
+    void *context = NULL;
+    int (*stream_ctx)(void *, void **) =
+        (int (*)(void *, void **))need(lib_driver, "cuStreamGetCtx");
+    int (*push)(void *) = (int (*)(void *))need(lib_driver, "cuCtxPushCurrent_v2");
+    int (*pop)(void **) = (int (*)(void **))need(lib_driver, "cuCtxPopCurrent_v2");
+    if (stream_ctx(k->stream, &context) == 0 && push(context) == 0) {
+      if (jax_kernels_context != context) {
+        int (*load)(void **, const void *) =
+            (int (*)(void **, const void *))need(lib_driver, "cuModuleLoadFatBinary");
+        jax_kernels_module = NULL;
+        if (load(&jax_kernels_module, jax_kernels_image) == 0)
+          jax_kernels_context = context;
+      }
+      if (jax_kernels_module) {
+        int (*get)(void **, void *, const char *) =
+            (int (*)(void **, void *, const char *))need(lib_driver, "cuModuleGetFunction");
+        if (get(&found, jax_kernels_module, symbol) != 0) found = NULL;
+      }
+      void *previous = NULL;
+      pop(&previous);
+    }
+  }
+  pthread_mutex_unlock(&jax_kernels_lock);
+  return found;
+}
+
+static int launch_with_context(Kernel *k, int cooperative, void *function, unsigned grid,
+                               unsigned block, void **params) {
+  void *context = NULL;
+  int (*stream_ctx)(void *, void **) =
+      (int (*)(void *, void **))need(lib_driver, "cuStreamGetCtx");
+  int (*push)(void *) = (int (*)(void *))need(lib_driver, "cuCtxPushCurrent_v2");
+  int (*pop)(void **) = (int (*)(void **))need(lib_driver, "cuCtxPopCurrent_v2");
+  int status = stream_ctx(k->stream, &context);
+  if (status == 0) status = push(context);
+  if (status != 0) return status;
+  if (cooperative) {
+    int (*device_of)(int *) = (int (*)(int *))need(lib_driver, "cuCtxGetDevice");
+    int (*attribute)(int *, int, int) =
+        (int (*)(int *, int, int))need(lib_driver, "cuDeviceGetAttribute");
+    int device = 0, processors = 1, threads = 1;
+    status = device_of(&device);
+    if (status == 0) status = attribute(&processors, 10, device);
+    if (status == 0) status = attribute(&threads, 1, device);
+    if (status == 0) {
+      int (*run)(void *, size_t, size_t, size_t, size_t, size_t, size_t, size_t, void *, void **) =
+          (int (*)(void *, size_t, size_t, size_t, size_t, size_t, size_t, size_t, void *,
+                   void **))need(lib_driver, "cuLaunchCooperativeKernel");
+      status = run(function, (size_t)processors, 1, 1, (size_t)threads, 1, 1, 0, k->stream, params);
+    }
+  } else {
+    int (*run)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, void *,
+               void **, void **) =
+        (int (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned,
+                 void *, void **, void **))need(lib_driver, "cuLaunchKernel");
+    status = run(function, grid, 1, 1, block, 1, 1, 0, k->stream, params, NULL);
+  }
+  void *previous = NULL;
+  pop(&previous);
+  return status;
+}
+
+ENTER(h_tridiagonal_perturbed)
+  Buffer *dl = ARG(0), *d = ARG(1), *du = ARG(2), *b = ARG(3), *x = RET(0);
+  int64_t batch = batch_of(b, 2);
+  int m = (int)d->dims[d->rank - 1];
+  int n = (int)b->dims[b->rank - 1];
+  const char *symbol = b->dtype == DT_F32   ? JAX_KERNEL_TRI_S
+                       : b->dtype == DT_F64 ? JAX_KERNEL_TRI_D
+                       : b->dtype == DT_C64 ? JAX_KERNEL_TRI_C
+                                            : JAX_KERNEL_TRI_Z;
+  void *function = jax_kernel(k, symbol);
+  if (!function)
+    return make_error(f, ERRC_INTERNAL,
+                      "ojax gpu solver: JAX's tridiagonal kernel needs jax_cuda13_plugin/_linalg.so");
+  void *work = scratch(k, ((size_t)n + 3 * (size_t)m) * (size_t)batch * elt_bytes(b->dtype),
+                       elt_bytes(b->dtype));
+  CHECK_PTR(work);
+  long batch_arg = (long)batch;
+  void *dl_data = dl->data, *d_data = d->data, *du_data = du->data, *b_data = b->data,
+       *x_data = x->data;
+  void *params[] = {&batch_arg, &m,       &n,      &dl_data, &d_data,
+                    &du_data,   &b_data,  &x_data, &work};
+  int64_t blocks = (batch + 127) / 128;
+  CHECK("tridiagonal", launch_with_context(k, 0, function,
+                                           (unsigned)(blocks < 1024 ? blocks : 1024), 128, params));
+  CHECK("sync", stream_sync(k));
+  return finish(k);
+}
+
 ENTER(h_cholesky_update)
   Buffer *mi = ARG(0), *vi = ARG(1), *mo = RET(0), *vo = RET(1);
   int single = mi->dtype == DT_F32;
@@ -1198,6 +1353,14 @@ ENTER(h_cholesky_update)
   size_t m_bytes = byte_size(mi), v_bytes = byte_size(vi);
   CHECK("copy", copy_input(k, mo->data, mi));
   CHECK("copy", copy_input(k, vo->data, vi));
+  void *device_kernel = jax_kernel(k, single ? JAX_KERNEL_CHOLESKY_F : JAX_KERNEL_CHOLESKY_D);
+  if (device_kernel) {
+    void *matrix_data = mo->data, *vector_data = vo->data;
+    void *params[] = {&matrix_data, &vector_data, &n};
+    CHECK("cholesky_update", launch_with_context(k, 1, device_kernel, 0, 0, params));
+    CHECK("sync", stream_sync(k));
+    return finish(k);
+  }
   char *hm = malloc(m_bytes), *hv = malloc(v_bytes);
   double *cs = calloc((size_t)n, sizeof(double)), *ss = calloc((size_t)n, sizeof(double));
   CHECK("copy", device_copy(k, hm, mo->data, m_bytes, COPY_DEVICE_TO_HOST));
@@ -1293,6 +1456,7 @@ CAMLprim value ojax_gpu_solver_handler(value v_name) {
                {"cusolver_geev_ffi", h_geev},
                {"cu_lu_pivots_to_permutation", h_lu_pivots},
                {"cu_cholesky_update_ffi", h_cholesky_update},
+               {"cu_tridiagonal_solve_perturbed", h_tridiagonal_perturbed},
                {"cuhybrid_geqp3", h_hybrid_geqp3}};
   for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
     if (strcmp(table[i].name, name) == 0) {

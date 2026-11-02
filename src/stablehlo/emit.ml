@@ -4281,11 +4281,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in_ids inputs [ c ]
       in
       Hashtbl.replace ctx.ids (sole eqn.outs).vid (List.hd ids)
-  | Tridiagonal_solve { perturb_singular = true } when lapack_ffi () ->
+  | Tridiagonal_solve { perturb_singular = true }
+    when lapack_ffi () || cuda_solver () ->
       let inputs = List.map atom_aval eqn.inputs in
       let b = List.nth inputs 3 in
       let ids =
-        emit_lapack_call ctx ~target:"tridiagonal_solve_perturbed_ffi"
+        emit_lapack_call ctx
+          ~target:
+            (if cuda_solver () then "cu_tridiagonal_solve_perturbed"
+             else "tridiagonal_solve_perturbed_ffi")
           ~base:"tridiagonal_solve_perturbed" ~config:"" ~aliases:[] in_ids
           inputs [ b ]
       in

@@ -242,6 +242,7 @@ let ratcheted_prefixes =
     "fuzz:";
     "fuzz_s2:";
     "compose_fuzz:";
+    "text_compose_fuzz:";
     "option_fuzz:";
     "text_option_fuzz:";
     "coverage:";

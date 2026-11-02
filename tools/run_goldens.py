@@ -128,6 +128,8 @@ def row_classes(log):
                 group = "fuzz_s2_error_text"
             elif suite.startswith("compose_fuzz:"):
                 group = "compose_fuzz"
+            elif suite.startswith("text_compose_fuzz:"):
+                group = "compose_fuzz_error_text"
             else:
                 group = "fixed"
             counter = groups[group]
@@ -154,6 +156,7 @@ def print_row_classes(log):
         "option_fuzz_error_text",
         "fuzz_error_text",
         "fuzz_s2_error_text",
+        "compose_fuzz_error_text",
     ):
         c = groups.get(name)
         if c:
@@ -348,7 +351,7 @@ def main():
     second_seed = [s for s in totals if s.startswith("fuzz_s2:")]
     option_rows = [s for s in totals if s.startswith(("option_fuzz:", "text_option_fuzz:"))]
     composed = [s for s in totals if s.startswith("compose_fuzz:")]
-    message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:"))]
+    message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:", "text_compose_fuzz:"))]
     uncounted = (
         set(shadow) | set(second_seed) | set(option_rows) | set(composed) | set(message_rows) | {"compare", "ratchet_selftest"}
     )

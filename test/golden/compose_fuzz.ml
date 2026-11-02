@@ -412,7 +412,15 @@ let text_row ~suite ~row reference field ours =
       Fuzz.log_row ~suite label 0 (-1) 0.0
         ("ojax_raises:" ^ Fuzz.one_line (Error_types.message_of e))
   | _, Ok _ -> Fuzz.log_row ~suite label 0 (-2) 0.0 "jax_raises"
-  | _, Error _ -> Fuzz.log_row ~suite label 0 0 0.0 Error_types.both_raise
+  | _, Error e -> (
+      Fuzz.log_row ~suite label 0 0 0.0 Error_types.both_raise;
+      match U.member (field ^ "_error") reference with
+      | `String w ->
+          let text_suite = "text_" ^ suite in
+          if w = Error_types.message_of e then
+            Fuzz.log_row ~suite:text_suite label 1 0 0.0 "same"
+          else Fuzz.log_row ~suite:text_suite label 1 1 0.0 "text_diff"
+      | _ -> ())
 
 let check_text ~suite ~set ~root case avals run =
   load_references root;

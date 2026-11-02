@@ -1,3 +1,13 @@
+aot_cost_add	1
+aot_cost_cumsum	1
+aot_cost_exp_log	1
+aot_cost_int_mul	1
+aot_cost_matmul	1
+aot_cost_reduce	1
+aot_cost_sin_dot	1
+aot_cost_tanh_big	1
+aot_cost_two_out	1
+aot_cost_where	1
 aot_mem_add	1
 aot_mem_cumsum	1
 aot_mem_exp_log	1
@@ -146,6 +156,7 @@ dprint_spec_on_array_eager	1
 dprint_spec_ordered_eager	1
 dprint_spec_ordered_jaxpr	1
 dprint_spec_ordered_jit	1
+dprint_spec_ordered_lowered	1
 dprint_str_conv_eager	1
 dprint_str_conv_jaxpr	1
 dprint_str_conv_jit	1
@@ -188,6 +199,7 @@ dprint_x_grad_eager	1
 dprint_x_grad_jaxpr	1
 dprint_x_grad_jit	1
 dprint_x_grad_scan_eager	1
+dprint_x_grad_scan_jaxpr	1
 dprint_x_grad_scan_jit	1
 dprint_x_jit_grad_eager	1
 dprint_x_jit_grad_jaxpr	1

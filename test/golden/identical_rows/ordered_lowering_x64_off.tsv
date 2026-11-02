@@ -1,0 +1,11 @@
+lowered_cond	1
+lowered_cond_ordered	1
+lowered_fori	1
+lowered_grad	1
+lowered_jvp	1
+lowered_nested_jit	1
+lowered_remat	1
+lowered_scan	1
+lowered_vmap	1
+lowered_vmap_ordered	1
+lowered_while	1

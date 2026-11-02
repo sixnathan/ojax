@@ -511,6 +511,82 @@ let check_operands prim args =
   | Ge -> nary_same "ge" not_complex real
   | _ -> ()
 
+let same_dtype_name = function
+  | Add -> Some "add"
+  | Sub -> Some "sub"
+  | Mul -> Some "mul"
+  | Div -> Some "div"
+  | Rem -> Some "rem"
+  | Max -> Some "max"
+  | Min -> Some "min"
+  | Atan2 -> Some "atan2"
+  | Nextafter -> Some "nextafter"
+  | Complex -> Some "complex"
+  | Mulhi -> Some "mulhi"
+  | And -> Some "and"
+  | Or -> Some "or"
+  | Xor -> Some "xor"
+  | Shift_left -> Some "shift_left"
+  | Shift_right_arithmetic -> Some "shift_right_arithmetic"
+  | Shift_right_logical -> Some "shift_right_logical"
+  | Eq -> Some "eq"
+  | Ne -> Some "ne"
+  | Ge -> Some "ge"
+  | Gt -> Some "gt"
+  | Le -> Some "le"
+  | Lt -> Some "lt"
+  | Eq_to -> Some "eq_to"
+  | Le_to -> Some "le_to"
+  | Lt_to -> Some "lt_to"
+  | Igamma -> Some "igamma"
+  | Igamma_grad_a -> Some "igamma_grad_a"
+  | Igammac -> Some "igammac"
+  | Polygamma -> Some "polygamma"
+  | Zeta -> Some "zeta"
+  | Regularized_incomplete_beta -> Some "regularized_incomplete_beta"
+  | _ -> None
+
+let jnp_function_equivalent = function
+  | "add" -> Some "add"
+  | "atan2" -> Some "arctan2"
+  | "div" -> Some "divide"
+  | "eq" -> Some "equal"
+  | "max" -> Some "maximum"
+  | "min" -> Some "minimum"
+  | "mul" -> Some "multiply"
+  | "ne" -> Some "not_equal"
+  | "nextafter" -> Some "nextafter"
+  | "shift_left" -> Some "left_shift"
+  | "shift_right_logical" | "shift_right_arithmetic" -> Some "right_shift"
+  | "sub" -> Some "subtract"
+  | _ -> None
+
+let check_same_dtypes prim args =
+  match (same_dtype_name prim, args) with
+  | Some name, (_ :: _ :: _ as args) ->
+      let dtypes =
+        List.map
+          (function
+            | Concrete a -> Ndarray.dtype a
+            | Tracer t -> t.aval.dtype
+            | Device b -> Pjrt.Buffer.element_type b)
+          args
+      in
+      let first = List.hd dtypes in
+      if List.exists (fun d -> d <> first) dtypes then
+        Py_exn.type_error
+          (Printf.sprintf
+             "lax.%s requires arguments to have the same dtypes, got %s.%s" name
+             (String.concat ", " (List.map Dtype.numpy_name dtypes))
+             (match jnp_function_equivalent name with
+             | Some equiv ->
+                 Printf.sprintf
+                   " (Tip: jnp.%s is a similar function that does automatic \
+                    type promotion on inputs)."
+                   equiv
+             | None -> ""))
+  | _ -> ()
+
 let is_elementwise = function
   | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi
   | Nextafter | Or | Rem | Shift_left | Shift_right_arithmetic
@@ -717,6 +793,7 @@ let bind prim args =
   | Some { kind = KJaxpr; _ } -> ()
   | _ -> Lax_shape.verify prim (fun () -> List.map value_aval args));
   check_operands prim args;
+  check_same_dtypes prim args;
   (match prim with
   | Reduce_sum axes when not (Config.value Config.allow_f16_reductions) ->
       check_f16_reduction axes args

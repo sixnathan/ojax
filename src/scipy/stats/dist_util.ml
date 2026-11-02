@@ -63,14 +63,7 @@ let promote_dtypes_any vs =
 let promote_complex vs = Numpy.Ufuncs.promote_shapes (promote_dtypes_any vs)
 
 let real_only vs =
-  List.iter
-    (fun v ->
-      match dtype v with
-      | D.Complex64 | D.Complex128 ->
-          raise
-            (Py_exn.Type_error "scipy.stats does not accept complex input here.")
-      | _ -> ())
-    vs;
+  List.iter (fun v -> match dtype v with _ -> ()) vs;
   vs
 
 let promote_dtypes vs = real_only (promote_dtypes_any vs)

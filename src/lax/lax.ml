@@ -1516,7 +1516,11 @@ let rec impl_base prim inputs =
         inputs
   | Concatenate dim -> [ concatenate_impl dim inputs ]
   | Pad cfg -> bin (fun a pv -> pad_impl cfg a pv) inputs
-  | Rev dims -> un (rev_impl dims) inputs
+  | Rev dims ->
+      List.iter
+        (fun nd -> Utils.check_rev dims (Array.length (Ndarray.shape nd)))
+        inputs;
+      un (rev_impl dims) inputs
   | Split { sizes; axis } -> (
       match inputs with
       | [ a ] -> split_impl sizes axis a
@@ -2592,7 +2596,12 @@ let abstract_eval prim avals =
             a.dtype
             (a.weak_type && pv.weak_type))
         avals
-  | Rev _ -> un_aval (fun a -> a) avals
+  | Rev dims ->
+      un_aval
+        (fun a ->
+          Utils.check_rev dims (Array.length a.shape);
+          a)
+        avals
   | Split { sizes; axis } -> (
       match avals with
       | [ a ] ->
@@ -2699,10 +2708,17 @@ let abstract_eval prim avals =
         avals
   | Dynamic_slice { slice_sizes } -> (
       match avals with
-      | operand :: _ -> [ shaped slice_sizes operand.dtype operand.weak_type ]
+      | operand :: starts ->
+          Slicing.check_dynamic_slice slice_sizes operand.shape
+            (List.map (fun a -> a.shape) starts);
+          [ shaped slice_sizes operand.dtype operand.weak_type ]
       | [] -> failwith "lax: dynamic_slice expects an operand")
   | Dynamic_update_slice -> (
       match avals with
+      | operand :: update :: starts ->
+          Slicing.check_dynamic_update_slice operand.shape update.shape
+            (List.map (fun a -> a.shape) starts);
+          [ operand ]
       | operand :: _ -> [ operand ]
       | [] -> failwith "lax: dynamic_update_slice expects an operand")
   | Gather { dimension_numbers; slice_sizes } -> (
@@ -3089,5 +3105,6 @@ module Linalg = Linalg
 module Special = Special
 module Slicing = Slicing
 module Fft = Fft
+module Utils = Utils
 
 let complex_bilinear = Utils.complex_bilinear

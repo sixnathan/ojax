@@ -227,6 +227,10 @@ let gelu ?(approximate = true) x =
   end
 
 let glu ?(axis = -1) x =
+  let sh = shape x in
+  let n = Array.length sh in
+  if sh.(if axis < 0 then axis + n else axis) mod 2 <> 0 then
+    failwith "axis size must be divisible by 2";
   match NL.split ~axis x (NL.Count 2) with
   | [ x1; x2 ] -> UF.multiply x1 (sigmoid x2)
   | _ -> invalid_arg "glu: split did not produce two halves"

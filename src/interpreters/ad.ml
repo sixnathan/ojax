@@ -1205,8 +1205,8 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
       | false, true -> Some (out, maybe_broadcast shape xdot)
       | false, false -> Some (out, b1 prim [ xdot; ydot ]))
   | Add_any | Neg | Real | Imag | Complex | Conj | Squeeze _ | Reshape _
-  | Reshape_perm _ | Rev _ | Transpose _ | Reduce_sum _ | Stack _
-  | Concatenate _ | Pad _ | Copy | Reduce_precision _ | Tile _ ->
+  | Reshape_perm _ | Rev _ | Transpose _ | Reduce_sum _ | Psum_positional _
+  | Stack _ | Concatenate _ | Pad _ | Copy | Reduce_precision _ | Tile _ ->
       linear ()
   | Stop_gradient ->
       let x = arg1 primals in
@@ -1782,6 +1782,11 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
   | Geqrf -> failwith "Differentiation rule for 'geqrf' not implemented"
   | Geqp3 -> failwith "Differentiation rule for 'geqp3' not implemented"
   | Ormqr _ -> failwith "Differentiation rule for 'ormqr' not implemented"
+  | Pmax_positional _ | Pmin_positional _ ->
+      Py_exn.not_implemented_error
+        ("Differentiation rule for '"
+        ^ Pretty_printer.primitive_name prim
+        ^ "' not implemented")
   | Collective { kind; _ } -> (
       match (kind, primals, tangents) with
       | ( ( Psum | Pbroadcast _ | Ppermute _ | All_gather _ | All_to_all _
@@ -4053,6 +4058,16 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       match primals with
       | [ x ] -> [ Some (reduce_sum_transpose axes (in_aval x).shape ct) ]
       | _ -> arity ())
+  | Psum_positional axes -> (
+      let ct = ct1 () in
+      match primals with
+      | [ x ] ->
+          let ct =
+            if axes = [||] then ct
+            else reduce_sum_transpose axes (in_aval x).shape ct
+          in
+          [ Some (b1 (Psum_positional [||]) [ ct ]) ]
+      | _ -> arity ())
   | Cumsum { axis; reverse } ->
       [ Some (b1 (Cumsum { axis; reverse = not reverse }) [ ct1 () ]) ]
   | Copy -> [ Some (b1 Copy [ ct1 () ]) ]
@@ -5044,7 +5059,8 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
         ^ "' not implemented")
   | Cholesky | Cholesky_update | Symmetric_product _ | Householder_product | Lu
   | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _
-  | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
+  | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _
+  | Pmax_positional _ | Pmin_positional _ ->
       Py_exn.not_implemented_error
         ("Transpose rule (for reverse-mode differentiation) for '"
         ^ Pretty_printer.primitive_name prim

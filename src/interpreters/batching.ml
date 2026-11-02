@@ -933,6 +933,22 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
       match (vals, bdims) with
       | [ x ], [ b ] -> reduce_sum_rule axes x b
       | _ -> failwith "batching: expected 1 operand")
+  | Psum_positional [||] | Pmax_positional [||] | Pmin_positional [||] -> (
+      match (vals, bdims) with
+      | [ x ], [ b ] -> (b1 prim [ x ], b)
+      | _ -> failwith "batching: expected 1 operand")
+  | Psum_positional axes | Pmax_positional axes | Pmin_positional axes -> (
+      let shifted = Array.map (fun a -> a + 1) axes in
+      let rebuilt =
+        match prim with
+        | Psum_positional _ -> Psum_positional shifted
+        | Pmax_positional _ -> Pmax_positional shifted
+        | _ -> Pmin_positional shifted
+      in
+      match (vals, bdims) with
+      | [ x ], [ None ] -> (b1 prim [ x ], None)
+      | [ x ], [ Some d ] -> (b1 rebuilt [ moveaxis d 0 x ], Some 0)
+      | _ -> failwith "batching: expected 1 operand")
   | Reshape_perm { new_sizes; dimensions } -> (
       match (vals, bdims) with
       | [ x ], [ b ] -> (
@@ -1691,18 +1707,18 @@ let collective_batch trace axis_size kind axis_name vals bdims =
         else y
       in
       (y, Some scatter_dimension)
-  | Psum, [ v ], [ Some d ] -> (b1 (Reduce_sum [| d |]) [ v ], None)
+  | Psum, [ v ], [ Some d ] ->
+      (b1 (Psum_positional [| 0 |]) [ moveaxis d 0 v ], None)
   | Psum, [ v ], [ None ] ->
       let a = Core.get_aval v in
-      let n = Array.fold_left ( * ) 1 a.shape in
       let scale =
-        Concrete
-          (Ndarray.of_floats a.dtype a.shape
-             (Array.make n (float_of_int axis_size)))
+        Concrete (Ndarray.of_floats a.dtype [||] [| float_of_int axis_size |])
       in
-      (b1 Mul [ v; scale ], None)
-  | Pmax, [ v ], [ Some d ] -> (b1 (Reduce_max [| d |]) [ v ], None)
-  | Pmin, [ v ], [ Some d ] -> (b1 (Reduce_min [| d |]) [ v ], None)
+      (b1 Mul [ scale; v ], None)
+  | Pmax, [ v ], [ Some d ] ->
+      (b1 (Pmax_positional [| 0 |]) [ moveaxis d 0 v ], None)
+  | Pmin, [ v ], [ Some d ] ->
+      (b1 (Pmin_positional [| 0 |]) [ moveaxis d 0 v ], None)
   | (Pmax | Pmin), [ v ], [ None ] -> (v, None)
   | All_gather { axis; _ }, [ v ], [ b ] ->
       (move_batch_axis axis_size b axis v, None)

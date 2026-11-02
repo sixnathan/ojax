@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Split the both-raise rows of the parity, coverage and apicov text references into identical, JAX defect with proof and differing."""
+"""Split the both-raise rows of the parity, coverage, apicov and fuzz text references into identical, JAX defect with proof and differing."""
 import argparse
 import collections
 import glob
@@ -11,7 +11,8 @@ import sys
 FIELDS = ("text_error", "jaxpr_error", "structure_error")
 TRACED_AT = re.compile(r"while tracing the function (\S+) at (\S+:\d+) for ")
 FROM_LINE = re.compile(r"\n    from line (.*)")
-SETS = ("parity", "coverage", "apicov")
+SETS = ("parity", "coverage", "apicov", "fuzz")
+LOC_CALLSITE = re.compile(r'at loc\("[^"]*"\(callsite\(')
 
 
 def load(paths):
@@ -35,6 +36,34 @@ def without_locations(message):
 
 
 CALLBACK = re.compile(r"callback=_FlatCallback\(callback_func=<function (\S+) at 0x[0-9A-Fa-fX]+>, in_tree=PyTreeDef\(.*\)\)$")
+
+
+def without_callsites(message):
+    out, i = [], 0
+    while True:
+        m = LOC_CALLSITE.search(message, i)
+        if m is None:
+            out.append(message[i:])
+            return "".join(out)
+        start = message.index('"(callsite(', m.start()) + 1
+        out.append(message[i:start])
+        depth, j, quoted = 0, start, False
+        while j < len(message):
+            ch = message[j]
+            if ch == '"':
+                quoted = not quoted
+            elif not quoted and ch == "(":
+                depth += 1
+            elif not quoted and ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        i = j + 1
+
+
+def callsite_files(message):
+    return sorted(set(re.findall(r'\("(/[^"]+\.py)":\d+', message)))
 
 
 def callback_repr_only(jax_text, ojax_text):
@@ -89,6 +118,14 @@ def classify(ref, ours):
                     + " there, and the texts are equal once the location after 'while tracing the function <name> at' and 'from line' is removed"
                 )
                 out.append((key, field, "defect", "c", proof))
+            elif LOC_CALLSITE.search(jax_text) and without_callsites(jax_text) == ojax_text:
+                proof = (
+                    "JAX's MLIR verifier diagnostic carries a loc(...) callsite chain of Python frames ("
+                    + ", ".join(callsite_files(jax_text))
+                    + ": the generator's and JAX's Python files, lines, columns and Python function names); "
+                    + "ojax prints the same loc without a callsite, and the texts are equal once the callsite chain after the quoted loc name is removed"
+                )
+                out.append((key, field, "defect", "c", proof))
             else:
                 out.append((key, field, "differ", "", ""))
     return out
@@ -96,7 +133,7 @@ def classify(ref, ours):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ref", nargs="+", required=True, help="reference jsonl files (text/reference.jsonl, coverage/text_ref.jsonl, apicov/text_ref.jsonl)")
+    ap.add_argument("--ref", nargs="+", required=True, help="reference jsonl files (text/reference.jsonl, coverage/text_ref.jsonl, apicov/text_ref.jsonl, fuzz/text/reference.jsonl)")
     ap.add_argument("--ours", nargs="+", required=True, help="text_dump output jsonl files")
     ap.add_argument("--write", help="write the defect rows as a tsv")
     args = ap.parse_args()

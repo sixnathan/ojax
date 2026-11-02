@@ -31,6 +31,7 @@ val usable_donations :
   bool list * int list
 
 val emit_jax_text :
+  ?with_tokens:bool ->
   ?keep_unused:bool ->
   ?donated:bool list ->
   ?result_names:string list ->

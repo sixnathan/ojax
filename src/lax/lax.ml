@@ -1271,6 +1271,8 @@ let impl_core_ref : (primitive -> Ndarray.t list -> Ndarray.t list) ref =
 
 let rec impl_base prim inputs =
   match prim with
+  | Psum_positional _ | Pmax_positional _ | Pmin_positional _ ->
+      impl_core_ref.contents prim inputs
   | Neg -> un (fun a -> Ndarray.map (Ndarray.dtype a) (fun x -> -.x) a) inputs
   | Sin ->
       un
@@ -2533,7 +2535,23 @@ let stack_elements batch elements =
                let e, i = index k in
                Ndarray.get_f e i))
 
-let impl_core prim inputs =
+let positional_reducer = function
+  | Psum_positional axes -> Some (Reduce_sum axes)
+  | Pmax_positional axes -> Some (Reduce_max axes)
+  | Pmin_positional axes -> Some (Reduce_min axes)
+  | _ -> None
+
+let rec impl_core prim inputs =
+  match positional_reducer prim with
+  | Some _
+    when match prim with
+         | Psum_positional a | Pmax_positional a | Pmin_positional a -> a = [||]
+         | _ -> false ->
+      inputs
+  | Some reducer -> impl_core reducer inputs
+  | None -> impl_plain prim inputs
+
+and impl_plain prim inputs =
   let wide = List.exists (fun nd -> is_wide_int (Ndarray.dtype nd)) inputs in
   match if wide then wide_int_elementwise prim inputs else None with
   | Some results -> results
@@ -2640,6 +2658,10 @@ let abstract_eval prim avals =
   | Reduce_sum axes ->
       un_aval
         (fun a -> shaped (Utils.reduce_shape a.shape axes) a.dtype a.weak_type)
+        avals
+  | Psum_positional axes | Pmax_positional axes | Pmin_positional axes ->
+      un_aval
+        (fun a -> shaped (Utils.reduce_shape a.shape axes) a.dtype false)
         avals
   | Dot_general dd ->
       bin_aval

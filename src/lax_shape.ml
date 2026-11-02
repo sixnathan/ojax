@@ -153,15 +153,14 @@ let check_conv lhs rhs (dn : conv_dims) ~window_strides ~padding ~lhs_dilation
           (List.map (fmt "np.int64(%d)") (Array.to_list spatial))
       ^ if Array.length spatial = 1 then ",)" else ")")
 
-let verify_conv rhs (dn : conv_dims) ~window_strides ~lhs_dilation ~rhs_dilation
-    =
+let verify_conv ?(name = "conv_general_dilated") rhs (dn : conv_dims)
+    ~window_strides ~lhs_dilation ~rhs_dilation =
   let sdims = Array.length dn.rhs_spec - 2 in
   let cannot_lower line =
     Py_exn.value_error
       ("Cannot lower jaxpr with verifier errors:\n\t" ^ line
-     ^ "\n\
-        \t\tat loc(\"jit(conv_general_dilated)/conv_general_dilated\")\n\
-        Define JAX_DUMP_IR_TO to dump the module.")
+     ^ "\n\t\tat loc(\"jit(" ^ name
+     ^ ")/conv_general_dilated\")\nDefine JAX_DUMP_IR_TO to dump the module.")
   in
   let same_size what given =
     if Array.length given <> sdims then

@@ -375,10 +375,8 @@ let add_result_info ?names line =
         else
           let types = split_results body in
           let is_token ty = starts_with "!stablehlo.token" ty in
-          let many =
-            List.length (List.filter (fun ty -> not (is_token ty)) types) > 1
-          in
           let tokens = List.length (List.filter is_token types) in
+          let many = List.length types - tokens > 1 in
           let annotated =
             List.mapi
               (fun i ty ->
@@ -438,18 +436,25 @@ let add_arg_attributes attribute_of line =
         let body = String.sub line start (close_at - start) in
         if String.trim body = "" then line
         else
-          let parts = split_results body in
-          let is_token arg = contains ": !stablehlo.token" arg in
-          let tokens = List.length (List.filter is_token parts) in
+          let all = split_results body in
+          let tokens =
+            List.length
+              (List.filter
+                 (fun a ->
+                   match find_from a "!stablehlo.token" 0 with
+                   | Some _ -> true
+                   | None -> false)
+                 all)
+          in
           let args =
             List.mapi
               (fun i arg ->
-                if is_token arg then arg
+                if i < tokens then arg
                 else
                   match attribute_of (i - tokens) with
                   | Some attr -> merge_attribute arg attr
                   | None -> arg)
-              parts
+              all
           in
           String.sub line 0 start ^ String.concat ", " args
           ^ String.sub line close_at (String.length line - close_at)
@@ -493,12 +498,11 @@ let splat_index_layouts line =
   go 0;
   Buffer.contents b
 
-let renumber_callbacks text =
+let renumber_callbacks ?(order = []) text =
   let key = "mhlo.backend_config = {index = " in
   let k = String.length key in
-  let seen = Hashtbl.create 4 in
-  let line_of line =
-    if not (contains "@xla_ffi_python_cpu_callback(" line) then line
+  let id_of line =
+    if not (contains "@xla_ffi_python_cpu_callback(" line) then None
     else
       let n = String.length line in
       let rec find i =
@@ -507,18 +511,57 @@ let renumber_callbacks text =
         else find (i + 1)
       in
       match find 0 with
-      | None -> line
+      | None -> None
       | Some start ->
           let stop = ref start in
           while !stop < n && line.[!stop] >= '0' && line.[!stop] <= '9' do
             incr stop
           done;
-          let index = Hashtbl.length seen in
-          Hashtbl.replace seen index ();
-          String.sub line 0 start ^ string_of_int index
-          ^ String.sub line !stop (n - !stop)
+          Some (start, !stop)
   in
-  String.concat "\n" (List.map line_of (String.split_on_char '\n' text))
+  let lines = String.split_on_char '\n' text in
+  let counts = Hashtbl.create 4 in
+  List.iter
+    (fun line ->
+      match id_of line with
+      | Some (start, stop) ->
+          let id = String.sub line start (stop - start) in
+          Hashtbl.replace counts id
+            (1 + Option.value ~default:0 (Hashtbl.find_opt counts id))
+      | None -> ())
+    lines;
+  let queues = Hashtbl.create 4 in
+  let next = ref 0 in
+  List.iter
+    (fun id ->
+      let id = string_of_int id in
+      let queue = Option.value ~default:[] (Hashtbl.find_opt queues id) in
+      if
+        List.length queue < Option.value ~default:0 (Hashtbl.find_opt counts id)
+      then begin
+        Hashtbl.replace queues id (queue @ [ !next ]);
+        incr next
+      end)
+    order;
+  let line_of line =
+    match id_of line with
+    | None -> line
+    | Some (start, stop) ->
+        let id = String.sub line start (stop - start) in
+        let index =
+          match Hashtbl.find_opt queues id with
+          | Some (i :: rest) ->
+              Hashtbl.replace queues id rest;
+              i
+          | _ ->
+              let i = !next in
+              incr next;
+              i
+        in
+        String.sub line 0 start ^ string_of_int index
+        ^ String.sub line stop (String.length line - stop)
+  in
+  String.concat "\n" (List.map line_of lines)
 
 let constant_of line =
   let t = String.trim line in

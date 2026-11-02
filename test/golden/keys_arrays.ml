@@ -502,10 +502,31 @@ let traced : (string * (Ojax.Types.value -> Ojax.Types.value)) list =
     ("jit_bitcast_f32_uint8", fun x -> L.bitcast_convert_type x D.Uint8);
     ("jit_bitcast_uint8_f32", fun x -> L.bitcast_convert_type x D.F32);
     ("jit_bitcast_err", fun x -> L.bitcast_convert_type x D.F32);
+    ("jit_key_split", fun k -> RC.split (Ojax.Key_reuse.mark_typed k) 2);
+    ( "jit_key_fold_in",
+      fun k -> RC.fold_in (Ojax.Key_reuse.mark_typed k) (seed 3) );
+    ( "jit_key_bits",
+      fun k -> RC.bits (Ojax.Key_reuse.mark_typed k) ~shape:[| 3 |] );
+    ("jit_key_data", fun k -> RC.key_data (Ojax.Key_reuse.mark_typed k));
+    ( "jit_key_uniform",
+      fun k ->
+        RC.uniform
+          (Ojax.Key_reuse.mark_typed k)
+          ~shape:[| 2 |] ~minval:0.0 ~maxval:1.0 );
+    ("jit_wrap_key_data", fun x -> RC.wrap_key_data x);
   ]
 
 let aval_of_arg a : Ojax.Types.aval =
   match U.to_list a with
+  | [ `String "key<fry>"; shape ] ->
+      {
+        dtype = D.Uint32;
+        shape =
+          Array.append
+            (Array.of_list (List.map U.to_int (U.to_list shape)))
+            [| 2 |];
+        weak_type = false;
+      }
   | [ dt; shape ] ->
       {
         dtype =

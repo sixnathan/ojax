@@ -8,6 +8,7 @@ val jaxpr_to_string : jaxpr -> string
 val closed_jaxpr_to_string : closed_jaxpr -> string
 val primitive_structure : closed_jaxpr -> string
 val closed_jaxpr_to_jax_string : closed_jaxpr -> string
+val key_vars : jaxpr -> (int, unit) Hashtbl.t
 val eqn_to_jax_string : eqn -> string
 val register_call_name : int -> string -> unit
 val custom_num_consts : (eqn -> int option) ref

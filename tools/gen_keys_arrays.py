@@ -270,6 +270,12 @@ def traced_cases():
         "jit_bitcast_f32_uint8": (lambda x: lax.bitcast_convert_type(x, jnp.uint8), [f32]),
         "jit_bitcast_uint8_f32": (lambda x: lax.bitcast_convert_type(x, jnp.float32), [jnp.zeros((3, 4), jnp.uint8)]),
         "jit_bitcast_err": (lambda x: lax.bitcast_convert_type(x, jnp.float32), [jnp.zeros((3, 2), jnp.uint8)]),
+        "jit_key_split": (lambda k: random.split(k), [random.key(0)]),
+        "jit_key_fold_in": (lambda k: random.fold_in(k, 3), [random.key(0)]),
+        "jit_key_bits": (lambda k: random.bits(k, (3,)), [random.key(0)]),
+        "jit_key_data": (lambda k: random.key_data(k), [random.key(0)]),
+        "jit_key_uniform": (lambda k: random.uniform(k, (2,)), [random.key(0)]),
+        "jit_wrap_key_data": (lambda x: random.wrap_key_data(x), [jnp.zeros((2,), jnp.uint32)]),
     }
 
 

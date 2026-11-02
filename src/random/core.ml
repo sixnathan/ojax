@@ -175,11 +175,15 @@ let key_data keys = Key_reuse.suspended (fun () -> raw_copy (unwrap keys))
 let wrap_key_data ?impl ?dtype data =
   let d = key_dtype (resolve_key_spec "wrap_key_data" impl dtype) in
   check_prng_key_data d data;
-  let copy = Key_reuse.suspended (fun () -> raw_copy (wrap data)) in
-  match (d.impl_name, copy) with
-  | "rbg", _ -> copy
-  | "unsafe_rbg", Concrete nd -> Concrete (Nd.as_weak nd)
-  | _ -> Key_reuse.mark_typed copy
+  match data with
+  | Tracer _ when d.impl_name = "threefry2x32" ->
+      Key_reuse.mark_typed (PR.random_wrap data)
+  | _ -> (
+      let copy = Key_reuse.suspended (fun () -> raw_copy (wrap data)) in
+      match (d.impl_name, copy) with
+      | "rbg", _ -> copy
+      | "unsafe_rbg", Concrete nd -> Concrete (Nd.as_weak nd)
+      | _ -> Key_reuse.mark_typed copy)
 
 let clone k = Key_reuse.mark_typed (Key_reuse.suspended (fun () -> raw_copy k))
 

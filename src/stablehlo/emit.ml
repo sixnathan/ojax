@@ -5063,13 +5063,48 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
       emit_constant_at ctx n nd)
     const_binders cj.consts;
   hoist_custom_consts ctx jx;
+  let keys =
+    if partition = None && !emission_depth = 1 then Pretty_printer.key_vars jx
+    else Hashtbl.create 1
+  in
+  let key_constraint source (a : aval) =
+    let n = fresh ctx in
+    let rank = Array.length a.shape in
+    let spec =
+      String.concat ", "
+        (List.init rank (fun i -> if i < rank - 1 then "{?}" else "{}"))
+    in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = sdy.sharding_constraint %s <@empty_mesh, [%s]> : %s\n"
+         (name n) source spec (Ir.tensor_type_of_aval a));
+    n
+  in
+  let constrained = ref false in
+  List.iter
+    (fun (v : var) ->
+      if Hashtbl.mem keys v.vid then begin
+        constrained := true;
+        let source = ssa_of_var ctx v in
+        Hashtbl.replace ctx.ids v.vid (key_constraint source v.vaval)
+      end)
+    arg_binders;
   in_function "main" (fun () ->
       List.iter
         (fun (e : eqn) ->
           let in_ids = List.map (id_of_atom ctx) e.inputs in
           emit_eqn ctx e in_ids)
         jx.eqns);
-  let out_names = List.map (ssa_of_atom ctx) jx.outs in
+  let out_names =
+    List.map
+      (fun atom ->
+        match atom with
+        | A_var v when Hashtbl.mem keys v.vid ->
+            constrained := true;
+            name (key_constraint (ssa_of_atom ctx atom) v.vaval)
+        | _ -> ssa_of_atom ctx atom)
+      jx.outs
+  in
   let out_types =
     List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) jx.outs
   in
@@ -5088,6 +5123,9 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   Printf.sprintf
     "module {\n%s%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
     ((match partition with Some p -> sdy_mesh p.pt_mesh | None -> "")
+    ^ (if !constrained then
+         "  sdy.mesh @empty_mesh = <[]> {stablehlo.mesh = {axes = []}}\n"
+       else "")
     ^
     if !callback_seen then
       "  sdy.mesh @maximal_mesh_0 = <[], device_ids=[0]> {stablehlo.mesh = \

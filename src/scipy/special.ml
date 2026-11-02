@@ -1030,7 +1030,7 @@ let gammasgn x =
       (band (eq_ x 0.0) (UF.signbit x))
   in
   select_default (lax_const x 1.0) [ c1; c2 ]
-    [ lax_const x Float.nan; lax_const x (-1.0) ]
+    [ lax_const x Float_format.nan; lax_const x (-1.0) ]
 
 let lanczos_g = 7.0
 
@@ -1071,7 +1071,7 @@ let complex_of_parts z re im = NL.astype (bind1 T.Complex [ re; im ]) (dtype z)
 
 let complex_nan z =
   let real_dt = if dtype z = D.Complex128 then D.F64 else D.F32 in
-  let nan = const_full real_dt [||] Float.nan in
+  let nan = const_full real_dt [||] Float_format.nan in
   complex_of_parts z nan nan
 
 let complex_pole_or_nan z =
@@ -1124,7 +1124,7 @@ let loggamma x =
   if is_complex_dtype (dtype x) then complex_loggamma_scipy x
   else
     let res = bind1 T.Lgamma [ x ] in
-    where_py (gt_ x 0.0) res Float.nan
+    where_py (gt_ x 0.0) res Float_format.nan
 
 let gammasgn_jit a0 =
   Eager_jit.one ~jit:"gammasgn" "scipy.special.gammasgn" () [] [ a0 ]
@@ -1795,7 +1795,7 @@ let spence_body x =
   piecewise ~key:"spence" x
     [ lt_ x 0.0; eq_ x 1.0; eq_ x 0.0 ]
     [
-      constf Float.nan;
+      constf Float_format.nan;
       Piece_const (py_int 0);
       constf ((Float.pi ** 2.0) /. 6.0);
       piece_fn spence_calc;
@@ -1866,7 +1866,7 @@ let sici_primal x =
   let si = select_default si_approx [ cond1; cond2 ] [ si_series; si_asymp ] in
   let ci = select_default ci_approx [ cond1; cond2 ] [ ci_series; ci_asymp ] in
   let si = UF.sign x *! si in
-  let ci = where_px (UF.isneginf x) Float.nan ci in
+  let ci = where_px (UF.isneginf x) Float_format.nan ci in
   [ si; ci ]
 
 let sici_jit a0 =
@@ -1950,7 +1950,10 @@ let owens_t_primal h a =
       result
   in
   let result = L.sign a *! result in
-  where_ (bor (UF.isnan a) (UF.isnan h)) (AC.full_like result Float.nan) result
+  where_
+    (bor (UF.isnan a) (UF.isnan h))
+    (AC.full_like result Float_format.nan)
+    result
 
 let rec owens_t_custom h a =
   List.hd
@@ -2265,7 +2268,7 @@ let expn_core n x =
   let with_n f = Piece_fn (function [ x; n ] -> f x n | _ -> assert false) in
   piecewise ~key:"expn" ~extra:[ n ] x conds
     [
-      constf Float.nan;
+      constf Float_format.nan;
       constf Float.infinity;
       const_val v3;
       const_val v4;

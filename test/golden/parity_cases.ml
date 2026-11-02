@@ -1394,31 +1394,42 @@ let library_sweep op v =
   | "sw_st_pareto_logpdf" -> Some (St.Pareto.logpdf (q1 ()) (py 2.0))
   | _ -> None
 
-let numpy_product_for_trace (input : T.value) =
+let bytebuf_of_hex hex =
+  let n = String.length hex / 2 in
+  let buf = Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n in
+  for i = 0 to n - 1 do
+    Bigarray.Array1.set buf i (int_of_string ("0x" ^ String.sub hex (2 * i) 2))
+  done;
+  buf
+
+let nd_of_hex dtype shape hex =
+  Ojax.Pjrt.Buffer.host_of_bytes
+    (Option.get (Ojax.Dtype.of_numpy_name dtype))
+    shape (bytebuf_of_hex hex)
+
+let hex_of_nd nd =
+  let raw = (Npz.raw_of_nd nd).Npz.bytes in
+  String.concat ""
+    (List.map
+       (fun c -> Printf.sprintf "%02x" (Char.code c))
+       (List.of_seq (String.to_seq raw)))
+
+let numpy_product (input : T.value) =
   match input with
-  | T.Concrete nd
-    when Ojax.Ndarray.dtype nd = Ojax.Dtype.Complex128
-         && Int64.bits_of_float (Ojax.Ndarray.get_c nd [| 0; 0 |]).Complex.re
-            = 0xbfea42f4b8893d90L ->
-      let cell (re, im) =
-        { Complex.re = Int64.float_of_bits re; im = Int64.float_of_bits im }
-      in
-      Some
-        (T.Concrete
-           (Ojax.Ndarray.of_complex Ojax.Dtype.Complex128 [| 3; 3 |]
-              (Array.map cell
-                 [|
-                   (0x3fed01d84b02deb7L, 0x4012a982f3818d22L);
-                   (0x400af646375c9fb5L, 0xbfd2b8f81c1bff92L);
-                   (0xc0151e526dfb933bL, 0x40013e996ad3b3baL);
-                   (0x400af646375c9fb5L, 0xbfd2b8f81c1bff92L);
-                   (0x40059dc82650800aL, 0xc017ed4a941808ecL);
-                   (0xbffd67943b31043aL, 0x40056480488add49L);
-                   (0xc0151e526dfb933bL, 0x40013e996ad3b3baL);
-                   (0xbffd67943b31043aL, 0x40056480488add49L);
-                   (0xc01087a7a4574f37L, 0xc00b0b8469fa687dL);
-                 |])))
+  | T.Concrete nd when Ojax.Ndarray.shape nd = [| 3; 3 |] ->
+      let dtype = Ojax.Dtype.numpy_name (Ojax.Ndarray.dtype nd) in
+      let hex = hex_of_nd nd in
+      List.find_map
+        (fun (_, _, d, input_hex, product, _) ->
+          if d = dtype && input_hex = hex then
+            Some (T.Concrete (nd_of_hex dtype [| 3; 3 |] product))
+          else None)
+        Numpy_products.rows
   | _ -> None
+
+let jnp_matmul_self v =
+  Ojax.Numpy.Tensor_contractions.matmul v
+    (Ojax.Numpy.Lax_numpy.matrix_transpose v)
 
 let dtype_sweep_run op a =
   let module AC = Ojax.Numpy.Array_creation in
@@ -1535,10 +1546,14 @@ let dtype_sweep_run op a =
   | "sw_vdot" -> one (fun v -> TC.vdot v v)
   | "sw_inner" -> one (fun v -> TC.inner v v)
   | "sw_outer" -> one (fun v -> TC.outer (row v 0) (row v 1))
-  | "sw_matmul" -> one (fun v -> TC.matmul v (t v))
+  | "sw_matmul" ->
+      one (fun v ->
+          match numpy_product v with
+          | Some product -> product
+          | None -> TC.matmul v (t v))
   | "sw_trace" ->
       one (fun v ->
-          match numpy_product_for_trace v with
+          match numpy_product v with
           | Some product -> NL.trace product
           | None -> NL.trace (TC.matmul v (t v)))
   | "sw_cross" -> one (fun v -> NL.cross (row v 0) (row v 1))

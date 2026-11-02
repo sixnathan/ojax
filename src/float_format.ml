@@ -27,14 +27,16 @@ let of_dtype = function
       Some (make 8 0 8 (-127) (Float.ldexp 1.0 127) Unsigned_fn)
   | _ -> None
 
+let nan = Int64.float_of_bits 0x7FF8000000000000L
+
 let overflow f v =
   match f.special with
   | Ieee -> Float.copy_sign Float.infinity v
-  | Fn -> Float.copy_sign Float.nan v
-  | Fnuz | Unsigned_fn -> Float.nan
+  | Fn -> Float.copy_sign nan v
+  | Fnuz | Unsigned_fn -> nan
   | No_special -> Float.copy_sign f.fmax v
 
-let not_a_number f = match f.special with No_special -> -0.0 | _ -> Float.nan
+let not_a_number f = match f.special with No_special -> -0.0 | _ -> nan
 
 let to_nearest_even q =
   let t = Float.trunc q in
@@ -50,7 +52,7 @@ let round_finite f v =
   if Float.abs out > f.fmax then overflow f v else out
 
 let round_unsigned f v =
-  if v <= 0.0 || not (Float.is_finite v) then Float.nan
+  if v <= 0.0 || not (Float.is_finite v) then nan
   else
     let least = Float.ldexp 1.0 f.min_exp in
     if v <= least then least
@@ -61,8 +63,7 @@ let narrow_to_f32 v = Int32.float_of_bits (Int32.bits_of_float v)
 
 let round f v0 =
   let v = narrow_to_f32 v0 in
-  if Float.is_nan v then
-    if f.special = No_special then -0.0 else Float.copy_sign Float.nan v0
+  if Float.is_nan v0 then if f.special = No_special then -0.0 else v0
   else if f.special = Unsigned_fn then round_unsigned f v
   else if not (Float.is_finite v) then overflow f v
   else if v = 0.0 then if f.special = Fnuz then 0.0 else v
@@ -97,8 +98,17 @@ let encode_finite f v =
 let encode f v0 =
   let v = round f v0 in
   if Float.is_nan v then
-    nan_bits f
-    lor if f.special <> Fnuz && Float.sign_bit v then sign_bit f else 0
+    let body =
+      if f.special = Ieee then
+        let m =
+          Int64.to_int
+            (Int64.shift_right_logical (Int64.bits_of_float v) (52 - f.nmant))
+          land mantissa_ones f
+        in
+        if m = 0 then nan_bits f else (exponent_ones f lsl f.nmant) lor m
+      else nan_bits f
+    in
+    body lor if f.special <> Fnuz && Float.sign_bit v then sign_bit f else 0
   else if f.special = Unsigned_fn then
     let _, e = Float.frexp v in
     e - 1 - f.min_exp
@@ -109,7 +119,7 @@ let encode f v0 =
 
 let decode f bits =
   if f.special = Unsigned_fn then
-    if bits = 0xff then Float.nan else Float.ldexp 1.0 (bits + f.min_exp)
+    if bits = 0xff then nan else Float.ldexp 1.0 (bits + f.min_exp)
   else
     let body = bits land (sign_bit f - 1) in
     let negative = bits land sign_bit f <> 0 in
@@ -121,7 +131,14 @@ let decode f bits =
       | Fnuz -> bits = nan_bits f
       | Unsigned_fn | No_special -> false
     in
-    if is_nan then if negative then -.Float.nan else Float.nan
+    if is_nan then
+      let bits =
+        Int64.logor 0x7FF0000000000000L
+          (Int64.shift_left (Int64.of_int fraction) (52 - f.nmant))
+      in
+      let bits = if f.special = Ieee then bits else 0x7FF8000000000000L in
+      Int64.float_of_bits
+        (if negative then Int64.logor bits Int64.min_int else bits)
     else if f.special = Ieee && biased = exponent_ones f then
       if negative then Float.neg_infinity else Float.infinity
     else

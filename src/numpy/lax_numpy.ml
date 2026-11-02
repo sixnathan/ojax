@@ -2109,7 +2109,7 @@ let canonicalize_for_sort x =
       [ bind1 T.Eq [ x; scalar dt 0.0 ]; x; const_full dt (shape x) 0.0 ]
   in
   bind1 T.Select_n
-    [ bind1 T.Ne [ x; x ]; result; const_full dt (shape x) Float.nan ]
+    [ bind1 T.Ne [ x; x ]; result; const_full dt (shape x) Float_format.nan ]
 
 let sort_compare_keys x =
   let dt = dtype x in

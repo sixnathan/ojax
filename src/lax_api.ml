@@ -395,7 +395,7 @@ let clamp_indices indices dims window =
     ]
 
 let gather_default_fill dt =
-  if Dtypes.issubdtype dt `Inexact then Float.nan
+  if Dtypes.issubdtype dt `Inexact then Float_format.nan
   else if dt = Dtype.Bool then 1.0
   else if Dtypes.issubdtype dt `Signed then (Dtypes.iinfo dt).imin
   else (Dtypes.iinfo dt).imax
@@ -526,7 +526,7 @@ let concrete_scalar v =
     match Ndarray.dtype nd with
     | Dtype.Complex64 | Dtype.Complex128 ->
         let z = Ndarray.get_c nd [||] in
-        if z.Complex.im = 0.0 then Some z.Complex.re else Some Float.nan
+        if z.Complex.im = 0.0 then Some z.Complex.re else Some Float_format.nan
     | _ -> Some (Ndarray.get_f nd [||])
   in
   match v with

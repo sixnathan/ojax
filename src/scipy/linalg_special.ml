@@ -599,7 +599,7 @@ let solve_sylvester_2d a b c tol =
              [
                U.multiply
                  (Numpy.Array_creation.zeros_like x)
-                 (Numpy.Jnp_util.py_float Float.nan);
+                 (Numpy.Jnp_util.py_float Float_format.nan);
              ])
            (fun _ -> [ x ])
            [])

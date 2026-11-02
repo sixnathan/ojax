@@ -351,7 +351,7 @@ let var_body dt axis keepdims mask a_mean correction a =
   where
     (bind1 T.Gt [ normalizer; const_full rdt [||] 0.0 ])
     result
-    (Jnp_util.py_float Float.nan)
+    (Jnp_util.py_float Float_format.nan)
 
 let var_value ?dtype:dt ?axis ?keepdims ?where:mask ?mean:a_mean correction a =
   let mask = check_where "var" mask in
@@ -466,7 +466,7 @@ let nan_reduce ~reduce ~init ~nan_if_all_nan ?axis ?keepdims a =
     let out = reduce ?axis ?keepdims filled in
     if nan_if_all_nan then
       let allnan = all ?axis ?keepdims (isnan a) in
-      where allnan (const_full (dtype a) [||] Float.nan) out
+      where allnan (const_full (dtype a) [||] Float_format.nan) out
     else out
   end
 
@@ -596,7 +596,7 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
   let nz = Ufuncs.subtract count (Jnp_util.py_int ddof) in
   let bad = bind1 T.Le [ nz; const_full (dtype nz) [||] 0.0 ] in
   let result = sum ?axis ?keepdims ?where:mask centered in
-  let result = where bad (Jnp_util.py_float Float.nan) result in
+  let result = where bad (Jnp_util.py_float Float_format.nan) result in
   let divisor = where bad (Jnp_util.py_int 1) nz in
   ignore rdt;
   convert (bind1 T.Div [ result; convert divisor (dtype result) ]) result_dtype
@@ -882,7 +882,7 @@ let quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans =
       let anynan = reduce_last_or (isnan am) in
       let anynan_r = reshape anynan (Array.append (Array.make qnd 1) bsh) in
       let anynan_full = broadcast_to anynan_r target in
-      where anynan_full (const_full cdt target Float.nan) result
+      where anynan_full (const_full cdt target Float_format.nan) result
     end
   in
   match keepdim_shape with
@@ -909,7 +909,7 @@ let quantile_plain a q ~axis ~method_ ~keepdims =
     invalid_arg (Printf.sprintf "q must be have rank <= 1, got rank %d" q_ndim);
   let a_shape = shape a in
   let nan_mask = any ~axis:[| ax |] ~keepdims:true (isnan a) in
-  let a = where nan_mask (Jnp_util.py_float Float.nan) a in
+  let a = where nan_mask (Jnp_util.py_float Float_format.nan) a in
   let a =
     bind1 (T.Sort { dimension = ax; is_stable = true; num_keys = 1 }) [ a ]
   in

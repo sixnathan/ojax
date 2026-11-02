@@ -65,7 +65,7 @@ let of_cm dt c b p q =
   make dt [| p; q |] (fun f -> elt c b ((f / max q 1) + (f mod max q 1 * p)))
 
 let of_vec dt c b n = make dt [| n |] (fun i -> elt c b i)
-let nan_elt = { Complex.re = Float.nan; im = Float.nan }
+let nan_elt = { Complex.re = Float_format.nan; im = Float_format.nan }
 let nan_like dt shape = make dt shape (fun _ -> nan_elt)
 let guarded ok dt shape value = if ok then value () else nan_like dt shape
 

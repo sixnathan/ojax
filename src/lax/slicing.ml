@@ -257,7 +257,7 @@ let default_gather_fill dt sh =
   let n = Array.fold_left ( * ) 1 sh in
   match dt with
   | d when Dtypes.issubdtype d `Inexact ->
-      Ndarray.of_floats dt sh (Array.make n Float.nan)
+      Ndarray.of_floats dt sh (Array.make n Float_format.nan)
   | Dtype.I64 -> Ndarray.of_int64s dt sh (Array.make n Int64.min_int)
   | Dtype.Uint64 -> Ndarray.of_int64s dt sh (Array.make n (-1L))
   | Dtype.Bool -> Ndarray.of_floats dt sh (Array.make n 1.0)

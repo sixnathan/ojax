@@ -92,7 +92,21 @@ def tally(log):
             parts = line.rstrip("\n").split("\t")
             if len(parts) >= 5 and parts[2] == "0":
                 counts[parts[4]] += 1
+            if len(parts) >= 6 and parts[5] == "same":
+                counts["raw:" + parts[4]] += 1
     return counts
+
+
+def float_nan_uses(root):
+    uses = []
+    for directory, _, files in os.walk(os.path.join(root, "src")):
+        for name in files:
+            if name.endswith(".ml"):
+                path = os.path.join(directory, name)
+                with open(path, encoding="utf-8") as f:
+                    if re.search(r"\bFloat\.nan\b", f.read()):
+                        uses.append(os.path.relpath(path, root))
+    return uses
 
 
 def main():
@@ -173,6 +187,7 @@ def main():
         floors = read_floors(os.path.join(root, "test/golden/exact_floor.tsv"))
         ran = {c[0] for c in cases}
         ran |= {s.replace("parity_jit:", "parity_jit_eager:") for s in ran}
+        ran |= {"raw:" + s for s in ran}
         fell = [(s, counts[s], f) for s, f in sorted(floors.items()) if s in ran and counts[s] < f]
     for suite, got, floor in fell:
         print(f"RATCHET {suite}: {got} bit-identical, floor {floor}")
@@ -184,13 +199,19 @@ def main():
             if len(parts) >= 5:
                 totals[parts[4]] += 1
     shadow = [s for s in totals if s.startswith("parity_jit_eager:")]
-    identical = sum(n for s, n in counts.items() if s not in shadow)
-    rows = sum(n for s, n in totals.items() if s not in shadow)
+    uncounted = set(shadow) | {"compare", "ratchet_selftest"}
+    identical = sum(n for s, n in counts.items() if s not in uncounted and not s.startswith("raw:"))
+    rows = sum(n for s, n in totals.items() if s not in uncounted)
+    raw_identical = sum(n for s, n in counts.items() if s.startswith("raw:") and s[4:] not in uncounted)
+    print(f"raw npz bytes and dtype: {raw_identical}/{rows} identical")
     print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {identical}/{rows} bit-identical")
     if shadow:
-        print(f"parity_jit against the eager goldens: {sum(counts[s] for s in shadow)}/{sum(totals[s] for s in shadow)} bit-identical")
+        print(f"parity_jit against the eager goldens: {sum(counts[s] for s in shadow)}/{sum(totals[s] for s in shadow)} bit-identical, {sum(counts['raw:' + s] for s in shadow)} in raw bytes")
     shutil.rmtree(work, ignore_errors=True)
-    sys.exit(1 if failed or fell else 0)
+    nan_uses = float_nan_uses(root)
+    if nan_uses:
+        print("Float.nan is 0x7ff8000000000001, JAX's nan is 0x7ff8000000000000; use Float_format.nan in: " + ", ".join(nan_uses))
+    sys.exit(1 if failed or fell or nan_uses else 0)
 
 
 if __name__ == "__main__":

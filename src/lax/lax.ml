@@ -210,7 +210,7 @@ let shift_right_logical_f dt x y =
         (Int64.shift_right_logical (low_bits nbits (Int64.of_float x)) s)
 
 let f64_nextafter x y =
-  if x <> x || y <> y then Float.nan
+  if x <> x || y <> y then Float_format.nan
   else if x = y then y
   else if y > x then Float.succ x
   else Float.pred x
@@ -230,13 +230,13 @@ let f32_next_down x =
     Int32.float_of_bits (if x > 0.0 then Int32.sub b 1l else Int32.add b 1l)
 
 let f32_nextafter x y =
-  if x <> x || y <> y then Float.nan
+  if x <> x || y <> y then Float_format.nan
   else if x = y then y
   else if y > x then f32_next_up x
   else f32_next_down x
 
 let narrow_nextafter ~precision ~min_exp x y =
-  if x <> x || y <> y then Float.nan
+  if x <> x || y <> y then Float_format.nan
   else if x = y then y
   else
     let smallest = Float.ldexp 1.0 (min_exp - precision + 1) in
@@ -841,7 +841,7 @@ let bitcast_impl new_dt operand =
   in
   let as_narrow =
     match Ndarray.dtype operand with
-    | Dtype.F32 -> fun i -> Int32.bits_of_float (value i)
+    | Dtype.F32 -> fun i -> Ndarray.f32_bits_of_float (value i)
     | Dtype.I32 | Dtype.Uint32 -> fun i -> Int64.to_int32 (word i)
     | _ -> fun _ -> 0l
   in
@@ -853,7 +853,7 @@ let bitcast_impl new_dt operand =
       Ndarray.of_int64s new_dt shape (Array.init n as_wide)
   | (Dtype.F32 | Dtype.I32 | Dtype.Uint32), Dtype.F32 ->
       Ndarray.of_floats new_dt shape
-        (Array.init n (fun i -> Int32.float_of_bits (as_narrow i)))
+        (Array.init n (fun i -> Ndarray.float_of_f32_bits (as_narrow i)))
   | (Dtype.F32 | Dtype.I32 | Dtype.Uint32), Dtype.I32 ->
       Ndarray.of_floats new_dt shape
         (Array.init n (fun i -> Int32.to_float (as_narrow i)))
@@ -1796,7 +1796,7 @@ let rec impl_base prim inputs =
       un
         (fun a ->
           if Ndarray.dtype a = Dtype.F8_e8m0fnu then
-            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float_format.nan) a
           else
             let step = small_step (Ndarray.dtype a) in
             Control_flow.Loops.cumred_impl ~axis ~reverse
@@ -1815,7 +1815,7 @@ let rec impl_base prim inputs =
       un
         (fun a ->
           if Ndarray.dtype a = Dtype.F8_e8m0fnu then
-            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float_format.nan) a
           else
             Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.max a)
         inputs
@@ -1823,7 +1823,7 @@ let rec impl_base prim inputs =
       un
         (fun a ->
           if Ndarray.dtype a = Dtype.F8_e8m0fnu then
-            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float.nan) a
+            Ndarray.map Dtype.F8_e8m0fnu (fun _ -> Float_format.nan) a
           else
             Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.min a)
         inputs

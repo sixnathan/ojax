@@ -317,7 +317,7 @@ let igamma_impl dt = function
       let output = select use_igammac cf series in
       let output = select x_zero (like a 0.0) output in
       let output = select x_inf (like a 1.0) output in
-      select domain_error (like a Float.nan) output
+      select domain_error (like a Float_format.nan) output
   | _ -> invalid_arg "Native_lowering: igamma arity"
 
 let igammac_impl dt = function
@@ -351,7 +351,7 @@ let igammac_impl dt = function
       let output = select use_igamma one_minus cf in
       let inf_or = x_inf ||: a_zero in
       let output = select inf_or (like output 0.0) output in
-      select domain_error (like a Float.nan) output
+      select domain_error (like a Float_format.nan) output
   | _ -> invalid_arg "Native_lowering: igammac arity"
 
 let grad_impl mode dt = function
@@ -378,7 +378,7 @@ let grad_impl mode dt = function
       let output = select use_igammac cf series in
       let output = select x_zero (like output 0.0) output in
       let bad = domain_error ||: nan in
-      select bad (like a Float.nan) output
+      select bad (like a Float_format.nan) output
   | _ -> invalid_arg "Native_lowering: igamma_grad_a arity"
 
 let igamma_grad_a_impl dt args = grad_impl Derivative dt args
@@ -609,7 +609,7 @@ let betainc_impl dt = function
       let result = select converges result complement in
       let result = select result_zero (like a 0.0) result in
       let result = select result_one (like a 1.0) result in
-      select result_nan (like a Float.nan) result
+      select result_nan (like a Float_format.nan) result
   | _ -> invalid_arg "Native_lowering: betainc arity"
 
 let betainc = up_and_broadcast betainc_impl
@@ -691,7 +691,7 @@ let complex_reduce ~is_max ~axes = function
 
 let canonical_key x =
   let zeroed = select (L.eq x (like x 0.0)) (like x 0.0) x in
-  select (is_nan x) (like x Float.nan) zeroed
+  select (is_nan x) (like x Float_format.nan) zeroed
 
 let complex_sort ~dimension ~is_stable ~num_keys operands =
   let indexed = List.mapi (fun i v -> (i, v)) operands in
@@ -1229,7 +1229,7 @@ let all_finite a =
   L.reduce_and finite axes
 
 let nan_unless finite v =
-  select (L.broadcast_in_dim finite (shape v) [||]) v (like v Float.nan)
+  select (L.broadcast_in_dim finite (shape v) [||]) v (like v Float_format.nan)
 
 let svd_core ~full_matrices ~compute_uv = function
   | [ operand ] -> (
@@ -1280,11 +1280,11 @@ let real_basetype v =
 
 let nan_full v =
   if is_complex v then
-    let nan = { Complex.re = Float.nan; im = Float.nan } in
+    let nan = { Complex.re = Float_format.nan; im = Float_format.nan } in
     L.broadcast_in_dim
       (Concrete (Ndarray.of_complex (dtype v) [||] [| nan |]))
       (shape v) [||]
-  else like v Float.nan
+  else like v Float_format.nan
 
 let nan_where_bad ok v =
   let batch = shape ok in

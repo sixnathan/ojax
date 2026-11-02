@@ -368,6 +368,26 @@ let scatter_combiner = function
   | Scatter_max _ -> Float.max
   | _ -> failwith "lax: not a scatter primitive"
 
+let fill_cast dt f =
+  let saturate lo hi = Float.max lo (Float.min hi (Float.trunc f)) in
+  let wrap bits signed v =
+    let m = Float.of_int (1 lsl bits) in
+    let r = Float.rem v m in
+    let r = if r < 0.0 then r +. m else r in
+    if signed && r >= m /. 2.0 then r -. m else r
+  in
+  if Float.is_nan f then if Dtypes.issubdtype dt `Integer then 0.0 else f
+  else
+    match dt with
+    | Dtype.I8 -> wrap 8 true (saturate (-2147483648.0) 2147483647.0)
+    | Dtype.I16 -> wrap 16 true (saturate (-2147483648.0) 2147483647.0)
+    | Dtype.Uint8 -> wrap 8 false (saturate 0.0 4294967295.0)
+    | Dtype.Uint16 -> wrap 16 false (saturate 0.0 4294967295.0)
+    | d when Dtypes.issubdtype d `Integer ->
+        let info = Dtypes.iinfo d in
+        saturate info.imin info.imax
+    | _ -> f
+
 let default_gather_fill dt sh =
   let n = Array.fold_left ( * ) 1 sh in
   match dt with
@@ -432,6 +452,7 @@ let gather_fill_expanded ?fill_value operand indices (gd : gather_dims)
   let fill =
     match fill_value with
     | Some f ->
+        let f = fill_cast op_dt f in
         Concrete
           (Ndarray.of_floats op_dt out_shape
              (Array.make (Array.fold_left ( * ) 1 out_shape) f))
@@ -546,7 +567,7 @@ let gather_fill_lowered prim operand indices =
   in
   let fill =
     match fill_value with
-    | Some f -> Ndarray.of_floats op_dt [||] [| f |]
+    | Some f -> Ndarray.of_floats op_dt [||] [| fill_cast op_dt f |]
     | None -> default_gather_fill op_dt [||]
   in
   let fill =

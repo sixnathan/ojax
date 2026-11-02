@@ -693,9 +693,6 @@ let dot_accumulate prim x y acc =
   else convert_to acc (b1 prim [ x; y ])
 
 let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
-  let preferred_element_type =
-    Option.map Dtypes.canonicalize_dtype preferred_element_type
-  in
   let level_name = function
     | Lax_config.Precision_default -> "DEFAULT"
     | Lax_config.Precision_high -> "HIGH"

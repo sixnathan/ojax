@@ -460,27 +460,25 @@ let remat_partial_eval trace id (tracers : tracer list) =
       let pick flag =
         List.filteri (fun i _ -> List.nth out_unknown i = flag) jx.outs
       in
-      let known_outs = pick false and unknown_outs = pick true in
-      let known_eqns = live_eqns (atom_vars known_outs) jx.eqns in
+      let unknown_outs = pick true in
+      let known_body, known_args =
+        Jaxpr.dce_closed body (List.map not out_unknown)
+      in
       let pvals =
-        List.map2
-          (fun (v : var) k ->
-            match k with
-            | Some c -> Partial_eval.partial_val_known c
-            | None -> Partial_eval.partial_val_unknown v.vaval)
-          binders known_flags
+        List.concat
+          (List.map2
+             (fun ((v : var), k) used ->
+               if not used then []
+               else
+                 match k with
+                 | Some c -> [ Partial_eval.partial_val_known c ]
+                 | None -> [ Partial_eval.partial_val_unknown v.vaval ])
+             (List.combine binders known_flags)
+             known_args)
       in
       let _, _, known_pvals =
         Partial_eval.partial_eval_flat
-          (fun args ->
-            let env = Hashtbl.create 64 in
-            List.iter2
-              (fun (v : var) nd -> Hashtbl.replace env v.vid (Concrete nd))
-              const_binders body.consts;
-            List.iter2
-              (fun (v : var) x -> Hashtbl.replace env v.vid x)
-              binders args;
-            eval_subset env known_eqns known_outs)
+          (Jaxpr.eval_closed_jaxpr known_body)
           pvals
       in
       let known_values =
@@ -519,6 +517,15 @@ let remat_partial_eval trace id (tracers : tracer list) =
               (fun ((v : var), _) x -> Hashtbl.replace env v.vid x)
               used_inputs ins;
             eval_subset env staged_eqns unknown_outs)
+      in
+      let staged, staged_args =
+        Jaxpr.dce_closed staged (List.map (fun _ -> true) staged.jaxpr.outs)
+      in
+      let used_inputs =
+        List.concat
+          (List.map2
+             (fun x used -> if used then [ x ] else [])
+             used_inputs staged_args)
       in
       let staged_id = remat_id ~differentiated:true staged in
       let unknown_values =

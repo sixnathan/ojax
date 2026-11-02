@@ -632,7 +632,7 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
                   (fun i ->
                     let k = i / 2 in
                     if Float.is_nan re.(k) || Float.is_nan im.(k) then
-                      if i mod 2 = 0 then Float.nan else 0.0
+                      if i mod 2 = 0 then Float_format.nan else 0.0
                     else if i mod 2 = 0 then re.(k)
                     else im.(k))
               else flat_floats (host "unique" moved)

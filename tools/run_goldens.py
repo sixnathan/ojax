@@ -4,6 +4,7 @@ import collections
 import fcntl
 import os
 import re
+import resource
 import shutil
 import subprocess
 import sys
@@ -102,6 +103,9 @@ def main():
     parser.add_argument("--filter", default=None)
     parser.add_argument("--log", default=None)
     parser.add_argument("--no-ratchet", action="store_true")
+    parser.add_argument("--stall-timeout", type=float, default=0)
+    parser.add_argument("--split-failed", action="store_true")
+    parser.add_argument("--mem-limit-gb", type=float, default=0)
     args = parser.parse_args()
 
     cwd = os.path.join(root, "_build/default/test/golden")
@@ -117,6 +121,10 @@ def main():
         cases = [c for c in cases if re.search(args.filter, c[0])]
     jobs = make_jobs(cases, args.jobs * 2)
 
+    def bound_memory():
+        limit = int(args.mem_limit_gb * 2**30)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
     started = time.time()
     running = []
     failed = []
@@ -130,7 +138,8 @@ def main():
             group, low, high = jobs[next_job]
             scratch = os.path.join(work, str(next_job))
             os.makedirs(os.path.join(scratch, "a"))
-            job_env = dict(env, OJAX_EXACT_LOG=os.path.join(scratch, "exact.log"))
+            job_log = os.path.join(scratch, "exact.log")
+            job_env = dict(env, OJAX_EXACT_LOG=job_log)
             out = open(os.path.join(scratch, "out"), "w")
             proc = subprocess.Popen(
                 ["nice", "-n", "10", "taskset", "-c", str(slot[0]), exe, "test", "-o", os.path.join(scratch, "a"), "^" + re.escape(group) + "$", f"{low}..{high}"],
@@ -138,15 +147,28 @@ def main():
                 env=job_env,
                 stdout=out,
                 stderr=subprocess.STDOUT,
+                preexec_fn=bound_memory if args.mem_limit_gb else None,
             )
-            running.append((proc, next_job, out, slot[1]))
+            running.append((proc, next_job, out, slot[1], job_log, time.time()))
             next_job += 1
         for item in running[:]:
+            if args.stall_timeout and item[0].poll() is None:
+                moved = os.path.getmtime(item[4]) if os.path.exists(item[4]) else item[5]
+                if time.time() - max(moved, item[5]) > args.stall_timeout:
+                    item[0].kill()
             if item[0].poll() is not None:
                 item[2].close()
                 os.close(item[3])
                 if item[0].returncode != 0:
-                    failed.append(item[1])
+                    group, low, high = jobs[item[1]]
+                    if args.split_failed and low < high:
+                        middle = (low + high) // 2
+                        jobs.append((group, low, middle))
+                        jobs.append((group, middle + 1, high))
+                        if os.path.exists(item[4]):
+                            os.remove(item[4])
+                    else:
+                        failed.append(item[1])
                 running.remove(item)
         time.sleep(0.05)
 

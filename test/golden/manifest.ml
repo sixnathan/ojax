@@ -4526,6 +4526,8 @@ let () =
            "x64_on";
          ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
        ]
+    @ Fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
+        ~concrete
     @ [
         ( "exact_ratchet",
           [

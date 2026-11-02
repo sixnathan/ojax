@@ -735,6 +735,10 @@ lax.conv_general_dilated_local_cd7948b0_float64:eager:error_text	1
 lax.conv_general_dilated_local_cd7948b0_float64:jit:error_text	1
 lax.conv_general_dilated_patches_19d2404c_float64:eager:error_text	1
 lax.conv_general_dilated_patches_19d2404c_float64:jit:error_text	1
+lax.conv_general_dilated_patches_63d6518c_float64:eager:error_text	1
+lax.conv_general_dilated_patches_63d6518c_float64:jit:error_text	1
+lax.conv_general_dilated_patches_8c3e47de_float64:eager:error_text	1
+lax.conv_general_dilated_patches_8c3e47de_float64:jit:error_text	1
 lax.conv_general_dilated_patches_9cd93f37_float64:eager:error_text	1
 lax.conv_general_dilated_patches_9cd93f37_float64:jit:error_text	1
 lax.conv_general_dilated_patches_cddf4e9d_float64:eager:error_text	1
@@ -1346,6 +1350,8 @@ sp_linalg.solve_sylvester_dc344777_float64:eager:error_text	1
 sp_linalg.solve_sylvester_dc344777_float64:jit:error_text	1
 sp_linalg.solve_triangular_f1c143b5_float64:eager:error_text	1
 sp_linalg.solve_triangular_f1c143b5_float64:jit:error_text	1
+sp_signal.convolve2d_3f9d461f_float64:eager:error_text	1
+sp_signal.convolve2d_3f9d461f_float64:jit:error_text	1
 sp_signal.convolve2d_6b143c04_float64:eager:error_text	1
 sp_signal.convolve2d_6b143c04_float64:jit:error_text	1
 sp_signal.convolve2d_6dc2350d_float64:eager:error_text	1

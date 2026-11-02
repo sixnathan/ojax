@@ -4054,8 +4054,10 @@ compose_00839_float32:jit:out0	1
 compose_00839_float32:text	1
 compose_00840_float32:eager:out0	1
 compose_00840_float32:eager:out1	1
+compose_00840_float32:jaxpr	1
 compose_00840_float32:jit:out0	1
 compose_00840_float32:jit:out1	1
+compose_00840_float32:text	1
 compose_00841_float32:eager:out0	1
 compose_00841_float32:jaxpr	1
 compose_00841_float32:jit:out0	1

@@ -1,5 +1,7 @@
 jnp.corrcoef_be522b5f_float32:eager:out0	1
 jnp.corrcoef_be522b5f_float32:jit:out0	1
+jnp.full_bf38151c_float32:eager:out0	1
+jnp.full_bf38151c_float32:jit:out0	1
 jnp.setxor1d_6b174152_float32:eager:out0	1
 jnp.setxor1d_6b174152_float32:jit:out0	1
 jnp.unique_43b835c6_float32:eager:out0	1

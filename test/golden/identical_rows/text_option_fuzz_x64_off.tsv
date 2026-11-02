@@ -709,8 +709,12 @@ lax.conv_general_dilated_patches_07a852dd_float32:eager:error_text	1
 lax.conv_general_dilated_patches_07a852dd_float32:jit:error_text	1
 lax.conv_general_dilated_patches_6a754692_float32:eager:error_text	1
 lax.conv_general_dilated_patches_6a754692_float32:jit:error_text	1
+lax.conv_general_dilated_patches_702d33c0_float32:eager:error_text	1
+lax.conv_general_dilated_patches_702d33c0_float32:jit:error_text	1
 lax.conv_general_dilated_patches_b51b4d4f_float32:eager:error_text	1
 lax.conv_general_dilated_patches_b51b4d4f_float32:jit:error_text	1
+lax.conv_general_dilated_patches_f8e94a81_float32:eager:error_text	1
+lax.conv_general_dilated_patches_f8e94a81_float32:jit:error_text	1
 lax.conv_transpose_28da392a_float32:eager:error_text	1
 lax.conv_transpose_28da392a_float32:jit:error_text	1
 lax.conv_transpose_2bcf4a66_float32:eager:error_text	1
@@ -769,6 +773,8 @@ lax.dot_e53c3d9e_float32:eager:error_text	1
 lax.dot_e53c3d9e_float32:jit:error_text	1
 lax.dot_e6573da3_float32:eager:error_text	1
 lax.dot_e6573da3_float32:jit:error_text	1
+lax.dot_edfe440b_float32:eager:error_text	1
+lax.dot_edfe440b_float32:jit:error_text	1
 lax.mul_92203867_float32:eager:error_text	1
 lax.mul_92203867_float32:jit:error_text	1
 lax.round_1d5128a9_float32:eager:error_text	1
@@ -1296,6 +1302,8 @@ sp_signal.convolve_25d44160_float32:eager:error_text	1
 sp_signal.convolve_25d44160_float32:jit:error_text	1
 sp_signal.convolve_a9e53b72_float32:eager:error_text	1
 sp_signal.convolve_a9e53b72_float32:jit:error_text	1
+sp_signal.convolve_f97c40ce_float32:eager:error_text	1
+sp_signal.convolve_f97c40ce_float32:jit:error_text	1
 sp_signal.correlate2d_217b37e6_float32:eager:error_text	1
 sp_signal.correlate2d_217b37e6_float32:jit:error_text	1
 sp_signal.correlate2d_691b4948_float32:eager:error_text	1
@@ -1306,6 +1314,8 @@ sp_signal.correlate2d_a2c04292_float32:eager:error_text	1
 sp_signal.correlate2d_a2c04292_float32:jit:error_text	1
 sp_signal.correlate2d_a7354aaf_float32:eager:error_text	1
 sp_signal.correlate2d_a7354aaf_float32:jit:error_text	1
+sp_signal.correlate2d_db7441b8_float32:eager:error_text	1
+sp_signal.correlate2d_db7441b8_float32:jit:error_text	1
 sp_signal.correlate_01ae34c5_float32:eager:error_text	1
 sp_signal.correlate_01ae34c5_float32:jit:error_text	1
 sp_signal.correlate_48b7412e_float32:eager:error_text	1

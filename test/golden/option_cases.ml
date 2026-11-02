@@ -1073,7 +1073,7 @@ let run op positional options arr =
       [
         Ojax.Numpy.Lax_numpy.tri ?m:(A.opt options "M" A.int_)
           ?k:(A.opt options "k" A.int_)
-          ~dtype:(A.default_float (A.get options "dtype" `Null))
+          ?dtype:(A.opt options "dtype" A.dtype)
           (A.int_ positional.(0));
       ]
   | "jnp.tril" ->

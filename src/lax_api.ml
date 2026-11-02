@@ -183,7 +183,7 @@ let select_n pred cases =
 
 let full sh fill_value dt =
   Validate.check_shapelike ~name:"broadcast_in_dim" ~arg:"shape" sh;
-  filled dt sh fill_value
+  filled (Dtypes.canonicalize_dtype dt) sh fill_value
 
 let rec full_like ?dtype ?shape x fill_value =
   match (dtype, shape) with
@@ -688,6 +688,12 @@ let top_k ?(axis = -1) x k =
 
 let dtype_bits = Dtypes.itemsize_bits
 
+let dot_bit_width = function
+  | Dtype.Bool -> 1
+  | Dtype.Complex64 -> 32
+  | Dtype.Complex128 -> 64
+  | dt -> dtype_bits dt
+
 let convert_to dt v =
   if dtype_of v = dt then v else b1 (Convert_element_type dt) [ v ]
 
@@ -770,7 +776,7 @@ let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
   | Some p
     when (not has_algorithm)
          && (not (Dtypes.issubdtype result `Floating))
-         && dtype_bits p < dtype_bits result ->
+         && dot_bit_width p < dot_bit_width result ->
       invalid_arg
         (Printf.sprintf
            "`preferred_element_type` must not be narrower than the original \

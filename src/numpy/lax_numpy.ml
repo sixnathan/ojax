@@ -929,7 +929,8 @@ let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
   let nd = ndim p in
   let axis = canonicalize_axis axis nd in
   let dt =
-    if is_bool (dtype p) then Dtypes.default_float_dtype ()
+    if is_bool (dtype p) || is_integral (dtype p) then
+      Dtypes.default_float_dtype ()
     else to_inexact_dtype (dtype p)
   in
   let p = convert p dt in
@@ -1775,7 +1776,7 @@ let diag_indices_from arr =
     s;
   diag_indices ~ndim:nd s.(0)
 
-let tri ?m ?(k = 0) ~dtype n =
+let tri ?m ?(k = 0) ?(dtype = D.F32) n =
   let dtype = Dtypes.canonicalize_dtype dtype in
   let m = Option.value m ~default:n in
   convert (Lax.Linalg.tri_mask n m k) dtype

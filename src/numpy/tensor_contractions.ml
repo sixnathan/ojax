@@ -13,10 +13,21 @@ let pref preferred vs =
 
 let astype v dt = if dtype v = dt then v else NL.astype v dt
 
-let dot_general ?precision lc rc lb rb a b =
-  Lax_api.dot_general ?precision
-    ~preferred_element_type:(Dtypes.promote_types (dtype a) (dtype b))
-    a b ~lhs_contract:lc ~rhs_contract:rc ~lhs_batch:lb ~rhs_batch:rb
+let dot_general ?precision ?preferred lc rc lb rb a b =
+  let preferred_element_type =
+    match preferred with
+    | Some p -> Dtypes.canonicalize_dtype p
+    | None -> Dtypes.promote_types (dtype a) (dtype b)
+  in
+  Lax_api.dot_general ?precision ~preferred_element_type a b ~lhs_contract:lc
+    ~rhs_contract:rc ~lhs_batch:lb ~rhs_batch:rb
+
+let contraction_inputs preferred a b =
+  match preferred with
+  | Some _ -> (a, b)
+  | None ->
+      let pdt = NL.result_type [ a; b ] in
+      (astype a pdt, astype b pdt)
 
 let mul_prim dt = if dt = D.Bool then T.And else T.Mul
 
@@ -26,15 +37,14 @@ let bcast_binop prim a b =
   C.bind1 prim [ a; b ]
 
 let dot ?precision ?preferred a b =
-  let pdt = pref preferred [ a; b ] in
-  let a = astype a pdt and b = astype b pdt in
+  let a, b = contraction_inputs preferred a b in
   let na = ndim a and nb = ndim b in
   let lc, rc =
     if na = 0 || nb = 0 then ([||], [||])
     else if nb = 1 then ([| na - 1 |], [| 0 |])
     else ([| na - 1 |], [| nb - 2 |])
   in
-  dot_general ?precision lc rc [||] [||] a b
+  dot_general ?precision ?preferred lc rc [||] [||] a b
 
 let matmul ?precision ?preferred a b =
   Eager_jit.one "numpy.tensor_contractions.matmul" (precision, preferred) []
@@ -49,8 +59,7 @@ let matmul ?precision ?preferred a b =
              (List.map string_of_int (Array.to_list aval.T.shape)))
       in
       let a_type = typeof a and b_type = typeof b in
-      let pdt = pref preferred [ a; b ] in
-      let a = astype a pdt and b = astype b pdt in
+      let a, b = contraction_inputs preferred a b in
       let na = ndim a and nb = ndim b in
       List.iteri
         (fun i n ->
@@ -121,7 +130,7 @@ let matmul ?precision ?preferred a b =
       in
       let a = squeezed a !a_squeeze and b = squeezed b !b_squeeze in
       let out =
-        dot_general ?precision
+        dot_general ?precision ?preferred
           [| ndim a - 1 |]
           [| (ndim b - 1 - if b_is_mat then 1 else 0) |]
           (Array.of_list !a_batch) (Array.of_list !b_batch) a b
@@ -183,26 +192,25 @@ let vecdot ?(axis = -1) ?precision ?preferred x1 x2 =
               (fun i _ -> i <> Validate.canonicalize_axis axis (ndim x2))
               (Array.to_list (shape x2)));
        ]);
-  let pdt = pref preferred [ x1; x2 ] in
   let x1 = NL.moveaxis [| axis |] [| ndim x1 - 1 |] x1 in
   let x2 = NL.moveaxis [| axis |] [| ndim x2 - 1 |] x2 in
-  match precision with
-  | Some _ ->
-      let sh = NL.broadcast_shapes_n [ shape x1; shape x2 ] in
-      let a = NL.broadcast_to (astype x1 pdt) sh in
-      let b = NL.broadcast_to (astype x2 pdt) sh in
-      let last = Array.length sh - 1 in
-      let batch = Array.init last Fun.id in
-      dot_general ?precision [| last |] [| last |] batch batch a b
-  | None ->
-      let prod = bcast_binop (mul_prim pdt) (astype x1 pdt) (astype x2 pdt) in
-      C.bind1 (T.Reduce_sum [| ndim prod - 1 |]) [ prod ]
+  let x1 =
+    match dtype x1 with
+    | D.Complex64 | D.Complex128 -> C.bind1 T.Conj [ x1 ]
+    | _ -> x1
+  in
+  let x1, x2 = contraction_inputs preferred x1 x2 in
+  let sh = NL.broadcast_shapes_n [ shape x1; shape x2 ] in
+  let bcast v = if shape v = sh then v else NL.broadcast_to v sh in
+  let last = Array.length sh - 1 in
+  let batch = Array.init last Fun.id in
+  dot_general ?precision ?preferred [| last |] [| last |] batch batch (bcast x1)
+    (bcast x2)
 
 type td_axes = Ax_int of int | Ax_pair of int array * int array
 
 let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
-  let pdt = pref preferred [ a; b ] in
-  let a = astype a pdt and b = astype b pdt in
+  let a, b = contraction_inputs preferred a b in
   let na = ndim a and nb = ndim b in
   let lc, rc =
     match axes with
@@ -227,7 +235,7 @@ let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
         ( Array.map (fun i -> Validate.canonicalize_axis i na) ax1,
           Array.map (fun i -> Validate.canonicalize_axis i nb) ax2 )
   in
-  dot_general ?precision lc rc [||] [||] a b
+  dot_general ?precision ?preferred lc rc [||] [||] a b
 
 let inner ?precision ?preferred a b =
   if ndim a = 0 || ndim b = 0 then begin

@@ -244,6 +244,31 @@ let check_pad operand value config =
           for padding_config %s and operand shape %s"
          (tuple result) (padding_text config) (tuple operand))
 
+let validate_preferred_element_type input preferred =
+  let sub d k = Dtypes.issubdtype d k in
+  if not (sub input `Integer && sub preferred `Floating) then begin
+    if
+      List.exists
+        (fun k -> sub input k && not (sub preferred k))
+        [ `Integer; `Floating; `Complex ]
+    then
+      raise
+        (Py_exn.Type_error
+           "Input type is incompatible with `preferred_element_type`. The \
+            compatible combinations of (input_type, preferred_element_type) \
+            are (integral, integral), (integral, floating), (floating, \
+            floating), (complex, complex.");
+    if sub input `Signed && not (sub preferred `Signed) then
+      raise
+        (Py_exn.Type_error
+           "`preferred_element_type` must have the same signedness as the \
+            original type.")
+  end;
+  if Dtypes.itemsize_bits preferred < Dtypes.itemsize_bits input then
+    raise
+      (Py_exn.Type_error
+         "`preferred_element_type` must not be narrower than the original type.")
+
 let check prim avals =
   match prim with
   | Reduce_sum axes
@@ -267,13 +292,18 @@ let check prim avals =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        conv_preferred;
         _;
       } -> (
       match avals () with
-      | [ lhs; rhs ] ->
+      | [ lhs; rhs ] -> (
           check_conv lhs.shape rhs.shape dimension_numbers ~window_strides
             ~padding ~lhs_dilation ~rhs_dilation ~feature_group_count
-            ~batch_group_count
+            ~batch_group_count;
+          match conv_preferred with
+          | Some d when lhs.dtype = rhs.dtype ->
+              validate_preferred_element_type lhs.dtype d
+          | _ -> ())
       | _ -> ())
   | Rng_bit_generator { rbg_shape; _ }
     when Array.exists (fun d -> d < 0) rbg_shape ->

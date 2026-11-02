@@ -1293,7 +1293,10 @@ let nan_where_bad ok v =
   let select_shape = Array.append batch (Array.make (rank - nb) 1) in
   let which = L.broadcast_in_dim ok select_shape (Array.init nb Fun.id) in
   let nans = nan_full v in
-  let spread = L.broadcast_in_dim which (shape v) (Array.init rank Fun.id) in
+  let spread =
+    if select_shape = shape v then which
+    else L.broadcast_in_dim which (shape v) (Array.init rank Fun.id)
+  in
   select spread v nans
 
 let full_info info x =

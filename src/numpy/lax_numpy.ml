@@ -1700,14 +1700,19 @@ let take_trailing a indices =
       g_sorted_unique = false;
     }
   in
+  let slice_shape =
+    Array.append (Array.sub s 0 (nd - k)) (shape (List.hd indices))
+  in
   ignore batch;
-  bind1
-    (T.Gather
-       {
-         dimension_numbers = dnums;
-         slice_sizes = Array.mapi (fun d e -> if d >= nd - k then 1 else e) s;
-       })
-    [ a; start ]
+  if Array.mem 0 slice_shape then C.splat (dtype a) slice_shape 0.0
+  else
+    bind1
+      (T.Gather
+         {
+           dimension_numbers = dnums;
+           slice_sizes = Array.mapi (fun d e -> if d >= nd - k then 1 else e) s;
+         })
+      [ a; start ]
 
 let index_at a i = Nd_index.take a [ Nd_index.Int i ]
 

@@ -1369,37 +1369,42 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     let b = ctx.extras in
     Buffer.add_string b
       (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
-    Buffer.add_string b
-      (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
-    if broadcast then (
+    if in_aval.shape.(axis) = 0 then
+      Buffer.add_string b (Printf.sprintf "    return %%0 : %s\n" ty)
+    else (
       Buffer.add_string b
-        (Printf.sprintf
-           "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
-           sty sty);
-      Buffer.add_string b
-        (Printf.sprintf
-           "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
-      Buffer.add_string b
-        (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
-      Buffer.add_string b
-        (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
-      Buffer.add_string b
-        (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
-      Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-      Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
-    else begin
-      Buffer.add_string b
-        (Printf.sprintf
-           "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
-      Buffer.add_string b
-        (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
-      Buffer.add_string b
-        (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
-      Buffer.add_string b
-        (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
-      Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-      Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
-    end;
+        (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (init dt) sty);
+      if broadcast then (
+        Buffer.add_string b
+          (Printf.sprintf
+             "    %%1 = stablehlo.broadcast_in_dim %%2, dims = [] : (%s) -> %s\n"
+             sty sty);
+        Buffer.add_string b
+          (Printf.sprintf
+             "    %%3 = \"stablehlo.reduce_window\"(%%0, %%1) <{%s}> ({\n" attrs);
+        Buffer.add_string b
+          (Printf.sprintf "    ^bb0(%%4: %s, %%5: %s):\n" sty sty);
+        Buffer.add_string b
+          (Printf.sprintf "      %%6 = stablehlo.%s %%4, %%5 : %s\n" op sty);
+        Buffer.add_string b
+          (Printf.sprintf "      stablehlo.return %%6 : %s\n" sty);
+        Buffer.add_string b
+          (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+        Buffer.add_string b (Printf.sprintf "    return %%3 : %s\n" ty))
+      else begin
+        Buffer.add_string b
+          (Printf.sprintf
+             "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
+        Buffer.add_string b
+          (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
+        Buffer.add_string b
+          (Printf.sprintf "      %%5 = stablehlo.%s %%3, %%4 : %s\n" op sty);
+        Buffer.add_string b
+          (Printf.sprintf "      stablehlo.return %%5 : %s\n" sty);
+        Buffer.add_string b
+          (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+        Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty)
+      end);
     Buffer.add_string b "  }\n"
   end
 

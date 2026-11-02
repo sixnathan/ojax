@@ -86,7 +86,7 @@ let tiled_all_to_all x ~axis_name ~split_axis ~concat_axis =
   let n = axis_size ~axis_name in
   let sh = (Core.get_aval x).shape in
   if sh.(split_axis) mod n <> 0 then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "The size of all_to_all split_axis (%d) has to be divisible by the \
           size of the named axis %s (%d)"
@@ -119,7 +119,7 @@ let all_to_all ?(tiled = false) x ~axis_name ~split_axis ~concat_axis =
     in
     if tiled then begin
       if sh.(split_axis) mod size <> 0 then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "The size of all_to_all split_axis (%d) has to be divisible by \
               the size of the named axis %s (%d)"

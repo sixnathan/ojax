@@ -61,7 +61,7 @@ let resolve shape index =
   let rank = Array.length shape in
   if List.length index > rank then
     raise
-      (Errors.Jax_index_error
+      (Py_exn.Index_error
          (Printf.sprintf
             "Too many indices: array is %d-dimensional, but %d were indexed"
             rank (List.length index)));

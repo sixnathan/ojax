@@ -2,28 +2,6 @@ let both_raise = "both_raise"
 let mismatch_prefix = "both_raise_type:"
 let mismatch_code = -8
 
-let typed =
-  [
-    ("TypeError", [ "Jax_type_error"; "Jaxpr_type_error" ]);
-    ("ValueError", [ "Type_promotion_error" ]);
-    ("IndexError", [ "Jax_index_error" ]);
-    ("ZeroDivisionError", [ "Division_by_zero" ]);
-    ("AssertionError", [ "Assert_failure" ]);
-    ("JAXTypeError", [ "Jax_type_error" ]);
-    ("JAXIndexError", [ "Jax_index_error" ]);
-    ("JaxRuntimeError", [ "Jax_runtime_error" ]);
-    ("XlaRuntimeError", [ "Jax_runtime_error" ]);
-    ("TypePromotionError", [ "Type_promotion_error" ]);
-    ("ConcretizationTypeError", [ "Concretization_type_error" ]);
-    ("NonConcreteBooleanIndexError", [ "Non_concrete_boolean_index_error" ]);
-    ("TracerArrayConversionError", [ "Tracer_array_conversion_error" ]);
-    ("TracerIntegerConversionError", [ "Tracer_integer_conversion_error" ]);
-    ("TracerBoolConversionError", [ "Tracer_bool_conversion_error" ]);
-    ("UnexpectedTracerError", [ "Unexpected_tracer_error" ]);
-    ("KeyReuseError", [ "Key_reuse_error" ]);
-    ("InconclusiveDimensionOperation", [ "Inconclusive_dimension_operation" ]);
-  ]
-
 let authored_stands_for =
   [
     "ValueError";
@@ -75,7 +53,7 @@ let message_of e =
   match e with
   | Failure m | Invalid_argument m -> m
   | e -> (
-      match Ojax.Errors.message_of e with
+      match Ojax.Py_exn.message_of e with
       | Some m -> m
       | None -> Printexc.to_string e)
 
@@ -85,17 +63,13 @@ let is_incidental message =
        (fun prefix -> String.starts_with ~prefix message)
        incidental_prefixes
 
+let python_class = Ojax.Py_exn.class_name
+
 let tier ~jax e =
-  let cls = ojax_class e in
-  let typed_match =
-    match List.assoc_opt jax typed with
-    | Some accepted -> List.mem cls accepted
-    | None -> false
-  in
-  if typed_match then Some "typed"
+  if python_class e = Some jax then Some "typed"
   else if
     List.mem jax authored_stands_for
-    && List.mem cls authored_classes
+    && List.mem (ojax_class e) authored_classes
     && not (is_incidental (message_of e))
   then Some "authored"
   else None

@@ -68,8 +68,7 @@ let real_only vs =
       match dtype v with
       | D.Complex64 | D.Complex128 ->
           raise
-            (Errors.jax_type_error
-               "scipy.stats does not accept complex input here.")
+            (Py_exn.Type_error "scipy.stats does not accept complex input here.")
       | _ -> ())
     vs;
   vs

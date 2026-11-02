@@ -12,13 +12,7 @@ let size v = Array.fold_left ( * ) 1 (shape v)
 let bind1 = C.bind1
 let const_full dt sh x = Core.splat dt sh x
 let zeros_like v = const_full (dtype v) (shape v) 0.0
-
-let canonicalize_axis ax n =
-  let a = if ax < 0 then ax + n else ax in
-  if a < 0 || a >= n then
-    invalid_arg
-      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" ax n);
-  a
+let canonicalize_axis = Validate.canonicalize_axis
 
 let convert v dt =
   if dtype v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
@@ -162,7 +156,7 @@ let reduction ~name ~prim ~bool_prim ~combine ~bool_combine ~init ~has_identity
     initial = None && (not has_identity)
     && Array.exists (fun i -> (shape a).(i) < 1) axes
   then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "zero-size array to reduction operation %s which has no identity" name);
   let result_dtype =
@@ -254,6 +248,9 @@ let count_over ?axis ?(keepdims = false) ?where:mask a cdt =
   match mask with
   | Some m -> sum ?axis ~keepdims ~dtype:cdt (broadcast_to m (shape a))
   | None ->
+      Option.iter
+        (Array.iter (fun i -> ignore (Validate.tuple_index (shape a) i)))
+        axis;
       let axes = resolve_axes a axis in
       let n = float_of_int (axis_count a axes) in
       ignore keepdims;
@@ -410,6 +407,9 @@ let count_nonzero ?axis ?keepdims p0 =
     [ p0 ]
 
 let average_with_sum ?axis ?(keepdims = false) ?weights a =
+  Option.iter
+    (fun axes -> ignore (Validate.canonicalize_axis_tuple axes (ndim a)))
+    axis;
   match weights with
   | None ->
       let a = to_inexact a in

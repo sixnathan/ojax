@@ -139,7 +139,7 @@ let reduce ?(axis = 0) u a =
       if n = 0 then
         match u.identity with
         | Some x -> Lax_api.full rest x dt
-        | None -> invalid_arg "reduce: zero-size input needs an identity"
+        | None -> Py_exn.value_error "reduce: zero-size input needs an identity"
       else
         let start_index, start_value =
           match u.identity with

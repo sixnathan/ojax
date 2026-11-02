@@ -13,7 +13,7 @@ let check_window operand_shape (w : window_dims) =
   Utils.check_shapelike "reduce_window" "window_dilation" w.window_dilation;
   let n = Array.length w.window_dimensions in
   let fail fmt =
-    Printf.ksprintf (fun msg -> raise (Errors.Jax_type_error msg)) fmt
+    Printf.ksprintf (fun msg -> raise (Py_exn.Type_error msg)) fmt
   in
   if Array.length operand_shape <> n then
     fail

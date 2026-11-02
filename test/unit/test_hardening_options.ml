@@ -5422,7 +5422,12 @@ let run_group cases () =
                  List.map host values))
         with
         | Failure m | Invalid_argument m -> Error m
-        | Errors.Jax_type_error m -> Error m
+        | Py_exn.Type_error m
+        | Py_exn.Value_error m
+        | Py_exn.Index_error m
+        | Py_exn.Overflow_error m
+        | Py_exn.Not_implemented_error m ->
+            Error m
       in
       match (outcome, expected) with
       | Error _, None -> ()

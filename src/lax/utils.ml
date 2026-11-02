@@ -7,7 +7,7 @@ let py_tuple a =
   | [ x ] -> Printf.sprintf "(%d,)" x
   | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
 
-let type_error msg = raise (Errors.Jax_type_error msg)
+let type_error msg = raise (Py_exn.Type_error msg)
 
 let check_conv_window (dn : conv_dims) rhs_shape =
   let n = Array.length dn.rhs_spec - 2 in

@@ -291,7 +291,7 @@ let placed_dispatch (top : trace) prim args =
 
 let rejected_dtype name dt classes =
   raise
-    (Errors.jax_type_error
+    (Py_exn.Type_error
        (Printf.sprintf "%s does not accept dtype %s. Accepted dtypes are %s."
           name (Dtype.short_name dt) classes))
 

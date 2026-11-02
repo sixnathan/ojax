@@ -62,7 +62,11 @@ let run_log name expected_log thunk =
 
 let raises_with name fragment thunk =
   match thunk () with
-  | exception (Failure m | Invalid_argument m | Errors.Jax_type_error m) ->
+  | exception
+      ( Failure m
+      | Invalid_argument m
+      | Ojax.Py_exn.Type_error m
+      | Ojax.Py_exn.Value_error m ) ->
       let contains =
         let n = String.length fragment and h = String.length m in
         let rec go i =

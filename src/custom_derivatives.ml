@@ -99,7 +99,7 @@ let custom_jvp_symbolic primal ~jvp =
       in
       if not (same_type expected got) then
         raise
-          (Errors.Jax_type_error
+          (Py_exn.Type_error
              (Printf.sprintf
                 "Custom JVP rule must produce primal and tangent outputs with \
                  corresponding shapes and dtypes. Expected %s (tangent type of \

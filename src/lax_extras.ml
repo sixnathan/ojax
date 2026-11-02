@@ -21,7 +21,7 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
     else reduction_dimension
   in
   if a.T.shape.(axis) < k then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "k must be smaller than the size of reduction_dim %d, got %d"
          a.T.shape.(axis) k);
@@ -223,7 +223,7 @@ let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
           "ragged_dot_general requires rhs group dimension numbers to be \
            distinct from contracting and batch dimensions.";
       if (shape rhs).(group) <> num_groups then
-        invalid_arg
+        Py_exn.type_error
           (Printf.sprintf "expected rhs group dimension size to be %d, got %d."
              num_groups
              (shape rhs).(group)));

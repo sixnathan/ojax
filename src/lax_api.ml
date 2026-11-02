@@ -7,14 +7,7 @@ let aval v = Core.get_aval v
 let shape v = (aval v).shape
 let dtype_of v = (aval v).dtype
 let ndim v = Array.length (shape v)
-
-let canon_axis n a =
-  let c = if a < 0 then a + n else a in
-  if c < 0 || c >= n then
-    invalid_arg
-      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" a n);
-  c
-
+let canon_axis n a = Validate.canonicalize_axis a n
 let product a = Array.fold_left ( * ) 1 a
 let filled dt sh x = Core.splat dt sh x
 
@@ -280,18 +273,21 @@ let broadcast_shapes shapes =
 let collapse_from x start =
   let sh = shape x in
   let n = Array.length sh in
-  let start = if start < 0 then start + n else start in
-  let size = product (Array.sub sh start (n - start)) in
-  b1 (Reshape (Array.append (Array.sub sh 0 start) [| size |])) [ x ]
+  let lo, _ = Validate.slice_indices ~start n in
+  let size = product (Array.sub sh lo (n - lo)) in
+  b1 (Reshape (Array.append (Array.sub sh 0 lo) [| size |])) [ x ]
 
 let collapse x start stop =
   let sh = shape x in
   let n = Array.length sh in
-  let stop = if stop < 0 then stop + n else stop in
-  let size = product (Array.sub sh start (stop - start)) in
+  let lo, hi = Validate.slice_indices ~start ~stop n in
+  if hi < lo then
+    Py_exn.value_error
+      (Printf.sprintf "Invalid dimension range passed to collapse: %s[%d:%d]"
+         (Validate.python_tuple sh) start stop);
+  let size = product (Array.sub sh lo (hi - lo)) in
   let out =
-    Array.concat
-      [ Array.sub sh 0 start; [| size |]; Array.sub sh stop (n - stop) ]
+    Array.concat [ Array.sub sh 0 lo; [| size |]; Array.sub sh hi (n - hi) ]
   in
   b1 (Reshape out) [ x ]
 
@@ -309,8 +305,9 @@ let slice ?strides x start_indices limit_indices =
 let slice_in_dim ?(stride = 1) ?(axis = 0) x start stop =
   let sh = shape x in
   let n = Array.length sh in
-  let axis = canon_axis n axis in
-  let bound v = if v < 0 then v + sh.(axis) else v in
+  let len_axis = Validate.tuple_index sh axis in
+  let axis = if axis < 0 then axis + n else axis in
+  let bound v = if v < 0 then v + len_axis else v in
   let lo = Array.make n 0 and hi = Array.copy sh and st = Array.make n 1 in
   lo.(axis) <- bound start;
   hi.(axis) <- bound stop;
@@ -318,11 +315,14 @@ let slice_in_dim ?(stride = 1) ?(axis = 0) x start stop =
   slice ~strides:st x lo hi
 
 let index_in_dim ?(axis = 0) ?(keepdims = true) x index =
-  let axis = canon_axis (ndim x) axis in
-  let size = (shape x).(axis) in
-  let index = if index < 0 then index + size else index in
-  if index < 0 || index >= size then invalid_arg "index out of bounds for axis";
-  let v = slice_in_dim ~axis x index (index + 1) in
+  let size = Validate.tuple_index (shape x) axis in
+  let wrapped = if index < 0 then index + size else index in
+  if wrapped < 0 || wrapped >= size then
+    Py_exn.index_error
+      (Printf.sprintf "index %d is out of bounds for axis %d with size %d" index
+         axis size);
+  let axis = if axis < 0 then axis + ndim x else axis in
+  let v = slice_in_dim ~axis x wrapped (wrapped + 1) in
   if keepdims then v else b1 (Squeeze [| axis |]) [ v ]
 
 let index_scalar i =
@@ -377,7 +377,7 @@ let starts_in_dim ?(allow_negative_indices = true) x axis start =
 
 let dynamic_slice_in_dim ?(axis = 0) ?allow_negative_indices x start size =
   let n = ndim x in
-  let axis = canon_axis n axis in
+  let axis = Validate.list_assign_index n axis in
   let sizes = Array.copy (shape x) in
   sizes.(axis) <- size;
   dynamic_slice_normalized x
@@ -385,7 +385,7 @@ let dynamic_slice_in_dim ?(axis = 0) ?allow_negative_indices x start size =
     sizes
 
 let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
-  let axis = canon_axis (ndim x) axis in
+  let axis = Validate.list_assign_index (ndim x) axis in
   match
     Jaxpr.named_jit ~name:"dynamic_index_in_dim"
       ~key:(Printf.sprintf "%d %b" axis keepdims)
@@ -402,7 +402,7 @@ let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
 let dynamic_update_slice_in_dim ?(axis = 0) ?allow_negative_indices x update
     start =
   let n = ndim x in
-  let axis = canon_axis n axis in
+  let axis = Validate.list_assign_index n axis in
   dynamic_update_slice x update
     (starts_in_dim ?allow_negative_indices x axis start)
 
@@ -751,7 +751,7 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
       let sx = shape x and sy = shape y in
       if not (nx >= 1 && nx <= 2 && ny >= 1 && ny <= 2 && sx.(nx - 1) = sy.(0))
       then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "jax.lax.dot: dimension_numbers must be specified when not \
               performing simple un-batched matrix-matrix, matrix-vector, or \
@@ -784,7 +784,7 @@ let dot_general ?precision ?preferred_element_type x y ~lhs_contract
 let batch_matmul ?precision ?preferred_element_type x y =
   let n = ndim x in
   if ndim y <> n || n < 2 then
-    invalid_arg "batch_matmul requires equal ranks of at least two";
+    Py_exn.type_error "batch_matmul requires equal ranks of at least two";
   let batch = Array.init (n - 2) Fun.id in
   dot_general ?precision ?preferred_element_type x y
     ~lhs_contract:[| n - 1 |]
@@ -855,7 +855,7 @@ let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation
     rhs ~window_strides padding =
   let rank = ndim lhs in
   if feature_group_count <= 0 then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "conv_general_dilated feature_group_count must be a positive integer, \
           got %d."

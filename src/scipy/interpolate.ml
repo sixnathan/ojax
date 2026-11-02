@@ -92,7 +92,7 @@ let evaluate t xi =
   let xshape = shape xi in
   let n = Array.length xshape in
   if xshape.(n - 1) <> d then
-    invalid_arg "the requested sample points xi have the wrong dimension";
+    Py_exn.value_error "the requested sample points xi have the wrong dimension";
   let flat_shape =
     [| Array.fold_left ( * ) 1 xshape / xshape.(n - 1); xshape.(n - 1) |]
   in

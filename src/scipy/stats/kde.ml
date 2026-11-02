@@ -25,7 +25,7 @@ let gaussian_kde ?(bw_method = "scott") ?weights dataset =
   let dataset = NL.atleast_2d dataset in
   let sh = shape dataset in
   if Array.length sh <> 2 || Array.fold_left ( * ) 1 sh <= 1 then
-    invalid_arg "`dataset` input should have multiple elements.";
+    Py_exn.value_error "`dataset` input should have multiple elements.";
   let d = sh.(0) and n = sh.(1) in
   let dataset, w =
     match weights with
@@ -143,7 +143,7 @@ let logpdf t points =
   L.squeeze result [| 1 |]
 
 let integrate_box_1d t low high =
-  if t.d <> 1 then invalid_arg "integrate_box_1d() only handles 1D pdfs";
+  if t.d <> 1 then Py_exn.value_error "integrate_box_1d() only handles 1D pdfs";
   let pyf = JU.py_float in
   Eager_jit.one ~jit:"integrate_box_1d" "scipy.stats.kde.integrate_box_1d" () []
     [ t.neff; t.dataset; t.weights; t.covariance; t.inv_cov; pyf low; pyf high ]

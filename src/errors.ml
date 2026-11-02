@@ -7,18 +7,27 @@ module Effects = struct
   let equal (a : t) (b : t) : bool = a = b
 end
 
-exception Jax_type_error of string
-exception Jax_index_error of string
-exception Concretization_type_error of string
-exception Non_concrete_boolean_index_error of string
-exception Tracer_array_conversion_error of string
-exception Tracer_integer_conversion_error of string
-exception Tracer_bool_conversion_error of string
-exception Unexpected_tracer_error of string
-exception Key_reuse_error of string
-exception Inconclusive_dimension_operation of string
-exception Jax_runtime_error of string
-exception Jaxpr_type_error of string
+exception Jax_type_error = Py_exn.Jax_type_error
+exception Jax_index_error = Py_exn.Jax_index_error
+exception Concretization_type_error = Py_exn.Concretization_type_error
+
+exception
+  Non_concrete_boolean_index_error = Py_exn.Non_concrete_boolean_index_error
+
+exception Tracer_array_conversion_error = Py_exn.Tracer_array_conversion_error
+
+exception
+  Tracer_integer_conversion_error = Py_exn.Tracer_integer_conversion_error
+
+exception Tracer_bool_conversion_error = Py_exn.Tracer_bool_conversion_error
+exception Unexpected_tracer_error = Py_exn.Unexpected_tracer_error
+exception Key_reuse_error = Py_exn.Key_reuse_error
+
+exception
+  Inconclusive_dimension_operation = Py_exn.Inconclusive_dimension_operation
+
+exception Jax_runtime_error = Py_exn.Jax_runtime_error
+exception Jaxpr_type_error = Py_exn.Jaxpr_type_error
 
 let error_page = "https://docs.jax.dev/en/latest/errors.html"
 let module_name = "jax.errors"
@@ -71,18 +80,4 @@ let unexpected_tracer_error (message : string) : exn =
 let key_reuse_error (message : string) : exn =
   Key_reuse_error (with_page "KeyReuseError" message)
 
-let message_of = function
-  | Jax_type_error m
-  | Jax_index_error m
-  | Concretization_type_error m
-  | Non_concrete_boolean_index_error m
-  | Tracer_array_conversion_error m
-  | Tracer_integer_conversion_error m
-  | Tracer_bool_conversion_error m
-  | Unexpected_tracer_error m
-  | Key_reuse_error m
-  | Inconclusive_dimension_operation m
-  | Jax_runtime_error m
-  | Jaxpr_type_error m ->
-      Some m
-  | _ -> None
+let message_of = Py_exn.message_of

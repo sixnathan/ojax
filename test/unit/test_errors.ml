@@ -70,17 +70,18 @@ let bincount_index_overflow () =
     Ojax.Types.Concrete (Ojax.Ndarray.of_floats dtype [| 1 |] [| value |])
   in
   Alcotest.check_raises "int8 maximum"
-    (Invalid_argument "Python integer 128 out of bounds for int8") (fun () ->
-      ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I8 127.0)));
+    (Ojax.Py_exn.Overflow_error "Python integer 128 out of bounds for int8")
+    (fun () -> ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I8 127.0)));
   Alcotest.check_raises "int8 length"
-    (Invalid_argument "Python integer 128 out of bounds for int8") (fun () ->
+    (Ojax.Py_exn.Overflow_error "Python integer 128 out of bounds for int8")
+    (fun () ->
       ignore (Ojax.Numpy.Extras.bincount ~length:128 (x Ojax.Dtype.I8 1.0)));
   Alcotest.check_raises "int16 maximum"
-    (Invalid_argument "Python integer 32768 out of bounds for int16") (fun () ->
-      ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I16 32767.0)));
+    (Ojax.Py_exn.Overflow_error "Python integer 32768 out of bounds for int16")
+    (fun () -> ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I16 32767.0)));
   Alcotest.check_raises "int32 maximum"
-    (Invalid_argument "Python integer 2147483648 out of bounds for int32")
-    (fun () ->
+    (Ojax.Py_exn.Overflow_error
+       "Python integer 2147483648 out of bounds for int32") (fun () ->
       ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I32 2147483647.0)))
 
 let jax_validation () =
@@ -91,13 +92,16 @@ let jax_validation () =
   in
   let f = Ojax.Dtype.F32 in
   let value_error name msg g =
-    Alcotest.check_raises name (Invalid_argument msg) (fun () -> ignore (g ()))
+    Alcotest.check_raises name (Ojax.Py_exn.Value_error msg) (fun () ->
+        ignore (g ()))
   in
   let type_error name msg g =
-    Alcotest.check_raises name (E.Jax_type_error msg) (fun () -> ignore (g ()))
+    Alcotest.check_raises name (Ojax.Py_exn.Type_error msg) (fun () ->
+        ignore (g ()))
   in
   let index_error name msg g =
-    Alcotest.check_raises name (E.Jax_index_error msg) (fun () -> ignore (g ()))
+    Alcotest.check_raises name (Ojax.Py_exn.Index_error msg) (fun () ->
+        ignore (g ()))
   in
   let module L = Ojax.Lax_api in
   type_error "slice limit bound"
@@ -140,9 +144,103 @@ let jax_validation () =
     "zero-size arrays not supported in convolutions, got shapes (0,) and (6,)."
     (fun () -> Ojax.Scipy.Signal.convolve (z f [| 0 |]) (z f [| 6 |]))
 
+let python_classes () =
+  let module P = Ojax.Py_exn in
+  let check name wanted got = Alcotest.(check string) name wanted got in
+  let printed e = Option.value (P.to_string e) ~default:"none" in
+  check "value error" "ValueError: bad" (printed (P.Value_error "bad"));
+  check "printexc" "TypeError: bad" (Printexc.to_string (P.Type_error "bad"));
+  check "key error reprs" "KeyError: 'k'" (printed (P.Key_error "k"));
+  check "no message" "AssertionError" (printed (P.Assertion_error ""));
+  check "division" "ZeroDivisionError" (printed Division_by_zero);
+  check "foreign" "none" (printed Not_found);
+  Alcotest.(check (list string))
+    "tracer bool mro"
+    [
+      "TracerBoolConversionError";
+      "ConcretizationTypeError";
+      "JAXTypeError";
+      "TypeError";
+      "Exception";
+    ]
+    (P.mro "TracerBoolConversionError");
+  Alcotest.(check bool)
+    "index lookup" true
+    (P.is_subclass "IndexError" ~of_:"LookupError");
+  Alcotest.(check bool)
+    "not implemented is runtime" true
+    (P.is_subclass "NotImplementedError" ~of_:"RuntimeError");
+  Alcotest.(check bool)
+    "promotion is value" true
+    (P.is_instance (Ojax.Dtypes.Type_promotion_error "x") "ValueError");
+  Alcotest.(check bool)
+    "type is not jax type" false
+    (P.is_instance (P.Type_error "x") "JAXTypeError");
+  Alcotest.(check (option string))
+    "errors share the class" (Some "JAXTypeError")
+    (P.class_name (E.Jax_type_error "x"))
+
+let validators () =
+  let module V = Ojax.Validate in
+  let module P = Ojax.Py_exn in
+  let value name msg f =
+    Alcotest.check_raises name (P.Value_error msg) (fun () -> ignore (f ()))
+  in
+  let index name msg f =
+    Alcotest.check_raises name (P.Index_error msg) (fun () -> ignore (f ()))
+  in
+  let same = Alcotest.(check int) in
+  same "negative axis" 2 (V.canonicalize_axis (-1) 3);
+  value "axis" "axis 3 is out of bounds for array of dimension 3" (fun () ->
+      V.canonicalize_axis 3 3);
+  value "repeated" "repeated axis: (1, 1)" (fun () ->
+      V.canonicalize_axis_tuple [| 1; -1 |] 2);
+  same "tuple" 4 (V.tuple_index [| 3; 4 |] (-1));
+  index "tuple" "tuple index out of range" (fun () -> V.tuple_index [||] 0);
+  index "list" "list assignment index out of range" (fun () ->
+      V.list_assign_index 0 0);
+  Alcotest.(check (pair int int))
+    "slice" (2, 3)
+    (V.slice_indices ~start:2 ~stop:9 3);
+  Alcotest.(check (pair int int))
+    "slice negative" (0, 1)
+    (V.slice_indices ~start:(-9) ~stop:(-2) 3);
+  Alcotest.(check (array int))
+    "broadcast" [| 3; 4 |]
+    (V.broadcast_shapes [ [| 3; 1 |]; [| 4 |] ]);
+  value "broadcast"
+    "Incompatible shapes for broadcasting: shapes=[(3, 1), (4, 1)]" (fun () ->
+      V.broadcast_shapes [ [| 3; 1 |]; [| 4; 1 |] ]);
+  value "ndim" "needs two" (fun () ->
+      V.require_ndim_at_least 1 ~min:2 "needs two";
+      0)
+
+let collapse_like_jax () =
+  let module L = Ojax.Lax_api in
+  let x sh =
+    Ojax.Types.Concrete
+      (Ojax.Ndarray.of_floats Ojax.Dtype.F32 sh
+         (Array.make (Array.fold_left ( * ) 1 sh) 0.0))
+  in
+  let shape v = (Ojax.Core.get_aval v).Ojax.Types.shape in
+  let check name wanted got = Alcotest.(check (array int)) name wanted got in
+  check "scalar" [| 1 |] (shape (L.collapse (x [||]) 1 3));
+  check "past the end" [| 2; 3 |] (shape (L.collapse (x [| 2; 3 |]) 1 3));
+  check "negative stop" [| 6; 4 |] (shape (L.collapse (x [| 2; 3; 4 |]) 0 (-1)));
+  Alcotest.check_raises "reversed"
+    (Ojax.Py_exn.Value_error
+       "Invalid dimension range passed to collapse: (2, 3, 4)[2:1]") (fun () ->
+      ignore (L.collapse (x [| 2; 3; 4 |]) 2 1))
+
 let () =
   Alcotest.run "errors"
     [
+      ( "python classes",
+        [
+          Alcotest.test_case "classes and printer" `Quick python_classes;
+          Alcotest.test_case "validators" `Quick validators;
+          Alcotest.test_case "collapse" `Quick collapse_like_jax;
+        ] );
       ( "validation",
         [ Alcotest.test_case "jax shape checks" `Quick jax_validation ] );
       ("messages", [ Alcotest.test_case "exact jax text" `Quick messages ]);

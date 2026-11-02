@@ -41,7 +41,7 @@ let broadcast_shapes a b =
       if da = db then da
       else if da = 1 then db
       else if db = 1 then da
-      else invalid_arg "broadcast: incompatible shapes")
+      else Py_exn.value_error "broadcast: incompatible shapes")
 
 let broadcast_to = Jnp_util.broadcast_to
 
@@ -120,8 +120,7 @@ let unary_promote prim x = bind1 prim [ p1 (promote [ x ]) ]
 let fabs x =
   (match dtype x with
   | D.Complex64 | D.Complex128 ->
-      raise
-        (Errors.jax_type_error "ufunc 'fabs' does not support complex dtypes")
+      raise (Py_exn.Type_error "ufunc 'fabs' does not support complex dtypes")
   | _ -> ());
   unary_inexact T.Abs x
 

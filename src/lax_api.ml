@@ -190,15 +190,17 @@ let broadcasted_iota dt sh dimension =
   b1 (Iota { dtype = dt; shape = sh; dimension }) []
 
 let reshape ?dimensions x new_sizes =
-  let v =
-    match dimensions with Some perm -> b1 (Transpose perm) [ x ] | None -> x
+  let in_shape = (Core.get_aval x).shape in
+  let dims =
+    match dimensions with
+    | Some perm when perm <> Array.init (Array.length perm) Fun.id -> Some perm
+    | _ -> None
   in
-  if
-    Array.length new_sizes > 0
-    && dimensions = None
-    && new_sizes = (Core.get_aval v).shape
-  then v
-  else b1 (Reshape new_sizes) [ v ]
+  match dims with
+  | Some perm -> b1 (Reshape_perm { new_sizes; dimensions = perm }) [ x ]
+  | None ->
+      if Array.length in_shape > 0 && new_sizes = in_shape then x
+      else b1 (Reshape new_sizes) [ x ]
 
 let transpose x perm = b1 (Transpose perm) [ x ]
 let rev x dims = b1 (Rev dims) [ x ]
@@ -274,7 +276,9 @@ let collapse x start stop =
   in
   b1 (Reshape out) [ x ]
 
-let concatenate xs dimension = b1 (Concatenate dimension) xs
+let concatenate xs dimension =
+  match xs with [ x ] -> x | _ -> b1 (Concatenate dimension) xs
+
 let stack xs axis = b1 (Stack axis) xs
 let unstack x axis = Core.bind (Unstack axis) [ x ]
 let split x sizes axis = Core.bind (Split { sizes; axis }) [ x ]

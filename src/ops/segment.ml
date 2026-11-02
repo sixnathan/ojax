@@ -9,16 +9,24 @@ let shape v = (get_aval v).T.shape
 let dtype v = (get_aval v).T.dtype
 let bind1 = C.bind1
 let const_full dt sh x = Core.splat dt sh x
+let num_segments_context = "segment_sum() `num_segments` argument."
+let scalar_int nd = int_of_float (Nd.fold (fun _ x -> x) 0.0 nd)
 
-let concrete_max_index v =
+let rec concrete_dim v =
   match v with
-  | T.Concrete nd ->
-      let m = Nd.fold (fun acc x -> Float.max acc x) Float.neg_infinity nd in
-      int_of_float m
+  | T.Concrete nd -> scalar_int nd
+  | T.Device b -> scalar_int (Pjrt.Buffer.to_host b)
+  | T.Tracer { payload = T.JVP { primal; _ }; _ } -> concrete_dim primal
   | T.Tracer _ ->
-      invalid_arg "segment: num_segments must be static for traced segment_ids"
-  | T.Device _ ->
-      invalid_arg "segment: num_segments must be static for traced segment_ids"
+      let aval = get_aval v in
+      raise
+        (Errors.concretization_type_error ~context:num_segments_context
+           ~error_repr:
+             (Printf.sprintf "traced array with shape %s[%s]"
+                (D.numpy_name aval.T.dtype)
+                (String.concat ","
+                   (Array.to_list (Array.map string_of_int aval.T.shape))))
+           ~origin_msg:(Jaxpr.origin_msg v) ())
 
 let identity_sum = 0.0
 let identity_prod = 1.0
@@ -91,7 +99,11 @@ let segment_update prim identity reducer ?num_segments
   let nseg =
     match num_segments with
     | Some k -> k
-    | None -> concrete_max_index segment_ids + 1
+    | None ->
+        concrete_dim
+          (Numpy.Ufuncs.add
+             (Numpy.Reductions.max segment_ids)
+             (Numpy.Jnp_util.py_int 1))
   in
   if nseg < 0 then invalid_arg "num_segments must be non-negative.";
   let clip = mode = Some "clip" in
@@ -119,12 +131,6 @@ let segment_update prim identity reducer ?num_segments
           [ narrow segment_ids ]
       in
       let dnums = { (segment_dnums (Array.length dsh)) with T.s_clip = clip } in
-      let scatter_indices =
-        if clip then
-          Lax_api.scatter_indices (Some Lax_config.Clip) out scatter_indices
-            data dnums
-        else scatter_indices
-      in
       finish (prim dnums) [ out; scatter_indices; data ]
   | Some size ->
       let num_buckets = (n + size - 1) / size in

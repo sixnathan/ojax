@@ -1596,22 +1596,22 @@ let rec impl_base prim inputs =
       | [ operand; indices ] ->
           [ Slicing.gather_impl dimension_numbers slice_sizes operand indices ]
       | _ -> failwith "lax: gather expects operand and indices")
-  | Scatter ({ dimension_numbers = { s_clip = true; _ } as d; _ } as o) -> (
+  | ( Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
+    | Scatter_max _ ) as p
+    when (scatter_dnums p).s_clip -> (
       match inputs with
       | [ operand; indices; updates ] ->
-          let plain = { d with s_clip = false } in
+          let plain = Slicing.unclip_scatter p in
           let clamped =
             Slicing.clamp_scatter_indices (Concrete operand) (Concrete indices)
-              (Concrete updates) plain
+              (Concrete updates) (scatter_dnums plain)
           in
           let clamped_nd =
             match clamped with
             | Concrete nd -> nd
             | _ -> failwith "lax: scatter clip"
           in
-          impl_base
-            (Scatter { o with dimension_numbers = plain })
-            [ operand; clamped_nd; updates ]
+          impl_base plain [ operand; clamped_nd; updates ]
       | _ -> failwith "lax: scatter expects operand, indices and updates")
   | ( Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
     | Scatter_max _ ) as p -> (

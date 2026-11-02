@@ -521,3 +521,31 @@ let clamp_scatter_indices operand indices updates (sd : scatter_dims) =
       [ Concrete (Ndarray.of_floats idt [||] [| 0.0 |]) ]
   in
   bind1 Clamp [ zero; indices; bound ]
+
+let unclip_scatter p =
+  let off (d : scatter_dims) = { d with s_clip = false } in
+  let plain =
+    match p with
+    | Scatter ({ dimension_numbers = d; _ } as o) ->
+        Scatter { o with dimension_numbers = off d }
+    | Scatter_add { dimension_numbers = d } ->
+        Scatter_add { dimension_numbers = off d }
+    | Scatter_sub { dimension_numbers = d } ->
+        Scatter_sub { dimension_numbers = off d }
+    | Scatter_mul ({ dimension_numbers = d; _ } as o) ->
+        Scatter_mul { o with dimension_numbers = off d }
+    | Scatter_min { dimension_numbers = d } ->
+        Scatter_min { dimension_numbers = off d }
+    | Scatter_max { dimension_numbers = d } ->
+        Scatter_max { dimension_numbers = off d }
+    | _ -> invalid_arg "unclip_scatter: not a scatter primitive"
+  in
+  let plain =
+    match Np_ints.scatter_flags_of p with
+    | Some (sorted, unique) -> Np_ints.mark_scatter_flags ~sorted ~unique plain
+    | None -> plain
+  in
+  let plain =
+    if Np_ints.scatter_marked p then Np_ints.mark_scatter plain else plain
+  in
+  if Np_ints.prim_marked p then Np_ints.mark_prim plain else plain

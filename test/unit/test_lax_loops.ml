@@ -133,8 +133,14 @@ let test_while_transpose_deferred () =
       (fun ops -> List.hd (Lax.while_loop wdouble_cond wdouble_body ops))
       [ sc 1.5 ]
   with
-  | _ -> Alcotest.fail "expected while transpose to be deferred"
-  | exception Failure _ -> ()
+  | _ -> Alcotest.fail "expected while transpose to raise"
+  | exception Ojax.Py_exn.Value_error msg ->
+      Alcotest.(check string)
+        "message"
+        "Reverse-mode differentiation does not work for lax.while_loop or \
+         lax.fori_loop with dynamic start/stop values. Try using lax.scan, or \
+         using fori_loop with static start/stop."
+        msg
 
 let test_while_vmap_deferred () =
   let wrapped inputs = Lax.while_loop wdouble_cond wdouble_body inputs in

@@ -1,0 +1,3 @@
+src/interpreters/ad.ml	transpose_rule	prim	prim is Fft {fft_type; fft_lengths}; the key holds both fields
+src/nn/functions.ml	jit_scalar	default	each name has one default: celu 1.0, elu 1.0, leaky_relu 0.01, squareplus 4
+src/numpy/extras.ml	piecewise	callables	the key carries a counter that rises on every call, so no entry is reused

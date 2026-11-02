@@ -5216,6 +5216,69 @@ let error_types_selftest () =
   check "authored stays apart" "authored"
     (tier "OverflowError" (Failure "out of bounds for int32"))
 
+let selected_range () =
+  Option.to_list (Sys.getenv_opt "OJAX_TEST_RANGE") @ Array.to_list Sys.argv
+  |> List.find_map (fun a ->
+      match String.split_on_char '.' a with
+      | [ low; ""; high ] -> (
+          match (int_of_string_opt low, int_of_string_opt high) with
+          | Some l, Some h -> Some (l, h)
+          | _ -> None)
+      | _ -> None)
+  |> Option.value ~default:(0, max_int)
+
+let reorder tests =
+  match Sys.getenv_opt "OJAX_TEST_ORDER" with
+  | None | Some "" | Some "normal" -> tests
+  | Some "fresh" ->
+      List.map
+        (fun (name, speed, run) ->
+          ( name,
+            speed,
+            fun arg ->
+              Ojax.Api.clear_caches ();
+              run arg ))
+        tests
+  | Some order ->
+      let low, high = selected_range () in
+      let inside i = i >= low && i <= high in
+      let indexed = List.mapi (fun i t -> (i, t)) tests in
+      let block = List.filter (fun (i, _) -> inside i) indexed in
+      let permuted =
+        match String.split_on_char ':' order with
+        | [ "reverse" ] | [ "repeat" ] -> List.rev block
+        | [ "shuffle"; seed ] ->
+            let state = Random.State.make [| int_of_string seed |] in
+            let arr = Array.of_list block in
+            for i = Array.length arr - 1 downto 1 do
+              let j = Random.State.int state (i + 1) in
+              let t = arr.(i) in
+              arr.(i) <- arr.(j);
+              arr.(j) <- t
+            done;
+            Array.to_list arr
+        | _ -> failwith ("OJAX_TEST_ORDER: " ^ order)
+      in
+      if order = "repeat" then
+        List.map snd
+          (List.filter (fun (i, _) -> i < low) indexed
+          @ block @ List.rev block
+          @ List.filter (fun (i, _) -> i > high) indexed)
+      else
+        let rest = ref permuted in
+        List.map
+          (fun (i, t) ->
+            if inside i then
+              match !rest with
+              | (_, p) :: tl ->
+                  rest := tl;
+                  p
+              | [] -> t
+            else t)
+          indexed
+
+let reordered (suite, tests) = (suite, reorder tests)
+
 let rec attributed_with_coverage suites =
   List.map attributed (coverage_suites @ apicov_suites @ suites)
 
@@ -5228,7 +5291,7 @@ and attributed (suite, tests) =
           fun arg ->
             Compare.set_suite suite;
             run arg ))
-      tests )
+      (reorder tests) )
 
 let () =
   at_exit (fun () ->
@@ -5377,12 +5440,13 @@ let () =
         (concrete_jit_suite_for "x64_off"
         :: concrete_jit_suite_for "x64_on"
         :: special_values_suites ())
-    @ Fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
-        ~concrete
-    @ Option_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
-        ~concrete
-    @ Compose_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
-        ~string_of_dtype ~concrete
+    @ List.map reordered
+        (Fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
+           ~concrete
+        @ Option_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
+            ~string_of_dtype ~concrete
+        @ Compose_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
+            ~string_of_dtype ~concrete)
     @ [
         ( "exact_ratchet",
           [

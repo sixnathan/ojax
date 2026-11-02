@@ -105,3 +105,4 @@ val run_plan :
 
 val client : unit -> Pjrt.Client.t
 val clear_placed_programs : unit -> unit
+val clear_region_programs : unit -> unit

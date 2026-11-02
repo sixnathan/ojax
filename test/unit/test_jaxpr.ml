@@ -83,6 +83,41 @@ let test_typecheck_bad () =
   | () -> Alcotest.fail "typecheck: expected failure"
   | exception Ojax.Errors.Jaxpr_type_error _ -> ()
 
+let test_named_jit_trace_context () =
+  let module Cf = Ojax.Config in
+  let body = function
+    | [ x ] ->
+        [
+          (if Cf.value Cf.numpy_rank_promotion = "raise" then b1 T.Cos [ x ]
+           else b1 T.Sin [ x ]);
+        ]
+    | _ -> assert false
+  in
+  let zero = T.Concrete (Nd.of_floats D.F32 [| 3 |] [| 0.; 0.; 0. |]) in
+  let first v =
+    match v with
+    | [ T.Concrete n ] -> Nd.get_f n [| 0 |]
+    | _ -> failwith "expected one concrete"
+  in
+  let staged mode =
+    Cf.with_value Cf.numpy_rank_promotion mode (fun () ->
+        let cj =
+          J.make_jaxpr
+            [ av [| 3 |] D.F32 ]
+            (fun a -> J.named_jit ~name:"ctx_probe" body a)
+        in
+        first (J.eval_closed_jaxpr cj [ zero ]))
+  in
+  let eager mode =
+    Cf.with_value Cf.numpy_rank_promotion mode (fun () ->
+        first (J.named_jit ~name:"ctx_probe_eager" body [ zero ]))
+  in
+  List.iter
+    (fun (mode, want) ->
+      Alcotest.(check (float 0.0)) ("staged " ^ mode) want (staged mode);
+      Alcotest.(check (float 0.0)) ("eager " ^ mode) want (eager mode))
+    [ ("allow", 0.0); ("raise", 1.0); ("allow", 0.0) ]
+
 let () =
   Ojax.Lax.install ();
   Alcotest.run "jaxpr"
@@ -95,5 +130,7 @@ let () =
           Alcotest.test_case "eval" `Quick test_eval;
           Alcotest.test_case "typecheck_ok" `Quick test_typecheck_ok;
           Alcotest.test_case "typecheck_bad" `Quick test_typecheck_bad;
+          Alcotest.test_case "named_jit_trace_context" `Quick
+            test_named_jit_trace_context;
         ] );
     ]

@@ -473,7 +473,7 @@ let bernoulli_prob k ~shape ~p =
 
 let rademacher_dt ?p_dt key ~shape ~dt =
   let p_dt = match p_dt with Some d -> d | None -> fdt () in
-  jit_region "_rademacher" (shape, dt) [ key ] (function
+  jit_region "_rademacher" (shape, dt, p_dt) [ key ] (function
     | [ key ] ->
         let b = conv (bernoulli_v key ~p:(npf p_dt 0.5) ~shape) dt in
         let lit x =

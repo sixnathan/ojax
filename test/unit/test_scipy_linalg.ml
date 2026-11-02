@@ -190,6 +190,26 @@ let special_sizes () =
         [ 2; 3; 2 ])
     constructors
 
+let sylvester_options () =
+  let module SS = Ojax.Scipy.Linalg_special in
+  let a = v [| 2; 2 |] [| 1.; 0.; 0.; 2. |] in
+  let b = v [| 2; 2 |] [| -0.999; 0.; 0.; 3. |] in
+  let c = v [| 2; 2 |] [| 1.; 1.; 1.; 1. |] in
+  List.iter
+    (fun (method_, tol, want_nan) ->
+      let x = nd (SS.solve_sylvester ~method_ ~tol a b c) in
+      Alcotest.(check bool)
+        (Printf.sprintf "%s tol=%g nan" method_ tol)
+        want_nan
+        (Float.is_nan (Nd.get_f x [| 0; 0 |])))
+    [
+      ("schur", 1e-8, false);
+      ("schur", 1e-2, true);
+      ("schur", 1e-8, false);
+      ("eigen", 1e-2, true);
+      ("eigen", 1e-8, false);
+    ]
+
 let () =
   Alcotest.run "scipy_linalg"
     [
@@ -217,5 +237,6 @@ let () =
           Alcotest.test_case "eigtri_vs_eigh" `Quick eigtri_vs_eigh;
           Alcotest.test_case "bounded_raises" `Quick bounded_raises;
           Alcotest.test_case "special_sizes" `Quick special_sizes;
+          Alcotest.test_case "sylvester_options" `Quick sylvester_options;
         ] );
     ]

@@ -47,6 +47,7 @@ val eager_jit :
   ref
 
 val copy_call_name : source:closed_jaxpr -> closed_jaxpr -> unit
+val clear_call_cache : unit -> unit
 
 val named_jit :
   name:string ->

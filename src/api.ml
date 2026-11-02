@@ -1166,7 +1166,9 @@ let default_backend = Backend.default_backend
 let clear_caches () =
   Hashtbl.reset compiled;
   Ad_util.clear_symbolic_zeros ();
-  Backend.clear_placed_programs ()
+  Backend.clear_placed_programs ();
+  Backend.clear_region_programs ();
+  Jaxpr.clear_call_cache ()
 
 let disable_jit thunk = Config.with_value Config.disable_jit true thunk
 let enable_checks v thunk = Config.with_value Config.enable_checks v thunk

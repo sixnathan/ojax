@@ -1521,3 +1521,7 @@ let to_host_value = function
 
 let client () = Xla.client ()
 let clear_placed_programs () = Hashtbl.reset placed_programs
+
+let clear_region_programs () =
+  Region_cache.reset region_programs;
+  Hashtbl.reset inline_call_cache

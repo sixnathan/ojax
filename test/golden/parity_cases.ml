@@ -1276,15 +1276,17 @@ let tracer_batch_run op params a b =
 let slice_prefix v stop =
   let sh = (Ojax.Core.get_aval v).Ojax.Types.shape in
   let limit = Array.copy sh in
-  limit.(0) <- stop;
-  Ojax.Core.bind1
-    (Ojax.Types.Slice
-       {
-         start_indices = Array.make (Array.length sh) 0;
-         limit_indices = limit;
-         strides = None;
-       })
-    [ v ]
+  limit.(0) <- min stop sh.(0);
+  if limit = sh then v
+  else
+    Ojax.Core.bind1
+      (Ojax.Types.Slice
+         {
+           start_indices = Array.make (Array.length sh) 0;
+           limit_indices = limit;
+           strides = None;
+         })
+      [ v ]
 
 let library_sweep op v =
   let module NF = Ojax.Nn.Functions in
@@ -1521,20 +1523,7 @@ let dtype_sweep_run op a =
           AC.geomspace_v ~num:3 lower upper)
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
   | "sw_polyval" ->
-      one (fun v ->
-          let sh = (Ojax.Core.get_aval v).T.shape in
-          let top =
-            Ojax.Core.bind1
-              (T.Slice
-                 {
-                   start_indices = Array.map (fun _ -> 0) sh;
-                   limit_indices =
-                     Array.mapi (fun i d -> if i = 0 then 2 else d) sh;
-                   strides = None;
-                 })
-              [ v ]
-          in
-          PO.polyval top (row v 0))
+      one (fun v -> PO.polyval (slice_prefix v 2) (row v 0))
   | "sw_polyder" -> one (fun v -> PO.polyder (row v 0))
   | "sw_polyint" -> one (fun v -> PO.polyint (row v 0))
   | "sw_polyadd" -> one (fun v -> PO.polyadd (row v 0) (row v 1))
@@ -1542,7 +1531,7 @@ let dtype_sweep_run op a =
   | "sw_roots" ->
       one (fun v -> S.sort ~axis:(Some 0) (UF.absolute (E.roots (row v 0))))
   | "sw_kron" -> one (fun v -> NL.kron v v)
-  | "sw_dot" -> one (fun v -> TC.dot v (t v))
+  | "sw_dot" -> one (fun v -> TC.dot v (NL.transpose v))
   | "sw_vdot" -> one (fun v -> TC.vdot v v)
   | "sw_inner" -> one (fun v -> TC.inner v v)
   | "sw_outer" -> one (fun v -> TC.outer (row v 0) (row v 1))

@@ -201,6 +201,14 @@ let slice_axis v axis lo hi =
     (T.Slice { start_indices = start; limit_indices = limit; strides = None })
     [ v ]
 
+let slice_tail v axis =
+  let d = (shape v).(axis) in
+  if d = 0 then v else slice_axis v axis 1 d
+
+let slice_head v axis =
+  let d = (shape v).(axis) in
+  if d = 0 then v else slice_axis v axis 0 (d - 1)
+
 let diff ?(n = 1) ?(axis = -1) ?prepend ?append v =
   if n = 0 then v
   else begin
@@ -233,9 +241,8 @@ let diff ?(n = 1) ?(axis = -1) ?prepend ?append v =
     in
     let bool_dtype = is_bool (dtype v) in
     let step acc =
-      let d = (shape acc).(axis) in
-      let hi = slice_axis acc axis 1 d in
-      let lo = slice_axis acc axis 0 (d - 1) in
+      let hi = slice_tail acc axis in
+      let lo = slice_head acc axis in
       if bool_dtype then bind1 T.Ne [ hi; lo ] else bind1 T.Sub [ hi; lo ]
     in
     let rec loop acc i = if i = 0 then acc else loop (step acc) (i - 1) in
@@ -256,8 +263,7 @@ let diff ?n ?axis ?prepend ?append p0 =
 
 let ediff1d ?to_end ?to_begin v =
   let a = ravel v in
-  let d = (shape a).(0) in
-  let body = bind1 T.Sub [ slice_axis a 0 1 d; slice_axis a 0 0 (d - 1) ] in
+  let body = bind1 T.Sub [ slice_tail a 0; slice_head a 0 ] in
   let extra w = ravel (convert w (dtype a)) in
   let parts =
     Option.to_list (Option.map extra to_begin)
@@ -1047,6 +1053,9 @@ let rec repeat ?axis ?total_repeat_length a repeats =
   | None -> repeat_scalar ?axis a repeats
 
 and repeat_to_total ?axis a repeats total =
+  if axis <> None && ndim a = 0 then
+    bind1 (T.Broadcast_in_dim { shape = [| total |]; dims = [||] }) [ a ]
+  else
   let a, ax =
     match axis with
     | None -> (ravel a, 0)
@@ -1068,6 +1077,9 @@ and repeat_to_total ?axis a repeats total =
   end
 
 and repeat_scalar ?axis a repeats =
+  if axis <> None && ndim a = 0 then
+    bind1 (T.Broadcast_in_dim { shape = [| repeats |]; dims = [||] }) [ a ]
+  else
   let a, ax =
     match axis with
     | None -> (ravel a, 0)
@@ -1695,13 +1707,19 @@ let take_trailing a indices =
     }
   in
   ignore batch;
-  bind1
-    (T.Gather
-       {
-         dimension_numbers = dnums;
-         slice_sizes = Array.mapi (fun d e -> if d >= nd - k then 1 else e) s;
-       })
-    [ a; start ]
+  let slice_shape =
+    Array.append (Array.sub s 0 (nd - k)) (shape (List.hd indices))
+  in
+  if Array.exists (fun d -> d = 0) slice_shape then
+    const_full (dtype a) slice_shape 0.0
+  else
+    bind1
+      (T.Gather
+         {
+           dimension_numbers = dnums;
+           slice_sizes = Array.mapi (fun d e -> if d >= nd - k then 1 else e) s;
+         })
+      [ a; start ]
 
 let index_at a i =
   let s = shape a in
@@ -2308,6 +2326,15 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
         in
         concatenate ~axis:0 [ x0; y2 ]
   in
+  if (shape x0).(0) = 0 then
+    reshape
+      (T.Concrete (Ndarray.of_floats (Dtypes.default_float_dtype ()) [| 0 |] [||]))
+      [| 0; 0 |]
+  else if (shape x).(1) = 0 then
+    const_full (dtype_of x)
+      (if (shape x).(0) = 1 then [||] else [| (shape x).(0); (shape x).(0) |])
+      Float_format.nan
+  else
   let x = match dtype with Some d -> convert x d | None -> x in
   let dt = dtype_of x in
   let nvars = (shape x).(0) and nobs = (shape x).(1) in

@@ -36,6 +36,11 @@ let sem ?axis ?ddof ?nan_policy ?keepdims a =
 
 let lane_mode x =
   let n = Array.fold_left ( * ) 1 (shape x) in
+  if n = 0 then
+    let dt = Dtypes.default_float_dtype () in
+    ( Lax_api.full [||] Float_format.nan dt,
+      Lax_api.full [||] 0.0 dt )
+  else
   let vals, counts =
     match Numpy.Extras.unique ~return_counts:true ~size:n x with
     | [ vals; counts ] -> (vals, counts)
@@ -64,7 +69,9 @@ let mode ?(axis = Some 0) ?(nan_policy = "propagate") ?(keepdims = false) a =
     | None -> NL.reshape x [| Array.fold_left ( * ) 1 sh |]
   in
   let msh = shape moved in
-  let lanes = Array.fold_left ( * ) 1 msh / max msh.(0) 1 in
+  let lanes =
+    Array.fold_left ( * ) 1 (Array.sub msh 1 (Array.length msh - 1))
+  in
   let rows = NL.reshape moved [| msh.(0); lanes |] in
   let results =
     Interpreters.Batching.vmap

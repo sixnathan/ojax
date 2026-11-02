@@ -1346,6 +1346,12 @@ let cum_window_attrs shape axis reverse =
 let cum_symbols : (string * string * int * bool, string) Hashtbl.t =
   Hashtbl.create 8
 
+let emit_cum_identity b ~fname ~ty =
+  Buffer.add_string b
+    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
+  Buffer.add_string b (Printf.sprintf "    return %%0 : %s\n" ty);
+  Buffer.add_string b "  }\n"
+
 let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
   let x = sole in_ids in
@@ -1364,7 +1370,9 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
-  if cached = None then begin
+  if cached = None && in_aval.shape.(axis) = 0 then
+    emit_cum_identity ctx.extras ~fname ~ty
+  else if cached = None then begin
     let attrs = cum_window_attrs in_aval.shape axis reverse in
     let b = ctx.extras in
     Buffer.add_string b
@@ -1416,6 +1424,8 @@ let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
+  if in_aval.shape.(axis) = 0 then emit_cum_identity ctx.extras ~fname ~ty
+  else
   let attrs = cum_window_attrs in_aval.shape axis reverse in
   let b = ctx.extras in
   Buffer.add_string b

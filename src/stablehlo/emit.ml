@@ -3814,6 +3814,67 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_reshape_perm ctx eqn in_ids dimensions
   | Decomposable { dname = "approx_top_k"; dparams; _ } ->
       emit_approx_top_k ctx eqn in_ids dparams
+  | Decomposable { dname = "ragged_dot_general"; dparams; _ }
+    when Config.current_platform () <> "cpu" ->
+      let spec = List.assoc "ragged_dot_dimension_numbers" dparams in
+      let groups =
+        let rec scan i acc =
+          match String.index_from_opt spec i '(' with
+          | None -> List.rev acc
+          | Some start -> (
+              match
+                ( String.index_from_opt spec (start + 1) ')',
+                  String.index_from_opt spec (start + 1) '(' )
+              with
+              | Some stop, nested
+                when match nested with Some n -> n > stop | None -> true ->
+                  let body = String.sub spec (start + 1) (stop - start - 1) in
+                  let items =
+                    String.split_on_char ',' body
+                    |> List.filter_map (fun t ->
+                        int_of_string_opt (String.trim t))
+                  in
+                  scan (stop + 1) (items :: acc)
+              | _ -> scan (start + 1) acc)
+        in
+        scan 0 []
+      in
+      let dims l = "[" ^ String.concat ", " (List.map string_of_int l) ^ "]" in
+      let ( lhs_contract,
+            rhs_contract,
+            lhs_batch,
+            rhs_batch,
+            lhs_ragged,
+            rhs_group ) =
+        match groups with
+        | [ lc; rc; lb; rb; lr; rg ] -> (lc, rc, lb, rb, lr, rg)
+        | _ -> invalid_arg "Stablehlo.Emit: ragged_dot_dimension_numbers"
+      in
+      let batching =
+        if lhs_batch = [] && rhs_batch = [] then ""
+        else
+          Printf.sprintf
+            "lhs_batching_dimensions = %s, rhs_batching_dimensions = %s, "
+            (dims lhs_batch) (dims rhs_batch)
+      in
+      let level = Option.value (Config.matmul_level ()) ~default:"DEFAULT" in
+      let out = sole eqn.outs in
+      let operands = List.map atom_aval eqn.inputs in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    %s = \"chlo.ragged_dot\"(%s) <{precision_config = \
+            [#chlo<precision %s>, #chlo<precision %s>], \
+            ragged_dot_dimension_numbers = \
+            #chlo.ragged_dot<%slhs_contracting_dimensions = %s, \
+            rhs_contracting_dimensions = %s, lhs_ragged_dimensions = %s, \
+            rhs_group_dimensions = %s>}> : (%s) -> %s\n"
+           (name n)
+           (String.concat ", " (List.map name in_ids))
+           level level batching (dims lhs_contract) (dims rhs_contract)
+           (dims lhs_ragged) (dims rhs_group)
+           (String.concat ", " (List.map Ir.tensor_type_of_aval operands))
+           (Ir.tensor_type_of_aval out.vaval))
   | Decomposable { dimpl; _ } ->
       emit_inlined ctx eqn in_ids (Core.decomposition dimpl)
   | Squeeze _ -> emit_reshape ctx eqn in_ids

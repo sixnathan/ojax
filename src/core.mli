@@ -145,3 +145,6 @@ val random_gamma_grad_hook : (log_space:bool -> value -> value -> value) ref
 val register_decomposition : (value list -> value list) -> int
 val decomposition : int -> value list -> value list
 val gather_fill_hook : (primitive -> value list -> value list) ref
+
+val py_shape : int array -> string
+val sizes_conflict : int list -> bool

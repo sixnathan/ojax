@@ -301,7 +301,83 @@ let is_complex_dtype = function
   | Dtype.Complex64 | Dtype.Complex128 -> true
   | _ -> false
 
+let py_shape shape =
+  match shape with
+  | [| only |] -> Printf.sprintf "(%d,)" only
+  | _ ->
+      "("
+      ^ String.concat ", " (Array.to_list (Array.map string_of_int shape))
+      ^ ")"
+
+let sizes_conflict sizes =
+  match List.filter (fun z -> z <> 1) sizes with
+  | [] -> false
+  | first :: rest -> List.exists (fun z -> z <> first) rest
+
+let broadcasting_name = function
+  | Add -> Some "add"
+  | Sub -> Some "sub"
+  | Mul -> Some "mul"
+  | Div -> Some "div"
+  | Rem -> Some "rem"
+  | Max -> Some "max"
+  | Min -> Some "min"
+  | Pow -> Some "pow"
+  | Atan2 -> Some "atan2"
+  | Nextafter -> Some "nextafter"
+  | Complex -> Some "complex"
+  | And -> Some "and"
+  | Or -> Some "or"
+  | Xor -> Some "xor"
+  | Eq -> Some "eq"
+  | Ne -> Some "ne"
+  | Lt -> Some "lt"
+  | Le -> Some "le"
+  | Gt -> Some "gt"
+  | Ge -> Some "ge"
+  | Shift_left -> Some "shift_left"
+  | Shift_right_arithmetic -> Some "shift_right_arithmetic"
+  | Shift_right_logical -> Some "shift_right_logical"
+  | _ -> None
+
+let check_broadcasting prim args =
+  match broadcasting_name prim with
+  | None -> ()
+  | Some name -> (
+      let shape_of = function
+        | Concrete a -> Ndarray.shape a
+        | Tracer t -> t.aval.shape
+        | Device b -> Pjrt.Buffer.dimensions b
+      in
+      let shapes =
+        List.filter (fun s -> Array.length s > 0) (List.map shape_of args)
+      in
+      match shapes with
+      | [] | [ _ ] -> ()
+      | first :: _ ->
+          let ranks =
+            List.sort_uniq compare (List.map Array.length shapes)
+          in
+          if List.length ranks <> 1 then
+            raise
+              (Errors.jax_type_error
+                 (Printf.sprintf
+                    "%s: arrays must have the same number of dimensions, got \
+                     {%s}"
+                    name
+                    (String.concat ", " (List.map string_of_int ranks))));
+          Array.iteri
+            (fun d _ ->
+              if sizes_conflict (List.map (fun s -> s.(d)) shapes) then
+                raise
+                  (Errors.jax_type_error
+                     (Printf.sprintf
+                        "%s got incompatible shapes for broadcasting: %s." name
+                        (String.concat ", " (List.map py_shape shapes)))))
+            first)
+
 let check_operands prim args =
+  check_broadcasting prim args;
   let check name accepted classes =
     match args with
     | [] -> ()

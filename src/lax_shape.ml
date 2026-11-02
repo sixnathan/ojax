@@ -283,6 +283,23 @@ let check prim avals =
   | Reshape new_sizes when Array.exists (fun d -> d < 0) new_sizes ->
       Py_exn.type_error
         ("reshape new_sizes must all be positive, got " ^ tuple new_sizes ^ ".")
+  | Reshape_perm { new_sizes; _ } when Array.exists (fun d -> d < 0) new_sizes
+    ->
+      Py_exn.type_error
+        ("reshape new_sizes must all be positive, got " ^ tuple new_sizes ^ ".")
+  | Reshape_perm { dimensions; _ } -> (
+      match avals () with
+      | [ operand ] ->
+          let rank = Array.length operand.shape in
+          if
+            List.sort_uniq compare (Array.to_list dimensions)
+            <> List.init rank Fun.id
+          then
+            Py_exn.type_error
+              ("reshape dimensions must be a permutation of operand \
+                dimensions, got dimensions " ^ tuple dimensions ^ " for shape "
+             ^ tuple operand.shape ^ ".")
+      | _ -> ())
   | Concatenate dimension ->
       check_concatenate
         (List.map (fun (a : aval) -> a.shape) (avals ()))

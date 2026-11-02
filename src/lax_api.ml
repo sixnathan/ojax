@@ -220,9 +220,10 @@ let broadcasted_iota dt sh dimension =
 
 let reshape ?dimensions x new_sizes =
   let in_shape = (Core.get_aval x).shape in
+  let rank = Array.length in_shape in
   let dims =
     match dimensions with
-    | Some perm when perm <> Array.init (Array.length perm) Fun.id -> Some perm
+    | Some perm when perm <> Array.init rank Fun.id -> Some perm
     | _ -> None
   in
   match dims with

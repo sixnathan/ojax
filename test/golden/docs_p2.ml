@@ -556,6 +556,25 @@ let ufunc_at_thunk fn idx_kind mode () =
          (List.map leaf (lead @ idx_vals)))
   else text_of (run a idx b)
 
+let api_thunk name () =
+  let x =
+    Ojax.Numpy.Lax_numpy.reshape
+      (Ojax.Numpy.Lax_numpy.arange ~dtype:Ojax.Dtype.F32 6.0)
+      [| 2; 3 |]
+  in
+  let like v =
+    Ojax.Shape_dtype_struct.to_string (Ojax.Shape_dtype_struct.like v)
+  in
+  match name with
+  | "flat" -> text_of (Ojax.Numpy.Array_methods.flat x)
+  | "like_f32" -> like x
+  | "like_weak" ->
+      like (F.multiply (G.take x [ G.Int 0; G.Int 0 ]) (py_float 2.0))
+  | "like_int" -> like (Ojax.Numpy.Lax_numpy.arange ~dtype:Ojax.Dtype.I32 4.0)
+  | "like_bool" -> like (F.greater x (py_int 1.0))
+  | "like_scalar_int" -> like (py_int 3.0)
+  | other -> failwith ("docs_p2: unknown api case " ^ other)
+
 let actual_of row =
   match U.to_string (U.member "group" row) with
   | "dprint" ->
@@ -574,6 +593,7 @@ let actual_of row =
            (U.to_string (U.member "case" row))
            (U.to_string (U.member "idx" row))
            (U.to_string (U.member "mode" row)))
+  | "api" -> run_case (api_thunk (U.to_string (U.member "case" row)))
   | "static_index" ->
       run_case
         (static_index_thunk

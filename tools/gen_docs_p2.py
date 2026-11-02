@@ -36,6 +36,8 @@ UFUNC_AT_BINARY = ["maximum", "minimum", "logaddexp", "logaddexp2",
 UFUNC_AT_UNARY = ["negative"]
 UFUNC_AT_IDX = ["scalar", "dup", "two_d", "two_d_row"]
 INT_UFUNCS = {"bitwise_and", "bitwise_or", "bitwise_xor"}
+API_CASES = ["flat", "like_f32", "like_weak", "like_int", "like_bool",
+             "like_scalar_int", "like_jit"]
 AOT_CASES = ["sin_dot", "add", "reduce", "exp_log", "matmul", "cumsum",
              "where", "int_mul", "two_out", "tanh_big"]
 
@@ -310,6 +312,23 @@ def ufunc_at_thunk(jax, jnp, fn, idx_kind, mode):
     return run
 
 
+def api_thunk(jax, jnp, name):
+    x = jnp.arange(6.0, dtype=jnp.float32).reshape(2, 3)
+    table = {
+        "flat": lambda: x.flat,
+        "like_f32": lambda: repr(jax.ShapeDtypeStruct.like(x)),
+        "like_weak": lambda: repr(jax.ShapeDtypeStruct.like(x[0, 0] * 2.0)),
+        "like_int": lambda: repr(jax.ShapeDtypeStruct.like(
+            jnp.arange(4, dtype=jnp.int32))),
+        "like_bool": lambda: repr(jax.ShapeDtypeStruct.like(x > 1)),
+        "like_scalar_int": lambda: repr(jax.ShapeDtypeStruct.like(
+            jnp.asarray(3))),
+        "like_jit": lambda: jax.jit(
+            lambda a: (a, repr(jax.ShapeDtypeStruct.like(a)))[0])(x) and "",
+    }
+    return lambda: str(table[name]()) if name != "flat" else table[name]()
+
+
 def aot_fn(jax, jnp, name):
     x34 = jnp.asarray(np.arange(12, dtype=np.float32).reshape(3, 4) / 7)
     y42 = jnp.asarray(np.arange(8, dtype=np.float32).reshape(4, 2) / 5)
@@ -403,6 +422,12 @@ def main():
                           "group": "ufunc_at", "case": fn, "idx": idx_kind,
                           "mode": mode})
                 rows.append(r)
+    for name in API_CASES:
+        if name == "like_jit":
+            continue
+        r = run_case(jax, api_thunk(jax, jnp, name))
+        r.update({"id": f"api_{name}", "group": "api", "case": name})
+        rows.append(r)
     rows.extend(aot_rows(jax, jnp))
     with open(args.out, "w") as fh:
         json.dump({"jax": jax.__version__, "x64": args.x64, "rows": rows},

@@ -26,6 +26,7 @@ val conjugate : Types.value -> Types.value
 val reshape : Types.value -> int array -> Types.value
 val ravel : Types.value -> Types.value
 val flatten : Types.value -> Types.value
+val flat : Types.value -> Types.value
 val transpose : ?axes:int array -> Types.value -> Types.value
 val squeeze : ?axis:int array -> Types.value -> Types.value
 val swapaxes : int -> int -> Types.value -> Types.value

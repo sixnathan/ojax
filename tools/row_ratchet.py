@@ -11,7 +11,7 @@ ROOT = os.path.dirname(HERE)
 PREFIXES = ("fuzz:", "fuzz_s2:", "compose_fuzz:", "option_fuzz:", "text_option_fuzz:", "text_fuzz:", "text_fuzz_s2:", "coverage:")
 BASELINE_DIR = os.path.join("test", "golden", "identical_rows")
 DROPPED = "dropped.tsv"
-TEXT_GROUPS = {"parity": "text_parity", "jaxpr": "text_parity", "coverage": "text_coverage", "fuzz": "text_fuzz"}
+TEXT_GROUPS = {"parity": "text_parity", "jaxpr": "text_parity", "coverage": "text_coverage", "apicov": "text_apicov", "fuzz": "text_fuzz"}
 SHOWN = 40
 
 
@@ -85,6 +85,7 @@ def reference_paths(goldens):
     return [
         os.path.join(goldens, "text", "reference.jsonl"),
         os.path.join(goldens, "coverage", "text_ref.jsonl"),
+        os.path.join(goldens, "apicov", "text_ref.jsonl"),
         os.path.join(goldens, "fuzz", "text", "reference.jsonl"),
     ]
 

@@ -741,7 +741,17 @@ and dispatch_widened top prim args =
       else None
     in
     match compiled with
-    | Some outs -> outs
+    | Some outs ->
+        if Debug_special.needs_check () then
+          Debug_special.check
+            (Pretty_printer.primitive_name prim)
+            (List.filter_map
+               (function
+                 | Concrete a -> Some a
+                 | Device b -> Some (Pjrt.Buffer.to_host b)
+                 | Tracer _ -> None)
+               outs);
+        outs
     | None ->
         let widen v =
           let s = value_shape v in

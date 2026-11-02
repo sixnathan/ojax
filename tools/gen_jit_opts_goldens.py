@@ -24,7 +24,9 @@ NAN_CASES = [
     "eager_log", "eager_sqrt", "eager_div_zero_zero", "eager_div_one_zero",
     "eager_add_nan_input", "jit_log", "jit_sqrt_sum", "jit_identity_nan",
     "jit_pair_nan", "jit_nested_log", "jit_div_one_zero", "jit_clean",
-    "eager_int_div",
+    "eager_int_div", "jnp_log", "jnp_sqrt", "jnp_div", "jnp_div1",
+    "jnp_arccos", "jnp_mean_jit", "vmap_log", "grad_sqrt", "grad_log",
+    "cond_log", "fori_log", "softmax_inf",
 ]
 TEXT_CASES = [
     "don_mul", "keep_unused", "don_pair", "don_sum", "don_reshape",
@@ -76,6 +78,8 @@ def run_case(thunk):
 
 
 def nan_thunk(jax, jnp, lax, name, x, z, n, one):
+    z0 = jnp.asarray(np.float32(0.0))
+    inf1 = jnp.asarray(np.array([np.inf, 1.0], np.float32))
     table = {
         "eager_log": lambda: lax.log(x),
         "eager_sqrt": lambda: lax.sqrt(x),
@@ -93,6 +97,18 @@ def nan_thunk(jax, jnp, lax, name, x, z, n, one):
         "jit_clean": lambda: jax.jit(lambda a: lax.exp(a))(x),
         "eager_int_div": lambda: lax.div(jnp.asarray(np.array([1], np.int32)),
                                          jnp.asarray(np.array([0], np.int32))),
+        "jnp_log": lambda: jnp.log(x),
+        "jnp_sqrt": lambda: jnp.sqrt(x),
+        "jnp_div": lambda: jnp.divide(z, z),
+        "jnp_div1": lambda: jnp.divide(1.0, z),
+        "jnp_arccos": lambda: jnp.arccos(x * 2.0),
+        "jnp_mean_jit": lambda: jax.jit(lambda a: jnp.mean(jnp.log(a)))(x),
+        "vmap_log": lambda: jax.vmap(lax.log)(x),
+        "grad_sqrt": lambda: jax.grad(lax.sqrt)(z0),
+        "grad_log": lambda: jax.grad(lax.log)(z0),
+        "cond_log": lambda: lax.cond(True, lax.log, lambda a: a, x),
+        "fori_log": lambda: lax.fori_loop(0, 2, lambda i, a: lax.log(a), x),
+        "softmax_inf": lambda: jax.nn.softmax(inf1),
     }
     return table[name]
 

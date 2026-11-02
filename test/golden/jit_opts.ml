@@ -121,6 +121,15 @@ let jit1 f args =
 
 let leaf v = Ojax.Tree_util.Leaf v
 
+let py_float x =
+  Ojax.Core.py_scalar
+    (if Ojax.Config.x64_enabled () then Ojax.Dtype.F64 else Ojax.Dtype.F32)
+    x
+
+let unary f = function
+  | [ Ojax.Tree_util.Leaf a ] -> f a
+  | _ -> failwith "jit_opts: arity"
+
 let special_thunk name =
   let x = f32 [| -1.0; 2.0 |]
   and z = f32 [| 0.0 |]
@@ -154,12 +163,41 @@ let special_thunk name =
           T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [| 1 |] [| v |])
         in
         [ L.div (i 1.0) (i 0.0) ]
+  | "jnp_log" -> fun () -> [ F.log x ]
+  | "jnp_sqrt" -> fun () -> [ F.sqrt x ]
+  | "jnp_div" -> fun () -> [ F.true_divide z z ]
+  | "jnp_div1" -> fun () -> [ F.true_divide (py_float 1.0) z ]
+  | "jnp_arccos" -> fun () -> [ F.arccos (F.multiply x (py_float 2.0)) ]
+  | "jnp_mean_jit" ->
+      fun () ->
+        jit1 (fun a -> leaf (Ojax.Numpy.Reductions.mean (F.log a))) [ x ]
+  | "vmap_log" ->
+      fun () ->
+        Ojax.Tree_util.tree_leaves
+          (Ojax.Api.vmap
+             (unary (fun a -> leaf (L.log a)))
+             [ Some 0 ]
+             [ leaf x ])
+  | "grad_sqrt" | "grad_log" ->
+      let op = if name = "grad_sqrt" then L.sqrt else L.log in
+      fun () ->
+        let z0 =
+          T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.F32 [||] [| 0.0 |])
+        in
+        Ojax.Tree_util.tree_leaves
+          (Ojax.Api.grad (unary (fun a -> leaf (op a))) [ leaf z0 ])
+  | "cond_log" ->
+      fun () ->
+        Ojax.Lax.cond
+          (T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.Bool [||] [| 1.0 |]))
+          (List.map L.log) Fun.id [ x ]
+  | "fori_log" ->
+      fun () ->
+        let i v = Ojax.Core.py_scalar Ojax.Dtype.I32 v in
+        L.fori_loop (i 0.0) (i 2.0) (fun _ vs -> List.map L.log vs) [ x ]
+  | "softmax_inf" ->
+      fun () -> [ Ojax.Nn.Functions.softmax (f32 [| Float.infinity; 1.0 |]) ]
   | other -> failwith ("jit_opts: unknown case " ^ other)
-
-let py_float x =
-  Ojax.Core.py_scalar
-    (if Ojax.Config.x64_enabled () then Ojax.Dtype.F64 else Ojax.Dtype.F32)
-    x
 
 let leaves_of = function
   | Ojax.Tree_util.Tuple l -> List.map (fun t -> Ojax.Tree_util.tree_leaves t) l

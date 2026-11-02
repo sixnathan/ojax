@@ -514,18 +514,38 @@ let traced : (string * (Ojax.Types.value -> Ojax.Types.value)) list =
           (Ojax.Key_reuse.mark_typed k)
           ~shape:[| 2 |] ~minval:0.0 ~maxval:1.0 );
     ("jit_wrap_key_data", fun x -> RC.wrap_key_data x);
+    ("jit_wrap_key_data_3x2", fun x -> RC.wrap_key_data x);
+    ("jit_key_from_seed", fun s -> RC.key s);
+    ("jit_key_split3_data", fun k -> RC.key_data (Ojax.Key_reuse.mark_typed k));
+    ( "jit_key_split3_bits",
+      fun k -> RC.bits (Ojax.Key_reuse.mark_typed k) ~shape:[| 2 |] );
+    ( "jit_key_normal",
+      fun k -> RC.normal (Ojax.Key_reuse.mark_typed k) ~shape:[| 3 |] );
+    ( "jit_key_split_split",
+      fun k ->
+        RC.split
+          (L.squeeze
+             (L.slice
+                (RC.split (Ojax.Key_reuse.mark_typed k) 2)
+                [| 0; 0 |] [| 1; 2 |])
+             [| 0 |])
+          2 );
+    ("jit_rbg_bits", fun k -> RC.bits k ~shape:[| 2 |]);
+    ("jit_rbg_split", fun k -> RC.split k 2);
+    ("jit_urbg_split", fun k -> RC.split k 2);
+    ("jit_urbg_data", fun k -> RC.key_data k);
   ]
 
 let aval_of_arg a : Ojax.Types.aval =
   match U.to_list a with
-  | [ `String "key<fry>"; shape ] ->
+  | [ `String (("key<fry>" | "key<rbg>" | "key<urbg>") as k); shape ] ->
       {
         dtype = D.Uint32;
         shape =
           Array.append
             (Array.of_list (List.map U.to_int (U.to_list shape)))
-            [| 2 |];
-        weak_type = false;
+            [| (if k = "key<fry>" then 2 else 4) |];
+        weak_type = k = "key<urbg>";
       }
   | [ dt; shape ] ->
       {

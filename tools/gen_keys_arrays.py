@@ -276,6 +276,16 @@ def traced_cases():
         "jit_key_data": (lambda k: random.key_data(k), [random.key(0)]),
         "jit_key_uniform": (lambda k: random.uniform(k, (2,)), [random.key(0)]),
         "jit_wrap_key_data": (lambda x: random.wrap_key_data(x), [jnp.zeros((2,), jnp.uint32)]),
+        "jit_wrap_key_data_3x2": (lambda x: random.wrap_key_data(x), [jnp.zeros((3, 2), jnp.uint32)]),
+        "jit_key_from_seed": (lambda s: random.key(s), [jnp.zeros((), jnp.int32)]),
+        "jit_key_split3_data": (lambda k: random.key_data(k), [random.split(random.key(0), 3)]),
+        "jit_key_split3_bits": (lambda k: random.bits(k, (2,)), [random.key(0)]),
+        "jit_key_normal": (lambda k: random.normal(k, (3,)), [random.key(0)]),
+        "jit_key_split_split": (lambda k: random.split(random.split(k)[0]), [random.key(0)]),
+        "jit_rbg_bits": (lambda k: random.bits(k, (2,)), [random.key(0, impl="rbg")]),
+        "jit_rbg_split": (lambda k: random.split(k), [random.key(0, impl="rbg")]),
+        "jit_urbg_split": (lambda k: random.split(k), [random.key(0, impl="unsafe_rbg")]),
+        "jit_urbg_data": (lambda k: random.key_data(k), [random.key(0, impl="unsafe_rbg")]),
     }
 
 

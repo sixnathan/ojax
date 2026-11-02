@@ -4498,7 +4498,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
                 [ x ];
             ]
         | _ -> invalid_arg "Stablehlo.Emit: fft arity")
-  | Fft { fft_type = Fft_real; fft_lengths } when Array.mem 0 fft_lengths ->
+  | Fft { fft_type = Fft_real; fft_lengths }
+    when Array.length fft_lengths > 0
+         && fft_lengths.(Array.length fft_lengths - 1) = 0 ->
       let out = sole eqn.outs in
       failwith
         (Printf.sprintf
@@ -4689,7 +4691,8 @@ let lower ?result_names ~name cj =
   }
 
 let emit_jax_text ?result_names ~name cj =
-  Mlir_names.renumber_callbacks (lower ?result_names ~name cj).text
+  Mlir_names.print_empty_dynamic_slices
+    (Mlir_names.renumber_callbacks (lower ?result_names ~name cj).text)
 
 let emit_export_text ?(platforms = []) ?result_names ~name
     ~uses_shape_polymorphism cj =

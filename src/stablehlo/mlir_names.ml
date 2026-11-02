@@ -370,7 +370,8 @@ let add_result_info ?names line =
         let start = at + m in
         let stop = String.rindex line ')' in
         let body = String.sub line start (stop - start) in
-        if body = "" then line
+        if body = "" then
+          String.sub line 0 at ^ ")" ^ String.sub line (stop + 1) (n - stop - 1)
         else
           let types = split_results body in
           let many = List.length types > 1 in
@@ -501,6 +502,15 @@ let replace_first ~sub ~by line =
   | None -> None
   | Some i ->
       Some (String.sub line 0 i ^ by ^ String.sub line (i + m) (n - i - m))
+
+let print_empty_dynamic_slices text =
+  String.split_on_char '\n' text
+  |> List.map (fun line ->
+      if contains "stablehlo.dynamic_slice" line then
+        Option.value ~default:line
+          (replace_first ~sub:", sizes = [] :" ~by:", , sizes = [] :" line)
+      else line)
+  |> String.concat "\n"
 
 let add_platform_index_arg ~arg text =
   let param = Printf.sprintf "%%%d" arg in

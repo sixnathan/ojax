@@ -122,7 +122,10 @@ let rankdata_body method_ a =
     else
       let count =
         NL.astype
-          (List.hd (Numpy.Extras.nonzero ~size:(n + 1) ~fill_value:n obs))
+          (List.hd
+             (Numpy.Extras.nonzero ~size:(n + 1)
+                ~fill_value:(Array.fold_left ( * ) 1 (shape obs))
+                obs))
           out_dt
       in
       match method_ with

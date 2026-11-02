@@ -115,3 +115,27 @@ let tuple_string dims =
       "("
       ^ String.concat ", " (Array.to_list (Array.map string_of_int dims))
       ^ ")"
+
+let check_slice_bounds start_indices limit_indices =
+  if Array.exists (fun d -> d < 0) limit_indices then
+    invalid_arg
+      ("slice limit_indices must have every element be nonnegative, got "
+     ^ tuple_string limit_indices ^ ".");
+  if
+    Array.exists Fun.id
+      (Array.map2 (fun lo hi -> hi < lo) start_indices limit_indices)
+  then
+    invalid_arg
+      ("slice limit_indices must be greater than or equal to start_indices, \
+        got start_indices " ^ tuple_string start_indices ^ " and limit_indices "
+     ^ tuple_string limit_indices ^ ".")
+
+let check_dynamic_slice_sizes slice_sizes operand_shape =
+  if
+    Array.exists Fun.id
+      (Array.map2 (fun s d -> s > d) slice_sizes operand_shape)
+  then
+    invalid_arg
+      ("slice slice_sizes must be less than or equal to operand shape, got \
+        slice_sizes " ^ tuple_string slice_sizes ^ " for operand shape "
+     ^ tuple_string operand_shape ^ ".")

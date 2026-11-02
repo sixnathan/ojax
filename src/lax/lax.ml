@@ -1587,8 +1587,13 @@ let rec impl_base prim inputs =
   | Rng_uniform -> failwith "lax: rng primitives deferred to M3 (PRNG)"
   | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
   | Slice { start_indices; limit_indices; strides } ->
+      Util.check_slice_bounds start_indices limit_indices;
       un (Slicing.slice_impl start_indices limit_indices strides) inputs
   | Dynamic_slice { slice_sizes } ->
+      (match inputs with
+      | operand :: _ ->
+          Util.check_dynamic_slice_sizes slice_sizes (Ndarray.shape operand)
+      | [] -> ());
       [ Slicing.dynamic_slice_impl slice_sizes inputs ]
   | Dynamic_update_slice -> [ Slicing.dynamic_update_slice_impl inputs ]
   | Gather { dimension_numbers; slice_sizes } -> (
@@ -2713,22 +2718,7 @@ let abstract_eval prim avals =
   | Rng_uniform -> failwith "lax: rng primitives deferred to M3 (PRNG)"
   | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
   | Slice { start_indices; limit_indices; strides } ->
-      if Array.exists (fun d -> d < 0) limit_indices then
-        invalid_arg
-          ("slice limit_indices must have every element be nonnegative, got "
-          ^ Util.tuple_string limit_indices
-          ^ ".");
-      if
-        Array.exists Fun.id
-          (Array.map2 (fun lo hi -> hi < lo) start_indices limit_indices)
-      then
-        invalid_arg
-          ("slice limit_indices must be greater than or equal to \
-            start_indices, got start_indices "
-          ^ Util.tuple_string start_indices
-          ^ " and limit_indices "
-          ^ Util.tuple_string limit_indices
-          ^ ".");
+      Util.check_slice_bounds start_indices limit_indices;
       un_aval
         (fun a ->
           shaped
@@ -2738,17 +2728,7 @@ let abstract_eval prim avals =
   | Dynamic_slice { slice_sizes } -> (
       match avals with
       | operand :: _ ->
-          if
-            Array.exists Fun.id
-              (Array.map2 (fun s d -> s > d) slice_sizes operand.shape)
-          then
-            invalid_arg
-              ("slice slice_sizes must be less than or equal to operand shape, \
-                got slice_sizes "
-              ^ Util.tuple_string slice_sizes
-              ^ " for operand shape "
-              ^ Util.tuple_string operand.shape
-              ^ ".");
+          Util.check_dynamic_slice_sizes slice_sizes operand.shape;
           [ shaped slice_sizes operand.dtype operand.weak_type ]
       | [] -> failwith "lax: dynamic_slice expects an operand")
   | Dynamic_update_slice -> (

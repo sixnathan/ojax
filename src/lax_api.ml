@@ -1232,9 +1232,8 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
       [ eye ]
   in
   let kernel =
-    b1
-      (Reshape (Array.append [| in_features * window; 1 |] filter_shape))
-      [ spread ]
+    let target = Array.append [| in_features * window; 1 |] filter_shape in
+    if target = shape spread then spread else b1 (Reshape target) [ spread ]
   in
   let kernel =
     let rest =

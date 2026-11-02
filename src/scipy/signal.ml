@@ -561,10 +561,12 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
         let update_shape =
           Array.mapi (fun i d -> if i = n - 1 then stop - 1 else d) sh
         in
+        let index =
+          L.broadcast_in_dim (int_literal (index_dtype ()) 1) [| 1 |] [||]
+        in
         if Array.mem 0 update_shape then result
         else
-          L.scatter_mul ~unique_indices:true result
-            (L.broadcast_in_dim (int_literal (index_dtype ()) 1) [| 1 |] [||])
+          L.scatter_mul ~unique_indices:true result index
             (Numpy.Array_creation.full ~dtype:(dtype_of result) update_shape 2.0)
             {
               update_window_dims = Array.init n Fun.id;

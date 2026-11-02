@@ -210,7 +210,7 @@ let at_update ?(axis = 0) build x idxs y =
         scatter_dims_to_operand_dims = Array.init k (fun j -> axis + j);
         s_operand_batching_dims = [||];
         s_scatter_indices_batching_dims = [||];
-        s_sorted_unique = false;
+        s_sorted_unique = m = 0;
         s_clip = false;
       }
     in
@@ -218,10 +218,14 @@ let at_update ?(axis = 0) build x idxs y =
     Core.convert_like ~weak:xa.weak_type out xa.dtype
 
 let at_set ?axis x idxs y =
-  at_update ?axis (fun a i u d -> L.scatter a i u d) x idxs y
+  at_update ?axis
+    (fun a i u d -> L.scatter ~unique_indices:d.s_sorted_unique a i u d)
+    x idxs y
 
 let at_add ?axis x idxs y =
-  at_update ?axis (fun a i u d -> L.scatter_add a i u d) x idxs y
+  at_update ?axis
+    (fun a i u d -> L.scatter_add ~unique_indices:d.s_sorted_unique a i u d)
+    x idxs y
 
 let array_of_values vs =
   let lift v =
@@ -393,13 +397,13 @@ let leading_slice v start stop =
     [ v ]
 
 let at_leading_slice_set x start y =
+  let index =
+    L.broadcast_in_dim
+      (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
+      [| 1 |] [||]
+  in
   if size_of y = 0 then x
   else
-    let index =
-      L.broadcast_in_dim
-        (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
-        [| 1 |] [||]
-    in
     let r = rank x in
     L.scatter x index y
       {
@@ -1398,6 +1402,10 @@ let choose ?(mode = "raise") a choices =
   in
   match NL.broadcast_arrays (arr :: choices) with
   | [] -> invalid_arg "choose: arity"
+  | arr :: choices when rank arr = 0 ->
+      Nd_index.take (array_of_values choices) [ Nd_index.Arr arr ]
+  | arr :: choices when Array.mem 0 (shape arr) ->
+      L.full (shape arr) 0.0 (dtype_of (List.hd choices))
   | arr :: choices ->
       let sh = shape arr in
       let r = Array.length sh in
@@ -1509,6 +1517,13 @@ let delete ?axis a obj =
     match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
   in
   let n = (shape a).(ax) in
+  List.iter
+    (fun i ->
+      if i < -n || i >= n then
+        invalid_arg
+          (Printf.sprintf "index %d is out of bounds for axis 0 with size %d" i
+             n))
+    obj;
   let drop = List.map (canon n) obj in
   let kept =
     List.filter (fun i -> not (List.mem i drop)) (List.init n Fun.id)
@@ -2146,7 +2161,7 @@ let roots_of_coefficients p =
       Linalg.eigvals companion)
 
 let roots ?(strip_zeros = true) p =
-  let p = as_inexact p in
+  let p = NL.atleast_1d (as_inexact p) in
   let n = (shape p).(0) in
   let real_dt = dtype_of p in
   let complex_dt =

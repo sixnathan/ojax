@@ -77,7 +77,11 @@ let cholesky_update_jax_fn r w =
     let x = at_scalar !current [| k; k |] and y = at_scalar !z [| k |] in
     match rotation x y with
     | [ c; s ] ->
-        let row = L.index_in_dim ~axis:0 ~keepdims:false !current k in
+        let row =
+          if (Core.get_aval !current).Types.shape.(0) = 1 then
+            Core.bind1 (T.Squeeze [| 0 |]) [ !current ]
+          else L.index_in_dim ~axis:0 ~keepdims:false !current k
+        in
         let spread v = L.broadcast_in_dim v [| n |] [||] in
         let new_row = L.sub (L.mul (spread c) row) (L.mul (spread s) !z) in
         z := L.add (L.mul (spread c) !z) (L.mul (spread s) row);

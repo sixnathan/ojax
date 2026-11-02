@@ -129,15 +129,14 @@ let deinterleave x axis =
   let out = Numpy.Array_creation.zeros ~dtype:(dtype_of x) (shape x) in
   let set_every target first updates =
     let count = (shape updates).(axis) in
+    let positions =
+      NL.arange ~start:(float_of_int first) ~step:2.0 ~dtype:Dtype.I32
+        (float_of_int size)
+    in
+    let lifted = L.broadcast_in_dim positions [| count; 1 |] [| 0 |] in
     if Array.mem 0 (shape updates) then target
     else
-      let positions =
-        NL.arange ~start:(float_of_int first) ~step:2.0 ~dtype:Dtype.I32
-          (float_of_int size)
-      in
-      L.scatter ~unique_indices:true target
-        (L.broadcast_in_dim positions [| count; 1 |] [| 0 |])
-        updates
+      L.scatter ~unique_indices:true target lifted updates
         {
           update_window_dims = other_axes (rank x) axis;
           inserted_window_dims = [| axis |];

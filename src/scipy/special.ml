@@ -3157,7 +3157,8 @@ let sph_harm_y ?diff_n ?n_max n m theta phi =
     invalid_arg
       "The 'diff_n' argument to jax.scipy.special.sph_harm_y is not supported.";
   let theta =
-    if Array.length (shape theta) = 0 then NL.reshape theta [| 1 |] else theta
+    if Array.length (shape theta) = 0 then L.broadcast_in_dim theta [| 1 |] [||]
+    else theta
   in
   let n_max =
     match n_max with

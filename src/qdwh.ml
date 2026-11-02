@@ -317,6 +317,7 @@ let qdwh ?(is_hermitian = false) ?(max_iterations = 10) ?eps x =
   let sh = shape x in
   (match (Core.get_aval x).dtype with
   | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> ()
+  | _ when eps <> None -> ()
   | d ->
       Py_exn.value_error
         (Printf.sprintf "data type dtype('%s') not compatible with finfo"

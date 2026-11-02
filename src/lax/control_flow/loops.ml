@@ -413,6 +413,8 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
   let jaxpr, hoisted, cells =
     Jaxpr.make_jaxpr_stateful (carry_avals @ x_slice_avals) body
   in
+  if unroll < 0 then
+    Py_exn.value_error "`unroll` must be a `bool` or a non-negative `int`.";
   if cells <> [] then begin
     let n_state = List.length cells in
     let stateful args =

@@ -6,7 +6,8 @@ module TF = Random.Threefry
 let () = Unix.putenv "OJAX_BACKEND" "interpreter"
 
 let u32 shape values =
-  Concrete (Ndarray.of_floats Dtype.Uint32 shape (Array.map float_of_int values))
+  Concrete
+    (Ndarray.of_floats Dtype.Uint32 shape (Array.map float_of_int values))
 
 let nd = function
   | Concrete a -> a
@@ -31,10 +32,7 @@ let check name expected_shape expected v =
   Alcotest.(check (array int))
     (name ^ " shape") expected_shape
     (Ndarray.shape (nd v));
-  Alcotest.(check (list string))
-    name
-    (List.map string_of_int expected)
-    (flat v)
+  Alcotest.(check (list string)) name (List.map string_of_int expected) (flat v)
 
 let key = u32 [| 2 |] [| 0; 42 |]
 
@@ -67,7 +65,8 @@ let bits () =
   check "bits 32" [| 5 |]
     [ 2098992034; 2919706841; 2646866425; 2409546199; 1935504149 ]
     (P.random_bits key ~bit_width:32 ~shape:[| 5 |]);
-  check "bits 16" [| 4 |] [ 5026; 12505; 63993; 49623 ]
+  check "bits 16" [| 4 |]
+    [ 5026; 12505; 63993; 49623 ]
     (P.random_bits key ~bit_width:16 ~shape:[| 4 |]);
   check "bits 8" [| 4 |] [ 162; 217; 249; 215 ]
     (P.random_bits key ~bit_width:8 ~shape:[| 4 |])

@@ -1346,6 +1346,16 @@ let cum_window_attrs shape axis reverse =
 let cum_symbols : (string * string * int * bool, string) Hashtbl.t =
   Hashtbl.create 8
 
+let empty_matrix (a : aval) =
+  let rank = Array.length a.shape in
+  a.shape.(rank - 2) = 0 || a.shape.(rank - 1) = 0
+
+let emit_cum_identity b ~fname ~ty =
+  Buffer.add_string b
+    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
+  Buffer.add_string b (Printf.sprintf "    return %%0 : %s\n" ty);
+  Buffer.add_string b "  }\n"
+
 let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
     ~broadcast ~op =
   let x = sole in_ids in
@@ -1364,7 +1374,9 @@ let emit_cum_single ctx (eqn : eqn) in_ids ~fname:base_name ~axis ~reverse ~init
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
-  if cached = None then begin
+  if cached = None && in_aval.shape.(axis) = 0 then
+    emit_cum_identity ctx.extras ~fname ~ty
+  else if cached = None then begin
     let attrs = cum_window_attrs in_aval.shape axis reverse in
     let b = ctx.extras in
     Buffer.add_string b
@@ -1416,44 +1428,47 @@ let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = call @%s(%s) : (%s) -> %s\n" (name n) fname
        (name x) ty ty);
-  let attrs = cum_window_attrs in_aval.shape axis reverse in
-  let b = ctx.extras in
-  Buffer.add_string b
-    (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
-  Buffer.add_string b
-    (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (reduce_maxid dt)
-       sty);
-  Buffer.add_string b
-    (Printf.sprintf
-       "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
-  Buffer.add_string b (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%5 = stablehlo.maximum %%3, %%4 : %s\n" sty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%6 = stablehlo.subtract %%3, %%4 : %s\n" sty);
-  Buffer.add_string b
-    (Printf.sprintf
-       "      %%7 = stablehlo.compare NE, %%6, %%6, FLOAT : (%s, %s) -> %s\n"
-       sty sty bty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%8 = stablehlo.add %%3, %%4 : %s\n" sty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%9 = stablehlo.abs %%6 : %s\n" sty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%10 = stablehlo.negate %%9 : %s\n" sty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%11 = stablehlo.exponential %%10 : %s\n" sty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%12 = stablehlo.log_plus_one %%11 : %s\n" sty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%13 = stablehlo.add %%5, %%12 : %s\n" sty);
-  Buffer.add_string b
-    (Printf.sprintf "      %%14 = stablehlo.select %%7, %%8, %%13 : %s, %s\n"
-       bty sty);
-  Buffer.add_string b (Printf.sprintf "      stablehlo.return %%14 : %s\n" sty);
-  Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
-  Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty);
-  Buffer.add_string b "  }\n"
+  if in_aval.shape.(axis) = 0 then emit_cum_identity ctx.extras ~fname ~ty
+  else
+    let attrs = cum_window_attrs in_aval.shape axis reverse in
+    let b = ctx.extras in
+    Buffer.add_string b
+      (Printf.sprintf "  func.func private @%s(%%0: %s) -> %s {\n" fname ty ty);
+    Buffer.add_string b
+      (Printf.sprintf "    %%2 = stablehlo.constant %s : %s\n" (reduce_maxid dt)
+         sty);
+    Buffer.add_string b
+      (Printf.sprintf
+         "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
+    Buffer.add_string b (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%5 = stablehlo.maximum %%3, %%4 : %s\n" sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%6 = stablehlo.subtract %%3, %%4 : %s\n" sty);
+    Buffer.add_string b
+      (Printf.sprintf
+         "      %%7 = stablehlo.compare NE, %%6, %%6, FLOAT : (%s, %s) -> %s\n"
+         sty sty bty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%8 = stablehlo.add %%3, %%4 : %s\n" sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%9 = stablehlo.abs %%6 : %s\n" sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%10 = stablehlo.negate %%9 : %s\n" sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%11 = stablehlo.exponential %%10 : %s\n" sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%12 = stablehlo.log_plus_one %%11 : %s\n" sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%13 = stablehlo.add %%5, %%12 : %s\n" sty);
+    Buffer.add_string b
+      (Printf.sprintf "      %%14 = stablehlo.select %%7, %%8, %%13 : %s, %s\n"
+         bty sty);
+    Buffer.add_string b
+      (Printf.sprintf "      stablehlo.return %%14 : %s\n" sty);
+    Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
+    Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty);
+    Buffer.add_string b "  }\n"
 
 let array_i64 a =
   "array<i64: "
@@ -2766,10 +2781,6 @@ let emit_axis_index ctx (eqn : eqn) mesh axis_name =
        (name size_c) size i32 (name div) (name as_int) (name stride_c) i32
        (name n) (name div) (name size_c) i32)
 
-let qr_core_empty (a : aval) =
-  let rank = Array.length a.shape in
-  a.shape.(rank - 2) = 0 || a.shape.(rank - 1) = 0
-
 let rec emit_region_returning ctx (jx : jaxpr) =
   let s =
     capture ctx (fun () ->
@@ -3734,15 +3745,20 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | _ -> invalid_arg "Stablehlo.Emit: gather arity")
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
-  | Scatter ({ dimension_numbers = { s_clip = true; _ } as d; _ } as o) ->
+  | ( Scatter { dimension_numbers = { s_clip = true; _ } as d; _ }
+    | Scatter_add { dimension_numbers = { s_clip = true; _ } as d }
+    | Scatter_sub { dimension_numbers = { s_clip = true; _ } as d }
+    | Scatter_mul { dimension_numbers = { s_clip = true; _ } as d; _ }
+    | Scatter_min { dimension_numbers = { s_clip = true; _ } as d }
+    | Scatter_max { dimension_numbers = { s_clip = true; _ } as d } ) as p ->
       emit_inlined ctx eqn in_ids (function
         | [ operand; indices; updates ] ->
-            let plain = { d with s_clip = false } in
             let clamped =
-              Lax.Slicing.clamp_scatter_indices operand indices updates plain
+              Lax.Slicing.clamp_scatter_indices operand indices updates
+                { d with s_clip = false }
             in
             Core.bind
-              (Scatter { o with dimension_numbers = plain })
+              (Lax.Slicing.unclip_scatter p)
               [ operand; clamped; updates ]
         | _ -> invalid_arg "Stablehlo.Emit: scatter arity")
   | Scatter { dimension_numbers; unique_indices } ->
@@ -3995,7 +4011,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_traced ctx [ a; pivots; info ] ids eqn.outs
         (Native_lowering.lapack_lu ~permutation_size:m)
   | Qr full_matrices
-    when lapack_ffi () && qr_core_empty (atom_aval (sole eqn.inputs)) ->
+    when lapack_ffi () && empty_matrix (atom_aval (sole eqn.inputs)) ->
       emit_inlined ctx eqn in_ids (function
         | [ a ] -> Native_lowering.qr_empty ~full_matrices a
         | _ -> invalid_arg "Stablehlo.Emit: qr arity")
@@ -4017,7 +4033,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_traced ctx [ a; taus ] ids eqn.outs
         (Native_lowering.qr_from_factors ~full_matrices)
   | Qr_pivoted full_matrices ->
-      let empty = qr_core_empty (atom_aval (sole eqn.inputs)) in
+      let empty = empty_matrix (atom_aval (sole eqn.inputs)) in
       emit_inlined ctx eqn in_ids (function
         | [ a ] when empty -> Native_lowering.qr_pivoted_empty ~full_matrices a
         | [ a ] -> Native_lowering.qr_pivoted ~full_matrices a
@@ -4127,8 +4143,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx [ a; w; info ] ids eqn.outs Native_lowering.lapack_guarded
   | Svd { full_matrices; compute_uv; _ }
-    when lapack_ffi ()
-         && Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape ->
+    when lapack_ffi () && empty_matrix (atom_aval (sole eqn.inputs)) ->
       emit_inlined ctx eqn in_ids (function
         | [ a ] -> Native_lowering.svd_empty ~full_matrices ~compute_uv a
         | _ -> invalid_arg "Stablehlo.Emit: svd arity")
@@ -4336,7 +4351,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         (Native_lowering.lu_pivots_to_permutation ~permutation_size)
   | Geqrf | Geqp3 | Ormqr _ ->
       failwith "Stablehlo.Emit: this LAPACK target needs the scipy library"
-  | Qr full_matrices when qr_core_empty (atom_aval (sole eqn.inputs)) ->
+  | Qr full_matrices when empty_matrix (atom_aval (sole eqn.inputs)) ->
       emit_inlined ctx eqn in_ids (function
         | [ a ] -> Native_lowering.qr_empty ~full_matrices a
         | _ -> invalid_arg "Stablehlo.Emit: qr arity")

@@ -38,5 +38,7 @@ val gather_fill :
 val clamp_scatter_indices :
   Types.value -> Types.value -> Types.value -> Types.scatter_dims -> Types.value
 
+val unclip_scatter : Types.primitive -> Types.primitive
+
 val gather_fill_lowered :
   Types.primitive -> Types.value -> Types.value -> Types.value

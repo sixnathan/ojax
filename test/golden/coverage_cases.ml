@@ -315,8 +315,17 @@ let prefix x n =
 let head_two x = prefix x 2
 
 let lax_run op p a =
+  let scatter_mode =
+    match opt_string "mode" p with
+    | Some "clip" -> Some Ojax.Lax_config.Clip
+    | Some ("fill" | "drop") -> Some Ojax.Lax_config.Fill_or_drop
+    | Some "promise_in_bounds" -> Some Ojax.Lax_config.Promise_in_bounds
+    | Some "one_hot" -> Some Ojax.Lax_config.One_hot
+    | _ -> None
+  in
   let scatter
       (f :
+        ?mode:Ojax.Lax_config.gather_scatter_mode ->
         ?indices_are_sorted:bool ->
         ?unique_indices:bool ->
         T.value ->
@@ -330,30 +339,30 @@ let lax_run op p a =
     let updates = UF.multiply (prefix x n) (Ojax.Numpy.Jnp_util.py_float 2.0) in
     Some
       [
-        f ?indices_are_sorted:(opt_bool "sorted" p)
+        f ?mode:scatter_mode ?indices_are_sorted:(opt_bool "sorted" p)
           ?unique_indices:(opt_bool "unique" p) x idx updates (scatter_dims ());
       ]
   in
   let allow = opt_bool "allow" p in
   match op with
   | "cv_l_scatter" ->
-      scatter (fun ?indices_are_sorted ?unique_indices x i u d ->
-          LX.scatter ?indices_are_sorted ?unique_indices x i u d)
+      scatter (fun ?mode ?indices_are_sorted ?unique_indices x i u d ->
+          LX.scatter ?mode ?indices_are_sorted ?unique_indices x i u d)
   | "cv_l_scatter_add" ->
-      scatter (fun ?indices_are_sorted ?unique_indices x i u d ->
-          LX.scatter_add ?indices_are_sorted ?unique_indices x i u d)
+      scatter (fun ?mode ?indices_are_sorted ?unique_indices x i u d ->
+          LX.scatter_add ?mode ?indices_are_sorted ?unique_indices x i u d)
   | "cv_l_scatter_sub" ->
-      scatter (fun ?indices_are_sorted ?unique_indices x i u d ->
-          LX.scatter_sub ?indices_are_sorted ?unique_indices x i u d)
+      scatter (fun ?mode ?indices_are_sorted ?unique_indices x i u d ->
+          LX.scatter_sub ?mode ?indices_are_sorted ?unique_indices x i u d)
   | "cv_l_scatter_mul" ->
-      scatter (fun ?indices_are_sorted ?unique_indices x i u d ->
-          LX.scatter_mul ?indices_are_sorted ?unique_indices x i u d)
+      scatter (fun ?mode ?indices_are_sorted ?unique_indices x i u d ->
+          LX.scatter_mul ?mode ?indices_are_sorted ?unique_indices x i u d)
   | "cv_l_scatter_min" ->
-      scatter (fun ?indices_are_sorted ?unique_indices x i u d ->
-          LX.scatter_min ?indices_are_sorted ?unique_indices x i u d)
+      scatter (fun ?mode ?indices_are_sorted ?unique_indices x i u d ->
+          LX.scatter_min ?mode ?indices_are_sorted ?unique_indices x i u d)
   | "cv_l_scatter_max" ->
-      scatter (fun ?indices_are_sorted ?unique_indices x i u d ->
-          LX.scatter_max ?indices_are_sorted ?unique_indices x i u d)
+      scatter (fun ?mode ?indices_are_sorted ?unique_indices x i u d ->
+          LX.scatter_max ?mode ?indices_are_sorted ?unique_indices x i u d)
   | "cv_l_gather" ->
       let mode =
         match U.to_string (U.member "mode" p) with
@@ -462,7 +471,12 @@ let misc_run op p a =
       | "cv_sem" ->
           Some
             [
-              STC.sem ?axis:(opt_int "axis" p)
+              STC.sem
+                ?axis:
+                  (match U.member "axis" p with
+                  | `Null when List.mem_assoc "axis" (U.to_assoc p) -> Some None
+                  | `Null -> None
+                  | v -> Some (Some (U.to_int v)))
                 ~ddof:(Option.value (opt_int "ddof" p) ~default:1)
                 ?nan_policy:(opt_string "nan_policy" p)
                 ?keepdims:(opt_bool "keepdims" p) (a ());

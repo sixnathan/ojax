@@ -1596,22 +1596,22 @@ let rec impl_base prim inputs =
       | [ operand; indices ] ->
           [ Slicing.gather_impl dimension_numbers slice_sizes operand indices ]
       | _ -> failwith "lax: gather expects operand and indices")
-  | Scatter ({ dimension_numbers = { s_clip = true; _ } as d; _ } as o) -> (
+  | ( Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
+    | Scatter_max _ ) as p
+    when (scatter_dnums p).s_clip -> (
       match inputs with
       | [ operand; indices; updates ] ->
-          let plain = { d with s_clip = false } in
+          let plain = Slicing.unclip_scatter p in
           let clamped =
             Slicing.clamp_scatter_indices (Concrete operand) (Concrete indices)
-              (Concrete updates) plain
+              (Concrete updates) (scatter_dnums plain)
           in
           let clamped_nd =
             match clamped with
             | Concrete nd -> nd
             | _ -> failwith "lax: scatter clip"
           in
-          impl_base
-            (Scatter { o with dimension_numbers = plain })
-            [ operand; clamped_nd; updates ]
+          impl_base plain [ operand; clamped_nd; updates ]
       | _ -> failwith "lax: scatter expects operand, indices and updates")
   | ( Scatter _ | Scatter_add _ | Scatter_sub _ | Scatter_mul _ | Scatter_min _
     | Scatter_max _ ) as p -> (
@@ -2948,6 +2948,10 @@ let abstract_eval_batched prim avals =
         (fun (a : aval) -> { a with shape = Array.append batch a.shape })
         (abstract_eval prim core)
 
+let empty_of (a : aval) =
+  if is_complex_dtype a.dtype then Ndarray.of_complex a.dtype a.shape [||]
+  else Ndarray.of_floats a.dtype a.shape [||]
+
 let impl prim inputs =
   let batch =
     match linalg_core_ranks prim with
@@ -2960,10 +2964,7 @@ let impl prim inputs =
       let batch_rank = Array.length batch in
       let count = Utils.prod batch in
       if count = 0 then
-        List.map
-          (fun (out : aval) ->
-            Ndarray.of_floats out.dtype out.shape
-              (Array.make (Utils.prod out.shape) 0.0))
+        List.map empty_of
           (abstract_eval_batched prim
              (List.map
                 (fun nd ->

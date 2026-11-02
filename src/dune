@@ -8,7 +8,7 @@
    (run %{exe:../tools/ltr/ltr.exe} %{input-file})))
  (foreign_stubs
   (language c)
-  (names pjrt_shim lapack_shim lapack_ffi)
+  (names pjrt_shim lapack_shim lapack_ffi gpu_solver_ffi)
   (include_dirs %{project_root}/reference/pjrt))
  (foreign_stubs
   (language c)

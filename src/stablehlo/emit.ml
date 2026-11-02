@@ -2381,6 +2381,18 @@ let lapack_ffi () =
   && Config.current_platform () = "cpu"
   && !lapack_ffi_ready ()
 
+let gpu_solver_ready : (unit -> bool) ref = ref (fun () -> false)
+
+let cuda_solver () =
+  (not !ffi_rule_disabled)
+  && Config.current_platform () = "cuda"
+  && !gpu_solver_ready ()
+
+let solver_ffi () = lapack_ffi () || cuda_solver ()
+
+let cu_target base =
+  if cuda_solver () then Some ("cusolver_" ^ base ^ "_ffi") else None
+
 let lapack_prec dt =
   match dt with
   | Dtype.F32 -> 's'
@@ -2402,8 +2414,8 @@ let sdy_factor_name i =
 
 let lapack_aval shape dtype = { shape; dtype; weak_type = false }
 
-let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
-    out_avals =
+let emit_lapack_call ?target ?(non_batch = 2) ?(row_major = false) ctx ~base
+    ~config ~aliases in_ids in_avals out_avals =
   let first = List.hd in_avals in
   let target =
     match target with
@@ -2415,14 +2427,18 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
       (fun acc (a : aval) -> max acc (Array.length a.shape))
       0 in_avals
   in
-  let batch = max_rank - 2 in
+  let batch = max_rank - non_batch in
   let group = fresh ctx in
   let n = List.length out_avals in
   let layouts avals =
     String.concat ", "
       (List.map
          (fun (a : aval) ->
-           match lapack_layout (Array.length a.shape) ~batch with
+           let rank = Array.length a.shape in
+           match
+             if row_major then Array.init rank (fun i -> rank - 1 - i)
+             else lapack_layout rank ~batch
+           with
            | [| only |] -> Printf.sprintf "dense<%d> : tensor<1xindex>" only
            | layout -> ffi_layout_text layout)
          avals)
@@ -2489,6 +2505,44 @@ let emit_lapack_call ?target ctx ~base ~config ~aliases in_ids in_avals
        (if n > 1 then "(" ^ types out_avals ^ ")" else types out_avals));
   if n = 1 then [ group ]
   else List.init n (fun i -> alias_result (Printf.sprintf "%%%d#%d" group i))
+
+let emit_plain_ffi ctx group target ~config ~aliases in_ids in_avals out_avals =
+  let n = List.length out_avals in
+  let layouts avals =
+    String.concat ", "
+      (List.map
+         (fun (a : aval) ->
+           let rank = Array.length a.shape in
+           match Array.init rank (fun i -> rank - 1 - i) with
+           | [| only |] -> Printf.sprintf "dense<%d> : tensor<1xindex>" only
+           | layout -> ffi_layout_text layout)
+         avals)
+  in
+  let alias_text =
+    String.concat ", "
+      (List.map
+         (fun (input, output) ->
+           Printf.sprintf
+             "#stablehlo.output_operand_alias<output_tuple_indices = [%s], \
+              operand_index = %d, operand_tuple_indices = []>"
+             (if n > 1 then string_of_int output else "")
+             input)
+         aliases)
+  in
+  let types avals =
+    String.concat ", " (List.map Ir.tensor_type_of_aval avals)
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %%%d%s = stablehlo.custom_call @%s(%s) {backend_config = \"\", \
+        mhlo.backend_config = {%s}, operand_layouts = [%s], \
+        output_operand_aliases = [%s], result_layouts = [%s]} : (%s) -> %s\n"
+       group
+       (if n > 1 then Printf.sprintf ":%d" n else "")
+       target
+       (String.concat ", " (List.map name in_ids))
+       config (layouts in_avals) alias_text (layouts out_avals) (types in_avals)
+       (if n > 1 then "(" ^ types out_avals ^ ")" else types out_avals))
 
 let emit_ffi_call ctx (eqn : eqn) in_ids (c : ffi_call) =
   let operand_types =
@@ -3979,19 +4033,59 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             (List.filteri
                (fun i _ -> (i >= before && i < last) || i >= total)
                args))
-  | Cholesky when !gpu_solver_prefix <> None ->
+  | Cholesky when !gpu_solver_prefix <> None || cuda_solver () ->
       let a = atom_aval (sole eqn.inputs) in
       let info =
         lapack_aval (Array.sub a.shape 0 (Array.length a.shape - 2)) Dtype.I32
       in
       let ids =
         emit_lapack_call
-          ~target:(Option.get !gpu_solver_prefix ^ "solver_potrf_ffi")
+          ~target:
+            (Option.value !gpu_solver_prefix ~default:"cu" ^ "solver_potrf_ffi")
           ctx ~base:"potrf" ~config:"lower = true"
           ~aliases:[ (0, 0) ]
           in_ids [ a ] [ a; info ]
       in
       emit_traced ctx [ a; info ] ids eqn.outs Native_lowering.lapack_cholesky
+  | Symmetric_product { alpha; beta } when cuda_solver () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let scalar = lapack_aval [||] (List.hd inputs).dtype in
+      let ty = Ir.tensor_type_of_aval scalar in
+      let full value =
+        let c = fresh ctx in
+        emit_constant_at ctx c (Ndarray.of_floats scalar.dtype [||] [| value |]);
+        let n = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+             (name n) (name c) ty ty);
+        n
+      in
+      let a_id = full alpha in
+      let b_id = full beta in
+      let avals = inputs @ [ scalar; scalar ] in
+      let out = sole eqn.outs in
+      let n = bind_var ctx out in
+      emit_plain_ffi ctx n "cusolver_syrk_ffi" ~config:"transpose = false"
+        ~aliases:[ (1, 0) ]
+        (in_ids @ [ a_id; b_id ])
+        avals [ out.vaval ]
+  | Cholesky_update when cuda_solver () ->
+      let inputs = List.map atom_aval eqn.inputs in
+      let group = fresh ctx in
+      emit_plain_ffi ctx group "cu_cholesky_update_ffi" ~config:""
+        ~aliases:[ (0, 0); (1, 1) ]
+        in_ids inputs inputs;
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid
+        (alias_result (Printf.sprintf "%%%d#0" group))
+  | Lu_pivots_to_permutation _ when cuda_solver () ->
+      let pivots = atom_aval (sole eqn.inputs) in
+      let ids =
+        emit_lapack_call ctx ~target:"cu_lu_pivots_to_permutation" ~non_batch:1
+          ~row_major:true ~base:"lu_pivots" ~config:"" ~aliases:[] in_ids
+          [ pivots ] [ (sole eqn.outs).vaval ]
+      in
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid (List.hd ids)
   | Cholesky_update | Symmetric_product _ ->
       emit_inlined ctx eqn in_ids (!Core.lowered_linalg_hook eqn.prim)
   | Cholesky when lapack_ffi () ->
@@ -4044,17 +4138,17 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in_ids inputs [ b ]
       in
       Hashtbl.replace ctx.ids (sole eqn.outs).vid (List.hd ids)
-  | Householder_product when lapack_ffi () ->
+  | Householder_product when solver_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let a = List.hd inputs in
       let base = if is_complex_dtype a.dtype then "ungqr" else "orgqr" in
       let ids =
-        emit_lapack_call ctx ~base ~config:""
+        emit_lapack_call ?target:(cu_target "orgqr") ctx ~base ~config:""
           ~aliases:[ (0, 0) ]
           in_ids inputs [ a ]
       in
       Hashtbl.replace ctx.ids (sole eqn.outs).vid (List.hd ids)
-  | Lu when lapack_ffi () ->
+  | Lu when solver_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
       let batch = Array.sub a.shape 0 (rank - 2) in
@@ -4062,18 +4156,20 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       let pivots = lapack_aval (Array.append batch [| min m n |]) Dtype.I32 in
       let info = lapack_aval batch Dtype.I32 in
       let ids =
-        emit_lapack_call ctx ~base:"getrf" ~config:""
+        emit_lapack_call ?target:(cu_target "getrf") ctx ~base:"getrf"
+          ~config:""
           ~aliases:[ (0, 0) ]
           in_ids [ a ] [ a; pivots; info ]
       in
       emit_traced ctx [ a; pivots; info ] ids eqn.outs
-        (Native_lowering.lapack_lu ~permutation_size:m)
+        (Native_lowering.lapack_lu ~bind_pivots:(cuda_solver ())
+           ~permutation_size:m)
   | Qr full_matrices
-    when lapack_ffi () && empty_matrix (atom_aval (sole eqn.inputs)) ->
+    when solver_ffi () && empty_matrix (atom_aval (sole eqn.inputs)) ->
       emit_inlined ctx eqn in_ids (function
         | [ a ] -> Native_lowering.qr_empty ~full_matrices a
         | _ -> invalid_arg "Stablehlo.Emit: qr arity")
-  | Qr full_matrices when lapack_ffi () ->
+  | Qr full_matrices when solver_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
       let taus =
@@ -4084,7 +4180,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           a.dtype
       in
       let ids =
-        emit_lapack_call ctx ~base:"geqrf" ~config:""
+        emit_lapack_call ?target:(cu_target "geqrf") ctx ~base:"geqrf"
+          ~config:""
           ~aliases:[ (0, 0) ]
           in_ids [ a ] [ a; taus ]
       in
@@ -4096,7 +4193,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | [ a ] when empty -> Native_lowering.qr_pivoted_empty ~full_matrices a
         | [ a ] -> Native_lowering.qr_pivoted ~full_matrices a
         | _ -> invalid_arg "Stablehlo.Emit: qr arity")
-  | Geqrf when lapack_ffi () ->
+  | Geqrf when solver_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
       let taus =
@@ -4107,14 +4204,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           a.dtype
       in
       let ids =
-        emit_lapack_call ctx ~base:"geqrf" ~config:""
+        emit_lapack_call ?target:(cu_target "geqrf") ctx ~base:"geqrf"
+          ~config:""
           ~aliases:[ (0, 0) ]
           in_ids [ a ] [ a; taus ]
       in
       List.iter2
         (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
         eqn.outs ids
-  | Geqp3 when lapack_ffi () ->
+  | Geqp3 when solver_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let a = List.hd inputs and jpvt = List.nth inputs 1 in
       let rank = Array.length a.shape in
@@ -4126,19 +4224,22 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           a.dtype
       in
       let ids =
-        emit_lapack_call ctx ~base:"geqp3" ~config:""
+        emit_lapack_call
+          ?target:(if cuda_solver () then Some "cuhybrid_geqp3" else None)
+          ctx ~base:"geqp3"
+          ~config:(if cuda_solver () then "magma = \"auto\"" else "")
           ~aliases:[ (0, 0); (1, 1) ]
           in_ids inputs [ a; jpvt; taus ]
       in
       List.iter2
         (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
         eqn.outs ids
-  | Ormqr { ormqr_left; ormqr_transpose } when lapack_ffi () ->
+  | Ormqr { ormqr_left; ormqr_transpose } when solver_ffi () ->
       let inputs = List.map atom_aval eqn.inputs in
       let a = List.hd inputs and c = List.nth inputs 2 in
       let base = if is_complex_dtype a.dtype then "unmqr" else "ormqr" in
       let ids =
-        emit_lapack_call ctx ~base
+        emit_lapack_call ?target:(cu_target "ormqr") ctx ~base
           ~config:
             (Printf.sprintf "left = %b, transpose = %b" ormqr_left
                ormqr_transpose)
@@ -4173,7 +4274,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           match Native_lowering.lapack_guarded outs with
           | [ _; _; _; x ] -> [ x ]
           | _ -> invalid_arg "Stablehlo.Emit: gtsv arity")
-  | Eigh { lower } when lapack_ffi () ->
+  | Eigh { lower } when solver_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
       let batch = Array.sub a.shape 0 (rank - 2) in
@@ -4189,11 +4290,14 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       let info = lapack_aval batch Dtype.I32 in
       let config =
-        Printf.sprintf "mode = 86 : ui8, uplo = %d : ui8"
-          (Char.code (if lower then 'L' else 'U'))
+        if cuda_solver () then
+          Printf.sprintf "algorithm = 0 : ui8, lower = %b" lower
+        else
+          Printf.sprintf "mode = 86 : ui8, uplo = %d : ui8"
+            (Char.code (if lower then 'L' else 'U'))
       in
       let ids =
-        emit_lapack_call ctx
+        emit_lapack_call ?target:(cu_target "syevd") ctx
           ~base:(if c then "heevd" else "syevd")
           ~config
           ~aliases:[ (0, 0) ]
@@ -4201,10 +4305,49 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx [ a; w; info ] ids eqn.outs Native_lowering.lapack_guarded
   | Svd { full_matrices; compute_uv; _ }
-    when lapack_ffi () && empty_matrix (atom_aval (sole eqn.inputs)) ->
+    when solver_ffi () && empty_matrix (atom_aval (sole eqn.inputs)) ->
       emit_inlined ctx eqn in_ids (function
         | [ a ] -> Native_lowering.svd_empty ~full_matrices ~compute_uv a
         | _ -> invalid_arg "Stablehlo.Emit: svd arity")
+  | Svd { full_matrices; compute_uv; gesvd } when cuda_solver () ->
+      if gesvd then failwith "Stablehlo.Emit: gesvd on cuda is not ported";
+      let a = atom_aval (sole eqn.inputs) in
+      let rank = Array.length a.shape in
+      let batch = Array.sub a.shape 0 (rank - 2) in
+      let m = a.shape.(rank - 2) and n = a.shape.(rank - 1) in
+      if m > 1024 || n > 1024 then
+        failwith "Stablehlo.Emit: gesvd on cuda is not ported";
+      let mn = min m n in
+      let real_dt =
+        match a.dtype with
+        | Dtype.Complex64 -> Dtype.F32
+        | Dtype.Complex128 -> Dtype.F64
+        | d -> d
+      in
+      let econ = (not full_matrices) && m > 32 && n > 32 in
+      let s = lapack_aval (Array.append batch [| mn |]) real_dt in
+      let u =
+        lapack_aval
+          (Array.append batch [| m; (if econ then mn else m) |])
+          a.dtype
+      in
+      let v =
+        lapack_aval
+          (Array.append batch [| n; (if econ then mn else n) |])
+          a.dtype
+      in
+      let info = lapack_aval batch Dtype.I32 in
+      let out_avals = [ a; s; u; v; info ] in
+      let ids =
+        emit_lapack_call ?target:(cu_target "gesvdj") ctx ~base:"gesvdj"
+          ~config:
+            (Printf.sprintf "compute_uv = %b, full_matrices = %b" compute_uv
+               (not econ))
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] out_avals
+      in
+      emit_traced ctx out_avals ids eqn.outs
+        (Native_lowering.cuda_svd ~full_matrices ~compute_uv ~econ)
   | Svd { full_matrices; compute_uv; gesvd } when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
@@ -4303,7 +4446,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx out_avals ids eqn.outs
         (Native_lowering.lapack_schur ~compute_vectors)
-  | Tridiagonal { lower } when lapack_ffi () ->
+  | Tridiagonal { lower } when solver_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
       let n = a.shape.(rank - 1) in
@@ -4322,11 +4465,13 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       let info = lapack_aval batch Dtype.I32 in
       let out_avals = [ a; d; e; taus; info ] in
       let ids =
-        emit_lapack_call ctx
+        emit_lapack_call ?target:(cu_target "sytrd") ctx
           ~base:(if is_complex_dtype a.dtype then "hetrd" else "sytrd")
           ~config:
-            (Printf.sprintf "uplo = %d : ui8"
-               (Char.code (if lower then 'L' else 'U')))
+            (if cuda_solver () then Printf.sprintf "lower = %b" lower
+             else
+               Printf.sprintf "uplo = %d : ui8"
+                 (Char.code (if lower then 'L' else 'U')))
           ~aliases:[ (0, 0) ]
           in_ids [ a ] out_avals
       in
@@ -4356,15 +4501,22 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
            (name (sole in_ids))
            ty (name n) (name raw) (name mask_id) ty)
   | Triangular_solve ({ transpose_a = false; conjugate_a = true; _ } as o) ->
-      emit_inlined ctx eqn in_ids (function
-        | [ a; b ] ->
-            let a =
-              if is_complex_dtype (Core.get_aval a).dtype then
-                Core.bind1 Conj [ a ]
-              else a
-            in
-            Core.bind (Triangular_solve { o with conjugate_a = false }) [ a; b ]
-        | _ -> invalid_arg "Stablehlo.Emit: triangular_solve arity")
+      let inputs = List.map atom_aval eqn.inputs in
+      if is_complex_dtype (List.hd inputs).dtype then begin
+        let c = fresh ctx in
+        let ty = Ir.tensor_type_of_aval (List.hd inputs) in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf "    %s = chlo.conj %s : %s -> %s\n" (name c)
+             (name (List.hd in_ids))
+             ty ty);
+        emit_eqn_in_context ctx
+          { eqn with prim = Triangular_solve { o with conjugate_a = false } }
+          (c :: List.tl in_ids)
+      end
+      else
+        emit_eqn_in_context ctx
+          { eqn with prim = Triangular_solve { o with conjugate_a = false } }
+          in_ids
   | Triangular_solve o ->
       let a, b = pair in_ids in
       let inputs = List.map atom_aval eqn.inputs in

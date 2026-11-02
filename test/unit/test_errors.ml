@@ -215,6 +215,32 @@ let validators () =
       V.require_ndim_at_least 1 ~min:2 "needs two";
       0)
 
+let shared_shape_rules () =
+  let module P = Ojax.Py_exn in
+  let x sh =
+    Ojax.Types.Concrete
+      (Ojax.Ndarray.of_floats Ojax.Dtype.F32 sh
+         (Array.make (Array.fold_left ( * ) 1 sh) 0.0))
+  in
+  Alcotest.check_raises "lax rule"
+    (P.Type_error "add got incompatible shapes for broadcasting: (2,), (3,).")
+    (fun () -> ignore (Ojax.Numpy.Ufuncs.add (x [| 2 |]) (x [| 3 |])));
+  Alcotest.check_raises "rank promotion"
+    (P.Value_error "Incompatible shapes for broadcasting: shapes=[(2, 3), (4,)]")
+    (fun () -> ignore (Ojax.Numpy.Ufuncs.add (x [| 2; 3 |]) (x [| 4 |])));
+  Alcotest.check_raises "linalg rank"
+    (P.Type_error "Input 0 to schur must have rank at least 2, but got shape=()")
+    (fun () -> ignore (Ojax.Scipy.Linalg.sqrtm (x [||])));
+  Alcotest.check_raises "linalg square"
+    (P.Value_error
+       "The input to cholesky must be a square matrix. Got shape (2, 3).")
+    (fun () -> ignore (Ojax.Core.bind Ojax.Types.Cholesky [ x [| 2; 3 |] ]));
+  Alcotest.check_raises "broadcast_to"
+    (P.Value_error
+       "Incompatible types for broadcasting: input type=float32[3] and \
+        requested type=float32[2]") (fun () ->
+      ignore (Ojax.Numpy.Jnp_util.broadcast_to (x [| 3 |]) [| 2 |]))
+
 let collapse_like_jax () =
   let module L = Ojax.Lax_api in
   let x sh =
@@ -240,6 +266,7 @@ let () =
           Alcotest.test_case "classes and printer" `Quick python_classes;
           Alcotest.test_case "validators" `Quick validators;
           Alcotest.test_case "collapse" `Quick collapse_like_jax;
+          Alcotest.test_case "shared shape rules" `Quick shared_shape_rules;
         ] );
       ( "validation",
         [ Alcotest.test_case "jax shape checks" `Quick jax_validation ] );

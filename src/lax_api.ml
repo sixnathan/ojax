@@ -256,19 +256,7 @@ let broadcast_to_rank x rank =
   let missing = rank - ndim x in
   if missing <= 0 then x else expand_dims x (Array.init missing Fun.id)
 
-let broadcast_shapes shapes =
-  let rank =
-    List.fold_left (fun m s -> Stdlib.max m (Array.length s)) 0 shapes
-  in
-  Array.init rank (fun i ->
-      List.fold_left
-        (fun acc s ->
-          let k = i - (rank - Array.length s) in
-          let d = if k < 0 then 1 else s.(k) in
-          if d = 1 then acc
-          else if acc = 1 || acc = d then d
-          else invalid_arg "Incompatible shapes for broadcasting")
-        1 shapes)
+let broadcast_shapes = Validate.broadcast_shapes
 
 let collapse_from x start =
   let sh = shape x in

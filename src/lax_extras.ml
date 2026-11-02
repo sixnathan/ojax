@@ -170,7 +170,7 @@ let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
   let rhs_rank = Array.length (shape rhs) in
   let check_range dim rank name arg =
     if dim < 0 || dim >= rank then
-      invalid_arg
+      Py_exn.type_error
         (Printf.sprintf
            "ragged_dot_general requires %s numbers to be nonnegative and less \
             than the number of axes of the %s value, got %d for %s of rank %d."

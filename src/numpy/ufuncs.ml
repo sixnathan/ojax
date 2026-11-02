@@ -32,17 +32,7 @@ let to_numeric_dtype = function D.Bool -> D.I32 | d -> d
 let convert v dt =
   if dtype v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
 
-let broadcast_shapes a b =
-  let na = Array.length a and nb = Array.length b in
-  let n = max na nb in
-  Array.init n (fun i ->
-      let da = if i < n - na then 1 else a.(i - (n - na)) in
-      let db = if i < n - nb then 1 else b.(i - (n - nb)) in
-      if da = db then da
-      else if da = 1 then db
-      else if db = 1 then da
-      else Py_exn.value_error "broadcast: incompatible shapes")
-
+let broadcast_shapes a b = Validate.broadcast_shapes [ a; b ]
 let broadcast_to = Jnp_util.broadcast_to
 
 let common_shape vs =
@@ -82,6 +72,7 @@ let promote_shapes vs =
         in
         if List.length nonscalar < 2 then vs
         else
+          let _ = Validate.broadcast_shapes (List.map shape vs) in
           let n = List.fold_left (fun acc v -> max acc (rank v)) 0 vs in
           List.map
             (fun v ->

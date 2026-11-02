@@ -58,4 +58,27 @@ let broadcast_shapes shapes =
             ("Incompatible shapes for broadcasting: shapes="
            ^ python_shapes shapes))
 
+let lax_broadcast_shapes ~name shapes =
+  let shapes = List.filter (fun s -> Array.length s > 0) shapes in
+  match shapes with
+  | [] -> [||]
+  | first :: _ ->
+      let ranks = List.sort_uniq compare (List.map Array.length shapes) in
+      if List.length ranks <> 1 then broadcast_shapes shapes
+      else
+        Array.init (Array.length first) (fun i ->
+            match
+              List.sort_uniq compare
+                (List.filter
+                   (fun d -> d <> 1)
+                   (List.map (fun s -> s.(i)) shapes))
+            with
+            | [] -> 1
+            | [ d ] -> d
+            | _ ->
+                Py_exn.type_error
+                  (Printf.sprintf
+                     "%s got incompatible shapes for broadcasting: %s." name
+                     (String.concat ", " (List.map python_tuple shapes))))
+
 let require_same_shape a b message = if a <> b then Py_exn.value_error message

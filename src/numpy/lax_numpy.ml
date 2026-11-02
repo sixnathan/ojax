@@ -33,17 +33,7 @@ let convert v dt =
   if dtype v = dt then v else bind1 (T.Convert_element_type dt) [ v ]
 
 let broadcast_to = Jnp_util.broadcast_to
-
-let broadcast_shapes a b =
-  let na = Array.length a and nb = Array.length b in
-  let n = max na nb in
-  Array.init n (fun i ->
-      let da = if i < n - na then 1 else a.(i - (n - na)) in
-      let db = if i < n - nb then 1 else b.(i - (n - nb)) in
-      if da = db then da
-      else if da = 1 then db
-      else if db = 1 then da
-      else Py_exn.value_error "broadcast: incompatible shapes")
+let broadcast_shapes a b = Validate.broadcast_shapes [ a; b ]
 
 let promote2 x y =
   let dt, _ =
@@ -794,7 +784,7 @@ let moveaxis source destination v =
   List.iter (fun (d, s) -> perm := insert !perm d s) pairs;
   bind1 (T.Transpose (Array.of_list !perm)) [ v ]
 
-let broadcast_shapes_n shapes = List.fold_left broadcast_shapes [||] shapes
+let broadcast_shapes_n = Validate.broadcast_shapes
 
 let broadcast_arrays vs =
   let sh =
@@ -1833,7 +1823,7 @@ let diag ?(k = 0) v =
       in
       where_ mask col (zero ())
   | 2 -> diagonal ~offset:k v
-  | _ -> invalid_arg "diag input must be 1d or 2d"
+  | _ -> Py_exn.value_error "diag input must be 1d or 2d"
 
 let diag ?k a0 =
   Eager_jit.one ~jit:"_diag" "numpy.lax_numpy.diag" k [] [ a0 ]

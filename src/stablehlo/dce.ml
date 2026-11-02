@@ -154,6 +154,8 @@ and rule used_outs (e : eqn) =
         )
     | Custom_jvp_call id when Core.shard_rule id <> None ->
         shard_map_rule e used_outs id (Option.get (Core.shard_rule id))
+    | Custom_jvp_call id when Hashtbl.mem Jaxpr.opaque_dce_calls id ->
+        (everything, Some e)
     | (Custom_jvp_call id | Custom_vjp_call id)
       when Core.constraint_rule id <> None ->
         (everything, Some e)

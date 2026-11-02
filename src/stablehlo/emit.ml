@@ -674,6 +674,25 @@ let emit_opt_barrier ctx (eqn : eqn) in_ids =
             (alias_result (Printf.sprintf "%%%d#%d" group i)))
         outs
 
+let emit_barrier_ids ctx avals in_ids =
+  match (avals, in_ids) with
+  | [ a ], [ x ] ->
+      let n = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.optimization_barrier %s : %s\n"
+           (name n) (name x) (Ir.tensor_type_of_aval a));
+      [ n ]
+  | _ ->
+      let group = fresh ctx in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %%%d:%d = stablehlo.optimization_barrier %s : %s\n"
+           group (List.length in_ids)
+           (String.concat ", " (List.map name in_ids))
+           (String.concat ", " (List.map Ir.tensor_type_of_aval avals)));
+      List.mapi
+        (fun i _ -> alias_result (Printf.sprintf "%%%d#%d" group i))
+        in_ids
+
 let emit_reduce_precision ctx (eqn : eqn) in_ids exponent_bits mantissa_bits =
   let x = sole in_ids in
   let out = sole eqn.outs in
@@ -4904,6 +4923,11 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Custom_jvp_call id | Custom_vjp_call id -> (
       match Jaxpr.custom_call_jaxpr id (List.map atom_aval eqn.inputs) with
       | Some c ->
+          let in_ids =
+            if Hashtbl.mem Jaxpr.barrier_calls id && in_ids <> [] then
+              emit_barrier_ids ctx (List.map atom_aval eqn.inputs) in_ids
+            else in_ids
+          in
           List.iter2
             (fun (v : var) out -> Hashtbl.replace ctx.ids v.vid out)
             eqn.outs

@@ -3785,6 +3785,10 @@ let conv_transpose_rhs g lhs (rhs : aval) ~window_strides ~padding ~lhs_dilation
        })
     [ lhs; g ]
 
+let custom_call_transpose :
+    (int -> value list -> tval list -> value option list option) ref =
+  ref (fun _ _ _ -> None)
+
 let transpose_cache :
     ( int * bool list * aval list * bool list * bool,
       closed_jaxpr * bool list )
@@ -4539,12 +4543,18 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       in
       List.map (fun _ -> None) res_tv @ keep
   | Custom_jvp_call id -> (
-      let avals =
-        List.map (function Prim v -> Core.get_aval v | Undef a -> a) primals
-      in
-      match Jaxpr.custom_call_jaxpr id avals with
-      | Some c -> xla_call_transpose c cts primals
-      | None -> failwith "ad: custom call cannot appear in a linear program")
+      match !custom_call_transpose id cts primals with
+      | Some r -> r
+      | None -> (
+          let avals =
+            List.map
+              (function Prim v -> Core.get_aval v | Undef a -> a)
+              primals
+          in
+          match Jaxpr.custom_call_jaxpr id avals with
+          | Some c -> xla_call_transpose c cts primals
+          | None -> failwith "ad: custom call cannot appear in a linear program"
+          ))
   | Custom_vjp_call _ ->
       failwith "ad: custom call cannot appear in a linear program"
   | Ffi_call c -> ffi_not_differentiable c

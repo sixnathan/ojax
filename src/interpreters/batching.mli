@@ -29,5 +29,20 @@ val vmap_out :
   int ->
   value list
 
+val custom_call_batch :
+  (int ->
+  int ->
+  value list ->
+  int option list ->
+  (value list * int option list) option)
+  ref
+
+val batch_jaxpr_axes :
+  int ->
+  closed_jaxpr ->
+  aval list ->
+  int option list ->
+  closed_jaxpr * bool list
+
 val find_axis : string -> string * trace * int
 val take_on_axis : (value -> int array -> int -> value) ref

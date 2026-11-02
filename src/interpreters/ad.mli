@@ -45,5 +45,8 @@ val grad : (value list -> value) -> value list -> value list
 
 type tval = Prim of value | Undef of aval
 
+val custom_call_transpose :
+  (int -> value list -> tval list -> value option list option) ref
+
 val eval_jaxpr_transposed :
   ?seeds:(var * value) list -> jaxpr -> tval list -> value list -> value list

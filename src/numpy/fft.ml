@@ -174,7 +174,7 @@ let fft_core name kind ~inverse ?s ?axes ?norm a =
     Py_exn.value_error
       (Printf.sprintf
          "jax.numpy.fft.%s does not support repeated axes. Got axes %s." name
-         (Validate.python_tuple (Array.of_list given_axes)));
+         (python_list given_axes));
   let inner_axes =
     match axes with
     | Some ax -> range (ndim - List.length ax) ndim

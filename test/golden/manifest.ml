@@ -5216,6 +5216,52 @@ let error_types_selftest () =
   check "authored stays apart" "authored"
     (tier "OverflowError" (Failure "out of bounds for int32"))
 
+let selected_range () =
+  Array.to_list Sys.argv
+  |> List.find_map (fun a ->
+      match String.split_on_char '.' a with
+      | [ low; ""; high ] -> (
+          match (int_of_string_opt low, int_of_string_opt high) with
+          | Some l, Some h -> Some (l, h)
+          | _ -> None)
+      | _ -> None)
+  |> Option.value ~default:(0, max_int)
+
+let reorder tests =
+  match Sys.getenv_opt "OJAX_TEST_ORDER" with
+  | None | Some "" | Some "normal" -> tests
+  | Some order ->
+      let low, high = selected_range () in
+      let inside i = i >= low && i <= high in
+      let indexed = List.mapi (fun i t -> (i, t)) tests in
+      let block = List.filter (fun (i, _) -> inside i) indexed in
+      let permuted =
+        match String.split_on_char ':' order with
+        | [ "reverse" ] -> List.rev block
+        | [ "shuffle"; seed ] ->
+            let state = Random.State.make [| int_of_string seed |] in
+            let arr = Array.of_list block in
+            for i = Array.length arr - 1 downto 1 do
+              let j = Random.State.int state (i + 1) in
+              let t = arr.(i) in
+              arr.(i) <- arr.(j);
+              arr.(j) <- t
+            done;
+            Array.to_list arr
+        | _ -> failwith ("OJAX_TEST_ORDER: " ^ order)
+      in
+      let rest = ref permuted in
+      List.map
+        (fun (i, t) ->
+          if inside i then
+            match !rest with
+            | (_, p) :: tl ->
+                rest := tl;
+                p
+            | [] -> t
+          else t)
+        indexed
+
 let rec attributed_with_coverage suites =
   List.map attributed (coverage_suites @ apicov_suites @ suites)
 
@@ -5228,7 +5274,7 @@ and attributed (suite, tests) =
           fun arg ->
             Compare.set_suite suite;
             run arg ))
-      tests )
+      (reorder tests) )
 
 let () =
   at_exit (fun () ->

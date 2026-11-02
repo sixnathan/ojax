@@ -128,7 +128,8 @@ let use_cholesky u (a_minus_e, c, e) =
   b1 T.Add [ left; b1 T.Mul [ a_minus_e; z ] ]
 
 let matrix_norm name axis v =
-  jit1 "norm" ~key:name
+  jit1 "norm"
+    ~key:(name ^ string_of_int axis)
     (function
       | [ v ] ->
           let magnitude = b1 T.Abs [ v ] in

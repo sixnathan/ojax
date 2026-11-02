@@ -162,6 +162,26 @@ def float_nan_uses(root):
     return uses
 
 
+def rows_by_name(log):
+    rows = collections.defaultdict(list)
+    with open(log, errors="replace") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 5:
+                rows[(parts[4], parts[0])].append(line.rstrip("\n"))
+    return {k: sorted(v) for k, v in rows.items()}
+
+
+def order_differences(normal_log, log):
+    normal = rows_by_name(normal_log)
+    other = rows_by_name(log)
+    differ = []
+    for key in sorted(set(normal) | set(other)):
+        if normal.get(key) != other.get(key):
+            differ.append((key, normal.get(key), other.get(key)))
+    return differ
+
+
 def main():
     root = checkout_root()
     parser = argparse.ArgumentParser()
@@ -173,6 +193,8 @@ def main():
     parser.add_argument("--split-failed", action="store_true")
     parser.add_argument("--mem-limit-gb", type=float, default=0)
     parser.add_argument("--failed-log", default=None)
+    parser.add_argument("--order", default="normal", help="normal, reverse or shuffle:SEED, applied to the cases of each job in one process")
+    parser.add_argument("--compare-log", default=None, help="a log of the same cases in normal order; rows that differ are printed")
     args = parser.parse_args()
 
     cwd = os.path.join(root, "_build/default/test/golden")
@@ -206,7 +228,7 @@ def main():
             scratch = os.path.join(work, str(next_job))
             os.makedirs(os.path.join(scratch, "a"))
             job_log = os.path.join(scratch, "exact.log")
-            job_env = dict(env, OJAX_EXACT_LOG=job_log)
+            job_env = dict(env, OJAX_EXACT_LOG=job_log, OJAX_TEST_ORDER=args.order)
             out = open(os.path.join(scratch, "out"), "w")
             proc = subprocess.Popen(
                 ["nice", "-n", "10", "taskset", "-c", str(slot[0]), exe, "test", "-o", os.path.join(scratch, "a"), "^" + re.escape(group) + "$", f"{low}..{high}"],
@@ -269,6 +291,17 @@ def main():
                 if "[FAIL]" in clean or "[failure]" in clean:
                     print("  " + clean.strip()[:200])
 
+    order_differ = []
+    if args.compare_log:
+        order_differ = order_differences(args.compare_log, log)
+        for (suite, name), before, after in order_differ[:200]:
+            print(f"ORDER {args.order} {suite} {name}")
+            for line in before or ["(missing)"]:
+                print("  normal: " + line[:300])
+            for line in after or ["(missing)"]:
+                print("  " + args.order + ": " + line[:300])
+        print(f"order {args.order}: {len(order_differ)} rows differ from {args.compare_log}")
+
     counts = tally(log)
     fell = []
     if not args.no_ratchet and not args.filter:
@@ -313,7 +346,7 @@ def main():
     nan_uses = float_nan_uses(root)
     if nan_uses:
         print("Float.nan is 0x7ff8000000000001, JAX's nan is 0x7ff8000000000000; use Float_format.nan in: " + ", ".join(nan_uses))
-    sys.exit(1 if failed or fell or row_fell or nan_uses else 0)
+    sys.exit(1 if failed or fell or row_fell or nan_uses or order_differ else 0)
 
 
 if __name__ == "__main__":

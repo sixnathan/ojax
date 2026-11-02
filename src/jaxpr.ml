@@ -898,13 +898,13 @@ let call_cache : (string, closed_jaxpr) Hashtbl.t = Hashtbl.create 64
 let call_key name key (avals : aval list) =
   String.concat "|"
     (name :: key
-    :: string_of_bool (Config.value Config.enable_x64)
-    :: List.map
-         (fun (a : aval) ->
-           Dtype.short_name a.dtype
-           ^ Pretty_printer.aval_short a
-           ^ string_of_bool a.weak_type)
-         avals)
+     :: List.map (fun (n, v) -> n ^ "=" ^ v) (Config.trace_context ())
+    @ List.map
+        (fun (a : aval) ->
+          Dtype.short_name a.dtype
+          ^ Pretty_printer.aval_short a
+          ^ string_of_bool a.weak_type)
+        avals)
 
 let eager_jit :
     (string -> string -> (value list -> value list) -> value list -> value list)

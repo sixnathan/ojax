@@ -717,7 +717,7 @@ let solve_sylvester_2d ~method_ a b c tol =
            [])
   | _ -> assert false
 
-let solve_sylvester ?(method_ = "schur") ?(tol = 1e-8) a b q =
+let solve_sylvester ?(method_ = "schur") ?tol a b q =
   let dt = Dtypes.to_inexact_dtype (NL.result_type [ a; b; q ]) in
   let a = NL.astype a dt and b = NL.astype b dt and q = NL.astype q dt in
   let m, n = Validate.unpack_last_two (shape q) in
@@ -732,14 +732,18 @@ let solve_sylvester ?(method_ = "schur") ?(tol = 1e-8) a b q =
          (Validate.python_tuple (shape a))
          (Validate.python_tuple (shape b))
          (Validate.python_tuple (shape q)));
-  let tol = Numpy.Jnp_util.py_float tol in
+  let traced_tol = Option.map Numpy.Jnp_util.py_float tol in
+  let inner a b q tol =
+    Numpy.Jnp_util.jit1 "_solve_sylvester_2d" ~key:method_
+      (function
+        | [ a; b; q; tol ] -> solve_sylvester_2d ~method_ a b q tol
+        | _ -> assert false)
+      [ a; b; q; tol ]
+  in
   Numpy.Jnp_util.jit1 "solve_sylvester"
+    ~key:(method_ ^ if tol = None then "" else "/tol")
     (function
-      | [ a; b; q ] ->
-          Numpy.Jnp_util.jit1 "_solve_sylvester_2d"
-            (function
-              | [ a; b; q; tol ] -> solve_sylvester_2d ~method_ a b q tol
-              | _ -> assert false)
-            [ a; b; q; tol ]
+      | [ a; b; q ] -> inner a b q (Numpy.Jnp_util.py_float 1e-8)
+      | [ a; b; q; tol ] -> inner a b q tol
       | _ -> assert false)
-    [ a; b; q ]
+    (a :: b :: q :: Option.to_list traced_tol)

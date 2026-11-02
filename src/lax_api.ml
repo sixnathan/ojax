@@ -444,79 +444,76 @@ let gather ?(mode = Lax_config.Promise_in_bounds) ?fill_value
       Lax.Slicing.gather_fill ~flag ?fill_value x indices dimension_numbers
         slice_sizes
 
-let scatter_indices mode x indices updates (dn : scatter_dims) =
-  match mode with
-  | Some Lax_config.Clip ->
-      let pos = ref 0 in
-      let window =
-        Array.mapi
-          (fun d size ->
-            if
-              Array.mem d dn.inserted_window_dims
-              || Array.mem d dn.s_operand_batching_dims
-            then size - 1
-            else begin
-              let extent = (shape updates).(dn.update_window_dims.(!pos)) in
-              incr pos;
-              size - extent
-            end)
-          (shape x)
-      in
-      clamp_indices indices dn.scatter_dims_to_operand_dims window
-  | _ -> indices
-
 let flagged_scatter prim ~indices_are_sorted ~unique_indices =
   if indices_are_sorted || unique_indices then
     Np_ints.mark_scatter_flags ~sorted:indices_are_sorted ~unique:unique_indices
       prim
   else prim
 
+let scatter_mode_dims mode (dn : scatter_dims) =
+  match mode with
+  | Some Lax_config.Clip -> { dn with s_clip = true }
+  | Some Lax_config.One_hot ->
+      invalid_arg "scatter: GatherScatterMode.ONE_HOT is not supported"
+  | _ -> dn
+
+let scatter_mode_prim mode prim =
+  match mode with
+  | Some Lax_config.Promise_in_bounds -> Np_ints.mark_prim prim
+  | _ -> prim
+
 let scatter ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
     indices updates dimension_numbers =
-  let indices = scatter_indices mode x indices updates dimension_numbers in
+  let dimension_numbers = scatter_mode_dims mode dimension_numbers in
   b1
-    (flagged_scatter ~indices_are_sorted ~unique_indices:false
-       (Scatter { dimension_numbers; unique_indices }))
+    (scatter_mode_prim mode
+       (flagged_scatter ~indices_are_sorted ~unique_indices:false
+          (Scatter { dimension_numbers; unique_indices })))
     [ x; indices; updates ]
 
 let scatter_add ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
     indices updates dimension_numbers =
-  let indices = scatter_indices mode x indices updates dimension_numbers in
+  let dimension_numbers = scatter_mode_dims mode dimension_numbers in
   b1
-    (flagged_scatter ~indices_are_sorted ~unique_indices
-       (Scatter_add { dimension_numbers }))
+    (scatter_mode_prim mode
+       (flagged_scatter ~indices_are_sorted ~unique_indices
+          (Scatter_add { dimension_numbers })))
     [ x; indices; updates ]
 
 let scatter_sub ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
     indices updates dimension_numbers =
-  let indices = scatter_indices mode x indices updates dimension_numbers in
+  let dimension_numbers = scatter_mode_dims mode dimension_numbers in
   b1
-    (flagged_scatter ~indices_are_sorted ~unique_indices
-       (Scatter_sub { dimension_numbers }))
+    (scatter_mode_prim mode
+       (flagged_scatter ~indices_are_sorted ~unique_indices
+          (Scatter_sub { dimension_numbers })))
     [ x; indices; updates ]
 
 let scatter_mul ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
     indices updates dimension_numbers =
-  let indices = scatter_indices mode x indices updates dimension_numbers in
+  let dimension_numbers = scatter_mode_dims mode dimension_numbers in
   b1
-    (flagged_scatter ~indices_are_sorted ~unique_indices:false
-       (Scatter_mul { dimension_numbers; unique_indices }))
+    (scatter_mode_prim mode
+       (flagged_scatter ~indices_are_sorted ~unique_indices:false
+          (Scatter_mul { dimension_numbers; unique_indices })))
     [ x; indices; updates ]
 
 let scatter_min ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
     indices updates dimension_numbers =
-  let indices = scatter_indices mode x indices updates dimension_numbers in
+  let dimension_numbers = scatter_mode_dims mode dimension_numbers in
   b1
-    (flagged_scatter ~indices_are_sorted ~unique_indices
-       (Scatter_min { dimension_numbers }))
+    (scatter_mode_prim mode
+       (flagged_scatter ~indices_are_sorted ~unique_indices
+          (Scatter_min { dimension_numbers })))
     [ x; indices; updates ]
 
 let scatter_max ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
     indices updates dimension_numbers =
-  let indices = scatter_indices mode x indices updates dimension_numbers in
+  let dimension_numbers = scatter_mode_dims mode dimension_numbers in
   b1
-    (flagged_scatter ~indices_are_sorted ~unique_indices
-       (Scatter_max { dimension_numbers }))
+    (scatter_mode_prim mode
+       (flagged_scatter ~indices_are_sorted ~unique_indices
+          (Scatter_max { dimension_numbers })))
     [ x; indices; updates ]
 
 let reduce_sum x axes = b1 (Reduce_sum axes) [ x ]

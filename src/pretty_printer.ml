@@ -823,7 +823,7 @@ let jax_params (e : eqn) =
       ]
   | Scatter { dimension_numbers; unique_indices } as p ->
       scatter_params ~flags:(scatter_flags p) ~sorted:(Np_ints.scatter_marked p)
-        dimension_numbers unique_indices
+        ~mode:(scatter_mode p) dimension_numbers unique_indices
   | Scatter_mul { dimension_numbers; unique_indices } as p ->
       scatter_params ~flags:(scatter_flags p) ~mode:(scatter_mode p)
         ~update:(Mul, in_dtype ())

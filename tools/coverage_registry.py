@@ -191,7 +191,7 @@ def _lax_ops():
     def scatter(name):
         fn = getattr(lax, name)
         idx = lambda p: jnp.asarray(p["idx"]).reshape(-1, 1)
-        return lambda a, p: fn(a, idx(p), a[: len(p["idx"])] * 2.0, _sdn(), indices_are_sorted=p.get("sorted", False), unique_indices=p.get("unique", False))
+        return lambda a, p: fn(a, idx(p), a[: len(p["idx"])] * 2.0, _sdn(), indices_are_sorted=p.get("sorted", False), unique_indices=p.get("unique", False), mode=p.get("mode"))
 
     ops = {"cv_l_" + n: scatter(n) for n in "scatter scatter_add scatter_sub scatter_mul scatter_min scatter_max".split()}
     ops["cv_l_gather"] = lambda a, p: lax.gather(a, jnp.asarray(p["idx"]).reshape(-1, 1), _gdn(), (1,), mode=p["mode"], indices_are_sorted=p.get("sorted", False), unique_indices=p.get("unique", False))

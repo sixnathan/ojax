@@ -12,18 +12,28 @@ let invert_permutation i =
   let vals = NL.arange ~dtype:(dtype i) (float_of_int size) in
   IX.put base i vals
 
-let sem ?(axis = 0) ~ddof ?(nan_policy = "propagate") ?(keepdims = false) a =
+let sem ?(axis = Some 0) ~ddof ?(nan_policy = "propagate") ?(keepdims = false) a
+    =
   let b = match promote_complex [ a ] with [ b ] -> b | _ -> assert false in
+  let axes = Option.map (fun ax -> [| ax |]) axis in
   match nan_policy with
   | "propagate" ->
-      let size = (shape b).(axis) in
-      let spread = RD.std ~axis:[| axis |] ~ddof_value:ddof ~keepdims b in
+      let sh = shape b in
+      let size =
+        match axis with
+        | None -> Array.fold_left ( * ) 1 sh
+        | Some ax ->
+            let n = Array.length sh in
+            if ax >= n || ax < -n then invalid_arg "tuple index out of range"
+            else sh.(if ax < 0 then ax + n else ax)
+      in
+      let spread = RD.std ?axis:axes ~ddof_value:ddof ~keepdims b in
       UF.divide spread
         (NL.astype (UF.sqrt (Numpy.Jnp_util.py_int size)) (dtype b))
   | "omit" ->
       let valid = UF.logical_not (UF.isnan b) in
-      let count = RD.sum ~axis:[| axis |] ~keepdims valid in
-      let spread = RD.nanstd ~axis:[| axis |] ~ddof_value:ddof ~keepdims b in
+      let count = RD.sum ?axis:axes ~keepdims valid in
+      let spread = RD.nanstd ?axis:axes ~ddof_value:ddof ~keepdims b in
       UF.divide spread (NL.astype (UF.sqrt count) (dtype b))
   | other -> invalid_arg (other ^ " is not supported")
 

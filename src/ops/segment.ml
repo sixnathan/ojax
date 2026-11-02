@@ -106,7 +106,8 @@ let segment_update prim identity reducer ?num_segments
              (Numpy.Jnp_util.py_int 1))
   in
   if nseg < 0 then invalid_arg "num_segments must be non-negative.";
-  let clip = mode = Some "clip" in
+  let mode = Option.map Lax_config.gather_scatter_mode_of_string mode in
+  let clip = mode = Some Lax_config.Clip in
   let narrow ids =
     if dtype ids = D.I64 then bind1 (T.Convert_element_type D.I32) [ ids ]
     else ids
@@ -116,7 +117,8 @@ let segment_update prim identity reducer ?num_segments
       scatter_flagged ~indices_are_sorted ~unique_indices scatter_prim
     in
     let prim =
-      if mode = Some "promise_in_bounds" then Np_ints.mark_prim prim else prim
+      if mode = Some Lax_config.Promise_in_bounds then Np_ints.mark_prim prim
+      else prim
     in
     bind1 prim args
   in

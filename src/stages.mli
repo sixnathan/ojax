@@ -44,6 +44,7 @@ val jax_jaxpr_text : lowered -> string
 val compile : ?compiler_options:compiler_options -> lowered -> compiled
 val call : compiled -> value list -> value list
 val cost_analysis : compiled -> (string * float) list
+val memory_analysis : compiled -> Pjrt.Executable.memory_stats
 
 val jit :
   ?name:string ->

@@ -111,6 +111,17 @@ let internal_of_tangent = function
 let aval_str = Ref_state.aval_string
 let same_type (a : aval) (b : aval) = a.shape = b.shape && a.dtype = b.dtype
 
+let mismatch_extra (a : aval) (b : aval) =
+  let mismatches =
+    (if a.dtype <> b.dtype then [ "the dtypes do not match" ] else [])
+    @ if a.shape <> b.shape then [ "the shapes do not match" ] else []
+  in
+  match List.rev mismatches with
+  | [] -> ""
+  | [ only ] -> ", so " ^ only
+  | last :: rest ->
+      ", so " ^ String.concat ", " (List.rev rest) ^ ", and " ^ last
+
 let custom_jvp_symbolic ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =
   let jvp_name = jvp_name ^ "\000symbolic" in
   let register primal ~jvp =
@@ -166,8 +177,8 @@ let bwd_output index (input : aval) = function
              "Custom VJP bwd rule must produce an output with the same type as \
               the args tuple of the primal function, but at output[%d] the bwd \
               rule produced an output of type %s corresponding to an input of \
-              type %s"
-             index (aval_str got) (aval_str input));
+              type %s%s"
+             index (aval_str got) (aval_str input) (mismatch_extra input got));
       v
 
 let custom_vjp_symbolic primal ~fwd ~bwd =

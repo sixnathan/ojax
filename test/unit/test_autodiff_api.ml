@@ -308,6 +308,22 @@ let primal_trees () =
       check "grad" 3.0
         (value (grad_of (fun a -> f [ sole a; scalar 3.0 ]) (scalar 2.0))))
 
+let symbolic_bwd_shape_message () =
+  let f =
+    Cd.custom_vjp_symbolic
+      (fun args -> args)
+      ~fwd:(fun args -> (List.map (fun p -> p.Cd.value) args, []))
+      ~bwd:(fun _ _ -> [ Some (Cd.Tangent (vec [| 1.0; 1.0 |])) ])
+  in
+  let total a = Core.bind1 (Reduce_sum [| 0 |]) (f [ a ]) in
+  Alcotest.check_raises "message"
+    (Invalid_argument
+       "Custom VJP bwd rule must produce an output with the same type as the \
+        args tuple of the primal function, but at output[0] the bwd rule \
+        produced an output of type float32[2] corresponding to an input of \
+        type float32[3], so the shapes do not match") (fun () ->
+      ignore (Ad.grad (fun a -> total (sole a)) [ vec [| 1.0; 2.0; 3.0 |] ]))
+
 let symbolic_constructors () =
   let z = Cd.symbolic_zero_from_primal_value (mat 2 3 (Array.make 6 1.0)) in
   Alcotest.(check (array int)) "shape" [| 2; 3 |] z.aval.shape;
@@ -1919,6 +1935,8 @@ let () =
           Alcotest.test_case "bwd outputs" `Quick bwd_outputs;
           Alcotest.test_case "primal trees" `Quick primal_trees;
           Alcotest.test_case "constructors" `Quick symbolic_constructors;
+          Alcotest.test_case "bwd shape message" `Quick
+            symbolic_bwd_shape_message;
         ] );
       ( "custom_jvp symbolic zeros",
         [

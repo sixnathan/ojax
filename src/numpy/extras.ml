@@ -2148,7 +2148,8 @@ let roots_of_coefficients p =
       Linalg.eigvals companion)
 
 let roots ?(strip_zeros = true) p =
-  let p = as_inexact p in
+  let p = NL.atleast_1d (as_inexact p) in
+  if rank p <> 1 then invalid_arg "Input must be a rank-1 array.";
   let n = (shape p).(0) in
   let real_dt = dtype_of p in
   let complex_dt =
@@ -2156,9 +2157,8 @@ let roots ?(strip_zeros = true) p =
     | Dtype.F64 | Dtype.Complex128 -> Dtype.Complex128
     | _ -> Dtype.Complex64
   in
-  if not strip_zeros then
-    if n < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
-    else roots_of_coefficients p
+  if n < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
+  else if not strip_zeros then roots_of_coefficients p
   else begin
     let nd = host "roots" p in
     let nonzero i =

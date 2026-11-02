@@ -396,7 +396,7 @@ let numpy_run op p a b c =
       let e =
         T.Concrete
           (Ojax.Ndarray.of_floats Ojax.Dtype.I32
-             (shp (a ()))
+             [| Array.length (ints "e" p) |]
              (Array.map float_of_int (ints "e" p)))
       in
       Some [ E.ldexp (a ()) e ]
@@ -849,7 +849,8 @@ let array_random_run op p a b =
       Some (Ojax.Api.jit_flat f [ a () ])
   | "sp_fresnel_grad" ->
       let f args =
-        L.reduce_sum (fst (Ojax.Scipy.Special.fresnel (List.hd args))) [| 0 |]
+        let s = fst (Ojax.Scipy.Special.fresnel (List.hd args)) in
+        L.reduce_sum s (Array.init (Array.length (shp s)) Fun.id)
       in
       Some (Ojax.Interpreters.Ad.grad f [ a () ])
   | _ -> None

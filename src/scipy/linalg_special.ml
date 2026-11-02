@@ -105,6 +105,9 @@ let circulant c =
 
 let hankel_patches c r =
   let nc = (shape c).(0) and nr = (shape r).(0) in
+  if nc = 0 || nr = 0 then
+    L.full [| nc; nr |] 0.0 (Dtypes.promote_types (dtype_of c) (dtype_of r))
+  else
   let tail =
     b1
       (Slice

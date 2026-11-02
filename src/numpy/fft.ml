@@ -80,9 +80,11 @@ let lax_fft kind sizes v =
             | Fft_real -> as_real v
             | Fft_forward | Fft_inverse | Fft_inverse_real -> as_complex v
           in
-          b1
-            (Fft { fft_type = kind; fft_lengths = Array.of_list sizes })
-            [ prepared ]
+          if sizes = [] then prepared
+          else
+            b1
+              (Fft { fft_type = kind; fft_lengths = Array.of_list sizes })
+              [ prepared ]
       | _ -> invalid_arg "fft: arity")
     [ v ]
 

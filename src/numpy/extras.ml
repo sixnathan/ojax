@@ -1603,8 +1603,8 @@ let delete_array ?axis ?(assume_unique_indices = false) a obj =
     let base = ramp (extent - count) in
     let above =
       U.greater_equal
-        (NL.reshape base [| 1; extent - count |])
-        (NL.reshape shifted [| count; 1 |])
+        (L.expand_dims base [| 0 |])
+        (L.expand_dims shifted [| 1 |])
     in
     let adjust = R.sum ~dtype:dt ~axis:[| 0 |] above in
     I.take_index ~axis:ax a (U.add base adjust)
@@ -2218,7 +2218,7 @@ let polyfit_full_body ?rcond ?w x y deg =
 let polyfit_full ?rcond ?w a0 a1 a2 =
   match
     Eager_jit.many ~jit:"polyfit" ~vals_first:true "numpy.extras.polyfit_full"
-      (rcond, a2) [ w ] [ a0; a1 ] (fun opts vals ->
+      ("full", rcond, a2) [ w ] [ a0; a1 ] (fun opts vals ->
         match (opts, vals) with
         | [ w ], [ a0; a1 ] -> polyfit_full_body ?rcond ?w a0 a1 a2
         | _ -> assert false)
@@ -2252,7 +2252,7 @@ let polyfit_cov_body ?rcond ?w ~unscaled x y deg =
 
 let polyfit_cov ?rcond ?w ?(unscaled = false) a0 a1 a2 =
   Eager_jit.pair ~jit:"polyfit" ~vals_first:true "numpy.extras.polyfit_cov"
-    (rcond, unscaled, a2) [ w ] [ a0; a1 ] (fun opts vals ->
+    ("cov", rcond, unscaled, a2) [ w ] [ a0; a1 ] (fun opts vals ->
       match (opts, vals) with
       | [ w ], [ a0; a1 ] -> polyfit_cov_body ?rcond ?w ~unscaled a0 a1 a2
       | _ -> assert false)

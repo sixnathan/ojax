@@ -1087,7 +1087,10 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   let cum = cumsum ~axis:ax clean in
   let total = Lax_api.index_in_dim ~axis:ax ~keepdims cum (extent - 1) in
   let tw_f = Lax_api.expand_dims total (ints q_ndim 0) in
-  let q_f = reshape q (Array.append (shape q) (Array.make (ndim total) 1)) in
+  let q_f =
+    let target = Array.append (shape q) (Array.make (ndim total) 1) in
+    if target = shape q then q else reshape q target
+  in
   let target = Lax_api.mul q_f tw_f in
   let aligned =
     if keepdims then target else Lax_api.expand_dims target [| ax + q_ndim |]
@@ -1100,10 +1103,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
     if squash_nans then
       sum ~axis:[| ax |] ~keepdims ~dtype:(dtype q)
         (Lax_api.bitwise_not nan_data)
-    else
-      bind1
-        (T.Convert_element_type (dtype q))
-        [ Lax_api.full_like total (float_of_int extent) ]
+    else Lax_api.full_like ~dtype:(dtype q) total (float_of_int extent)
   in
   let const_of v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |]) in
   let limit = Lax_api.sub valid_counts (Lax_api.full_like valid_counts 1.0) in

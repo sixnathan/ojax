@@ -4512,10 +4512,14 @@ sp_linalg.solve_e6d935d2_float32:eager:out0	1
 sp_linalg.solve_e6d935d2_float32:jit:out0	1
 sp_linalg.solve_sylvester_12074a48_float32:eager:out0	1
 sp_linalg.solve_sylvester_12074a48_float32:jit:out0	1
+sp_linalg.solve_sylvester_20d54a5b_float32:eager:both_raise	0
+sp_linalg.solve_sylvester_20d54a5b_float32:jit:both_raise	0
 sp_linalg.solve_sylvester_298941f4_float32:eager:out0	1
 sp_linalg.solve_sylvester_298941f4_float32:jit:out0	1
 sp_linalg.solve_sylvester_ddc8477c_float32:eager:out0	1
 sp_linalg.solve_sylvester_ddc8477c_float32:jit:out0	1
+sp_linalg.solve_sylvester_ebb2478f_float32:eager:both_raise	0
+sp_linalg.solve_sylvester_ebb2478f_float32:jit:both_raise	0
 sp_linalg.solve_triangular_392c414d_float32:eager:out0	1
 sp_linalg.solve_triangular_392c414d_float32:jit:out0	1
 sp_linalg.solve_triangular_7b374084_float32:eager:out0	1

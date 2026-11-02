@@ -1260,6 +1260,7 @@ sp_linalg.solve_sylvester_10374a43_float64:jit:error_text	1
 sp_linalg.solve_sylvester_b53d4e3f_float64:eager:error_text	1
 sp_linalg.solve_sylvester_b53d4e3f_float64:jit:error_text	1
 sp_linalg.solve_sylvester_dc344777_float64:eager:error_text	1
+sp_linalg.solve_sylvester_dc344777_float64:jit:error_text	1
 sp_signal.convolve2d_6b143c04_float64:eager:error_text	1
 sp_signal.convolve2d_6b143c04_float64:jit:error_text	1
 sp_signal.convolve2d_6dc2350d_float64:eager:error_text	1

@@ -1197,6 +1197,10 @@ sp_linalg.solve_88e73c88_float32:eager:error_text	1
 sp_linalg.solve_88e73c88_float32:jit:error_text	1
 sp_linalg.solve_de53376a_float32:eager:error_text	1
 sp_linalg.solve_de53376a_float32:jit:error_text	1
+sp_linalg.solve_sylvester_20d54a5b_float32:eager:error_text	1
+sp_linalg.solve_sylvester_20d54a5b_float32:jit:error_text	1
+sp_linalg.solve_sylvester_ebb2478f_float32:eager:error_text	1
+sp_linalg.solve_sylvester_ebb2478f_float32:jit:error_text	1
 sp_linalg.sqrtm_14b0262c_float32:eager:error_text	1
 sp_linalg.sqrtm_14b0262c_float32:jit:error_text	1
 sp_linalg.sqrtm_821d24d8_float32:eager:error_text	1

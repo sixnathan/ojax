@@ -4309,6 +4309,7 @@ sp_linalg.solve_sylvester_b53d4e3f_float64:jit:both_raise	0
 sp_linalg.solve_sylvester_c0ed4369_float64:eager:out0	1
 sp_linalg.solve_sylvester_c0ed4369_float64:jit:out0	1
 sp_linalg.solve_sylvester_dc344777_float64:eager:both_raise	0
+sp_linalg.solve_sylvester_dc344777_float64:jit:both_raise	0
 sp_linalg.solve_sylvester_ed464794_float64:eager:out0	1
 sp_linalg.solve_sylvester_ed464794_float64:jit:out0	1
 sp_linalg.solve_triangular_32003c19_float64:eager:out0	1

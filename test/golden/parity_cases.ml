@@ -501,7 +501,7 @@ let scipy_run op p a b c =
   | "sl_invhilbert" -> Some [ SP.invhilbert (int "n" p) ]
   | "sl_solve_sylvester" ->
       let shift v =
-        let n = (shp v).(0) in
+        let n = Ojax.Validate.tuple_index (shp v) 0 in
         let eye = NL.identity ~dtype:(dt_of v) n in
         L.add v (L.mul (like eye 4.0) eye)
       in
@@ -620,12 +620,10 @@ let rev_first v =
   L.rev (I.take v [ I.Range { start = None; stop = None } ]) [| 0 |]
 
 let spd v =
-  let sh = shp v in
-  let n = sh.(Array.length sh - 1) in
-  ignore sh;
   let product =
     Ojax.Numpy.Tensor_contractions.matmul v (NL.swapaxes (-1) (-2) v)
   in
+  let n = Ojax.Validate.tuple_index (shp v) (-1) in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -870,11 +868,11 @@ let gap_run op p a b =
   | "gp_qr_full" -> Some (LA.qr ~mode:"complete" (a ()))
   | "gp_svd_hermitian" ->
       let x = a () in
-      let sym = L.add x (L.transpose x [| 1; 0 |]) in
+      let sym = L.add x (NL.transpose x) in
       Some (LA.svd ~hermitian:true ~compute_uv:false sym)
   | "gp_pinv_hermitian" ->
       let x = a () in
-      Some [ LA.pinv ~hermitian:true (L.add x (L.transpose x [| 1; 0 |])) ]
+      Some [ LA.pinv ~hermitian:true (L.add x (NL.transpose x)) ]
   | "gp_init_orthogonal" ->
       Some
         [
@@ -936,12 +934,10 @@ let gap_run op p a b =
   | _ -> None
 
 let herm v =
-  let sh = shp v in
-  let n = sh.(Array.length sh - 1) in
-  ignore sh;
   let product =
     Ojax.Numpy.Tensor_contractions.matmul v (UF.conj (NL.swapaxes (-1) (-2) v))
   in
+  let n = Ojax.Validate.tuple_index (shp v) (-1) in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 

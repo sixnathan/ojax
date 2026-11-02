@@ -1608,6 +1608,12 @@ let cross ?(axisa = -1) ?(axisb = -1) ?(axisc = -1) ?axis a b =
   let na = (shape a).(ndim a - 1) and nb = (shape b).(ndim b - 1) in
   if not ((na = 2 || na = 3) && (nb = 2 || nb = 3)) then
     Py_exn.value_error "Dimension must be either 2 or 3 for cross product";
+  if ndim a <> ndim b then
+    ignore
+      (Validate.broadcast_shapes
+         [
+           Array.sub (shape a) 0 (ndim a - 1); Array.sub (shape b) 0 (ndim b - 1);
+         ]);
   if na = 2 && nb = 2 then
     let a0 = last_index a 0 and a1 = last_index a 1 in
     let b0 = last_index b 0 and b1 = last_index b 1 in

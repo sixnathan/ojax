@@ -85,7 +85,15 @@ let while_impl (cond : closed_jaxpr) (body : closed_jaxpr) (inputs : value list)
   let carry = ref inputs in
   let pred () =
     match Jaxpr.eval_closed_jaxpr cond !carry with
-    | [ Concrete nd ] -> Ndarray.get_f nd [||] <> 0.0
+    | [ Concrete nd ] ->
+        if Ndarray.shape nd <> [||] then
+          Py_exn.type_error
+            (Printf.sprintf
+               "cond_fun must return a boolean scalar, but got output type(s) \
+                [ShapedArray(bool[%s])]."
+               (String.concat ","
+                  (Array.to_list (Array.map string_of_int (Ndarray.shape nd)))));
+        Ndarray.get_f nd [||] <> 0.0
     | [ _ ] -> failwith "loops: while cond must be concrete"
     | _ -> failwith "loops: while cond must return one value"
   in

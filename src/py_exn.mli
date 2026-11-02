@@ -1,4 +1,5 @@
 exception Value_error of string
+exception Mlir_error of string
 exception Type_error of string
 exception Index_error of string
 exception Key_error of string

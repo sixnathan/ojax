@@ -302,9 +302,9 @@ static void *start(Kernel *k, Frame *f) {
     }                                    \
   } while (0)
 
-#define CHECK_PTR(p)             \
-  do {                           \
-    if (!(p)) return finish(k);  \
+#define CHECK_PTR(p)                         \
+  do {                                       \
+    if (!(p) && k->error) return finish(k);  \
   } while (0)
 
 static char prec_of(int dtype) {
@@ -1108,6 +1108,7 @@ ENTER(h_sytrd)
     td += elt * (size_t)(n - 1);
     in++;
   }
+  CHECK("sync", stream_sync(k));
   solver_release(handle);
   return finish(k);
 }

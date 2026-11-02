@@ -1395,8 +1395,7 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
             let nz = List.find (fun t -> not (is_zero t)) tcases in
             let z =
               if
-                !lin_call_depth > 0
-                && Array.length (Core.get_aval nz).shape = 0
+                !lin_call_depth > 0 && Array.length (Core.get_aval nz).shape = 0
               then instantiate_residual (p2tz nz)
               else full_like nz 0.0
             in
@@ -2226,7 +2225,22 @@ let rec jvp_pairs prim primals tangents =
   | Custom_jvp_call id -> (
       match Core.custom_rule id with
       | Core.Jvp_rule { jvp; _ } ->
-          jvp (List.map Core.full_lower primals) tangents
+          let primals = List.map Core.full_lower primals in
+          let tangents =
+            if Option.is_some (Core.custom_names_of id) then
+              List.map2
+                (fun p t ->
+                  if Ad_util.is_symbolic_zero t then
+                    let a = Core.get_aval t in
+                    match Core.splat a.dtype a.shape 0.0 with
+                    | Concrete nd when (Core.get_aval p).weak_type ->
+                        Concrete (Ndarray.as_weak nd)
+                    | v -> v
+                  else t)
+                primals tangents
+            else tangents
+          in
+          jvp primals tangents
       | Core.Vjp_rule _ | Core.Linear_rule _ | Core.Callback_rule _ ->
           failwith "ad: custom_jvp_call with a non-jvp rule")
   | Custom_vjp_call id -> (

@@ -38,6 +38,7 @@ val make_jaxpr_hoisted :
   aval list -> (value list -> value list) -> closed_jaxpr * value list
 
 val barrier_calls : (int, unit) Hashtbl.t
+val opaque_dce_calls : (int, unit) Hashtbl.t
 val remat_body : (int -> closed_jaxpr option) ref
 val remat_rebuild : (int -> closed_jaxpr -> int) ref
 val install : unit -> unit

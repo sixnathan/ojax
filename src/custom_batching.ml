@@ -23,6 +23,7 @@ let custom_vmap ?(rule_name = "rule") f ~(rule : rule) args =
   in
   let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp }) in
   Hashtbl.replace rules id rule;
+  Hashtbl.replace Jaxpr.opaque_dce_calls id ();
   Pretty_printer.register_custom_view id "custom_vmap_call"
     [
       ("call", Pretty_printer.Sub call);

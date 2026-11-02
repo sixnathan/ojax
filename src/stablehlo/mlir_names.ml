@@ -513,15 +513,8 @@ let renumber_callbacks text =
           while !stop < n && line.[!stop] >= '0' && line.[!stop] <= '9' do
             incr stop
           done;
-          let id = String.sub line start (!stop - start) in
-          let index =
-            match Hashtbl.find_opt seen id with
-            | Some i -> i
-            | None ->
-                let i = Hashtbl.length seen in
-                Hashtbl.replace seen id i;
-                i
-          in
+          let index = Hashtbl.length seen in
+          Hashtbl.replace seen index ();
           String.sub line 0 start ^ string_of_int index
           ^ String.sub line !stop (n - !stop)
   in

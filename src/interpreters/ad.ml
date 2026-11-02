@@ -556,9 +556,14 @@ let batch_broadcast mask batch =
       [ mask ]
 
 let tri_mask n m k =
-  let i = lax_iota Dtype.I32 [| n; m |] 0 in
-  let plus = ladd i (scalar_i32 k) in
-  let j = lax_iota Dtype.I32 [| n; m |] 1 in
+  let shape_dtype =
+    if n > Int32.to_int Int32.max_int || m > Int32.to_int Int32.max_int then
+      Dtype.I64
+    else Dtypes.default_int_dtype ()
+  in
+  let i = lax_iota shape_dtype [| n; m |] 0 in
+  let plus = ladd i (Core.splat shape_dtype [||] (float_of_int k)) in
+  let j = lax_iota shape_dtype [| n; m |] 1 in
   b1 Ge [ plus; j ]
 
 let ltril ?(k = 0) x =

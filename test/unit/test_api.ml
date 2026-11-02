@@ -82,6 +82,30 @@ let test_vmap_of_jit () =
     Alcotest.(check (float 1e-6)) "vmap jit" ((sin x *. 2.0) -. x) (geti o i)
   done
 
+let test_jit_flat_retraces_on_x64 () =
+  let f =
+    Api.jit_flat (fun args ->
+        List.map
+          (fun x ->
+            b1
+              (T.Convert_element_type (Ojax.Dtypes.default_float_dtype ()))
+              [ x ])
+          args)
+  in
+  let x = T.Concrete (Nd.of_floats D.I32 [| 2 |] [| 1.0; 2.0 |]) in
+  let dtype_of = function
+    | [ T.Concrete a ] -> Nd.dtype a
+    | _ -> Alcotest.fail "concrete"
+  in
+  let run x64 =
+    Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+        dtype_of (f [ x ]))
+  in
+  let off = run false in
+  let on = run true in
+  Alcotest.(check bool) "x64 off gives float32" true (off = D.F32);
+  Alcotest.(check bool) "x64 on retraces and gives float64" true (on = D.F64)
+
 let test_pytree_jit () =
   let jf = Api.jit poly_tree in
   let out = unleaf (jf [ leaf (scalar 0.7) ]) in
@@ -196,6 +220,8 @@ let () =
       ( "pytree",
         [
           Alcotest.test_case "jit" `Quick test_pytree_jit;
+          Alcotest.test_case "jit_flat retraces on x64" `Quick
+            test_jit_flat_retraces_on_x64;
           Alcotest.test_case "grad" `Quick test_pytree_grad;
           Alcotest.test_case "value_and_grad" `Quick test_value_and_grad;
           Alcotest.test_case "vmap" `Quick test_pytree_vmap;

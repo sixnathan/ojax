@@ -317,6 +317,7 @@ let ratchet goldens baseline_dir =
     [
       path "text/reference.jsonl";
       path "coverage/text_ref.jsonl";
+      path "apicov/text_ref.jsonl";
       path "fuzz/text/reference.jsonl";
     ]
   in
@@ -340,7 +341,7 @@ let ratchet goldens baseline_dir =
         if Sys.file_exists file then
           check_text_baseline ~path:file ~references ~ours
         else [ "no baseline " ^ file ])
-      [ "text_parity"; "text_coverage"; "text_fuzz" ]
+      [ "text_parity"; "text_coverage"; "text_apicov"; "text_fuzz" ]
   in
   if failures <> [] then begin
     List.iteri

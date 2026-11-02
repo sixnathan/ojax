@@ -22,4 +22,9 @@ val lower_partitioned :
   name:string -> partition -> Types.closed_jaxpr -> lowered
 
 val emit_export_text :
-  name:string -> uses_shape_polymorphism:bool -> Types.closed_jaxpr -> lowered
+  ?platforms:string list ->
+  ?result_names:string list ->
+  name:string ->
+  uses_shape_polymorphism:bool ->
+  Types.closed_jaxpr ->
+  lowered

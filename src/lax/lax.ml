@@ -2968,6 +2968,7 @@ let () = install ()
 let cond = Control_flow.Conditionals.cond
 let switch = Control_flow.Conditionals.switch
 let platform_index = Control_flow.Conditionals.platform_index
+let branch_call = Control_flow.Conditionals.branch_call
 let scan = Control_flow.Loops.scan
 let lower_scan = Control_flow.Loops.lower_scan
 let dynamic_index_in_dim = Control_flow.Loops.dynamic_index_in_dim

@@ -173,10 +173,12 @@ let rec export_internal ~fun_name ~platforms ~disabled_checks ~in_tree ~out_tree
   in
   let lowered = Stages.lower f avals in
   let { Stablehlo.Emit.text; kept } =
-    Stablehlo.Emit.emit_export_text ~name:fun_name
+    Stablehlo.Emit.emit_export_text ~name:fun_name ~platforms
       ~uses_shape_polymorphism:(List.length platforms > 1)
       lowered.Stages.closed
   in
+  if Stablehlo.Mlir_names.mentions_host_callback text then
+    failwith "serialization of host_callbacks is not yet implemented";
   check_module text disabled_checks;
   let out_tree =
     match out_tree with
@@ -672,6 +674,20 @@ let is_batched = function
 
 let run_module e args =
   let kept = List.map (List.nth args) e.module_kept_var_idx in
+  let kept =
+    match e.platforms with
+    | [] | [ _ ] -> kept
+    | platforms ->
+        let current = Config.current_platform () in
+        let rec index i = function
+          | [] -> 0
+          | p :: r -> if p = current then i else index (i + 1) r
+        in
+        Concrete
+          (Ndarray.of_floats Dtype.I32 [||]
+             [| float_of_int (index 0 platforms) |])
+        :: kept
+  in
   Backend.run_text e.mlir_module kept
 
 let host_args args = List.map Backend.to_host_value args

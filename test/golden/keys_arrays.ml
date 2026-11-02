@@ -87,6 +87,9 @@ let cases : (string * (unit -> outcome)) list =
           (match RC.key_shape (RC.split (key 0) 3) with
           | [| d |] -> Printf.sprintf "(%d,)" d
           | _ -> "?") );
+    ("key_view_err", fun () -> Value (AM.view (key 0) D.Uint32));
+    ("key_item_err", fun () -> item (key 0));
+    ("key_byteswap_err", fun () -> Value (AM.byteswap (RC.split (key 0) 2)));
     ( "key_itemsize_fry",
       fun () -> Text (string_of_int (RC.key_itemsize (key 0))) );
     ( "key_itemsize_rbg",

@@ -83,7 +83,12 @@ let every_other x start =
   strides.(n - 1) <- 2;
   Lax_api.slice ~strides x begin_ stop
 
+let abstract_on_keys name x =
+  if Key_reuse.is_typed x then
+    raise (Py_exn.Not_implemented_error ("Cannot call abstract method " ^ name))
+
 let rec view x dtype =
+  abstract_on_keys "view" x;
   let dtype = Dtypes.canonicalize_dtype dtype in
   let a = aval_of x in
   let nbits_in = Dtypes.itemsize_bits a.dtype in
@@ -137,6 +142,7 @@ let rec view x dtype =
   else Lax_api.bitcast_convert_type x dtype
 
 let rec byteswap x =
+  abstract_on_keys "byteswap" x;
   let a = aval_of x in
   if is_complex a.dtype then
     Lax_api.complex (byteswap (Lax_api.real x)) (byteswap (Lax_api.imag x))
@@ -187,6 +193,7 @@ let scalar_at nd idx =
   | _ -> Py_float (Ndarray.get_f nd idx)
 
 let item ?(args = []) x =
+  abstract_on_keys "item" x;
   let nd = host "item()" x in
   let shape = Ndarray.shape nd in
   let size = size_of shape in

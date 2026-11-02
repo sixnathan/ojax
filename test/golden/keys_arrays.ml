@@ -187,6 +187,42 @@ let cases : (string * (unit -> outcome)) list =
           (AC.asarray
              (arr (Ojax.Dtypes.default_float_dtype ()) [| 2 |] [| 1.0; 2.0 |]))
     );
+    ( "repr_bf16_special",
+      fun () ->
+        repr
+          (arr D.Bf16 [| 7 |]
+             [|
+               1.0; -0.0; Float.nan; Float.infinity; 1234567.0; 1e-7; 3.140625;
+             |]) );
+    ( "repr_bf16_neg_nan",
+      fun () -> repr (arr D.Bf16 [| 2 |] [| -.Float.nan; Float.neg_infinity |])
+    );
+    ( "repr_bf16_wrap",
+      fun () ->
+        repr
+          (UF.divide
+             (NL.reshape (NL.arange ~dtype:D.Bf16 40.0) [| 2; 20 |])
+             (JU.py_int 3)) );
+    ( "repr_f8_e4m3fn",
+      fun () -> repr (arr D.F8_e4m3fn [| 3 |] [| 1.0; 0.5; -448.0 |]) );
+    ("repr_f8_e5m2", fun () -> repr (arr D.F8_e5m2 [| 3 |] [| 1.0; 0.1; -3.0 |]));
+    ("repr_int4", fun () -> repr (arr D.I4 [| 3 |] [| 1.0; -3.0; 7.0 |]));
+    ( "repr_uint4_2x2",
+      fun () -> repr (arr D.Uint4 [| 2; 2 |] [| 1.0; 15.0; 10.0; 0.0 |]) );
+    ("repr_bf16_scalar", fun () -> repr (arr D.Bf16 [||] [| 2.5 |]));
+    ( "repr_bf16_third",
+      fun () -> repr (UF.divide (arr D.Bf16 [||] [| 1.0 |]) (JU.py_int 3)) );
+    ( "str_bf16_vec",
+      fun () ->
+        Text
+          (Ojax.Numpy.Extras.array_str_jax (arr D.Bf16 [| 2 |] [| 2.5; 1.0 |]))
+    );
+    ( "str_bf16_scalar_third",
+      fun () ->
+        Text
+          (Ojax.Numpy.Extras.array_str_jax
+             (UF.divide (arr D.Bf16 [||] [| 1.0 |]) (JU.py_int 3))) );
+    ("tolist_bf16", fun () -> tolist (arr D.Bf16 [| 2 |] [| 2.5; 1.0 /. 3.0 |]));
     ("item_f32_flat1", fun () -> item ~args:[ 1 ] (f32_2x3 ()));
     ("item_f32_neg1", fun () -> item ~args:[ -1 ] (f32_2x3 ()));
     ("item_f32_1_2", fun () -> item ~args:[ 1; 2 ] (f32_2x3 ()));
@@ -451,6 +487,21 @@ let host = function
 
 let esc = String.escaped
 
+let address_proof =
+  "(a) nondeterministic and (c) Python only: JAX ends the text with \
+   impl=PRNGImpl(...), whose repr prints every impl function as <function \
+   _rbg_seed at 0x...>, a CPython object address; two runs of the same call \
+   printed 0xe4e74b6d56c0 and 0xe2a6c46616c0 for _rbg_random_bits. ojax prints \
+   the same text without the addresses."
+
+let defects =
+  List.concat_map
+    (fun mode ->
+      List.map
+        (fun row -> (("keys_arrays:" ^ mode, row), address_proof))
+        [ "wrap_err_shape_rbg"; "wrap_err_shape_fry" ])
+    [ "x64_off"; "x64_on" ]
+
 let error_detail e =
   match Ojax.Py_exn.class_name e with
   | Some c -> c ^ ": " ^ Error_types.message_of e
@@ -469,7 +520,9 @@ let check_row ~suite row () =
       ~suite name 1
       (if same then 0 else 1)
       0.0
-      (if same then Compare.raw_identical else "differ")
+      (if same then Compare.raw_identical
+       else if List.mem_assoc (suite, name) defects then "jax_defect"
+       else "differ")
   in
   let expected_error =
     match (str_opt row "error_class", str_opt row "message") with

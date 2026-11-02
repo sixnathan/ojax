@@ -250,6 +250,21 @@ let is_float dt =
       true
   | _ -> false
 
+let is_ml_dtype dt =
+  match dt with
+  | Dtype.Bf16 | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn
+  | Dtype.F8_e3m4 | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn
+  | Dtype.F8_e4m3fnuz | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu
+  | Dtype.I2 | Dtype.I4 | Dtype.Uint2 | Dtype.Uint4 ->
+      true
+  | _ -> false
+
+let ml_string nd idx =
+  if is_float (Ndarray.dtype nd) then
+    let v = Ndarray.get_f nd idx in
+    if Float.is_nan v then "nan" else Printf.sprintf "%g" v
+  else Int64.to_string (Ndarray.get_i64 nd idx)
+
 let unsigned_string (v : int64) dt =
   match dt with
   | Dtype.Uint64 -> Printf.sprintf "%Lu" v
@@ -285,6 +300,7 @@ let make_formatter ~options nd indices =
       r ^ String.sub i 0 trimmed ^ "j"
       ^ String.sub i trimmed (String.length i - trimmed)
   end
+  else if is_ml_dtype dt then ml_string nd
   else if is_float dt then
     let f =
       float_formatter ~options ~plus:false ~dtype:dt
@@ -481,7 +497,11 @@ let numpy_array_repr ?(options = default_options) nd =
     in
     prefix ^ s ^ "," ^ sep ^ dtype_str ^ ")"
 
-let scalar_str nd =
+let rec scalar_str nd =
+  let dt = Ndarray.dtype nd in
+  if is_ml_dtype dt then ml_string nd [||] else scalar_str_numpy nd
+
+and scalar_str_numpy nd =
   let dt = Ndarray.dtype nd in
   let one v =
     let round = rounder dt in

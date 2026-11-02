@@ -254,6 +254,20 @@ let case_fn name =
                ~result_avals:[] [ v ]);
           tuple [ add1 v ]),
         [ x () ] )
+  | "dprint_then_io" ->
+      ( "h",
+        (fun a ->
+          let v = one a in
+          Ojax.Debugging.print ~ordered:true "a {}" [ v ];
+          tuple [ io true v ]),
+        [ x () ] )
+  | "io_then_dprint" ->
+      ( "k",
+        (fun a ->
+          let r = io true (one a) in
+          Ojax.Debugging.print ~ordered:true "b {}" [ r ];
+          tuple [ r ]),
+        [ x () ] )
   | _ -> failwith ("vmap_coll: unknown case " ^ name)
 
 let thunk name mode () =

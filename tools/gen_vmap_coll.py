@@ -11,7 +11,8 @@ CASES = [
     "psum_grad", "psum_jvp", "psum_nested", "pmax_nested", "psum_unmapped",
     "pmax_unmapped", "psum_vjp", "psum_grad_in1", "pmax_grad", "pmin_jvp",
     "io_ordered", "io_ordered_two", "io_ordered_multi", "io_unordered",
-    "dprint_ordered_two", "io_ordered_noout",
+    "dprint_ordered_two", "io_ordered_noout", "dprint_then_io",
+    "io_then_dprint",
 ]
 MODES = ["eager", "jit", "jaxpr", "lowered"]
 
@@ -110,6 +111,17 @@ def case_fn(jax, jnp, name):
             io_callback(lambda y: None, None, a, ordered=True)
             return (a + 1,)
         return g, (x,)
+    if name == "dprint_then_io":
+        def h(a):
+            jax.debug.print("a {}", a, ordered=True)
+            return (io(a, True),)
+        return h, (x,)
+    if name == "io_then_dprint":
+        def k(a):
+            r = io(a, True)
+            jax.debug.print("b {}", r, ordered=True)
+            return (r,)
+        return k, (x,)
     raise KeyError(name)
 
 
@@ -137,7 +149,7 @@ def main():
     rows = []
     for name in CASES:
         for mode in MODES:
-            if name.startswith("io_") and mode == "jaxpr":
+            if ("io" in name.split("_")) and mode == "jaxpr":
                 continue
             r = run_case(jax, thunk(jax, jnp, name, mode))
             r.update({"id": f"{name}_{mode}", "case": name, "mode": mode})

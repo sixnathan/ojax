@@ -2911,15 +2911,16 @@ let ordered_token ctx io =
       t
 
 let top_level_ordered_effects (jx : jaxpr) =
-  List.fold_left
-    (fun acc (e : eqn) ->
-      match e.prim with
-      | Custom_jvp_call id | Custom_vjp_call id -> (
-          match ordered_effect id with
-          | Some io when not (List.mem io acc) -> acc @ [ io ]
-          | _ -> acc)
-      | _ -> acc)
-    [] jx.eqns
+  List.sort compare
+  @@ List.fold_left
+       (fun acc (e : eqn) ->
+         match e.prim with
+         | Custom_jvp_call id | Custom_vjp_call id -> (
+             match ordered_effect id with
+             | Some io when not (List.mem io acc) -> acc @ [ io ]
+             | _ -> acc)
+         | _ -> acc)
+       [] jx.eqns
 
 let default_layout rank = Array.init rank (fun i -> rank - 1 - i)
 

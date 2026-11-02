@@ -133,16 +133,8 @@ let classify ~dtype ~width expected i actual j =
   | _ -> ("int", 0.0)
 
 let log_row ~suite name count differing largest classes =
-  let tally =
-    match Hashtbl.find_opt Compare.tallies suite with
-    | Some t -> t
-    | None ->
-        let t = (ref 0, ref 0) in
-        Hashtbl.replace Compare.tallies suite t;
-        t
-  in
-  incr (snd tally);
-  if differing = 0 then incr (fst tally);
+  Compare.bump suite (differing = 0);
+  Compare.bump (Compare.raw_prefix ^ suite) (classes = Compare.raw_identical);
   match Lazy.force Compare.exact_log with
   | None -> ()
   | Some oc -> (

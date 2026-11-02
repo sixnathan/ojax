@@ -5278,7 +5278,8 @@ let () =
                            not
                              (String.starts_with ~prefix:"e2e\t" line
                              || String.starts_with ~prefix:"raw:e2e\t" line
-                             || String.starts_with ~prefix:"fuzz:" line
+                             || (String.starts_with ~prefix:"fuzz:" line
+                                || String.starts_with ~prefix:"raw:fuzz:" line)
                                 && not (Fuzz.available ~goldens_root)))
                          (String.split_on_char '\n' Exact_floor.data))));
           ] );

@@ -18,6 +18,7 @@ val elu : ?alpha:float -> Types.value -> Types.value
 val celu : ?alpha:float -> Types.value -> Types.value
 val leaky_relu : ?negative_slope:float -> Types.value -> Types.value
 val squareplus : ?b:float -> Types.value -> Types.value
+val squareplus_value : b:Types.value -> Types.value -> Types.value
 val gelu : ?approximate:bool -> Types.value -> Types.value
 val glu : ?axis:int -> Types.value -> Types.value
 val softmax : ?axis:int -> ?where:Types.value -> Types.value -> Types.value

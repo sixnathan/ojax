@@ -357,7 +357,10 @@ let scatter_impl combiner (sd : scatter_dims) operand indices updates =
   Ndarray.of_floats (Ndarray.dtype operand) op_shape out
 
 let scatter_combiner = function
-  | Scatter _ -> fun _ y -> y
+  | Scatter _ as p -> (
+      match Scatter_apply.find p with
+      | Some (_, host) -> fun x _ -> host x
+      | None -> fun _ y -> y)
   | Scatter_add _ -> ( +. )
   | Scatter_sub _ -> ( -. )
   | Scatter_mul _ -> ( *. )
@@ -659,4 +662,7 @@ let unclip_scatter p =
         Scatter_max { dimension_numbers = off d }
     | _ -> invalid_arg "unclip_scatter: not a scatter primitive"
   in
-  Np_ints.copy_scatter_marks ~from:p plain
+  let plain = Np_ints.copy_scatter_marks ~from:p plain in
+  match Scatter_apply.find p with
+  | Some (jaxpr, host) -> Scatter_apply.mark plain jaxpr host
+  | None -> plain

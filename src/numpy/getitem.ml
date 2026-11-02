@@ -868,6 +868,42 @@ type scatter_op =
   | Max
   | Apply of (T.value -> T.value)
 
+let scatter_apply ~indices_are_sorted ~unique_indices ?mode x g y f
+    (dn : T.scatter_dims) =
+  let dt = dtype x in
+  let scalar = { T.dtype = dt; shape = [||]; weak_type = false } in
+  let jaxpr =
+    Jaxpr.make_jaxpr [ scalar; scalar ] (function
+      | [ a; _ ] -> [ f a ]
+      | _ -> invalid_arg "scatter_apply")
+  in
+  let host v =
+    let s = T.Concrete (Ndarray.of_floats dt [||] [| v |]) in
+    match Jaxpr.eval_closed_jaxpr jaxpr [ s; s ] with
+    | [ r ] -> (
+        match concrete_nd r with
+        | Some nd -> Ndarray.get_f nd [||]
+        | None -> invalid_arg "scatter_apply")
+    | _ -> invalid_arg "scatter_apply"
+  in
+  let unused = L.full (shape y) 0.0 dt in
+  let dn =
+    match mode with Some LC.Clip -> { dn with T.s_clip = true } | _ -> dn
+  in
+  let prim = T.Scatter { dimension_numbers = dn; unique_indices } in
+  let prim =
+    if indices_are_sorted || unique_indices then
+      Np_ints.mark_scatter_flags ~sorted:indices_are_sorted ~unique:false prim
+    else prim
+  in
+  let prim =
+    match mode with
+    | Some LC.Promise_in_bounds -> Np_ints.mark_prim prim
+    | Some LC.One_hot -> Np_ints.mark_scatter_one_hot prim
+    | _ -> prim
+  in
+  C.bind1 (Scatter_apply.mark prim jaxpr host) [ x; g; unused ]
+
 let scatter_update ?(indices_are_sorted = false) ?(unique_indices = false) ?mode
     ?(normalize_indices = true) op x indices y =
   let x_dt = dtype x and weak = (C.get_aval x).T.weak_type in
@@ -912,8 +948,7 @@ let scatter_update ?(indices_are_sorted = false) ?(unique_indices = false) ?mode
       | Min -> L.scatter_min ?mode ~indices_are_sorted ~unique_indices x g y dn
       | Max -> L.scatter_max ?mode ~indices_are_sorted ~unique_indices x g y dn
       | Apply f ->
-          L.scatter_apply ~update_shape:(shape y) ~indices_are_sorted
-            ~unique_indices ?mode x g f dn
+          scatter_apply ~indices_are_sorted ~unique_indices ?mode x g y f dn
     in
     let out =
       if ix.scalar_bool_dims = [||] then out

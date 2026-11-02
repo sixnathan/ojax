@@ -3209,6 +3209,58 @@ and emit_reduce_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr) dims =
       emit_region_returning ctx reducer.jaxpr;
       Buffer.add_string ctx.buf "    }\n"
 
+and emit_scatter_apply ~unique ctx (eqn : eqn) in_ids dnums
+    (update : closed_jaxpr) =
+  let op_id, idx_id, upd_id =
+    match in_ids with
+    | [ a; b; c ] -> (a, b, c)
+    | _ -> invalid_arg "Stablehlo.Emit: scatter arity"
+  in
+  let op_av, idx_av, upd_av =
+    match eqn.inputs with
+    | [ a; b; c ] -> (atom_aval a, atom_aval b, atom_aval c)
+    | _ -> invalid_arg "Stablehlo.Emit: scatter arity"
+  in
+  let ivd = Array.length idx_av.shape - 1 in
+  let out = sole eqn.outs in
+  let sorted =
+    Np_ints.scatter_marked eqn.prim
+    || dnums.s_sorted_unique
+    || Option.fold ~none:false ~some:fst (Np_ints.scatter_flags_of eqn.prim)
+  in
+  let unique =
+    unique
+    || Np_ints.scatter_marked eqn.prim
+    || dnums.s_sorted_unique
+    || Option.fold ~none:false ~some:snd (Np_ints.scatter_flags_of eqn.prim)
+  in
+  let sty = Ir.tensor_type op_av.dtype [||] in
+  let n = bind_var ctx out in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf
+       "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
+        scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
+       (name n) (name op_id) (name idx_id) (name upd_id) sorted
+       (scatter_dnums_attr dnums ivd)
+       unique);
+  let ba, bb =
+    match update.jaxpr.in_binders with
+    | [ a; b ] ->
+        let ia = bind_var ctx a in
+        let ib = bind_var ctx b in
+        (ia, ib)
+    | _ -> invalid_arg "Stablehlo.Emit: scatter update arity"
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    ^bb0(%s: %s, %s: %s):\n" (name ba) sty (name bb) sty);
+  emit_region_returning ctx update.jaxpr;
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s, %s, %s) -> %s\n"
+       (Ir.tensor_type_of_aval op_av)
+       (Ir.tensor_type_of_aval idx_av)
+       (Ir.tensor_type_of_aval upd_av)
+       (Ir.tensor_type_of_aval out.vaval))
+
 and emit_reduce_window_general ctx (eqn : eqn) in_ids (reducer : closed_jaxpr)
     window =
   let op_id, init_id = pair in_ids in
@@ -4100,6 +4152,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
               (Lax.Slicing.unclip_scatter p)
               [ operand; clamped; updates ]
         | _ -> invalid_arg "Stablehlo.Emit: scatter arity")
+  | Scatter { dimension_numbers; unique_indices } as p
+    when Scatter_apply.find p <> None ->
+      emit_scatter_apply ~unique:unique_indices ctx eqn in_ids dimension_numbers
+        (fst (Option.get (Scatter_apply.find p)))
   | Scatter { dimension_numbers; unique_indices } ->
       emit_scatter ~unique:unique_indices ctx eqn in_ids dimension_numbers None
   | Scatter_add { dimension_numbers } ->

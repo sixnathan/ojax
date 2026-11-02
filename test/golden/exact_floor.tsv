@@ -83,10 +83,14 @@ custom_ad:x64_off	1747	1757
 custom_ad:x64_on	1711	1720
 raw:custom_ad:x64_off	1329	1757
 raw:custom_ad:x64_on	1286	1720
-index_fuzz:x64_off	4511	4608
+index_fuzz:x64_off	4608	4608
 index_fuzz:x64_on	4608	4608
-raw:index_fuzz:x64_off	3282	4608
+raw:index_fuzz:x64_off	3379	4608
 raw:index_fuzz:x64_on	3413	4608
+apply_transforms:x64_off	408	408
+apply_transforms:x64_on	480	480
+raw:apply_transforms:x64_off	234	408
+raw:apply_transforms:x64_on	234	480
 keys_arrays:x64_off	316	318
 keys_arrays:x64_on	315	317
 raw:keys_arrays:x64_off	316	318
@@ -264,3 +268,7 @@ raw:text_index_fuzz:x64_off	782	1229
 raw:text_index_fuzz:x64_on	774	1195
 text_index_fuzz:x64_off	782	1229
 text_index_fuzz:x64_on	774	1195
+raw:text_apply_transforms:x64_off	174	174
+raw:text_apply_transforms:x64_on	246	246
+text_apply_transforms:x64_off	174	174
+text_apply_transforms:x64_on	246	246

@@ -930,10 +930,29 @@ let lu_pivots_to_permutation ~permutation_size p =
 let triangular_solve ?(left_side = false) ?(lower = false)
     ?(transpose_a = false) ?(conjugate_a = false) ?(unit_diagonal = false) a b =
   let conjugate_a = conjugate_a && is_complex_dtype (Core.get_aval a).dtype in
-  Core.bind1
-    (Triangular_solve
-       { left_side; lower; transpose_a; conjugate_a; unit_diagonal })
-    [ a; b ]
+  let rank_of v = Array.length (Core.get_aval v).shape in
+  let singleton = rank_of b = rank_of a - 1 in
+  let solve b =
+    Core.bind1
+      (Triangular_solve
+         { left_side; lower; transpose_a; conjugate_a; unit_diagonal })
+      [ a; b ]
+  in
+  if not singleton then solve b
+  else
+    let sb = (Core.get_aval b).shape in
+    let rank = Array.length sb + 1 in
+    let axis = Validate.canonicalize_axis (if left_side then -1 else -2) rank in
+    let expanded_shape =
+      Array.init rank (fun i ->
+          if i < axis then sb.(i) else if i = axis then 1 else sb.(i - 1))
+    in
+    let dims = Array.init (rank - 1) (fun i -> if i < axis then i else i + 1) in
+    let out =
+      solve
+        (Core.bind1 (Broadcast_in_dim { shape = expanded_shape; dims }) [ b ])
+    in
+    Core.bind1 (Squeeze [| axis |]) [ out ]
 
 let tridiagonal_solve ?(perturb_singular = false) dl d du b =
   Core.bind1 (Tridiagonal_solve { perturb_singular }) [ dl; d; du; b ]
@@ -970,6 +989,12 @@ let eigh ?implementation ?(lower = true) ?(symmetrize_input = true) x =
   | _ -> assert false
 
 let hessenberg x =
+  let shape = (Core.get_aval x).shape in
+  let rank = Array.length shape in
+  if rank >= 2 && shape.(rank - 1) = 0 && shape.(rank - 2) = 0 then
+    raise
+      (Py_exn.Mlir_error
+         "Invalid type:\nerror: unknown: invalid tensor dimension size");
   match Core.bind Hessenberg [ x ] with
   | [ a; taus ] -> (a, taus)
   | _ -> assert false

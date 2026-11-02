@@ -1292,15 +1292,33 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     (f : value list -> value list) (in_axes : int option list)
     (args : value list) : value list =
   let axis_size =
+    let mapped_size x d =
+      let shape = (Core.get_aval x).shape in
+      let rank = Array.length shape in
+      if d >= rank || d < -rank then
+        Py_exn.value_error
+          (Printf.sprintf
+             "vmap was requested to map its argument along axis %d, which \
+              implies that its rank should be at least %d, but is only %d (its \
+              shape is %s)"
+             d
+             (if d >= 0 then d + 1 else -d)
+             rank
+             (Validate.python_tuple shape));
+      shape.(if d < 0 then d + rank else d)
+    in
     let rec find axes vals =
       match (axes, vals) with
-      | Some d :: _, x :: _ -> Some (Core.get_aval x).shape.(d)
+      | Some d :: axes, x :: vals ->
+          let size = mapped_size x d in
+          ignore (find axes vals);
+          Some size
       | None :: axes, _ :: vals -> find axes vals
       | _ -> None
     in
     match (find in_axes args, axis_size) with
     | Some found, Some given when found <> given ->
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "vmap got inconsistent sizes for array axes to be mapped:\n\
              \  * axis_size is %d but an array axis has size %d"
@@ -1308,7 +1326,9 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     | Some found, _ -> found
     | None, Some given -> given
     | None, None ->
-        invalid_arg "vmap must have at least one non-None value in in_axes"
+        Py_exn.value_error
+          "vmap must have at least one non-None value in in_axes or axis_size \
+           must be specified"
   in
   Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
       let tracers_in =

@@ -48,22 +48,6 @@ let cholesky ?lower a0 =
 
 let cho_factor ?(lower = false) a = (cholesky ~lower a, lower)
 
-let cho_solve (c, lower) b =
-  let c = to_inexact c and b = to_inexact b in
-  let sc = shape c in
-  let n = sc.(Array.length sc - 1) in
-  let bvec = ndim b = 1 in
-  let bm = if bvec then NL.reshape b [| n; 1 |] else b in
-  let x1 =
-    LL.triangular_solve ~left_side:true ~lower ~transpose_a:(not lower)
-      ~conjugate_a:(not lower) c bm
-  in
-  let x2 =
-    LL.triangular_solve ~left_side:true ~lower ~transpose_a:lower
-      ~conjugate_a:lower c x1
-  in
-  if bvec then NL.reshape x2 [| n |] else x2
-
 let triangular_signature ?(extra = "") a b =
   let vector = Printf.sprintf "(n,n)%s,(n)->(n)" extra in
   if ndim b = 1 then vector
@@ -72,6 +56,28 @@ let triangular_signature ?(extra = "") a b =
     && Validate.tuple_index (shape a) (-1) = Validate.tuple_index (shape b) (-1)
   then vector
   else Printf.sprintf "(n,n)%s,(n,k)->(n,k)" extra
+
+let cho_solve (c, lower) b =
+  let c = to_inexact c and b = to_inexact b in
+  let signature = triangular_signature c b in
+  Numpy.Vectorize.vectorize ~signature
+    (function
+      | [ c; b ] ->
+          let sc = shape c in
+          let n = sc.(Array.length sc - 1) in
+          let bvec = ndim b = 1 in
+          let bm = if bvec then NL.reshape b [| n; 1 |] else b in
+          let x1 =
+            LL.triangular_solve ~left_side:true ~lower ~transpose_a:(not lower)
+              ~conjugate_a:(not lower) c bm
+          in
+          let x2 =
+            LL.triangular_solve ~left_side:true ~lower ~transpose_a:lower
+              ~conjugate_a:lower c x1
+          in
+          if bvec then NL.reshape x2 [| n |] else x2
+      | _ -> assert false)
+    [ c; b ]
 
 let det a = LN.det a
 let inv a = LN.inv a
@@ -886,7 +892,7 @@ let expm_frechet ?(compute_expm = true) a e =
     let n = Array.length s in
     n >= 2 && s.(n - 1) = s.(n - 2)
   in
-  if not (batched_square sa) then
+  if Array.length sa < 2 || sa.(Array.length sa - 2) <> sa.(1) then
     Py_exn.value_error
       ("expected A to be a (batched) square matrix, got A.shape="
      ^ Validate.python_tuple sa);
@@ -1037,27 +1043,22 @@ let sqrtm_triu t =
       | _ -> assert false)
     [ t ]
 
-let rec sqrtm ?(blocksize = 1) a =
+let sqrtm ?(blocksize = 1) a =
   if blocksize > 1 then
     raise
       (Py_exn.Not_implemented_error "Blocked version is not implemented yet.");
   let a = to_inexact a in
-  if ndim a > 2 then
-    List.hd
-      (Interpreters.Batching.vmap
-         (fun args -> [ sqrtm (List.hd args) ])
-         [ Some 0 ] [ a ])
-  else
-    match schur ~output:"complex" a with
-    | [ t; z ] ->
-        let root = sqrtm_triu t in
-        let highest =
-          Lax_config.precision_of_level Lax_config.Precision_highest
-        in
-        let product = TC.matmul ~precision:highest z root in
-        TC.matmul ~precision:highest product
-          (UF.conj (C.bind1 (T.Transpose [| 1; 0 |]) [ z ]))
-    | _ -> assert false
+  match schur ~output:"complex" a with
+  | [ t; z ] ->
+      if ndim t > 2 then Py_exn.value_error "diag input must be 1d or 2d";
+      let root = sqrtm_triu t in
+      let highest =
+        Lax_config.precision_of_level Lax_config.Precision_highest
+      in
+      let product = TC.matmul ~precision:highest z root in
+      TC.matmul ~precision:highest product
+        (UF.conj (C.bind1 (T.Transpose [| 1; 0 |]) [ z ]))
+  | _ -> assert false
 
 let sqrtm ?blocksize a0 =
   Eager_jit.one ~jit:"_sqrtm" "scipy.linalg.sqrtm" blocksize [] [ a0 ]
@@ -1291,25 +1292,26 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
     in
     let c v = T.Concrete (Nd.of_floats base_dtype [||] [| v |]) in
     let static_slice v lo hi =
-      C.bind1
-        (T.Slice
-           {
-             start_indices = [| lo |];
-             limit_indices = [| hi |];
-             strides = None;
-           })
-        [ v ]
+      let sv = shape v in
+      if Array.length sv = 0 then
+        Py_exn.index_error
+          "Too many indices: array is 0-dimensional, but 1 were indexed";
+      let lo, hi = Validate.slice_indices ~start:lo ~stop:hi sv.(0) in
+      let start_indices = Array.make (Array.length sv) 0 in
+      start_indices.(0) <- lo;
+      let limit_indices = Array.copy sv in
+      limit_indices.(0) <- max lo hi;
+      C.bind1 (T.Slice { start_indices; limit_indices; strides = None }) [ v ]
     in
     let static_at v i =
       C.bind1 (T.Squeeze [| 0 |]) [ static_slice v i (i + 1) ]
     in
-    let m = (shape beta_abs).(0) in
     let row_sum =
       let head = static_slice beta_abs 0 1 in
-      let left = static_slice beta_abs 0 (m - 1) in
-      let right = static_slice beta_abs 1 m in
+      let left = static_slice beta_abs 0 (-1) in
+      let right = static_slice beta_abs 1 Stdlib.max_int in
       let middle = UF.add left right in
-      let tail = static_slice beta_abs (m - 1) m in
+      let tail = static_slice beta_abs (-1) Stdlib.max_int in
       NL.concatenate [ head; middle; tail ]
     in
     let lambda_max = RED.amax (UF.add alpha_real row_sum) in

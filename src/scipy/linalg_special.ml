@@ -78,6 +78,7 @@ let comb big_n k =
   where0 (b1 Exp [ b1 Sub [ ab; c ] ])
 
 let hilbert n =
+  Lax.Utils.check_shapelike "iota" "shape" [| n; 1 |];
   jit1 "hilbert"
     (fun _ ->
       let dt = default_float () in

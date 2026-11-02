@@ -544,8 +544,7 @@ let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
   let patch_precision =
     match precision with
     | None -> None
-    | Some (Lax_config.Precision (l, _)) ->
-        Some (Lax_config.Precision (l, Lax_config.Precision_default))
+    | Some (Lax_config.Precision (l, _)) -> Some (Lax_config.Precision (l, l))
     | Some _ ->
         raise
           (Py_exn.Value_error

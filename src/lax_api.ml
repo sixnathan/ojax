@@ -1044,9 +1044,10 @@ let checked_conv_dims lhs_shape rhs_shape dimension_numbers =
         [ d.lhs_spec; d.rhs_spec; d.out_spec ];
       d
 
-let conv_general_dilated ?conv_precision ?precision ?preferred_element_type
-    ?lhs_dilation ?rhs_dilation ?dimension_numbers ?(feature_group_count = 1)
-    ?(batch_group_count = 1) lhs rhs ~window_strides padding =
+let conv_general_dilated_checked ?precision_error ?conv_precision ?precision
+    ?preferred_element_type ?lhs_dilation ?rhs_dilation ?dimension_numbers
+    ?(feature_group_count = 1) ?(batch_group_count = 1) lhs rhs ~window_strides
+    padding =
   let conv_precision = conv_precision_of ?conv_precision ?precision () in
   let conv_preferred =
     Option.map Dtypes.canonicalize_dtype preferred_element_type
@@ -1082,6 +1083,7 @@ let conv_general_dilated ?conv_precision ?precision ?preferred_element_type
            sdims)
     else padtype_to_pads lhs_sp effective_rhs window_strides padding
   in
+  Option.iter raise precision_error;
   b1
     (Conv_general_dilated
        {
@@ -1096,6 +1098,13 @@ let conv_general_dilated ?conv_precision ?precision ?preferred_element_type
          conv_preferred;
        })
     [ lhs; rhs ]
+
+let conv_general_dilated ?conv_precision ?precision ?preferred_element_type
+    ?lhs_dilation ?rhs_dilation ?dimension_numbers ?feature_group_count
+    ?batch_group_count lhs rhs ~window_strides padding =
+  conv_general_dilated_checked ?conv_precision ?precision
+    ?preferred_element_type ?lhs_dilation ?rhs_dilation ?dimension_numbers
+    ?feature_group_count ?batch_group_count lhs rhs ~window_strides padding
 
 let conv ?precision ?preferred_element_type lhs rhs ~window_strides padding =
   conv_general_dilated ?precision ?preferred_element_type lhs rhs
@@ -1496,6 +1505,27 @@ let conv_transpose_shape_tuple lhs_shape rhs_shape window_strides padding
 let conv_general_dilated_patches ?window_strides ?(padding = Valid)
     ?lhs_dilation ?rhs_dilation ?dimension_numbers ?precision
     ?preferred_element_type lhs ~filter_shape =
+  let precision, precision_error =
+    match precision with
+    | None -> (None, None)
+    | Some (Lax_config.Precision (l, r)) when l = r ->
+        (Some (Lax_config.Precision (l, Lax_config.Precision_default)), None)
+    | Some given ->
+        let enum l = "Precision." ^ precision_level_name l in
+        let shown =
+          match given with
+          | Lax_config.Precision (l, r) ->
+              Printf.sprintf "(%s, %s)" (enum l) (enum r)
+          | Lax_config.Preset p ->
+              "DotAlgorithmPreset." ^ Lax_config.dot_algorithm_preset_name p
+          | Lax_config.Algorithm _ -> "DotAlgorithm"
+        in
+        ( None,
+          Some
+            (Py_exn.Value_error
+               (Lax_config.precision_argument_message
+                  (Printf.sprintf "(%s, Precision.DEFAULT)" shown))) )
+  in
   let k = Array.length filter_shape in
   let dn =
     checked_conv_dims (shape lhs)
@@ -1530,9 +1560,9 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
     else b1 (Transpose order) [ kernel ]
   in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
-  conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn
-    ?precision ?preferred_element_type ~feature_group_count:in_features lhs
-    kernel ~window_strides:strides padding
+  conv_general_dilated_checked ?precision_error ?lhs_dilation ?rhs_dilation
+    ~dimension_numbers:dn ?precision ?preferred_element_type
+    ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
 
 let scatter_apply ?(update_shape : int array option) ?indices_are_sorted
     ?unique_indices ?mode x indices func dimension_numbers =

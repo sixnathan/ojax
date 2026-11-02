@@ -234,8 +234,8 @@ let diff ?(n = 1) ?(axis = -1) ?prepend ?append v =
     let bool_dtype = is_bool (dtype v) in
     let step acc =
       let d = (shape acc).(axis) in
-      let hi = slice_axis acc axis 1 d in
-      let lo = slice_axis acc axis 0 (d - 1) in
+      let hi = slice_axis acc axis (min 1 d) d in
+      let lo = slice_axis acc axis 0 (max 0 (d - 1)) in
       if bool_dtype then bind1 T.Ne [ hi; lo ] else bind1 T.Sub [ hi; lo ]
     in
     let rec loop acc i = if i = 0 then acc else loop (step acc) (i - 1) in
@@ -257,7 +257,9 @@ let diff ?n ?axis ?prepend ?append p0 =
 let ediff1d ?to_end ?to_begin v =
   let a = ravel v in
   let d = (shape a).(0) in
-  let body = bind1 T.Sub [ slice_axis a 0 1 d; slice_axis a 0 0 (d - 1) ] in
+  let body =
+    bind1 T.Sub [ slice_axis a 0 (min 1 d) d; slice_axis a 0 0 (max 0 (d - 1)) ]
+  in
   let extra w = ravel (convert w (dtype a)) in
   let parts =
     Option.to_list (Option.map extra to_begin)

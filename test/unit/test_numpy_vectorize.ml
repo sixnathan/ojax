@@ -35,13 +35,14 @@ let matvec = function [ m; x ] -> TC.matmul m x | _ -> assert false
 
 let cross3 = function
   | [ a; b ] ->
-      let fa = flat a and fb = flat b in
-      v [| 3 |]
-        [|
-          (fa.(1) *. fb.(2)) -. (fa.(2) *. fb.(1));
-          (fa.(2) *. fb.(0)) -. (fa.(0) *. fb.(2));
-          (fa.(0) *. fb.(1)) -. (fa.(1) *. fb.(0));
-        |]
+      let module NL = Ojax.Numpy.Lax_numpy in
+      let module UF = Ojax.Numpy.Ufuncs in
+      let term i j k l =
+        UF.subtract
+          (UF.multiply (NL.index_at a i) (NL.index_at b j))
+          (UF.multiply (NL.index_at a k) (NL.index_at b l))
+      in
+      NL.stack ~axis:0 [ term 1 2 2 1; term 2 0 0 2; term 0 1 1 0 ]
   | _ -> assert false
 
 let mv m x = V.vectorize ~signature:"(n,m),(m)->(n)" matvec [ m; x ]

@@ -2,7 +2,44 @@ open Types
 
 let resolve_strides n = function Some s -> s | None -> Array.make n 1
 
+let py_tuple xs =
+  match Array.to_list xs with
+  | [ x ] -> Printf.sprintf "(%d,)" x
+  | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
+
+let check_slice start_indices limit_indices ishape =
+  let n = Array.length ishape in
+  let fail fmt =
+    Printf.ksprintf (fun m -> raise (Errors.jax_type_error m)) fmt
+  in
+  if Array.length start_indices <> n then
+    fail
+      "slice start_indices must have length equal to the number of dimensions \
+       of the operand, got indices %s for operand shape %s."
+      (py_tuple start_indices) (py_tuple ishape);
+  if Array.length limit_indices <> n then
+    fail
+      "slice limit_indices must have the same length as start_indices, got \
+       start_indices %s and limit_indices %s."
+      (py_tuple start_indices) (py_tuple limit_indices);
+  if Array.exists2 (fun d l -> d < l) ishape limit_indices then
+    fail
+      "slice limit_indices must be less than or equal to operand shape, got \
+       limit_indices %s for operand shape %s."
+      (py_tuple limit_indices) (py_tuple ishape);
+  if Array.exists (fun v -> v < 0) start_indices then
+    fail
+      "slice start_indices must be greater than or equal to zero, got \
+       start_indices of %s."
+      (py_tuple start_indices);
+  if Array.exists2 (fun l v -> l < v) limit_indices start_indices then
+    fail
+      "slice limit_indices must be greater than or equal to start_indices, got \
+       start_indices %s and limit_indices %s."
+      (py_tuple start_indices) (py_tuple limit_indices)
+
 let slice_shape start_indices limit_indices strides ishape =
+  check_slice start_indices limit_indices ishape;
   let n = Array.length ishape in
   let strides = resolve_strides n strides in
   Array.init n (fun i ->

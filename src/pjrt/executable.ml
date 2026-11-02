@@ -1,16 +1,16 @@
-type t
+type handle
 
-external compile_ : Client.t -> string -> string -> t = "ojax_pjrt_compile"
+external compile_ : Client.t -> string -> string -> handle = "ojax_pjrt_compile"
 
-external execute_ : t -> Buffer.raw array -> Buffer.raw array
+external execute_ : handle -> Buffer.raw array -> Buffer.raw array
   = "ojax_pjrt_execute"
 
 external execute_devices_ :
-  t -> Buffer.raw array array -> Buffer.raw array array
+  handle -> Buffer.raw array array -> Buffer.raw array array
   = "ojax_pjrt_execute_devices"
 
-external optimized_ : t -> string = "ojax_pjrt_executable_optimized"
-external serialize_ : t -> string = "ojax_pjrt_executable_serialize"
+external optimized_ : handle -> string = "ojax_pjrt_executable_optimized"
+external serialize_ : handle -> string = "ojax_pjrt_executable_serialize"
 
 type memory_stats = {
   generated_code_size_in_bytes : int;
@@ -26,16 +26,16 @@ type memory_stats = {
   peak_memory_in_bytes : int;
 }
 
-external cost_analysis : t -> (string * float) list
-  = "ojax_pjrt_executable_cost_analysis"
+external memory_stats_ : handle -> memory_stats
+  = "ojax_pjrt_executable_memory_stats"
 
-external memory_stats : t -> memory_stats = "ojax_pjrt_executable_memory_stats"
-
-external deserialize_ : Client.t -> string -> t
+external deserialize_ : Client.t -> string -> handle
   = "ojax_pjrt_executable_deserialize"
 
-external num_outputs_ : t -> int = "ojax_pjrt_executable_num_outputs"
-external destroy_ : t -> unit = "ojax_pjrt_executable_destroy"
+external num_outputs_ : handle -> int = "ojax_pjrt_executable_num_outputs"
+external destroy_ : handle -> unit = "ojax_pjrt_executable_destroy"
+
+type t = { handle : handle; client : Client.t; tokens : int }
 
 let cache_dir = lazy (Sys.getenv_opt "OJAX_TEST_COMPILE_CACHE")
 let plugin_hash = lazy (Option.get (Discover.verified_sha256 ()))
@@ -158,12 +158,38 @@ let env_override_entry (key, opt) =
   Stdlib.Buffer.add_buffer out entry;
   Stdlib.Buffer.contents out
 
+let token_params code =
+  let key = "func.func public @main(" in
+  let n = String.length code and m = String.length key in
+  let rec matches i j =
+    j = m || (code.[i + j] = key.[j] && matches i (j + 1))
+  in
+  let rec find i =
+    if i + m > n then None
+    else if matches i 0 then Some (i + m)
+    else find (i + 1)
+  in
+  match find 0 with
+  | None -> 0
+  | Some start ->
+      let token = "!stablehlo.token {jax.token = true}" in
+      let k = String.length token in
+      let rec count i acc =
+        match String.index_from_opt code i ':' with
+        | Some c when c + 2 + k <= n && String.sub code (c + 2) k = token ->
+            count (c + 2 + k) (acc + 1)
+        | _ -> acc
+      in
+      count start 0
+
+let wrap client code handle = { handle; client; tokens = token_params code }
+
 let compile ?(options = []) client code =
   let proto =
     compile_options_proto
     ^ String.concat "" (List.map env_override_entry options)
   in
-  compile_cached client code proto
+  wrap client code (compile_cached client code proto)
 
 let device_assignment_proto devices =
   let b = Stdlib.Buffer.create 32 in
@@ -208,7 +234,9 @@ let placed_options_proto ~devices ~propagate_outputs =
   Stdlib.Buffer.contents b
 
 let compile_placed client code ~devices ~propagate_outputs =
-  compile_cached client code (placed_options_proto ~devices ~propagate_outputs)
+  wrap client code
+    (compile_cached client code
+       (placed_options_proto ~devices ~propagate_outputs))
 
 type output_sharding =
   | Replicated
@@ -295,7 +323,7 @@ let decode_sharding fields =
 
 let output_shardings exec =
   let module_fields =
-    match List.assoc_opt 1 (proto_fields (optimized_ exec)) with
+    match List.assoc_opt 1 (proto_fields (optimized_ exec.handle)) with
     | Some (`Bytes b) -> proto_fields b
     | _ -> failwith "Pjrt.Executable: optimized program has no module"
   in
@@ -313,11 +341,60 @@ let output_shardings exec =
           fields
       else [ decode_sharding fields ]
 
+let optimized_module exec =
+  match List.assoc_opt 1 (proto_fields (optimized_ exec.handle)) with
+  | Some (`Bytes b) -> b
+  | _ -> failwith "Pjrt.Executable: optimized program has no module"
+
+let cost_analysis exec = Hlo_cost.of_module (optimized_module exec)
+
+let token_input exec =
+  Buffer.single_raw
+    (Buffer.of_host exec.client (Ndarray.of_floats Dtype.Bool [| 0 |] [||]))
+
+let with_tokens exec run args =
+  if exec.tokens = 0 then run args
+  else
+    let tokens = Array.init exec.tokens (fun _ -> token_input exec) in
+    let outs =
+      Fun.protect
+        ~finally:(fun () ->
+          Array.iter (fun t -> Buffer.destroy (Buffer.Single t)) tokens)
+        (fun () -> run (Array.append tokens args))
+    in
+    Array.iteri
+      (fun i b -> if i < exec.tokens then Buffer.destroy (Buffer.Single b))
+      outs;
+    Array.sub outs exec.tokens (Array.length outs - exec.tokens)
+
 let execute exec args =
   Array.map
     (fun raw -> Buffer.Single raw)
-    (execute_ exec (Array.map Buffer.single_raw args))
+    (with_tokens exec (execute_ exec.handle) (Array.map Buffer.single_raw args))
 
-let execute_devices exec lists = execute_devices_ exec lists
-let num_outputs exec = num_outputs_ exec
-let destroy exec = destroy_ exec
+let execute_devices exec lists =
+  if exec.tokens = 0 then execute_devices_ exec.handle lists
+  else
+    let tokens = Array.map (fun _ -> token_input exec) lists in
+    let outs =
+      Fun.protect
+        ~finally:(fun () ->
+          Array.iter (fun t -> Buffer.destroy (Buffer.Single t)) tokens)
+        (fun () ->
+          execute_devices_ exec.handle
+            (Array.mapi
+               (fun d row ->
+                 Array.append (Array.make exec.tokens tokens.(d)) row)
+               lists))
+    in
+    Array.map
+      (fun row ->
+        Array.iteri
+          (fun i b -> if i < exec.tokens then Buffer.destroy (Buffer.Single b))
+          row;
+        Array.sub row exec.tokens (Array.length row - exec.tokens))
+      outs
+
+let num_outputs exec = num_outputs_ exec.handle - exec.tokens
+let destroy exec = destroy_ exec.handle
+let memory_stats exec = memory_stats_ exec.handle

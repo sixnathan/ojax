@@ -134,9 +134,7 @@ let dprint_body name x =
       p "{}"
         [
           F.multiply
-            (Ojax.Numpy.Lax_numpy.arange
-               ~dtype:(Ojax.Dtypes.canonicalize_dtype Ojax.Dtype.I64)
-               4.0)
+            (Ojax.Numpy.Lax_numpy.arange ~dtype:Ojax.Dtype.I64 4.0)
             (py_int 1000000.0);
         ]
   | "f16_spec" -> p "{:.4f}" [ astype (div (at x 1) 3.0) Ojax.Dtype.F16 ]
@@ -455,6 +453,10 @@ let xform_thunk row name mode () =
   | "jit" ->
       ignore (Ojax.Api.jit fn args);
       ""
+  | "lowered" ->
+      let name = if name = "jvp" then "_lambda" else "f" in
+      Ojax.Stages.as_text
+        ((Ojax.Stages.jit ~name fn).Ojax.Stages.wrapped_lower args)
   | _ ->
       Ojax.Pretty_printer.closed_jaxpr_to_jax_string
         (Ojax.Api.make_jaxpr fn args)

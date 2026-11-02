@@ -4018,7 +4018,11 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Convert_element_type _ -> (
       let ct = ct1 () in
       match primals with
-      | [ x ] -> [ Some (b1 (Convert_element_type (in_aval x).dtype) [ ct ]) ]
+      | [ x ] ->
+          let ct_aval = Core.get_aval ct in
+          if ct_aval.dtype = (in_aval x).dtype && not ct_aval.weak_type then
+            [ Some ct ]
+          else [ Some (b1 (Convert_element_type (in_aval x).dtype) [ ct ]) ]
       | _ -> arity ())
   | Broadcast_in_dim { shape; dims } -> (
       let ct = ct1 () in
@@ -4858,13 +4862,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           (fun i _ -> i >= n_closed && i < n_closed + num_consts)
           binders
       in
-      let carry_undef =
-        List.filteri
-          (fun i _ ->
-            i >= n_closed + num_consts && i < n_closed + num_consts + num_carry)
-          binders
-        |> List.map (fun (v : var) -> Undef v.vaval)
-      in
+      let carry_undef = List.map (fun c -> Undef (Core.get_aval c)) ct_carry in
       let x_binders =
         List.filteri (fun i _ -> i >= n_closed + num_consts + num_carry) binders
       in

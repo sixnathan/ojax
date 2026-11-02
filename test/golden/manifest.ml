@@ -5421,6 +5421,10 @@ let () =
          Docs_p2.suite_for true;
          Docs_p2b.suite_for false;
          Docs_p2b.suite_for true;
+         Aot_cost.suite_for false;
+         Aot_cost.suite_for true;
+         Ordered_lowering.suite_for false;
+         Ordered_lowering.suite_for true;
          ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
          ( "row_ratchet",
            [

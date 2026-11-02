@@ -314,6 +314,25 @@ let check_operands prim args =
         in
         if not (accepted dt) then rejected_dtype name dt classes
   in
+  let cumulative name axis =
+    (match args with
+    | [] -> ()
+    | first :: _ ->
+        let shape =
+          match first with
+          | Concrete a -> Ndarray.shape a
+          | Tracer t -> t.aval.shape
+          | Device b -> Pjrt.Buffer.dimensions b
+        in
+        if axis < 0 then
+          Py_exn.value_error "XLA operations do not allow negative axes"
+        else if axis >= Array.length shape then
+          Py_exn.value_error
+            (Printf.sprintf "axis %d is out of bounds for array of shape %s"
+               axis
+               (Validate.python_tuple shape)));
+    check name (fun d -> d <> Dtype.Bool) "subtypes of number"
+  in
   let floating = "subtypes of floating" in
   let inexact = "subtypes of complexfloating, floating" in
   let numeric = "subtypes of complexfloating, floating, integer" in
@@ -500,36 +519,11 @@ let check_operands prim args =
                       name (Dtype.numpy_name d))))
       | [] -> ())
   | Rem -> nary_same "rem" (fun d -> not_bool d && not_complex d) real_numeric
-  | Cumsum { axis; _ }
-  | Cumprod { axis; _ }
-  | Cummax { axis; _ }
-  | Cummin { axis; _ }
-  | Cumlogsumexp { axis; _ } ->
-      let name =
-        match prim with
-        | Cumsum _ -> "cumsum"
-        | Cumprod _ -> "cumprod"
-        | Cummax _ -> "cummax"
-        | Cummin _ -> "cummin"
-        | _ -> "cumlogsumexp"
-      in
-      (match args with
-      | first :: _ ->
-          let shape =
-            match first with
-            | Concrete a -> Ndarray.shape a
-            | Tracer t -> t.aval.shape
-            | Device b -> Pjrt.Buffer.dimensions b
-          in
-          if axis < 0 then
-            Py_exn.value_error "XLA operations do not allow negative axes"
-          else if axis >= Array.length shape then
-            Py_exn.value_error
-              (Printf.sprintf "axis %d is out of bounds for array of shape %s"
-                 axis
-                 (Validate.python_tuple shape))
-      | [] -> ());
-      check name not_bool "subtypes of number"
+  | Cumsum { axis; _ } -> cumulative "cumsum" axis
+  | Cumprod { axis; _ } -> cumulative "cumprod" axis
+  | Cummax { axis; _ } -> cumulative "cummax" axis
+  | Cummin { axis; _ } -> cumulative "cummin" axis
+  | Cumlogsumexp { axis; _ } -> cumulative "cumlogsumexp" axis
   | Lt -> nary_same "lt" not_complex real
   | Gt -> nary_same "gt" not_complex real
   | Le -> nary_same "le" not_complex real

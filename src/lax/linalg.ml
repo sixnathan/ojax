@@ -1048,44 +1048,47 @@ let schur ?(compute_schur_vectors = true) ?(sort_eig_vals = false)
 
 let svd ?algorithm ?(full_matrices = true) ?(compute_uv = true) ?subset_by_index
     x =
-  (match subset_by_index with
-  | None -> ()
-  | Some (lo, hi) ->
-      let sh = (Core.get_aval x).shape in
-      let r = Array.length sh in
-      let rank = if r < 2 then 0 else Stdlib.min sh.(r - 1) sh.(r - 2) in
-      if (lo, hi) <> (0, rank) then begin
-        if full_matrices then
-          raise
-            (Py_exn.Value_error
-               "full_matrices and subset_by_index cannot both be set");
-        (match (Core.get_aval x).dtype with
-        | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> ()
-        | d ->
+  let subset_error =
+    match subset_by_index with
+    | None -> None
+    | Some (lo, hi) ->
+        let sh = (Core.get_aval x).shape in
+        let r = Array.length sh in
+        let rank = if r < 2 then 0 else Stdlib.min sh.(r - 1) sh.(r - 2) in
+        if (lo, hi) <> (0, rank) then begin
+          if full_matrices then
             raise
-              (Py_exn.Type_error
-                 (Printf.sprintf
-                    "svd does not accept dtype %s at position 0. Accepted \
-                     dtypes at position 0 are subtypes of complexfloating, \
-                     floating."
-                    (Dtype.numpy_name d))));
-        raise
-          (Py_exn.Not_implemented_error
-             "subset_by_index not implemented for CPU and GPU")
-      end);
-  let gesvd =
+              (Py_exn.Value_error
+                 "full_matrices and subset_by_index cannot both be set");
+          Some
+            (Py_exn.Not_implemented_error
+               "subset_by_index not implemented for CPU and GPU")
+        end
+        else None
+  in
+  let gesvd, algorithm_error =
     match algorithm with
     | None
     | Some Lax_config.Svd_default
     | Some Lax_config.Svd_divide_and_conquer ->
-        false
-    | Some Lax_config.Svd_qr -> true
+        (false, None)
+    | Some Lax_config.Svd_qr -> (true, None)
     | Some Lax_config.Svd_jacobi | Some Lax_config.Svd_polar ->
-        raise
-          (Py_exn.Not_implemented_error
-             "The SVD Jacobi and Polar algorithms are not implemented on CPU.")
+        ( false,
+          Some
+            (Py_exn.Not_implemented_error
+               "The SVD Jacobi and Polar algorithms are not implemented on CPU.")
+        )
   in
-  Core.bind (Svd { full_matrices; compute_uv; gesvd }) [ x ]
+  let lowering_error =
+    match subset_error with Some _ -> subset_error | None -> algorithm_error
+  in
+  let prim = Svd { full_matrices; compute_uv; gesvd } in
+  match lowering_error with
+  | None -> Core.bind prim [ x ]
+  | Some e ->
+      Core.check_operands prim [ x ];
+      raise e
 
 let tridiagonal ?(lower = true) x =
   match Core.bind (Tridiagonal { lower }) [ x ] with

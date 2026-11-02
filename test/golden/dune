@@ -30,6 +30,7 @@
  (deps
   (source_tree %{project_root}/goldens/dtypes)
   (source_tree %{project_root}/goldens/jit_opts)
+  (source_tree %{project_root}/goldens/user_dtype)
   (source_tree %{project_root}/goldens/lax)
   (source_tree %{project_root}/goldens/lax_smoke)
   (source_tree %{project_root}/goldens/jaxpr)

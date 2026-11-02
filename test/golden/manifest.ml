@@ -5415,6 +5415,8 @@ let () =
            "x64_on";
          Jit_opts.suite_for false;
          Jit_opts.suite_for true;
+         Jit_opts.suite_for ~set:"user_dtype" false;
+         Jit_opts.suite_for ~set:"user_dtype" true;
          ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
          ( "row_ratchet",
            [

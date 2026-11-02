@@ -619,7 +619,9 @@ let spd v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul_typed v (NL.swapaxes (-1) (-2) v) in
+  let product =
+    Ojax.Numpy.Tensor_contractions.matmul v (NL.swapaxes (-1) (-2) v)
+  in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -1839,6 +1841,8 @@ let needs_concrete op =
       "np_polydiv";
       "np_roots";
     ]
+
+let fuzz_traces_jit op = op = "np_polydiv"
 
 let result_names = function
   | "gp_qr_full" ->

@@ -278,7 +278,8 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
     (output_names case "eager")
     direct;
   let jit () =
-    if Parity_cases.needs_concrete op then direct ()
+    if Parity_cases.needs_concrete op && not (Parity_cases.fuzz_traces_jit op)
+    then direct ()
     else
       Ojax.Api.jit_flat
         (fun args -> Parity_cases.run op params (lookup args))

@@ -150,89 +150,126 @@ let rec derived covered depth id =
 
 let findings = ref []
 let new_wrappers = ref []
+let known_none = ref SS.empty
+
+let rec none_tested depth (c : expression) =
+  match c.exp_desc with
+  | Texp_apply
+      ({ exp_desc = Texp_ident (op, _, _); _ }, [ (_, Arg a); (_, Arg b) ]) -> (
+      match (last_name op, a.exp_desc, b.exp_desc) with
+      | "||", _, _ -> (
+          match (none_tested depth a, none_tested depth b) with
+          | Some x, Some y -> Some (SS.union x y)
+          | _ -> None)
+      | "<>", Texp_ident (Path.Pident id, _, _), Texp_construct (_, cd, [])
+        when cd.Data_types.cstr_name = "None" ->
+          Some (SS.singleton (uname id))
+      | _ -> None)
+  | Texp_ident (Path.Pident id, _, _) when depth < 4 -> (
+      match Hashtbl.find_opt bindings (uname id) with
+      | Some b -> none_tested (depth + 1) b
+      | None -> None)
+  | _ -> None
 
 let analyse file enclosing =
   {
     Tast_iterator.default_iterator with
     expr =
       (fun self e ->
-        (match e.exp_desc with
-        | Texp_apply ({ exp_desc = Texp_ident (path, _, vd); _ }, args)
-          when is_target path vd ->
-            let present =
-              List.filter_map
-                (fun (l, a) ->
-                  match a with Arg x -> Some (l, x) | Omitted () -> None)
-                args
-            in
-            let fns, others =
-              List.partition
-                (fun (l, (x : expression)) ->
-                  l = Asttypes.Nolabel && is_arrow x.exp_type)
-                present
-            in
-            let rec cover depth s id =
-              let u = uname id in
-              if SS.mem u s then s
-              else
-                let s = SS.add u s in
-                match Hashtbl.find_opt bindings u with
-                | Some b when depth < 8 ->
-                    List.fold_left
-                      (fun s (d, _) -> cover (depth + 1) s d)
-                      s (free_locals b)
-                | _ -> s
-            in
-            let covered =
-              List.fold_left
-                (fun s (_, x) ->
+        match e.exp_desc with
+        | Texp_ifthenelse (c, t, Some f) ->
+            self.expr self c;
+            self.expr self t;
+            let saved = !known_none in
+            (match none_tested 0 c with
+            | Some ids -> known_none := SS.union ids saved
+            | None -> ());
+            self.expr self f;
+            known_none := saved
+        | _ ->
+            (match e.exp_desc with
+            | Texp_apply ({ exp_desc = Texp_ident (path, _, vd); _ }, args)
+              when is_target path vd ->
+                let present =
+                  List.filter_map
+                    (fun (l, a) ->
+                      match a with Arg x -> Some (l, x) | Omitted () -> None)
+                    args
+                in
+                let fns, others =
+                  List.partition
+                    (fun (l, (x : expression)) ->
+                      l = Asttypes.Nolabel && is_arrow x.exp_type)
+                    present
+                in
+                let rec cover depth s id =
+                  let u = uname id in
+                  if SS.mem u s then s
+                  else
+                    let s = SS.add u s in
+                    match Hashtbl.find_opt bindings u with
+                    | Some b when depth < 8 ->
+                        List.fold_left
+                          (fun s (d, _) -> cover (depth + 1) s d)
+                          s (free_locals b)
+                    | _ -> s
+                in
+                let covered =
                   List.fold_left
-                    (fun s (id, _) -> cover 0 s id)
-                    s (used_idents x))
-                SS.empty others
-            in
-            List.iter
-              (fun (_, (f : expression)) ->
-                match f.exp_desc with
-                | Texp_ident (Path.Pident id, _, _)
-                  when not (SS.mem (uname id) !toplevel) -> (
-                    match !enclosing with
-                    | Some name when not (Hashtbl.mem wrappers name) ->
-                        new_wrappers := name :: !new_wrappers
-                    | _ -> ())
-                | _ ->
-                    List.iter
-                      (fun (id, (vd : Types.value_description)) ->
-                        (if
-                           is_arrow vd.val_type
-                           && (not (Hashtbl.mem bindings (uname id)))
-                           && not (SS.mem (uname id) covered)
-                         then
-                           match !enclosing with
-                           | Some name when not (Hashtbl.mem wrappers name) ->
-                               new_wrappers := name :: !new_wrappers
-                           | _ -> ());
-                        if not (SS.mem (uname id) covered) then
-                          let kind =
-                            if is_array_type vd.val_type then "array"
-                            else if is_arrow vd.val_type then "closure"
-                            else if derived covered 0 id then "derived"
-                            else "static"
-                          in
-                          let pos = e.exp_loc.loc_start in
-                          findings :=
-                            ( file,
-                              pos.pos_lnum,
-                              Option.value !enclosing ~default:"?",
-                              last_name path,
-                              kind,
-                              Ident.name id,
-                              type_string vd.val_type )
-                            :: !findings)
-                      (free_locals f))
-              fns
-        | _ -> ());
-        Tast_iterator.default_iterator.expr self e);
+                    (fun s (_, x) ->
+                      List.fold_left
+                        (fun s (id, _) -> cover 0 s id)
+                        s (used_idents x))
+                    SS.empty others
+                in
+                List.iter
+                  (fun (_, (f : expression)) ->
+                    match f.exp_desc with
+                    | Texp_ident (Path.Pident id, _, _)
+                      when not (SS.mem (uname id) !toplevel) -> (
+                        match !enclosing with
+                        | Some name when not (Hashtbl.mem wrappers name) ->
+                            new_wrappers := name :: !new_wrappers
+                        | _ -> ())
+                    | _ ->
+                        List.iter
+                          (fun (id, (vd : Types.value_description)) ->
+                            (if
+                               is_arrow vd.val_type
+                               && (not (Hashtbl.mem bindings (uname id)))
+                               && not (SS.mem (uname id) covered)
+                             then
+                               match !enclosing with
+                               | Some name when not (Hashtbl.mem wrappers name)
+                                 ->
+                                   new_wrappers := name :: !new_wrappers
+                               | _ -> ());
+                            if not (SS.mem (uname id) covered) then
+                              let kind =
+                                if SS.mem (uname id) !known_none then "none"
+                                else if derived covered 0 id then "derived"
+                                else if
+                                  is_arrow vd.val_type
+                                  && not (Hashtbl.mem bindings (uname id))
+                                then "wrapper"
+                                else if is_array_type vd.val_type then "array"
+                                else if is_arrow vd.val_type then "closure"
+                                else "static"
+                              in
+                              let pos = e.exp_loc.loc_start in
+                              findings :=
+                                ( file,
+                                  pos.pos_lnum,
+                                  Option.value !enclosing ~default:"?",
+                                  last_name path,
+                                  kind,
+                                  Ident.name id,
+                                  type_string vd.val_type )
+                                :: !findings)
+                          (free_locals f))
+                  fns
+            | _ -> ());
+            Tast_iterator.default_iterator.expr self e);
     structure_item =
       (fun self si ->
         match si.str_desc with
@@ -281,9 +318,41 @@ let () =
       loop (round + 1))
   in
   loop 0;
-  Hashtbl.iter (fun w () -> Printf.printf "wrapper\t%s\n" w) wrappers;
+  let all = Array.mem "--all" Sys.argv in
+  let reviewed = Hashtbl.create 64 in
+  Array.iteri
+    (fun i a ->
+      if a = "--reviewed" && i + 1 < Array.length Sys.argv then
+        In_channel.with_open_text Sys.argv.(i + 1) In_channel.input_all
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            match String.split_on_char '\t' line with
+            | file :: encl :: name :: _ :: _ ->
+                Hashtbl.replace reviewed (file, encl, name) ()
+            | _ -> ()))
+    Sys.argv;
+  let strip file =
+    match Filename.chop_suffix_opt ~suffix:".pp.ml" file with
+    | Some base -> base ^ ".ml"
+    | None -> file
+  in
+  let open_findings = ref 0 in
+  let counts = Hashtbl.create 8 in
   List.iter
     (fun (file, line, encl, callee, kind, name, ty) ->
-      Printf.printf "%s:%d\t%s\t%s\t%s\t%s\t%s\n" file line encl callee kind
-        name ty)
-    (List.sort compare !findings)
+      let file = strip file in
+      let quiet = List.mem kind [ "derived"; "none"; "wrapper" ] in
+      let known = Hashtbl.mem reviewed (file, encl, name) in
+      let label = if known then kind ^ ",reviewed" else kind in
+      Hashtbl.replace counts label
+        (1 + Option.value (Hashtbl.find_opt counts label) ~default:0);
+      if not (quiet || known) then incr open_findings;
+      if all || not (quiet || known) then
+        Printf.printf "%s:%d\t%s\t%s\t%s\t%s\t%s\n" file line encl callee label
+          name ty)
+    (List.sort_uniq compare !findings);
+  if all then
+    Hashtbl.iter (fun w () -> Printf.printf "wrapper\t%s\n" w) wrappers;
+  Hashtbl.iter (fun k n -> Printf.eprintf "%s\t%d\n" k n) counts;
+  Printf.eprintf "unreviewed\t%d\n" !open_findings;
+  exit (if !open_findings > 0 then 1 else 0)

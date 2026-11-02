@@ -269,6 +269,13 @@ let index_dtype sh =
 let py_int i = Jnp_util.py_int i
 let as_strong v dt = C.convert_like ~weak:false v dt
 
+let array_start i d =
+  let dt = dtype i in
+  if is_unsigned dt then i
+  else
+    let d_arr = T.Concrete (Ndarray.of_floats dt [||] [| float_of_int d |]) in
+    L.select (Ufuncs.less i (py_int 0)) (Ufuncs.add i d_arr) i
+
 let dynamic_slice ~normalize ~mode x parsed =
   let sh = shape x in
   (match mode with
@@ -355,7 +362,12 @@ let dynamic_slice ~normalize ~mode x parsed =
   let a l = Array.of_list (List.rev l) in
   let y =
     if !trivial then x
-    else L.dynamic_slice ~allow_negative_indices:normalize x starts (a !sizes)
+    else
+      let starts =
+        if not normalize then starts
+        else List.mapi (fun i st -> array_start st sh.(i)) starts
+      in
+      L.dynamic_slice_normalized x starts (a !sizes)
   in
   finish y ~rev:(a !rev) ~squeeze:(a !squeeze) ~newaxis:(a !newaxis)
 
@@ -449,7 +461,18 @@ type gather_indexer = {
 
 let host_value nd = T.Concrete nd
 
+let canon = function
+  | T.Concrete nd ->
+      T.Concrete
+        (Ndarray.canonicalize (Dtypes.canonicalize_dtype (Ndarray.dtype nd)) nd)
+  | v -> v
+
 let normalize_item sh p =
+  let p =
+    match p.item with
+    | User (Arr v) -> { p with item = User (Arr (canon v)) }
+    | _ -> p
+  in
   match (p.typ, p.item) with
   | Tinteger, User (Int i) ->
       let size = sh.(List.hd p.axes) in
@@ -458,7 +481,13 @@ let normalize_item sh p =
   | Tarray, User (Arr v) ->
       let size = sh.(List.hd p.axes) in
       let dt = dtype v in
-      let neg = Ufuncs.less v (py_int 0) in
+      let neg =
+        match concrete_nd v with
+        | Some nd ->
+            host_value
+              (Ndarray.map D.Bool (fun x -> if x < 0.0 then 1.0 else 0.0) nd)
+        | None -> Ufuncs.less v (py_int 0)
+      in
       let sz = T.Concrete (Ndarray.of_floats dt [||] [| float_of_int size |]) in
       { p with item = Jarr (L.select neg (L.add v sz) v) }
   | Tarray, Host nd ->
@@ -723,8 +752,33 @@ let index_to_gather ~normalize sh parsed =
 
 let is_empty sh = Array.exists (fun d -> d = 0) sh
 
+let python_float_repr f =
+  if Float.is_nan f then "nan"
+  else if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.1f" f
+  else
+    let rec go p =
+      let s = Printf.sprintf "%.*g" p f in
+      if p >= 17 || float_of_string s = f then s else go (p + 1)
+    in
+    go 1
+
+let fill_of v =
+  if ndim v <> 0 then
+    Py_exn.value_error "fill_value argument to indexed get() must be a scalar";
+  match concrete_nd v with
+  | None ->
+      Py_exn.value_error "fill_value argument to indexed get() must be concrete"
+  | Some nd ->
+      let f = Ndarray.get_f nd [||] in
+      let repr =
+        if is_integer (Ndarray.dtype nd) then Printf.sprintf "%.0f" f
+        else python_float_repr f
+      in
+      (repr, f)
+
 let gather ~sorted ~unique ~mode ~fill_value ~normalize x parsed =
   let ix = index_to_gather ~normalize (shape x) parsed in
+  let fill_value = Option.map fill_of fill_value in
   let y = x in
   let y =
     if ix.scalar_bool_dims = [||] then y
@@ -735,10 +789,31 @@ let gather ~sorted ~unique ~mode ~fill_value ~normalize x parsed =
     let y =
       if is_empty (shape ix.gather_indices) then y
       else
-        L.gather ~mode:(parse_mode mode) ?fill_value
-          ~indices_are_sorted:(sorted || ix.sorted)
-          ~unique_indices:(unique || ix.unique) y ix.gather_indices ix.dnums
-          ix.gather_slice_shape
+        let indices_are_sorted = sorted || ix.sorted in
+        let unique_indices = unique || ix.unique in
+        let m =
+          match mode with None -> LC.Promise_in_bounds | m -> parse_mode m
+        in
+        match (m, fill_value) with
+        | LC.Fill_or_drop, Some (repr, f) ->
+            let prim =
+              T.Gather
+                {
+                  dimension_numbers = ix.dnums;
+                  slice_sizes = ix.gather_slice_shape;
+                }
+            in
+            let prim = Np_ints.mark_gather_fill prim repr (Some f) in
+            let prim =
+              if indices_are_sorted || unique_indices then
+                Np_ints.mark_gather_flags ~sorted:indices_are_sorted
+                  ~unique:unique_indices prim
+              else prim
+            in
+            C.bind1 prim [ y; ix.gather_indices ]
+        | _ ->
+            L.gather ~mode:m ~indices_are_sorted ~unique_indices y
+              ix.gather_indices ix.dnums ix.gather_slice_shape
     in
     let y =
       if ix.reversed_y_dims = [||] then y else L.rev y ix.reversed_y_dims

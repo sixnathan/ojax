@@ -91,8 +91,8 @@ let program case names values =
   | "get" ->
       let fill_value =
         match U.member "fill_value" params with
-        | `Float f -> Some f
-        | `Int i -> Some (float_of_int i)
+        | `Float f -> Some (JU.py_float f)
+        | `Int i -> Some (JU.py_int i)
         | _ -> None
       in
       G.take ?indices_are_sorted ?unique_indices ?mode ?fill_value
@@ -188,7 +188,11 @@ let check_case ~suite ~root ~set ~set_dir ~x64 ~nd_of_npz ~string_of_dtype
   in
   let input arg =
     let m = Hashtbl.find table (case_id ^ "/in_" ^ arg) in
-    T.Concrete (nd_of_npz (Npz.decode b m.Fuzz.start m.Fuzz.descr m.Fuzz.shape))
+    let nd = nd_of_npz (Npz.decode b m.Fuzz.start m.Fuzz.descr m.Fuzz.shape) in
+    T.Concrete
+      (Ojax.Ndarray.canonicalize
+         (Ojax.Dtypes.canonicalize_dtype (Ojax.Ndarray.dtype nd))
+         nd)
   in
   let inputs = List.map input names in
   let str key =

@@ -10,7 +10,7 @@ val take :
   ?indices_are_sorted:bool ->
   ?unique_indices:bool ->
   ?mode:string ->
-  ?fill_value:float ->
+  ?fill_value:Types.value ->
   ?normalize_indices:bool ->
   Types.value ->
   index list ->

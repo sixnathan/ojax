@@ -112,6 +112,13 @@ let is_effectful = function
       match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
   | _ -> false
 
+let is_debug_callback = function
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule { cb_effect = Core.Callback_debug _; _ } -> true
+      | _ -> false)
+  | _ -> false
+
 let atom_aval = function
   | A_var v -> v.vaval
   | A_lit nd ->
@@ -179,9 +186,10 @@ let partition policy (cj : closed_jaxpr) ~n_primal ~n_out ~n_tangent =
       end
       else begin
         known_eqns := e :: !known_eqns;
-        let saveable =
-          is_effectful e.prim || policy e.prim (List.map atom_aval e.inputs)
-        in
+        let policy_saves = policy e.prim (List.map atom_aval e.inputs) in
+        if is_debug_callback e.prim && not policy_saves then
+          staged_eqns := e :: !staged_eqns;
+        let saveable = is_effectful e.prim || policy_saves in
         if saveable then
           List.iter
             (fun (v : var) -> Hashtbl.replace saved_producer v.vid v)
@@ -581,6 +589,14 @@ let remat_partial_eval trace id (tracers : tracer list) =
                   if Hashtbl.mem pe_unknown v.vid then
                     Hashtbl.replace unknown_vars v.vid ())
                 e.outs;
+              true
+            end
+            else if
+              is_debug_callback e.prim
+              && remat_case policy e.prim (List.map atom_aval e.inputs)
+                 = Recompute
+            then begin
+              List.iter note ins;
               true
             end
             else if

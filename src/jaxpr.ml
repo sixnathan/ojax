@@ -716,6 +716,12 @@ let () =
 let has_side_effect = function
   | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
   | Dce_sink _ | Create_token | After_all -> true
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule
+          { cb_effect = Core.Callback_io _ | Core.Callback_debug _; _ } ->
+          true
+      | _ -> false)
   | _ -> false
 
 let rec eqn_has_effect (e : eqn) =

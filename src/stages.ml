@@ -10,7 +10,12 @@ type lowered = {
   donated : bool list;
 }
 
-type compiled = { run : value list -> value list; source : lowered }
+type compiled = {
+  run : value list -> value list;
+  source : lowered;
+  exec : Pjrt.Executable.t Lazy.t;
+}
+
 type compiler_option = Pjrt.Executable.compiler_option
 type compiler_options = (string * compiler_option) list
 type arg_info = { arg_aval : aval; donated : bool }
@@ -102,6 +107,7 @@ let compile ?compiler_options lowered =
   {
     run = Backend.executor ?options:compiler_options lowered.closed;
     source = lowered;
+    exec = lazy (Backend.Xla.compile lowered.closed);
   }
 
 let call compiled args =
@@ -114,7 +120,11 @@ let call compiled args =
     actual compiled.source.in_avals;
   compiled.run args
 
-let cost_analysis _ = []
+let cost_analysis compiled =
+  Pjrt.Executable.cost_analysis (Lazy.force compiled.exec)
+
+let memory_analysis compiled =
+  Pjrt.Executable.memory_stats (Lazy.force compiled.exec)
 
 let donated_leaves donate_argnums args =
   List.concat

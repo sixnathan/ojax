@@ -29,22 +29,23 @@ let is_inexact = function
 let to_inexact = Dtypes.to_inexact_dtype
 let default_float () = Dtypes.default_float_dtype ()
 
-let full ?dtype shape fill =
+let full_named fun_name ?dtype shape fill =
   let dt =
     match dtype with
-    | Some d -> Dtypes.canonicalize_dtype d
+    | Some d -> Dtypes.check_and_canonicalize_user_dtype ~fun_name d
     | None -> default_float ()
   in
   const_full dt shape fill
 
-let zeros ?dtype shape = full ?dtype shape 0.0
-let ones ?dtype shape = full ?dtype shape 1.0
-let empty ?dtype shape = zeros ?dtype shape
+let full ?dtype shape fill = full_named "full" ?dtype shape fill
+let zeros ?dtype shape = full_named "zeros" ?dtype shape 0.0
+let ones ?dtype shape = full_named "ones" ?dtype shape 1.0
+let empty ?dtype shape = full_named "empty" ?dtype shape 0.0
 
-let full_like ?dtype ?shape a fill =
+let full_like_named fun_name ?dtype ?shape a fill =
   let dt =
     match dtype with
-    | Some d -> Dtypes.canonicalize_dtype d
+    | Some d -> Dtypes.check_and_canonicalize_user_dtype ~fun_name d
     | None -> dtype_of a
   in
   let sh = match shape with Some s -> s | None -> shape_of a in
@@ -62,9 +63,14 @@ let full_like ?dtype ?shape a fill =
         T.Concrete (Ndarray.as_weak nd)
     | _, filled -> filled
 
-let zeros_like ?dtype ?shape a = full_like ?dtype ?shape a 0.0
-let ones_like ?dtype ?shape a = full_like ?dtype ?shape a 1.0
-let empty_like ?dtype ?shape a = zeros_like ?dtype ?shape a
+let full_like ?dtype ?shape a fill =
+  full_like_named "full_like" ?dtype ?shape a fill
+
+let zeros_like ?dtype ?shape a =
+  full_like_named "zeros_like" ?dtype ?shape a 0.0
+
+let ones_like ?dtype ?shape a = full_like_named "ones_like" ?dtype ?shape a 1.0
+let empty_like ?dtype ?shape a = full_like_named "ones_like" ?dtype ?shape a 0.0
 let weak_scalar dt x = C.py_scalar dt x
 
 let reshape_same v sh =
@@ -190,7 +196,11 @@ let linspace_parts ~retstep ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype
     [ start; stop ]
 
 let linspace_v ?num ?endpoint ?axis ?dtype start stop =
-  let dtype = Option.map Dtypes.canonicalize_dtype dtype in
+  let dtype =
+    Option.map
+      (Dtypes.check_and_canonicalize_user_dtype ~fun_name:"linspace")
+      dtype
+  in
   List.hd (linspace_parts ~retstep:false ?num ?endpoint ?axis ?dtype start stop)
 
 let logspace_core ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop
@@ -214,12 +224,20 @@ let logspace_core ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop
 
 let logspace_v ?(num = 50) ?(endpoint = true) ?(base = 10.0) ?(axis = 0) ?dtype
     start stop =
-  let dtype = Option.map Dtypes.canonicalize_dtype dtype in
+  let dtype =
+    Option.map
+      (Dtypes.check_and_canonicalize_user_dtype ~fun_name:"logspace")
+      dtype
+  in
   logspace_core ~num ~endpoint ~axis ?dtype start stop
     (weak_scalar (default_float ()) base)
 
 let geomspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
-  let dtype = Option.map Dtypes.canonicalize_dtype dtype in
+  let dtype =
+    Option.map
+      (Dtypes.check_and_canonicalize_user_dtype ~fun_name:"geomspace")
+      dtype
+  in
   let key = Printf.sprintf "%d %b %d %s" num endpoint axis (dtype_key dtype) in
   Jnp_util.jit1 "_geomspace" ~key
     (function

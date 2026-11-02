@@ -142,7 +142,10 @@ let process_custom_jvp trace primal ~jvp args =
 let process_custom_vjp trace primal ~fwd ~bwd args =
   (interpreter_for trace).i_process_custom_vjp trace ~primal ~fwd ~bwd args
 
-type callback_effect = Callback_pure | Callback_io of { ordered : bool }
+type callback_effect =
+  | Callback_pure
+  | Callback_io of { ordered : bool }
+  | Callback_debug of { ordered : bool }
 
 type custom_rule =
   | Jvp_rule of {

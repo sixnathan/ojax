@@ -41,10 +41,42 @@ let is_unknown_value = function
 
 let known_tracer trace v = new_pe_tracer trace (partial_val_known v) None
 
+let effect_sessions :
+    (trace * (int * primitive * tracer list) list ref) list ref =
+  ref []
+
+let is_staged_effect = function
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule
+          {
+            cb_effect = Core.Callback_io _ | Core.Callback_debug _;
+            result_avals = [];
+            _;
+          } ->
+          true
+      | _ -> false)
+  | _ -> false
+
+let with_effect_session trace f =
+  let effects = ref [] in
+  effect_sessions := (trace, effects) :: !effect_sessions;
+  Fun.protect
+    ~finally:(fun () ->
+      effect_sessions := List.filter (fun (t, _) -> t != trace) !effect_sessions)
+    (fun () ->
+      let r = f () in
+      (r, List.rev !effects))
+
 let record_unknown trace prim (tracers : tracer list) : value list =
   let tracers_in = List.map (instantiate_const trace) tracers in
   let avals_in = List.map (fun (t : tracer) -> t.aval) tracers_in in
   let avals_out = Core.rules.abstract_eval prim avals_in in
+  (if avals_out = [] && is_staged_effect prim then
+     match List.assq_opt trace !effect_sessions with
+     | Some effects ->
+         effects := (Core.fresh_id (), prim, tracers_in) :: !effects
+     | None -> ());
   let out_tracers =
     List.map
       (fun a -> new_pe_tracer trace (partial_val_unknown a) None)
@@ -229,8 +261,9 @@ let toposort (out_nodes : tracer list) (parents : tracer -> tracer list) :
       loop ();
       !sorted
 
-let tracers_to_jaxpr ?(literals = true) (tracers_in : tracer list)
-    (tracers_out : tracer list) : jaxpr * value list =
+let tracers_to_jaxpr ?(literals = true) ?(effects = [])
+    (tracers_in : tracer list) (tracers_out : tracer list) : jaxpr * value list
+    =
   let tracer_to_var : (int, var) Hashtbl.t = Hashtbl.create 64 in
   List.iter
     (fun (t : tracer) ->
@@ -275,8 +308,24 @@ let tracers_to_jaxpr ?(literals = true) (tracers_in : tracer list)
       multiple_results = List.length out_binders > 1;
     }
   in
+  let pending_effects = ref effects in
+  let flush_effects upto =
+    let rec go () =
+      match !pending_effects with
+      | (key, prim, inputs) :: rest when key < upto ->
+          pending_effects := rest;
+          eqns := recipe_to_eqn prim inputs [] [] :: !eqns;
+          go ()
+      | _ -> ()
+    in
+    go ()
+  in
   List.iter
     (fun (t : tracer) ->
+      (match t.payload with
+      | PE { recipe = Some (EqnRecipe e); _ } ->
+          flush_effects (recipe_key e.er_out)
+      | _ -> ());
       match t.payload with
       | PE { recipe = Some LambdaBinding; _ } -> ()
       | PE { recipe = Some (ConstRecipe (Concrete nd)); _ }
@@ -305,7 +354,11 @@ let tracers_to_jaxpr ?(literals = true) (tracers_in : tracer list)
       | _ -> invalid_arg "tracers_to_jaxpr: expected a PartialEval tracer")
     (List.stable_sort
        (fun (x : tracer) (y : tracer) -> compare (eqn_order x) (eqn_order y))
-       (toposort (tracers_in @ tracers_out) tracer_parents));
+       (toposort
+          (tracers_in @ tracers_out
+          @ List.concat_map (fun (_, _, ins) -> ins) effects)
+          tracer_parents));
+  flush_effects max_int;
   let constvals = List.rev !constvar_to_val in
   let constvars = List.map fst constvals in
   let in_binders =
@@ -323,14 +376,17 @@ let partial_eval_flat (f : value list -> value list)
       let tracers_in =
         List.map (fun pv -> new_pe_tracer main pv (Some LambdaBinding)) pvals_in
       in
-      let outs = f (List.map (fun t -> Tracer t) tracers_in) in
+      let outs, effects =
+        with_effect_session main (fun () ->
+            f (List.map (fun t -> Tracer t) tracers_in))
+      in
       let tracers_out =
         List.map (fun v -> as_tracer (Core.full_raise main v)) outs
       in
       let pvals_out = List.map pe_pval tracers_out in
       let unk_in = List.filter (fun t -> is_unknown (pe_pval t)) tracers_in in
       let unk_out = List.filter (fun t -> is_unknown (pe_pval t)) tracers_out in
-      let jaxpr, consts = tracers_to_jaxpr unk_in unk_out in
+      let jaxpr, consts = tracers_to_jaxpr ~effects unk_in unk_out in
       (jaxpr, consts, pvals_out))
 
 let partial_eval_flat_instantiate ~instantiate (f : value list -> value list)
@@ -339,7 +395,10 @@ let partial_eval_flat_instantiate ~instantiate (f : value list -> value list)
       let tracers_in =
         List.map (fun pv -> new_pe_tracer main pv (Some LambdaBinding)) pvals_in
       in
-      let outs = f (List.map (fun t -> Tracer t) tracers_in) in
+      let outs, effects =
+        with_effect_session main (fun () ->
+            f (List.map (fun t -> Tracer t) tracers_in))
+      in
       let tracers_out =
         List.mapi
           (fun i v ->
@@ -350,7 +409,7 @@ let partial_eval_flat_instantiate ~instantiate (f : value list -> value list)
       let pvals_out = List.map pe_pval tracers_out in
       let unk_in = List.filter (fun t -> is_unknown (pe_pval t)) tracers_in in
       let unk_out = List.filter (fun t -> is_unknown (pe_pval t)) tracers_out in
-      let jaxpr, consts = tracers_to_jaxpr unk_in unk_out in
+      let jaxpr, consts = tracers_to_jaxpr ~effects unk_in unk_out in
       (jaxpr, consts, pvals_out))
 
 let mapped_leading (a : aval) =

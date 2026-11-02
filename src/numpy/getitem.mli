@@ -53,3 +53,12 @@ val ufunc_multiply_at :
 
 val ufunc_subtract_at :
   ?inplace:bool -> Types.value -> index list -> Types.value -> Types.value
+
+val ufunc_at :
+  ?inplace:bool ->
+  name:string ->
+  (Types.value list -> Types.value) ->
+  Types.value ->
+  index list ->
+  Types.value list ->
+  Types.value

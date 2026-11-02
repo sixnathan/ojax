@@ -87,3 +87,60 @@ let logaddexp_custom =
   call
 
 let logaddexp a b = List.hd (logaddexp_custom [ a; b ])
+
+let logaddexp2_body a b =
+  let amax = bind1 Max [ a; b ] in
+  let invln2 = lax_const amax (1.0 /. Float.log 2.0) in
+  if is_complex a then begin
+    let sum = bind1 Add [ a; b ] in
+    let delta = bind1 Sub [ sum; bind1 Mul [ amax; lax_const amax 2.0 ] ] in
+    let out =
+      bind1 Add
+        [ amax; bind1 Mul [ invln2; bind1 Log1p [ bind1 Exp2 [ delta ] ] ] ]
+    in
+    bind1 Complex
+      [
+        bind1 Real [ out ];
+        wrap_between (bind1 Imag [ out ]) (Float.pi /. Float.log 2.0);
+      ]
+  end
+  else
+    let delta = bind1 Sub [ a; b ] in
+    let is_nan = bind1 Ne [ delta; delta ] in
+    let sum = bind1 Add [ a; b ] in
+    let magnitude = bind1 Abs [ delta ] in
+    let negated = bind1 Neg [ magnitude ] in
+    let exponent = bind1 Exp2 [ negated ] in
+    let tail = bind1 Log1p [ exponent ] in
+    let scaled = bind1 Mul [ invln2; tail ] in
+    let normal = bind1 Add [ amax; scaled ] in
+    bind1 Select_n [ is_nan; normal; sum ]
+
+let logaddexp2_custom =
+  let self = ref (fun _ -> []) in
+  let call =
+    Custom_derivatives.custom_jvp ~name:"logaddexp2" ~jvp_name:"_logaddexp2_jvp"
+      (function
+        | [ a; b ] -> [ logaddexp2_body a b ]
+        | _ -> invalid_arg "logaddexp2: arity")
+      ~jvp:(fun primals tangents ->
+        match (primals, tangents) with
+        | [ x1; x2 ], [ t1; t2 ] ->
+            let out = !self [ x1; x2 ] in
+            let po = List.hd out in
+            let term t x =
+              let rx = replace_inf x in
+              let rp = replace_inf po in
+              let d = bind1 Sub [ rx; rp ] in
+              let e = bind1 Exp2 [ d ] in
+              bind1 Mul [ t; e ]
+            in
+            let first = term t1 x1 in
+            let second = term t2 x2 in
+            (out, [ bind1 Add [ first; second ] ])
+        | _ -> invalid_arg "logaddexp2: arity")
+  in
+  self := call;
+  call
+
+let logaddexp2 a b = List.hd (logaddexp2_custom [ a; b ])

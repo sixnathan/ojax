@@ -6,6 +6,7 @@ let make ?(weak_type = false) shape dtype =
   { shape = Array.copy shape; dtype; weak_type }
 
 let of_value = Core.get_aval
+let like = Core.get_aval
 let shape (s : t) = s.shape
 let dtype (s : t) = s.dtype
 let weak_type (s : t) = s.weak_type

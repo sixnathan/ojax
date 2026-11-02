@@ -529,6 +529,9 @@ let dispatch_host_callback id args rets =
       | Core.Callback_rule { host; result_avals; _ } -> (host, result_avals)
       | _ -> failwith "host callback: not a callback rule"
     in
+    let not_token (code, _, _) = code <> 17 in
+    let args = Array.of_list (List.filter not_token (Array.to_list args)) in
+    let rets = Array.of_list (List.filter not_token (Array.to_list rets)) in
     let inputs =
       Array.to_list
         (Array.map

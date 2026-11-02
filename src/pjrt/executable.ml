@@ -12,6 +12,25 @@ external execute_devices_ :
 external optimized_ : t -> string = "ojax_pjrt_executable_optimized"
 external serialize_ : t -> string = "ojax_pjrt_executable_serialize"
 
+type memory_stats = {
+  generated_code_size_in_bytes : int;
+  argument_size_in_bytes : int;
+  output_size_in_bytes : int;
+  alias_size_in_bytes : int;
+  temp_size_in_bytes : int;
+  host_generated_code_size_in_bytes : int;
+  host_argument_size_in_bytes : int;
+  host_output_size_in_bytes : int;
+  host_alias_size_in_bytes : int;
+  host_temp_size_in_bytes : int;
+  peak_memory_in_bytes : int;
+}
+
+external cost_analysis : t -> (string * float) list
+  = "ojax_pjrt_executable_cost_analysis"
+
+external memory_stats : t -> memory_stats = "ojax_pjrt_executable_memory_stats"
+
 external deserialize_ : Client.t -> string -> t
   = "ojax_pjrt_executable_deserialize"
 

@@ -2273,6 +2273,9 @@ let rec jvp_pairs prim primals tangents =
               )
           in
           (po, to_)
+      | Core.Callback_rule { cb_effect = Core.Callback_debug _; _ } ->
+          ignore (Core.bind prim primals);
+          ([], [])
       | Core.Callback_rule { cb_effect = Core.Callback_io _; _ } ->
           invalid_arg "IO callbacks do not support JVP."
       | Core.Callback_rule { result_avals = []; _ } ->

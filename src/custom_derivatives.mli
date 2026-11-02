@@ -82,4 +82,13 @@ val io_callback :
   value list ->
   value list
 
+val callback_with_view :
+  ordered:bool ->
+  string ->
+  (string * string) list ->
+  (value list -> value list) ->
+  result_avals:aval list ->
+  value list ->
+  value list
+
 val zero_from_primal : value -> value

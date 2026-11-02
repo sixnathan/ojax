@@ -316,3 +316,9 @@ let py_scalar_repr = function
 let rec py_list_repr = function
   | Py_item s -> py_scalar_repr s
   | Py_list l -> "[" ^ String.concat ", " (List.map py_list_repr l) ^ "]"
+
+let flat _ =
+  raise
+    (Py_exn.Not_implemented_error
+       "JAX Arrays do not implement the arr.flat property: consider \
+        arr.flatten() instead.")

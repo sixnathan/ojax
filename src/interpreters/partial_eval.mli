@@ -9,7 +9,11 @@ val instantiate_const : trace -> tracer -> tracer
 val toposort : tracer list -> (tracer -> tracer list) -> tracer list
 
 val tracers_to_jaxpr :
-  ?literals:bool -> tracer list -> tracer list -> jaxpr * value list
+  ?literals:bool ->
+  ?effects:(int * Types.primitive * Types.tracer list) list ->
+  tracer list ->
+  tracer list ->
+  jaxpr * value list
 
 val partial_eval_flat :
   (value list -> value list) ->

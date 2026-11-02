@@ -1765,3 +1765,99 @@ CAMLprim value ojax_pjrt_execute_devices(value v_exec, value v_lists) {
   caml_stat_free(out_store);
   CAMLreturn(v_out);
 }
+
+static PJRT_Executable *ojax_get_executable(struct ojax_pjrt_executable *e) {
+  const PJRT_Api *api = e->api;
+  PJRT_LoadedExecutable_GetExecutable_Args ga;
+  memset(&ga, 0, sizeof ga);
+  ga.struct_size = PJRT_LoadedExecutable_GetExecutable_Args_STRUCT_SIZE;
+  ga.loaded_executable = e->executable;
+  ojax_pjrt_check(api, api->PJRT_LoadedExecutable_GetExecutable(&ga));
+  return ga.executable;
+}
+
+static void ojax_release_executable(const PJRT_Api *api, PJRT_Executable *x) {
+  PJRT_Executable_Destroy_Args da;
+  memset(&da, 0, sizeof da);
+  da.struct_size = PJRT_Executable_Destroy_Args_STRUCT_SIZE;
+  da.executable = x;
+  PJRT_Error *derr = api->PJRT_Executable_Destroy(&da);
+  if (derr != NULL) {
+    PJRT_Error_Destroy_Args de;
+    memset(&de, 0, sizeof de);
+    de.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+    de.error = derr;
+    api->PJRT_Error_Destroy(&de);
+  }
+}
+
+CAMLprim value ojax_pjrt_executable_cost_analysis(value v_exec) {
+  CAMLparam1(v_exec);
+  CAMLlocal4(v_out, v_cell, v_pair, v_name);
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  if (e->executable == NULL)
+    ojax_pjrt_raise("cost_analysis on destroyed executable");
+  const PJRT_Api *api = e->api;
+  PJRT_Executable *x = ojax_get_executable(e);
+  PJRT_Executable_GetCostAnalysis_Args ca;
+  memset(&ca, 0, sizeof ca);
+  ca.struct_size = PJRT_Executable_GetCostAnalysis_Args_STRUCT_SIZE;
+  ca.executable = x;
+  PJRT_Error *err = api->PJRT_Executable_GetCostAnalysis(&ca);
+  if (err != NULL) {
+    ojax_release_executable(api, x);
+    ojax_pjrt_check(api, err);
+  }
+  v_out = Val_emptylist;
+  for (size_t i = ca.num_properties; i > 0; i--) {
+    const PJRT_NamedValue *p = &ca.properties[i - 1];
+    double d = 0.0;
+    switch (p->type) {
+      case PJRT_NamedValue_kFloat: d = (double)p->float_value; break;
+      case PJRT_NamedValue_kInt64: d = (double)p->int64_value; break;
+      case PJRT_NamedValue_kBool: d = p->bool_value ? 1.0 : 0.0; break;
+      default: continue;
+    }
+    v_name = caml_alloc_initialized_string(p->name_size, p->name);
+    v_pair = caml_alloc_tuple(2);
+    Store_field(v_pair, 0, v_name);
+    Store_field(v_pair, 1, caml_copy_double(d));
+    v_cell = caml_alloc(2, 0);
+    Store_field(v_cell, 0, v_pair);
+    Store_field(v_cell, 1, v_out);
+    v_out = v_cell;
+  }
+  ojax_release_executable(api, x);
+  CAMLreturn(v_out);
+}
+
+CAMLprim value ojax_pjrt_executable_memory_stats(value v_exec) {
+  CAMLparam1(v_exec);
+  CAMLlocal1(v_out);
+  struct ojax_pjrt_executable *e = Ojax_executable_val(v_exec);
+  if (e->executable == NULL)
+    ojax_pjrt_raise("memory_analysis on destroyed executable");
+  const PJRT_Api *api = e->api;
+  PJRT_Executable *x = ojax_get_executable(e);
+  PJRT_Executable_GetCompiledMemoryStats_Args ma;
+  memset(&ma, 0, sizeof ma);
+  ma.struct_size = PJRT_Executable_GetCompiledMemoryStats_Args_STRUCT_SIZE;
+  ma.executable = x;
+  PJRT_Error *err = api->PJRT_Executable_GetCompiledMemoryStats(&ma);
+  ojax_release_executable(api, x);
+  ojax_pjrt_check(api, err);
+  int64_t vals[11] = {ma.generated_code_size_in_bytes,
+                      ma.argument_size_in_bytes,
+                      ma.output_size_in_bytes,
+                      ma.alias_size_in_bytes,
+                      ma.temp_size_in_bytes,
+                      ma.host_generated_code_size_in_bytes,
+                      ma.host_argument_size_in_bytes,
+                      ma.host_output_size_in_bytes,
+                      ma.host_alias_size_in_bytes,
+                      ma.host_temp_size_in_bytes,
+                      ma.peak_memory_in_bytes};
+  v_out = caml_alloc_tuple(11);
+  for (int i = 0; i < 11; i++) Store_field(v_out, i, Val_long(vals[i]));
+  CAMLreturn(v_out);
+}

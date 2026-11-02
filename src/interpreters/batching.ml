@@ -2024,27 +2024,62 @@ let unstacks_operands prim (bdims : int option list) =
       any_batched (List.filteri (fun i _ -> i >= n) bdims)
   | _ -> false
 
+let is_debug_callback = function
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule { cb_effect = Core.Callback_debug _; _ } -> true
+      | _ -> false)
+  | _ -> false
+
+let index_in_dim v i dim =
+  let shape = (Core.get_aval v).shape in
+  let rank = Array.length shape in
+  let start_indices = Array.init rank (fun k -> if k = dim then i else 0) in
+  let limit_indices =
+    Array.init rank (fun k -> if k = dim then i + 1 else shape.(k))
+  in
+  let sliced =
+    Core.bind1
+      (Slice
+         { start_indices; limit_indices; strides = Some (Array.make rank 1) })
+      [ v ]
+  in
+  Core.bind1 (Squeeze [| dim |]) [ sliced ]
+
+let debug_batch axis_size prim vals bdims =
+  for i = 0 to axis_size - 1 do
+    ignore
+      (Core.bind prim
+         (List.map2
+            (fun v b -> match b with None -> v | Some d -> index_in_dim v i d)
+            vals bdims))
+  done;
+  []
+
 let unstacked_batch axis_size prim vals bdims =
   check_vmappable_callback prim;
-  let per_element =
-    List.map2
-      (fun v b ->
-        match b with
-        | None -> List.init axis_size (fun _ -> v)
-        | Some d -> Core.bind (Unstack d) [ v ])
-      vals bdims
-  in
-  let results =
-    List.init axis_size (fun i ->
-        Core.bind prim (List.map (fun column -> List.nth column i) per_element))
-  in
-  match results with
-  | [] -> failwith "batching: empty batch"
-  | first :: _ ->
-      List.mapi
-        (fun j _ ->
-          Core.bind1 (Stack 0) (List.map (fun out -> List.nth out j) results))
-        first
+  if is_debug_callback prim then debug_batch axis_size prim vals bdims
+  else
+    let per_element =
+      List.map2
+        (fun v b ->
+          match b with
+          | None -> List.init axis_size (fun _ -> v)
+          | Some d -> Core.bind (Unstack d) [ v ])
+        vals bdims
+    in
+    let results =
+      List.init axis_size (fun i ->
+          Core.bind prim
+            (List.map (fun column -> List.nth column i) per_element))
+    in
+    match results with
+    | [] -> failwith "batching: empty batch"
+    | first :: _ ->
+        List.mapi
+          (fun j _ ->
+            Core.bind1 (Stack 0) (List.map (fun out -> List.nth out j) results))
+          first
 
 let batched_custom_rules : (int * int, int) Hashtbl.t = Hashtbl.create 16
 let all_mapped l = List.map (fun _ -> Some 0) l

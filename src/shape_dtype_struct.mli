@@ -4,6 +4,7 @@ type t = aval
 
 val make : ?weak_type:bool -> int array -> Dtype.t -> t
 val of_value : value -> t
+val like : value -> t
 val shape : t -> int array
 val dtype : t -> Dtype.t
 val weak_type : t -> bool

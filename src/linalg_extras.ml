@@ -65,7 +65,12 @@ let cholesky_update_jax_fn r w =
       nonzero [ x; y ]
   in
   let at_scalar v starts =
-    L.reshape (L.slice v starts (Array.map (fun i -> i + 1) starts)) [||]
+    let limits = Array.map (fun i -> i + 1) starts in
+    let trivial =
+      Array.for_all (fun i -> i = 0) starts
+      && limits = (Core.get_aval v).Types.shape
+    in
+    L.reshape (if trivial then v else L.slice v starts limits) [||]
   in
   let current = ref r and z = ref w in
   for k = 0 to n - 1 do

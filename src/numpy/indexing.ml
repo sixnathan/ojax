@@ -55,6 +55,10 @@ let take ?axis ?mode ?fill_value ?(unique_indices = false)
   let ish = shape indices in
   let rank = Array.length ash in
   let axis_size = ash.(axis_idx) in
+  if axis_size = 0 && Array.fold_left ( * ) 1 ish <> 0 then
+    raise
+      (Errors.Jax_index_error
+         "Cannot do a non-empty jnp.take() from an empty axis.");
   let indices =
     match mode with
     | Some "clip" -> indices

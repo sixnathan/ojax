@@ -159,7 +159,7 @@ let to_gather sh idx =
         in
         let target = Array.of_list (List.map shape arrs) in
         let same = Array.for_all (fun s -> s = target.(0)) target in
-        let arrs = if same then arrs else Lax_numpy.broadcast_arrays arrs in
+        let arrs = if same then arrs else Jnp_util.broadcast_arrays arrs in
         let bshape = shape (List.hd arrs) in
         let start_dim = List.length !gather_shape in
         List.iter
@@ -254,10 +254,49 @@ let gather_take ?(clip = false) x idx =
 
 let take_clip x idx = gather_take ~clip:true x (expand idx (rank x))
 
+let check_scalar_axes x idx =
+  let sh = shape x in
+  List.iteri
+    (fun axis i ->
+      match i with
+      | Int _ when sh.(axis) = 0 ->
+          raise
+            (Errors.Jax_index_error
+               (Printf.sprintf "index is out of bounds for axis %d with size 0"
+                  axis))
+      | Arr v when rank v = 0 && sh.(axis) = 0 ->
+          raise
+            (Errors.Jax_index_error
+               (Printf.sprintf "index is out of bounds for axis %d with size 0"
+                  axis))
+      | _ -> ())
+    idx
+
+let static_in_bounds x idx =
+  let sh = shape x in
+  List.for_all Fun.id
+    (List.mapi
+       (fun axis i ->
+         match i with
+         | Int v ->
+             let v = if v < 0 then v + sh.(axis) else v in
+             0 <= v && v < sh.(axis)
+         | _ -> true)
+       idx)
+
 let take x idx =
-  let idx = expand idx (rank x) in
+  let given = List.length idx and r = rank x in
+  if given > r then
+    raise
+      (Errors.Jax_index_error
+         (Printf.sprintf
+            "Too many indices: array is %d-dimensional, but %d were indexed" r
+            given));
+  let idx = expand idx r in
+  check_scalar_axes x idx;
   let is_arr = function Arr _ -> true | _ -> false in
-  if not (List.exists is_arr idx) then static_take x idx
+  if not (List.exists is_arr idx) then
+    if static_in_bounds x idx then static_take x idx else dynamic_take x idx
   else if List.for_all (function Arr v -> rank v = 0 | _ -> true) idx then
     dynamic_take x idx
   else gather_take x idx

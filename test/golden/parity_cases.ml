@@ -615,11 +615,17 @@ let narrow_run op p a b =
 
 module LA = Ojax.Numpy.Linalg
 
+let rev_first v =
+  let module I = Ojax.Numpy.Nd_index in
+  L.rev (I.take v [ I.Range { start = None; stop = None } ]) [| 0 |]
+
 let spd v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul_typed v (NL.swapaxes (-1) (-2) v) in
+  let product =
+    Ojax.Numpy.Tensor_contractions.matmul v (NL.swapaxes (-1) (-2) v)
+  in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -932,7 +938,9 @@ let herm v =
   let sh = shp v in
   let n = sh.(Array.length sh - 1) in
   ignore sh;
-  let product = L.batch_matmul_typed v (UF.conj (NL.swapaxes (-1) (-2) v)) in
+  let product =
+    Ojax.Numpy.Tensor_contractions.matmul v (UF.conj (NL.swapaxes (-1) (-2) v))
+  in
   let eye = NL.eye ~dtype:(dt_of v) n in
   UF.add product (UF.multiply (like eye 3.0) eye)
 
@@ -1439,7 +1447,7 @@ let dtype_sweep_run op a =
   let module FFT = Ojax.Numpy.Fft in
   let row v i = NL.index_at v i in
   let cell v i = NL.index_at (row v 0) i in
-  let t = NL.matrix_transpose in
+  let t v = NL.transpose v in
   let one f = Some [ f (a ()) ] in
   let ax0 = [| 0 |] in
   match op with
@@ -1493,21 +1501,20 @@ let dtype_sweep_run op a =
   | "sw_isfinite" -> one UF.isfinite
   | "sw_isinf" -> one UF.isinf
   | "sw_round" -> one (NL.round ~decimals:1)
-  | "sw_bitwise_and" -> one (fun v -> UF.bitwise_and v (L.rev v [| 0 |]))
-  | "sw_bitwise_or" -> one (fun v -> UF.bitwise_or v (L.rev v [| 0 |]))
-  | "sw_bitwise_xor" -> one (fun v -> UF.bitwise_xor v (L.rev v [| 0 |]))
+  | "sw_bitwise_and" -> one (fun v -> UF.bitwise_and v (rev_first v))
+  | "sw_bitwise_or" -> one (fun v -> UF.bitwise_or v (rev_first v))
+  | "sw_bitwise_xor" -> one (fun v -> UF.bitwise_xor v (rev_first v))
   | "sw_bitwise_not" -> one UF.bitwise_not
   | "sw_left_shift" -> one (fun v -> UF.left_shift v (AC.ones_like v))
   | "sw_right_shift" -> one (fun v -> UF.right_shift v (AC.ones_like v))
   | "sw_remainder" ->
-      one (fun v -> UF.remainder v (UF.add (L.rev v [| 0 |]) (AC.ones_like v)))
+      one (fun v -> UF.remainder v (UF.add (rev_first v) (AC.ones_like v)))
   | "sw_floor_divide" ->
-      one (fun v ->
-          UF.floor_divide v (UF.add (L.rev v [| 0 |]) (AC.ones_like v)))
+      one (fun v -> UF.floor_divide v (UF.add (rev_first v) (AC.ones_like v)))
   | "sw_power_self" ->
       one (fun v -> UF.power v (UF.add (AC.ones_like v) (AC.ones_like v)))
-  | "sw_gcd" -> one (fun v -> NL.gcd v (L.rev v [| 0 |]))
-  | "sw_lcm" -> one (fun v -> NL.lcm v (L.rev v [| 0 |]))
+  | "sw_gcd" -> one (fun v -> NL.gcd v (rev_first v))
+  | "sw_lcm" -> one (fun v -> NL.lcm v (rev_first v))
   | "sw_floor_div_self" ->
       one (fun v ->
           let y = UF.add v (Ojax.Numpy.Jnp_util.py_float 2.0) in
@@ -1522,17 +1529,9 @@ let dtype_sweep_run op a =
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
   | "sw_polyval" ->
       one (fun v ->
-          let sh = (Ojax.Core.get_aval v).T.shape in
           let top =
-            Ojax.Core.bind1
-              (T.Slice
-                 {
-                   start_indices = Array.map (fun _ -> 0) sh;
-                   limit_indices =
-                     Array.mapi (fun i d -> if i = 0 then 2 else d) sh;
-                   strides = None;
-                 })
-              [ v ]
+            Ojax.Numpy.Nd_index.take v
+              [ Ojax.Numpy.Nd_index.Range { start = None; stop = Some 2 } ]
           in
           PO.polyval top (row v 0))
   | "sw_polyder" -> one (fun v -> PO.polyder (row v 0))
@@ -1560,8 +1559,8 @@ let dtype_sweep_run op a =
   | "sw_tensordot" -> one (fun v -> TC.tensordot ~axes:(TC.Ax_int 1) v (t v))
   | "sw_einsum" -> one (fun v -> Ojax.Numpy.Einsum.einsum "ij,kj->ik" [ v; v ])
   | "sw_clip" -> one (NL.clip ~min:(-0.5) ~max:0.5)
-  | "sw_minimum" -> one (fun v -> UF.minimum v (L.rev v [| 0 |]))
-  | "sw_maximum" -> one (fun v -> UF.maximum v (L.rev v [| 0 |]))
+  | "sw_minimum" -> one (fun v -> UF.minimum v (rev_first v))
+  | "sw_maximum" -> one (fun v -> UF.maximum v (rev_first v))
   | "sw_max" -> one (RD.amax ~axis:ax0)
   | "sw_min" -> one (RD.amin ~axis:ax0)
   | "sw_argmax" -> one (NL.argmax ~axis:0)

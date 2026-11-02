@@ -849,7 +849,7 @@ let array_random_run op p a b =
       let x = a () in
       let f args =
         let v = RC.gamma_value (k ()) ~shape:(shp x) ~a:(List.hd args) in
-        L.reduce_sum v [| 0 |]
+        L.reduce_sum v (Array.init (Array.length (shp v)) Fun.id)
       in
       Some (Ojax.Interpreters.Ad.grad f [ x ])
   | "sp_fresnel_jit" ->

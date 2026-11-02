@@ -280,6 +280,9 @@ let check prim avals =
       raise
         (Py_exn.Mlir_error
            "Invalid type:\nerror: unknown: invalid tensor dimension size")
+  | Reshape new_sizes when Array.exists (fun d -> d < 0) new_sizes ->
+      Py_exn.type_error
+        ("reshape new_sizes must all be positive, got " ^ tuple new_sizes ^ ".")
   | Concatenate dimension ->
       check_concatenate
         (List.map (fun (a : aval) -> a.shape) (avals ()))

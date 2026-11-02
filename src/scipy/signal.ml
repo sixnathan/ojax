@@ -731,8 +731,11 @@ let trim_edges v k =
   let n = rank v in
   let size = (shape v).(n - 1) in
   let start = Array.make n 0 and limit = Array.copy (shape v) in
-  start.(n - 1) <- k;
-  limit.(n - 1) <- (if k = 0 then 0 else size - k);
+  let first, stop =
+    Validate.slice_indices ~start:k ~stop:(if k = 0 then 0 else -k) size
+  in
+  start.(n - 1) <- first;
+  limit.(n - 1) <- Stdlib.max first stop;
   L.slice v start limit
 
 let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)

@@ -93,6 +93,9 @@ let evaluate_nearest t indices norms =
 
 let evaluate t xi =
   let d = List.length t.points in
+  let xi =
+    if Array.length (shape xi) = 1 then NL.reshape xi [| -1; d |] else xi
+  in
   let xshape = shape xi in
   let n = Array.length xshape in
   if Validate.tuple_index xshape (-1) <> d then

@@ -101,7 +101,7 @@ def tally(log):
 
 
 def is_fuzz_suite(group):
-    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:"))
+    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "compose_fuzz:"))
 
 
 def row_classes(log):
@@ -122,6 +122,8 @@ def row_classes(log):
                 group = "option_fuzz"
             elif suite.startswith("text_option_fuzz:"):
                 group = "option_fuzz_error_text"
+            elif suite.startswith("compose_fuzz:"):
+                group = "compose_fuzz"
             else:
                 group = "fixed"
             counter = groups[group]
@@ -139,7 +141,7 @@ def row_classes(log):
 def print_row_classes(log):
     print("set\trows\tidentical\traw\tboth_raise\t(typed\tauthored)\tboth_raise_type\tempty_arrays")
     groups = row_classes(log)
-    for name in ("fixed", "fuzz", "fuzz_s2", "option_fuzz", "option_fuzz_error_text"):
+    for name in ("fixed", "fuzz", "fuzz_s2", "compose_fuzz", "option_fuzz", "option_fuzz_error_text"):
         c = groups.get(name)
         if c:
             print(
@@ -291,7 +293,8 @@ def main():
     shadow = [s for s in totals if s.startswith("parity_jit_eager:")]
     second_seed = [s for s in totals if s.startswith("fuzz_s2:")]
     option_rows = [s for s in totals if s.startswith(("option_fuzz:", "text_option_fuzz:"))]
-    uncounted = set(shadow) | set(second_seed) | set(option_rows) | {"compare", "ratchet_selftest"}
+    composed = [s for s in totals if s.startswith("compose_fuzz:")]
+    uncounted = set(shadow) | set(second_seed) | set(option_rows) | set(composed) | {"compare", "ratchet_selftest"}
     identical = sum(n for s, n in counts.items() if s not in uncounted and not s.startswith("raw:"))
     rows = sum(n for s, n in totals.items() if s not in uncounted)
     raw_identical = sum(n for s, n in counts.items() if s.startswith("raw:") and s[4:] not in uncounted)
@@ -300,6 +303,8 @@ def main():
         print(f"fuzz_s2, not in the totals below: {sum(counts[s] for s in second_seed)}/{sum(totals[s] for s in second_seed)} bit-identical, {sum(counts['raw:' + s] for s in second_seed)} in raw bytes")
     for s in sorted(option_rows):
         print(f"{s}, not in the totals below: {counts[s]}/{totals[s]} bit-identical, {counts['raw:' + s]} in raw bytes")
+    if composed:
+        print(f"compose_fuzz, not in the totals below: {sum(counts[s] for s in composed)}/{sum(totals[s] for s in composed)} bit-identical, {sum(counts['raw:' + s] for s in composed)} in raw bytes")
     print(f"raw npz bytes and dtype: {raw_identical}/{rows} identical")
     print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {identical}/{rows} bit-identical")
     if shadow:

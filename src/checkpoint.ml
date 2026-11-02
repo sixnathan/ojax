@@ -326,8 +326,17 @@ let legacy_rule f =
               (primals @ tangents) ));
     }
 
+let remat_view id traced =
+  Pretty_printer.register_custom_view id "remat2"
+    [
+      ("differentiated", Pretty_printer.Plain "False");
+      ("jaxpr", Pretty_printer.Sub traced);
+      ("policy", Pretty_printer.Plain "None");
+      ("prevent_cse", Pretty_printer.Plain "True");
+    ];
+  id
+
 let checkpoint ?policy f =
-  let legacy = lazy (Core.register_custom_rule (legacy_rule f)) in
   let closed_rules : (aval list, int) Hashtbl.t = Hashtbl.create 4 in
   fun args ->
     let avals = List.map Core.get_aval args in
@@ -340,7 +349,9 @@ let checkpoint ?policy f =
         let chosen = Option.value policy ~default:nothing_saveable in
         match (hoisted, policy) with
         | [], None ->
-            let id = Lazy.force legacy in
+            let id =
+              remat_view (Core.register_custom_rule (legacy_rule f)) traced
+            in
             Hashtbl.replace closed_rules avals id;
             Core.bind (Custom_jvp_call id) args
         | [], Some _ ->

@@ -17,8 +17,9 @@
   option_cases
   option_manual
   option_fuzz
+  compose_fuzz
   manifest)
- (libraries alcotest yojson ojax)
+ (libraries alcotest yojson ojax unix)
  (preprocess
   (action
    (run %{exe:../../tools/ltr/ltr.exe} %{input-file})))
@@ -67,6 +68,7 @@
   (source_tree %{project_root}/goldens/fuzz)
   (source_tree %{project_root}/goldens/fuzz_s2)
   (source_tree %{project_root}/goldens/option_fuzz)
+  (source_tree %{project_root}/goldens/compose_fuzz)
   (glob_files identical_rows/*.tsv)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))

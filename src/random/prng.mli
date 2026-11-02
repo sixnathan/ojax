@@ -25,3 +25,7 @@ val bits64_hook : (Ndarray.t -> int array -> int64 array) ref
 val legacy_split_hook : (value -> int array -> value) ref
 val legacy_bits_hook : (value -> int -> int array -> value) ref
 val random_gamma : log_space:bool -> value -> value -> value
+val is_rbg_key : value -> bool
+val rbg_split_hook : (value -> int array -> value) ref
+val rbg_fold_in_hook : (value -> value -> value) ref
+val rbg_bits_hook : (value -> int -> int array -> value) ref

@@ -8,19 +8,19 @@ let const_full dt sh x = Core.splat dt sh x
 let where pred x y = bind1 Select_n [ pred; y; x ]
 
 let wrap_between x half =
-  let sh = shape x in
-  let two_half = const_full (dtype x) sh (2.0 *. half) in
-  let half_v = const_full (dtype x) sh half in
+  let half_v = Core.splat (dtype x) [||] half in
+  let two_half = Core.splat (dtype x) [||] (2.0 *. half) in
+  let zero = Core.splat (dtype x) [||] 0.0 in
   let rem = bind1 Rem [ bind1 Add [ x; half_v ]; two_half ] in
-  let zero = const_full (dtype x) sh 0.0 in
   let rem = where (bind1 Lt [ rem; zero ]) (bind1 Add [ rem; two_half ]) rem in
   bind1 Sub [ rem; half_v ]
 
 let logaddexp_body a b =
   let amax = bind1 Max [ a; b ] in
   if is_complex a then begin
-    let two = const_full (dtype a) (shape a) 2.0 in
-    let delta = bind1 Sub [ bind1 Add [ a; b ]; bind1 Mul [ amax; two ] ] in
+    let two = Core.splat (dtype a) [||] 2.0 in
+    let sum = bind1 Add [ a; b ] in
+    let delta = bind1 Sub [ sum; bind1 Mul [ amax; two ] ] in
     let out = bind1 Add [ amax; bind1 Log1p [ bind1 Exp [ delta ] ] ] in
     bind1 Complex
       [ bind1 Real [ out ]; wrap_between (bind1 Imag [ out ]) Float.pi ]

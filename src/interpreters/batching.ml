@@ -885,6 +885,13 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta
   | Regularized_incomplete_beta ->
       naryop_rule prim vals bdims
+  | Add_any when List.exists Option.is_none bdims -> (
+      match (vals, bdims) with
+      | [ x; y ], [ None; Some d ] ->
+          (Core.bind1 Add_any [ move_batch_axis axis_size None d x; y ], Some d)
+      | [ x; y ], [ Some d; None ] ->
+          (Core.bind1 Add_any [ x; move_batch_axis axis_size None d y ], Some d)
+      | _ -> bin ())
   | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | Eq | Lt | Gt | Ge | Le
   | Eq_to | Le_to | Lt_to | And | Atan2 | Complex | Mulhi | Ne | Nextafter | Or
   | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor | Tie
@@ -1384,29 +1391,43 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     (f : value list -> value list) (in_axes : int option list)
     (args : value list) : value list =
   check_mapped_axes in_axes args;
+  let in_axes =
+    List.map2
+      (fun d x ->
+        Option.map
+          (fun d ->
+            if d < 0 then d + Array.length (Core.get_aval x).shape else d)
+          d)
+      in_axes args
+  in
   let axis_size =
-    let rec find axes vals =
-      match (axes, vals) with
-      | Some d :: _, x :: _ ->
-          let shape = (Core.get_aval x).shape in
-          Some shape.(if d < 0 then d + Array.length shape else d)
-      | None :: axes, _ :: vals -> find axes vals
-      | _ -> None
+    let sizes =
+      List.sort_uniq compare
+        (List.concat
+           (List.map2
+              (fun d x ->
+                match d with
+                | Some d -> [ (Core.get_aval x).shape.(d) ]
+                | None -> [])
+              in_axes args))
     in
-    match (find in_axes args, axis_size) with
-    | Some found, Some given when found <> given ->
+    match (sizes, axis_size) with
+    | [ found ], Some given when found <> given ->
         Py_exn.value_error
           (Printf.sprintf
              "vmap got inconsistent sizes for array axes to be mapped:\n\
              \  * the `axis_size` argument was %d;\n\
              \  * one axis had size %d"
              given found)
-    | Some found, _ -> found
-    | None, Some given -> given
-    | None, None ->
+    | [ found ], _ -> found
+    | [], Some given -> given
+    | [], None ->
         Py_exn.value_error
           "vmap must have at least one non-None value in in_axes or axis_size \
            must be specified"
+    | _ ->
+        Py_exn.value_error
+          "vmap got inconsistent sizes for array axes to be mapped"
   in
   Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
       let tracers_in =
@@ -1436,13 +1457,15 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
       in
       List.map
         (fun (v, bdim) ->
-          let dest =
-            if out_axis >= 0 then out_axis
-            else
-              out_axis
-              + Array.length (Core.get_aval v).shape
-              + if bdim = None then 1 else 0
+          let rank =
+            Array.length (Core.get_aval v).shape + if bdim = None then 1 else 0
           in
+          if out_axis >= rank || out_axis < -rank then
+            Py_exn.value_error
+              (Printf.sprintf
+                 "axis %d is out of bounds for array of dimension %d" out_axis
+                 rank);
+          let dest = if out_axis >= 0 then out_axis else out_axis + rank in
           move_batch_axis axis_size bdim dest v)
         vals_bdims)
 

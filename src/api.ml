@@ -891,28 +891,16 @@ let jacfwd ?(argnums = 0) ?(holomorphic = false) f args =
   in
   let primal_outs = ref [] in
   let tangents = std_basis leaves in
-  let raw =
-    Batching.vmap
+  let moved_all =
+    Batching.vmap_flat ~out_axis:(-1)
       (fun ts ->
-        let po, to_ = Ad.jvp call leaves ts in
+        let po, to_ = Ad.jvp_instantiated call leaves ts in
         primal_outs := po;
         to_)
       (List.map (fun _ -> Some 0) leaves)
       tangents
   in
   let sizes = List.map size_of avals in
-  let moved_all =
-    List.map
-      (fun arr ->
-        let ndim = Array.length (Core.get_aval arr).shape in
-        if ndim > 1 then
-          Core.bind1
-            (Transpose
-               (Array.init ndim (fun i -> if i = ndim - 1 then 0 else i + 1)))
-            [ arr ]
-        else arr)
-      raw
-  in
   let entries =
     List.map
       (fun moved ->

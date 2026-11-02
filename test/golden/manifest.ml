@@ -2744,7 +2744,7 @@ and random_core_fn_pinned op params operands : T.value list =
   | "clone", [ k ] -> [ RC.key_data (RC.clone (PR.random_wrap k)) ]
   | "fold_in", [ k; d ] -> [ RC.fold_in k d ]
   | "split", [ k ] -> [ RC.split k (ip "num") ]
-  | "bits", [ k ] -> [ RC.bits k ~shape:(shape ()) ]
+  | "bits", [ k ] -> [ RC.bits ~dtype:Ojax.Dtype.Uint32 k ~shape:(shape ()) ]
   | "randint", [ k ] ->
       [
         RC.randint k ~shape:(shape ()) ~minval:(ip "minval")
@@ -5381,6 +5381,8 @@ let () =
         ~concrete
     @ Option_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
         ~concrete
+    @ Compose_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
+        ~string_of_dtype ~concrete
     @ [
         ( "exact_ratchet",
           [
@@ -5403,7 +5405,13 @@ let () =
                                      line)
                                 && not
                                      (Fuzz.available ~goldens_root
-                                        ~name:Fuzz.second_seed)))
+                                        ~name:Fuzz.second_seed)
+                             || (String.starts_with ~prefix:"compose_fuzz:" line
+                                || String.starts_with
+                                     ~prefix:"raw:compose_fuzz:" line)
+                                && not
+                                     (Fuzz.available ~goldens_root
+                                        ~name:Compose_fuzz.name)))
                          (String.split_on_char '\n' Exact_floor.data))));
           ] );
       ])

@@ -3553,6 +3553,7 @@ compose_00722_float64:jit:out0	1
 compose_00722_float64:jit:out1	1
 compose_00722_float64:text	1
 compose_00723_float64:eager:out0	1
+compose_00723_float64:jaxpr	1
 compose_00723_float64:jit:out0	1
 compose_00723_float64:text	1
 compose_00724_float64:eager:out0	1

@@ -101,7 +101,7 @@ def tally(log):
 
 
 def is_fuzz_suite(group):
-    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "compose_fuzz:"))
+    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "option_pinned:", "compose_fuzz:"))
 
 
 def row_classes(log):
@@ -118,9 +118,9 @@ def row_classes(log):
                 group = "fuzz"
             elif suite.startswith("fuzz_s2:"):
                 group = "fuzz_s2"
-            elif suite.startswith("option_fuzz:"):
+            elif suite.startswith(("option_fuzz:", "option_pinned:")):
                 group = "option_fuzz"
-            elif suite.startswith("text_option_fuzz:"):
+            elif suite.startswith(("text_option_fuzz:", "text_option_pinned:")):
                 group = "option_fuzz_error_text"
             elif suite.startswith("text_fuzz:"):
                 group = "fuzz_error_text"
@@ -346,7 +346,7 @@ def main():
                 totals[parts[4]] += 1
     shadow = [s for s in totals if s.startswith("parity_jit_eager:")]
     second_seed = [s for s in totals if s.startswith("fuzz_s2:")]
-    option_rows = [s for s in totals if s.startswith(("option_fuzz:", "text_option_fuzz:"))]
+    option_rows = [s for s in totals if s.startswith(("option_fuzz:", "text_option_fuzz:", "option_pinned:", "text_option_pinned:"))]
     composed = [s for s in totals if s.startswith("compose_fuzz:")]
     message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:"))]
     uncounted = (

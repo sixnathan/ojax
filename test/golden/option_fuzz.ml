@@ -95,16 +95,17 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
   mode "eager" (fun () -> run values);
   mode "jit" (fun () -> Ojax.Api.jit_flat run values)
 
-let suites ~goldens_root ~nd_of_npz ~string_of_dtype ~concrete =
+let suites ?(module_name = "option_fuzz") ~goldens_root ~nd_of_npz
+    ~string_of_dtype ~concrete () =
   List.filter_map
     (fun (set_name, x64) ->
       let set_dir =
-        Filename.concat (Filename.concat goldens_root "option_fuzz") set_name
+        Filename.concat (Filename.concat goldens_root module_name) set_name
       in
       let path = Filename.concat set_dir "manifest.json" in
       if not (Sys.file_exists path) then None
       else
-        let suite = "option_fuzz:" ^ set_name in
+        let suite = module_name ^ ":" ^ set_name in
         let cases =
           Yojson.Safe.from_file path |> U.member "cases" |> U.to_list
         in

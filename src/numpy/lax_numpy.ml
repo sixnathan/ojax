@@ -1654,10 +1654,6 @@ let append ?axis p0 p1 =
     [ p0; p1 ]
 
 let argmax ?axis ?(keepdims = false) a =
-  (match dtype a with
-  | D.Complex64 | D.Complex128 ->
-      raise (Py_exn.Type_error "argmax does not accept complex input.")
-  | _ -> ());
   let orig_nd = ndim a in
   let a2, ax, dims =
     match axis with
@@ -1669,6 +1665,14 @@ let argmax ?axis ?(keepdims = false) a =
   in
   if (shape a2).(ax) = 0 then
     Py_exn.value_error "attempt to get argmax of an empty sequence";
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      Py_exn.type_error
+        (Printf.sprintf
+           "gt does not accept dtype %s at position 0. Accepted dtypes at \
+            position 0 are subtypes of bool, floating, integer."
+           (D.numpy_name (dtype a)))
+  | _ -> ());
   let r =
     bind1
       (T.Argmax { axis = ax; index_dtype = Dtypes.default_int_dtype () })
@@ -2016,14 +2020,21 @@ let vander ?n ?increasing p0 =
     [ p0 ]
 
 let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
-  let y = convert y (to_inexact_dtype (dtype y)) in
+  let y, x =
+    match x with
+    | None -> (convert y (to_inexact_dtype (dtype y)), None)
+    | Some xv ->
+        let flags v = ((C.get_aval v).T.dtype, (C.get_aval v).T.weak_type) in
+        let dt, weak = Dtypes.result_type [ flags y; flags xv ] in
+        let dt = to_inexact_dtype dt in
+        (C.convert_like ~weak y dt, Some (C.convert_like ~weak xv dt))
+  in
   let nd = ndim y in
   let ax = canonicalize_axis axis nd in
   let dxd =
     match x with
     | None -> None
     | Some xv ->
-        let xv = convert xv (to_inexact_dtype (dtype xv)) in
         if ndim xv = 1 then Some (diff xv)
         else Some (moveaxis [| axis |] [| -1 |] (diff ~axis xv))
   in
@@ -2084,10 +2095,6 @@ let all_over ?axis ?(keepdims = false) v =
 let scalar_at v i = squeeze (slice_axis v 0 i (i + 1))
 
 let argmin ?axis ?(keepdims = false) a =
-  (match dtype a with
-  | D.Complex64 | D.Complex128 ->
-      raise (Py_exn.Type_error "argmin does not accept complex input.")
-  | _ -> ());
   let orig_nd = ndim a in
   let a2, ax, dims =
     match axis with
@@ -2099,6 +2106,14 @@ let argmin ?axis ?(keepdims = false) a =
   in
   if (shape a2).(ax) = 0 then
     Py_exn.value_error "attempt to get argmin of an empty sequence";
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      Py_exn.type_error
+        (Printf.sprintf
+           "lt does not accept dtype %s at position 0. Accepted dtypes at \
+            position 0 are subtypes of bool, floating, integer."
+           (D.numpy_name (dtype a)))
+  | _ -> ());
   let r =
     bind1
       (T.Argmin { axis = ax; index_dtype = Dtypes.default_int_dtype () })
@@ -2109,7 +2124,11 @@ let argmin ?axis ?(keepdims = false) a =
 let nanargmax ?axis ?(keepdims = false) a =
   (match dtype a with
   | D.Complex64 | D.Complex128 ->
-      raise (Py_exn.Type_error "nanargmax does not accept complex input.")
+      Py_exn.type_error
+        (Printf.sprintf
+           "gt does not accept dtype %s at position 0. Accepted dtypes at \
+            position 0 are subtypes of bool, floating, integer."
+           (D.numpy_name (dtype a)))
   | _ -> ());
   if not (is_inexact (dtype a)) then argmax ?axis ~keepdims a
   else begin
@@ -2123,7 +2142,11 @@ let nanargmax ?axis ?(keepdims = false) a =
 let nanargmin ?axis ?(keepdims = false) a =
   (match dtype a with
   | D.Complex64 | D.Complex128 ->
-      raise (Py_exn.Type_error "nanargmin does not accept complex input.")
+      Py_exn.type_error
+        (Printf.sprintf
+           "lt does not accept dtype %s at position 0. Accepted dtypes at \
+            position 0 are subtypes of bool, floating, integer."
+           (D.numpy_name (dtype a)))
   | _ -> ());
   if not (is_inexact (dtype a)) then argmin ?axis ~keepdims a
   else begin
@@ -2523,16 +2546,16 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
         if ndim w > 1 then
           Py_exn.runtime_error
             (Printf.sprintf "cannot handle multidimensional %s" name);
-        if (shape w).(0) <> nobs then
+        if Validate.tuple_index (shape w) 0 <> nobs then
           Py_exn.runtime_error
             (Printf.sprintf "incompatible numbers of samples and %s" name)
       in
       Option.iter (check_weights "fweights") fweights;
-      Option.iter (check_weights "aweights") aweights;
       (match fweights with
       | Some f when not (is_integral (dtype_of f)) ->
           raise (Py_exn.Type_error "fweights must be integer.")
       | _ -> ());
+      Option.iter (check_weights "aweights") aweights;
       let magnitude w =
         match dtype_of w with
         | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> w

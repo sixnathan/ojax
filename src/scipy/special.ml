@@ -860,7 +860,7 @@ let is_complex_dtype = function
 let reject_complex name v =
   if is_complex_dtype (dtype v) then
     raise
-      (Py_exn.Type_error (name ^ " does not support complex-valued inputs."))
+      (Py_exn.Value_error (name ^ " does not support complex-valued inputs."))
 
 let real_only name x =
   let x = promote1 x in
@@ -1028,7 +1028,7 @@ let constf v = Piece_const (py_float v)
 let const_val v = Piece_const v
 let piece_fn f = Piece_fn (function [ x ] -> f x | _ -> assert false)
 let fresh_key () = string_of_int (C.fresh_id ())
-let gammaln x = bind1 T.Lgamma [ real_only "gammaln" x ]
+let gammaln x = bind1 T.Lgamma [ promote1 x ]
 
 let gammasgn x =
   let x = real_only "gammasgn" x in
@@ -1215,7 +1215,7 @@ let betainc a b x =
   let a, b, x = real_only3 "betainc" a b x in
   bind1 T.Regularized_incomplete_beta [ a; b; x ]
 
-let digamma x = bind1 T.Digamma [ real_only "digamma" x ]
+let digamma x = bind1 T.Digamma [ promote1 x ]
 
 let gammainc a x =
   let a, x = promote2 a x in
@@ -1228,7 +1228,7 @@ let gammaincc a x =
 let lax_igamma a x = bind1 T.Igamma [ a; x ]
 let erf x = bind1 T.Erf [ promote1 x ]
 let erfc x = bind1 T.Erfc [ promote1 x ]
-let erfinv x = bind1 T.Erf_inv [ real_only "erfinv" x ]
+let erfinv x = bind1 T.Erf_inv [ promote1 x ]
 let expit x = bind1 T.Logistic [ promote1 x ]
 
 let rec logit x =
@@ -1762,7 +1762,7 @@ let log_softmax ?axis x =
       NL.reshape (NN.log_softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
 
 let poch_primal z m =
-  let z, m = real_only2 "poch" z m in
+  let z, m = real_only2 "jnp.poch" z m in
   where_ (eq_ m 0.0) (lax_const z 1.0) (gamma (z +! m) /! gamma z)
 
 let rec poch z m =
@@ -1876,7 +1876,11 @@ let sici_approx x =
   (si, ci)
 
 let sici_primal x =
-  let x = real_only "sici" x in
+  let x = promote1 x in
+  if is_complex_dtype (dtype x) then
+    Py_exn.value_error
+      (Printf.sprintf "Argument `x` to sici must be real-valued. Got dtype %s."
+         (D.numpy_name (dtype x)));
   let x_abs = UF.abs x in
   let si_series, ci_series = sici_series x_abs in
   let si_asymp, ci_asymp = sici_asympt x_abs in
@@ -2880,7 +2884,8 @@ let bessel_jn_one ~v ~n_iter z =
 
 let bessel_jn ?(n_iter = 50) ~v z =
   let z = promote1 z in
-  reject_complex "bessel_jn" z;
+  if is_complex_dtype (dtype z) then
+    Py_exn.value_error "complex input not supported.";
   let rank = ndim z in
   let rec wrap d f =
     if d = 0 then f

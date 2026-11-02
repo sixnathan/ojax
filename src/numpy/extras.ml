@@ -2620,13 +2620,13 @@ let check_bitorder bitorder =
     Py_exn.value_error "'order' must be either 'little' or 'big'"
 
 let packbits ?axis ?(bitorder = "big") a =
-  check_bitorder bitorder;
   (match dtype_of a with
   | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
   | Dtype.Complex128 ->
       Py_exn.type_error
         "Expected an input array of integer or boolean data type"
   | _ -> ());
+  check_bitorder bitorder;
   Jnp_util.jit1 "packbits"
     ~key:
       (Printf.sprintf "%s/%s"

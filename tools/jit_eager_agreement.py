@@ -10,44 +10,6 @@ import sys
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TRANSFORMED = ("swv_", "swg_", "swj_")
-MASK = 0xFFFFFFFF
-
-
-def rotl32(x, n):
-    return ((x << n) | (x >> (32 - n))) & MASK
-
-
-def mix(h, d):
-    d = (d * 0xCC9E2D51) & MASK
-    d = rotl32(d, 15)
-    d = (d * 0x1B873593) & MASK
-    h ^= d
-    h = rotl32(h, 13)
-    return (h * 5 + 0xE6546B64) & MASK
-
-
-def ocaml_string_hash(text):
-    data = text.encode("utf-8")
-    h = 0
-    whole = len(data) - len(data) % 4
-    for i in range(0, whole, 4):
-        h = mix(h, int.from_bytes(data[i : i + 4], "little"))
-    if len(data) % 4:
-        h = mix(h, int.from_bytes(data[whole:], "little"))
-    h ^= len(data) & MASK
-    h ^= h >> 16
-    h = (h * 0x85EBCA6B) & MASK
-    h ^= h >> 13
-    h = (h * 0xC2B2AE35) & MASK
-    h ^= h >> 16
-    return h & 0x3FFFFFFF
-
-
-def sampled_for_jit(case):
-    if len(case["op"]) > 4 and case["op"][:4] in TRANSFORMED:
-        return ocaml_string_hash(case["case_id"]) % 5 == 0
-    return True
 
 
 def needs_concrete_ops(root):
@@ -119,6 +81,10 @@ def differing(left, right):
     return sum(not same_bits(a, b) for a, b in zip(as_doubles(left_descr, left_body), as_doubles(right_descr, right_body)))
 
 
+def raw_differs(left, right):
+    return left != right
+
+
 def load_cases(goldens, module, mode):
     with open(os.path.join(goldens, module, mode, "manifest.json"), encoding="utf-8") as fh:
         return json.load(fh)["cases"]
@@ -129,21 +95,20 @@ def compare_mode(root, goldens, mode):
     jit_cases = {c["case_id"]: c for c in load_cases(goldens, "parity_jit", mode)}
     rows = []
     for case in load_cases(goldens, "parity", mode):
-        if not sampled_for_jit(case):
-            continue
         entry = jit_cases[case["case_id"]]
         eager_path = os.path.join(goldens, "parity", mode, "outputs", case["case_id"] + ".npz")
         jit_path = os.path.join(goldens, "parity_jit", mode, "outputs", case["case_id"] + ".npz")
         for output in case["outputs"]:
             row = case["case_id"] + ":" + output["name"]
             if "jit_error" in entry:
-                rows.append((row, "jit_error", 0))
+                rows.append((row, "jit_error", 0, False))
             elif case["op"] in concrete:
                 diff = differing(read_member(eager_path, output["name"]), read_member(jit_path, output["name"]))
-                rows.append((row, "needs_concrete", diff))
+                rows.append((row, "needs_concrete", diff, False))
             else:
-                diff = differing(read_member(eager_path, output["name"]), read_member(jit_path, output["name"]))
-                rows.append((row, "compared", diff))
+                eager = read_member(eager_path, output["name"])
+                jitted = read_member(jit_path, output["name"])
+                rows.append((row, "compared", differing(eager, jitted), raw_differs(eager, jitted)))
     return rows
 
 
@@ -152,7 +117,7 @@ def agreement(root=ROOT, goldens=None):
     counts = {}
     for mode in ("x64_off", "x64_on"):
         rows = compare_mode(root, goldens, mode)
-        counts[mode] = sum(1 for _, source, diff in rows if source != "compared" or diff == 0)
+        counts[mode] = sum(1 for _, source, diff, _ in rows if source != "compared" or diff == 0)
     return counts
 
 
@@ -172,6 +137,8 @@ def main():
         count = agree + errors + len(concrete)
         print(f"parity_jit_eager:{mode}\t{count}\t{len(rows)}")
         print(f"  compared bit by bit {len(compared)}, identical {agree}, differing {len(compared) - agree}")
+        raw_agree = sum(1 for r in compared if not r[3])
+        print(f"  compared as raw npz bytes {len(compared)}, identical {raw_agree}, differing {len(compared) - raw_agree}")
         print(f"  reference is the eager golden, so identical by construction: jit_error {errors}, needs_concrete {len(concrete)}")
         print(f"  needs_concrete rows whose jit golden exists and differs: {[r[0] for r in concrete if r[2] != 0]}")
         if args.log:
@@ -181,9 +148,9 @@ def main():
             names = {r[0] for r in rows}
             print(f"  row names against {os.path.basename(args.log)}: {len(logged)} logged, only here {sorted(names - logged)}, only there {sorted(logged - names)}")
         if args.list:
-            for row, _, diff in compared:
-                if diff != 0:
-                    print(f"  differs\t{row}\t{diff}")
+            for row, _, diff, raw in compared:
+                if diff != 0 or raw:
+                    print(f"  differs\t{row}\t{diff}\traw={raw}")
 
 
 if __name__ == "__main__":

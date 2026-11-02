@@ -5,7 +5,7 @@ type buffer =
   | Int32_buf of (int32, int32_elt, c_layout) Array1.t
   | Int64_buf of (int64, int64_elt, c_layout) Array1.t
   | Int8_buf of (int, int8_signed_elt, c_layout) Array1.t
-  | Complex64_buf of (Complex.t, complex32_elt, c_layout) Array1.t
+  | Complex64_buf of (int32, int32_elt, c_layout) Array1.t
   | Complex128_buf of (Complex.t, complex64_elt, c_layout) Array1.t
 
 type t = {
@@ -17,7 +17,40 @@ type t = {
 }
 
 let uint32_mask = 0xFFFF_FFFF
-let f32_round v = Int32.float_of_bits (Int32.bits_of_float v)
+let double_exponent = 0x7FF0000000000000L
+let double_mantissa = 0xFFFFFFFFFFFFFL
+
+let double_nan ~negative ~mantissa ~shift =
+  Int64.float_of_bits
+    (Int64.logor
+       (if negative then Int64.min_int else 0L)
+       (Int64.logor double_exponent (Int64.shift_left mantissa shift)))
+
+let narrow_mantissa v ~shift ~quiet =
+  let m =
+    Int64.shift_right_logical
+      (Int64.logand (Int64.bits_of_float v) double_mantissa)
+      shift
+  in
+  if m = 0L then quiet else m
+
+let f32_bits_of_float v =
+  if Float.is_nan v then
+    let m = narrow_mantissa v ~shift:29 ~quiet:0x400000L in
+    Int32.logor
+      (if Float.sign_bit v then Int32.min_int else 0l)
+      (Int32.logor 0x7F800000l (Int64.to_int32 m))
+  else Int32.bits_of_float v
+
+let float_of_f32_bits b =
+  let m = Int32.logand b 0x7FFFFFl in
+  if Int32.logand b 0x7F800000l = 0x7F800000l && m <> 0l then
+    double_nan
+      ~negative:(Int32.compare b 0l < 0)
+      ~mantissa:(Int64.of_int32 m) ~shift:29
+  else Int32.float_of_bits b
+
+let f32_round v = float_of_f32_bits (f32_bits_of_float v)
 
 let round_significant ~bits ~min_exp ~max_exp v =
   if v = 0.0 || not (Float.is_finite v) then v
@@ -48,27 +81,20 @@ let bf16_round v = round_significant ~bits:8 ~min_exp:(-126) ~max_exp:127 v
 let half_of_bits bits =
   let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
   let exponent = (bits lsr 10) land 0x1F and mantissa = bits land 0x3FF in
-  if exponent = 0x1F && mantissa <> 0 then
-    Int64.float_of_bits
-      (Int64.logor
-         (Int64.shift_left (Int64.of_int (((bits lsr 15) lsl 11) lor 0x7FF)) 52)
-         (Int64.shift_left (Int64.of_int mantissa) 42))
-  else
-    let magnitude =
-      if exponent = 0x1F then Float.infinity
-      else if exponent = 0 then Float.ldexp (float_of_int mantissa) (-24)
-      else Float.ldexp (float_of_int (mantissa + 1024)) (exponent - 25)
-    in
-    Float.copy_sign magnitude sign
+  let magnitude =
+    if exponent = 0x1F then
+      if mantissa = 0 then Float.infinity
+      else
+        double_nan ~negative:false ~mantissa:(Int64.of_int mantissa) ~shift:42
+    else if exponent = 0 then Float.ldexp (float_of_int mantissa) (-24)
+    else Float.ldexp (float_of_int (mantissa + 1024)) (exponent - 25)
+  in
+  Float.copy_sign magnitude sign
 
 let bits_of_half v =
   let sign = if Float.sign_bit v then 0x8000 else 0 in
   if Float.is_nan v then
-    sign lor 0x7C00
-    lor Int64.to_int
-          (Int64.logand
-             (Int64.shift_right_logical (Int64.bits_of_float v) 42)
-             0x3FFL)
+    sign lor 0x7C00 lor Int64.to_int (narrow_mantissa v ~shift:42 ~quiet:0x200L)
   else if Float.abs v = Float.infinity then sign lor 0x7C00
   else if v = 0.0 then sign
   else
@@ -80,11 +106,16 @@ let bits_of_half v =
     else sign lor int_of_float (Float.ldexp (Float.abs v) 24)
 
 let bfloat_of_bits bits =
-  Int32.float_of_bits (Int32.shift_left (Int32.of_int bits) 16)
+  float_of_f32_bits (Int32.shift_left (Int32.of_int bits) 16)
 
 let bits_of_bfloat v =
-  Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float v) 16)
-  land 0xFFFF
+  if Float.is_nan v then
+    (if Float.sign_bit v then 0x8000 else 0)
+    lor 0x7F80
+    lor Int64.to_int (narrow_mantissa v ~shift:45 ~quiet:0x40L)
+  else
+    Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float v) 16)
+    land 0xFFFF
 
 let wrap_int ~bits ~signed v =
   let modulus = 1 lsl bits in
@@ -113,8 +144,18 @@ let create_buffer dtype n =
       Int32_buf (Array1.create Int32 C_layout n)
   | Dtype.I64 | Dtype.Uint64 -> Int64_buf (Array1.create Int64 C_layout n)
   | Dtype.Bool | Dtype.Float0 -> Int8_buf (Array1.create Int8_signed C_layout n)
-  | Dtype.Complex64 -> Complex64_buf (Array1.create Complex32 C_layout n)
+  | Dtype.Complex64 -> Complex64_buf (Array1.create Int32 C_layout (2 * n))
   | Dtype.Complex128 -> Complex128_buf (Array1.create Complex64 C_layout n)
+
+let complex64_get a i =
+  {
+    Complex.re = float_of_f32_bits (Array1.unsafe_get a (2 * i));
+    im = float_of_f32_bits (Array1.unsafe_get a ((2 * i) + 1));
+  }
+
+let complex64_set a i (z : Complex.t) =
+  Array1.unsafe_set a (2 * i) (f32_bits_of_float z.re);
+  Array1.unsafe_set a ((2 * i) + 1) (f32_bits_of_float z.im)
 
 let read_float dtype data i =
   match data with
@@ -127,7 +168,7 @@ let read_float dtype data i =
       let v = Array1.unsafe_get a i in
       if dtype = Dtype.Uint64 then uint64_to_float v else Int64.to_float v
   | Int8_buf a -> float_of_int (Array1.unsafe_get a i)
-  | Complex64_buf a -> (Array1.unsafe_get a i).Complex.re
+  | Complex64_buf a -> float_of_f32_bits (Array1.unsafe_get a (2 * i))
   | Complex128_buf a -> (Array1.unsafe_get a i).Complex.re
 
 let write_float dtype data i v =
@@ -135,7 +176,7 @@ let write_float dtype data i v =
   | Float_buf a ->
       let stored =
         match dtype with
-        | Dtype.F32 -> Int32.float_of_bits (Int32.bits_of_float v)
+        | Dtype.F32 -> f32_round v
         | Dtype.F16 -> f16_round v
         | Dtype.Bf16 -> bf16_round v
         | d -> (
@@ -164,7 +205,7 @@ let write_float dtype data i v =
         (if dtype = Dtype.Uint64 then uint64_of_float v else Int64.of_float v)
   | Int8_buf a ->
       Array1.unsafe_set a i (if v = 0.0 || dtype = Dtype.Float0 then 0 else 1)
-  | Complex64_buf a -> Array1.unsafe_set a i { Complex.re = v; im = 0.0 }
+  | Complex64_buf a -> complex64_set a i { Complex.re = v; im = 0.0 }
   | Complex128_buf a -> Array1.unsafe_set a i { Complex.re = v; im = 0.0 }
 
 let read_int64 dtype data i =
@@ -176,12 +217,13 @@ let read_int64 dtype data i =
       else Int64.of_int v
   | Int64_buf a -> Array1.unsafe_get a i
   | Int8_buf a -> Int64.of_int (Array1.unsafe_get a i)
-  | Complex64_buf a -> Int64.of_float (Array1.unsafe_get a i).Complex.re
+  | Complex64_buf a ->
+      Int64.of_float (float_of_f32_bits (Array1.unsafe_get a (2 * i)))
   | Complex128_buf a -> Int64.of_float (Array1.unsafe_get a i).Complex.re
 
 let read_complex data i =
   match data with
-  | Complex64_buf a -> Array1.unsafe_get a i
+  | Complex64_buf a -> complex64_get a i
   | Complex128_buf a -> Array1.unsafe_get a i
   | Float_buf a -> { Complex.re = Array1.unsafe_get a i; im = 0.0 }
   | Int32_buf _ | Int64_buf _ | Int8_buf _ ->
@@ -189,7 +231,7 @@ let read_complex data i =
 
 let write_complex data i (z : Complex.t) =
   match data with
-  | Complex64_buf a -> Array1.unsafe_set a i z
+  | Complex64_buf a -> complex64_set a i z
   | Complex128_buf a -> Array1.unsafe_set a i z
   | Float_buf a -> Array1.unsafe_set a i z.Complex.re
   | Int32_buf _ | Int64_buf _ | Int8_buf _ ->

@@ -107,12 +107,13 @@ let encode nd =
     | D.I64 | D.Uint64 -> Bytes.set_int64_le out at (Nd.get_i64 nd idx)
     | D.F16 -> Bytes.set_uint16_le out at (Nd.bits_of_half (Nd.get_f nd idx))
     | D.Bf16 -> Bytes.set_uint16_le out at (Nd.bits_of_bfloat (Nd.get_f nd idx))
-    | D.F32 -> Bytes.set_int32_le out at (Int32.bits_of_float (Nd.get_f nd idx))
+    | D.F32 ->
+        Bytes.set_int32_le out at (Nd.f32_bits_of_float (Nd.get_f nd idx))
     | D.F64 -> Bytes.set_int64_le out at (Int64.bits_of_float (Nd.get_f nd idx))
     | D.Complex64 ->
         let z = Nd.get_c nd idx in
-        Bytes.set_int32_le out at (Int32.bits_of_float z.Complex.re);
-        Bytes.set_int32_le out (at + 4) (Int32.bits_of_float z.Complex.im)
+        Bytes.set_int32_le out at (Nd.f32_bits_of_float z.Complex.re);
+        Bytes.set_int32_le out (at + 4) (Nd.f32_bits_of_float z.Complex.im)
     | D.Complex128 ->
         let z = Nd.get_c nd idx in
         Bytes.set_int64_le out at (Int64.bits_of_float z.Complex.re);
@@ -133,8 +134,8 @@ let decode dt sh data offset =
         (Array.init count (fun f ->
              {
                Complex.re =
-                 Int32.float_of_bits (String.get_int32_le data (at f));
-               im = Int32.float_of_bits (String.get_int32_le data (at f + 4));
+                 Nd.float_of_f32_bits (String.get_int32_le data (at f));
+               im = Nd.float_of_f32_bits (String.get_int32_le data (at f + 4));
              }))
   | D.Complex128 ->
       Nd.of_complex dt sh
@@ -155,7 +156,7 @@ let decode dt sh data offset =
   | D.F32 ->
       Nd.of_floats dt sh
         (Array.init count (fun f ->
-             Int32.float_of_bits (String.get_int32_le data (at f))))
+             Nd.float_of_f32_bits (String.get_int32_le data (at f))))
   | D.F64 ->
       Nd.of_floats dt sh
         (Array.init count (fun f ->

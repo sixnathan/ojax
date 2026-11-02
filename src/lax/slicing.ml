@@ -257,7 +257,7 @@ let default_gather_fill dt sh =
   let n = Array.fold_left ( * ) 1 sh in
   match dt with
   | d when Dtypes.issubdtype d `Inexact ->
-      Ndarray.of_floats dt sh (Array.make n Float.nan)
+      Ndarray.of_floats dt sh (Array.make n Float_format.nan)
   | Dtype.I64 -> Ndarray.of_int64s dt sh (Array.make n Int64.min_int)
   | Dtype.Uint64 -> Ndarray.of_int64s dt sh (Array.make n (-1L))
   | Dtype.Bool -> Ndarray.of_floats dt sh (Array.make n 1.0)
@@ -461,7 +461,10 @@ let clamp_scatter_indices operand indices updates (sd : scatter_dims) =
       (fun o -> float_of_int (op_shape.(o) - slice_sizes.(o)))
       sd.scatter_dims_to_operand_dims
   in
-  let host = Dtypes.default_int_dtype () in
+  let host =
+    if Array.exists (fun v -> v > 2147483647.0) upper then Dtype.I64
+    else Dtype.I32
+  in
   let raw = Concrete (Ndarray.of_floats host [| Array.length upper |] upper) in
   let int_max dt =
     match dt with

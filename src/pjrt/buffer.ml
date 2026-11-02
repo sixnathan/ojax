@@ -98,12 +98,7 @@ let get_u16 buf off =
 let half_bits v =
   let sign = if Float.sign_bit v then 0x8000 else 0 in
   let m = Float.abs v in
-  if Float.is_nan v then
-    sign lor 0x7c00
-    lor Int64.to_int
-          (Int64.logand
-             (Int64.shift_right_logical (Int64.bits_of_float v) 42)
-             0x3ffL)
+  if Float.is_nan v then Ndarray.bits_of_half v
   else if m = Float.infinity || m >= 65536.0 then sign lor 0x7c00
   else if m = 0.0 then sign
   else
@@ -114,43 +109,23 @@ let half_bits v =
       let fraction = int_of_float (Float.ldexp m (10 - exp)) - 1024 in
       sign lor ((exp + 15) lsl 10) lor fraction
 
-let half_value bits =
-  let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
-  let exponent = (bits lsr 10) land 0x1f and fraction = bits land 0x3ff in
-  if exponent = 31 && fraction <> 0 then
-    Int64.float_of_bits
-      (Int64.logor
-         (Int64.shift_left (Int64.of_int (((bits lsr 15) lsl 11) lor 0x7FF)) 52)
-         (Int64.shift_left (Int64.of_int fraction) 42))
-  else
-    sign
-    *.
-    if exponent = 0 then Float.ldexp (float_of_int fraction) (-24)
-    else if exponent = 31 then Float.infinity
-    else Float.ldexp (float_of_int (fraction + 1024)) (exponent - 25)
-
-let bfloat_bits v =
-  Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float v) 16)
-  land 0xffff
-
-let bfloat_value bits =
-  Int32.float_of_bits (Int32.shift_left (Int32.of_int bits) 16)
-
 let encode buf off dtype nd idx =
   let v () = Ndarray.get_f nd idx in
   match dtype with
-  | Dtype.F32 -> put_i32 buf off (Int32.bits_of_float (v ()))
+  | Dtype.F32 -> put_i32 buf off (Ndarray.f32_bits_of_float (v ()))
   | Dtype.F64 -> put_i64 buf off (Int64.bits_of_float (v ()))
   | Dtype.I32 -> put_i32 buf off (Int32.of_float (v ()))
   | Dtype.I64 | Dtype.Uint64 -> put_i64 buf off (Ndarray.get_i64 nd idx)
   | Dtype.Uint32 ->
       put_i32 buf off (Int32.of_int (int_of_float (v ()) land u32_mask))
   | Dtype.Bool -> set_byte buf off (if v () = 0.0 then 0 else 1)
-  | Dtype.I8 | Dtype.Uint8 | Dtype.I2 | Dtype.I4 | Dtype.Uint2 | Dtype.Uint4 ->
+  | Dtype.I8 | Dtype.Uint8 | Dtype.Uint2 | Dtype.Uint4 ->
       set_byte buf off (int_of_float (v ()) land 0xff)
+  | Dtype.I2 -> set_byte buf off (int_of_float (v ()) land 0x3)
+  | Dtype.I4 -> set_byte buf off (int_of_float (v ()) land 0xf)
   | Dtype.I16 | Dtype.Uint16 -> put_u16 buf off (int_of_float (v ()) land 0xffff)
   | Dtype.F16 -> put_u16 buf off (half_bits (v ()))
-  | Dtype.Bf16 -> put_u16 buf off (bfloat_bits (v ()))
+  | Dtype.Bf16 -> put_u16 buf off (Ndarray.bits_of_bfloat (v ()))
   | Dtype.F4_e2m1fn | Dtype.F6_e2m3fn | Dtype.F6_e3m2fn | Dtype.F8_e3m4
   | Dtype.F8_e4m3 | Dtype.F8_e4m3b11fnuz | Dtype.F8_e4m3fn | Dtype.F8_e4m3fnuz
   | Dtype.F8_e5m2 | Dtype.F8_e5m2fnuz | Dtype.F8_e8m0fnu ->
@@ -159,8 +134,8 @@ let encode buf off dtype nd idx =
   | Dtype.Float0 -> ()
   | Dtype.Complex64 ->
       let z = Ndarray.get_c nd idx in
-      put_i32 buf off (Int32.bits_of_float z.Complex.re);
-      put_i32 buf (off + 4) (Int32.bits_of_float z.Complex.im)
+      put_i32 buf off (Ndarray.f32_bits_of_float z.Complex.re);
+      put_i32 buf (off + 4) (Ndarray.f32_bits_of_float z.Complex.im)
   | Dtype.Complex128 ->
       let z = Ndarray.get_c nd idx in
       put_i64 buf off (Int64.bits_of_float z.Complex.re);
@@ -173,7 +148,7 @@ let narrow_int buf off bits signed =
 
 let decode buf off dtype =
   match dtype with
-  | Dtype.F32 -> Int32.float_of_bits (get_i32 buf off)
+  | Dtype.F32 -> Ndarray.float_of_f32_bits (get_i32 buf off)
   | Dtype.F64 -> Int64.float_of_bits (get_i64 buf off)
   | Dtype.I32 -> Int32.to_float (get_i32 buf off)
   | Dtype.I64 -> Int64.to_float (get_i64 buf off)
@@ -187,8 +162,8 @@ let decode buf off dtype =
       let b = get_u16 buf off in
       float_of_int (if b >= 32768 then b - 65536 else b)
   | Dtype.Uint16 -> float_of_int (get_u16 buf off)
-  | Dtype.F16 -> half_value (get_u16 buf off)
-  | Dtype.Bf16 -> bfloat_value (get_u16 buf off)
+  | Dtype.F16 -> Ndarray.half_of_bits (get_u16 buf off)
+  | Dtype.Bf16 -> Ndarray.bfloat_of_bits (get_u16 buf off)
   | Dtype.I2 -> narrow_int buf off 2 true
   | Dtype.I4 -> narrow_int buf off 4 true
   | Dtype.Uint2 -> narrow_int buf off 2 false
@@ -253,8 +228,8 @@ let host_of_bytes dtype shape buf =
         (Array.init n (fun i ->
              let off = i * esz in
              {
-               Complex.re = Int32.float_of_bits (get_i32 buf off);
-               im = Int32.float_of_bits (get_i32 buf (off + 4));
+               Complex.re = Ndarray.float_of_f32_bits (get_i32 buf off);
+               im = Ndarray.float_of_f32_bits (get_i32 buf (off + 4));
              }))
   | Dtype.Complex128 ->
       Ndarray.of_complex dtype shape

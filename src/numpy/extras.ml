@@ -395,7 +395,7 @@ let unique_sorted_mask ar axis equal_nan =
           in
           let aux =
             if is_complex_value aux then
-              NL.where_ (U.isnan aux) (scalar_like aux Float.nan) aux
+              NL.where_ (U.isnan aux) (scalar_like aux Float_format.nan) aux
             else aux
           in
           let sh = shape aux in
@@ -538,11 +538,19 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
         go 0
       in
       let order = List.stable_sort compare_rows (List.init rows Fun.id) in
+      let equal_nan = Option.value equal_nan ~default:true in
+      let same_group i j =
+        compare_rows i j = 0
+        && (equal_nan
+           || not
+                (Array.exists Float.is_nan (row_values i)
+                || Array.exists Float.is_nan (row_values j)))
+      in
       let groups =
         List.fold_left
           (fun acc i ->
             match acc with
-            | (first, members) :: rest when compare_rows first i = 0 ->
+            | (first, members) :: rest when same_group first i ->
                 (first, i :: members) :: rest
             | _ -> (i, [ i ]) :: acc)
           [] order
@@ -619,15 +627,16 @@ let unique_values ?size ?fill_value a =
 
 let unique_counts ?size ?fill_value a =
   let flags = { no_unique_flags with want_counts = true } in
-  let r = unique_full ~flags ?size ?fill_value a in
+  let r = unique_full ~flags ~equal_nan:false ?size ?fill_value a in
   (r.values, r.counts)
 
 let unique_inverse ?size ?fill_value a =
   let flags = { no_unique_flags with want_inverse = true } in
-  let r = unique_full ~flags ?size ?fill_value a in
+  let r = unique_full ~flags ~equal_nan:false ?size ?fill_value a in
   (r.values, r.inverse)
 
-let unique_all ?size ?fill_value a = unique_full ?size ?fill_value a
+let unique_all ?size ?fill_value a =
+  unique_full ~equal_nan:false ?size ?fill_value a
 
 let unique ?(return_index = false) ?(return_inverse = false)
     ?(return_counts = false) ?axis ?size ?fill_value a =
@@ -783,17 +792,14 @@ let intersect1d ?(assume_unique = false) ?size ?fill_value a b =
           let sorted = List.sort compare_with_nan (first @ second) in
           let rec adjacent = function
             | p :: (q :: _ as rest) ->
-                if compare_with_nan p q = 0 then p :: adjacent rest
-                else adjacent rest
+                if p = q then p :: adjacent rest else adjacent rest
             | _ -> []
           in
           adjacent sorted
         else
           let first = sorted_unique_floats "intersect1d" a in
           let ys = sorted_unique_floats "intersect1d" b in
-          List.filter
-            (fun x -> List.exists (fun y -> compare_with_nan x y = 0) ys)
-            first
+          List.filter (fun x -> List.exists (fun y -> x = y) ys) first
       in
       sized_result (dtype_of a) xs ~size ~fill_value
 
@@ -837,9 +843,7 @@ let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
       in
       let ys = flat_float_list "setdiff1d" b in
       sized_result dt
-        (List.filter
-           (fun x -> not (List.exists (fun y -> compare_with_nan x y = 0) ys))
-           source)
+        (List.filter (fun x -> not (List.exists (fun y -> x = y) ys)) source)
         ~size ~fill_value:(Some fill)
 
 let setxor1d_sized ~assume_unique ~size ~fill_value a b =
@@ -918,9 +922,9 @@ let setxor1d ?(assume_unique = false) ?size ?fill_value a b =
       let second = values b in
       let sorted = List.sort compare_with_nan (first @ second) in
       let rec singles = function
-        | p :: q :: rest when compare_with_nan p q = 0 ->
+        | p :: q :: rest when p = q ->
             let rec drop = function
-              | r :: tl when compare_with_nan p r = 0 -> drop tl
+              | r :: tl when p = r -> drop tl
               | tl -> tl
             in
             singles (drop rest)
@@ -2119,7 +2123,7 @@ let pi = 3.141592653589793
 let e = 2.718281828459045
 let euler_gamma = 0.5772156649015329
 let inf = Float.infinity
-let nan = Float.nan
+let nan = Float_format.nan
 
 type printoptions = {
   precision : int;

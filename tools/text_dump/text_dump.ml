@@ -42,7 +42,7 @@ let field name = function
   | `Ok s -> [ (name, `String s) ]
   | `Err e -> [ (name ^ "_error", `String e) ]
 
-let record oc ~set ~case traced =
+let record ?result_names oc ~set ~case traced =
   let lowered = guarded traced in
   let render f =
     match lowered with
@@ -52,7 +52,8 @@ let record oc ~set ~case traced =
   let fields =
     field "jaxpr" (render PP.closed_jaxpr_to_jax_string)
     @ field "structure" (render PP.primitive_structure)
-    @ field "text" (render (Ojax.Stablehlo.Emit.emit_jax_text ~name:"f"))
+    @ field "text"
+        (render (Ojax.Stablehlo.Emit.emit_jax_text ?result_names ~name:"f"))
   in
   Yojson.Safe.to_channel oc
     (`Assoc ([ ("set", `String set); ("case", `String case) ] @ fields));
@@ -84,7 +85,9 @@ let parity_case oc ~set case =
     in
     go names args
   in
-  record oc ~set
+  record
+    ?result_names:(Parity_cases.result_names op)
+    oc ~set
     ~case:(U.to_string (U.member "case_id" case))
     (fun () ->
       Ojax.Jaxpr.with_trace_debug
@@ -195,9 +198,31 @@ let () =
     dump_arrays goldens out;
     exit 0
   end;
+  let fuzz = Array.length Sys.argv > 5 && Sys.argv.(5) = "fuzz" in
   let shard = int_of_string Sys.argv.(3) in
   let shards = int_of_string Sys.argv.(4) in
   let oc = open_out out in
+  if fuzz then begin
+    List.iter
+      (fun (set, x64) ->
+        Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+            let manifest =
+              Filename.concat
+                (Filename.concat (Filename.concat goldens "fuzz") set)
+                "manifest.json"
+            in
+            List.iteri
+              (fun i case ->
+                if
+                  in_shard ~shard ~shards i
+                  && String.starts_with ~prefix:"shape"
+                       (U.to_string (U.member "variant" case))
+                then parity_case oc ~set:("fuzz/" ^ set) case)
+              (cases_of manifest)))
+      [ ("x64_off", false); ("x64_on", true) ];
+    close_out oc;
+    exit 0
+  end;
   List.iter
     (fun (set, x64) ->
       Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->

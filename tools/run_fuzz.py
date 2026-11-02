@@ -60,7 +60,6 @@ def report(goldens, log, out_path, top):
         suite, case, mode = key
         if logged[key] == 0:
             if mode == "jit" and outs == ["both_raise"]:
-                both_raise += 1
                 continue
             total += 1
             rows.append((suite, case, mode, "lost", -7, 0, "lost"))
@@ -91,6 +90,32 @@ def report(goldens, log, out_path, top):
         sys.stdout.write(f"  {count} {op}\n")
 
 
+def text_report(goldens, directory, jobs):
+    os.makedirs(directory, exist_ok=True)
+    exe = os.path.join(ROOT, "_build/default/tools/text_dump/text_dump.exe")
+    workers = [
+        subprocess.Popen(
+            ["nice", "-n", "10", exe, goldens, os.path.join(directory, str(i) + ".jsonl"), str(i), str(jobs), "fuzz"],
+            cwd=os.path.dirname(exe),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        for i in range(jobs)
+    ]
+    for worker in workers:
+        worker.wait()
+    command = [
+        sys.executable,
+        "-I",
+        os.path.join(HERE, "compare_text.py"),
+        "compare",
+        "--ref",
+        os.path.join(goldens, "fuzz", "text", "reference.jsonl"),
+        "--ours",
+    ] + [os.path.join(directory, str(i) + ".jsonl") for i in range(jobs)] + ["--out", os.path.join(directory, "report.json"), "--top", "12"]
+    subprocess.run(command, cwd=directory)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--jobs", type=int, default=8)
@@ -99,9 +124,13 @@ def main():
     parser.add_argument("--top", type=int, default=40)
     parser.add_argument("--filter", default=None)
     parser.add_argument("--report-only", action="store_true")
+    parser.add_argument("--text", default=None)
     parser.add_argument("--stall-timeout", type=float, default=120)
     args = parser.parse_args()
     goldens = os.environ.get("OJAX_GOLDENS") or run_goldens.find_goldens(ROOT)
+    if args.text:
+        text_report(goldens, os.path.abspath(args.text), args.jobs)
+        return
     status = 0
     if not args.report_only:
         command = [
@@ -115,9 +144,6 @@ def main():
             args.log,
             "--stall-timeout",
             str(args.stall_timeout),
-            "--split-failed",
-            "--mem-limit-gb",
-            "12",
         ]
         status = subprocess.run(command).returncode
     report(goldens, args.log, args.rows, args.top)

@@ -164,7 +164,8 @@ let dump name i b e actual a step =
       let hex bytes off =
         String.concat ""
           (List.init step (fun k ->
-               Printf.sprintf "%02x" (Bytes.get_uint8 bytes (off + step - 1 - k))))
+               Printf.sprintf "%02x"
+                 (Bytes.get_uint8 bytes (off + step - 1 - k))))
       in
       Printf.fprintf oc "%s %d jax=%s ojax=%s\n%!" name i (hex b e)
         (hex actual a)
@@ -206,7 +207,7 @@ let compare_output ~suite ~name ~string_of_dtype b (m : member) nd =
       List.sort compare (Hashtbl.fold (fun k () acc -> k :: acc) classes [])
     in
     log_row ~suite name (elements * scalars) !differing !largest
-      (String.concat "," names)
+      (if !differing = 0 then Compare.raw_identical else String.concat "," names)
   end
 
 let run_guarded f =
@@ -295,6 +296,12 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
   else
     check_mode ~suite ~case_id ~mode:"jit" ~string_of_dtype ~concrete b table
       (output_names case "jit") jit
+
+let available ~goldens_root =
+  Sys.file_exists
+    (Filename.concat
+       (Filename.concat (Filename.concat goldens_root "fuzz") "x64_off")
+       "manifest.json")
 
 let suites ~goldens_root ~nd_of_npz ~string_of_dtype ~concrete =
   List.filter_map

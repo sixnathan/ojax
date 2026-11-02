@@ -67,6 +67,9 @@ let fresh ctx =
   ctx.next <- n + 1;
   n
 
+let unique_region_ids = ref false
+let reset_next ctx start = if not !unique_region_ids then ctx.next <- start
+
 let bind_var ctx (v : var) =
   let n = fresh ctx in
   Hashtbl.replace ctx.ids v.vid n;
@@ -687,35 +690,106 @@ let emit_empty ctx (eqn : eqn) =
        "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
        (name n) (name c) sty oty)
 
-let platform_branch_index platforms =
-  let current = Config.current_platform () in
-  let n = Array.length platforms in
-  let rec find_named i =
-    if i >= n then find_default 0
-    else
-      match platforms.(i) with
-      | Some names when Array.exists (fun p -> p = current) names -> i
-      | _ -> find_named (i + 1)
-  and find_default i =
-    if i >= n then
-      failwith
+let lowering_platforms : string list ref = ref []
+let platform_index_arg = 4000000
+
+let module_platforms () =
+  match !lowering_platforms with
+  | [] -> [ Config.current_platform () ]
+  | platforms -> platforms
+
+let emit_i32_case_on ctx index returning =
+  let i32 = Ir.tensor_type Dtype.I32 [||] in
+  let n = fresh ctx in
+  let start = ctx.next in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" (name n) (name index));
+  List.iteri
+    (fun i v ->
+      reset_next ctx start;
+      let k = fresh ctx in
+      if i > 0 then Buffer.add_string ctx.buf "    }, {\n";
+      Buffer.add_string ctx.buf
         (Printf.sprintf
-           "Stablehlo.Emit: platform_index has no %s or default branch" current)
-    else match platforms.(i) with None -> i | Some _ -> find_default (i + 1)
-  in
-  find_named 0
+           "      %s = stablehlo.constant %s : %s\n\
+           \      stablehlo.return %s : %s\n"
+           (name k)
+           (Ir.dense (Ir.int_literal (Int64.of_int v)))
+           i32 (name k) i32))
+    returning;
+  Buffer.add_string ctx.buf (Printf.sprintf "    }) : (%s) -> %s\n" i32 i32);
+  reset_next ctx start;
+  n
+
+let platform_rule_of platforms p =
+  let found = ref None in
+  Array.iteri
+    (fun i names ->
+      match names with
+      | Some names when Array.mem p names -> found := Some i
+      | _ -> ())
+    platforms;
+  !found
+
+let platform_default platforms =
+  let found = ref None in
+  Array.iteri (fun i n -> if n = None then found := Some i) platforms;
+  !found
 
 let emit_platform_index ctx (eqn : eqn) platforms =
   let out = sole eqn.outs in
-  let ty = Ir.tensor_type_of_aval out.vaval in
-  let constant n v =
-    Printf.sprintf "%s = stablehlo.constant %s : %s\n" (name n)
-      (Ir.dense (Ir.int_literal (Int64.of_int v)))
-      ty
+  let current = module_platforms () in
+  let named =
+    List.concat_map
+      (function Some names -> Array.to_list names | None -> [])
+      (Array.to_list platforms)
   in
-  let n = bind_var ctx out in
-  Buffer.add_string ctx.buf
-    ("    " ^ constant n (platform_branch_index platforms))
+  let named =
+    List.fold_left
+      (fun acc p -> if List.mem p acc then acc else acc @ [ p ])
+      [] named
+  in
+  let kept_named = List.filter (fun p -> List.mem p current) named in
+  let unnamed = List.filter (fun p -> not (List.mem p kept_named)) current in
+  let index_of l x =
+    let rec go i = function
+      | [] -> invalid_arg "Stablehlo.Emit: platform rule"
+      | y :: r -> if y = x then i else go (i + 1) r
+    in
+    go 0 l
+  in
+  let kept =
+    List.map (fun p -> Option.get (platform_rule_of platforms p)) kept_named
+    @
+    if unnamed = [] then []
+    else
+      match platform_default platforms with
+      | Some d -> [ d ]
+      | None ->
+          failwith
+            (Printf.sprintf
+               "Stablehlo.Emit: platform_index has no %s or default branch"
+               (List.hd unnamed))
+  in
+  match kept with
+  | [ only ] ->
+      let ty = Ir.tensor_type_of_aval out.vaval in
+      let n = bind_var ctx out in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name n)
+           (Ir.dense (Ir.int_literal (Int64.of_int only)))
+           ty)
+  | _ ->
+      let rule_of_platform =
+        List.map
+          (fun p ->
+            if List.mem p kept_named then index_of kept_named p
+            else List.length kept_named)
+          current
+      in
+      let rule = emit_i32_case_on ctx platform_index_arg rule_of_platform in
+      let n = emit_i32_case_on ctx rule kept in
+      Hashtbl.replace ctx.ids out.vid n
 
 let emit_broadcast_in_dim ctx (eqn : eqn) in_ids dims =
   let x = sole in_ids in
@@ -1933,7 +2007,7 @@ let emit_sort_canonical_key ctx dt operand =
   let cnan = fresh ctx in
   Buffer.add_string ctx.buf
     (Printf.sprintf "      %s = stablehlo.constant %s : %s\n" (name cnan)
-       (Ir.dense (Ir.float_literal dt Float.nan))
+       (Ir.dense (Ir.float_literal dt Float_format.nan))
        sty);
   let cres = fresh ctx in
   Buffer.add_string ctx.buf
@@ -2235,7 +2309,13 @@ let ffi_layout_text layout =
   Printf.sprintf "dense<%s> : tensor<%dxindex>" body n
 
 let lapack_ffi_ready : (unit -> bool) ref = ref (fun () -> false)
-let lapack_ffi () = Config.current_platform () = "cpu" && !lapack_ffi_ready ()
+let ffi_rule_disabled = ref false
+let gpu_solver_prefix : string option ref = ref None
+
+let lapack_ffi () =
+  (not !ffi_rule_disabled)
+  && Config.current_platform () = "cpu"
+  && !lapack_ffi_ready ()
 
 let lapack_prec dt =
   match dt with
@@ -2479,7 +2559,7 @@ let callback_seen = ref false
 let default_layout rank = Array.init rank (fun i -> rank - 1 - i)
 
 let emit_host_callback ctx (eqn : eqn) in_ids id =
-  if (not (lapack_ffi ())) || !active_mesh <> None then
+  if not (lapack_ffi ()) then
     failwith "Stablehlo.Emit: callbacks run on the host interpreter";
   callback_seen := true;
   let in_avals = List.map atom_aval eqn.inputs in
@@ -2750,53 +2830,54 @@ and emit_cond ctx (eqn : eqn) in_ids ~platforms branches =
         c
     | _ -> pred_id
   in
-  let index_id =
+  let branches_with_index =
     match platforms with
-    | None -> index_id
-    | Some _ ->
-        let i32 = Ir.tensor_type Dtype.I32 [||] in
-        let n = fresh ctx in
-        let start = ctx.next in
-        let k = fresh ctx in
-        let region =
-          Printf.sprintf
-            "      %s = stablehlo.constant %s : %s\n\
-            \      stablehlo.return %s : %s\n"
-            (name k)
-            (Ir.dense (Ir.int_literal 0L))
-            i32 (name k) i32
+    | None -> (index_id, branches)
+    | Some branch_platforms ->
+        let order = ref [] in
+        List.iter
+          (fun p ->
+            let rec first i =
+              if i >= Array.length branch_platforms then
+                invalid_arg "Stablehlo.Emit: cond platforms"
+              else
+                match branch_platforms.(i) with
+                | None -> i
+                | Some names when Array.mem p names -> i
+                | Some _ -> first (i + 1)
+            in
+            let b = first 0 in
+            if not (List.mem b !order) then order := !order @ [ b ])
+          (module_platforms ());
+        let kept_of i =
+          let rec go k = function
+            | [] -> 0
+            | b :: r -> if b = i then k else go (k + 1) r
+          in
+          go 0 !order
         in
-        Buffer.add_string ctx.buf
-          (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n%s" (name n)
-             (name index_id) region);
-        List.iteri
-          (fun i _ ->
-            if i > 0 then
-              Buffer.add_string ctx.buf (Printf.sprintf "    }, {\n%s" region))
-          branches;
-        Buffer.add_string ctx.buf
-          (Printf.sprintf "    }) : (%s) -> %s\n" i32 i32);
-        ctx.next <- start;
-        n
+        let index =
+          emit_i32_case_on ctx index_id
+            (List.mapi (fun i _ -> kept_of i) branches)
+        in
+        (index, List.map (List.nth branches) !order)
   in
+  let index_id, branches = branches_with_index in
   let result = bind_results ctx eqn.outs in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" result
        (name index_id));
   let start = ctx.next in
   let emit_branch (cj : closed_jaxpr) =
-    ctx.next <- start;
+    reset_next ctx start;
     enter_region ctx cj operand_ids;
     emit_region_returning ctx cj.jaxpr
   in
-  (match platforms with
-  | None ->
-      List.iteri
-        (fun i b ->
-          if i > 0 then Buffer.add_string ctx.buf "    }, {\n";
-          emit_branch b)
-        branches
-  | Some _ -> emit_branch (List.nth branches (List.length branches - 1)));
+  List.iteri
+    (fun i b ->
+      if i > 0 then Buffer.add_string ctx.buf "    }, {\n";
+      emit_branch b)
+    branches;
   let out_types =
     List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
   in
@@ -2948,7 +3029,7 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
   incr while_depth;
   enter_region_later ctx cond cond_ids "    cond {\n";
   Buffer.add_string ctx.buf "    } do {\n";
-  ctx.next <- start;
+  reset_next ctx start;
   let cond_fake =
     List.filteri (fun i _ -> i < cond_nconsts) const_avals
     |> List.map (fun a -> { vid = Core.fresh_id (); vaval = a })
@@ -2995,6 +3076,7 @@ and hoist_custom_consts ctx (jx : jaxpr) =
   List.iter
     (fun (e : eqn) ->
       match e.prim with
+      | Custom_jvp_call id when Core.shard_rule id <> None -> ()
       | Custom_jvp_call id | Custom_vjp_call id -> (
           match Jaxpr.custom_call_jaxpr id (List.map atom_aval e.inputs) with
           | Some c -> begin
@@ -3273,8 +3355,84 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
     ~finally:(fun () -> Jaxpr.in_eqn_eval := prev)
     (fun () -> emit_eqn_in_context ctx eqn in_ids)
 
+and emit_cpu_and_default ctx (eqn : eqn) in_ids =
+  let rule_of_platform =
+    List.map (fun p -> if p = "cpu" then 0 else 1) !lowering_platforms
+  in
+  let rule = emit_i32_case_on ctx platform_index_arg rule_of_platform in
+  let result = bind_results ctx eqn.outs in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" result (name rule));
+  let start = ctx.next in
+  let saved_platforms = !lowering_platforms in
+  let other = List.filter (fun p -> p <> "cpu") !lowering_platforms in
+  let solver_prefix =
+    match (eqn.prim, other) with
+    | Cholesky, [ "cuda" ] -> Some "cu"
+    | Cholesky, [ "rocm" ] -> Some "hip"
+    | Cholesky, _ ->
+        failwith
+          "Stablehlo.Emit: multi-platform cholesky over several gpu platforms \
+           is not ported"
+    | _ -> None
+  in
+  let emit_rule disabled =
+    reset_next ctx start;
+    gpu_solver_prefix := if disabled then solver_prefix else None;
+    let fresh_outs =
+      List.map (fun (v : var) -> { v with vid = Core.fresh_id () }) eqn.outs
+    in
+    lowering_platforms := [];
+    ffi_rule_disabled := disabled;
+    let text =
+      capture ctx (fun () ->
+          emit_eqn_in_context ctx { eqn with outs = fresh_outs } in_ids;
+          let outs = List.map (fun v -> ssa_of_atom ctx (A_var v)) fresh_outs in
+          let tys =
+            List.map
+              (fun (v : var) -> Ir.tensor_type_of_aval v.vaval)
+              fresh_outs
+          in
+          Buffer.add_string ctx.buf
+            (Printf.sprintf "    stablehlo.return %s : %s\n"
+               (String.concat ", " outs) (String.concat ", " tys)))
+    in
+    lowering_platforms := saved_platforms;
+    ffi_rule_disabled := false;
+    gpu_solver_prefix := None;
+    Buffer.add_string ctx.buf (reindent 2 text)
+  in
+  emit_rule false;
+  Buffer.add_string ctx.buf "    }, {\n";
+  emit_rule true;
+  let out_types =
+    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s) -> %s\n"
+       (Ir.tensor_type Dtype.I32 [||])
+       (match out_types with
+       | [ t ] -> t
+       | ts -> "(" ^ String.concat ", " ts ^ ")"))
+
 and emit_eqn_in_context ctx (eqn : eqn) (in_ids : int list) : unit =
+  (match eqn.prim with
+  | Lu | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Householder_product | Ormqr _
+  | Eigh _ | Svd _ | Eig _ | Hessenberg | Schur _ | Tridiagonal _
+  | Tridiagonal_solve _
+    when List.length !lowering_platforms > 1 ->
+      failwith
+        ("Stablehlo.Emit: multi-platform lowering of "
+        ^ Pretty_printer.primitive_name eqn.prim
+        ^ " needs per-platform rules that are not ported")
+  | _ -> ());
   match (eqn.prim, eqn.inputs) with
+  | (Cholesky | Triangular_solve _), _
+    when List.length !lowering_platforms > 1
+         && List.mem "cpu" !lowering_platforms
+         && List.exists (fun p -> p <> "cpu") !lowering_platforms
+         && not !ffi_rule_disabled ->
+      emit_cpu_and_default ctx eqn in_ids
   | Pow, [ l; r ] when (atom_aval l).dtype <> (atom_aval r).dtype ->
       emit_inlined ctx eqn in_ids (function
         | [ x; y ] ->
@@ -3751,6 +3909,21 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             (List.filteri
                (fun i _ -> (i >= before && i < last) || i >= total)
                args))
+  | Cholesky when !gpu_solver_prefix <> None ->
+      let a = atom_aval (sole eqn.inputs) in
+      let info =
+        lapack_aval (Array.sub a.shape 0 (Array.length a.shape - 2)) Dtype.I32
+      in
+      let ids =
+        emit_lapack_call
+          ~target:(Option.get !gpu_solver_prefix ^ "solver_potrf_ffi")
+          ctx ~base:"potrf" ~config:"lower = true"
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] [ a; info ]
+      in
+      emit_traced ctx [ a; info ] ids eqn.outs Native_lowering.lapack_cholesky
+  | Cholesky_update | Symmetric_product _ ->
+      emit_inlined ctx eqn in_ids (!Core.lowered_linalg_hook eqn.prim)
   | Cholesky when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let info =
@@ -3814,8 +3987,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Lu when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty lu runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let m = a.shape.(rank - 2) and n = a.shape.(rank - 1) in
       let pivots = lapack_aval (Array.append batch [| min m n |]) Dtype.I32 in
@@ -3827,11 +3998,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       in
       emit_traced ctx [ a; pivots; info ] ids eqn.outs
         (Native_lowering.lapack_lu ~permutation_size:m)
+  | Qr full_matrices
+    when lapack_ffi ()
+         && Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a ] -> Native_lowering.qr_empty ~full_matrices a
+        | _ -> invalid_arg "Stablehlo.Emit: qr arity")
   | Qr full_matrices when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty qr runs on the host";
       let taus =
         lapack_aval
           (Array.append
@@ -3940,8 +4115,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | Dtype.Complex128 -> Dtype.F64
         | d -> d
       in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty eigh runs on the host";
       let w =
         lapack_aval (Array.append batch [| a.shape.(rank - 1) |]) real_dt
       in
@@ -3958,11 +4131,15 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in_ids [ a ] [ a; w; info ]
       in
       emit_traced ctx [ a; w; info ] ids eqn.outs Native_lowering.lapack_guarded
+  | Svd { full_matrices; compute_uv; _ }
+    when lapack_ffi ()
+         && Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a ] -> Native_lowering.svd_empty ~full_matrices ~compute_uv a
+        | _ -> invalid_arg "Stablehlo.Emit: svd arity")
   | Svd { full_matrices; compute_uv; gesvd } when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty svd runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let m = a.shape.(rank - 2) and n = a.shape.(rank - 1) in
       let mn = min m n in
@@ -4000,8 +4177,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Eig { compute_left; compute_right; _ } when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty eig runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let n = a.shape.(rank - 1) in
       let real = not (is_complex_dtype a.dtype) in
@@ -4044,8 +4219,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Schur { compute_vectors } when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty schur runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let w =
         lapack_aval (Array.append batch [| a.shape.(rank - 1) |]) a.dtype
@@ -4403,13 +4576,12 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   in
   Printf.sprintf
     "module {\n%s%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
-    (match partition with
-    | Some p -> sdy_mesh p.pt_mesh
-    | None ->
-        if !callback_seen then
-          "  sdy.mesh @maximal_mesh_0 = <[], device_ids=[0]> {stablehlo.mesh = \
-           {axes = [], device_ids = dense<0> : tensor<1xi64>}}\n"
-        else "")
+    ((match partition with Some p -> sdy_mesh p.pt_mesh | None -> "")
+    ^
+    if !callback_seen then
+      "  sdy.mesh @maximal_mesh_0 = <[], device_ids=[0]> {stablehlo.mesh = \
+       {axes = [], device_ids = dense<0> : tensor<1xi64>}}\n"
+    else "")
     (Buffer.contents prelude)
     (String.concat ", " params)
     (String.concat ", " out_attributes)
@@ -4424,28 +4596,48 @@ let emit_closed_jaxpr ?partition cj =
 
 type lowered = { text : string; kept : int list }
 
-let lower ~name cj =
-  let pruned, kept = Dce.prune_unused_inputs cj in
-  {
-    text = Mlir_names.render ~module_name:name (emit_closed_jaxpr pruned);
-    kept;
-  }
-
-let emit_jax_text ~name cj = Mlir_names.renumber_callbacks (lower ~name cj).text
-
-let emit_export_text ~name ~uses_shape_polymorphism cj =
+let lower ?result_names ~name cj =
   let pruned, kept = Dce.prune_unused_inputs cj in
   {
     text =
-      Mlir_names.render ~module_name:name
-        ~module_attributes:
-          [
-            Printf.sprintf "jax.uses_shape_polymorphism = %b"
-              uses_shape_polymorphism;
-          ]
-        (Mlir_names.hoist_constants (emit_closed_jaxpr pruned));
+      Mlir_names.render ?result_names ~module_name:name
+        (emit_closed_jaxpr pruned);
     kept;
   }
+
+let emit_jax_text ?result_names ~name cj =
+  Mlir_names.renumber_callbacks (lower ?result_names ~name cj).text
+
+let emit_export_text ?(platforms = []) ?result_names ~name
+    ~uses_shape_polymorphism cj =
+  let pruned, kept = Dce.prune_unused_inputs cj in
+  let saved = !lowering_platforms in
+  let saved_unique = !unique_region_ids in
+  lowering_platforms := platforms;
+  unique_region_ids := true;
+  Fun.protect
+    ~finally:(fun () ->
+      lowering_platforms := saved;
+      unique_region_ids := saved_unique)
+    (fun () ->
+      let body = emit_closed_jaxpr pruned in
+      let body =
+        if List.length platforms > 1 then
+          Mlir_names.add_platform_index_arg ~arg:platform_index_arg body
+        else body
+      in
+      let body = Mlir_names.drop_empty_backend_config body in
+      {
+        text =
+          Mlir_names.render ?result_names ~module_name:name
+            ~module_attributes:
+              [
+                Printf.sprintf "jax.uses_shape_polymorphism = %b"
+                  uses_shape_polymorphism;
+              ]
+            (Mlir_names.hoist_constants body);
+        kept;
+      })
 
 let lower_partitioned ~name partition cj =
   let pruned, kept = Dce.prune_unused_inputs cj in

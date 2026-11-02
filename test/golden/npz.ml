@@ -1,5 +1,15 @@
 type data = I of int64 array | F of float array | C of Complex.t array
-type t = { dtype : string; shape : int array; data : data }
+type raw = { raw_dtype : string; bytes : string }
+type t = { dtype : string; shape : int array; data : data; raw : raw }
+
+let raw_of_nd nd =
+  let buf = Ojax.Pjrt.Buffer.host_bytes nd in
+  {
+    raw_dtype = Ojax.Dtype.numpy_name (Ojax.Ndarray.dtype nd);
+    bytes =
+      String.init (Bigarray.Array1.dim buf) (fun i ->
+          Char.chr (Bigarray.Array1.get buf i));
+  }
 
 let u16 b off = Bytes.get_uint16_le b off
 let u32 b off = Int32.to_int (Bytes.get_int32_le b off) land 0xFFFFFFFF
@@ -104,33 +114,25 @@ let read_int b off width unsigned =
   | 8, _ -> Bytes.get_int64_le b off
   | _ -> failwith "npz: bad int width"
 
-let read_half b o =
-  let bits = Bytes.get_uint16_le b o in
-  let sign = if bits land 0x8000 <> 0 then -1.0 else 1.0 in
-  let exponent = (bits lsr 10) land 0x1f and fraction = bits land 0x3ff in
-  if exponent = 31 && fraction <> 0 then
-    Int64.float_of_bits
-      (Int64.logor
-         (Int64.shift_left (Int64.of_int (((bits lsr 15) lsl 11) lor 0x7FF)) 52)
-         (Int64.shift_left (Int64.of_int fraction) 42))
-  else
-    let magnitude =
-      if exponent = 0 then Float.ldexp (float_of_int fraction) (-24)
-      else if exponent = 31 then Float.infinity
-      else Float.ldexp (float_of_int (fraction + 1024)) (exponent - 25)
-    in
-    sign *. magnitude
-
-let read_bfloat b o =
-  let bits = Bytes.get_uint16_le b o in
-  Int32.float_of_bits (Int32.shift_left (Int32.of_int bits) 16)
-
-let read_f32 b off = Int32.float_of_bits (Bytes.get_int32_le b off)
+let read_half b o = Ojax.Ndarray.half_of_bits (Bytes.get_uint16_le b o)
+let read_bfloat b o = Ojax.Ndarray.bfloat_of_bits (Bytes.get_uint16_le b o)
+let read_f32 b off = Ojax.Ndarray.float_of_f32_bits (Bytes.get_int32_le b off)
 let read_f64 b off = Int64.float_of_bits (Bytes.get_int64_le b off)
+
+let element_bytes = function
+  | `Int (w, _) | `Float w -> w
+  | `Half | `Bfloat -> 2
+  | `Complex w -> 2 * w
 
 let decode b start descr shape =
   let dtype, kind = elem_kind descr in
   let n = Array.fold_left ( * ) 1 shape in
+  let raw =
+    {
+      raw_dtype = dtype;
+      bytes = Bytes.sub_string b start (n * element_bytes kind);
+    }
+  in
   let data =
     match kind with
     | `Int (w, u) ->
@@ -152,7 +154,7 @@ let decode b start descr shape =
                { Complex.re = read_f64 b o; im = read_f64 b (o + 8) }))
     | `Complex _ -> failwith "npz: bad complex width"
   in
-  { dtype; shape; data }
+  { dtype; shape; data; raw }
 
 let parse_npy b off =
   if Bytes.sub_string b off 6 <> "\147NUMPY" then failwith "npz: bad npy magic";

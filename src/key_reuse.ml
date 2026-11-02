@@ -1,6 +1,11 @@
 open Types
 
-type cell = { typed : bool; batch : int array; mutable consumed : bool array }
+type cell = {
+  typed : bool;
+  batch : int array;
+  mutable consumed : bool array;
+  birth : int;
+}
 
 module Nd_table = Ephemeron.K1.Make (struct
   type t = Ndarray.t
@@ -85,10 +90,17 @@ let batch_of v =
   Array.sub shape 0 (Array.length shape - 1)
 
 let size batch = Array.fold_left ( * ) 1 batch
+let generation = ref 0
+let journal : (cell * bool array) list ref list ref = ref []
 
 let fresh_cell ?(consumed = false) ?(typed = true) v =
   let batch = batch_of v in
-  { typed; batch; consumed = Array.make (size batch) consumed }
+  {
+    typed;
+    batch;
+    consumed = Array.make (size batch) consumed;
+    birth = !generation;
+  }
 
 let typed_cell v =
   match lookup v with Some cell when cell.typed -> Some cell | _ -> None
@@ -135,16 +147,32 @@ let overlaps cell mask =
       && Array.exists Fun.id (Array.map2 (fun a b -> a && b) m cell.consumed)
 
 let mark cell mask =
+  (match !journal with
+  | j :: _ -> j := (cell, Array.copy cell.consumed) :: !j
+  | [] -> ());
   match mask with
   | Some m when Array.length m = Array.length cell.consumed ->
       cell.consumed <- Array.map2 ( || ) m cell.consumed
   | _ -> cell.consumed <- Array.map (fun _ -> true) cell.consumed
+
+let region_stack : (int * (cell * value) list ref) list ref = ref []
+
+let enter_closure_view cell v =
+  match (!region_stack, !journal) with
+  | (start, touched) :: _, log :: _
+    when cell.birth < start
+         && not (List.exists (fun (c, _) -> c == cell) !touched) ->
+      touched := (cell, v) :: !touched;
+      log := (cell, Array.copy cell.consumed) :: !log;
+      cell.consumed <- Array.map (fun _ -> false) cell.consumed
+  | _ -> ()
 
 let sink ~eager_name ~static_name ?mask index v =
   if checking () then
     match typed_cell v with
     | None -> ()
     | Some cell ->
+        enter_closure_view cell v;
         if overlaps cell mask then report ~eager_name ~static_name ~index v;
         mark cell mask
 
@@ -165,7 +193,7 @@ let forward ~share cell out =
         if same then Array.copy cell.consumed
         else Array.make (size batch) (any_consumed cell)
       in
-      register out { typed = true; batch; consumed }
+      register out { typed = true; batch; consumed; birth = !generation }
 
 let source out = ignore (mark_typed out)
 
@@ -197,7 +225,11 @@ let slice_mask batch ~start ~limit ~strides =
 let apply prim args run =
   if idle () || not (List.exists is_typed args) then run ()
   else
-    let prim_name = Pretty_printer.primitive_name prim in
+    let prim_name =
+      match prim with
+      | Xla_call _ -> "jit"
+      | _ -> Pretty_printer.primitive_name prim
+    in
     let sink_arg ?mask index v =
       sink ~eager_name:prim_name ~static_name:prim_name ?mask index v
     in
@@ -268,7 +300,13 @@ let apply prim args run =
         on_outs (List.iter consumed_out)
 
 type arg_kind = Kind_typed | Kind_raw | Kind_other
-type out_rule = Out_raw | Out_source | Out_consumed | Out_forward of int
+
+type out_rule =
+  | Out_raw
+  | Out_source
+  | Out_consumed
+  | Out_forward of int
+  | Out_share of cell
 
 type signature = {
   mutable sinks : (int * bool array) list;
@@ -294,7 +332,7 @@ let kinds_key kinds =
 
 let new_signature () = { sinks = []; out_rules = [] }
 
-let instrument signature kinds f tracers =
+let instrument_from ?start signature kinds f tracers =
   let cells =
     List.map2
       (fun kind v ->
@@ -334,9 +372,15 @@ let instrument signature kinds f tracers =
         | Some cell -> (
             match input_index cell with
             | Some i -> Out_forward i
-            | None -> if any_consumed cell then Out_consumed else Out_source))
+            | None -> (
+                match start with
+                | Some s when cell.birth < s -> Out_share cell
+                | _ -> if any_consumed cell then Out_consumed else Out_source)))
       outs;
   outs
+
+let instrument signature kinds f tracers =
+  instrument_from signature kinds f tracers
 
 let call_with_signature signature args run =
   if !suspension > 0 then run ()
@@ -353,9 +397,313 @@ let call_with_signature signature args run =
         | Out_raw -> ()
         | Out_source -> source out
         | Out_consumed -> consumed_out out
+        | Out_share cell -> forward ~share:false cell out
         | Out_forward i -> (
             match typed_cell (List.nth args i) with
             | Some cell -> forward ~share:false cell out
             | None -> source out))
       signature.out_rules outs;
     outs)
+
+type region = { r_signature : signature; r_closure : (value * bool array) list }
+
+let moved_slots : bool list option ref list ref = ref []
+
+let note_moved flags =
+  match !moved_slots with
+  | ({ contents = None } as slot) :: _ -> slot := Some flags
+  | _ -> ()
+
+let with_moved_slot run =
+  let slot = ref None in
+  moved_slots := slot :: !moved_slots;
+  let outs =
+    Fun.protect ~finally:(fun () -> moved_slots := List.tl !moved_slots) run
+  in
+  (outs, !slot)
+
+let traced_region ~level holder kinds f tracers =
+  let saved = !suspension in
+  suspension := level;
+  incr generation;
+  let start = !generation in
+  let log = ref [] in
+  let touched = ref [] in
+  journal := log :: !journal;
+  region_stack := (start, touched) :: !region_stack;
+  let signature = new_signature () in
+  Fun.protect
+    ~finally:(fun () ->
+      journal := List.tl !journal;
+      region_stack := List.tl !region_stack;
+      suspension := saved;
+      List.iter (fun (c, old) -> c.consumed <- old) !log)
+    (fun () ->
+      let outs = instrument_from ~start signature kinds f tracers in
+      let closure =
+        List.rev_map
+          (fun ((c : cell), v) -> (v, Array.copy c.consumed))
+          !touched
+      in
+      holder := Some { r_signature = signature; r_closure = closure };
+      outs)
+
+let sink_operands ~name ~offset operands sinks =
+  List.iter
+    (fun (i, mask) ->
+      sink ~eager_name:name ~static_name:name ~mask (i + offset)
+        (List.nth operands i))
+    sinks
+
+let apply_out_rule operands rule out =
+  match rule with
+  | Out_raw -> ()
+  | Out_source -> source out
+  | Out_consumed -> consumed_out out
+  | Out_share cell -> forward ~share:false cell out
+  | Out_forward i -> (
+      match typed_cell (List.nth operands i) with
+      | Some cell -> forward ~share:false cell out
+      | None -> source out)
+
+let cond_regions branches operands run =
+  if idle () then run branches
+  else
+    let level = !suspension in
+    let kinds = arg_kinds operands in
+    let holders = List.map (fun _ -> ref None) branches in
+    let wrapped =
+      List.map2 (fun h b -> traced_region ~level h kinds b) holders branches
+    in
+    let outs = suspended (fun () -> run wrapped) in
+    let regions = List.filter_map (fun h -> !h) holders in
+    if List.length regions <> List.length branches then outs
+    else
+      let merged =
+        List.fold_left
+          (fun acc r ->
+            List.fold_left
+              (fun acc (i, mask) ->
+                match List.assoc_opt i acc with
+                | Some m ->
+                    (i, Array.map2 ( || ) m mask) :: List.remove_assoc i acc
+                | None -> (i, mask) :: acc)
+              acc r.r_signature.sinks)
+          [] regions
+      in
+      let closures =
+        List.fold_left
+          (fun acc r ->
+            List.fold_left
+              (fun acc (v, mask) ->
+                let same w =
+                  match (typed_cell v, typed_cell w) with
+                  | Some a, Some b -> a == b
+                  | _ -> false
+                in
+                if List.exists (fun (w, _) -> same w) acc then
+                  List.map
+                    (fun (w, m) ->
+                      if same w then (w, Array.map2 ( || ) m mask) else (w, m))
+                    acc
+                else acc @ [ (v, mask) ])
+              acc r.r_closure)
+          [] regions
+      in
+      List.iteri
+        (fun j (v, mask) ->
+          sink ~eager_name:"cond" ~static_name:"cond" ~mask (j + 1) v)
+        closures;
+      sink_operands ~name:"cond"
+        ~offset:(1 + List.length closures)
+        operands (List.sort compare merged);
+      let rules = List.map (fun r -> r.r_signature.out_rules) regions in
+      List.iteri
+        (fun j out ->
+          let at = List.map (fun l -> List.nth l j) rules in
+          let first = List.hd at in
+          let same =
+            List.for_all
+              (fun r ->
+                match (r, first) with
+                | Out_forward a, Out_forward b -> a = b
+                | Out_share a, Out_share b -> a == b
+                | _ -> false)
+              at
+          in
+          if same then apply_out_rule operands first out
+          else if List.exists (fun r -> r = Out_source) at then source out
+          else if List.for_all (fun r -> r = Out_raw) at then ()
+          else consumed_out out)
+        outs;
+      outs
+
+let signature_repr ~moved ?(body = true) r =
+  let rules = r.r_signature.out_rules in
+  let is_moved i =
+    match List.nth_opt moved i with Some m -> m | None -> false
+  in
+  let count_before pred i =
+    List.length (List.filter pred (List.init i Fun.id))
+  in
+  let n_carry = List.length moved in
+  let n_moved = List.length (List.filter Fun.id moved) in
+  let n_closure = List.length r.r_closure in
+  let map_in i =
+    if not body then i - count_before is_moved (min i n_carry) + n_closure
+    else if is_moved i then count_before is_moved i
+    else n_moved + n_closure + (i - count_before is_moved (min i n_carry))
+  in
+  let map_out j = j - count_before is_moved (min j n_carry) in
+  let sinks =
+    List.mapi (fun j _ -> j + if body then n_moved else 0) r.r_closure
+    @ List.map (fun (i, _) -> map_in i) r.r_signature.sinks
+  in
+  let sources =
+    List.concat
+      (List.mapi
+         (fun j rule ->
+           match rule with
+           | Out_source when not (is_moved j) -> [ map_out j ]
+           | _ -> [])
+         rules)
+  in
+  let forwards =
+    List.concat
+      (List.mapi
+         (fun j rule ->
+           match rule with
+           | Out_forward i when not (is_moved j) -> [ (map_in i, map_out j) ]
+           | _ -> [])
+         rules)
+  in
+  let items =
+    List.map (Printf.sprintf "Sink(%d)") (List.sort compare sinks)
+    @ List.map (Printf.sprintf "Source(%d)") (List.sort compare sources)
+    @ List.map
+        (fun (a, b) -> Printf.sprintf "Forward(%d, %d)" a b)
+        (List.sort compare forwards)
+  in
+  match items with
+  | [ one ] -> Printf.sprintf "KeyReuseSignature(%s,)" one
+  | l -> Printf.sprintf "KeyReuseSignature(%s)" (String.concat ", " l)
+
+let finish_loop ~name operands r outs =
+  sink_operands ~name ~offset:0 operands r.r_signature.sinks;
+  List.iter2 (apply_out_rule operands) r.r_signature.out_rules outs;
+  outs
+
+let moved_of ~num_carry slot =
+  match slot with
+  | Some flags when List.length flags = num_carry -> flags
+  | _ -> List.init num_carry (fun _ -> false)
+
+let scan_region ~num_carry body operands run =
+  if idle () then run body
+  else
+    let level = !suspension in
+    let holder = ref None in
+    let wrapped = traced_region ~level holder (arg_kinds operands) body in
+    let outs, slot =
+      with_moved_slot (fun () -> suspended (fun () -> run wrapped))
+    in
+    let moved = moved_of ~num_carry slot in
+    match !holder with
+    | None -> outs
+    | Some r ->
+        let sinks = r.r_signature.sinks in
+        let is_moved i =
+          match List.nth_opt moved i with Some m -> m | None -> false
+        in
+        if not (checking ()) then finish_loop ~name:"scan" operands r outs
+        else if
+          r.r_closure <> [] || List.exists (fun (i, _) -> is_moved i) sinks
+        then
+          raise
+            (Errors.key_reuse_error
+               (Printf.sprintf
+                  "scan body function leads to key reuse when repeatedly \
+                   executed, because key constants are repeatedly consumed:\n\
+                  \  signature=%s"
+                  (signature_repr ~moved r)))
+        else if
+          not
+            (List.for_all
+               (fun (i, _) ->
+                 i >= num_carry
+                 ||
+                 match List.nth_opt r.r_signature.out_rules i with
+                 | Some Out_source -> true
+                 | _ -> false)
+               sinks)
+        then
+          raise
+            (Errors.key_reuse_error
+               (Printf.sprintf
+                  "scan body function leads to key reuse when repeatedly \
+                   executed, because consumed inputs don't match sourced \
+                   outputs:\n\
+                  \  signature=%s"
+                  (signature_repr ~moved r)))
+        else finish_loop ~name:"scan" operands r outs
+
+let while_regions cond_fun body operands run =
+  if idle () then run cond_fun body
+  else
+    let level = !suspension in
+    let kinds = arg_kinds operands in
+    let cond_holder = ref None and body_holder = ref None in
+    let cond_wrapped = traced_region ~level cond_holder kinds cond_fun in
+    let body_wrapped = traced_region ~level body_holder kinds body in
+    let outs, slot =
+      with_moved_slot (fun () ->
+          suspended (fun () -> run cond_wrapped body_wrapped))
+    in
+    let num_carry = List.length operands in
+    let moved = moved_of ~num_carry slot in
+    match (!cond_holder, !body_holder) with
+    | Some c, Some b ->
+        if not (checking ()) then finish_loop ~name:"while" operands b outs
+        else
+          let cond_repr = signature_repr ~moved ~body:false c in
+          let body_repr = signature_repr ~moved b in
+          let fail which repr =
+            raise
+              (Errors.key_reuse_error
+                 (Printf.sprintf
+                    "while_loop %s function leads to key reuse when repeatedly \
+                     executed:   %s_signature=%s"
+                    which which repr))
+          in
+          let is_moved i =
+            match List.nth_opt moved i with Some m -> m | None -> false
+          in
+          let sourced (r : region) =
+            List.for_all
+              (fun (i, _) ->
+                match List.nth_opt b.r_signature.out_rules i with
+                | Some Out_source -> true
+                | _ -> false)
+              r.r_signature.sinks
+          in
+          if c.r_closure <> [] then fail "cond" cond_repr
+          else if
+            b.r_closure <> []
+            || List.exists (fun (i, _) -> is_moved i) b.r_signature.sinks
+          then fail "body" body_repr
+          else if not (sourced c) then fail "cond" cond_repr
+          else if not (sourced b) then fail "body" body_repr
+          else if
+            List.exists
+              (fun (i, _) -> List.mem_assoc i c.r_signature.sinks)
+              b.r_signature.sinks
+          then
+            raise
+              (Errors.key_reuse_error
+                 (Printf.sprintf
+                    "while_loop cond and body functions both use the same \
+                     key:   cond_signature=%s\n\
+                    \  body_signature=%s"
+                    cond_repr body_repr))
+          else finish_loop ~name:"while" operands b outs
+    | _ -> outs

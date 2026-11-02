@@ -44,19 +44,16 @@ let tensor_type dtype shape =
 
 let tensor_type_of_aval (a : Types.aval) = tensor_type a.dtype a.shape
 let is_f32 = function Dtype.F32 -> true | _ -> false
-let f32_round v = Int32.float_of_bits (Int32.bits_of_float v)
+let f32_round = Ndarray.(fun v -> float_of_f32_bits (f32_bits_of_float v))
 
 let bits_equal dtype a b =
   if is_f32 dtype then
-    Int32.equal (Int32.bits_of_float a) (Int32.bits_of_float b)
+    Int32.equal (Ndarray.f32_bits_of_float a) (Ndarray.f32_bits_of_float b)
   else Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
 
 let hex_bits dtype v =
-  if is_f32 dtype then Printf.sprintf "0x%08lX" (Int32.bits_of_float v)
+  if is_f32 dtype then Printf.sprintf "0x%08lX" (Ndarray.f32_bits_of_float v)
   else Printf.sprintf "0x%016LX" (Int64.bits_of_float v)
-
-let canonical_nan dtype =
-  if is_f32 dtype then "0x7FC00000" else "0x7FF8000000000000"
 
 let big_of_int n =
   let rec limbs n = if n = 0 then [] else (n land 0xffff) :: limbs (n lsr 16) in
@@ -224,10 +221,12 @@ let narrow_finite dtype v0 =
 
 let narrow_literal dtype v =
   let nan_bits, inf_bits =
-    match dtype with Dtype.F16 -> ("0x7E00", 0x7C00) | _ -> ("0x7FC0", 0x7F80)
+    match dtype with
+    | Dtype.F16 -> (Ndarray.bits_of_half, 0x7C00)
+    | _ -> (Ndarray.bits_of_bfloat, 0x7F80)
   in
   match Float.classify_float v with
-  | FP_nan -> nan_bits
+  | FP_nan -> Printf.sprintf "0x%04X" (nan_bits v)
   | FP_infinite ->
       Printf.sprintf "0x%04X"
         (if v < 0.0 then inf_bits lor 0x8000 else inf_bits)
@@ -250,7 +249,7 @@ let rec float_literal dtype v0 =
 and wide_literal dtype v0 =
   let v = if is_f32 dtype then f32_round v0 else v0 in
   match Float.classify_float v with
-  | FP_nan -> canonical_nan dtype
+  | FP_nan -> hex_bits dtype v
   | FP_infinite -> hex_bits dtype v
   | _ -> ( match stage1 dtype v with Some s -> s | None -> stage2 dtype v)
 

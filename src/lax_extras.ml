@@ -12,7 +12,7 @@ let aval = Core.get_aval
 let shape v = (aval v).T.shape
 let dtype v = (aval v).T.dtype
 
-let approx_top_k ~is_max_k ~reduction_dimension operand k =
+let approx_top_k_prim ~is_max_k ~reduction_dimension operand k =
   let exact = function
     | [ x ] ->
         if is_max_k then
@@ -54,6 +54,11 @@ let approx_top_k ~is_max_k ~reduction_dimension operand k =
   match Core.bind prim [ operand ] with
   | [ values; indices ] -> (values, indices)
   | _ -> invalid_arg "approx_top_k: arity"
+
+let approx_top_k ~is_max_k ~reduction_dimension operand k =
+  Eager_jit.pair "lax.approx_top_k" (is_max_k, reduction_dimension, k)
+    [] [ operand ] (fun _ vals ->
+      approx_top_k_prim ~is_max_k ~reduction_dimension (List.hd vals) k)
 
 let approx_max_k ?(reduction_dimension = -1) operand k =
   approx_top_k ~is_max_k:true ~reduction_dimension operand k

@@ -93,7 +93,21 @@ def tally(log):
             parts = line.rstrip("\n").split("\t")
             if len(parts) >= 5 and parts[2] == "0":
                 counts[parts[4]] += 1
+            if len(parts) >= 6 and parts[5] == "same":
+                counts["raw:" + parts[4]] += 1
     return counts
+
+
+def float_nan_uses(root):
+    uses = []
+    for directory, _, files in os.walk(os.path.join(root, "src")):
+        for name in files:
+            if name.endswith(".ml"):
+                path = os.path.join(directory, name)
+                with open(path, encoding="utf-8") as f:
+                    if re.search(r"\bFloat\.nan\b", f.read()):
+                        uses.append(os.path.relpath(path, root))
+    return uses
 
 
 def main():
@@ -121,8 +135,8 @@ def main():
         cases = [c for c in cases if re.search(args.filter, c[0])]
     jobs = make_jobs(cases, args.jobs * 2)
 
-    def bound_memory():
-        limit = int(args.mem_limit_gb * 2**30)
+    def bound_fuzz_memory():
+        limit = int((args.mem_limit_gb or 12) * 2**30)
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
     started = time.time()
@@ -147,26 +161,30 @@ def main():
                 env=job_env,
                 stdout=out,
                 stderr=subprocess.STDOUT,
-                preexec_fn=bound_memory if args.mem_limit_gb else None,
+                preexec_fn=bound_fuzz_memory if group.startswith("fuzz:") else None,
             )
             running.append((proc, next_job, out, slot[1], job_log, time.time()))
             next_job += 1
         for item in running[:]:
-            if args.stall_timeout and item[0].poll() is None:
+            is_fuzz = jobs[item[1]][0].startswith("fuzz:")
+            stall = args.stall_timeout or (60 if is_fuzz else 0)
+            if stall and item[0].poll() is None:
                 moved = os.path.getmtime(item[4]) if os.path.exists(item[4]) else item[5]
-                if time.time() - max(moved, item[5]) > args.stall_timeout:
+                if time.time() - max(moved, item[5]) > stall:
                     item[0].kill()
             if item[0].poll() is not None:
                 item[2].close()
                 os.close(item[3])
                 if item[0].returncode != 0:
                     group, low, high = jobs[item[1]]
-                    if args.split_failed and low < high:
+                    if (args.split_failed or is_fuzz) and low < high:
                         middle = (low + high) // 2
                         jobs.append((group, low, middle))
                         jobs.append((group, middle + 1, high))
                         if os.path.exists(item[4]):
                             os.remove(item[4])
+                    elif is_fuzz:
+                        print(f"FUZZ LOST {group} {low}")
                     else:
                         failed.append(item[1])
                 running.remove(item)
@@ -195,6 +213,7 @@ def main():
         floors = read_floors(os.path.join(root, "test/golden/exact_floor.tsv"))
         ran = {c[0] for c in cases}
         ran |= {s.replace("parity_jit:", "parity_jit_eager:") for s in ran}
+        ran |= {"raw:" + s for s in ran}
         fell = [(s, counts[s], f) for s, f in sorted(floors.items()) if s in ran and counts[s] < f]
     for suite, got, floor in fell:
         print(f"RATCHET {suite}: {got} bit-identical, floor {floor}")
@@ -206,13 +225,19 @@ def main():
             if len(parts) >= 5:
                 totals[parts[4]] += 1
     shadow = [s for s in totals if s.startswith("parity_jit_eager:")]
-    identical = sum(n for s, n in counts.items() if s not in shadow)
-    rows = sum(n for s, n in totals.items() if s not in shadow)
+    uncounted = set(shadow) | {"compare", "ratchet_selftest"}
+    identical = sum(n for s, n in counts.items() if s not in uncounted and not s.startswith("raw:"))
+    rows = sum(n for s, n in totals.items() if s not in uncounted)
+    raw_identical = sum(n for s, n in counts.items() if s.startswith("raw:") and s[4:] not in uncounted)
+    print(f"raw npz bytes and dtype: {raw_identical}/{rows} identical")
     print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {identical}/{rows} bit-identical")
     if shadow:
-        print(f"parity_jit against the eager goldens: {sum(counts[s] for s in shadow)}/{sum(totals[s] for s in shadow)} bit-identical")
+        print(f"parity_jit against the eager goldens: {sum(counts[s] for s in shadow)}/{sum(totals[s] for s in shadow)} bit-identical, {sum(counts['raw:' + s] for s in shadow)} in raw bytes")
     shutil.rmtree(work, ignore_errors=True)
-    sys.exit(1 if failed or fell else 0)
+    nan_uses = float_nan_uses(root)
+    if nan_uses:
+        print("Float.nan is 0x7ff8000000000001, JAX's nan is 0x7ff8000000000000; use Float_format.nan in: " + ", ".join(nan_uses))
+    sys.exit(1 if failed or fell or nan_uses else 0)
 
 
 if __name__ == "__main__":

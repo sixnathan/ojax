@@ -299,9 +299,40 @@ let identity_rule () =
          jvp = (fun primals tangents -> (primals, tangents));
        })
 
+let axis_type_to_string = function
+  | Auto -> "Auto"
+  | Explicit -> "Explicit"
+  | Manual -> "Manual"
+
+let axis_types_string types =
+  match types with
+  | [ one ] -> "(" ^ axis_type_to_string one ^ ",)"
+  | many -> "(" ^ String.concat ", " (List.map axis_type_to_string many) ^ ")"
+
+let mesh_to_string m =
+  if m.axis_names = [] then "Mesh()"
+  else
+    Printf.sprintf "Mesh(%s, axis_types=%s)"
+      (String.concat ", "
+         (List.map2
+            (fun n s -> Printf.sprintf "'%s': %d" n s)
+            m.axis_names m.axis_sizes))
+      (axis_types_string m.axis_types)
+
+let py_specs specs =
+  match specs with
+  | [ one ] -> "(" ^ spec_to_string one ^ ",)"
+  | many -> "(" ^ String.concat ", " (List.map spec_to_string many) ^ ")"
+
+let py_frozenset names =
+  match names with
+  | [] -> "frozenset({})"
+  | l -> "frozenset({" ^ String.concat ", " (List.map quote l) ^ "})"
+
 let constrained v m spec =
   if mesh_size m <= 1 then v
   else begin
+    let spec_list = spec in
     let rank = Array.length (Core.get_aval v).shape in
     let spec = spec_array spec rank in
     Backend.check_divisible ~shape:(Core.get_aval v).shape ~mesh:(mesh_pairs m)
@@ -309,6 +340,17 @@ let constrained v m spec =
     let id = identity_rule () in
     Core.register_constraint_rule id
       { cr_mesh = mesh_pairs m; cr_devices = device_ids m; cr_spec = spec };
+    Pretty_printer.register_custom_view id "sharding_constraint"
+      [
+        ("context_mesh", Plain "Mesh()");
+        ("layout", Plain "None");
+        ( "sharding",
+          Plain
+            (Printf.sprintf
+               "NamedSharding(mesh=%s, spec=%s, memory_kind=device)"
+               (mesh_to_string m) (spec_to_string spec_list)) );
+        ("unconstrained_dims", Plain "frozenset({})");
+      ];
     Core.bind1 (Custom_jvp_call id) [ v ]
   end
 
@@ -624,6 +666,57 @@ let shard_map_flat f ~mesh ~manual ~in_specs ~out_specs args =
               out_spec_of k (Array.length local.shape))
             body.jaxpr.outs
         in
+        let out_list =
+          List.mapi
+            (fun k _ ->
+              if List.length out_specs = 1 then List.hd out_specs
+              else List.nth out_specs k)
+            body.jaxpr.outs
+        in
+        let env = Hashtbl.create 16 in
+        let set (v : var) axes =
+          Hashtbl.replace env v.vid axes;
+          Pretty_printer.note_varying v.vid axes
+        in
+        let n_consts = List.length body.consts in
+        List.iteri
+          (fun i (v : var) ->
+            if i >= n_consts then
+              set v
+                (List.filter
+                   (fun a ->
+                     List.mem a (spec_names (List.nth in_specs (i - n_consts))))
+                   manual_ordered))
+          body.jaxpr.in_binders;
+        List.iter
+          (fun (e : eqn) ->
+            let ins =
+              List.concat_map
+                (function
+                  | A_var (v : var) ->
+                      Option.value ~default:[] (Hashtbl.find_opt env v.vid)
+                  | A_lit _ | DropVar _ -> [])
+                e.inputs
+            in
+            let axes = List.filter (fun a -> List.mem a ins) manual_ordered in
+            let axes =
+              match e.prim with
+              | Collective { kind = Psum | Pmax | Pmin; axis_name } ->
+                  List.filter (fun a -> a <> axis_name) axes
+              | _ -> axes
+            in
+            List.iter (fun v -> set v axes) e.outs)
+          body.jaxpr.eqns;
+        Pretty_printer.register_custom_view id "shard_map"
+          [
+            ("check_vma", Plain "True");
+            ("in_specs", Plain (py_specs in_specs));
+            ("jaxpr", Sub body);
+            ("mesh", Plain (mesh_to_string mesh));
+            ( "newly_manual_axes",
+              Plain (py_frozenset (List.sort compare manual_ordered)) );
+            ("out_specs", Plain (py_specs out_list));
+          ];
         Core.register_shard_rule id
           {
             sr_mesh = pairs;
@@ -869,26 +962,6 @@ let pmap ?axis_name ?in_axes ?(out_axes = 0) f args =
 let device_to_string d =
   let label = String.capitalize_ascii (Backend.platform ()) in
   Printf.sprintf "%sDevice(id=%d)" label d.id
-
-let axis_type_to_string = function
-  | Auto -> "Auto"
-  | Explicit -> "Explicit"
-  | Manual -> "Manual"
-
-let axis_types_string types =
-  match types with
-  | [ one ] -> "(" ^ axis_type_to_string one ^ ",)"
-  | many -> "(" ^ String.concat ", " (List.map axis_type_to_string many) ^ ")"
-
-let mesh_to_string m =
-  if m.axis_names = [] then "Mesh()"
-  else
-    Printf.sprintf "Mesh(%s, axis_types=%s)"
-      (String.concat ", "
-         (List.map2
-            (fun n s -> Printf.sprintf "'%s': %d" n s)
-            m.axis_names m.axis_sizes))
-      (axis_types_string m.axis_types)
 
 let abstract_device_fields d =
   Printf.sprintf "device_kind=%s, num_cores=%s, platform=%s" d.device_kind

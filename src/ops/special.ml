@@ -66,5 +66,5 @@ let logsumexp ?axis ?b ?(keepdims = false) a =
   match (b, dtype out) with
   | Some _, (D.F16 | D.Bf16 | D.F32 | D.F64) ->
       let neg = UF.less sign (scalar_of sign 0.0) in
-      NL.where_ neg (scalar_of out Float.nan) out
+      NL.where_ neg (scalar_of out Float_format.nan) out
   | _ -> out

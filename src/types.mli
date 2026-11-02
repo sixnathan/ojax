@@ -264,6 +264,8 @@ and primitive =
   | Random_unwrap
   | Random_gamma of { log_space : bool }
   | Cholesky
+  | Cholesky_update
+  | Symmetric_product of { alpha : float; beta : float }
   | Householder_product
   | Lu
   | Lu_pivots_to_permutation of int

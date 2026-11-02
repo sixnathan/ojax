@@ -1103,7 +1103,7 @@ let binomial_v key ~count ~prob ~shape ~dt =
           UF.bitwise_or (UF.bitwise_or q_l_0 q_is_nan) count_nan_or_neg
         in
         let samples =
-          L.select invalid (AC.full_like samples Float.nan) samples
+          L.select invalid (AC.full_like samples Float_format.nan) samples
         in
         let samples =
           L.select

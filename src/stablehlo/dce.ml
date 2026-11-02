@@ -136,8 +136,10 @@ and rule used_outs (e : eqn) =
     | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
         scan_rule e used_outs ~length ~reverse ~num_consts ~num_carry ~jaxpr
           ~unroll
+    | Custom_jvp_call id when Core.shard_rule id <> None ->
+        shard_map_rule e used_outs id (Option.get (Core.shard_rule id))
     | (Custom_jvp_call id | Custom_vjp_call id)
-      when Core.shard_rule id <> None || Core.constraint_rule id <> None ->
+      when Core.constraint_rule id <> None ->
         (everything, Some e)
     | Custom_jvp_call id | Custom_vjp_call id -> (
         let avals = eqn_avals e in
@@ -171,6 +173,72 @@ and rule used_outs (e : eqn) =
               in
               (everything, with_prim prim everything))
     | _ -> (everything, Some e)
+
+and shard_map_rule (e : eqn) used_outs id (r : Core.shard_rule) =
+  let n = List.length r.sr_in in
+  let body', used_ins =
+    dce_closed r.sr_body used_outs ~instantiate:(List.init n (fun _ -> false))
+  in
+  if
+    (not (List.exists Fun.id used_ins))
+    && (not (List.exists Fun.id used_outs))
+    && not (closed_effects body')
+  then (used_ins, None)
+  else
+    let key = (id, eqn_avals e, used_outs, Config.x64_enabled ()) in
+    let id' =
+      match Hashtbl.find_opt custom_cache key with
+      | Some id' -> id'
+      | None ->
+          let avals = eqn_avals e in
+          let primal kept =
+            let rec refill keep avals kept =
+              match (keep, avals, kept) with
+              | [], _, _ -> []
+              | true :: ks, _ :: az, x :: xs -> x :: refill ks az xs
+              | false :: ks, (a : aval) :: az, xs ->
+                  Concrete
+                    (Ndarray.of_floats a.dtype a.shape
+                       (Array.make (Array.fold_left ( * ) 1 a.shape) 0.))
+                  :: refill ks az xs
+              | _ -> invalid_arg "Stablehlo.Dce: shard_map inputs"
+            in
+            let outs =
+              match Core.custom_rule id with
+              | Core.Jvp_rule { primal; _ } ->
+                  primal (refill used_ins avals kept)
+              | _ -> invalid_arg "Stablehlo.Dce: shard_map rule"
+            in
+            keep_where outs used_outs
+          in
+          let id' =
+            Core.register_custom_rule
+              (Core.Jvp_rule
+                 {
+                   primal;
+                   jvp =
+                     (fun _ _ ->
+                       invalid_arg "Stablehlo.Dce: jvp of a pruned shard_map");
+                 })
+          in
+          Core.register_shard_rule id'
+            {
+              r with
+              sr_in = keep_where r.sr_in used_ins;
+              sr_out = keep_where r.sr_out used_outs;
+              sr_body = body';
+            };
+          Hashtbl.replace custom_cache key id';
+          id'
+    in
+    ( used_ins,
+      Some
+        {
+          e with
+          prim = Custom_jvp_call id';
+          inputs = keep_where e.inputs used_ins;
+          outs = keep_where e.outs used_outs;
+        } )
 
 and scan_rule (e : eqn) used_outputs ~length ~reverse ~num_consts ~num_carry
     ~jaxpr ~unroll =

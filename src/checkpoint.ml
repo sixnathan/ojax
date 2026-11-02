@@ -974,8 +974,8 @@ and call_rule policy inner unks_in inst_in (e : eqn) =
 
 type split_eqn = Plain of eqn | Split of eqn * eqn * bool list * var list
 
-let split_calls policy (jx : jaxpr) const_binders binders known_flags pe_unknown
-    =
+let split_calls ~case_of policy (jx : jaxpr) const_binders binders known_flags
+    pe_unknown =
   let env = Hashtbl.create 64 in
   let read = function
     | A_var (v : var) -> (
@@ -1021,11 +1021,8 @@ let split_calls policy (jx : jaxpr) const_binders binders known_flags pe_unknown
             e.outs;
           Plain e
       | None ->
-          if
-            is_effectful e.prim
-            || remat_case policy e.prim (List.map atom_aval e.inputs)
-               <> Recompute
-          then List.iter (write (false, false)) e.outs
+          if is_effectful e.prim || case_of e <> Recompute then
+            List.iter (write (false, false)) e.outs
           else List.iter (write (false, true)) e.outs;
           Plain e)
     jx.eqns
@@ -1093,8 +1090,18 @@ let remat_partial_eval trace id (tracers : tracer list) =
                       env jx.eqns jx.outs)
                   pvals);
              []));
+      let cases = ref [] in
+      let case_of (e : eqn) =
+        match List.assq_opt e !cases with
+        | Some c -> c
+        | None ->
+            let c = remat_case policy e.prim (List.map atom_aval e.inputs) in
+            cases := (e, c) :: !cases;
+            c
+      in
       let split =
-        split_calls policy jx const_binders binders known_flags pe_unknown
+        split_calls ~case_of policy jx const_binders binders known_flags
+          pe_unknown
       in
       let plain (e : eqn) =
         List.iter (fun (v : var) -> Hashtbl.replace var_of v.vid v) e.outs;
@@ -1109,17 +1116,11 @@ let remat_partial_eval trace id (tracers : tracer list) =
             e.outs;
           true
         end
-        else if
-          is_debug_callback e.prim
-          && remat_case policy e.prim (List.map atom_aval e.inputs) = Recompute
-        then begin
+        else if is_debug_callback e.prim && case_of e = Recompute then begin
           List.iter note ins;
           true
         end
-        else if
-          is_effectful e.prim
-          || remat_case policy e.prim (List.map atom_aval e.inputs) <> Recompute
-        then begin
+        else if is_effectful e.prim || case_of e <> Recompute then begin
           List.iter (fun (v : var) -> Hashtbl.replace saved v.vid ()) e.outs;
           false
         end

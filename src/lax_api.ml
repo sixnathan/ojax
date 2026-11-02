@@ -193,7 +193,7 @@ let select_n pred cases =
 
 let full sh fill_value dt =
   Validate.check_shapelike ~name:"broadcast_in_dim" ~arg:"shape" sh;
-  filled (Dtypes.canonicalize_dtype dt) sh fill_value
+  filled dt sh fill_value
 
 let rec full_like ?dtype ?shape x fill_value =
   match (dtype, shape) with

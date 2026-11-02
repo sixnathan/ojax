@@ -1056,19 +1056,22 @@ let cond_partial_eval trace (branches : closed_jaxpr list) platforms
                 let outs, res =
                   split_at (Jaxpr.eval_closed_jaxpr known inputs) num_known_outs
                 in
+                let empties =
+                  List.map
+                    (fun ((a : aval), _) ->
+                      let e = Core.bind1 (Empty2 a.dtype) [] in
+                      if Array.length a.shape = 0 then e
+                      else
+                        Core.bind1
+                          (Broadcast_in_dim { shape = a.shape; dims = [||] })
+                          [ e ])
+                    all_res
+                in
                 outs
                 @ List.map2
-                    (fun ((a : aval), _) pos ->
-                      match pos with
-                      | Some i -> List.nth res i
-                      | None ->
-                          let e = Core.bind1 (Empty2 a.dtype) [] in
-                          if Array.length a.shape = 0 then e
-                          else
-                            Core.bind1
-                              (Broadcast_in_dim { shape = a.shape; dims = [||] })
-                              [ e ])
-                    all_res slot))
+                    (fun empty pos ->
+                      match pos with Some i -> List.nth res i | None -> empty)
+                    empties slot))
           splits slots
       in
       let branches_unknown =

@@ -85,9 +85,16 @@ let parity_case ?(run = Parity_cases.run_cases) oc ~set case =
     in
     go names args
   in
-  record
-    ?result_names:(Parity_cases.result_names op)
-    oc ~set
+  let result_names =
+    match op with
+    | "ap_indices_sparse" ->
+        Some
+          (List.init
+             (List.length (U.to_list (U.member "dims" params)))
+             (Printf.sprintf "result[%d]"))
+    | _ -> Parity_cases.result_names op
+  in
+  record ?result_names oc ~set
     ~case:(U.to_string (U.member "case_id" case))
     (fun () ->
       Ojax.Jaxpr.with_trace_debug

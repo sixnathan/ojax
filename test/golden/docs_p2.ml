@@ -453,6 +453,10 @@ let xform_thunk row name mode () =
   | "jit" ->
       ignore (Ojax.Api.jit fn args);
       ""
+  | "lowered" ->
+      let name = if name = "jvp" then "_lambda" else "f" in
+      Ojax.Stages.as_text
+        ((Ojax.Stages.jit ~name fn).Ojax.Stages.wrapped_lower args)
   | _ ->
       Ojax.Pretty_printer.closed_jaxpr_to_jax_string
         (Ojax.Api.make_jaxpr fn args)

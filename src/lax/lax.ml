@@ -1675,7 +1675,8 @@ let rec impl_base prim inputs =
         _;
       } ->
       (match (conv_preferred, inputs) with
-      | Some d, lhs :: _ -> validate_preferred_element_type (Ndarray.dtype lhs) d
+      | Some d, lhs :: _ ->
+          validate_preferred_element_type (Ndarray.dtype lhs) d
       | _ -> ());
       let conv lhs rhs =
         Convolution.conv_impl dimension_numbers window_strides padding

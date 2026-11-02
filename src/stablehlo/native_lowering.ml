@@ -1307,13 +1307,57 @@ let lapack_cholesky = function
   | [ r; info ] -> [ nan_where_bad (info_ok info) r ]
   | _ -> invalid_arg "Native_lowering: potrf arity"
 
-let lapack_lu ~permutation_size = function
+let cuda_svd ~full_matrices ~compute_uv ~econ = function
+  | [ _; s; u; v; info ] ->
+      let rank = Array.length (shape u) in
+      let vt =
+        if not compute_uv then v
+        else
+          let vt =
+            L.transpose v
+              (Array.init rank (fun i ->
+                   if i = rank - 2 then rank - 1
+                   else if i = rank - 1 then rank - 2
+                   else i))
+          in
+          if is_complex vt then
+            L.complex (Core.bind1 Real [ vt ])
+              (Core.bind1 Neg [ Core.bind1 Imag [ vt ] ])
+          else vt
+      in
+      let u, vt =
+        if compute_uv && (not full_matrices) && not econ then begin
+          let dims = shape u in
+          let m = dims.(rank - 2) and n = (shape v).(rank - 1) in
+          let k = min m n in
+          let cut rows cols x =
+            let limits = Array.copy (shape x) in
+            limits.(rank - 2) <- rows;
+            limits.(rank - 1) <- cols;
+            L.slice x (Array.make rank 0) limits
+          in
+          (cut m k u, cut k n vt)
+        end
+        else (u, vt)
+      in
+      let ok = info_ok info in
+      let s = nan_where_bad ok s in
+      if compute_uv then
+        let u = nan_where_bad ok u in
+        let vt = nan_where_bad ok vt in
+        [ u; s; vt ]
+      else [ s ]
+  | _ -> invalid_arg "Native_lowering: gesvdj arity"
+
+let lapack_lu ?(bind_pivots = false) ~permutation_size = function
   | [ lu; pivots; info ] ->
       let pivots = pivots -: full_info pivots 1.0 in
       let ok = L.ge info (full_info info 0.0) in
       let guarded = nan_where_bad ok lu in
       let perm =
-        List.hd (lu_pivots_to_permutation ~permutation_size [ pivots ])
+        if bind_pivots then
+          Core.bind1 (Lu_pivots_to_permutation permutation_size) [ pivots ]
+        else List.hd (lu_pivots_to_permutation ~permutation_size [ pivots ])
       in
       [ guarded; pivots; perm ]
   | _ -> invalid_arg "Native_lowering: getrf arity"

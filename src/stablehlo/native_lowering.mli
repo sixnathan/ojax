@@ -28,7 +28,13 @@ val qr_from_factors : full_matrices:bool -> value list -> value list
 val svd : full_matrices:bool -> compute_uv:bool -> value list -> value list
 val eigh_refined : lower:bool -> value list -> value list
 val lapack_cholesky : value list -> value list
-val lapack_lu : permutation_size:int -> value list -> value list
+
+val lapack_lu :
+  ?bind_pivots:bool -> permutation_size:int -> value list -> value list
+
+val cuda_svd :
+  full_matrices:bool -> compute_uv:bool -> econ:bool -> value list -> value list
+
 val lapack_guarded : value list -> value list
 val lapack_svd : compute_uv:bool -> value list -> value list
 

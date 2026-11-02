@@ -246,6 +246,28 @@ module Xla = struct
         ready
 
   let () = Stablehlo.Emit.lapack_ffi_ready := lapack_targets_ready
+  let gpu_solver_registered = ref None
+
+  let gpu_solver_targets_ready () =
+    match !gpu_solver_registered with
+    | Some ready -> ready
+    | None ->
+        let ready =
+          Linalg.Gpu_solver.available ()
+          &&
+          let plugin = plugin_for "cuda" in
+          try
+            List.iter
+              (fun (target, handler) ->
+                Pjrt.Abi.ffi_register_handler plugin target "CUDA" handler)
+              (Linalg.Gpu_solver.ffi_targets ());
+            true
+          with Pjrt.Abi.Error _ -> false
+        in
+        gpu_solver_registered := Some ready;
+        ready
+
+  let () = Stablehlo.Emit.gpu_solver_ready := gpu_solver_targets_ready
   let clients = Hashtbl.create 2
 
   let client_for platform =

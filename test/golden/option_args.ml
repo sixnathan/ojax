@@ -84,6 +84,13 @@ let int_array_option : json -> int array option = function
 let int_pair j =
   match elements j with [ a; b ] -> (int_ a, int_ b) | _ -> no "type:pair"
 
+let unpack_pair decode : json -> 'a * 'a = function
+  | `Assoc [ ("$arr", _) ] -> no "type:array_for_tuple"
+  | j -> (
+      match elements j with
+      | [ a; b ] -> (decode a, decode b)
+      | _ -> no "type:pair")
+
 let int_pairs j = Array.of_list (List.map int_pair (elements j))
 
 let string_pair j =

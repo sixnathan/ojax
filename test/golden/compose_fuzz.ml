@@ -116,117 +116,130 @@ let flat_call f =
   (flat, shape)
 
 let axis_of = function `Null -> None | v -> Some (U.to_int v)
+let no_extension _ _ = None
 
-let apply_layer layer f =
+let apply_layer ?(extend = no_extension) layer f =
   let argnum () = U.to_int (U.member "argnum" layer) in
-  match U.to_string (U.member "t" layer) with
-  | "jit" ->
-      fun args ->
-        let flat, shape = flat_call f in
-        let out = A.jit_flat ~name:"g" flat (values args) in
-        TU.tree_unflatten !shape out
-  | "vmap" ->
-      let in_axes = List.map axis_of (U.to_list (U.member "in_axes" layer)) in
-      let out_axes = U.to_int (U.member "out_axes" layer) in
-      fun args -> A.vmap ~out_axes f in_axes args
-  | "grad" -> fun args -> A.grad ~argnums:(argnum ()) (scalarized f) args
-  | "value_and_grad" ->
-      fun args ->
-        let v, g = A.value_and_grad ~argnums:(argnum ()) (scalarized f) args in
-        TU.Tuple [ v; g ]
-  | "jacfwd" -> fun args -> A.jacfwd ~argnums:(argnum ()) f args
-  | "jacrev" -> fun args -> A.jacrev ~argnums:(argnum ()) f args
-  | "hessian" -> fun args -> A.hessian ~argnums:(argnum ()) (scalarized f) args
-  | "checkpoint" ->
-      fun args ->
-        let flat, shape = flat_call f in
-        let out = Ojax.Checkpoint.checkpoint flat (values args) in
-        TU.tree_unflatten !shape out
-  | "jvp" ->
-      fun args ->
-        let tangents =
-          List.map (TU.tree_map (fun x -> AC.full_like x 0.5)) args
-        in
-        let y, dy = A.jvp f args tangents in
-        TU.Tuple [ y; dy ]
-  | "vjp" ->
-      fun args ->
-        let y, pull = A.vjp f args in
-        let cotangent = TU.tree_map (fun v -> AC.ones_like v) y in
-        TU.Tuple [ y; TU.Tuple (pull cotangent) ]
-  | "custom_jvp" ->
-      fun args ->
-        let flat, shape = flat_call f in
-        let rule primals tangents =
-          let y, dy = A.jvp f (arrays primals) (arrays tangents) in
-          shape := TU.tree_structure y;
-          ( leaves y,
-            List.map (fun v -> UF.multiply v (JU.py_float 1.5)) (leaves dy) )
-        in
-        let out =
-          CD.custom_jvp ~name:"g" ~jvp_name:"rule" flat ~jvp:rule (values args)
-        in
-        TU.tree_unflatten !shape out
-  | "scan" -> (
-      let length = U.to_int (U.member "length" layer) in
-      fun args ->
-        let a = values args in
-        let rest = List.tl a in
-        let body = function
-          | c :: _ ->
-              let s = step_value f c rest in
-              [ s; RD.sum s ]
-          | [] -> failwith "compose: scan body"
-        in
-        match CF.scan ~length body [ List.hd a ] [] with
-        | [ c; ys ] -> TU.Tuple [ leaf c; leaf ys ]
-        | _ -> failwith "compose: scan arity")
-  | "while_loop" ->
-      let length = U.to_int (U.member "length" layer) in
-      fun args ->
-        let a = values args in
-        let rest = List.tl a in
-        let test = function
-          | i :: _ -> UF.less i (JU.py_int length)
-          | [] -> failwith "compose: while test"
-        in
-        let body = function
-          | [ i; c ] -> [ UF.add i (JU.py_int 1); step_value f c rest ]
-          | _ -> failwith "compose: while body"
-        in
-        let start = Ojax.Numpy.Array_constructors.asarray (JU.py_int 0) in
-        leaf (List.nth (CF.while_loop test body [ start; List.hd a ]) 1)
-  | "cond" ->
-      fun args ->
-        let a = values args in
-        let chosen v = [ as_leaf (scalarized f (arrays v)) ] in
-        let other v = [ RD.sum (List.hd v) ] in
-        leaf
-          (List.hd
-             (CF.cond
-                (UF.greater (RD.sum (List.hd a)) (JU.py_float 0.0))
-                chosen other a))
-  | "switch" ->
-      fun args ->
-        let a = values args in
-        let total = RD.sum (List.hd a) in
-        let int32 v = C.bind1 (T.Convert_element_type Ojax.Dtype.I32) [ v ] in
-        let index =
-          UF.add
-            (int32 (UF.greater total (JU.py_float 0.0)))
-            (int32 (UF.greater total (JU.py_float 1.0)))
-        in
-        let chosen v = [ as_leaf (scalarized f (arrays v)) ] in
-        let second v = [ RD.sum (List.hd v) ] in
-        let third v = [ RD.sum (UF.sin (List.hd v)) ] in
-        leaf (List.hd (CF.switch index [ chosen; second; third ] a))
-  | other -> failwith ("compose: layer " ^ other)
+  match extend layer f with
+  | Some g -> g
+  | None -> (
+      match U.to_string (U.member "t" layer) with
+      | "jit" ->
+          fun args ->
+            let flat, shape = flat_call f in
+            let out = A.jit_flat ~name:"g" flat (values args) in
+            TU.tree_unflatten !shape out
+      | "vmap" ->
+          let in_axes =
+            List.map axis_of (U.to_list (U.member "in_axes" layer))
+          in
+          let out_axes = U.to_int (U.member "out_axes" layer) in
+          fun args -> A.vmap ~out_axes f in_axes args
+      | "grad" -> fun args -> A.grad ~argnums:(argnum ()) (scalarized f) args
+      | "value_and_grad" ->
+          fun args ->
+            let v, g =
+              A.value_and_grad ~argnums:(argnum ()) (scalarized f) args
+            in
+            TU.Tuple [ v; g ]
+      | "jacfwd" -> fun args -> A.jacfwd ~argnums:(argnum ()) f args
+      | "jacrev" -> fun args -> A.jacrev ~argnums:(argnum ()) f args
+      | "hessian" ->
+          fun args -> A.hessian ~argnums:(argnum ()) (scalarized f) args
+      | "checkpoint" ->
+          fun args ->
+            let flat, shape = flat_call f in
+            let out = Ojax.Checkpoint.checkpoint flat (values args) in
+            TU.tree_unflatten !shape out
+      | "jvp" ->
+          fun args ->
+            let tangents =
+              List.map (TU.tree_map (fun x -> AC.full_like x 0.5)) args
+            in
+            let y, dy = A.jvp f args tangents in
+            TU.Tuple [ y; dy ]
+      | "vjp" ->
+          fun args ->
+            let y, pull = A.vjp f args in
+            let cotangent = TU.tree_map (fun v -> AC.ones_like v) y in
+            TU.Tuple [ y; TU.Tuple (pull cotangent) ]
+      | "custom_jvp" ->
+          fun args ->
+            let flat, shape = flat_call f in
+            let rule primals tangents =
+              let y, dy = A.jvp f (arrays primals) (arrays tangents) in
+              shape := TU.tree_structure y;
+              ( leaves y,
+                List.map (fun v -> UF.multiply v (JU.py_float 1.5)) (leaves dy)
+              )
+            in
+            let out =
+              CD.custom_jvp ~name:"g" ~jvp_name:"rule" flat ~jvp:rule
+                (values args)
+            in
+            TU.tree_unflatten !shape out
+      | "scan" -> (
+          let length = U.to_int (U.member "length" layer) in
+          fun args ->
+            let a = values args in
+            let rest = List.tl a in
+            let body = function
+              | c :: _ ->
+                  let s = step_value f c rest in
+                  [ s; RD.sum s ]
+              | [] -> failwith "compose: scan body"
+            in
+            match CF.scan ~length body [ List.hd a ] [] with
+            | [ c; ys ] -> TU.Tuple [ leaf c; leaf ys ]
+            | _ -> failwith "compose: scan arity")
+      | "while_loop" ->
+          let length = U.to_int (U.member "length" layer) in
+          fun args ->
+            let a = values args in
+            let rest = List.tl a in
+            let test = function
+              | i :: _ -> UF.less i (JU.py_int length)
+              | [] -> failwith "compose: while test"
+            in
+            let body = function
+              | [ i; c ] -> [ UF.add i (JU.py_int 1); step_value f c rest ]
+              | _ -> failwith "compose: while body"
+            in
+            let start = Ojax.Numpy.Array_constructors.asarray (JU.py_int 0) in
+            leaf (List.nth (CF.while_loop test body [ start; List.hd a ]) 1)
+      | "cond" ->
+          fun args ->
+            let a = values args in
+            let chosen v = [ as_leaf (scalarized f (arrays v)) ] in
+            let other v = [ RD.sum (List.hd v) ] in
+            leaf
+              (List.hd
+                 (CF.cond
+                    (UF.greater (RD.sum (List.hd a)) (JU.py_float 0.0))
+                    chosen other a))
+      | "switch" ->
+          fun args ->
+            let a = values args in
+            let total = RD.sum (List.hd a) in
+            let int32 v =
+              C.bind1 (T.Convert_element_type Ojax.Dtype.I32) [ v ]
+            in
+            let index =
+              UF.add
+                (int32 (UF.greater total (JU.py_float 0.0)))
+                (int32 (UF.greater total (JU.py_float 1.0)))
+            in
+            let chosen v = [ as_leaf (scalarized f (arrays v)) ] in
+            let second v = [ RD.sum (List.hd v) ] in
+            let third v = [ RD.sum (UF.sin (List.hd v)) ] in
+            leaf (List.hd (CF.switch index [ chosen; second; third ] a))
+      | other -> failwith ("compose: layer " ^ other))
 
-let compose_program params =
+let compose_program ?extend params =
   let op = U.to_string (U.member "base" params) in
   let start args = base op (values args) in
   List.fold_left
-    (fun f layer -> apply_layer layer f)
+    (fun f layer -> apply_layer ?extend layer f)
     start
     (U.to_list (U.member "layers" params))
 
@@ -333,18 +346,20 @@ let prng_program params =
       (U.to_list (U.member "draws" params));
     TU.Tuple (arrays (List.rev !outs))
 
-let program case =
+let program ?extend case =
   let params = U.member "params" case in
   match U.to_string (U.member "op" case) with
-  | "compose" -> compose_program params
+  | "compose" -> compose_program ?extend params
   | "promote" -> promote_program params
   | "prng" -> prng_program params
   | other -> failwith ("compose: family " ^ other)
 
 let references = Hashtbl.create 1024
+let loaded = Hashtbl.create 4
 
-let load_references root =
-  if Hashtbl.length references = 0 then
+let load_references ~name root =
+  if not (Hashtbl.mem loaded name) then (
+    Hashtbl.replace loaded name ();
     let path =
       Filename.concat
         (Filename.concat (Filename.concat root name) "text")
@@ -363,7 +378,7 @@ let load_references root =
                 row;
               go ()
         in
-        go ())
+        go ()))
 
 let trace_debug n =
   {
@@ -418,8 +433,8 @@ let text_row ~suite ~row reference field ours =
       | `String jax -> Fuzz.log_message ~suite ~row:label ~jax e
       | _ -> ())
 
-let check_text ~suite ~set ~root case avals run =
-  load_references root;
+let check_text ~name ~suite ~set ~root case avals run =
+  load_references ~name root;
   let case_id = U.to_string (U.member "case_id" case) in
   match Hashtbl.find_opt references (name ^ "/" ^ set ^ "/" ^ case_id) with
   | None -> Fuzz.log_row ~suite (case_id ^ ":text") 0 (-7) 0.0 "no_reference"
@@ -448,8 +463,8 @@ let check_text ~suite ~set ~root case avals run =
                ~result_names:(Ojax.Stages.result_names_of_tree !shape)
                ~name:"f" closed))
 
-let check_case ~suite ~root ~set ~set_dir ~x64 ~nd_of_npz ~string_of_dtype
-    ~concrete case () =
+let check_case ~name ~extend ~suite ~root ~set ~set_dir ~x64 ~nd_of_npz
+    ~string_of_dtype ~concrete case () =
   Ojax.Config.set Ojax.Config.enable_x64 x64;
   Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
   @@ fun () ->
@@ -466,6 +481,7 @@ let check_case ~suite ~root ~set ~set_dir ~x64 ~nd_of_npz ~string_of_dtype
     T.Concrete (nd_of_npz (Npz.decode b m.Fuzz.start m.Fuzz.descr m.Fuzz.shape))
   in
   let inputs = List.map input arg_names in
+  let program case = program ?extend case in
   let run = program case in
   let jax_error key =
     match U.member key case with `String n -> n | _ -> "unknown"
@@ -476,11 +492,12 @@ let check_case ~suite ~root ~set ~set_dir ~x64 ~nd_of_npz ~string_of_dtype
   Fuzz.check_mode ~suite ~case_id ~mode:"jit" ~string_of_dtype ~concrete
     ~jax_error:(jax_error "jit_error") b table (Fuzz.output_names case "jit")
     (fun () -> A.jit_flat (fun a -> leaves ((program case) (arrays a))) inputs);
-  check_text ~suite ~set ~root case
+  check_text ~name ~suite ~set ~root case
     (List.map (fun v -> C.get_aval v) inputs)
     (program case)
 
-let suites ~goldens_root ~nd_of_npz ~string_of_dtype ~concrete =
+let suites ?(name = name) ?extend ~goldens_root ~nd_of_npz ~string_of_dtype
+    ~concrete () =
   List.filter_map
     (fun (set, x64) ->
       let set_dir = Filename.concat (Filename.concat goldens_root name) set in
@@ -498,7 +515,7 @@ let suites ~goldens_root ~nd_of_npz ~string_of_dtype ~concrete =
                 Alcotest.test_case
                   (U.to_string (U.member "case_id" case))
                   `Quick
-                  (check_case ~suite ~root:goldens_root ~set ~set_dir ~x64
-                     ~nd_of_npz ~string_of_dtype ~concrete case))
+                  (check_case ~name ~extend ~suite ~root:goldens_root ~set
+                     ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case))
               cases ))
     [ ("x64_off", false); ("x64_on", true) ]

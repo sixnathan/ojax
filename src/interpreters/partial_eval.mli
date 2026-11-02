@@ -22,6 +22,8 @@ val partial_eval_flat_instantiate :
   partial_val list ->
   jaxpr * value list * partial_val list
 
+val known_tracer : trace -> value -> tracer
+val is_unknown_value : value -> bool
 val record_unknown : trace -> primitive -> tracer list -> value list
 val custom_call_rule : (trace -> int -> tracer list -> value list option) ref
 val install : unit -> unit

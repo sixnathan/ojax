@@ -102,7 +102,7 @@ def tally(log):
 
 
 def is_fuzz_suite(group):
-    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "compose_fuzz:"))
+    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "compose_fuzz:", "custom_ad:"))
 
 
 def row_classes(log):
@@ -131,6 +131,8 @@ def row_classes(log):
                 group = "compose_fuzz"
             elif suite.startswith("text_compose_fuzz:"):
                 group = "compose_fuzz_error_text"
+            elif suite.startswith("custom_ad:"):
+                group = "custom_ad"
             else:
                 group = "fixed"
             counter = groups[group]
@@ -153,6 +155,7 @@ def print_row_classes(log):
         "fuzz",
         "fuzz_s2",
         "compose_fuzz",
+        "custom_ad",
         "option_fuzz",
         "option_fuzz_error_text",
         "fuzz_error_text",
@@ -352,9 +355,10 @@ def main():
     second_seed = [s for s in totals if s.startswith("fuzz_s2:")]
     option_rows = [s for s in totals if s.startswith(("option_fuzz:", "text_option_fuzz:"))]
     composed = [s for s in totals if s.startswith("compose_fuzz:")]
+    custom = [s for s in totals if s.startswith("custom_ad:")]
     message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:", "text_compose_fuzz:"))]
     uncounted = (
-        set(shadow) | set(second_seed) | set(option_rows) | set(composed) | set(message_rows) | {"compare", "ratchet_selftest"}
+        set(shadow) | set(second_seed) | set(option_rows) | set(composed) | set(custom) | set(message_rows) | {"compare", "ratchet_selftest"}
     )
     identical = sum(n for s, n in counts.items() if s not in uncounted and not s.startswith("raw:"))
     rows = sum(n for s, n in totals.items() if s not in uncounted)
@@ -369,6 +373,8 @@ def main():
         print(f"{s}, raw error message, not in the totals below: {counts[s]}/{totals[s]} identical")
     if composed:
         print(f"compose_fuzz, not in the totals below: {sum(counts[s] for s in composed)}/{sum(totals[s] for s in composed)} bit-identical, {sum(counts['raw:' + s] for s in composed)} in raw bytes")
+    if custom:
+        print(f"custom_ad, not in the totals below: {sum(counts[s] for s in custom)}/{sum(totals[s] for s in custom)} bit-identical, {sum(counts['raw:' + s] for s in custom)} in raw bytes")
     print(f"raw npz bytes and dtype: {raw_identical}/{rows} identical")
     print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {identical}/{rows} bit-identical")
     if shadow:

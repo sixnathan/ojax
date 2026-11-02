@@ -117,8 +117,10 @@ let segment_update prim identity reducer ?num_segments
       scatter_flagged ~indices_are_sorted ~unique_indices scatter_prim
     in
     let prim =
-      if mode = Some Lax_config.Promise_in_bounds then Np_ints.mark_prim prim
-      else prim
+      match mode with
+      | Some Lax_config.Promise_in_bounds -> Np_ints.mark_prim prim
+      | Some Lax_config.One_hot -> Np_ints.mark_scatter_one_hot prim
+      | _ -> prim
     in
     bind1 prim args
   in

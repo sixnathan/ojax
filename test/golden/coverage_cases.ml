@@ -320,6 +320,7 @@ let lax_run op p a =
     | Some "clip" -> Some Ojax.Lax_config.Clip
     | Some ("fill" | "drop") -> Some Ojax.Lax_config.Fill_or_drop
     | Some "promise_in_bounds" -> Some Ojax.Lax_config.Promise_in_bounds
+    | Some "one_hot" -> Some Ojax.Lax_config.One_hot
     | _ -> None
   in
   let scatter

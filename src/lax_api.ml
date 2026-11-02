@@ -451,15 +451,12 @@ let flagged_scatter prim ~indices_are_sorted ~unique_indices =
   else prim
 
 let scatter_mode_dims mode (dn : scatter_dims) =
-  match mode with
-  | Some Lax_config.Clip -> { dn with s_clip = true }
-  | Some Lax_config.One_hot ->
-      invalid_arg "scatter: GatherScatterMode.ONE_HOT is not supported"
-  | _ -> dn
+  match mode with Some Lax_config.Clip -> { dn with s_clip = true } | _ -> dn
 
 let scatter_mode_prim mode prim =
   match mode with
   | Some Lax_config.Promise_in_bounds -> Np_ints.mark_prim prim
+  | Some Lax_config.One_hot -> Np_ints.mark_scatter_one_hot prim
   | _ -> prim
 
 let scatter ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x

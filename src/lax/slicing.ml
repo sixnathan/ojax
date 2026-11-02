@@ -540,12 +540,4 @@ let unclip_scatter p =
         Scatter_max { dimension_numbers = off d }
     | _ -> invalid_arg "unclip_scatter: not a scatter primitive"
   in
-  let plain =
-    match Np_ints.scatter_flags_of p with
-    | Some (sorted, unique) -> Np_ints.mark_scatter_flags ~sorted ~unique plain
-    | None -> plain
-  in
-  let plain =
-    if Np_ints.scatter_marked p then Np_ints.mark_scatter plain else plain
-  in
-  if Np_ints.prim_marked p then Np_ints.mark_prim plain else plain
+  Np_ints.copy_scatter_marks ~from:p plain

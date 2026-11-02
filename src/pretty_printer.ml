@@ -631,7 +631,9 @@ let scatter_flags p =
   Option.value (Np_ints.scatter_flags_of p) ~default:(false, false)
 
 let scatter_mode p =
-  if Np_ints.prim_marked p then "PROMISE_IN_BOUNDS" else "FILL_OR_DROP"
+  if Np_ints.prim_marked p then "PROMISE_IN_BOUNDS"
+  else if Np_ints.scatter_one_hot p then "ONE_HOT"
+  else "FILL_OR_DROP"
 
 let scatter_params ?(flags = (false, false)) ?(sorted = false) ?update
     ?(mode = "FILL_OR_DROP") d unique =

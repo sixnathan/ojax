@@ -86,7 +86,7 @@ let flip ?axis v =
 let fliplr v = rev_dims v [| 1 |]
 let flipud v = rev_dims v [| 0 |]
 
-let reshape v sh =
+let resolve_newshape v sh =
   let total = size v in
   let unknown = Array.fold_left (fun n d -> if d = -1 then n + 1 else n) 0 sh in
   let tuple = Validate.python_tuple in
@@ -110,7 +110,10 @@ let reshape v sh =
          "cannot reshape array of shape %s (size %d) into shape %s (size %d)"
          (tuple (shape v))
          total (tuple sh) known);
-  let resolved = Array.map (fun d -> if d = -1 then total / known else d) sh in
+  Array.map (fun d -> if d = -1 then total / known else d) sh
+
+let reshape v sh =
+  let resolved = resolve_newshape v sh in
   if Array.length resolved > 0 && resolved = shape v then v
   else bind1 (T.Reshape resolved) [ v ]
 
@@ -124,13 +127,17 @@ let reshape ?(order = "C") v sh =
       let c_order = bind1 (T.Transpose (reverse_axes v)) [ v ] in
       let out = reshape c_order flipped in
       bind1 (T.Transpose (reverse_axes out)) [ out ]
-  | "A" -> Py_exn.not_implemented_error "np.reshape order=A is not implemented."
+  | "A" ->
+      ignore (resolve_newshape v sh);
+      Py_exn.not_implemented_error "np.reshape order=A is not implemented."
   | o ->
+      ignore (resolve_newshape v sh);
       Py_exn.value_error
         (Printf.sprintf "Unexpected value for 'order' argument: %s." o)
 
 let ravel ?(order = "C") v =
   match order with
+  | "K" -> Py_exn.not_implemented_error "Ravel not implemented for order='K'."
   | "C" -> reshape v [| size v |]
   | "F" -> reshape (bind1 (T.Transpose (reverse_axes v)) [ v ]) [| size v |]
   | "A" -> Py_exn.not_implemented_error "np.reshape order=A is not implemented."
@@ -926,6 +933,8 @@ let unravel_index indices dims =
       where_ oob_pos smax (where_ oob_neg zero out.(i)))
 
 let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
+  if is_complex_dtype (dtype p) then
+    Py_exn.value_error "jnp.unwrap does not support complex inputs.";
   let nd = ndim p in
   let axis = canonicalize_axis axis nd in
   let dt =
@@ -1723,6 +1732,13 @@ let cross ?axisa ?axisb ?axisc ?axis p0 p1 =
     [ p0; p1 ]
 
 let diag_indices ?(ndim = 2) n =
+  if n < 0 then
+    Py_exn.value_error
+      (Printf.sprintf "n argument to diag_indices must be nonnegative, got %d" n);
+  if ndim < 0 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "ndim argument to diag_indices must be nonnegative, got %d" ndim);
   let dt = Dtypes.default_int_dtype () in
   let one = bind1 (T.Iota { dtype = dt; shape = [| n |]; dimension = 0 }) [] in
   List.init ndim (fun _ -> one)
@@ -2370,11 +2386,17 @@ let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
     [ sorted_arr; query ]
 
 let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
+  if ndim a <> 1 then Py_exn.value_error "a should be 1-dimensional";
+  (match sorter with
+  | Some s when not (is_integral (dtype s) || is_bool (dtype s)) ->
+      Py_exn.type_error
+        ("Indexer must have integer or boolean type, got indexer with type "
+        ^ D.numpy_name (dtype s))
+  | _ -> ());
   if side <> "left" && side <> "right" then
     raise
       (Py_exn.Value_error
          ("invalid argument side='" ^ side ^ "', expected 'left' or 'right'"));
-  if ndim a <> 1 then Py_exn.value_error "a should be 1-dimensional";
   check_search_method method_;
   let args = [ a; v ] @ Option.to_list sorter in
   Jnp_util.jit1 "searchsorted"
@@ -2451,6 +2473,13 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
       Py_exn.value_error "y has more than 2 dimensions"
   | _ -> ());
   if ndim m > 2 then Py_exn.value_error "m has more than 2 dimensions";
+  (match dtype with
+  | Some d when not (is_inexact d) ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "cov: dtype must be a subclass of float or complex; got dtype='%s'"
+           (D.numpy_name d))
+  | _ -> ());
   let dt_common =
     match y with
     | None -> dtype_of m
@@ -2491,6 +2520,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
         match ddof with Some d -> d | None -> if bias then 0 else 1
       in
       let check_weights name w =
+        if ndim w = 0 then Py_exn.index_error "tuple index out of range";
         if ndim w > 1 then
           Py_exn.runtime_error
             (Printf.sprintf "cannot handle multidimensional %s" name);
@@ -2498,12 +2528,13 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
           Py_exn.runtime_error
             (Printf.sprintf "incompatible numbers of samples and %s" name)
       in
-      Option.iter (check_weights "fweights") fweights;
+      Option.iter
+        (fun f ->
+          check_weights "fweights" f;
+          if not (is_integral (dtype_of f)) then
+            raise (Py_exn.Type_error "fweights must be integer."))
+        fweights;
       Option.iter (check_weights "aweights") aweights;
-      (match fweights with
-      | Some f when not (is_integral (dtype_of f)) ->
-          raise (Py_exn.Type_error "fweights must be integer.")
-      | _ -> ());
       let magnitude w =
         match dtype_of w with
         | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> w
@@ -2620,6 +2651,14 @@ let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
       (p0 :: Option.to_list aweights)
 
 let corrcoef ?y ?(rowvar = true) ?dtype x =
+  (match dtype with
+  | Some d when not (is_inexact d) ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "corrcoef: dtype must be a subclass of float or complex; got \
+            dtype='%s'"
+           (D.numpy_name d))
+  | _ -> ());
   let c = cov ?y ~rowvar ?dtype x in
   if ndim c = 0 then bind1 T.Div [ c; c ]
   else begin

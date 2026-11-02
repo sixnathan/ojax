@@ -288,7 +288,11 @@ let polymul ?(trim_leading_zeros = false) a1 a2 =
   let a1, a2 = two (promote_dtypes_inexact [ a1; a2 ]) in
   let a1, a2 =
     if trim_leading_zeros && (py_len a1 > 1 || py_len a2 > 1) then
-      (trim_front a1, trim_front a2)
+      let trim v =
+        if Array.length (shape v) = 1 then trim_front v
+        else Extras.trim_zeros ~trim:"f" v
+      in
+      (trim a1, trim a2)
     else (a1, a2)
   in
   let a1 = if py_len a1 = 0 then const_full (dtype a2) [| 1 |] 0.0 else a1 in

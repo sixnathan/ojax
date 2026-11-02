@@ -261,7 +261,7 @@ let prim_name = function
   | Custom_linear_solve _ -> "custom_linear_solve"
   | Threefry2x32 -> "threefry2x32"
   | Iota_2x32_shape _ -> "iota_2x32_shape"
-  | Random_seed -> "random_seed"
+  | Random_seed _ -> "random_seed"
   | Random_split _ -> "random_split"
   | Random_fold_in -> "random_fold_in"
   | Random_bits _ -> "random_bits"
@@ -1017,7 +1017,8 @@ let jax_params (e : eqn) =
       ]
   | Random_split shape -> [ ("shape", Plain (py_ints shape)) ]
   | Random_gamma { log_space } -> [ ("log_space", Plain (py_bool log_space)) ]
-  | Random_seed | Random_wrap -> [ ("impl", Plain "fry") ]
+  | Random_seed tag -> [ ("impl", Plain tag) ]
+  | Random_wrap -> [ ("impl", Plain "fry") ]
   | While { cond_nconsts; body_nconsts; cond; body } ->
       [
         ("body_jaxpr", Sub body);
@@ -1195,7 +1196,12 @@ let pp_atoms ctx ?(separator = "") atoms =
 let key_short (a : aval) =
   let rank = Array.length a.shape in
   let dims = Array.to_list (Array.sub a.shape 0 (max 0 (rank - 1))) in
-  "key<fry>[" ^ String.concat "," (List.map string_of_int dims) ^ "]"
+  let tag =
+    if rank = 0 || a.shape.(rank - 1) <> 4 then "fry"
+    else if a.weak_type then "urbg"
+    else "rbg"
+  in
+  "key<" ^ tag ^ ">[" ^ String.concat "," (List.map string_of_int dims) ^ "]"
 
 let token_vars : (int, unit) Hashtbl.t = Hashtbl.create 8
 
@@ -1404,7 +1410,7 @@ let rec mark_keys keys (jx : jaxpr) =
   List.iter
     (fun (e : eqn) ->
       match e.prim with
-      | Random_seed | Random_wrap | Random_split _ | Random_fold_in ->
+      | Random_seed _ | Random_wrap | Random_split _ | Random_fold_in ->
           List.iter mark e.outs
       | Slice _ | Squeeze _ | Reshape _ | Copy | Stop_gradient ->
           if List.exists is_key e.inputs then List.iter mark e.outs

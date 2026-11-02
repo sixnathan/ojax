@@ -257,7 +257,7 @@ and primitive =
     }
   | Threefry2x32
   | Iota_2x32_shape of int array
-  | Random_seed
+  | Random_seed of string
   | Random_split of int array
   | Random_fold_in
   | Random_bits of { bit_width : int; shape : int array }

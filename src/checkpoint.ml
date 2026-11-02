@@ -512,6 +512,203 @@ let eval_subset ?(post = fun _ _ x -> x) (env : (int, value) Hashtbl.t) eqns
     eqns;
   List.map read outs
 
+let select flags xs =
+  List.concat (List.map2 (fun f x -> if f then [ x ] else []) flags xs)
+
+let last_index p xs =
+  let r = ref None in
+  List.iteri (fun i x -> if p x then r := Some i) xs;
+  !r
+
+let same_var (v : var) = function A_var w -> w.vid = v.vid | _ -> false
+
+let named_like (src : closed_jaxpr) jaxpr consts =
+  let c = { jid = Core.fresh_id (); jaxpr; consts } in
+  Pretty_printer.register_call_name c.jid (Pretty_printer.call_name src.jid);
+  Core.inherit_inline ~from:src.jid c.jid;
+  c
+
+let rec pe_custom policy (c : closed_jaxpr) unks_in inst_in =
+  let jx = c.jaxpr in
+  let const_binders, binders =
+    match Util.split_list jx.in_binders [ List.length c.consts ] with
+    | [ a; b ] -> (a, b)
+    | _ -> failwith "checkpoint: binder arity"
+  in
+  let env = Hashtbl.create 64 in
+  let read = function
+    | A_var (v : var) -> Hashtbl.find env v.vid
+    | A_lit _ | DropVar _ -> (false, true)
+  in
+  let write flags (v : var) = Hashtbl.replace env v.vid flags in
+  let residuals = ref [] and res_set = Hashtbl.create 16 in
+  let add_res (v : var) =
+    if not (Hashtbl.mem res_set v.vid) then begin
+      Hashtbl.replace res_set v.vid ();
+      residuals := v :: !residuals
+    end
+  in
+  let ensure inst = function A_var v when not inst -> add_res v | _ -> () in
+  List.iter2 (fun v u -> write u v) binders (List.combine unks_in inst_in);
+  List.iter (write (false, true)) const_binders;
+  let known = ref [] and staged = ref [] in
+  List.iter
+    (fun (e : eqn) ->
+      let flags = List.map read e.inputs in
+      let unks = List.map fst flags and insts = List.map snd flags in
+      match e.prim with
+      | Xla_call inner ->
+          let k, s, unks_out, inst_out, new_vars =
+            call_rule policy inner unks insts e
+          in
+          known := k :: !known;
+          staged := s :: !staged;
+          List.iter add_res new_vars;
+          List.iter2 write (List.combine unks_out inst_out) e.outs
+      | _ when List.exists Fun.id unks ->
+          List.iter2 ensure insts e.inputs;
+          staged := e :: !staged;
+          List.iter (write (true, true)) e.outs
+      | _ ->
+          known := e :: !known;
+          if
+            is_effectful e.prim
+            || remat_case policy e.prim (List.map atom_aval e.inputs)
+               <> Recompute
+          then List.iter (write (false, false)) e.outs
+          else begin
+            List.iter2 ensure insts e.inputs;
+            staged := e :: !staged;
+            List.iter (write (false, true)) e.outs
+          end)
+    jx.eqns;
+  let out_flags = List.map read jx.outs in
+  let unks_out = List.map fst out_flags and inst_out = List.map snd out_flags in
+  let residuals = List.rev !residuals in
+  let ins_known = select (List.map not unks_in) binders in
+  let outs_known = select (List.map not unks_out) jx.outs in
+  let in_fwd =
+    List.map
+      (fun (r : var) -> last_index (fun (b : var) -> b.vid = r.vid) ins_known)
+      residuals
+  in
+  let out_fwd =
+    List.map (fun r -> last_index (same_var r) outs_known) residuals
+  in
+  let keep = List.map2 (fun a b -> a = None && b = None) in_fwd out_fwd in
+  let known_c =
+    named_like c
+      {
+        in_binders = const_binders @ ins_known;
+        eqns = List.rev !known;
+        outs = outs_known @ List.map (fun v -> A_var v) (select keep residuals);
+      }
+      c.consts
+  in
+  let staged_c =
+    named_like c
+      {
+        in_binders = const_binders @ residuals @ select inst_in binders;
+        eqns = List.rev !staged;
+        outs = select inst_out jx.outs;
+      }
+      c.consts
+  in
+  (known_c, staged_c, unks_out, inst_out, residuals, in_fwd, out_fwd)
+
+and call_rule policy inner unks_in inst_in (e : eqn) =
+  let known_c, staged_c, unks_out, inst_out, residuals, in_fwd, out_fwd =
+    pe_custom policy inner unks_in inst_in
+  in
+  let out_binders_known = select (List.map not unks_out) e.outs in
+  let ins_known = select (List.map not unks_in) e.inputs in
+  let ins_staged = select inst_in e.inputs in
+  let out_binders_staged = select inst_out e.outs in
+  let res_binders =
+    List.concat
+      (List.map2
+         (fun (r : var) (fi, fo) ->
+           if fi = None && fo = None then
+             [ { vid = Core.fresh_id (); vaval = r.vaval } ]
+           else [])
+         residuals
+         (List.combine in_fwd out_fwd))
+  in
+  let rest = ref res_binders in
+  let res_vals =
+    List.map2
+      (fun fi fo ->
+        match (fo, fi) with
+        | Some i, _ -> A_var (List.nth out_binders_known i)
+        | None, Some i -> List.nth ins_known i
+        | None, None ->
+            let v = List.hd !rest in
+            rest := List.tl !rest;
+            A_var v)
+      in_fwd out_fwd
+  in
+  let mk prim inputs outs =
+    { prim; inputs; outs; multiple_results = List.length outs > 1 }
+  in
+  let eqn_known =
+    mk (Xla_call known_c) ins_known (out_binders_known @ res_binders)
+  in
+  let eqn_staged =
+    mk (Xla_call staged_c) (res_vals @ ins_staged) out_binders_staged
+  in
+  let new_inst =
+    List.concat
+      (List.map2
+         (fun a inst -> match a with A_var v when not inst -> [ v ] | _ -> [])
+         e.inputs inst_in)
+  in
+  let new_vars =
+    new_inst
+    @ List.filter_map (function A_var v -> Some v | _ -> None) res_vals
+  in
+  (eqn_known, eqn_staged, unks_out, inst_out, new_vars)
+
+type split_eqn = Plain of eqn | Split of eqn * eqn * bool list * var list
+
+let split_calls policy (jx : jaxpr) const_binders binders known_flags =
+  let env = Hashtbl.create 64 in
+  let read = function
+    | A_var (v : var) -> (
+        match Hashtbl.find_opt env v.vid with
+        | Some f -> f
+        | None -> (false, true))
+    | A_lit _ | DropVar _ -> (false, true)
+  in
+  let write flags (v : var) = Hashtbl.replace env v.vid flags in
+  List.iter2 (fun (v : var) k -> write (k = None, true) v) binders known_flags;
+  List.iter (write (false, true)) const_binders;
+  List.map
+    (fun (e : eqn) ->
+      let flags = List.map read e.inputs in
+      let unks = List.map fst flags and insts = List.map snd flags in
+      match e.prim with
+      | Xla_call inner ->
+          let k, s, unks_out, inst_out, new_vars =
+            call_rule policy inner unks insts e
+          in
+          List.iter2 write (List.combine unks_out inst_out) e.outs;
+          let saved_known =
+            List.map not (select (List.map not unks_out) inst_out)
+          in
+          Split (k, s, saved_known, new_vars)
+      | _ when List.exists Fun.id unks ->
+          List.iter (write (true, true)) e.outs;
+          Plain e
+      | _ ->
+          if
+            is_effectful e.prim
+            || remat_case policy e.prim (List.map atom_aval e.inputs)
+               <> Recompute
+          then List.iter (write (false, false)) e.outs
+          else List.iter (write (false, true)) e.outs;
+          Plain e)
+    jx.eqns
+
 let remat_partial_eval trace id (tracers : tracer list) =
   match Hashtbl.find_opt remats id with
   | None -> None
@@ -575,43 +772,68 @@ let remat_partial_eval trace id (tracers : tracer list) =
                       env jx.eqns jx.outs)
                   pvals);
              []));
+      let split = split_calls policy jx const_binders binders known_flags in
+      let plain (e : eqn) =
+        List.iter (fun (v : var) -> Hashtbl.replace var_of v.vid v) e.outs;
+        let ins = atom_vars e.inputs in
+        if List.exists (fun (v : var) -> Hashtbl.mem pe_unknown v.vid) e.outs
+        then begin
+          List.iter note ins;
+          List.iter
+            (fun (v : var) ->
+              if Hashtbl.mem pe_unknown v.vid then
+                Hashtbl.replace unknown_vars v.vid ())
+            e.outs;
+          true
+        end
+        else if
+          is_debug_callback e.prim
+          && remat_case policy e.prim (List.map atom_aval e.inputs) = Recompute
+        then begin
+          List.iter note ins;
+          true
+        end
+        else if
+          is_effectful e.prim
+          || remat_case policy e.prim (List.map atom_aval e.inputs) <> Recompute
+        then begin
+          List.iter (fun (v : var) -> Hashtbl.replace saved v.vid ()) e.outs;
+          false
+        end
+        else begin
+          List.iter note ins;
+          true
+        end
+      in
       let candidates =
-        List.filter
-          (fun (e : eqn) ->
-            List.iter (fun (v : var) -> Hashtbl.replace var_of v.vid v) e.outs;
-            let ins = atom_vars e.inputs in
-            if
-              List.exists (fun (v : var) -> Hashtbl.mem pe_unknown v.vid) e.outs
-            then begin
-              List.iter note ins;
-              List.iter
-                (fun (v : var) ->
-                  if Hashtbl.mem pe_unknown v.vid then
-                    Hashtbl.replace unknown_vars v.vid ())
-                e.outs;
-              true
-            end
-            else if
-              is_debug_callback e.prim
-              && remat_case policy e.prim (List.map atom_aval e.inputs)
-                 = Recompute
-            then begin
-              List.iter note ins;
-              true
-            end
-            else if
-              is_effectful e.prim
-              || remat_case policy e.prim (List.map atom_aval e.inputs)
-                 <> Recompute
-            then begin
-              List.iter (fun (v : var) -> Hashtbl.replace saved v.vid ()) e.outs;
-              false
-            end
-            else begin
-              List.iter note ins;
-              true
-            end)
-          jx.eqns
+        List.concat_map
+          (function
+            | Plain e -> if plain e then [ e ] else []
+            | Split (k, s, saved_known, new_vars) ->
+                List.iter
+                  (fun (v : var) -> Hashtbl.replace var_of v.vid v)
+                  (k.outs @ s.outs);
+                let n = List.length saved_known in
+                List.iteri
+                  (fun i (v : var) ->
+                    if i >= n || List.nth saved_known i then
+                      Hashtbl.replace saved v.vid ())
+                  k.outs;
+                List.iter
+                  (fun (v : var) ->
+                    if Hashtbl.mem var_of v.vid && not (List.mem v.vid !order)
+                    then order := v.vid :: !order)
+                  new_vars;
+                List.iter
+                  (fun (v : var) ->
+                    if Hashtbl.mem pe_unknown v.vid then
+                      Hashtbl.replace unknown_vars v.vid ())
+                  s.outs;
+                [ s ])
+          split
+      in
+      let known_list =
+        List.map (function Plain e -> e | Split (k, _, _, _) -> k) split
       in
       let out_unknown =
         List.map
@@ -659,12 +881,55 @@ let remat_partial_eval trace id (tracers : tracer list) =
             else None)
           (List.rev !order)
       in
+      let used_inputs =
+        List.filter
+          (fun ((v : var), _) -> Hashtbl.mem used v.vid)
+          (List.combine binders tracers)
+      in
+      let staged =
+        Jaxpr.make_jaxpr
+          (List.map (fun (v : var) -> v.vaval) residuals
+          @ List.map (fun ((v : var), _) -> v.vaval) used_inputs)
+          (fun ins ->
+            let env = Hashtbl.create 64 in
+            List.iter2
+              (fun (v : var) nd -> Hashtbl.replace env v.vid (Concrete nd))
+              const_binders body.consts;
+            let res_in, rest =
+              match Util.split_list ins [ List.length residuals ] with
+              | [ a; b ] -> (a, b)
+              | _ -> failwith "checkpoint: staged arity"
+            in
+            List.iter2
+              (fun (v : var) x -> Hashtbl.replace env v.vid x)
+              residuals res_in;
+            List.iter2
+              (fun ((v : var), _) x -> Hashtbl.replace env v.vid x)
+              used_inputs rest;
+            eval_subset env staged_eqns unknown_outs)
+      in
+      let staged, staged_args =
+        Jaxpr.dce_closed staged (List.map (fun _ -> true) staged.jaxpr.outs)
+      in
+      let keep xs flags =
+        List.concat (List.map2 (fun x k -> if k then [ x ] else []) xs flags)
+      in
+      let res_used, inputs_used =
+        match Util.split_list staged_args [ List.length residuals ] with
+        | [ a; b ] -> (a, b)
+        | _ -> failwith "checkpoint: staged arity"
+      in
+      let residuals = keep residuals res_used in
       let res_atoms = List.map (fun v -> A_var v) residuals in
       let known_eqns =
         let outs = known_outs @ res_atoms in
         let pruned, _ =
           Jaxpr.dce_closed
-            { body with jid = Core.fresh_id (); jaxpr = { jx with outs } }
+            {
+              body with
+              jid = Core.fresh_id ();
+              jaxpr = { jx with outs; eqns = known_list };
+            }
             (List.map (fun _ -> true) outs)
         in
         pruned.jaxpr.eqns
@@ -738,45 +1003,6 @@ let remat_partial_eval trace id (tracers : tracer list) =
         | [ a; b ] -> (a, b)
         | _ -> failwith "checkpoint: residual arity"
       in
-      let used_inputs =
-        List.filter
-          (fun ((v : var), _) -> Hashtbl.mem used v.vid)
-          (List.combine binders tracers)
-      in
-      let staged =
-        Jaxpr.make_jaxpr
-          (List.map (fun (v : var) -> v.vaval) residuals
-          @ List.map (fun ((v : var), _) -> v.vaval) used_inputs)
-          (fun ins ->
-            let env = Hashtbl.create 64 in
-            List.iter2
-              (fun (v : var) nd -> Hashtbl.replace env v.vid (Concrete nd))
-              const_binders body.consts;
-            let res_in, rest =
-              match Util.split_list ins [ List.length residuals ] with
-              | [ a; b ] -> (a, b)
-              | _ -> failwith "checkpoint: staged arity"
-            in
-            List.iter2
-              (fun (v : var) x -> Hashtbl.replace env v.vid x)
-              residuals res_in;
-            List.iter2
-              (fun ((v : var), _) x -> Hashtbl.replace env v.vid x)
-              used_inputs rest;
-            eval_subset env staged_eqns unknown_outs)
-      in
-      let staged, staged_args =
-        Jaxpr.dce_closed staged (List.map (fun _ -> true) staged.jaxpr.outs)
-      in
-      let keep xs flags =
-        List.concat (List.map2 (fun x k -> if k then [ x ] else []) xs flags)
-      in
-      let res_used, inputs_used =
-        match Util.split_list staged_args [ List.length res_values ] with
-        | [ a; b ] -> (a, b)
-        | _ -> failwith "checkpoint: staged arity"
-      in
-      let res_values = keep res_values res_used in
       let used_inputs = keep used_inputs inputs_used in
       let staged_id = remat_id ~cfg ~differentiated:true staged in
       let unknown_values =

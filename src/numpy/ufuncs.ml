@@ -53,7 +53,7 @@ let check_rank_promotion vs =
         "Operands could not be broadcast together: implicit rank promotion is \
          disabled by numpy_rank_promotion"
       in
-      if mode = "raise" then invalid_arg text else prerr_endline text
+      if mode = "raise" then Py_exn.value_error text else prerr_endline text
     end
   end
 

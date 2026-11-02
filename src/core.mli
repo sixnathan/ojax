@@ -34,6 +34,8 @@ val current_level : unit -> int
 val with_new_main : trace_kind -> global_data -> (trace -> 'a) -> 'a
 val new_dynamic : trace -> (unit -> 'a) -> 'a
 val find_top_trace : value list -> trace
+val dynamic_trace : trace option ref
+val linearize_scope : trace option option ref
 val full_raise : trace -> value -> value
 val full_lower : value -> value
 val process_primitive : trace -> primitive -> value list -> value list
@@ -135,6 +137,7 @@ val is_inline_call : int -> bool
 val inherit_inline : from:int -> int -> unit
 val call_direct : (closed_jaxpr -> value list -> value list) ref
 val random_gamma_hook : (log_space:bool -> value -> value -> value) ref
+val lowered_linalg_hook : (primitive -> value list -> value list) ref
 val random_gamma_grad_hook : (log_space:bool -> value -> value -> value) ref
 val register_decomposition : (value list -> value list) -> int
 val decomposition : int -> value list -> value list

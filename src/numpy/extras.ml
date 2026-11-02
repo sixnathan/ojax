@@ -299,10 +299,17 @@ let flatnonzero ?size ?fill_value a =
   List.hd (nonzero ?size ?fill_value (flat a))
 
 let argwhere ?size ?fill_value a =
-  let a = if rank a = 0 then NL.reshape a [| 1 |] else a in
+  let scalar = rank a = 0 in
+  let a = if scalar then NL.reshape a [| 1 |] else a in
   match nonzero ?size ?fill_value a with
   | [] -> AC.zeros ~dtype:(default_int ()) [| 0; 0 |]
-  | parts -> NL.stack ~axis:1 parts
+  | parts ->
+      let result = NL.stack ~axis:1 parts in
+      if scalar then
+        NL.reshape
+          (L.slice_in_dim ~axis:0 result 0 0)
+          [| (shape result).(0); 0 |]
+      else result
 
 type unique_result = {
   values : value;
@@ -1077,7 +1084,6 @@ let sum_at n data ids =
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims
 
 let bincount ?weights ?(minlength = 0) ?length x =
-  if rank x <> 1 then Py_exn.value_error "only 1-dimensional input supported.";
   let x =
     if dtype_of x = Dtype.Bool then L.convert_element_type x Dtype.I32 else x
   in
@@ -1089,8 +1095,21 @@ let bincount ?weights ?(minlength = 0) ?length x =
       raise
         (Py_exn.Type_error
            ("x argument to bincount must have an integer type; got "
-          ^ Dtype.short_name d)));
+          ^ Dtype.numpy_name d)));
   if rank x <> 1 then Py_exn.value_error "only 1-dimensional input supported.";
+  (match weights with
+  | Some w when shape w <> shape x ->
+      let typeof v =
+        Printf.sprintf "%s[%s]({})"
+          (Dtype.short_name (dtype_of v))
+          (String.concat "," (List.map string_of_int (Array.to_list (shape v))))
+      in
+      Py_exn.value_error
+        (Printf.sprintf
+           "type of weights must match type of x. Got typeof(x)=%s and \
+            typeof(weights)=%s"
+           (typeof x) (typeof w))
+  | _ -> ());
   let n =
     match length with
     | Some l -> l
@@ -1258,10 +1277,7 @@ let unpack_sample_shape shape =
       Py_exn.value_error
         (Printf.sprintf "not enough values to unpack (expected 2, got %d)"
            (Array.length shape))
-  | _ ->
-      Py_exn.value_error
-        (Printf.sprintf "too many values to unpack (expected 2, got %d)"
-           (Array.length shape))
+  | _ -> Py_exn.value_error "too many values to unpack (expected 2)"
 
 let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
   let sample, weights =
@@ -1350,12 +1366,12 @@ let interp_body ?left ?right ?period x xp fp =
         let xp = U.remainder xp p in
         let xp, fp = match L.sort_key_val xp fp with k, v -> (k, v) in
         let n = size_of xp in
-        let last = plain_slice xp (n - 1) n in
+        let last = plain_slice xp (Stdlib.max 0 (n - 1)) n in
         let last = U.subtract last p in
-        let first = U.add (plain_slice xp 0 1) p in
+        let first = U.add (plain_slice xp 0 (Stdlib.min 1 n)) p in
         let xp = NL.concatenate [ last; xp; first ] in
-        let fp_last = plain_slice fp (n - 1) n in
-        let fp_first = plain_slice fp 0 1 in
+        let fp_last = plain_slice fp (Stdlib.max 0 (n - 1)) n in
+        let fp_first = plain_slice fp 0 (Stdlib.min 1 n) in
         (x, xp, NL.concatenate [ fp_last; fp; fp_first ])
   in
   let n = size_of xp in
@@ -1674,7 +1690,9 @@ let tile_to_size vals n =
 
 let insert ?axis a position values =
   let a, ax =
-    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
+    match axis with
+    | Some x -> (a, canonicalize_axis x (rank a))
+    | None -> (flat a, 0)
   in
   let ndim = rank a in
   let dt = dtype_of a in
@@ -2555,7 +2573,9 @@ let packbits ?axis ?(bitorder = "big") a =
           let arr, ax =
             match axis with
             | None -> (flat arr, 0)
-            | Some x -> (arr, canon (rank arr) x)
+            | Some x ->
+                ignore (NL.swapaxes x (-1) arr);
+                (arr, canon (rank arr) x)
           in
           let arr = NL.swapaxes ax (-1) arr in
           let last = (shape arr).(rank arr - 1) in

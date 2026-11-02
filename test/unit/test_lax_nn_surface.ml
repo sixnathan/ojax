@@ -129,16 +129,17 @@ let contains s sub =
 let raises name sub f =
   match f () with
   | _ -> Alcotest.failf "%s: expected an error" name
-  | exception
-      ( Invalid_argument msg
-      | Failure msg
-      | Ojax.Py_exn.Value_error msg
-      | Ojax.Py_exn.Type_error msg
-      | Ojax.Py_exn.Index_error msg
-      | Ojax.Py_exn.Key_error msg
-      | Ojax.Py_exn.Not_implemented_error msg ) ->
-      if not (contains msg sub) then
-        Alcotest.failf "%s: unexpected message %s" name msg
+  | exception e -> (
+      let msg =
+        match e with
+        | Invalid_argument msg | Failure msg -> Some msg
+        | e -> Ojax.Py_exn.message_of e
+      in
+      match msg with
+      | None -> raise e
+      | Some msg ->
+          if not (contains msg sub) then
+            Alcotest.failf "%s: unexpected message %s" name msg)
 
 let sole = function [ x ] -> x | _ -> Alcotest.fail "expected one value"
 let jit1 f x = sole (Api.jit_flat (fun a -> [ f (sole a) ]) [ x ])

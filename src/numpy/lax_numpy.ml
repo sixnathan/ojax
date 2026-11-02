@@ -786,7 +786,15 @@ let squeeze ?axis v =
 let swapaxes axis1 axis2 v =
   let n = ndim v in
   let perm = Array.init n (fun i -> i) in
-  let a1 = canonicalize_axis axis1 n and a2 = canonicalize_axis axis2 n in
+  let numpy_index axis =
+    if axis < -n || axis >= n then
+      Py_exn.index_error
+        (Printf.sprintf "index %d is out of bounds for axis 0 with size %d" axis
+           n);
+    if axis < 0 then axis + n else axis
+  in
+  let a2 = numpy_index axis2 in
+  let a1 = numpy_index axis1 in
   perm.(a1) <- a2;
   perm.(a2) <- a1;
   bind1 (T.Transpose perm) [ v ]
@@ -816,9 +824,7 @@ let moveaxis source destination v =
 let broadcast_shapes_n = Validate.broadcast_shapes
 
 let broadcast_arrays vs =
-  let sh =
-    List.fold_left (fun acc v -> broadcast_shapes acc (shape v)) [||] vs
-  in
+  let sh = broadcast_shapes_n (List.map shape vs) in
   List.map (fun v -> broadcast_to v sh) vs
 
 let resize v new_shape =
@@ -2357,6 +2363,11 @@ let digitize ?right ?method_ a0 a1 =
 let dtype_of = dtype
 
 let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
+  (match y with
+  | Some yv when ndim yv > 2 ->
+      Py_exn.value_error "y has more than 2 dimensions"
+  | _ -> ());
+  if ndim m > 2 then Py_exn.value_error "m has more than 2 dimensions";
   let dt_common =
     match y with
     | None -> dtype_of m

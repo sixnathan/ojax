@@ -15,18 +15,16 @@ let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 let concrete = function
   | Concrete nd -> nd
   | Tracer _ ->
-      Py_exn.not_implemented_error
-        "nn/initializers: initializer on a tracer not supported"
+      failwith "nn/initializers: initializer on a tracer not supported"
   | Device _ ->
-      Py_exn.not_implemented_error
-        "nn/initializers: initializer on a tracer not supported"
+      failwith "nn/initializers: initializer on a tracer not supported"
 
 let const shape x = C.splat D.F32 shape x
 
 let compute_fans shape ~in_axis ~out_axis ~batch_axis =
   let ndim = Array.length shape in
   if in_axis = -2 && ndim <= 1 then
-    Py_exn.value_error
+    invalid_arg
       (Printf.sprintf
          "Can't compute input and output sizes of a %d-dimensional weights \
           tensor with default in_axis. Must be at least 2D or specify in_axis \
@@ -134,7 +132,7 @@ let orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
  fun key ~shape ->
   let rank = Array.length shape in
   if rank < 2 then
-    Py_exn.value_error "orthogonal initializer requires at least a 2D shape";
+    invalid_arg "orthogonal initializer requires at least a 2D shape";
   let axis = if column_axis < 0 then column_axis + rank else column_axis in
   let n_cols = shape.(axis) in
   let n_rows = prod shape / n_cols in
@@ -151,10 +149,9 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
  fun key ~shape ->
   let rank = Array.length shape in
   if rank < 3 || rank > 5 then
-    Py_exn.value_error
-      "Delta orthogonal initializer requires a 3D, 4D or 5D shape.";
+    invalid_arg "Delta orthogonal initializer requires a 3D, 4D or 5D shape.";
   if shape.(rank - 1) < shape.(rank - 2) then
-    Py_exn.value_error "`fan_in` must be less or equal than `fan_out`. ";
+    invalid_arg "`fan_in` must be less or equal than `fan_out`. ";
   let ortho =
     orthogonal ~scale ~column_axis () key
       ~shape:[| shape.(rank - 2); shape.(rank - 1) |]

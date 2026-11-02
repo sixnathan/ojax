@@ -112,9 +112,15 @@ let tail_add x y =
           }))
     [ x; indices; y ]
 
+let py_len v =
+  match shape v with
+  | [||] -> Py_exn.type_error "len() of unsized object"
+  | dims -> dims.(0)
+
 let polyadd a1 a2 =
   let a1, a2 = two (promote_dtypes [ a1; a2 ]) in
-  let n1 = (shape a1).(0) and n2 = (shape a2).(0) in
+  let n2 = Validate.tuple_index (shape a2) 0 in
+  let n1 = Validate.tuple_index (shape a1) 0 in
   if n2 <= n1 then tail_add a1 a2 else tail_add a2 a1
 
 let polyadd p0 p1 =
@@ -146,7 +152,7 @@ let polyint ?(m = 1) ?k p =
   if m = 0 then p
   else begin
     let dt = dtype p in
-    let np_ = (shape p).(0) in
+    let np_ = py_len p in
     let k = NL.atleast_1d k in
     let k =
       if (shape k).(0) = 1 then
@@ -190,7 +196,7 @@ let polyder ?(m = 1) p =
   if m = 0 then p
   else begin
     let dt = dtype p in
-    let np_ = (shape p).(0) in
+    let np_ = py_len p in
     let grid_a =
       NL.expand_dims
         (NL.arange ~start:(float_of_int m) ~dtype:dt (float_of_int np_))
@@ -281,16 +287,12 @@ let trim_front v =
 let polymul ?(trim_leading_zeros = false) a1 a2 =
   let a1, a2 = two (promote_dtypes_inexact [ a1; a2 ]) in
   let a1, a2 =
-    if trim_leading_zeros && ((shape a1).(0) > 1 || (shape a2).(0) > 1) then
+    if trim_leading_zeros && (py_len a1 > 1 || py_len a2 > 1) then
       (trim_front a1, trim_front a2)
     else (a1, a2)
   in
-  let a1 =
-    if (shape a1).(0) = 0 then const_full (dtype a2) [| 1 |] 0.0 else a1
-  in
-  let a2 =
-    if (shape a2).(0) = 0 then const_full (dtype a1) [| 1 |] 0.0 else a2
-  in
+  let a1 = if py_len a1 = 0 then const_full (dtype a2) [| 1 |] 0.0 else a1 in
+  let a2 = if py_len a2 = 0 then const_full (dtype a1) [| 1 |] 0.0 else a2 in
   NL.convolve ~mode:"full" a1 a2
 
 let poly a0 =

@@ -40,6 +40,15 @@ let matmul ?precision ?preferred a b =
   Eager_jit.one "numpy.tensor_contractions.matmul" (precision, preferred) []
     [ a; b ] (fun _ vals ->
       let a, b = match vals with [ a; b ] -> (a, b) | _ -> assert false in
+      let typeof v =
+        let aval = C.get_aval v in
+        Printf.sprintf "%s%s[%s]"
+          (if aval.T.weak_type then "~" else "")
+          (Dtype.numpy_name aval.T.dtype)
+          (String.concat ","
+             (List.map string_of_int (Array.to_list aval.T.shape)))
+      in
+      let a_type = typeof a and b_type = typeof b in
       let pdt = pref preferred [ a; b ] in
       let a = astype a pdt and b = astype b pdt in
       let na = ndim a and nb = ndim b in
@@ -94,7 +103,10 @@ let matmul ?precision ?preferred a b =
               push b_batch (len idx_batch + len idx_b);
               push idx_batch i
           | Some _, Some _ ->
-              Py_exn.value_error "Incompatible types for matmul arguments")
+              Py_exn.value_error
+                (Printf.sprintf
+                   "Incompatible types for matmul arguments: %s and %s" a_type
+                   b_type))
         (List.combine (pad a_dims) (pad b_dims));
       if a_is_mat then push idx_a num_batch;
       if b_is_mat then push idx_b (num_batch + if a_is_mat then 1 else 0);

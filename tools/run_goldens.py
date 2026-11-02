@@ -120,6 +120,7 @@ def main():
     parser.add_argument("--stall-timeout", type=float, default=0)
     parser.add_argument("--split-failed", action="store_true")
     parser.add_argument("--mem-limit-gb", type=float, default=0)
+    parser.add_argument("--failed-log", default=None)
     args = parser.parse_args()
 
     cwd = os.path.join(root, "_build/default/test/golden")
@@ -197,6 +198,15 @@ def main():
             if os.path.exists(part):
                 with open(part) as f:
                     merged.write(f.read())
+
+    if args.failed_log:
+        with open(args.failed_log, "w") as sink:
+            for index in failed:
+                with open(os.path.join(work, str(index), "out"), errors="replace") as f:
+                    for line in f:
+                        clean = ANSI.sub("", line)
+                        if "[FAIL]" in clean or "[failure]" in clean or "[exception]" in clean:
+                            sink.write(clean.strip()[:400] + "\n")
 
     for index in failed[:20]:
         group, low, high = jobs[index]

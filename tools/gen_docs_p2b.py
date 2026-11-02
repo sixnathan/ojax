@@ -37,6 +37,7 @@ POLY_CASES = ["parse", "parse_bad", "parse_bad2", "ge1", "ge2", "eq",
               "neg_ge", "sub_ge", "like", "like_bad", "gt_const", "le_self",
               "mod_sym", "cons_eq"]
 OOM_CASES = [("zeros", 40), ("zeros", 43), ("broadcast", 40), ("broadcast", 43)]
+DEVICE_CASES = ["cpu", "bogus", "", "CPU", "it's"]
 REUSE_CASES = ["twice_eager", "twice_jit", "consumed_eager", "consumed_jit",
                "split_once", "split_twice", "split_twice_jit", "bits_fold_in",
                "clone", "off_twice", "while_reuse", "cond_branches",
@@ -341,6 +342,13 @@ def oom_thunk(jax, jnp, kind, log2):
     return run
 
 
+def device_thunk(jax, jnp, name):
+    def run():
+        with jax.default_device(name):
+            return text_of(jnp.add(jnp.arange(3.0), 1.0))
+    return run
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -395,6 +403,10 @@ def main():
     for kind, log2 in OOM_CASES:
         add(run_case(jax, oom_thunk(jax, jnp, kind, log2)),
             id=f"oom_{kind}_{log2}", group="oom", case=kind, log2=log2)
+    for name in DEVICE_CASES:
+        add(run_case(jax, device_thunk(jax, jnp, name)),
+            id=f"device_{name.replace(chr(39), '_') or 'empty'}",
+            group="device", case=name)
     for name in REUSE_CASES:
         add(run_case(jax, reuse_thunk(jax, jnp, name)),
             id=f"reuse_{name}", group="reuse", case=name)

@@ -314,6 +314,13 @@ let oom_thunk kind log2 () =
   ignore (Ojax.Api.block_until_ready out);
   "allocated"
 
+let device_thunk name () =
+  Ojax.Api.default_device ~new_val:name () (fun () ->
+      Docs_p2.text_of
+        (F.add
+           (NL.arange ~dtype:(Docs_p2.float_dt ()) 3.0)
+           (Docs_p2.py_float 1.0)))
+
 let actual_of row =
   let thunk =
     match str row "group" with
@@ -326,6 +333,7 @@ let actual_of row =
     | "legacy" -> legacy_thunk (str row "mode") (str row "case")
     | "reuse" -> reuse_thunk (str row "case")
     | "poly" -> poly_thunk (str row "case")
+    | "device" -> device_thunk (str row "case")
     | "oom" -> oom_thunk (str row "case") (U.to_int (U.member "log2" row))
     | "signal" ->
         signal_thunk (str row "case") (str row "input")

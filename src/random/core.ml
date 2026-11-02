@@ -1662,7 +1662,7 @@ let check_float_dtype name dtype =
           (Py_exn.Value_error
              (Printf.sprintf
                 "dtype argument to `%s` must be a float dtype, got %s" name
-                (Dtype.short_name d)))
+                (Dtype.numpy_name d)))
 
 let check_inexact_dtype name dtype =
   match dtype with
@@ -1675,7 +1675,7 @@ let check_inexact_dtype name dtype =
              (Printf.sprintf
                 "dtype argument to `%s` must be a float or complex dtype, got \
                  %s"
-                name (Dtype.short_name d)))
+                name (Dtype.numpy_name d)))
 
 let check_randint_dtype dtype =
   match dtype with
@@ -1686,7 +1686,7 @@ let check_randint_dtype dtype =
         raise
           (Py_exn.Type_error
              (Printf.sprintf "randint only accepts integer dtypes, got %s"
-                (Dtype.short_name d)))
+                (Dtype.numpy_name d)))
 
 let check_geometric_dtype dtype =
   match dtype with
@@ -1698,7 +1698,7 @@ let check_geometric_dtype dtype =
           (Py_exn.Value_error
              (Printf.sprintf
                 "dtype argument to `geometric` must be an int dtype, got %s"
-                (Dtype.short_name d)))
+                (Dtype.numpy_name d)))
 
 let check_poisson_dtype dtype =
   match dtype with
@@ -1725,7 +1725,7 @@ let check_uint_dtype dtype =
       (Py_exn.Value_error
          (Printf.sprintf
             "dtype argument to `bits` must be an unsigned int dtype, got %s"
-            (Dtype.short_name d)))
+            (Dtype.numpy_name d)))
 
 let sampler ?(name = "jit-compiled function") k thunk =
   check_prng_key k;

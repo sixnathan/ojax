@@ -1256,15 +1256,16 @@ let eigh_tridiagonal ?(eigvals_only = false) ?(select = "a") ?select_range ?tol
          (Printf.sprintf
             "diagonal and off-diagonal values must have same dtype, got %s and \
              %s"
-            (D.short_name (dtype alpha))
-            (D.short_name (dtype beta))));
+            (D.numpy_name (dtype alpha))
+            (D.numpy_name (dtype beta))));
   (match dtype alpha with
   | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> ()
   | dt ->
       raise
         (Py_exn.Type_error
            ("Only float32 and float64 inputs are supported as inputs to \
-             jax.scipy.linalg.eigh_tridiagonal, got " ^ D.short_name dt)));
+             jax.scipy.linalg.eigh_tridiagonal, got " ^ D.numpy_name dt
+          ^ " and " ^ D.numpy_name dt)));
   let n = Validate.tuple_index (shape alpha) 0 in
   let solve_dtype = dtype alpha in
   let is_complex = is_complex_dt solve_dtype in

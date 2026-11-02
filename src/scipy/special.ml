@@ -885,7 +885,7 @@ let single_or_double x =
         (Py_exn.Type_error
            (Printf.sprintf
               "x.dtype=%s is not supported, see docstring for supported types."
-              (D.short_name d)))
+              (D.numpy_name d)))
 
 let eps_of v =
   match dtype v with
@@ -1822,7 +1822,7 @@ let spence x =
         (Py_exn.Type_error
            (Printf.sprintf
               "x.dtype=%s is not supported, see docstring for supported types."
-              (D.short_name d))));
+              (D.numpy_name d))));
   spence_body x
 
 let euler_gamma = 0.5772156649015329
@@ -3133,7 +3133,7 @@ let check_lpmn m n z =
       Py_exn.type_error
         (Printf.sprintf
            "z.dtype=%s is not supported, see docstring for supported types."
-           (D.short_name d)));
+           (D.numpy_name d)));
   if Array.length (shape z) <> 1 then Py_exn.value_error "z must be a 1D array.";
   if m <> n then
     raise

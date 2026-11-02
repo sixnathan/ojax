@@ -775,7 +775,7 @@ let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
         (Printf.sprintf
            "`preferred_element_type` must not be narrower than the original \
             type, got preferred_element_type of %s for result type of %s."
-           (Dtype.short_name p) (Dtype.short_name result))
+           (Dtype.numpy_name p) (Dtype.numpy_name result))
   | _ -> ());
   let out = Option.value preferred_element_type ~default:result in
   match precision with

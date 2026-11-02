@@ -239,6 +239,10 @@ let bincount_length length weights x =
 let nonzero ?size ?fill_value a =
   let sh = shape a in
   let n = Array.length sh in
+  if n = 0 then
+    invalid_arg
+      "Calling nonzero on 0d arrays is not allowed. Use \
+       jnp.atleast_1d(scalar).nonzero() instead.";
   let mask = nonzero_mask a in
   let count () = R.sum mask in
   let k =
@@ -252,8 +256,8 @@ let nonzero ?size ?fill_value a =
         int_of_float (Ndarray.get_f (host "nonzero" total) [||])
   in
   let int_dt = default_int () in
-  if k = 0 then
-    List.map (fun _ -> AC.zeros ~dtype:int_dt [| 0 |]) (Array.to_list sh)
+  if size_of a = 0 || k = 0 then
+    List.map (fun _ -> AC.zeros ~dtype:int_dt [| k |]) (Array.to_list sh)
   else begin
     let running = R.cumsum mask in
     let histogram =
@@ -311,21 +315,24 @@ let index_gather a idx =
   let r = Array.length sh in
   let m = rank idx in
   let indices = index_array ~extents:[ sh.(0) ] [ idx ] in
-  Core.bind1
-    (Gather
-       {
-         dimension_numbers =
-           {
-             offset_dims = Array.init (r - 1) (fun i -> m + i);
-             collapsed_slice_dims = [| 0 |];
-             start_index_map = [| 0 |];
-             g_operand_batching_dims = [||];
-             g_start_indices_batching_dims = [||];
-             g_sorted_unique = false;
-           };
-         slice_sizes = Array.mapi (fun i d -> if i = 0 then 1 else d) sh;
-       })
-    [ a; indices ]
+  let slice_shape = Array.append (shape idx) (Array.sub sh 1 (r - 1)) in
+  if Array.mem 0 slice_shape then L.full slice_shape 0.0 (dtype_of a)
+  else
+    Core.bind1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = Array.init (r - 1) (fun i -> m + i);
+               collapsed_slice_dims = [| 0 |];
+               start_index_map = [| 0 |];
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+               g_sorted_unique = false;
+             };
+           slice_sizes = Array.mapi (fun i d -> if i = 0 then 1 else d) sh;
+         })
+      [ a; indices ]
 
 let fancy_take x indices =
   let sh = shape x in
@@ -384,22 +391,24 @@ let leading_slice v start stop =
     [ v ]
 
 let at_leading_slice_set x start y =
-  let index =
-    L.broadcast_in_dim
-      (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
-      [| 1 |] [||]
-  in
-  let r = rank x in
-  L.scatter x index y
-    {
-      update_window_dims = Array.init r Fun.id;
-      inserted_window_dims = [||];
-      scatter_dims_to_operand_dims = [| 0 |];
-      s_operand_batching_dims = [||];
-      s_scatter_indices_batching_dims = [||];
-      s_sorted_unique = true;
-      s_clip = false;
-    }
+  if size_of y = 0 then x
+  else
+    let index =
+      L.broadcast_in_dim
+        (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
+        [| 1 |] [||]
+    in
+    let r = rank x in
+    L.scatter x index y
+      {
+        update_window_dims = Array.init r Fun.id;
+        inserted_window_dims = [||];
+        scatter_dims_to_operand_dims = [| 0 |];
+        s_operand_batching_dims = [||];
+        s_scatter_indices_batching_dims = [||];
+        s_sorted_unique = true;
+        s_clip = false;
+      }
 
 let unique_sorted_mask ar axis equal_nan =
   Jnp_util.jit "_unique_sorted_mask"
@@ -419,33 +428,39 @@ let unique_sorted_mask ar axis equal_nan =
           let row_len =
             Array.fold_left ( * ) 1 (Array.sub sh 1 (Array.length sh - 1))
           in
-          let perm =
-            Sorting.lexsort_array
-              (L.rev
-                 (NL.transpose (NL.reshape aux [| rows; row_len |]))
-                 [| 0 |])
+          let rows, perm =
+            if row_len = 0 then (1, L.full [| 1 |] 0.0 (default_int ()))
+            else
+              ( rows,
+                Sorting.lexsort_array
+                  (L.rev
+                     (NL.transpose (NL.reshape aux [| rows; row_len |]))
+                     [| 0 |]) )
           in
           let aux = index_gather aux perm in
-          let ones = L.full [| rows |] 1.0 Dtype.Bool in
-          let tail = leading_slice aux 1 rows in
-          let head = leading_slice aux 0 (rows - 1) in
-          let inexact =
-            Dtypes.isdtype (dtype_of aux) "numeric"
-            && not (Dtypes.isdtype (dtype_of aux) "integral")
-          in
-          let differs =
-            if inexact && equal_nan then
-              let ne = L.ne tail head in
-              let both = U.bitwise_and (U.isnan tail) (U.isnan head) in
-              U.bitwise_and ne (U.logical_not both)
-            else L.ne tail head
-          in
-          let any_diff =
-            R.any
-              ~axis:(Array.init (Array.length sh - 1) (fun i -> i + 1))
-              differs
-          in
-          [ aux; at_leading_slice_set ones 1 any_diff; perm ]
+          if size_of aux = 0 then
+            [ aux; L.full [| rows |] 0.0 Dtype.Bool; perm ]
+          else
+            let ones = L.full [| rows |] 1.0 Dtype.Bool in
+            let tail = leading_slice aux 1 rows in
+            let head = leading_slice aux 0 (rows - 1) in
+            let inexact =
+              Dtypes.isdtype (dtype_of aux) "numeric"
+              && not (Dtypes.isdtype (dtype_of aux) "integral")
+            in
+            let differs =
+              if inexact && equal_nan then
+                let ne = L.ne tail head in
+                let both = U.bitwise_and (U.isnan tail) (U.isnan head) in
+                U.bitwise_and ne (U.logical_not both)
+              else L.ne tail head
+            in
+            let any_diff =
+              R.any
+                ~axis:(Array.init (Array.length sh - 1) (fun i -> i + 1))
+                differs
+            in
+            [ aux; at_leading_slice_set ones 1 any_diff; perm ]
       | _ -> invalid_arg "unique: arity")
     [ ar ]
 
@@ -467,17 +482,26 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
   let reshape_inverse = axis = None in
   let arr = match axis with None -> NL.ravel a | Some _ -> a in
   let ax = match axis with None -> 0 | Some x -> canon (rank a) x in
+  if (shape arr).(ax) = 0 && size <> 0 && fill_value = None then
+    invalid_arg
+      "jnp.unique: for zero-sized input with nonzero size argument, fill_value \
+       must be specified";
   let aux, mask, perm =
     match unique_sorted_mask arr ax equal_nan with
     | [ aux; mask; perm ] -> (aux, mask, perm)
     | _ -> assert false
   in
   let mask_size = size_of mask in
+  let filled = size_of aux > 0 in
   let ind = List.hd (nonzero ~size mask) in
-  let result = index_gather aux ind in
+  let result = if filled then index_gather aux ind else aux in
   let result =
     match fill_value with
     | None -> result
+    | Some fv when (shape result).(0) = 0 ->
+        let sh = Array.copy (shape result) in
+        sh.(0) <- size;
+        L.full sh fv (dtype_of result)
     | Some fv ->
         let positions = NL.arange ~dtype:idt (float_of_int size) in
         let sum = R.sum mask in
@@ -492,18 +516,30 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
   in
   let values = if ax = 0 then result else NL.moveaxis [| 0 |] [| ax |] result in
   let empty = ints_value idt [| 0 |] [||] in
-  let indices = if flags.want_index then index_gather perm ind else empty in
+  let indices =
+    if not flags.want_index then empty
+    else if filled then index_gather perm ind
+    else perm
+  in
   let inverse =
     if flags.want_inverse then begin
-      let imask = U.subtract (R.cumsum mask) (Jnp_util.py_int 1) in
-      let zeros = L.full (shape mask) 0.0 idt in
-      let inv = at_set zeros [ perm ] imask in
+      let inv =
+        if filled then
+          let imask = U.subtract (R.cumsum mask) (Jnp_util.py_int 1) in
+          let zeros = L.full (shape mask) 0.0 idt in
+          at_set zeros [ perm ] imask
+        else L.full [| (shape arr).(ax) |] 0.0 idt
+      in
       if reshape_inverse then NL.reshape inv (shape a) else inv
     end
     else empty
   in
   let counts =
-    if flags.want_counts then begin
+    if flags.want_counts && not filled then
+      let n = (shape arr).(ax) in
+      if n <> 0 then L.full [| 1 |] (float_of_int n) idt
+      else L.full [| 0 |] 0.0 idt
+    else if flags.want_counts then begin
       let idx = List.hd (nonzero ~size:(size + 1) mask) in
       let tail = leading_slice idx 1 (size + 1) in
       let tail' = leading_slice idx 1 (size + 1) in
@@ -521,8 +557,7 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
   match size with
   | _ when is_complex_value a && axis = None ->
       unique_complex ?size ?fill_value a
-  | Some size when size_of a > 0 ->
-      traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
+  | Some size -> traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
   | _ ->
       let fill_value = Option.value fill_value ~default:0.0 in
       let nd = host "unique" a in

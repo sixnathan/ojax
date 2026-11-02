@@ -1569,20 +1569,36 @@ let emit_gather ctx (eqn : eqn) in_ids dnums slice_sizes =
   in
   let ivd = Array.length idx_av.shape - 1 in
   let out = sole eqn.outs in
-  let n = bind_var ctx out in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf
-       "    %s = \"stablehlo.gather\"(%s, %s) <{dimension_numbers = %s, \
-        indices_are_sorted = %b, slice_sizes = %s}> : (%s, %s) -> %s\n"
-       (name n) (name op_id) (name idx_id)
-       (gather_dnums_attr dnums ivd)
-       (dnums.g_sorted_unique
-       || Np_ints.gather_clip_of eqn.prim = Some true
-       || Option.fold ~none:false ~some:fst (Np_ints.gather_flags_of eqn.prim))
-       (array_i64 slice_sizes)
-       (Ir.tensor_type_of_aval op_av)
-       (Ir.tensor_type_of_aval idx_av)
-       (Ir.tensor_type_of_aval out.vaval))
+  if Array.mem 0 out.vaval.shape then begin
+    let dt = out.vaval.dtype in
+    let sty = Ir.tensor_type dt [||] in
+    let c = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s = stablehlo.constant %s : %s\n" (name c)
+         (reduce_zero dt) sty);
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = stablehlo.broadcast_in_dim %s, dims = [] : (%s) -> %s\n"
+         (name n) (name c) sty
+         (Ir.tensor_type_of_aval out.vaval))
+  end
+  else
+    let n = bind_var ctx out in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = \"stablehlo.gather\"(%s, %s) <{dimension_numbers = %s, \
+          indices_are_sorted = %b, slice_sizes = %s}> : (%s, %s) -> %s\n"
+         (name n) (name op_id) (name idx_id)
+         (gather_dnums_attr dnums ivd)
+         (dnums.g_sorted_unique
+         || Np_ints.gather_clip_of eqn.prim = Some true
+         || Option.fold ~none:false ~some:fst (Np_ints.gather_flags_of eqn.prim)
+         )
+         (array_i64 slice_sizes)
+         (Ir.tensor_type_of_aval op_av)
+         (Ir.tensor_type_of_aval idx_av)
+         (Ir.tensor_type_of_aval out.vaval))
 
 let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
   let op_id, idx_id, upd_id =

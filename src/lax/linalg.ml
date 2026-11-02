@@ -967,21 +967,23 @@ let take_rows x indices m rest =
       (Broadcast_in_dim { shape = [| m; 1 |]; dims = [| 0 |] })
       [ idx0 ]
   in
-  Core.bind1
-    (Gather
-       {
-         dimension_numbers =
-           {
-             offset_dims = [| 1 |];
-             collapsed_slice_dims = [| 0 |];
-             start_index_map = [| 0 |];
-             g_operand_batching_dims = [||];
-             g_start_indices_batching_dims = [||];
-             g_sorted_unique = false;
-           };
-         slice_sizes = [| 1; rest |];
-       })
-    [ x; idx ]
+  if m = 0 || rest = 0 then Core.splat (Core.get_aval x).dtype [| m; rest |] 0.0
+  else
+    Core.bind1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = [| 1 |];
+               collapsed_slice_dims = [| 0 |];
+               start_index_map = [| 0 |];
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+               g_sorted_unique = false;
+             };
+           slice_sizes = [| 1; rest |];
+         })
+      [ x; idx ]
 
 let lu_solve_core ~transpose lu permutation b =
   let m = (Core.get_aval lu).shape.(0) in

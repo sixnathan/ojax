@@ -1570,7 +1570,9 @@ let array_equiv a b =
   | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
 
 let arange ?(start = 0.0) ?step ~dtype stop =
-  let dtype = Dtypes.canonicalize_dtype dtype in
+  let dtype =
+    Dtypes.check_and_canonicalize_user_dtype ~fun_name:"arange" dtype
+  in
   match step with
   | Some step ->
       let working =

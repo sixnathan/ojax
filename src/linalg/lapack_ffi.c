@@ -574,6 +574,10 @@ ENTER(h_host_callback)
   return NULL;
 }
 
+ENTER(h_dce_sink)
+  return NULL;
+}
+
 CAMLprim value ojax_lapack_ffi_handler(value v_name) {
   CAMLparam1(v_name);
   CAMLlocal1(result);
@@ -587,7 +591,8 @@ CAMLprim value ojax_lapack_ffi_handler(value v_name) {
                {"geev", h_geev},   {"gees", h_gees},   {"gehrd", h_gehrd},
                {"sytrd", h_sytrd}, {"trsm", h_trsm},   {"gtsv", h_gtsv},
                {"tridiagonal_perturbed", h_tridiagonal_perturbed},
-               {"host_callback", h_host_callback}};
+               {"host_callback", h_host_callback},
+               {"dce_sink", h_dce_sink}};
   for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
     if (strcmp(table[i].name, name) == 0) {
       result = caml_copy_nativeint((intnat)table[i].fn);

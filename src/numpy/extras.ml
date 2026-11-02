@@ -2644,19 +2644,14 @@ let roots ?(strip_zeros = true) p =
   if n < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
   else if not strip_zeros then roots_of_coefficients p
   else begin
-    let nd = host "roots" p in
-    let nonzero i =
-      match real_dt with
-      | Dtype.Complex64 | Dtype.Complex128 ->
-          Ndarray.get_c nd [| i |] <> Complex.zero
-      | _ -> Ndarray.get_f nd [| i |] <> 0.0
+    (match p with Tracer _ -> ignore (host "roots" p) | _ -> ());
+    let is_zero = U.equal p (Jnp_util.py_int 0) in
+    let count =
+      NL.where_ (R.all is_zero) (Jnp_util.py_int n) (NL.argmin is_zero)
     in
-    let lead = ref 0 in
-    while !lead < n && not (nonzero !lead) do
-      incr lead
-    done;
-    if n - !lead < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
-    else roots_of_coefficients (L.slice_in_dim ~axis:0 p !lead n)
+    let lead = int_of_float (Ndarray.get_f (host "roots" count) [||]) in
+    if n - lead < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
+    else roots_of_coefficients (L.slice_in_dim ~axis:0 p lead n)
   end
 
 let fromfunction f shape_ ~dtype =

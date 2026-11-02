@@ -320,8 +320,9 @@ let int_seed v =
   in
   T.Concrete (Ojax.Ndarray.of_floats dt [||] [| v |])
 
-let random_thunk name =
+let random_thunk ?(seed = 0.0) name =
   let module R = Ojax.Random.Core in
+  let int_seed v = int_seed (v +. seed) in
   match name with
   | "key_data" -> fun () -> [ R.key_data (R.key (int_seed 11.0)) ]
   | "prng_key" -> fun () -> [ R.prng_key (int_seed 11.0) ]
@@ -336,7 +337,10 @@ let random_thunk name =
       fun () ->
         jit1
           (fun s -> leaf (R.key_data (R.key s)))
-          [ T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| 11.0 |]) ]
+          [
+            T.Concrete
+              (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| 11.0 +. seed |]);
+          ]
   | "gumbel" -> fun () -> [ R.gumbel (R.key (int_seed 1.0)) ~shape:[| 5 |] ]
   | "gumbel_f64" ->
       fun () ->
@@ -498,10 +502,10 @@ let scaled shape offset factor =
        (Array.init n (fun i ->
             f32 (float_of_int ((i mod 5) + 1 + offset) *. factor))))
 
-let user_dtype_thunk name dtype () =
+let user_dtype_thunk name dtype seed () =
   let module R = Ojax.Random.Core in
   let module X = Ojax.Random_extras in
-  let k = R.key (int_seed 1.0) in
+  let k = R.key (int_seed seed) in
   let s = [| 3 |] in
   [
     (match name with
@@ -639,7 +643,12 @@ let actual_of row =
   | "random" ->
       let arg = U.to_string (U.member "arg" row) in
       let offset = Option.value (int_of_string_opt arg) ~default:0 in
-      let thunk = random_thunk (U.to_string (U.member "case" row)) in
+      let seed =
+        match U.member "seed" row with
+        | `Null -> 0.0
+        | v -> float_of_int (U.to_int v)
+      in
+      let thunk = random_thunk ~seed (U.to_string (U.member "case" row)) in
       Ojax.Config.with_value Ojax.Config.random_seed_offset offset (fun () ->
           Ojax.Config.with_value Ojax.Config.high_dynamic_range_gumbel
             (arg = "high") (fun () -> run_case thunk))
@@ -693,7 +702,12 @@ let actual_of row =
         Option.get
           (Ojax.Dtype.of_numpy_name (U.to_string (U.member "dtype" row)))
       in
-      run_case (user_dtype_thunk (U.to_string (U.member "fn" row)) dtype)
+      let seed =
+        match U.member "seed" row with
+        | `Null -> 1.0
+        | v -> float_of_int (U.to_int v)
+      in
+      run_case (user_dtype_thunk (U.to_string (U.member "fn" row)) dtype seed)
   | "text" ->
       let thunk = text_thunk (U.to_string (U.member "case" row)) in
       let text = ref "" in

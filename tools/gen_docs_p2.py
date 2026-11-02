@@ -49,6 +49,9 @@ X64WARN_CASES = [
     ("geomspace", "float64"), ("zeros", "uint64"), ("ones", "float32"),
     ("full_like", "int32"),
 ]
+DEFAULT_SEED = 0
+BASE = {}
+
 AOT_CASES = ["sin_dot", "add", "reduce", "exp_log", "matmul", "cumsum",
              "where", "int_mul", "two_out", "tanh_big"]
 
@@ -191,8 +194,34 @@ def dprint_body(jax, jnp, name):
     return body
 
 
+def base_x(jnp):
+    if "x" in BASE:
+        return jnp.asarray(BASE["x"], dtype=jnp.arange(3.0).dtype)
+    return jnp.arange(3.0)
+
+
+def base_m(jnp):
+    if "m" in BASE:
+        return jnp.asarray(BASE["m"], dtype=jnp.arange(3.0).dtype)
+    return jnp.arange(6.0).reshape(2, 3)
+
+
+def set_base(seed):
+    BASE.clear()
+    if seed != DEFAULT_SEED:
+        rng = np.random.default_rng([seed, 2])
+        BASE["x"] = [float(v) / 4 for v in rng.integers(-12, 17, 3)]
+        BASE["m"] = [[float(v) / 4 for v in r]
+                     for r in rng.integers(-12, 17, (2, 3))]
+
+
+def with_base(row):
+    row.update(BASE)
+    return row
+
+
 def dprint_thunk(jax, jnp, name, mode):
-    x = jnp.arange(3.0)
+    x = base_x(jnp)
     body = dprint_body(jax, jnp, name)
     if mode == "eager":
         return lambda: (body(x), "")[1]
@@ -241,8 +270,8 @@ def static_index_thunk(jax, jnp, name, mode, flag):
 def xform_thunk(jax, jnp, name, mode):
     p = jax.debug.print
     lax = jax.lax
-    x = jnp.arange(3.0)
-    m = jnp.arange(6.0).reshape(2, 3)
+    x = base_x(jnp)
+    m = base_m(jnp)
 
     def run():
         if name == "vmap":
@@ -470,29 +499,31 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--x64", action="store_true")
+    ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = ap.parse_args()
     import jax
     jax.config.update("jax_enable_x64", args.x64)
     import jax.numpy as jnp
+    set_base(args.seed)
     rows = []
     for name in DPRINT_CASES:
         for mode in DPRINT_MODES:
             r = run_case(jax, dprint_thunk(jax, jnp, name, mode))
             r.update({"id": f"dprint_{name}_{mode}", "group": "dprint",
                       "case": name, "mode": mode})
-            rows.append(r)
+            rows.append(with_base(r))
     for name in DPRINT_EXTRA:
         for mode in ["eager", "jit", "jaxpr"]:
             r = run_case(jax, dprint_thunk(jax, jnp, name, mode))
             r.update({"id": f"dprint_{name}_{mode}", "group": "dprint",
                       "case": name, "mode": mode})
-            rows.append(r)
+            rows.append(with_base(r))
     for name in DPRINT_XFORMS:
         for mode in ["eager", "jit", "jaxpr"]:
             r = run_case(jax, xform_thunk(jax, jnp, name, mode))
             r.update({"id": f"dprint_x_{name}_{mode}", "group": "dprint_x",
                       "case": name, "mode": mode})
-            rows.append(r)
+            rows.append(with_base(r))
     for name in DPRINT_ERRORS:
         for mode in ["eager", "jit"]:
             if name == "spec_on_array" and mode == "jit":
@@ -500,7 +531,7 @@ def main():
             r = run_case(jax, dprint_thunk(jax, jnp, name, mode))
             r.update({"id": f"dprint_{name}_{mode}", "group": "dprint",
                       "case": name, "mode": mode})
-            rows.append(r)
+            rows.append(with_base(r))
     for name, mode in STATIC_INDEX_CASES:
         for flag in [True, False]:
             r = run_case(jax, static_index_thunk(jax, jnp, name, mode, flag))

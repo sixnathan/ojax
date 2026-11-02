@@ -206,8 +206,31 @@ let one f = function
   | [ Ojax.Tree_util.Leaf a ] -> f a
   | _ -> failwith "docs_p2: arity"
 
-let dprint_thunk name mode () =
-  let x = Ojax.Numpy.Lax_numpy.arange ~dtype:(float_dt ()) 3.0 in
+let base_of row key shape default =
+  match U.member key row with
+  | `Null -> default ()
+  | v ->
+      let vals =
+        List.concat_map
+          (function
+            | `List r -> List.map U.to_number r | j -> [ U.to_number j ])
+          (U.to_list v)
+      in
+      T.Concrete
+        (Ojax.Ndarray.of_floats (float_dt ()) shape (Array.of_list vals))
+
+let base_x row =
+  base_of row "x" [| 3 |] (fun () ->
+      Ojax.Numpy.Lax_numpy.arange ~dtype:(float_dt ()) 3.0)
+
+let base_m row =
+  base_of row "m" [| 2; 3 |] (fun () ->
+      Ojax.Numpy.Lax_numpy.reshape
+        (Ojax.Numpy.Lax_numpy.arange ~dtype:(float_dt ()) 6.0)
+        [| 2; 3 |])
+
+let dprint_thunk row name mode () =
+  let x = base_x row in
   let body = one (fun a -> leaf (dprint_body name a)) in
   match mode with
   | "eager" ->
@@ -224,14 +247,10 @@ let dprint_thunk name mode () =
       Ojax.Stages.as_text (wrapped.Ojax.Stages.wrapped_lower [ leaf x ])
   | other -> failwith ("docs_p2: unknown mode " ^ other)
 
-let xform_thunk name mode () =
+let xform_thunk row name mode () =
   let p = Ojax.Debugging.print in
-  let x = Ojax.Numpy.Lax_numpy.arange ~dtype:(float_dt ()) 3.0 in
-  let m =
-    Ojax.Numpy.Lax_numpy.reshape
-      (Ojax.Numpy.Lax_numpy.arange ~dtype:(float_dt ()) 6.0)
-      [| 2; 3 |]
-  in
+  let x = base_x row in
+  let m = base_m row in
   let fn, arg =
     match name with
     | "vmap" ->
@@ -729,12 +748,12 @@ let actual_of row =
   match U.to_string (U.member "group" row) with
   | "dprint" ->
       run_case
-        (dprint_thunk
+        (dprint_thunk row
            (U.to_string (U.member "case" row))
            (U.to_string (U.member "mode" row)))
   | "dprint_x" ->
       run_case
-        (xform_thunk
+        (xform_thunk row
            (U.to_string (U.member "case" row))
            (U.to_string (U.member "mode" row)))
   | "ufunc_at" ->

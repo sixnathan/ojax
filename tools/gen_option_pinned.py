@@ -36,6 +36,8 @@ PINNED = [
     (80917353, "lax.conv_general_dilated_patches_eb394909_float64"),
     (80917353, "lax.conv_general_dilated_patches_60254602_float64"),
     (66338877, "lax.conv_general_dilated_patches_c26d4119_float64"),
+    (93518027, "jnp.unique_inverse_26ce29c6_float32"),
+    (93518027, "lax.conv_with_general_padding_934d5428_float32"),
 ]
 
 

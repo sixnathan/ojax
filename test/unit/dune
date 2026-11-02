@@ -38,6 +38,7 @@
   test_api
   test_api_transforms
   test_random_traced
+  test_threefry_host
   test_runtime_surface
   test_runtime_flags
   test_numpy_io

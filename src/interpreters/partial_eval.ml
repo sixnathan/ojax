@@ -545,17 +545,22 @@ let scan_partial_eval trace ~length ~reverse ~unroll ~num_consts ~num_carry
     @ List.map value_of known_xs
   in
   let known_results =
-    Core.bind
-      (Scan
-         {
-           length;
-           reverse;
-           num_consts = n_known_consts;
-           num_carry = n_known_carry;
-           jaxpr = known_body;
-           unroll;
-         })
-      known_ins
+    if
+      known_body.jaxpr.outs = []
+      && not (List.exists Jaxpr.eqn_has_effect known_body.jaxpr.eqns)
+    then []
+    else
+      Core.bind
+        (Scan
+           {
+             length;
+             reverse;
+             num_consts = n_known_consts;
+             num_carry = n_known_carry;
+             jaxpr = known_body;
+             unroll;
+           })
+        known_ins
   in
   let known_carry_out, r1 = split_at known_results n_known_carry in
   let n_known_ys = List.length (List.filter is_known ys_out_pv) in

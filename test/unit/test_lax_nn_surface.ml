@@ -133,7 +133,10 @@ let raises name sub f =
       ( Invalid_argument msg
       | Failure msg
       | Ojax.Py_exn.Value_error msg
-      | Ojax.Py_exn.Type_error msg ) ->
+      | Ojax.Py_exn.Type_error msg
+      | Ojax.Py_exn.Index_error msg
+      | Ojax.Py_exn.Key_error msg
+      | Ojax.Py_exn.Not_implemented_error msg ) ->
       if not (contains msg sub) then
         Alcotest.failf "%s: unexpected message %s" name msg
 

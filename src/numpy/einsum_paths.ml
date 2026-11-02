@@ -16,7 +16,8 @@ let optimize_of_string s =
   | "branch-all" -> Branch_all
   | "branch-2" -> Branch_2
   | "branch-1" -> Branch_1
-  | other -> invalid_arg (Printf.sprintf "Path optimizer '%s' not found." other)
+  | other ->
+      Py_exn.key_error (Printf.sprintf "Path optimizer '%s' not found." other)
 
 type contraction = {
   positions : int list;
@@ -413,7 +414,7 @@ let parse subscripts shapes =
       count_char s '-' <> 1
       || count_char s '>' <> 1
       || snd (split_arrow s) = None
-    then invalid_arg "Subscripts can only contain one '->'."
+    then Py_exn.value_error "Subscripts can only contain one '->'."
     end;
   let input_part, output_part = split_arrow s in
   let terms = String.split_on_char ',' input_part in
@@ -438,7 +439,8 @@ let parse subscripts shapes =
               let width = Array.length (List.nth shapes num) in
               let count = width - (String.length term - 3) in
               if count > !longest then longest := count;
-              if count < 0 then invalid_arg "Ellipses lengths do not match.";
+              if count < 0 then
+                Py_exn.value_error "Ellipses lengths do not match.";
               let last = String.sub ellipse (widest - count) count in
               replace_dots term last
             end)
@@ -458,16 +460,16 @@ let parse subscripts shapes =
   List.iter
     (fun c ->
       if count_char output_term c <> 1 then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "Output character '%c' appeared more than once in the output." c);
       if not (mem input_terms c) then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf "Output character '%c' did not appear in the input" c))
     (chars output_term);
   let count = List.length (String.split_on_char ',' input_terms) in
   if count <> List.length shapes then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "Number of einsum subscripts, %d, must be equal to the number of \
           operands, %d."
@@ -545,7 +547,7 @@ let collect_sizes terms shapes =
               sizes :=
                 List.map (fun (k, v) -> (k, if k = c then dim else v)) !sizes
           | Some prior when dim <> 1 && dim <> prior ->
-              invalid_arg
+              Py_exn.value_error
                 (Printf.sprintf
                    "Size of label '%c' for operand %d (%d) does not match \
                     previous terms (%d)."

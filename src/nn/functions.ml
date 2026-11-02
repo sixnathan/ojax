@@ -26,7 +26,7 @@ let to_inexact = function
   | D.Uint4 ->
       D.F32
   | (D.I2 | D.Uint2) as narrow -> narrow
-  | D.Float0 -> invalid_arg "float0 has no inexact dtype"
+  | D.Float0 -> Py_exn.type_error "float0 has no inexact dtype"
   | D.I64 | D.Uint64 -> D.F64
   | (D.Complex64 | D.Complex128) as c -> c
 
@@ -331,7 +331,7 @@ let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
                  (RED.mean ~axis:ax ~keepdims:true ?where:mask (UF.square x))
                  (UF.square mean))
         | a ->
-            invalid_arg
+            Py_exn.value_error
               ("Unknown algorithm '" ^ a ^ "'. Expected 'fast' or 'stable'."))
   in
   UF.multiply (UF.subtract x mean)
@@ -408,7 +408,7 @@ let get_scaled_dot_general_config ?global_scale mode =
         global_scale = None;
         infer_only = false;
       }
-  | other -> invalid_arg (Printf.sprintf "Unsupported mode: %s" other)
+  | other -> Py_exn.value_error (Printf.sprintf "Unsupported mode: %s" other)
 
 let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch a b =
@@ -417,8 +417,9 @@ let scaled_dot_general ?(preferred_element_type = D.F32) ?configs ~lhs_contract
       (match preferred_element_type with
       | D.F32 | D.Bf16 | D.F16 -> ()
       | _ ->
-          invalid_arg "Only support preferred_element_type in (f32, bf16, f16)");
-      failwith
+          Py_exn.value_error
+            "Only support preferred_element_type in (f32, bf16, f16)");
+      Py_exn.not_implemented_error
         "MLIR translation rule for primitive 'scaled_matmul' not found for \
          platform cpu"
   | None -> ());
@@ -433,23 +434,25 @@ let scaled_matmul ?(preferred_element_type = D.F32) lhs rhs lhs_scales
       (fun v -> Array.length (dims v) <> 3)
       [ lhs; rhs; lhs_scales; rhs_scales ]
   then
-    invalid_arg "scaled_matmul requires all inputs to be 3-dimensional arrays";
+    Py_exn.value_error
+      "scaled_matmul requires all inputs to be 3-dimensional arrays";
   let sa = dims lhs and sb = dims rhs in
   if sa.(2) <> sb.(2) || sa.(0) <> sb.(0) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires inputs a and b to have matching batch (B) and \
        contract (K) dimensions";
   let ssa = dims lhs_scales and ssb = dims rhs_scales in
   if ssa.(2) <> ssb.(2) || ssa.(0) <> ssb.(0) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires scales to have matching batch (B) and contract \
        (K) dimensions";
   if ssa.(1) <> sa.(1) || ssb.(1) <> sb.(1) then
-    invalid_arg
+    Py_exn.value_error
       "scaled_matmul requires scales to match non-contract dimensions of inputs";
   let k = sa.(2) in
   if ssa.(2) = 0 || k mod ssa.(2) <> 0 then
-    invalid_arg "scaled_matmul requires K to be divisible by the scale blocks";
+    Py_exn.value_error
+      "scaled_matmul requires K to be divisible by the scale blocks";
   let block = k / ssa.(2) in
   let scaled operand scales =
     let sh = dims scales in
@@ -517,7 +520,7 @@ let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
   let b, t, n, h = (q_shape.(0), q_shape.(1), q_shape.(2), q_shape.(3)) in
   let k = k_shape.(2) in
   if n mod k <> 0 then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "The number of query heads must be a multiple of key/value heads, but \
           got %d vs %d"

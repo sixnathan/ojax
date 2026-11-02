@@ -94,7 +94,7 @@ let matmul ?precision ?preferred a b =
               push b_batch (len idx_batch + len idx_b);
               push idx_batch i
           | Some _, Some _ ->
-              invalid_arg "Incompatible types for matmul arguments")
+              Py_exn.value_error "Incompatible types for matmul arguments")
         (List.combine (pad a_dims) (pad b_dims));
       if a_is_mat then push idx_a num_batch;
       if b_is_mat then push idx_b (num_batch + if a_is_mat then 1 else 0);
@@ -168,8 +168,6 @@ let vecdot ?(axis = -1) ?precision ?preferred x1 x2 =
 
 type td_axes = Ax_int of int | Ax_pair of int array * int array
 
-let canon i n = if i < 0 then i + n else i
-
 let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
   let pdt = pref preferred [ a; b ] in
   let a = astype a pdt and b = astype b pdt in
@@ -178,13 +176,24 @@ let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
     match axes with
     | Ax_int k ->
         if k > min na nb then
-          Py_exn.type_error "tensordot: number of axes exceeds input ranks";
+          Py_exn.type_error
+            (Printf.sprintf
+               "Number of tensordot axes (axes %d) exceeds input ranks (%s and \
+                %s)"
+               k
+               (Validate.python_tuple (shape a))
+               (Validate.python_tuple (shape b)));
         (Array.init k (fun i -> na - k + i), Array.init k Fun.id)
     | Ax_pair (ax1, ax2) ->
         if Array.length ax1 <> Array.length ax2 then
-          invalid_arg "tensordot: axes lists must have equal length";
-        ( Array.map (fun i -> canon i na) ax1,
-          Array.map (fun i -> canon i nb) ax2 )
+          Py_exn.type_error
+            (Printf.sprintf
+               "tensordot requires axes lists to have equal length, got %s and \
+                %s."
+               (Validate.python_tuple ax1)
+               (Validate.python_tuple ax2));
+        ( Array.map (fun i -> Validate.canonicalize_axis i na) ax1,
+          Array.map (fun i -> Validate.canonicalize_axis i nb) ax2 )
   in
   dot_general ?precision lc rc [||] [||] a b
 

@@ -23,7 +23,7 @@ let to_inexact_dtype = function
   | D.Uint4 ->
       D.F32
   | (D.I2 | D.Uint2) as narrow -> narrow
-  | D.Float0 -> invalid_arg "float0 has no inexact dtype"
+  | D.Float0 -> Py_exn.type_error "float0 has no inexact dtype"
   | D.I64 | D.Uint64 -> D.F64
   | (D.Complex64 | D.Complex128) as c -> c
 
@@ -241,7 +241,9 @@ let spacing x =
   let a = p1 (promote_inexact [ x ]) in
   if
     Dtypes.issubdtype (dtype a) `Floating && Dtypes.itemsize_bits (dtype a) < 16
-  then failwith "jax.numpy.signbit only supports 16, 32, and 64-bit types.";
+  then
+    Py_exn.not_implemented_error
+      "jax.numpy.signbit only supports 16, 32, and 64-bit types.";
   let dt = dtype a and sh = shape a in
   if dt = D.F16 then
     bind1 T.Sub [ bind1 T.Nextafter [ a; const_full dt sh infinity ]; a ]
@@ -519,15 +521,23 @@ let signbit_body x =
       let i = bind1 (T.Bitcast_convert_type D.I16) [ a ] in
       let s = bind1 T.Shift_right_arithmetic [ i; const_full D.I16 sh 15.0 ] in
       bind1 (T.Convert_element_type D.Bool) [ s ]
-  | D.Float0 -> invalid_arg "signbit does not accept float0"
+  | D.Float0 ->
+      Py_exn.type_error
+        "Called signbit with a float0 array. float0s do not support any \
+         operations by design because they are not compatible with non-trivial \
+         vector spaces. No implicit dtype conversion is done. You can use \
+         np.zeros_like(arr, dtype=np.float) to cast a float0 array to a \
+         regular zeros array but probably you don't want to do this."
   | D.F4_e2m1fn | D.F6_e2m3fn | D.F6_e3m2fn | D.F8_e3m4 | D.F8_e4m3
   | D.F8_e4m3b11fnuz | D.F8_e4m3fn | D.F8_e4m3fnuz | D.F8_e5m2 | D.F8_e5m2fnuz
   | D.F8_e8m0fnu ->
-      failwith "jax.numpy.signbit only supports 16, 32, and 64-bit types."
+      Py_exn.not_implemented_error
+        "jax.numpy.signbit only supports 16, 32, and 64-bit types."
   | D.Bool | D.Uint32 | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint64 ->
       array_full D.Bool sh 0.0
-  | D.Complex64 | D.Complex128 ->
-      invalid_arg "signbit: complex dtype unsupported"
+  | (D.Complex64 | D.Complex128) as dt ->
+      Py_exn.value_error
+        ("jax.numpy.signbit is not well defined for " ^ D.numpy_name dt)
   | D.F32 ->
       let i = bind1 (T.Bitcast_convert_type D.I32) [ a ] in
       let s = bind1 T.Shift_right_arithmetic [ i; const_full D.I32 sh 31.0 ] in
@@ -580,7 +590,8 @@ let isnan x = bind1 T.Ne [ x; x ]
 let isposinf x =
   match dtype x with
   | D.Complex64 | D.Complex128 ->
-      invalid_arg "isposinf/isneginf are not well defined for complex types"
+      Py_exn.value_error
+        "isposinf/isneginf are not well defined for complex types"
   | d when Dtypes.issubdtype d `Floating ->
       bind1 T.Eq [ x; const_full (dtype x) (shape x) infinity ]
   | _ -> array_full D.Bool (shape x) 0.0
@@ -588,7 +599,8 @@ let isposinf x =
 let isneginf x =
   match dtype x with
   | D.Complex64 | D.Complex128 ->
-      invalid_arg "isposinf/isneginf are not well defined for complex types"
+      Py_exn.value_error
+        "isposinf/isneginf are not well defined for complex types"
   | d when Dtypes.issubdtype d `Floating ->
       bind1 T.Eq [ x; const_full (dtype x) (shape x) neg_infinity ]
   | _ -> array_full D.Bool (shape x) 0.0
@@ -605,7 +617,7 @@ let hypot x1 x2 =
   let a0, b0 = p2 (promote_inexact [ x1; x2 ]) in
   (match dtype a0 with
   | D.Complex64 | D.Complex128 ->
-      invalid_arg
+      Py_exn.value_error
         "jnp.hypot is not well defined for complex-valued inputs. Please \
          convert to real values first, such as by using abs(x)"
   | _ -> ());

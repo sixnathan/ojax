@@ -134,7 +134,8 @@ let polysub p0 p1 =
     [ p0; p1 ]
 
 let polyint ?(m = 1) ?k p =
-  if m < 0 then invalid_arg "polyint: order of integral must be non-negative";
+  if m < 0 then
+    Py_exn.value_error "Order of integral must be positive (see polyder)";
   let k = match k with Some k -> k | None -> scalar D.I32 0.0 in
   let p =
     if dtype p = D.Bool then
@@ -153,7 +154,8 @@ let polyint ?(m = 1) ?k p =
       else k
     in
     if (shape k).(0) <> m then
-      invalid_arg "polyint: k must be a scalar or a rank-1 array of length m";
+      Py_exn.value_error
+        "k must be a scalar or a rank-1 array of length 1 or m.";
     let grid_a =
       NL.expand_dims (NL.arange ~dtype:dt (float_of_int (np_ + m))) [| 0 |]
     in
@@ -183,7 +185,7 @@ let polyint ?m ?k p0 =
       [ p0 ]
 
 let polyder ?(m = 1) p =
-  if m < 0 then invalid_arg "polyder: order of derivative must be non-negative";
+  if m < 0 then Py_exn.value_error "Order of derivative must be positive";
   let p = List.hd (promote_dtypes_inexact [ p ]) in
   if m = 0 then p
   else begin
@@ -249,7 +251,10 @@ let poly p0 =
 let trim_front v =
   match v with
   | T.Tracer _ ->
-      invalid_arg "polymul: trim_leading_zeros needs a concrete array"
+      raise
+        (Py_exn.Concretization_type_error
+           "Abstract tracer value encountered where concrete value is expected\n\
+            Error arose in the `filt` argument of trim_zeros()")
   | _ ->
       let n = (shape v).(0) in
       let nd =

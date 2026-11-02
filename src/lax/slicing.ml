@@ -2,7 +2,96 @@ open Types
 
 let resolve_strides n = function Some s -> s | None -> Array.make n 1
 
+let type_error fmt =
+  Printf.ksprintf (fun msg -> raise (Errors.Jax_type_error msg)) fmt
+
+let all_ge a b =
+  let n = Stdlib.min (Array.length a) (Array.length b) in
+  let ok = ref true in
+  for i = 0 to n - 1 do
+    if a.(i) < b.(i) then ok := false
+  done;
+  !ok
+
+let check_slice start_indices limit_indices strides ishape =
+  let t = Utils.py_tuple in
+  Utils.check_shapelike "slice" "start_indices" start_indices;
+  Utils.check_shapelike "slice" "limit_indices" limit_indices;
+  let n = Array.length ishape in
+  if n <> Array.length start_indices then
+    type_error
+      "slice start_indices must have length equal to the number of dimensions \
+       of the operand, got indices %s for operand shape %s."
+      (t start_indices) (t ishape);
+  if Array.length start_indices <> Array.length limit_indices then
+    type_error
+      "slice limit_indices must have the same length as start_indices, got \
+       start_indices %s and limit_indices %s."
+      (t start_indices) (t limit_indices);
+  if not (all_ge ishape limit_indices) then
+    type_error
+      "slice limit_indices must be less than or equal to operand shape, got \
+       limit_indices %s for operand shape %s."
+      (t limit_indices) (t ishape);
+  if not (all_ge limit_indices start_indices) then
+    type_error
+      "slice limit_indices must be greater than or equal to start_indices, got \
+       start_indices %s and limit_indices %s."
+      (t start_indices) (t limit_indices);
+  match strides with
+  | Some s when s <> Array.make n 1 ->
+      Utils.check_shapelike "slice" "strides" s;
+      if Array.length s <> n then
+        type_error
+          "slice strides must have length equal to the number of dimensions of \
+           the operand, got strides %s for operand shape %s."
+          (t s) (t ishape)
+  | _ -> ()
+
+let check_dynamic_slice slice_sizes ishape start_shapes =
+  let t = Utils.py_tuple in
+  if not (all_ge ishape slice_sizes) then
+    type_error
+      "slice slice_sizes must be less than or equal to operand shape, got \
+       slice_sizes %s for operand shape %s."
+      (t slice_sizes) (t ishape);
+  if Array.exists (fun s -> s < 0) slice_sizes then
+    type_error
+      "slice slice_sizes must be greater than or equal to zero, got \
+       slice_sizes of %s."
+      (t slice_sizes);
+  if List.exists (fun s -> Array.length s <> 0) start_shapes then
+    type_error
+      "start_indices arguments to dynamic_slice must be scalars,  got indices \
+       %s"
+      (String.concat ", " (List.map t start_shapes))
+
+let check_dynamic_update_slice ishape update_shape start_shapes =
+  let t = Utils.py_tuple in
+  if Array.length ishape <> Array.length update_shape then
+    type_error
+      "dynamic_update_slice update must have the same rank as operand, got \
+       update shape %s for operand shape %s."
+      (t update_shape) (t ishape);
+  if Array.length ishape <> List.length start_shapes then
+    type_error
+      "dynamic_update_slice start_indices must have length equal to the rank \
+       of operand, got indices %s for operand shape %s."
+      (String.concat ", " (List.map t start_shapes))
+      (t ishape);
+  if not (all_ge ishape update_shape) then
+    type_error
+      "dynamic_update_slice update shape must be smaller than operand shape, \
+       got update shape %s for operand shape %s."
+      (t update_shape) (t ishape);
+  if List.exists (fun s -> Array.length s <> 0) start_shapes then
+    type_error
+      "start_indices arguments to dynamic_update_slice must be scalars, got \
+       indices %s"
+      (String.concat ", " (List.map t start_shapes))
+
 let slice_shape start_indices limit_indices strides ishape =
+  check_slice start_indices limit_indices strides ishape;
   let n = Array.length ishape in
   let strides = resolve_strides n strides in
   Array.init n (fun i ->
@@ -35,6 +124,7 @@ let dynamic_slice_impl slice_sizes inputs =
   match inputs with
   | operand :: idx_nds ->
       let os = Ndarray.shape operand in
+      check_dynamic_slice slice_sizes os (List.map Ndarray.shape idx_nds);
       let n = Array.length os in
       let starts =
         Array.init n (fun d ->
@@ -68,6 +158,7 @@ let dynamic_update_slice_impl inputs =
   | operand :: update :: idx_nds ->
       let os = Ndarray.shape operand in
       let us = Ndarray.shape update in
+      check_dynamic_update_slice os us (List.map Ndarray.shape idx_nds);
       let n = Array.length os in
       let ostr = Utils.strides os in
       let starts =
@@ -521,3 +612,23 @@ let clamp_scatter_indices operand indices updates (sd : scatter_dims) =
       [ Concrete (Ndarray.of_floats idt [||] [| 0.0 |]) ]
   in
   bind1 Clamp [ zero; indices; bound ]
+
+let unclip_scatter p =
+  let off (d : scatter_dims) = { d with s_clip = false } in
+  let plain =
+    match p with
+    | Scatter ({ dimension_numbers = d; _ } as o) ->
+        Scatter { o with dimension_numbers = off d }
+    | Scatter_add { dimension_numbers = d } ->
+        Scatter_add { dimension_numbers = off d }
+    | Scatter_sub { dimension_numbers = d } ->
+        Scatter_sub { dimension_numbers = off d }
+    | Scatter_mul ({ dimension_numbers = d; _ } as o) ->
+        Scatter_mul { o with dimension_numbers = off d }
+    | Scatter_min { dimension_numbers = d } ->
+        Scatter_min { dimension_numbers = off d }
+    | Scatter_max { dimension_numbers = d } ->
+        Scatter_max { dimension_numbers = off d }
+    | _ -> invalid_arg "unclip_scatter: not a scatter primitive"
+  in
+  Np_ints.copy_scatter_marks ~from:p plain

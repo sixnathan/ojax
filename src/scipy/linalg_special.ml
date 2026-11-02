@@ -129,11 +129,18 @@ let hankel_patches c r =
     b1 (Squeeze [| 0 |]) [ patches ]
 
 let hankel ?r c =
-  require_vector "hankel" c;
   let r =
     match r with Some v -> v | None -> Numpy.Array_creation.zeros_like c
   in
-  hankel_patches c r
+  if Array.length (shape c) = 0 then
+    invalid_arg "hankel: c must be at least 1-dimensional, got a scalar.";
+  if Array.length (shape r) = 0 then
+    invalid_arg "hankel: r must be at least 1-dimensional, got a scalar.";
+  require_vector "hankel" c;
+  let nc = (shape c).(0) and nr = (shape r).(0) in
+  if nc = 0 || nr = 0 then
+    L.full [| nc; nr |] 0.0 (Dtypes.promote_types (dtype_of c) (dtype_of r))
+  else hankel_patches c r
 
 let toeplitz ?r c =
   let r = match r with Some r -> r | None -> U.conj c in
@@ -200,6 +207,13 @@ let companion a =
 
 let fiedler_companion a =
   let a = inexact (NL.atleast_1d a) in
+  (let sh = shape a in
+   if sh.(Array.length sh - 1) = 0 then
+     invalid_arg
+       (Printf.sprintf
+          "fiedler_companion requires the last axis of 'a' to have nonzero \
+           length, but got an array of shape %s."
+          (Lax.Utils.py_tuple sh)));
   require_vector "fiedler_companion" a;
   let n = (shape a).(0) - 1 in
   if n <= 0 then L.full [| 0; 0 |] 0.0 (dtype_of a)
@@ -412,8 +426,20 @@ let hadamard ?dtype:requested n =
     []
 
 let convolution_matrix ?(mode = "full") a n =
-  if n <= 0 then invalid_arg "n must be a positive integer";
+  if n <= 0 then
+    invalid_arg (Printf.sprintf "n must be a positive integer; got %d." n);
+  if Array.length (shape a) = 0 then
+    invalid_arg
+      "convolution_matrix: a must be at least 1-dimensional, got a scalar.";
   let m = (shape a).(Array.length (shape a) - 1) in
+  if m < 1 then
+    invalid_arg
+      (Printf.sprintf "len(a) must be at least 1; got shape %s."
+         (Lax.Utils.py_tuple (shape a)));
+  if not (List.mem mode [ "full"; "valid"; "same" ]) then
+    invalid_arg
+      (Printf.sprintf "mode must be one of 'full', 'valid', 'same'; got '%s'."
+         mode);
   jit1 "convolution_matrix"
     ~key:(Printf.sprintf "%d %s" n mode)
     (function

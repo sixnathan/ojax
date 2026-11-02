@@ -83,9 +83,68 @@ let bincount_index_overflow () =
     (fun () ->
       ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I32 2147483647.0)))
 
+let jax_validation () =
+  let z dt sh =
+    Ojax.Types.Concrete
+      (Ojax.Ndarray.of_floats dt sh
+         (Array.make (Array.fold_left ( * ) 1 sh) 0.0))
+  in
+  let f = Ojax.Dtype.F32 in
+  let value_error name msg g =
+    Alcotest.check_raises name (Invalid_argument msg) (fun () -> ignore (g ()))
+  in
+  let type_error name msg g =
+    Alcotest.check_raises name (E.Jax_type_error msg) (fun () -> ignore (g ()))
+  in
+  let index_error name msg g =
+    Alcotest.check_raises name (E.Jax_index_error msg) (fun () -> ignore (g ()))
+  in
+  let module L = Ojax.Lax_api in
+  type_error "slice limit bound"
+    "slice limit_indices must be less than or equal to operand shape, got \
+     limit_indices (5, 2) for operand shape (0, 2)." (fun () ->
+      L.slice_in_dim (z f [| 0; 2 |]) 1 5);
+  type_error "slice negative limit"
+    "slice limit_indices must have every element be nonnegative, got (2, -1)."
+    (fun () -> L.slice_in_dim ~axis:1 (z f [| 2; 0 |]) 1 (-1));
+  type_error "slice ordering"
+    "slice limit_indices must be greater than or equal to start_indices, got \
+     start_indices (1,) and limit_indices (0,)." (fun () ->
+      L.slice_in_dim (z f [| 0 |]) 1 0);
+  value_error "lax.dot scalars"
+    "jax.lax.dot: dimension_numbers must be specified when not performing \
+     simple un-batched matrix-matrix, matrix-vector, or vector-vector \
+     products; got lhs_shape=() rhs_shape=()" (fun () ->
+      L.dot (z f [||]) (z f [||]));
+  value_error "cumsum on a scalar"
+    "axis 0 is out of bounds for array of dimension 0" (fun () ->
+      Ojax.Numpy.Reductions.cumsum ~axis:0 (z f [||]));
+  index_error "take from an empty axis"
+    "Cannot do a non-empty jnp.take() from an empty axis." (fun () ->
+      Ojax.Numpy.Indexing.take ~axis:0
+        (z f [| 0; 2 |])
+        (z Ojax.Dtype.I32 [| 2 |]));
+  index_error "integer index into an empty axis"
+    "index is out of bounds for axis 1 with size 0" (fun () ->
+      Ojax.Numpy.Nd_index.take
+        (z f [| 3; 0 |])
+        [
+          Ojax.Numpy.Nd_index.Range { start = None; stop = None };
+          Ojax.Numpy.Nd_index.Int 0;
+        ]);
+  value_error "fiedler_companion empty"
+    "fiedler_companion requires the last axis of 'a' to have nonzero length, \
+     but got an array of shape (0,)." (fun () ->
+      Ojax.Scipy.Linalg_special.fiedler_companion (z f [| 0 |]));
+  value_error "convolve empty"
+    "zero-size arrays not supported in convolutions, got shapes (0,) and (6,)."
+    (fun () -> Ojax.Scipy.Signal.convolve (z f [| 0 |]) (z f [| 6 |]))
+
 let () =
   Alcotest.run "errors"
     [
+      ( "validation",
+        [ Alcotest.test_case "jax shape checks" `Quick jax_validation ] );
       ("messages", [ Alcotest.test_case "exact jax text" `Quick messages ]);
       ( "bincount",
         [ Alcotest.test_case "index overflow" `Quick bincount_index_overflow ]

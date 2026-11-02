@@ -706,18 +706,17 @@ let scatter_dnums_of = function
   | _ -> failwith "batching: not a scatter primitive"
 
 let rebuild_scatter prim (sd : scatter_dims) =
-  match prim with
-  | Scatter { unique_indices; _ } ->
-      Scatter { dimension_numbers = sd; unique_indices }
-  | Scatter_add _ when Np_ints.scatter_marked prim ->
-      Np_ints.mark_scatter (Scatter_add { dimension_numbers = sd })
-  | Scatter_add _ -> Scatter_add { dimension_numbers = sd }
-  | Scatter_sub _ -> Scatter_sub { dimension_numbers = sd }
-  | Scatter_mul { unique_indices; _ } ->
-      Scatter_mul { dimension_numbers = sd; unique_indices }
-  | Scatter_min _ -> Scatter_min { dimension_numbers = sd }
-  | Scatter_max _ -> Scatter_max { dimension_numbers = sd }
-  | _ -> failwith "batching: not a scatter primitive"
+  Np_ints.copy_scatter_marks ~from:prim
+    (match prim with
+    | Scatter { unique_indices; _ } ->
+        Scatter { dimension_numbers = sd; unique_indices }
+    | Scatter_add _ -> Scatter_add { dimension_numbers = sd }
+    | Scatter_sub _ -> Scatter_sub { dimension_numbers = sd }
+    | Scatter_mul { unique_indices; _ } ->
+        Scatter_mul { dimension_numbers = sd; unique_indices }
+    | Scatter_min _ -> Scatter_min { dimension_numbers = sd }
+    | Scatter_max _ -> Scatter_max { dimension_numbers = sd }
+    | _ -> failwith "batching: not a scatter primitive")
 
 let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
@@ -1275,6 +1274,7 @@ let vmap_rule_multi (axis_size : int) (prim : primitive) (vals : value list)
   | _ -> failwith "batching: expected a multi-output primitive"
 
 let named_axes : (string * trace * int) list ref = ref []
+let partial_permute_axes : string list ref = ref []
 
 let find_axis name =
   match List.find_opt (fun (n, _, _) -> n = name) !named_axes with
@@ -1288,8 +1288,9 @@ let () =
         (fun (n, t, _) -> if n = name then Some t else None)
         !named_axes
 
-let vmap_flat ?axis_name ?(out_axis = 0) (f : value list -> value list)
-    (in_axes : int option list) (args : value list) : value list =
+let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0)
+    (f : value list -> value list) (in_axes : int option list)
+    (args : value list) : value list =
   let axis_size =
     let rec find axes vals =
       match (axes, vals) with
@@ -1309,12 +1310,17 @@ let vmap_flat ?axis_name ?(out_axis = 0) (f : value list -> value list)
           args in_axes
       in
       let saved = !named_axes in
+      let saved_partial = !partial_permute_axes in
       (match axis_name with
-      | Some name -> named_axes := (name, main, axis_size) :: saved
+      | Some name ->
+          named_axes := (name, main, axis_size) :: saved;
+          if partial_permute then partial_permute_axes := name :: saved_partial
       | None -> ());
       let outs =
         Fun.protect
-          ~finally:(fun () -> named_axes := saved)
+          ~finally:(fun () ->
+            named_axes := saved;
+            partial_permute_axes := saved_partial)
           (fun () -> f tracers_in)
       in
       let vals_bdims =
@@ -1502,6 +1508,8 @@ let collective_batch trace axis_size kind axis_name vals bdims =
       (List.nth (Core.bind (Unstack d) [ v ]) source, None)
   | Pbroadcast _, [ v ], [ None ] -> (v, None)
   | Ppermute pairs, [ v ], [ b ] when Array.length pairs <> axis_size ->
+      if not (List.mem axis_name !partial_permute_axes) then
+        failwith "Permutation doesn't match the axis size!";
       let moved = move_batch_axis axis_size b 0 v in
       let rows = Array.of_list (Core.bind (Unstack 0) [ moved ]) in
       let zero = Ad_util.zeros_like_aval (Core.get_aval rows.(0)) in

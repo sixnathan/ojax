@@ -26,6 +26,9 @@ exception Type_promotion_error of string
 val value_error : string -> 'a
 val type_error : string -> 'a
 val index_error : string -> 'a
+val not_implemented_error : string -> 'a
+val runtime_error : string -> 'a
+val key_error : string -> 'a
 val class_name : exn -> string option
 val message_of : exn -> string option
 val parent : string -> string option

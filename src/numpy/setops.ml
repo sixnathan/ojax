@@ -34,6 +34,14 @@ let isin ?(assume_unique = false) ?(invert = false) ?(method_ = "auto") element
   ignore assume_unique;
   (match method_ with
   | "auto" | "compare_all" -> ()
-  | _ -> failwith "setops.isin: only 'auto'/'compare_all' method is implemented");
+  | "binary_search" | "sort" ->
+      Py_exn.not_implemented_error
+        "setops.isin: only 'auto'/'compare_all' method is implemented"
+  | m ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "method='%s' is not implemented; options are 'compare_all', \
+            'binary_search', 'sort', and 'auto'"
+           m));
   let result = in1d ~invert element test_elements in
   NL.reshape result (shape element)

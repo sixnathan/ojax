@@ -281,7 +281,7 @@ let expand_ellipsis inputs output operands =
 
 let contract ?precision ?preferred optimize inputs operands result =
   if List.length inputs <> List.length operands then
-    invalid_arg "einsum: operand and subscript counts differ";
+    Py_exn.value_error "einsum: operand and subscript counts differ";
   let spec = String.concat "," inputs ^ "->" ^ result in
   let _, info =
     Einsum_paths.contract_path ~optimize spec (List.map shape operands)
@@ -303,7 +303,7 @@ let contract ?precision ?preferred optimize inputs operands result =
           | [ l; r ], [ nl; nr ] ->
               einsum_pair ?precision ?preferred l r nl nr out
           | _ ->
-              failwith
+              Py_exn.not_implemented_error
                 "jax.numpy.einsum does not support simultaneous contraction of \
                  3 or more operands. Typically this means you've passed an \
                  unsupported path to the einsum optimize parameter."

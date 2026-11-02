@@ -124,23 +124,32 @@ let reshape ?(order = "C") v sh =
       let c_order = bind1 (T.Transpose (reverse_axes v)) [ v ] in
       let out = reshape c_order flipped in
       bind1 (T.Transpose (reverse_axes out)) [ out ]
-  | "A" -> failwith "The 'A' order option is not supported by jnp.reshape."
-  | o -> invalid_arg ("Unrecognized order " ^ o)
+  | "A" -> Py_exn.not_implemented_error "np.reshape order=A is not implemented."
+  | o ->
+      Py_exn.value_error
+        (Printf.sprintf "Unexpected value for 'order' argument: %s." o)
 
 let ravel ?(order = "C") v =
   match order with
   | "C" -> reshape v [| size v |]
   | "F" -> reshape (bind1 (T.Transpose (reverse_axes v)) [ v ]) [| size v |]
-  | "A" -> failwith "The 'A' order option is not supported by jnp.ravel."
-  | o -> invalid_arg ("Unrecognized order " ^ o)
+  | "A" -> Py_exn.not_implemented_error "np.reshape order=A is not implemented."
+  | o ->
+      Py_exn.value_error
+        (Printf.sprintf "Unexpected value for 'order' argument: %s." o)
 
 let rot90 ?(k = 1) ?(axes = (0, 1)) v =
   let n = ndim v in
   if n < 2 then
-    invalid_arg (Printf.sprintf "rot90 requires ndim >= 2; got %d" n);
+    Py_exn.value_error
+      (Printf.sprintf
+         "rot90 requires its first argument to have ndim at least two, but got \
+          first argument of shape %s, which has ndim %d"
+         (Validate.python_tuple (shape v))
+         n);
   let ax1 = canonicalize_axis (fst axes) n in
   let ax2 = canonicalize_axis (snd axes) n in
-  if ax1 = ax2 then invalid_arg "rot90: axes must be different";
+  if ax1 = ax2 then Py_exn.value_error "Axes must be different";
   let k = ((k mod 4) + 4) mod 4 in
   if k = 0 then v
   else if k = 2 then flip ~axis:[| ax2 |] (flip ~axis:[| ax1 |] v)
@@ -221,9 +230,17 @@ let slice_head v axis =
 let diff ?(n = 1) ?(axis = -1) ?prepend ?append v =
   if n = 0 then v
   else begin
-    if n < 0 then invalid_arg "diff: order must be non-negative";
+    if n < 0 then
+      Py_exn.value_error
+        (Printf.sprintf "order must be non-negative but got %d" n);
     let nd = ndim v in
-    if nd = 0 then Py_exn.value_error "diff requires at least one dimension";
+    if nd = 0 then
+      Py_exn.value_error
+        (Printf.sprintf
+           "diff requires input that is at least one dimensional; got \
+            JitTracer(%s%s[])"
+           (if (C.get_aval v).T.weak_type then "~" else "")
+           (D.numpy_name (dtype v)));
     let axis = canonicalize_axis axis nd in
     let edge w =
       if ndim w = 0 then begin
@@ -407,6 +424,9 @@ let flip1 y =
     [ y ]
 
 let conv1d_body ~mode ~correlating a v =
+  let op = if correlating then "correlate" else "convolve" in
+  if ndim a <> 1 || ndim v <> 1 then
+    Py_exn.value_error (op ^ "() only support 1-dimensional inputs.");
   let flip_kernel = not correlating in
   let dt, _ =
     Dtypes.result_type
@@ -416,7 +436,11 @@ let conv1d_body ~mode ~correlating a v =
   in
   let a = convert a dt and v = convert v dt in
   let la = (shape a).(0) and lv = (shape v).(0) in
-  if la = 0 || lv = 0 then Py_exn.value_error "conv: inputs cannot be empty";
+  if la = 0 || lv = 0 then
+    Py_exn.value_error
+      (Printf.sprintf "%s: inputs cannot be empty, got shapes %s and %s." op
+         (Validate.python_tuple (shape a))
+         (Validate.python_tuple (shape v)));
   let v =
     match dtype v with
     | (D.Complex64 | D.Complex128) when correlating -> bind1 T.Conj [ v ]
@@ -431,7 +455,7 @@ let conv1d_body ~mode ~correlating a v =
     | "valid" -> [| (0, 0) |]
     | "same" -> [| (ly / 2, ly - (ly / 2) - 1) |]
     | "full" -> [| (ly - 1, ly - 1) |]
-    | _ -> invalid_arg "conv: mode must be one of full, same, valid"
+    | _ -> Py_exn.value_error "mode must be one of ['full', 'same', 'valid']"
   in
   let lx = (shape x).(0) in
   let lifted v n =
@@ -622,7 +646,7 @@ let reject_complex_clip values =
         match dtype v with D.Complex64 | D.Complex128 -> true | _ -> false)
       values
   then
-    invalid_arg
+    Py_exn.value_error
       "Clip received a complex value either through the input or the min/max \
        keywords. Complex values have no ordering and cannot be clipped. Please \
        convert to a real value or array by taking the real or imaginary \
@@ -708,7 +732,7 @@ let clip ?min ?max arr =
 let rec round ?(decimals = 0) v =
   let dt = dtype v in
   if is_bool dt then
-    invalid_arg "jnp.round: data type bool not compatible with finfo";
+    Py_exn.value_error "data type dtype('bool') not compatible with finfo";
   if is_integral dt then v
   else if dt = D.Complex64 || dt = D.Complex128 then
     bind1 T.Complex
@@ -799,7 +823,9 @@ let moveaxis source destination v =
   let src = Array.map (fun a -> canonicalize_axis a n) source in
   let dst = Array.map (fun a -> canonicalize_axis a n) destination in
   if Array.length src <> Array.length dst then
-    invalid_arg "moveaxis: inconsistent number of elements";
+    Py_exn.value_error
+      (Printf.sprintf "Inconsistent number of elements: %d vs %d"
+         (Array.length src) (Array.length dst));
   let src_list = Array.to_list src in
   let perm =
     ref (List.filter (fun i -> not (List.mem i src_list)) (List.init n Fun.id))
@@ -817,9 +843,7 @@ let moveaxis source destination v =
 let broadcast_shapes_n = Validate.broadcast_shapes
 
 let broadcast_arrays vs =
-  let sh =
-    List.fold_left (fun acc v -> broadcast_shapes acc (shape v)) [||] vs
-  in
+  let sh = broadcast_shapes_n (List.map shape vs) in
   List.map (fun v -> broadcast_to v sh) vs
 
 let resize v new_shape =
@@ -936,7 +960,8 @@ let do_split ~array_split ?(axis = 0) v s =
         if r = 0 then Array.make nsec part
         else if array_split then
           Array.init nsec (fun i -> if i < r then part + 1 else part)
-        else invalid_arg "array split does not result in an equal division"
+        else
+          Py_exn.value_error "array split does not result in an equal division"
   in
   bind (T.Split { sizes = Np_ints.mark sizes; axis }) [ v ]
 
@@ -951,9 +976,11 @@ let dsplit v s = do_split ~array_split:false ~axis:2 v s
 
 let select ?default condlist choicelist =
   let k = List.length condlist in
-  if k = 0 then invalid_arg "select: condlist must be non-empty";
   if List.length choicelist <> k then
-    invalid_arg "select: condlist and choicelist must have the same length";
+    Py_exn.value_error
+      (Printf.sprintf "condlist must have length equal to choicelist (%d vs %d)"
+         k (List.length choicelist));
+  if k = 0 then Py_exn.value_error "condlist must be non-empty";
   let default_v =
     match default with Some d -> d | None -> Jnp_util.py_int 0
   in
@@ -1026,8 +1053,10 @@ let with_dtype dt arrays =
 
 let concatenate ?(axis = 0) ?dtype:dt arrays =
   match arrays with
-  | [] -> invalid_arg "concatenate: need at least one array"
+  | [] -> Py_exn.value_error "Need at least one array to concatenate."
   | first :: _ ->
+      if ndim first = 0 then
+        Py_exn.value_error "Zero-dimensional arrays cannot be concatenated.";
       let ax = canonicalize_axis axis (ndim first) in
       bind1 (T.Concatenate ax) (with_dtype dt arrays)
 
@@ -1035,7 +1064,7 @@ let concat ?(axis = 0) arrays = concatenate ~axis arrays
 
 let stack ?(axis = 0) ?dtype:dt arrays =
   match arrays with
-  | [] -> invalid_arg "stack: need at least one array"
+  | [] -> Py_exn.value_error "Need at least one array to stack."
   | first :: _ ->
       let ax = canonicalize_axis axis (ndim first + 1) in
       bind1 (T.Stack ax) (with_dtype dt arrays)
@@ -1136,7 +1165,8 @@ let pad_constant v pad_width cval =
 
 let no_padding_on_empty (lo, hi) mode =
   if lo > 0 || hi > 0 then
-    invalid_arg (Printf.sprintf "Cannot apply '%s' padding to empty axis" mode)
+    Py_exn.value_error
+      (Printf.sprintf "Cannot apply '%s' padding to empty axis" mode)
 
 let pad_wrap v pad_width =
   let out = ref v in
@@ -1295,7 +1325,7 @@ let pad_stats v pad_width stat_length stat_func =
             let n = (shape array).(i) in
             let lb, la = lengths.(i) in
             if lb = 0 || la = 0 then
-              invalid_arg "stat_length of 0 yields no value for padding";
+              Py_exn.value_error "stat_length of 0 yields no value for padding";
             let lb = min lb n and la = min la n in
             ( stat_func (slice_axis array i 0 lb) i,
               stat_func (slice_axis array i (n - la) n) i )
@@ -1319,13 +1349,13 @@ let pad_body ?(mode = "constant") ?stat_length ?end_values
   if ndim v = 0 then v
   else begin
     if Array.length pad_width <> ndim v then
-      invalid_arg
-        (Printf.sprintf "Expected pad_width to have %d pairs; got %d" (ndim v)
-           (Array.length pad_width));
+      Py_exn.value_error
+        (Printf.sprintf "Expected pad_width to have shape (%d, 2); got (%d, 2)."
+           (ndim v) (Array.length pad_width));
     Array.iter
       (fun (lo, hi) ->
         if lo < 0 || hi < 0 then
-          invalid_arg "index can't contain negative values")
+          Py_exn.value_error "index can't contain negative values")
       pad_width;
     let keep_stat f a axis = f a axis in
     match mode with
@@ -1358,7 +1388,7 @@ let pad_body ?(mode = "constant") ?stat_length ?end_values
           (keep_stat (fun a axis -> Reductions.median ~axis ~keepdims:true a))
     | "empty" -> pad_constant v pad_width 0.0
     | m ->
-        failwith
+        Py_exn.not_implemented_error
           (Printf.sprintf "Unimplemented padding mode '%s' for np.pad." m)
   end
 
@@ -1406,7 +1436,8 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
 
 let i0 v =
   if is_complex_dtype (dtype v) then
-    invalid_arg "Unsupported input type to jax.numpy.i0: complex";
+    Py_exn.value_error
+      ("Unsupported input type to jax.numpy.i0: " ^ D.numpy_name (dtype v));
   let v = convert v (to_inexact_dtype (dtype v)) in
   let ax = bind1 T.Abs [ v ] in
   bind1 T.Mul [ bind1 T.Exp [ ax ]; bind1 T.Bessel_i0e [ ax ] ]
@@ -1646,11 +1677,11 @@ let diag_indices ?(ndim = 2) n =
 let diag_indices_from arr =
   let s = shape arr in
   let nd = Array.length s in
-  if nd < 2 then invalid_arg "input array must be at least 2-d";
+  if nd < 2 then Py_exn.value_error "input array must be at least 2-d";
   Array.iter
     (fun d ->
       if d <> s.(0) then
-        invalid_arg "All dimensions of input must be of equal length")
+        Py_exn.value_error "All dimensions of input must be of equal length")
     s;
   diag_indices ~ndim:nd s.(0)
 
@@ -1682,7 +1713,8 @@ let tril ?(k = 0) m =
 let triu ?(k = 0) m =
   let s = shape m in
   let nd = Array.length s in
-  if nd < 2 then invalid_arg "Argument to jax.numpy.triu must be at least 2D";
+  if nd < 2 then
+    Py_exn.value_error "Argument to jax.numpy.triu must be at least 2D";
   Jnp_util.jit1 "triu" ~key:(string_of_int k)
     (function
       | [ m ] ->
@@ -1699,7 +1731,7 @@ let trace ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) ?dtype a =
   let s = shape a in
   let nd = Array.length s in
   let a1 = canonicalize_axis axis1 nd and a2 = canonicalize_axis axis2 nd in
-  if a1 = a2 then invalid_arg "axis1 and axis2 can not be same";
+  if a1 = a2 then Py_exn.value_error "axis1 and axis2 can not be same";
   let na = s.(a1) and ma = s.(a2) in
   let am = moveaxis [| axis1; axis2 |] [| nd - 2; nd - 1 |] a in
   let mask = eye ~m:ma ~k:offset ~dtype:D.Bool na in
@@ -1892,10 +1924,10 @@ let kron p0 p1 =
     [ p0; p1 ]
 
 let vander ?n ?(increasing = false) x =
-  if ndim x <> 1 then invalid_arg "x must be a one-dimensional array";
+  if ndim x <> 1 then Py_exn.value_error "x must be a one-dimensional array";
   let len = (shape x).(0) in
   let nn = Option.value n ~default:len in
-  if nn < 0 then invalid_arg "N must be nonnegative";
+  if nn < 0 then Py_exn.value_error "N must be nonnegative";
   let dt = dtype x in
   let io = bind1 (T.Iota { dtype = dt; shape = [| nn |]; dimension = 0 }) [] in
   let io =
@@ -1924,7 +1956,7 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
     | Some xv ->
         let xv = convert xv (to_inexact_dtype (dtype xv)) in
         if ndim xv = 1 then Some (diff xv)
-        else invalid_arg "trapezoid: only 1-dimensional x is supported"
+        else Some (moveaxis [| axis |] [| -1 |] (diff ~axis xv))
   in
   let y = moveaxis [| ax |] [| nd - 1 |] y in
   let ny = shape y in
@@ -1943,6 +1975,12 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
       let ends = bind1 T.Mul [ scalar (dtype total) 0.5; total ] in
       let out = sub2 s ends in
       bind1 T.Mul [ scalar (dtype out) dx; out ]
+  | Some dxa when (shape dxa).(ndim dxa - 1) = 1 ->
+      let dx_reduced = last_index dxa 0 in
+      let s = Reductions.sum ~axis:[| nd - 1 |] y in
+      let total = add2 (last_index y 0) (last_index y (l - 1)) in
+      let ends = bind1 T.Mul [ scalar (dtype total) 0.5; total ] in
+      mul2 dx_reduced (sub2 s ends)
   | Some dxa ->
       let y1 = slice_axis y (nd - 1) 1 l in
       let y0 = slice_axis y (nd - 1) 0 (l - 1) in
@@ -2074,7 +2112,7 @@ let rollaxis ?(start = 0) axis a =
   let nd = ndim a in
   let axis = canonicalize_axis axis nd in
   if not (-nd <= start && start <= nd) then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf "start=%d must satisfy %d<=start<=%d" start (-nd) nd);
   let start = if start < 0 then start + nd else start in
   let start = if start > axis then start - 1 else start in
@@ -2099,7 +2137,7 @@ let gcd x1 x2 =
     | _ -> assert false
   in
   if not (is_integral (dtype x1)) then
-    invalid_arg "Arguments to jax.numpy.gcd must be integers.";
+    Py_exn.value_error "Arguments to jax.numpy.gcd must be integers.";
   let x1, x2 =
     match broadcast_arrays [ x1; x2 ] with
     | [ a; b ] -> (a, b)
@@ -2140,7 +2178,7 @@ let lcm x1 x2 =
   in
   let x1 = abs_of x1 and x2 = abs_of x2 in
   if not (is_integral (dtype x1)) then
-    invalid_arg "Arguments to jax.numpy.lcm must be integers.";
+    Py_exn.value_error "Arguments to jax.numpy.lcm must be integers.";
   let d = gcd x1 x2 in
   let is_zero = bind1 T.Eq [ d; scalar (dtype d) 0.0 ] in
   let prod = Ufuncs.multiply x1 (Ufuncs.floor_divide x2 d) in
@@ -2155,9 +2193,11 @@ let lcm p0 p1 =
 let check_search_method = function
   | "scan" | "scan_unrolled" | "sort" | "compare_all" -> ()
   | m ->
-      invalid_arg
-        ("method must be one of ['scan', 'scan_unrolled', 'sort', \
-          'compare_all']; got " ^ m)
+      Py_exn.value_error
+        (Printf.sprintf
+           "invalid argument method='%s', expected one of ['compare_all', \
+            'scan', 'scan_unrolled', 'sort']"
+           m)
 
 let gather_1d a indices =
   let sh = shape indices in
@@ -2276,7 +2316,7 @@ let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
     [ sorted_arr; query ]
 
 let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
-  if ndim a <> 1 then invalid_arg "a should be 1-dimensional";
+  if ndim a <> 1 then Py_exn.value_error "a should be 1-dimensional";
   check_search_method method_;
   let args = [ a; v ] @ Option.to_list sorter in
   Jnp_util.jit1 "searchsorted"
@@ -2321,7 +2361,7 @@ let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
 let digitize ?(right = false) ?(method_ = "scan") x bins =
   check_search_method method_;
   if ndim bins <> 1 then
-    invalid_arg "digitize: bins must be a 1-dimensional array";
+    Py_exn.value_error "digitize: bins must be a 1-dimensional array";
   let nb = (shape bins).(0) in
   if nb = 0 then const_full D.I32 (shape x) 0.0
   else begin
@@ -2348,6 +2388,11 @@ let digitize ?right ?method_ a0 a1 =
 let dtype_of = dtype
 
 let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
+  (match y with
+  | Some yv when ndim yv > 2 ->
+      Py_exn.value_error "y has more than 2 dimensions"
+  | _ -> ());
+  if ndim m > 2 then Py_exn.value_error "m has more than 2 dimensions";
   let dt_common =
     match y with
     | None -> dtype_of m
@@ -2389,9 +2434,10 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
       in
       let check_weights name w =
         if ndim w > 1 then
-          failwith (Printf.sprintf "cannot handle multidimensional %s" name);
+          Py_exn.runtime_error
+            (Printf.sprintf "cannot handle multidimensional %s" name);
         if (shape w).(0) <> nobs then
-          failwith
+          Py_exn.runtime_error
             (Printf.sprintf "incompatible numbers of samples and %s" name)
       in
       Option.iter (check_weights "fweights") fweights;

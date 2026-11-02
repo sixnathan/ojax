@@ -72,7 +72,7 @@ let parse_signature (s : string) : int list * int list =
   let arrow =
     match String.index_opt s '-' with
     | Some k when k + 1 < String.length s && s.[k + 1] = '>' -> k
-    | _ -> invalid_arg ("not a valid gufunc signature: " ^ s)
+    | _ -> Py_exn.value_error ("not a valid gufunc signature: " ^ s)
   in
   let lhs = String.sub s 0 arrow in
   let rhs = String.sub s (arrow + 2) (String.length s - arrow - 2) in
@@ -104,8 +104,29 @@ let vectorize_many ?(excluded = []) ?signature pyfunc raw_args =
   in
   let dyn_arr = Array.of_list dynamic in
   let ncs = Array.of_list input_ncs in
+  let excluded_repr =
+    match excluded with
+    | [] -> "frozenset()"
+    | items ->
+        "frozenset({"
+        ^ String.concat ", " (List.map string_of_int (List.sort compare items))
+        ^ "})"
+  in
+  let error_context () =
+    Printf.sprintf "on vectorized function with excluded=%s and signature=%s"
+      excluded_repr
+      (match signature with Some s -> "'" ^ s ^ "'" | None -> "None")
+  in
+  let core_dims idx =
+    match signature with
+    | None -> "()"
+    | Some s -> python_core_dims (List.nth (input_core_dims s) idx)
+  in
   if Array.length dyn_arr <> Array.length ncs then
-    invalid_arg "vectorize: wrong number of positional arguments";
+    Py_exn.type_error
+      (Printf.sprintf
+         "wrong number of positional arguments: expected %d, got %d %s"
+         (Array.length ncs) (Array.length dyn_arr) (error_context ()));
   ignore output_ncs;
   (match signature with
   | Some s ->
@@ -120,7 +141,10 @@ let vectorize_many ?(excluded = []) ?signature pyfunc raw_args =
            let nc = ncs.(idx) in
            if ndim < nc then
              Py_exn.value_error
-               "vectorize: input has too few dimensions for its core dimensions";
+               (Printf.sprintf
+                  "input with shape %s does not have enough dimensions for all \
+                   core dimensions %s %s"
+                  (Validate.python_tuple sh) (core_dims idx) (error_context ()));
            Array.sub sh 0 (ndim - nc))
          dyn_arr)
   in
@@ -167,7 +191,8 @@ let vectorize_many ?(excluded = []) ?signature pyfunc raw_args =
 let vectorize ?excluded ?signature pyfunc raw_args =
   (match signature with
   | Some s when List.length (snd (parse_signature s)) <> 1 ->
-      failwith "vectorize: only single-output gufuncs supported"
+      Py_exn.not_implemented_error
+        "vectorize: only single-output gufuncs supported"
   | _ -> ());
   List.hd
     (vectorize_many ?excluded ?signature (fun xs -> [ pyfunc xs ]) raw_args)

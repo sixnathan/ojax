@@ -32,7 +32,7 @@ let call_flat u args =
 
 let call u args =
   if List.length args <> u.nin then
-    invalid_arg
+    Py_exn.type_error
       (Printf.sprintf "ufunc: expected %d inputs, got %d" u.nin
          (List.length args));
   if u.nout = 1 then
@@ -52,8 +52,11 @@ let single u args =
   | _ -> invalid_arg "ufunc: this method needs a single output function"
 
 let check_binary u name =
-  if u.nin <> 2 || u.nout <> 1 then
-    invalid_arg (name ^ " only supported for functions with nin=2 and nout=1")
+  if u.nin <> 2 then
+    Py_exn.value_error (name ^ " only supported for binary ufuncs");
+  if u.nout <> 1 then
+    Py_exn.value_error
+      (name ^ " only supported for functions returning a single value")
 
 let one_of dt : T.aval = { shape = [||]; dtype = dt; weak_type = false }
 

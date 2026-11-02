@@ -256,6 +256,13 @@ let broadcast_shapes shapes =
           else invalid_arg "Incompatible shapes for broadcasting")
         1 shapes)
 
+let collapse_from x start =
+  let sh = shape x in
+  let n = Array.length sh in
+  let start = if start < 0 then start + n else start in
+  let size = product (Array.sub sh start (n - start)) in
+  b1 (Reshape (Array.append (Array.sub sh 0 start) [| size |])) [ x ]
+
 let collapse x start stop =
   let sh = shape x in
   let n = Array.length sh in
@@ -323,28 +330,39 @@ let normalized_start start size =
 let dynamic_slice_normalized x starts slice_sizes =
   b1 (Dynamic_slice { slice_sizes }) (x :: starts)
 
-let dynamic_slice x starts slice_sizes =
+let dynamic_slice ?(allow_negative_indices = true) x starts slice_sizes =
   let starts =
-    List.mapi (fun i start -> normalized_start start (shape x).(i)) starts
+    if allow_negative_indices then
+      List.mapi (fun i start -> normalized_start start (shape x).(i)) starts
+    else starts
   in
   dynamic_slice_normalized x starts slice_sizes
 
-let dynamic_update_slice x update starts =
+let dynamic_update_slice ?(allow_negative_indices = false) x update starts =
+  let starts =
+    if allow_negative_indices then
+      List.mapi (fun i start -> normalized_start start (shape x).(i)) starts
+    else starts
+  in
   b1 Dynamic_update_slice (x :: update :: starts)
 
-let starts_in_dim x axis start =
+let starts_in_dim ?(allow_negative_indices = true) x axis start =
   let dt = (Core.get_aval start).dtype in
   let zero = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
   let sh = shape x in
-  let start = normalized_start start sh.(axis) in
+  let start =
+    if allow_negative_indices then normalized_start start sh.(axis) else start
+  in
   List.init (Array.length sh) (fun d -> if d = axis then start else zero)
 
-let dynamic_slice_in_dim ?(axis = 0) x start size =
+let dynamic_slice_in_dim ?(axis = 0) ?allow_negative_indices x start size =
   let n = ndim x in
   let axis = canon_axis n axis in
   let sizes = Array.copy (shape x) in
   sizes.(axis) <- size;
-  dynamic_slice_normalized x (starts_in_dim x axis start) sizes
+  dynamic_slice_normalized x
+    (starts_in_dim ?allow_negative_indices x axis start)
+    sizes
 
 let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
   let axis = canon_axis (ndim x) axis in
@@ -361,10 +379,12 @@ let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
   | [ v ] -> v
   | _ -> invalid_arg "dynamic_index_in_dim: arity"
 
-let dynamic_update_slice_in_dim ?(axis = 0) x update start =
+let dynamic_update_slice_in_dim ?(axis = 0) ?allow_negative_indices x update
+    start =
   let n = ndim x in
   let axis = canon_axis n axis in
-  dynamic_update_slice x update (starts_in_dim x axis start)
+  dynamic_update_slice x update
+    (starts_in_dim ?allow_negative_indices x axis start)
 
 let dynamic_update_index_in_dim ?(axis = 0) x update index =
   let axis = canon_axis (ndim x) axis in
@@ -400,48 +420,25 @@ let gather_default_fill dt =
   else if Dtypes.issubdtype dt `Signed then (Dtypes.iinfo dt).imin
   else (Dtypes.iinfo dt).imax
 
-let gather ?(mode = Lax_config.Promise_in_bounds) ?fill_value x indices
+let gather ?(mode = Lax_config.Promise_in_bounds) ?fill_value
+    ?(indices_are_sorted = false) ?(unique_indices = false) x indices
     dimension_numbers slice_sizes =
-  let window = Array.mapi (fun d size -> size - slice_sizes.(d)) (shape x) in
-  let dims = dimension_numbers.start_index_map in
-  let run indices =
-    b1 (Gather { dimension_numbers; slice_sizes }) [ x; indices ]
+  let flag prim =
+    if indices_are_sorted || unique_indices then
+      Np_ints.mark_gather_flags ~sorted:indices_are_sorted
+        ~unique:unique_indices prim
+    else prim
   in
+  let prim = Gather { dimension_numbers; slice_sizes } in
   match mode with
-  | Lax_config.Promise_in_bounds -> run indices
-  | Lax_config.Clip -> run (clamp_indices indices dims window)
+  | Lax_config.Promise_in_bounds -> b1 (flag prim) [ x; indices ]
+  | Lax_config.Clip ->
+      b1 (Np_ints.mark_gather_clip ~sorted:false (flag prim)) [ x; indices ]
   | Lax_config.One_hot ->
       invalid_arg "gather: GatherScatterMode.ONE_HOT is not supported"
   | Lax_config.Fill_or_drop ->
-      let fill =
-        match fill_value with
-        | Some f -> f
-        | None -> gather_default_fill (dtype_of x)
-      in
-      let gathered = run indices in
-      let out_shape = shape gathered in
-      let idx_shape = shape indices in
-      let batch_rank = Array.length idx_shape - 1 in
-      let in_bounds =
-        b1 And
-          [
-            b1 Ge [ indices; filled (dtype_of indices) idx_shape 0.0 ];
-            b1 Le [ indices; index_upper_bound indices dims window ];
-          ]
-      in
-      let mask = b1 (Reduce_and [| batch_rank |]) [ in_bounds ] in
-      let batch_dims =
-        List.filter
-          (fun d -> not (Array.mem d dimension_numbers.offset_dims))
-          (List.init (Array.length out_shape) Fun.id)
-      in
-      let wide =
-        b1
-          (Broadcast_in_dim
-             { shape = out_shape; dims = Array.of_list batch_dims })
-          [ mask ]
-      in
-      select wide gathered (filled (dtype_of gathered) out_shape fill)
+      Lax.Slicing.gather_fill ~flag ?fill_value x indices dimension_numbers
+        slice_sizes
 
 let scatter_indices mode x indices updates (dn : scatter_dims) =
   match mode with
@@ -464,31 +461,59 @@ let scatter_indices mode x indices updates (dn : scatter_dims) =
       clamp_indices indices dn.scatter_dims_to_operand_dims window
   | _ -> indices
 
-let scatter ?mode ?(unique_indices = false) x indices updates dimension_numbers
-    =
-  let indices = scatter_indices mode x indices updates dimension_numbers in
-  b1 (Scatter { dimension_numbers; unique_indices }) [ x; indices; updates ]
+let flagged_scatter prim ~indices_are_sorted ~unique_indices =
+  if indices_are_sorted || unique_indices then
+    Np_ints.mark_scatter_flags ~sorted:indices_are_sorted ~unique:unique_indices
+      prim
+  else prim
 
-let scatter_add ?mode x indices updates dimension_numbers =
+let scatter ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
+    indices updates dimension_numbers =
   let indices = scatter_indices mode x indices updates dimension_numbers in
-  b1 (Scatter_add { dimension_numbers }) [ x; indices; updates ]
+  b1
+    (flagged_scatter ~indices_are_sorted ~unique_indices:false
+       (Scatter { dimension_numbers; unique_indices }))
+    [ x; indices; updates ]
 
-let scatter_sub ?mode x indices updates dimension_numbers =
+let scatter_add ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
+    indices updates dimension_numbers =
   let indices = scatter_indices mode x indices updates dimension_numbers in
-  b1 (Scatter_sub { dimension_numbers }) [ x; indices; updates ]
+  b1
+    (flagged_scatter ~indices_are_sorted ~unique_indices
+       (Scatter_add { dimension_numbers }))
+    [ x; indices; updates ]
 
-let scatter_mul ?mode ?(unique_indices = false) x indices updates
-    dimension_numbers =
+let scatter_sub ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
+    indices updates dimension_numbers =
   let indices = scatter_indices mode x indices updates dimension_numbers in
-  b1 (Scatter_mul { dimension_numbers; unique_indices }) [ x; indices; updates ]
+  b1
+    (flagged_scatter ~indices_are_sorted ~unique_indices
+       (Scatter_sub { dimension_numbers }))
+    [ x; indices; updates ]
 
-let scatter_min ?mode x indices updates dimension_numbers =
+let scatter_mul ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
+    indices updates dimension_numbers =
   let indices = scatter_indices mode x indices updates dimension_numbers in
-  b1 (Scatter_min { dimension_numbers }) [ x; indices; updates ]
+  b1
+    (flagged_scatter ~indices_are_sorted ~unique_indices:false
+       (Scatter_mul { dimension_numbers; unique_indices }))
+    [ x; indices; updates ]
 
-let scatter_max ?mode x indices updates dimension_numbers =
+let scatter_min ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
+    indices updates dimension_numbers =
   let indices = scatter_indices mode x indices updates dimension_numbers in
-  b1 (Scatter_max { dimension_numbers }) [ x; indices; updates ]
+  b1
+    (flagged_scatter ~indices_are_sorted ~unique_indices
+       (Scatter_min { dimension_numbers }))
+    [ x; indices; updates ]
+
+let scatter_max ?mode ?(indices_are_sorted = false) ?(unique_indices = false) x
+    indices updates dimension_numbers =
+  let indices = scatter_indices mode x indices updates dimension_numbers in
+  b1
+    (flagged_scatter ~indices_are_sorted ~unique_indices
+       (Scatter_max { dimension_numbers }))
+    [ x; indices; updates ]
 
 let reduce_sum x axes = b1 (Reduce_sum axes) [ x ]
 let reduce_prod x axes = b1 (Reduce_prod axes) [ x ]
@@ -932,7 +957,7 @@ let map ?batch_size f xs =
           match column with [ only ] -> only | _ -> concatenate column 0)
         (List.hd parts)
 
-let fori_loop lower upper body init =
+let fori_loop ?unroll lower upper body init =
   match (lower, upper) with
   | Concrete lo, Concrete hi
     when Array.length (Ndarray.shape lo) = 0
@@ -952,7 +977,7 @@ let fori_loop lower upper body init =
             next :: body i rest
         | [] -> failwith "fori_loop: arity"
       in
-      List.tl (Lax.scan ~length step (start :: init) [])
+      List.tl (Lax.scan ~length ?unroll step (start :: init) [])
   | _ ->
       let lower =
         if dtype_of lower = dtype_of upper then lower

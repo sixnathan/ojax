@@ -11,11 +11,11 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MAP = {
-    "jax": ["api", "core", "ad_util", "custom_derivatives", "checkpoint", "tree_util", "flatten_util", "config", "sharding", "backend", "debugging", "basearray", "dtypes", "stages", "random/core", "profiler", "monitoring"],
-    "jax.numpy": ["numpy/*"],
+    "jax": ["spmd", "parallel", "ref", "shape_dtype_struct", "api", "core", "ad_util", "custom_derivatives", "checkpoint", "tree_util", "flatten_util", "config", "sharding", "backend", "debugging", "basearray", "dtypes", "stages", "random/core", "profiler", "monitoring"],
+    "jax.numpy": ["numpy/*", "dtypes"],
     "jax.numpy.fft": ["numpy/fft"],
     "jax.numpy.linalg": ["numpy/linalg", "linalg_extras"],
-    "jax.lax": ["lax_api", "lax_extras", "lax_other", "lax/*", "lax/control_flow/*", "lax_config", "api"],
+    "jax.lax": ["spmd", "parallel", "lax_api", "lax_extras", "lax_other", "lax/*", "lax/control_flow/*", "lax_config", "api"],
     "jax.lax.linalg": ["lax/linalg", "qdwh", "linalg_extras"],
     "jax.nn": ["nn/functions"],
     "jax.nn.initializers": ["nn/initializers"],
@@ -96,6 +96,57 @@ def signature_params(obj):
     ]
 
 
+NO_RESULT_EFFECT = {
+    "device",
+    "out_sharding",
+    "sharding",
+    "copy",
+    "order",
+    "overwrite_a",
+    "overwrite_b",
+    "overwrite_c",
+    "overwrite_input",
+    "overwrite_data",
+    "check_finite",
+    "debug",
+    "lwork",
+    "use_magma",
+    "dynamic_shape",
+    "allow_pickle",
+    "kind",
+    "donate",
+    "may_alias",
+    "donate_argnums",
+    "donate_argnames",
+    "src",
+    "backend",
+    "keep_unused",
+    "inline",
+    "compiler_options",
+    "reduce_axes",
+    "turbo",
+}
+
+
+def rejected_by_jax(module, name, obj, param):
+    if param == "out":
+        return True
+    if isinstance(obj, jax_ufunc()) and param in ("out", "where"):
+        return True
+    try:
+        source = inspect.getsource(inspect.unwrap(obj))
+    except (TypeError, OSError):
+        return False
+    pattern = r"if\s+(?:not\s+)?%s\b[^\n]*:\s*\n\s*raise\s+(?:NotImplementedError|ValueError|TypeError)" % re.escape(param)
+    return re.search(pattern, source) is not None
+
+
+def jax_ufunc():
+    import jax.numpy as jnp
+
+    return jnp.ufunc
+
+
 def val_labels(files):
     labels = collections.defaultdict(set)
     decl = re.compile(r"^\s*val\s+([a-zA-Z_][a-zA-Z0-9_']*)\s*:(.*?)(?=^\s*(?:val|type|module|external|exception|open)\b|\Z)", re.M | re.S)
@@ -103,7 +154,10 @@ def val_labels(files):
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
         for m in decl.finditer(text):
-            labels[m.group(1)].update(re.findall(r"\??([a-z_][a-zA-Z0-9_']*)\s*:", m.group(2)))
+            found = set(re.findall(r"\??([a-z_][a-zA-Z0-9_']*)\s*:", m.group(2)))
+            if "Dtype.t" in m.group(2):
+                found.add("dtype")
+            labels[m.group(1)].update(found)
             labels[m.group(1)].add("")
     return labels
 
@@ -123,11 +177,12 @@ def main():
         vals, others = symbols(mli_files(patterns))
         known = vals | {n.lower() for n in others}
         lowered = {n.lower() for n in others} | others
+        known_norm = {norm(n) for n in known | lowered}
         missing_strict = []
         missing_loose = []
         for name in names:
             candidates = {name, name.lower(), name + "_", name.lower() + "_", name + "'"}
-            if not candidates & (known | lowered):
+            if not candidates & (known | lowered) and norm(name) not in known_norm:
                 missing_strict.append(name)
                 if norm(name) not in loose:
                     missing_loose.append(name)
@@ -153,14 +208,22 @@ def main():
                 key = name if name in labels else name + "_" if name + "_" in labels else name.lower()
                 if key not in labels:
                     continue
-                have = {norm(l) for l in labels[key]}
-                lacking = [p for p, d in params if d is not None and norm(p) not in have]
+                have = set()
+                for label_key, found in labels.items():
+                    if label_key == key or label_key.startswith(key + "_"):
+                        have |= {norm(l) for l in found}
+                obj = getattr(mod, name, None)
+                lacking = [p for p, d in params if d is not None and norm(p) not in have and not p.startswith("_")]
+                real = [p for p in lacking if p not in NO_RESULT_EFFECT and not rejected_by_jax(module, name, obj, p)]
+                inert = [p for p in lacking if p in NO_RESULT_EFFECT]
+                rejected = [p for p in lacking if p not in NO_RESULT_EFFECT and p not in real]
                 if lacking:
-                    rows.append((module, name, lacking))
+                    rows.append((module, name, real, inert, rejected))
         report["_options"] = rows
-        print("OPTIONS missing:", sum(len(r[2]) for r in rows), "across", len(rows))
-        for module, name, lacking in rows:
-            print(f"  {module}.{name}: {' '.join(lacking)}")
+        print("OPTIONS result-changing missing:", sum(len(r[2]) for r in rows), "placement or no-result-effect:", sum(len(r[3]) for r in rows), "JAX rejects:", sum(len(r[4]) for r in rows))
+        for module, name, real, _, _ in rows:
+            if real:
+                print(f"  {module}.{name}: {' '.join(real)}")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=1, sort_keys=True)

@@ -127,3 +127,113 @@ OPS.update(_gather_ops())
 
 def all_cases():
     return _random_cases() + _gather_cases()
+
+
+def _transform_ops():
+    def f_scalar(x):
+        return jnp.sum(jnp.sin(x) * x), x * 2.0
+
+    def f_vec(x):
+        return jnp.sin(x) * x, x * 2.0
+
+    def f_holo(x):
+        return jnp.sum(x * x * x)
+
+    return {
+        "cv_t_grad_aux": lambda a, p: jax.grad(f_scalar, has_aux=True)(a),
+        "cv_t_vg_aux": lambda a, p: jax.value_and_grad(f_scalar, has_aux=True)(a),
+        "cv_t_jvp_aux": lambda a, p: jax.jvp(f_vec, (a,), (jnp.ones_like(a),), has_aux=True),
+        "cv_t_vjp_aux": lambda a, p: (lambda r: (r[0], r[1](jnp.ones_like(a))[0], r[2]))(jax.vjp(f_vec, a, has_aux=True)),
+        "cv_t_linearize_aux": lambda a, p: (lambda r: (r[0], r[1](jnp.ones_like(a)), r[2]))(jax.linearize(f_vec, a, has_aux=True)),
+        "cv_t_jacfwd_aux": lambda a, p: jax.jacfwd(f_vec, has_aux=True)(a),
+        "cv_t_jacrev_aux": lambda a, p: jax.jacrev(f_vec, has_aux=True)(a),
+        "cv_t_hessian_aux": lambda a, p: jax.hessian(f_scalar, has_aux=True)(a),
+        "cv_t_jacfwd": lambda a, p: jax.jacfwd(lambda x: jnp.sin(x) * x)(a),
+        "cv_t_jacrev": lambda a, p: jax.jacrev(lambda x: jnp.sin(x) * x)(a),
+        "cv_t_hessian": lambda a, p: jax.hessian(lambda x: jnp.sum(jnp.sin(x) * x))(a),
+        "cv_t_jacfwd_scalar": lambda a, p: jax.jacfwd(lambda x: jnp.sin(x) * x)(a),
+        "cv_t_jacrev_scalar": lambda a, p: jax.jacrev(lambda x: jnp.sin(x) * x)(a),
+        "cv_t_jacfwd_pair": lambda a, p: jax.jacfwd(lambda t: (t[0] * t[1], jnp.sin(t[1])))((a, a * 2.0)),
+        "cv_t_jacrev_pair": lambda a, p: jax.jacrev(lambda t: (t[0] * t[1], jnp.sin(t[1])))((a, a * 2.0)),
+        "cv_t_grad_holo": lambda a, p: jax.grad(f_holo, holomorphic=True)(a),
+        "cv_t_vg_holo": lambda a, p: jax.value_and_grad(f_holo, holomorphic=True)(a),
+    }
+
+
+def _transform_cases():
+    r = {"a": {"kind": "real", "shape": [3]}}
+    c = {"a": {"kind": "complex", "shape": [3]}}
+    out = [(op, r, {}) for op in "cv_t_grad_aux cv_t_vg_aux cv_t_jvp_aux cv_t_vjp_aux cv_t_linearize_aux cv_t_jacfwd_aux cv_t_jacrev_aux cv_t_hessian_aux".split()]
+    out += [("cv_t_grad_holo", c, {}), ("cv_t_vg_holo", c, {})]
+    out += [(op, r, {}) for op in "cv_t_jacfwd cv_t_jacrev cv_t_hessian cv_t_jacfwd_pair cv_t_jacrev_pair".split()]
+    m = {"a": {"kind": "real", "shape": [2, 2]}}
+    out += [("cv_t_jacfwd", m, {}), ("cv_t_jacrev", m, {}), ("cv_t_hessian", m, {})]
+    s0 = {"a": {"kind": "real", "shape": []}}
+    out += [("cv_t_jacfwd_scalar", s0, {}), ("cv_t_jacrev_scalar", s0, {})]
+    return out
+
+
+def _sdn(update_window=(), inserted=(0,), to_operand=(0,)):
+    from jax.lax import ScatterDimensionNumbers as S
+
+    return S(update_window_dims=tuple(update_window), inserted_window_dims=tuple(inserted), scatter_dims_to_operand_dims=tuple(to_operand))
+
+
+def _gdn():
+    from jax.lax import GatherDimensionNumbers as G
+
+    return G(offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,))
+
+
+def _lax_ops():
+    from jax import lax
+
+    def scatter(name):
+        fn = getattr(lax, name)
+        idx = lambda p: jnp.asarray(p["idx"]).reshape(-1, 1)
+        return lambda a, p: fn(a, idx(p), a[: len(p["idx"])] * 2.0, _sdn(), indices_are_sorted=p.get("sorted", False), unique_indices=p.get("unique", False))
+
+    ops = {"cv_l_" + n: scatter(n) for n in "scatter scatter_add scatter_sub scatter_mul scatter_min scatter_max".split()}
+    ops["cv_l_gather"] = lambda a, p: lax.gather(a, jnp.asarray(p["idx"]).reshape(-1, 1), _gdn(), (1,), mode=p["mode"], indices_are_sorted=p.get("sorted", False), unique_indices=p.get("unique", False))
+    ops["cv_l_dynamic_slice"] = lambda a, p: lax.dynamic_slice(a, (jnp.argmax(a) - 1,), (2,), allow_negative_indices=p["allow"])
+    ops["cv_l_dynamic_slice_in_dim"] = lambda a, p: lax.dynamic_slice_in_dim(a, jnp.argmax(a) - 1, 2, 0, allow_negative_indices=p["allow"])
+    ops["cv_l_dynamic_update_slice"] = lambda a, p: lax.dynamic_update_slice(a, a[:2], (jnp.argmax(a) - 1,), allow_negative_indices=p["allow"])
+    ops["cv_l_dynamic_update_slice_in_dim"] = lambda a, p: lax.dynamic_update_slice_in_dim(a, a[:2], jnp.argmax(a) - 1, 0, allow_negative_indices=p["allow"])
+    ops["cv_l_fori_unroll"] = lambda a, p: lax.fori_loop(0, p["n"], lambda i, x: x * 2.0, a, unroll=p["unroll"])
+    ops["cv_l_collapse_from"] = lambda a, p: lax.collapse(a, p["start"])
+    return ops
+
+
+def _lax_cases():
+    r = lambda shape: {"a": {"kind": "real", "shape": shape}}
+    out = []
+    for n in "scatter scatter_add scatter_sub scatter_mul scatter_min scatter_max".split():
+        for srt, unique in [(True, False), (False, True), (True, True)]:
+            out.append(("cv_l_" + n, r([5]), {"idx": [0, 2], "sorted": srt, "unique": unique}))
+    for mode in ["promise_in_bounds", "clip", "fill"]:
+        for srt, unique in [(True, False), (False, True), (True, True)]:
+            out.append(("cv_l_gather", r([5]), {"idx": [0, 2], "mode": mode, "sorted": srt, "unique": unique}))
+    for allow in [True, False]:
+        for op in "dynamic_slice dynamic_slice_in_dim dynamic_update_slice dynamic_update_slice_in_dim".split():
+            out.append(("cv_l_" + op, r([5]), {"allow": allow}))
+    out.append(("cv_l_fori_unroll", r([3]), {"n": 4, "unroll": 2}))
+    out.append(("cv_l_collapse_from", r([2, 3, 4]), {"start": 1}))
+    out.append(("cv_l_collapse_from", r([2, 3, 4]), {"start": -2}))
+    return out
+
+
+def _flat(fn):
+    def call(*args, **kw):
+        leaves = jax.tree_util.tree_leaves(fn(*args, **kw))
+        return leaves[0] if len(leaves) == 1 else tuple(leaves)
+
+    return call
+
+
+OPS.update({k: _flat(v) for k, v in _transform_ops().items()})
+OPS.update(_lax_ops())
+_prior_all_cases = all_cases
+
+
+def all_cases():
+    return _prior_all_cases() + _transform_cases() + _lax_cases()

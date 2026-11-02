@@ -91,3 +91,17 @@ let gather_flags_of prim =
     (fun (other, sorted, unique) ->
       if other == o then Some (sorted, unique) else None)
     (Hashtbl.find_all gather_flags (Hashtbl.hash o))
+
+let scatter_flags : (int, Obj.t * bool * bool) Hashtbl.t = Hashtbl.create 16
+
+let mark_scatter_flags ~sorted ~unique prim =
+  let o = Obj.repr prim in
+  Hashtbl.add scatter_flags (Hashtbl.hash o) (o, sorted, unique);
+  prim
+
+let scatter_flags_of prim =
+  let o = Obj.repr prim in
+  List.find_map
+    (fun (other, sorted, unique) ->
+      if other == o then Some (sorted, unique) else None)
+    (Hashtbl.find_all scatter_flags (Hashtbl.hash o))

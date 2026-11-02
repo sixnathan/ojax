@@ -1523,9 +1523,16 @@ let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
        "    %s = \"stablehlo.scatter\"(%s, %s, %s) <{indices_are_sorted = %b, \
         scatter_dimension_numbers = %s, unique_indices = %b}> ({\n"
        (name n) (name op_id) (name idx_id) (name upd_id)
-       (Np_ints.scatter_marked eqn.prim || dnums.s_sorted_unique)
+       (Np_ints.scatter_marked eqn.prim
+       || dnums.s_sorted_unique
+       || Option.fold ~none:false ~some:fst (Np_ints.scatter_flags_of eqn.prim)
+       )
        (scatter_dnums_attr dnums ivd)
-       (unique || Np_ints.scatter_marked eqn.prim || dnums.s_sorted_unique));
+       (unique
+       || Np_ints.scatter_marked eqn.prim
+       || dnums.s_sorted_unique
+       || Option.fold ~none:false ~some:snd (Np_ints.scatter_flags_of eqn.prim)
+       ));
   let a = fresh ctx in
   let b = fresh ctx in
   Buffer.add_string ctx.buf

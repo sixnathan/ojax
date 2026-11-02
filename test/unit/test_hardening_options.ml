@@ -512,11 +512,11 @@ module T5 = struct
         (fun a i v -> [ f ~mode:Lax_config.Fill_or_drop a i v sd ])
     in
     fam "scatter" (fun ?mode a i v d -> L.scatter ?mode a i v d);
-    fam "scatter_add" L.scatter_add;
-    fam "scatter_sub" L.scatter_sub;
+    fam "scatter_add" (fun ?mode x i u d -> L.scatter_add ?mode x i u d);
+    fam "scatter_sub" (fun ?mode x i u d -> L.scatter_sub ?mode x i u d);
     fam "scatter_mul" (fun ?mode a i v d -> L.scatter_mul ?mode a i v d);
-    fam "scatter_min" L.scatter_min;
-    fam "scatter_max" L.scatter_max
+    fam "scatter_min" (fun ?mode x i u d -> L.scatter_min ?mode x i u d);
+    fam "scatter_max" (fun ?mode x i u d -> L.scatter_max ?mode x i u d)
 end
 
 module T6 = struct

@@ -16,3 +16,5 @@ val mark_gather_clip : sorted:bool -> 'a -> 'a
 val gather_clip_of : 'a -> bool option
 val mark_gather_flags : sorted:bool -> unique:bool -> 'a -> 'a
 val gather_flags_of : 'a -> (bool * bool) option
+val mark_scatter_flags : sorted:bool -> unique:bool -> 'a -> 'a
+val scatter_flags_of : 'a -> (bool * bool) option

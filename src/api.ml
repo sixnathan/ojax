@@ -632,21 +632,8 @@ let fwd_and_bwd ?(has_aux = false) ?(jitted = true) ~argnums f =
   in
   (fwd, bwd)
 
-let basis (a : aval) =
-  let n = Array.fold_left ( * ) 1 a.shape in
-  Concrete
-    (Ndarray.of_floats a.dtype [| n; n |]
-       (Array.init (n * n) (fun i -> if i mod (n + 1) = 0 then 1.0 else 0.0)))
-
 let size_of (a : aval) = Array.fold_left ( * ) 1 a.shape
 let reshape_to shape v = Core.bind1 (Reshape shape) [ v ]
-
-let move_first_to_last_and_reshape out_shape in_shape v =
-  let ndim = Array.length (Core.get_aval v).shape in
-  let perm = Array.init ndim (fun i -> if i = ndim - 1 then 0 else i + 1) in
-  let moved = Core.bind1 (Transpose perm) [ v ] in
-  reshape_to (Array.append out_shape in_shape) moved
-
 let zeros_for (a : aval) = Ad_util.zeros_like_aval a
 
 let nested_jacobian out_tree in_tree (entries : value list list) =
@@ -667,6 +654,52 @@ let flatten_nested (tree : value Tree.t Tree.t) : value Tree.t =
   in
   go tree
 
+let split_along arr sizes axis =
+  Core.bind (Split { sizes = Np_ints.mark (Array.of_list sizes); axis }) [ arr ]
+
+let reshape_if_needed v shape =
+  if (Core.get_aval v).shape = shape then v else reshape_to shape v
+
+let std_basis (leaves : value list) =
+  let avals = List.map Core.get_aval leaves in
+  let total = List.fold_left (fun acc a -> acc + size_of a) 0 avals in
+  let dt =
+    List.fold_left
+      (fun acc (a : aval) -> Dtypes.promote_types acc a.dtype)
+      (List.hd avals).dtype (List.tl avals)
+  in
+  let flat_basis =
+    let idt = Dtypes.default_int_dtype () in
+    let iota dimension =
+      Core.bind1
+        (Iota { dtype = idt; shape = [| total; total |]; dimension })
+        []
+    in
+    let rows = iota 0 in
+    let cols = iota 1 in
+    let shifted = Core.bind1 Add [ rows; Core.py_scalar idt 0.0 ] in
+    Core.bind1 (Convert_element_type dt) [ Core.bind1 Eq [ shifted; cols ] ]
+  in
+  let parts = split_along flat_basis (List.map size_of avals) 1 in
+  List.map2
+    (fun part (a : aval) ->
+      let shaped = reshape_if_needed part (Array.append [| total |] a.shape) in
+      Core.bind1 (Convert_element_type a.dtype) [ shaped ])
+    parts avals
+
+let downcast v (example : aval) =
+  let a = Core.get_aval v in
+  let v =
+    match (a.dtype, example.dtype) with
+    | (Dtype.Complex64 | Dtype.Complex128), (Dtype.Complex64 | Dtype.Complex128)
+      ->
+        v
+    | (Dtype.Complex64 | Dtype.Complex128), _ -> Core.bind1 Real [ v ]
+    | _ -> v
+  in
+  if (Core.get_aval v).dtype = example.dtype && not a.weak_type then v
+  else Core.bind1 (Convert_element_type example.dtype) [ v ]
+
 let jacfwd ?(argnums = 0) f args =
   let selected, rebuild = split_args [ argnums ] args in
   let x0 = List.hd selected in
@@ -679,31 +712,46 @@ let jacfwd ?(argnums = 0) f args =
     out_def := d;
     o
   in
-  let columns =
-    List.mapi
-      (fun k (a : aval) ->
-        let push b =
-          let tangents =
-            List.mapi
-              (fun j (aj : aval) ->
-                if j = k then reshape_to a.shape b else zeros_for aj)
-              avals
-          in
-          snd (Ad.jvp call leaves tangents)
-        in
-        Batching.vmap (fun bs -> push (List.hd bs)) [ Some 0 ] [ basis a ])
-      avals
+  let primal_outs = ref [] in
+  let tangents = std_basis leaves in
+  let raw =
+    Batching.vmap
+      (fun ts ->
+        let po, to_ = Ad.jvp call leaves ts in
+        primal_outs := po;
+        to_)
+      (List.map (fun _ -> Some 0) leaves)
+      tangents
   in
-  let n_out = List.length (List.hd columns) in
+  let sizes = List.map size_of avals in
+  let moved_all =
+    List.map
+      (fun arr ->
+        let ndim = Array.length (Core.get_aval arr).shape in
+        if ndim > 1 then
+          Core.bind1
+            (Transpose
+               (Array.init ndim (fun i -> if i = ndim - 1 then 0 else i + 1)))
+            [ arr ]
+        else arr)
+      raw
+  in
   let entries =
-    List.init n_out (fun j ->
+    List.map
+      (fun moved ->
+        let out_shape =
+          let s = (Core.get_aval moved).shape in
+          Array.sub s 0 (Array.length s - 1)
+        in
+        let example = Core.get_aval (List.hd !primal_outs) in
+        let parts = split_along moved sizes (Array.length out_shape) in
         List.map2
-          (fun column (a : aval) ->
-            let raw = List.nth column j in
-            let full = (Core.get_aval raw).shape in
-            let out_shape = Array.sub full 1 (Array.length full - 1) in
-            move_first_to_last_and_reshape out_shape a.shape raw)
-          columns avals)
+          (fun part (a : aval) ->
+            downcast
+              (reshape_if_needed part (Array.append out_shape a.shape))
+              { example with dtype = (Core.get_aval moved).dtype })
+          parts avals)
+      moved_all
   in
   flatten_nested (nested_jacobian !out_def in_def entries)
 
@@ -721,22 +769,24 @@ let jacrev ?(argnums = 0) f args =
   in
   let outs, f_vjp = Ad.vjp call leaves in
   let out_avals = List.map Core.get_aval outs in
+  let basis_trees = std_basis outs in
+  let grads =
+    Batching.vmap f_vjp (List.map (fun _ -> Some 0) outs) basis_trees
+  in
+  let sizes = List.map size_of out_avals in
+  let per_input =
+    List.map2
+      (fun g (a : aval) ->
+        let parts = split_along g sizes 0 in
+        List.map2
+          (fun part (oa : aval) ->
+            downcast (reshape_if_needed part (Array.append oa.shape a.shape)) a)
+          parts out_avals)
+      grads avals
+  in
   let entries =
     List.mapi
-      (fun j (oa : aval) ->
-        let pull bs =
-          let ct =
-            List.mapi
-              (fun i (ai : aval) ->
-                if i = j then reshape_to oa.shape (List.hd bs) else zeros_for ai)
-              out_avals
-          in
-          f_vjp ct
-        in
-        let grads = Batching.vmap pull [ Some 0 ] [ basis oa ] in
-        List.map2
-          (fun g (a : aval) -> reshape_to (Array.append oa.shape a.shape) g)
-          grads avals)
+      (fun j _ -> List.map (fun column -> List.nth column j) per_input)
       out_avals
   in
   flatten_nested (nested_jacobian !out_def in_def entries)
@@ -788,6 +838,87 @@ let eval_shape_structs f structs =
              }
          | DropVar a -> a)
        closed.jaxpr.outs)
+
+type tree_fn = value Tree.t list -> value Tree.t
+
+let split_aux f =
+  let aux = ref Tree.Null in
+  ( (fun args ->
+      match f args with
+      | Tree.Tuple [ y; a ] ->
+          aux := Tree.tree_map Ad.aux_primal a;
+          y
+      | _ -> invalid_arg "has_aux requires a (value, aux) tuple"),
+    aux )
+
+let check_holomorphic name v =
+  match (Core.get_aval v).dtype with
+  | Dtype.Complex64 | Dtype.Complex128 -> ()
+  | dt ->
+      invalid_arg
+        (Printf.sprintf
+           "%s with holomorphic=True requires inputs with complex dtype, but \
+            got %s."
+           name (Dtype.numpy_name dt))
+
+let value_and_grad_holomorphic f args =
+  match args with
+  | [] -> failwith "value_and_grad: no arguments"
+  | x0 :: rest ->
+      let flat0, tree0 = Tree.tree_flatten x0 in
+      List.iter (check_holomorphic "grad") flat0;
+      let flat_f flat0' =
+        match f (Tree.tree_unflatten tree0 flat0' :: rest) with
+        | Tree.Leaf v -> [ v ]
+        | _ -> failwith "value_and_grad: function must return a scalar leaf"
+      in
+      let outs, f_vjp = Ad.vjp flat_f flat0 in
+      let y = List.hd outs in
+      (Tree.Leaf y, Tree.tree_unflatten tree0 (f_vjp [ ones_like_value y ]))
+
+let grad_holomorphic f args = snd (value_and_grad_holomorphic f args)
+
+let grad_aux ?allow_int f args =
+  let g, aux = split_aux f in
+  let out = grad ?allow_int g args in
+  (out, !aux)
+
+let value_and_grad_aux ?allow_int f args =
+  let g, aux = split_aux f in
+  let y, out = value_and_grad ?allow_int g args in
+  (y, out, !aux)
+
+let jvp_aux f primals tangents =
+  let g, aux = split_aux f in
+  let y, t = jvp g primals tangents in
+  (y, t, !aux)
+
+let vjp_aux f primals =
+  let g, aux = split_aux f in
+  let y, back = vjp g primals in
+  (y, back, !aux)
+
+let linearize_aux f primals =
+  let g, aux = split_aux f in
+  let y, lin = linearize g primals in
+  (y, lin, !aux)
+
+let jacfwd_aux ?argnums f args =
+  let g, aux = split_aux f in
+  let jac = jacfwd ?argnums g args in
+  (jac, !aux)
+
+let jacrev_aux ?argnums f args =
+  let g, aux = split_aux f in
+  let jac = jacrev ?argnums g args in
+  (jac, !aux)
+
+let hessian_aux ?argnums f args =
+  jacfwd_aux ?argnums
+    (fun a ->
+      let jac, aux = jacrev_aux ?argnums f a in
+      Tree.Tuple [ jac; aux ])
+    args
 
 let linear_transpose f primals =
   let leaves, in_def = Tree.tree_flatten (Tree.Tuple primals) in

@@ -105,6 +105,17 @@ let program case names values =
   | "power" -> update G.at_power
   | "min" -> update G.at_min
   | "max" -> update G.at_max
+  | ("ufunc_add_at" | "ufunc_multiply_at" | "ufunc_subtract_at") as op ->
+      let inplace =
+        match U.member "inplace" params with `Bool b -> b | _ -> false
+      in
+      let f =
+        match op with
+        | "ufunc_add_at" -> G.ufunc_add_at
+        | "ufunc_multiply_at" -> G.ufunc_multiply_at
+        | _ -> G.ufunc_subtract_at
+      in
+      f ~inplace x idx (y ())
   | "apply" ->
       G.at_apply ?indices_are_sorted ?unique_indices ?mode ?normalize_indices x
         idx negative

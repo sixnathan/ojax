@@ -489,7 +489,11 @@ let normalize_item sh p =
               (Ndarray.map D.Bool (fun x -> if x < 0.0 then 1.0 else 0.0) nd)
         | None -> Ufuncs.less v (py_int 0)
       in
-      let sz = T.Concrete (Ndarray.of_floats dt [||] [| float_of_int size |]) in
+      let sz = Ndarray.of_floats dt [||] [| float_of_int size |] in
+      let sz =
+        T.Concrete
+          (if (C.get_aval v).T.weak_type then Ndarray.as_weak sz else sz)
+      in
       { p with item = Jarr (L.select neg (L.add v sz) v) }
   | Tarray, Host nd ->
       let size = sh.(List.hd p.axes) in
@@ -966,3 +970,98 @@ let at_apply ?indices_are_sorted ?unique_indices ?mode ?normalize_indices x idx
   scatter_update ?indices_are_sorted ?unique_indices ?mode ?normalize_indices
     (Apply f) x idx
     (T.Concrete (Ndarray.of_floats (dtype x) [||] [| 0.0 |]))
+
+let at_inplace_warning =
+  "Because JAX arrays are immutable, jnp.ufunc.at() cannot operate inplace like\n\
+   np.ufunc.at(). Instead, you can pass inplace=False and capture the result; \
+   e.g.\n\
+   >>> arr = jnp.add.at(arr, ind, val, inplace=False)\n"
+
+let check_inplace inplace =
+  if inplace then raise (Py_exn.Not_implemented_error at_inplace_warning)
+
+let bool_via_int32 a b f =
+  if dtype a = D.Bool then
+    let a = Lax_numpy.astype a D.I32 in
+    let b = Lax_numpy.astype (C.convert_like ~weak:false b D.Bool) D.I32 in
+    Lax_numpy.astype (f a b) D.Bool
+  else f a b
+
+let ufunc_jit name f a idx b =
+  let leaves =
+    List.concat
+      (List.mapi
+         (fun k item ->
+           let bad ty =
+             raise
+               (Py_exn.Type_error
+                  (Printf.sprintf
+                     "Error interpreting argument to <function ufunc.at> as an \
+                      abstract array. The problematic value is of type <class \
+                      '%s'> and was passed to the function at path indices[%d].\n\
+                      This typically means that a jit-wrapped function was \
+                      called with a non-array argument, and this argument was \
+                      not marked as static using the static_argnums or \
+                      static_argnames parameters of jax.jit."
+                     ty k))
+           in
+           match item with
+           | Slice _ -> bad "slice"
+           | Ellipsis -> bad "ellipsis"
+           | Newaxis -> []
+           | Int i -> [ py_int i ]
+           | Bool b -> [ C.py_scalar D.Bool (if b then 1.0 else 0.0) ]
+           | Arr v -> [ v ])
+         idx)
+  in
+  let shape_key =
+    String.concat ","
+      (List.map
+         (function
+           | Newaxis -> "n"
+           | Int _ -> "i"
+           | Bool _ -> "b"
+           | Arr _ -> "a"
+           | _ -> "?")
+         idx)
+  in
+  Jnp_util.jit1 "at"
+    ~key:(name ^ ":" ^ shape_key)
+    (fun args ->
+      match args with
+      | a :: rest ->
+          let rest = ref rest in
+          let next () =
+            match !rest with
+            | v :: tl ->
+                rest := tl;
+                v
+            | [] -> invalid_arg "ufunc.at"
+          in
+          let idx =
+            List.map (function Newaxis -> Newaxis | _ -> Arr (next ())) idx
+          in
+          f a idx (next ())
+      | [] -> invalid_arg "ufunc.at")
+    ((a :: leaves) @ [ b ])
+
+let ufunc_add_at ?(inplace = true) a idx b =
+  ufunc_jit "add"
+    (fun a idx b ->
+      check_inplace inplace;
+      bool_via_int32 a b (fun a b -> at_add a idx b))
+    a idx b
+
+let ufunc_multiply_at ?(inplace = true) a idx b =
+  ufunc_jit "multiply"
+    (fun a idx b ->
+      check_inplace inplace;
+      bool_via_int32 a b (fun a b -> at_multiply a idx b))
+    a idx b
+
+let ufunc_subtract_at ?(inplace = true) a idx b =
+  ufunc_jit "subtract"
+    (fun a idx b ->
+      check_inplace inplace;
+      at_subtract a idx b)
+    a idx b

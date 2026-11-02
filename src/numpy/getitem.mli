@@ -44,3 +44,12 @@ val at_apply :
   index list ->
   (Types.value -> Types.value) ->
   Types.value
+
+val ufunc_add_at :
+  ?inplace:bool -> Types.value -> index list -> Types.value -> Types.value
+
+val ufunc_multiply_at :
+  ?inplace:bool -> Types.value -> index list -> Types.value -> Types.value
+
+val ufunc_subtract_at :
+  ?inplace:bool -> Types.value -> index list -> Types.value -> Types.value

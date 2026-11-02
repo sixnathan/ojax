@@ -28,6 +28,7 @@ DTYPES = {
     "x64_on": ("float32", "float64", "int32", "int64", "uint32", "bool", "complex128"),
 }
 UPDATES = ("set", "add", "subtract", "multiply", "divide", "power", "min", "max", "apply")
+UFUNC_AT = ("ufunc_add_at", "ufunc_multiply_at", "ufunc_subtract_at")
 MODES = (None, "clip", "fill", "drop", "promise_in_bounds")
 
 
@@ -96,6 +97,9 @@ def program(case):
             return ref.get(**kw)
         if op == "apply":
             return ref.apply(jnp.negative, **kw)
+        if op.startswith("ufunc_"):
+            y = params["y_scalar"] if "y_scalar" in params else env["y"]
+            return getattr(jnp, op.split("_")[1]).at(x, idx, y, inplace=params.get("inplace", False))
         if "y_scalar" in params:
             y = params["y_scalar"]
         else:
@@ -229,6 +233,10 @@ def options(rng, op):
     p = {"op": op}
     if op == "getitem":
         return p
+    if op in UFUNC_AT:
+        if rng.random() < 0.1:
+            p["inplace"] = True
+        return p
     r = rng.random()
     if r < 0.5:
         mode = MODES[int(rng.integers(0, len(MODES)))]
@@ -248,7 +256,7 @@ def options(rng, op):
 def make_case(set_name, case_id, rng, shape, spec, arrays, op, dtype):
     params = options(rng, op)
     params["index"] = spec
-    if op in UPDATES and op != "apply" and rng.random() < 0.3:
+    if (op in UPDATES or op in UFUNC_AT) and op != "apply" and rng.random() < 0.3:
         params["y_scalar"] = int(rng.integers(-3, 4)) if rng.random() < 0.5 else float(rng.choice([0.5, -2.0, 3.0]))
     if arrays and rng.random() < 0.2 and not any(v.dtype == np.float32 for v in arrays.values()):
         params["const"] = True
@@ -274,7 +282,7 @@ def expand(seed):
                 case, arrays = make_case(set_name, cid, rng, spec["shape"], spec["index"], arrays, op, dtype)
                 cases.append(case)
                 stash[cid] = arrays
-        for op in UPDATES + ("get",):
+        for op in UPDATES + ("get",) + UFUNC_AT:
             for form in ([arr("i0")], [sl(None, None, 2)], [iv(-1), sl()], [arr("m0")]):
                 for dtype in dts:
                     cid = "fixed_%04d" % n
@@ -289,7 +297,7 @@ def expand(seed):
             shape = [int(rng.choice([0, 1, 2, 3, 4, 5], p=[0.05, 0.1, 0.2, 0.25, 0.2, 0.2])) for _ in range(rank)]
             spec = random_spec(rng, rank)
             arrays = fuzz_arrays(rng, shape, spec)
-            op = ("getitem", "get") + UPDATES
+            op = ("getitem", "get") + UPDATES + UFUNC_AT
             op = op[int(rng.integers(0, len(op)))]
             dtype = dts[int(rng.integers(0, len(dts)))]
             cid = "fuzz_%04d" % i
@@ -317,7 +325,7 @@ def inputs_for(case, index_arrays):
     arrays = {"x": values_for(rng, case["dtype"], tuple(case["shape"]))}
     arrays.update(index_arrays)
     params = case["params"]
-    if params["op"] in UPDATES and params["op"] != "apply" and "y_scalar" not in params:
+    if (params["op"] in UPDATES or params["op"] in UFUNC_AT) and params["op"] != "apply" and "y_scalar" not in params:
         xj = jnp.asarray(arrays["x"])
         try:
             with warnings.catch_warnings():

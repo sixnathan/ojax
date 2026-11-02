@@ -75,21 +75,22 @@ let variance_scaling scale mode distribution ?(in_axis = -2) ?(out_axis = -1)
     | Fan_geo_avg -> sqrt (fan_in *. fan_out)
   in
   let module UF = Numpy.Ufuncs in
-  let quotient = scale /. denominator in
+  let dt = RC.float_dtype () in
+  let variance = Concrete (Nd.of_floats dt [||] [| scale /. denominator |]) in
+  let literal v = Concrete (Nd.of_floats dt [||] [| v |]) in
   match distribution with
   | Truncated_normal ->
-      let samp = RC.truncated_normal key ~lower:(-2.0) ~upper:2.0 ~shape in
-      let variance = like samp quotient in
       let root = UF.sqrt variance in
-      let stddev = UF.true_divide root (like samp 0.8796256610342398) in
+      let stddev = UF.true_divide root (literal 0.87962566103423978) in
+      let samp = RC.truncated_normal_int key ~lower:(-2) ~upper:2 ~shape in
       times samp stddev
   | Normal ->
       let samp = RC.normal key ~shape in
-      times samp (UF.sqrt (like samp quotient))
+      times samp (UF.sqrt variance)
   | Uniform ->
-      let samp = RC.uniform key ~shape ~minval:(-1.0) ~maxval:1.0 in
-      let variance = like samp quotient in
-      times samp (UF.sqrt (times (like samp 3.0) variance))
+      let samp = RC.uniform_int_low key ~shape ~minval:(-1) in
+      let tripled = UF.multiply (Numpy.Jnp_util.py_int 3) variance in
+      times samp (UF.sqrt tripled)
 
 let glorot_uniform ?in_axis ?out_axis ?batch_axis () : t =
   variance_scaling 1.0 Fan_avg Uniform ?in_axis ?out_axis ?batch_axis ()
@@ -186,3 +187,6 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () : t =
     in
     C.bind1 (Pad cfg)
       [ expanded; Concrete (Nd.of_floats a.dtype [||] [| 0.0 |]) ]
+
+let with_dtype dtype (init : t) : t =
+ fun key ~shape -> RC.with_dtypes ~float_dtype:dtype (fun () -> init key ~shape)

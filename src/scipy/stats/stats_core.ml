@@ -12,16 +12,27 @@ let invert_permutation i =
   let vals = NL.arange ~dtype:(dtype i) (float_of_int size) in
   IX.put base i vals
 
-let sem ?(axis = 0) ?(ddof = 1) a =
+let sem ?(axis = 0) ?(ddof = 1) ?(nan_policy = "propagate") ?(keepdims = false)
+    a =
   let b = match promote_complex [ a ] with [ b ] -> b | _ -> assert false in
-  let size = (shape b).(axis) in
-  let denom = sc b (Float.sqrt (float_of_int size)) in
-  UF.divide (RD.std ~axis:[| axis |] ~ddof b) denom
+  match nan_policy with
+  | "propagate" ->
+      let size = (shape b).(axis) in
+      let denom = sc b (Float.sqrt (float_of_int size)) in
+      UF.divide (RD.std ~axis:[| axis |] ~ddof ~keepdims b) denom
+  | "omit" ->
+      let valid = UF.logical_not (UF.isnan b) in
+      let count = RD.sum ~axis:[| axis |] ~keepdims valid in
+      let spread = RD.nanstd ~axis:[| axis |] ~ddof ~keepdims b in
+      UF.divide spread (Numpy.Lax_numpy.astype (UF.sqrt count) (dtype b))
+  | other -> invalid_arg (other ^ " is not supported")
 
-let sem ?axis ?ddof a =
-  Eager_jit.one ~jit:"sem" "scipy.stats.sem" (axis, ddof) [] [ a ]
-    (fun _ vals ->
-      match vals with [ a ] -> sem ?axis ?ddof a | _ -> assert false)
+let sem ?axis ?ddof ?nan_policy ?keepdims a =
+  Eager_jit.one ~jit:"sem" "scipy.stats.sem" (axis, ddof, nan_policy, keepdims)
+    [] [ a ] (fun _ vals ->
+      match vals with
+      | [ a ] -> sem ?axis ?ddof ?nan_policy ?keepdims a
+      | _ -> assert false)
 
 let lane_mode x =
   let n = Array.fold_left ( * ) 1 (shape x) in

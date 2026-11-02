@@ -10,6 +10,8 @@ complex:x64_off	20	20
 complex:x64_on	40	40
 conditionals:x64_off	19	19
 conditionals:x64_on	23	23
+coverage:x64_off	284	284
+coverage:x64_on	567	568
 contractions:x64_off	47	47
 contractions:x64_on	51	51
 creation:x64_off	32	32

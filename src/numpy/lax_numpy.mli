@@ -78,7 +78,11 @@ val allclose :
 val clip : ?min:float -> ?max:float -> Types.value -> Types.value
 
 val clip_values :
-  ?min:Types.value -> ?max:Types.value -> Types.value -> Types.value
+  ?method_:bool ->
+  ?min:Types.value ->
+  ?max:Types.value ->
+  Types.value ->
+  Types.value
 
 val clip_strong_max : Types.value -> Types.value -> Types.value
 val round : ?decimals:int -> Types.value -> Types.value

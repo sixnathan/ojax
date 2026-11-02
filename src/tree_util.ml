@@ -79,6 +79,42 @@ let rec tree_map (f : 'a -> 'b) (tree : 'a t) : 'b t =
   | Custom (name, aux, children) ->
       Custom (name, aux, List.map (tree_map f) children)
 
+let rec tree_map_is_leaf ~is_leaf (f : 'a t -> 'b t) (tree : 'a t) : 'b t =
+  if is_leaf tree then f tree
+  else
+    let go = tree_map_is_leaf ~is_leaf f in
+    match tree with
+    | Leaf _ -> f tree
+    | Null -> Null
+    | List children -> List (List.map go children)
+    | Tuple children -> Tuple (List.map go children)
+    | Dict kvs -> Dict (List.map (fun (k, v) -> (k, go v)) kvs)
+    | Custom (name, aux, children) -> Custom (name, aux, List.map go children)
+
+let rec tree_leaves_is_leaf ~is_leaf (tree : 'a t) : 'a t list =
+  if is_leaf tree then [ tree ]
+  else
+    let go = tree_leaves_is_leaf ~is_leaf in
+    match tree with
+    | Leaf _ -> [ tree ]
+    | Null -> []
+    | List children | Tuple children | Custom (_, _, children) ->
+        List.concat_map go children
+    | Dict kvs -> List.concat_map (fun (_, v) -> go v) kvs
+
+let rec tree_structure_is_leaf ~is_leaf (tree : 'a t) : treedef =
+  if is_leaf tree then Leaf_def
+  else
+    let go = tree_structure_is_leaf ~is_leaf in
+    match tree with
+    | Leaf _ -> Leaf_def
+    | Null -> Null_def
+    | List children -> List_def (List.map go children)
+    | Tuple children -> Tuple_def (List.map go children)
+    | Dict kvs -> Dict_def (List.map (fun (k, v) -> (k, go v)) kvs)
+    | Custom (name, aux, children) ->
+        Custom_def (name, aux, List.map go children)
+
 type key_entry =
   | Dict_key of string
   | Sequence_key of int
@@ -126,14 +162,17 @@ let tree_map_with_path f tree =
   let paths = tree_leaves_with_path tree in
   tree_unflatten (tree_structure tree) (List.map (fun (p, x) -> f p x) paths)
 
-let keystr path =
-  String.concat ""
+let keystr ?(simple = false) ?(separator = "") path =
+  String.concat separator
     (List.map
        (function
-         | Dict_key k -> "['" ^ k ^ "']"
-         | Sequence_key i -> "[" ^ string_of_int i ^ "]"
-         | Flattened_index_key i -> "[<flat index " ^ string_of_int i ^ ">]"
-         | Get_attr_key name -> "." ^ name)
+         | Dict_key k -> if simple then k else "['" ^ k ^ "']"
+         | Sequence_key i ->
+             if simple then string_of_int i else "[" ^ string_of_int i ^ "]"
+         | Flattened_index_key i ->
+             if simple then string_of_int i
+             else "[<flat index " ^ string_of_int i ^ ">]"
+         | Get_attr_key name -> if simple then name else "." ^ name)
        path)
 
 let tree_reduce f init tree = List.fold_left f init (tree_leaves tree)

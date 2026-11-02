@@ -19,46 +19,103 @@ val clone : value -> value
 val fold_in : value -> value -> value
 val split : value -> int -> value
 val bits : value -> shape:int array -> value
-val randint : value -> shape:int array -> minval:int -> maxval:int -> value
-val uniform : value -> shape:int array -> minval:float -> maxval:float -> value
-val normal : value -> shape:int array -> value
+
+val randint :
+  ?dtype:Dtype.t ->
+  value ->
+  shape:int array ->
+  minval:int ->
+  maxval:int ->
+  value
+
+val uniform :
+  ?dtype:Dtype.t ->
+  value ->
+  shape:int array ->
+  minval:float ->
+  maxval:float ->
+  value
+
+val normal : ?dtype:Dtype.t -> value -> shape:int array -> value
 
 val truncated_normal :
-  value -> lower:float -> upper:float -> shape:int array -> value
+  ?dtype:Dtype.t ->
+  value ->
+  lower:float ->
+  upper:float ->
+  shape:int array ->
+  value
 
 val permutation : value -> int -> value
 val choice : value -> n:int -> shape:int array -> replace:bool -> value
-val exponential : value -> shape:int array -> value
-val cauchy : value -> shape:int array -> value
-val laplace : value -> shape:int array -> value
-val logistic : value -> shape:int array -> value
-val gumbel : value -> shape:int array -> value
-val pareto : value -> shape:int array -> b:float -> value
-val rayleigh : value -> shape:int array -> scale:float -> value
+val exponential : ?dtype:Dtype.t -> value -> shape:int array -> value
+val cauchy : ?dtype:Dtype.t -> value -> shape:int array -> value
+val laplace : ?dtype:Dtype.t -> value -> shape:int array -> value
+val logistic : ?dtype:Dtype.t -> value -> shape:int array -> value
+val gumbel : ?dtype:Dtype.t -> ?mode:string -> value -> shape:int array -> value
+val pareto : ?dtype:Dtype.t -> value -> shape:int array -> b:float -> value
+
+val rayleigh :
+  ?dtype:Dtype.t -> value -> shape:int array -> scale:float -> value
 
 val weibull_min :
-  value -> shape:int array -> scale:float -> concentration:float -> value
+  ?dtype:Dtype.t ->
+  value ->
+  shape:int array ->
+  scale:float ->
+  concentration:float ->
+  value
 
-val lognormal : value -> shape:int array -> sigma:float -> value
+val lognormal :
+  ?dtype:Dtype.t -> value -> shape:int array -> sigma:float -> value
 
 val triangular :
-  value -> shape:int array -> left:float -> mode:float -> right:float -> value
+  ?dtype:Dtype.t ->
+  value ->
+  shape:int array ->
+  left:float ->
+  mode:float ->
+  right:float ->
+  value
 
-val wald : value -> shape:int array -> mean:float -> value
-val geometric : value -> shape:int array -> p:float -> value
-val bernoulli : value -> shape:int array -> p:float -> value
-val rademacher : value -> shape:int array -> value
+val wald : ?dtype:Dtype.t -> value -> shape:int array -> mean:float -> value
+val geometric : ?dtype:Dtype.t -> value -> shape:int array -> p:float -> value
+val bernoulli : ?mode:string -> value -> shape:int array -> p:float -> value
+val rademacher : ?dtype:Dtype.t -> value -> shape:int array -> value
 val categorical : value -> logits:value -> axis:int -> value
-val gamma : value -> shape:int array -> a:float -> value
-val loggamma : value -> shape:int array -> a:float -> value
-val beta : value -> shape:int array -> a:float -> b:float -> value
-val chisquare : value -> shape:int array -> df:float -> value
-val t : value -> shape:int array -> df:float -> value
-val f : value -> shape:int array -> dfnum:float -> dfden:float -> value
-val generalized_normal : value -> shape:int array -> p:float -> value
-val dirichlet : value -> alpha:value -> shape:int array -> value
-val poisson : value -> shape:int array -> lam:float -> value
-val binomial : value -> shape:int array -> count:float -> prob:float -> value
+val gamma : ?dtype:Dtype.t -> value -> shape:int array -> a:float -> value
+val loggamma : ?dtype:Dtype.t -> value -> shape:int array -> a:float -> value
+
+val beta :
+  ?dtype:Dtype.t -> value -> shape:int array -> a:float -> b:float -> value
+
+val chisquare : ?dtype:Dtype.t -> value -> shape:int array -> df:float -> value
+val t : ?dtype:Dtype.t -> value -> shape:int array -> df:float -> value
+
+val f :
+  ?dtype:Dtype.t ->
+  value ->
+  shape:int array ->
+  dfnum:float ->
+  dfden:float ->
+  value
+
+val generalized_normal :
+  ?dtype:Dtype.t -> value -> shape:int array -> p:float -> value
+
+val dirichlet :
+  ?dtype:Dtype.t -> value -> alpha:value -> shape:int array -> value
+
+val poisson : ?dtype:Dtype.t -> value -> shape:int array -> lam:float -> value
+
+val binomial :
+  ?dtype:Dtype.t ->
+  value ->
+  shape:int array ->
+  count:float ->
+  prob:float ->
+  value
+
 val multinomial : value -> p:value -> n_trials:float -> value
 val bernoulli_prob : value -> shape:int array -> p:value -> value
 
@@ -73,3 +130,39 @@ val poisson_value : value -> shape:int array -> lam:value -> value
 val bits_as : value -> shape:int array -> dtype:Dtype.t -> value
 val prng_key : value -> value
 val generalized_normal_value : value -> shape:int array -> p:value -> value
+
+val permutation_array :
+  ?axis:int -> ?independent:bool -> value -> value -> value
+
+val choice_array :
+  ?shape:int array ->
+  ?replace:bool ->
+  ?p:value ->
+  ?axis:int ->
+  ?mode:string ->
+  value ->
+  value ->
+  value
+
+val categorical_full :
+  ?axis:int ->
+  ?shape:int array ->
+  ?replace:bool ->
+  ?mode:string ->
+  value ->
+  value ->
+  value
+
+val multinomial_full :
+  ?shape:int array ->
+  ?dtype:Dtype.t ->
+  ?unroll:int ->
+  value ->
+  n:value ->
+  p:value ->
+  value
+
+val truncated_normal_int :
+  value -> lower:int -> upper:int -> shape:int array -> value
+
+val uniform_int_low : value -> shape:int array -> minval:int -> value

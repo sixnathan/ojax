@@ -9,6 +9,7 @@
   special_values
   poison_values
   parity_cases
+  coverage_cases
   manifest)
  (libraries alcotest yojson ojax)
  (preprocess
@@ -53,6 +54,7 @@
   (source_tree %{project_root}/goldens/scipy_cluster_vq)
   (source_tree %{project_root}/goldens/scipy_optimize)
   (source_tree %{project_root}/goldens/parity)
+  (source_tree %{project_root}/goldens/coverage)
   (source_tree %{project_root}/goldens/parity_jit)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))

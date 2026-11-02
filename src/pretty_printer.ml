@@ -617,7 +617,12 @@ let update_jaxpr prim dt =
       Hashtbl.replace update_jaxprs (prim, dt) c;
       c
 
-let scatter_params ?(sorted = false) ?update ?(mode = "FILL_OR_DROP") d unique =
+let scatter_flags p =
+  Option.value (Np_ints.scatter_flags_of p) ~default:(false, false)
+
+let scatter_params ?(flags = (false, false)) ?(sorted = false) ?update
+    ?(mode = "FILL_OR_DROP") d unique =
+  let sorted = sorted || fst flags and unique = unique || snd flags in
   [
     ("dimension_numbers", Plain (scatter_numbers d));
     ("indices_are_sorted", Plain (py_bool (sorted || d.s_sorted_unique)));
@@ -781,12 +786,17 @@ let jax_params (e : eqn) =
       let fill = Np_ints.gather_fill_of p in
       let clip = Np_ints.gather_clip_of p in
       let sorted = clip = Some true in
+      let flag_sorted, flag_unique =
+        Option.value (Np_ints.gather_flags_of p) ~default:(false, false)
+      in
       [
         ("dimension_numbers", Plain (gather_numbers dimension_numbers));
         ( "fill_value",
           Plain (match fill with Some (r, _) -> r | None -> "None") );
         ( "indices_are_sorted",
-          Plain (py_bool (sorted || dimension_numbers.g_sorted_unique)) );
+          Plain
+            (py_bool
+               (sorted || flag_sorted || dimension_numbers.g_sorted_unique)) );
         ( "mode",
           Plain
             (if fill <> None then "GatherScatterMode.FILL_OR_DROP"
@@ -794,13 +804,17 @@ let jax_params (e : eqn) =
              else "GatherScatterMode.PROMISE_IN_BOUNDS") );
         ("slice_sizes", Plain (py_ints slice_sizes));
         ( "unique_indices",
-          Plain (py_bool (sorted || dimension_numbers.g_sorted_unique)) );
+          Plain
+            (py_bool
+               (sorted || flag_unique || dimension_numbers.g_sorted_unique)) );
       ]
   | Scatter { dimension_numbers; unique_indices } as p ->
-      scatter_params ~sorted:(Np_ints.scatter_marked p) dimension_numbers
-        unique_indices
-  | Scatter_mul { dimension_numbers; unique_indices } ->
-      scatter_params ~update:(Mul, in_dtype ()) dimension_numbers unique_indices
+      scatter_params ~flags:(scatter_flags p) ~sorted:(Np_ints.scatter_marked p)
+        dimension_numbers unique_indices
+  | Scatter_mul { dimension_numbers; unique_indices } as p ->
+      scatter_params ~flags:(scatter_flags p)
+        ~update:(Mul, in_dtype ())
+        dimension_numbers unique_indices
   | Scatter_add { dimension_numbers } as p when Np_ints.scatter_marked p ->
       scatter_params ~sorted:true
         ~update:(Add, in_dtype ())
@@ -809,13 +823,21 @@ let jax_params (e : eqn) =
       let mode =
         if Np_ints.prim_marked p then "PROMISE_IN_BOUNDS" else "FILL_OR_DROP"
       in
-      scatter_params ~mode ~update:(Add, in_dtype ()) dimension_numbers false
-  | Scatter_sub { dimension_numbers } ->
-      scatter_params ~update:(Sub, in_dtype ()) dimension_numbers false
-  | Scatter_min { dimension_numbers } ->
-      scatter_params ~update:(Min, in_dtype ()) dimension_numbers false
-  | Scatter_max { dimension_numbers } ->
-      scatter_params ~update:(Max, in_dtype ()) dimension_numbers false
+      scatter_params ~flags:(scatter_flags p) ~mode
+        ~update:(Add, in_dtype ())
+        dimension_numbers false
+  | Scatter_sub { dimension_numbers } as p ->
+      scatter_params ~flags:(scatter_flags p)
+        ~update:(Sub, in_dtype ())
+        dimension_numbers false
+  | Scatter_min { dimension_numbers } as p ->
+      scatter_params ~flags:(scatter_flags p)
+        ~update:(Min, in_dtype ())
+        dimension_numbers false
+  | Scatter_max { dimension_numbers } as p ->
+      scatter_params ~flags:(scatter_flags p)
+        ~update:(Max, in_dtype ())
+        dimension_numbers false
   | Conv_general_dilated c ->
       [
         ("batch_group_count", Plain (string_of_int c.batch_group_count));
@@ -1365,6 +1387,18 @@ let rec mark_keys keys (jx : jaxpr) =
           List.iter2
             (fun (out : var) input -> if is_key input then mark out)
             e.outs carry
+      | Scan { jaxpr = c; _ } ->
+          let binders =
+            List.filteri
+              (fun i _ -> i >= List.length c.consts)
+              c.jaxpr.in_binders
+          in
+          if List.length binders = List.length e.inputs then begin
+            List.iter2
+              (fun (b : var) input -> if is_key input then mark b)
+              binders e.inputs;
+            mark_keys keys c.jaxpr
+          end
       | _ -> ())
     jx.eqns
 

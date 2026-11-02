@@ -24,6 +24,7 @@ val scatter_impl :
 val scatter_combiner : Types.primitive -> float -> float -> float
 
 val gather_fill :
+  ?flag:(Types.primitive -> Types.primitive) ->
   ?fill_value:float ->
   Types.value ->
   Types.value ->

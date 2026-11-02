@@ -4621,6 +4621,10 @@ let parity_run c inputs =
   let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
   Parity_cases.run c.op c.params get
 
+let coverage_run c inputs =
+  let get name = T.Concrete (nd_of_npz_any (find_member inputs name)) in
+  Coverage_cases.run c.op c.params get
+
 let parity_jit_run c inputs =
   let names = List.map (fun (a : arg) -> a.name) c.args in
   let values =
@@ -4712,6 +4716,19 @@ let composed_suite_for ?(keep = fun _ -> true) ~run module_name set_name =
     Alcotest.test_case "coverage" `Quick (check_coverage ~set_dir cases)
   in
   (module_name ^ ":" ^ set_name, coverage :: case_tests)
+
+let coverage_suites =
+  List.filter_map
+    (fun set_name ->
+      let manifest =
+        Filename.concat
+          (Filename.concat (Filename.concat goldens_root "coverage") set_name)
+          "manifest.json"
+      in
+      if Sys.file_exists manifest then
+        Some (composed_suite_for ~run:coverage_run "coverage" set_name)
+      else None)
+    [ "x64_off"; "x64_on" ]
 
 let parity_jit_suite_for set_name =
   let set_dir =
@@ -5095,7 +5112,10 @@ let numpy_product_rows () =
             ~actual:(npz_of_nd nd dtype "allclose")))
     Numpy_products.rows
 
-let attributed (suite, tests) =
+let rec attributed_with_coverage suites =
+  List.map attributed (coverage_suites @ suites)
+
+and attributed (suite, tests) =
   ( suite,
     List.map
       (fun (name, speed, run) ->
@@ -5133,7 +5153,7 @@ let () =
   Ojax.Random.Prng.install ();
   Ojax.Random.Threefry.install ();
   Alcotest.run "goldens"
-    (List.map attributed
+    (attributed_with_coverage
        [
          dtypes_suite_for "x64_off";
          dtypes_suite_for "x64_on";

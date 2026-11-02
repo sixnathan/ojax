@@ -99,6 +99,63 @@ val hessian :
   value Tree_util.t list ->
   value Tree_util.t
 
+type tree_fn = value Tree_util.t list -> value Tree_util.t
+
+val grad_holomorphic : tree_fn -> value Tree_util.t list -> value Tree_util.t
+
+val value_and_grad_holomorphic :
+  tree_fn -> value Tree_util.t list -> value Tree_util.t * value Tree_util.t
+
+val grad_aux :
+  ?allow_int:bool ->
+  tree_fn ->
+  value Tree_util.t list ->
+  value Tree_util.t * value Tree_util.t
+
+val value_and_grad_aux :
+  ?allow_int:bool ->
+  tree_fn ->
+  value Tree_util.t list ->
+  value Tree_util.t * value Tree_util.t * value Tree_util.t
+
+val jvp_aux :
+  tree_fn ->
+  value Tree_util.t list ->
+  value Tree_util.t list ->
+  value Tree_util.t * value Tree_util.t * value Tree_util.t
+
+val vjp_aux :
+  tree_fn ->
+  value Tree_util.t list ->
+  value Tree_util.t
+  * (value Tree_util.t -> value Tree_util.t list)
+  * value Tree_util.t
+
+val linearize_aux :
+  tree_fn ->
+  value Tree_util.t list ->
+  value Tree_util.t
+  * (value Tree_util.t list -> value Tree_util.t)
+  * value Tree_util.t
+
+val jacfwd_aux :
+  ?argnums:int ->
+  tree_fn ->
+  value Tree_util.t list ->
+  value Tree_util.t * value Tree_util.t
+
+val jacrev_aux :
+  ?argnums:int ->
+  tree_fn ->
+  value Tree_util.t list ->
+  value Tree_util.t * value Tree_util.t
+
+val hessian_aux :
+  ?argnums:int ->
+  tree_fn ->
+  value Tree_util.t list ->
+  value Tree_util.t * value Tree_util.t
+
 val eval_shape :
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->

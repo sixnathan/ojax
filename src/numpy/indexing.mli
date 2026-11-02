@@ -2,6 +2,8 @@ val take :
   ?axis:int ->
   ?mode:string ->
   ?fill_value:float ->
+  ?unique_indices:bool ->
+  ?indices_are_sorted:bool ->
   Types.value ->
   Types.value ->
   Types.value
@@ -18,6 +20,7 @@ val take_along_axis :
   ?axis:int ->
   ?mode:string ->
   ?fill_value:float ->
+  ?wrap_negative_indices:bool ->
   Types.value ->
   Types.value ->
   Types.value

@@ -94,6 +94,7 @@ val broadcast : value -> int array -> value
 val broadcast_to_rank : value -> int -> value
 val broadcast_shapes : int array list -> int array
 val collapse : value -> int -> int -> value
+val collapse_from : value -> int -> value
 val concatenate : value list -> int -> value
 val stack : value list -> int -> value
 val unstack : value -> int -> value list
@@ -106,27 +107,45 @@ val index_in_dim : ?axis:int -> ?keepdims:bool -> value -> int -> value
 val dynamic_slice_normalized :
   Types.value -> Types.value list -> int array -> Types.value
 
-val dynamic_slice : value -> value list -> int array -> value
-val dynamic_update_slice : value -> value -> value list -> value
-val dynamic_slice_in_dim : ?axis:int -> value -> value -> int -> value
+val dynamic_slice :
+  ?allow_negative_indices:bool -> value -> value list -> int array -> value
+
+val dynamic_update_slice :
+  ?allow_negative_indices:bool -> value -> value -> value list -> value
+
+val dynamic_slice_in_dim :
+  ?axis:int -> ?allow_negative_indices:bool -> value -> value -> int -> value
 
 val dynamic_index_in_dim :
   ?axis:int -> ?keepdims:bool -> value -> value -> value
 
-val dynamic_update_slice_in_dim : ?axis:int -> value -> value -> value -> value
+val dynamic_update_slice_in_dim :
+  ?axis:int -> ?allow_negative_indices:bool -> value -> value -> value -> value
+
 val dynamic_update_index_in_dim : ?axis:int -> value -> value -> value -> value
 
 val gather :
   ?mode:Lax_config.gather_scatter_mode ->
   ?fill_value:float ->
+  ?indices_are_sorted:bool ->
+  ?unique_indices:bool ->
   value ->
   value ->
   gather_dims ->
   int array ->
   value
 
+val scatter_indices :
+  Lax_config.gather_scatter_mode option ->
+  value ->
+  value ->
+  value ->
+  scatter_dims ->
+  value
+
 val scatter :
   ?mode:Lax_config.gather_scatter_mode ->
+  ?indices_are_sorted:bool ->
   ?unique_indices:bool ->
   value ->
   value ->
@@ -136,6 +155,8 @@ val scatter :
 
 val scatter_add :
   ?mode:Lax_config.gather_scatter_mode ->
+  ?indices_are_sorted:bool ->
+  ?unique_indices:bool ->
   value ->
   value ->
   value ->
@@ -144,6 +165,8 @@ val scatter_add :
 
 val scatter_sub :
   ?mode:Lax_config.gather_scatter_mode ->
+  ?indices_are_sorted:bool ->
+  ?unique_indices:bool ->
   value ->
   value ->
   value ->
@@ -152,6 +175,7 @@ val scatter_sub :
 
 val scatter_mul :
   ?mode:Lax_config.gather_scatter_mode ->
+  ?indices_are_sorted:bool ->
   ?unique_indices:bool ->
   value ->
   value ->
@@ -161,6 +185,8 @@ val scatter_mul :
 
 val scatter_min :
   ?mode:Lax_config.gather_scatter_mode ->
+  ?indices_are_sorted:bool ->
+  ?unique_indices:bool ->
   value ->
   value ->
   value ->
@@ -169,6 +195,8 @@ val scatter_min :
 
 val scatter_max :
   ?mode:Lax_config.gather_scatter_mode ->
+  ?indices_are_sorted:bool ->
+  ?unique_indices:bool ->
   value ->
   value ->
   value ->
@@ -319,6 +347,7 @@ val switch :
   value -> (value list -> value list) list -> value list -> value list
 
 val fori_loop :
+  ?unroll:int ->
   value ->
   value ->
   (value -> value list -> value list) ->

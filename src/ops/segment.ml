@@ -76,7 +76,15 @@ let segment_dnums rank =
     s_clip = false;
   }
 
-let segment_update prim identity ?num_segments data segment_ids =
+let scatter_flagged prim ~indices_are_sorted ~unique_indices =
+  if indices_are_sorted || unique_indices then
+    Np_ints.mark_scatter_flags ~sorted:indices_are_sorted ~unique:unique_indices
+      prim
+  else prim
+
+let segment_update prim identity reducer ?num_segments
+    ?(indices_are_sorted = false) ?(unique_indices = false) ?bucket_size ?mode
+    data segment_ids =
   let dt = dtype data in
   let dsh = shape data in
   let n = if Array.length dsh = 0 then 0 else dsh.(0) in
@@ -86,32 +94,112 @@ let segment_update prim identity ?num_segments data segment_ids =
     | None -> concrete_max_index segment_ids + 1
   in
   if nseg < 0 then invalid_arg "num_segments must be non-negative.";
-  let out_shape = Array.copy dsh in
-  if Array.length out_shape > 0 then out_shape.(0) <- nseg;
-  let out = const_full dt out_shape identity in
-  let scatter_indices = NL.reshape segment_ids [| n; 1 |] in
-  let dnums = segment_dnums (Array.length dsh) in
-  bind1 (prim dnums) [ out; scatter_indices; data ]
+  let clip = mode = Some "clip" in
+  let narrow ids =
+    if dtype ids = D.I64 then bind1 (T.Convert_element_type D.I32) [ ids ]
+    else ids
+  in
+  let finish scatter_prim args =
+    let prim =
+      scatter_flagged ~indices_are_sorted ~unique_indices scatter_prim
+    in
+    let prim =
+      if mode = Some "promise_in_bounds" then Np_ints.mark_prim prim else prim
+    in
+    bind1 prim args
+  in
+  match bucket_size with
+  | None ->
+      let out_shape = Array.copy dsh in
+      if Array.length out_shape > 0 then out_shape.(0) <- nseg;
+      let out = const_full dt out_shape identity in
+      let scatter_indices =
+        bind1
+          (T.Broadcast_in_dim { shape = [| n; 1 |]; dims = [| 0 |] })
+          [ narrow segment_ids ]
+      in
+      let dnums = { (segment_dnums (Array.length dsh)) with T.s_clip = clip } in
+      let scatter_indices =
+        if clip then
+          Lax_api.scatter_indices (Some Lax_config.Clip) out scatter_indices
+            data dnums
+        else scatter_indices
+      in
+      finish (prim dnums) [ out; scatter_indices; data ]
+  | Some size ->
+      let num_buckets = (n + size - 1) / size in
+      let tail = Array.sub dsh 1 (Array.length dsh - 1) in
+      let out =
+        const_full dt (Array.append [| num_buckets; nseg |] tail) identity
+      in
+      let idt = Dtypes.default_int_dtype () in
+      let iota =
+        bind1 (T.Iota { dtype = idt; shape = [| n |]; dimension = 0 }) []
+      in
+      let buckets =
+        Numpy.Ufuncs.floor_divide iota (Numpy.Jnp_util.py_int size)
+      in
+      let broadcast v shape dims =
+        bind1 (T.Broadcast_in_dim { shape; dims }) [ v ]
+      in
+      let ids_row = broadcast segment_ids [| 1; n |] [| 1 |] in
+      let bucket_row = narrow (broadcast buckets [| 1; n |] [| 1 |]) in
+      let ids_row = narrow ids_row in
+      let bucket_col = broadcast bucket_row [| 1; n; 1 |] [| 0; 1 |] in
+      let ids_col = broadcast ids_row [| 1; n; 1 |] [| 0; 1 |] in
+      let stacked = bind1 (T.Concatenate 2) [ bucket_col; ids_col ] in
+      let rank = Array.length dsh in
+      let dnums =
+        {
+          T.update_window_dims = Array.init (rank - 1) (fun i -> i + 2);
+          inserted_window_dims = [| 0; 1 |];
+          scatter_dims_to_operand_dims = [| 0; 1 |];
+          s_operand_batching_dims = [||];
+          s_scatter_indices_batching_dims = [||];
+          s_sorted_unique = false;
+          s_clip = clip;
+        }
+      in
+      let updates =
+        broadcast data (Array.append [| 1 |] dsh)
+          (Array.init (Array.length dsh) (fun i -> i + 1))
+      in
+      let scattered = finish (prim dnums) [ out; stacked; updates ] in
+      NL.astype (reducer scattered) dt
 
-let segment_sum ?num_segments data segment_ids =
+let segment_sum ?num_segments ?indices_are_sorted ?unique_indices ?bucket_size
+    ?mode data segment_ids =
   segment_update
     (fun dnums -> T.Scatter_add { dimension_numbers = dnums })
-    identity_sum ?num_segments data segment_ids
+    identity_sum
+    (Numpy.Reductions.sum ~axis:[| 0 |])
+    ?num_segments ?indices_are_sorted ?unique_indices ?bucket_size ?mode data
+    segment_ids
 
-let segment_prod ?num_segments data segment_ids =
+let segment_prod ?num_segments ?indices_are_sorted ?unique_indices ?bucket_size
+    ?mode data segment_ids =
   segment_update
     (fun dnums ->
       T.Scatter_mul { dimension_numbers = dnums; unique_indices = false })
-    identity_prod ?num_segments data segment_ids
+    identity_prod
+    (Numpy.Reductions.prod ~axis:[| 0 |])
+    ?num_segments ?indices_are_sorted ?unique_indices ?bucket_size ?mode data
+    segment_ids
 
-let segment_max ?num_segments data segment_ids =
+let segment_max ?num_segments ?indices_are_sorted ?unique_indices ?bucket_size
+    ?mode data segment_ids =
   segment_update
     (fun dnums -> T.Scatter_max { dimension_numbers = dnums })
     (identity_max (dtype data))
-    ?num_segments data segment_ids
+    (Numpy.Reductions.max ~axis:[| 0 |])
+    ?num_segments ?indices_are_sorted ?unique_indices ?bucket_size ?mode data
+    segment_ids
 
-let segment_min ?num_segments data segment_ids =
+let segment_min ?num_segments ?indices_are_sorted ?unique_indices ?bucket_size
+    ?mode data segment_ids =
   segment_update
     (fun dnums -> T.Scatter_min { dimension_numbers = dnums })
     (identity_min (dtype data))
-    ?num_segments data segment_ids
+    (Numpy.Reductions.min ~axis:[| 0 |])
+    ?num_segments ?indices_are_sorted ?unique_indices ?bucket_size ?mode data
+    segment_ids

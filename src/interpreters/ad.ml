@@ -3977,7 +3977,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           in
           op_t :: up_t :: List.map (fun _ -> None) idx
       | _ -> arity ())
-  | Gather { dimension_numbers; _ } -> (
+  | Gather { dimension_numbers; slice_sizes } -> (
       match primals with
       | [ operand; indices ] ->
           let ct = ct1 () in
@@ -3987,12 +3987,42 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
                 Core.splat (Core.get_aval ct).dtype (in_aval operand).shape 0.0
               in
               let sd = gather_to_scatter dimension_numbers in
+              let scatter_at =
+                let idx = prim_val indices in
+                if Np_ints.gather_clip_of prim = None then idx
+                else begin
+                  let ia = Core.get_aval idx in
+                  let shape_op = (in_aval operand).shape in
+                  let upper =
+                    Array.map
+                      (fun o -> float_of_int (shape_op.(o) - slice_sizes.(o)))
+                      dimension_numbers.start_index_map
+                  in
+                  let bound =
+                    Concrete
+                      (Ndarray.of_floats ia.dtype
+                         [| Array.length upper |]
+                         upper)
+                  in
+                  let wide =
+                    Core.bind1
+                      (Broadcast_in_dim
+                         {
+                           shape = ia.shape;
+                           dims = [| Array.length ia.shape - 1 |];
+                         })
+                      [ bound ]
+                  in
+                  Core.bind1 Clamp
+                    [ Core.splat ia.dtype ia.shape 0.0; idx; wide ]
+                end
+              in
               Some
                 (Core.bind1
                    (let p = Scatter_add { dimension_numbers = sd } in
                     if Np_ints.gather_fill_of prim <> None then p
                     else Np_ints.mark_prim p)
-                   [ zeros; prim_val indices; ct ])
+                   [ zeros; scatter_at; ct ])
             else None
           in
           [ op_t; None ]

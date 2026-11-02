@@ -607,11 +607,18 @@ let reject_complex_clip values =
        convert to a real value or array by taking the real or imaginary \
        components via jax.numpy.real/imag respectively."
 
-let clip_values ?min ?max arr =
+let convert_bound v dt =
+  if dtype v = dt && not (Core.get_aval v).T.weak_type then v
+  else bind1 (T.Convert_element_type dt) [ v ]
+
+let clip_values ?(method_ = false) ?min ?max arr =
   let present = Option.to_list min @ Option.to_list max in
   reject_complex_clip (arr :: present);
   Jnp_util.jit1 "clip"
-    ~key:(string_of_bool (min <> None) ^ string_of_bool (max <> None))
+    ~key:
+      (string_of_bool (min <> None)
+      ^ string_of_bool (max <> None)
+      ^ if method_ then "m" else "")
     (function
       | arr :: bounds -> (
           let rest = ref bounds in
@@ -625,8 +632,9 @@ let clip_values ?min ?max arr =
                     Some v
                 | [] -> invalid_arg "clip: arity")
           in
+          let high = if method_ then next max else None in
           let low = next min in
-          let high = next max in
+          let high = if method_ then high else next max in
           let target =
             let dts = List.filter_map Fun.id [ low; high ] in
             fst
@@ -636,14 +644,15 @@ let clip_values ?min ?max arr =
           let arr = convert arr target in
           let arr =
             match low with
-            | Some v -> bind1 T.Max [ convert v target; arr ]
+            | Some v -> bind1 T.Max [ convert_bound v target; arr ]
             | None -> arr
           in
           match high with
-          | Some v -> bind1 T.Min [ convert v target; arr ]
+          | Some v -> bind1 T.Min [ convert_bound v target; arr ]
           | None -> arr)
       | [] -> invalid_arg "clip: arity")
-    (arr :: present)
+    (arr
+    :: (if method_ then Option.to_list max @ Option.to_list min else present))
 
 let clip_strong_max maximum_value arr =
   Jnp_util.jit1 "clip" ~key:"falsetrue"

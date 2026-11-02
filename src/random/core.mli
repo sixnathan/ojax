@@ -18,7 +18,7 @@ val wrap_key_data : value -> value
 val clone : value -> value
 val fold_in : value -> value -> value
 val split : value -> int -> value
-val bits : value -> shape:int array -> value
+val bits : ?dtype:Dtype.t -> value -> shape:int array -> value
 
 val randint :
   ?dtype:Dtype.t ->

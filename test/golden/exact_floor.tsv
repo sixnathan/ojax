@@ -18,6 +18,8 @@ coverage:x64_off	284	284
 coverage:x64_on	568	568
 creation:x64_off	32	32
 creation:x64_on	32	32
+docs_p2:x64_off	351	366
+docs_p2:x64_on	354	366
 dtypes:x64_off	7	7
 dtypes:x64_on	9	9
 e2e	36	36
@@ -85,6 +87,8 @@ raw:custom_ad:x64_off	1329	1757
 raw:custom_ad:x64_on	1286	1720
 index_fuzz:x64_off	4608	4608
 index_fuzz:x64_on	4608	4608
+raw:docs_p2:x64_off	351	366
+raw:docs_p2:x64_on	354	366
 raw:index_fuzz:x64_off	3379	4608
 raw:index_fuzz:x64_on	3413	4608
 apply_transforms:x64_off	408	408

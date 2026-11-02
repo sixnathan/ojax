@@ -60,6 +60,29 @@ def reference():
             ("hessenberg_q_0x0", lambda x: sl.hessenberg(x, calc_q=True), (0, 0)),
         ]:
             run(name + suffix, fn, [np.zeros(shape, dt)])
+    from jax import export
+
+    def sym(name, text):
+        rows[name] = {"text": text, "jit": [], "eager": []}
+
+    a, = export.symbolic_shape("a")
+    b, c = export.symbolic_shape("b, c")
+    sym("sym_a", str(a))
+    sym("sym_a1", str(a + 1))
+    sym("sym_2a", str(a * 2))
+    sym("sym_2a_1", str(2 * a - 1))
+    sym("sym_bc1", str(b * c + 1))
+    sym("sym_parse", str(tuple(export.symbolic_shape("b+c, 2*b"))))
+    sym("sym_floordiv", str(a // 2))
+    sym("sym_mod", str(a % 2))
+    from jax._src import core as _core
+
+    sym("sym_max", str(_core.max_dim(a, 2)))
+    sym("sym_min", str(_core.min_dim(b, c)))
+    sym("sym_pow", str(a**3))
+    spec = jax.ShapeDtypeStruct(export.symbolic_shape("a, 3"), jnp.float32)
+    exported = export.export(jax.jit(lambda x: jnp.sum(x * 2.0, axis=0)))(spec)
+    rows["sym_call"] = {"text": "", "jit": values(exported.call(np.ones((4, 3), np.float32))), "eager": []}
     m = np.array([[2.0, 1.0], [1.0, 3.0]], np.float32)
     for name, fn in [
         ("named_qr", la.qr),

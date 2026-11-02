@@ -189,8 +189,63 @@ let run oc (name, f, args, paths) =
   output_char oc '\n';
   flush oc
 
+module SP = Ojax.Shape_poly
+
+let write_sym oc =
+  let shape text = SP.symbolic_shape text in
+  let one text = (shape (Some text)).(0) in
+  let row name text =
+    Yojson.Safe.to_channel oc
+      (`Assoc
+         [
+           ("case", `String name);
+           ("text", `String text);
+           ("jit", `List []);
+           ("eager", `List []);
+         ]);
+    output_char oc '\n'
+  in
+  let a = one "a" in
+  let bc = shape (Some "b, c") in
+  let b = bc.(0) and c = bc.(1) in
+  let two = SP.of_int 2 and n1 = SP.of_int 1 in
+  row "sym_a" (SP.dim_to_string a);
+  row "sym_a1" (SP.dim_to_string (SP.add a n1));
+  row "sym_2a" (SP.dim_to_string (SP.mul a two));
+  row "sym_2a_1" (SP.dim_to_string (SP.sub (SP.mul two a) n1));
+  row "sym_bc1" (SP.dim_to_string (SP.add (SP.mul b c) n1));
+  row "sym_parse" (SP.shape_to_string (shape (Some "b+c, 2*b")));
+  row "sym_floordiv" (SP.dim_to_string (SP.floordiv_dim a two));
+  row "sym_mod" (SP.dim_to_string (SP.mod_dim a two));
+  row "sym_max" (SP.dim_to_string (SP.max_dim a two));
+  row "sym_min" (SP.dim_to_string (SP.min_dim b c));
+  row "sym_pow" (SP.dim_to_string (SP.pow a 3));
+  let f = function
+    | [ x ] ->
+        [
+          Ojax.Numpy.Reductions.sum ~axis:[| 0 |]
+            (U.multiply x (T.Concrete (Nd.of_floats f32 [||] [| 2. |])));
+        ]
+    | _ -> failwith "arity"
+  in
+  let s =
+    Ojax.Export.export_symbolic f
+      [ { SP.shape = shape (Some "a, 3"); dtype = f32 } ]
+  in
+  let ones = T.Concrete (Nd.of_floats f32 [| 4; 3 |] (Array.make 12 1.)) in
+  Yojson.Safe.to_channel oc
+    (`Assoc
+       [
+         ("case", `String "sym_call");
+         ("text", `String "");
+         ("jit", `List (List.map value_row (Ojax.Export.call_symbolic s [ ones ])));
+         ("eager", `List []);
+       ]);
+  output_char oc '\n'
+
 let () =
   let oc = open_out Sys.argv.(1) in
+  write_sym oc;
   List.iter (run oc)
     (linalg_family "_f32" f32 @ linalg_family "_c64" c64 @ named_tuples
    @ lu_rows);

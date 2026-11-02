@@ -121,6 +121,11 @@ let process_primitive trace prim (args : value list) : value list =
         !cond_rule trace branches platforms tracers
     | While { cond_nconsts; body_nconsts; cond; body } ->
         !while_rule trace ~cond_nconsts ~body_nconsts cond body tracers
+    | Custom_jvp_call id when Option.is_some (Core.custom_names_of id) -> (
+        match Core.custom_rule id with
+        | Core.Jvp_rule { primal; _ } ->
+            primal (List.map (fun t -> Tracer t) tracers)
+        | _ -> record_unknown trace prim tracers)
     | _ -> record_unknown trace prim tracers
 
 let full_lower_pe v =

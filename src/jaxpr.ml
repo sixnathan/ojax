@@ -744,13 +744,71 @@ and dce_closed_uncached (c : closed_jaxpr) used_outs =
     List.fold_left
       (fun acc (e : eqn) ->
         match e.prim with
+        | Cond { branches; platforms }
+          when not
+                 (List.exists
+                    (fun (b : closed_jaxpr) ->
+                      List.exists eqn_has_effect b.jaxpr.eqns)
+                    branches) ->
+            let outs_used = List.map is_used e.outs in
+            if not (List.exists Fun.id outs_used) then acc
+            else begin
+              let pruned =
+                List.map (fun b -> dce_closed b outs_used) branches
+              in
+              let args_used =
+                List.fold_left
+                  (fun acc (_, ins) -> List.map2 ( || ) acc ins)
+                  (List.map (fun _ -> false) (List.tl e.inputs))
+                  pruned
+              in
+              let branches' =
+                List.map2
+                  (fun (b : closed_jaxpr) ((p : closed_jaxpr), _) ->
+                    let n_consts = List.length b.consts in
+                    let consts =
+                      List.filteri (fun i _ -> i < n_consts) p.jaxpr.in_binders
+                    in
+                    let args =
+                      List.filteri (fun i _ -> i >= n_consts) b.jaxpr.in_binders
+                    in
+                    let kept =
+                      List.concat
+                        (List.map2
+                           (fun a keep -> if keep then [ a ] else [])
+                           args args_used)
+                    in
+                    {
+                      p with
+                      jaxpr = { p.jaxpr with in_binders = consts @ kept };
+                    })
+                  branches pruned
+              in
+              let inputs =
+                List.hd e.inputs
+                :: List.concat
+                     (List.map2
+                        (fun a keep -> if keep then [ a ] else [])
+                        (List.tl e.inputs) args_used)
+              in
+              List.iter note inputs;
+              let outs = List.filter is_used e.outs in
+              {
+                prim = Cond { branches = branches'; platforms };
+                inputs;
+                outs;
+                multiple_results = List.length outs > 1;
+              }
+              :: acc
+            end
         | Custom_jvp_call id when e.outs <> [] && List.for_all is_used e.outs ->
             let first = List.hd e.outs in
             let body =
               match Core.find_custom_eqn_jaxpr first.vid with
               | Some body -> Some body
               | None ->
-                  custom_call_jaxpr id (List.map Pretty_printer.atom_type e.inputs)
+                  custom_call_jaxpr id
+                    (List.map Pretty_printer.atom_type e.inputs)
             in
             Option.iter
               (fun (body : closed_jaxpr) ->
@@ -859,7 +917,8 @@ let jaxpr_forwarding (c : closed_jaxpr) =
   let fwds : (int, int) Hashtbl.t = Hashtbl.create 16 in
   let n_consts = List.length c.consts in
   List.iteri
-    (fun i (v : var) -> if i >= n_consts then Hashtbl.replace fwds v.vid (i - n_consts))
+    (fun i (v : var) ->
+      if i >= n_consts then Hashtbl.replace fwds v.vid (i - n_consts))
     c.jaxpr.in_binders;
   let origin = function
     | A_var (v : var) -> Hashtbl.find_opt fwds v.vid

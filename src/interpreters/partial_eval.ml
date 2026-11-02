@@ -595,8 +595,8 @@ type jit_split = {
   js_in_fwd : int option list;
 }
 
-let jit_split_cache :
-    (int * bool list * aval list * bool, jit_split) Hashtbl.t =
+let jit_split_cache : (int * bool list * aval list * bool, jit_split) Hashtbl.t
+    =
   Hashtbl.create 64
 
 let jit_split (c : closed_jaxpr) name (tracers : tracer list) known_flags
@@ -727,8 +727,10 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
     (k, u)
   in
   let key =
-    (c.jid, known_flags, List.map (fun (t : tracer) -> t.aval) tracers,
-     Config.x64_enabled ())
+    ( c.jid,
+      known_flags,
+      List.map (fun (t : tracer) -> t.aval) tracers,
+      Config.x64_enabled () )
   in
   let split =
     match Hashtbl.find_opt jit_split_cache key with

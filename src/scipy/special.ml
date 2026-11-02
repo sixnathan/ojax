@@ -1985,8 +1985,7 @@ let rec owens_t_custom h a =
                neg_ (L.exp (lit_mul (-0.5) (L.square h)))
                *! bind1 T.Erf [ a *! h /! root_2 ]
                /!
-               if weak_scalar h then
-                 const_of h (2.0 *. sqrt (2.0 *. Float.pi))
+               if weak_scalar h then const_of h (2.0 *. sqrt (2.0 *. Float.pi))
                else lax_const h (2.0 *. rounded)
              in
              let sq_a1 () = add_lit (L.square a) 1.0 in

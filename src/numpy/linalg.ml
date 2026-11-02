@@ -1105,7 +1105,8 @@ let cofactor_solve a b =
           UF.multiply
             (I.take x
                (leading @ [ I.Range { start = None; stop = Some (-1) }; all ]))
-            (Lax_api.expand_dims last_det [| ndim last_det; ndim last_det + 1 |]);
+            (Lax_api.expand_dims last_det
+               [| ndim last_det; ndim last_det + 1 |]);
           I.take x
             (leading @ [ I.Range { start = Some (-1); stop = None }; all ]);
         ]

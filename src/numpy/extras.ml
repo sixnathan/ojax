@@ -1122,14 +1122,14 @@ let bincount ?weights ?(minlength = 0) ?length x =
 let plain_slice v start stop =
   if start = 0 && stop = (shape v).(0) then v
   else
-  Core.bind1
-    (Slice
-       {
-         start_indices = [| start |];
-         limit_indices = [| stop |];
-         strides = None;
-       })
-    [ v ]
+    Core.bind1
+      (Slice
+         {
+           start_indices = [| start |];
+           limit_indices = [| stop |];
+           strides = None;
+         })
+      [ v ]
 
 let histogram_bin_edges ?(bins = 10) ?range ?weights:_ a =
   let a = as_inexact a in

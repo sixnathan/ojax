@@ -82,7 +82,6 @@ let scalar_const v x =
      then Ndarray.with_py_value (Ndarray.as_weak literal) x
      else literal)
 
-
 let finfo_const v x = Concrete (Ndarray.of_floats (dtype v) [||] [| x |])
 
 let igamma_series ax x a enabled eps mode =
@@ -104,10 +103,14 @@ let igamma_series ax x a enabled eps mode =
           match mode with
           | Value ->
               let ratio = c /: ans in
-              L.gt (Core.convert_like ~weak:false ratio (dtype ratio)) (finfo_const c eps)
+              L.gt
+                (Core.convert_like ~weak:false ratio (dtype ratio))
+                (finfo_const c eps)
           | Derivative | Sample_derivative ->
               let ratio = L.abs (dc_da /: dans_da) in
-              L.gt (Core.convert_like ~weak:false ratio (dtype ratio)) (finfo_const dc_da eps)
+              L.gt
+                (Core.convert_like ~weak:false ratio (dtype ratio))
+                (finfo_const dc_da eps)
         in
         let cond_out = enabled &&: keep_going in
         let s1 = select enabled r r0 in
@@ -215,7 +218,10 @@ let igammac_continued_fraction ax x a enabled eps mode =
         let ndqkm1 = scaled ndqkm1 in
         let keep_going =
           match mode with
-          | Value -> L.gt (Core.convert_like ~weak:false t (dtype t)) (finfo_const t eps)
+          | Value ->
+              L.gt
+                (Core.convert_like ~weak:false t (dtype t))
+                (finfo_const t eps)
           | Derivative | Sample_derivative ->
               L.gt grad_conditional (eps_of grad_conditional)
         in
@@ -517,7 +523,10 @@ let betainc_impl dt = function
       let flipped = one_x -: x0 in
       let x = select converges x0 flipped in
       let numerator iteration =
-        let i = if target = [||] then iteration else L.broadcast_in_dim iteration target [||] in
+        let i =
+          if target = [||] then iteration
+          else L.broadcast_in_dim iteration target [||]
+        in
         let int_like c =
           let lit =
             Concrete
@@ -577,7 +586,10 @@ let betainc_impl dt = function
         select is_one one_numerator n
       in
       let denominator iteration =
-        let i = if target = [||] then iteration else L.broadcast_in_dim iteration target [||] in
+        let i =
+          if target = [||] then iteration
+          else L.broadcast_in_dim iteration target [||]
+        in
         let is_zero = L.eq i (like i 0.0) in
         let zero = like x 0.0 in
         let one = like x 1.0 in

@@ -113,8 +113,7 @@ let vectorize_many ?(excluded = []) ?signature pyfunc raw_args =
   let results = !func squeezed in
   match !expand with
   | [] -> results
-  | dims ->
-      List.map (fun r -> LN.expand_dims r (Array.of_list dims)) results
+  | dims -> List.map (fun r -> LN.expand_dims r (Array.of_list dims)) results
 
 let vectorize ?excluded ?signature pyfunc raw_args =
   (match signature with

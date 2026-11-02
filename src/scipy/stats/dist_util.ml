@@ -61,12 +61,7 @@ let promote_dtypes_any vs =
     vs
 
 let promote_complex vs = Numpy.Ufuncs.promote_shapes (promote_dtypes_any vs)
-
-let real_only vs =
-  List.iter (fun v -> match dtype v with _ -> ()) vs;
-  vs
-
-let promote_dtypes vs = real_only (promote_dtypes_any vs)
+let promote_dtypes vs = promote_dtypes_any vs
 let promote vs = Numpy.Ufuncs.promote_shapes (promote_dtypes vs)
 let lgamma v = C.bind1 T.Lgamma [ v ]
 let py_float = JU.py_float

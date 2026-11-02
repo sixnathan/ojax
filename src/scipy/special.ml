@@ -1743,7 +1743,10 @@ let zeta ?q x =
 
 let reject_bool x =
   if dtype x = D.Bool then
-    raise (Py_exn.Type_error "sub does not accept dtype bool.")
+    raise
+      (Py_exn.Type_error
+         "sub does not accept dtype bool at position 0. Accepted dtypes at \
+          position 0 are subtypes of complexfloating, floating, integer.")
 
 let softmax ?axis x =
   Option.iter

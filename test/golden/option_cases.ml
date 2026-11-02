@@ -1590,6 +1590,7 @@ let run op positional options arr =
       [
         Ojax.Lax_extras.conv_general_dilated_local
           ?window_strides:(Some (A.int_array positional.(2)))
+          ?padding:(Some (A.padding positional.(3)))
           ?lhs_dilation:(A.opt options "lhs_dilation" A.int_array)
           ?rhs_dilation:(A.opt options "rhs_dilation" A.int_array)
           ?precision:(A.opt options "precision" A.precision)

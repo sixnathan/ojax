@@ -2967,14 +2967,14 @@ let impl prim inputs =
                   })
                 inputs))
       else
-      let results =
-        List.init count (fun b ->
-            impl_core prim
-              (List.map (fun nd -> element_slice nd batch_rank b) inputs))
-      in
-      let n_out = List.length (List.hd results) in
-      List.init n_out (fun j ->
-          stack_elements batch (List.map (fun out -> List.nth out j) results))
+        let results =
+          List.init count (fun b ->
+              impl_core prim
+                (List.map (fun nd -> element_slice nd batch_rank b) inputs))
+        in
+        let n_out = List.length (List.hd results) in
+        List.init n_out (fun j ->
+            stack_elements batch (List.map (fun out -> List.nth out j) results))
 
 let install () =
   Core.rules.impl <- impl;

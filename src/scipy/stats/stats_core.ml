@@ -38,15 +38,14 @@ let lane_mode x =
   let n = Array.fold_left ( * ) 1 (shape x) in
   if n = 0 then
     let dt = Dtypes.default_float_dtype () in
-    ( Lax_api.full [||] Float_format.nan dt,
-      Lax_api.full [||] 0.0 dt )
+    (Lax_api.full [||] Float_format.nan dt, Lax_api.full [||] 0.0 dt)
   else
-  let vals, counts =
-    match Numpy.Extras.unique ~return_counts:true ~size:n x with
-    | [ vals; counts ] -> (vals, counts)
-    | _ -> failwith "scipy.stats.mode: unique arity"
-  in
-  (IX.dynamic_at vals (NL.argmax counts), RD.max counts)
+    let vals, counts =
+      match Numpy.Extras.unique ~return_counts:true ~size:n x with
+      | [ vals; counts ] -> (vals, counts)
+      | _ -> failwith "scipy.stats.mode: unique arity"
+    in
+    (IX.dynamic_at vals (NL.argmax counts), RD.max counts)
 
 let mode ?(axis = Some 0) ?(nan_policy = "propagate") ?(keepdims = false) a =
   if nan_policy = "omit" then

@@ -315,27 +315,25 @@ let index_gather a idx =
   let r = Array.length sh in
   let m = rank idx in
   let indices = index_array ~extents:[ sh.(0) ] [ idx ] in
-  let slice_shape =
-    Array.append (shape idx) (Array.sub sh 1 (r - 1))
-  in
+  let slice_shape = Array.append (shape idx) (Array.sub sh 1 (r - 1)) in
   if Array.exists (fun d -> d = 0) slice_shape then
     L.full slice_shape 0.0 (dtype_of a)
   else
-  Core.bind1
-    (Gather
-       {
-         dimension_numbers =
-           {
-             offset_dims = Array.init (r - 1) (fun i -> m + i);
-             collapsed_slice_dims = [| 0 |];
-             start_index_map = [| 0 |];
-             g_operand_batching_dims = [||];
-             g_start_indices_batching_dims = [||];
-             g_sorted_unique = false;
-           };
-         slice_sizes = Array.mapi (fun i d -> if i = 0 then 1 else d) sh;
-       })
-    [ a; indices ]
+    Core.bind1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = Array.init (r - 1) (fun i -> m + i);
+               collapsed_slice_dims = [| 0 |];
+               start_index_map = [| 0 |];
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+               g_sorted_unique = false;
+             };
+           slice_sizes = Array.mapi (fun i d -> if i = 0 then 1 else d) sh;
+         })
+      [ a; indices ]
 
 let fancy_take x indices =
   let sh = shape x in
@@ -372,21 +370,21 @@ let fancy_take x indices =
   if Array.exists (fun e -> e = 0) slice_shape then
     L.full slice_shape 0.0 (dtype_of x)
   else
-  Core.bind1
-    (Gather
-       {
-         dimension_numbers =
-           {
-             offset_dims = Array.init (r - d) (fun i -> i + 1);
-             collapsed_slice_dims = Array.init d Fun.id;
-             start_index_map = Array.init d Fun.id;
-             g_operand_batching_dims = [||];
-             g_start_indices_batching_dims = [||];
-             g_sorted_unique = false;
-           };
-         slice_sizes = Array.mapi (fun i e -> if i < d then 1 else e) sh;
-       })
-    [ x; start ]
+    Core.bind1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = Array.init (r - d) (fun i -> i + 1);
+               collapsed_slice_dims = Array.init d Fun.id;
+               start_index_map = Array.init d Fun.id;
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+               g_sorted_unique = false;
+             };
+           slice_sizes = Array.mapi (fun i e -> if i < d then 1 else e) sh;
+         })
+      [ x; start ]
 
 let leading_slice v start stop =
   let sh = shape v in
@@ -448,26 +446,26 @@ let unique_sorted_mask ar axis equal_nan =
           if size_of aux = 0 then
             [ aux; L.full [| rows |] 0.0 Dtype.Bool; perm ]
           else
-          let ones = L.full [| rows |] 1.0 Dtype.Bool in
-          let tail = leading_slice aux 1 rows in
-          let head = leading_slice aux 0 (rows - 1) in
-          let inexact =
-            Dtypes.isdtype (dtype_of aux) "numeric"
-            && not (Dtypes.isdtype (dtype_of aux) "integral")
-          in
-          let differs =
-            if inexact && equal_nan then
-              let ne = L.ne tail head in
-              let both = U.bitwise_and (U.isnan tail) (U.isnan head) in
-              U.bitwise_and ne (U.logical_not both)
-            else L.ne tail head
-          in
-          let any_diff =
-            R.any
-              ~axis:(Array.init (Array.length sh - 1) (fun i -> i + 1))
-              differs
-          in
-          [ aux; at_leading_slice_set ones 1 any_diff; perm ]
+            let ones = L.full [| rows |] 1.0 Dtype.Bool in
+            let tail = leading_slice aux 1 rows in
+            let head = leading_slice aux 0 (rows - 1) in
+            let inexact =
+              Dtypes.isdtype (dtype_of aux) "numeric"
+              && not (Dtypes.isdtype (dtype_of aux) "integral")
+            in
+            let differs =
+              if inexact && equal_nan then
+                let ne = L.ne tail head in
+                let both = U.bitwise_and (U.isnan tail) (U.isnan head) in
+                U.bitwise_and ne (U.logical_not both)
+              else L.ne tail head
+            in
+            let any_diff =
+              R.any
+                ~axis:(Array.init (Array.length sh - 1) (fun i -> i + 1))
+                differs
+            in
+            [ aux; at_leading_slice_set ones 1 any_diff; perm ]
       | _ -> invalid_arg "unique: arity")
     [ ar ]
 
@@ -1423,24 +1421,23 @@ let choose ?(mode = "raise") a choices =
       in
       let extents = n :: Array.to_list sh in
       let indices = index_array ~extents (arr :: grids) in
-      if Array.exists (fun e -> e = 0) sh then
-        L.full sh 0.0 (dtype_of stacked)
+      if Array.exists (fun e -> e = 0) sh then L.full sh 0.0 (dtype_of stacked)
       else
-      Core.bind1
-        (Gather
-           {
-             dimension_numbers =
-               {
-                 offset_dims = [||];
-                 collapsed_slice_dims = Array.init (r + 1) Fun.id;
-                 start_index_map = Array.init (r + 1) Fun.id;
-                 g_operand_batching_dims = [||];
-                 g_start_indices_batching_dims = [||];
-                 g_sorted_unique = false;
-               };
-             slice_sizes = Array.make (r + 1) 1;
-           })
-        [ stacked; indices ]
+        Core.bind1
+          (Gather
+             {
+               dimension_numbers =
+                 {
+                   offset_dims = [||];
+                   collapsed_slice_dims = Array.init (r + 1) Fun.id;
+                   start_index_map = Array.init (r + 1) Fun.id;
+                   g_operand_batching_dims = [||];
+                   g_start_indices_batching_dims = [||];
+                   g_sorted_unique = false;
+                 };
+               slice_sizes = Array.make (r + 1) 1;
+             })
+          [ stacked; indices ]
 
 let compress ?axis ?size ?(fill_value = 0.0) condition a =
   let condition = Jaxpr.stage_constant condition in

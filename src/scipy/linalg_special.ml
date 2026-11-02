@@ -108,25 +108,25 @@ let hankel_patches c r =
   if nc = 0 || nr = 0 then
     L.full [| nc; nr |] 0.0 (Dtypes.promote_types (dtype_of c) (dtype_of r))
   else
-  let tail =
-    b1
-      (Slice
-         { start_indices = [| 1 |]; limit_indices = [| nr |]; strides = None })
-      [ r ]
-  in
-  let v = NL.concatenate [ c; tail ] in
-  let lifted = L.reshape v [| 1; nc + nr - 1; 1 |] in
-  let patches =
-    L.conv_general_dilated_patches ~window_strides:[| 1 |] ~padding:L.Valid
-      ~dimension_numbers:
-        {
-          lhs_spec = [| 0; 2; 1 |];
-          rhs_spec = [| 1; 0; 2 |];
-          out_spec = [| 0; 2; 1 |];
-        }
-      ~precision:("HIGHEST", "DEFAULT") lifted ~filter_shape:[| nr |]
-  in
-  b1 (Squeeze [| 0 |]) [ patches ]
+    let tail =
+      b1
+        (Slice
+           { start_indices = [| 1 |]; limit_indices = [| nr |]; strides = None })
+        [ r ]
+    in
+    let v = NL.concatenate [ c; tail ] in
+    let lifted = L.reshape v [| 1; nc + nr - 1; 1 |] in
+    let patches =
+      L.conv_general_dilated_patches ~window_strides:[| 1 |] ~padding:L.Valid
+        ~dimension_numbers:
+          {
+            lhs_spec = [| 0; 2; 1 |];
+            rhs_spec = [| 1; 0; 2 |];
+            out_spec = [| 0; 2; 1 |];
+          }
+        ~precision:("HIGHEST", "DEFAULT") lifted ~filter_shape:[| nr |]
+    in
+    b1 (Squeeze [| 0 |]) [ patches ]
 
 let hankel ?r c =
   require_vector "hankel" c;

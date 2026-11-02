@@ -1523,8 +1523,7 @@ let dtype_sweep_run op a =
           let upper = UF.add (row v 1) (py 3.0) in
           AC.geomspace_v ~num:3 lower upper)
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
-  | "sw_polyval" ->
-      one (fun v -> PO.polyval (slice_prefix v 2) (row v 0))
+  | "sw_polyval" -> one (fun v -> PO.polyval (slice_prefix v 2) (row v 0))
   | "sw_polyder" -> one (fun v -> PO.polyder (row v 0))
   | "sw_polyint" -> one (fun v -> PO.polyint (row v 0))
   | "sw_polyadd" -> one (fun v -> PO.polyadd (row v 0) (row v 1))

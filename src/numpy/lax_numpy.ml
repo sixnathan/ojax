@@ -1056,49 +1056,49 @@ and repeat_to_total ?axis a repeats total =
   if axis <> None && ndim a = 0 then
     bind1 (T.Broadcast_in_dim { shape = [| total |]; dims = [||] }) [ a ]
   else
-  let a, ax =
-    match axis with
-    | None -> (ravel a, 0)
-    | Some x -> (a, canonicalize_axis x (ndim a))
-  in
-  let full = repeat_scalar ~axis:ax a repeats in
-  let n = (shape full).(ax) in
-  if total = 0 then begin
-    let sh = Array.copy (shape a) in
-    sh.(ax) <- 0;
-    const_full (dtype a) sh 0.0
-  end
-  else if (shape a).(ax) = 0 then a
-  else if total <= n then slice_axis full ax 0 total
-  else begin
-    let last = slice_axis full ax (n - 1) n in
-    let tail = repeat_scalar ~axis:ax last (total - n) in
-    bind1 (T.Concatenate ax) [ full; tail ]
-  end
+    let a, ax =
+      match axis with
+      | None -> (ravel a, 0)
+      | Some x -> (a, canonicalize_axis x (ndim a))
+    in
+    let full = repeat_scalar ~axis:ax a repeats in
+    let n = (shape full).(ax) in
+    if total = 0 then begin
+      let sh = Array.copy (shape a) in
+      sh.(ax) <- 0;
+      const_full (dtype a) sh 0.0
+    end
+    else if (shape a).(ax) = 0 then a
+    else if total <= n then slice_axis full ax 0 total
+    else begin
+      let last = slice_axis full ax (n - 1) n in
+      let tail = repeat_scalar ~axis:ax last (total - n) in
+      bind1 (T.Concatenate ax) [ full; tail ]
+    end
 
 and repeat_scalar ?axis a repeats =
   if axis <> None && ndim a = 0 then
     bind1 (T.Broadcast_in_dim { shape = [| repeats |]; dims = [||] }) [ a ]
   else
-  let a, ax =
-    match axis with
-    | None -> (ravel a, 0)
-    | Some x -> (a, canonicalize_axis x (ndim a))
-  in
-  let ish = shape a in
-  let nd = Array.length ish in
-  let aux_axis = ax + 1 in
-  let aux_shape =
-    Array.init (nd + 1) (fun i ->
-        if i < aux_axis then ish.(i)
-        else if i = aux_axis then repeats
-        else ish.(i - 1))
-  in
-  let dims = Array.init nd (fun i -> if i < aux_axis then i else i + 1) in
-  let bc = bind1 (T.Broadcast_in_dim { shape = aux_shape; dims }) [ a ] in
-  let result_shape = Array.copy ish in
-  result_shape.(ax) <- ish.(ax) * repeats;
-  reshape bc result_shape
+    let a, ax =
+      match axis with
+      | None -> (ravel a, 0)
+      | Some x -> (a, canonicalize_axis x (ndim a))
+    in
+    let ish = shape a in
+    let nd = Array.length ish in
+    let aux_axis = ax + 1 in
+    let aux_shape =
+      Array.init (nd + 1) (fun i ->
+          if i < aux_axis then ish.(i)
+          else if i = aux_axis then repeats
+          else ish.(i - 1))
+    in
+    let dims = Array.init nd (fun i -> if i < aux_axis then i else i + 1) in
+    let bc = bind1 (T.Broadcast_in_dim { shape = aux_shape; dims }) [ a ] in
+    let result_shape = Array.copy ish in
+    result_shape.(ax) <- ish.(ax) * repeats;
+    reshape bc result_shape
 
 let pad_widths_config pad_width =
   Np_ints.mark_triples
@@ -2331,121 +2331,126 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   in
   if (shape x0).(0) = 0 then
     reshape
-      (T.Concrete (Ndarray.of_floats (Dtypes.default_float_dtype ()) [| 0 |] [||]))
+      (T.Concrete
+         (Ndarray.of_floats (Dtypes.default_float_dtype ()) [| 0 |] [||]))
       [| 0; 0 |]
   else if (shape x).(1) = 0 then
     const_full (dtype_of x)
       (if (shape x).(0) = 1 then [||] else [| (shape x).(0); (shape x).(0) |])
       Float_format.nan
   else
-  let x = match dtype with Some d -> convert x d | None -> x in
-  let dt = dtype_of x in
-  let nvars = (shape x).(0) and nobs = (shape x).(1) in
-  let ddof = match ddof with Some d -> d | None -> if bias then 0 else 1 in
-  let check_weights name w =
-    if ndim w > 1 then
-      failwith (Printf.sprintf "cannot handle multidimensional %s" name);
-    if (shape w).(0) <> nobs then
-      failwith (Printf.sprintf "incompatible numbers of samples and %s" name)
-  in
-  Option.iter (check_weights "fweights") fweights;
-  Option.iter (check_weights "aweights") aweights;
-  (match fweights with
-  | Some f when not (is_integral (dtype_of f)) ->
-      raise (Errors.jax_type_error "fweights must be integer.")
-  | _ -> ());
-  let magnitude w =
-    match dtype_of w with
-    | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> w
-    | _ -> bind1 T.Abs [ w ]
-  in
-  let f_abs = Option.map magnitude fweights in
-  let a_abs = Option.map magnitude aweights in
-  let as_dt w = convert w dt in
-  let w =
-    match (f_abs, a_abs) with
-    | None, None -> None
-    | Some f, None -> Some (as_dt f)
-    | None, Some a -> Some (as_dt a)
-    | Some f, Some a -> Some (bind1 T.Mul [ as_dt f; as_dt a ])
-  in
-  let sum_all v = bind1 (T.Reduce_sum (Array.init (ndim v) Fun.id)) [ v ] in
-  let avg, w_sum =
-    match w with
-    | None ->
-        ( Reductions.mean ~axis:[| 1 |] x,
-          bind1
-            (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
-            [ scalar dt (float_of_int nobs) ] )
-    | Some wv ->
-        let lifted = bind1 (T.Reshape [| 1; nobs |]) [ wv ] in
-        let total = bind1 (T.Reduce_sum [| 1 |]) [ lifted ] in
-        let product = bind1 T.Mul [ x; lifted ] in
-        let summed = bind1 (T.Reduce_sum [| 1 |]) [ product ] in
-        let mean = bind1 T.Div [ summed; total ] in
-        (mean, Jnp_util.broadcast_to total (shape mean))
-  in
-  let first =
-    if (shape w_sum).(0) = 1 then w_sum
-    else
+    let x = match dtype with Some d -> convert x d | None -> x in
+    let dt = dtype_of x in
+    let nvars = (shape x).(0) and nobs = (shape x).(1) in
+    let ddof = match ddof with Some d -> d | None -> if bias then 0 else 1 in
+    let check_weights name w =
+      if ndim w > 1 then
+        failwith (Printf.sprintf "cannot handle multidimensional %s" name);
+      if (shape w).(0) <> nobs then
+        failwith (Printf.sprintf "incompatible numbers of samples and %s" name)
+    in
+    Option.iter (check_weights "fweights") fweights;
+    Option.iter (check_weights "aweights") aweights;
+    (match fweights with
+    | Some f when not (is_integral (dtype_of f)) ->
+        raise (Errors.jax_type_error "fweights must be integer.")
+    | _ -> ());
+    let magnitude w =
+      match dtype_of w with
+      | D.Bool | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 -> w
+      | _ -> bind1 T.Abs [ w ]
+    in
+    let f_abs = Option.map magnitude fweights in
+    let a_abs = Option.map magnitude aweights in
+    let as_dt w = convert w dt in
+    let w =
+      match (f_abs, a_abs) with
+      | None, None -> None
+      | Some f, None -> Some (as_dt f)
+      | None, Some a -> Some (as_dt a)
+      | Some f, Some a -> Some (bind1 T.Mul [ as_dt f; as_dt a ])
+    in
+    let sum_all v = bind1 (T.Reduce_sum (Array.init (ndim v) Fun.id)) [ v ] in
+    let avg, w_sum =
+      match w with
+      | None ->
+          ( Reductions.mean ~axis:[| 1 |] x,
+            bind1
+              (T.Broadcast_in_dim { shape = [| nvars |]; dims = [||] })
+              [ scalar dt (float_of_int nobs) ] )
+      | Some wv ->
+          let lifted = bind1 (T.Reshape [| 1; nobs |]) [ wv ] in
+          let total = bind1 (T.Reduce_sum [| 1 |]) [ lifted ] in
+          let product = bind1 T.Mul [ x; lifted ] in
+          let summed = bind1 (T.Reduce_sum [| 1 |]) [ product ] in
+          let mean = bind1 T.Div [ summed; total ] in
+          (mean, Jnp_util.broadcast_to total (shape mean))
+    in
+    let first =
+      if (shape w_sum).(0) = 1 then w_sum
+      else
+        bind1
+          (T.Slice
+             {
+               start_indices = [| 0 |];
+               limit_indices = [| 1 |];
+               strides = None;
+             })
+          [ w_sum ]
+    in
+    let first = bind1 (T.Squeeze [| 0 |]) [ first ] in
+    let f =
+      match (w, a_abs) with
+      | None, _ -> scalar dt (float_of_int (nobs - ddof))
+      | Some _, _ when ddof = 0 -> first
+      | Some _, None -> bind1 T.Sub [ first; scalar dt (float_of_int ddof) ]
+      | Some wv, Some a ->
+          let scaled =
+            bind1 T.Mul
+              [
+                scalar dt (float_of_int ddof);
+                sum_all (bind1 T.Mul [ wv; as_dt a ]);
+              ]
+          in
+          bind1 T.Sub [ first; bind1 T.Div [ scaled; first ] ]
+    in
+    let lifted_avg =
       bind1
-        (T.Slice
-           { start_indices = [| 0 |]; limit_indices = [| 1 |]; strides = None })
-        [ w_sum ]
-  in
-  let first = bind1 (T.Squeeze [| 0 |]) [ first ] in
-  let f =
-    match (w, a_abs) with
-    | None, _ -> scalar dt (float_of_int (nobs - ddof))
-    | Some _, _ when ddof = 0 -> first
-    | Some _, None -> bind1 T.Sub [ first; scalar dt (float_of_int ddof) ]
-    | Some wv, Some a ->
-        let scaled =
-          bind1 T.Mul
-            [
-              scalar dt (float_of_int ddof);
-              sum_all (bind1 T.Mul [ wv; as_dt a ]);
-            ]
-        in
-        bind1 T.Sub [ first; bind1 T.Div [ scaled; first ] ]
-  in
-  let lifted_avg =
-    bind1
-      (T.Broadcast_in_dim { shape = [| nvars; 1 |]; dims = [| 0 |] })
-      [ avg ]
-  in
-  let centered = bind1 T.Sub [ x; lifted_avg ] in
-  let weighted =
-    match w with
-    | None -> centered
-    | Some wv ->
-        let lifted =
-          bind1
-            (T.Broadcast_in_dim { shape = [| 1; nobs |]; dims = [| 1 |] })
-            [ wv ]
-        in
-        bind1 T.Mul [ centered; lifted ]
-  in
-  let x_t = bind1 (T.Transpose [| 1; 0 |]) [ weighted ] in
-  let x_t =
-    match dt with
-    | D.Complex64 | D.Complex128 -> bind1 T.Conj [ x_t ]
-    | _ -> x_t
-  in
-  let prod =
-    bind1
-      (T.Dot_general
-         {
-           lhs_contract = [| 1 |];
-           rhs_contract = [| 0 |];
-           lhs_batch = [||];
-           rhs_batch = [||];
-           untyped_dot = false;
-           dot_precision = None;
-         })
-      [ centered; x_t ]
-  in
-  squeeze (bind1 T.Div [ prod; f ])
+        (T.Broadcast_in_dim { shape = [| nvars; 1 |]; dims = [| 0 |] })
+        [ avg ]
+    in
+    let centered = bind1 T.Sub [ x; lifted_avg ] in
+    let weighted =
+      match w with
+      | None -> centered
+      | Some wv ->
+          let lifted =
+            bind1
+              (T.Broadcast_in_dim { shape = [| 1; nobs |]; dims = [| 1 |] })
+              [ wv ]
+          in
+          bind1 T.Mul [ centered; lifted ]
+    in
+    let x_t = bind1 (T.Transpose [| 1; 0 |]) [ weighted ] in
+    let x_t =
+      match dt with
+      | D.Complex64 | D.Complex128 -> bind1 T.Conj [ x_t ]
+      | _ -> x_t
+    in
+    let prod =
+      bind1
+        (T.Dot_general
+           {
+             lhs_contract = [| 1 |];
+             rhs_contract = [| 0 |];
+             lhs_batch = [||];
+             rhs_batch = [||];
+             untyped_dot = false;
+             dot_precision = None;
+           })
+        [ centered; x_t ]
+    in
+    squeeze (bind1 T.Div [ prod; f ])
 
 let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
   let y_given = y <> None in

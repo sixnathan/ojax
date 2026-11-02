@@ -1736,7 +1736,7 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
   | Dce_sink _ | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
-  | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
+  | Iota_2x32_shape _ | Random_seed _ | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
       failwith "ad: primitive has no jvp rule in M1"
   | Cholesky -> (
@@ -4599,7 +4599,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Digamma | Erf | Erf_inv | Erfc | Igamma | Igamma_grad_a | Igammac | Lgamma
   | Polygamma | Regularized_incomplete_beta | Zeta | Platform_index _
   | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ | Threefry2x32
-  | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
+  | Iota_2x32_shape _ | Random_seed _ | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap | Random_gamma _ ->
       Py_exn.not_implemented_error
         ("Transpose rule (for reverse-mode differentiation) for '"

@@ -398,3 +398,121 @@ let random_bits64 ~shape key =
           b1 Or [ b1 Shift_left [ hi; thirty_two ]; lo ]
       | _ -> invalid_arg "Prng_lowering: threefry arity")
     key
+
+let jnp_reshape shape v =
+  let current = (Core.get_aval v).shape in
+  if Array.length current > 0 && current = shape then v
+  else b1 (Reshape shape) [ v ]
+
+let rng_bits ?(dtype = u32) key shape =
+  match
+    Core.bind
+      (Rng_bit_generator
+         { rbg_shape = shape; rbg_dtype = dtype; rbg_algorithm = "DEFAULT" })
+      [ key ]
+  with
+  | [ _; bits ] -> bits
+  | _ -> invalid_arg "Prng_lowering: rng_bit_generator arity"
+
+let rbg_seed_one seed =
+  let half = seed_scalar seed in
+  b1 (Concatenate 0) [ half; half ]
+
+let rbg_random_seed seed =
+  iterated_vmap_unary
+    (Array.length (Core.get_aval seed).shape)
+    rbg_seed_one seed
+
+let threefry_split_foldlike key shape =
+  let k1, k2 = key_words key in
+  let c1, c2 = iota_counters shape in
+  match Core.bind Threefry2x32 [ k1; k2; c1; c2 ] with
+  | [ x; y ] -> b1 (Stack (Array.length (Core.get_aval x).shape)) [ x; y ]
+  | _ -> invalid_arg "Prng_lowering: threefry arity"
+
+let threefry_split_original key shape =
+  let num = Array.fold_left ( * ) 1 shape in
+  let counts =
+    b1 (Iota { dtype = u32; shape = [| num * 2 |]; dimension = 0 }) []
+  in
+  b1 (Reshape (Array.append shape [| 2 |])) [ threefry_2x32 key counts ]
+
+let rbg_split_one shape key =
+  let split =
+    if Config.value Config.threefry_partitionable then threefry_split_foldlike
+    else threefry_split_original
+  in
+  let halves = jnp_reshape [| 2; 2 |] key in
+  let parts =
+    List.hd
+      (Interpreters.Batching.vmap_flat ~out_axis:(Array.length shape)
+         (function
+           | [ half ] -> [ split half shape ]
+           | _ -> invalid_arg "Prng_lowering: split arity")
+         [ Some 0 ] [ halves ])
+  in
+  jnp_reshape (Array.append shape [| 4 |]) parts
+
+let unsafe_rbg_split_one shape key =
+  let num = Array.fold_left ( * ) 1 shape in
+  let keys = rng_bits key [| 10 * num; 4 |] in
+  let stepped =
+    b1
+      (Slice
+         {
+           start_indices = [| 0; 0 |];
+           limit_indices = [| 10 * num; 4 |];
+           strides = Some [| 10; 1 |];
+         })
+      [ keys ]
+  in
+  jnp_reshape (Array.append shape [| 4 |]) stepped
+
+let rbg_fold_in_one key data =
+  let halves = jnp_reshape [| 2; 2 |] key in
+  let folded =
+    vmap1 ~axes:[ Some 0; None ]
+      (function
+        | [ half; d ] -> threefry_fold_in half d
+        | _ -> invalid_arg "Prng_lowering: fold_in arity")
+      [ halves; data ]
+  in
+  jnp_reshape [| 4 |] folded
+
+let unsafe_rbg_fold_in_one key data =
+  let bits = rng_bits (rbg_seed_one data) [| 10; 4 |] in
+  let last =
+    b1
+      (Slice
+         {
+           start_indices = [| 9; 0 |];
+           limit_indices = [| 10; 4 |];
+           strides = None;
+         })
+      [ bits ]
+  in
+  xor key (b1 (Reshape [| 4 |]) [ last ])
+
+let key_batch_rank key = Array.length (Core.get_aval key).shape - 1
+
+let rbg_random_split ~unsafe ~shape key =
+  let one = if unsafe then unsafe_rbg_split_one else rbg_split_one in
+  iterated_vmap_unary (key_batch_rank key) (one shape) key
+
+let rbg_fold_in ~unsafe key data =
+  let one = if unsafe then unsafe_rbg_fold_in_one else rbg_fold_in_one in
+  let ka = Core.get_aval key and da = Core.get_aval data in
+  let key_batch = Array.sub ka.shape 0 (Array.length ka.shape - 1) in
+  iterated_vmap_binary_bcast key_batch da.shape one key data
+
+let rbg_random_bits ~bit_width ~shape key =
+  let dtype =
+    match bit_width with
+    | 8 -> Dtype.Uint8
+    | 16 -> Dtype.Uint16
+    | 64 -> Dtype.Uint64
+    | _ -> u32
+  in
+  iterated_vmap_unary (key_batch_rank key)
+    (fun k -> rng_bits ~dtype k shape)
+    key

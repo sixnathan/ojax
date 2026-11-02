@@ -158,7 +158,62 @@ let random_bits_impl bit_width shape key =
   done;
   of_u32 out_shape out
 
-let impl_rule prim inputs =
+let is_rbg_nd nd =
+  let s = Nd.shape nd in
+  let n = Array.length s in
+  n >= 1 && s.(n - 1) = 4 && Nd.dtype nd = Dtype.Uint32
+
+let strong nd =
+  if Nd.weak nd then
+    let s = Nd.shape nd in
+    of_u32 s (Array.init (prod s) (geti nd))
+  else nd
+
+let host = function
+  | Concrete nd -> nd
+  | Device b -> Pjrt.Buffer.to_host b
+  | Tracer _ -> failwith "prng: rbg rule produced a tracer"
+
+let tagged ~unsafe v =
+  let nd = strong (host v) in
+  if unsafe then Nd.as_weak nd else nd
+
+let rbg_rule prim inputs =
+  match (prim, inputs) with
+  | Random_seed (("rbg" | "urbg") as tag), [ seeds ] ->
+      Some
+        [
+          tagged ~unsafe:(tag = "urbg")
+            (Stablehlo.Prng_lowering.rbg_random_seed (Concrete seeds));
+        ]
+  | Random_split shape, [ key ] when is_rbg_nd key ->
+      let unsafe = Nd.weak key in
+      Some
+        [
+          tagged ~unsafe
+            (Stablehlo.Prng_lowering.rbg_random_split ~unsafe ~shape
+               (Concrete (strong key)));
+        ]
+  | Random_fold_in, [ key; msg ] when is_rbg_nd key ->
+      let unsafe = Nd.weak key in
+      Some
+        [
+          tagged ~unsafe
+            (Stablehlo.Prng_lowering.rbg_fold_in ~unsafe
+               (Concrete (strong key))
+               (Concrete msg));
+        ]
+  | Random_bits { bit_width; shape }, [ key ] when is_rbg_nd key ->
+      Some
+        [
+          host
+            (Stablehlo.Prng_lowering.rbg_random_bits ~bit_width ~shape
+               (Concrete (strong key)));
+        ]
+  | Random_unwrap, [ key ] when is_rbg_nd key -> Some [ strong key ]
+  | _ -> None
+
+let base_rule prim inputs =
   match (prim, inputs) with
   | Random_gamma { log_space }, [ key; a ] -> (
       match !Core.random_gamma_hook ~log_space (Concrete key) (Concrete a) with
@@ -168,7 +223,7 @@ let impl_rule prim inputs =
   | Iota_2x32_shape shape, [] ->
       let hi, lo = iota_2x32_nd shape in
       [ hi; lo ]
-  | Random_seed, [ seeds ] -> [ random_seed_impl seeds ]
+  | Random_seed _, [ seeds ] -> [ random_seed_impl seeds ]
   | Random_split shape, [ key ] -> [ random_split_impl shape key ]
   | Random_fold_in, [ key; msg ] -> [ random_fold_in_impl key msg ]
   | Random_bits { bit_width = 64; shape }, [ key ] ->
@@ -188,18 +243,44 @@ let impl_rule prim inputs =
   | Random_unwrap, [ key ] -> [ key ]
   | _ -> failwith "prng: impl arity mismatch"
 
+let impl_rule prim inputs =
+  match rbg_rule prim inputs with
+  | Some outs -> outs
+  | None -> base_rule prim inputs
+
 let shaped shape = { shape; dtype = Dtype.Uint32; weak_type = false }
+let key_width (a : aval) = a.shape.(Array.length a.shape - 1)
 
 let abstract_eval_rule prim avals =
   match (prim, avals) with
   | Random_gamma _, [ _; a ] -> [ a ]
   | Iota_2x32_shape shape, [] -> [ shaped shape; shaped shape ]
-  | Random_seed, [ a ] -> [ shaped (Array.append a.shape [| 2 |]) ]
+  | Random_seed tag, [ a ] ->
+      [
+        {
+          (shaped (Array.append a.shape [| (if tag = "fry" then 2 else 4) |])) with
+          weak_type = tag = "urbg";
+        };
+      ]
   | Random_split shape, [ a ] ->
-      [ shaped (Array.append (Array.append (drop_last a.shape) shape) [| 2 |]) ]
+      [
+        {
+          (shaped
+             (Array.append
+                (Array.append (drop_last a.shape) shape)
+                [| key_width a |]))
+          with
+          weak_type = a.weak_type;
+        };
+      ]
   | Random_fold_in, [ ka; ma ] ->
       let ob = broadcast_shapes [ drop_last ka.shape; ma.shape ] in
-      [ shaped (Array.append ob [| 2 |]) ]
+      [
+        {
+          (shaped (Array.append ob [| key_width ka |])) with
+          weak_type = ka.weak_type;
+        };
+      ]
   | Random_bits { bit_width = (8 | 16 | 64) as w; shape }, [ a ] ->
       [
         {
@@ -221,7 +302,7 @@ let abstract_eval_rule prim avals =
   | _ -> failwith "prng: abstract_eval arity mismatch"
 
 let is_prng_prim = function
-  | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
+  | Iota_2x32_shape _ | Random_seed _ | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap | Random_gamma _ ->
       true
   | _ -> false
@@ -254,23 +335,12 @@ let iota_2x32_shape shape =
     | [ hi; lo ] -> (hi, lo)
     | _ -> failwith "prng: iota_2x32_shape arity"
 
-let random_seed seed = Core.bind1 Random_seed [ seed ]
+let random_seed ?(impl = "fry") seed = Core.bind1 (Random_seed impl) [ seed ]
 
 let is_rbg_key key =
   let a = Core.get_aval key in
   let n = Array.length a.shape in
-  n >= 1
-  && a.shape.(n - 1) = 4
-  && (a.dtype = Dtype.Uint32 || a.dtype = Dtype.I32)
-
-let rbg_split_hook : (value -> int array -> value) ref =
-  ref (fun _ _ -> failwith "prng: rbg split not installed")
-
-let rbg_fold_in_hook : (value -> value -> value) ref =
-  ref (fun _ _ -> failwith "prng: rbg fold_in not installed")
-
-let rbg_bits_hook : (value -> int -> int array -> value) ref =
-  ref (fun _ _ _ -> failwith "prng: rbg random_bits not installed")
+  n >= 1 && a.shape.(n - 1) = 4 && a.dtype = Dtype.Uint32
 
 let legacy_split_hook : (value -> int array -> value) ref =
   ref (fun _ _ -> failwith "prng: original threefry split not installed")
@@ -279,7 +349,7 @@ let legacy_bits_hook : (value -> int -> int array -> value) ref =
   ref (fun _ _ _ -> failwith "prng: original threefry bits not installed")
 
 let random_split key shape =
-  if is_rbg_key key then !rbg_split_hook key shape
+  if is_rbg_key key then Core.bind1 (Random_split shape) [ key ]
   else if Config.value Config.threefry_partitionable then
     Core.bind1 (Random_split shape) [ key ]
   else
@@ -288,11 +358,16 @@ let random_split key shape =
            [ Key_reuse.suspended (fun () -> !legacy_split_hook key shape) ]))
 
 let random_fold_in key msg =
-  if is_rbg_key key then !rbg_fold_in_hook key msg
+  if is_rbg_key key then Core.bind1 Random_fold_in [ key; msg ]
   else Core.bind1 Random_fold_in [ key; msg ]
 
 let random_bits key ~bit_width ~shape =
-  if is_rbg_key key then !rbg_bits_hook key bit_width shape
+  if is_rbg_key key then begin
+    if not (List.mem bit_width [ 8; 16; 32; 64 ]) then
+      raise
+        (Errors.jax_type_error "requires 8-, 16-, 32- or 64-bit field width.");
+    Core.bind1 (Random_bits { bit_width; shape }) [ key ]
+  end
   else if Config.value Config.threefry_partitionable then
     Core.bind1 (Random_bits { bit_width; shape }) [ key ]
   else

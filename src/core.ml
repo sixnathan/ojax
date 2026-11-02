@@ -879,7 +879,25 @@ let as_concrete = function
   | Device b -> Pjrt.Buffer.to_host b
   | Tracer _ -> failwith "eval: expected a concrete value"
 
-let eval_process_primitive _trace prim args =
+let urbg_shaped (a : aval) =
+  let n = Array.length a.shape in
+  a.weak_type && a.dtype = Dtype.Uint32 && n >= 1 && a.shape.(n - 1) = 4
+
+let retag_urbg prim args outs =
+  let seeded = match prim with Random_seed "urbg" -> true | _ -> false in
+  if seeded || List.exists (fun v -> urbg_shaped (value_aval v)) args then
+    match rules.abstract_eval prim (List.map value_aval args) with
+    | avals when List.compare_lengths avals outs = 0 ->
+        List.map2
+          (fun out a ->
+            if urbg_shaped a then Concrete (Ndarray.as_weak (as_concrete out))
+            else out)
+          outs avals
+    | _ -> outs
+    | exception _ -> outs
+  else outs
+
+let eval_untagged prim args =
   (match prim with
   | Dot_general _ -> Config.check_matmul_preset_on_cpu ()
   | _ -> ());
@@ -914,6 +932,9 @@ let eval_process_primitive _trace prim args =
       List.map
         (fun r -> Concrete (Ndarray.canonicalize (Ndarray.dtype r) r))
         results
+
+let eval_process_primitive _trace prim args =
+  retag_urbg prim args (eval_untagged prim args)
 
 let eval_interpreter =
   {

@@ -320,6 +320,7 @@ jnp.insert_61613458_float64:eager:error_text	1
 jnp.insert_61613458_float64:jit:error_text	1
 jnp.insert_dced36c3_float64:eager:error_text	1
 jnp.insert_dced36c3_float64:jit:error_text	1
+jnp.intersect1d_f06b4142_float64:jit:error_text	1
 jnp.isin_2cab440b_float64:eager:error_text	1
 jnp.isin_2cab440b_float64:jit:error_text	1
 jnp.isin_3a033f14_float64:eager:error_text	1

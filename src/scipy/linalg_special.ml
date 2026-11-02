@@ -126,11 +126,18 @@ let hankel_patches c r =
   b1 (Squeeze [| 0 |]) [ patches ]
 
 let hankel ?r c =
-  require_vector "hankel" c;
   let r =
     match r with Some v -> v | None -> Numpy.Array_creation.zeros_like c
   in
-  hankel_patches c r
+  if Array.length (shape c) = 0 then
+    invalid_arg "hankel: c must be at least 1-dimensional, got a scalar.";
+  if Array.length (shape r) = 0 then
+    invalid_arg "hankel: r must be at least 1-dimensional, got a scalar.";
+  require_vector "hankel" c;
+  let nc = (shape c).(0) and nr = (shape r).(0) in
+  if nc = 0 || nr = 0 then
+    L.full [| nc; nr |] 0.0 (Dtypes.promote_types (dtype_of c) (dtype_of r))
+  else hankel_patches c r
 
 let toeplitz ?r c =
   let r = match r with Some r -> r | None -> U.conj c in

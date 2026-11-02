@@ -996,7 +996,8 @@ let complex_grad_run op a =
   | "cg_conj" -> on (abs_of (fun z -> L.mul (L.conj z) z))
   | "cg_real" -> on (fun z -> UF.power (L.real z) (scalar_int 2))
   | "cg_imag" -> on (fun z -> UF.power (L.imag z) (scalar_int 2))
-  | "cg_matmul" -> on (abs_of (fun z -> L.dot_typed z (L.conj z)))
+  | "cg_matmul" ->
+      on (abs_of (fun z -> Ojax.Numpy.Tensor_contractions.matmul z (L.conj z)))
   | "cg_fft" -> on (abs_of (fun z -> Ojax.Numpy.Fft.fft z))
   | "cg_angle" -> on (fun z -> NL.angle z)
   | _ -> None
@@ -1194,17 +1195,11 @@ let tracer_batch_run op params a b =
   | "tb_lexsort" ->
       let v = a () in
       let column j =
-        let rows = (shp v).(0) in
-        L.squeeze
-          (Ojax.Core.bind1
-             (T.Slice
-                {
-                  start_indices = [| 0; j |];
-                  limit_indices = [| rows; j + 1 |];
-                  strides = None;
-                })
-             [ v ])
-          [| 1 |]
+        Ojax.Numpy.Nd_index.take v
+          [
+            Ojax.Numpy.Nd_index.Range { start = None; stop = None };
+            Ojax.Numpy.Nd_index.Int j;
+          ]
       in
       let first = column 0 in
       let second = column 1 in

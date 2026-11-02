@@ -1516,7 +1516,11 @@ let rec impl_base prim inputs =
         inputs
   | Concatenate dim -> [ concatenate_impl dim inputs ]
   | Pad cfg -> bin (fun a pv -> pad_impl cfg a pv) inputs
-  | Rev dims -> un (rev_impl dims) inputs
+  | Rev dims ->
+      List.iter
+        (fun nd -> Utils.check_rev dims (Array.length (Ndarray.shape nd)))
+        inputs;
+      un (rev_impl dims) inputs
   | Split { sizes; axis } -> (
       match inputs with
       | [ a ] -> split_impl sizes axis a
@@ -2592,7 +2596,12 @@ let abstract_eval prim avals =
             a.dtype
             (a.weak_type && pv.weak_type))
         avals
-  | Rev _ -> un_aval (fun a -> a) avals
+  | Rev dims ->
+      un_aval
+        (fun a ->
+          Utils.check_rev dims (Array.length a.shape);
+          a)
+        avals
   | Split { sizes; axis } -> (
       match avals with
       | [ a ] ->

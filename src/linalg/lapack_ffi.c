@@ -257,7 +257,7 @@ ENTER(h_geqrf)
 ENTER(h_geqp3)
   Buffer *a = RET(0), *jpvt = RET(1), *tau = RET(2);
   if (batches(a, 2) > 0 && rows(a) == 0 && cols(a) > 0)
-    return ffi_error(f, "std::bad_alloc");
+    return ffi_error(f, "UNKNOWN: XLA FFI call failed: std::bad_alloc");
   copy_to(a, ARG(0));
   copy_to(jpvt, ARG(1));
   char prec = prec_of(a->dtype);

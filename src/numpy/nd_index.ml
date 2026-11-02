@@ -16,7 +16,11 @@ let full = Range { start = None; stop = None }
 
 let expand idx n =
   let k = List.length idx in
-  if k > n then invalid_arg "too many indices for array";
+  if k > n then
+    raise
+      (Errors.Jax_index_error
+         (Printf.sprintf
+            "Too many indices: array is %d-dimensional, but %d were indexed" n k));
   idx @ List.init (n - k) (fun _ -> full)
 
 let bound size v =

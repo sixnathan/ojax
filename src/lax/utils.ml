@@ -31,6 +31,22 @@ let check_shapelike ?(non_zero_shape = false) fun_name arg_name obj =
       (Printf.sprintf "%s %s must have every element be %s, got %s." fun_name
          arg_name bound (py_tuple obj))
 
+let check_rev dimensions ndim =
+  check_shapelike "rev" "dimensions" dimensions;
+  if
+    List.length (List.sort_uniq compare (Array.to_list dimensions))
+    <> Array.length dimensions
+  then
+    type_error
+      (Printf.sprintf "rev dimensions must be unique, got %s."
+         (py_tuple dimensions));
+  if Array.exists (fun d -> d >= ndim) dimensions then
+    type_error
+      (Printf.sprintf
+         "rev dimensions must all be less than operand ndim, got dimensions %s \
+          for operand ndim %d."
+         (py_tuple dimensions) ndim)
+
 let strides shape =
   let n = Array.length shape in
   let s = Array.make (max n 1) 1 in

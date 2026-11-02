@@ -49,6 +49,16 @@ let int_list : json -> int list = function
   | j -> List.map int_ (elements j)
 
 let int_array j = Array.of_list (int_list j)
+
+let int_sequence : json -> int list = function
+  | `Int _ ->
+      raise
+        (Ojax.Py_exn.Type_error
+           "option_args: a bare int given where the signature takes only a \
+            sequence of ints")
+  | j -> int_list j
+
+let int_sequence_array j = Array.of_list (int_sequence j)
 let float_array j = Array.of_list (List.map float_ (elements j))
 
 let int_option : json -> int option = function

@@ -1456,7 +1456,7 @@ let shuffle_axis key x ~axis =
 
 let permutation_array ?(axis = 0) ?(independent = false) k x =
   let rank = Array.length (shape_of x) in
-  let axis = if axis < 0 then axis + max rank 1 else axis in
+  let axis = Validate.canonicalize_axis axis (max rank 1) in
   if independent || rank = 1 then shuffle_axis k x ~axis
   else
     let n = (shape_of x).(axis) in
@@ -1489,7 +1489,7 @@ let gumbel_any key ~shape ~dt ~mode =
 let choice_array ?(shape = [||]) ?(replace = true) ?p ?(axis = 0) ?mode k arr =
   let ash = shape_of arr in
   let rank = Array.length ash in
-  let axis = if axis < 0 then axis + max rank 1 else axis in
+  let axis = if rank = 0 then axis else Validate.canonicalize_axis axis rank in
   let n_inputs =
     if rank = 0 then int_of_float (Nd.get_f (concrete arr) [||]) else ash.(axis)
   in
@@ -1504,9 +1504,9 @@ let choice_array ?(shape = [||]) ?(replace = true) ?p ?(axis = 0) ?mode k arr =
   in
   if n_draws = 0 then AC.zeros ~dtype:(dtype_of arr) (out_shape ())
   else if n_inputs <= 0 then
-    invalid_arg "a must be greater than 0 unless no samples are taken"
+    Py_exn.value_error "a must be greater than 0 unless no samples are taken"
   else if (not replace) && n_draws > n_inputs then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "Cannot take a larger sample (size %d) than population (size %d) when \
           'replace=False'"
@@ -1524,6 +1524,9 @@ let choice_array ?(shape = [||]) ?(replace = true) ?p ?(axis = 0) ?mode k arr =
               (randint_v k ~minval:(JU.py_int 0) ~maxval:(JU.py_int n_inputs)
                  ~shape ~dt:int_dt)
           else
+            let axis =
+              if rank = 0 then Validate.canonicalize_axis axis 1 else axis
+            in
             let perm =
               if rank = 0 then
                 shuffle_axis k
@@ -1552,7 +1555,7 @@ let choice_array ?(shape = [||]) ?(replace = true) ?p ?(axis = 0) ?mode k arr =
       | Some p_arr ->
           let p_arr = List.hd (promote_inexact [ p_arr ]) in
           if shape_of p_arr <> [| n_inputs |] then
-            invalid_arg
+            Py_exn.value_error
               (Printf.sprintf
                  "p must be None or a 1D vector with the same size as \
                   a.shape[axis]. p has shape %s and a.shape[axis] is %d."

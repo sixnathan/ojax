@@ -3409,6 +3409,33 @@ let dce_tape (eqns : eqn list) (outs : atom list) =
             }
             :: kept
           end
+      | Cond { branches; platforms }
+        when not
+               (List.exists
+                  (fun (b : closed_jaxpr) ->
+                    List.exists Jaxpr.eqn_has_effect b.jaxpr.eqns)
+                  branches) ->
+          let used = List.map is_live e.outs in
+          if not (List.exists Fun.id used) then kept
+          else begin
+            let branches', args_used = Jaxpr.dce_branches branches used in
+            let inputs =
+              List.hd e.inputs
+              :: List.concat
+                   (List.map2
+                      (fun a keep -> if keep then [ a ] else [])
+                      (List.tl e.inputs) args_used)
+            in
+            List.iter mark inputs;
+            let outs = List.filter is_live e.outs in
+            {
+              prim = Cond { branches = branches'; platforms };
+              inputs;
+              outs;
+              multiple_results = List.length outs > 1;
+            }
+            :: kept
+          end
       | _ ->
           if List.exists is_live e.outs || e.outs = [] then begin
             List.iter mark e.inputs;

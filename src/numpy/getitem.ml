@@ -510,12 +510,18 @@ let normalize_item sh p =
       }
   | _ -> p
 
+let stage = function
+  | T.Concrete nd as v when Array.length (Ndarray.shape nd) > 0 ->
+      Jaxpr.stage_constant v
+  | v -> v
+
 let as_jnp = function
   | User (Int i) | Pint i -> py_int i
-  | User (Arr v) | Jarr v -> v
+  | User (Arr v) | Jarr v -> stage v
   | Host nd ->
-      C.convert_like ~weak:false (host_value nd)
-        (Dtypes.canonicalize_dtype (Ndarray.dtype nd))
+      stage
+        (C.convert_like ~weak:false (host_value nd)
+           (Dtypes.canonicalize_dtype (Ndarray.dtype nd)))
   | _ -> invalid_arg "as_jnp"
 
 let is_advanced_int parsed =

@@ -11,6 +11,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DEFECTS = os.path.join("test", "golden", "jax_defects.tsv")
+TRACK_DEFECTS = (os.path.join("test", "golden", "index_fuzz_defects.tsv"),)
 SETS = (("x64_off", False), ("x64_on", True))
 KINDS = {
     "a": "JAX is nondeterministic",
@@ -442,6 +443,8 @@ def read_defects(path):
 
 def report(root, log, out=sys.stdout):
     defects = read_defects(os.path.join(root, DEFECTS))
+    for extra in TRACK_DEFECTS:
+        defects.update(read_defects(os.path.join(root, extra)))
     by_suite = collections.defaultdict(collections.Counter)
     with open(log, encoding="utf-8", errors="replace") as fh:
         for line in fh:

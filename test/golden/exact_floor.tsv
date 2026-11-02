@@ -81,6 +81,10 @@ custom_ad:x64_off	1738	1757
 custom_ad:x64_on	1704	1720
 raw:custom_ad:x64_off	1320	1757
 raw:custom_ad:x64_on	1279	1720
+index_fuzz:x64_off	4511	4608
+index_fuzz:x64_on	4608	4608
+raw:index_fuzz:x64_off	3282	4608
+raw:index_fuzz:x64_on	3413	4608
 keys_arrays:x64_off	316	318
 keys_arrays:x64_on	315	317
 raw:keys_arrays:x64_off	316	318
@@ -248,3 +252,7 @@ text_compose_fuzz:x64_off	924	938
 text_compose_fuzz:x64_on	1256	1286
 text_custom_ad:x64_off	191	203
 text_custom_ad:x64_on	194	206
+raw:text_index_fuzz:x64_off	782	1229
+raw:text_index_fuzz:x64_on	774	1195
+text_index_fuzz:x64_off	782	1229
+text_index_fuzz:x64_on	774	1195

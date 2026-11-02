@@ -2592,6 +2592,15 @@ let lapack_prec dt =
   | Dtype.F64 -> 'd'
   | Dtype.Complex64 -> 'c'
   | Dtype.Complex128 -> 'z'
+  | Dtype.F16 ->
+      raise
+        (Py_exn.Not_implemented_error
+           "(KeyError(<class 'numpy.float16'>), 'Unsupported dtype float16.')")
+  | Dtype.Bf16 ->
+      raise
+        (Py_exn.Not_implemented_error
+           "(KeyError(<class 'ml_dtypes.bfloat16'>), 'Unsupported dtype \
+            bfloat16.')")
   | _ -> failwith "Stablehlo.Emit: LAPACK has no routine for this dtype"
 
 let lapack_layout rank ~batch =
@@ -4457,7 +4466,12 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in_ids [ a ] [ a; info ]
       in
       emit_traced ctx [ a; info ] ids eqn.outs Native_lowering.lapack_cholesky
-  | Triangular_solve o when lapack_ffi () ->
+  | Triangular_solve o
+    when lapack_ffi ()
+         &&
+         match (atom_aval (List.hd eqn.inputs)).dtype with
+         | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> true
+         | _ -> false ->
       let inputs = List.map atom_aval eqn.inputs in
       let b = List.nth inputs 1 in
       let char_attr key c = Printf.sprintf "%s = %d : ui8" key (Char.code c) in

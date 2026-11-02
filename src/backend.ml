@@ -387,7 +387,39 @@ let guard_host_to_device ~explicit nd =
   | Some "log_explicit" -> Config.log (host_to_device_text nd)
   | Some _ -> disallow ()
 
+let status_codes =
+  [
+    "CANCELLED";
+    "UNKNOWN";
+    "INVALID_ARGUMENT";
+    "DEADLINE_EXCEEDED";
+    "NOT_FOUND";
+    "ALREADY_EXISTS";
+    "PERMISSION_DENIED";
+    "RESOURCE_EXHAUSTED";
+    "FAILED_PRECONDITION";
+    "ABORTED";
+    "OUT_OF_RANGE";
+    "UNIMPLEMENTED";
+    "INTERNAL";
+    "UNAVAILABLE";
+    "DATA_LOSS";
+    "UNAUTHENTICATED";
+  ]
+
+let without_status reason =
+  match
+    List.find_opt
+      (fun code -> String.starts_with ~prefix:(code ^ ": ") reason)
+      status_codes
+  with
+  | Some code ->
+      let n = String.length code + 2 in
+      String.sub reason n (String.length reason - n)
+  | None -> reason
+
 let verifier_diagnostic reason =
+  let reason = without_status reason in
   let line =
     match String.index_opt reason '\n' with
     | Some i -> String.sub reason 0 i
@@ -413,6 +445,7 @@ let verifier_diagnostic reason =
   else None
 
 let custom_call_diagnostic reason =
+  let reason = without_status reason in
   let line =
     match String.index_opt reason '\n' with
     | Some i -> String.sub reason 0 i

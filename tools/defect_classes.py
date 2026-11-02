@@ -28,7 +28,21 @@ def unknown_precision_string(rest):
     return got is not None and got.group(1) not in PRECISION_NAMES
 
 
-CHECKS = {"accepted_dtypes_order": dtype_order_only, "invalid_precision_string": unknown_precision_string}
+PRECISION_PAIR = re.compile(r"but got \(\('([a-z_0-9]+)', '([a-z_0-9]+)'\), Precision\.DEFAULT\)\.$")
+
+
+def precision_pair_as_enums(rest):
+    parts = rest.split("\t")
+    if len(parts) < 3:
+        return False
+    got = PRECISION_PAIR.search(parts[1])
+    if got is None or not {got.group(1), got.group(2)} <= PRECISION_NAMES:
+        return False
+    enums = PRECISION_PAIR.sub(lambda m: f"but got ((Precision.{m.group(1).upper()}, Precision.{m.group(2).upper()}), Precision.DEFAULT).", parts[1])
+    return enums == parts[2]
+
+
+CHECKS = {"accepted_dtypes_order": dtype_order_only, "invalid_precision_string": unknown_precision_string, "precision_pair_repr": precision_pair_as_enums}
 
 
 def load_classes(path):

@@ -24,6 +24,23 @@ let canonicalize_dtype (d : Dtype.t) : Dtype.t =
     | Dtype.Uint64 -> Dtype.Uint32
     | d -> d
 
+let check_and_canonicalize_user_dtype ?(fun_name = "") d =
+  let canonical = canonicalize_dtype d in
+  if canonical = d then d
+  else begin
+    Py_warnings.warn
+      (Printf.sprintf
+         "Explicitly requested dtype %s%s is not available, and will be \
+          truncated to dtype %s. To enable more dtypes, set the jax_enable_x64 \
+          configuration option or the JAX_ENABLE_X64 shell environment \
+          variable. See https://github.com/jax-ml/jax#current-gotchas for \
+          more."
+         (Dtype.numpy_name d)
+         (if fun_name = "" then "" else " requested in " ^ fun_name)
+         (Dtype.numpy_name canonical));
+    canonical
+  end
+
 type node =
   | Bool
   | Weak_int

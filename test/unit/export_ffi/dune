@@ -9,5 +9,5 @@
  (foreign_stubs
   (language c)
   (names dlpack_stubs))
- (libraries ojax alcotest)
+ (libraries ojax alcotest unix)
  (deps ffi_target.so))

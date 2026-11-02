@@ -1199,6 +1199,12 @@ let device_buffer = function
   | Device b -> b
   | Concrete _ | Tracer _ -> Alcotest.fail "expected a device value"
 
+let await_deleter_calls expected =
+  let deadline = Unix.gettimeofday () +. 30. in
+  while deleter_calls () < expected && Unix.gettimeofday () < deadline do
+    Unix.sleepf 0.001
+  done
+
 let dlpack_import () =
   let ext, p = foreign [| 2; 3 |] in
   let before = deleter_calls () in
@@ -1212,6 +1218,7 @@ let dlpack_import () =
   check_floats "external writes show" [| 42.; 1.; 2.; 3.; 4.; 5. |] v;
   Alcotest.(check int) "view keeps the tensor" before (deleter_calls ());
   Pjrt.Buffer.destroy (device_buffer v);
+  await_deleter_calls (before + 1);
   Alcotest.(check int)
     "view release runs the deleter" (before + 1) (deleter_calls ());
   let ext, p = foreign [| 2; 3 |] in

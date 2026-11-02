@@ -64,11 +64,17 @@ let default_prng_impl () = TF.threefry_prng_impl
 let resolve_prng_impl = function
   | None -> TF.threefry_prng_impl
   | Some "threefry2x32" -> TF.threefry_prng_impl
+  | Some (("rbg" | "unsafe_rbg") as name) ->
+      { TF.threefry_prng_impl with PR.name; key_shape = [| 4 |] }
   | Some name ->
       invalid_arg
         (Printf.sprintf "unrecognized PRNG implementation \"%s\"" name)
 
-let key_impl _keys = TF.threefry_prng_impl.PR.name
+let key_impl keys =
+  if not (PR.is_rbg_key keys) then TF.threefry_prng_impl.PR.name
+  else if Rbg.is_unsafe keys then "unsafe_rbg"
+  else "rbg"
+
 let key_dtype _impl_spec = D.Uint32
 
 let copy_nd nd =
@@ -82,7 +88,12 @@ let raw_copy = function
   | Device b -> Concrete (copy_nd (Pjrt.Buffer.to_host b))
   | Tracer _ as v -> C.bind1 Copy [ v ]
 
-let key seed = Key_reuse.mark_typed (PR.random_seed seed)
+let key ?impl seed =
+  match (resolve_prng_impl impl).PR.name with
+  | "rbg" -> Rbg.seed ~unsafe:false seed
+  | "unsafe_rbg" -> Rbg.seed ~unsafe:true seed
+  | _ -> Key_reuse.mark_typed (PR.random_seed seed)
+
 let key_data keys = Key_reuse.suspended (fun () -> raw_copy (unwrap keys))
 
 let wrap_key_data data =
@@ -96,7 +107,14 @@ let fold_in k data =
        (C.bind1 (Convert_element_type D.Uint32) [ data ]))
 
 let split k num = unwrap (PR.random_split (wrap k) [| num |])
-let bits k ~shape = PR.random_bits (wrap k) ~bit_width:32 ~shape
+
+let bits ?dtype k ~shape =
+  let element =
+    match dtype with
+    | Some d -> d
+    | None -> if Config.value Config.enable_x64 then D.Uint64 else D.Uint32
+  in
+  PR.random_bits (wrap k) ~bit_width:(Dtypes.itemsize_bits element) ~shape
 
 module L = Lax_api
 module UF = Numpy.Ufuncs
@@ -1628,6 +1646,7 @@ let key_impl k =
 let key_data k =
   check_prng_key k;
   match k with
+  | _ when PR.is_rbg_key k -> Rbg.key_data k
   | Tracer _ when Key_reuse.known_raw k -> PR.random_unwrap (PR.random_wrap k)
   | Tracer _ -> PR.random_unwrap k
   | _ -> key_data k
@@ -1652,7 +1671,8 @@ let prng_key seed =
     | Tracer _ -> Key_reuse.mark_raw (PR.random_unwrap raw)
     | _ -> raw
 
-let bits k ~shape = sampler ~name:"random_bits" k (fun () -> bits k ~shape)
+let bits ?dtype k ~shape =
+  sampler ~name:"random_bits" k (fun () -> bits ?dtype k ~shape)
 
 let randint ?dtype k ~shape ~minval ~maxval =
   sampler k (fun () ->

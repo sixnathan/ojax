@@ -256,6 +256,22 @@ let iota_2x32_shape shape =
 
 let random_seed seed = Core.bind1 Random_seed [ seed ]
 
+let is_rbg_key key =
+  let a = Core.get_aval key in
+  let n = Array.length a.shape in
+  n >= 1
+  && a.shape.(n - 1) = 4
+  && (a.dtype = Dtype.Uint32 || a.dtype = Dtype.I32)
+
+let rbg_split_hook : (value -> int array -> value) ref =
+  ref (fun _ _ -> failwith "prng: rbg split not installed")
+
+let rbg_fold_in_hook : (value -> value -> value) ref =
+  ref (fun _ _ -> failwith "prng: rbg fold_in not installed")
+
+let rbg_bits_hook : (value -> int -> int array -> value) ref =
+  ref (fun _ _ _ -> failwith "prng: rbg random_bits not installed")
+
 let legacy_split_hook : (value -> int array -> value) ref =
   ref (fun _ _ -> failwith "prng: original threefry split not installed")
 
@@ -263,17 +279,21 @@ let legacy_bits_hook : (value -> int -> int array -> value) ref =
   ref (fun _ _ _ -> failwith "prng: original threefry bits not installed")
 
 let random_split key shape =
-  if Config.value Config.threefry_partitionable then
+  if is_rbg_key key then !rbg_split_hook key shape
+  else if Config.value Config.threefry_partitionable then
     Core.bind1 (Random_split shape) [ key ]
   else
     List.hd
       (Key_reuse.apply (Random_split shape) [ key ] (fun () ->
            [ Key_reuse.suspended (fun () -> !legacy_split_hook key shape) ]))
 
-let random_fold_in key msg = Core.bind1 Random_fold_in [ key; msg ]
+let random_fold_in key msg =
+  if is_rbg_key key then !rbg_fold_in_hook key msg
+  else Core.bind1 Random_fold_in [ key; msg ]
 
 let random_bits key ~bit_width ~shape =
-  if Config.value Config.threefry_partitionable then
+  if is_rbg_key key then !rbg_bits_hook key bit_width shape
+  else if Config.value Config.threefry_partitionable then
     Core.bind1 (Random_bits { bit_width; shape }) [ key ]
   else
     List.hd

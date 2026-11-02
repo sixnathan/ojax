@@ -2867,75 +2867,162 @@ let dense_i64_matrix rows =
     n m
 
 let callback_seen = ref false
+let ordered_tokens : (Buffer.t * string) list ref = ref []
+
+let is_ordered_callback id =
+  match Core.custom_rule id with
+  | Core.Callback_rule
+      {
+        cb_effect =
+          ( Core.Callback_io { ordered = true }
+          | Core.Callback_debug { ordered = true } );
+        _;
+      } ->
+      true
+  | _ -> false
+
+let ordered_token ctx =
+  match List.assq_opt ctx.buf !ordered_tokens with
+  | Some t -> t
+  | None ->
+      let t = name (fresh ctx) in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf "    %s = stablehlo.after_all : !stablehlo.token\n" t);
+      t
+
 let default_layout rank = Array.init rank (fun i -> rank - 1 - i)
+
+let emit_ordered_callback ctx (eqn : eqn) in_ids id =
+  let in_avals = List.map atom_aval eqn.inputs in
+  let out_avals = List.map (fun (v : var) -> v.vaval) eqn.outs in
+  let token = ordered_token ctx in
+  let token_layout = "dense<> : tensor<0xindex>" in
+  let layouts avals =
+    String.concat ", "
+      (token_layout
+      :: List.map
+           (fun (a : aval) ->
+             ffi_layout_text (default_layout (Array.length a.shape)))
+           avals)
+  in
+  let types avals =
+    String.concat ", "
+      ("!stablehlo.token" :: List.map Ir.tensor_type_of_aval avals)
+  in
+  let results =
+    match out_avals with
+    | [] -> "!stablehlo.token"
+    | avals -> "(" ^ types avals ^ ")"
+  in
+  let attrs =
+    Printf.sprintf
+      "{backend_config = \"\", has_side_effect = true, mhlo.backend_config = \
+       {index = %d : ui64}, operand_layouts = [%s], result_layouts = [%s]} : \
+       (%s) -> %s\n"
+      id (layouts in_avals) (layouts out_avals) (types in_avals) results
+  in
+  let args = String.concat ", " (token :: List.map name in_ids) in
+  let group = fresh ctx in
+  let next_token =
+    match eqn.outs with
+    | [] ->
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "    %%%d = stablehlo.custom_call \
+              @xla_ffi_python_cpu_callback(%s) %s"
+             group args attrs);
+        name group
+    | outs ->
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "    %%%d:%d = stablehlo.custom_call \
+              @xla_ffi_python_cpu_callback(%s) %s"
+             group
+             (List.length outs + 1)
+             args attrs);
+        List.iteri
+          (fun i (v : var) ->
+            Hashtbl.replace ctx.ids v.vid
+              (alias_result (Printf.sprintf "%%%d#%d" group (i + 1))))
+          outs;
+        Printf.sprintf "%%%d#0" group
+  in
+  ordered_tokens :=
+    (ctx.buf, next_token)
+    :: List.filter (fun (b, _) -> b != ctx.buf) !ordered_tokens
 
 let emit_host_callback ctx (eqn : eqn) in_ids id =
   if not (lapack_ffi ()) then
     failwith "Stablehlo.Emit: callbacks run on the host interpreter";
   callback_seen := true;
-  let in_avals = List.map atom_aval eqn.inputs in
-  let out_avals = List.map (fun (v : var) -> v.vaval) eqn.outs in
-  let layouts avals =
-    String.concat ", "
-      (List.map
-         (fun (a : aval) ->
-           ffi_layout_text (default_layout (Array.length a.shape)))
-         avals)
-  in
-  let types avals =
-    String.concat ", " (List.map Ir.tensor_type_of_aval avals)
-  in
-  let per_value =
-    let n = max 1 (List.length out_avals) in
-    String.concat ", " (List.init n (fun _ -> "<@maximal_mesh_0, []>"))
-  in
-  let results =
-    match out_avals with
-    | [] -> "()"
-    | [ a ] -> Ir.tensor_type_of_aval a
-    | avals -> "(" ^ types avals ^ ")"
-  in
-  let attrs =
-    Printf.sprintf
-      "{backend_config = \"\", %smhlo.backend_config = {index = %d : ui64}, \
-       operand_layouts = [%s], result_layouts = [%s], sdy.sharding = \
-       #sdy.sharding_per_value<[%s]>} : (%s) -> %s\n"
-      (if
-         out_avals = []
-         ||
-         match Core.custom_rule id with
-         | Core.Callback_rule { cb_effect = Core.Callback_io _; _ } -> true
-         | _ -> false
-       then "has_side_effect = true, "
-       else "")
-      id (layouts in_avals) (layouts out_avals) per_value (types in_avals)
-      results
-  in
-  let args = String.concat ", " (List.map name in_ids) in
-  match eqn.outs with
-  | [] ->
-      Buffer.add_string ctx.buf
-        (Printf.sprintf
-           "    stablehlo.custom_call @xla_ffi_python_cpu_callback(%s) %s" args
-           attrs)
-  | [ only ] ->
-      let n = bind_var ctx only in
-      Buffer.add_string ctx.buf
-        (Printf.sprintf
-           "    %s = stablehlo.custom_call @xla_ffi_python_cpu_callback(%s) %s"
-           (name n) args attrs)
-  | outs ->
-      let group = fresh ctx in
-      Buffer.add_string ctx.buf
-        (Printf.sprintf
-           "    %%%d:%d = stablehlo.custom_call \
-            @xla_ffi_python_cpu_callback(%s) %s"
-           group (List.length outs) args attrs);
-      List.iteri
-        (fun i (v : var) ->
-          Hashtbl.replace ctx.ids v.vid
-            (alias_result (Printf.sprintf "%%%d#%d" group i)))
-        outs
+  if is_ordered_callback id then emit_ordered_callback ctx eqn in_ids id
+  else
+    let in_avals = List.map atom_aval eqn.inputs in
+    let out_avals = List.map (fun (v : var) -> v.vaval) eqn.outs in
+    let layouts avals =
+      String.concat ", "
+        (List.map
+           (fun (a : aval) ->
+             ffi_layout_text (default_layout (Array.length a.shape)))
+           avals)
+    in
+    let types avals =
+      String.concat ", " (List.map Ir.tensor_type_of_aval avals)
+    in
+    let per_value =
+      let n = max 1 (List.length out_avals) in
+      String.concat ", " (List.init n (fun _ -> "<@maximal_mesh_0, []>"))
+    in
+    let results =
+      match out_avals with
+      | [] -> "()"
+      | [ a ] -> Ir.tensor_type_of_aval a
+      | avals -> "(" ^ types avals ^ ")"
+    in
+    let attrs =
+      Printf.sprintf
+        "{backend_config = \"\", %smhlo.backend_config = {index = %d : ui64}, \
+         operand_layouts = [%s], result_layouts = [%s], sdy.sharding = \
+         #sdy.sharding_per_value<[%s]>} : (%s) -> %s\n"
+        (if
+           out_avals = []
+           ||
+           match Core.custom_rule id with
+           | Core.Callback_rule
+               { cb_effect = Core.Callback_io _ | Core.Callback_debug _; _ } ->
+               true
+           | _ -> false
+         then "has_side_effect = true, "
+         else "")
+        id (layouts in_avals) (layouts out_avals) per_value (types in_avals)
+        results
+    in
+    let args = String.concat ", " (List.map name in_ids) in
+    match eqn.outs with
+    | [] ->
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "    stablehlo.custom_call @xla_ffi_python_cpu_callback(%s) %s"
+             args attrs)
+    | [ only ] ->
+        let n = bind_var ctx only in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "    %s = stablehlo.custom_call @xla_ffi_python_cpu_callback(%s) \
+              %s"
+             (name n) args attrs)
+    | outs ->
+        let group = fresh ctx in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "    %%%d:%d = stablehlo.custom_call \
+              @xla_ffi_python_cpu_callback(%s) %s"
+             group (List.length outs) args attrs);
+        List.iteri
+          (fun i (v : var) ->
+            Hashtbl.replace ctx.ids v.vid
+              (alias_result (Printf.sprintf "%%%d#%d" group i)))
+          outs
 
 let next_channel () =
   incr channel;
@@ -5168,6 +5255,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   symbol_counter := 0;
   seen_mesh := None;
   callback_seen := false;
+  ordered_tokens := [];
   channel := 0;
   manual_axes := [];
   active_mesh := Option.map (fun p -> p.pt_mesh) partition;

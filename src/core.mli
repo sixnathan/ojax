@@ -55,7 +55,10 @@ val process_custom_vjp :
   value list ->
   value list
 
-type callback_effect = Callback_pure | Callback_io of { ordered : bool }
+type callback_effect =
+  | Callback_pure
+  | Callback_io of { ordered : bool }
+  | Callback_debug of { ordered : bool }
 
 type custom_rule =
   | Jvp_rule of {

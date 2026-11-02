@@ -68,6 +68,10 @@ let run_case thunk =
 
 let idx k = [ G.Int k ]
 let at v k = G.take v (idx k)
+let astype = Ojax.Numpy.Lax_numpy.astype
+let div a k = F.true_divide a (py_int k)
+
+module L = Ojax.Lax_api
 
 let dprint_body name x =
   let p = Ojax.Debugging.print in
@@ -110,6 +114,57 @@ let dprint_body name x =
   | "weak_scalar" -> p "{}" [ F.add (at x 0) (py_float 0.5) ]
   | "f64_vals" -> p "{}" [ F.true_divide x (py_int 3.0) ]
   | "nan_inf" -> p "{}" [ F.log (F.subtract x (py_int 1.0)) ]
+  | "f16_scalar" -> p "{}" [ astype (div (at x 1) 3.0) Ojax.Dtype.F16 ]
+  | "bf16_arr" -> p "{}" [ astype (div x 3.0) Ojax.Dtype.Bf16 ]
+  | "big_arr" ->
+      p "{}"
+        [
+          F.add
+            (Ojax.Numpy.Lax_numpy.arange ~dtype:Ojax.Dtype.F32 1500.0)
+            (at x 0);
+        ]
+  | "complex_scalar" -> p "{}" [ L.complex (at x 1) (at x 2) ]
+  | "u8_arr" -> p "{}" [ astype (F.multiply i (py_int 100.0)) Ojax.Dtype.Uint8 ]
+  | "bool_scalar_spec" ->
+      p "[{:>6}] [{}]"
+        [ F.greater (at x 1) (py_int 0.0); F.greater (at x 0) (py_int 0.0) ]
+  | "repr_conv" -> p "{!r}" [ x ]
+  | "str_conv" -> p "{!s} {!r}" [ at x 1; at x 2 ]
+  | "i64_arr" ->
+      p "{}"
+        [
+          F.multiply
+            (Ojax.Numpy.Lax_numpy.arange
+               ~dtype:(Ojax.Dtypes.canonicalize_dtype Ojax.Dtype.I64)
+               4.0)
+            (py_int 1000000.0);
+        ]
+  | "f16_spec" -> p "{:.4f}" [ astype (div (at x 1) 3.0) Ojax.Dtype.F16 ]
+  | "hex_spec" ->
+      p "{:x} {:#X} {:b} {:o}"
+        [
+          F.multiply (at i 2) (py_int 100.0);
+          F.multiply (at i 2) (py_int 100.0);
+          at i 2;
+          F.multiply (at i 2) (py_int 9.0);
+        ]
+  | "center_spec" -> p "[{:^9.2f}] [{:*^7}]" [ div (at x 1) 3.0; at i 2 ]
+  | "zero_pad" -> p "{:08.3f} {:05d}" [ div (F.negative (at x 1)) 3.0; at i 2 ]
+  | "int_as_float_spec" -> p "{:.2f} {:e}" [ at i 2; at i 1 ]
+  | "neg_zero" -> p "{} {:.1f}" [ F.negative (at x 0); F.negative (at x 0) ]
+  | "empty_arr" ->
+      p "{}"
+        [ G.take x [ G.Slice { start = Some 3; stop = None; step = None } ] ]
+  | "two_d_int" ->
+      p "{}"
+        [ F.subtract (Ojax.Numpy.Tensor_contractions.outer i i) (py_int 3.0) ]
+  | "inf_scalar" ->
+      p "{} {:.2f} {:e}"
+        [
+          F.true_divide (py_int 1.0) (at x 0);
+          F.true_divide (py_int (-1.0)) (at x 0);
+          F.log (F.subtract (at x 0) (py_int 1.0));
+        ]
   | "missing_kw" -> p "{y}" [ x ]
   | "missing_pos" -> p "{} {}" [ x ]
   | "spec_on_array" -> p "{:.2f}" [ x ]
@@ -138,6 +193,119 @@ let dprint_thunk name mode () =
       let wrapped = Ojax.Stages.jit ~name:"body" body in
       Ojax.Stages.as_text (wrapped.Ojax.Stages.wrapped_lower [ leaf x ])
   | other -> failwith ("docs_p2: unknown mode " ^ other)
+
+let xform_thunk name mode () =
+  let p = Ojax.Debugging.print in
+  let x = Ojax.Numpy.Lax_numpy.arange ~dtype:(float_dt ()) 3.0 in
+  let m =
+    Ojax.Numpy.Lax_numpy.reshape
+      (Ojax.Numpy.Lax_numpy.arange ~dtype:(float_dt ()) 6.0)
+      [| 2; 3 |]
+  in
+  let fn, arg =
+    match name with
+    | "vmap" ->
+        ( Ojax.Api.vmap
+            (one (fun a ->
+                 p "row {}" [ a ];
+                 leaf (F.multiply a (py_int 2.0))))
+            [ Some 0 ],
+          m )
+    | "vmap_ordered" ->
+        ( Ojax.Api.vmap
+            (one (fun a ->
+                 p ~ordered:true "row {} {}" [ at a 0; a ];
+                 leaf (F.multiply a (py_int 2.0))))
+            [ Some 0 ],
+          m )
+    | "grad" ->
+        ( Ojax.Api.grad
+            (one (fun a ->
+                 p "a={}" [ a ];
+                 leaf (Ojax.Numpy.Reductions.sum (F.sin a)))),
+          x )
+    | "jvp" ->
+        ( one (fun a ->
+              let f =
+                one (fun b ->
+                    p "a={}" [ b ];
+                    leaf (F.sin b))
+              in
+              let pr, tg =
+                Ojax.Api.jvp f
+                  [ leaf a ]
+                  [ leaf (Ojax.Numpy.Array_creation.ones_like a) ]
+              in
+              Ojax.Tree_util.Tuple [ pr; tg ]),
+          x )
+    | "cond" ->
+        ( one (fun a ->
+              match
+                L.cond
+                  (F.less (at a 0) (py_int 1.0))
+                  (fun bs ->
+                    p "yes {}" bs;
+                    bs)
+                  (fun bs ->
+                    p "no {}" bs;
+                    List.map F.negative bs)
+                  [ a ]
+              with
+              | [ r ] -> leaf r
+              | _ -> failwith "docs_p2: cond"),
+          x )
+    | "fori" ->
+        ( one (fun a ->
+              match
+                L.fori_loop (py_int 0.0) (py_int 3.0)
+                  (fun k cs ->
+                    p "k={} c={}" (k :: cs);
+                    List.map (fun c -> F.add c (py_int 1.0)) cs)
+                  [ a ]
+              with
+              | [ r ] -> leaf r
+              | _ -> failwith "docs_p2: fori"),
+          x )
+    | "scan" ->
+        ( one (fun a ->
+              match
+                L.scan
+                  (function
+                    | [ c; e ] ->
+                        p "c={} e={}" [ c; e ];
+                        [ F.add c e; F.multiply c e ]
+                    | _ -> failwith "docs_p2: scan body")
+                  [ at a 0 ]
+                  [ a ]
+              with
+              | [ c; ys ] -> Ojax.Tree_util.Tuple [ leaf c; leaf ys ]
+              | _ -> failwith "docs_p2: scan"),
+          x )
+    | "nested_jit" ->
+        ( one (fun a ->
+              let g = function
+                | [ b ] ->
+                    p "inner {}" [ b ];
+                    [ F.add b (py_int 1.0) ]
+                | _ -> failwith "docs_p2: nested"
+              in
+              p "outer {}" [ a ];
+              match Ojax.Api.jit_flat ~name:"g" g [ a ] with
+              | [ r ] -> leaf (F.multiply r (py_int 2.0))
+              | _ -> failwith "docs_p2: nested"),
+          x )
+    | other -> failwith ("docs_p2: unknown xform " ^ other)
+  in
+  match mode with
+  | "eager" ->
+      ignore (fn [ leaf arg ]);
+      ""
+  | "jit" ->
+      ignore (Ojax.Api.jit fn [ leaf arg ]);
+      ""
+  | _ ->
+      Ojax.Pretty_printer.closed_jaxpr_to_jax_string
+        (Ojax.Api.make_jaxpr fn [ leaf arg ])
 
 let expected_of row =
   let str k = match U.member k row with `String s -> s | _ -> "" in
@@ -316,6 +484,11 @@ let actual_of row =
   | "dprint" ->
       run_case
         (dprint_thunk
+           (U.to_string (U.member "case" row))
+           (U.to_string (U.member "mode" row)))
+  | "dprint_x" ->
+      run_case
+        (xform_thunk
            (U.to_string (U.member "case" row))
            (U.to_string (U.member "mode" row)))
   | "static_index" ->

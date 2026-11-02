@@ -12,6 +12,14 @@ DPRINT_CASES = [
     "align_spec", "plain_text", "two_kw", "pct_spec", "g_spec", "neg_scalar",
     "weak_scalar", "f64_vals", "nan_inf",
 ]
+DPRINT_EXTRA = [
+    "f16_scalar", "bf16_arr", "big_arr", "complex_scalar", "u8_arr",
+    "bool_scalar_spec", "repr_conv", "str_conv", "i64_arr", "f16_spec",
+    "hex_spec", "center_spec", "zero_pad", "int_as_float_spec", "neg_zero",
+    "empty_arr", "two_d_int", "inf_scalar",
+]
+DPRINT_XFORMS = ["vmap", "grad", "cond", "fori", "scan", "nested_jit",
+                 "vmap_ordered", "jvp"]
 DPRINT_MODES = ["eager", "jit", "jaxpr", "lowered"]
 DPRINT_ERRORS = ["missing_kw", "missing_pos", "spec_on_array",
                  "mixed_numbering"]
@@ -96,6 +104,42 @@ def dprint_body(jax, jnp, name):
             p("{}", x / 3)
         elif name == "nan_inf":
             p("{}", jnp.log(x - 1))
+        elif name == "f16_scalar":
+            p("{}", (x[1] / 3).astype(jnp.float16))
+        elif name == "bf16_arr":
+            p("{}", (x / 3).astype(jnp.bfloat16))
+        elif name == "big_arr":
+            p("{}", jnp.arange(1500, dtype=jnp.float32) + x[0])
+        elif name == "complex_scalar":
+            p("{}", jax.lax.complex(x[1], x[2]))
+        elif name == "u8_arr":
+            p("{}", (i * 100).astype(jnp.uint8))
+        elif name == "bool_scalar_spec":
+            p("[{:>6}] [{}]", x[1] > 0, x[0] > 0)
+        elif name == "repr_conv":
+            p("{!r}", x)
+        elif name == "str_conv":
+            p("{!s} {!r}", x[1], x[2])
+        elif name == "i64_arr":
+            p("{}", jnp.arange(4, dtype=jnp.int64) * 1000000)
+        elif name == "f16_spec":
+            p("{:.4f}", (x[1] / 3).astype(jnp.float16))
+        elif name == "hex_spec":
+            p("{:x} {:#X} {:b} {:o}", i[2] * 100, i[2] * 100, i[2], i[2] * 9)
+        elif name == "center_spec":
+            p("[{:^9.2f}] [{:*^7}]", x[1] / 3, i[2])
+        elif name == "zero_pad":
+            p("{:08.3f} {:05d}", -x[1] / 3, i[2])
+        elif name == "int_as_float_spec":
+            p("{:.2f} {:e}", i[2], i[1])
+        elif name == "neg_zero":
+            p("{} {:.1f}", -x[0], -x[0])
+        elif name == "empty_arr":
+            p("{}", x[3:])
+        elif name == "two_d_int":
+            p("{}", jnp.outer(i, i) - 3)
+        elif name == "inf_scalar":
+            p("{} {:.2f} {:e}", 1 / x[0], -1 / x[0], jnp.log(x[0] - 1))
         elif name == "missing_kw":
             p("{y}", x)
         elif name == "missing_pos":
@@ -157,6 +201,72 @@ def static_index_thunk(jax, jnp, name, mode, flag):
     return run
 
 
+def xform_thunk(jax, jnp, name, mode):
+    p = jax.debug.print
+    lax = jax.lax
+    x = jnp.arange(3.0)
+    m = jnp.arange(6.0).reshape(2, 3)
+
+    def run():
+        if name == "vmap":
+            def f(a):
+                p("row {}", a)
+                return a * 2
+            fn, args = jax.vmap(f), (m,)
+        elif name == "vmap_ordered":
+            def f(a):
+                p("row {} {}", a[0], a, ordered=True)
+                return a * 2
+            fn, args = jax.vmap(f), (m,)
+        elif name == "grad":
+            def f(a):
+                p("a={}", a)
+                return jnp.sum(jnp.sin(a))
+            fn, args = jax.grad(f), (x,)
+        elif name == "jvp":
+            def f(a):
+                p("a={}", a)
+                return jnp.sin(a)
+            fn, args = (lambda a: jax.jvp(f, (a,), (jnp.ones_like(a),))), (x,)
+        elif name == "cond":
+            def f(a):
+                return lax.cond(a[0] < 1, lambda b: (p("yes {}", b), b)[1],
+                                lambda b: (p("no {}", b), -b)[1], a)
+            fn, args = f, (x,)
+        elif name == "fori":
+            def f(a):
+                def body(k, c):
+                    p("k={} c={}", k, c)
+                    return c + 1
+                return lax.fori_loop(0, 3, body, a)
+            fn, args = f, (x,)
+        elif name == "scan":
+            def f(a):
+                def body(c, e):
+                    p("c={} e={}", c, e)
+                    return c + e, c * e
+                return lax.scan(body, a[0], a)
+            fn, args = f, (x,)
+        elif name == "nested_jit":
+            def f(a):
+                def g(b):
+                    p("inner {}", b)
+                    return b + 1
+                p("outer {}", a)
+                return jax.jit(g)(a) * 2
+            fn, args = f, (x,)
+        else:
+            raise KeyError(name)
+        if mode == "eager":
+            fn(*args)
+            return ""
+        if mode == "jit":
+            jax.jit(fn)(*args)
+            return ""
+        return str(jax.make_jaxpr(fn)(*args))
+    return run
+
+
 def aot_fn(jax, jnp, name):
     x34 = jnp.asarray(np.arange(12, dtype=np.float32).reshape(3, 4) / 7)
     y42 = jnp.asarray(np.arange(8, dtype=np.float32).reshape(4, 2) / 5)
@@ -213,6 +323,18 @@ def main():
         for mode in DPRINT_MODES:
             r = run_case(jax, dprint_thunk(jax, jnp, name, mode))
             r.update({"id": f"dprint_{name}_{mode}", "group": "dprint",
+                      "case": name, "mode": mode})
+            rows.append(r)
+    for name in DPRINT_EXTRA:
+        for mode in ["eager", "jit", "jaxpr"]:
+            r = run_case(jax, dprint_thunk(jax, jnp, name, mode))
+            r.update({"id": f"dprint_{name}_{mode}", "group": "dprint",
+                      "case": name, "mode": mode})
+            rows.append(r)
+    for name in DPRINT_XFORMS:
+        for mode in ["eager", "jit", "jaxpr"]:
+            r = run_case(jax, xform_thunk(jax, jnp, name, mode))
+            r.update({"id": f"dprint_x_{name}_{mode}", "group": "dprint_x",
                       "case": name, "mode": mode})
             rows.append(r)
     for name in DPRINT_ERRORS:

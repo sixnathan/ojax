@@ -25,9 +25,11 @@ VALUES = {"full": None, "two": 2, "one": 1}
 
 MODES = [None, "clip", "wrap", "raise", "bogus"]
 
+DEFAULT_SEED = 20261104
 
-def build(set_name, dtype):
-    rng = np.random.default_rng(20261104)
+
+def build(set_name, dtype, seed=DEFAULT_SEED):
+    rng = np.random.default_rng(seed)
     cases = []
     for ind_name, ind in INDICES.items():
         for val_name, count in VALUES.items():
@@ -60,11 +62,11 @@ def build(set_name, dtype):
     return cases
 
 
-def write(root):
+def write(root, seed=DEFAULT_SEED):
     for set_name, x64 in of.SETS:
         outdir = os.path.join(root, MODULE, set_name)
         dtypes = ["float32"] if not x64 else ["float32", "float64"]
-        cases = [c for d in dtypes for c in build(set_name, d)]
+        cases = [c for d in dtypes for c in build(set_name, d, seed)]
         if os.path.isdir(outdir):
             shutil.rmtree(outdir)
         os.makedirs(os.path.join(outdir, "ops"))
@@ -92,8 +94,9 @@ def write(root):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args()
-    write(args.root)
+    write(args.root, args.seed)
 
 
 if __name__ == "__main__":

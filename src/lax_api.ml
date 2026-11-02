@@ -310,8 +310,12 @@ let collapse x start stop =
 let concatenate xs dimension =
   match xs with [ x ] -> x | _ -> b1 (Concatenate dimension) xs
 
-let stack xs axis = b1 (Stack axis) xs
-let unstack x axis = Core.bind (Unstack axis) [ x ]
+let stack xs axis =
+  match xs with
+  | [] -> Py_exn.index_error "list index out of range"
+  | first :: _ -> b1 (Stack (canon_axis (ndim first + 1) axis)) xs
+
+let unstack x axis = Core.bind (Unstack (canon_axis (ndim x) axis)) [ x ]
 
 let split x sizes axis =
   let sh = shape x in

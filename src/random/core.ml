@@ -1567,6 +1567,10 @@ let categorical_full ?(axis = -1) ?shape ?(replace = true) ?mode k logits =
   let nb = Array.length batch_shape and ns = Array.length shape in
   let shape_prefix = Array.sub shape 0 (ns - nb) in
   let dt = dtype_of logits in
+  if not (Dtypes.issubdtype dt `Floating) then
+    Py_exn.value_error
+      (Printf.sprintf "dtype argument to `gumbel` must be a float dtype, got %s"
+         (Dtype.short_name dt));
   if replace then begin
     let axis = if axis >= 0 then axis - rank else axis in
     let tail = Array.to_list (Array.sub shape (ns - nb) nb) in
@@ -1589,7 +1593,7 @@ let categorical_full ?(axis = -1) ?shape ?(replace = true) ?mode k logits =
     let logits = logits +! gumbel_any k ~shape:lsh ~dt ~mode in
     let top = prod shape_prefix in
     if top > lsh.(norm_axis) then
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "Number of samples without replacement (%d) cannot exceed number of \
             categories (%d)."

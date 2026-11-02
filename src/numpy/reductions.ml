@@ -373,7 +373,8 @@ let var ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
     (correction_of ddof correction)
     a
 
-let std ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
+let std ?dtype:dt ?axis ?keepdims ?ddof ?ddof_value ?where:mask ?mean:a_mean
+    ?correction a =
   let dt = Option.map Dtypes.canonicalize_dtype dt in
   (match dt with
   | Some d when not (is_inexact d) ->
@@ -393,7 +394,11 @@ let std ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean ?correction a =
                 correction a;
             ]
       | _ -> invalid_arg "std: arity")
-    (a :: correction_of ddof correction :: optional_args mask a_mean)
+    (a
+    :: (match ddof_value with
+    | Some v -> v
+    | None -> correction_of ddof correction)
+    :: optional_args mask a_mean)
 
 let ptp ?axis ?(keepdims = false) a =
   bind1 T.Sub [ amax ?axis ~keepdims a; amin ?axis ~keepdims a ]
@@ -577,7 +582,7 @@ let nanmean ?dtype ?axis ?keepdims ?where p0 =
         | _ -> invalid_arg "nanmean: arity")
       [ p0 ]
 
-let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
+let nanvar ?dtype:dt ?axis ?keepdims ~ddof ?where:mask ?mean:a_mean a =
   let mask = check_where "nanvar" mask in
   let dt = Option.map Dtypes.canonicalize_dtype dt in
   let computation, result_dtype = var_promote (dtype a) dt in
@@ -593,7 +598,7 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
   let centered = squared_magnitude computation centered in
   let notnan = bind1 T.Not [ isnan af ] in
   let count = sum ?axis ?keepdims ?where:mask notnan in
-  let nz = Ufuncs.subtract count (Jnp_util.py_int ddof) in
+  let nz = Ufuncs.subtract count ddof in
   let bad = bind1 T.Le [ nz; const_full (dtype nz) [||] 0.0 ] in
   let result = sum ?axis ?keepdims ?where:mask centered in
   let result = where bad (Jnp_util.py_float Float_format.nan) result in
@@ -601,39 +606,56 @@ let nanvar ?dtype:dt ?axis ?keepdims ?(ddof = 0) ?where:mask ?mean:a_mean a =
   ignore rdt;
   convert (bind1 T.Div [ result; convert divisor (dtype result) ]) result_dtype
 
-let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
+let ddof_arg ddof ddof_value =
+  match (ddof_value, ddof) with
+  | Some v, _ -> Some v
+  | None, Some d -> Some (Jnp_util.py_int d)
+  | None, None -> None
+
+let ddof_or_zero = function Some v -> v | None -> Jnp_util.py_int 0
+
+let nanvar ?dtype ?axis ?keepdims ?ddof ?ddof_value ?where ?mean p0 =
+  let given = ddof_arg ddof ddof_value in
   let where_given = where <> None in
   let mean_given = mean <> None in
   if where_given || mean_given then
-    nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+    nanvar ?dtype ?axis ?keepdims ~ddof:(ddof_or_zero given) ?where ?mean p0
   else
     Jnp_util.jit1 "nanvar"
       ~key:
         (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
+           (Digest.string
+              (Marshal.to_string (dtype, axis, keepdims, given <> None) [])))
       (function
-        | [ p0 ] -> nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+        | [ p0 ] -> nanvar ?dtype ?axis ?keepdims ~ddof:(ddof_or_zero None) p0
+        | [ p0; d ] -> nanvar ?dtype ?axis ?keepdims ~ddof:d p0
         | _ -> invalid_arg "nanvar: arity")
-      [ p0 ]
+      (p0 :: Option.to_list given)
 
-let nanstd ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a =
+let nanstd ?dtype:dt ?axis ?keepdims ~ddof ?where:mask ?mean:a_mean a =
   bind1 T.Sqrt
-    [ nanvar ?dtype:dt ?axis ?keepdims ?ddof ?where:mask ?mean:a_mean a ]
+    [
+      nanvar ?dtype:dt ?axis ?keepdims ~ddof_value:ddof ?where:mask ?mean:a_mean
+        a;
+    ]
 
-let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0 =
+let nanstd ?dtype ?axis ?keepdims ?ddof ?ddof_value ?where ?mean p0 =
+  let given = ddof_arg ddof ddof_value in
   let where_given = where <> None in
   let mean_given = mean <> None in
   if where_given || mean_given then
-    nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+    nanstd ?dtype ?axis ?keepdims ~ddof:(ddof_or_zero given) ?where ?mean p0
   else
     Jnp_util.jit1 "nanstd"
       ~key:
         (Digest.to_hex
-           (Digest.string (Marshal.to_string (dtype, axis, keepdims, ddof) [])))
+           (Digest.string
+              (Marshal.to_string (dtype, axis, keepdims, given <> None) [])))
       (function
-        | [ p0 ] -> nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean p0
+        | [ p0 ] -> nanstd ?dtype ?axis ?keepdims ~ddof:(ddof_or_zero None) p0
+        | [ p0; d ] -> nanstd ?dtype ?axis ?keepdims ~ddof:d p0
         | _ -> invalid_arg "nanstd: arity")
-      [ p0 ]
+      (p0 :: Option.to_list given)
 
 let cumulative ~fill ~promote ~make ?dtype:dt ?axis a =
   let a, ax =
@@ -1124,20 +1146,20 @@ let nanmean ?dtype ?axis ?keepdims ?where a0 =
       | [ where ], [ a0 ] -> nanmean ?dtype ?axis ?keepdims ?where a0
       | _ -> assert false)
 
-let nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean a0 =
+let nanvar ?dtype ?axis ?keepdims ?ddof ?ddof_value ?where ?mean a0 =
   Eager_jit.one "numpy.reductions.nanvar" (dtype, axis, keepdims, ddof)
-    [ where; mean ] [ a0 ] (fun opts vals ->
+    [ where; mean; ddof_value ] [ a0 ] (fun opts vals ->
       match (opts, vals) with
-      | [ where; mean ], [ a0 ] ->
-          nanvar ?dtype ?axis ?keepdims ?ddof ?where ?mean a0
+      | [ where; mean; ddof_value ], [ a0 ] ->
+          nanvar ?dtype ?axis ?keepdims ?ddof ?ddof_value ?where ?mean a0
       | _ -> assert false)
 
-let nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean a0 =
+let nanstd ?dtype ?axis ?keepdims ?ddof ?ddof_value ?where ?mean a0 =
   Eager_jit.one "numpy.reductions.nanstd" (dtype, axis, keepdims, ddof)
-    [ where; mean ] [ a0 ] (fun opts vals ->
+    [ where; mean; ddof_value ] [ a0 ] (fun opts vals ->
       match (opts, vals) with
-      | [ where; mean ], [ a0 ] ->
-          nanstd ?dtype ?axis ?keepdims ?ddof ?where ?mean a0
+      | [ where; mean; ddof_value ], [ a0 ] ->
+          nanstd ?dtype ?axis ?keepdims ?ddof ?ddof_value ?where ?mean a0
       | _ -> assert false)
 
 let cumsum_by_keyword ?axis a0 =

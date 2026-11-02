@@ -462,7 +462,8 @@ let misc_run op p a =
       | "cv_sem" ->
           Some
             [
-              STC.sem ?axis:(opt_int "axis" p) ?ddof:(opt_int "ddof" p)
+              STC.sem ?axis:(opt_int "axis" p)
+                ~ddof:(Option.value (opt_int "ddof" p) ~default:1)
                 ?nan_policy:(opt_string "nan_policy" p)
                 ?keepdims:(opt_bool "keepdims" p) (a ());
             ]

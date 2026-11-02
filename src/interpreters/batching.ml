@@ -1901,7 +1901,9 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
     else a
   in
   let binder_avals =
-    List.map (fun (v : var) -> v.vaval) jaxpr.jaxpr.in_binders
+    List.filteri
+      (fun i _ -> i >= List.length jaxpr.consts)
+      (List.map (fun (v : var) -> v.vaval) jaxpr.jaxpr.in_binders)
   in
   let build carry_batched =
     let flags = const_batched @ carry_batched @ xs_batched in

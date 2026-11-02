@@ -47,6 +47,37 @@ let check_gpu_runtime () =
              LD_LIBRARY_PATH for the cuda platform"
             cudnn_library))
 
+let cuda_path () =
+  match Sys.getenv_opt "CUDA_ROOT" with
+  | Some root -> Some root
+  | None -> (
+      match Sys.getenv_opt Pjrt.Discover.gpu_env_var with
+      | None -> None
+      | Some plugin ->
+          let site =
+            Filename.dirname (Filename.dirname (Filename.dirname plugin))
+          in
+          let candidate =
+            Filename.concat (Filename.concat site "nvidia") "cu13"
+          in
+          if
+            Sys.file_exists
+              (Filename.concat (Filename.concat candidate "bin") "ptxas")
+          then Some candidate
+          else None)
+
+let export_cuda_data_dir () =
+  match cuda_path () with
+  | None -> ()
+  | Some path ->
+      let flag = "--xla_gpu_cuda_data_dir=" ^ path in
+      let merged =
+        match Sys.getenv_opt "XLA_FLAGS" with
+        | None | Some "" -> flag
+        | Some flags -> flags ^ " " ^ flag
+      in
+      Unix.putenv "XLA_FLAGS" merged
+
 let gpu_client_options () =
   let open Pjrt.Client in
   let env name default =
@@ -184,7 +215,9 @@ module Xla = struct
     | None ->
         let path =
           match platform with
-          | "cuda" -> Pjrt.Discover.gpu_preflight ()
+          | "cuda" ->
+              export_cuda_data_dir ();
+              Pjrt.Discover.gpu_preflight ()
           | _ -> Pjrt.Discover.preflight ()
         in
         let plugin = Pjrt.Abi.open_plugin path in

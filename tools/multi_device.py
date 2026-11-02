@@ -214,6 +214,30 @@ def reference():
         "values": [],
     }
     rows["stages_tree_paths"] = {"text": jax.jit(tree_out).lower(z3).as_text(), "values": []}
+    e22 = np.eye(2, dtype=np.float32)
+    rows["export_multi_cholesky"] = {
+        "text": _strip_locations(export.export(jax.jit(jnp.linalg.cholesky), platforms=platforms)(e22).mlir_module()),
+        "values": [],
+    }
+
+    rows["export_single_cholesky"] = {"text": _strip_locations(export.export(jax.jit(jnp.linalg.cholesky))(e22).mlir_module()), "values": []}
+
+    def cb_f(x):
+        return jax.pure_callback(lambda a: a, jax.ShapeDtypeStruct((2, 2), jnp.float32), x)
+
+    cb_f.__name__ = "f"
+    try:
+        export.export(jax.jit(cb_f), disabled_checks=[export.DisabledSafetyCheck.custom_call("xla_ffi_python_cpu_callback")])(e22)
+        message = ""
+    except NotImplementedError as error:
+        message = str(error)
+    rows["export_single_callback"] = {"text": message, "values": []}
+
+    def tri(x, y):
+        return jax.scipy.linalg.solve_triangular(x, y, lower=True)
+
+    tri.__name__ = "f"
+    rows["export_multi_tri"] = {"text": _strip_locations(export.export(jax.jit(tri), platforms=platforms)(e22, e22).mlir_module()), "values": []}
     v3 = np.array([1.0, 2.0, -3.0], np.float32)
     rows["export_multi_call"] = {
         "text": "",

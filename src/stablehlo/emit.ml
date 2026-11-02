@@ -2309,7 +2309,13 @@ let ffi_layout_text layout =
   Printf.sprintf "dense<%s> : tensor<%dxindex>" body n
 
 let lapack_ffi_ready : (unit -> bool) ref = ref (fun () -> false)
-let lapack_ffi () = Config.current_platform () = "cpu" && !lapack_ffi_ready ()
+let ffi_rule_disabled = ref false
+let gpu_solver_prefix : string option ref = ref None
+
+let lapack_ffi () =
+  (not !ffi_rule_disabled)
+  && Config.current_platform () = "cpu"
+  && !lapack_ffi_ready ()
 
 let lapack_prec dt =
   match dt with
@@ -3349,11 +3355,71 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
     ~finally:(fun () -> Jaxpr.in_eqn_eval := prev)
     (fun () -> emit_eqn_in_context ctx eqn in_ids)
 
+and emit_cpu_and_default ctx (eqn : eqn) in_ids =
+  let rule_of_platform =
+    List.map (fun p -> if p = "cpu" then 0 else 1) !lowering_platforms
+  in
+  let rule = emit_i32_case_on ctx platform_index_arg rule_of_platform in
+  let result = bind_results ctx eqn.outs in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" result (name rule));
+  let start = ctx.next in
+  let saved_platforms = !lowering_platforms in
+  let other = List.filter (fun p -> p <> "cpu") !lowering_platforms in
+  let solver_prefix =
+    match (eqn.prim, other) with
+    | Cholesky, [ "cuda" ] -> Some "cu"
+    | Cholesky, [ "rocm" ] -> Some "hip"
+    | Cholesky, _ ->
+        failwith
+          "Stablehlo.Emit: multi-platform cholesky over several gpu platforms \
+           is not ported"
+    | _ -> None
+  in
+  let emit_rule disabled =
+    reset_next ctx start;
+    gpu_solver_prefix := if disabled then solver_prefix else None;
+    let fresh_outs =
+      List.map (fun (v : var) -> { v with vid = Core.fresh_id () }) eqn.outs
+    in
+    lowering_platforms := [];
+    ffi_rule_disabled := disabled;
+    let text =
+      capture ctx (fun () ->
+          emit_eqn_in_context ctx { eqn with outs = fresh_outs } in_ids;
+          let outs = List.map (fun v -> ssa_of_atom ctx (A_var v)) fresh_outs in
+          let tys =
+            List.map
+              (fun (v : var) -> Ir.tensor_type_of_aval v.vaval)
+              fresh_outs
+          in
+          Buffer.add_string ctx.buf
+            (Printf.sprintf "    stablehlo.return %s : %s\n"
+               (String.concat ", " outs) (String.concat ", " tys)))
+    in
+    lowering_platforms := saved_platforms;
+    ffi_rule_disabled := false;
+    gpu_solver_prefix := None;
+    Buffer.add_string ctx.buf (reindent 2 text)
+  in
+  emit_rule false;
+  Buffer.add_string ctx.buf "    }, {\n";
+  emit_rule true;
+  let out_types =
+    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+  in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    }) : (%s) -> %s\n"
+       (Ir.tensor_type Dtype.I32 [||])
+       (match out_types with
+       | [ t ] -> t
+       | ts -> "(" ^ String.concat ", " ts ^ ")"))
+
 and emit_eqn_in_context ctx (eqn : eqn) (in_ids : int list) : unit =
   (match eqn.prim with
-  | Cholesky | Lu | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Householder_product
-  | Ormqr _ | Eigh _ | Svd _ | Eig _ | Hessenberg | Schur _ | Tridiagonal _
-  | Tridiagonal_solve _ | Triangular_solve _
+  | Lu | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Householder_product | Ormqr _
+  | Eigh _ | Svd _ | Eig _ | Hessenberg | Schur _ | Tridiagonal _
+  | Tridiagonal_solve _
     when List.length !lowering_platforms > 1 ->
       failwith
         ("Stablehlo.Emit: multi-platform lowering of "
@@ -3361,6 +3427,12 @@ and emit_eqn_in_context ctx (eqn : eqn) (in_ids : int list) : unit =
         ^ " needs per-platform rules that are not ported")
   | _ -> ());
   match (eqn.prim, eqn.inputs) with
+  | (Cholesky | Triangular_solve _), _
+    when List.length !lowering_platforms > 1
+         && List.mem "cpu" !lowering_platforms
+         && List.exists (fun p -> p <> "cpu") !lowering_platforms
+         && not !ffi_rule_disabled ->
+      emit_cpu_and_default ctx eqn in_ids
   | Pow, [ l; r ] when (atom_aval l).dtype <> (atom_aval r).dtype ->
       emit_inlined ctx eqn in_ids (function
         | [ x; y ] ->
@@ -3837,6 +3909,19 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
             (List.filteri
                (fun i _ -> (i >= before && i < last) || i >= total)
                args))
+  | Cholesky when !gpu_solver_prefix <> None ->
+      let a = atom_aval (sole eqn.inputs) in
+      let info =
+        lapack_aval (Array.sub a.shape 0 (Array.length a.shape - 2)) Dtype.I32
+      in
+      let ids =
+        emit_lapack_call
+          ~target:(Option.get !gpu_solver_prefix ^ "solver_potrf_ffi")
+          ctx ~base:"potrf" ~config:"lower = true"
+          ~aliases:[ (0, 0) ]
+          in_ids [ a ] [ a; info ]
+      in
+      emit_traced ctx [ a; info ] ids eqn.outs Native_lowering.lapack_cholesky
   | Cholesky when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let info =
@@ -4539,6 +4624,7 @@ let emit_export_text ?(platforms = []) ?result_paths ~name
           Mlir_names.add_platform_index_arg ~arg:platform_index_arg body
         else body
       in
+      let body = Mlir_names.drop_empty_backend_config body in
       {
         text =
           Mlir_names.render ?result_paths ~module_name:name

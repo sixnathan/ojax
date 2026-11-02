@@ -333,6 +333,41 @@ let single_device oc =
       [ f32_aval [| 3 |]; f32_aval [| 3 |] ]
   in
   write "export_multi_scan" e.Ojax.Export.mlir_module;
+  let m22 = [ f32_aval [| 2; 2 |] ] in
+  write "export_multi_cholesky"
+    (Ojax.Export.export ~fun_name:"cholesky" ~platforms
+       (function
+         | [ x ] -> [ Ojax.Numpy.Linalg.cholesky x ] | _ -> failwith "arity")
+       m22)
+      .Ojax.Export.mlir_module;
+  write "export_single_cholesky"
+    (Ojax.Export.export ~fun_name:"cholesky"
+       (function
+         | [ x ] -> [ Ojax.Numpy.Linalg.cholesky x ] | _ -> failwith "arity")
+       m22)
+      .Ojax.Export.mlir_module;
+  write "export_single_callback"
+    (try
+       (Ojax.Export.export ~fun_name:"f"
+          ~disabled_checks:
+            [ Ojax.Export.custom_call_check "xla_ffi_python_cpu_callback" ]
+          (function
+            | [ x ] ->
+                Ojax.Custom_derivatives.pure_callback
+                  (function [ a ] -> [ a ] | _ -> failwith "arity")
+                  ~result_avals:[ f32_aval [| 2; 2 |] ]
+                  [ x ]
+            | _ -> failwith "arity")
+          m22)
+         .Ojax.Export.mlir_module
+     with Failure m -> m);
+  write "export_multi_tri"
+    (Ojax.Export.export ~fun_name:"f" ~platforms
+       (function
+         | [ x; y ] -> [ Ojax.Scipy.Linalg.solve_triangular ~lower:true x y ]
+         | _ -> failwith "arity")
+       (m22 @ m22))
+      .Ojax.Export.mlir_module;
   let nested_scan = function
     | x :: _ -> (
         let three = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 3.0 |]) in

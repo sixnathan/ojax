@@ -546,6 +546,18 @@ let add_platform_index_arg ~arg text =
   in
   String.concat "\n" (List.map rewrite (String.split_on_char '\n' text))
 
+let mentions_host_callback text = contains "@xla_ffi_python_cpu_callback" text
+
+let drop_empty_backend_config text =
+  let sub = "{backend_config = \"\", " in
+  String.concat "\n"
+    (List.map
+       (fun line ->
+         if contains "stablehlo.custom_call" line then
+           Option.value (replace_first ~sub ~by:"{" line) ~default:line
+         else line)
+       (String.split_on_char '\n' text))
+
 let hoist_constants text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let n = Array.length lines in

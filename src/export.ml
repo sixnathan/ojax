@@ -177,6 +177,8 @@ let rec export_internal ~fun_name ~platforms ~disabled_checks ~in_tree ~out_tree
       ~uses_shape_polymorphism:(List.length platforms > 1)
       lowered.Stages.closed
   in
+  if Stablehlo.Mlir_names.mentions_host_callback text then
+    failwith "serialization of host_callbacks is not yet implemented";
   check_module text disabled_checks;
   let out_tree =
     match out_tree with

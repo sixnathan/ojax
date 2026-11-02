@@ -257,6 +257,60 @@ let aot_text row =
                 ("peak_memory_in_bytes", m.E.peak_memory_in_bytes);
               ]))
 
+let text_of v =
+  let nd =
+    match v with
+    | T.Concrete nd -> nd
+    | T.Device b -> Ojax.Pjrt.Buffer.to_host b
+    | T.Tracer _ -> failwith "docs_p2: tracer result"
+  in
+  Printf.sprintf "%s [%s] %s"
+    (Ojax.Dtype.numpy_name (Ojax.Ndarray.dtype nd))
+    (String.concat ", "
+       (List.map string_of_int (Array.to_list (Ojax.Ndarray.shape nd))))
+    (Parity_cases.hex_of_nd nd)
+
+let static_index_thunk name mode flag () =
+  let x =
+    T.Concrete
+      (Ojax.Ndarray.of_floats Ojax.Dtype.F32 [| 2; 3 |]
+         (Array.init 6 (fun k -> float_of_int (k + 1))))
+  and v =
+    T.Concrete
+      (Ojax.Ndarray.of_floats Ojax.Dtype.F32 [| 3 |]
+         (Array.init 3 (fun k -> float_of_int (k + 1))))
+  in
+  let f _ =
+    match name with
+    | "pos_oob" -> G.take v [ G.Int 5 ]
+    | "neg_oob" -> G.take v [ G.Int (-4) ]
+    | "second_axis" -> G.take x [ G.Int 1; G.Int 7 ]
+    | "in_bounds" -> G.take x [ G.Int 1; G.Int 2 ]
+    | "neg_in" -> G.take v [ G.Int (-3) ]
+    | "at_clip" -> G.take ~mode:"clip" v [ G.Int 5 ]
+    | "at_promise" -> G.take ~mode:"promise_in_bounds" v [ G.Int 5 ]
+    | "at_fill" -> G.take ~mode:"fill" v [ G.Int 5 ]
+    | "at_nonorm" -> G.take ~normalize_indices:false v [ G.Int (-1) ]
+    | "slice_mix" ->
+        G.take x
+          [ G.Int 3; G.Slice { start = Some 1; stop = None; step = None } ]
+    | "at_set" -> G.at_set v [ G.Int 5 ] (py_float 9.0)
+    | "int_arr_idx" ->
+        G.take v
+          [
+            G.Arr
+              (T.Concrete
+                 (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [| 2 |] [| 0.0; 4.0 |]));
+          ]
+    | other -> failwith ("docs_p2: unknown static_index case " ^ other)
+  in
+  Ojax.Config.with_value Ojax.Config.check_static_indices flag (fun () ->
+      if mode = "jit" then
+        match Ojax.Api.jit (one (fun a -> leaf (f a))) [ leaf v ] with
+        | Ojax.Tree_util.Leaf r -> text_of r
+        | _ -> failwith "docs_p2: jit result"
+      else text_of (f v))
+
 let actual_of row =
   match U.to_string (U.member "group" row) with
   | "dprint" ->
@@ -264,6 +318,12 @@ let actual_of row =
         (dprint_thunk
            (U.to_string (U.member "case" row))
            (U.to_string (U.member "mode" row)))
+  | "static_index" ->
+      run_case
+        (static_index_thunk
+           (U.to_string (U.member "case" row))
+           (U.to_string (U.member "mode" row))
+           (U.to_bool (U.member "flag" row)))
   | "aot_cost" | "aot_mem" -> run_case (fun () -> aot_text row)
   | g -> failwith ("docs_p2: unknown group " ^ g)
 

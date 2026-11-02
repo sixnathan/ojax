@@ -15,6 +15,13 @@ DPRINT_CASES = [
 DPRINT_MODES = ["eager", "jit", "jaxpr", "lowered"]
 DPRINT_ERRORS = ["missing_kw", "missing_pos", "spec_on_array",
                  "mixed_numbering"]
+STATIC_INDEX_CASES = [
+    ("pos_oob", "eager"), ("neg_oob", "eager"), ("second_axis", "eager"),
+    ("in_bounds", "eager"), ("neg_in", "eager"), ("pos_oob", "jit"),
+    ("in_bounds", "jit"), ("at_clip", "eager"), ("at_promise", "eager"),
+    ("at_fill", "eager"), ("at_nonorm", "eager"), ("slice_mix", "eager"),
+    ("at_set", "eager"), ("int_arr_idx", "eager"),
+]
 AOT_CASES = ["sin_dot", "add", "reduce", "exp_log", "matmul", "cumsum",
              "where", "int_mul", "two_out", "tanh_big"]
 
@@ -117,6 +124,39 @@ def dprint_thunk(jax, jnp, name, mode):
     raise KeyError(mode)
 
 
+def text_of(out):
+    a = np.asarray(out)
+    return f"{a.dtype} {list(a.shape)} {a.tobytes().hex()}"
+
+
+def static_index_thunk(jax, jnp, name, mode, flag):
+    x = jnp.asarray(np.arange(6, dtype=np.float32).reshape(2, 3) + 1)
+    v = jnp.asarray(np.arange(3, dtype=np.float32) + 1)
+    table = {
+        "pos_oob": lambda a: v[5],
+        "neg_oob": lambda a: v[-4],
+        "second_axis": lambda a: x[1, 7],
+        "in_bounds": lambda a: x[1, 2],
+        "neg_in": lambda a: v[-3],
+        "at_clip": lambda a: v.at[5].get(mode="clip"),
+        "at_promise": lambda a: v.at[5].get(mode="promise_in_bounds"),
+        "at_fill": lambda a: v.at[5].get(mode="fill"),
+        "at_nonorm": lambda a: v.at[-1].get(wrap_negative_indices=False),
+        "slice_mix": lambda a: x[3, 1:],
+        "at_set": lambda a: v.at[5].set(9.0),
+        "int_arr_idx": lambda a: v[jnp.asarray(np.array([0, 4], np.int32))],
+    }
+    f = table[name]
+
+    def run():
+        from jax._src import config as jcfg
+        with jcfg.check_static_indices(flag):
+            if mode == "jit":
+                return text_of(jax.jit(f)(v))
+            return text_of(f(v))
+    return run
+
+
 def aot_fn(jax, jnp, name):
     x34 = jnp.asarray(np.arange(12, dtype=np.float32).reshape(3, 4) / 7)
     y42 = jnp.asarray(np.arange(8, dtype=np.float32).reshape(4, 2) / 5)
@@ -182,6 +222,13 @@ def main():
             r = run_case(jax, dprint_thunk(jax, jnp, name, mode))
             r.update({"id": f"dprint_{name}_{mode}", "group": "dprint",
                       "case": name, "mode": mode})
+            rows.append(r)
+    for name, mode in STATIC_INDEX_CASES:
+        for flag in [True, False]:
+            r = run_case(jax, static_index_thunk(jax, jnp, name, mode, flag))
+            r.update({"id": f"static_index_{name}_{mode}_{flag}",
+                      "group": "static_index", "case": name, "mode": mode,
+                      "flag": flag})
             rows.append(r)
     rows.extend(aot_rows(jax, jnp))
     with open(args.out, "w") as fh:

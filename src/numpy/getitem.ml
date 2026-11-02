@@ -828,6 +828,10 @@ let gather ~sorted ~unique ~mode ~fill_value ~normalize x parsed =
 let take ?(indices_are_sorted = false) ?(unique_indices = false) ?mode
     ?fill_value ?(normalize_indices = true) x indices =
   let parsed = parse indices (shape x) in
+  if
+    Config.value Config.check_static_indices
+    && (mode = None || parse_mode mode = LC.Promise_in_bounds)
+  then validate_static_indices ~normalize:normalize_indices (shape x) parsed;
   let attempt f =
     try Some (f ())
     with Py_exn.Type_error _ | Py_exn.Value_error _ | Py_exn.Index_error _ ->

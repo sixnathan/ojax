@@ -17,7 +17,7 @@ let canonicalize_axis ax n =
   let a = if ax < 0 then ax + n else ax in
   if a < 0 || a >= n then
     invalid_arg
-      (Printf.sprintf "axis %d out of bounds for array of ndim %d" ax n);
+      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" ax n);
   a
 
 let convert v dt =
@@ -644,7 +644,6 @@ let cumulative ~fill ~promote ~make ?dtype:dt ?axis a =
   let a, ax =
     match axis with
     | None -> ((if ndim a = 1 then a else ravel a), 0)
-    | Some _ when ndim a = 0 -> (ravel a, 0)
     | Some ax -> (a, canonicalize_axis ax (ndim a))
   in
   let a =

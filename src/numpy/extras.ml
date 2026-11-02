@@ -11,6 +11,14 @@ let dtype_of v = (Core.get_aval v).dtype
 let size_of v = Array.fold_left ( * ) 1 (shape v)
 let rank v = Array.length (shape v)
 let canon n a = if a < 0 then a + n else a
+
+let canonicalize_axis axis n =
+  if axis < -n || axis >= n then
+    invalid_arg
+      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" axis
+         n);
+  canon n axis
+
 let default_int () = Dtypes.default_int_dtype ()
 let default_float () = Dtypes.default_float_dtype ()
 
@@ -555,6 +563,17 @@ let traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a =
   fst (traced_unique_sized ?flags ?equal_nan ?axis ~size ?fill_value a)
 
 let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
+  (let extent =
+     match axis with
+     | None -> size_of a
+     | Some ax -> (shape a).(canonicalize_axis ax (rank a))
+   in
+   match (size, fill_value) with
+   | Some s, None when extent = 0 && s <> 0 ->
+       invalid_arg
+         "jnp.unique: for zero-sized input with nonzero size argument, \
+          fill_value must be specified"
+   | _ -> ());
   match size with
   | _ when is_complex_value a && axis = None ->
       unique_complex ?size ?fill_value a
@@ -1071,6 +1090,7 @@ let bincount ?weights ?(minlength = 0) ?length x =
         (Errors.jax_type_error
            ("x argument to bincount must have an integer type; got "
           ^ Dtype.short_name d)));
+  if rank x <> 1 then invalid_arg "only 1-dimensional input supported.";
   let n =
     match length with
     | Some l -> l
@@ -1241,6 +1261,8 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
         | _ -> assert false)
   in
   let n_dims = (shape sample).(1) in
+  if Array.length bins <> 0 && Array.length bins <> n_dims then
+    invalid_arg "should be a bin for each dimension.";
   let bins_for i = if Array.length bins = 0 then 10 else bins.(i) in
   let column i =
     let sh = shape sample in
@@ -1573,6 +1595,14 @@ let delete ?axis a obj =
     match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
   in
   let n = (shape a).(ax) in
+  List.iter
+    (fun i ->
+      if i < -n || i >= n then
+        raise
+          (Errors.Jax_index_error
+             (Printf.sprintf "index %d is out of bounds for axis 0 with size %d"
+                i n)))
+    obj;
   let drop = List.map (canon n) obj in
   let kept =
     List.filter (fun i -> not (List.mem i drop)) (List.init n Fun.id)
@@ -2017,7 +2047,7 @@ let argpartition ?(axis = -1) a kth =
 
 let apply_along_axis f axis arr =
   let n = rank arr in
-  let axis = canon n axis in
+  let axis = canonicalize_axis axis n in
   let func = ref (fun xs -> [ f (List.hd xs) ]) in
   for i = 1 to n - axis - 1 do
     let inner = !func in
@@ -2171,8 +2201,15 @@ let polydiv ?(trim_leading_zeros = false) u v =
   end
 
 let polyfit_parts ?rcond ?w x y deg =
-  let x = as_inexact x and y = as_inexact y in
   let order = deg + 1 in
+  if deg < 0 then invalid_arg "expected deg >= 0";
+  let type_error msg = raise (Errors.Jax_type_error msg) in
+  if rank x <> 1 then type_error "expected 1D vector for x";
+  if size_of x = 0 then type_error "expected non-empty vector for x";
+  if rank y < 1 || rank y > 2 then type_error "expected 1D or 2D array for y";
+  if (shape x).(0) <> (shape y).(0) then
+    type_error "expected x and y to have same length";
+  let x = as_inexact x and y = as_inexact y in
   let lhs = NL.vander ~n:order x in
   let lhs, y =
     match w with

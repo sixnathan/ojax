@@ -203,6 +203,9 @@ let geqp3_impl a jpvt_in =
   let dt = Ndarray.dtype a in
   let c = is_complex_dtype dt in
   let m, n = dims2 a in
+  if m = 0 && n > 0 then
+    raise
+      (Errors.Jax_runtime_error "UNKNOWN: XLA FFI call failed: std::bad_alloc");
   let k = min m n in
   by_dtype dt
     {
@@ -269,27 +272,35 @@ let qr_pivoted_impl full_matrices inputs =
       let mn = min m n in
       let k = if full_matrices then m else mn in
       let zeros = Ndarray.of_floats Dtype.I32 [| n |] (Array.make n 0.0) in
-      match geqp3_impl a zeros with
-      | [ h; jpvt; taus ] ->
-          let r =
-            make dt [| k; n |] (fun f ->
-                let i = f / max n 1 and j = f mod max n 1 in
-                if j >= i && i < m then cell h [| i; j |] else Complex.zero)
-          in
-          let base =
-            make dt [| m; k |] (fun f ->
-                let i = f / max k 1 and j = f mod max k 1 in
-                if j < n then cell h [| i; j |] else Complex.zero)
-          in
-          ignore c;
-          let q = List.hd (householder_product_impl [ base; taus ]) in
-          let p =
-            Ndarray.of_floats Dtype.I32 [| n |]
-              (Array.init n (fun i ->
-                   Int64.to_float (Ndarray.get_i64 jpvt [| i |]) -. 1.0))
-          in
-          [ q; r; p ]
-      | _ -> failwith "linalg: geqp3 arity")
+      if m = 0 || n = 0 then
+        [
+          make dt [| m; k |] (fun f ->
+              if f mod max k 1 = f / max k 1 then Complex.one else Complex.zero);
+          make dt [| k; n |] (fun _ -> Complex.zero);
+          zeros;
+        ]
+      else
+        match geqp3_impl a zeros with
+        | [ h; jpvt; taus ] ->
+            let r =
+              make dt [| k; n |] (fun f ->
+                  let i = f / max n 1 and j = f mod max n 1 in
+                  if j >= i && i < m then cell h [| i; j |] else Complex.zero)
+            in
+            let base =
+              make dt [| m; k |] (fun f ->
+                  let i = f / max k 1 and j = f mod max k 1 in
+                  if j < n then cell h [| i; j |] else Complex.zero)
+            in
+            ignore c;
+            let q = List.hd (householder_product_impl [ base; taus ]) in
+            let p =
+              Ndarray.of_floats Dtype.I32 [| n |]
+                (Array.init n (fun i ->
+                     Int64.to_float (Ndarray.get_i64 jpvt [| i |]) -. 1.0))
+            in
+            [ q; r; p ]
+        | _ -> failwith "linalg: geqp3 arity")
   | _ -> failwith "linalg: qr expects one operand"
 
 let ormqr_impl ~left ~transpose a taus c_in =

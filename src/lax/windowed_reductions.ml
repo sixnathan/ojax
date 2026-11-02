@@ -3,7 +3,41 @@ open Types
 let dilate_dim d f = if d = 0 then 0 else ((d - 1) * f) + 1
 let stride_dim d w s = if d < w then 0 else ((d - w) / s) + 1
 
+let check_window operand_shape (w : window_dims) =
+  let t = Utils.py_tuple in
+  Utils.check_shapelike ~non_zero_shape:true "reduce_window" "window_dimensions"
+    w.window_dimensions;
+  Utils.check_shapelike ~non_zero_shape:true "reduce_window" "window_strides"
+    w.window_strides;
+  Utils.check_shapelike "reduce_window" "base_dilation" w.base_dilation;
+  Utils.check_shapelike "reduce_window" "window_dilation" w.window_dilation;
+  let n = Array.length w.window_dimensions in
+  let fail fmt =
+    Printf.ksprintf (fun msg -> raise (Errors.Jax_type_error msg)) fmt
+  in
+  if Array.length operand_shape <> n then
+    fail
+      "reduce_window got the wrong number of window_dimensions for operand: \
+       got operand shape %s with window_dimensions %s."
+      (t operand_shape) (t w.window_dimensions);
+  if Array.length w.window_strides <> n then
+    fail
+      "reduce_window got inconsistent window_strides and window_dimensions: \
+       got window_strides %s and window_dimensions %s."
+      (t w.window_strides) (t w.window_dimensions);
+  if Array.length w.base_dilation <> n then
+    fail
+      "reduce_window got inconsistent base_dilation and window_dimensions: got \
+       base_dilation %s and window_dimensions %s."
+      (t w.base_dilation) (t w.window_dimensions);
+  if Array.length w.window_dilation <> n then
+    fail
+      "reduce_window got inconsistent window_dilation and window_dimensions: \
+       got window_dilation %s and window_dimensions %s."
+      (t w.window_dilation) (t w.window_dimensions)
+
 let out_shape operand_shape (w : window_dims) =
+  check_window operand_shape w;
   Array.mapi
     (fun i d ->
       let lo, hi = w.w_padding.(i) in

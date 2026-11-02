@@ -13,7 +13,7 @@ let canonicalize_axis ax n =
   let a = if ax < 0 then ax + n else ax in
   if a < 0 || a >= n then
     invalid_arg
-      (Printf.sprintf "axis %d out of bounds for array of ndim %d" ax n);
+      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" ax n);
   a
 
 let const_full dt sh x = Core.splat dt sh x
@@ -195,8 +195,9 @@ let slice_axis v axis lo hi =
   let n = Array.length sh in
   let start = Array.make n 0 in
   let limit = Array.copy sh in
+  let lo = Stdlib.min lo sh.(axis) in
   start.(axis) <- lo;
-  limit.(axis) <- hi;
+  limit.(axis) <- Stdlib.max lo (Stdlib.min hi sh.(axis));
   bind1
     (T.Slice { start_indices = start; limit_indices = limit; strides = None })
     [ v ]
@@ -1916,6 +1917,11 @@ let trapezoid ?x ?(dx = 1.0) ?(axis = -1) y =
   let l = ny.(nd - 1) in
   match dxd with
   | None ->
+      if l = 0 then
+        raise
+          (Errors.Jax_index_error
+             (Printf.sprintf "index is out of bounds for axis %d with size 0"
+                (nd - 1)));
       let s = Reductions.sum ~axis:[| nd - 1 |] y in
       let y0 = last_index y 0 in
       let yl = last_index y (l - 1) in

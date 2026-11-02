@@ -5358,6 +5358,8 @@ let () =
         :: special_values_suites ())
     @ Fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
         ~concrete
+    @ Option_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype
+        ~concrete
     @ [
         ( "exact_ratchet",
           [

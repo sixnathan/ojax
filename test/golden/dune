@@ -13,6 +13,9 @@
   coverage_cases
   apicov_cases
   fuzz
+  option_args
+  option_cases
+  option_fuzz
   manifest)
  (libraries alcotest yojson ojax)
  (preprocess
@@ -62,6 +65,7 @@
   (source_tree %{project_root}/goldens/parity_jit)
   (source_tree %{project_root}/goldens/fuzz)
   (source_tree %{project_root}/goldens/fuzz_s2)
+  (source_tree %{project_root}/goldens/option_fuzz)
   (glob_files identical_rows/*.tsv)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))

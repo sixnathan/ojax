@@ -2699,10 +2699,17 @@ let abstract_eval prim avals =
         avals
   | Dynamic_slice { slice_sizes } -> (
       match avals with
-      | operand :: _ -> [ shaped slice_sizes operand.dtype operand.weak_type ]
+      | operand :: starts ->
+          Slicing.check_dynamic_slice slice_sizes operand.shape
+            (List.map (fun a -> a.shape) starts);
+          [ shaped slice_sizes operand.dtype operand.weak_type ]
       | [] -> failwith "lax: dynamic_slice expects an operand")
   | Dynamic_update_slice -> (
       match avals with
+      | operand :: update :: starts ->
+          Slicing.check_dynamic_update_slice operand.shape update.shape
+            (List.map (fun a -> a.shape) starts);
+          [ operand ]
       | operand :: _ -> [ operand ]
       | [] -> failwith "lax: dynamic_update_slice expects an operand")
   | Gather { dimension_numbers; slice_sizes } -> (
@@ -3073,5 +3080,6 @@ module Linalg = Linalg
 module Special = Special
 module Slicing = Slicing
 module Fft = Fft
+module Utils = Utils
 
 let complex_bilinear = Utils.complex_bilinear

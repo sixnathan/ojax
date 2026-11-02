@@ -1501,13 +1501,8 @@ let collective_batch trace axis_size kind axis_name vals bdims =
   | Pbroadcast source, [ v ], [ Some d ] ->
       (List.nth (Core.bind (Unstack d) [ v ]) source, None)
   | Pbroadcast _, [ v ], [ None ] -> (v, None)
-  | Ppermute pairs, [ v ], [ b ] when Array.length pairs <> axis_size ->
-      let moved = move_batch_axis axis_size b 0 v in
-      let rows = Array.of_list (Core.bind (Unstack 0) [ moved ]) in
-      let zero = Ad_util.zeros_like_aval (Core.get_aval rows.(0)) in
-      let out = Array.make axis_size zero in
-      Array.iter (fun (src, dst) -> out.(dst) <- rows.(src)) pairs;
-      (b1 (Stack 0) (Array.to_list out), Some 0)
+  | Ppermute pairs, [ _ ], [ _ ] when Array.length pairs <> axis_size ->
+      failwith "Permutation doesn't match the axis size!"
   | Ppermute _, [ v ], [ None ] -> (v, None)
   | Ppermute pairs, [ v ], [ Some d ] ->
       let indices = Array.make axis_size 0 in

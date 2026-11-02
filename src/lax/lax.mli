@@ -92,6 +92,7 @@ module Linalg = Linalg
 module Special = Special
 module Slicing = Slicing
 module Fft = Fft
+module Utils = Utils
 
 val complex_bilinear :
   (Types.value -> Types.value -> Types.value) ->

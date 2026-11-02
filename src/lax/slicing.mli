@@ -1,6 +1,11 @@
 val slice_shape :
   int array -> int array -> int array option -> int array -> int array
 
+val check_dynamic_slice : int array -> int array -> int array list -> unit
+
+val check_dynamic_update_slice :
+  int array -> int array -> int array list -> unit
+
 val slice_impl :
   int array -> int array -> int array option -> Ndarray.t -> Ndarray.t
 

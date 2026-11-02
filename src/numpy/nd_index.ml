@@ -252,10 +252,28 @@ let gather_take ?(clip = false) x idx =
     in
     C.bind1 prim [ x; ix.gather_indices ]
 
-let take_clip x idx = gather_take ~clip:true x (expand idx (rank x))
+let check_scalar_indices sh idx =
+  let advanced = function Arr v -> rank v > 0 | _ -> false in
+  if not (List.exists advanced idx) then
+    List.iteri
+      (fun axis i ->
+        match i with
+        | (Int _ | Arr _) when sh.(axis) = 0 ->
+            raise
+              (Errors.Jax_index_error
+                 (Printf.sprintf
+                    "index is out of bounds for axis %d with size 0" axis))
+        | _ -> ())
+      idx
+
+let take_clip x idx =
+  let idx = expand idx (rank x) in
+  check_scalar_indices (shape x) idx;
+  gather_take ~clip:true x idx
 
 let take x idx =
   let idx = expand idx (rank x) in
+  check_scalar_indices (shape x) idx;
   let is_arr = function Arr _ -> true | _ -> false in
   if not (List.exists is_arr idx) then static_take x idx
   else if List.for_all (function Arr v -> rank v = 0 | _ -> true) idx then
@@ -264,6 +282,7 @@ let take x idx =
 
 let set x idx y =
   let idx = expand idx (rank x) in
+  check_scalar_indices (shape x) idx;
   let x_aval = C.get_aval x in
   let ix = to_gather x_aval.shape idx in
   if empty ix.slice_shape then x

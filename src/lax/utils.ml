@@ -2,6 +2,22 @@ open Types
 
 let prod a = Array.fold_left ( * ) 1 a
 
+let py_tuple a =
+  match Array.to_list a with
+  | [ x ] -> Printf.sprintf "(%d,)" x
+  | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
+
+let type_error msg = raise (Errors.Jax_type_error msg)
+
+let check_shapelike ?(non_zero_shape = false) fun_name arg_name obj =
+  let lower, bound =
+    if non_zero_shape then (1, "strictly positive") else (0, "nonnegative")
+  in
+  if Array.exists (fun d -> d < lower) obj then
+    type_error
+      (Printf.sprintf "%s %s must have every element be %s, got %s." fun_name
+         arg_name bound (py_tuple obj))
+
 let strides shape =
   let n = Array.length shape in
   let s = Array.make (max n 1) 1 in
@@ -37,7 +53,83 @@ let reduce_shape shape axes =
   done;
   Array.of_list !out
 
+let distinct a =
+  List.length (List.sort_uniq compare (Array.to_list a)) = Array.length a
+
+let overlap a b = Array.exists (fun x -> Array.mem x b) a
+
+let check_dot_general (dd : dot_dims) lhs_shape rhs_shape =
+  let lhs_ndim = Array.length lhs_shape and rhs_ndim = Array.length rhs_shape in
+  let out_of_range ndim d = Array.exists (fun x -> x < 0 || x >= ndim) d in
+  let fail fmt = Printf.ksprintf type_error fmt in
+  let t = py_tuple in
+  let lc = dd.lhs_contract
+  and rc = dd.rhs_contract
+  and lb = dd.lhs_batch
+  and rb = dd.rhs_batch in
+  if out_of_range lhs_ndim lc || out_of_range lhs_ndim lb then
+    fail
+      "dot_general requires lhs dimension numbers to be nonnegative and less \
+       than the number of axes of the lhs value, got lhs_batch of %s and \
+       lhs_contracting of %s for lhs of rank %d"
+      (t lb) (t lc) lhs_ndim;
+  if out_of_range rhs_ndim rc || out_of_range rhs_ndim rb then
+    fail
+      "dot_general requires rhs dimension numbers to be nonnegative and less \
+       than the number of axes of the rhs value, got rhs_batch of %s and \
+       rhs_contracting of %s for rhs of rank %d"
+      (t rb) (t rc) rhs_ndim;
+  if Array.length lb <> Array.length rb then
+    fail
+      "dot_general requires equal numbers of lhs_batch and rhs_batch \
+       dimensions, got lhs_batch %s and rhs_batch %s."
+      (t lb) (t rb);
+  if not (distinct lb) then
+    fail
+      "dot_general requires lhs batch dimensions to be distinct, got lhs_batch \
+       %s."
+      (t lb);
+  if not (distinct rb) then
+    fail
+      "dot_general requires rhs batch dimensions to be distinct, got rhs_batch \
+       %s."
+      (t rb);
+  if not (distinct lc) then
+    fail
+      "dot_general requires lhs contracting dimensions to be distinct, got \
+       lhs_contracting %s."
+      (t lc);
+  if not (distinct rc) then
+    fail
+      "dot_general requires rhs contracting dimensions to be distinct, got \
+       rhs_contracting %s."
+      (t rc);
+  if overlap lc lb then
+    fail
+      "dot_general requires lhs batch dimensions to be disjoint from \
+       contracting dimensions, got lhs_batch %s and lhs_contracting %s."
+      (t lb) (t lc);
+  if overlap rc rb then
+    fail
+      "dot_general requires rhs batch dimensions to be disjoint from \
+       contracting dimensions, got rhs_batch %s and rhs_contracting %s."
+      (t rb) (t rc);
+  let pick sh = Array.map (fun i -> sh.(i)) in
+  let lbs = pick lhs_shape lb and rbs = pick rhs_shape rb in
+  if lbs <> rbs then
+    fail
+      "dot_general requires lhs batch dimensions and rhs batch dimensions to \
+       have the same shape, got %s and %s."
+      (t lbs) (t rbs);
+  let lcs = pick lhs_shape lc and rcs = pick rhs_shape rc in
+  if lcs <> rcs then
+    fail
+      "dot_general requires contracting dimensions to have the same shape, got \
+       %s and %s."
+      (t lcs) (t rcs)
+
 let dot_general_shape (dd : dot_dims) lhs_shape rhs_shape =
+  check_dot_general dd lhs_shape rhs_shape;
   let lhs_free =
     free_axes (Array.length lhs_shape) dd.lhs_batch dd.lhs_contract
   in

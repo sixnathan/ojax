@@ -507,7 +507,7 @@ let run op positional options arr =
         Ojax.Numpy.Extras.intersect1d
           ?assume_unique:(A.opt options "assume_unique" A.bool_)
           ?size:(A.opt options "size" A.int_)
-          ?fill_value:(A.opt options "fill_value" A.float_)
+          ?fill_value:(A.opt options "fill_value" (A.value arr))
           ((A.value arr) positional.(0))
           ((A.value arr) positional.(1));
       ]
@@ -961,7 +961,7 @@ let run op positional options arr =
         Ojax.Numpy.Extras.setxor1d
           ?assume_unique:(A.opt options "assume_unique" A.bool_)
           ?size:(A.opt options "size" A.int_)
-          ?fill_value:(A.opt options "fill_value" A.float_)
+          ?fill_value:(A.opt options "fill_value" (A.value arr))
           ((A.value arr) positional.(0))
           ((A.value arr) positional.(1));
       ]

@@ -43,6 +43,10 @@ val remat_rebuild : (int -> closed_jaxpr -> int) ref
 val install : unit -> unit
 val eqn_has_effect : eqn -> bool
 val dce_closed : closed_jaxpr -> bool list -> closed_jaxpr * bool list
+
+val dce_branches :
+  closed_jaxpr list -> bool list -> closed_jaxpr list * bool list
+
 val dce_keep_args : closed_jaxpr -> closed_jaxpr
 
 val eager_jit :

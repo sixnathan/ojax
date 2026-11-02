@@ -787,6 +787,8 @@ let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
     | Some (Lax_config.Algorithm _ | Lax_config.Preset _) -> true
     | _ -> false
   in
+  if preferred_element_type <> None then
+    ignore (Lax.Utils.dot_general_shape dn (shape x) (shape y));
   (match preferred_element_type with
   | Some p
     when (not has_algorithm)

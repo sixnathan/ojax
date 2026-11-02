@@ -756,37 +756,7 @@ and dce_closed_uncached (c : closed_jaxpr) used_outs =
             let outs_used = List.map is_used e.outs in
             if not (List.exists Fun.id outs_used) then acc
             else begin
-              let pruned =
-                List.map (fun b -> dce_closed b outs_used) branches
-              in
-              let args_used =
-                List.fold_left
-                  (fun acc (_, ins) -> List.map2 ( || ) acc ins)
-                  (List.map (fun _ -> false) (List.tl e.inputs))
-                  pruned
-              in
-              let branches' =
-                List.map2
-                  (fun (b : closed_jaxpr) ((p : closed_jaxpr), _) ->
-                    let n_consts = List.length b.consts in
-                    let consts =
-                      List.filteri (fun i _ -> i < n_consts) p.jaxpr.in_binders
-                    in
-                    let args =
-                      List.filteri (fun i _ -> i >= n_consts) b.jaxpr.in_binders
-                    in
-                    let kept =
-                      List.concat
-                        (List.map2
-                           (fun a keep -> if keep then [ a ] else [])
-                           args args_used)
-                    in
-                    {
-                      p with
-                      jaxpr = { p.jaxpr with in_binders = consts @ kept };
-                    })
-                  branches pruned
-              in
+              let branches', args_used = dce_branches branches outs_used in
               let inputs =
                 List.hd e.inputs
                 :: List.concat
@@ -883,6 +853,38 @@ and dce_closed_uncached (c : closed_jaxpr) used_outs =
   Pretty_printer.register_call_name pruned.jid (Pretty_printer.call_name c.jid);
   Core.inherit_inline ~from:c.jid pruned.jid;
   (pruned, List.map is_used arg_binders)
+
+and dce_branches branches outs_used =
+  let pruned = List.map (fun b -> dce_closed b outs_used) branches in
+  let args_used =
+    match branches with
+    | [] -> []
+    | (b : closed_jaxpr) :: _ ->
+        let n_consts = List.length b.consts in
+        List.fold_left
+          (fun acc (_, ins) -> List.map2 ( || ) acc ins)
+          (List.filteri (fun i _ -> i >= n_consts) b.jaxpr.in_binders
+          |> List.map (fun _ -> false))
+          pruned
+  in
+  let branches' =
+    List.map2
+      (fun (b : closed_jaxpr) ((p : closed_jaxpr), _) ->
+        let n_consts = List.length b.consts in
+        let consts =
+          List.filteri (fun i _ -> i < n_consts) p.jaxpr.in_binders
+        in
+        let args = List.filteri (fun i _ -> i >= n_consts) b.jaxpr.in_binders in
+        let kept =
+          List.concat
+            (List.map2
+               (fun a keep -> if keep then [ a ] else [])
+               args args_used)
+        in
+        { p with jaxpr = { p.jaxpr with in_binders = consts @ kept } })
+      branches pruned
+  in
+  (branches', args_used)
 
 let dce_keep_args (c : closed_jaxpr) =
   let n = List.length c.consts in

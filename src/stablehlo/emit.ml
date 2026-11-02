@@ -1478,31 +1478,84 @@ let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
       (Printf.sprintf
          "    %%1 = \"stablehlo.reduce_window\"(%%0, %%2) <{%s}> ({\n" attrs);
     Buffer.add_string b (Printf.sprintf "    ^bb0(%%3: %s, %%4: %s):\n" sty sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%5 = stablehlo.maximum %%3, %%4 : %s\n" sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%6 = stablehlo.subtract %%3, %%4 : %s\n" sty);
-    Buffer.add_string b
-      (Printf.sprintf
-         "      %%7 = stablehlo.compare NE, %%6, %%6, FLOAT : (%s, %s) -> %s\n"
-         sty sty bty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%8 = stablehlo.add %%3, %%4 : %s\n" sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%9 = stablehlo.abs %%6 : %s\n" sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%10 = stablehlo.negate %%9 : %s\n" sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%11 = stablehlo.exponential %%10 : %s\n" sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%12 = stablehlo.log_plus_one %%11 : %s\n" sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%13 = stablehlo.add %%5, %%12 : %s\n" sty);
-    Buffer.add_string b
-      (Printf.sprintf "      %%14 = stablehlo.select %%7, %%8, %%13 : %s, %s\n"
-         bty sty);
-    Buffer.add_string b
-      (Printf.sprintf "      stablehlo.return %%14 : %s\n" sty);
+    if is_complex_dtype dt then begin
+      let rdt = if dt = Dtype.Complex64 then Dtype.F32 else Dtype.F64 in
+      let rty = Ir.tensor_type rdt [||] in
+      let line fmt = Printf.ksprintf (fun l -> Buffer.add_string b l) fmt in
+      let const k v =
+        line "      %%%d = stablehlo.constant %s : %s\n" k
+          (Ir.dense (Ir.float_literal rdt v))
+          rty
+      in
+      line "      %%5 = stablehlo.real %%3 : (%s) -> %s\n" sty rty;
+      line "      %%6 = stablehlo.real %%4 : (%s) -> %s\n" sty rty;
+      line
+        "      %%7 = stablehlo.compare EQ, %%5, %%6, FLOAT : (%s, %s) -> %s\n"
+        rty rty bty;
+      line
+        "      %%8 = stablehlo.compare GT, %%5, %%6, FLOAT : (%s, %s) -> %s\n"
+        rty rty bty;
+      line "      %%9 = stablehlo.imag %%3 : (%s) -> %s\n" sty rty;
+      line "      %%10 = stablehlo.imag %%4 : (%s) -> %s\n" sty rty;
+      line
+        "      %%11 = stablehlo.compare GT, %%9, %%10, FLOAT : (%s, %s) -> %s\n"
+        rty rty bty;
+      line "      %%12 = stablehlo.select %%7, %%11, %%8 : %s, %s\n" bty bty;
+      line "      %%13 = stablehlo.select %%12, %%3, %%4 : %s, %s\n" bty sty;
+      line "      %%14 = stablehlo.add %%3, %%4 : %s\n" sty;
+      line "      %%15 = stablehlo.constant %s : %s\n"
+        (Ir.dense (Ir.complex_literal dt { Complex.re = 2.0; im = 0.0 }))
+        sty;
+      line "      %%16 = stablehlo.multiply %%13, %%15 : %s\n" sty;
+      line "      %%17 = stablehlo.subtract %%14, %%16 : %s\n" sty;
+      line "      %%18 = stablehlo.exponential %%17 : %s\n" sty;
+      line "      %%19 = stablehlo.log_plus_one %%18 : %s\n" sty;
+      line "      %%20 = stablehlo.add %%13, %%19 : %s\n" sty;
+      line "      %%21 = stablehlo.real %%20 : (%s) -> %s\n" sty rty;
+      line "      %%22 = stablehlo.imag %%20 : (%s) -> %s\n" sty rty;
+      const 23 Float.pi;
+      line "      %%24 = stablehlo.add %%22, %%23 : %s\n" rty;
+      const 25 (2.0 *. Float.pi);
+      line "      %%26 = stablehlo.remainder %%24, %%25 : %s\n" rty;
+      const 27 0.0;
+      line
+        "      %%28 = stablehlo.compare LT, %%26, %%27, FLOAT : (%s, %s) -> %s\n"
+        rty rty bty;
+      const 29 (2.0 *. Float.pi);
+      line "      %%30 = stablehlo.add %%26, %%29 : %s\n" rty;
+      line "      %%31 = stablehlo.select %%28, %%30, %%26 : %s, %s\n" bty rty;
+      const 32 Float.pi;
+      line "      %%33 = stablehlo.subtract %%31, %%32 : %s\n" rty;
+      line "      %%34 = stablehlo.complex %%21, %%33 : %s\n" sty;
+      line "      stablehlo.return %%34 : %s\n" sty
+    end
+    else begin
+      Buffer.add_string b
+        (Printf.sprintf "      %%5 = stablehlo.maximum %%3, %%4 : %s\n" sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%6 = stablehlo.subtract %%3, %%4 : %s\n" sty);
+      Buffer.add_string b
+        (Printf.sprintf
+           "      %%7 = stablehlo.compare NE, %%6, %%6, FLOAT : (%s, %s) -> %s\n"
+           sty sty bty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%8 = stablehlo.add %%3, %%4 : %s\n" sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%9 = stablehlo.abs %%6 : %s\n" sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%10 = stablehlo.negate %%9 : %s\n" sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%11 = stablehlo.exponential %%10 : %s\n" sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%12 = stablehlo.log_plus_one %%11 : %s\n" sty);
+      Buffer.add_string b
+        (Printf.sprintf "      %%13 = stablehlo.add %%5, %%12 : %s\n" sty);
+      Buffer.add_string b
+        (Printf.sprintf
+           "      %%14 = stablehlo.select %%7, %%8, %%13 : %s, %s\n" bty sty);
+      Buffer.add_string b
+        (Printf.sprintf "      stablehlo.return %%14 : %s\n" sty)
+    end;
     Buffer.add_string b (Printf.sprintf "    }) : (%s, %s) -> %s\n" ty sty ty);
     Buffer.add_string b (Printf.sprintf "    return %%1 : %s\n" ty);
     Buffer.add_string b "  }\n"

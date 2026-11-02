@@ -1770,9 +1770,7 @@ let softmax ?axis x =
   match axis with
   | Some (Numpy.Reductions.Axis ax) -> NN.softmax ~axis:ax x
   | Some (Numpy.Reductions.Axes axes) -> NN.softmax_axes ~axes x
-  | None ->
-      let sh = shape x in
-      NL.reshape (NN.softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
+  | None -> NN.softmax_axes ~axes:(Array.init (ndim x) Fun.id) x
 
 let log_softmax ?axis x =
   Option.iter
@@ -1788,9 +1786,7 @@ let log_softmax ?axis x =
   match axis with
   | Some (Numpy.Reductions.Axis ax) -> NN.log_softmax ~axis:ax x
   | Some (Numpy.Reductions.Axes axes) -> NN.log_softmax_axes ~axes x
-  | None ->
-      let sh = shape x in
-      NL.reshape (NN.log_softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
+  | None -> NN.log_softmax_axes ~axes:(Array.init (ndim x) Fun.id) x
 
 let poch_primal z m =
   let z, m = real_only2 ~fun_name:"poch" "jnp.poch" z m in
@@ -3232,9 +3228,25 @@ let sph_harm_y ?diff_n ?n_max n m theta phi =
     match n_max with
     | Some v -> v
     | None -> (
+        let python_int nd =
+          let v = Nd.get_f nd [||] in
+          match Nd.dtype nd with
+          | D.Complex64 | D.Complex128 ->
+              raise
+                (Py_exn.Type_error
+                   "int() argument must be a string, a bytes-like object or a \
+                    real number, not 'complex'")
+          | _ when Float.is_nan v ->
+              raise (Py_exn.Value_error "cannot convert float NaN to integer")
+          | _ when Float.is_finite v -> int_of_float v
+          | _ ->
+              raise
+                (Py_exn.Overflow_error
+                   "cannot convert float infinity to integer")
+        in
         match RED.amax n with
-        | T.Concrete nd -> int_of_float (Nd.get_f nd [||])
-        | T.Device b -> int_of_float (Nd.get_f (Pjrt.Buffer.to_host b) [||])
+        | T.Concrete nd -> python_int nd
+        | T.Device b -> python_int (Pjrt.Buffer.to_host b)
         | T.Tracer _ as top ->
             raise
               (Errors.concretization_type_error

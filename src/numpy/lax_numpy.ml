@@ -2591,7 +2591,11 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
         (if (shape x).(0) = 1 then [||] else [| (shape x).(0); (shape x).(0) |])
         Float_format.nan
     else
-      let x = match dtype with Some d -> convert x d | None -> x in
+      let x =
+        match dtype with
+        | Some d -> convert x (Dtypes.canonicalize_dtype d)
+        | None -> x
+      in
       let dt = dtype_of x in
       let nvars = (shape x).(0) and nobs = (shape x).(1) in
       let ddof =

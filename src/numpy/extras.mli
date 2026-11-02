@@ -34,7 +34,7 @@ val union1d : ?size:int -> ?fill_value:float -> value -> value -> value
 val intersect1d :
   ?assume_unique:bool ->
   ?size:int ->
-  ?fill_value:float ->
+  ?fill_value:value ->
   value ->
   value ->
   value
@@ -42,7 +42,7 @@ val intersect1d :
 val intersect1d_indices :
   ?assume_unique:bool ->
   ?size:int ->
-  ?fill_value:float ->
+  ?fill_value:value ->
   value ->
   value ->
   value * value * value
@@ -58,7 +58,7 @@ val setdiff1d :
 val setxor1d :
   ?assume_unique:bool ->
   ?size:int ->
-  ?fill_value:float ->
+  ?fill_value:value ->
   value ->
   value ->
   value

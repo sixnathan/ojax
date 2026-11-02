@@ -1008,6 +1008,9 @@ let eig ?implementation ?(compute_left_eigenvectors = true)
 let eigh ?implementation ?(lower = true) ?(symmetrize_input = true)
     ?(sort_eigenvalues = true) ?subset_by_index x =
   ignore (sort_eigenvalues : bool);
+  let x = if symmetrize_input then symmetrize x else x in
+  Core.check_operands (Eigh { lower }) [ x ];
+  Linalg_shape.check (Eigh { lower }) (fun () -> [ (Core.get_aval x).shape ]);
   (match subset_by_index with
   | Some (lo, hi)
     when let sh = (Core.get_aval x).shape in
@@ -1026,7 +1029,6 @@ let eigh ?implementation ?(lower = true) ?(symmetrize_input = true)
       raise
         (Py_exn.Not_implemented_error
            "QDWH implementation is only supported on TPU"));
-  let x = if symmetrize_input then symmetrize x else x in
   match Core.bind (Eigh { lower }) [ x ] with
   | [ v; w ] -> (v, w)
   | _ -> assert false
@@ -1045,6 +1047,14 @@ let hessenberg x =
 let schur ?(compute_schur_vectors = true) ?(sort_eig_vals = false)
     ?(select_callable : (value -> value) option) x =
   ignore select_callable;
+  if sort_eig_vals then begin
+    Core.check_operands
+      (Schur { compute_vectors = compute_schur_vectors })
+      [ x ];
+    Linalg_shape.check
+      (Schur { compute_vectors = compute_schur_vectors })
+      (fun () -> [ (Core.get_aval x).shape ])
+  end;
   if sort_eig_vals then
     raise
       (Py_exn.Not_implemented_error

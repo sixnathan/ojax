@@ -645,7 +645,13 @@ let remat_partial_eval trace id (tracers : tracer list) =
       in
       let res_atoms = List.map (fun v -> A_var v) residuals in
       let known_eqns =
-        live_eqns (atom_vars known_outs @ atom_vars res_atoms) jx.eqns
+        let outs = known_outs @ res_atoms in
+        let pruned, _ =
+          Jaxpr.dce_closed
+            { body with jid = Core.fresh_id (); jaxpr = { jx with outs } }
+            (List.map (fun _ -> true) outs)
+        in
+        pruned.jaxpr.eqns
       in
       let known_used = Hashtbl.create 64 in
       List.iter
@@ -743,6 +749,19 @@ let remat_partial_eval trace id (tracers : tracer list) =
               used_inputs rest;
             eval_subset env staged_eqns unknown_outs)
       in
+      let staged, staged_args =
+        Jaxpr.dce_closed staged (List.map (fun _ -> true) staged.jaxpr.outs)
+      in
+      let keep xs flags =
+        List.concat (List.map2 (fun x k -> if k then [ x ] else []) xs flags)
+      in
+      let res_used, inputs_used =
+        match Util.split_list staged_args [ List.length res_values ] with
+        | [ a; b ] -> (a, b)
+        | _ -> failwith "checkpoint: staged arity"
+      in
+      let res_values = keep res_values res_used in
+      let used_inputs = keep used_inputs inputs_used in
       let staged_id = remat_id ~cfg ~differentiated:true staged in
       let unknown_values =
         Partial_eval.record_unknown trace (Custom_jvp_call staged_id)

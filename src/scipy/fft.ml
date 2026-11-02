@@ -206,7 +206,12 @@ let dct2 x ~axes:(axis1, axis2) ~norm =
 let resolve_axes ?s ?axes x =
   let n = rank x in
   match (axes, s) with
-  | Some a, _ -> List.map (canon n) a
+  | Some a, _ ->
+      let a = List.map (canon n) a in
+      if List.length (List.sort_uniq compare a) <> List.length a then
+        Py_exn.value_error
+          ("repeated axis: " ^ Validate.python_tuple (Array.of_list a));
+      a
   | None, Some sizes ->
       let k = List.length sizes in
       List.init k (fun i -> n - k + i)

@@ -194,18 +194,23 @@ let vecdot ?(axis = -1) ?precision ?preferred x1 x2 =
        ]);
   let x1 = NL.moveaxis [| axis |] [| ndim x1 - 1 |] x1 in
   let x2 = NL.moveaxis [| axis |] [| ndim x2 - 1 |] x2 in
-  let x1 =
-    match dtype x1 with
-    | D.Complex64 | D.Complex128 -> C.bind1 T.Conj [ x1 ]
-    | _ -> x1
-  in
-  let x1, x2 = contraction_inputs preferred x1 x2 in
-  let sh = NL.broadcast_shapes_n [ shape x1; shape x2 ] in
-  let bcast v = if shape v = sh then v else NL.broadcast_to v sh in
-  let last = Array.length sh - 1 in
-  let batch = Array.init last Fun.id in
-  dot_general ?precision ?preferred [| last |] [| last |] batch batch (bcast x1)
-    (bcast x2)
+  Eager_jit.one "numpy.tensor_contractions.vdot"
+    ("vectorized", precision, preferred) [] [ x1; x2 ] (fun _ vals ->
+      match vals with
+      | [ x1; x2 ] ->
+          let x1 =
+            match dtype x1 with
+            | D.Complex64 | D.Complex128 -> C.bind1 T.Conj [ x1 ]
+            | _ -> x1
+          in
+          let x1, x2 = contraction_inputs preferred x1 x2 in
+          let sh = NL.broadcast_shapes_n [ shape x1; shape x2 ] in
+          let bcast v = if shape v = sh then v else NL.broadcast_to v sh in
+          let last = Array.length sh - 1 in
+          let batch = Array.init last Fun.id in
+          dot_general ?precision ?preferred [| last |] [| last |] batch batch
+            (bcast x1) (bcast x2)
+      | _ -> assert false)
 
 type td_axes = Ax_int of int | Ax_pair of int array * int array
 
@@ -236,7 +241,13 @@ let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
         ( Array.map (fun i -> Validate.canonicalize_axis i na) ax1,
           Array.map (fun i -> Validate.canonicalize_axis i nb) ax2 )
   in
-  dot_general ?precision ?preferred lc rc [||] [||] a b
+  let contract a b = dot_general ?precision ?preferred lc rc [||] [||] a b in
+  match (a, b) with
+  | T.Tracer _, _ | _, T.Tracer _ -> contract a b
+  | _ ->
+      Eager_jit.one "lax.dot_general" (precision, preferred, lc, rc) [] [ a; b ]
+        (fun _ vals ->
+          match vals with [ a; b ] -> contract a b | _ -> assert false)
 
 let inner ?precision ?preferred a b =
   if ndim a = 0 || ndim b = 0 then begin

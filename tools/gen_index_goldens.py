@@ -23,6 +23,7 @@ MODULE = "index_fuzz"
 DEFAULT_SEED = 20261103
 SETS = (("x64_off", False), ("x64_on", True))
 FUZZ_CASES = 500
+REDUCEAT_CASES = 60
 DTYPES = {
     "x64_off": ("float32", "int32", "uint8", "int8", "bool", "float16", "complex64"),
     "x64_on": ("float32", "float64", "int32", "int64", "uint32", "bool", "complex128"),
@@ -82,8 +83,12 @@ def program(case):
         if const:
             env.update({k: np.asarray(v["data"], dtype=v["dtype"]) for k, v in params["consts"].items()})
         x = env["x"]
-        idx = build_index(spec, env)
         op = params["op"]
+        if op == "reduceat":
+            fn = {"add": jnp.add, "multiply": jnp.multiply, "maximum": jnp.maximum}[params["ufunc"]]
+            u = jnp.frompyfunc(fn, 2, 1, identity=params.get("identity"))
+            return u.reduceat(x, env["i0"], axis=params["axis"])
+        idx = build_index(spec, env)
         if op == "getitem":
             return x[idx]
         kw = {}
@@ -292,6 +297,22 @@ def expand(seed):
                     case, arrays = make_case(set_name, cid, rng, shape, form, arrays, op, dtype)
                     cases.append(case)
                     stash[cid] = arrays
+        for i in range(REDUCEAT_CASES):
+            rank = int(rng.integers(1, 4)) if i % 9 else 0
+            shape = [int(rng.integers(1, 6)) for _ in range(rank)]
+            axis = int(rng.integers(-rank, rank)) if rank else 0
+            size = shape[axis] if rank else 1
+            n = int(rng.integers(1, 5))
+            ishape = (n,) if i % 11 else (n, 1)
+            idx = rng.integers(0, size + (1 if rng.random() < 0.15 else 0), ishape).astype("int32")
+            ufunc = ("add", "multiply", "maximum")[i % 3]
+            params = {"op": "reduceat", "ufunc": ufunc, "axis": axis, "index": []}
+            if ufunc != "maximum":
+                params["identity"] = 0 if ufunc == "add" else 1
+            dtype = dts[int(rng.integers(0, len(dts)))]
+            cid = "reduceat_%04d" % i
+            cases.append({"case_id": cid, "op": "index", "dtype": dtype, "shape": shape, "params": params, "index_arrays": {"i0": ["int32", list(ishape)]}, "arrays_seed": int(rng.integers(0, 2**31))})
+            stash[cid] = {"i0": idx}
         for i in range(FUZZ_CASES):
             rank = int(rng.integers(1, 4))
             shape = [int(rng.choice([0, 1, 2, 3, 4, 5], p=[0.05, 0.1, 0.2, 0.25, 0.2, 0.2])) for _ in range(rank)]

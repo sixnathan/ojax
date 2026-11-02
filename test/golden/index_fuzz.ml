@@ -68,58 +68,81 @@ let program case names values =
     | _ -> env
   in
   let x = List.assoc "x" env in
-  let idx = List.map (index_of env) (U.to_list (U.member "index" params)) in
-  let flag key =
-    match U.member key params with `Bool b -> Some b | _ -> None
-  in
-  let indices_are_sorted = flag "indices_are_sorted" in
-  let unique_indices = flag "unique_indices" in
-  let normalize_indices = flag "wrap_negative_indices" in
-  let mode =
-    match U.member "mode" params with `String m -> Some m | _ -> None
-  in
-  let y () =
-    match U.member "y_scalar" params with
-    | `Null -> List.assoc "y" env
-    | v -> scalar_value v
-  in
-  let update f =
-    f ?indices_are_sorted ?unique_indices ?mode ?normalize_indices x idx (y ())
-  in
-  match U.to_string (U.member "op" params) with
-  | "getitem" -> G.take x idx
-  | "get" ->
-      let fill_value =
-        match U.member "fill_value" params with
-        | `Float f -> Some (JU.py_float f)
-        | `Int i -> Some (JU.py_int i)
-        | _ -> None
-      in
-      G.take ?indices_are_sorted ?unique_indices ?mode ?fill_value
-        ?normalize_indices x idx
-  | "set" -> update G.at_set
-  | "add" -> update G.at_add
-  | "subtract" -> update G.at_subtract
-  | "multiply" -> update G.at_multiply
-  | "divide" -> update G.at_divide
-  | "power" -> update G.at_power
-  | "min" -> update G.at_min
-  | "max" -> update G.at_max
-  | ("ufunc_add_at" | "ufunc_multiply_at" | "ufunc_subtract_at") as op ->
-      let inplace =
-        match U.member "inplace" params with `Bool b -> b | _ -> false
-      in
-      let f =
-        match op with
-        | "ufunc_add_at" -> G.ufunc_add_at
-        | "ufunc_multiply_at" -> G.ufunc_multiply_at
-        | _ -> G.ufunc_subtract_at
-      in
-      f ~inplace x idx (y ())
-  | "apply" ->
-      G.at_apply ?indices_are_sorted ?unique_indices ?mode ?normalize_indices x
-        idx negative
-  | other -> failwith ("index_fuzz: op " ^ other)
+  if U.member "op" params = `String "reduceat" then
+    let f =
+      match U.to_string (U.member "ufunc" params) with
+      | "add" -> Ojax.Numpy.Ufuncs.add
+      | "multiply" -> Ojax.Numpy.Ufuncs.multiply
+      | _ -> Ojax.Numpy.Ufuncs.maximum
+    in
+    let identity =
+      match U.member "identity" params with
+      | `Int i -> Some (float_of_int i)
+      | _ -> None
+    in
+    let u =
+      Ojax.Numpy.Ufunc.frompyfunc ?identity
+        ~name:(U.to_string (U.member "ufunc" params))
+        (function [ a; b ] -> [ f a b ] | _ -> failwith "index_fuzz: arity")
+        ~nin:2 ~nout:1
+    in
+    Ojax.Numpy.Ufunc.reduceat
+      ~axis:(U.to_int (U.member "axis" params))
+      u x (List.assoc "i0" env)
+  else
+    let idx = List.map (index_of env) (U.to_list (U.member "index" params)) in
+    let flag key =
+      match U.member key params with `Bool b -> Some b | _ -> None
+    in
+    let indices_are_sorted = flag "indices_are_sorted" in
+    let unique_indices = flag "unique_indices" in
+    let normalize_indices = flag "wrap_negative_indices" in
+    let mode =
+      match U.member "mode" params with `String m -> Some m | _ -> None
+    in
+    let y () =
+      match U.member "y_scalar" params with
+      | `Null -> List.assoc "y" env
+      | v -> scalar_value v
+    in
+    let update f =
+      f ?indices_are_sorted ?unique_indices ?mode ?normalize_indices x idx
+        (y ())
+    in
+    match U.to_string (U.member "op" params) with
+    | "getitem" -> G.take x idx
+    | "get" ->
+        let fill_value =
+          match U.member "fill_value" params with
+          | `Float f -> Some (JU.py_float f)
+          | `Int i -> Some (JU.py_int i)
+          | _ -> None
+        in
+        G.take ?indices_are_sorted ?unique_indices ?mode ?fill_value
+          ?normalize_indices x idx
+    | "set" -> update G.at_set
+    | "add" -> update G.at_add
+    | "subtract" -> update G.at_subtract
+    | "multiply" -> update G.at_multiply
+    | "divide" -> update G.at_divide
+    | "power" -> update G.at_power
+    | "min" -> update G.at_min
+    | "max" -> update G.at_max
+    | ("ufunc_add_at" | "ufunc_multiply_at" | "ufunc_subtract_at") as op ->
+        let inplace =
+          match U.member "inplace" params with `Bool b -> b | _ -> false
+        in
+        let f =
+          match op with
+          | "ufunc_add_at" -> G.ufunc_add_at
+          | "ufunc_multiply_at" -> G.ufunc_multiply_at
+          | _ -> G.ufunc_subtract_at
+        in
+        f ~inplace x idx (y ())
+    | "apply" ->
+        G.at_apply ?indices_are_sorted ?unique_indices ?mode ?normalize_indices
+          x idx negative
+    | other -> failwith ("index_fuzz: op " ^ other)
 
 let references = Hashtbl.create 1024
 

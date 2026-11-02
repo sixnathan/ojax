@@ -38,7 +38,14 @@ let wrap_negative indices axis_size =
   let idt = dtype indices in
   NL.where_
     (bind1 T.Lt [ indices; full idt [||] 0.0 ])
-    (bind1 T.Add [ indices; full idt [||] (float_of_int axis_size) ])
+    (bind1 T.Add
+       [
+         indices;
+         (match full idt [||] (float_of_int axis_size) with
+         | T.Concrete nd when (get_aval indices).T.weak_type ->
+             T.Concrete (Nd.as_weak nd)
+         | c -> c);
+       ])
     indices
 
 let take ?axis ?mode ?fill_value ?(unique_indices = false)

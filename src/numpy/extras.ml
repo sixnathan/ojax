@@ -193,27 +193,29 @@ let at_update ?(axis = 0) build x idxs y =
   let m = Array.length idx_shape in
   let trailing = Array.sub sh (axis + k) (Array.length sh - axis - k) in
   let slice_shape = Array.concat [ Array.sub sh 0 axis; idx_shape; trailing ] in
-  let dt, weak =
-    Dtypes.result_type [ (xa.dtype, xa.weak_type); (ya.dtype, ya.weak_type) ]
-  in
-  let x' = Core.convert_like ~weak x dt in
-  let y' = Core.convert_like ~weak y dt in
-  let y' = NL.broadcast_to y' slice_shape in
-  let dims =
-    {
-      update_window_dims =
-        Array.append (Array.init axis Fun.id)
-          (Array.init (Array.length trailing) (fun i -> axis + m + i));
-      inserted_window_dims = Array.init k (fun j -> axis + j);
-      scatter_dims_to_operand_dims = Array.init k (fun j -> axis + j);
-      s_operand_batching_dims = [||];
-      s_scatter_indices_batching_dims = [||];
-      s_sorted_unique = false;
-      s_clip = false;
-    }
-  in
-  let out = build x' indices y' dims in
-  Core.convert_like ~weak:xa.weak_type out xa.dtype
+  if Array.mem 0 slice_shape then x
+  else
+    let dt, weak =
+      Dtypes.result_type [ (xa.dtype, xa.weak_type); (ya.dtype, ya.weak_type) ]
+    in
+    let x' = Core.convert_like ~weak x dt in
+    let y' = Core.convert_like ~weak y dt in
+    let y' = NL.broadcast_to y' slice_shape in
+    let dims =
+      {
+        update_window_dims =
+          Array.append (Array.init axis Fun.id)
+            (Array.init (Array.length trailing) (fun i -> axis + m + i));
+        inserted_window_dims = Array.init k (fun j -> axis + j);
+        scatter_dims_to_operand_dims = Array.init k (fun j -> axis + j);
+        s_operand_batching_dims = [||];
+        s_scatter_indices_batching_dims = [||];
+        s_sorted_unique = false;
+        s_clip = false;
+      }
+    in
+    let out = build x' indices y' dims in
+    Core.convert_like ~weak:xa.weak_type out xa.dtype
 
 let at_set ?axis x idxs y =
   at_update ?axis (fun a i u d -> L.scatter a i u d) x idxs y
@@ -2144,9 +2146,8 @@ let roots ?(strip_zeros = true) p =
     | Dtype.F64 | Dtype.Complex128 -> Dtype.Complex128
     | _ -> Dtype.Complex64
   in
-  if not strip_zeros then
-    if n < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
-    else roots_of_coefficients p
+  if n < 2 then Concrete (Ndarray.of_complex complex_dt [| 0 |] [||])
+  else if not strip_zeros then roots_of_coefficients p
   else begin
     let nd = host "roots" p in
     let nonzero i =

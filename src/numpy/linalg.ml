@@ -432,15 +432,17 @@ and pinv_body ~hermitian ~rtol a =
     in
     let last = ndim s - 1 in
     let s0 =
-      Core.bind1
-        (Types.Slice
-           {
-             start_indices = Array.make (last + 1) 0;
-             limit_indices =
-               Array.mapi (fun i d -> if i = last then 1 else d) (shape s);
-             strides = None;
-           })
-        [ s ]
+      if (shape s).(last) = 1 then s
+      else
+        Core.bind1
+          (Types.Slice
+             {
+               start_indices = Array.make (last + 1) 0;
+               limit_indices =
+                 Array.mapi (fun i d -> if i = last then 1 else d) (shape s);
+               strides = None;
+             })
+          [ s ]
     in
     let cutoff = UF.multiply rtol s0 in
     let s =

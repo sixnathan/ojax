@@ -1282,17 +1282,8 @@ let tracer_batch_run op params a b =
   | _ -> None
 
 let slice_prefix v stop =
-  let sh = (Ojax.Core.get_aval v).Ojax.Types.shape in
-  let limit = Array.copy sh in
-  limit.(0) <- stop;
-  Ojax.Core.bind1
-    (Ojax.Types.Slice
-       {
-         start_indices = Array.make (Array.length sh) 0;
-         limit_indices = limit;
-         strides = None;
-       })
-    [ v ]
+  let module I = Ojax.Numpy.Nd_index in
+  I.take v [ I.Range { start = None; stop = Some stop } ]
 
 let library_sweep op v =
   let module NF = Ojax.Nn.Functions in

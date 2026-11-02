@@ -1345,7 +1345,7 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
   let body v =
     pad_body ~mode ?stat_length ?end_values ~reflect_type v pad_width 0.0
   in
-  if ndim v = 0 then v
+  if ndim v = 0 && mode <> "constant" then v
   else if mode = "constant" then begin
     let literal =
       if bool_literal then
@@ -1356,6 +1356,7 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
     in
     Jnp_util.jit1 "_pad" ~key
       (function
+        | [ v; _ ] when ndim v = 0 -> v
         | [ v; cval ] ->
             let cfg = pad_widths_config pad_width in
             let cval =

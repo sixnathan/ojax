@@ -236,7 +236,16 @@ let raw_status (expected : Npz.t) (actual : Npz.t) =
       nan_sign nan_payload neg_zero value first
 
 let raw_prefix = "raw:"
-let ratcheted_prefixes = [ "fuzz:"; "fuzz_s2:"; "compose_fuzz:"; "coverage:" ]
+
+let ratcheted_prefixes =
+  [
+    "fuzz:";
+    "fuzz_s2:";
+    "compose_fuzz:";
+    "option_fuzz:";
+    "text_option_fuzz:";
+    "coverage:";
+  ]
 
 let is_ratcheted suite =
   List.exists

@@ -8,7 +8,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-PREFIXES = ("fuzz:", "fuzz_s2:", "compose_fuzz:", "coverage:")
+PREFIXES = ("fuzz:", "fuzz_s2:", "compose_fuzz:", "option_fuzz:", "text_option_fuzz:", "coverage:")
 BASELINE_DIR = os.path.join("test", "golden", "identical_rows")
 DROPPED = "dropped.tsv"
 TEXT_GROUPS = {"parity": "text_parity", "jaxpr": "text_parity", "coverage": "text_coverage", "fuzz": "text_fuzz"}

@@ -291,7 +291,7 @@ let placed_dispatch (top : trace) prim args =
 
 let rejected_dtype name dt classes =
   raise
-    (Errors.jax_type_error
+    (Py_exn.Type_error
        (Printf.sprintf "%s does not accept dtype %s. Accepted dtypes are %s."
           name (Dtype.short_name dt) classes))
 
@@ -580,7 +580,19 @@ and dispatch_equal top prim args =
       let outs = process_primitive top prim tracers in
       List.map full_lower outs
 
+let check_broadcast prim args =
+  if is_elementwise prim then
+    match List.map value_shape args with
+    | first :: rest when List.exists (fun s -> s <> first) rest ->
+        ignore
+          (Validate.lax_broadcast_shapes
+             ~name:(Pretty_printer.primitive_name prim)
+             (first :: rest))
+    | _ -> ()
+
 let bind prim args =
+  check_broadcast prim args;
+  Linalg_shape.check prim (fun () -> List.map value_shape args);
   check_operands prim args;
   (match prim with
   | Reduce_sum axes when not (Config.value Config.allow_f16_reductions) ->

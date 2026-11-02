@@ -133,7 +133,7 @@ let hankel ?r c =
     match r with Some v -> v | None -> Numpy.Array_creation.zeros_like c
   in
   if Array.length (shape c) = 0 then
-    invalid_arg "hankel: c must be at least 1-dimensional, got a scalar.";
+    Py_exn.value_error "hankel: c must be at least 1-dimensional, got a scalar.";
   if Array.length (shape r) = 0 then
     invalid_arg "hankel: r must be at least 1-dimensional, got a scalar.";
   require_vector "hankel" c;
@@ -192,7 +192,8 @@ let companion a =
   require_vector "companion" a;
   let n = (shape a).(0) in
   if n < 2 then
-    invalid_arg "The length of `a` along the last axis must be at least 2";
+    Py_exn.value_error
+      "The length of `a` along the last axis must be at least 2";
   let rest =
     b1
       (Slice
@@ -209,7 +210,7 @@ let fiedler_companion a =
   let a = inexact (NL.atleast_1d a) in
   (let sh = shape a in
    if sh.(Array.length sh - 1) = 0 then
-     invalid_arg
+     Py_exn.value_error
        (Printf.sprintf
           "fiedler_companion requires the last axis of 'a' to have nonzero \
            length, but got an array of shape %s."
@@ -270,8 +271,9 @@ let leslie f s =
   require_vector "leslie" s;
   let n = (shape f).(0) in
   if n < 2 then
-    invalid_arg "The length of f along the last axis must be at least 2";
-  if (shape s).(0) <> n - 1 then invalid_arg "Incorrect lengths for f and s.";
+    Py_exn.value_error "The length of f along the last axis must be at least 2";
+  if (shape s).(0) <> n - 1 then
+    Py_exn.value_error "Incorrect lengths for f and s.";
   let dt = NL.result_type [ f; s ] in
   let f = NL.astype f dt and s = NL.astype s dt in
   set_first_row (NL.diag ~k:(-1) s) f
@@ -429,11 +431,11 @@ let convolution_matrix ?(mode = "full") a n =
   if n <= 0 then
     invalid_arg (Printf.sprintf "n must be a positive integer; got %d." n);
   if Array.length (shape a) = 0 then
-    invalid_arg
+    Py_exn.value_error
       "convolution_matrix: a must be at least 1-dimensional, got a scalar.";
   let m = (shape a).(Array.length (shape a) - 1) in
   if m < 1 then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf "len(a) must be at least 1; got shape %s."
          (Lax.Utils.py_tuple (shape a)));
   if not (List.mem mode [ "full"; "valid"; "same" ]) then

@@ -848,8 +848,7 @@ let is_complex_dtype = function
 let reject_complex name v =
   if is_complex_dtype (dtype v) then
     raise
-      (Errors.jax_type_error
-         (name ^ " does not support complex-valued inputs."))
+      (Py_exn.Type_error (name ^ " does not support complex-valued inputs."))
 
 let real_only name x =
   let x = promote1 x in
@@ -871,7 +870,7 @@ let single_or_double x =
   | D.F32 | D.F64 -> ()
   | d ->
       raise
-        (Errors.jax_type_error
+        (Py_exn.Type_error
            (Printf.sprintf
               "x.dtype=%s is not supported, see docstring for supported types."
               (D.short_name d)))
@@ -1723,7 +1722,7 @@ let zeta ?q x =
 
 let reject_bool x =
   if dtype x = D.Bool then
-    raise (Errors.jax_type_error "sub does not accept dtype bool.")
+    raise (Py_exn.Type_error "sub does not accept dtype bool.")
 
 let softmax ?axis x =
   reject_bool x;
@@ -1806,7 +1805,7 @@ let spence x =
   | D.F32 | D.F64 -> ()
   | d ->
       raise
-        (Errors.jax_type_error
+        (Py_exn.Type_error
            (Printf.sprintf
               "x.dtype=%s is not supported, see docstring for supported types."
               (D.short_name d))));
@@ -3114,7 +3113,7 @@ let check_lpmn m n z =
         (Printf.sprintf
            "z.dtype=%s is not supported, see docstring for supported types."
            (D.short_name d)));
-  if Array.length (shape z) <> 1 then invalid_arg "z must be a 1D array.";
+  if Array.length (shape z) <> 1 then Py_exn.value_error "z must be a 1D array.";
   if m <> n then invalid_arg "Computations for m!=n are not yet supported."
 
 let lpmn m n z =

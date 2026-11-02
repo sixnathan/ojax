@@ -3,7 +3,7 @@ open Types
 let resolve_strides n = function Some s -> s | None -> Array.make n 1
 
 let type_error fmt =
-  Printf.ksprintf (fun msg -> raise (Errors.Jax_type_error msg)) fmt
+  Printf.ksprintf (fun msg -> raise (Py_exn.Type_error msg)) fmt
 
 let all_ge a b =
   let n = Stdlib.min (Array.length a) (Array.length b) in

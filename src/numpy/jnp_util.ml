@@ -27,11 +27,24 @@ let broadcast_to v sh =
   if s = sh then v
   else begin
     let nlead = Array.length sh - Array.length s in
-    if nlead < 0 then invalid_arg "broadcast_to: incompatible shapes";
+    if nlead < 0 then
+      Py_exn.value_error
+        (Printf.sprintf
+           "Cannot broadcast to shape with fewer dimensions: arr_shape=%s \
+            shape=%s"
+           (Validate.python_tuple s) (Validate.python_tuple sh));
     Array.iteri
       (fun i d ->
         if not (d = sh.(i + nlead) || d = 1) then
-          invalid_arg "broadcast_to: incompatible shapes")
+          let name = D.numpy_name (dtype v) in
+          let text dims =
+            String.concat "," (Array.to_list (Array.map string_of_int dims))
+          in
+          Py_exn.value_error
+            (Printf.sprintf
+               "Incompatible types for broadcasting: input type=%s[%s] and \
+                requested type=%s[%s]"
+               name (text s) name (text sh)))
       s;
     C.bind1
       (T.Broadcast_in_dim
@@ -61,7 +74,7 @@ let broadcast_arrays vs =
   | first :: rest ->
       if List.for_all (fun v -> shape v = shape first) rest then vs
       else
-        let sh = C.elementwise_shape (List.map shape vs) in
+        let sh = Validate.broadcast_shapes (List.map shape vs) in
         List.map (fun v -> broadcast_to v sh) vs
 
 let select_unless_empty c a b =

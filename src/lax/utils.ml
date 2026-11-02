@@ -7,14 +7,14 @@ let py_tuple a =
   | [ x ] -> Printf.sprintf "(%d,)" x
   | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
 
-let type_error msg = raise (Errors.Jax_type_error msg)
+let type_error msg = raise (Py_exn.Type_error msg)
 
 let check_conv_window (dn : conv_dims) rhs_shape =
   let n = Array.length dn.rhs_spec - 2 in
   for i = 0 to n - 1 do
     let w = rhs_shape.(dn.rhs_spec.(i + 2)) in
     if w <= 0 then
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "Cannot lower jaxpr with verifier errors:\n\
             \texpects window to have positive value for %d-th window \

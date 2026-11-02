@@ -11,14 +11,7 @@ let dtype_of v = (Core.get_aval v).dtype
 let size_of v = Array.fold_left ( * ) 1 (shape v)
 let rank v = Array.length (shape v)
 let canon n a = if a < 0 then a + n else a
-
-let canonicalize_axis axis n =
-  if axis < -n || axis >= n then
-    invalid_arg
-      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" axis
-         n);
-  canon n axis
-
+let canonicalize_axis = Validate.canonicalize_axis
 let default_int () = Dtypes.default_int_dtype ()
 let default_float () = Dtypes.default_float_dtype ()
 
@@ -151,8 +144,9 @@ let check_index_extent dt extent =
   in
   match bound with
   | Some (largest, name) when extent > largest ->
-      invalid_arg
-        (Printf.sprintf "Python integer %d out of bounds for %s" extent name)
+      raise
+        (Py_exn.Overflow_error
+           (Printf.sprintf "Python integer %d out of bounds for %s" extent name))
   | _ -> ()
 
 let normalize_index idx extent =
@@ -254,7 +248,7 @@ let nonzero ?size ?fill_value a =
   let sh = shape a in
   let n = Array.length sh in
   if n = 0 then
-    invalid_arg
+    Py_exn.value_error
       "Calling nonzero on 0d arrays is not allowed. Use \
        jnp.atleast_1d(scalar).nonzero() instead.";
   let mask = nonzero_mask a in
@@ -505,7 +499,7 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
   let ax = match axis with None -> 0 | Some x -> canon (rank a) x in
   let extent = (shape arr).(ax) in
   if extent = 0 && size <> 0 && fill_value = None then
-    invalid_arg
+    Py_exn.value_error
       "jnp.unique: for zero-sized input with nonzero size argument, fill_value \
        must be specified";
   let aux, mask, perm =
@@ -583,7 +577,7 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
    in
    match (size, fill_value) with
    | Some s, None when extent = 0 && s <> 0 ->
-       invalid_arg
+       Py_exn.value_error
          "jnp.unique: for zero-sized input with nonzero size argument, \
           fill_value must be specified"
    | _ -> ());
@@ -1083,7 +1077,7 @@ let sum_at n data ids =
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims
 
 let bincount ?weights ?(minlength = 0) ?length x =
-  if rank x <> 1 then invalid_arg "only 1-dimensional input supported.";
+  if rank x <> 1 then Py_exn.value_error "only 1-dimensional input supported.";
   let x =
     if dtype_of x = Dtype.Bool then L.convert_element_type x Dtype.I32 else x
   in
@@ -1093,10 +1087,10 @@ let bincount ?weights ?(minlength = 0) ?length x =
       ()
   | d ->
       raise
-        (Errors.jax_type_error
+        (Py_exn.Type_error
            ("x argument to bincount must have an integer type; got "
           ^ Dtype.short_name d)));
-  if rank x <> 1 then invalid_arg "only 1-dimensional input supported.";
+  if rank x <> 1 then Py_exn.value_error "only 1-dimensional input supported.";
   let n =
     match length with
     | Some l -> l
@@ -1268,7 +1262,7 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
   in
   let n_dims = (shape sample).(1) in
   if Array.length bins <> 0 && Array.length bins <> n_dims then
-    invalid_arg "should be a bin for each dimension.";
+    Py_exn.value_error "should be a bin for each dimension.";
   let bins_for i = if Array.length bins = 0 then 10 else bins.(i) in
   let column i =
     let sh = shape sample in
@@ -1326,7 +1320,7 @@ let histogram2d ?(bins = [| 10; 10 |]) ?range ?weights ?(density = false) x y =
 
 let interp_body ?left ?right ?period x xp fp =
   if shape xp <> shape fp || rank xp <> 1 then
-    invalid_arg "xp and fp must be one-dimensional arrays of equal size";
+    Py_exn.value_error "xp and fp must be one-dimensional arrays of equal size";
   let x, xp =
     match NL.promote_values [ as_inexact x; as_inexact xp ] with
     | [ a; b ] -> (a, b)
@@ -1440,7 +1434,7 @@ let gradient ?spacing ?axis a =
     | None -> List.init n Fun.id
   in
   if axes <> [] && List.exists (fun ax -> (shape a).(ax) < 2) axes then
-    invalid_arg
+    Py_exn.value_error
       "Shape of array too small to calculate a numerical gradient, at least 2 \
        elements are required.";
   let key = Digest.to_hex (Digest.string (Marshal.to_string axis [])) in
@@ -1562,7 +1556,8 @@ let compress ?axis ?size ?(fill_value = 0.0) condition a =
       | Tracer _ -> raise (concretization "compress" any_extra)
       | _ ->
           if Ndarray.get_f (host "compress" any_extra) [||] <> 0.0 then
-            invalid_arg "condition contains entries that are out of bounds");
+            Py_exn.value_error
+              "condition contains entries that are out of bounds");
       let bits = flat_floats (host "compress" cond) in
       let kept =
         List.filter
@@ -1607,7 +1602,7 @@ let delete ?axis a obj =
     (fun i ->
       if i < -n || i >= n then
         raise
-          (Errors.Jax_index_error
+          (Py_exn.Index_error
              (Printf.sprintf "index %d is out of bounds for axis 0 with size %d"
                 i n)))
     obj;
@@ -1817,7 +1812,7 @@ let piecewise x condlist funclist =
 let fill_diagonal ?(wrap = false) a value =
   if wrap then invalid_arg "wrap=True is not implemented, must use wrap=False";
   let sh = shape a in
-  if Array.length sh < 2 then invalid_arg "array must be at least 2-d";
+  if Array.length sh < 2 then Py_exn.value_error "array must be at least 2-d";
   let is_2d = Array.length sh = 2 in
   if (not is_2d) && Array.exists (fun d -> d <> sh.(0)) sh then
     invalid_arg "All dimensions of input must be of equal length";
@@ -1855,12 +1850,12 @@ let triu_indices ?(k = 0) ?m n =
 
 let tril_indices_from ?k a =
   let sh = shape a in
-  if Array.length sh <> 2 then invalid_arg "Only 2-D inputs are accepted";
+  if Array.length sh <> 2 then Py_exn.value_error "Only 2-D inputs are accepted";
   tril_indices ?k ~m:sh.(1) sh.(0)
 
 let triu_indices_from ?k a =
   let sh = shape a in
-  if Array.length sh <> 2 then invalid_arg "Only 2-D inputs are accepted";
+  if Array.length sh <> 2 then Py_exn.value_error "Only 2-D inputs are accepted";
   triu_indices ?k ~m:sh.(1) sh.(0)
 
 let mask_indices ?(k = 0) ?size n mask_func =
@@ -1941,8 +1936,7 @@ let reject_complex name x =
   match dtype_of x with
   | Dtype.Complex64 | Dtype.Complex128 ->
       raise
-        (Errors.jax_type_error
-           (name ^ " does not support complex-valued inputs"))
+        (Py_exn.Type_error (name ^ " does not support complex-valued inputs"))
   | _ -> ()
 
 let frexp_info = function
@@ -2211,7 +2205,7 @@ let polydiv ?(trim_leading_zeros = false) u v =
 let polyfit_parts ?rcond ?w x y deg =
   let order = deg + 1 in
   if deg < 0 then invalid_arg "expected deg >= 0";
-  let type_error msg = raise (Errors.Jax_type_error msg) in
+  let type_error msg = raise (Py_exn.Type_error msg) in
   if rank x <> 1 then type_error "expected 1D vector for x";
   if size_of x = 0 then type_error "expected non-empty vector for x";
   if rank y < 1 || rank y > 2 then type_error "expected 1D or 2D array for y";
@@ -2225,10 +2219,9 @@ let polyfit_parts ?rcond ?w x y deg =
     | Some weights ->
         let weights = as_inexact weights in
         if rank weights <> 1 then
-          raise (Errors.jax_type_error "expected a 1-d array for weights");
+          raise (Py_exn.Type_error "expected a 1-d array for weights");
         if (shape weights).(0) <> (shape y).(0) then
-          raise
-            (Errors.jax_type_error "expected w and y to have the same length");
+          raise (Py_exn.Type_error "expected w and y to have the same length");
         let column = NL.reshape weights [| (shape weights).(0); 1 |] in
         ( U.multiply lhs column,
           U.multiply y (if rank y = 2 then column else weights) )

@@ -313,7 +313,7 @@ let log_softmax ?(axis = -1) ?where:mask x =
 
 let standardize ?(axis = -1) ?mean ?variance ?(epsilon = 1e-5) ?where:mask
     ?(algorithm = "fast") x =
-  let ax = [| canon_axis (Array.length (shape x)) axis |] in
+  let ax = [| axis |] in
   let mean =
     match mean with
     | Some m -> m

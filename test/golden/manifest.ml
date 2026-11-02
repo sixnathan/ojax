@@ -5192,8 +5192,25 @@ let error_types_selftest () =
   check "division" "typed" (tier "ZeroDivisionError" Division_by_zero);
   check "division against a value error" "mismatch"
     (tier "ValueError" Division_by_zero);
-  check "assertion needs Assert_failure" "mismatch"
-    (tier "AssertionError" (Invalid_argument "authored"))
+  check "assertion needs a class" "mismatch"
+    (tier "AssertionError" (Invalid_argument "authored"));
+  check "assert_failure is AssertionError" "typed"
+    (tier "AssertionError" (Assert_failure ("a.ml", 1, 1)));
+  check "exact value error" "typed"
+    (tier "ValueError" (Ojax.Py_exn.Value_error "x"));
+  check "type error against value error" "mismatch"
+    (tier "ValueError" (Ojax.Py_exn.Type_error "x"));
+  check "a subclass is not the class" "mismatch"
+    (tier "TypeError" (Ojax.Errors.Jax_type_error "x"));
+  check "a subclass is not the base" "mismatch"
+    (tier "IndexError" (Ojax.Errors.Jax_index_error "x"));
+  check "tracer bool is not concretization" "mismatch"
+    (tier "ConcretizationTypeError"
+       (Ojax.Errors.Tracer_bool_conversion_error "x"));
+  check "typed promotion is not value error" "mismatch"
+    (tier "ValueError" (Ojax.Dtypes.Type_promotion_error "x"));
+  check "authored stays apart" "authored"
+    (tier "OverflowError" (Failure "out of bounds for int32"))
 
 let rec attributed_with_coverage suites =
   List.map attributed (coverage_suites @ apicov_suites @ suites)

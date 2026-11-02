@@ -129,7 +129,11 @@ let contains s sub =
 let raises name sub f =
   match f () with
   | _ -> Alcotest.failf "%s: expected an error" name
-  | exception (Invalid_argument msg | Failure msg) ->
+  | exception
+      ( Invalid_argument msg
+      | Failure msg
+      | Ojax.Py_exn.Value_error msg
+      | Ojax.Py_exn.Type_error msg ) ->
       if not (contains msg sub) then
         Alcotest.failf "%s: unexpected message %s" name msg
 

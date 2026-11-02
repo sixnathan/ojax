@@ -11,13 +11,7 @@ let bind = C.bind
 let bind1 = C.bind1
 let prod sh = Array.fold_left ( * ) 1 sh
 let const_full dt sh x = Core.splat dt sh x
-
-let canonicalize_axis ax n =
-  let a = if ax < 0 then ax + n else ax in
-  if a < 0 || a >= n then
-    invalid_arg
-      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" ax n);
-  a
+let canonicalize_axis = Validate.canonicalize_axis
 
 let broadcasted_iota dt sh dim =
   bind1 (T.Iota { dtype = dt; shape = sh; dimension = dim }) []

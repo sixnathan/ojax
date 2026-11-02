@@ -214,7 +214,7 @@ let poly seq =
     else s
   in
   if Array.length (shape s) <> 1 then
-    invalid_arg "input must be 1d or non-empty square 2d array.";
+    Py_exn.value_error "input must be 1d or non-empty square 2d array.";
   let dt = dtype s in
   let n = (shape s).(0) in
   if n = 0 then const_full dt [||] 1.0

@@ -545,7 +545,7 @@ fuzz/x64_off	lx_symmetric_product_3x2_3x3_36a11c08_float32_shape_small	i	i
 fuzz/x64_off	lx_symmetric_product_3x2_3x3_52411c53_float32_shape_other	i	i
 fuzz/x64_off	lx_symmetric_product_3x2_3x3_52411c53_float32_shape_small	b	b
 fuzz/x64_off	lx_tridiagonal_4x4_6f650ed3_float32_shape_other	i	i
-fuzz/x64_off	lx_tridiagonal_4x4_6f650ed3_float32_shape_small	b	-
+fuzz/x64_off	lx_tridiagonal_4x4_6f650ed3_float32_shape_small	b	b
 fuzz/x64_off	nn_attention_3x2x4_5x2x4_5x2x4_b92524a9_float32_shape_other	i	i
 fuzz/x64_off	nn_attention_3x2x4_5x2x4_5x2x4_b92524a9_float32_shape_small	i	i
 fuzz/x64_off	nn_hard_swish_4_156e0cff_float32_shape_other	i	i
@@ -4239,7 +4239,7 @@ fuzz/x64_on	lx_symmetric_product_3x2_3x3_36a11c08_float64_shape_small	b	b
 fuzz/x64_on	lx_symmetric_product_3x2_3x3_52411c53_float64_shape_other	i	i
 fuzz/x64_on	lx_symmetric_product_3x2_3x3_52411c53_float64_shape_small	i	i
 fuzz/x64_on	lx_tridiagonal_4x4_6f650ed3_float64_shape_other	i	i
-fuzz/x64_on	lx_tridiagonal_4x4_6f650ed3_float64_shape_small	b	-
+fuzz/x64_on	lx_tridiagonal_4x4_6f650ed3_float64_shape_small	b	b
 fuzz/x64_on	nn_hard_swish_4_156e0cff_float64_shape_other	i	i
 fuzz/x64_on	nn_hard_swish_4_156e0cff_float64_shape_small	i	i
 fuzz/x64_on	nn_logsumexp_2x3_bcf21000_float64_shape_other	i	i

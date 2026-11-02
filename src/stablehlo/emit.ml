@@ -4976,8 +4976,10 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in
           emit_inlined ctx eqn in_ids inline
       | Core.Jvp_rule _ | Core.Vjp_rule _ | Core.Callback_rule _ ->
-          failwith
-            "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
+          raise
+            (Py_exn.Type_error
+               "can't apply forward-mode autodiff (jvp) to a custom_vjp \
+                function."))
   | Xla_call c -> emit_call ctx eqn in_ids c
   | Stop_gradient -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
 

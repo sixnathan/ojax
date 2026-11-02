@@ -77,6 +77,10 @@ raw:complex:x64_off	20	20
 raw:complex:x64_on	40	40
 raw:compose_fuzz:x64_off	16310	18202
 raw:compose_fuzz:x64_on	22305	24900
+custom_ad:x64_off	1738	1757
+custom_ad:x64_on	1704	1720
+raw:custom_ad:x64_off	1320	1757
+raw:custom_ad:x64_on	1279	1720
 raw:conditionals:x64_off	19	19
 raw:conditionals:x64_on	23	23
 raw:contractions:x64_off	47	47

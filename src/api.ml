@@ -1213,10 +1213,9 @@ let concrete_removed =
 
 let checkpoint ?policy ?(prevent_cse : bool option)
     ?(static_argnums = ([] : int list)) ?(concrete : bool option) f =
-  ignore prevent_cse;
   if concrete <> None then raise (Py_exn.Not_implemented_error concrete_removed);
   match static_argnums with
-  | [] -> Checkpoint.checkpoint ?policy f
+  | [] -> Checkpoint.checkpoint ?policy ?prevent_cse f
   | static ->
       fun args ->
         let dynamic = List.filteri (fun i _ -> not (List.mem i static)) args in

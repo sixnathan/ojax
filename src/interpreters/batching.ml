@@ -2160,7 +2160,14 @@ let custom_batch axis_size prim vals bdims =
     match prim with
     | Custom_jvp_call id -> Custom_jvp_call (batched_rule_id id axis_size)
     | Custom_vjp_call id -> Custom_vjp_call (batched_rule_id id axis_size)
-    | Custom_lin { rule; n_res; out_avals } ->
+    | Custom_lin { rule; _ }
+      when match Core.custom_rule rule with
+           | Core.Vjp_rule _ -> true
+           | _ -> false ->
+        raise
+          (Py_exn.Type_error
+             "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
+    | Custom_lin { rule; n_res; out_avals; in_zeros } ->
         Custom_lin
           {
             rule = batched_rule_id rule axis_size;
@@ -2170,6 +2177,7 @@ let custom_batch axis_size prim vals bdims =
                 (fun (a : aval) ->
                   { a with shape = Array.append [| axis_size |] a.shape })
                 out_avals;
+            in_zeros;
           }
     | _ -> failwith "batching: not a custom primitive"
   in

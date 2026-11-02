@@ -103,6 +103,16 @@ let mul_with ?out_dtype x y =
   match out_dtype with
   | None -> mul x y
   | Some d ->
+      List.iteri
+        (fun i v ->
+          if (Core.get_aval v).dtype = Dtype.Bool then
+            Py_exn.type_error
+              (Printf.sprintf
+                 "mul does not accept dtype bool at position %d. Accepted \
+                  dtypes at position %d are subtypes of floating, \
+                  complexfloating, integer."
+                 i i))
+        [ x; y ];
       let d = Dtypes.canonicalize_dtype d in
       let cast v =
         if (Core.get_aval v).dtype = d then v

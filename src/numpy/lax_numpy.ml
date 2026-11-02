@@ -764,7 +764,12 @@ let rec round ?(decimals = 0) v =
   let dt = dtype v in
   if is_bool dt then
     Py_exn.value_error "data type dtype('bool') not compatible with finfo";
-  if is_integral dt then v
+  if is_integral dt then begin
+    if decimals < 0 then
+      Py_exn.not_implemented_error
+        "integer np.round not implemented for decimals < 0";
+    v
+  end
   else if dt = D.Complex64 || dt = D.Complex128 then
     bind1 T.Complex
       [

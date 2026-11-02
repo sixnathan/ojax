@@ -1618,6 +1618,8 @@ let gradient ?spacing ?axis ?(edge_order : int option) a =
         [ a; Jnp_util.py_float spacing ]
 
 let choose ?(mode = "raise") a choices =
+  if not (Dtypes.issubdtype (dtype_of a) `Integer) then
+    Py_exn.value_error "`a` array must be integer typed";
   let n = List.length choices in
   let arr =
     match mode with

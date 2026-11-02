@@ -75,6 +75,13 @@ let bind_var ctx (v : var) =
   Hashtbl.replace ctx.ids v.vid n;
   n
 
+let current_function = ref "main"
+
+let in_function name thunk =
+  let saved = !current_function in
+  current_function := name;
+  Fun.protect ~finally:(fun () -> current_function := saved) thunk
+
 let used_symbols : (string, int) Hashtbl.t = Hashtbl.create 8
 let symbol_counter = ref 0
 
@@ -3452,9 +3459,11 @@ and emit_private_function ctx fname (c : closed_jaxpr) =
     (fun (v : var) nd -> emit_constant_at inner (bind_var inner v) nd)
     const_binders c.consts;
   hoist_custom_consts inner c.jaxpr;
-  List.iter
-    (fun (e : eqn) -> emit_eqn inner e (List.map (id_of_atom inner) e.inputs))
-    c.jaxpr.eqns;
+  in_function fname (fun () ->
+      List.iter
+        (fun (e : eqn) ->
+          emit_eqn inner e (List.map (id_of_atom inner) e.inputs))
+        c.jaxpr.eqns);
   let out_names = List.map (ssa_of_atom inner) c.jaxpr.outs in
   let out_types =
     List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) c.jaxpr.outs
@@ -4830,7 +4839,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       let input = atom_aval (List.hd eqn.inputs) in
       let out = sole eqn.outs in
       Py_exn.value_error
-        (Validate.rfft_empty_verifier_message ~function_name:"fft"
+        (Validate.rfft_empty_verifier_message ~function_name:!current_function
            ~location:"loc(unknown)"
            ~element:(Ir.element_type out.vaval.dtype)
            input.shape)
@@ -4962,11 +4971,12 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
       emit_constant_at ctx n nd)
     const_binders cj.consts;
   hoist_custom_consts ctx jx;
-  List.iter
-    (fun (e : eqn) ->
-      let in_ids = List.map (id_of_atom ctx) e.inputs in
-      emit_eqn ctx e in_ids)
-    jx.eqns;
+  in_function "main" (fun () ->
+      List.iter
+        (fun (e : eqn) ->
+          let in_ids = List.map (id_of_atom ctx) e.inputs in
+          emit_eqn ctx e in_ids)
+        jx.eqns);
   let out_names = List.map (ssa_of_atom ctx) jx.outs in
   let out_types =
     List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) jx.outs

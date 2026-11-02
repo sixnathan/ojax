@@ -34,11 +34,12 @@ def jax_message(call):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--goldens", required=True)
-    parser.add_argument("--log", required=True)
+    parser.add_argument("--log", default=None)
     parser.add_argument("--name", default="fuzz")
     parser.add_argument("--show", type=int, default=0)
+    parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-    ojax = ojax_messages(args.log, args.name)
+    ojax = ojax_messages(args.log, args.name) if args.log else {}
     total = same = 0
     shown = 0
     for set_name, x64 in (("x64_off", False), ("x64_on", True)):
@@ -48,6 +49,7 @@ def main():
             cases = json.load(fh)["cases"]
         suite = args.name + ":" + set_name
         by_op = {}
+        written = {}
         for case in cases:
             if "eager_error" in case or "jit_error" in case:
                 by_op.setdefault(case["op"], []).append(case)
@@ -63,14 +65,24 @@ def main():
                         devices = {k: jax.numpy.asarray(v) for k, v in arrays.items()}
                         return op(**devices, p=params)
 
-                    def jitted():
-                        return jax.jit(lambda *v: op(**dict(zip(names, v)), p=params))(*[arrays[k] for k in names])
+                    def call(*values):
+                        return op(**dict(zip(names, values)), p=params)
 
-                    for mode, call in (("eager", eager), ("jit", jitted)):
+                    def jitted():
+                        return jax.jit(call)(*[arrays[k] for k in names])
+
+                    for mode, thunk in (("eager", eager), ("jit", jitted)):
                         key = (suite, case["case_id"] + ":" + mode + ":both_raise")
-                        if key not in ojax or mode + "_error" not in case:
+                        if mode + "_error" not in case:
                             continue
-                        message = jax_message(call)
+                        if args.write:
+                            message = jax_message(thunk)
+                            if message is not None:
+                                written[case["case_id"] + ":" + mode] = message
+                        if key not in ojax:
+                            continue
+                        if not args.write:
+                            message = jax_message(thunk)
                         total += 1
                         if message == ojax[key]:
                             same += 1
@@ -78,6 +90,9 @@ def main():
                             shown += 1
                             print(key[1], "\n  JAX ", repr(message)[:200], "\n  OJAX", repr(ojax[key])[:200])
             jax.clear_caches()
+        if args.write:
+            with open(os.path.join(set_dir, "messages.json"), "w", encoding="utf-8") as fh:
+                json.dump({"messages": written}, fh, sort_keys=True, indent=0)
     print(f"{args.name}: both-raise rows {total}, raw message identical {same}")
 
 

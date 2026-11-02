@@ -9,14 +9,37 @@ let instantiate_zero primal t =
     | v -> v
   else t
 
-let custom_jvp ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =
-  let rule primals tangents =
-    let tangents = List.map2 instantiate_zero primals tangents in
-    jvp primals tangents
-  in
-  let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp = rule }) in
-  Core.register_custom_names id ~name ~jvp_name;
-  fun args -> Core.bind (Custom_jvp_call id) args
+let split_nondiff nondiff args =
+  ( List.filteri (fun i _ -> List.mem i nondiff) args,
+    List.filteri (fun i _ -> not (List.mem i nondiff)) args )
+
+let merge_nondiff nondiff kept diff =
+  let total = List.length kept + List.length diff in
+  let k = ref kept and d = ref diff in
+  List.init total (fun i ->
+      let source = if List.mem i nondiff then k else d in
+      match !source with
+      | v :: tl ->
+          source := tl;
+          v
+      | [] -> invalid_arg "custom derivative: arity")
+
+let rec custom_jvp ?(nondiff_argnums = []) ?(name = "f") ?(jvp_name = "jvp")
+    primal ~jvp =
+  if nondiff_argnums <> [] then fun args ->
+    let kept, diff = split_nondiff nondiff_argnums args in
+    custom_jvp ~name ~jvp_name
+      (fun d -> primal (merge_nondiff nondiff_argnums kept d))
+      ~jvp:(fun primals tangents -> jvp (kept @ primals) tangents)
+      diff
+  else
+    let rule primals tangents =
+      let tangents = List.map2 instantiate_zero primals tangents in
+      jvp primals tangents
+    in
+    let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp = rule }) in
+    Core.register_custom_names id ~name ~jvp_name;
+    fun args -> Core.bind (Custom_jvp_call id) args
 
 let add_tangents x y =
   if Ad_util.is_symbolic_zero x then y
@@ -48,12 +71,20 @@ let defjvps ?name primal rules =
   self := call;
   call
 
-let custom_vjp primal ~fwd ~bwd =
-  let id =
-    Core.register_custom_rule
-      (Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed = None })
-  in
-  fun args -> Core.bind (Custom_vjp_call id) args
+let rec custom_vjp ?(nondiff_argnums = []) primal ~fwd ~bwd =
+  if nondiff_argnums <> [] then fun args ->
+    let kept, diff = split_nondiff nondiff_argnums args in
+    custom_vjp
+      (fun d -> primal (merge_nondiff nondiff_argnums kept d))
+      ~fwd:(fun d -> fwd (merge_nondiff nondiff_argnums kept d))
+      ~bwd:(fun res ct -> bwd (kept @ res) ct)
+      diff
+  else
+    let id =
+      Core.register_custom_rule
+        (Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed = None })
+    in
+    fun args -> Core.bind (Custom_vjp_call id) args
 
 type symbolic_zero = { aval : aval }
 type tangent = Symbolic_zero of symbolic_zero | Tangent of value

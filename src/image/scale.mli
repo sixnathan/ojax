@@ -31,6 +31,7 @@ val scale_and_translate :
   translation:float array ->
   method_:resize_method ->
   ?antialias:bool ->
+  ?precision:Lax_config.precision ->
   unit ->
   Types.value
 
@@ -39,5 +40,6 @@ val resize :
   shape:int array ->
   method_:resize_method ->
   ?antialias:bool ->
+  ?precision:Lax_config.precision ->
   unit ->
   Types.value

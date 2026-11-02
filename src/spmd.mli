@@ -97,6 +97,7 @@ val shard_map :
   ?mesh:mesh ->
   ?axis_names:string list ->
   ?in_specs:partition_spec list ->
+  ?check_vma:bool ->
   out_specs:partition_spec list ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
@@ -114,6 +115,7 @@ val pmap :
   ?axis_name:string ->
   ?in_axes:int option list ->
   ?out_axes:int ->
+  ?axis_size:int ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t

@@ -68,6 +68,7 @@ val scaled_matmul :
 val scaled_dot_general :
   ?preferred_element_type:Dtype.t ->
   ?configs:block_scale_config list ->
+  ?implementation:string ->
   lhs_contract:int array ->
   rhs_contract:int array ->
   lhs_batch:int array ->
@@ -84,6 +85,11 @@ val dot_product_attention :
   ?bias:Types.value ->
   ?mask:Types.value ->
   ?scale:float ->
+  ?is_causal:bool ->
+  ?query_seq_lengths:Types.value ->
+  ?key_value_seq_lengths:Types.value ->
+  ?local_window_size:int * int ->
+  ?implementation:string ->
   query:Types.value ->
   key:Types.value ->
   value:Types.value ->
@@ -105,3 +111,28 @@ val logsumexp_sign :
   ?where:Types.value ->
   Types.value ->
   Types.value * Types.value
+
+val dot_product_attention_residual :
+  ?bias:Types.value ->
+  ?mask:Types.value ->
+  ?scale:float ->
+  ?is_causal:bool ->
+  ?query_seq_lengths:Types.value ->
+  ?key_value_seq_lengths:Types.value ->
+  ?local_window_size:int * int ->
+  ?implementation:string ->
+  ?return_residual:bool ->
+  query:Types.value ->
+  key:Types.value ->
+  value:Types.value ->
+  unit ->
+  Types.value * Types.value
+
+val scaled_dot_general_dimension_numbers :
+  ?preferred_element_type:Dtype.t ->
+  ?configs:block_scale_config list ->
+  ?implementation:string ->
+  dimension_numbers:(int array * int array) * (int array * int array) ->
+  Types.value ->
+  Types.value ->
+  Types.value

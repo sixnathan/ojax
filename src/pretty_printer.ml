@@ -896,7 +896,11 @@ let jax_params (e : eqn) =
             (match c.conv_precision with
             | Some (l, r) -> Printf.sprintf "(Precision.%s, Precision.%s)" l r
             | None -> "None") );
-        ("preferred_element_type", Plain "None");
+        ( "preferred_element_type",
+          Plain
+            (match c.conv_preferred with
+            | Some d -> Dtype.short_name d
+            | None -> "None") );
         ("rhs_dilation", Plain (py_ints c.rhs_dilation));
         ("window_strides", Plain (py_ints c.window_strides));
       ]

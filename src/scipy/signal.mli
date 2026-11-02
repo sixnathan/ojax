@@ -1,21 +1,35 @@
 open Types
 
-val convolve : ?mode:string -> ?method_:string -> value -> value -> value
+val convolve :
+  ?mode:string ->
+  ?method_:string ->
+  ?precision:Lax_config.precision ->
+  value ->
+  value ->
+  value
 
 val convolve2d :
   ?mode:string ->
   ?boundary:string ->
   ?fillvalue:float ->
+  ?precision:Lax_config.precision ->
   value ->
   value ->
   value
 
-val correlate : ?mode:string -> ?method_:string -> value -> value -> value
+val correlate :
+  ?mode:string ->
+  ?method_:string ->
+  ?precision:Lax_config.precision ->
+  value ->
+  value ->
+  value
 
 val correlate2d :
   ?mode:string ->
   ?boundary:string ->
   ?fillvalue:float ->
+  ?precision:Lax_config.precision ->
   value ->
   value ->
   value

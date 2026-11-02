@@ -54,13 +54,15 @@ let test_put () =
   let a = f32 [| 5 |] [| 0.; 0.; 0.; 0.; 0. |] in
   let ind = i32 [| 3 |] [| 0.; 2.; 4. |] in
   let v = f32 [| 3 |] [| 10.; 20.; 30. |] in
-  Alcotest.check farr "put" [| 10.; 0.; 20.; 0.; 30. |] (read (IDX.put a ind v));
+  Alcotest.check farr "put"
+    [| 10.; 0.; 20.; 0.; 30. |]
+    (read (IDX.put ~inplace:false a ind v));
   let a2 = f32 [| 2; 3 |] [| 0.; 0.; 0.; 0.; 0.; 0. |] in
   let ind2 = i32 [| 2 |] [| 0.; 4. |] in
   let v2 = f32 [| 2 |] [| 7.; 9. |] in
   Alcotest.check farr "put 2d"
     [| 7.; 0.; 0.; 0.; 9.; 0. |]
-    (read (IDX.put a2 ind2 v2))
+    (read (IDX.put ~inplace:false a2 ind2 v2))
 
 let test_put_along_axis () =
   let arr = i32 [| 2; 3 |] [| 10.; 30.; 20.; 60.; 40.; 50. |] in
@@ -68,7 +70,7 @@ let test_put_along_axis () =
   let v = i32 [| 2; 1 |] [| 99.; 99. |] in
   Alcotest.check farr "put_along_axis"
     [| 10.; 99.; 20.; 99.; 40.; 50. |]
-    (read (IDX.put_along_axis ~axis:1 arr ind v))
+    (read (IDX.put_along_axis ~axis:1 ~inplace:false arr ind v))
 
 let () =
   Alcotest.run "numpy_indexing"

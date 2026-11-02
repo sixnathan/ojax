@@ -1,5 +1,7 @@
 val sort :
   ?axis:int option ->
+  ?kind:string ->
+  ?order:string ->
   ?stable:bool ->
   ?descending:bool ->
   Types.value ->
@@ -7,6 +9,8 @@ val sort :
 
 val argsort :
   ?axis:int option ->
+  ?kind:string ->
+  ?order:string ->
   ?stable:bool ->
   ?descending:bool ->
   ?dtype:Dtype.t ->

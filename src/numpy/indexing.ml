@@ -279,7 +279,12 @@ let identity_scatter_dims r =
     s_clip = false;
   }
 
-let put ?mode a ind v =
+let put ?mode ?(inplace = true) a ind v =
+  if inplace then
+    raise
+      (Py_exn.Value_error
+         "jax.numpy.put cannot modify arrays in-place, because JAX arrays are \
+          immutable. Pass inplace=False to instead return an updated array.");
   let ash = shape a in
   let asize = Array.fold_left ( * ) 1 ash in
   let ind = NL.ravel ind in
@@ -516,7 +521,13 @@ let dslice_index x slices =
       (Np_ints.mark_gather_flags ~sorted:true ~unique:true prim)
       [ x; gather_array ]
 
-let put_along_axis ?axis ?mode a0 a1 a2 =
+let put_along_axis ?axis ?mode ?(inplace = true) a0 a1 a2 =
+  if inplace then
+    raise
+      (Py_exn.Value_error
+         "jax.numpy.put_along_axis cannot modify arrays in-place, because JAX \
+          arraysare immutable. Pass inplace=False to instead return an updated \
+          array.");
   Eager_jit.one ~jit:"put_along_axis" "numpy.indexing.put_along_axis"
     (axis, mode) [] [ a0; a1; a2 ] (fun opts vals ->
       match (opts, vals) with

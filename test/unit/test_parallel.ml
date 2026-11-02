@@ -25,10 +25,10 @@ let reductions () =
     let out = over (fun v -> f v ~axis_name:"i") x in
     close name expected (at out 1)
   in
-  check "psum" P.psum 7.0;
-  check "pmax" P.pmax 4.0;
-  check "pmin" P.pmin 1.0;
-  check "pmean" P.pmean (7.0 /. 3.0)
+  check "psum" (fun x ~axis_name -> P.psum x ~axis_name) 7.0;
+  check "pmax" (fun x ~axis_name -> P.pmax x ~axis_name) 4.0;
+  check "pmin" (fun x ~axis_name -> P.pmin x ~axis_name) 1.0;
+  check "pmean" (fun x ~axis_name -> P.pmean x ~axis_name) (7.0 /. 3.0)
 
 let index_and_size () =
   let x = vec [| 5.0; 6.0; 7.0 |] in

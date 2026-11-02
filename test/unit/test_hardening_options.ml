@@ -309,9 +309,10 @@ module T3 = struct
     b "take_along.clip" (fun a i -> I.take_along_axis ~axis:0 ~mode:"clip" a i);
     b "take_along.fv" (fun a i -> I.take_along_axis ~axis:0 ~fill_value:7. a i);
     b "take_along.2d" (fun a i -> I.take_along_axis ~axis:1 a i);
-    c "put_along.default" (fun a i v -> I.put_along_axis ~axis:0 a i v);
+    c "put_along.default" (fun a i v ->
+        I.put_along_axis ~axis:0 ~inplace:false a i v);
     c "put_along.clip" (fun a i v ->
-        I.put_along_axis ~axis:0 ~mode:"clip" a i v);
+        I.put_along_axis ~axis:0 ~mode:"clip" ~inplace:false a i v);
     b "softmax.where" (fun a w -> N.softmax ~where:w a);
     b "log_softmax.where" (fun a w -> N.log_softmax ~where:w a);
     b "softmax.where0" (fun a w -> N.softmax ~axis:0 ~where:w a);
@@ -598,7 +599,7 @@ module T6 = struct
         ("i0", NL.i0);
         ("zeros_like", fun a -> AC.zeros_like a);
         ("ones_like", fun a -> AC.ones_like a);
-        ("copy", NL.copy);
+        ("copy", fun a -> NL.copy a);
         ("real", UF.real);
         ("imag", UF.imag);
         ("conj", UF.conj);

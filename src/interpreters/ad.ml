@@ -3734,6 +3734,7 @@ let conv_transpose_lhs g (lhs : aval) rhs ~window_strides ~padding ~lhs_dilation
            feature_group_count = groups;
            batch_group_count = 1;
            conv_precision = None;
+           conv_preferred = None;
          })
       [ g; revd ]
   in
@@ -3774,6 +3775,7 @@ let conv_transpose_rhs g lhs (rhs : aval) ~window_strides ~padding ~lhs_dilation
          feature_group_count = new_feature;
          batch_group_count = new_batch;
          conv_precision = None;
+         conv_preferred = None;
        })
     [ lhs; g ]
 

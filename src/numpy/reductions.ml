@@ -67,7 +67,14 @@ let all_axes v = Array.init (ndim v) (fun i -> i)
 
 let resolve_axes v = function
   | None -> all_axes v
-  | Some ax -> Array.map (fun i -> canonicalize_axis i (ndim v)) ax
+  | Some ax ->
+      let axes = Array.map (fun i -> canonicalize_axis i (ndim v)) ax in
+      let unique = List.sort_uniq compare (Array.to_list axes) in
+      if List.length unique <> Array.length axes then
+        raise
+          (Py_exn.Value_error
+             ("duplicate value in 'axis': " ^ Validate.python_tuple axes));
+      axes
 
 let mem_axis axes i = Array.exists (fun a -> a = i) axes
 
@@ -1377,6 +1384,11 @@ let quantile ?axis ?keepdims ?method_ ?weights a0 a1 =
       | _ -> assert false)
 
 let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
+  if ndim a1 > 1 then
+    raise
+      (Py_exn.Value_error
+         ("q must be have rank <= 1, got shape "
+         ^ Validate.python_tuple (shape a1)));
   Eager_jit.one "numpy.reductions.nanquantile"
     (axis, keepdims, method_, weights <> None)
     [ weights ] [ a0; a1 ]
@@ -1387,6 +1399,11 @@ let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
       | _ -> assert false)
 
 let nanpercentile ?axis ?keepdims ?method_ ?weights a0 a1 =
+  if ndim a1 > 1 then
+    raise
+      (Py_exn.Value_error
+         ("q must be have rank <= 1, got shape "
+         ^ Validate.python_tuple (shape a1)));
   Eager_jit.one "numpy.reductions.nanpercentile"
     (axis, keepdims, method_, weights <> None)
     [ weights ] [ a0; a1 ]

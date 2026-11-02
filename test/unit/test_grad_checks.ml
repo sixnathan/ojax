@@ -116,6 +116,7 @@ let conv ?(strides = [| 1 |]) ?(padding = [| (0, 0) |]) ?(ld = [| 1 |])
          feature_group_count = fg;
          batch_group_count = bg;
          conv_precision = None;
+         conv_preferred = None;
        })
     [ lhs; rhs ]
 

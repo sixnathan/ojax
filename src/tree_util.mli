@@ -100,10 +100,10 @@ val registry_mem : registry -> string -> bool
 type ('n, 'a) node_class
 
 val register_pytree_node :
-  ?flatten_with_keys:('n -> (key_entry * 'a t) list * string) ->
+  ?flatten_with_keys_func:('n -> (key_entry * 'a t) list * string) ->
   string ->
-  flatten:('n -> 'a t list * string) ->
-  unflatten:(string -> 'a t list -> 'n) ->
+  flatten_func:('n -> 'a t list * string) ->
+  unflatten_func:(string -> 'a t list -> 'n) ->
   ('n, 'a) node_class
 
 val register_pytree_node_class :
@@ -116,7 +116,7 @@ val register_pytree_with_keys :
   ?flatten_func:('n -> 'a t list * string) ->
   string ->
   flatten_with_keys:('n -> (key_entry * 'a t) list * string) ->
-  unflatten:(string -> 'a t list -> 'n) ->
+  unflatten_func:(string -> 'a t list -> 'n) ->
   ('n, 'a) node_class
 
 val register_pytree_with_keys_class :

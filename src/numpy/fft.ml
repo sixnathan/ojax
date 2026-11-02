@@ -239,7 +239,14 @@ let ifft ?n ?(axis = -1) ?norm a =
   let axes, s = single_axis axis n in
   fft_core "ifft" Fft_inverse ~inverse:true ?s ?axes ?norm a
 
+let check_real_input a =
+  match (Core.get_aval a).dtype with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      raise (Py_exn.Value_error "only real valued inputs supported for rfft")
+  | _ -> ()
+
 let rfft ?n ?(axis = -1) ?norm a =
+  check_real_input a;
   let axes, s = single_axis axis n in
   fft_core "rfft" Fft_real ~inverse:false ?s ?axes ?norm a
 
@@ -260,6 +267,7 @@ let hfft ?n ?(axis = -1) ?norm a =
     (Jnp_util.py_int nn)
 
 let ihfft ?n ?(axis = -1) ?norm a =
+  check_real_input a;
   let nn =
     match n with Some x -> x | None -> Validate.tuple_index (shape_of a) axis
   in
@@ -305,8 +313,19 @@ let irfft2 ?s ?(axes = two_d) ?norm a =
 
 let default_real () = if Config.x64_enabled () then Dtype.F64 else Dtype.F32
 
+let freq_dtypes dtype =
+  let out = Option.value dtype ~default:(default_real ()) in
+  let inexact = Dtypes.to_inexact_dtype (Dtypes.canonicalize_dtype out) in
+  let real =
+    match inexact with
+    | Dtype.Complex64 -> Dtype.F32
+    | Dtype.Complex128 -> Dtype.F64
+    | d -> d
+  in
+  (Dtypes.canonicalize_dtype out, real)
+
 let fftfreq ?(d = 1.0) ?dtype n =
-  let dt = Option.value dtype ~default:(default_real ()) in
+  let out, dt = freq_dtypes dtype in
   let i = Lax_numpy.arange ~dtype:dt (float_of_int n) in
   let half = Jnp_util.py_int (n / 2) in
   let k =
@@ -314,15 +333,19 @@ let fftfreq ?(d = 1.0) ?dtype n =
       (Ufuncs.remainder (Ufuncs.add i half) (Jnp_util.py_int n))
       half
   in
-  Ufuncs.divide (Lax_numpy.astype k dt)
-    (Concrete (Ndarray.of_floats dt [||] [| d *. float_of_int n |]))
+  Lax_numpy.astype
+    (Ufuncs.divide (Lax_numpy.astype k dt)
+       (Concrete (Ndarray.of_floats dt [||] [| d *. float_of_int n |])))
+    out
 
 let rfftfreq ?(d = 1.0) ?dtype n =
-  let dt = Option.value dtype ~default:(default_real ()) in
+  let out, dt = freq_dtypes dtype in
   let count = if n mod 2 = 0 then (n / 2) + 1 else ((n - 1) / 2) + 1 in
-  Ufuncs.divide
-    (Lax_numpy.arange ~dtype:dt (float_of_int count))
-    (Concrete (Ndarray.of_floats dt [||] [| d *. float_of_int n |]))
+  Lax_numpy.astype
+    (Ufuncs.divide
+       (Lax_numpy.arange ~dtype:dt (float_of_int count))
+       (Concrete (Ndarray.of_floats dt [||] [| d *. float_of_int n |])))
+    out
 
 let roll_axis v axis shift =
   let shape = shape_of v in

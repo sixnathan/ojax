@@ -4026,6 +4026,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         feature_group_count;
         batch_group_count;
         conv_precision;
+        _;
       } ->
       emit_conv ctx eqn in_ids ~window_strides ~padding ~lhs_dilation
         ~rhs_dilation ~dn:dimension_numbers ~feature_group_count

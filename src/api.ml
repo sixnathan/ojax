@@ -534,7 +534,8 @@ let grad ?allow_int ?argnums (f : value Tree.t list -> value Tree.t)
     (args : value Tree.t list) : value Tree.t =
   snd (value_and_grad ?allow_int ?argnums f args)
 
-let vmap ?axis_name ?out_axes ?axis_size (f : value Tree.t list -> value Tree.t)
+let vmap ?axis_name ?out_axes ?axis_size ?(spmd_axis_name : string list option)
+    ?(sum_match : bool option) (f : value Tree.t list -> value Tree.t)
     (in_axes : int option list) (args : value Tree.t list) : value Tree.t =
   let flat_args, in_tree = flatten_args args in
   let flat_axes =
@@ -1105,14 +1106,53 @@ let linear_transpose f primals =
     | Tree.Tuple xs -> xs
     | _ -> failwith "linear_transpose: result split"
 
-let checkpoint ?policy f = Checkpoint.checkpoint ?policy f
-let remat ?policy f = Checkpoint.checkpoint ?policy f
+let concrete_removed =
+  "The `concrete` option to `jax.checkpoint` was deprecated in JAX v0.8.2, and \
+   removed in JAX v0.10.0. In its place please use `static_argnums`; for \
+   details refer to \
+   https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html."
+
+let checkpoint ?policy ?(prevent_cse : bool option)
+    ?(static_argnums = ([] : int list)) ?(concrete : bool option) f =
+  ignore prevent_cse;
+  if concrete <> None then raise (Py_exn.Not_implemented_error concrete_removed);
+  match static_argnums with
+  | [] -> Checkpoint.checkpoint ?policy f
+  | static ->
+      fun args ->
+        let dynamic = List.filteri (fun i _ -> not (List.mem i static)) args in
+        let merged values =
+          let remaining = ref values in
+          List.mapi
+            (fun i a ->
+              if List.mem i static then a
+              else
+                match !remaining with
+                | v :: tl ->
+                    remaining := tl;
+                    v
+                | [] -> invalid_arg "checkpoint: arity")
+            args
+        in
+        Checkpoint.checkpoint ?policy (fun d -> f (merged d)) dynamic
+
+let remat = checkpoint
 let named_call ?name:_ f = f
 let named_scope _name f = f ()
 let device_get = to_host
 let block_until_ready x = x
 let devices ?backend () = Backend.devices ?backend ()
-let local_devices = devices
+
+let local_devices ?process_index ?backend ?host_id () =
+  let process_index =
+    match host_id with Some h -> Some h | None -> process_index
+  in
+  (match process_index with
+  | Some p when p <> 0 ->
+      raise (Py_exn.Value_error (Printf.sprintf "Unknown process_index %d" p))
+  | _ -> ());
+  devices ?backend ()
+
 let device_count ?backend () = List.length (devices ?backend ())
 let local_device_count = device_count
 let process_count () = 1
@@ -1181,8 +1221,29 @@ let array_garbage_collection_guard v thunk =
 
 let ensure_compile_time_eval thunk = Core.with_eval_dynamic thunk
 
-let pmap ?axis_name ?in_axes ?out_axes f args =
-  Spmd.pmap ?axis_name ?in_axes ?out_axes f args
+let pmap ?axis_name ?in_axes ?out_axes
+    ?(static_broadcasted_argnums = ([] : int list)) ?axis_size f args =
+  let static = static_broadcasted_argnums in
+  let dynamic = List.filteri (fun i _ -> not (List.mem i static)) args in
+  let in_axes =
+    Option.map (List.filteri (fun i _ -> not (List.mem i static))) in_axes
+  in
+  let merged values =
+    let remaining = ref values in
+    List.mapi
+      (fun i a ->
+        if List.mem i static then a
+        else
+          match !remaining with
+          | v :: tl ->
+              remaining := tl;
+              v
+          | [] -> invalid_arg "pmap: arity")
+      args
+  in
+  Spmd.pmap ?axis_name ?in_axes ?out_axes ?axis_size
+    (fun d -> f (merged d))
+    dynamic
 
 let pure_callback host_fun ~result_avals args =
   Custom_derivatives.pure_callback host_fun ~result_avals args
@@ -1190,13 +1251,32 @@ let pure_callback host_fun ~result_avals args =
 let typeof v = Core.get_aval v
 let effects_barrier () = ()
 let copy_to_host_async x = x
-let default_device () = List.hd (devices ())
-let live_arrays () = ([] : value list)
 
-let make_array_from_callback (shape : int array) callback =
+let default_device ?(new_val : string option) () thunk =
+  match new_val with
+  | None ->
+      raise
+        (Py_exn.Type_error
+           "Context manager for default_device config option requires an \
+            argument representing the new value for the config option.")
+  | Some _ -> thunk ()
+
+let live_arrays ?(platform : string option) () =
+  ignore platform;
+  ([] : value list)
+
+let make_array_from_callback ?(dtype : Dtype.t option) (shape : int array)
+    callback =
+  ignore dtype;
   callback (Array.map (fun s -> (0, s)) shape)
 
-let print_environment_info () =
-  print_endline
-    (Printf.sprintf "ojax: backend=%s devices=%d x64=%b" (default_backend ())
-       (device_count ()) (Config.x64_enabled ()))
+let print_environment_info ?(return_string = false) () =
+  let info =
+    Printf.sprintf "ojax: backend=%s devices=%d x64=%b" (default_backend ())
+      (device_count ()) (Config.x64_enabled ())
+  in
+  if return_string then Some info
+  else begin
+    print_endline info;
+    None
+  end

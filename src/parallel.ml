@@ -14,18 +14,86 @@ let collective kind axis_name v =
   ignore (bound_axis_size axis_name);
   Core.bind1 (Collective { kind; axis_name }) [ v ]
 
-let psum v ~axis_name = collective Psum axis_name v
-let pmax v ~axis_name = collective Pmax axis_name v
-let pmin v ~axis_name = collective Pmin axis_name v
+let is_vmap_axis axis_name =
+  match B.find_axis axis_name with
+  | _ -> true
+  | exception Invalid_argument _ -> false
+
+let validate_reduce_groups = function
+  | None -> ()
+  | Some groups ->
+      let total = List.fold_left (fun n g -> n + List.length g) 0 groups in
+      let seen = List.sort_uniq compare (List.concat groups) in
+      if seen <> List.init total Fun.id then
+        raise
+          (Py_exn.Value_error
+             "axis_index_groups must cover all indices exactly once")
+
+let check_groups ~message axis_name = function
+  | None -> ()
+  | Some groups ->
+      if is_vmap_axis axis_name then
+        raise (Py_exn.Not_implemented_error message);
+      if List.length groups <> 1 then
+        raise
+          (Py_exn.Not_implemented_error
+             "axis_index_groups with more than one group needs a mapped axis \
+              lowered with replica groups")
+
+let reduction_message =
+  "axis_index_groups not supported in vmap collectives. Please open a feature \
+   request!"
+
+let reduce_with kind ?axis_index_groups v ~axis_name =
+  validate_reduce_groups axis_index_groups;
+  check_groups ~message:reduction_message axis_name axis_index_groups;
+  collective kind axis_name v
+
+let psum ?axis_index_groups v ~axis_name =
+  reduce_with Psum ?axis_index_groups v ~axis_name
+
+let pmax ?axis_index_groups v ~axis_name =
+  reduce_with Pmax ?axis_index_groups v ~axis_name
+
+let pmin ?axis_index_groups v ~axis_name =
+  reduce_with Pmin ?axis_index_groups v ~axis_name
+
 let axis_size ~axis_name = bound_axis_size axis_name
 
-let pmean v ~axis_name =
-  let total = psum v ~axis_name in
+let pmean ?axis_index_groups v ~axis_name =
+  let total = psum ?axis_index_groups v ~axis_name in
   Lax_api.div total
     (Lax_api.full_like total (float_of_int (axis_size ~axis_name)))
 
-let all_gather ?(axis = 0) v ~axis_name =
-  collective (All_gather { axis; size = axis_size ~axis_name }) axis_name v
+let all_gather ?axis_index_groups ?(axis = 0) ?(tiled = false)
+    ?(to_ = "varying") v ~axis_name =
+  if not (List.mem to_ [ "varying"; "reduced"; "invarying" ]) then
+    raise
+      (Py_exn.Value_error
+         "Got unexpected `to` value for `jax.lax.all_gather`. Allowed `to` \
+          values are: {'varying', 'reduced', 'invarying'}");
+  if to_ <> "varying" && axis_index_groups <> None then
+    raise (Py_exn.Not_implemented_error "");
+  check_groups ~message:"axis_index_groups not supported in vmap" axis_name
+    axis_index_groups;
+  let rank = Array.length (Core.get_aval v).shape in
+  let dim =
+    Validate.canonicalize_axis axis (if tiled then rank else rank + 1)
+  in
+  let size = axis_size ~axis_name in
+  let gathered = collective (All_gather { axis = dim; size }) axis_name v in
+  if not tiled then gathered
+  else
+    let sh = (Core.get_aval gathered).shape in
+    let folded =
+      Array.concat
+        [
+          Array.sub sh 0 dim;
+          [| sh.(dim) * sh.(dim + 1) |];
+          Array.sub sh (dim + 2) (Array.length sh - dim - 2);
+        ]
+    in
+    L.reshape gathered folded
 
 let pbroadcast ?(source = 0) v ~axis_name =
   collective (Pbroadcast source) axis_name v
@@ -125,7 +193,10 @@ let on_vmap_axis axis_name =
   | _ -> true
   | exception Invalid_argument _ -> false
 
-let all_to_all ?(tiled = false) x ~axis_name ~split_axis ~concat_axis =
+let all_to_all ?axis_index_groups ?(tiled = false) x ~axis_name ~split_axis
+    ~concat_axis =
+  check_groups ~message:"Please open a feature request!" axis_name
+    axis_index_groups;
   if on_vmap_axis axis_name then begin
     let size = axis_size ~axis_name in
     let sh = (Core.get_aval x).shape in
@@ -166,10 +237,13 @@ let all_to_all ?(tiled = false) x ~axis_name ~split_axis ~concat_axis =
         [| split |]
   end
 
-let pswapaxes x ~axis_name ~axis =
-  all_to_all x ~axis_name ~split_axis:axis ~concat_axis:axis
+let pswapaxes ?axis_index_groups x ~axis_name ~axis =
+  all_to_all ?axis_index_groups x ~axis_name ~split_axis:axis ~concat_axis:axis
 
-let psum_scatter ?(scatter_dimension = 0) ?(tiled = false) x ~axis_name =
+let psum_scatter ?(scatter_dimension = 0) ?axis_index_groups ?(tiled = false) x
+    ~axis_name =
+  check_groups ~message:"axis_index_groups not supported in vmap" axis_name
+    axis_index_groups;
   let n = axis_size ~axis_name in
   let sh = (Core.get_aval x).shape in
   if on_vmap_axis axis_name then
@@ -212,8 +286,10 @@ let pshuffle x ~axis_name ~perm =
       ("`perm` does not represent a permutation: " ^ Validate.python_list perm);
   ppermute x ~axis_name ~perm:(List.mapi (fun i src -> (src, i)) perm)
 
-let ragged_all_to_all operand output input_offsets send_sizes output_offsets
-    recv_sizes ~axis_name =
+let ragged_all_to_all ?axis_index_groups operand output input_offsets send_sizes
+    output_offsets recv_sizes ~axis_name =
+  check_groups ~message:"Please open a feature request!" axis_name
+    axis_index_groups;
   let check name v =
     let aval = Core.get_aval v in
     if not (Dtypes.issubdtype aval.dtype `Integer) then

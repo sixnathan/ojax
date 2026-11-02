@@ -98,6 +98,18 @@ let lt = lift2 Lt
 let max = lift2 Max
 let min = lift2 Min
 let mul = lift2 Mul
+
+let mul_with ?out_dtype x y =
+  match out_dtype with
+  | None -> mul x y
+  | Some d ->
+      let d = Dtypes.canonicalize_dtype d in
+      let cast v =
+        if (Core.get_aval v).dtype = d then v
+        else b1 (Convert_element_type d) [ v ]
+      in
+      mul (cast x) (cast y)
+
 let mulhi = lift2 Mulhi
 let ne = lift2 Ne
 let neg x = b1 Neg [ x ]
@@ -300,7 +312,21 @@ let concatenate xs dimension =
 
 let stack xs axis = b1 (Stack axis) xs
 let unstack x axis = Core.bind (Unstack axis) [ x ]
-let split x sizes axis = Core.bind (Split { sizes; axis }) [ x ]
+
+let split x sizes axis =
+  let sh = shape x in
+  let axis = Validate.canonicalize_axis axis (Array.length sh) in
+  let total = Array.fold_left ( + ) 0 sizes in
+  if total <> sh.(axis) then
+    raise
+      (Py_exn.Value_error
+         (Printf.sprintf
+            "Sum of sizes %d must be equal to dimension %d of the operand \
+             shape [%s]"
+            total axis
+            (String.concat ", " (Array.to_list (Array.map string_of_int sh)))));
+  Core.bind (Split { sizes; axis }) [ x ]
+
 let pad x value config = b1 (Pad config) [ x; value ]
 
 let slice ?strides x start_indices limit_indices =
@@ -388,14 +414,17 @@ let dynamic_slice_in_dim ?(axis = 0) ?allow_negative_indices x start size =
     (starts_in_dim ?allow_negative_indices x axis start)
     sizes
 
-let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true) x index =
+let dynamic_index_in_dim ?(axis = 0) ?(keepdims = true)
+    ?(allow_negative_indices = true) x index =
   let axis = Validate.list_assign_index (ndim x) axis in
   match
     Jaxpr.named_jit ~name:"dynamic_index_in_dim"
-      ~key:(Printf.sprintf "%d %b" axis keepdims)
+      ~key:(Printf.sprintf "%d %b %b" axis keepdims allow_negative_indices)
       (function
         | [ x; index ] ->
-            let v = dynamic_slice_in_dim ~axis x index 1 in
+            let v =
+              dynamic_slice_in_dim ~axis ~allow_negative_indices x index 1
+            in
             [ (if keepdims then v else b1 (Squeeze [| axis |]) [ v ]) ]
         | _ -> invalid_arg "dynamic_index_in_dim: arity")
       [ x; index ]
@@ -410,12 +439,13 @@ let dynamic_update_slice_in_dim ?(axis = 0) ?allow_negative_indices x update
   dynamic_update_slice x update
     (starts_in_dim ?allow_negative_indices x axis start)
 
-let dynamic_update_index_in_dim ?(axis = 0) x update index =
+let dynamic_update_index_in_dim ?(axis = 0) ?allow_negative_indices x update
+    index =
   let axis = canon_axis (ndim x) axis in
   let update =
     if ndim update = ndim x then update else expand_dims update [| axis |]
   in
-  dynamic_update_slice_in_dim ~axis x update index
+  dynamic_update_slice_in_dim ~axis ?allow_negative_indices x update index
 
 let index_upper_bound indices dims window =
   let idx_shape = shape indices in
@@ -817,6 +847,11 @@ let dot_general ?precision ?preferred_element_type x y ~lhs_contract
     }
     x y
 
+let dot_general_dimension_numbers ?precision ?preferred_element_type x y
+    ~dimension_numbers:((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)) =
+  dot_general ?precision ?preferred_element_type x y ~lhs_contract ~rhs_contract
+    ~lhs_batch ~rhs_batch
+
 let batch_matmul ?precision ?preferred_element_type x y =
   let n = ndim x in
   if Stdlib.min n (ndim y) < 2 then
@@ -916,9 +951,53 @@ let conv_general_permutations ((lhs, rhs, out) as specs) =
 
 let conv_dimension_numbers specs = conv_general_permutations specs
 
+let conv_dimension_numbers_of ~lhs_shape ~rhs_shape ~dimension_numbers =
+  let l = Array.length lhs_shape and r = Array.length rhs_shape in
+  if l <> r then
+    raise
+      (Py_exn.Type_error
+         (Printf.sprintf
+            "convolution requires lhs and rhs ndim to be equal, got %d and %d."
+            l r));
+  match dimension_numbers with
+  | None ->
+      let iota = Array.init l Fun.id in
+      { lhs_spec = iota; rhs_spec = iota; out_spec = iota }
+  | Some ((a, b, c) as specs) ->
+      List.iteri
+        (fun i s ->
+          if String.length s <> l then
+            raise
+              (Py_exn.Type_error
+                 (Printf.sprintf
+                    "convolution dimension_numbers[%d] must have len equal to \
+                     the ndim of lhs and rhs, got %d for lhs and rhs shapes %s \
+                     and %s."
+                    i (String.length s)
+                    (Validate.python_tuple lhs_shape)
+                    (Validate.python_tuple rhs_shape))))
+        [ a; b; c ];
+      conv_general_permutations specs
+
 let default_conv_dims rank =
   let id = Array.init rank Fun.id in
   { lhs_spec = id; rhs_spec = id; out_spec = id }
+
+let precision_level_name = function
+  | Lax_config.Precision_default -> "DEFAULT"
+  | Lax_config.Precision_high -> "HIGH"
+  | Lax_config.Precision_highest -> "HIGHEST"
+
+let conv_precision_of ?conv_precision ?precision () =
+  match (conv_precision, precision) with
+  | (Some _ as given), _ -> given
+  | None, Some (Lax_config.Precision (l, r)) ->
+      Some (precision_level_name l, precision_level_name r)
+  | None, Some _ -> None
+  | None, None -> (
+      match Config.matmul_preset () with
+      | Some _ -> None
+      | None -> Option.map (fun l -> (l, l)) (Config.matmul_level ()))
 
 let checked_conv_dims lhs_shape rhs_shape dimension_numbers =
   let rank = Array.length lhs_shape in
@@ -944,9 +1023,13 @@ let checked_conv_dims lhs_shape rhs_shape dimension_numbers =
         [ d.lhs_spec; d.rhs_spec; d.out_spec ];
       d
 
-let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation
-    ?dimension_numbers ?(feature_group_count = 1) ?(batch_group_count = 1) lhs
-    rhs ~window_strides padding =
+let conv_general_dilated ?conv_precision ?precision ?preferred_element_type
+    ?lhs_dilation ?rhs_dilation ?dimension_numbers ?(feature_group_count = 1)
+    ?(batch_group_count = 1) lhs rhs ~window_strides padding =
+  let conv_precision = conv_precision_of ?conv_precision ?precision () in
+  let conv_preferred =
+    Option.map Dtypes.canonicalize_dtype preferred_element_type
+  in
   let dn = checked_conv_dims (shape lhs) (shape rhs) dimension_numbers in
   let sdims = Stdlib.max (ndim lhs - 2) 0 in
   let ones = Array.make sdims 1 in
@@ -989,16 +1072,18 @@ let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation
          feature_group_count;
          batch_group_count;
          conv_precision;
+         conv_preferred;
        })
     [ lhs; rhs ]
 
-let conv lhs rhs ~window_strides padding =
-  conv_general_dilated lhs rhs ~window_strides padding
+let conv ?precision ?preferred_element_type lhs rhs ~window_strides padding =
+  conv_general_dilated ?precision ?preferred_element_type lhs rhs
+    ~window_strides padding
 
-let conv_with_general_padding ?lhs_dilation ?rhs_dilation lhs rhs
-    ~window_strides padding =
-  conv_general_dilated ?lhs_dilation ?rhs_dilation lhs rhs ~window_strides
-    (Explicit padding)
+let conv_with_general_padding ?lhs_dilation ?rhs_dilation ?precision
+    ?preferred_element_type lhs rhs ~window_strides padding =
+  conv_general_dilated ?lhs_dilation ?rhs_dilation ?precision
+    ?preferred_element_type lhs rhs ~window_strides (Explicit padding)
 
 let conv_transpose_pad k s padding =
   match padding with
@@ -1014,7 +1099,8 @@ let conv_transpose_pad k s padding =
       Py_exn.value_error "Invalid padding mode: SAME_LOWER"
 
 let conv_transpose ?rhs_dilation ?dimension_numbers ?(transpose_kernel = false)
-    lhs rhs ~strides padding =
+    ?precision ?preferred_element_type ?(use_consistent_padding = false) lhs rhs
+    ~strides padding =
   let rank = ndim lhs in
   Validate.assertion (rank = ndim rhs && rank >= 2);
   let sdims = rank - 2 in
@@ -1035,6 +1121,13 @@ let conv_transpose ?rhs_dilation ?dimension_numbers ?(transpose_kernel = false)
   let dilation = Option.value rhs_dilation ~default:(Array.make sdims 1) in
   let pads =
     match padding with
+    | Explicit p when use_consistent_padding ->
+        Array.init sdims (fun i ->
+            let k = rhs_shape.(dn.rhs_spec.(i + 2)) in
+            let effective = ((k - 1) * dilation.(i)) + 1 in
+            let lo, hi = p.(i) in
+            let a = effective - lo - 1 and b = effective - hi - 1 in
+            (a, b))
     | Same | Valid ->
         Array.init
           (Stdlib.min sdims (Array.length strides))
@@ -1055,8 +1148,9 @@ let conv_transpose ?rhs_dilation ?dimension_numbers ?(transpose_kernel = false)
     end
     else rhs
   in
-  conv_general_dilated ~lhs_dilation:strides ~rhs_dilation:dilation
-    ~dimension_numbers:dn lhs rhs ~window_strides:(Array.make sdims 1)
+  conv_general_dilated ?precision ?preferred_element_type ~lhs_dilation:strides
+    ~rhs_dilation:dilation ~dimension_numbers:dn lhs rhs
+    ~window_strides:(Array.make sdims 1)
     (match padding with Same_lower -> Same_lower | _ -> Explicit pads)
 
 let cond = Lax.cond
@@ -1067,7 +1161,26 @@ let cumprod = Lax.cumprod
 let cummax = Lax.cummax
 let cummin = Lax.cummin
 let cumlogsumexp = Lax.cumlogsumexp
-let custom_linear_solve = Lax.custom_linear_solve
+
+let custom_linear_solve ?(has_aux = false) ?symmetric ?transpose_solve
+    ?linear_matvec matvec b solve =
+  if not has_aux then
+    Lax.custom_linear_solve ?symmetric ?transpose_solve ?linear_matvec matvec b
+      solve
+  else begin
+    let n = List.length b in
+    let first l = List.filteri (fun i _ -> i < n) l in
+    let rest l = List.filteri (fun i _ -> i >= n) l in
+    let x =
+      Lax.custom_linear_solve ?symmetric
+        ?transpose_solve:
+          (Option.map (fun ts mv rhs -> first (ts mv rhs)) transpose_solve)
+        ?linear_matvec matvec b
+        (fun mv rhs -> first (solve mv rhs))
+    in
+    x @ rest (solve matvec b)
+  end
+
 let map_scan f xs = Lax.scan f [] xs
 let switch = Lax.switch
 
@@ -1143,47 +1256,55 @@ let fori_loop ?unroll lower upper body init =
                 | _ -> failwith "fori_loop: arity")
               (lower :: upper :: init)))
 
-let custom_root f initial_guess solve tangent_solve =
-  let avals = List.map aval initial_guess in
-  let n = List.length initial_guess in
-  let closed_f, f_consts = Custom_derivatives.closure_convert f avals in
-  let closed_solve, solve_consts =
-    Custom_derivatives.closure_convert (solve f) avals
-  in
-  let linearize_and_solve args =
-    match Util.split_list args [ n ] with
-    | [ x; b ] ->
-        let matvec v = snd (Interpreters.Ad.jvp f x v) in
-        tangent_solve matvec b
-    | _ -> failwith "custom_root: arity"
-  in
-  let closed_ls, ls_consts =
-    Custom_derivatives.closure_convert linearize_and_solve (avals @ avals)
-  in
-  let nf = List.length f_consts and ns = List.length solve_consts in
-  let nl = List.length ls_consts in
-  let split all =
-    match Util.split_list all [ nf; ns; nl ] with
-    | [ pf; ps; pl; x ] -> (pf, ps, pl, x)
-    | _ -> failwith "custom_root: arity"
-  in
-  let primal all =
-    let _, ps, _, x0 = split all in
-    closed_solve (x0 @ ps)
-  in
-  let jvp primals tangents =
-    let pf, _, pl, _ = split primals in
-    let solution = primal primals in
-    let tf, _, _, _ = split tangents in
-    let _, rhs =
-      Interpreters.Ad.jvp (fun hs -> closed_f (solution @ hs)) pf tf
+let rec custom_root ?(has_aux = false) f initial_guess solve tangent_solve =
+  if has_aux then begin
+    let n = List.length initial_guess in
+    let first l = List.filteri (fun i _ -> i < n) l in
+    let rest l = List.filteri (fun i _ -> i >= n) l in
+    custom_root f initial_guess (fun g x0 -> first (solve g x0)) tangent_solve
+    @ rest (solve f initial_guess)
+  end
+  else
+    let avals = List.map aval initial_guess in
+    let n = List.length initial_guess in
+    let closed_f, f_consts = Custom_derivatives.closure_convert f avals in
+    let closed_solve, solve_consts =
+      Custom_derivatives.closure_convert (solve f) avals
     in
-    let answer = List.map neg (closed_ls (solution @ rhs @ pl)) in
-    (solution, answer)
-  in
-  Custom_derivatives.custom_jvp ~name:"_custom_root" ~jvp_name:"_root_jvp"
-    primal ~jvp
-    (f_consts @ solve_consts @ ls_consts @ initial_guess)
+    let linearize_and_solve args =
+      match Util.split_list args [ n ] with
+      | [ x; b ] ->
+          let matvec v = snd (Interpreters.Ad.jvp f x v) in
+          tangent_solve matvec b
+      | _ -> failwith "custom_root: arity"
+    in
+    let closed_ls, ls_consts =
+      Custom_derivatives.closure_convert linearize_and_solve (avals @ avals)
+    in
+    let nf = List.length f_consts and ns = List.length solve_consts in
+    let nl = List.length ls_consts in
+    let split all =
+      match Util.split_list all [ nf; ns; nl ] with
+      | [ pf; ps; pl; x ] -> (pf, ps, pl, x)
+      | _ -> failwith "custom_root: arity"
+    in
+    let primal all =
+      let _, ps, _, x0 = split all in
+      closed_solve (x0 @ ps)
+    in
+    let jvp primals tangents =
+      let pf, _, pl, _ = split primals in
+      let solution = primal primals in
+      let tf, _, _, _ = split tangents in
+      let _, rhs =
+        Interpreters.Ad.jvp (fun hs -> closed_f (solution @ hs)) pf tf
+      in
+      let answer = List.map neg (closed_ls (solution @ rhs @ pl)) in
+      (solution, answer)
+    in
+    Custom_derivatives.custom_jvp ~name:"_custom_root" ~jvp_name:"_root_jvp"
+      primal ~jvp
+      (f_consts @ solve_consts @ ls_consts @ initial_guess)
 
 let platform_dependent ?default ?cuda ~cpu () =
   match (Config.current_platform (), cuda, default) with
@@ -1291,10 +1412,16 @@ let reduce_window_shape_tuple operand_shape window_dimensions window_strides
       if padded < window then 0
       else ((padded - window) / window_strides.(i)) + 1)
 
-let conv_shape_tuple lhs_shape rhs_shape strides pads =
+let conv_shape_tuple ?(batch_group_count = 1) lhs_shape rhs_shape strides pads =
   let n = Array.length lhs_shape in
   Array.init n (fun i ->
-      if i = 0 then lhs_shape.(0)
+      if i = 0 then
+        if batch_group_count > 1 then begin
+          if lhs_shape.(0) mod batch_group_count <> 0 then
+            raise (Py_exn.Assertion_error "");
+          lhs_shape.(0) / batch_group_count
+        end
+        else lhs_shape.(0)
       else if i = 1 then rhs_shape.(0)
       else
         let lo, hi = pads.(i - 2) in
@@ -1346,8 +1473,8 @@ let conv_transpose_shape_tuple lhs_shape rhs_shape window_strides padding
   out
 
 let conv_general_dilated_patches ?window_strides ?(padding = Valid)
-    ?lhs_dilation ?rhs_dilation ?dimension_numbers ?precision lhs ~filter_shape
-    =
+    ?lhs_dilation ?rhs_dilation ?dimension_numbers ?precision
+    ?preferred_element_type lhs ~filter_shape =
   let k = Array.length filter_shape in
   let dn =
     checked_conv_dims (shape lhs)
@@ -1383,25 +1510,38 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
   in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
   conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn
-    ?conv_precision:precision ~feature_group_count:in_features lhs kernel
-    ~window_strides:strides padding
+    ?conv_precision:precision ?preferred_element_type
+    ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
 
-let scatter_apply x indices func dimension_numbers =
-  let updates_shape = shape indices in
-  let n_updates = updates_shape.(0) in
-  let unused = filled (dtype_of x) [| n_updates |] 0.0 in
+let scatter_apply ?(update_shape : int array option) ?indices_are_sorted
+    ?unique_indices ?mode x indices func dimension_numbers =
+  let updates_shape =
+    match update_shape with Some s -> s | None -> [| (shape indices).(0) |]
+  in
   let touched =
-    scatter
+    scatter ?mode ?indices_are_sorted ?unique_indices
       (filled Dtype.Bool (shape x) 0.0)
       indices
-      (filled Dtype.Bool [| n_updates |] 1.0)
+      (filled Dtype.Bool updates_shape 1.0)
       dimension_numbers
   in
-  ignore unused;
   select touched (func x) x
 
 let with_sharding_constraint x _sharding = x
-let pcast x ~dtype:_ = x
+
+let pcast x ~axis_name ~to_ =
+  if axis_name = "" then x
+  else begin
+    if not (List.mem to_ [ "unreduced"; "reduced"; "varying" ]) then
+      raise
+        (Py_exn.Value_error
+           "Got unexpected `to` value. Allowed `to` values are: {'unreduced', \
+            'reduced', 'varying'}");
+    if to_ = "unreduced" then
+      raise
+        (Py_exn.Value_error "Unsupported pcast from=invarying, to='unreduced'");
+    x
+  end
 
 let composite decomposition ~name:_ ~attrs:_ ~version:_ args =
   decomposition args

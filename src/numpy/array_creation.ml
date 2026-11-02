@@ -30,7 +30,11 @@ let to_inexact = Dtypes.to_inexact_dtype
 let default_float () = Dtypes.default_float_dtype ()
 
 let full ?dtype shape fill =
-  let dt = match dtype with Some d -> d | None -> default_float () in
+  let dt =
+    match dtype with
+    | Some d -> Dtypes.canonicalize_dtype d
+    | None -> default_float ()
+  in
   const_full dt shape fill
 
 let zeros ?dtype shape = full ?dtype shape 0.0
@@ -38,7 +42,11 @@ let ones ?dtype shape = full ?dtype shape 1.0
 let empty ?dtype shape = zeros ?dtype shape
 
 let full_like ?dtype ?shape a fill =
-  let dt = match dtype with Some d -> d | None -> dtype_of a in
+  let dt =
+    match dtype with
+    | Some d -> Dtypes.canonicalize_dtype d
+    | None -> dtype_of a
+  in
   let sh = match shape with Some s -> s | None -> shape_of a in
   if dtype = None && (Core.get_aval a).weak_type && Core.staging () then
     let scalar_fill =
@@ -176,6 +184,7 @@ let linspace_parts ~retstep ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype
     [ start; stop ]
 
 let linspace_v ?num ?endpoint ?axis ?dtype start stop =
+  let dtype = Option.map Dtypes.canonicalize_dtype dtype in
   List.hd (linspace_parts ~retstep:false ?num ?endpoint ?axis ?dtype start stop)
 
 let logspace_core ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop
@@ -199,10 +208,12 @@ let logspace_core ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop
 
 let logspace_v ?(num = 50) ?(endpoint = true) ?(base = 10.0) ?(axis = 0) ?dtype
     start stop =
+  let dtype = Option.map Dtypes.canonicalize_dtype dtype in
   logspace_core ~num ~endpoint ~axis ?dtype start stop
     (weak_scalar (default_float ()) base)
 
 let geomspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
+  let dtype = Option.map Dtypes.canonicalize_dtype dtype in
   let key = Printf.sprintf "%d %b %d %s" num endpoint axis (dtype_key dtype) in
   Jnp_util.jit1 "_geomspace" ~key
     (function

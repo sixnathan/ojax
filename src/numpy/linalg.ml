@@ -910,11 +910,13 @@ and outer x1 x2 =
          (ndim x1) (ndim x2));
   TC.outer x1 x2
 
-and matmul ?preferred x1 x2 = TC.matmul ?preferred x1 x2
-and vecdot ?(axis = -1) ?preferred x1 x2 = TC.vecdot ~axis ?preferred x1 x2
+and matmul ?precision ?preferred x1 x2 = TC.matmul ?precision ?preferred x1 x2
 
-and tensordot ?preferred ?(axes = TC.Ax_int 2) x1 x2 =
-  TC.tensordot ?preferred ~axes x1 x2
+and vecdot ?(axis = -1) ?precision ?preferred x1 x2 =
+  TC.vecdot ~axis ?precision ?preferred x1 x2
+
+and tensordot ?precision ?preferred ?(axes = TC.Ax_int 2) x1 x2 =
+  TC.tensordot ?precision ?preferred ~axes x1 x2
 
 and diagonal ?(offset = 0) x = NL.diagonal ~offset ~axis1:(-2) ~axis2:(-1) x
 
@@ -1339,7 +1341,7 @@ let norm ?ord ?axis ?keepdims a0 =
 let matrix_norm ?(keepdims = false) ?(ord = Ofro) x =
   norm ~ord ~axis:(Apair (-2, -1)) ~keepdims x
 
-let multi_dot arrs =
+let multi_dot ?precision arrs =
   (match arrs with
   | [] | [ _ ] ->
       Py_exn.value_error
@@ -1380,7 +1382,7 @@ let multi_dot arrs =
     let left = letter i and right = letter (i + 1) in
     if ndim arr = 1 then if i = 0 then right else left else left ^ right
   in
-  Einsum.einsum (String.concat "," (List.mapi term arrs)) arrs
+  Einsum.einsum ?precision (String.concat "," (List.mapi term arrs)) arrs
 
 let () = Tree_util.register_attribute_keys "QRResult" [ "Q"; "R" ]
 
@@ -1409,7 +1411,14 @@ let pinv ?rtol ?hermitian ?rcond a0 =
       | [ rtol; rcond ], [ a0 ] -> pinv ?rtol ?hermitian ?rcond a0
       | _ -> assert false)
 
-let svd ?full_matrices ?compute_uv ?hermitian a0 =
+let svd ?full_matrices ?compute_uv ?hermitian ?subset_by_index a0 =
+  (match subset_by_index with
+  | None -> ()
+  | Some _ when hermitian = Some true -> ignore (LL.eigh ?subset_by_index a0)
+  | Some _ ->
+      ignore
+        (LL.svd ?full_matrices ~compute_uv:false ?subset_by_index
+           (to_inexact a0)));
   Eager_jit.many "numpy.linalg.svd" (full_matrices, compute_uv, hermitian)
     [] [ a0 ] (fun opts vals ->
       match (opts, vals) with

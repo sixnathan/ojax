@@ -18,4 +18,6 @@ let array ?dtype ?(ndmin = 0) v =
   if ndmin > n then NL.expand_dims v (Array.init (ndmin - n) (fun i -> i))
   else v
 
-let asarray ?dtype v = array ?dtype v
+let asarray ?dtype ?order v =
+  NL.check_array_order order;
+  array ?dtype:(Option.map Dtypes.canonicalize_dtype dtype) v

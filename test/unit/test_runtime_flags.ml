@@ -360,7 +360,7 @@ let sampler_table =
     ("bernoulli", fun k -> R.bernoulli k ~shape:[||] ~p:0.5);
     ("gamma", fun k -> R.gamma k ~shape:[||] ~a:2.0);
     ("permutation", fun k -> R.permutation k 3);
-    ("choice", fun k -> R.choice k ~n:3 ~shape:[||] ~replace:true);
+    ("choice", fun k -> R.choice k ~a:3 ~shape:[||] ~replace:true);
     ("beta", fun k -> R.beta k ~shape:[||] ~a:1.0 ~b:2.0);
     ("poisson", fun k -> R.poisson k ~shape:[||] ~lam:2.0);
   ]

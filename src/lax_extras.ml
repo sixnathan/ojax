@@ -79,6 +79,8 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
 
 let approx_top_k ~is_max_k ~reduction_dimension ~recall_target
     ~reduction_input_size_override ~aggregate_to_topk operand k =
+  if not (Dtypes.issubdtype (aval operand).T.dtype `Floating) then
+    raise (Py_exn.Value_error "operand must be a floating type");
   Eager_jit.pair "lax.approx_top_k"
     ( is_max_k,
       reduction_dimension,
@@ -510,10 +512,26 @@ let scaled_dot ?lhs_scale ?rhs_scale ?dimension_numbers ?preferred_element_type
     ~lhs_batch:dn.lhs_batch ~rhs_batch:dn.rhs_batch
 
 let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
-    ?rhs_dilation ?dimension_numbers lhs rhs ~filter_shape =
+    ?rhs_dilation ?dimension_numbers ?precision lhs rhs ~filter_shape =
+  let patch_precision =
+    match precision with
+    | None -> None
+    | Some (Lax_config.Precision (l, _)) ->
+        let name = function
+          | Lax_config.Precision_default -> "DEFAULT"
+          | Lax_config.Precision_high -> "HIGH"
+          | Lax_config.Precision_highest -> "HIGHEST"
+        in
+        Some (name l, "DEFAULT")
+    | Some _ ->
+        raise
+          (Py_exn.Value_error
+             "Unsupported precision for conv_general_dilated_local")
+  in
   let patches =
     L.conv_general_dilated_patches ?window_strides ?padding ?lhs_dilation
-      ?rhs_dilation ?dimension_numbers lhs ~filter_shape
+      ?rhs_dilation ?dimension_numbers ?precision:patch_precision lhs
+      ~filter_shape
   in
   let rank = Array.length (shape lhs) in
   let identity = Array.init rank Fun.id in
@@ -529,7 +547,7 @@ let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
   let order = Array.init spatial Fun.id in
   Array.sort (fun a b -> compare lhs_b.(a) lhs_b.(b)) order;
   let out =
-    L.dot_general patches rhs
+    L.dot_general ?precision patches rhs
       ~lhs_contract:[| dn.out_spec.(1) |]
       ~rhs_contract:[| dn.rhs_spec.(1) |]
       ~lhs_batch:(Array.map (fun i -> lhs_b.(i)) order)

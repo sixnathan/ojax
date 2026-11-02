@@ -88,3 +88,4 @@ val e_array_dtype : e_array -> Dtype.t
 val e_array_ndim : e_array -> int
 val e_array_size : e_array -> int
 val e_array_to_string : e_array -> string
+val default_prng_impl : ?new_val:string -> unit -> (unit -> 'a) -> 'a

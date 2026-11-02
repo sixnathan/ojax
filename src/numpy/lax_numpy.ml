@@ -423,16 +423,20 @@ let flip1 y =
     (function [ y ] -> rev_dims y [| 0 |] | _ -> invalid_arg "flip: arity")
     [ y ]
 
-let conv1d_body ~mode ~correlating a v =
+let conv1d_body ~mode ~correlating ?precision ?preferred a v =
+  let flip_kernel = not correlating in
   let op = if correlating then "correlate" else "convolve" in
   if ndim a <> 1 || ndim v <> 1 then
-    Py_exn.value_error (op ^ "() only support 1-dimensional inputs.");
-  let flip_kernel = not correlating in
+    raise (Py_exn.Value_error (op ^ "() only support 1-dimensional inputs."));
   let dt, _ =
-    Dtypes.result_type
-      [
-        (to_inexact_dtype (dtype a), false); (to_inexact_dtype (dtype v), false);
-      ]
+    match preferred with
+    | None ->
+        Dtypes.result_type
+          [
+            (to_inexact_dtype (dtype a), false);
+            (to_inexact_dtype (dtype v), false);
+          ]
+    | Some _ -> Dtypes.result_type [ (dtype a, false); (dtype v, false) ]
   in
   let a = convert a dt and v = convert v dt in
   let la = (shape a).(0) and lv = (shape v).(0) in
@@ -479,37 +483,58 @@ let conv1d_body ~mode ~correlating a v =
              };
            feature_group_count = 1;
            batch_group_count = 1;
-           conv_precision = None;
+           conv_precision =
+             (let level = function
+                | Lax_config.Precision_default -> "DEFAULT"
+                | Lax_config.Precision_high -> "HIGH"
+                | Lax_config.Precision_highest -> "HIGHEST"
+              in
+              match precision with
+              | Some (Lax_config.Precision (l, r)) -> Some (level l, level r)
+              | _ -> None);
+           conv_preferred = preferred;
          })
       [ lhs; rhs ]
   in
   let out = if correlating && swapped then rev_dims out [| 2 |] else out in
   bind1 (T.Squeeze [| 0; 1 |]) [ out ]
 
-let conv1d ~mode ~correlating a v =
+let conv1d ~mode ~correlating ?precision ?preferred a v =
   Jnp_util.jit1 "_conv"
-    ~key:(mode ^ string_of_bool correlating)
+    ~key:
+      (mode ^ string_of_bool correlating
+      ^ Digest.to_hex
+          (Digest.string (Marshal.to_string (precision, preferred) [])))
     (function
-      | [ a; v ] -> conv1d_body ~mode ~correlating a v
+      | [ a; v ] -> conv1d_body ~mode ~correlating ?precision ?preferred a v
       | _ -> invalid_arg "conv: arity")
     [ a; v ]
 
-let convolve ?(mode = "full") a v = conv1d ~mode ~correlating:false a v
+let convolve ?(mode = "full") ?precision ?preferred a v =
+  conv1d ~mode ~correlating:false ?precision ?preferred a v
 
-let convolve ?mode p0 p1 =
+let convolve ?mode ?precision ?preferred_element_type p0 p1 =
+  let preferred = Option.map Dtypes.canonicalize_dtype preferred_element_type in
   Jnp_util.jit1 "convolve"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (mode, precision, preferred) [])))
     (function
-      | [ p0; p1 ] -> convolve ?mode p0 p1 | _ -> invalid_arg "convolve: arity")
+      | [ p0; p1 ] -> convolve ?mode ?precision ?preferred p0 p1
+      | _ -> invalid_arg "convolve: arity")
     [ p0; p1 ]
 
-let correlate ?(mode = "valid") a v = conv1d ~mode ~correlating:true a v
+let correlate ?(mode = "valid") ?precision ?preferred a v =
+  conv1d ~mode ~correlating:true ?precision ?preferred a v
 
-let correlate ?mode p0 p1 =
+let correlate ?mode ?precision ?preferred_element_type p0 p1 =
+  let preferred = Option.map Dtypes.canonicalize_dtype preferred_element_type in
   Jnp_util.jit1 "correlate"
-    ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
+    ~key:
+      (Digest.to_hex
+         (Digest.string (Marshal.to_string (mode, precision, preferred) [])))
     (function
-      | [ p0; p1 ] -> correlate ?mode p0 p1
+      | [ p0; p1 ] -> correlate ?mode ?precision ?preferred p0 p1
       | _ -> invalid_arg "correlate: arity")
     [ p0; p1 ]
 
@@ -540,7 +565,13 @@ let minimum a b =
   let a, b = promote_scalar_kept a b in
   bind1 T.Min [ a; b ]
 
-let where_ = Jnp_util.where
+let where_ ?(size : int option) ?(fill_value : float option) c x y =
+  if size <> None || fill_value <> None then
+    raise
+      (Py_exn.Value_error
+         "size and fill_value arguments cannot be used in three-term where \
+          function.");
+  Jnp_util.where c x y
 
 let finfo_max = function
   | D.F64 | D.Complex128 -> Float.max_float
@@ -1010,7 +1041,14 @@ let astype v dt =
   | (D.Complex64 | D.Complex128), D.Bool -> bind1 T.Ne [ v; zeros_like v ]
   | _ -> convert v dt
 
-let copy v = bind1 T.Copy [ v ]
+let check_array_order = function
+  | Some order when order <> "K" ->
+      raise (Py_exn.Not_implemented_error "Only implemented for order='K'")
+  | _ -> ()
+
+let copy ?order v =
+  check_array_order order;
+  bind1 T.Copy [ v ]
 
 let atleast_1d v =
   Jnp_util.jit1 "atleast_1d"
@@ -1466,6 +1504,7 @@ let array_equiv a b =
   | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
 
 let arange ?(start = 0.0) ?step ~dtype stop =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   match step with
   | Some step ->
       let working =
@@ -1492,6 +1531,7 @@ let arange ?(start = 0.0) ?step ~dtype stop =
       if start = 0.0 then idx else bind1 T.Add [ scalar dtype start; idx ]
 
 let eye ?m ?(k = 0) ~dtype n =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   let m = Option.value m ~default:n in
   let idt = Dtypes.default_int_dtype () in
   let i =
@@ -1506,6 +1546,7 @@ let eye ?m ?(k = 0) ~dtype n =
 let identity ~dtype n = eye ~dtype n
 
 let indices_sparse ~dtype dims =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   let n = Array.length dims in
   List.init n (fun i ->
       let idx =
@@ -1520,6 +1561,7 @@ let indices_sparse ~dtype dims =
         [ idx ])
 
 let indices ~dtype dims =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   let n = Array.length dims in
   let outs =
     List.init n (fun i ->
@@ -1531,6 +1573,17 @@ let indices ~dtype dims =
   stack ~axis:0 outs
 
 let meshgrid ?(indexing = "xy") ?(sparse = false) xs =
+  if indexing <> "xy" && indexing <> "ij" then
+    raise
+      (Py_exn.Value_error
+         ("Valid values for indexing are 'xy' and 'ij', got " ^ indexing));
+  if List.exists (fun a -> ndim a <> 1) xs then
+    raise
+      (Py_exn.Value_error
+         ("Arguments to jax.numpy.meshgrid must be 1D, got shapes ["
+         ^ String.concat ", "
+             (List.map (fun a -> Validate.python_tuple (shape a)) xs)
+         ^ "]"));
   let args = Array.of_list xs in
   let n = Array.length args in
   let swap = indexing = "xy" && n >= 2 in
@@ -1686,6 +1739,7 @@ let diag_indices_from arr =
   diag_indices ~ndim:nd s.(0)
 
 let tri ?m ?(k = 0) ~dtype n =
+  let dtype = Dtypes.canonicalize_dtype dtype in
   let m = Option.value m ~default:n in
   convert (Lax.Linalg.tri_mask n m k) dtype
 
@@ -2316,6 +2370,10 @@ let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
     [ sorted_arr; query ]
 
 let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
+  if side <> "left" && side <> "right" then
+    raise
+      (Py_exn.Value_error
+         ("invalid argument side='" ^ side ^ "', expected 'left' or 'right'"));
   if ndim a <> 1 then Py_exn.value_error "a should be 1-dimensional";
   check_search_method method_;
   let args = [ a; v ] @ Option.to_list sorter in
@@ -2634,16 +2692,20 @@ let trunc a0 =
   Eager_jit.one "numpy.lax_numpy.trunc" () [] [ a0 ] (fun opts vals ->
       match (opts, vals) with [], [ a0 ] -> trunc a0 | _ -> assert false)
 
-let convolve ?mode a0 a1 =
-  Eager_jit.one "numpy.lax_numpy.convolve" mode [] [ a0; a1 ] (fun opts vals ->
+let convolve ?mode ?precision ?preferred_element_type a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.convolve"
+    (mode, precision, preferred_element_type) [] [ a0; a1 ] (fun opts vals ->
       match (opts, vals) with
-      | [], [ a0; a1 ] -> convolve ?mode a0 a1
+      | [], [ a0; a1 ] ->
+          convolve ?mode ?precision ?preferred_element_type a0 a1
       | _ -> assert false)
 
-let correlate ?mode a0 a1 =
-  Eager_jit.one "numpy.lax_numpy.correlate" mode [] [ a0; a1 ] (fun opts vals ->
+let correlate ?mode ?precision ?preferred_element_type a0 a1 =
+  Eager_jit.one "numpy.lax_numpy.correlate"
+    (mode, precision, preferred_element_type) [] [ a0; a1 ] (fun opts vals ->
       match (opts, vals) with
-      | [], [ a0; a1 ] -> correlate ?mode a0 a1
+      | [], [ a0; a1 ] ->
+          correlate ?mode ?precision ?preferred_element_type a0 a1
       | _ -> assert false)
 
 let rot90 ?k ?axes a0 =

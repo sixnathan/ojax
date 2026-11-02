@@ -291,10 +291,7 @@ let slice_in_dim ?(stride = 1) ?(axis = 0) x start stop =
   let sh = shape x in
   let n = Array.length sh in
   let axis = canon_axis n axis in
-  let bound v =
-    let v = if v < 0 then v + sh.(axis) else v in
-    Stdlib.min (Stdlib.max v 0) sh.(axis)
-  in
+  let bound v = if v < 0 then v + sh.(axis) else v in
   let lo = Array.make n 0 and hi = Array.copy sh and st = Array.make n 1 in
   lo.(axis) <- bound start;
   hi.(axis) <- bound stop;
@@ -560,8 +557,7 @@ let concrete_scalar v =
 
 let reduce_window x init computation ~window_dimensions ~window_strides
     ?base_dilation ?window_dilation padding_config =
-  let n = ndim x in
-  let ones = Array.make n 1 in
+  let ones = Array.make (Array.length window_dimensions) 1 in
   let window =
     {
       window_dimensions;
@@ -733,18 +729,25 @@ let dot ?precision ?preferred_element_type ?dimension_numbers x y =
         }
         x y
   | None ->
-      if nx = 0 || ny = 0 then mul x y
-      else
-        dot_with ?precision ?preferred_element_type
-          {
-            lhs_contract = [| nx - 1 |];
-            rhs_contract = [| (if ny = 1 then 0 else ny - 2) |];
-            lhs_batch = [||];
-            rhs_batch = [||];
-            untyped_dot = false;
-            dot_precision = None;
-          }
-          x y
+      let sx = shape x and sy = shape y in
+      if not (nx >= 1 && nx <= 2 && ny >= 1 && ny <= 2 && sx.(nx - 1) = sy.(0))
+      then
+        invalid_arg
+          (Printf.sprintf
+             "jax.lax.dot: dimension_numbers must be specified when not \
+              performing simple un-batched matrix-matrix, matrix-vector, or \
+              vector-vector products; got lhs_shape=%s rhs_shape=%s"
+             (Lax.Utils.py_tuple sx) (Lax.Utils.py_tuple sy));
+      dot_with ?precision ?preferred_element_type
+        {
+          lhs_contract = [| nx - 1 |];
+          rhs_contract = [| 0 |];
+          lhs_batch = [||];
+          rhs_batch = [||];
+          untyped_dot = false;
+          dot_precision = None;
+        }
+        x y
 
 let dot_general ?precision ?preferred_element_type x y ~lhs_contract
     ~rhs_contract ~lhs_batch ~rhs_batch =

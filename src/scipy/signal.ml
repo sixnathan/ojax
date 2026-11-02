@@ -30,8 +30,17 @@ let conj_if_complex v =
   | _ -> v
 
 let convolve_nd in1 in2 mode =
+  if not (List.mem mode [ "full"; "same"; "valid" ]) then
+    invalid_arg "mode must be one of ['full', 'same', 'valid']";
   if rank in1 <> rank in2 then
     invalid_arg "in1 and in2 must have the same number of dimensions";
+  if Array.exists (( = ) 0) (shape in1) || Array.exists (( = ) 0) (shape in2)
+  then
+    invalid_arg
+      (Printf.sprintf
+         "zero-size arrays not supported in convolutions, got shapes %s and %s."
+         (Lax.Utils.py_tuple (shape in1))
+         (Lax.Utils.py_tuple (shape in2)));
   let in1, in2 = promote in1 in2 in
   let s1 = shape in1 and s2 = shape in2 in
   let no_swap = all_pairs ( >= ) s1 s2 and swap = all_pairs ( <= ) s1 s2 in

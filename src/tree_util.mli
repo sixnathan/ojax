@@ -50,3 +50,107 @@ val all_leaves : 'a t list -> bool
 val tree_broadcast : 'a t -> 'b t -> 'a t
 val count_leaves : treedef -> int
 val tree_transpose : treedef -> treedef -> 'a t -> 'a t
+val tree_broadcast_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'b t -> 'a t
+val tree_flatten_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'a t list * treedef
+
+val tree_leaves_with_path_is_leaf :
+  ?is_leaf:('a t -> bool) ->
+  ?is_leaf_takes_path:(key_path -> 'a t -> bool) ->
+  'a t ->
+  (key_path * 'a t) list
+
+val tree_flatten_with_path_is_leaf :
+  ?is_leaf:('a t -> bool) ->
+  ?is_leaf_takes_path:(key_path -> 'a t -> bool) ->
+  'a t ->
+  (key_path * 'a t) list * treedef
+
+val tree_map_with_path_is_leaf :
+  ?is_leaf:('a t -> bool) ->
+  ?is_leaf_takes_path:(key_path -> 'a t -> bool) ->
+  (key_path -> 'a t -> 'b t) ->
+  'a t ->
+  'b t
+
+val tree_reduce_is_leaf :
+  is_leaf:('a t -> bool) -> ('acc -> 'a t -> 'acc) -> 'acc -> 'a t -> 'acc
+
+val tree_all_is_leaf : is_leaf:('a t -> bool) -> ('a t -> bool) -> 'a t -> bool
+val tree_reduce_no_init : ('a -> 'a -> 'a) -> 'a t -> 'a
+
+val tree_reduce_associative_is_leaf :
+  is_leaf:('a t -> bool) ->
+  ('a t -> 'a t -> 'a t) ->
+  ?identity:'a t ->
+  'a t ->
+  'a t
+
+val all_leaves_is_leaf : is_leaf:('a t -> bool) -> 'a t list -> bool
+
+type py_tree_def = treedef
+
+val num_nodes : treedef -> int
+val treedef_to_string : treedef -> string
+
+type registry
+
+val default_registry : registry
+val registry_mem : registry -> string -> bool
+
+type ('n, 'a) node_class
+
+val register_pytree_node :
+  ?flatten_with_keys:('n -> (key_entry * 'a t) list * string) ->
+  string ->
+  flatten:('n -> 'a t list * string) ->
+  unflatten:(string -> 'a t list -> 'n) ->
+  ('n, 'a) node_class
+
+val register_pytree_node_class :
+  string ->
+  tree_flatten:('n -> 'a t list * string) ->
+  tree_unflatten:(string -> 'a t list -> 'n) ->
+  ('n, 'a) node_class
+
+val register_pytree_with_keys :
+  ?flatten_func:('n -> 'a t list * string) ->
+  string ->
+  flatten_with_keys:('n -> (key_entry * 'a t) list * string) ->
+  unflatten:(string -> 'a t list -> 'n) ->
+  ('n, 'a) node_class
+
+val register_pytree_with_keys_class :
+  string ->
+  tree_flatten_with_keys:('n -> (key_entry * 'a t) list * string) ->
+  tree_unflatten:(string -> 'a t list -> 'n) ->
+  ('n, 'a) node_class
+
+val register_static :
+  string ->
+  to_aux:('n -> string) ->
+  of_aux:(string -> 'n) ->
+  ('n, 'a) node_class
+
+type field_kind = Data_field | Static_field
+
+val static : unit -> field_kind
+
+val register_dataclass :
+  ?meta_fields:string list ->
+  ?drop_fields:string list ->
+  string ->
+  data_fields:string list ->
+  get:('n -> string -> 'a t) ->
+  meta:('n -> string) ->
+  make:(string -> 'a t list -> 'n) ->
+  ('n, 'a) node_class
+
+val node_to_tree : ('n, 'a) node_class -> 'n -> 'a t
+val node_of_tree : ('n, 'a) node_class -> 'a t -> 'n
+
+type ('a, 'b) partial
+
+val partial : ?name:string -> ('a t list -> 'b) -> 'a t list -> ('a, 'b) partial
+val partial_call : ('a, 'b) partial -> 'a t list -> 'b
+val partial_to_tree : ('a, 'b) partial -> 'a t
+val partial_of_tree : ('a, 'b) partial -> 'a t -> ('a, 'b) partial

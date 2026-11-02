@@ -10,6 +10,7 @@
   poison_values
   parity_cases
   coverage_cases
+  apicov_cases
   fuzz
   manifest)
  (libraries alcotest yojson ojax)
@@ -56,6 +57,7 @@
   (source_tree %{project_root}/goldens/scipy_optimize)
   (source_tree %{project_root}/goldens/parity)
   (source_tree %{project_root}/goldens/coverage)
+  (source_tree %{project_root}/goldens/apicov)
   (source_tree %{project_root}/goldens/parity_jit)
   (source_tree %{project_root}/goldens/fuzz)
   (source_tree %{project_root}/goldens/vectorize)

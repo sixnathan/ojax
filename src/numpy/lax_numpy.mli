@@ -11,6 +11,9 @@ type dtype_class =
   | Number
   | Generic
   | Cbool
+  | Flexible
+  | Character
+  | Object_
 
 type sections = Count of int | Indices of int array
 
@@ -147,6 +150,7 @@ val arange :
 val eye : ?m:int -> ?k:int -> dtype:Dtype.t -> int -> Types.value
 val identity : dtype:Dtype.t -> int -> Types.value
 val indices : dtype:Dtype.t -> int array -> Types.value
+val indices_sparse : dtype:Dtype.t -> int array -> Types.value list
 
 val meshgrid :
   ?indexing:string -> ?sparse:bool -> Types.value list -> Types.value list

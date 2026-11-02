@@ -366,38 +366,144 @@ let ds ?size ?(stride = 1) start =
       Dslice
         { start = T.Concrete (Nd.of_floats D.I32 [||] [| 0.0 |]); size; stride }
 
-let dslice_start start extent =
-  let dtype = (C.get_aval start).dtype in
-  let zero = Lax_api.full [||] 0.0 dtype in
-  Lax_api.select (Lax_api.lt start zero)
-    (Lax_api.add start (Lax_api.full [||] (float_of_int extent) dtype))
-    start
-
 let dslice_index x slices =
-  List.fold_left
-    (fun (acc, axis) slice ->
-      match slice with
-      | Full -> (acc, axis + 1)
-      | Dslice { start; size; stride } ->
-          let extent = (C.get_aval acc).shape.(axis) in
-          let begin_at = dslice_start start extent in
-          let out =
-            if stride = 1 then
-              Lax_api.dynamic_slice_in_dim ~axis acc begin_at size
-            else
-              Lax_api.concatenate
-                (List.init size (fun k ->
-                     let dtype = (C.get_aval begin_at).dtype in
-                     let at =
-                       Lax_api.add begin_at
-                         (Lax_api.full [||] (float_of_int (k * stride)) dtype)
-                     in
-                     Lax_api.dynamic_slice_in_dim ~axis acc at 1))
-                axis
+  let sh = shape x in
+  let nd = Array.length sh in
+  let given = List.length slices in
+  if given > nd then
+    invalid_arg
+      (Printf.sprintf
+         "Too many indices: %d-dimensional array indexed with %d regular \
+          indices."
+         nd given);
+  let slices = slices @ List.init (nd - given) (fun _ -> Full) in
+  let unit_stride = function
+    | Full | Dslice { stride = 1; _ } -> true
+    | Dslice _ -> false
+  in
+  let idx_dtype = Nd_index.index_dtype sh in
+  if List.for_all (fun s -> s = Full) slices then x
+  else if List.for_all unit_stride slices then
+    let starts =
+      List.map
+        (function
+          | Full -> T.Concrete (Nd.of_floats D.I32 [||] [| 0.0 |])
+          | Dslice { start; _ } -> start)
+        slices
+    in
+    let sizes =
+      Array.of_list
+        (List.mapi
+           (fun axis slice ->
+             match slice with Full -> sh.(axis) | Dslice { size; _ } -> size)
+           slices)
+    in
+    let starts =
+      if List.length starts > 1 then
+        List.map (fun v -> C.convert_like ~weak:false v idx_dtype) starts
+      else starts
+    in
+    let normalised =
+      List.mapi
+        (fun axis start ->
+          let d = dtype start in
+          let negative =
+            Ufuncs.less start (T.Concrete (Nd.of_floats d [||] [| 0.0 |]))
           in
-          (out, axis + 1))
-    (x, 0) slices
-  |> fst
+          let shifted =
+            Lax_api.add start
+              (T.Concrete (Nd.of_floats d [||] [| float_of_int sh.(axis) |]))
+          in
+          bind1 T.Select_n [ negative; start; shifted ])
+        starts
+    in
+    Lax_api.dynamic_slice_normalized x normalised sizes
+  else
+    let gather_indices = ref [] in
+    let indices_shape = ref [] in
+    let start_map = ref [] in
+    let collapsed = ref [] in
+    let offset = ref [] in
+    let gather_sizes = ref [] in
+    let slice_shape = ref [] in
+    List.iteri
+      (fun axis slice ->
+        let y_axis = axis in
+        match slice with
+        | Full | Dslice { stride = 1; _ } ->
+            let size =
+              match slice with Dslice { size; _ } -> size | _ -> sh.(axis)
+            in
+            (match slice with
+            | Dslice { start; size; _ } when size <> sh.(axis) ->
+                gather_indices :=
+                  ( C.convert_like ~weak:false start idx_dtype,
+                    List.length !indices_shape )
+                  :: !gather_indices;
+                start_map := axis :: !start_map
+            | _ -> ());
+            gather_sizes := size :: !gather_sizes;
+            offset := y_axis :: !offset;
+            slice_shape := size :: !slice_shape
+        | Dslice { start; size; stride } ->
+            let begin_at =
+              bind1 (T.Convert_element_type idx_dtype)
+                [ bind1 T.Copy [ start ] ]
+            in
+            let steps =
+              Lax_api.mul
+                (T.Concrete
+                   (Nd.of_floats idx_dtype [||] [| float_of_int stride |]))
+                (bind1
+                   (T.Iota
+                      { dtype = idx_dtype; shape = [| size |]; dimension = 0 })
+                   [])
+            in
+            let indices = Lax_api.add begin_at steps in
+            gather_sizes := 1 :: !gather_sizes;
+            gather_indices :=
+              (indices, List.length !indices_shape) :: !gather_indices;
+            start_map := axis :: !start_map;
+            indices_shape := size :: !indices_shape;
+            collapsed := axis :: !collapsed;
+            slice_shape := size :: !slice_shape)
+      slices;
+    let items = List.rev !gather_indices in
+    let shape_list = List.rev !indices_shape in
+    let gather_array =
+      match items with
+      | [] -> T.Concrete (Nd.of_floats idx_dtype [| 0 |] [||])
+      | [ (g, _) ] -> Lax_api.expand_dims g [| ndim g |]
+      | _ ->
+          let full = Array.of_list (shape_list @ [ 1 ]) in
+          let last = List.length shape_list in
+          Lax_api.concatenate
+            (List.map
+               (fun (g, i) ->
+                 Lax_api.broadcast_in_dim g full
+                   (Array.init (ndim g) (fun k -> i + k)))
+               items)
+            last
+    in
+    let prim =
+      T.Gather
+        {
+          dimension_numbers =
+            {
+              offset_dims = Array.of_list (List.rev !offset);
+              collapsed_slice_dims =
+                Array.of_list (List.sort compare !collapsed);
+              start_index_map = Array.of_list (List.rev !start_map);
+              g_operand_batching_dims = [||];
+              g_start_indices_batching_dims = [||];
+              g_sorted_unique = false;
+            };
+          slice_sizes = Array.of_list (List.rev !gather_sizes);
+        }
+    in
+    bind1
+      (Np_ints.mark_gather_flags ~sorted:true ~unique:true prim)
+      [ x; gather_array ]
 
 let put_along_axis ?axis ?mode a0 a1 a2 =
   Eager_jit.one ~jit:"put_along_axis" "numpy.indexing.put_along_axis"
@@ -515,3 +621,6 @@ let () =
               (if Config.value Config.enable_x64 then D.I64 else D.I32)
               [| Array.length indices |]
               (Array.map float_of_int indices)))
+
+let () =
+  Reductions.take_along_axis_hook := fun ~axis a i -> take_along_axis ~axis a i

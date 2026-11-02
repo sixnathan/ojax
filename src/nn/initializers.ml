@@ -5,6 +5,7 @@ module D = Dtype
 module RC = Random.Core
 
 type t = value -> shape:int array -> value
+type initializer_ = t
 type mode = Fan_in | Fan_out | Fan_avg | Fan_geo_avg
 type distribution = Truncated_normal | Normal | Uniform
 
@@ -43,6 +44,17 @@ let compute_fans shape ~in_axis ~out_axis ~batch_axis =
 
 let zeros : t = fun _key ~shape -> const shape 0.0
 let ones : t = fun _key ~shape -> const shape 1.0
+
+let zeros_dtype ?dtype _key ~shape =
+  match dtype with
+  | None -> const shape 0.0
+  | Some d -> Lax_api.full shape 0.0 (Dtypes.canonicalize_dtype d)
+
+let ones_dtype ?dtype _key ~shape =
+  match dtype with
+  | None -> const shape 1.0
+  | Some d -> Lax_api.full shape 1.0 (Dtypes.canonicalize_dtype d)
+
 let constant value : t = fun _key ~shape -> const shape (f32 value)
 let dtype_of v = (C.get_aval v).dtype
 let like v x = Concrete (Nd.of_floats (dtype_of v) [||] [| x |])

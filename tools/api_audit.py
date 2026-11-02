@@ -11,7 +11,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MAP = {
-    "jax": ["spmd", "parallel", "ref", "shape_dtype_struct", "api", "core", "ad_util", "custom_derivatives", "checkpoint", "tree_util", "flatten_util", "config", "sharding", "backend", "debugging", "basearray", "dtypes", "stages", "random/core", "profiler", "monitoring"],
+    "jax": ["spmd", "parallel", "ref", "shape_dtype_struct", "api", "core", "ad_util", "custom_derivatives", "checkpoint", "tree_util", "flatten_util", "config", "sharding", "backend", "debugging", "basearray", "dtypes", "stages", "random/core", "profiler", "monitoring", "jax_top"],
     "jax.numpy": ["numpy/*", "dtypes"],
     "jax.numpy.fft": ["numpy/fft"],
     "jax.numpy.linalg": ["numpy/linalg", "linalg_extras"],
@@ -162,10 +162,188 @@ def val_labels(files):
     return labels
 
 
+DECL = re.compile(r"^[ \t]*(?:val|external)\s+\(?\s*([a-zA-Z_][a-zA-Z0-9_']*)\s*\)?\s*:(.*?)(?=^[ \t]*(?:val|type|module|external|exception|open|end|include)\b|\Z)", re.M | re.S)
+
+
+def split_arrows(text):
+    parts, depth, cur, i = [], 0, "", 0
+    while i < len(text):
+        c = text[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        if depth == 0 and text.startswith("->", i):
+            parts.append(cur.strip())
+            cur = ""
+            i += 2
+            continue
+        cur += c
+        i += 1
+    parts.append(cur.strip())
+    return parts
+
+
+def parse_val(text):
+    text = re.sub(r"\[@@?[^\]]*\]", "", text)
+    if '"' in text:
+        text = text[: text.index('"')]
+        text = text.rsplit("=", 1)[0]
+    parts = split_arrows(text)
+    labels, positional = {}, []
+    for part in parts[:-1]:
+        m = re.match(r"^(\??)([a-z_][a-zA-Z0-9_']*)\s*:(.*)$", part, re.S)
+        if m:
+            labels[norm(m.group(2))] = m.group(3).strip()
+        elif part != "unit":
+            positional.append(part)
+    return labels, positional, parts[-1]
+
+
+def declarations(files):
+    decls = collections.defaultdict(list)
+    for path in files:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for m in DECL.finditer(text):
+            decls[m.group(1)].append(parse_val(m.group(2)))
+    return decls
+
+
+def type_expansion(files):
+    out = {}
+    pat = re.compile(r"^[ \t]*type\s+(?:'[a-z]+\s+)?([a-z_][a-zA-Z0-9_']*)\s*=\s*(.*?)(?=^[ \t]*(?:val|type|module|external|exception|open|end|include)\b|\Z)", re.M | re.S)
+    for path in files:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for m in pat.finditer(text):
+            if "->" in m.group(2) and not m.group(2).lstrip().startswith(("|", "{")):
+                out[m.group(1)] = m.group(2).strip()
+    return out
+
+
+def jax_parameters(obj):
+    try:
+        sig = inspect.signature(obj)
+    except (TypeError, ValueError):
+        return None
+    out = []
+    for p in sig.parameters.values():
+        if p.kind == p.VAR_KEYWORD:
+            continue
+        if p.kind == p.VAR_POSITIONAL:
+            out.append((p.name, "var"))
+        elif p.default is inspect.Parameter.empty:
+            out.append((p.name, "required"))
+        else:
+            out.append((p.name, "optional"))
+    return out
+
+
+def ocaml_key(name, decls):
+    for key in (name, name + "_", name.lower(), name.lower() + "_", name + "'"):
+        if key in decls:
+            return key
+    return None
+
+
+CURRIED = {"grad", "value_and_grad", "jacfwd", "jacrev", "jacobian", "hessian", "jit", "vmap", "pmap", "make_jaxpr", "checkpoint", "remat", "custom_jvp", "custom_vjp", "shard_map", "smap"}
+NO_NAMED_ARGUMENTS = {"static_argnames", "nondiff_argnames"}
+VARIANT_LABELS = {"aux": "has_aux", "holomorphic": "holomorphic", "returned": "returned", "retstep": "retstep", "shape": "return_shape", "indices": "return_indices", "full": "full", "cov": "cov", "sign": "return_sign", "sparse": "sparse"}
+ALIASES = {"preferred": "preferred_element_type", "method_": "method"}
+
+
+def signature_gaps(module, name, obj, decls, types):
+    params = jax_parameters(obj)
+    if params is None:
+        return None
+    params = [p for p in params if p[0] not in NO_NAMED_ARGUMENTS]
+    key = ocaml_key(name, decls)
+    if key is None:
+        return None
+    variants = [d for k, ds in decls.items() if k == key or k.startswith(key + "_") or k.startswith(key.rstrip("_") + "_") for d in ds]
+    exact = decls[key]
+    labels = set()
+    for lab, _, _ in variants:
+        labels |= set(lab)
+    for alias, target in ALIASES.items():
+        if norm(alias) in labels:
+            labels.add(norm(target))
+    for k in decls:
+        if k.startswith(key.rstrip("_") + "_"):
+            suffix = k[len(key.rstrip("_")) + 1 :]
+            if suffix in VARIANT_LABELS:
+                labels.add(norm(VARIANT_LABELS[suffix]))
+    positional = max(len(pos) for _, pos, _ in exact)
+    if name in CURRIED:
+        positional = max(0, positional - 1)
+    for _, pos, res in exact:
+        for arg in pos + [res]:
+            if "flag" in arg:
+                return []
+        base = re.sub(r"^.*\.", "", res.split()[-1]) if res.split() else ""
+        if base in types:
+            lab, pos2, _ = parse_val(types[base])
+            labels |= set(lab)
+            positional = max(positional, len(pos) + len(pos2))
+    if any("Dtype.t" in p for _, pos, _ in exact for p in pos):
+        labels.add("dtype")
+    if isinstance(obj, jax_ufunc()) or "Primitive" in type(obj).__name__:
+        return []
+    gaps = []
+    for pname, kind in params:
+        if norm(pname) in labels:
+            continue
+        if kind in ("required", "var"):
+            if positional > 0:
+                positional -= 1
+                continue
+            if kind == "required":
+                gaps.append(pname)
+        else:
+            if pname.startswith("_") or pname in NO_RESULT_EFFECT or rejected_by_jax(module, name, obj, pname):
+                continue
+            if pname == "operand" and any(k == "var" for _, k in params):
+                continue
+            if positional > 0 and pname not in OPTIONS_NOT_POSITIONAL:
+                positional -= 1
+                continue
+            gaps.append(pname)
+    return gaps
+
+
+OPTIONS_NOT_POSITIONAL = {"argnums", "out_axes", "has_aux", "holomorphic", "allow_int", "axis_name", "axis_size"}
+
+
+def signature_audit(report):
+    total = ok = no_sig = 0
+    rows = []
+    for module, patterns in MAP.items():
+        mod = importlib.import_module(module)
+        files = mli_files(patterns)
+        decls = declarations(files)
+        types = type_expansion(files)
+        missing = set(report[module]["missing_strict"])
+        for name in public_names(module):
+            if name in missing:
+                continue
+            total += 1
+            gaps = signature_gaps(module, name, getattr(mod, name, None), decls, types)
+            if gaps is None:
+                no_sig += 1
+                ok += 1
+            elif gaps:
+                rows.append((module, name, gaps))
+            else:
+                ok += 1
+    return total, ok, no_sig, rows
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", default=None)
     parser.add_argument("--options", action="store_true")
+    parser.add_argument("--signatures", action="store_true")
     args = parser.parse_args()
     all_files = mli_files(["*", "*/*", "*/*/*"])
     loose_vals, loose_others = symbols(all_files)
@@ -198,6 +376,13 @@ def main():
     print(f"TOTAL {tot} strict {strict_n} loose {loose_n}")
     primitive = sum(1 for m in report.values() for n in m["missing_strict"] if n.endswith("_p"))
     print(f"primitive objects among strict gaps (ojax has variant constructors for them): {primitive}")
+    if args.signatures:
+        checked, sig_ok, no_sig, sig_rows = signature_audit(report)
+        report["_signatures"] = sig_rows
+        print(f"SIGNATURES names_present {checked} signature_ok {sig_ok} (of which {no_sig} have no comparable signature) signature_gaps {len(sig_rows)} params_missing {sum(len(r[2]) for r in sig_rows)}")
+        print(f"STRICT_WITH_SIGNATURES {sig_ok} of {tot}")
+        for module, name, gaps in sig_rows:
+            print(f"  {module}.{name}: {' '.join(gaps)}")
     if args.options:
         rows = []
         for module, patterns in MAP.items():

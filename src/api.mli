@@ -6,11 +6,21 @@ val jit_flat :
 val call : (value list -> value list) -> value list -> value list
 
 val make_jaxpr :
+  ?axis_env:(string * int) list ->
+  ?static_argnums:int list ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   closed_jaxpr
 
+val make_jaxpr_shape :
+  ?axis_env:(string * int) list ->
+  ?static_argnums:int list ->
+  (value Tree_util.t list -> value Tree_util.t) ->
+  value Tree_util.t list ->
+  closed_jaxpr * aval Tree_util.t
+
 val jit :
+  ?static_argnums:int list ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t
@@ -39,17 +49,22 @@ val scalar_type_of : value -> Dtypes.scalar_type
 
 val grad :
   ?allow_int:bool ->
+  ?argnums:int ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t
 
 val value_and_grad :
   ?allow_int:bool ->
+  ?argnums:int ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t * value Tree_util.t
 
 val vmap :
+  ?axis_name:string ->
+  ?out_axes:int ->
+  ?axis_size:int ->
   (value Tree_util.t list -> value Tree_util.t) ->
   int option list ->
   value Tree_util.t list ->
@@ -77,24 +92,30 @@ val fwd_and_bwd :
 
 val jacfwd :
   ?argnums:int ->
+  ?holomorphic:bool ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t
 
 val jacrev :
   ?argnums:int ->
+  ?holomorphic:bool ->
+  ?allow_int:bool ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t
 
 val jacobian :
   ?argnums:int ->
+  ?holomorphic:bool ->
+  ?allow_int:bool ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t
 
 val hessian :
   ?argnums:int ->
+  ?holomorphic:bool ->
   (value Tree_util.t list -> value Tree_util.t) ->
   value Tree_util.t list ->
   value Tree_util.t
@@ -137,6 +158,12 @@ val linearize_aux :
   value Tree_util.t
   * (value Tree_util.t list -> value Tree_util.t)
   * value Tree_util.t
+
+val jacobian_aux :
+  ?argnums:int ->
+  (value Tree_util.t list -> value Tree_util.t) ->
+  value Tree_util.t list ->
+  value Tree_util.t * value Tree_util.t
 
 val jacfwd_aux :
   ?argnums:int ->
@@ -184,7 +211,7 @@ val remat :
   value list ->
   value list
 
-val named_call : 'a -> 'a
+val named_call : ?name:string -> 'a -> 'a
 val named_scope : string -> (unit -> 'a) -> 'a
 val device_get : value Tree_util.t -> value Tree_util.t
 val block_until_ready : 'a -> 'a

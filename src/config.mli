@@ -22,6 +22,8 @@ val softmax_custom_jvp : bool flag
 val threefry_partitionable : bool flag
 val allow_f16_reductions : bool flag
 val thread_guard : bool flag
+val auto_pcast : bool flag
+val remove_size_one_mesh_axis_from_type : bool flag
 val jax2tf_associative_scan_reductions : bool flag
 val numpy_dtype_promotion : string flag
 val legacy_prng_key : string flag
@@ -42,3 +44,18 @@ val platforms : string flag
 val platform_resolver : (unit -> string) ref
 val current_platform : unit -> string
 val num_cpu_devices : int flag
+
+type 'a user_context
+
+val make_user_context : ?default_value:'a -> unit -> 'a user_context
+val with_user_context : 'a user_context -> 'a -> (unit -> 'b) -> 'b
+val user_context_value : 'a user_context -> 'a option
+
+type config_value =
+  | Config_bool of bool
+  | Config_int of int
+  | Config_string of string
+  | Config_optional_string of string option
+
+val read : string -> config_value
+val update : string -> config_value -> unit

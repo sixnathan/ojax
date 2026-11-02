@@ -12,17 +12,8 @@ let aval = Core.get_aval
 let shape v = (aval v).T.shape
 let dtype v = (aval v).T.dtype
 
-let approx_top_k_prim ~is_max_k ~reduction_dimension operand k =
-  let exact = function
-    | [ x ] ->
-        if is_max_k then
-          let values, indices = L.top_k ~axis:reduction_dimension x k in
-          [ values; indices ]
-        else
-          let values, indices = L.top_k ~axis:reduction_dimension (L.neg x) k in
-          [ L.neg values; indices ]
-    | _ -> invalid_arg "approx_top_k: arity"
-  in
+let approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
+    ~reduction_input_size_override ~aggregate_to_topk operand k =
   let a = aval operand in
   let rank = Array.length a.T.shape in
   let axis =
@@ -34,19 +25,35 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension operand k =
       (Printf.sprintf
          "k must be smaller than the size of reduction_dim %d, got %d"
          a.T.shape.(axis) k);
-  let out_shape = Array.mapi (fun i d -> if i = axis then k else d) a.T.shape in
+  let returned = if aggregate_to_topk then k else a.T.shape.(axis) in
+  let exact = function
+    | [ x ] ->
+        if is_max_k then
+          let values, indices = L.top_k ~axis:reduction_dimension x returned in
+          [ values; indices ]
+        else
+          let values, indices =
+            L.top_k ~axis:reduction_dimension (L.neg x) returned
+          in
+          [ L.neg values; indices ]
+    | _ -> invalid_arg "approx_top_k: arity"
+  in
+  let out_shape =
+    Array.mapi (fun i d -> if i = axis then returned else d) a.T.shape
+  in
   let prim =
     T.Decomposable
       {
         dname = "approx_top_k";
         dparams =
           [
-            ("aggregate_to_topk", "True");
+            ("aggregate_to_topk", if aggregate_to_topk then "True" else "False");
             ("is_max_k", if is_max_k then "True" else "False");
             ("k", string_of_int k);
-            ("recall_target", "0.95");
+            ("recall_target", Printf.sprintf "%.12g" recall_target);
             ("reduction_dimension", string_of_int reduction_dimension);
-            ("reduction_input_size_override", "-1");
+            ( "reduction_input_size_override",
+              string_of_int reduction_input_size_override );
           ];
         dimpl = Core.register_decomposition exact;
         davals =
@@ -60,19 +67,39 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension operand k =
   | [ values; indices ] -> (values, indices)
   | _ -> invalid_arg "approx_top_k: arity"
 
-let approx_top_k ~is_max_k ~reduction_dimension operand k =
-  Eager_jit.pair "lax.approx_top_k" (is_max_k, reduction_dimension, k)
-    [] [ operand ] (fun _ vals ->
-      approx_top_k_prim ~is_max_k ~reduction_dimension (List.hd vals) k)
+let approx_top_k ~is_max_k ~reduction_dimension ~recall_target
+    ~reduction_input_size_override ~aggregate_to_topk operand k =
+  Eager_jit.pair "lax.approx_top_k"
+    ( is_max_k,
+      reduction_dimension,
+      k,
+      recall_target,
+      reduction_input_size_override,
+      aggregate_to_topk ) [] [ operand ] (fun _ vals ->
+      approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
+        ~reduction_input_size_override ~aggregate_to_topk (List.hd vals) k)
 
-let approx_max_k ?(reduction_dimension = -1) operand k =
-  approx_top_k ~is_max_k:true ~reduction_dimension operand k
+let approx_max_k ?(reduction_dimension = -1) ?(recall_target = 0.95)
+    ?(reduction_input_size_override = -1) ?(aggregate_to_topk = true) operand k
+    =
+  approx_top_k ~is_max_k:true ~reduction_dimension ~recall_target
+    ~reduction_input_size_override ~aggregate_to_topk operand k
 
-let approx_min_k ?(reduction_dimension = -1) operand k =
-  approx_top_k ~is_max_k:false ~reduction_dimension operand k
+let approx_min_k ?(reduction_dimension = -1) ?(recall_target = 0.95)
+    ?(reduction_input_size_override = -1) ?(aggregate_to_topk = true) operand k
+    =
+  approx_top_k ~is_max_k:false ~reduction_dimension ~recall_target
+    ~reduction_input_size_override ~aggregate_to_topk operand k
 
 let broadcast_like arr like = NL.broadcast_to arr (shape like)
 let create_token () = Core.bind1 T.Create_token []
+
+let dce_sink ?(prevent_mlir_dce = false) v =
+  ignore (Core.bind (T.Dce_sink { prevent_mlir_dce }) [ v ])
+
+type precision_like = Lax_config.precision option
+type conv_general_dilated_dimension_numbers = Types.conv_dims option
+
 let after_all tokens = Core.bind1 T.After_all tokens
 
 type ragged_mode = Ragged_noncontracting | Ragged_contracting | Ragged_batch

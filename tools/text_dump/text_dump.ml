@@ -247,6 +247,18 @@ let () =
                   parity_case ~run:Coverage_cases.run oc
                     ~set:("coverage/" ^ set) case)
               (cases_of coverage);
+          let apicov =
+            Filename.concat
+              (Filename.concat (Filename.concat goldens "apicov") set)
+              "manifest.json"
+          in
+          if Sys.file_exists apicov then
+            List.iteri
+              (fun i case ->
+                if in_shard ~shard ~shards i then
+                  parity_case ~run:Apicov_cases.run oc ~set:("apicov/" ^ set)
+                    case)
+              (cases_of apicov);
           if shard = 0 then
             List.iter
               (fun (case, avals, f) ->

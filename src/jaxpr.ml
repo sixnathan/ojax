@@ -711,7 +711,7 @@ let () =
 
 let has_side_effect = function
   | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
-  | Dce_sink | Create_token | After_all -> true
+  | Dce_sink _ | Create_token | After_all -> true
   | _ -> false
 
 let rec eqn_has_effect (e : eqn) =

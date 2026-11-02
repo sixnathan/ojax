@@ -99,7 +99,11 @@ let test_empty2 () =
   Alcotest.check arr "empty2" [| 0. |] (out_floats r)
 
 let test_dce_sink () =
-  let r = C.bind T.Dce_sink [ f32 [| 2 |] [| 1.; 2. |] ] in
+  let r =
+    C.bind
+      (T.Dce_sink { prevent_mlir_dce = false })
+      [ f32 [| 2 |] [| 1.; 2. |] ]
+  in
   Alcotest.(check int) "dce_sink no output" 0 (List.length r)
 
 let test_composite () =

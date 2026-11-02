@@ -238,7 +238,7 @@ let closure_convert f avals =
   let closed, hoisted = Jaxpr.make_jaxpr_hoisted avals f in
   ((fun args -> Jaxpr.eval_closed_jaxpr closed args), hoisted)
 
-let pure_callback host_fun ~result_avals =
+let callback_id cb_effect host_fun ~result_avals =
   let host args =
     host_fun
       (List.map
@@ -248,9 +248,32 @@ let pure_callback host_fun ~result_avals =
            | Tracer _ -> failwith "pure_callback: expected concrete arguments")
          args)
   in
-  let id =
-    Core.register_custom_rule (Core.Callback_rule { host; result_avals })
+  Core.register_custom_rule
+    (Core.Callback_rule { host; result_avals; cb_effect })
+
+let pure_callback host_fun ~result_avals =
+  let id = callback_id Core.Callback_pure host_fun ~result_avals in
+  fun args -> Core.bind (Custom_vjp_call id) args
+
+let shaped_array (a : aval) =
+  let dims =
+    String.concat "," (List.map string_of_int (Array.to_list a.shape))
   in
+  Printf.sprintf "ShapedArray(%s[%s])" (Ref_state.dtype_name a.dtype) dims
+
+let py_tuple = function
+  | [ one ] -> "(" ^ one ^ ",)"
+  | items -> "(" ^ String.concat ", " items ^ ")"
+
+let io_callback ?(ordered = false) host_fun ~result_avals =
+  let id = callback_id (Core.Callback_io { ordered }) host_fun ~result_avals in
+  Pretty_printer.register_callback_view id "io_callback"
+    [
+      ("callback", "<host callback>");
+      ("ordered", if ordered then "True" else "False");
+      ("result_avals", py_tuple (List.map shaped_array result_avals));
+      ("sharding", "None");
+    ];
   fun args -> Core.bind (Custom_vjp_call id) args
 
 let zero_from_primal v = Ad_util.zeros_like_aval (Core.get_aval v)

@@ -1013,7 +1013,7 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Custom_linear_solve _ ->
       failwith "batching: multi-output handled by batch_process_primitive"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
-  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
+  | Dce_sink _ | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ ->
       failwith "batching: vmap of this primitive not supported in M1"
   | Dot_general dims -> dot_general_batch dims vals bdims
@@ -1288,17 +1288,27 @@ let () =
         (fun (n, t, _) -> if n = name then Some t else None)
         !named_axes
 
-let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0)
+let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     (f : value list -> value list) (in_axes : int option list)
     (args : value list) : value list =
   let axis_size =
     let rec find axes vals =
       match (axes, vals) with
-      | Some d :: _, x :: _ -> (Core.get_aval x).shape.(d)
+      | Some d :: _, x :: _ -> Some (Core.get_aval x).shape.(d)
       | None :: axes, _ :: vals -> find axes vals
-      | _ -> failwith "batching: vmap needs at least one mapped input"
+      | _ -> None
     in
-    find in_axes args
+    match (find in_axes args, axis_size) with
+    | Some found, Some given when found <> given ->
+        invalid_arg
+          (Printf.sprintf
+             "vmap got inconsistent sizes for array axes to be mapped:\n\
+             \  * axis_size is %d but an array axis has size %d"
+             given found)
+    | Some found, _ -> found
+    | None, Some given -> given
+    | None, None ->
+        invalid_arg "vmap must have at least one non-None value in in_axes"
   in
   Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
       let tracers_in =
@@ -1796,6 +1806,15 @@ let scan_batch (axis_size : int) ~(length : int) ~(reverse : bool)
   in
   (outs, out_bdims)
 
+let check_vmappable_callback = function
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule
+          { cb_effect = Core.Callback_io { ordered = true }; _ } ->
+          invalid_arg "Cannot `vmap` ordered IO callback."
+      | _ -> ())
+  | _ -> ()
+
 let unstacks_operands prim (bdims : int option list) =
   let any_batched = List.exists (fun b -> b <> None) in
   match (prim, bdims) with
@@ -1813,6 +1832,7 @@ let unstacks_operands prim (bdims : int option list) =
   | _ -> false
 
 let unstacked_batch axis_size prim vals bdims =
+  check_vmappable_callback prim;
   let per_element =
     List.map2
       (fun v b ->

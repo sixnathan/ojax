@@ -79,7 +79,7 @@ val clamp : value -> value -> value -> value
 val select : value -> value -> value -> value
 val select_n : value -> value list -> value
 val full : int array -> float -> Dtype.t -> value
-val full_like : value -> float -> value
+val full_like : ?dtype:Dtype.t -> ?shape:int array -> value -> float -> value
 val empty : Dtype.t -> value
 val iota : Dtype.t -> int -> value
 val broadcasted_iota : Dtype.t -> int array -> int -> value

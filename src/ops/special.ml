@@ -25,7 +25,12 @@ let reduction_dims ndim axis =
   | None -> Array.init ndim (fun i -> i)
   | Some a -> Array.map (canon_axis ndim) a
 
-let logsumexp ?axis ?b ?(keepdims = false) a =
+let logsumexp_parts ?axis ?b ?(keepdims = false) ?where a ~return_sign =
+  let a =
+    match where with
+    | None -> a
+    | Some w -> NL.where_ w a (Numpy.Jnp_util.py_int 0)
+  in
   let a_arr, b_arr =
     match b with
     | None -> (promote_inexact a, None)
@@ -44,8 +49,8 @@ let logsumexp ?axis ?b ?(keepdims = false) a =
   let dims = reduction_dims ndim axis in
   let real_a = UF.real a_arr in
   let amax =
-    RED.max ~axis:dims ~keepdims
-      ~initial:(scalar_of real_a Float.neg_infinity)
+    RED.max ~axis:dims ~keepdims ?where
+      ~initial:(JU.py_float Float.neg_infinity)
       real_a
   in
   let finite = UF.isfinite amax in
@@ -54,17 +59,25 @@ let logsumexp ?axis ?b ?(keepdims = false) a =
   let diff = C.bind1 T.Sub [ a_arr; NL.astype amax_with_dims (dtype a_arr) ] in
   let exp_a = L.exp diff in
   let exp_a = match b_arr with None -> exp_a | Some bb -> L.mul exp_a bb in
-  let sumexp = RED.sum ~axis:dims ~keepdims exp_a in
+  let sumexp = RED.sum ~axis:dims ~keepdims ?where exp_a in
   let sign = L.sign sumexp in
   let sumexp =
     match dtype a_arr with
-    | D.Complex64 | D.Complex128 -> sumexp
+    | (D.Complex64 | D.Complex128) when not return_sign -> sumexp
     | _ -> UF.abs sumexp
   in
   let lg = L.log sumexp in
-  let out = L.add lg (NL.astype amax (dtype sumexp)) in
+  (L.add lg (NL.astype amax (dtype sumexp)), sign)
+
+let logsumexp ?axis ?b ?keepdims ?where a =
+  let out, sign =
+    logsumexp_parts ?axis ?b ?keepdims ?where a ~return_sign:false
+  in
   match (b, dtype out) with
   | Some _, (D.F16 | D.Bf16 | D.F32 | D.F64) ->
       let neg = UF.less sign (scalar_of sign 0.0) in
       NL.where_ neg (scalar_of out Float_format.nan) out
   | _ -> out
+
+let logsumexp_sign ?axis ?b ?keepdims ?where a =
+  logsumexp_parts ?axis ?b ?keepdims ?where a ~return_sign:true

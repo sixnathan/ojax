@@ -55,6 +55,8 @@ val process_custom_vjp :
   value list ->
   value list
 
+type callback_effect = Callback_pure | Callback_io of { ordered : bool }
+
 type custom_rule =
   | Jvp_rule of {
       primal : value list -> value list;
@@ -75,6 +77,7 @@ type custom_rule =
   | Callback_rule of {
       host : value list -> value list;
       result_avals : aval list;
+      cb_effect : callback_effect;
     }
 
 val register_custom_rule : custom_rule -> int

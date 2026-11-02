@@ -253,14 +253,55 @@ let call (f : value list -> value list) (args : value list) : value list =
 let flatten_args (args : value Tree.t list) : value list * Tree.treedef =
   Tree.tree_flatten (Tree.Tuple args)
 
-let make_jaxpr (f : value Tree.t list -> value Tree.t)
-    (args : value Tree.t list) : closed_jaxpr =
-  let flat_args, in_tree = flatten_args args in
-  let avals = List.map Core.get_aval flat_args in
-  let flat_fun, _ = Api_util.flatten_fun f in_tree in
-  Jaxpr.make_jaxpr avals (Linear_util.call_wrapped flat_fun)
+let split_static static_argnums args =
+  let is_static i = List.mem i static_argnums in
+  let dynamic = List.filteri (fun i _ -> not (is_static i)) args in
+  let merge dyn =
+    let remaining = ref dyn in
+    List.mapi
+      (fun i a ->
+        if is_static i then a
+        else
+          match !remaining with
+          | x :: rest ->
+              remaining := rest;
+              x
+          | [] -> invalid_arg "static_argnums: arity")
+      args
+  in
+  (dynamic, merge)
 
-let jit (f : value Tree.t list -> value Tree.t) :
+let make_jaxpr_shape ?(axis_env = []) ?(static_argnums = [])
+    (f : value Tree.t list -> value Tree.t) (args : value Tree.t list) =
+  let dynamic, merge = split_static static_argnums args in
+  let flat_args, in_tree = flatten_args dynamic in
+  let avals = List.map Core.get_aval flat_args in
+  let flat_fun, out_tree =
+    Api_util.flatten_fun (fun xs -> f (merge xs)) in_tree
+  in
+  let closed =
+    Core.with_mesh_axes (axis_env @ !Core.mesh_axes) (fun () ->
+        Jaxpr.make_jaxpr avals (Linear_util.call_wrapped flat_fun))
+  in
+  let out_avals =
+    List.map
+      (function
+        | A_var v -> v.vaval
+        | A_lit nd ->
+            {
+              shape = Ndarray.shape nd;
+              dtype = Ndarray.dtype nd;
+              weak_type = false;
+            }
+        | DropVar a -> a)
+      closed.jaxpr.outs
+  in
+  (closed, Tree.tree_unflatten (out_tree ()) out_avals)
+
+let make_jaxpr ?axis_env ?static_argnums f args =
+  fst (make_jaxpr_shape ?axis_env ?static_argnums f args)
+
+let jit_plain (f : value Tree.t list -> value Tree.t) :
     value Tree.t list -> value Tree.t =
   let cache :
       ( string,
@@ -305,6 +346,46 @@ let jit (f : value Tree.t list -> value Tree.t) :
       Tree.tree_unflatten out_tree
         (Key_reuse.call_with_signature signature flat_args (fun () ->
              run_with_refs cj cells flat_args))
+
+let static_key tree =
+  String.concat ","
+    (List.map
+       (function
+         | Concrete nd when Ndarray.shape nd = [||] ->
+             Printf.sprintf "%s:%h"
+               (Ref_state.dtype_name (Ndarray.dtype nd))
+               (Ndarray.get_f nd [||])
+         | Device b when Ndarray.shape (Pjrt.Buffer.to_host b) = [||] ->
+             let nd = Pjrt.Buffer.to_host b in
+             Printf.sprintf "%s:%h"
+               (Ref_state.dtype_name (Ndarray.dtype nd))
+               (Ndarray.get_f nd [||])
+         | _ ->
+             invalid_arg
+               "Non-hashable static arguments are used in a jit function")
+       (Tree.tree_leaves tree))
+
+let jit ?(static_argnums = []) f =
+  if static_argnums = [] then jit_plain f
+  else
+    let per_key = Hashtbl.create 8 in
+    fun args ->
+      let dynamic, merge = split_static static_argnums args in
+      let key =
+        String.concat ";"
+          (List.mapi
+             (fun i a -> if List.mem i static_argnums then static_key a else "")
+             args)
+      in
+      let compiled =
+        match Hashtbl.find_opt per_key key with
+        | Some c -> c
+        | None ->
+            let c = jit_plain (fun xs -> f (merge xs)) in
+            Hashtbl.replace per_key key c;
+            c
+      in
+      compiled dynamic
 
 let keep_key_kind source moved =
   if Key_reuse.is_typed source then Key_reuse.mark_typed moved else moved
@@ -430,12 +511,31 @@ let value_and_grad ?(allow_int = false) (f : value Tree.t list -> value Tree.t)
       in
       (Tree.Leaf y, Tree.tree_unflatten tree0 g)
 
-let grad ?allow_int (f : value Tree.t list -> value Tree.t)
-    (args : value Tree.t list) : value Tree.t =
-  snd (value_and_grad ?allow_int f args)
+let move_argnum k args =
+  if k = 0 then (args, fun xs -> xs)
+  else (
+    if k < 0 || k >= List.length args then invalid_arg "argnums out of range";
+    let chosen = List.nth args k in
+    let others = List.filteri (fun i _ -> i <> k) args in
+    let restore = function
+      | x :: rest ->
+          let before = List.filteri (fun i _ -> i < k) rest in
+          let after = List.filteri (fun i _ -> i >= k) rest in
+          before @ (x :: after)
+      | [] -> []
+    in
+    (chosen :: others, restore))
 
-let vmap (f : value Tree.t list -> value Tree.t) (in_axes : int option list)
+let value_and_grad ?allow_int ?(argnums = 0) f args =
+  let moved, restore = move_argnum argnums args in
+  value_and_grad ?allow_int (fun xs -> f (restore xs)) moved
+
+let grad ?allow_int ?argnums (f : value Tree.t list -> value Tree.t)
     (args : value Tree.t list) : value Tree.t =
+  snd (value_and_grad ?allow_int ?argnums f args)
+
+let vmap ?axis_name ?out_axes ?axis_size (f : value Tree.t list -> value Tree.t)
+    (in_axes : int option list) (args : value Tree.t list) : value Tree.t =
   let flat_args, in_tree = flatten_args args in
   let flat_axes =
     List.concat
@@ -445,7 +545,9 @@ let vmap (f : value Tree.t list -> value Tree.t) (in_axes : int option list)
   in
   let flat_fun, out_tree = Api_util.flatten_fun f in_tree in
   let outs =
-    Batching.vmap (Linear_util.call_wrapped flat_fun) flat_axes flat_args
+    Batching.vmap_flat ?axis_name ?out_axis:out_axes ?axis_size
+      (Linear_util.call_wrapped flat_fun)
+      flat_axes flat_args
   in
   Tree.tree_unflatten (out_tree ()) outs
 
@@ -710,10 +812,74 @@ let downcast v (example : aval) =
   if (Core.get_aval v).dtype = example.dtype && not a.weak_type then v
   else Core.bind1 (Convert_element_type example.dtype) [ v ]
 
-let jacfwd ?(argnums = 0) f args =
+let is_complex_dtype dt = dt = Dtype.Complex64 || dt = Dtype.Complex128
+
+let check_input_jacfwd holomorphic v =
+  let dt = (Core.get_aval v).dtype in
+  let name = Dtype.numpy_name dt in
+  if holomorphic then
+    begin if not (is_complex_dtype dt) then
+      invalid_arg
+        ("jacfwd with holomorphic=True requires inputs with complex dtype, but \
+          got " ^ name ^ ".")
+    end
+  else if not (Dtypes.issubdtype dt `Floating) then
+    invalid_arg
+      ("jacfwd requires real-valued inputs (input dtype that is a sub-dtype of \
+        np.floating), but got " ^ name
+     ^ ". For holomorphic differentiation, pass holomorphic=True. For \
+        differentiation of non-holomorphic functions involving complex inputs \
+        or integer inputs, use jax.jvp directly.")
+
+let check_output_jacfwd holomorphic v =
+  let dt = (Core.get_aval v).dtype in
+  if holomorphic && not (is_complex_dtype dt) then
+    invalid_arg
+      ("jacfwd with holomorphic=True requires outputs with complex dtype, but \
+        got " ^ Dtype.numpy_name dt ^ ".")
+
+let check_input_jacrev holomorphic allow_int v =
+  let dt = (Core.get_aval v).dtype in
+  let name = Dtype.numpy_name dt in
+  if holomorphic && not (is_complex_dtype dt) then
+    invalid_arg
+      ("jacrev with holomorphic=True requires inputs with complex dtype, but \
+        got " ^ name ^ ".");
+  if is_integral_dtype dt && not allow_int then
+    invalid_arg
+      ("jacrev requires real- or complex-valued inputs (input dtype that is a \
+        sub-dtype of np.inexact), but got " ^ name
+     ^ ". If you want to use Boolean- or integer-valued inputs, use vjp or set \
+        allow_int to True.")
+
+let check_output_jacrev holomorphic v =
+  let dt = (Core.get_aval v).dtype in
+  let name = Dtype.numpy_name dt in
+  if holomorphic then
+    begin if not (is_complex_dtype dt) then
+      invalid_arg
+        ("jacrev with holomorphic=True requires outputs with complex dtype, \
+          but got " ^ name ^ ".")
+    end
+  else if is_complex_dtype dt then
+    invalid_arg
+      ("jacrev requires real-valued outputs (output dtype that is a sub-dtype \
+        of np.floating), but got " ^ name
+     ^ ". For holomorphic differentiation, pass holomorphic=True. For \
+        differentiation of non-holomorphic functions involving complex \
+        outputs, use jax.vjp directly.")
+  else if not (Dtypes.issubdtype dt `Floating) then
+    invalid_arg
+      ("jacrev requires real-valued outputs (output dtype that is a sub-dtype \
+        of np.floating), but got " ^ name
+     ^ ". For differentiation of functions with integer outputs, use jax.vjp \
+        directly.")
+
+let jacfwd ?(argnums = 0) ?(holomorphic = false) f args =
   let selected, rebuild = split_args [ argnums ] args in
   let x0 = List.hd selected in
   let leaves, in_def = Tree.tree_flatten x0 in
+  List.iter (check_input_jacfwd holomorphic) leaves;
   let avals = List.map Core.get_aval leaves in
   let out_def = ref Tree.Null_def in
   let call flat =
@@ -765,10 +931,11 @@ let jacfwd ?(argnums = 0) f args =
   in
   flatten_nested (nested_jacobian !out_def in_def entries)
 
-let jacrev ?(argnums = 0) f args =
+let jacrev ?(argnums = 0) ?(holomorphic = false) ?(allow_int = false) f args =
   let selected, rebuild = split_args [ argnums ] args in
   let x0 = List.hd selected in
   let leaves, in_def = Tree.tree_flatten x0 in
+  List.iter (check_input_jacrev holomorphic allow_int) leaves;
   let avals = List.map Core.get_aval leaves in
   let out_def = ref Tree.Null_def in
   let call flat =
@@ -778,6 +945,7 @@ let jacrev ?(argnums = 0) f args =
     o
   in
   let outs, f_vjp = Ad.vjp call leaves in
+  List.iter (check_output_jacrev holomorphic) outs;
   let out_avals = List.map Core.get_aval outs in
   let basis_trees = std_basis outs in
   let grads =
@@ -803,8 +971,8 @@ let jacrev ?(argnums = 0) f args =
 
 let jacobian = jacrev
 
-let hessian ?(argnums = 0) f args =
-  jacfwd ~argnums (fun a -> jacrev ~argnums f a) args
+let hessian ?(argnums = 0) ?holomorphic f args =
+  jacfwd ~argnums ?holomorphic (fun a -> jacrev ~argnums ?holomorphic f a) args
 
 let eval_shape f args =
   let flat, in_tree = flatten_args args in
@@ -913,6 +1081,11 @@ let linearize_aux f primals =
   let y, lin = linearize g primals in
   (y, lin, !aux)
 
+let jacobian_aux ?argnums f args =
+  let g, aux = split_aux f in
+  let jac = jacrev ?argnums g args in
+  (jac, !aux)
+
 let jacfwd_aux ?argnums f args =
   let g, aux = split_aux f in
   let jac = jacfwd ?argnums g args in
@@ -946,7 +1119,7 @@ let linear_transpose f primals =
 
 let checkpoint ?policy f = Checkpoint.checkpoint ?policy f
 let remat ?policy f = Checkpoint.checkpoint ?policy f
-let named_call f = f
+let named_call ?name:_ f = f
 let named_scope _name f = f ()
 let device_get = to_host
 let block_until_ready x = x

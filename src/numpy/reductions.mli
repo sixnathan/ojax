@@ -204,6 +204,7 @@ val quantile :
   ?axis:int ->
   ?keepdims:bool ->
   ?method_:string ->
+  ?weights:Types.value ->
   Types.value ->
   Types.value ->
   Types.value
@@ -212,6 +213,7 @@ val nanquantile :
   ?axis:int ->
   ?keepdims:bool ->
   ?method_:string ->
+  ?weights:Types.value ->
   Types.value ->
   Types.value ->
   Types.value
@@ -220,6 +222,7 @@ val percentile :
   ?axis:int ->
   ?keepdims:bool ->
   ?method_:string ->
+  ?weights:Types.value ->
   Types.value ->
   Types.value ->
   Types.value
@@ -228,9 +231,13 @@ val nanpercentile :
   ?axis:int ->
   ?keepdims:bool ->
   ?method_:string ->
+  ?weights:Types.value ->
   Types.value ->
   Types.value ->
   Types.value
 
 val median : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
 val nanmedian : ?axis:int -> ?keepdims:bool -> Types.value -> Types.value
+
+val take_along_axis_hook :
+  (axis:int -> Types.value -> Types.value -> Types.value) ref

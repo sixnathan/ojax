@@ -3184,3 +3184,6 @@ let bessel_jn ?n_iter ~v a1 =
       match (opts, vals) with
       | [], [ a1 ] -> bessel_jn ?n_iter ~v a1
       | _ -> assert false)
+
+let logsumexp = Ops.Special.logsumexp
+let logsumexp_sign = Ops.Special.logsumexp_sign

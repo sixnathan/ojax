@@ -70,4 +70,11 @@ val pure_callback :
   value list ->
   value list
 
+val io_callback :
+  ?ordered:bool ->
+  (value list -> value list) ->
+  result_avals:aval list ->
+  value list ->
+  value list
+
 val zero_from_primal : value -> value

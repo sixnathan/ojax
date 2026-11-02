@@ -5,6 +5,15 @@ val pmax : value -> axis_name:string -> value
 val pmin : value -> axis_name:string -> value
 val pmean : value -> axis_name:string -> value
 val axis_size : axis_name:string -> int
+val psend : value -> axis_name:string -> perm:(int * int) list -> value
+
+val precv :
+  value ->
+  out_shape:Shape_dtype_struct.t ->
+  axis_name:string ->
+  perm:(int * int) list ->
+  value
+
 val axis_index : axis_name:string -> value
 val all_gather : ?axis:int -> value -> axis_name:string -> value
 val pbroadcast : ?source:int -> value -> axis_name:string -> value

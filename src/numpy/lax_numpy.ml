@@ -363,6 +363,9 @@ type dtype_class =
   | Number
   | Generic
   | Cbool
+  | Flexible
+  | Character
+  | Object_
 
 let class_chain = function
   | Cdtype D.Bool | Cbool -> [ Cbool; Generic ]
@@ -382,6 +385,9 @@ let class_chain = function
   | Inexact -> [ Inexact; Number; Generic ]
   | Number -> [ Number; Generic ]
   | Generic -> [ Generic ]
+  | Flexible -> [ Flexible; Generic ]
+  | Character -> [ Character; Flexible; Generic ]
+  | Object_ -> [ Object_; Generic ]
   | Extended -> [ Extended; Generic ]
   | Prng_key_class -> [ Prng_key_class; Extended; Generic ]
 
@@ -1454,6 +1460,20 @@ let eye ?m ?(k = 0) ~dtype n =
   convert (bind1 T.Eq [ ik; j ]) dtype
 
 let identity ~dtype n = eye ~dtype n
+
+let indices_sparse ~dtype dims =
+  let n = Array.length dims in
+  List.init n (fun i ->
+      let idx =
+        bind1 (T.Iota { dtype; shape = [| dims.(i) |]; dimension = 0 }) []
+      in
+      bind1
+        (T.Broadcast_in_dim
+           {
+             shape = Array.init n (fun k -> if k = i then dims.(i) else 1);
+             dims = [| i |];
+           })
+        [ idx ])
 
 let indices ~dtype dims =
   let n = Array.length dims in

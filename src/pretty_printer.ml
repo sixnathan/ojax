@@ -84,6 +84,12 @@ let dot_dims_str (dd : dot_dims) =
   "((" ^ int_tuple dd.lhs_contract ^ "," ^ int_tuple dd.rhs_contract ^ "),("
   ^ int_tuple dd.lhs_batch ^ "," ^ int_tuple dd.rhs_batch ^ "))"
 
+let callback_views : (int, string * (string * string) list) Hashtbl.t =
+  Hashtbl.create 8
+
+let register_callback_view id name params =
+  Hashtbl.replace callback_views id (name, params)
+
 let prim_name = function
   | Add -> "add"
   | Add_any -> "add_any"
@@ -182,7 +188,7 @@ let prim_name = function
   | Clamp -> "clamp"
   | Composite _ -> "composite"
   | Create_token -> "create_token"
-  | Dce_sink -> "dce_sink"
+  | Dce_sink _ -> "dce_sink"
   | Empty _ -> "empty"
   | Empty2 _ -> "empty2"
   | From_edtype _ -> "from_edtype"
@@ -234,6 +240,8 @@ let prim_name = function
   | Custom_jvp_call id when Hashtbl.mem custom_view_names id ->
       Hashtbl.find custom_view_names id
   | Custom_jvp_call _ -> "custom_jvp_call"
+  | Custom_vjp_call id when Hashtbl.mem callback_views id ->
+      fst (Hashtbl.find callback_views id)
   | Custom_vjp_call _ -> "custom_vjp_call"
   | Custom_lin _ -> "custom_lin"
   | Checkpoint_name _ -> "name"
@@ -699,6 +707,11 @@ let jax_params (e : eqn) =
         ("sharding", Plain "None");
       ]
   | Decomposable { dparams; _ } -> List.map (fun (k, v) -> (k, Plain v)) dparams
+  | Dce_sink { prevent_mlir_dce } ->
+      [
+        ( "prevent_mlir_dce",
+          Plain (if prevent_mlir_dce then "True" else "False") );
+      ]
   | Reshape_perm { new_sizes; dimensions } ->
       [
         ("dimensions", Plain (py_ints dimensions));
@@ -1166,11 +1179,14 @@ let key_short (a : aval) =
   let dims = Array.to_list (Array.sub a.shape 0 (max 0 (rank - 1))) in
   "key<fry>[" ^ String.concat "," (List.map string_of_int dims) ^ "]"
 
+let token_vars : (int, unit) Hashtbl.t = Hashtbl.create 8
+
 let pp_binders ctx (vars : var list) =
   let doc (v : var) =
     let name = name_of_var ctx v in
     let short =
-      if Hashtbl.mem ctx.keys v.vid then key_short v.vaval
+      if Hashtbl.mem token_vars v.vid then "Tok"
+      else if Hashtbl.mem ctx.keys v.vid then key_short v.vaval
       else aval_short v.vaval
     in
     let short =
@@ -1281,6 +1297,10 @@ and pp_params ctx params =
            ])
 
 and pp_eqn ctx (e : eqn) =
+  (match e.prim with
+  | Create_token | After_all | Decomposable { dname = "psend"; _ } ->
+      List.iter (fun (v : var) -> Hashtbl.replace token_vars v.vid ()) e.outs
+  | _ -> ());
   let name_param =
     match e.prim with
     | Xla_call c ->
@@ -1293,6 +1313,10 @@ and pp_eqn ctx (e : eqn) =
           suggest_names ctx c.jaxpr.outs (List.map (fun v -> A_var v) e.outs)
         end;
         [ ("name", Plain (xla_call_name c)) ]
+    | Custom_vjp_call id when Hashtbl.mem callback_views id ->
+        List.map
+          (fun (k, v) -> (k, Plain v))
+          (snd (Hashtbl.find callback_views id))
     | Custom_jvp_call id when Hashtbl.mem custom_view_params id ->
         Hashtbl.find custom_view_params id
     | Custom_jvp_call _ -> (

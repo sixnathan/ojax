@@ -175,7 +175,19 @@ let select_n pred cases =
 
 let full sh fill_value dt = filled dt sh fill_value
 
-let full_like x fill_value =
+let rec full_like ?dtype ?shape x fill_value =
+  match (dtype, shape) with
+  | None, None -> full_like_plain x fill_value
+  | _ ->
+      let a = aval x in
+      let dt =
+        match dtype with
+        | Some d -> Dtypes.canonicalize_dtype d
+        | None -> a.dtype
+      in
+      filled dt (Option.value shape ~default:a.shape) fill_value
+
+and full_like_plain x fill_value =
   let a = aval x in
   if not a.weak_type then filled a.dtype a.shape fill_value
   else if Array.length a.shape = 0 then Core.py_scalar a.dtype fill_value

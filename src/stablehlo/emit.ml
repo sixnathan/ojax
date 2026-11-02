@@ -2653,7 +2653,14 @@ let emit_host_callback ctx (eqn : eqn) in_ids id =
       "{backend_config = \"\", %smhlo.backend_config = {index = %d : ui64}, \
        operand_layouts = [%s], result_layouts = [%s], sdy.sharding = \
        #sdy.sharding_per_value<[%s]>} : (%s) -> %s\n"
-      (if out_avals = [] then "has_side_effect = true, " else "")
+      (if
+         out_avals = []
+         ||
+         match Core.custom_rule id with
+         | Core.Callback_rule { cb_effect = Core.Callback_io _; _ } -> true
+         | _ -> false
+       then "has_side_effect = true, "
+       else "")
       id (layouts in_avals) (layouts out_avals) per_value (types in_avals)
       results
   in
@@ -3731,9 +3738,17 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | After_all | Create_token ->
       emit_inlined ctx eqn in_ids (fun _ ->
           [ Concrete (Ndarray.of_floats Dtype.F32 [| 0 |] [||]) ])
-  | Dce_sink ->
-      failwith
-        "Stablehlo.Emit: Dce_sink is a DCE-effect marker, non-representable"
+  | Dce_sink { prevent_mlir_dce = false } -> ()
+  | Dce_sink { prevent_mlir_dce = true } ->
+      let in_aval = atom_aval (List.hd eqn.inputs) in
+      Buffer.add_string ctx.buf
+        (Printf.sprintf
+           "    stablehlo.custom_call @dce_sink(%s) {backend_config = \"\", \
+            has_side_effect = true, mhlo.backend_config = {}, operand_layouts \
+            = [%s], result_layouts = []} : (%s) -> ()\n"
+           (name (List.hd in_ids))
+           (ffi_layout_text (default_layout (Array.length in_aval.shape)))
+           (Ir.tensor_type_of_aval in_aval))
   | Empty2 _ ->
       let out = sole eqn.outs in
       let c = fresh ctx in

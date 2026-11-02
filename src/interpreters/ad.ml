@@ -1729,7 +1729,7 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
   | Symmetric_product _ ->
       failwith "Differentiation rule for 'symmetric_product' not implemented"
   | Iota _ | Empty _ | Empty2 _ | Create_token | After_all | Composite _
-  | Dce_sink | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
+  | Dce_sink _ | From_edtype _ | Ragged_dot_general | Rng_bit_generator _
   | Rng_uniform | To_edtype _ | Platform_index _ | Threefry2x32
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap ->
@@ -2238,6 +2238,8 @@ let rec jvp_pairs prim primals tangents =
               (res @ List.map instantiate tangents)
           in
           (po, to_)
+      | Core.Callback_rule { cb_effect = Core.Callback_io _; _ } ->
+          invalid_arg "IO callbacks do not support JVP."
       | Core.Callback_rule { result_avals = []; _ } ->
           ignore (Core.bind prim primals);
           ([], [])
@@ -4565,7 +4567,7 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Or | Rem | Shift_left | Shift_right_arithmetic | Shift_right_logical | Xor
   | Argmax _ | Argmin _ | Reduce _ | Reduce_and _ | Reduce_max _ | Reduce_min _
   | Reduce_or _ | Reduce_prod _ | Reduce_xor _ | After_all
-  | Bitcast_convert_type _ | Clamp | Composite _ | Create_token | Dce_sink
+  | Bitcast_convert_type _ | Clamp | Composite _ | Create_token | Dce_sink _
   | Empty _ | Empty2 _ | From_edtype _ | Iota _ | Ragged_dot_general
   | Rng_bit_generator _ | Rng_uniform | Sort _ | To_edtype _ | Top_k _
   | Scatter_min _ | Scatter_max _ | Reduce_window _ | Reduce_window_max _

@@ -4864,6 +4864,149 @@ let narrow_dtype_rows () =
         ~actual:(npz_of_nd nd result_dtype compare))
     Narrow_dtypes.rows
 
+let special_values_shape text =
+  if text = "-" then [||]
+  else Array.of_list (List.map int_of_string (String.split_on_char 'x' text))
+
+let table_compare = function
+  | "float16" | "float32" | "float64" | "complex64" | "complex128" | "bfloat16"
+    ->
+      "allclose"
+  | _ -> "exact"
+
+let record_table_outputs ~suite ~label outputs results =
+  let rec walk k outs results =
+    match outs with
+    | out_dtype :: shape :: hex :: rest ->
+        let shape = special_values_shape shape in
+        let compare = table_compare out_dtype in
+        let expected =
+          {
+            (npz_of_nd
+               (Parity_cases.nd_of_hex out_dtype shape hex)
+               out_dtype compare)
+            with
+            raw = (raw_row out_dtype hex).raw;
+          }
+        in
+        let head, tail =
+          match results with
+          | Some (r :: t) -> (Some r, Some t)
+          | Some [] | None -> (None, None)
+        in
+        let actual =
+          match head with
+          | Some (T.Concrete nd) -> npz_of_nd nd out_dtype compare
+          | Some _ | None ->
+              {
+                Npz.dtype = "raises";
+                shape = [| -1 |];
+                data = Npz.I [||];
+                raw = { Npz.raw_dtype = "raises"; bytes = "" };
+              }
+        in
+        Compare.record_exact ~suite
+          (Printf.sprintf "%s:out%d" label k)
+          expected actual;
+        walk (k + 1) rest tail
+    | _ -> ()
+  in
+  walk 0 outputs results
+
+let table_results run =
+  match run () with
+  | results -> Some results
+  | exception ((Stack_overflow | Out_of_memory) as fatal) -> raise fatal
+  | exception _ -> None
+
+let special_values_row ~suite ~x64 ~jit fields () =
+  Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+      match fields with
+      | op :: dtype :: index :: input :: _count :: outputs ->
+          let value =
+            T.Concrete (Parity_cases.nd_of_hex dtype [| 3; 3 |] input)
+          in
+          let run () =
+            let lookup args _ = List.hd args in
+            if jit && not (Parity_cases.needs_concrete op) then
+              Ojax.Api.jit_flat
+                (fun args -> Parity_cases.run op `Null (lookup args))
+                [ value ]
+            else Parity_cases.run op `Null (lookup [ value ])
+          in
+          record_table_outputs ~suite
+            ~label:(Printf.sprintf "%s:%s:%s" op dtype index)
+            outputs (table_results run)
+      | _ -> Alcotest.fail "special values: bad row")
+
+let poison_row ~suite ~x64 ~jit fields () =
+  Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+      match fields with
+      | op :: case :: params :: count :: rest ->
+          let params = Yojson.Safe.from_string params in
+          let rec args k rest acc =
+            match (k, rest) with
+            | 0, _ -> (List.rev acc, rest)
+            | k, name :: dtype :: shape :: hex :: tail ->
+                let nd =
+                  Parity_cases.nd_of_hex dtype (special_values_shape shape) hex
+                in
+                args (k - 1) tail ((name, T.Concrete nd) :: acc)
+            | _ -> Alcotest.fail "poison values: bad row"
+          in
+          let inputs, outputs = args (int_of_string count) rest [] in
+          let names = List.map fst inputs and values = List.map snd inputs in
+          let lookup vs name =
+            let rec go ns vs =
+              match (ns, vs) with
+              | n :: _, v :: _ when n = name -> v
+              | _ :: nt, _ :: vt -> go nt vt
+              | _ -> failwith ("poison values: missing input " ^ name)
+            in
+            go names vs
+          in
+          let run () =
+            if jit && not (Parity_cases.needs_concrete op) then
+              Ojax.Api.jit_flat
+                (fun vs -> Parity_cases.run op params (lookup vs))
+                values
+            else Parity_cases.run op params (lookup values)
+          in
+          record_table_outputs ~suite ~label:case outputs (table_results run)
+      | _ -> Alcotest.fail "poison values: bad row")
+
+let table_suites prefix data row =
+  let rows =
+    String.split_on_char '\n' data
+    |> List.filter_map (fun line ->
+        match String.split_on_char '\t' line with
+        | x64 :: mode :: fields -> Some (x64, mode, fields)
+        | _ -> None)
+  in
+  List.concat_map
+    (fun x64 ->
+      List.map
+        (fun mode ->
+          let suite = Printf.sprintf "%s_%s:%s" prefix mode x64 in
+          let tests =
+            List.filter_map
+              (fun (x, m, fields) ->
+                if x <> x64 || m <> mode then None
+                else
+                  Some
+                    (Alcotest.test_case (List.hd fields) `Quick
+                       (row ~suite ~x64:(x64 = "x64_on") ~jit:(mode = "jit")
+                          fields)))
+              rows
+          in
+          (suite, tests))
+        [ "eager"; "jit" ])
+    [ "x64_off"; "x64_on" ]
+
+let special_values_suites () =
+  table_suites "special_values" Special_values.data special_values_row
+  @ table_suites "poison_values" Poison_values.data poison_row
+
 let numpy_product_rows () =
   List.iter
     (fun (case, x64, dtype, input, numpy, jax) ->
@@ -5027,6 +5170,7 @@ let () =
                numpy_product_rows;
            ] );
        ]
+    @ List.map attributed (special_values_suites ())
     @ [
         ( "exact_ratchet",
           [

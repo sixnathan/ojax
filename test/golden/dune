@@ -6,6 +6,8 @@
   exact_floor
   numpy_products
   narrow_dtypes
+  special_values
+  poison_values
   parity_cases
   manifest)
  (libraries alcotest yojson ojax)
@@ -65,3 +67,25 @@
     (echo "let data = {floor|")
     (cat exact_floor.tsv)
     (echo "|floor}\n")))))
+
+(rule
+ (targets special_values.ml)
+ (deps special_values.tsv)
+ (action
+  (with-stdout-to
+   %{targets}
+   (progn
+    (echo "let data = {tsv|")
+    (cat special_values.tsv)
+    (echo "|tsv}\n")))))
+
+(rule
+ (targets poison_values.ml)
+ (deps poison_values.tsv)
+ (action
+  (with-stdout-to
+   %{targets}
+   (progn
+    (echo "let data = {tsv|")
+    (cat poison_values.tsv)
+    (echo "|tsv}\n")))))

@@ -50,6 +50,7 @@ apicov/x64_off	ap_init_dtype_1_90ba19a1_float32	i	i
 apicov/x64_off	ap_init_dtype_1_af791a1f_float32	i	i
 apicov/x64_off	ap_init_dtype_1_e5a91a99_float32	i	i
 apicov/x64_off	ap_io_callback_2_155c0cfd_float32	i	-
+apicov/x64_off	ap_io_callback_2x2_29b612be_float32	i	-
 apicov/x64_off	ap_io_callback__09c70ccb_float32	i	-
 apicov/x64_off	ap_issubdtype_1_155d19cd_float32	i	i
 apicov/x64_off	ap_issubdtype_1_16d019cd_float32	i	i
@@ -306,6 +307,8 @@ apicov/x64_on	ap_init_dtype_1_e5a91a99_float32	i	i
 apicov/x64_on	ap_init_dtype_1_e5a91a99_float64	i	i
 apicov/x64_on	ap_io_callback_2_155c0cfd_float32	i	-
 apicov/x64_on	ap_io_callback_2_155c0cfd_float64	i	-
+apicov/x64_on	ap_io_callback_2x2_29b612be_float32	i	-
+apicov/x64_on	ap_io_callback_2x2_29b612be_float64	i	-
 apicov/x64_on	ap_io_callback__09c70ccb_float32	i	-
 apicov/x64_on	ap_io_callback__09c70ccb_float64	i	-
 apicov/x64_on	ap_issubdtype_1_155d19cd_float32	i	i

@@ -19,8 +19,8 @@ creation:x64_on	32	32
 dtypes:x64_off	7	7
 dtypes:x64_on	9	9
 e2e	36	36
-fuzz:x64_off	15472	15614
-fuzz:x64_on	17040	17190
+fuzz:x64_off	15592	15614
+fuzz:x64_on	17176	17190
 image:x64_off	34	34
 image:x64_on	37	37
 indexing:x64_off	17	17
@@ -196,8 +196,8 @@ ufuncs:x64_off	141	141
 ufuncs:x64_on	193	193
 vectorize:x64_off	8	8
 vectorize:x64_on	16	16
-fuzz_s2:x64_off	15458	15633
-fuzz_s2:x64_on	17042	17189
+fuzz_s2:x64_off	15613	15633
+fuzz_s2:x64_on	17175	17189
 raw:fuzz_s2:x64_off	14791	15633
 raw:fuzz_s2:x64_on	16363	17189
 apicov:x64_off	306	306

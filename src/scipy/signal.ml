@@ -31,9 +31,9 @@ let conj_if_complex v =
 
 let convolve_nd ?precision in1 in2 mode =
   if not (List.mem mode [ "full"; "same"; "valid" ]) then
-    invalid_arg "mode must be one of ['full', 'same', 'valid']";
+    Py_exn.value_error "mode must be one of ['full', 'same', 'valid']";
   if rank in1 <> rank in2 then
-    invalid_arg "in1 and in2 must have the same number of dimensions";
+    Py_exn.value_error "in1 and in2 must have the same number of dimensions";
   if Array.exists (( = ) 0) (shape in1) || Array.exists (( = ) 0) (shape in2)
   then
     Py_exn.value_error
@@ -61,7 +61,7 @@ let convolve_nd ?precision in1 in2 mode =
             (s - 1 - ((so - 1) / 2), s - so + ((so - 1) / 2)))
           small_shape
     | "full" -> Array.map (fun s -> (s - 1, s - 1)) small_shape
-    | other -> invalid_arg ("mode must be one of full, same, valid: " ^ other)
+    | other -> Py_exn.value_error ("unsupported mode: " ^ other)
   in
   let lift v = L.expand_dims v [| 0; 1 |] in
   let out =
@@ -78,9 +78,9 @@ let fftconvolve_unbatched in1 in2 mode =
     if mode = "valid" then begin
       let no_swap = all_pairs ( >= ) s1 s2 and swap = all_pairs ( <= ) s1 s2 in
       if not (no_swap || swap) then
-        invalid_arg
+        Py_exn.value_error
           "For 'valid' mode, One input must be at least as large as the other \
-           in every dimension";
+           in every dimension.";
       if swap then (in2, in1) else (in1, in2)
     end
     else (in1, in2)
@@ -109,7 +109,7 @@ let fftconvolve_unbatched in1 in2 mode =
     | "full" -> full_shape
     | "same" -> s1
     | "valid" -> Array.map2 (fun a b -> a - b + 1) s1 s2
-    | other -> invalid_arg ("Unrecognized mode=" ^ other)
+    | other -> Py_exn.value_error ("Unrecognized mode='" ^ other ^ "'")
   in
   let start = Array.map2 (fun f o -> (f - o) / 2) full_shape out_shape in
   let index i =
@@ -125,9 +125,9 @@ let fftconvolve_unbatched in1 in2 mode =
 
 let fftconvolve ?(mode = "full") ?axes in1 in2 =
   if rank in1 <> rank in2 then
-    invalid_arg "in1 and in2 should have the same dimensionality";
+    Py_exn.value_error "in1 and in2 should have the same dimensionality";
   if not (List.mem mode [ "same"; "full"; "valid" ]) then
-    invalid_arg "mode must be one of ['same', 'full', 'valid']";
+    Py_exn.value_error "mode must be one of ['same', 'full', 'valid']";
   let in1, in2 = promote in1 in2 in
   match axes with
   | None -> fftconvolve_unbatched in1 in2 mode
@@ -140,7 +140,13 @@ let fftconvolve ?(mode = "full") ?axes in1 in2 =
       List.iter
         (fun i ->
           if (shape in1).(i) <> (shape in2).(i) then
-            invalid_arg "mapped axes must have same shape")
+            Py_exn.value_error
+              (Printf.sprintf
+                 "mapped axes must have same shape; got in1.shape=%s \
+                  in2.shape=%s axes=%s"
+                 (Validate.python_tuple (shape in1))
+                 (Validate.python_tuple (shape in2))
+                 (Validate.python_list axes)))
         mapped;
       let rec apply mapped in1 in2 =
         match mapped with
@@ -164,7 +170,8 @@ let convolve ?(mode = "full") ?(method_ = "auto") ?precision in1 in2 =
   | "fft" -> fftconvolve ~mode in1 in2
   | "direct" | "auto" -> convolve_nd ?precision in1 in2 mode
   | other ->
-      invalid_arg ("Got method=" ^ other ^ "; expected auto, fft, or direct.")
+      Py_exn.value_error
+        ("Got method='" ^ other ^ "'; expected 'auto', 'fft', or 'direct'.")
 
 let check_boundary name boundary fillvalue =
   if boundary <> "fill" || fillvalue <> 0.0 then
@@ -239,7 +246,7 @@ let add_rows x lo updates =
 
 let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
   if type_ <> "constant" && type_ <> "linear" then
-    invalid_arg "Trend type must be 'linear' or 'constant'.";
+    Py_exn.value_error "Trend type must be 'linear' or 'constant'.";
   let data = inexact data in
   if type_ = "constant" then
     Numpy.Ufuncs.subtract data (R.mean ~axis:[| axis |] ~keepdims:true data)
@@ -247,7 +254,7 @@ let detrend ?(axis = -1) ?(type_ = "linear") ?(bp = []) data =
     let n = Validate.tuple_index (shape data) axis in
     let bounds = List.sort_uniq compare ((0 :: bp) @ [ n ]) in
     if List.hd bounds < 0 || List.nth bounds (List.length bounds - 1) > n then
-      invalid_arg
+      Py_exn.value_error
         "Breakpoints must be non-negative and less than length of data along \
          given axis.";
     let moved = NL.moveaxis [| axis |] [| 0 |] data in
@@ -321,7 +328,7 @@ let odd_ext x n =
     let last = rank x - 1 in
     let size = (shape x).(last) in
     if n > size - 1 then
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "The extension length n (%d) is too big. It must not exceed \
             x.shape[axis]-1, which is %d."
@@ -352,7 +359,7 @@ let pad_edges mode x n =
   | "even" -> NL.pad ~mode:"reflect" x widths 0.0
   | "odd" -> odd_ext x n
   | other ->
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "Unknown boundary option '%s', must be one of: ['even', 'odd', \
             'constant', 'zeros', None]"
@@ -406,13 +413,13 @@ let triage_segments window nperseg input_length dt =
       (win, n)
   | Some w ->
       let win = NL.astype w dt in
-      if rank win <> 1 then invalid_arg "window must be 1-D";
+      if rank win <> 1 then Py_exn.value_error "window must be 1-D";
       let size = (shape win).(0) in
       let n = Option.value nperseg ~default:size in
       if input_length < size then
-        invalid_arg "window is longer than input signal";
+        Py_exn.value_error "window is longer than input signal";
       if n <> size then
-        invalid_arg
+        Py_exn.value_error
           "value specified for nperseg is different from length of window";
       (win, n)
 
@@ -426,34 +433,43 @@ let py_mod a b = ((a mod b) + b) mod b
 let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
     ~return_onesided ~scaling ~axis ~mode ~boundary ~padded x =
   if mode <> "psd" && mode <> "stft" then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "Unknown value for mode %s, must be one of: ('psd', 'stft')" mode);
   (match boundary with
   | None | Some ("even" | "odd" | "constant" | "zeros") -> ()
   | Some other ->
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "Unknown boundary option '%s', must be one of: ['even', 'odd', \
             'constant', 'zeros', None]"
            other));
-  let axis = if axis < 0 then axis + rank x else axis in
+  let axis = Validate.canonicalize_axis axis (rank x) in
   let x, y =
     match y with
     | None -> (inexact x, None)
     | Some v ->
+        if mode <> "psd" then
+          Py_exn.value_error
+            "two-argument mode is available only when mode=='psd'";
         let a, b = promote x v in
         if rank a <> rank b then
-          invalid_arg "two-arguments must have the same rank";
+          Py_exn.value_error
+            "two-arguments must have the same rank ({x.ndim} vs {y.ndim}).";
+        let outer v =
+          Array.of_list
+            (List.filteri (fun i _ -> i <> axis) (Array.to_list (shape v)))
+        in
+        (try ignore (Validate.broadcast_shapes [ outer a; outer b ])
+         with Py_exn.Value_error _ ->
+           Py_exn.value_error "x and y cannot be broadcast together.");
         (a, Some b)
   in
-  if y <> None && mode <> "psd" then
-    invalid_arg "two-argument mode is available only when mode=='psd'";
   let dt = dtype_of x in
   let result_dt = complex_dtype_of dt in
   let freq_dt = real_part_dtype dt in
   (match nperseg with
-  | Some n when n < 1 -> invalid_arg "nperseg must be a positive integer"
+  | Some n when n < 1 -> Py_exn.value_error "nperseg must be a positive integer"
   | _ -> ());
   let win, nperseg = triage_segments window nperseg (shape x).(axis) dt in
   let noverlap = Option.value noverlap ~default:(nperseg / 2) in
@@ -498,7 +514,7 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
       | _ -> (x, y)
     in
     if nfft < nperseg then
-      invalid_arg "nfft must be greater than or equal to nperseg.";
+      Py_exn.value_error "nfft must be greater than or equal to nperseg.";
     if noverlap >= nperseg then
       Py_exn.value_error "noverlap must be less than nperseg.";
     let nstep = nperseg - noverlap in
@@ -530,7 +546,7 @@ let spectral_helper ?y ~fs ~window ~nperseg ~noverlap ~nfft ~detrend_type
                (R.sum (Numpy.Ufuncs.multiply win win)))
       | "spectrum" ->
           Numpy.Ufuncs.divide (py_float 1.0) (b1 (Integer_pow 2) [ R.sum win ])
-      | other -> invalid_arg ("Unknown scaling: " ^ other)
+      | other -> Py_exn.value_error ("Unknown scaling: " ^ other)
     in
     let scale = if mode = "stft" then Numpy.Ufuncs.sqrt scale else scale in
     let scale = NL.astype scale (complex_dtype_of (dtype_of scale)) in
@@ -662,7 +678,7 @@ let csd ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft
             Numpy.Ufuncs.divide med bias
         | "mean" -> R.mean ~axis:[| -1 |] pxy
         | other ->
-            invalid_arg
+            Py_exn.value_error
               (Printf.sprintf "average must be \"median\" or \"mean\", got %s"
                  other)
       else NL.reshape pxy (Array.sub sh 0 (r - 1))
@@ -679,6 +695,7 @@ let welch ?fs ?window ?nperseg ?noverlap ?nfft ?detrend ?return_onesided
   (freqs, Numpy.Ufuncs.real pxx)
 
 let slice_to x axis stop =
+  let _, stop = Validate.slice_indices ~stop (shape x).(axis) in
   if stop = (shape x).(axis) then x
   else
     let n = rank x in
@@ -689,7 +706,8 @@ let slice_to x axis stop =
 let overlap_and_add x step =
   let sh = shape x in
   let n = Array.length sh in
-  if n < 2 then invalid_arg "Input must have (..., frames, frame_length) shape.";
+  if n < 2 then
+    Py_exn.value_error "Input must have (..., frames, frame_length) shape.";
   let batch = Array.sub sh 0 (n - 2) in
   let nframes = sh.(n - 2) and segment_len = sh.(n - 1) in
   let flat = Array.fold_left ( * ) 1 batch in
@@ -714,18 +732,21 @@ let trim_edges v k =
   let n = rank v in
   let size = (shape v).(n - 1) in
   let start = Array.make n 0 and limit = Array.copy (shape v) in
-  start.(n - 1) <- k;
-  limit.(n - 1) <- (if k = 0 then 0 else size - k);
+  let first, stop =
+    Validate.slice_indices ~start:k ~stop:(if k = 0 then 0 else -k) size
+  in
+  start.(n - 1) <- first;
+  limit.(n - 1) <- Stdlib.max first stop;
   L.slice v start limit
 
 let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
     ?(boundary = true) ?(time_axis = -1) ?(freq_axis = -2) zxx =
   let rankz = rank zxx in
   if rankz < 2 then Py_exn.value_error "Input stft must be at least 2d!";
-  let canon a = if a < 0 then a + rankz else a in
-  let freq_axis = canon freq_axis and time_axis = canon time_axis in
+  let freq_axis = Validate.canonicalize_axis freq_axis rankz in
+  let time_axis = Validate.canonicalize_axis time_axis rankz in
   if freq_axis = time_axis then
-    invalid_arg "Must specify differing time and frequency axes!";
+    Py_exn.value_error "Must specify differing time and frequency axes!";
   let zxx = NL.astype zxx (complex_dtype_of (dtype_of zxx)) in
   let n_default =
     if input_onesided then 2 * ((shape zxx).(freq_axis) - 1)
@@ -734,7 +755,8 @@ let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
   let nperseg_int =
     match nperseg with Some 0 | None -> n_default | Some n -> n
   in
-  if nperseg_int < 1 then invalid_arg "nperseg must be a positive integer";
+  if nperseg_int < 1 then
+    Py_exn.value_error "nperseg must be a positive integer";
   let nfft_int =
     match nfft with
     | None ->
@@ -743,7 +765,7 @@ let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
     | Some n -> n
   in
   if nfft_int < nperseg_int then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf "FFT length (%d) must be longer than nperseg (%d)."
          nfft_int nperseg_int);
   let noverlap_int =
@@ -771,9 +793,9 @@ let istft ?(fs = 1.0) ?window ?nperseg ?noverlap ?nfft ?(input_onesided = true)
     match window with
     | None -> NL.astype (hann nperseg_int) (dtype_of xsubs)
     | Some w ->
-        if rank w <> 1 then invalid_arg "window must be 1-D";
+        if rank w <> 1 then Py_exn.value_error "window must be 1-D";
         if (shape w).(0) <> nperseg_int then
-          invalid_arg
+          Py_exn.value_error
             (Printf.sprintf "window must have length of %d" nperseg_int);
         w
   in

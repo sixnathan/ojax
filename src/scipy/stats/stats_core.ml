@@ -24,7 +24,8 @@ let sem ?(axis = Some 0) ~ddof ?(nan_policy = "propagate") ?(keepdims = false) a
         | None -> Array.fold_left ( * ) 1 sh
         | Some ax ->
             let n = Array.length sh in
-            if ax >= n || ax < -n then invalid_arg "tuple index out of range"
+            if ax >= n || ax < -n then
+              Py_exn.index_error "tuple index out of range"
             else sh.(if ax < 0 then ax + n else ax)
       in
       let spread = RD.std ?axis:axes ~ddof_value:ddof ~keepdims b in
@@ -35,7 +36,7 @@ let sem ?(axis = Some 0) ~ddof ?(nan_policy = "propagate") ?(keepdims = false) a
       let count = RD.sum ?axis:axes ~keepdims valid in
       let spread = RD.nanstd ?axis:axes ~ddof_value:ddof ~keepdims b in
       UF.divide spread (NL.astype (UF.sqrt count) (dtype b))
-  | other -> invalid_arg (other ^ " is not supported")
+  | other -> Py_exn.value_error (other ^ " is not supported")
 
 let sem ?axis ?ddof ?nan_policy ?keepdims a =
   Eager_jit.one ~jit:"sem" ~vals_first:true "scipy.stats.sem"
@@ -65,8 +66,20 @@ let lane_mode x =
     (IX.dynamic_at vals (NL.argmax counts), RD.max counts)
 
 let mode ?(axis = Some 0) ?(nan_policy = "propagate") ?(keepdims = false) a =
+  if not (List.mem nan_policy [ "propagate"; "omit"; "raise" ]) then
+    Py_exn.value_error
+      ("Illegal nan_policy value '" ^ nan_policy
+     ^ "'; expected one of {'propagate', 'omit', 'raise'}");
   if nan_policy = "omit" then
-    invalid_arg "scipy.stats.mode: nan_policy='omit' is not supported by JAX.";
+    raise
+      (Py_exn.Not_implemented_error
+         "Logic for `nan_policy` of omit is not implemented");
+  if nan_policy = "raise" then
+    raise
+      (Py_exn.Not_implemented_error
+         "In order to best JIT compile `mode`, we cannot know whether `x` \
+          contains nans. Please check if nans exist in `x` outside of the \
+          `mode` function.");
   let x = NL.atleast_1d a in
   let sh = shape x in
   let rank = Array.length sh in
@@ -163,11 +176,22 @@ let rankdata_body method_ a =
 let rec rankdata_impl ?(method_ = "average") ?axis ?(nan_policy = "propagate") a
     =
   let module L = Lax_api in
+  if not (List.mem nan_policy [ "propagate"; "omit"; "raise" ]) then
+    Py_exn.value_error
+      ("Illegal nan_policy value '" ^ nan_policy
+     ^ "'; expected one of {'propagate', 'omit', 'raise'}");
   if nan_policy = "omit" then
-    invalid_arg
-      "scipy.stats.rankdata: nan_policy='omit' is not supported by JAX.";
+    raise
+      (Py_exn.Not_implemented_error
+         "Logic for `nan_policy` of omit is not implemented");
+  if nan_policy = "raise" then
+    raise
+      (Py_exn.Not_implemented_error
+         "In order to best JIT compile `rankdata`, we cannot know whether `x` \
+          contains nans. Please check if nans exist in `x` outside of the \
+          `rankdata` function.");
   if not (List.mem method_ [ "average"; "min"; "max"; "dense"; "ordinal" ]) then
-    invalid_arg ("unknown method '" ^ method_ ^ "'");
+    Py_exn.value_error ("unknown method '" ^ method_ ^ "'");
   match axis with
   | Some ax ->
       Numpy.Extras.apply_along_axis

@@ -4,6 +4,8 @@ bl_cholesky_2x2x3x3_82be0e79_float64_edge:eager:out0	1
 bl_cholesky_2x2x3x3_82be0e79_float64_edge:jit:out0	1
 bl_cholesky_2x2x3x3_82be0e79_float64_shape_other:eager:out0	1
 bl_cholesky_2x2x3x3_82be0e79_float64_shape_other:jit:out0	1
+bl_cholesky_2x2x3x3_82be0e79_float64_shape_small:eager:both_raise	0
+bl_cholesky_2x2x3x3_82be0e79_float64_shape_small:jit:both_raise	0
 bl_cholesky_2x2x3x3_82be0e79_float64_wide:eager:out0	1
 bl_cholesky_2x2x3x3_82be0e79_float64_wide:jit:out0	1
 bl_cholesky_2x3x3_5cd50dfb_float32_edge:eager:out0	1
@@ -52,6 +54,8 @@ bl_det_3x3_38660d7d_float64_edge:eager:out0	1
 bl_det_3x3_38660d7d_float64_edge:jit:out0	1
 bl_det_3x3_38660d7d_float64_shape_other:eager:out0	1
 bl_det_3x3_38660d7d_float64_shape_other:jit:out0	1
+bl_det_3x3_38660d7d_float64_shape_small:eager:both_raise	0
+bl_det_3x3_38660d7d_float64_shape_small:jit:both_raise	0
 bl_det_3x3_38660d7d_float64_wide:eager:out0	1
 bl_det_3x3_38660d7d_float64_wide:jit:out0	1
 bl_eigvalsh_2x2x3x3_82be0e79_float32_edge:eager:out0	1
@@ -90,6 +94,8 @@ bl_grad_det_2x2x3x3_82be0e79_float64_edge:eager:out0	1
 bl_grad_det_2x2x3x3_82be0e79_float64_edge:jit:out0	1
 bl_grad_det_2x2x3x3_82be0e79_float64_shape_other:eager:out0	1
 bl_grad_det_2x2x3x3_82be0e79_float64_shape_other:jit:out0	1
+bl_grad_det_2x2x3x3_82be0e79_float64_shape_small:eager:both_raise	0
+bl_grad_det_2x2x3x3_82be0e79_float64_shape_small:jit:both_raise	0
 bl_grad_det_2x2x3x3_82be0e79_float64_wide:eager:out0	1
 bl_grad_det_2x2x3x3_82be0e79_float64_wide:jit:out0	1
 bl_grad_det_2x3x3_5cd50dfb_float32_edge:eager:out0	1
@@ -118,6 +124,8 @@ bl_inv_2x2x3x3_82be0e79_float64_edge:eager:out0	1
 bl_inv_2x2x3x3_82be0e79_float64_edge:jit:out0	1
 bl_inv_2x2x3x3_82be0e79_float64_shape_other:eager:out0	1
 bl_inv_2x2x3x3_82be0e79_float64_shape_other:jit:out0	1
+bl_inv_2x2x3x3_82be0e79_float64_shape_small:eager:both_raise	0
+bl_inv_2x2x3x3_82be0e79_float64_shape_small:jit:both_raise	0
 bl_inv_2x2x3x3_82be0e79_float64_wide:eager:out0	1
 bl_inv_2x2x3x3_82be0e79_float64_wide:jit:out0	1
 bl_inv_2x3x3_5cd50dfb_float32_edge:eager:out0	1
@@ -326,6 +334,8 @@ bl_vmap_inv_2x3x3_5cd50dfb_float64_edge:eager:out0	1
 bl_vmap_inv_2x3x3_5cd50dfb_float64_edge:jit:out0	1
 bl_vmap_inv_2x3x3_5cd50dfb_float64_shape_other:eager:out0	1
 bl_vmap_inv_2x3x3_5cd50dfb_float64_shape_other:jit:out0	1
+bl_vmap_inv_2x3x3_5cd50dfb_float64_shape_small:eager:both_raise	0
+bl_vmap_inv_2x3x3_5cd50dfb_float64_shape_small:jit:both_raise	0
 bl_vmap_inv_2x3x3_5cd50dfb_float64_wide:eager:out0	1
 bl_vmap_inv_2x3x3_5cd50dfb_float64_wide:jit:out0	1
 cg_abs_4_485c0e53_float32_edge:eager:out0	1
@@ -394,6 +404,8 @@ cg_fft_4_485c0e53_float64_edge:eager:out0	1
 cg_fft_4_485c0e53_float64_edge:jit:out0	1
 cg_fft_4_485c0e53_float64_shape_other:eager:out0	1
 cg_fft_4_485c0e53_float64_shape_other:jit:out0	1
+cg_fft_4_485c0e53_float64_shape_small:eager:both_raise	0
+cg_fft_4_485c0e53_float64_shape_small:jit:both_raise	0
 cg_fft_4_485c0e53_float64_wide:eager:out0	1
 cg_fft_4_485c0e53_float64_wide:jit:out0	1
 cg_imag_4_485c0e53_float32_edge:eager:out0	1
@@ -512,6 +524,8 @@ cl_cholesky_2x3x3_97bb0f4f_float64_edge:eager:out0	1
 cl_cholesky_2x3x3_97bb0f4f_float64_edge:jit:out0	1
 cl_cholesky_2x3x3_97bb0f4f_float64_shape_other:eager:out0	1
 cl_cholesky_2x3x3_97bb0f4f_float64_shape_other:jit:out0	1
+cl_cholesky_2x3x3_97bb0f4f_float64_shape_small:eager:both_raise	0
+cl_cholesky_2x3x3_97bb0f4f_float64_shape_small:jit:both_raise	0
 cl_cholesky_2x3x3_97bb0f4f_float64_wide:eager:out0	1
 cl_cholesky_2x3x3_97bb0f4f_float64_wide:jit:out0	1
 cl_cholesky_3x3_6f500ed1_float32_edge:eager:out0	1
@@ -520,6 +534,8 @@ cl_cholesky_3x3_6f500ed1_float64_edge:eager:out0	1
 cl_cholesky_3x3_6f500ed1_float64_edge:jit:out0	1
 cl_cholesky_3x3_6f500ed1_float64_shape_other:eager:out0	1
 cl_cholesky_3x3_6f500ed1_float64_shape_other:jit:out0	1
+cl_cholesky_3x3_6f500ed1_float64_shape_small:eager:both_raise	0
+cl_cholesky_3x3_6f500ed1_float64_shape_small:jit:both_raise	0
 cl_cholesky_3x3_6f500ed1_float64_wide:eager:out0	1
 cl_cholesky_3x3_6f500ed1_float64_wide:jit:out0	1
 cl_det_2x3x3_97bb0f4f_float32_edge:eager:out0	1
@@ -558,6 +574,8 @@ cl_eigvalsh_3x3_6f500ed1_float64_edge:eager:out0	1
 cl_eigvalsh_3x3_6f500ed1_float64_edge:jit:out0	1
 cl_eigvalsh_3x3_6f500ed1_float64_shape_other:eager:out0	1
 cl_eigvalsh_3x3_6f500ed1_float64_shape_other:jit:out0	1
+cl_eigvalsh_3x3_6f500ed1_float64_shape_small:eager:both_raise	0
+cl_eigvalsh_3x3_6f500ed1_float64_shape_small:jit:both_raise	0
 cl_eigvalsh_3x3_6f500ed1_float64_wide:eager:out0	1
 cl_eigvalsh_3x3_6f500ed1_float64_wide:jit:out0	1
 cl_grad_eigvals_3x3_38660d7d_float32_edge:eager:out0	1
@@ -586,6 +604,8 @@ cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_edge:eager:out0	1
 cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_edge:jit:out0	1
 cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_shape_other:eager:out0	1
 cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_shape_other:jit:out0	1
+cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_shape_small:eager:both_raise	0
+cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_shape_small:jit:both_raise	0
 cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_wide:eager:out0	1
 cl_grad_eigvalsh_2x3x3_97bb0f4f_float64_wide:jit:out0	1
 cl_grad_eigvalsh_3x3_6f500ed1_float32_edge:eager:out0	1
@@ -614,6 +634,8 @@ cl_grad_logdet_3x3_6f500ed1_float64_edge:eager:out0	1
 cl_grad_logdet_3x3_6f500ed1_float64_edge:jit:out0	1
 cl_grad_logdet_3x3_6f500ed1_float64_shape_other:eager:out0	1
 cl_grad_logdet_3x3_6f500ed1_float64_shape_other:jit:out0	1
+cl_grad_logdet_3x3_6f500ed1_float64_shape_small:eager:both_raise	0
+cl_grad_logdet_3x3_6f500ed1_float64_shape_small:jit:both_raise	0
 cl_grad_logdet_3x3_6f500ed1_float64_wide:eager:out0	1
 cl_grad_logdet_3x3_6f500ed1_float64_wide:jit:out0	1
 cl_grad_svdvals_2x4_6f4d0ed1_float32_edge:eager:out0	1
@@ -1102,6 +1124,8 @@ fft2_3x4_6f590ed2_float64_edge:eager:out0	1
 fft2_3x4_6f590ed2_float64_edge:jit:out0	1
 fft2_3x4_6f590ed2_float64_shape_other:eager:out0	1
 fft2_3x4_6f590ed2_float64_shape_other:jit:out0	1
+fft2_3x4_6f590ed2_float64_shape_small:eager:both_raise	0
+fft2_3x4_6f590ed2_float64_shape_small:jit:both_raise	0
 fft2_3x4_6f590ed2_float64_wide:eager:out0	1
 fft2_3x4_6f590ed2_float64_wide:jit:out0	1
 fft_2x6_00121156_float32_edge:eager:out0	1
@@ -1120,6 +1144,8 @@ fft_5_a0690f98_float64_edge:eager:out0	1
 fft_5_a0690f98_float64_edge:jit:out0	1
 fft_5_a0690f98_float64_shape_other:eager:out0	1
 fft_5_a0690f98_float64_shape_other:jit:out0	1
+fft_5_a0690f98_float64_shape_small:eager:both_raise	0
+fft_5_a0690f98_float64_shape_small:jit:both_raise	0
 fft_5_a0690f98_float64_wide:eager:out0	1
 fft_5_a0690f98_float64_wide:jit:out0	1
 fft_6_421a131f_float32_edge:eager:out0	1
@@ -1128,6 +1154,8 @@ fft_6_421a131f_float64_edge:eager:out0	1
 fft_6_421a131f_float64_edge:jit:out0	1
 fft_6_421a131f_float64_shape_other:eager:out0	1
 fft_6_421a131f_float64_shape_other:jit:out0	1
+fft_6_421a131f_float64_shape_small:eager:both_raise	0
+fft_6_421a131f_float64_shape_small:jit:both_raise	0
 fft_6_421a131f_float64_wide:eager:out0	1
 fft_6_421a131f_float64_wide:jit:out0	1
 fft_6_69ba13e8_float32_edge:eager:out0	1
@@ -1136,6 +1164,8 @@ fft_6_69ba13e8_float64_edge:eager:out0	1
 fft_6_69ba13e8_float64_edge:jit:out0	1
 fft_6_69ba13e8_float64_shape_other:eager:out0	1
 fft_6_69ba13e8_float64_shape_other:jit:out0	1
+fft_6_69ba13e8_float64_shape_small:eager:both_raise	0
+fft_6_69ba13e8_float64_shape_small:jit:both_raise	0
 fft_6_69ba13e8_float64_wide:eager:out0	1
 fft_6_69ba13e8_float64_wide:jit:out0	1
 fft_7_48770e56_float32_edge:eager:out0	1
@@ -1144,6 +1174,8 @@ fft_7_48770e56_float64_edge:eager:out0	1
 fft_7_48770e56_float64_edge:jit:out0	1
 fft_7_48770e56_float64_shape_other:eager:out0	1
 fft_7_48770e56_float64_shape_other:jit:out0	1
+fft_7_48770e56_float64_shape_small:eager:both_raise	0
+fft_7_48770e56_float64_shape_small:jit:both_raise	0
 fft_7_48770e56_float64_wide:eager:out0	1
 fft_7_48770e56_float64_wide:jit:out0	1
 fft_8_48800e57_float32_edge:eager:out0	1
@@ -1342,6 +1374,8 @@ gp_pinv_hermitian_3x3_38660d7d_float64_edge:eager:out0	1
 gp_pinv_hermitian_3x3_38660d7d_float64_edge:jit:out0	1
 gp_pinv_hermitian_3x3_38660d7d_float64_shape_other:eager:out0	1
 gp_pinv_hermitian_3x3_38660d7d_float64_shape_other:jit:out0	1
+gp_pinv_hermitian_3x3_38660d7d_float64_shape_small:eager:both_raise	0
+gp_pinv_hermitian_3x3_38660d7d_float64_shape_small:jit:both_raise	0
 gp_pinv_hermitian_3x3_38660d7d_float64_wide:eager:out0	1
 gp_pinv_hermitian_3x3_38660d7d_float64_wide:jit:out0	1
 gp_qr_full_4x2_38690d7d_float32_edge:eager:out0	1
@@ -1470,6 +1504,8 @@ hfft_3x5_6f620ed3_float64_edge:eager:out0	1
 hfft_3x5_6f620ed3_float64_edge:jit:out0	1
 hfft_3x5_6f620ed3_float64_shape_other:eager:out0	1
 hfft_3x5_6f620ed3_float64_shape_other:jit:out0	1
+hfft_3x5_6f620ed3_float64_shape_small:eager:both_raise	0
+hfft_3x5_6f620ed3_float64_shape_small:jit:both_raise	0
 hfft_3x5_6f620ed3_float64_wide:eager:out0	1
 hfft_3x5_6f620ed3_float64_wide:jit:out0	1
 hfft_5_48650e54_float32_edge:eager:out0	1
@@ -1478,6 +1514,8 @@ hfft_5_48650e54_float64_edge:eager:out0	1
 hfft_5_48650e54_float64_edge:jit:out0	1
 hfft_5_48650e54_float64_shape_other:eager:out0	1
 hfft_5_48650e54_float64_shape_other:jit:out0	1
+hfft_5_48650e54_float64_shape_small:eager:both_raise	0
+hfft_5_48650e54_float64_shape_small:jit:both_raise	0
 hfft_5_48650e54_float64_wide:eager:out0	1
 hfft_5_48650e54_float64_wide:jit:out0	1
 hfft_5_69a013e7_float32_edge:eager:out0	1
@@ -1526,6 +1564,8 @@ ifft_5_a0690f98_float64_edge:eager:out0	1
 ifft_5_a0690f98_float64_edge:jit:out0	1
 ifft_5_a0690f98_float64_shape_other:eager:out0	1
 ifft_5_a0690f98_float64_shape_other:jit:out0	1
+ifft_5_a0690f98_float64_shape_small:eager:both_raise	0
+ifft_5_a0690f98_float64_shape_small:jit:both_raise	0
 ifft_5_a0690f98_float64_wide:eager:out0	1
 ifft_5_a0690f98_float64_wide:jit:out0	1
 ifft_6_421a131f_float32_edge:eager:out0	1
@@ -1594,6 +1634,8 @@ ifftn_3x4_1cda114e_float64_edge:eager:out0	1
 ifftn_3x4_1cda114e_float64_edge:jit:out0	1
 ifftn_3x4_1cda114e_float64_shape_other:eager:out0	1
 ifftn_3x4_1cda114e_float64_shape_other:jit:out0	1
+ifftn_3x4_1cda114e_float64_shape_small:eager:both_raise	0
+ifftn_3x4_1cda114e_float64_shape_small:jit:both_raise	0
 ifftn_3x4_1cda114e_float64_wide:eager:out0	1
 ifftn_3x4_1cda114e_float64_wide:jit:out0	1
 ifftn_3x4_6f590ed2_float32_edge:eager:out0	1
@@ -1632,6 +1674,8 @@ ihfft_3x8_38930d82_float64_edge:eager:out0	1
 ihfft_3x8_38930d82_float64_edge:jit:out0	1
 ihfft_3x8_38930d82_float64_shape_other:eager:out0	1
 ihfft_3x8_38930d82_float64_shape_other:jit:out0	1
+ihfft_3x8_38930d82_float64_shape_small:eager:both_raise	0
+ihfft_3x8_38930d82_float64_shape_small:jit:both_raise	0
 ihfft_3x8_38930d82_float64_wide:eager:out0	1
 ihfft_3x8_38930d82_float64_wide:jit:out0	1
 ihfft_8_15920d03_float32_edge:eager:out0	1
@@ -1640,6 +1684,8 @@ ihfft_8_15920d03_float64_edge:eager:out0	1
 ihfft_8_15920d03_float64_edge:jit:out0	1
 ihfft_8_15920d03_float64_shape_other:eager:out0	1
 ihfft_8_15920d03_float64_shape_other:jit:out0	1
+ihfft_8_15920d03_float64_shape_small:eager:both_raise	0
+ihfft_8_15920d03_float64_shape_small:jit:both_raise	0
 ihfft_8_15920d03_float64_wide:eager:out0	1
 ihfft_8_15920d03_float64_wide:jit:out0	1
 ihfft_8_65a70e44_float32_edge:eager:out0	1
@@ -1658,6 +1704,8 @@ ihfft_8_fb6111cd_float64_edge:eager:out0	1
 ihfft_8_fb6111cd_float64_edge:jit:out0	1
 ihfft_8_fb6111cd_float64_shape_other:eager:out0	1
 ihfft_8_fb6111cd_float64_shape_other:jit:out0	1
+ihfft_8_fb6111cd_float64_shape_small:eager:both_raise	0
+ihfft_8_fb6111cd_float64_shape_small:jit:both_raise	0
 ihfft_8_fb6111cd_float64_wide:eager:out0	1
 ihfft_8_fb6111cd_float64_wide:jit:out0	1
 ihfft_9_159b0d04_float32_edge:eager:out0	1
@@ -1666,6 +1714,8 @@ ihfft_9_159b0d04_float64_edge:eager:out0	1
 ihfft_9_159b0d04_float64_edge:jit:out0	1
 ihfft_9_159b0d04_float64_shape_other:eager:out0	1
 ihfft_9_159b0d04_float64_shape_other:jit:out0	1
+ihfft_9_159b0d04_float64_shape_small:eager:both_raise	0
+ihfft_9_159b0d04_float64_shape_small:jit:both_raise	0
 ihfft_9_159b0d04_float64_wide:eager:out0	1
 ihfft_9_159b0d04_float64_wide:jit:out0	1
 ip_linear_3x4_5x2_187c1854_float32_edge:eager:out0	1
@@ -1674,6 +1724,8 @@ ip_linear_3x4_5x2_187c1854_float64_edge:eager:out0	1
 ip_linear_3x4_5x2_187c1854_float64_edge:jit:out0	1
 ip_linear_3x4_5x2_187c1854_float64_shape_other:eager:out0	1
 ip_linear_3x4_5x2_187c1854_float64_shape_other:jit:out0	1
+ip_linear_3x4_5x2_187c1854_float64_shape_small:eager:both_raise	0
+ip_linear_3x4_5x2_187c1854_float64_shape_small:jit:both_raise	0
 ip_linear_3x4_5x2_187c1854_float64_wide:eager:out0	1
 ip_linear_3x4_5x2_187c1854_float64_wide:jit:out0	1
 ip_nearest_3x4_5x2_187c1854_float32_edge:eager:out0	1
@@ -1692,6 +1744,8 @@ irfft2_3x3_6f500ed1_float64_edge:eager:out0	1
 irfft2_3x3_6f500ed1_float64_edge:jit:out0	1
 irfft2_3x3_6f500ed1_float64_shape_other:eager:out0	1
 irfft2_3x3_6f500ed1_float64_shape_other:jit:out0	1
+irfft2_3x3_6f500ed1_float64_shape_small:eager:both_raise	0
+irfft2_3x3_6f500ed1_float64_shape_small:jit:both_raise	0
 irfft2_3x3_6f500ed1_float64_wide:eager:out0	1
 irfft2_3x3_6f500ed1_float64_wide:jit:out0	1
 irfft_3x5_6f620ed3_float32_edge:eager:out0	1
@@ -1700,6 +1754,8 @@ irfft_3x5_6f620ed3_float64_edge:eager:out0	1
 irfft_3x5_6f620ed3_float64_edge:jit:out0	1
 irfft_3x5_6f620ed3_float64_shape_other:eager:out0	1
 irfft_3x5_6f620ed3_float64_shape_other:jit:out0	1
+irfft_3x5_6f620ed3_float64_shape_small:eager:both_raise	0
+irfft_3x5_6f620ed3_float64_shape_small:jit:both_raise	0
 irfft_3x5_6f620ed3_float64_wide:eager:out0	1
 irfft_3x5_6f620ed3_float64_wide:jit:out0	1
 irfft_5_48650e54_float32_edge:eager:out0	1
@@ -1718,6 +1774,8 @@ irfft_5_69a013e7_float64_edge:eager:out0	1
 irfft_5_69a013e7_float64_edge:jit:out0	1
 irfft_5_69a013e7_float64_shape_other:eager:out0	1
 irfft_5_69a013e7_float64_shape_other:jit:out0	1
+irfft_5_69a013e7_float64_shape_small:eager:both_raise	0
+irfft_5_69a013e7_float64_shape_small:jit:both_raise	0
 irfft_5_69a013e7_float64_wide:eager:out0	1
 irfft_5_69a013e7_float64_wide:jit:out0	1
 irfft_5_a06c0f99_float32_edge:eager:out0	1
@@ -1726,6 +1784,8 @@ irfft_5_a06c0f99_float64_edge:eager:out0	1
 irfft_5_a06c0f99_float64_edge:jit:out0	1
 irfft_5_a06c0f99_float64_shape_other:eager:out0	1
 irfft_5_a06c0f99_float64_shape_other:jit:out0	1
+irfft_5_a06c0f99_float64_shape_small:eager:both_raise	0
+irfft_5_a06c0f99_float64_shape_small:jit:both_raise	0
 irfft_5_a06c0f99_float64_wide:eager:out0	1
 irfft_5_a06c0f99_float64_wide:jit:out0	1
 irfftn_3x3_1cc4114e_float32_edge:eager:out0	1
@@ -1874,6 +1934,8 @@ lax_conv_same_1x1x7_1x1x3_a1661c2d_float64_edge:eager:out0	1
 lax_conv_same_1x1x7_1x1x3_a1661c2d_float64_edge:jit:out0	1
 lax_conv_same_1x1x7_1x1x3_a1661c2d_float64_shape_other:eager:out0	1
 lax_conv_same_1x1x7_1x1x3_a1661c2d_float64_shape_other:jit:out0	1
+lax_conv_same_1x1x7_1x1x3_a1661c2d_float64_shape_small:eager:both_raise	0
+lax_conv_same_1x1x7_1x1x3_a1661c2d_float64_shape_small:jit:both_raise	0
 lax_conv_same_1x1x7_1x1x3_a1661c2d_float64_wide:eager:out0	1
 lax_conv_same_1x1x7_1x1x3_a1661c2d_float64_wide:jit:out0	1
 lax_conv_transpose_1x1x4_1x1x3_af232528_float32_edge:eager:out0	1
@@ -2052,6 +2114,8 @@ lax_reduce_custom_2x3_dd9210b0_float64_edge:eager:out0	1
 lax_reduce_custom_2x3_dd9210b0_float64_edge:jit:out0	1
 lax_reduce_custom_2x3_dd9210b0_float64_shape_other:eager:out0	1
 lax_reduce_custom_2x3_dd9210b0_float64_shape_other:jit:out0	1
+lax_reduce_custom_2x3_dd9210b0_float64_shape_small:eager:both_raise	0
+lax_reduce_custom_2x3_dd9210b0_float64_shape_small:jit:both_raise	0
 lax_reduce_custom_2x3_dd9210b0_float64_wide:eager:out0	1
 lax_reduce_custom_2x3_dd9210b0_float64_wide:jit:out0	1
 lax_reduce_window_2x6_50951a67_float32_edge:eager:out0	1
@@ -2176,6 +2240,7 @@ lax_top_k_6_656b0e3c_float64_shape_other:eager:out0	1
 lax_top_k_6_656b0e3c_float64_shape_other:eager:out1	1
 lax_top_k_6_656b0e3c_float64_shape_other:jit:out0	1
 lax_top_k_6_656b0e3c_float64_shape_other:jit:out1	1
+lax_top_k_6_656b0e3c_float64_shape_small:eager:both_raise	0
 lax_top_k_6_656b0e3c_float64_shape_small:jit:both_raise	0
 lax_top_k_6_656b0e3c_float64_wide:eager:out0	1
 lax_top_k_6_656b0e3c_float64_wide:eager:out1	1
@@ -2187,6 +2252,8 @@ lx_cholesky_update_3x3_3_d4ad17d3_float64_edge:eager:out0	1
 lx_cholesky_update_3x3_3_d4ad17d3_float64_edge:jit:out0	1
 lx_cholesky_update_3x3_3_d4ad17d3_float64_shape_other:eager:out0	1
 lx_cholesky_update_3x3_3_d4ad17d3_float64_shape_other:jit:out0	1
+lx_cholesky_update_3x3_3_d4ad17d3_float64_shape_small:eager:both_raise	0
+lx_cholesky_update_3x3_3_d4ad17d3_float64_shape_small:jit:both_raise	0
 lx_cholesky_update_3x3_3_d4ad17d3_float64_wide:eager:out0	1
 lx_cholesky_update_3x3_3_d4ad17d3_float64_wide:jit:out0	1
 lx_eigh_tri_4_3_9f7f1755_float32_edge:eager:out0	1
@@ -2277,6 +2344,8 @@ lx_hessenberg_4x4_6f650ed3_float64_shape_other:eager:out0	1
 lx_hessenberg_4x4_6f650ed3_float64_shape_other:eager:out1	1
 lx_hessenberg_4x4_6f650ed3_float64_shape_other:jit:out0	1
 lx_hessenberg_4x4_6f650ed3_float64_shape_other:jit:out1	1
+lx_hessenberg_4x4_6f650ed3_float64_shape_small:eager:both_raise	0
+lx_hessenberg_4x4_6f650ed3_float64_shape_small:jit:both_raise	0
 lx_hessenberg_4x4_6f650ed3_float64_wide:eager:out0	1
 lx_hessenberg_4x4_6f650ed3_float64_wide:eager:out1	1
 lx_hessenberg_4x4_6f650ed3_float64_wide:jit:out0	1
@@ -2705,6 +2774,8 @@ lx_qr_multiply_4x3_2x4_429c2c6f_float64_shape_other:eager:out0	1
 lx_qr_multiply_4x3_2x4_429c2c6f_float64_shape_other:eager:out1	1
 lx_qr_multiply_4x3_2x4_429c2c6f_float64_shape_other:jit:out0	1
 lx_qr_multiply_4x3_2x4_429c2c6f_float64_shape_other:jit:out1	1
+lx_qr_multiply_4x3_2x4_429c2c6f_float64_shape_small:eager:both_raise	0
+lx_qr_multiply_4x3_2x4_429c2c6f_float64_shape_small:jit:both_raise	0
 lx_qr_multiply_4x3_2x4_429c2c6f_float64_wide:eager:out0	1
 lx_qr_multiply_4x3_2x4_429c2c6f_float64_wide:eager:out1	1
 lx_qr_multiply_4x3_2x4_429c2c6f_float64_wide:jit:out0	1
@@ -2827,6 +2898,8 @@ lx_qr_multiply_4x3_3x2_12b62bfb_float64_shape_other:eager:out2	1
 lx_qr_multiply_4x3_3x2_12b62bfb_float64_shape_other:jit:out0	1
 lx_qr_multiply_4x3_3x2_12b62bfb_float64_shape_other:jit:out1	1
 lx_qr_multiply_4x3_3x2_12b62bfb_float64_shape_other:jit:out2	1
+lx_qr_multiply_4x3_3x2_12b62bfb_float64_shape_small:eager:both_raise	0
+lx_qr_multiply_4x3_3x2_12b62bfb_float64_shape_small:jit:both_raise	0
 lx_qr_multiply_4x3_3x2_12b62bfb_float64_wide:eager:out0	1
 lx_qr_multiply_4x3_3x2_12b62bfb_float64_wide:eager:out1	1
 lx_qr_multiply_4x3_3x2_12b62bfb_float64_wide:eager:out2	1
@@ -2845,6 +2918,8 @@ lx_qr_multiply_4x3_3x2_3e492c46_float64_shape_other:eager:out0	1
 lx_qr_multiply_4x3_3x2_3e492c46_float64_shape_other:eager:out1	1
 lx_qr_multiply_4x3_3x2_3e492c46_float64_shape_other:jit:out0	1
 lx_qr_multiply_4x3_3x2_3e492c46_float64_shape_other:jit:out1	1
+lx_qr_multiply_4x3_3x2_3e492c46_float64_shape_small:eager:both_raise	0
+lx_qr_multiply_4x3_3x2_3e492c46_float64_shape_small:jit:both_raise	0
 lx_qr_multiply_4x3_3x2_3e492c46_float64_wide:eager:out0	1
 lx_qr_multiply_4x3_3x2_3e492c46_float64_wide:eager:out1	1
 lx_qr_multiply_4x3_3x2_3e492c46_float64_wide:jit:out0	1
@@ -2891,6 +2966,8 @@ lx_qr_multiply_4x3_3x2_e9f1299e_float64_shape_other:eager:out0	1
 lx_qr_multiply_4x3_3x2_e9f1299e_float64_shape_other:eager:out1	1
 lx_qr_multiply_4x3_3x2_e9f1299e_float64_shape_other:jit:out0	1
 lx_qr_multiply_4x3_3x2_e9f1299e_float64_shape_other:jit:out1	1
+lx_qr_multiply_4x3_3x2_e9f1299e_float64_shape_small:eager:both_raise	0
+lx_qr_multiply_4x3_3x2_e9f1299e_float64_shape_small:jit:both_raise	0
 lx_qr_multiply_4x3_3x2_e9f1299e_float64_wide:eager:out0	1
 lx_qr_multiply_4x3_3x2_e9f1299e_float64_wide:eager:out1	1
 lx_qr_multiply_4x3_3x2_e9f1299e_float64_wide:jit:out0	1
@@ -3367,6 +3444,8 @@ lx_symmetric_product_3x2_3x3_36a11c08_float64_edge:eager:out0	1
 lx_symmetric_product_3x2_3x3_36a11c08_float64_edge:jit:out0	1
 lx_symmetric_product_3x2_3x3_36a11c08_float64_shape_other:eager:out0	1
 lx_symmetric_product_3x2_3x3_36a11c08_float64_shape_other:jit:out0	1
+lx_symmetric_product_3x2_3x3_36a11c08_float64_shape_small:eager:both_raise	0
+lx_symmetric_product_3x2_3x3_36a11c08_float64_shape_small:jit:both_raise	0
 lx_symmetric_product_3x2_3x3_36a11c08_float64_wide:eager:out0	1
 lx_symmetric_product_3x2_3x3_36a11c08_float64_wide:jit:out0	1
 lx_symmetric_product_3x2_3x3_52411c53_float32_edge:eager:out0	1
@@ -4038,6 +4117,7 @@ np_trim_zeros_3_b4fe1002_float64_wide:eager:out0	1
 np_trim_zeros_3_c58c1064_float32_edge:eager:out0	1
 np_trim_zeros_3_c58c1064_float64_edge:eager:out0	1
 np_trim_zeros_3_c58c1064_float64_shape_other:eager:out0	1
+np_trim_zeros_3_c58c1064_float64_shape_small:eager:both_raise	0
 np_trim_zeros_3_c58c1064_float64_wide:eager:out0	1
 np_triu_indices_1_d9ee0fc1_float32_edge:eager:out0	1
 np_triu_indices_1_d9ee0fc1_float32_edge:eager:out1	1
@@ -4740,6 +4820,8 @@ rfft2_3x4_386f0d7e_float64_edge:eager:out0	1
 rfft2_3x4_386f0d7e_float64_edge:jit:out0	1
 rfft2_3x4_386f0d7e_float64_shape_other:eager:out0	1
 rfft2_3x4_386f0d7e_float64_shape_other:jit:out0	1
+rfft2_3x4_386f0d7e_float64_shape_small:eager:both_raise	0
+rfft2_3x4_386f0d7e_float64_shape_small:jit:both_raise	0
 rfft2_3x4_386f0d7e_float64_wide:eager:out0	1
 rfft2_3x4_386f0d7e_float64_wide:jit:out0	1
 rfft_3x8_38930d82_float32_edge:eager:out0	1
@@ -4748,6 +4830,8 @@ rfft_3x8_38930d82_float64_edge:eager:out0	1
 rfft_3x8_38930d82_float64_edge:jit:out0	1
 rfft_3x8_38930d82_float64_shape_other:eager:out0	1
 rfft_3x8_38930d82_float64_shape_other:jit:out0	1
+rfft_3x8_38930d82_float64_shape_small:eager:both_raise	0
+rfft_3x8_38930d82_float64_shape_small:jit:both_raise	0
 rfft_3x8_38930d82_float64_wide:eager:out0	1
 rfft_3x8_38930d82_float64_wide:jit:out0	1
 rfft_8_15920d03_float32_edge:eager:out0	1
@@ -4756,6 +4840,8 @@ rfft_8_15920d03_float64_edge:eager:out0	1
 rfft_8_15920d03_float64_edge:jit:out0	1
 rfft_8_15920d03_float64_shape_other:eager:out0	1
 rfft_8_15920d03_float64_shape_other:jit:out0	1
+rfft_8_15920d03_float64_shape_small:eager:both_raise	0
+rfft_8_15920d03_float64_shape_small:jit:both_raise	0
 rfft_8_15920d03_float64_wide:eager:out0	1
 rfft_8_15920d03_float64_wide:jit:out0	1
 rfft_8_65a70e44_float32_edge:eager:out0	1
@@ -4774,6 +4860,8 @@ rfft_8_fb6111cd_float64_edge:eager:out0	1
 rfft_8_fb6111cd_float64_edge:jit:out0	1
 rfft_8_fb6111cd_float64_shape_other:eager:out0	1
 rfft_8_fb6111cd_float64_shape_other:jit:out0	1
+rfft_8_fb6111cd_float64_shape_small:eager:both_raise	0
+rfft_8_fb6111cd_float64_shape_small:jit:both_raise	0
 rfft_8_fb6111cd_float64_wide:eager:out0	1
 rfft_8_fb6111cd_float64_wide:jit:out0	1
 rfft_9_159b0d04_float32_edge:eager:out0	1
@@ -4782,6 +4870,8 @@ rfft_9_159b0d04_float64_edge:eager:out0	1
 rfft_9_159b0d04_float64_edge:jit:out0	1
 rfft_9_159b0d04_float64_shape_other:eager:out0	1
 rfft_9_159b0d04_float64_shape_other:jit:out0	1
+rfft_9_159b0d04_float64_shape_small:eager:both_raise	0
+rfft_9_159b0d04_float64_shape_small:jit:both_raise	0
 rfft_9_159b0d04_float64_wide:eager:out0	1
 rfft_9_159b0d04_float64_wide:jit:out0	1
 rfftn_2x3x4_3a3211b0_float32_edge:eager:out0	1
@@ -4790,6 +4880,8 @@ rfftn_2x3x4_3a3211b0_float64_edge:eager:out0	1
 rfftn_2x3x4_3a3211b0_float64_edge:jit:out0	1
 rfftn_2x3x4_3a3211b0_float64_shape_other:eager:out0	1
 rfftn_2x3x4_3a3211b0_float64_shape_other:jit:out0	1
+rfftn_2x3x4_3a3211b0_float64_shape_small:eager:both_raise	0
+rfftn_2x3x4_3a3211b0_float64_shape_small:jit:both_raise	0
 rfftn_2x3x4_3a3211b0_float64_wide:eager:out0	1
 rfftn_2x3x4_3a3211b0_float64_wide:jit:out0	1
 rfftn_3x4_386f0d7e_float32_edge:eager:out0	1
@@ -4868,6 +4960,8 @@ sb_all_to_all_3x3_1ea61910_float64_edge:eager:out0	1
 sb_all_to_all_3x3_1ea61910_float64_edge:jit:out0	1
 sb_all_to_all_3x3_1ea61910_float64_shape_other:eager:out0	1
 sb_all_to_all_3x3_1ea61910_float64_shape_other:jit:out0	1
+sb_all_to_all_3x3_1ea61910_float64_shape_small:eager:both_raise	0
+sb_all_to_all_3x3_1ea61910_float64_shape_small:jit:both_raise	0
 sb_all_to_all_3x3_1ea61910_float64_wide:eager:out0	1
 sb_all_to_all_3x3_1ea61910_float64_wide:jit:out0	1
 sb_all_to_all_3x3x2_566c198f_float32_edge:eager:out0	1
@@ -5026,12 +5120,20 @@ sb_pshuffle_3x2_415611b1_float32_edge:eager:out0	1
 sb_pshuffle_3x2_415611b1_float32_edge:jit:out0	1
 sb_pshuffle_3x2_415611b1_float64_edge:eager:out0	1
 sb_pshuffle_3x2_415611b1_float64_edge:jit:out0	1
+sb_pshuffle_3x2_415611b1_float64_shape_other:eager:both_raise	0
+sb_pshuffle_3x2_415611b1_float64_shape_other:jit:both_raise	0
+sb_pshuffle_3x2_415611b1_float64_shape_small:eager:both_raise	0
+sb_pshuffle_3x2_415611b1_float64_shape_small:jit:both_raise	0
 sb_pshuffle_3x2_415611b1_float64_wide:eager:out0	1
 sb_pshuffle_3x2_415611b1_float64_wide:jit:out0	1
 sb_psum_scatter_2x4_b3651441_float32_edge:eager:out0	1
 sb_psum_scatter_2x4_b3651441_float32_edge:jit:out0	1
 sb_psum_scatter_2x4_b3651441_float64_edge:eager:out0	1
 sb_psum_scatter_2x4_b3651441_float64_edge:jit:out0	1
+sb_psum_scatter_2x4_b3651441_float64_shape_other:eager:both_raise	0
+sb_psum_scatter_2x4_b3651441_float64_shape_other:jit:both_raise	0
+sb_psum_scatter_2x4_b3651441_float64_shape_small:eager:both_raise	0
+sb_psum_scatter_2x4_b3651441_float64_shape_small:jit:both_raise	0
 sb_psum_scatter_2x4_b3651441_float64_wide:eager:out0	1
 sb_psum_scatter_2x4_b3651441_float64_wide:jit:out0	1
 sb_psum_scatter_3x3_c741148c_float32_edge:eager:out0	1
@@ -5050,6 +5152,8 @@ sb_pswapaxes_3x3x2_e5e7107e_float64_edge:eager:out0	1
 sb_pswapaxes_3x3x2_e5e7107e_float64_edge:jit:out0	1
 sb_pswapaxes_3x3x2_e5e7107e_float64_shape_other:eager:out0	1
 sb_pswapaxes_3x3x2_e5e7107e_float64_shape_other:jit:out0	1
+sb_pswapaxes_3x3x2_e5e7107e_float64_shape_small:eager:both_raise	0
+sb_pswapaxes_3x3x2_e5e7107e_float64_shape_small:jit:both_raise	0
 sb_pswapaxes_3x3x2_e5e7107e_float64_wide:eager:out0	1
 sb_pswapaxes_3x3x2_e5e7107e_float64_wide:jit:out0	1
 sb_r_2_3_9f231753_float32_edge:eager:out0	1
@@ -5314,6 +5418,8 @@ sg_csd_32_32_83d121f9_float64_shape_other:eager:out0	1
 sg_csd_32_32_83d121f9_float64_shape_other:eager:out1	1
 sg_csd_32_32_83d121f9_float64_shape_other:jit:out0	1
 sg_csd_32_32_83d121f9_float64_shape_other:jit:out1	1
+sg_csd_32_32_83d121f9_float64_shape_small:eager:both_raise	0
+sg_csd_32_32_83d121f9_float64_shape_small:jit:both_raise	0
 sg_csd_32_32_83d121f9_float64_wide:eager:out0	1
 sg_csd_32_32_83d121f9_float64_wide:eager:out1	1
 sg_csd_32_32_83d121f9_float64_wide:jit:out0	1
@@ -5330,6 +5436,8 @@ sg_csd_32_32_fdb11b82_float64_shape_other:eager:out0	1
 sg_csd_32_32_fdb11b82_float64_shape_other:eager:out1	1
 sg_csd_32_32_fdb11b82_float64_shape_other:jit:out0	1
 sg_csd_32_32_fdb11b82_float64_shape_other:jit:out1	1
+sg_csd_32_32_fdb11b82_float64_shape_small:eager:both_raise	0
+sg_csd_32_32_fdb11b82_float64_shape_small:jit:both_raise	0
 sg_csd_32_32_fdb11b82_float64_wide:eager:out0	1
 sg_csd_32_32_fdb11b82_float64_wide:eager:out1	1
 sg_csd_32_32_fdb11b82_float64_wide:jit:out0	1
@@ -5370,6 +5478,8 @@ sg_stft_2x32_01361178_float64_shape_other:eager:out2	1
 sg_stft_2x32_01361178_float64_shape_other:jit:out0	1
 sg_stft_2x32_01361178_float64_shape_other:jit:out1	1
 sg_stft_2x32_01361178_float64_shape_other:jit:out2	1
+sg_stft_2x32_01361178_float64_shape_small:eager:both_raise	0
+sg_stft_2x32_01361178_float64_shape_small:jit:both_raise	0
 sg_stft_2x32_01361178_float64_wide:eager:out0	1
 sg_stft_2x32_01361178_float64_wide:eager:out1	1
 sg_stft_2x32_01361178_float64_wide:eager:out2	1
@@ -5424,6 +5534,8 @@ sg_stft_32_d7cc10fa_float64_shape_other:eager:out2	1
 sg_stft_32_d7cc10fa_float64_shape_other:jit:out0	1
 sg_stft_32_d7cc10fa_float64_shape_other:jit:out1	1
 sg_stft_32_d7cc10fa_float64_shape_other:jit:out2	1
+sg_stft_32_d7cc10fa_float64_shape_small:eager:both_raise	0
+sg_stft_32_d7cc10fa_float64_shape_small:jit:both_raise	0
 sg_stft_32_d7cc10fa_float64_wide:eager:out0	1
 sg_stft_32_d7cc10fa_float64_wide:eager:out1	1
 sg_stft_32_d7cc10fa_float64_wide:eager:out2	1
@@ -5492,6 +5604,8 @@ sg_welch_32_80b51771_float64_shape_other:eager:out0	1
 sg_welch_32_80b51771_float64_shape_other:eager:out1	1
 sg_welch_32_80b51771_float64_shape_other:jit:out0	1
 sg_welch_32_80b51771_float64_shape_other:jit:out1	1
+sg_welch_32_80b51771_float64_shape_small:eager:both_raise	0
+sg_welch_32_80b51771_float64_shape_small:jit:both_raise	0
 sg_welch_32_80b51771_float64_wide:eager:out0	1
 sg_welch_32_80b51771_float64_wide:eager:out1	1
 sg_welch_32_80b51771_float64_wide:jit:out0	1
@@ -5812,6 +5926,8 @@ sl_solve_sylvester_2x2_3x3_2x3_a8d32325_float64_edge:eager:out0	1
 sl_solve_sylvester_2x2_3x3_2x3_a8d32325_float64_edge:jit:out0	1
 sl_solve_sylvester_2x2_3x3_2x3_a8d32325_float64_shape_other:eager:out0	1
 sl_solve_sylvester_2x2_3x3_2x3_a8d32325_float64_shape_other:jit:out0	1
+sl_solve_sylvester_2x2_3x3_2x3_a8d32325_float64_shape_small:eager:both_raise	0
+sl_solve_sylvester_2x2_3x3_2x3_a8d32325_float64_shape_small:jit:both_raise	0
 sl_solve_sylvester_2x2_3x3_2x3_a8d32325_float64_wide:eager:out0	1
 sl_solve_sylvester_2x2_3x3_2x3_a8d32325_float64_wide:jit:out0	1
 sp_convolve2d_4x5_2x3_89561c81_float32_edge:eager:out0	1
@@ -6010,6 +6126,8 @@ sp_dct_8_15920d03_float64_edge:eager:out0	1
 sp_dct_8_15920d03_float64_edge:jit:out0	1
 sp_dct_8_15920d03_float64_shape_other:eager:out0	1
 sp_dct_8_15920d03_float64_shape_other:jit:out0	1
+sp_dct_8_15920d03_float64_shape_small:eager:both_raise	0
+sp_dct_8_15920d03_float64_shape_small:jit:both_raise	0
 sp_dct_8_15920d03_float64_wide:eager:out0	1
 sp_dct_8_15920d03_float64_wide:jit:out0	1
 sp_dctn_3x4_25821248_float32_edge:eager:out0	1
@@ -6168,6 +6286,7 @@ sp_idct_3x4_bd161001_float64_edge:eager:out0	1
 sp_idct_3x4_bd161001_float64_edge:jit:out0	1
 sp_idct_3x4_bd161001_float64_shape_other:eager:out0	1
 sp_idct_3x4_bd161001_float64_shape_other:jit:out0	1
+sp_idct_3x4_bd161001_float64_shape_small:eager:both_raise	0
 sp_idct_3x4_bd161001_float64_shape_small:jit:both_raise	0
 sp_idct_3x4_bd161001_float64_wide:eager:out0	1
 sp_idct_3x4_bd161001_float64_wide:jit:out0	1
@@ -6187,6 +6306,7 @@ sp_idct_7_fb4911cc_float64_edge:eager:out0	1
 sp_idct_7_fb4911cc_float64_edge:jit:out0	1
 sp_idct_7_fb4911cc_float64_shape_other:eager:out0	1
 sp_idct_7_fb4911cc_float64_shape_other:jit:out0	1
+sp_idct_7_fb4911cc_float64_shape_small:eager:both_raise	0
 sp_idct_7_fb4911cc_float64_shape_small:jit:both_raise	0
 sp_idct_7_fb4911cc_float64_wide:eager:out0	1
 sp_idct_7_fb4911cc_float64_wide:jit:out0	1
@@ -6196,6 +6316,8 @@ sp_idct_8_15920d03_float64_edge:eager:out0	1
 sp_idct_8_15920d03_float64_edge:jit:out0	1
 sp_idct_8_15920d03_float64_shape_other:eager:out0	1
 sp_idct_8_15920d03_float64_shape_other:jit:out0	1
+sp_idct_8_15920d03_float64_shape_small:eager:both_raise	0
+sp_idct_8_15920d03_float64_shape_small:jit:both_raise	0
 sp_idct_8_15920d03_float64_wide:eager:out0	1
 sp_idct_8_15920d03_float64_wide:jit:out0	1
 sp_idctn_3x4_25821248_float32_edge:eager:out0	1
@@ -6204,6 +6326,7 @@ sp_idctn_3x4_25821248_float64_edge:eager:out0	1
 sp_idctn_3x4_25821248_float64_edge:jit:out0	1
 sp_idctn_3x4_25821248_float64_shape_other:eager:out0	1
 sp_idctn_3x4_25821248_float64_shape_other:jit:out0	1
+sp_idctn_3x4_25821248_float64_shape_small:eager:both_raise	0
 sp_idctn_3x4_25821248_float64_shape_small:jit:both_raise	0
 sp_idctn_3x4_25821248_float64_wide:eager:out0	1
 sp_idctn_3x4_25821248_float64_wide:jit:out0	1
@@ -6213,6 +6336,7 @@ sp_idctn_3x4_386f0d7e_float64_edge:eager:out0	1
 sp_idctn_3x4_386f0d7e_float64_edge:jit:out0	1
 sp_idctn_3x4_386f0d7e_float64_shape_other:eager:out0	1
 sp_idctn_3x4_386f0d7e_float64_shape_other:jit:out0	1
+sp_idctn_3x4_386f0d7e_float64_shape_small:eager:both_raise	0
 sp_idctn_3x4_386f0d7e_float64_shape_small:jit:both_raise	0
 sp_idctn_3x4_386f0d7e_float64_wide:eager:out0	1
 sp_idctn_3x4_386f0d7e_float64_wide:jit:out0	1
@@ -7918,12 +8042,16 @@ sw_fft_3x3_603812d6_float64_edge:eager:out0	1
 sw_fft_3x3_603812d6_float64_edge:jit:out0	1
 sw_fft_3x3_603812d6_float64_shape_other:eager:out0	1
 sw_fft_3x3_603812d6_float64_shape_other:jit:out0	1
+sw_fft_3x3_603812d6_float64_shape_small:eager:both_raise	0
+sw_fft_3x3_603812d6_float64_shape_small:jit:both_raise	0
 sw_fft_3x3_603812d6_float64_wide:eager:out0	1
 sw_fft_3x3_603812d6_float64_wide:jit:out0	1
 sw_fft_3x3_670312ff_float64_edge:eager:out0	1
 sw_fft_3x3_670312ff_float64_edge:jit:out0	1
 sw_fft_3x3_670312ff_float64_shape_other:eager:out0	1
 sw_fft_3x3_670312ff_float64_shape_other:jit:out0	1
+sw_fft_3x3_670312ff_float64_shape_small:eager:both_raise	0
+sw_fft_3x3_670312ff_float64_shape_small:jit:both_raise	0
 sw_fft_3x3_670312ff_float64_wide:eager:out0	1
 sw_fft_3x3_670312ff_float64_wide:jit:out0	1
 sw_fft_3x3_6ed01305_float64_edge:eager:out0	1
@@ -9796,6 +9924,8 @@ sw_nn_gelu_exact_3x3_9fc813d0_float64_wide:eager:out0	1
 sw_nn_gelu_exact_3x3_9fc813d0_float64_wide:jit:out0	1
 sw_nn_glu_3x3_9fc813d0_float64_edge:eager:out0	1
 sw_nn_glu_3x3_9fc813d0_float64_edge:jit:out0	1
+sw_nn_glu_3x3_9fc813d0_float64_shape_other:eager:both_raise	0
+sw_nn_glu_3x3_9fc813d0_float64_shape_other:jit:both_raise	0
 sw_nn_glu_3x3_9fc813d0_float64_shape_small:eager:out0	1
 sw_nn_glu_3x3_9fc813d0_float64_shape_small:jit:out0	1
 sw_nn_glu_3x3_9fc813d0_float64_wide:eager:out0	1
@@ -11018,12 +11148,16 @@ sw_polyval_3x3_670312ff_float64_edge:eager:out0	1
 sw_polyval_3x3_670312ff_float64_edge:jit:out0	1
 sw_polyval_3x3_670312ff_float64_shape_other:eager:out0	1
 sw_polyval_3x3_670312ff_float64_shape_other:jit:out0	1
+sw_polyval_3x3_670312ff_float64_shape_small:eager:both_raise	0
+sw_polyval_3x3_670312ff_float64_shape_small:jit:both_raise	0
 sw_polyval_3x3_670312ff_float64_wide:eager:out0	1
 sw_polyval_3x3_670312ff_float64_wide:jit:out0	1
 sw_polyval_3x3_6ed01305_float64_edge:eager:out0	1
 sw_polyval_3x3_6ed01305_float64_edge:jit:out0	1
 sw_polyval_3x3_6ed01305_float64_shape_other:eager:out0	1
 sw_polyval_3x3_6ed01305_float64_shape_other:jit:out0	1
+sw_polyval_3x3_6ed01305_float64_shape_small:eager:both_raise	0
+sw_polyval_3x3_6ed01305_float64_shape_small:jit:both_raise	0
 sw_polyval_3x3_6ed01305_float64_wide:eager:out0	1
 sw_polyval_3x3_6ed01305_float64_wide:jit:out0	1
 sw_polyval_3x3_6f500ed1_float32_edge:eager:out0	1
@@ -16434,6 +16568,8 @@ sx_hyp2f1_grad_3_64ae11cf_float64_edge:eager:out0	1
 sx_hyp2f1_grad_3_64ae11cf_float64_edge:jit:out0	1
 sx_hyp2f1_grad_3_64ae11cf_float64_shape_other:eager:out0	1
 sx_hyp2f1_grad_3_64ae11cf_float64_shape_other:jit:out0	1
+sx_hyp2f1_grad_3_64ae11cf_float64_shape_small:eager:both_raise	0
+sx_hyp2f1_grad_3_64ae11cf_float64_shape_small:jit:both_raise	0
 sx_hyp2f1_grad_3_64ae11cf_float64_wide:eager:out0	1
 sx_hyp2f1_grad_3_64ae11cf_float64_wide:jit:out0	1
 sx_hyp2f1_grad_3_75a011f4_float32_edge:eager:out0	1

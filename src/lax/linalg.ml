@@ -104,7 +104,7 @@ let cholesky_impl inputs =
                     else elt c ca (i + (j * n)));
               ]);
         }
-  | _ -> failwith "linalg: cholesky expects one operand"
+  | _ -> assert false
 
 let permutation_of_pivots m pivots =
   let perm = Array.init m (fun i -> i) in
@@ -142,7 +142,7 @@ let lu_impl inputs =
                   (Array.map float_of_int (permutation_of_pivots m pivots));
               ]);
         }
-  | _ -> failwith "linalg: lu expects one operand"
+  | _ -> assert false
 
 let qr_empty dt m n k =
   let q =
@@ -192,7 +192,7 @@ let qr_impl full_matrices inputs =
               in
               [ of_cm dt c work m k; r ]);
         }
-  | _ -> failwith "linalg: qr expects one operand"
+  | _ -> assert false
 
 let geqrf_impl a =
   let dt = Ndarray.dtype a in
@@ -268,7 +268,7 @@ let householder_product_impl inputs =
               in
               [ of_cm dt c ca m n ]);
         }
-  | _ -> failwith "linalg: householder_product expects two operands"
+  | _ -> assert false
 
 let qr_pivoted_impl full_matrices inputs =
   match inputs with
@@ -317,8 +317,8 @@ let qr_pivoted_impl full_matrices inputs =
                      Int64.to_float (Ndarray.get_i64 jpvt [| i |]) -. 1.0))
             in
             [ q; r; p ]
-        | _ -> failwith "linalg: geqp3 arity")
-  | _ -> failwith "linalg: qr expects one operand"
+        | _ -> assert false)
+  | _ -> assert false
 
 let ormqr_impl ~left ~transpose a taus c_in =
   let dt = Ndarray.dtype a in
@@ -359,7 +359,7 @@ let lu_pivots_to_permutation_impl permutation_size inputs =
           (Array.init k (fun i -> Int64.to_int (Ndarray.get_i64 pivots [| i |])))
       in
       [ Ndarray.of_floats Dtype.I32 [| m |] (Array.map float_of_int perm) ]
-  | _ -> failwith "linalg: lu_pivots_to_permutation expects one operand"
+  | _ -> assert false
 
 let triangular_solve_impl left_side lower transpose_a conjugate_a unit_diagonal
     inputs =
@@ -398,7 +398,7 @@ let triangular_solve_impl left_side lower transpose_a conjugate_a unit_diagonal
                   ~lda:order ~b:cb ~ldb:(max rows 1);
               [ of_cm dt c cb rows cols ]);
         }
-  | _ -> failwith "linalg: triangular_solve expects two operands"
+  | _ -> assert false
 
 let tridiagonal_cell nd i j =
   if Array.length (Ndarray.shape nd) >= 2 then Ndarray.get_c nd [| i; j |]
@@ -433,7 +433,7 @@ let tridiagonal_solve_perturbed inputs =
       in
       if dt = Dtype.F32 || dt = Dtype.Complex64 then solve Bigarray.float32
       else solve Bigarray.float64
-  | _ -> failwith "linalg: tridiagonal_solve expects four operands"
+  | _ -> assert false
 
 let tridiagonal_solve_gtsv dl d du b =
   let dt = Ndarray.dtype b in
@@ -503,7 +503,7 @@ let eigh_impl lower inputs =
                 guarded (info = 0) rdt [| n |] (fun () -> of_vec rdt false w n);
               ]);
         }
-  | _ -> failwith "linalg: eigh expects one operand"
+  | _ -> assert false
 
 let unpack_eigvecs n (pv : 'k Lp.real) wi =
   let cv = Array.make (n * n) Complex.zero in
@@ -576,7 +576,7 @@ let eig_impl compute_left compute_right inputs =
               in
               (values :: vectors compute_left vl) @ vectors compute_right vr);
         }
-  | _ -> failwith "linalg: eig expects one operand"
+  | _ -> assert false
 
 let hessenberg_impl inputs =
   match inputs with
@@ -601,7 +601,7 @@ let hessenberg_impl inputs =
                   (fun () -> of_vec dt c tau (n - 1));
               ]);
         }
-  | _ -> failwith "linalg: hessenberg expects one operand"
+  | _ -> assert false
 
 let schur_impl compute_vectors inputs =
   match inputs with
@@ -630,7 +630,7 @@ let schur_impl compute_vectors inputs =
                 [ t; guarded ok dt [| n; n |] (fun () -> of_cm dt c vs n n) ]
               else [ t ]);
         }
-  | _ -> failwith "linalg: schur expects one operand"
+  | _ -> assert false
 
 let eye_like dt p q =
   make dt [| p; q |] (fun f ->
@@ -695,7 +695,7 @@ let svd_impl ?(gesvd = false) full_matrices compute_uv inputs =
                   ]
                 else [ values ]);
           }
-  | _ -> failwith "linalg: svd expects one operand"
+  | _ -> assert false
 
 let tridiagonal_impl lower inputs =
   match inputs with
@@ -727,21 +727,17 @@ let tridiagonal_impl lower inputs =
                 guarded ok dt [| n - 1 |] (fun () -> of_vec dt c tau (n - 1));
               ]);
         }
-  | _ -> failwith "linalg: tridiagonal expects one operand"
+  | _ -> assert false
 
 let int_aval shape = { shape; dtype = Dtype.I32; weak_type = false }
-
-let cholesky_aval avals =
-  match avals with
-  | [ a ] -> [ a ]
-  | _ -> failwith "linalg: cholesky expects one aval"
+let cholesky_aval avals = match avals with [ a ] -> [ a ] | _ -> assert false
 
 let lu_aval avals =
   match avals with
   | [ a ] ->
       let m = a.shape.(0) and n = a.shape.(1) in
       [ a; int_aval [| min m n |]; int_aval [| m |] ]
-  | _ -> failwith "linalg: lu expects one aval"
+  | _ -> assert false
 
 let qr_aval full_matrices avals =
   match avals with
@@ -749,7 +745,7 @@ let qr_aval full_matrices avals =
       let m = a.shape.(0) and n = a.shape.(1) in
       let k = if full_matrices then m else min m n in
       [ { a with shape = [| m; k |] }; { a with shape = [| k; n |] } ]
-  | _ -> failwith "linalg: qr expects one aval"
+  | _ -> assert false
 
 let qr_pivoted_aval full_matrices avals =
   match avals with
@@ -761,18 +757,18 @@ let qr_pivoted_aval full_matrices avals =
         { a with shape = [| k; n |] };
         { a with shape = [| n |]; dtype = Dtype.I32 };
       ]
-  | _ -> failwith "linalg: qr expects one aval"
+  | _ -> assert false
 
 let geqrf_aval avals =
   match avals with
   | [ a ] -> [ a; { a with shape = [| min a.shape.(0) a.shape.(1) |] } ]
-  | _ -> failwith "linalg: geqrf expects one aval"
+  | _ -> assert false
 
 let geqp3_aval avals =
   match avals with
   | [ a; jpvt ] ->
       [ a; jpvt; { a with shape = [| min a.shape.(0) a.shape.(1) |] } ]
-  | _ -> failwith "linalg: geqp3 expects two avals"
+  | _ -> assert false
 
 let ormqr_aval ~left avals =
   match avals with
@@ -787,40 +783,34 @@ let ormqr_aval ~left avals =
             ^ ")"
       in
       if left && c.shape.(0) <> m then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "ormqr with left=True expects c to have the same number of rows \
               as the Householder matrix a. Got a shape %s and c shape %s."
              (shape_text a.shape) (shape_text c.shape));
       if (not left) && c.shape.(1) <> m then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "ormqr with left=False expects c to have the same number of \
               columns as the Householder matrix a has rows. Got a shape %s and \
               c shape %s."
              (shape_text a.shape) (shape_text c.shape));
       [ c ]
-  | _ -> failwith "linalg: ormqr expects three avals"
+  | _ -> assert false
 
 let householder_product_aval avals =
-  match avals with
-  | [ a; _ ] -> [ a ]
-  | _ -> failwith "linalg: householder_product expects two avals"
+  match avals with [ a; _ ] -> [ a ] | _ -> assert false
 
 let lu_pivots_to_permutation_aval permutation_size avals =
   match avals with
   | [ _ ] -> [ int_aval [| permutation_size |] ]
-  | _ -> failwith "linalg: lu_pivots_to_permutation expects one aval"
+  | _ -> assert false
 
 let triangular_solve_aval avals =
-  match avals with
-  | [ _; b ] -> [ b ]
-  | _ -> failwith "linalg: triangular_solve expects two avals"
+  match avals with [ _; b ] -> [ b ] | _ -> assert false
 
 let tridiagonal_solve_aval avals =
-  match avals with
-  | [ _; _; _; b ] -> [ b ]
-  | _ -> failwith "linalg: tridiagonal_solve expects four avals"
+  match avals with [ _; _; _; b ] -> [ b ] | _ -> assert false
 
 let eigh_aval = function
   | [ a ] ->
@@ -829,7 +819,7 @@ let eigh_aval = function
         { a with shape = [| n; n |] };
         { shape = [| n |]; dtype = real_basetype a.dtype; weak_type = false };
       ]
-  | _ -> failwith "linalg: eigh expects one aval"
+  | _ -> assert false
 
 let eig_aval compute_left compute_right = function
   | [ a ] ->
@@ -839,17 +829,17 @@ let eig_aval compute_left compute_right = function
       let left = if compute_left then [ vec ] else [] in
       let right = if compute_right then [ vec ] else [] in
       { shape = [| n |]; dtype = cdt; weak_type = false } :: (left @ right)
-  | _ -> failwith "linalg: eig expects one aval"
+  | _ -> assert false
 
 let hessenberg_aval = function
   | [ a ] ->
       let n = a.shape.(0) in
       [ a; { a with shape = [| n - 1 |] } ]
-  | _ -> failwith "linalg: hessenberg expects one aval"
+  | _ -> assert false
 
 let schur_aval compute_vectors = function
   | [ a ] -> if compute_vectors then [ a; a ] else [ a ]
-  | _ -> failwith "linalg: schur expects one aval"
+  | _ -> assert false
 
 let svd_aval full_matrices compute_uv = function
   | [ a ] ->
@@ -866,7 +856,7 @@ let svd_aval full_matrices compute_uv = function
           { a with shape = [| vrows; n |] };
         ]
       else [ s ]
-  | _ -> failwith "linalg: svd expects one aval"
+  | _ -> assert false
 
 let tridiagonal_aval = function
   | [ a ] ->
@@ -878,14 +868,13 @@ let tridiagonal_aval = function
         { shape = [| n - 1 |]; dtype = rdt; weak_type = false };
         { a with shape = [| n - 1 |] };
       ]
-  | _ -> failwith "linalg: tridiagonal expects one aval"
+  | _ -> assert false
 
 let symmetrize x =
   let aval = Core.get_aval x in
   let rank = Array.length aval.shape in
   let perm =
-    Array.init rank (fun i ->
-        if i = rank - 1 then rank - 2 else if i = rank - 2 then rank - 1 else i)
+    Array.append (Array.init (max 0 (rank - 2)) Fun.id) [| rank - 1; rank - 2 |]
   in
   let flipped = Core.bind1 (Transpose perm) [ x ] in
   let flipped =
@@ -893,9 +882,21 @@ let symmetrize x =
     | Dtype.Complex64 | Dtype.Complex128 -> Core.bind1 Conj [ flipped ]
     | _ -> flipped
   in
-  let half = Core.splat aval.dtype [||] 2.0 in
-  let sum = Core.bind1 Add [ x; flipped ] in
-  Core.bind1 Div [ sum; half ]
+  match aval.dtype with
+  | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 ->
+      let half = Core.splat aval.dtype [||] 2.0 in
+      let sum = Core.bind1 Add [ x; flipped ] in
+      Core.bind1 Div [ sum; half ]
+  | dtype ->
+      let sum =
+        Core.bind1 (if dtype = Dtype.Bool then Or else Add) [ x; flipped ]
+      in
+      let real = Dtypes.to_inexact_dtype dtype in
+      Core.bind1 Div
+        [
+          Core.bind1 (Convert_element_type real) [ sum ];
+          Core.splat real [||] 2.0;
+        ]
 
 let tri_mask n_rows n_cols k =
   let dtype = Dtypes.default_int_dtype () in
@@ -926,14 +927,12 @@ let cholesky ?(symmetrize_input = true) x =
   tril c
 
 let lu x =
-  match Core.bind Lu [ x ] with
-  | [ a; b; c ] -> (a, b, c)
-  | _ -> failwith "linalg: lu arity"
+  match Core.bind Lu [ x ] with [ a; b; c ] -> (a, b, c) | _ -> assert false
 
 let qr ?(full_matrices = true) x =
   match Core.bind (Qr full_matrices) [ x ] with
   | [ q; r ] -> (q, r)
-  | _ -> failwith "linalg: qr arity"
+  | _ -> assert false
 
 let qr_full ?(pivoting = false) ?(full_matrices = true) x =
   if pivoting then Core.bind (Qr_pivoted full_matrices) [ x ]
@@ -947,10 +946,29 @@ let lu_pivots_to_permutation ~permutation_size p =
 let triangular_solve ?(left_side = false) ?(lower = false)
     ?(transpose_a = false) ?(conjugate_a = false) ?(unit_diagonal = false) a b =
   let conjugate_a = conjugate_a && is_complex_dtype (Core.get_aval a).dtype in
-  Core.bind1
-    (Triangular_solve
-       { left_side; lower; transpose_a; conjugate_a; unit_diagonal })
-    [ a; b ]
+  let rank_of v = Array.length (Core.get_aval v).shape in
+  let singleton = rank_of b = rank_of a - 1 in
+  let solve b =
+    Core.bind1
+      (Triangular_solve
+         { left_side; lower; transpose_a; conjugate_a; unit_diagonal })
+      [ a; b ]
+  in
+  if not singleton then solve b
+  else
+    let sb = (Core.get_aval b).shape in
+    let rank = Array.length sb + 1 in
+    let axis = Validate.canonicalize_axis (if left_side then -1 else -2) rank in
+    let expanded_shape =
+      Array.init rank (fun i ->
+          if i < axis then sb.(i) else if i = axis then 1 else sb.(i - 1))
+    in
+    let dims = Array.init (rank - 1) (fun i -> if i < axis then i else i + 1) in
+    let out =
+      solve
+        (Core.bind1 (Broadcast_in_dim { shape = expanded_shape; dims }) [ b ])
+    in
+    Core.bind1 (Squeeze [| axis |]) [ out ]
 
 let tridiagonal_solve ?(perturb_singular = false) dl d du b =
   Core.bind1 (Tridiagonal_solve { perturb_singular }) [ dl; d; du; b ]
@@ -960,7 +978,7 @@ let eig ?implementation ?(compute_left_eigenvectors = true)
   (match implementation with
   | None | Some Lax_config.Lapack -> ()
   | Some (Lax_config.Cusolver | Lax_config.Magma) ->
-      invalid_arg "Only the lapack implementation is supported on CPU.");
+      Py_exn.value_error "Only the lapack implementation is supported on CPU.");
   Core.bind
     (Eig
        {
@@ -984,18 +1002,28 @@ let eigh ?implementation ?(lower = true) ?(symmetrize_input = true)
   (match implementation with
   | None | Some Lax_config.Eigh_qr -> ()
   | Some Lax_config.Eigh_jacobi ->
-      failwith "Jacobi implementation is not supported on CPU"
+      raise
+        (Py_exn.Not_implemented_error
+           "Jacobi implementation is not supported on CPU")
   | Some Lax_config.Eigh_qdwh ->
-      failwith "QDWH implementation is only supported on TPU");
+      raise
+        (Py_exn.Not_implemented_error
+           "QDWH implementation is only supported on TPU"));
   let x = if symmetrize_input then symmetrize x else x in
   match Core.bind (Eigh { lower }) [ x ] with
   | [ v; w ] -> (v, w)
-  | _ -> failwith "linalg: eigh arity"
+  | _ -> assert false
 
 let hessenberg x =
+  let shape = (Core.get_aval x).shape in
+  let rank = Array.length shape in
+  if rank >= 2 && shape.(rank - 1) = 0 && shape.(rank - 2) = 0 then
+    raise
+      (Py_exn.Mlir_error
+         "Invalid type:\nerror: unknown: invalid tensor dimension size");
   match Core.bind Hessenberg [ x ] with
   | [ a; taus ] -> (a, taus)
-  | _ -> failwith "linalg: hessenberg arity"
+  | _ -> assert false
 
 let schur ?(compute_schur_vectors = true) ?(sort_eig_vals = false)
     ?(select_callable : (value -> value) option) x =
@@ -1031,15 +1059,16 @@ let svd ?algorithm ?(full_matrices = true) ?(compute_uv = true) ?subset_by_index
         false
     | Some Lax_config.Svd_qr -> true
     | Some Lax_config.Svd_jacobi | Some Lax_config.Svd_polar ->
-        failwith
-          "The SVD Jacobi and Polar algorithms are not implemented on CPU."
+        raise
+          (Py_exn.Not_implemented_error
+             "The SVD Jacobi and Polar algorithms are not implemented on CPU.")
   in
   Core.bind (Svd { full_matrices; compute_uv; gesvd }) [ x ]
 
 let tridiagonal ?(lower = true) x =
   match Core.bind (Tridiagonal { lower }) [ x ] with
   | [ a; d; e; taus ] -> (a, d, e, taus)
-  | _ -> failwith "linalg: tridiagonal arity"
+  | _ -> assert false
 
 let reshape_if_changed shape x =
   if (Core.get_aval x).shape = shape then x
@@ -1100,7 +1129,7 @@ let lu_solve_core ~transpose lu permutation b =
             [ permutation; iota ]
         with
         | [ _; ind ] -> ind
-        | _ -> invalid_arg "lu_solve: sort arity"
+        | _ -> assert false
       in
       take_rows x ind m rest
     end
@@ -1126,7 +1155,7 @@ let lu_solve_vector ~transpose lu permutation b =
         [
           Core.bind1 (Squeeze [| 1 |]) [ lu_solve_core ~transpose l p widened ];
         ]
-    | _ -> invalid_arg "lu_solve: arity"
+    | _ -> assert false
   in
   match
     Jaxpr.named_jit ~name:"_lu_solve"
@@ -1134,4 +1163,4 @@ let lu_solve_vector ~transpose lu permutation b =
       core [ lu; permutation; b ]
   with
   | [ out ] -> out
-  | _ -> invalid_arg "lu_solve: arity"
+  | _ -> assert false

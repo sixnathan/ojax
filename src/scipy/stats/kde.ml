@@ -56,7 +56,7 @@ let gaussian_kde ?(bw_method = "scott") ?weights dataset =
         in
         U.power scaled (lit neff exponent)
     | other ->
-        invalid_arg
+        Py_exn.value_error
           ("`bw_method` should be 'scott', 'silverman', a scalar, or a \
             callable: " ^ other)
   in
@@ -77,7 +77,7 @@ let reshape_points t points =
   if sh.(0) <> t.d then
     if sh.(0) = 1 && sh.(1) = t.d then NL.reshape points [| t.d; 1 |]
     else
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf "points have dimension %d, dataset has dimension %d"
            sh.(0) t.d)
   else points

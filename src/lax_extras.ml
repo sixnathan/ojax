@@ -16,6 +16,14 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
     ~reduction_input_size_override ~aggregate_to_topk operand k =
   let a = aval operand in
   let rank = Array.length a.T.shape in
+  if k <= 0 then
+    Py_exn.value_error (Printf.sprintf "k must be positive, got %d" k);
+  if rank = 0 then
+    Py_exn.type_error
+      ("approx_top_k operand must have >= 1 dimension, got "
+      ^ Validate.python_tuple a.T.shape);
+  if reduction_dimension < -rank || reduction_dimension >= rank then
+    Py_exn.index_error "list index out of range";
   let axis =
     if reduction_dimension < 0 then rank + reduction_dimension
     else reduction_dimension
@@ -25,6 +33,8 @@ let approx_top_k_prim ~is_max_k ~reduction_dimension ~recall_target
       (Printf.sprintf
          "k must be smaller than the size of reduction_dim %d, got %d"
          a.T.shape.(axis) k);
+  if not (Dtypes.issubdtype a.T.dtype `Floating) then
+    Py_exn.value_error "operand must be a floating type";
   let returned = if aggregate_to_topk then k else a.T.shape.(axis) in
   let exact = function
     | [ x ] ->
@@ -164,9 +174,11 @@ let ragged_to_dense x group_sizes dim axes =
 
 let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
     group_sizes (dims : Lax_config.ragged_dot_dimension_numbers) =
-  if group_offset <> None then failwith "Unimplemented group_offset support.";
+  if group_offset <> None then
+    raise (Py_exn.Not_implemented_error "Unimplemented group_offset support.");
   if Array.length dims.lhs_ragged_dimensions <> 1 then
-    invalid_arg "ragged_dot_general expects exactly one lhs ragged dimension.";
+    Py_exn.type_error
+      "ragged_dot_general expects exactly one lhs ragged dimension.";
   let ragged = dims.lhs_ragged_dimensions.(0) in
   let lhs_rank = Array.length (shape lhs) in
   let rhs_rank = Array.length (shape rhs) in
@@ -191,37 +203,39 @@ let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
   | D.I8 | D.I16 | D.I32 | D.I64 | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
       ()
   | _ ->
-      invalid_arg
+      Py_exn.type_error
         "ragged_dot_general requires that group_sizes.dtype is subtype of \
          np.integer.");
   let gs_shape = shape group_sizes in
   let gs_rank = Array.length gs_shape in
-  if gs_rank = 0 then invalid_arg "expected rank of group_sizes to be >=1.";
+  if gs_rank = 0 then
+    Py_exn.type_error "expected rank of group_sizes to be >=1.";
   let l_prefix = ragged_prefix mode lhs_rank ragged l_batch l_contract in
   let prefix_shape =
     Array.of_list (List.map (fun i -> (shape lhs).(i)) l_prefix)
   in
   let num_groups = gs_shape.(gs_rank - 1) in
   if gs_rank <> 1 && gs_shape <> Array.append prefix_shape [| num_groups |] then
-    invalid_arg
-      "expected group_sizes to have the shape of the lhs prefix dimensions \
-       followed by the group count.";
+    Py_exn.type_error
+      (Printf.sprintf "expected group_sizes to have shape %s, got %s."
+         (Validate.python_tuple (Array.append prefix_shape [| num_groups |]))
+         (Validate.python_tuple gs_shape));
   let rhs_group = dims.rhs_group_dimensions in
   (match mode with
   | Ragged_contracting | Ragged_batch ->
       if Array.length rhs_group <> 0 then
-        invalid_arg
+        Py_exn.type_error
           "ragged_dot_general requires zero group dimensions in the rhs when \
            lhs ragged dimension is contracting or batch."
   | Ragged_noncontracting ->
       if Array.length rhs_group <> 1 then
-        invalid_arg
+        Py_exn.type_error
           "ragged_dot_general requires exactly one rhs group dimension when \
            lhs ragged dimension is noncontracting.";
       let group = rhs_group.(0) in
       check_range group rhs_rank "rhs group dimension" "rhs";
       if Array.mem group r_batch || Array.mem group r_contract then
-        invalid_arg
+        Py_exn.type_error
           "ragged_dot_general requires rhs group dimension numbers to be \
            distinct from contracting and batch dimensions.";
       if (shape rhs).(group) <> num_groups then
@@ -229,6 +243,7 @@ let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
           (Printf.sprintf "expected rhs group dimension size to be %d, got %d."
              num_groups
              (shape rhs).(group)));
+  ignore (Lax.Utils.dot_general_shape dn (shape lhs) (shape rhs));
   let group_sizes =
     if gs_rank = 1 && Array.length prefix_shape > 0 then
       L.broadcast group_sizes prefix_shape
@@ -350,21 +365,21 @@ let validate_operand_scale side operand scale contracting =
       let scale_size = (shape scale).(i) in
       if Array.mem i contracting then begin
         if size mod scale_size <> 0 then
-          invalid_arg
+          Py_exn.type_error
             (Printf.sprintf
                "%s contracting dim %d of size %d must be divisible by its \
                 scale's dim size %d."
                side i size scale_size);
         let ratio = size / scale_size in
         if ratio < 2 then
-          invalid_arg
+          Py_exn.type_error
             (Printf.sprintf
                "The ratio of %s contracting dim %d to its scale's dim size \
                 (%d) must be at least 2."
                side i ratio)
       end
       else if scale_size <> size then
-        invalid_arg
+        Py_exn.type_error
           (Printf.sprintf
              "%s dim %d of size %d does not match scale dim size %d." side i
              size scale_size))
@@ -380,14 +395,14 @@ let validate_scaled_dot lhs rhs lhs_scale rhs_scale
   if List.exists (( <> ) (List.hd ranks)) ranks then
     invalid_arg "All input tensors must have the same rank.";
   if Array.length dn.lhs_batch <> Array.length dn.rhs_batch then
-    invalid_arg
+    Py_exn.type_error
       (Printf.sprintf
          "LHS and RHS must have the same number of batch dimensions, got %d \
           and %d."
          (Array.length dn.lhs_batch)
          (Array.length dn.rhs_batch));
   if Array.length dn.lhs_contract <> Array.length dn.rhs_contract then
-    invalid_arg
+    Py_exn.type_error
       (Printf.sprintf
          "LHS and RHS must have the same number of contracting dimensions, got \
           %d and %d."
@@ -405,7 +420,7 @@ let validate_scaled_dot lhs rhs lhs_scale rhs_scale
         ]
       in
       if List.exists (( <> ) (List.hd sizes)) sizes then
-        invalid_arg
+        Py_exn.type_error
           (Printf.sprintf
              "All input tensors must have the same batch dimension size for \
               batch dims (%d, %d)."
@@ -415,7 +430,7 @@ let validate_scaled_dot lhs rhs lhs_scale rhs_scale
     (fun k l ->
       let r = dn.rhs_contract.(k) in
       if (shape lhs).(l) <> (shape rhs).(r) then
-        invalid_arg
+        Py_exn.type_error
           (Printf.sprintf
              "LHS contracting dim %d of size %d does not match RHS contracting \
               dim %d of size %d."
@@ -458,7 +473,8 @@ let scaled_dot ?lhs_scale ?rhs_scale ?dimension_numbers ?preferred_element_type
     | None ->
         let n = Array.length (shape lhs) in
         if n < 2 then
-          invalid_arg "scaled_dot does not support 0-rank and 1-rank operands.";
+          Py_exn.type_error
+            "scaled_dot does not support 0-rank and 1-rank operands.";
         let batch = Array.init (n - 2) Fun.id in
         {
           Lax_config.lhs_contract = [| n - 1 |];
@@ -512,6 +528,11 @@ let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
           (Py_exn.Value_error
              "Unsupported precision for conv_general_dilated_local")
   in
+  let patches =
+    L.conv_general_dilated_patches ?window_strides ?padding ?lhs_dilation
+      ?rhs_dilation ?dimension_numbers ?precision:patch_precision lhs
+      ~filter_shape
+  in
   let rank = Array.length (shape lhs) in
   let identity = Array.init rank Fun.id in
   let dn =
@@ -519,11 +540,6 @@ let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
     | Some d -> d
     | None ->
         { T.lhs_spec = identity; rhs_spec = identity; out_spec = identity }
-  in
-  let patches =
-    L.conv_general_dilated_patches ?window_strides ?padding ?lhs_dilation
-      ?rhs_dilation ~dimension_numbers:dn ?precision:patch_precision lhs
-      ~filter_shape
   in
   let spatial = Array.length filter_shape in
   let lhs_b = Array.sub dn.out_spec 2 spatial in

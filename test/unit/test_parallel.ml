@@ -91,7 +91,7 @@ let gradient_matches_jax () =
 let unbound_name () =
   match P.psum (vec [| 1.0 |]) ~axis_name:"missing" with
   | _ -> Alcotest.fail "expected an unbound axis error"
-  | exception Invalid_argument _ -> ()
+  | exception Ojax.Py_exn.Name_error _ -> ()
 
 let debug_print () =
   let seen = ref [] in

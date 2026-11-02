@@ -23,6 +23,51 @@ let parse_side (s : string) : string list list =
   done;
   List.rev !groups
 
+let input_core_dims (s : string) : string list list =
+  match String.index_opt s '-' with
+  | Some k -> parse_side (String.sub s 0 k)
+  | None -> []
+
+let python_core_dims = function
+  | [ d ] -> Printf.sprintf "('%s',)" d
+  | dims ->
+      "(" ^ String.concat ", " (List.map (Printf.sprintf "'%s'") dims) ^ ")"
+
+let check_core_dims excluded signature names shapes =
+  let context =
+    Printf.sprintf "on vectorized function with excluded=%s and signature='%s'"
+      (match excluded with
+      | [] -> "frozenset()"
+      | l ->
+          "frozenset({" ^ String.concat ", " (List.map string_of_int l) ^ "})")
+      signature
+  in
+  let sizes = Hashtbl.create 4 in
+  List.iter2
+    (fun core_dims shape ->
+      let rank = Array.length shape and count = List.length core_dims in
+      if rank < count then
+        Py_exn.value_error
+          (Printf.sprintf
+             "input with shape %s does not have enough dimensions for all core \
+              dimensions %s %s"
+             (Validate.python_tuple shape)
+             (python_core_dims core_dims)
+             context);
+      List.iteri
+        (fun i dim ->
+          let size = shape.(rank - count + i) in
+          match Hashtbl.find_opt sizes dim with
+          | None -> Hashtbl.add sizes dim size
+          | Some seen when seen <> size ->
+              Py_exn.value_error
+                (Printf.sprintf
+                   "inconsistent size for core dimension '%s': %d vs %d %s" dim
+                   size seen context)
+          | Some _ -> ())
+        core_dims)
+    names shapes
+
 let parse_signature (s : string) : int list * int list =
   let arrow =
     match String.index_opt s '-' with
@@ -63,6 +108,10 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
     invalid_arg "vectorize: wrong number of positional arguments";
   if List.length output_ncs <> 1 then
     failwith "vectorize: only single-output gufuncs supported";
+  (match signature with
+  | Some s ->
+      check_core_dims excluded s (input_core_dims s) (List.map shape_of dynamic)
+  | None -> ());
   let batch_shapes =
     Array.to_list
       (Array.mapi

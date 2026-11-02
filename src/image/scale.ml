@@ -32,7 +32,7 @@ let from_string s =
   | "cubic" | "bicubic" | "tricubic" -> Cubic
   | "cubic-pytorch" | "bicubic-pytorch" -> Cubic_pytorch
   | "area" -> Area
-  | _ -> invalid_arg (Printf.sprintf "Unknown resize method \"%s\"" s)
+  | _ -> Py_exn.value_error (Printf.sprintf "Unknown resize method \"%s\"" s)
 
 let kernels = function
   | Linear -> (1, Triangle)
@@ -204,9 +204,10 @@ let resolve_kernel method_ antialias =
 let scale_and_translate image ~shape:output_shape ~spatial_dims ~scale
     ~translation ~method_ ?(antialias = true) ?precision () =
   if Array.length output_shape <> ndim image then
-    invalid_arg "shape must have length equal to the number of dimensions of x";
+    Py_exn.value_error
+      "shape must have length equal to the number of dimensions of x";
   if method_ = Nearest then
-    failwith
+    Py_exn.value_error
       "Nearest neighbor resampling is not currently supported for \
        scale_and_translate.";
   let kernel = resolve_kernel method_ antialias in
@@ -237,7 +238,8 @@ let resize_nearest image ~output_shape =
 let resize image ~shape:output_shape ~method_ ?(antialias = true) ?precision ()
     =
   if Array.length output_shape <> ndim image then
-    invalid_arg "shape must have length equal to the number of dimensions of x";
+    Py_exn.value_error
+      "shape must have length equal to the number of dimensions of x";
   match method_ with
   | Nearest -> resize_nearest image ~output_shape
   | _ ->

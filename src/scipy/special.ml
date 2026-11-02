@@ -1172,7 +1172,7 @@ let betaln a b =
   where_ (lt_ b 8.0) small_b large_b
 
 let factorial ?(exact = false) n =
-  if exact then failwith "factorial with exact=True";
+  if exact then raise (Py_exn.Not_implemented_error "factorial with exact=True");
   let n = promote1 n in
   where_ (lt_ n 0.0) (py_int 0) (L.exp (lgamma_prim (add_lit n 1.0)))
 
@@ -1632,8 +1632,9 @@ let norm_logpdf x =
     (scalar_of x norm_logpdf_constant)
 
 let rec log_ndtr ?(series_order = 3) x =
-  if series_order < 0 then invalid_arg "series_order must be non-negative.";
-  if series_order > 30 then invalid_arg "series_order must be <= 30.";
+  if series_order < 0 then
+    Py_exn.value_error "series_order must be non-negative.";
+  if series_order > 30 then Py_exn.value_error "series_order must be <= 30.";
   single_or_double x;
   List.hd
     (CD.custom_jvp ~name:"log_ndtr" ~jvp_name:"_log_ndtr_jvp"
@@ -1649,7 +1650,7 @@ let rec log_ndtr ?(series_order = 3) x =
 
 let polygamma n x =
   if not (is_integer_dtype (dtype n)) then
-    invalid_arg "Argument `n` to polygamma must be of integer type.";
+    Py_exn.value_error "Argument `n` to polygamma must be of integer type.";
   let n, x = real_only2 "polygamma" n x in
   bind1 T.Polygamma [ n; x ]
 
@@ -1701,9 +1702,10 @@ let zeta_series x q =
 let zeta ?q x =
   match q with
   | None ->
-      failwith
-        "Riemann zeta function not implemented; pass q != None to compute the \
-         Hurwitz Zeta function."
+      raise
+        (Py_exn.Not_implemented_error
+           "Riemann zeta function not implemented; pass q != None to compute \
+            the Hurwitz Zeta function.")
   | Some q ->
       let primal = function
         | [ x; q ] ->
@@ -1989,7 +1991,7 @@ let owens_t h a =
   owens_t_custom h a
 
 let bernoulli n =
-  if n < 0 then invalid_arg "n must be a non-negative integer.";
+  if n < 0 then Py_exn.value_error "n must be a non-negative integer.";
   let dt = Dts.default_float_dtype () in
   let b3 = T.Concrete (Nd.of_floats dt [| 3 |] [| 1.0; -0.5; 1.0 /. 6.0 |]) in
   let module NI = Numpy.Nd_index in
@@ -2728,12 +2730,17 @@ let fresnel_primal xxa0 =
   let xxa = promote1 xxa0 in
   let original_dtype = dtype xxa in
   if is_complex_dtype original_dtype then
-    failwith "Support for complex-valued inputs is not implemented yet.";
+    raise
+      (Py_exn.Not_implemented_error
+         "Support for complex-valued inputs is not implemented yet.");
   let xxa =
     match original_dtype with
     | D.F32 | D.F16 | D.Bf16 -> NL.astype xxa D.F32
     | D.F64 -> xxa
-    | _ -> failwith "Support for this dtype is not implemented yet."
+    | _ ->
+        raise
+          (Py_exn.Not_implemented_error
+             "Support for this dtype is not implemented yet.")
   in
   let single = dtype xxa = D.F32 in
   if single then
@@ -3109,12 +3116,15 @@ let check_lpmn m n z =
   (match dtype z with
   | D.F32 | D.F64 -> ()
   | d ->
-      invalid_arg
+      Py_exn.type_error
         (Printf.sprintf
            "z.dtype=%s is not supported, see docstring for supported types."
            (D.short_name d)));
   if Array.length (shape z) <> 1 then Py_exn.value_error "z must be a 1D array.";
-  if m <> n then invalid_arg "Computations for m!=n are not yet supported."
+  if m <> n then
+    raise
+      (Py_exn.Not_implemented_error
+         "Computations for m!=n are not yet supported.")
 
 let lpmn m n z =
   check_lpmn m n z;
@@ -3153,8 +3163,10 @@ let sph_harm_body n_max args =
 
 let sph_harm_y ?diff_n ?n_max n m theta phi =
   if diff_n <> None then
-    invalid_arg
-      "The 'diff_n' argument to jax.scipy.special.sph_harm_y is not supported.";
+    raise
+      (Py_exn.Not_implemented_error
+         "The 'diff_n' argument to jax.scipy.special.sph_harm_y is not \
+          supported.");
   let theta =
     if Array.length (shape theta) = 0 then L.broadcast_in_dim theta [| 1 |] [||]
     else theta

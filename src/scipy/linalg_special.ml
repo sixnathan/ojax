@@ -339,7 +339,14 @@ let dft ?scale ?dtype:requested n =
         (Printf.sprintf "scale must be None, 'sqrtn', or 'n'; got '%s'." other));
   let dt =
     match requested with
-    | Some d -> Dtypes.canonicalize_dtype d
+    | Some d ->
+        let d = Dtypes.canonicalize_dtype d in
+        if not (Dtypes.issubdtype d `Complex) then
+          Py_exn.value_error
+            (Printf.sprintf
+               "dtype must be a complex floating-point type; got %s."
+               (Dtype.numpy_name d));
+        d
     | None -> (
         match default_float () with
         | Dtype.F64 -> Dtype.Complex128

@@ -132,7 +132,7 @@ let fftconvolve ?(mode = "full") ?axes in1 in2 =
   | None -> fftconvolve_unbatched in1 in2 mode
   | Some axes ->
       let n = rank in1 in
-      let axes = List.map (fun a -> if a < 0 then a + n else a) axes in
+      let axes = List.map (fun a -> Validate.canonicalize_axis a n) axes in
       let mapped =
         List.filter (fun i -> not (List.mem i axes)) (List.init n Fun.id)
       in

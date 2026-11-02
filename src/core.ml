@@ -343,9 +343,9 @@ let check_operands prim args =
     match args with
     | first :: _
       when (match first with
-           | Concrete a -> Ndarray.dtype a
-           | Tracer t -> t.aval.dtype
-           | Device b -> Pjrt.Buffer.element_type b)
+             | Concrete a -> Ndarray.dtype a
+             | Tracer t -> t.aval.dtype
+             | Device b -> Pjrt.Buffer.element_type b)
            = Dtype.Bool ->
         Py_exn.type_error
           (Printf.sprintf
@@ -355,6 +355,9 @@ let check_operands prim args =
     | _ -> ()
   in
   match prim with
+  | Iota { dtype = Dtype.Bool; _ } ->
+      rejected_dtype "iota" Dtype.Bool
+        "subtypes of complexfloating, floating, integer"
   | Scatter_add _ ->
       reject_bool_at_zero "add" "floating, complexfloating, integer"
   | Scatter_mul _ ->

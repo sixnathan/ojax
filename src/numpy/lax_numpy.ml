@@ -2494,6 +2494,13 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
       Py_exn.value_error "y has more than 2 dimensions"
   | _ -> ());
   if ndim m > 2 then Py_exn.value_error "m has more than 2 dimensions";
+  (match dtype with
+  | Some d when not (is_inexact d) ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "cov: dtype must be a subclass of float or complex; got dtype='%s'"
+           (D.numpy_name d))
+  | _ -> ());
   let dt_common =
     match y with
     | None -> dtype_of m

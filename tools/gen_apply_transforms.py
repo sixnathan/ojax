@@ -31,7 +31,7 @@ FORMS = (
     [gi.arr("m0")],
     [gi.iv(-1), gi.sl(1, 3)],
 )
-TRANSFORMS = ("vmap0", "vmap1", "vmap_idx", "vmap_both", "jit_vmap0", "grad", "jvp")
+TRANSFORMS = ("vmap0", "vmap1", "vmap_idx", "vmap_both", "jit_vmap0", "grad", "jvp", "linearize", "vjp")
 MODES = (None, "clip", "drop", "promise_in_bounds")
 BATCH = 3
 SHAPE = [4, 5]
@@ -76,6 +76,18 @@ def program(case):
             x = values[xi]
             return jax.jvp(lambda x: base(*with_x(values, x)), (x,), (jnp.ones_like(x),))
         return f
+    if t == "linearize":
+        def f(*values):
+            x = values[xi]
+            y, lin = jax.linearize(lambda x: base(*with_x(values, x)), x)
+            return y, lin(jnp.ones_like(x))
+        return f
+    if t == "vjp":
+        def f(*values):
+            x = values[xi]
+            y, back = jax.vjp(lambda x: base(*with_x(values, x)), x)
+            return (y,) + tuple(back(jnp.ones_like(y)))
+        return f
     raise ValueError(t)
 
 
@@ -91,7 +103,7 @@ def plan():
                 if t in ("vmap_idx", "vmap_both") and not has_i0:
                     continue
                 for di, dtype in enumerate(DTYPES[set_name]):
-                    if t == "grad" and not dtype.startswith("float"):
+                    if t in ("grad", "linearize", "vjp") and not dtype.startswith("float"):
                         continue
                     func = ("negative", "sin", "square")[(fi + di + n) % 3]
                     if dtype.startswith("int") and func == "sin":

@@ -76,6 +76,29 @@ let program case names values =
           [ leaf (Ojax.Numpy.Array_creation.ones_like x) ]
       in
       leaves y @ leaves dy
+  | "linearize" ->
+      let x = List.nth values xi in
+      let y, lin =
+        A.linearize
+          (function
+            | [ x ] -> leaf (base case names (with_x (List.hd (leaves x))))
+            | _ -> failwith "apply_transforms: linearize arity")
+          [ leaf x ]
+      in
+      leaves y @ leaves (lin [ leaf (Ojax.Numpy.Array_creation.ones_like x) ])
+  | "vjp" ->
+      let x = List.nth values xi in
+      let y, back =
+        A.vjp
+          (function
+            | [ x ] -> leaf (base case names (with_x (List.hd (leaves x))))
+            | _ -> failwith "apply_transforms: vjp arity")
+          [ leaf x ]
+      in
+      let ys = leaves y in
+      ys
+      @ List.concat_map leaves
+          (back (leaf (Ojax.Numpy.Array_creation.ones_like (List.hd ys))))
   | other -> failwith ("apply_transforms: transform " ^ other)
 
 let references = Hashtbl.create 256

@@ -1873,7 +1873,9 @@ let emit_conv ctx (eqn : eqn) in_ids ~window_strides ~padding ~lhs_dilation
               (Printf.sprintf
                  "Cannot lower jaxpr with verifier errors:\n\
                   \texpects window to have positive value for %d-th window \
-                  dimension, but got 0."
+                  dimension, but got 0.\n\
+                  \t\tat loc(\"jit(conv_general_dilated)/conv_general_dilated\")\n\
+                  Define JAX_DUMP_IR_TO to dump the module."
                  i))
         (Array.sub dn.rhs_spec 2 n_spatial)
   | _ -> ());

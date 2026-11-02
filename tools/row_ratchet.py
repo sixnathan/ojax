@@ -8,10 +8,12 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-PREFIXES = ("fuzz:", "fuzz_s2:", "compose_fuzz:", "custom_ad:", "option_fuzz:", "text_option_fuzz:", "text_fuzz:", "text_fuzz_s2:", "coverage:")
+PREFIXES = ("fuzz:", "fuzz_s2:", "compose_fuzz:", "text_compose_fuzz:", "custom_ad:", "option_fuzz:", "text_option_fuzz:", "text_fuzz:", "text_fuzz_s2:", "coverage:")
 BASELINE_DIR = os.path.join("test", "golden", "identical_rows")
 DROPPED = "dropped.tsv"
-TEXT_GROUPS = {"parity": "text_parity", "jaxpr": "text_parity", "coverage": "text_coverage", "fuzz": "text_fuzz"}
+TEXT_GROUPS = {"parity": "text_parity", "jaxpr": "text_parity", "coverage": "text_coverage", "apicov": "text_apicov", "fuzz": "text_fuzz"}
+DETAIL_GROUPS = {"text_errors": ("text_error", "jaxpr_error", "structure_error"), "text_structure": ("structure",)}
+FIELDS = dict({name: ("text", "jaxpr") for name in TEXT_GROUPS.values()}, **DETAIL_GROUPS)
 SHOWN = 40
 
 
@@ -81,10 +83,19 @@ def verdict(ref, ours, field):
     return "-"
 
 
+def error_verdict(ref, ours, field):
+    if field not in ref:
+        return "n"
+    if ours is None or field not in ours:
+        return "-"
+    return "i" if ref[field] == ours[field] else "-"
+
+
 def reference_paths(goldens):
     return [
         os.path.join(goldens, "text", "reference.jsonl"),
         os.path.join(goldens, "coverage", "text_ref.jsonl"),
+        os.path.join(goldens, "apicov", "text_ref.jsonl"),
         os.path.join(goldens, "fuzz", "text", "reference.jsonl"),
     ]
 
@@ -126,6 +137,10 @@ def text_verdicts(goldens, ours):
         name = TEXT_GROUPS[key[0].split("/")[0]]
         got = mine.get(key)
         groups.setdefault(name, {})[key] = (verdict(ref, got, "text"), verdict(ref, got, "jaxpr"))
+        errors = DETAIL_GROUPS["text_errors"]
+        if any(field in ref for field in errors):
+            groups.setdefault("text_errors", {})[key] = tuple(error_verdict(ref, got, f) for f in errors)
+        groups.setdefault("text_structure", {})[key] = (verdict(ref, got, "structure"),)
     return groups
 
 
@@ -133,23 +148,25 @@ def read_text_baseline(root, name):
     rows = {}
     with open(os.path.join(root, BASELINE_DIR, name + ".tsv"), encoding="utf-8") as fh:
         for line in fh:
-            set_name, case, text, jaxpr = line.rstrip("\n").split("\t")
-            rows[(set_name, case)] = (text, jaxpr)
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) != 2 + len(FIELDS[name]):
+                sys.exit(f"row ratchet: bad line in {name}.tsv: {line.rstrip()}")
+            rows[(fields[0], fields[1])] = tuple(fields[2:])
     return rows
 
 
 def text_failures(root, goldens, ours):
     current = text_verdicts(goldens, ours)
     failures = []
-    for name in sorted(set(TEXT_GROUPS.values())):
+    for name in sorted(FIELDS):
         path = os.path.join(root, BASELINE_DIR, name + ".tsv")
         if not os.path.exists(path):
             failures.append(f"{name}: no baseline {os.path.relpath(path, root)}")
             continue
         for key, wanted in sorted(read_text_baseline(root, name).items()):
-            got = current.get(name, {}).get(key, ("-", "-"))
-            for field, want, have in (("text", wanted[0], got[0]), ("jaxpr", wanted[1], got[1])):
-                if want != "-" and want != have:
+            got = current.get(name, {}).get(key, ("-",) * len(FIELDS[name]))
+            for field, want, have in zip(FIELDS[name], wanted, got):
+                if want not in ("-", "n") and want != have:
                     failures.append(f"{name} {key[0]} {key[1]} {field}: was {want}, now {have}")
     return failures, current
 
@@ -169,12 +186,37 @@ def run_text_check(root, goldens, jobs):
     with tempfile.TemporaryDirectory(prefix="text_ratchet_", dir=os.environ.get("TMPDIR")) as out:
         ours = dump_text(root, goldens, out, jobs)
         failures, current = text_failures(root, goldens, ours)
+    print_text_counts(current)
+    return failures
+
+
+def print_text_counts(current):
     for name, rows in sorted(current.items()):
+        if name in DETAIL_GROUPS:
+            continue
         text = sum(1 for r in rows.values() if r[0] == "i")
         jaxpr = sum(1 for r in rows.values() if r[1] == "i")
         both = sum(1 for r in rows.values() if r[0] == "b")
         print(f"{name}: {len(rows)} cases, text identical {text}, jaxpr identical {jaxpr}, text both raise {both}")
-    return failures
+    by_group = {}
+    for key, verdicts in current.get("text_errors", {}).items():
+        counts = by_group.setdefault(key[0].split("/")[0], {})
+        for field, v in zip(DETAIL_GROUPS["text_errors"], verdicts):
+            if v != "n":
+                tally = counts.setdefault(field, [0, 0])
+                tally[0] += 1
+                tally[1] += v == "i"
+    for group, counts in sorted(by_group.items()):
+        parts = ", ".join(f"{field} {c[1]} of {c[0]}" for field, c in sorted(counts.items()))
+        print(f"text_errors {group}: JAX raises, raw message identical: {parts}")
+    structure = {}
+    for key, (v,) in current.get("text_structure", {}).items():
+        tally = structure.setdefault(key[0].split("/")[0], [0, 0, 0])
+        tally[0] += 1
+        tally[1] += v == "i"
+        tally[2] += v == "b"
+    for group, c in sorted(structure.items()):
+        print(f"text_structure {group}: {c[0]} cases, identical {c[1]}, both raise {c[2]}")
 
 
 def read_proofs(path):
@@ -236,17 +278,18 @@ def refresh(root, log, goldens, text_dir, proof_file, jobs):
         for name, rows in sorted(current.items()):
             path = os.path.join(root, BASELINE_DIR, name + ".tsv")
             old = read_text_baseline(root, name) if os.path.exists(path) else {}
-            merged = {k: v for k, v in rows.items() if v != ("-", "-")}
+            fields = FIELDS[name]
+            merged = {k: v for k, v in rows.items() if any(x != "-" for x in v)}
             for key, wanted in old.items():
-                got = rows.get(key, ("-", "-"))
-                for index, field in enumerate(("text", "jaxpr")):
-                    if wanted[index] != "-" and wanted[index] != got[index]:
+                got = rows.get(key, ("-",) * len(fields))
+                for index, field in enumerate(fields):
+                    if wanted[index] not in ("-", "n") and wanted[index] != got[index]:
                         tag = f"{name} {key[0]} {key[1]} {field}"
                         if tag in proofs:
                             used[tag] = proofs[tag]
                         else:
                             missing.append(tag)
-            writes[path] = [f"{k[0]}\t{k[1]}\t{v[0]}\t{v[1]}\n" for k, v in sorted(merged.items())]
+            writes[path] = ["\t".join(k + v) + "\n" for k, v in sorted(merged.items())]
     if missing:
         print(f"refused: {len(missing)} rows would be dropped without a proof note")
         for row in missing[:SHOWN]:

@@ -449,6 +449,10 @@ let floor_divide x1 x2 =
             let q1 = bind1 T.Sub [ q; int_literal_like q 1.0 ] in
             where sel q1 q
           end
+          else if Dtypes.issubdtype dt `Complex then
+            raise
+              (Py_exn.Type_error
+                 "floor_divide does not support complex-valued inputs")
           else fst (float_divmod a b)
       | _ -> invalid_arg "floor_divide: arity")
     [ x1; x2 ]

@@ -19,6 +19,7 @@
  (deps
   (source_tree %{project_root}/goldens/parity)
   (source_tree %{project_root}/goldens/coverage)
+  (source_tree %{project_root}/goldens/apicov)
   (source_tree %{project_root}/goldens/fuzz)
   (source_tree %{project_root}/goldens/text)
   (glob_files %{project_root}/test/golden/identical_rows/text_*.tsv))

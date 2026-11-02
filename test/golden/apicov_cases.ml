@@ -633,7 +633,8 @@ and run_options op p a b =
         f
           ~dtype:(X.dtype (pstr "dtype" p))
           (Ojax.Random.Core.key
-             (T.Concrete (Nd.of_floats D.I32 [||] [| 0.0 |])))
+             (T.Concrete
+                (Nd.of_floats (Ojax.Dtypes.default_int_dtype ()) [||] [| 0.0 |])))
           ~shape:
             (Array.of_list (List.map U.to_int (U.to_list (U.member "shape" p))));
       ]

@@ -645,4 +645,6 @@ let () =
               (Array.map float_of_int indices)))
 
 let () =
-  Reductions.take_along_axis_hook := fun ~axis a i -> take_along_axis ~axis a i
+  (Reductions.take_along_axis_hook := fun ~axis a i -> take_along_axis ~axis a i);
+  Reductions.getitem_hook :=
+    fun a idx -> Nd_index.take a (List.map (fun i -> Nd_index.Arr i) idx)

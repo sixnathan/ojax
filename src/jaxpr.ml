@@ -827,6 +827,29 @@ let eager_jit :
 
 let known_copies : (int, closed_jaxpr) Hashtbl.t = Hashtbl.create 16
 
+let jaxpr_forwarding (c : closed_jaxpr) =
+  let fwds : (int, int) Hashtbl.t = Hashtbl.create 16 in
+  let n_consts = List.length c.consts in
+  List.iteri
+    (fun i (v : var) -> if i >= n_consts then Hashtbl.replace fwds v.vid (i - n_consts))
+    c.jaxpr.in_binders;
+  let origin = function
+    | A_var (v : var) -> Hashtbl.find_opt fwds v.vid
+    | A_lit _ | DropVar _ -> None
+  in
+  List.iter
+    (fun (e : eqn) ->
+      match (e.prim, e.inputs, e.outs) with
+      | Convert_element_type dt, [ (A_var (i : var) as a) ], [ o ]
+        when i.vaval.dtype = dt && i.vaval.weak_type = o.vaval.weak_type ->
+          Option.iter (Hashtbl.replace fwds o.vid) (origin a)
+      | Broadcast_in_dim { shape; _ }, [ (A_var (i : var) as a) ], [ o ]
+        when i.vaval.shape = shape ->
+          Option.iter (Hashtbl.replace fwds o.vid) (origin a)
+      | _ -> ())
+    c.jaxpr.eqns;
+  List.map origin c.jaxpr.outs
+
 let rec known_copy (c : closed_jaxpr) =
   match Hashtbl.find_opt known_copies c.jid with
   | Some copy -> copy
@@ -840,18 +863,47 @@ let rec known_copy (c : closed_jaxpr) =
             Hashtbl.replace vars v.vid f;
             f
       in
-      let atom = function A_var v -> A_var (fresh v) | a -> a in
+      let subst : (int, atom) Hashtbl.t = Hashtbl.create 4 in
+      let atom = function
+        | A_var v as a -> (
+            match Hashtbl.find_opt subst v.vid with
+            | Some forwarded -> forwarded
+            | None -> ( match a with A_var v -> A_var (fresh v) | a -> a))
+        | a -> a
+      in
       let in_binders = List.map fresh c.jaxpr.in_binders in
       let eqns =
         List.map
           (fun (e : eqn) ->
-            let prim =
-              match e.prim with
-              | Xla_call inner -> Xla_call (known_copy inner)
-              | p -> p
-            in
             let inputs = List.map atom e.inputs in
-            { e with prim; inputs; outs = List.map fresh e.outs })
+            match e.prim with
+            | Xla_call inner when not (eqn_has_effect e) ->
+                let inner, in_fwd = known_call inner in
+                let outs =
+                  List.concat
+                    (List.map2
+                       (fun (o : var) f ->
+                         match f with
+                         | Some i ->
+                             Hashtbl.replace subst o.vid (List.nth inputs i);
+                             []
+                         | None -> [ fresh o ])
+                       e.outs in_fwd)
+                in
+                {
+                  prim = Xla_call inner;
+                  inputs;
+                  outs;
+                  multiple_results = List.length outs > 1;
+                }
+            | Xla_call inner ->
+                {
+                  e with
+                  prim = Xla_call (known_copy inner);
+                  inputs;
+                  outs = List.map fresh e.outs;
+                }
+            | _ -> { e with inputs; outs = List.map fresh e.outs })
           c.jaxpr.eqns
       in
       let copy =
@@ -866,6 +918,37 @@ let rec known_copy (c : closed_jaxpr) =
       Core.inherit_inline ~from:c.jid copy.jid;
       Hashtbl.replace known_copies c.jid copy;
       copy
+
+and known_call (c : closed_jaxpr) =
+  let copy = known_copy c in
+  let in_fwd = jaxpr_forwarding copy in
+  if List.for_all Option.is_none in_fwd then (copy, in_fwd)
+  else
+    let key = -copy.jid in
+    let pruned =
+      match Hashtbl.find_opt known_copies key with
+      | Some pruned -> pruned
+      | None ->
+          let outs =
+            List.concat
+              (List.map2
+                 (fun a f -> if f = None then [ a ] else [])
+                 copy.jaxpr.outs in_fwd)
+          in
+          let pruned =
+            {
+              copy with
+              jid = Core.fresh_id ();
+              jaxpr = { copy.jaxpr with outs };
+            }
+          in
+          Pretty_printer.register_call_name pruned.jid
+            (Pretty_printer.call_name c.jid);
+          Core.inherit_inline ~from:c.jid pruned.jid;
+          Hashtbl.replace known_copies key pruned;
+          pruned
+    in
+    (pruned, in_fwd)
 
 let in_linearize_scope args =
   match !Core.linearize_scope with
@@ -890,9 +973,20 @@ let named_jit ~name ?(key = "") f args =
           | _ -> None)
     in
     match closed with
-    | Some c ->
-        let c = if in_linearize_scope args then known_copy c else c in
-        Core.bind (Xla_call c) args
+    | Some c when in_linearize_scope args ->
+        let known, in_fwd = known_call c in
+        let results = ref (Core.bind (Xla_call known) args) in
+        List.map
+          (function
+            | Some i -> List.nth args i
+            | None -> (
+                match !results with
+                | v :: tl ->
+                    results := tl;
+                    v
+                | [] -> invalid_arg "Jaxpr.named_jit: forwarded outputs"))
+          in_fwd
+    | Some c -> Core.bind (Xla_call c) args
     | None -> f args
 
 let copy_call_name ~(source : closed_jaxpr) (target : closed_jaxpr) =

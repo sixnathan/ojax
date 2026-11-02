@@ -60,7 +60,10 @@ let permute_dims v axes = transpose ~axes v
 let matrix_transpose v =
   let n = ndim v in
   if n < 2 then
-    invalid_arg (Printf.sprintf "matrix_transpose requires ndim >= 2; got %d" n);
+    Py_exn.value_error
+      (Printf.sprintf
+         "x must be at least two-dimensional for matrix_transpose; got ndim=%d"
+         n);
   let perm = Array.init n (fun i -> i) in
   perm.(n - 1) <- n - 2;
   perm.(n - 2) <- n - 1;
@@ -1574,6 +1577,11 @@ let cross ?(axisa = -1) ?(axisb = -1) ?(axisc = -1) ?axis a b =
   let na = (shape a).(ndim a - 1) and nb = (shape b).(ndim b - 1) in
   if not ((na = 2 || na = 3) && (nb = 2 || nb = 3)) then
     Py_exn.value_error "Dimension must be either 2 or 3 for cross product";
+  ignore
+    (Validate.broadcast_shapes
+       [
+         Array.sub (shape a) 0 (ndim a - 1); Array.sub (shape b) 0 (ndim b - 1);
+       ]);
   if na = 2 && nb = 2 then
     let a0 = last_index a 0 and a1 = last_index a 1 in
     let b0 = last_index b 0 and b1 = last_index b 1 in
@@ -1780,7 +1788,7 @@ let diagonal ?(offset = 0) ?(axis1 = 0) ?(axis2 = 1) a =
   let s = shape a in
   let nd = Array.length s in
   if nd < 2 then
-    invalid_arg "diagonal requires an array of at least two dimensions.";
+    Py_exn.value_error "diagonal requires an array of at least two dimensions.";
   if s.(0) <> s.(1) || nd <> 2 || offset <> 0 || is_bool (dtype a) then
     default_diag ~offset ~axis1 ~axis2 a
   else begin

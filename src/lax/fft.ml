@@ -126,12 +126,17 @@ let read_complex nd =
 let complex_of = function
   | Dtype.F32 | Dtype.Complex64 -> Dtype.Complex64
   | Dtype.F64 | Dtype.Complex128 -> Dtype.Complex128
-  | _ -> invalid_arg "fft requires a floating or complex operand"
+  | d ->
+      Py_exn.value_error
+        ("FFT input must be complex64 or complex128, got " ^ Dtype.numpy_name d)
 
 let real_of = function
   | Dtype.Complex64 -> Dtype.F32
   | Dtype.Complex128 -> Dtype.F64
-  | _ -> invalid_arg "irfft requires a complex operand"
+  | d ->
+      Py_exn.value_error
+        ("IRFFT input must be complex64 or complex128, got "
+       ^ Dtype.numpy_name d)
 
 let last_axes shape lengths =
   let rank = Array.length shape and k = Array.length lengths in

@@ -169,8 +169,7 @@ let fft_core name kind ~inverse ?s ?axes ?norm a =
     | None, Some sizes -> range (ndim - List.length sizes) ndim
     | None, None -> range 0 ndim
   in
-  if
-    List.length (List.sort_uniq compare given_axes) <> List.length given_axes
+  if List.length (List.sort_uniq compare given_axes) <> List.length given_axes
   then
     Py_exn.value_error
       (Printf.sprintf
@@ -181,9 +180,7 @@ let fft_core name kind ~inverse ?s ?axes ?norm a =
     | Some ax -> range (ndim - List.length ax) ndim
     | None -> given_axes
   in
-  let arr =
-    match axes with Some ax -> moveaxis ax inner_axes a | None -> a
-  in
+  let arr = match axes with Some ax -> moveaxis ax inner_axes a | None -> a in
   let shape = shape_of arr in
   let arr, sizes =
     match s with
@@ -260,9 +257,7 @@ let hfft ?n ?(axis = -1) ?norm a =
 
 let ihfft ?n ?(axis = -1) ?norm a =
   let nn =
-    match n with
-    | Some x -> x
-    | None -> Validate.tuple_index (shape_of a) axis
+    match n with Some x -> x | None -> Validate.tuple_index (shape_of a) axis
   in
   let axes, s = single_axis axis n in
   let output =

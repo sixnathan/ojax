@@ -24,6 +24,7 @@ let is_inexact = function
   | _ -> false
 
 let default_float () = Dtypes.default_float_dtype ()
+let default_int () = Dtypes.default_int_dtype ()
 
 let to_inexact v =
   if is_inexact (dtype v) then v
@@ -38,9 +39,9 @@ let eps_of = function
 let matrix_transpose_v x =
   let nd = ndim x in
   if nd < 2 then
-    invalid_arg
-      (Printf.sprintf "matrix_transpose requires at least 2 dimensions; got %d"
-         nd);
+    Py_exn.value_error
+      (Printf.sprintf
+         "matrix_transpose requires at least 2 dimensions; got ndim=%d" nd);
   NL.matrix_transpose x
 
 let hconj x = UF.conj (matrix_transpose_v x)
@@ -66,8 +67,7 @@ and cholesky ?upper ?symmetrize_input p0 =
       (Digest.to_hex
          (Digest.string (Marshal.to_string (upper, symmetrize_input) [])))
     (function
-      | [ p0 ] -> cholesky_body ?upper ?symmetrize_input p0
-      | _ -> invalid_arg "cholesky: arity")
+      | [ p0 ] -> cholesky_body ?upper ?symmetrize_input p0 | _ -> assert false)
     [ p0 ]
 
 and svd ?full_matrices ?compute_uv ?hermitian p0 =
@@ -78,15 +78,13 @@ and svd ?full_matrices ?compute_uv ?hermitian p0 =
             (Marshal.to_string (full_matrices, compute_uv, hermitian) [])))
     (function
       | [ p0 ] -> svd_body ?full_matrices ?compute_uv ?hermitian p0
-      | _ -> invalid_arg "svd: arity")
+      | _ -> assert false)
     [ p0 ]
 
 and matrix_power p0 s1 =
   Jnp_util.jit1 "matrix_power"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string s1 [])))
-    (function
-      | [ p0 ] -> matrix_power_body p0 s1
-      | _ -> invalid_arg "matrix_power: arity")
+    (function [ p0 ] -> matrix_power_body p0 s1 | _ -> assert false)
     [ p0 ]
 
 and matrix_rank ?rtol ?hermitian ?tol p0 =
@@ -98,7 +96,7 @@ and matrix_rank ?rtol ?hermitian ?tol p0 =
       ~key:(Digest.to_hex (Digest.string (Marshal.to_string hermitian [])))
       (function
         | [ p0 ] -> matrix_rank_body ?rtol ?hermitian ?tol p0
-        | _ -> invalid_arg "matrix_rank: arity")
+        | _ -> assert false)
       [ p0 ]
 
 and slogdet ?method_ p0 =
@@ -109,22 +107,22 @@ and slogdet ?method_ p0 =
         | [ p0 ] ->
             let a, b = slogdet_body ?method_ p0 in
             [ a; b ]
-        | _ -> invalid_arg "slogdet: arity")
+        | _ -> assert false)
       [ p0 ]
   with
   | [ a; b ] -> (a, b)
-  | _ -> invalid_arg "slogdet: arity"
+  | _ -> assert false
 
 and det p0 =
   Jnp_util.jit1 "det"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> det_body p0 | _ -> invalid_arg "det: arity")
+    (function [ p0 ] -> det_body p0 | _ -> assert false)
     [ p0 ]
 
 and eigvals p0 =
   Jnp_util.jit1 "eigvals"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> eigvals_body p0 | _ -> invalid_arg "eigvals: arity")
+    (function [ p0 ] -> eigvals_body p0 | _ -> assert false)
     [ p0 ]
 
 and eigh ?uplo ?symmetrize_input p0 =
@@ -137,11 +135,11 @@ and eigh ?uplo ?symmetrize_input p0 =
         | [ p0 ] ->
             let a, b = eigh_body ?uplo ?symmetrize_input p0 in
             [ a; b ]
-        | _ -> invalid_arg "eigh: arity")
+        | _ -> assert false)
       [ p0 ]
   with
   | [ a; b ] -> (a, b)
-  | _ -> invalid_arg "eigh: arity"
+  | _ -> assert false
 
 and eigvalsh ?uplo ?symmetrize_input p0 =
   Jnp_util.jit1 "eigvalsh"
@@ -149,14 +147,13 @@ and eigvalsh ?uplo ?symmetrize_input p0 =
       (Digest.to_hex
          (Digest.string (Marshal.to_string (uplo, symmetrize_input) [])))
     (function
-      | [ p0 ] -> eigvalsh_body ?uplo ?symmetrize_input p0
-      | _ -> invalid_arg "eigvalsh: arity")
+      | [ p0 ] -> eigvalsh_body ?uplo ?symmetrize_input p0 | _ -> assert false)
     [ p0 ]
 
 and inv p0 =
   Jnp_util.jit1 "inv"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function [ p0 ] -> inv_body p0 | _ -> invalid_arg "inv: arity")
+    (function [ p0 ] -> inv_body p0 | _ -> assert false)
     [ p0 ]
 
 and norm ?ord ?axis ?keepdims p0 =
@@ -164,28 +161,25 @@ and norm ?ord ?axis ?keepdims p0 =
     ~key:
       (Digest.to_hex
          (Digest.string (Marshal.to_string (ord, axis, keepdims) [])))
-    (function
-      | [ p0 ] -> norm_body ?ord ?axis ?keepdims p0
-      | _ -> invalid_arg "norm: arity")
+    (function [ p0 ] -> norm_body ?ord ?axis ?keepdims p0 | _ -> assert false)
     [ p0 ]
 
 and qr ?mode p0 =
   Jnp_util.jit "qr"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string mode [])))
-    (function [ p0 ] -> qr_body ?mode p0 | _ -> invalid_arg "qr: arity")
+    (function [ p0 ] -> qr_body ?mode p0 | _ -> assert false)
     [ p0 ]
 
 and solve p0 p1 =
   Jnp_util.jit1 "solve"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string () [])))
-    (function
-      | [ p0; p1 ] -> solve_body p0 p1 | _ -> invalid_arg "solve: arity")
+    (function [ p0; p1 ] -> solve_body p0 p1 | _ -> assert false)
     [ p0; p1 ]
 
 and cond ?p p0 =
   Jnp_util.jit1 "cond"
     ~key:(Digest.to_hex (Digest.string (Marshal.to_string p [])))
-    (function [ p0 ] -> cond_body ?p p0 | _ -> invalid_arg "cond: arity")
+    (function [ p0 ] -> cond_body ?p p0 | _ -> assert false)
     [ p0 ]
 
 and svd_uv ~full_matrices a =
@@ -241,7 +235,7 @@ and svd_hermitian ~compute_uv a =
                (NL.astype (NL.expand_dims sign [| last |]) (dtype u)))
         in
         [ u; s; vh ]
-    | _ -> invalid_arg "svd: arity"
+    | _ -> assert false
 
 and solve_body a b =
   let a = to_inexact a and b = to_inexact b in
@@ -249,29 +243,34 @@ and solve_body a b =
   let a = NL.astype a dt and b = NL.astype b dt in
   let sa = shape a and sb = shape b in
   let na = Array.length sa and nb = Array.length sb in
-  if na < 2 then invalid_arg "left hand array must be at least two dimensional";
-  if nb < 1 then invalid_arg "right hand array must be at least one dimensional";
+  if na < 2 then
+    Py_exn.value_error
+      ("left hand array must be at least two dimensional; got a.shape="
+     ^ Validate.python_tuple sa);
   if
     nb > 1
     && na = nb + 1
     && sa.(na - 1) = sb.(nb - 1)
     && sa.(na - 1) <> sb.(nb - 2)
   then
-    invalid_arg
-      "Invalid shapes for solve: Prior to JAX v0.5.0, this would have been \
-       treated as a batched 1-dimensional solve. To recover this behavior, use \
-       solve(a, b[..., None]).squeeze(-1).";
+    Py_exn.value_error
+      (Printf.sprintf
+         "Invalid shapes for solve: %s, %s. Prior to JAX v0.5.0, this would \
+          have been treated as a batched 1-dimensional solve. To recover this \
+          behavior, use solve(a, b[..., None]).squeeze(-1)."
+         (Validate.python_tuple sa) (Validate.python_tuple sb));
   let signature = if nb = 1 then "(m,m),(m)->(m)" else "(m,m),(m,n)->(m,n)" in
   Vectorize.vectorize ~signature
-    (function
-      | [ a; b ] -> Lax.solve_with_lu a b | _ -> invalid_arg "solve: arity")
+    (function [ a; b ] -> Lax.solve_with_lu a b | _ -> assert false)
     [ a; b ]
 
 and inv_body a =
   let sa = shape a in
   let na = Array.length sa in
   if na < 2 || sa.(na - 1) <> sa.(na - 2) then
-    invalid_arg "Argument to inv must have shape [..., n, n]";
+    Py_exn.value_error
+      (Printf.sprintf "Argument to inv must have shape [..., n, n], got %s."
+         (Validate.python_tuple sa));
   let n = sa.(na - 1) in
   let eye = NL.eye ~dtype:(dtype a) n in
   let batched =
@@ -286,19 +285,65 @@ and inv_body a =
 
 and slogdet_body ?(method_ = "lu") a =
   let a = to_inexact a in
-  if method_ <> "lu" then
-    invalid_arg "jnp.linalg.slogdet: only method='lu' supported in ojax";
   let sa = shape a in
   let na = Array.length sa in
+  if na < 2 || sa.(na - 1) <> sa.(na - 2) then
+    Py_exn.value_error
+      ("Argument to slogdet() must have shape [..., n, n], got "
+     ^ Validate.python_tuple sa);
   let n = sa.(na - 1) in
-  if n = 1 || n = 2 then
-    match !slogdet_small_call [ a ] with
-    | [ sign; logdet ] -> (sign, logdet)
-    | _ -> invalid_arg "slogdet: arity"
-  else
-    match !slogdet_lu_call [ a ] with
-    | [ sign; logdet ] -> (sign, logdet)
-    | _ -> assert false
+  match method_ with
+  | "lu" -> (
+      if n = 1 || n = 2 then
+        match !slogdet_small_call [ a ] with
+        | [ sign; logdet ] -> (sign, logdet)
+        | _ -> assert false
+      else
+        match !slogdet_lu_call [ a ] with
+        | [ sign; logdet ] -> (sign, logdet)
+        | _ -> assert false)
+  | "qr" -> slogdet_qr a n
+  | other ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "Unknown slogdet method '%s'. Supported methods are 'lu' (`None`), \
+            and 'qr'."
+           other)
+
+and slogdet_qr a n =
+  (match dtype a with
+  | D.Complex64 | D.Complex128 ->
+      raise
+        (Py_exn.Not_implemented_error
+           "slogdet method='qr' not implemented for complex inputs")
+  | _ -> ());
+  let h, taus =
+    match Core.bind T.Geqrf [ a ] with [ h; t ] -> (h, t) | _ -> assert false
+  in
+  let a_diag = NL.diagonal ~axis1:(-2) ~axis2:(-1) h in
+  let log_abs_det = RED.sum ~axis:[| -1 |] (UF.log (UF.abs a_diag)) in
+  let sign_diag = RED.prod ~axis:[| -1 |] (UF.sign a_diag) in
+  let st = shape taus in
+  let nt = Array.length st in
+  let _, stop = Validate.slice_indices ~stop:(n - 1) st.(nt - 1) in
+  let kept =
+    Core.bind1
+      (T.Slice
+         {
+           start_indices = Array.make nt 0;
+           limit_indices =
+             Array.mapi (fun i d -> if i = nt - 1 then stop else d) st;
+           strides = None;
+         })
+      [ taus ]
+  in
+  let flips =
+    NL.where_
+      (UF.not_equal kept (Jnp_util.py_int 0))
+      (Jnp_util.py_int (-1)) (Jnp_util.py_int 1)
+  in
+  let sign_taus = NL.astype (RED.prod ~axis:[| -1 |] flips) (dtype sign_diag) in
+  (UF.multiply sign_diag sign_taus, log_abs_det)
 
 and det_body a =
   let a = to_inexact a in
@@ -327,7 +372,7 @@ and det_body a =
   end
   else if na >= 2 && sa.(na - 1) = sa.(na - 2) then List.hd (!det_call [ a ])
   else
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf "Argument to _det() must have shape [..., n, n], got %s"
          (Lax.Utils.py_tuple sa))
 
@@ -376,7 +421,9 @@ and eigh_body ?(uplo = "L") ?(symmetrize_input = true) a =
     match uplo with
     | "L" -> true
     | "U" -> false
-    | _ -> invalid_arg "UPLO must be one of None, 'L', or 'U'"
+    | other ->
+        Py_exn.value_error
+          ("UPLO must be one of None, 'L', or 'U', got " ^ other)
   in
   let a = to_inexact a in
   let v, w = LL.eigh ~lower ~symmetrize_input a in
@@ -390,7 +437,7 @@ and pinv_body ~hermitian ~rtol a =
   let arr = to_inexact a in
   let sa = shape arr in
   let na = Array.length sa in
-  let m = sa.(na - 2) and n = sa.(na - 1) in
+  let m, n = Validate.unpack_last_two sa in
   if m = 0 || n = 0 then
     Array_creation.empty ~dtype:(dtype arr)
       (Array.append (Array.sub sa 0 (na - 2)) [| n; m |])
@@ -413,7 +460,7 @@ and pinv_body ~hermitian ~rtol a =
     let u, s, vh =
       match svd ~full_matrices:false ~hermitian arr with
       | [ u; s; vh ] -> (u, s, vh)
-      | _ -> invalid_arg "pinv: svd arity"
+      | _ -> assert false
     in
     let expanded = NL.expand_dims rtol [| ndim rtol |] in
     let missing = ndim s - ndim rtol - 1 in
@@ -489,16 +536,16 @@ and pinv_custom ~hermitian ~rtol a =
                       pinv_body ~hermitian
                         ~rtol:(match rest with r :: _ -> Some r | [] -> None)
                         a
-                  | [] -> invalid_arg "pinv: arity")
+                  | [] -> assert false)
                 (a :: extra);
             ]
-        | _ -> invalid_arg "pinv: arity")
+        | _ -> assert false)
       ~jvp:(fun primals tangents ->
         match (primals, tangents) with
         | [ a ], [ a_dot ] ->
             Config.with_value Config.default_matmul_precision (Some "float32")
               (fun () -> pinv_jvp ~hermitian ~rtol a a_dot)
-        | _ -> invalid_arg "pinv: arity")
+        | _ -> assert false)
   in
   List.hd (call [ a ])
 
@@ -506,7 +553,7 @@ and pinv ?rtol ?(hermitian = false) ?rcond a =
   let rtol =
     match (rcond, rtol) with
     | Some _, Some _ ->
-        invalid_arg "pinv: only one of rtol and rcond may be specified."
+        Py_exn.value_error "pinv: only one of rtol and rcond may be specified."
     | Some r, None -> Some r
     | None, r -> r
   in
@@ -516,9 +563,11 @@ and matrix_power_body a p =
   let sa = shape a in
   let na = Array.length sa in
   if na < 2 then
-    Py_exn.type_error "matrix_power: array must be at least two-dimensional";
+    Py_exn.type_error
+      (Printf.sprintf
+         "%d-dimensional array given. Array must be at least two-dimensional" na);
   if sa.(na - 1) <> sa.(na - 2) then
-    invalid_arg "matrix_power: last 2 dimensions of the array must be square";
+    Py_exn.type_error "Last 2 dimensions of the array must be square";
   let m = sa.(na - 1) in
   if p = 0 then NL.broadcast_to (NL.eye ~dtype:(dtype a) m) sa
   else begin
@@ -547,26 +596,30 @@ and matrix_rank_body ?rtol ?(hermitian = false) ?tol a =
   let rtol =
     match (tol, rtol) with
     | Some _, Some _ ->
-        invalid_arg "matrix_rank: only one of tol or rtol may be specified."
+        Py_exn.value_error
+          "matrix_rank: only one of tol or rtol may be specified."
     | Some t, None -> Some t
     | None, r -> r
   in
   let a = to_inexact a in
-  let s = if hermitian then UF.abs (svdvals a) else svdvals a in
-  let sa = shape a in
-  let na = Array.length sa in
-  let maxdim = max sa.(na - 1) sa.(na - 2) in
-  let dt = dtype s in
-  let rtol =
-    match rtol with
-    | Some r -> r
-    | None ->
-        UF.multiply
-          (RED.amax ~axis:[| -1 |] s)
-          (const dt (float_of_int maxdim *. eps_of dt))
-  in
-  let rtol = NL.expand_dims rtol [| ndim rtol |] in
-  RED.sum ~axis:[| -1 |] (UF.greater s rtol)
+  if ndim a < 2 then
+    NL.astype (RED.any (UF.not_equal a (Jnp_util.py_int 0))) D.I32
+  else
+    let s = if hermitian then UF.abs (svdvals a) else svdvals a in
+    let sa = shape a in
+    let na = Array.length sa in
+    let maxdim = max sa.(na - 1) sa.(na - 2) in
+    let dt = dtype s in
+    let rtol =
+      match rtol with
+      | Some r -> r
+      | None ->
+          UF.multiply
+            (RED.amax ~axis:[| -1 |] s)
+            (const dt (float_of_int maxdim *. eps_of dt))
+    in
+    let rtol = NL.expand_dims rtol [| ndim rtol |] in
+    RED.sum ~axis:[| -1 |] (UF.greater s rtol)
 
 and vector_norm ?(axis = None) ?(keepdims = false) ?(ord = Onum 2.0) x =
   let x = to_inexact x in
@@ -583,7 +636,8 @@ and vector_norm ?(axis = None) ?(keepdims = false) ?(ord = Onum 2.0) x =
   let two_norm () = UF.sqrt (sumf (UF.real (UF.multiply x (UF.conj x)))) in
   match ord with
   | Onone -> two_norm ()
-  | Ofro | Onuc -> invalid_arg "Invalid order for vector norm."
+  | Ofro -> Py_exn.value_error "Invalid order 'fro' for vector norm."
+  | Onuc -> Py_exn.value_error "Invalid order 'nuc' for vector norm."
   | Onum o ->
       if o = 2.0 then two_norm ()
       else if o = infinity then
@@ -644,7 +698,10 @@ and matrix_norm_impl x ord r c keepdims =
         in
         if keepdims then NL.expand_dims y [| r; c |] else y
       end
-      else invalid_arg "Invalid order for matrix norm."
+      else
+        Py_exn.value_error
+          (Printf.sprintf "Invalid order '%s' for matrix norm."
+             (Printf.sprintf "%g" o))
 
 and norm_body ?(ord = Onone) ?(axis = Anone) ?(keepdims = false) x =
   let x = to_inexact x in
@@ -657,7 +714,12 @@ and norm_body ?(ord = Onone) ?(axis = Anone) ?(keepdims = false) x =
       | _ ->
           if nd = 1 then vector_norm ~axis:(Some [| 0 |]) ~keepdims ~ord x
           else if nd = 2 then matrix_norm_impl x ord 0 1 keepdims
-          else invalid_arg "Improper number of axes for norm")
+          else
+            Py_exn.value_error
+              (Printf.sprintf
+                 "Improper number of axes for norm: axis=%s. Pass one axis to \
+                  compute a vector-norm, or two axes to compute a matrix-norm."
+                 (Validate.python_tuple (Array.init nd Fun.id))))
   | Aint a ->
       let ord = match ord with Onone -> Onum 2.0 | o -> o in
       vector_norm ~axis:(Some [| canon_axis a nd |]) ~keepdims ~ord x
@@ -668,7 +730,7 @@ and matrix_transpose x = matrix_transpose_v x
 and raw_qr a =
   match Core.bind T.Geqrf [ a ] with
   | [ h; t ] -> [ matrix_transpose_v h; t ]
-  | _ -> failwith "jnp.linalg.qr: raw mode arity"
+  | _ -> assert false
 
 and qr_body ?(mode = "reduced") a =
   let a = to_inexact a in
@@ -679,7 +741,7 @@ and qr_body ?(mode = "reduced") a =
       | "reduced" | "r" | "full" -> false
       | "complete" -> true
       | _ ->
-          invalid_arg
+          Py_exn.value_error
             (Printf.sprintf "Unsupported QR decomposition mode '%s'" mode)
     in
     let q, r = LL.qr ~full_matrices a in
@@ -698,85 +760,111 @@ and lstsq ?rcond ?(numpy_resid = false) a b =
           args
       with
       | [ x; resid; rank; s ] -> (x, resid, rank, s)
-      | _ -> invalid_arg "_lstsq: arity"
+      | _ -> assert false
     in
     match rcond with
     | None ->
         call "default" [ a; b ] (function
           | [ a; b ] -> lstsq_body ~rcond:None ~numpy_resid a b
-          | _ -> invalid_arg "_lstsq: arity")
+          | _ -> assert false)
     | Some r ->
         call "traced"
           [ a; b; Jnp_util.py_float r ]
           (function
             | [ a; b; r ] ->
                 lstsq_body ~rcond:(Some (`Traced r)) ~numpy_resid a b
-            | _ -> invalid_arg "_lstsq: arity")
+            | _ -> assert false)
 
 and lstsq_body ~rcond ~numpy_resid a b =
   let a = to_inexact a and b = to_inexact b in
+  let leading_a = Validate.tuple_index (shape a) 0 in
+  let leading_b = Validate.tuple_index (shape b) 0 in
+  if leading_a <> leading_b then
+    Py_exn.value_error "Leading dimensions of input arrays must match";
   let b_vec = ndim b = 1 in
   let bm = if b_vec then NL.expand_dims b [| 1 |] else b in
+  if ndim a <> 2 then
+    Py_exn.type_error
+      (Printf.sprintf
+         "%d-dimensional array given. Array must be two-dimensional" (ndim a));
+  if ndim bm <> 2 then
+    Py_exn.type_error
+      (Printf.sprintf
+         "%d-dimensional array given. Array must be one or two-dimensional"
+         (ndim bm));
   let sa = shape a in
   let m = sa.(0) and n = sa.(1) in
   let dt = dtype a in
-  let rcond =
-    match rcond with
-    | Some (`Python r) when r < 0.0 -> const dt (eps_of dt)
-    | Some (`Python r) -> const dt r
-    | Some (`Traced r) ->
-        let negative = UF.less r (Jnp_util.py_int 0) in
-        Jnp_util.where_weak ~x_weak:false negative (const dt (eps_of dt)) r
-    | None -> const dt (eps_of dt *. float_of_int (max n m))
-  in
-  let u, s, vt =
-    match
-      Jnp_util.jit "svd" ~key:"reduced"
-        (function
-          | [ a ] ->
-              let u, s, vh = svd_uv ~full_matrices:false a in
-              [ u; s; vh ]
-          | _ -> invalid_arg "svd: arity")
-        [ a ]
-    with
-    | [ u; s; vh ] -> (u, s, vh)
-    | _ -> invalid_arg "svd: arity"
-  in
-  let positive = UF.greater s (const dt 0.0) in
-  let rcond =
-    match rcond with
-    | T.Tracer _ -> Core.bind1 T.Copy [ NL.astype rcond (dtype s) ]
-    | _ -> NL.astype rcond (dtype s)
-  in
-  let s0 =
-    if ndim s = 1 then
-      Core.bind1 (T.Squeeze [| 0 |])
-        [
-          Core.bind1
-            (T.Slice
-               {
-                 start_indices = [| 0 |];
-                 limit_indices = [| 1 |];
-                 strides = None;
-               })
-            [ s ];
-        ]
-    else RED.amax ~axis:[| -1 |] ~keepdims:true s
-  in
-  let mask =
-    UF.logical_and positive (UF.greater_equal s (UF.multiply rcond s0))
-  in
-  let rank = RED.sum mask in
-  let safe_s = NL.astype (NL.where_ mask s (Jnp_util.py_int 1)) dt in
-  let s_inv =
-    NL.where_ mask (UF.divide (Jnp_util.py_int 1) safe_s) (Jnp_util.py_int 0)
-  in
-  let s_inv_col = NL.expand_dims s_inv [| ndim s_inv |] in
-  let utb = TC.matmul ~precision:highest (UF.conj (matrix_transpose_v u)) bm in
-  let x =
-    TC.matmul ~precision:highest
-      (UF.conj (matrix_transpose_v vt))
-      (UF.multiply s_inv_col utb)
+  let x, rank, s =
+    if m * n = 0 then
+      ( Array_creation.zeros ~dtype:dt
+          (Array.append [| n |] (Array.sub (shape bm) 1 (ndim bm - 1))),
+        T.Concrete (Nd.of_floats (default_int ()) [||] [| 0.0 |]),
+        Array_creation.empty ~dtype:dt [| 0 |] )
+    else
+      let rcond =
+        match rcond with
+        | Some (`Python r) when r < 0.0 -> const dt (eps_of dt)
+        | Some (`Python r) -> const dt r
+        | Some (`Traced r) ->
+            let negative = UF.less r (Jnp_util.py_int 0) in
+            Jnp_util.where_weak ~x_weak:false negative (const dt (eps_of dt)) r
+        | None -> const dt (eps_of dt *. float_of_int (max n m))
+      in
+      let u, s, vt =
+        match
+          Jnp_util.jit "svd" ~key:"reduced"
+            (function
+              | [ a ] ->
+                  let u, s, vh = svd_uv ~full_matrices:false a in
+                  [ u; s; vh ]
+              | _ -> assert false)
+            [ a ]
+        with
+        | [ u; s; vh ] -> (u, s, vh)
+        | _ -> assert false
+      in
+      let positive = UF.greater s (const dt 0.0) in
+      let rcond =
+        match rcond with
+        | T.Tracer _ -> Core.bind1 T.Copy [ NL.astype rcond (dtype s) ]
+        | _ -> NL.astype rcond (dtype s)
+      in
+      let s0 =
+        if ndim s = 1 then
+          Core.bind1 (T.Squeeze [| 0 |])
+            [
+              Core.bind1
+                (T.Slice
+                   {
+                     start_indices = [| 0 |];
+                     limit_indices = [| 1 |];
+                     strides = None;
+                   })
+                [ s ];
+            ]
+        else RED.amax ~axis:[| -1 |] ~keepdims:true s
+      in
+      let mask =
+        UF.logical_and positive (UF.greater_equal s (UF.multiply rcond s0))
+      in
+      let rank = RED.sum mask in
+      let safe_s = NL.astype (NL.where_ mask s (Jnp_util.py_int 1)) dt in
+      let s_inv =
+        NL.where_ mask
+          (UF.divide (Jnp_util.py_int 1) safe_s)
+          (Jnp_util.py_int 0)
+      in
+      let s_inv_col = NL.expand_dims s_inv [| ndim s_inv |] in
+      let utb =
+        TC.matmul ~precision:highest (UF.conj (matrix_transpose_v u)) bm
+      in
+      let x =
+        TC.matmul ~precision:highest
+          (UF.conj (matrix_transpose_v vt))
+          (UF.multiply s_inv_col utb)
+      in
+      (x, rank, s)
   in
   let b_est = TC.matmul ~precision:highest a x in
   let full_resid () =
@@ -788,7 +876,10 @@ and lstsq_body ~rcond ~numpy_resid a b =
         match rank with
         | T.Concrete nd -> Nd.get_i64 nd [||]
         | T.Device b -> Nd.get_i64 (Pjrt.Buffer.to_host b) [||]
-        | T.Tracer _ -> invalid_arg "lstsq: numpy_resid needs a concrete rank"
+        | T.Tracer _ ->
+            raise
+              (Py_exn.Concretization_type_error
+                 "lstsq: numpy_resid needs a concrete rank")
       in
       if Int64.to_int concrete_rank < n || m <= n then
         T.Concrete (Nd.of_floats dt [| 0 |] [||])
@@ -798,8 +889,26 @@ and lstsq_body ~rcond ~numpy_resid a b =
   let x = if b_vec then NL.ravel x else x in
   (x, resid, rank, s)
 
-and cross ?(axis = -1) x1 x2 = NL.cross ~axis x1 x2
-and outer x1 x2 = TC.outer x1 x2
+and cross ?(axis = -1) x1 x2 =
+  let size1 = Validate.tuple_index (shape x1) axis in
+  let size2 = Validate.tuple_index (shape x2) axis in
+  if size1 <> 3 || size2 <> 3 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Both input arrays must be (arrays of) 3-dimensional vectors, but \
+          they have x1.shape[axis]=%d and x2.shape[axis]=%d"
+         size1 size2);
+  NL.cross ~axis x1 x2
+
+and outer x1 x2 =
+  if ndim x1 <> 1 || ndim x2 <> 1 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Input arrays must be one-dimensional, but they are x1.ndim=%d \
+          x2.ndim=%d"
+         (ndim x1) (ndim x2));
+  TC.outer x1 x2
+
 and matmul ?preferred x1 x2 = TC.matmul ?preferred x1 x2
 and vecdot ?(axis = -1) ?preferred x1 x2 = TC.vecdot ~axis ?preferred x1 x2
 
@@ -812,7 +921,9 @@ and trace ?(offset = 0) ?dtype x =
   NL.trace ~offset ~axis1:(-2) ~axis2:(-1) ?dtype x
 
 and tensorinv ?(ind = 2) a =
-  if ind <= 0 then invalid_arg "ind must be a positive integer";
+  if ind <= 0 then
+    Py_exn.value_error
+      (Printf.sprintf "ind must be a positive integer; got ind=%d" ind);
   let sa = shape a in
   let nd = Array.length sa in
   let prod lo hi =
@@ -822,12 +933,18 @@ and tensorinv ?(ind = 2) a =
     done;
     !r
   in
-  let p0 = prod 0 ind and p1 = prod ind nd in
+  let split = min ind nd in
+  let p0 = prod 0 split and p1 = prod split nd in
   if p0 <> p1 then
-    invalid_arg "tensorinv: product of first ind dims must equal the rest";
+    Py_exn.value_error
+      (Printf.sprintf
+         "tensorinv is only possible when the product of the first `ind` \
+          dimensions equals that of the remaining dimensions. got a.shape=%s \
+          with ind=%d."
+         (Validate.python_tuple sa) ind);
   let flat = NL.reshape a [| p0; p1 |] in
   let out_shape =
-    Array.append (Array.sub sa ind (nd - ind)) (Array.sub sa 0 ind)
+    Array.append (Array.sub sa split (nd - split)) (Array.sub sa 0 split)
   in
   NL.reshape (inv flat) out_shape
 
@@ -842,9 +959,22 @@ and tensorsolve ?axes a b =
   let sb = shape b in
   let bnd = Array.length sb in
   let sa = shape a in
-  let out_shape = Array.sub sa bnd (Array.length sa - bnd) in
+  let split = min bnd (Array.length sa) in
+  let out_shape = Array.sub sa split (Array.length sa - split) in
+  if Array.sub sa 0 split <> sb then
+    Py_exn.value_error
+      (Printf.sprintf
+         "After moving axes to end, leading shape of a must match shape of b. \
+          got a.shape=%s, b.shape=%s"
+         (Validate.python_tuple sa) (Validate.python_tuple sb));
   let bsize = Array.fold_left ( * ) 1 sb in
   let prod_out = Array.fold_left ( * ) 1 out_shape in
+  if bsize <> prod_out then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Input arrays must have prod(a.shape[:b.ndim]) == \
+          prod(a.shape[b.ndim:]); got a.shape=%s, b.ndim=%d."
+         (Validate.python_tuple sa) bnd);
   let a2 = NL.reshape a [| bsize; prod_out |] in
   let x = solve a2 (NL.ravel b) in
   NL.reshape x out_shape
@@ -852,7 +982,16 @@ and tensorsolve ?axes a b =
 and cond_body ?(p = Onone) x =
   let arr = to_inexact x in
   let nd = ndim arr in
-  if nd < 2 then invalid_arg "jnp.linalg.cond: input array must be at least 2D";
+  let sa = shape arr in
+  let shape_text = Validate.python_tuple sa in
+  if nd < 2 then
+    Py_exn.value_error
+      ("jnp.linalg.cond: input array must be at least 2D; got arr.shape="
+     ^ shape_text);
+  if sa.(nd - 1) = 0 || sa.(nd - 2) = 0 then
+    Py_exn.value_error
+      ("jnp.linalg.cond: input array must not be empty; got arr.shape="
+     ^ shape_text);
   let is_two = match p with Onone -> true | Onum o -> o = 2.0 | _ -> false in
   let is_neg_two = match p with Onum o -> o = -2.0 | _ -> false in
   if is_two then
@@ -863,6 +1002,20 @@ and cond_body ?(p = Onone) x =
     UF.divide (RED.amin ~axis:[| -1 |] s) (RED.amax ~axis:[| -1 |] s)
   else
     let dt = dtype arr in
+    if sa.(nd - 2) <> sa.(nd - 1) then
+      Py_exn.value_error
+        (Printf.sprintf
+           "jnp.linalg.cond: for p=%s, array must be square; got arr.shape=%s"
+           (match p with
+           | Ofro -> "'fro'"
+           | Onuc -> "'nuc'"
+           | Onum o when Float.is_integer o ->
+               Printf.sprintf "%d" (int_of_float o)
+           | Onum o when o = infinity -> "inf"
+           | Onum o when o = neg_infinity -> "-inf"
+           | Onum o -> Printf.sprintf "%g" o
+           | Onone -> "None")
+           shape_text);
     let r =
       UF.multiply
         (norm ~ord:p ~axis:(Apair (-2, -1)) arr)
@@ -920,7 +1073,7 @@ let () =
         | [ a ] ->
             let sign, logdet = slogdet_lu a in
             [ sign; logdet ]
-        | _ -> invalid_arg "slogdet: arity")
+        | _ -> assert false)
       ~jvp:(fun primals tangents ->
         match (primals, tangents) with
         | [ x ], [ g ] -> (
@@ -938,7 +1091,7 @@ let () =
                   (out, [ sign_dot; re2 ])
                 end
                 else (out, [ C.splat (dtype sign) (shape sign) 0.0; ans_dot ]))
-        | _ -> invalid_arg "slogdet: arity")
+        | _ -> assert false)
   in
   slogdet_lu_call := call
 
@@ -962,7 +1115,7 @@ let () =
   slogdet_small_call :=
     Custom_derivatives.custom_jvp ~name:"_slogdet_small"
       ~jvp_name:"_slogdet_small_jvp"
-      (function [ a ] -> slogdet_small a | _ -> invalid_arg "slogdet: arity")
+      (function [ a ] -> slogdet_small a | _ -> assert false)
       ~jvp:(fun primals tangents ->
         match (primals, tangents) with
         | [ x ], [ g ] -> (
@@ -1004,8 +1157,8 @@ let () =
                 else
                   ( [ sign; ans ],
                     [ C.splat (dtype sign) (shape sign) 0.0; ans_dot ] )
-            | _ -> invalid_arg "slogdet: arity")
-        | _ -> invalid_arg "slogdet: arity")
+            | _ -> assert false)
+        | _ -> assert false)
 
 let cofactor_solve a b =
   let module I = Nd_index in
@@ -1018,7 +1171,7 @@ let cofactor_solve a b =
     if n >= 2 then Array.sub s (n - 2) 2 else s
   in
   if not (na >= 2 && sa.(na - 1) = sa.(na - 2) && last2 sb = last2 sa) then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "The arguments to _cofactor_solve must have shapes a=[..., m, m] and \
           b=[..., m, m]; got a=%s and b=%s"
@@ -1114,13 +1267,13 @@ let () =
         | [ a ] ->
             let sign, logdet = slogdet a in
             [ UF.multiply sign (NL.astype (UF.exp logdet) (dtype sign)) ]
-        | _ -> invalid_arg "det: arity")
+        | _ -> assert false)
       ~jvp:(fun primals tangents ->
         match (primals, tangents) with
         | [ x ], [ g ] ->
             let y, z = cofactor_solve x g in
             ([ y ], [ NL.trace ~axis1:(-1) ~axis2:(-2) z ])
-        | _ -> invalid_arg "det: arity")
+        | _ -> assert false)
 
 let cholesky ?upper ?symmetrize_input a0 =
   Eager_jit.one "numpy.linalg.cholesky" (upper, symmetrize_input) [] [ a0 ]
@@ -1186,8 +1339,40 @@ let matrix_norm ?(keepdims = false) ?(ord = Ofro) x =
 
 let multi_dot arrs =
   (match arrs with
-  | [] | [ _ ] -> invalid_arg "multi_dot requires at least two arrays"
+  | [] | [ _ ] ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "multi_dot requires at least two arrays; got len(arrays)=%d"
+           (List.length arrs))
   | _ -> ());
+  let shapes_text () =
+    "["
+    ^ String.concat ", "
+        (List.map (fun a -> Validate.python_tuple (shape a)) arrs)
+    ^ "]"
+  in
+  let count = List.length arrs in
+  if
+    List.exists Fun.id
+      (List.mapi
+         (fun i a ->
+           let d = ndim a in
+           if i = 0 || i = count - 1 then not (d = 1 || d = 2) else d <> 2)
+         arrs)
+  then
+    Py_exn.value_error
+      ("multi_dot: input arrays must all be two-dimensional, except for the \
+        first and last array which may be 1 or 2 dimensional. Got array \
+        shapes " ^ shapes_text ());
+  let rec consecutive = function
+    | x :: (y :: _ as rest) ->
+        (shape x).(ndim x - 1) <> (shape y).(0) || consecutive rest
+    | _ -> false
+  in
+  if consecutive arrs then
+    Py_exn.value_error
+      ("multi_dot: last dimension of each array must match first dimension of \
+        following array. Got array shapes " ^ shapes_text ());
   let letter i = String.make 1 (Char.chr (Char.code 'a' + i)) in
   let term i arr =
     let left = letter i and right = letter (i + 1) in

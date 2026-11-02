@@ -314,9 +314,9 @@ let qdwh_body max_iterations eps x =
 let qdwh ?(is_hermitian = false) ?(max_iterations = 10) ?eps x =
   ignore is_hermitian;
   let sh = shape x in
-  if Array.length sh <> 2 then Py_exn.value_error "qdwh: expected a matrix";
-  if sh.(0) < sh.(1) then
-    Py_exn.value_error "The input matrix of shape M x N must have M >= N";
+  let m, n = Validate.unpack_exact_two sh in
+  if m < n then
+    Py_exn.value_error "The input matrix of shape M x N must have M >= N.";
   let key =
     Printf.sprintf "%d %s" max_iterations
       (match eps with Some e -> string_of_float e | None -> "none")

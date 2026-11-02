@@ -40,6 +40,23 @@ let rfft_empty_verifier_message ~function_name ~location ~element shape =
      Define JAX_DUMP_IR_TO to dump the module."
     returned (tensor result) function_name location returned location
 
+let unpack_last_two shape =
+  let n = Array.length shape in
+  if n < 2 then
+    Py_exn.value_error
+      (Printf.sprintf "not enough values to unpack (expected 2, got %d)" n);
+  (shape.(n - 2), shape.(n - 1))
+
+let unpack_exact_two shape =
+  match shape with
+  | [| m; n |] -> (m, n)
+  | _ when Array.length shape > 2 ->
+      Py_exn.value_error "too many values to unpack (expected 2)"
+  | _ ->
+      Py_exn.value_error
+        (Printf.sprintf "not enough values to unpack (expected 2, got %d)"
+           (Array.length shape))
+
 let list_assign_index length i =
   if i < -length || i >= length then
     Py_exn.index_error "list assignment index out of range";

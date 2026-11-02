@@ -1318,31 +1318,78 @@ let () =
         (fun (n, t, _) -> if n = name then Some t else None)
         !named_axes
 
+let check_mapped_axes in_axes args =
+  let sizes =
+    List.concat
+      (List.mapi
+         (fun i (d, x) ->
+           match d with
+           | None -> []
+           | Some d ->
+               let a = Core.get_aval x in
+               let shape = a.shape in
+               let rank = Array.length shape in
+               if d >= rank || d < -rank then
+                 Py_exn.value_error
+                   (Printf.sprintf
+                      "vmap was requested to map its argument along axis %d, \
+                       which implies that its rank should be at least %d, but \
+                       is only %d (its shape is %s)"
+                      d
+                      (if d >= 0 then d + 1 else -d)
+                      rank
+                      (Validate.python_tuple shape));
+               [ (shape.(if d < 0 then d + rank else d), d, i, a) ])
+         (List.combine in_axes args))
+  in
+  match sizes with
+  | [] -> ()
+  | (first, _, _, _) :: _ ->
+      if List.exists (fun (s, _, _, _) -> s <> first) sizes then begin
+        let order = ref [] in
+        List.iter
+          (fun (s, _, _, _) ->
+            if not (List.mem s !order) then order := !order @ [ s ])
+          sizes;
+        let count s =
+          List.length (List.filter (fun (o, _, _, _) -> o = s) sizes)
+        in
+        let ranked =
+          List.stable_sort (fun x y -> compare (count y) (count x)) !order
+        in
+        let line index s =
+          let _, d, i, (a : aval) =
+            List.find (fun (o, _, _, _) -> o = s) sizes
+          in
+          let where =
+            Printf.sprintf "axis %d of args[%d] of type %s" d i
+              (Validate.aval_short ~dtype_name:(Dtype.numpy_name a.dtype)
+                 ~weak:a.weak_type a.shape)
+          in
+          match count s with
+          | 1 -> Printf.sprintf "  * one axis had size %d: %s" s where
+          | n when index = 0 ->
+              Printf.sprintf "  * most axes (%d of them) had size %d, e.g. %s" n
+                s where
+          | n ->
+              Printf.sprintf "  * some axes (%d of them) had size %d, e.g. %s" n
+                s where
+        in
+        Py_exn.value_error
+          ("vmap got inconsistent sizes for array axes to be mapped:\n"
+          ^ String.concat ";\n" (List.mapi line ranked))
+      end
+
 let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     (f : value list -> value list) (in_axes : int option list)
     (args : value list) : value list =
+  check_mapped_axes in_axes args;
   let axis_size =
-    let mapped_size x d =
-      let shape = (Core.get_aval x).shape in
-      let rank = Array.length shape in
-      if d >= rank || d < -rank then
-        Py_exn.value_error
-          (Printf.sprintf
-             "vmap was requested to map its argument along axis %d, which \
-              implies that its rank should be at least %d, but is only %d (its \
-              shape is %s)"
-             d
-             (if d >= 0 then d + 1 else -d)
-             rank
-             (Validate.python_tuple shape));
-      shape.(if d < 0 then d + rank else d)
-    in
     let rec find axes vals =
       match (axes, vals) with
-      | Some d :: axes, x :: vals ->
-          let size = mapped_size x d in
-          ignore (find axes vals);
-          Some size
+      | Some d :: _, x :: _ ->
+          let shape = (Core.get_aval x).shape in
+          Some shape.(if d < 0 then d + Array.length shape else d)
       | None :: axes, _ :: vals -> find axes vals
       | _ -> None
     in
@@ -1351,7 +1398,8 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
         Py_exn.value_error
           (Printf.sprintf
              "vmap got inconsistent sizes for array axes to be mapped:\n\
-             \  * axis_size is %d but an array axis has size %d"
+             \  * the `axis_size` argument was %d;\n\
+             \  * one axis had size %d"
              given found)
     | Some found, _ -> found
     | None, Some given -> given
@@ -1406,6 +1454,14 @@ let vmap ?axis_name (f : value list -> value list) (in_axes : int option list) :
 
 let take_on_axis : (value -> int array -> int -> value) ref =
   ref (fun _ _ _ -> failwith "batching: take not installed")
+
+let check_splitaxis shape axis factor =
+  if axis < -Array.length shape || axis >= Array.length shape then
+    Py_exn.index_error "list index out of range";
+  let size = shape.(if axis < 0 then axis + Array.length shape else axis) in
+  Validate.assertion
+    (Validate.py_mod size factor = 0)
+    ~message:(Printf.sprintf "(%d, %d)" size factor)
 
 let collective_batch trace axis_size kind axis_name vals bdims =
   let bound =
@@ -1476,6 +1532,7 @@ let collective_batch trace axis_size kind axis_name vals bdims =
       let shape_of x = (Core.get_aval x).shape in
       let splitaxis axis x =
         let s = shape_of x in
+        check_splitaxis s axis axis_size;
         b1
           (Reshape
              (Array.concat
@@ -1488,19 +1545,42 @@ let collective_batch trace axis_size kind axis_name vals bdims =
       in
       let foldaxis axis x =
         let s = shape_of x in
-        b1
-          (Reshape
-             (Array.concat
-                [
-                  Array.sub s 0 axis;
-                  [| s.(axis) * s.(axis + 1) |];
-                  Array.sub s (axis + 2) (Array.length s - axis - 2);
-                ]))
-          [ x ]
+        let at i =
+          let n = Array.length s in
+          if i < -n || i >= n then Py_exn.index_error "tuple index out of range";
+          s.(if i < 0 then i + n else i)
+        in
+        let product = at axis * at (axis + 1) in
+        let n = Array.length s in
+        let clamp v = if v < 0 then Stdlib.max (v + n) 0 else Stdlib.min v n in
+        let start = clamp axis and stop = clamp (axis + 2) in
+        let new_shape =
+          Array.concat
+            [
+              Array.sub s 0 start;
+              [| product |];
+              (let from = Stdlib.max start stop in
+               Array.sub s from (n - from));
+            ]
+        in
+        let size a = Array.fold_left ( * ) 1 a in
+        if size new_shape <> size s then
+          Py_exn.type_error
+            (Printf.sprintf
+               "cannot reshape array of shape %s (size %d) into shape %s (size \
+                %d)"
+               (Validate.python_tuple s) (size s)
+               (Validate.python_list (Array.to_list new_shape))
+               (size new_shape));
+        b1 (Reshape new_shape) [ x ]
       in
       let move src dst x =
         let n = Array.length (shape_of x) in
         let rest = List.filter (fun i -> i <> src) (List.init n Fun.id) in
+        let m = List.length rest in
+        let dst =
+          if dst < 0 then Stdlib.max (dst + m) 0 else Stdlib.min dst m
+        in
         let perm =
           List.filteri (fun i _ -> i < dst) rest
           @ (src :: List.filteri (fun i _ -> i >= dst) rest)
@@ -1521,6 +1601,17 @@ let collective_batch trace axis_size kind axis_name vals bdims =
         let concat = foldaxis concat_axis (move d concat_axis v) in
         (splitaxis split_axis concat, Some split_axis)
   | Reduce_scatter { scatter_dimension; tiled; _ }, [ v ], [ b ] ->
+      (if not tiled then
+         let kept =
+           Array.length (Core.get_aval v).shape
+           - match b with Some _ -> 1 | None -> 0
+         in
+         if scatter_dimension < -kept || scatter_dimension >= kept then
+           Py_exn.index_error "tuple index out of range"
+         else if scatter_dimension < 0 then
+           raise
+             (Py_exn.Assertion_error
+                (Printf.sprintf "(%d, %d)" scatter_dimension kept)));
       let y =
         match b with
         | None ->
@@ -1534,8 +1625,9 @@ let collective_batch trace axis_size kind axis_name vals bdims =
         | Some d -> b1 (Reduce_sum [| d |]) [ v ]
       in
       let y =
-        if tiled then
+        if tiled then (
           let s = (Core.get_aval y).shape in
+          check_splitaxis s scatter_dimension axis_size;
           b1
             (Reshape
                (Array.concat
@@ -1545,7 +1637,7 @@ let collective_batch trace axis_size kind axis_name vals bdims =
                     Array.sub s (scatter_dimension + 1)
                       (Array.length s - scatter_dimension - 1);
                   ]))
-            [ y ]
+            [ y ])
         else y
       in
       (y, Some scatter_dimension)
@@ -1569,7 +1661,8 @@ let collective_batch trace axis_size kind axis_name vals bdims =
   | Pbroadcast _, [ v ], [ None ] -> (v, None)
   | Ppermute pairs, [ v ], [ b ] when Array.length pairs <> axis_size ->
       if not (List.mem axis_name !partial_permute_axes) then
-        failwith "Permutation doesn't match the axis size!";
+        raise
+          (Py_exn.Assertion_error "Permutation doesn't match the axis size!");
       let moved = move_batch_axis axis_size b 0 v in
       let rows = Array.of_list (Core.bind (Unstack 0) [ moved ]) in
       let zero = Ad_util.zeros_like_aval (Core.get_aval rows.(0)) in

@@ -341,8 +341,12 @@ let logaddexp a b =
 let cumred_impl ~axis ~reverse ~combine (nd : Ndarray.t) : Ndarray.t =
   let sh = Ndarray.shape nd in
   let ndim = Array.length sh in
-  if axis < 0 || axis >= ndim then
-    failwith "loops: cumulative axis out of bounds";
+  if axis < 0 then
+    Py_exn.value_error "XLA operations do not allow negative axes";
+  if axis >= ndim then
+    Py_exn.value_error
+      (Printf.sprintf "axis %d is out of bounds for array of shape %s" axis
+         (Validate.python_tuple sh));
   let dtype = Ndarray.dtype nd in
   let total = Array.fold_left ( * ) 1 sh in
   let out = Ndarray.of_floats dtype sh (Array.make total 0.0) in
@@ -378,10 +382,31 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
   let num_carry = List.length init in
   let length =
     match (length, xs) with
-    | Some n, _ -> n
-    | None, x :: _ -> (Core.get_aval x).shape.(0)
+    | Some n, _ ->
+        let lengths =
+          List.map (fun v -> Validate.tuple_index (Core.get_aval v).shape 0) xs
+        in
+        if List.exists (fun l -> l <> n) lengths then
+          Py_exn.value_error
+            (Printf.sprintf
+               "scan got `length` argument of %d which disagrees with leading \
+                axis sizes %s."
+               n
+               (Validate.python_list lengths));
+        n
+    | None, x :: rest ->
+        let leading v = Validate.tuple_index (Core.get_aval v).shape 0 in
+        let first = leading x in
+        let lengths = first :: List.map leading rest in
+        if List.exists (fun l -> l <> first) lengths then
+          Py_exn.value_error
+            ("scan got values with different leading axis sizes: "
+            ^ String.concat ", " (List.map string_of_int lengths)
+            ^ ".");
+        first
     | None, [] ->
-        invalid_arg "scan got no values to scan over and `length` not provided."
+        Py_exn.value_error
+          "scan got no values to scan over and `length` not provided."
   in
   let carry_avals = List.map Core.get_aval init in
   let x_slice_avals = List.map (fun x -> mapped_leading (Core.get_aval x)) xs in

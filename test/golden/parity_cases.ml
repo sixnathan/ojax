@@ -154,7 +154,9 @@ let lax_run op p a b =
   | "lax_conv_transpose" ->
       Some
         [
-          L.conv_transpose ?transpose_kernel:(opt_bool "tk" p) (a ()) (b ())
+          L.conv_transpose
+            ~dimension_numbers:(L.conv_dimension_numbers ("NCH", "OIH", "NCH"))
+            ?transpose_kernel:(opt_bool "tk" p) (a ()) (b ())
             ~strides:(ints "str" p) (padding_of p);
         ]
   | "lax_map" ->
@@ -520,6 +522,8 @@ let scipy_run op p a b c =
   | "rnd_multivariate_normal" ->
       let key = seed_key p in
       let m = b () in
+      if Array.length (shp m) = 0 then
+        ignore (Ojax.Numpy.Tensor_contractions.matmul m m);
       let n = (shp m).(0) in
       let product = L.dot_typed m (L.transpose m [| 1; 0 |]) in
       let eye = NL.identity ~dtype:(dt_of m) n in
@@ -675,7 +679,8 @@ let grid_of v =
   let sh = shp v in
   let dt = dt_of v in
   let axis size = L.iota dt size in
-  [ axis sh.(0); axis sh.(1) ]
+  let at = Ojax.Validate.tuple_index sh in
+  [ axis (at 0); axis (at 1) ]
 
 let triple (x, y, z) = [ x; y; z ]
 
@@ -842,7 +847,7 @@ let array_random_run op p a b =
       let x = a () in
       let f args =
         let v = RC.gamma_value (k ()) ~shape:(shp x) ~a:(List.hd args) in
-        L.reduce_sum v [| 0 |]
+        L.reduce_sum v (Array.init (Array.length (shp v)) Fun.id)
       in
       Some (Ojax.Interpreters.Ad.grad f [ x ])
   | "sp_fresnel_jit" ->
@@ -1275,6 +1280,9 @@ let tracer_batch_run op params a b =
 
 let slice_prefix v stop =
   let sh = (Ojax.Core.get_aval v).Ojax.Types.shape in
+  if Array.length sh = 0 then
+    Ojax.Py_exn.index_error
+      "Too many indices: array is 0-dimensional, but 1 were indexed";
   let limit = Array.copy sh in
   limit.(0) <- min stop sh.(0);
   if limit = sh then v

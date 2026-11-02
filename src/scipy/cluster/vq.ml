@@ -26,14 +26,14 @@ let vq ?(check_finite = true) obs code_book =
     | _ -> assert false
   in
   if ndim obs <> ndim cb then
-    invalid_arg "Observation and code_book should have the same rank";
+    Py_exn.value_error "Observation and code_book should have the same rank";
   let obs, cb =
     if ndim obs = 1 then
       (LN.expand_dims obs [| ndim obs |], LN.expand_dims cb [| ndim cb |])
     else (obs, cb)
   in
   if ndim obs <> 2 then
-    invalid_arg "ndim different than 1 or 2 are not supported";
+    Py_exn.value_error "ndim different than 1 or 2 are not supported";
   let diff =
     U.subtract (LN.expand_dims obs [| 1 |]) (LN.expand_dims cb [| 0 |])
   in

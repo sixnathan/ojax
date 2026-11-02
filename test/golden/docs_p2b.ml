@@ -299,6 +299,21 @@ let poly_thunk name () =
       | other -> failwith ("docs_p2b: unknown poly " ^ other))
   | _ -> failwith "docs_p2b: poly scope"
 
+let oom_thunk kind log2 () =
+  let n = 1 lsl log2 in
+  let x = T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.F32 [||] [| 1.0 |]) in
+  Ojax.Api.clear_caches ();
+  let out =
+    jit1
+      (fun a ->
+        if kind = "zeros" then
+          Ojax.Numpy.Array_creation.zeros ~dtype:Ojax.Dtype.F32 [| n |]
+        else F.multiply (NL.broadcast_to a [| n |]) (Docs_p2.py_float 2.0))
+      x
+  in
+  ignore (Ojax.Api.block_until_ready out);
+  "allocated"
+
 let actual_of row =
   let thunk =
     match str row "group" with
@@ -311,6 +326,7 @@ let actual_of row =
     | "legacy" -> legacy_thunk (str row "mode") (str row "case")
     | "reuse" -> reuse_thunk (str row "case")
     | "poly" -> poly_thunk (str row "case")
+    | "oom" -> oom_thunk (str row "case") (U.to_int (U.member "log2" row))
     | "signal" ->
         signal_thunk (str row "case") (str row "input")
           (U.to_bool (U.member "onesided" row))

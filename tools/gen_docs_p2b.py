@@ -36,6 +36,7 @@ POLY_CASES = ["parse", "parse_bad", "parse_bad2", "ge1", "ge2", "eq",
               "divmod_sym", "mod", "jmax", "min3", "cons", "cons_bad",
               "neg_ge", "sub_ge", "like", "like_bad", "gt_const", "le_self",
               "mod_sym", "cons_eq"]
+OOM_CASES = [("zeros", 40), ("zeros", 43), ("broadcast", 40), ("broadcast", 43)]
 REUSE_CASES = ["twice_eager", "twice_jit", "consumed_eager", "consumed_jit",
                "split_once", "split_twice", "split_twice_jit", "bits_fold_in",
                "clone", "off_twice", "while_reuse", "cond_branches",
@@ -326,6 +327,20 @@ def poly_thunk(name):
     return run
 
 
+def oom_thunk(jax, jnp, kind, log2):
+    n = 2 ** log2
+
+    def run():
+        x = jnp.float32(1)
+        if kind == "zeros":
+            out = jax.jit(lambda a: jnp.zeros((n,), jnp.float32))(x)
+        else:
+            out = jax.jit(lambda a: jnp.broadcast_to(a, (n,)) * 2)(x)
+        out.block_until_ready()
+        return "allocated"
+    return run
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -377,6 +392,9 @@ def main():
     for name in POLY_CASES:
         add(run_case(jax, poly_thunk(name)), id=f"poly_{name}", group="poly",
             case=name)
+    for kind, log2 in OOM_CASES:
+        add(run_case(jax, oom_thunk(jax, jnp, kind, log2)),
+            id=f"oom_{kind}_{log2}", group="oom", case=kind, log2=log2)
     for name in REUSE_CASES:
         add(run_case(jax, reuse_thunk(jax, jnp, name)),
             id=f"reuse_{name}", group="reuse", case=name)

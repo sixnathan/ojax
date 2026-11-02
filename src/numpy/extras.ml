@@ -239,6 +239,10 @@ let bincount_length length weights x =
 let nonzero ?size ?fill_value a =
   let sh = shape a in
   let n = Array.length sh in
+  if n = 0 then
+    invalid_arg
+      "Calling nonzero on 0d arrays is not allowed. Use \
+       jnp.atleast_1d(scalar).nonzero() instead.";
   let mask = nonzero_mask a in
   let count () = R.sum mask in
   let k =
@@ -252,8 +256,8 @@ let nonzero ?size ?fill_value a =
         int_of_float (Ndarray.get_f (host "nonzero" total) [||])
   in
   let int_dt = default_int () in
-  if k = 0 then
-    List.map (fun _ -> AC.zeros ~dtype:int_dt [| 0 |]) (Array.to_list sh)
+  if k = 0 || Array.exists (fun d -> d = 0) sh then
+    List.map (fun _ -> AC.zeros ~dtype:int_dt [| k |]) (Array.to_list sh)
   else begin
     let running = R.cumsum mask in
     let histogram =

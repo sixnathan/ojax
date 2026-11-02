@@ -2657,6 +2657,14 @@ let abstract_eval prim avals =
       | [ operands; inits ] ->
           List.map2
             (fun (op : aval) (init : aval) ->
+              let n = Array.length op.shape in
+              Array.iter
+                (fun d ->
+                  if d >= n || d < -n then
+                    Py_exn.index_error
+                      (Printf.sprintf
+                         "index %d is out of bounds for axis 0 with size %d" d n))
+                dimensions;
               shaped
                 (Utils.reduce_shape op.shape dimensions)
                 op.dtype

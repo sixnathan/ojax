@@ -509,9 +509,11 @@ let gather_fill_lowered prim operand indices =
              })
           [ bound ]
       in
-      bind1
-        (Broadcast_in_dim { shape = ish; dims = Array.init rank Fun.id })
-        [ expanded ]
+      if (aval expanded).shape = ish then expanded
+      else
+        bind1
+          (Broadcast_in_dim { shape = ish; dims = Array.init rank Fun.id })
+          [ expanded ]
   in
   let mask = bind1 And [ ge; bind1 Le [ indices; bound ] ] in
   let mask = bind1 (Reduce_and [| batch |]) [ mask ] in

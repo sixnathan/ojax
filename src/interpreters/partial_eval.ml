@@ -79,7 +79,8 @@ let jit_rule : (trace -> closed_jaxpr -> tracer list -> value list) ref =
 let process_primitive trace prim (args : value list) : value list =
   let tracers = List.map as_tracer args in
   let pvals = List.map pe_pval tracers in
-  if List.for_all is_known pvals then
+  let all_known = List.for_all is_known pvals in
+  if all_known && match prim with Xla_call _ -> false | _ -> true then
     let consts =
       List.map
         (fun pv ->
@@ -585,15 +586,21 @@ let () = scan_rule := scan_partial_eval
 let same_value a b =
   match (a, b) with Tracer x, Tracer y -> x.id = y.id | _ -> a == b
 
-let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
-    value list =
-  let name = Pretty_printer.call_name c.jid in
-  let known_flags = List.map (fun t -> is_known (pe_pval t)) tracers in
-  let known_tracers, unknown_tracers =
-    let k = List.filter (fun t -> is_known (pe_pval t)) tracers in
-    let u = List.filter (fun t -> is_unknown (pe_pval t)) tracers in
-    (k, u)
-  in
+type jit_split = {
+  js_known : closed_jaxpr;
+  js_unknown : closed_jaxpr;
+  js_plan : [ `Literal of Ndarray.t | `Input of int | `Output ] list;
+  js_const_binders : var list;
+  js_pvals_out : partial_val list;
+  js_in_fwd : int option list;
+}
+
+let jit_split_cache : (int * bool list * aval list * bool, jit_split) Hashtbl.t
+    =
+  Hashtbl.create 64
+
+let jit_split (c : closed_jaxpr) name (tracers : tracer list) known_flags
+    known_tracers =
   let known_avals = List.map (fun (t : tracer) -> t.aval) known_tracers in
   let holder = ref None in
   let known_closed =
@@ -633,6 +640,13 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
             consts
         in
         let known_outs = List.filter_map (fun pv -> pv.pv_const) pvals_out in
+        let in_fwd = List.map index_of known_outs in
+        let known_outs =
+          List.concat
+            (List.map2
+               (fun v f -> if f = None then [ v ] else [])
+               known_outs in_fwd)
+        in
         let residual_outs =
           List.filter_map
             (function `Output v -> Some v | `Input _ | `Literal _ -> None)
@@ -644,32 +658,16 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
           | [ a; b ] -> (a, b)
           | _ -> failwith "partial_eval: jit binders"
         in
-        holder := Some (jx, plan, const_binders, arg_binders, pvals_out);
+        holder := Some (jx, plan, const_binders, arg_binders, pvals_out, in_fwd);
         known_outs @ residual_outs)
   in
-  let jx, plan, const_binders, arg_binders, pvals_out =
+  let jx, plan, const_binders, arg_binders, pvals_out, in_fwd =
     match !holder with
     | Some h -> h
     | None -> failwith "partial_eval: jit was not traced"
   in
-  let known_inputs =
-    List.map
-      (fun t ->
-        match (pe_pval t).pv_const with
-        | Some v -> v
-        | None -> failwith "partial_eval: known jit input")
-      known_tracers
-  in
   Pretty_printer.register_call_name known_closed.jid name;
   Core.inherit_inline ~from:c.jid known_closed.jid;
-  let known_results = Core.bind (Xla_call known_closed) known_inputs in
-  let n_known_outs = List.length (List.filter is_known pvals_out) in
-  let known_out_vals, residual_vals =
-    match Util.split_list known_results [ n_known_outs ] with
-    | [ a; b ] -> (a, b)
-    | _ -> failwith "partial_eval: jit outputs"
-  in
-  let residual_rest = ref residual_vals in
   let literal_subst : (int, atom) Hashtbl.t = Hashtbl.create 4 in
   let kept =
     List.concat
@@ -679,13 +677,7 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
            | `Literal nd ->
                Hashtbl.replace literal_subst v.vid (A_lit nd);
                []
-           | `Input i -> [ (v, List.nth known_inputs i) ]
-           | `Output _ -> (
-               match !residual_rest with
-               | r :: tl ->
-                   residual_rest := tl;
-                   [ (v, r) ]
-               | [] -> failwith "partial_eval: jit residual arity"))
+           | `Input _ | `Output _ -> [ v ])
          const_binders plan)
   in
   let subst = function
@@ -697,7 +689,7 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
   in
   let unknown_jx =
     {
-      in_binders = arg_binders @ List.map fst kept;
+      in_binders = arg_binders @ kept;
       eqns =
         List.map
           (fun (e : eqn) -> { e with inputs = List.map subst e.inputs })
@@ -710,12 +702,101 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
   in
   Pretty_printer.register_call_name unknown_closed.jid name;
   Core.inherit_inline ~from:c.jid unknown_closed.jid;
+  {
+    js_known = known_closed;
+    js_unknown = unknown_closed;
+    js_plan =
+      List.map
+        (function
+          | `Literal nd -> `Literal nd
+          | `Input i -> `Input i
+          | `Output _ -> `Output)
+        plan;
+    js_const_binders = const_binders;
+    js_pvals_out = pvals_out;
+    js_in_fwd = in_fwd;
+  }
+
+let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
+    value list =
+  let name = Pretty_printer.call_name c.jid in
+  let known_flags = List.map (fun t -> is_known (pe_pval t)) tracers in
+  let known_tracers, unknown_tracers =
+    let k = List.filter (fun t -> is_known (pe_pval t)) tracers in
+    let u = List.filter (fun t -> is_unknown (pe_pval t)) tracers in
+    (k, u)
+  in
+  let key =
+    ( c.jid,
+      known_flags,
+      List.map (fun (t : tracer) -> t.aval) tracers,
+      Config.x64_enabled () )
+  in
+  let split =
+    match Hashtbl.find_opt jit_split_cache key with
+    | Some s -> s
+    | None ->
+        let s = jit_split c name tracers known_flags known_tracers in
+        Hashtbl.replace jit_split_cache key s;
+        s
+  in
+  let known_inputs =
+    List.map
+      (fun t ->
+        match (pe_pval t).pv_const with
+        | Some v -> v
+        | None -> failwith "partial_eval: known jit input")
+      known_tracers
+  in
+  let known_results = Core.bind (Xla_call split.js_known) known_inputs in
+  let plan = split.js_plan and pvals_out = split.js_pvals_out in
+  let const_binders = split.js_const_binders in
+  let n_known_outs =
+    List.length (List.filter (fun f -> f = None) split.js_in_fwd)
+  in
+  let known_kept, residual_vals =
+    match Util.split_list known_results [ n_known_outs ] with
+    | [ a; b ] -> (a, b)
+    | _ -> failwith "partial_eval: jit outputs"
+  in
+  let known_out_vals =
+    let rest = ref known_kept in
+    List.map
+      (function
+        | Some i -> List.nth known_inputs i
+        | None -> (
+            match !rest with
+            | v :: tl ->
+                rest := tl;
+                v
+            | [] -> failwith "partial_eval: jit known outputs"))
+      split.js_in_fwd
+  in
+  let residual_rest = ref residual_vals in
+  let kept =
+    List.concat
+      (List.map2
+         (fun (_ : var) entry ->
+           match entry with
+           | `Literal _ -> []
+           | `Input i -> [ List.nth known_inputs i ]
+           | `Output -> (
+               match !residual_rest with
+               | r :: tl ->
+                   residual_rest := tl;
+                   [ r ]
+               | [] -> failwith "partial_eval: jit residual arity"))
+         const_binders plan)
+  in
+  let unknown_closed = split.js_unknown in
   let residual_tracers =
-    List.map (fun (_, r) -> as_tracer (Core.full_raise trace r)) kept
+    List.map (fun r -> as_tracer (Core.full_raise trace r)) kept
   in
   let unknown_results =
-    record_unknown trace (Xla_call unknown_closed)
-      (unknown_tracers @ residual_tracers)
+    if List.exists is_unknown pvals_out then
+      record_unknown trace (Xla_call unknown_closed)
+        (unknown_tracers @ residual_tracers)
+    else []
   in
   let k = ref known_out_vals and u = ref unknown_results in
   List.map

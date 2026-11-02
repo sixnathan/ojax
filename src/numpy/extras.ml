@@ -413,13 +413,13 @@ let leading_slice v start stop =
     [ v ]
 
 let at_leading_slice_set x start y =
+  let index =
+    L.broadcast_in_dim
+      (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
+      [| 1 |] [||]
+  in
   if size_of y = 0 then x
   else
-    let index =
-      L.broadcast_in_dim
-        (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
-        [| 1 |] [||]
-    in
     let r = rank x in
     L.scatter x index y
       {
@@ -547,14 +547,12 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
   let axis_size = (shape arr).(ax) in
   let inverse =
     if flags.want_inverse && aux_empty then begin
-      let inv = L.full [| axis_size |] 0.0 idt in
-      if reshape_inverse then NL.reshape inv (shape a) else inv
+      L.full [| axis_size |] 0.0 idt
     end
     else if flags.want_inverse then begin
       let imask = U.subtract (R.cumsum mask) (Jnp_util.py_int 1) in
       let zeros = L.full (shape mask) 0.0 idt in
-      let inv = at_set zeros [ perm ] imask in
-      if reshape_inverse then NL.reshape inv (shape a) else inv
+      at_set zeros [ perm ] imask
     end
     else empty
   in
@@ -570,6 +568,10 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
       NL.diff (at_leading_slice_set idx 1 stops)
     end
     else empty
+  in
+  let inverse =
+    if flags.want_inverse && reshape_inverse then NL.reshape inverse (shape a)
+    else inverse
   in
   ({ values; indices; inverse; counts }, fun () -> R.sum mask)
 
@@ -1135,14 +1137,16 @@ let bincount ?weights ?(minlength = 0) ?length x =
       else bincount_length n w (flat x)
 
 let plain_slice v start stop =
-  Core.bind1
-    (Slice
-       {
-         start_indices = [| start |];
-         limit_indices = [| stop |];
-         strides = None;
-       })
-    [ v ]
+  if start = 0 && stop = (shape v).(0) then v
+  else
+    Core.bind1
+      (Slice
+         {
+           start_indices = [| start |];
+           limit_indices = [| stop |];
+           strides = None;
+         })
+      [ v ]
 
 let histogram_bin_edges ?(bins = 10) ?range ?weights:_ a =
   let a = as_inexact a in
@@ -2675,10 +2679,10 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
                 let r = Array.length su in
                 let last = su.(r - 1) in
                 if c > last then
-                  L.pad unpacked
-                    (L.full [||] 0.0 Dtype.Uint8)
+                  NL.pad unpacked
                     (Array.init r (fun d ->
-                         if d = r - 1 then (0, c - last, 0) else (0, 0, 0)))
+                         if d = r - 1 then (0, c - last) else (0, 0)))
+                    0.0
                 else
                   let keep = if c >= 0 then c else max (last + c) 0 in
                   let hi = Array.copy su in

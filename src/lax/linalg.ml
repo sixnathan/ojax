@@ -861,6 +861,11 @@ let svd_aval full_matrices compute_uv = function
 let tridiagonal_aval = function
   | [ a ] ->
       let n = a.shape.(0) in
+      if n <> a.shape.(1) || a.shape.(1) = 0 then
+        Py_exn.value_error
+          (Printf.sprintf
+             "The input to tridiagonal must be a square matrix. Got shape %s."
+             (Utils.py_tuple a.shape));
       let rdt = real_basetype a.dtype in
       [
         a;

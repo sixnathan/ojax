@@ -4588,8 +4588,6 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
       let n = a.shape.(rank - 1) in
-      if n < 2 then
-        failwith "Stablehlo.Emit: a small tridiagonal runs on the host";
       let batch = Array.sub a.shape 0 (rank - 2) in
       let real_dt =
         match a.dtype with

@@ -33,12 +33,22 @@ let pdf ?loc ?scale x a b =
   let loc, scale = defaults loc scale in
   L.exp (logpdf ~loc ~scale x a b)
 
+let promote5_betainc x a b loc scale =
+  match promote_complex [ x; a; b; loc; scale ] with
+  | [ x; a; b; loc; scale ] ->
+      (match dtype x with
+      | Dtype.Complex64 | Dtype.Complex128 ->
+          Py_exn.value_error "betainc does not support complex-valued inputs."
+      | _ -> ());
+      (x, a, b, loc, scale)
+  | _ -> assert false
+
 let unit_clamp x loc scale =
   L.clamp (sc x 0.0) (L.div (L.sub x loc) scale) (sc x 1.0)
 
 let cdf ?loc ?scale x a b =
   let loc, scale = defaults loc scale in
-  let x, a, b, loc, scale = promote5 x a b loc scale in
+  let x, a, b, loc, scale = promote5_betainc x a b loc scale in
   SP.betainc a b (unit_clamp x loc scale)
 
 let logcdf ?loc ?scale x a b =
@@ -47,7 +57,7 @@ let logcdf ?loc ?scale x a b =
 
 let sf ?loc ?scale x a b =
   let loc, scale = defaults loc scale in
-  let x, a, b, loc, scale = promote5 x a b loc scale in
+  let x, a, b, loc, scale = promote5_betainc x a b loc scale in
   SP.betainc b a (UF.subtract (sc x 1.0) (unit_clamp x loc scale))
 
 let logsf ?loc ?scale x a b =

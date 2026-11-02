@@ -933,6 +933,8 @@ let unravel_index indices dims =
       where_ oob_pos smax (where_ oob_neg zero out.(i)))
 
 let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
+  if is_complex_dtype (dtype p) then
+    Py_exn.value_error "jnp.unwrap does not support complex inputs.";
   let nd = ndim p in
   let axis = canonicalize_axis axis nd in
   let dt =
@@ -1730,6 +1732,13 @@ let cross ?axisa ?axisb ?axisc ?axis p0 p1 =
     [ p0; p1 ]
 
 let diag_indices ?(ndim = 2) n =
+  if n < 0 then
+    Py_exn.value_error
+      (Printf.sprintf "n argument to diag_indices must be nonnegative, got %d" n);
+  if ndim < 0 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "ndim argument to diag_indices must be nonnegative, got %d" ndim);
   let dt = Dtypes.default_int_dtype () in
   let one = bind1 (T.Iota { dtype = dt; shape = [| n |]; dimension = 0 }) [] in
   List.init ndim (fun _ -> one)

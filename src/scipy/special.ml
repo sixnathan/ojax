@@ -1739,6 +1739,7 @@ let reject_bool x =
     raise (Py_exn.Type_error "sub does not accept dtype bool.")
 
 let softmax ?axis x =
+  Option.iter (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x))) axis;
   reject_bool x;
   match axis with
   | Some ax -> NN.softmax ~axis:ax x
@@ -1747,6 +1748,7 @@ let softmax ?axis x =
       NL.reshape (NN.softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
 
 let log_softmax ?axis x =
+  Option.iter (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x))) axis;
   reject_bool x;
   match axis with
   | Some ax -> NN.log_softmax ~axis:ax x

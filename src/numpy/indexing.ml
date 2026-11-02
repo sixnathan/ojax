@@ -15,7 +15,7 @@ let canonicalize_axis ax n =
   let a = if ax < 0 then ax + n else ax in
   if a < 0 || a >= n then
     invalid_arg
-      (Printf.sprintf "axis %d out of bounds for array of ndim %d" ax n);
+      (Printf.sprintf "axis %d is out of bounds for array of dimension %d" ax n);
   a
 
 let full dt sh x = Core.splat dt sh x
@@ -65,51 +65,67 @@ let take ?axis ?mode ?fill_value ?(unique_indices = false)
     | Some m -> invalid_arg ("take: unsupported mode " ^ m)
   in
   let index_dims = Array.length ish in
-  let slice_sizes = Array.copy ash in
-  slice_sizes.(axis_idx) <- 1;
-  let offset_dims =
-    Array.of_list
-      (List.init axis_idx (fun i -> i)
-      @ List.init (rank - 1 - axis_idx) (fun i -> axis_idx + index_dims + i))
-  in
-  let dnums =
-    {
-      T.offset_dims;
-      collapsed_slice_dims = [| axis_idx |];
-      start_index_map = [| axis_idx |];
-      g_operand_batching_dims = [||];
-      g_start_indices_batching_dims = [||];
-      g_sorted_unique = false;
-    }
-  in
-  let gather_indices =
-    bind1
-      (T.Broadcast_in_dim
-         {
-           shape = Array.append ish [| 1 |];
-           dims = Array.init index_dims Fun.id;
-         })
-      [ indices ]
-  in
-  let flag prim =
-    if unique_indices || indices_are_sorted then
-      Np_ints.mark_gather_flags ~sorted:indices_are_sorted
-        ~unique:unique_indices prim
-    else prim
-  in
-  match mode with
-  | None | Some "fill" ->
-      Lax.Slicing.gather_fill ~flag ?fill_value a gather_indices dnums
-        slice_sizes
-  | Some "clip" ->
+  let indices_size = Array.fold_left ( * ) 1 ish in
+  if axis_size = 0 && indices_size <> 0 then
+    raise
+      (Errors.Jax_index_error
+         "Cannot do a non-empty jnp.take() from an empty axis.");
+  if axis_size = 0 then a
+  else if indices_size = 0 then
+    full (dtype a)
+      (Array.concat
+         [
+           Array.sub ash 0 axis_idx;
+           ish;
+           Array.sub ash (axis_idx + 1) (rank - axis_idx - 1);
+         ])
+      0.0
+  else
+    let slice_sizes = Array.copy ash in
+    slice_sizes.(axis_idx) <- 1;
+    let offset_dims =
+      Array.of_list
+        (List.init axis_idx (fun i -> i)
+        @ List.init (rank - 1 - axis_idx) (fun i -> axis_idx + index_dims + i))
+    in
+    let dnums =
+      {
+        T.offset_dims;
+        collapsed_slice_dims = [| axis_idx |];
+        start_index_map = [| axis_idx |];
+        g_operand_batching_dims = [||];
+        g_start_indices_batching_dims = [||];
+        g_sorted_unique = false;
+      }
+    in
+    let gather_indices =
       bind1
-        (Np_ints.mark_gather_clip ~sorted:false
-           (flag (T.Gather { dimension_numbers = dnums; slice_sizes })))
-        [ a; gather_indices ]
-  | _ ->
-      bind1
-        (flag (T.Gather { dimension_numbers = dnums; slice_sizes }))
-        [ a; gather_indices ]
+        (T.Broadcast_in_dim
+           {
+             shape = Array.append ish [| 1 |];
+             dims = Array.init index_dims Fun.id;
+           })
+        [ indices ]
+    in
+    let flag prim =
+      if unique_indices || indices_are_sorted then
+        Np_ints.mark_gather_flags ~sorted:indices_are_sorted
+          ~unique:unique_indices prim
+      else prim
+    in
+    match mode with
+    | None | Some "fill" ->
+        Lax.Slicing.gather_fill ~flag ?fill_value a gather_indices dnums
+          slice_sizes
+    | Some "clip" ->
+        bind1
+          (Np_ints.mark_gather_clip ~sorted:false
+             (flag (T.Gather { dimension_numbers = dnums; slice_sizes })))
+          [ a; gather_indices ]
+    | _ ->
+        bind1
+          (flag (T.Gather { dimension_numbers = dnums; slice_sizes }))
+          [ a; gather_indices ]
 
 let take_along_axis_body ~axis ?mode ?fill_value ?wrap_negative_indices a
     indices =
@@ -411,15 +427,17 @@ let select_negative i n =
   let shifted = bind1 T.Add [ i; weak_literal i n ] in
   bind1 T.Select_n [ negative; i; shifted ]
 
-let check_scalar_index_axis sh axis =
-  if sh.(axis) = 0 then
-    raise
-      (Errors.jax_index_error
-         (Printf.sprintf "index is out of bounds for axis %d with size 0" axis))
+let check_nonempty_axes sh count =
+  for axis = 0 to count - 1 do
+    if sh.(axis) = 0 then
+      raise
+        (Errors.Jax_index_error
+           (Printf.sprintf "index is out of bounds for axis %d with size 0" axis))
+  done
 
 let dynamic_at x i =
   let sh = shape x in
-  check_scalar_index_axis sh 0;
+  check_nonempty_axes sh 1;
   let negative = bind1 T.Lt [ i; weak_literal i 0 ] in
   let shifted = bind1 T.Add [ strong_index i; weak_literal i sh.(0) ] in
   let start = bind1 T.Select_n [ negative; i; shifted ] in
@@ -434,8 +452,7 @@ let dynamic_at x i =
 
 let dynamic_at2 x i j =
   let sh = shape x in
-  check_scalar_index_axis sh 0;
-  check_scalar_index_axis sh 1;
+  check_nonempty_axes sh 2;
   let dt = if Array.exists (fun d -> d > 2147483647) sh then D.I64 else D.I32 in
   let to_dt v =
     if is_weak v || dtype v <> dt then bind1 (T.Convert_element_type dt) [ v ]
@@ -452,6 +469,7 @@ let dynamic_at2 x i j =
 
 let set_at2 x i j value =
   let sh = shape x in
+  check_nonempty_axes sh 2;
   let wi = select_negative i sh.(0) in
   let wj = select_negative j sh.(1) in
   let as_i32 v =

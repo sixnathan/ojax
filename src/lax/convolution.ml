@@ -36,6 +36,7 @@ let conv_impl (dn : conv_dims) window_strides padding lhs_dilation rhs_dilation
     feature_group_count batch_group_count lhs rhs =
   let lshape = Ndarray.shape lhs in
   let rshape = Ndarray.shape rhs in
+  Utils.check_conv_window dn rshape;
   let ndim = Array.length lshape in
   let ns = ndim - 2 in
   let lhs_can = take lshape dn.lhs_spec in

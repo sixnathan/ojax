@@ -1,6 +1,11 @@
 val slice_shape :
   int array -> int array -> int array option -> int array -> int array
 
+val check_dynamic_slice : int array -> int array -> int array list -> unit
+
+val check_dynamic_update_slice :
+  int array -> int array -> int array list -> unit
+
 val slice_impl :
   int array -> int array -> int array option -> Ndarray.t -> Ndarray.t
 
@@ -34,6 +39,8 @@ val gather_fill :
 
 val clamp_scatter_indices :
   Types.value -> Types.value -> Types.value -> Types.scatter_dims -> Types.value
+
+val unclip_scatter : Types.primitive -> Types.primitive
 
 val gather_fill_lowered :
   Types.primitive -> Types.value -> Types.value -> Types.value

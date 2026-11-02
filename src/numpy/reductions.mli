@@ -90,6 +90,7 @@ val std :
   ?axis:int array ->
   ?keepdims:bool ->
   ?ddof:int ->
+  ?ddof_value:Types.value ->
   ?where:Types.value ->
   ?mean:Types.value ->
   ?correction:float ->
@@ -162,6 +163,7 @@ val nanvar :
   ?axis:int array ->
   ?keepdims:bool ->
   ?ddof:int ->
+  ?ddof_value:Types.value ->
   ?where:Types.value ->
   ?mean:Types.value ->
   Types.value ->
@@ -172,6 +174,7 @@ val nanstd :
   ?axis:int array ->
   ?keepdims:bool ->
   ?ddof:int ->
+  ?ddof_value:Types.value ->
   ?where:Types.value ->
   ?mean:Types.value ->
   Types.value ->

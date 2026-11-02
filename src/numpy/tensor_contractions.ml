@@ -43,8 +43,15 @@ let matmul ?precision ?preferred a b =
       let pdt = pref preferred [ a; b ] in
       let a = astype a pdt and b = astype b pdt in
       let na = ndim a and nb = ndim b in
-      if na < 1 || nb < 1 then
-        invalid_arg "matmul: inputs must have ndim at least 1";
+      List.iteri
+        (fun i n ->
+          if n < 1 then
+            invalid_arg
+              (Printf.sprintf
+                 "matmul input operand %d must have ndim at least 1, but it \
+                  has ndim %d"
+                 i n))
+        [ na; nb ];
       let a_is_mat = na > 1 and b_is_mat = nb > 1 in
       let batch_of sh is_mat =
         if is_mat then Array.to_list (Array.sub sh 0 (Array.length sh - 2))

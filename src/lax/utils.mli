@@ -1,6 +1,13 @@
 open Types
 
 val prod : int array -> int
+val check_rev : int array -> int -> unit
+val check_conv_window : conv_dims -> int array -> unit
+val py_tuple : int array -> string
+
+val check_shapelike :
+  ?non_zero_shape:bool -> string -> string -> int array -> unit
+
 val strides : int array -> int array
 val decode : int -> int array -> int array
 val free_axes : int -> int array -> int array -> int array

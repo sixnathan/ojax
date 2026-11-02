@@ -46,4 +46,5 @@ val lapack_eig :
   value list ->
   value list
 
+val cuda_eig : real:bool -> compute_right:bool -> value list -> value list
 val lapack_schur : compute_vectors:bool -> value list -> value list

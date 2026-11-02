@@ -610,16 +610,18 @@ let isneginf x =
   | _ -> array_full D.Bool (shape x) 0.0
 
 let heaviside x1 x2 =
-  let a, b =
-    p2
-      (Config.with_value Config.numpy_rank_promotion "allow" (fun () ->
-           promote_inexact [ x1; x2 ]))
-  in
-  let dt = dtype a and sh = shape a in
-  let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
-  let inner2 = where (bind1 T.Ne [ a; a ]) a b in
-  let inner1 = where (bind1 T.Gt [ a; zero ]) one inner2 in
-  where (bind1 T.Lt [ a; zero ]) zero inner1
+  let dt, is_weak = result_flags [ x1; x2 ] in
+  let dt = to_inexact_dtype dt in
+  let a = C.convert_like ~weak:is_weak x1 dt in
+  let b = C.convert_like ~weak:is_weak x2 dt in
+  let zero = const_full (dtype a) [||] 0.0 in
+  let lt = bind1 T.Lt [ a; zero ] in
+  let gt = bind1 T.Gt [ a; zero ] in
+  let one = const_full (dtype a) [||] 1.0 in
+  let isnan = bind1 T.Ne [ a; a ] in
+  let inner2 = where isnan a b in
+  let inner1 = where gt one inner2 in
+  where lt zero inner1
 
 let hypot x1 x2 =
   let a0, b0 = p2 (promote_inexact ~name:"hypot" [ x1; x2 ]) in

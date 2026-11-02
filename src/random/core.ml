@@ -1590,7 +1590,7 @@ let categorical_full ?(axis = -1) ?shape ?(replace = true) ?mode k logits =
   if not (Dtypes.issubdtype dt `Floating) then
     Py_exn.value_error
       (Printf.sprintf "dtype argument to `gumbel` must be a float dtype, got %s"
-         (Dtype.short_name dt));
+         (Dtype.numpy_name dt));
   if replace then begin
     let axis = if axis >= 0 then axis - rank else axis in
     let tail = Array.to_list (Array.sub shape (ns - nb) nb) in

@@ -317,6 +317,8 @@ let contract ?precision ?preferred optimize inputs operands result =
 
 let einsum ?(optimize = Einsum_paths.Auto) ?precision ?preferred_element_type
     subscripts operands =
+  ignore
+    (Einsum_paths.contract_path ~optimize subscripts (List.map shape operands));
   let s = String.concat "" (String.split_on_char ' ' subscripts) in
   let input_part, output_opt = split_arrow s in
   let inputs = String.split_on_char ',' input_part in

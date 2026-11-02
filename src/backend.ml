@@ -305,7 +305,8 @@ module Xla = struct
     exec
 
   let compile cj =
-    compile_text (Stablehlo.Emit.emit_jax_text ~name:"_lambda" cj)
+    compile_text
+      (Stablehlo.Emit.emit_jax_text ~with_tokens:false ~name:"_lambda" cj)
 
   let execute exec bufs =
     Array.to_list (Pjrt.Executable.execute exec (Array.of_list bufs))

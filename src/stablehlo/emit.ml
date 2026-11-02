@@ -2876,22 +2876,31 @@ let dense_i64_matrix rows =
     n m
 
 let callback_seen = ref false
-let ordered_tokens : (Buffer.t * string) list ref = ref []
+let ordered_tokens : ((Buffer.t * bool) * string) list ref = ref []
 
-let is_ordered_callback id =
+let ordered_effect id =
   match Core.custom_rule id with
-  | Core.Callback_rule
-      {
-        cb_effect =
-          ( Core.Callback_io { ordered = true }
-          | Core.Callback_debug { ordered = true } );
-        _;
-      } ->
-      true
-  | _ -> false
+  | Core.Callback_rule { cb_effect = Core.Callback_io { ordered = true }; _ } ->
+      Some true
+  | Core.Callback_rule { cb_effect = Core.Callback_debug { ordered = true }; _ }
+    ->
+      Some false
+  | _ -> None
 
-let ordered_token ctx =
-  match List.assq_opt ctx.buf !ordered_tokens with
+let is_ordered_callback id = ordered_effect id <> None
+
+let find_token buf io =
+  List.find_map
+    (fun ((b, k), t) -> if b == buf && k = io then Some t else None)
+    !ordered_tokens
+
+let set_token buf io t =
+  ordered_tokens :=
+    ((buf, io), t)
+    :: List.filter (fun ((b, k), _) -> not (b == buf && k = io)) !ordered_tokens
+
+let ordered_token ctx io =
+  match find_token ctx.buf io with
   | Some t -> t
   | None ->
       let t = name (fresh ctx) in
@@ -2899,12 +2908,24 @@ let ordered_token ctx =
         (Printf.sprintf "    %s = stablehlo.after_all : !stablehlo.token\n" t);
       t
 
+let top_level_ordered_effects (jx : jaxpr) =
+  List.fold_left
+    (fun acc (e : eqn) ->
+      match e.prim with
+      | Custom_jvp_call id | Custom_vjp_call id -> (
+          match ordered_effect id with
+          | Some io when not (List.mem io acc) -> acc @ [ io ]
+          | _ -> acc)
+      | _ -> acc)
+    [] jx.eqns
+
 let default_layout rank = Array.init rank (fun i -> rank - 1 - i)
 
 let emit_ordered_callback ctx (eqn : eqn) in_ids id =
   let in_avals = List.map atom_aval eqn.inputs in
   let out_avals = List.map (fun (v : var) -> v.vaval) eqn.outs in
-  let token = ordered_token ctx in
+  let io = ordered_effect id = Some true in
+  let token = ordered_token ctx io in
   let token_layout = "dense<> : tensor<0xindex>" in
   let layouts avals =
     String.concat ", "
@@ -2923,12 +2944,22 @@ let emit_ordered_callback ctx (eqn : eqn) in_ids id =
     | [] -> "!stablehlo.token"
     | avals -> "(" ^ types avals ^ ")"
   in
+  let sharding =
+    if io then
+      Printf.sprintf ", sdy.sharding = #sdy.sharding_per_value<[%s]>"
+        (String.concat ", "
+           (List.init
+              (1 + List.length out_avals)
+              (fun _ -> "<@maximal_mesh_0, []>")))
+    else ""
+  in
   let attrs =
     Printf.sprintf
       "{backend_config = \"\", has_side_effect = true, mhlo.backend_config = \
-       {index = %d : ui64}, operand_layouts = [%s], result_layouts = [%s]} : \
+       {index = %d : ui64}, operand_layouts = [%s], result_layouts = [%s]%s} : \
        (%s) -> %s\n"
-      id (layouts in_avals) (layouts out_avals) (types in_avals) results
+      id (layouts in_avals) (layouts out_avals) sharding (types in_avals)
+      results
   in
   let args = String.concat ", " (token :: List.map name in_ids) in
   let group = fresh ctx in
@@ -2956,14 +2987,12 @@ let emit_ordered_callback ctx (eqn : eqn) in_ids id =
           outs;
         Printf.sprintf "%%%d#0" group
   in
-  ordered_tokens :=
-    (ctx.buf, next_token)
-    :: List.filter (fun (b, _) -> b != ctx.buf) !ordered_tokens
+  set_token ctx.buf io next_token
 
 let emit_host_callback ctx (eqn : eqn) in_ids id =
   if not (lapack_ffi ()) then
     failwith "Stablehlo.Emit: callbacks run on the host interpreter";
-  callback_seen := true;
+  if ordered_effect id <> Some false then callback_seen := true;
   if is_ordered_callback id then emit_ordered_callback ctx eqn in_ids id
   else
     let in_avals = List.map atom_aval eqn.inputs in
@@ -5264,6 +5293,7 @@ let qualify_nested_calls ~depth text =
   |> String.concat "\n"
 
 let emission_depth = ref 0
+let main_tokens = ref false
 let emitting () = !emission_depth > 0
 
 let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
@@ -5310,14 +5340,28 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
     | Some spec -> Printf.sprintf " {sdy.sharding = %s}" (sdy_sharding spec)
     | None -> ""
   in
+  let main_effects =
+    if !main_tokens && partition = None && !emission_depth = 1 then
+      top_level_ordered_effects jx
+    else []
+  in
+  let token_params =
+    List.map
+      (fun io ->
+        let t = name (fresh ctx) in
+        set_token ctx.buf io t;
+        Printf.sprintf "%s: !stablehlo.token {jax.token = true}" t)
+      main_effects
+  in
   let params =
-    List.map2
-      (fun (v : var) spec ->
-        Printf.sprintf "%s: %s%s"
-          ("%" ^ string_of_int (bind_var ctx v))
-          (Ir.tensor_type_of_aval v.vaval)
-          (attribute spec))
-      arg_binders in_specs
+    token_params
+    @ List.map2
+        (fun (v : var) spec ->
+          Printf.sprintf "%s: %s%s"
+            ("%" ^ string_of_int (bind_var ctx v))
+            (Ir.tensor_type_of_aval v.vaval)
+            (attribute spec))
+        arg_binders in_specs
   in
   List.iter2
     (fun (v : var) nd ->
@@ -5367,8 +5411,13 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
         | _ -> ssa_of_atom ctx atom)
       jx.outs
   in
+  let out_names =
+    List.filter_map (fun io -> find_token ctx.buf io) main_effects @ out_names
+  in
+  let token_types = List.map (fun _ -> "!stablehlo.token") main_effects in
   let out_types =
-    List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) jx.outs
+    token_types
+    @ List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) jx.outs
   in
   if out_names = [] then Buffer.add_string ctx.buf "    return\n"
   else
@@ -5380,7 +5429,9 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
     match partition with
     | Some { pt_out; _ } when pt_out <> [] ->
         List.map2 (fun ty spec -> ty ^ attribute spec) out_types pt_out
-    | _ -> out_types
+    | _ ->
+        List.map (fun ty -> ty ^ " {jax.token = true}") token_types
+        @ List.filteri (fun i _ -> i >= List.length token_types) out_types
   in
   Printf.sprintf
     "module {\n%s%s  func.func public @main(%s) -> (%s) {\n%s  }\n%s}\n"
@@ -5466,10 +5517,16 @@ let usable_donations ?(keep_unused = false) ~donated cj =
         kept);
   (Array.to_list usable, kept)
 
-let emit_jax_text ?keep_unused ?donated ?result_names ~name cj =
-  Mlir_names.print_empty_dynamic_slices
-    (Mlir_names.renumber_callbacks
-       (lower ?keep_unused ?donated ?result_names ~name cj).text)
+let emit_jax_text ?(with_tokens = true) ?keep_unused ?donated ?result_names
+    ~name cj =
+  let saved = !main_tokens in
+  main_tokens := with_tokens;
+  Fun.protect
+    ~finally:(fun () -> main_tokens := saved)
+    (fun () ->
+      Mlir_names.print_empty_dynamic_slices
+        (Mlir_names.renumber_callbacks
+           (lower ?keep_unused ?donated ?result_names ~name cj).text))
 
 let emit_export_text ?(platforms = []) ?result_names ~name
     ~uses_shape_polymorphism cj =

@@ -12,6 +12,12 @@ module I = Ojax.Numpy.Indexing
 module J = Ojax.Jax_top
 module SP = Ojax.Ops.Special
 
+let host_array nd =
+  match !Ojax.Core.dynamic_trace with
+  | Some trace when trace.T.kind = T.KJaxpr ->
+      Ojax.Core.full_raise trace (T.Concrete nd)
+  | _ -> T.Concrete nd
+
 let pstr name p = U.to_string (U.member name p)
 let pbool name p = U.to_bool (U.member name p)
 
@@ -448,7 +454,7 @@ and run_options op p a b =
              | _ -> failwith "apicov: float list")
            (U.to_list (U.member name p)))
     in
-    T.Concrete (Nd.of_floats dt [| Array.length values |] values)
+    host_array (Nd.of_floats dt [| Array.length values |] values)
   in
   let int_list name =
     let dt = Ojax.Dtypes.default_int_dtype () in
@@ -458,7 +464,7 @@ and run_options op p a b =
            (fun v -> float_of_int (U.to_int v))
            (U.to_list (U.member name p)))
     in
-    T.Concrete (Nd.of_floats dt [| Array.length values |] values)
+    host_array (Nd.of_floats dt [| Array.length values |] values)
   in
   match op with
   | "ap_grad_argnums" ->

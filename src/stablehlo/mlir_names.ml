@@ -374,30 +374,35 @@ let add_result_info ?names line =
           String.sub line 0 at ^ ")" ^ String.sub line (stop + 1) (n - stop - 1)
         else
           let types = split_results body in
-          let many = List.length types > 1 in
+          let is_token ty = starts_with "!stablehlo.token" ty in
+          let tokens = List.length (List.filter is_token types) in
+          let many = List.length types - tokens > 1 in
           let annotated =
             List.mapi
               (fun i ty ->
-                let label =
-                  match names with
-                  | Some names when i < List.length names -> List.nth names i
-                  | _ ->
-                      if many then Printf.sprintf "result[%d]" i else "result"
-                in
-                let key = " {" in
-                let k = String.length ty and m = String.length key in
-                let rec brace j =
-                  if j + m > k then None
-                  else if String.sub ty j m = key then Some j
-                  else brace (j + 1)
-                in
-                match brace 0 with
-                | Some j ->
-                    Printf.sprintf "%s {jax.result_info = \"%s\", %s"
-                      (String.sub ty 0 j) label
-                      (String.sub ty (j + m) (k - j - m))
-                | None ->
-                    Printf.sprintf "%s {jax.result_info = \"%s\"}" ty label)
+                if is_token ty then ty
+                else
+                  let i = i - tokens in
+                  let label =
+                    match names with
+                    | Some names when i < List.length names -> List.nth names i
+                    | _ ->
+                        if many then Printf.sprintf "result[%d]" i else "result"
+                  in
+                  let key = " {" in
+                  let k = String.length ty and m = String.length key in
+                  let rec brace j =
+                    if j + m > k then None
+                    else if String.sub ty j m = key then Some j
+                    else brace (j + 1)
+                  in
+                  match brace 0 with
+                  | Some j ->
+                      Printf.sprintf "%s {jax.result_info = \"%s\", %s"
+                        (String.sub ty 0 j) label
+                        (String.sub ty (j + m) (k - j - m))
+                  | None ->
+                      Printf.sprintf "%s {jax.result_info = \"%s\"}" ty label)
               types
           in
           String.sub line 0 start
@@ -431,13 +436,25 @@ let add_arg_attributes attribute_of line =
         let body = String.sub line start (close_at - start) in
         if String.trim body = "" then line
         else
+          let all = split_results body in
+          let tokens =
+            List.length
+              (List.filter
+                 (fun a ->
+                   match find_from a "!stablehlo.token" 0 with
+                   | Some _ -> true
+                   | None -> false)
+                 all)
+          in
           let args =
             List.mapi
               (fun i arg ->
-                match attribute_of i with
-                | Some attr -> merge_attribute arg attr
-                | None -> arg)
-              (split_results body)
+                if i < tokens then arg
+                else
+                  match attribute_of (i - tokens) with
+                  | Some attr -> merge_attribute arg attr
+                  | None -> arg)
+              all
           in
           String.sub line 0 start ^ String.concat ", " args
           ^ String.sub line close_at (String.length line - close_at)

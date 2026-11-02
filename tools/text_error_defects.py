@@ -34,8 +34,39 @@ def without_locations(message):
     return FROM_LINE.sub("\n    from line <loc>", message)
 
 
+CALLBACK = re.compile(r"callback=_FlatCallback\(callback_func=<function (\S+) at 0x[0-9A-Fa-fX]+>, in_tree=PyTreeDef\(.*\)\)$")
+
+
+def callback_repr_only(jax_text, ojax_text):
+    a, b = jax_text.splitlines(), ojax_text.splitlines()
+    if len(a) != len(b):
+        return None
+    names = []
+    for x, y in zip(a, b):
+        if x == y:
+            continue
+        m = CALLBACK.search(x.strip())
+        if m is None or y.strip() != "callback=<host callback>" or x[: len(x) - len(x.lstrip())] != y[: len(y) - len(y.lstrip())]:
+            return None
+        names.append(m.group(1))
+    return names or None
+
+
 def classify(ref, ours):
     out = []
+    for key, r in sorted(ref.items()):
+        if key[0].split("/")[0] not in SETS:
+            continue
+        o = ours.get(key, {})
+        if "jaxpr" in r and "jaxpr" in o and r["jaxpr"] != o["jaxpr"]:
+            names = callback_repr_only(r["jaxpr"], o["jaxpr"])
+            if names:
+                proof = (
+                    "the only differing jaxpr line is the callback parameter, which JAX prints as the repr of a Python object: "
+                    + "_FlatCallback(callback_func=<function " + names[0] + " at 0x...>, in_tree=...), a Python function's qualified name in the generator "
+                    + "(tools/apicov_registry.py) and a CPython object address; ojax's callback is an OCaml closure, printed <host callback>"
+                )
+                out.append((key, "jaxpr", "defect", "c", proof))
     for key, r in sorted(ref.items()):
         if key[0].split("/")[0] not in SETS:
             continue

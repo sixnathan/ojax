@@ -3,6 +3,7 @@ exception Type_promotion_error of string
 val default_int_dtype : unit -> Dtype.t
 val default_float_dtype : unit -> Dtype.t
 val canonicalize_dtype : Dtype.t -> Dtype.t
+val check_and_canonicalize_user_dtype : ?fun_name:string -> Dtype.t -> Dtype.t
 val promote_types : Dtype.t -> Dtype.t -> Dtype.t
 val result_type : (Dtype.t * bool) list -> Dtype.t * bool
 

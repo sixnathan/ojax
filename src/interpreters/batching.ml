@@ -2300,8 +2300,7 @@ let match_axis_sum axis_size src dst v =
     | Some s, Some d -> moveaxis s d v
     | Some s, None -> b1 (Reduce_sum [| s |]) [ v ]
 
-let batched_vjp_rule id axis_size vals bdims ~primal ~fwd ~bwd ~fwd_perturbed
-    =
+let batched_vjp_rule id axis_size vals bdims ~primal ~fwd ~bwd ~fwd_perturbed =
   let avals = List.map Core.get_aval vals in
   let key = (id, axis_size, bdims, avals, Config.x64_enabled ()) in
   match Hashtbl.find_opt vjp_batch_cache key with
@@ -2367,9 +2366,12 @@ let batched_vjp_rule id axis_size vals bdims ~primal ~fwd ~bwd ~fwd_perturbed
             (fun c d -> if Ad_util.is_symbolic_zero c then None else d)
             cts out_dims
         in
-        let outs, d = subtrace (fun all ->
-            let r, c = split_at_n all (List.length res) in
-            bwd r c) (!res_dims @ in_dims) (res @ cts)
+        let outs, d =
+          subtrace
+            (fun all ->
+              let r, c = split_at_n all (List.length res) in
+              bwd r c)
+            (!res_dims @ in_dims) (res @ cts)
         in
         List.map2
           (fun (v, s) t -> match_axis_sum axis_size s t v)

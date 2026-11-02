@@ -20,6 +20,10 @@ val key_dtype_itemsize : key_dtype -> int
 val key_dtype_class : key_dtype -> Numpy.Lax_numpy.dtype_class
 val dtype_of_key : value -> key_dtype
 val key_shape : value -> int array
+val key_size : value -> int
+val key_ndim : value -> int
+val key_itemsize : value -> int
+val key_nbytes : value -> int
 val key_repr : value -> string
 val key_typeof : value -> string
 val key : ?impl:string -> ?dtype:string -> value -> value

@@ -87,6 +87,25 @@ let cases : (string * (unit -> outcome)) list =
           (match RC.key_shape (RC.split (key 0) 3) with
           | [| d |] -> Printf.sprintf "(%d,)" d
           | _ -> "?") );
+    ( "key_itemsize_fry",
+      fun () -> Text (string_of_int (RC.key_itemsize (key 0))) );
+    ( "key_itemsize_rbg",
+      fun () -> Text (string_of_int (RC.key_itemsize (key ~impl:"rbg" 0))) );
+    ( "key_nbytes_split3",
+      fun () -> Text (string_of_int (RC.key_nbytes (RC.split (key 0) 3))) );
+    ( "key_nbytes_urbg_split_2x2",
+      fun () ->
+        Text
+          (string_of_int
+             (RC.key_nbytes (split_shape (key ~impl:"unsafe_rbg" 0) [| 2; 2 |])))
+    );
+    ( "key_size_split_2x2",
+      fun () ->
+        Text (string_of_int (RC.key_size (split_shape (key 0) [| 2; 2 |]))) );
+    ( "key_ndim_split_2x2",
+      fun () ->
+        Text (string_of_int (RC.key_ndim (split_shape (key 0) [| 2; 2 |]))) );
+    ("key_ndim_scalar", fun () -> Text (string_of_int (RC.key_ndim (key 0))));
     ("typeof_key", fun () -> ktype (key 0));
     ("typeof_split3", fun () -> ktype (RC.split (key 0) 3));
     ("typeof_split_2x2", fun () -> ktype (split_shape (key 0) [| 2; 2 |]));

@@ -2036,6 +2036,11 @@ let key_shape k =
   let s = (C.get_aval k).shape in
   Array.sub s 0 (Array.length s - Array.length d.key_shape)
 
+let key_size k = prod (key_shape k)
+let key_ndim k = Array.length (key_shape k)
+let key_itemsize k = key_dtype_itemsize (dtype_of_key k)
+let key_nbytes k = key_itemsize k * key_size k
+
 let key_repr k =
   let d = dtype_of_key k in
   Printf.sprintf "Array(%s, dtype=%s) overlaying:\n%s"

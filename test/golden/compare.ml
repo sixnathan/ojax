@@ -323,4 +323,5 @@ let check_with_reference ~name ~compare ~atol ~rtol ~eager_suite
     ~(reference_actual : Npz.t) =
   record_exact name reference reference_actual;
   record_exact ~suite:eager_suite name expected actual;
-  check_tolerance ~name ~compare ~atol ~rtol ~expected ~actual
+  check_tolerance ~name ~compare ~atol ~rtol ~expected:reference
+    ~actual:reference_actual

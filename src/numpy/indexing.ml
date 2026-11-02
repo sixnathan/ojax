@@ -411,8 +411,15 @@ let select_negative i n =
   let shifted = bind1 T.Add [ i; weak_literal i n ] in
   bind1 T.Select_n [ negative; i; shifted ]
 
+let check_scalar_index_axis sh axis =
+  if sh.(axis) = 0 then
+    raise
+      (Errors.jax_index_error
+         (Printf.sprintf "index is out of bounds for axis %d with size 0" axis))
+
 let dynamic_at x i =
   let sh = shape x in
+  check_scalar_index_axis sh 0;
   let negative = bind1 T.Lt [ i; weak_literal i 0 ] in
   let shifted = bind1 T.Add [ strong_index i; weak_literal i sh.(0) ] in
   let start = bind1 T.Select_n [ negative; i; shifted ] in
@@ -427,6 +434,8 @@ let dynamic_at x i =
 
 let dynamic_at2 x i j =
   let sh = shape x in
+  check_scalar_index_axis sh 0;
+  check_scalar_index_axis sh 1;
   let dt = if Array.exists (fun d -> d > 2147483647) sh then D.I64 else D.I32 in
   let to_dt v =
     if is_weak v || dtype v <> dt then bind1 (T.Convert_element_type dt) [ v ]

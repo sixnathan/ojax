@@ -13,7 +13,7 @@ CASES = [
     "io_ordered", "io_ordered_two", "io_ordered_multi", "io_unordered",
     "dprint_ordered_two", "io_ordered_noout", "dprint_then_io",
     "io_then_dprint", "io_nested_jit", "io_nested_twice", "dprint_nested_jit",
-    "mixed_io_nested",
+    "mixed_io_nested", "io_cond", "dprint_cond", "io_cond_after",
 ]
 MODES = ["eager", "jit", "jaxpr", "lowered"]
 
@@ -143,6 +143,15 @@ def case_fn(jax, jnp, name):
         return (lambda a: (jax.jit(show)(a) + 1,)), (x,)
     if name == "mixed_io_nested":
         return (lambda a: (jax.jit(both)(a), io(a, True))), (x,)
+    if name == "io_cond":
+        return (lambda a: (lax.cond(a[0] < 1, inner, lambda v: v, a),)), (x,)
+    if name == "dprint_cond":
+        def yes(v):
+            jax.debug.print("yes {}", v, ordered=True)
+            return v
+        return (lambda a: (lax.cond(a[0] < 1, yes, lambda v: -v, a),)), (x,)
+    if name == "io_cond_after":
+        return (lambda a: (io(lax.cond(a[0] < 1, inner, lambda v: v * 3, a), True),)), (x,)
     raise KeyError(name)
 
 

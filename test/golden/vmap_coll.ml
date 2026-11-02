@@ -129,6 +129,18 @@ let nested name f v =
   | [ r ] -> r
   | _ -> failwith "vmap_coll: nested arity"
 
+let cond_lt1 v yes no =
+  let first = Ojax.Numpy.Getitem.take v [ Ojax.Numpy.Getitem.Int 0 ] in
+  match
+    Ojax.Lax_api.cond
+      (F.less first (Ojax.Core.py_scalar (int_dt ()) 1.0))
+      (function [ b ] -> [ yes b ] | _ -> failwith "vmap_coll: cond arity")
+      (function [ b ] -> [ no b ] | _ -> failwith "vmap_coll: cond arity")
+      [ v ]
+  with
+  | [ r ] -> r
+  | _ -> failwith "vmap_coll: cond arity"
+
 let case_fn name =
   let lam f args = ("_lambda", f, args) in
   match name with
@@ -313,6 +325,27 @@ let case_fn name =
           let v = one a in
           let r = nested "both" both v in
           tuple [ r; io true v ])
+        [ x () ]
+  | "io_cond" ->
+      lam (fun a -> tuple [ cond_lt1 (one a) (io true) (fun v -> v) ]) [ x () ]
+  | "dprint_cond" ->
+      lam
+        (fun a ->
+          let yes v =
+            Ojax.Debugging.print ~ordered:true "yes {}" [ v ];
+            v
+          in
+          tuple [ cond_lt1 (one a) yes F.negative ])
+        [ x () ]
+  | "io_cond_after" ->
+      lam
+        (fun a ->
+          tuple
+            [
+              io true
+                (cond_lt1 (one a) (io true) (fun v ->
+                     F.multiply v (Ojax.Core.py_scalar (int_dt ()) 3.0)));
+            ])
         [ x () ]
   | _ -> failwith ("vmap_coll: unknown case " ^ name)
 

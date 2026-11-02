@@ -2920,6 +2920,10 @@ let rec call_ordered_effects (jx : jaxpr) =
         | Custom_jvp_call id | Custom_vjp_call id -> (
             match ordered_effect id with Some io -> [ io ] | None -> [])
         | Xla_call c -> call_ordered_effects c.jaxpr
+        | Cond { branches; _ } ->
+            List.concat_map
+              (fun (b : closed_jaxpr) -> call_ordered_effects b.jaxpr)
+              branches
         | _ -> []
       in
       List.fold_left
@@ -3211,17 +3215,22 @@ let emit_axis_index ctx (eqn : eqn) mesh axis_name =
        (name size_c) size i32 (name div) (name as_int) (name stride_c) i32
        (name n) (name div) (name size_c) i32)
 
-let rec emit_region_returning ctx (jx : jaxpr) =
+let rec emit_region_returning ?(tokens = []) ctx (jx : jaxpr) =
   let s =
     capture ctx (fun () ->
+        List.iter (fun (io, t) -> set_token ctx.buf io t) tokens;
         List.iter
           (fun (e : eqn) ->
             let ids = List.map (id_of_atom ctx) e.inputs in
             emit_eqn ctx e ids)
           jx.eqns;
-        let outs = List.map (ssa_of_atom ctx) jx.outs in
+        let outs =
+          List.map (fun (io, _) -> ordered_token ctx io) tokens
+          @ List.map (ssa_of_atom ctx) jx.outs
+        in
         let otys =
-          List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) jx.outs
+          List.map (fun _ -> "!stablehlo.token") tokens
+          @ List.map (fun a -> Ir.tensor_type_of_aval (atom_aval a)) jx.outs
         in
         Buffer.add_string ctx.buf
           (Printf.sprintf "    stablehlo.return %s : %s\n"
@@ -3317,7 +3326,34 @@ and emit_cond ctx (eqn : eqn) in_ids ~platforms branches =
         (index, List.map (List.nth branches) !order)
   in
   let index_id, branches = branches_with_index in
-  let result = bind_results ctx eqn.outs in
+  let effects =
+    if !main_tokens then
+      List.sort_uniq compare
+        (List.concat_map
+           (fun (b : closed_jaxpr) -> call_ordered_effects b.jaxpr)
+           branches)
+    else []
+  in
+  let tokens = List.map (fun io -> (io, ordered_token ctx io)) effects in
+  let k = List.length tokens in
+  let result =
+    if k = 0 then bind_results ctx eqn.outs
+    else begin
+      let group = fresh ctx in
+      let total = k + List.length eqn.outs in
+      let at i =
+        if total = 1 then Printf.sprintf "%%%d" group
+        else Printf.sprintf "%%%d#%d" group i
+      in
+      List.iteri (fun i (io, _) -> set_token ctx.buf io (at i)) tokens;
+      List.iteri
+        (fun i (v : var) ->
+          Hashtbl.replace ctx.ids v.vid (alias_result (at (i + k))))
+        eqn.outs;
+      if total = 1 then Printf.sprintf "%%%d" group
+      else Printf.sprintf "%%%d:%d" group total
+    end
+  in
   Buffer.add_string ctx.buf
     (Printf.sprintf "    %s = \"stablehlo.case\"(%s) ({\n" result
        (name index_id));
@@ -3325,7 +3361,7 @@ and emit_cond ctx (eqn : eqn) in_ids ~platforms branches =
   let emit_branch (cj : closed_jaxpr) =
     reset_next ctx start;
     enter_region ctx cj operand_ids;
-    emit_region_returning ctx cj.jaxpr
+    emit_region_returning ~tokens ctx cj.jaxpr
   in
   List.iteri
     (fun i b ->
@@ -3333,7 +3369,8 @@ and emit_cond ctx (eqn : eqn) in_ids ~platforms branches =
       emit_branch b)
     branches;
   let out_types =
-    List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
+    List.map (fun _ -> "!stablehlo.token") tokens
+    @ List.map (fun (v : var) -> Ir.tensor_type_of_aval v.vaval) eqn.outs
   in
   let out_type =
     match out_types with [ t ] -> t | ts -> "(" ^ String.concat ", " ts ^ ")"

@@ -245,6 +245,44 @@ def array_cases():
     }
 
 
+def traced_cases():
+    f32 = jnp.zeros((2, 3), jnp.float32)
+    return {
+        "jit_view_f32_uint8": (lambda x: x.view(jnp.uint8), [f32]),
+        "jit_view_f32_int32": (lambda x: x.view(jnp.int32), [f32]),
+        "jit_view_f32_float16": (lambda x: x.view(jnp.float16), [f32]),
+        "jit_view_int8_int32": (lambda x: x.view(jnp.int32), [jnp.zeros((2, 4), jnp.int8)]),
+        "jit_view_bool_int16": (lambda x: x.view(jnp.int16), [jnp.zeros((4,), jnp.bool_)]),
+        "jit_view_f32_bool": (lambda x: x.view(jnp.bool_), [jnp.zeros((2,), jnp.float32)]),
+        "jit_view_f32_c64": (lambda x: x.view(jnp.complex64), [jnp.zeros((4,), jnp.float32)]),
+        "jit_view_scalar": (lambda x: x.view(jnp.int32), [jnp.zeros((), jnp.float32)]),
+        "jit_byteswap_f32": (lambda x: x.byteswap(), [f32]),
+        "jit_byteswap_uint16": (lambda x: x.byteswap(), [jnp.zeros((4,), jnp.uint16)]),
+        "jit_byteswap_int8": (lambda x: x.byteswap(), [jnp.zeros((3,), jnp.int8)]),
+        "jit_byteswap_c64": (lambda x: x.byteswap(), [jnp.zeros((2,), jnp.complex64)]),
+        "jit_bitcast_f32_uint8": (lambda x: lax.bitcast_convert_type(x, jnp.uint8), [f32]),
+        "jit_bitcast_uint8_f32": (lambda x: lax.bitcast_convert_type(x, jnp.float32), [jnp.zeros((3, 4), jnp.uint8)]),
+        "jit_bitcast_err": (lambda x: lax.bitcast_convert_type(x, jnp.float32), [jnp.zeros((3, 2), jnp.uint8)]),
+    }
+
+
+def run_traced(x64):
+    rows = []
+    for name, (fn, args) in traced_cases().items():
+        def f(*a):
+            return fn(*a)
+
+        row = {"id": name, "x64": x64, "args": [[str(a.dtype), list(a.shape)] for a in args]}
+        try:
+            row["jaxpr"] = str(jax.make_jaxpr(f)(*args))
+            row["hlo"] = jax.jit(f).lower(*args).as_text()
+        except Exception as e:
+            row["error_class"] = type(e).__name__
+            row["message"] = str(e)
+        rows.append(row)
+    return rows
+
+
 def run(x64):
     jax.config.update("jax_enable_x64", x64)
     rows = []
@@ -269,7 +307,7 @@ def run(x64):
             row["error_class"] = type(e).__name__
             row["message"] = str(e)
         rows.append(row)
-    return rows
+    return rows + run_traced(x64)
 
 
 def main():

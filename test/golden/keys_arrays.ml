@@ -466,6 +466,38 @@ let cases : (string * (unit -> outcome)) list =
     ("key_data_split3", fun () -> Value (RC.key_data (RC.split (key 0) 3)));
   ]
 
+let traced : (string * (Ojax.Types.value -> Ojax.Types.value)) list =
+  [
+    ("jit_view_f32_uint8", fun x -> AM.view x D.Uint8);
+    ("jit_view_f32_int32", fun x -> AM.view x D.I32);
+    ("jit_view_f32_float16", fun x -> AM.view x D.F16);
+    ("jit_view_int8_int32", fun x -> AM.view x D.I32);
+    ("jit_view_bool_int16", fun x -> AM.view x D.I16);
+    ("jit_view_f32_bool", fun x -> AM.view x D.Bool);
+    ("jit_view_f32_c64", fun x -> AM.view x D.Complex64);
+    ("jit_view_scalar", fun x -> AM.view x D.I32);
+    ("jit_byteswap_f32", AM.byteswap);
+    ("jit_byteswap_uint16", AM.byteswap);
+    ("jit_byteswap_int8", AM.byteswap);
+    ("jit_byteswap_c64", AM.byteswap);
+    ("jit_bitcast_f32_uint8", fun x -> L.bitcast_convert_type x D.Uint8);
+    ("jit_bitcast_uint8_f32", fun x -> L.bitcast_convert_type x D.F32);
+    ("jit_bitcast_err", fun x -> L.bitcast_convert_type x D.F32);
+  ]
+
+let aval_of_arg a : Ojax.Types.aval =
+  match U.to_list a with
+  | [ dt; shape ] ->
+      {
+        dtype =
+          (match D.of_numpy_name (U.to_string dt) with
+          | Some d -> d
+          | None -> failwith "keys_arrays: dtype");
+        shape = Array.of_list (List.map U.to_int (U.to_list shape));
+        weak_type = false;
+      }
+  | _ -> failwith "keys_arrays: arg"
+
 let read_rows path =
   let ic = open_in path in
   let rec loop acc =
@@ -534,30 +566,68 @@ let check_row ~suite row () =
     | None -> Error "no_binding"
     | Some f -> ( try Ok (f ()) with e -> Error (error_detail e))
   in
-  match (expected_error, got) with
-  | Some jax, Error ojax -> log jax ojax
-  | Some jax, Ok _ -> log jax "returned"
-  | None, Error ojax -> (
-      log (Option.value (str_opt row "text") ~default:"array") ojax;
-      match str_opt row "repr" with
-      | Some r -> log ~name:(id ^ ":repr") r ojax
-      | None -> ())
-  | None, Ok (Text t) ->
-      log (Option.value (str_opt row "text") ~default:"array") t
-  | None, Ok (Value v) -> (
-      match (str_opt row "dtype", str_opt row "hex", str_opt row "repr") with
-      | Some dt, Some hx, Some r ->
-          let nd = host v in
-          let shape = List.map U.to_int (U.to_list (U.member "shape" row)) in
-          let shape_text s = String.concat "," (List.map string_of_int s) in
-          let raw = Npz.raw_of_nd nd in
-          log
-            (dt ^ "[" ^ shape_text shape ^ "]" ^ hx)
-            (raw.Npz.raw_dtype ^ "["
-            ^ shape_text (Array.to_list (Nd.shape nd))
-            ^ "]" ^ hex raw.Npz.bytes);
-          log ~name:(id ^ ":repr") r (Ojax.Numpy.Extras.repr v)
-      | _ -> log (Option.value (str_opt row "text") ~default:"text") "array")
+  match U.member "args" row with
+  | `List args -> (
+      let avals = List.map aval_of_arg args in
+      let closed =
+        match List.assoc_opt id traced with
+        | None -> Error "no_binding"
+        | Some f -> (
+            try
+              Ok
+                (Ojax.Jaxpr.make_jaxpr avals (function
+                  | [ x ] -> [ f x ]
+                  | _ -> failwith "keys_arrays: arity"))
+            with e -> Error (error_detail e))
+      in
+      match (expected_error, closed) with
+      | Some jax, Error ojax -> log jax ojax
+      | Some jax, Ok _ -> log jax "returned"
+      | None, Error ojax ->
+          log ~name:(id ^ ":jaxpr")
+            (Option.value (str_opt row "jaxpr") ~default:"")
+            ojax;
+          log ~name:(id ^ ":hlo")
+            (Option.value (str_opt row "hlo") ~default:"")
+            ojax
+      | None, Ok c ->
+          let text f = try f c with e -> error_detail e in
+          log ~name:(id ^ ":jaxpr")
+            (Option.value (str_opt row "jaxpr") ~default:"")
+            (text Ojax.Pretty_printer.closed_jaxpr_to_jax_string);
+          log ~name:(id ^ ":hlo")
+            (Option.value (str_opt row "hlo") ~default:"")
+            (text (Ojax.Stablehlo.Emit.emit_jax_text ~name:"f")))
+  | _ -> (
+      match (expected_error, got) with
+      | Some jax, Error ojax -> log jax ojax
+      | Some jax, Ok _ -> log jax "returned"
+      | None, Error ojax -> (
+          log (Option.value (str_opt row "text") ~default:"array") ojax;
+          match str_opt row "repr" with
+          | Some r -> log ~name:(id ^ ":repr") r ojax
+          | None -> ())
+      | None, Ok (Text t) ->
+          log (Option.value (str_opt row "text") ~default:"array") t
+      | None, Ok (Value v) -> (
+          match
+            (str_opt row "dtype", str_opt row "hex", str_opt row "repr")
+          with
+          | Some dt, Some hx, Some r ->
+              let nd = host v in
+              let shape =
+                List.map U.to_int (U.to_list (U.member "shape" row))
+              in
+              let shape_text s = String.concat "," (List.map string_of_int s) in
+              let raw = Npz.raw_of_nd nd in
+              log
+                (dt ^ "[" ^ shape_text shape ^ "]" ^ hx)
+                (raw.Npz.raw_dtype ^ "["
+                ^ shape_text (Array.to_list (Nd.shape nd))
+                ^ "]" ^ hex raw.Npz.bytes);
+              log ~name:(id ^ ":repr") r (Ojax.Numpy.Extras.repr v)
+          | _ -> log (Option.value (str_opt row "text") ~default:"text") "array"
+          ))
 
 let path ~goldens_root =
   Filename.concat (Filename.concat goldens_root name) "cases.jsonl"

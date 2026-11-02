@@ -14,6 +14,13 @@ import parity_registry
 REGISTRIES = {"parity": parity_registry, "coverage": coverage_registry, "apicov": apicov_registry}
 
 MODULE = "aot_cost"
+MEM_FIELDS = [
+    "generated_code_size_in_bytes", "argument_size_in_bytes",
+    "output_size_in_bytes", "alias_size_in_bytes", "temp_size_in_bytes",
+    "host_generated_code_size_in_bytes", "host_argument_size_in_bytes",
+    "host_output_size_in_bytes", "host_alias_size_in_bytes",
+    "host_temp_size_in_bytes", "peak_memory_in_bytes",
+]
 
 
 def selected_cases(x64):
@@ -49,11 +56,13 @@ def run_shard(x64, index, count, out):
         try:
             compiled = jax.jit(call).lower(*values).compile()
             cost = compiled.cost_analysis()
+            mem = compiled.memory_analysis()
         except Exception as error:
             row["error"] = type(error).__name__
             rows.append(row)
             continue
         row["cost"] = sorted([k, float(v)] for k, v in cost.items())
+        row["mem"] = sorted([k, int(getattr(mem, k))] for k in MEM_FIELDS)
         rows.append(row)
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(rows, fh)

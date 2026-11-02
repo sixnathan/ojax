@@ -18,16 +18,42 @@ let aval_of_arg a : T.aval =
 
 let fmt_float x = Yojson.Safe.to_string (`Float x)
 
-let pairs_text pairs =
+let pairs_text ~mem pairs =
   String.concat "\n"
     (List.map
        (fun p ->
          match U.to_list p with
-         | [ k; v ] -> U.to_string k ^ "=" ^ fmt_float (U.to_number v)
+         | [ k; v ] ->
+             U.to_string k ^ "="
+             ^
+             if mem then string_of_int (U.to_int v)
+             else fmt_float (U.to_number v)
          | _ -> failwith "aot_cost: bad pair")
        (U.to_list pairs))
 
-let actual_text row =
+let mem_text compiled =
+  let m = Ojax.Stages.memory_analysis compiled in
+  let module E = Ojax.Pjrt.Executable in
+  String.concat "\n"
+    (List.map
+       (fun (k, v) -> k ^ "=" ^ string_of_int v)
+       (List.sort compare
+          [
+            ("generated_code_size_in_bytes", m.E.generated_code_size_in_bytes);
+            ("argument_size_in_bytes", m.E.argument_size_in_bytes);
+            ("output_size_in_bytes", m.E.output_size_in_bytes);
+            ("alias_size_in_bytes", m.E.alias_size_in_bytes);
+            ("temp_size_in_bytes", m.E.temp_size_in_bytes);
+            ( "host_generated_code_size_in_bytes",
+              m.E.host_generated_code_size_in_bytes );
+            ("host_argument_size_in_bytes", m.E.host_argument_size_in_bytes);
+            ("host_output_size_in_bytes", m.E.host_output_size_in_bytes);
+            ("host_alias_size_in_bytes", m.E.host_alias_size_in_bytes);
+            ("host_temp_size_in_bytes", m.E.host_temp_size_in_bytes);
+            ("peak_memory_in_bytes", m.E.peak_memory_in_bytes);
+          ]))
+
+let actual_text ~mem row =
   let args = U.to_list (U.member "args" row) in
   let names = List.map (fun a -> U.to_string (U.member "name" a)) args in
   let avals = List.map aval_of_arg args in
@@ -51,9 +77,13 @@ let actual_text row =
   let lowered =
     Ojax.Stages.lower (fun values -> run op params (lookup values)) avals
   in
-  let cost = Ojax.Stages.cost_analysis (Ojax.Stages.compile lowered) in
-  String.concat "\n"
-    (List.map (fun (k, v) -> k ^ "=" ^ fmt_float v) (List.sort compare cost))
+  let compiled = Ojax.Stages.compile lowered in
+  if mem then mem_text compiled
+  else
+    String.concat "\n"
+      (List.map
+         (fun (k, v) -> k ^ "=" ^ fmt_float v)
+         (List.sort compare (Ojax.Stages.cost_analysis compiled)))
 
 let record suite name same =
   Compare.bump suite same;
@@ -69,22 +99,27 @@ let record suite name same =
           (if same then Compare.raw_identical else "differ")
       with Sys_error _ -> ())
 
-let check_row ~x64 row () =
+let check_row ~x64 ~mem row () =
   let id =
     U.to_string (U.member "suite" row)
     ^ "/"
     ^ U.to_string (U.member "case_id" row)
   in
-  let expected = pairs_text (U.member "cost" row) in
+  let expected =
+    pairs_text ~mem (U.member (if mem then "mem" else "cost") row)
+  in
   let actual =
     Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
-        try actual_text row with e -> "raise " ^ Printexc.to_string e)
+        try actual_text ~mem row with e -> "raise " ^ Printexc.to_string e)
   in
-  let suite = "aot_cost:" ^ if x64 then "x64_on" else "x64_off" in
+  let suite =
+    (if mem then "aot_mem:" else "aot_cost:")
+    ^ if x64 then "x64_on" else "x64_off"
+  in
   let ok = expected = actual in
   record suite id ok;
   if not ok then
-    Printf.eprintf "AOT_COST DIFFER %s %s\n  jax:  %S\n  ojax: %S\n%!" suite id
+    Printf.eprintf "AOT DIFFER %s %s\n  jax:  %S\n  ojax: %S\n%!" suite id
       expected actual
 
 let suite_for x64 =
@@ -99,9 +134,12 @@ let suite_for x64 =
     else []
   in
   ( "aot_cost_" ^ tag,
-    List.map
+    List.concat_map
       (fun row ->
-        Alcotest.test_case
-          (U.to_string (U.member "case_id" row))
-          `Quick (check_row ~x64 row))
+        let name = U.to_string (U.member "case_id" row) in
+        [
+          Alcotest.test_case name `Quick (check_row ~x64 ~mem:false row);
+          Alcotest.test_case (name ^ ":mem") `Quick
+            (check_row ~x64 ~mem:true row);
+        ])
       rows )

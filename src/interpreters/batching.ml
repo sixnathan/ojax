@@ -514,10 +514,22 @@ let slice_batch (start_indices : int array) (limit_indices : int array)
   | None -> (b1 (Slice { start_indices; limit_indices; strides }) [ x ], None)
   | Some d ->
       let dim_size = (Core.get_aval x).shape.(d) in
-      let ns = insert_size start_indices d 0 in
-      let nl = insert_size limit_indices d dim_size in
+      let insert arr v =
+        let out = insert_size arr d v in
+        if
+          Array.exists Fun.id
+            (Array.mapi (fun i _ -> Np_ints.is_marked arr i) arr)
+        then
+          Np_ints.mark_where
+            (fun i ->
+              i <> d && Np_ints.is_marked arr (if i < d then i else i - 1))
+            out
+        else out
+      in
+      let ns = insert start_indices 0 in
+      let nl = insert limit_indices dim_size in
       let nst =
-        match strides with None -> None | Some s -> Some (insert_size s d 1)
+        match strides with None -> None | Some s -> Some (insert s 1)
       in
       ( b1
           (Slice { start_indices = ns; limit_indices = nl; strides = nst })

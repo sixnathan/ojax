@@ -212,8 +212,8 @@ let toposort (out_nodes : tracer list) (parents : tracer -> tracer list) :
       loop ();
       !sorted
 
-let tracers_to_jaxpr (tracers_in : tracer list) (tracers_out : tracer list) :
-    jaxpr * value list =
+let tracers_to_jaxpr ?(literals = true) (tracers_in : tracer list)
+    (tracers_out : tracer list) : jaxpr * value list =
   let tracer_to_var : (int, var) Hashtbl.t = Hashtbl.create 64 in
   List.iter
     (fun (t : tracer) ->
@@ -234,12 +234,14 @@ let tracers_to_jaxpr (tracers_in : tracer list) (tracers_out : tracer list) :
     | PE { recipe = Some (EqnRecipe e); _ } -> recipe_key e.er_out
     | _ -> -1
   in
+  let literal_of : (int, atom) Hashtbl.t = Hashtbl.create 16 in
+  let atom_of (t : tracer) =
+    match Hashtbl.find_opt literal_of t.id with
+    | Some a -> a
+    | None -> A_var (Hashtbl.find tracer_to_var t.id)
+  in
   let recipe_to_eqn prim (inputs : tracer list) (avals_out : aval list) er_out =
-    let in_atoms =
-      List.map
-        (fun (t : tracer) -> A_var (Hashtbl.find tracer_to_var t.id))
-        inputs
-    in
+    let in_atoms = List.map atom_of inputs in
     let out_binders =
       List.map (fun a -> { vid = Core.fresh_id (); vaval = a }) avals_out
     in
@@ -260,6 +262,9 @@ let tracers_to_jaxpr (tracers_in : tracer list) (tracers_out : tracer list) :
     (fun (t : tracer) ->
       match t.payload with
       | PE { recipe = Some LambdaBinding; _ } -> ()
+      | PE { recipe = Some (ConstRecipe (Concrete nd)); _ }
+        when literals && Array.length (Ndarray.shape nd) = 0 ->
+          Hashtbl.replace literal_of t.id (A_lit nd)
       | PE { recipe = Some (ConstRecipe v); _ } ->
           let var =
             match List.find_opt (fun (v', _) -> v' == v) !constid_to_var with
@@ -290,11 +295,7 @@ let tracers_to_jaxpr (tracers_in : tracer list) (tracers_out : tracer list) :
     constvars
     @ List.map (fun (t : tracer) -> Hashtbl.find tracer_to_var t.id) tracers_in
   in
-  let out_atoms =
-    List.map
-      (fun (t : tracer) -> A_var (Hashtbl.find tracer_to_var t.id))
-      tracers_out
-  in
+  let out_atoms = List.map atom_of tracers_out in
   let jx = { in_binders; eqns = List.rev !eqns; outs = out_atoms } in
   Jaxpr.typecheck_jaxpr jx;
   (jx, List.map snd constvals)

@@ -2453,7 +2453,9 @@ let lin_process (trace : trace) (b : jaxpr_builder) prim primals tangents =
             tos
         in
         let out_tracers = List.filter_map Fun.id classified in
-        let jx, consts = Partial_eval.tracers_to_jaxpr in_tracers out_tracers in
+        let jx, consts =
+          Partial_eval.tracers_to_jaxpr ~literals:false in_tracers out_tracers
+        in
         (pos, List.map Option.is_some classified, consts, jx))
   in
   let nz_in = List.filter (fun t -> not (is_zero t)) tangents in

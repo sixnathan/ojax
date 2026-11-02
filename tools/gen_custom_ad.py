@@ -11,6 +11,7 @@ from jax import ad_checkpoint
 MODULE = "custom_ad"
 DEFAULT_SEED = 20261103
 CASES = 300
+VMAP_CASES = 60
 CUSTOM = (
     "custom_vjp",
     "custom_vjp_nondiff",
@@ -130,6 +131,17 @@ def apply_layer(layer, f):
         return cf.named(g)
     if t == "checkpoint_policy":
         return cf.named(jax.checkpoint(f, policy=policy_of(layer["policy"]), prevent_cse=layer["prevent_cse"]))
+    if t == "custom_vmap":
+        wrapped = jax.custom_batching.custom_vmap(f)
+
+        @wrapped.def_vmap
+        def rule(axis_size, in_batched, *xs):
+            out = jax.vmap(f, in_axes=tuple(0 if b else None for b in in_batched))(*xs)
+            return scale(out, 1.5), jax.tree_util.tree_map(lambda _: True, out)
+
+        return wrapped
+    if t == "sequential_vmap":
+        return jax.custom_batching.sequential_vmap(f)
     if t == "checkpoint_name":
 
         def g(*a):
@@ -178,6 +190,29 @@ def custom_cases(seed, set_name, dtype):
                 "op": "compose",
                 "dtype": dtype,
                 "variant": variant,
+                "params": {"base": base, "layers": layers},
+                "shapes": shapes,
+            }
+        )
+    vrng = np.random.default_rng([seed, cf.digest(MODULE + "vmap" + set_name + dtype)])
+    for i in range(VMAP_CASES):
+        nargs = 1 if vrng.random() < 0.6 else 2
+        pool = unary if nargs == 1 else binary
+        base = pool[int(vrng.integers(0, len(pool)))]
+        shape = cf.ARG_SHAPES[int(vrng.integers(0, len(cf.ARG_SHAPES)))]
+        shapes = [list(shape), list(shape)][:nargs]
+        layers = [{"t": ("custom_vmap", "sequential_vmap")[int(vrng.integers(0, 2))]}]
+        for _ in range(int(vrng.integers(1, 3))):
+            layer = cf.random_layer(vrng, nargs, 0)
+            while layer["t"] not in ("jit", "vmap"):
+                layer = cf.random_layer(vrng, nargs, 0)
+            layers.append(layer)
+        out.append(
+            {
+                "case_id": "cvmap_" + format(i, "05d") + "_" + dtype,
+                "op": "compose",
+                "dtype": dtype,
+                "variant": "normal",
                 "params": {"base": base, "layers": layers},
                 "shapes": shapes,
             }

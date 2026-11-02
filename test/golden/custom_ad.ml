@@ -121,6 +121,21 @@ let extend layer f =
       let policy = policy_of (U.to_string (U.member "policy" layer)) in
       let prevent_cse = U.to_bool (U.member "prevent_cse" layer) in
       Some (wrap (A.checkpoint ~policy ~prevent_cse flat))
+  | "custom_vmap" ->
+      let rule _ in_batched xs =
+        let out =
+          A.vmap f
+            (List.map (fun b -> if b then Some 0 else None) in_batched)
+            (arrays xs)
+        in
+        let leaves = scale (JU.py_float 1.5) (TU.tree_leaves out) in
+        (leaves, List.map (fun _ -> true) leaves)
+      in
+      Some
+        (wrap
+           (Ojax.Custom_batching.custom_vmap
+              ~rule_name:"apply_layer.<locals>.rule" flat ~rule))
+  | "sequential_vmap" -> Some (wrap (Ojax.Custom_batching.sequential_vmap flat))
   | "checkpoint_name" ->
       Some
         (fun args -> TU.tree_map (fun v -> CP.checkpoint_name v "n") (f args))

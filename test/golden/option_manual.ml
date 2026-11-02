@@ -157,9 +157,10 @@ let run op positional options arr =
               (v positional.(1))))
   | "jnp.intersect1d" when flag options "return_indices" ->
       let a, b, c =
-        A.refuse options [ "size"; "fill_value" ];
         X.intersect1d_indices
           ?assume_unique:(A.opt options "assume_unique" A.bool_)
+          ?size:(A.opt options "size" A.int_)
+          ?fill_value:(A.opt options "fill_value" A.float_)
           (v positional.(0))
           (v positional.(1))
       in

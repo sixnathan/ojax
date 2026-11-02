@@ -182,6 +182,8 @@ def arm(spec, parts, module):
         if ty == "Dtype.t" and not optional and spec["name"] in ("eye", "tri", "identity", "indices", "full"):
             default = "A.default_int" if spec["name"] == "indices" else "A.default_float"
             args.append("~" + label + ":(" + default + " " + param_source(target) + ")")
+        elif target.name == "local_window_size" and ty == "int * int":
+            args.append("?" + label + ':(A.opt options "local_window_size" A.window_pair)')
         elif target.name == "trans" and ty == "int":
             args.append("?" + label + ':(A.opt options "trans" A.trans)')
         elif not optional:

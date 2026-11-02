@@ -40,7 +40,12 @@ val intersect1d :
   value
 
 val intersect1d_indices :
-  ?assume_unique:bool -> value -> value -> value * value * value
+  ?assume_unique:bool ->
+  ?size:int ->
+  ?fill_value:float ->
+  value ->
+  value ->
+  value * value * value
 
 val setdiff1d :
   ?assume_unique:bool ->

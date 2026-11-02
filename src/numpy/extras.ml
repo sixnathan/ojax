@@ -939,6 +939,97 @@ let intersect1d_indices ?(assume_unique = false) a b =
     of_ints (fun (_, i, _) -> i),
     of_ints (fun (_, _, j) -> j) )
 
+let intersect1d_sized_indices ~assume_unique ~size ~fill_value a b =
+  let idt = default_int () in
+  let m1 = size_of a and m2 = size_of b in
+  let ind1, ind2, num_unique1, aux, mask, aux_sort_indices =
+    if assume_unique then begin
+      let arr = NL.concatenate [ a; b ] in
+      let n = size_of arr in
+      match
+        concat_sorted_keys ~keys:[ arr ]
+          ~payload:[ NL.arange ~dtype:idt (float_of_int n) ]
+      with
+      | [ aux; sorted ] ->
+          ( NL.arange ~dtype:idt (float_of_int m1),
+            NL.arange ~dtype:idt (float_of_int m2),
+            Jnp_util.py_int m1,
+            aux,
+            AC.ones ~dtype:Dtype.Bool [| n |],
+            sorted )
+      | _ -> invalid_arg "intersect1d: arity"
+    end
+    else begin
+      let flags = { no_unique_flags with want_index = true } in
+      let u1, n1 =
+        traced_unique_sized ~flags ~axis:0 ~size:m1 ~fill_value:0.0 a
+      in
+      let n1 = n1 () in
+      let u2, n2 =
+        traced_unique_sized ~flags ~axis:0 ~size:m2 ~fill_value:0.0 b
+      in
+      let n2 = n2 () in
+      let dt = dtype_of u1.values in
+      let arr = L.full [| m1 + m2 |] 0.0 dt in
+      let arr = dynamic_set arr u1.values (lit_of 0.0 idt) in
+      let arr = dynamic_set arr u2.values n1 in
+      let n = size_of arr in
+      let mask = positions_below n (U.add n1 n2) in
+      match
+        concat_sorted_keys
+          ~keys:[ U.logical_not mask; arr ]
+          ~payload:[ NL.arange ~dtype:idt (float_of_int n) ]
+      with
+      | [ _; aux; sorted ] -> (u1.indices, u2.indices, n1, aux, mask, sorted)
+      | _ -> invalid_arg "intersect1d: arity"
+    end
+  in
+  let n = size_of aux in
+  let tail v = L.slice v [| 1 |] [| n |]
+  and head v = L.slice v [| 0 |] [| n - 1 |] in
+  let aux_mask =
+    U.logical_and (Core.bind1 Eq [ tail aux; head aux ]) (tail mask)
+  in
+  let num_results = R.sum aux_mask in
+  let val_indices, vals =
+    if n > 0 then
+      let val_indices =
+        List.hd (nonzero ~size ~fill_value:(Jnp_util.py_int n) aux_mask)
+      in
+      (val_indices, take_fill aux val_indices)
+    else (NL.arange ~dtype:idt 0.0, L.full [| size |] 0.0 (dtype_of aux))
+  in
+  let vals = fill_or_extremes ~fill_value vals num_results in
+  let gather_fill v indices fill =
+    I.take ~mode:"fill" ~fill_value:(float_of_int fill) ~axis:0 v indices
+  in
+  let below v = positions_below (size_of v) num_results in
+  let arr1_indices = gather_fill aux_sort_indices val_indices m1 in
+  let arr1_indices =
+    NL.where_ (below arr1_indices) arr1_indices (Jnp_util.py_int m1)
+  in
+  let arr2_indices =
+    U.subtract
+      (gather_fill aux_sort_indices (U.add val_indices (Jnp_util.py_int 1)) m2)
+      num_unique1
+  in
+  let arr2_indices =
+    NL.where_ (below arr2_indices) arr2_indices (Jnp_util.py_int m2)
+  in
+  if assume_unique then (vals, arr1_indices, arr2_indices)
+  else
+    ( vals,
+      gather_fill ind1 arr1_indices (size_of ind1),
+      gather_fill ind2 arr2_indices (size_of ind2) )
+
+let intersect1d_indices ?(assume_unique = false) ?size ?fill_value a b =
+  match size with
+  | None -> intersect1d_indices ~assume_unique a b
+  | Some n ->
+      let a, b = same_dtype a b in
+      intersect1d_sized_indices ~assume_unique ~size:n ~fill_value (flat a)
+        (flat b)
+
 let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in
   let dt = dtype_of a in

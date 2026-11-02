@@ -1946,7 +1946,7 @@ let run op positional options arr =
           ?query_seq_lengths:(A.opt options "query_seq_lengths" (A.value arr))
           ?key_value_seq_lengths:
             (A.opt options "key_value_seq_lengths" (A.value arr))
-          ?local_window_size:(A.opt options "local_window_size" A.int_pair)
+          ?local_window_size:(A.opt options "local_window_size" A.window_pair)
           ?implementation:(A.opt options "implementation" A.string_)
           ~query:((A.value arr) positional.(0))
           ~key:((A.value arr) positional.(1))

@@ -201,3 +201,7 @@ let sections arr : json -> Ojax.Numpy.Lax_numpy.sections = function
   | `Assoc [ ("$arr", _) ] as j ->
       Ojax.Numpy.Lax_numpy.Index_array (value arr j)
   | j -> Ojax.Numpy.Lax_numpy.Indices (int_array j)
+
+let window_pair : json -> int * int = function
+  | `Int n -> (n, n)
+  | j -> int_pair j

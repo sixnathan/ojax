@@ -1671,8 +1671,12 @@ let rec impl_base prim inputs =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        conv_preferred;
         _;
       } ->
+      (match (conv_preferred, inputs) with
+      | Some d, lhs :: _ -> validate_preferred_element_type (Ndarray.dtype lhs) d
+      | _ -> ());
       let conv lhs rhs =
         Convolution.conv_impl dimension_numbers window_strides padding
           lhs_dilation rhs_dilation feature_group_count batch_group_count lhs

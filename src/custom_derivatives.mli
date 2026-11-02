@@ -36,6 +36,8 @@ val custom_vjp_primal_tree_values :
   custom_vjp_primal Tree_util.t -> value Tree_util.t
 
 val custom_jvp_symbolic :
+  ?name:string ->
+  ?jvp_name:string ->
   (value list -> value list) ->
   jvp:(value list -> tangent list -> value list * tangent list) ->
   value list ->

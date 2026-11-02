@@ -94,7 +94,9 @@ let extend layer f =
             (fun v -> CD.Tangent v)
             (scale (JU.py_float 1.5) (TU.tree_leaves dy)) )
       in
-      Some (wrap (CD.custom_jvp_symbolic flat ~jvp:rule))
+      Some
+        (wrap
+           (CD.custom_jvp_symbolic ~name:"g" ~jvp_name:"rule" flat ~jvp:rule))
   | "custom_gradient" ->
       let g a =
         let y, pull = A.vjp f (arrays a) in

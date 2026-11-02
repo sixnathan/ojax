@@ -1377,6 +1377,11 @@ and pp_eqn ctx (e : eqn) =
     | Custom_jvp_call _ -> (
         match custom_call_of e with
         | Some (name, jvp_name, c) ->
+            let jvp_name, symbolic =
+              match String.index_opt jvp_name '\000' with
+              | Some i -> (String.sub jvp_name 0 i, true)
+              | None -> (jvp_name, false)
+            in
             [
               ("name", Plain name);
               ("call_jaxpr", Sub c);
@@ -1385,7 +1390,9 @@ and pp_eqn ctx (e : eqn) =
             @ (match !custom_num_consts e with
               | Some n -> [ ("num_consts", Plain (string_of_int n)) ]
               | None -> [])
-            @ [ ("symbolic_zeros", Plain "False") ]
+            @ [
+                ("symbolic_zeros", Plain (if symbolic then "True" else "False"));
+              ]
         | None -> [])
     | _ -> []
   in

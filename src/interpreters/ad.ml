@@ -2227,7 +2227,11 @@ let rec jvp_pairs prim primals tangents =
       | Core.Jvp_rule { jvp; _ } ->
           let primals = List.map Core.full_lower primals in
           let tangents =
-            if Option.is_some (Core.custom_names_of id) then
+            if
+              match Core.custom_names_of id with
+              | Some (_, jvp_name) -> not (String.contains jvp_name '\000')
+              | None -> false
+            then
               List.map2
                 (fun p t ->
                   if Ad_util.is_symbolic_zero t then

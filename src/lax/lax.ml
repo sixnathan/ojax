@@ -372,7 +372,17 @@ let broadcast_in_dim_impl shape dims a =
   done;
   Ndarray.of_floats (Ndarray.dtype a) shape out
 
-let reshape_impl ns a = Ndarray.of_floats (Ndarray.dtype a) ns (to_array a)
+let reshape_impl ns a =
+  let n_out = Array.fold_left ( * ) 1 ns
+  and n_in = Array.fold_left ( * ) 1 (Ndarray.shape a) in
+  if n_out <> n_in then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Cannot lower jaxpr with verifier errors:\n\
+          \tnumber of output elements (%d) doesn't match expected number of \
+          elements (%d)"
+         n_out n_in);
+  Ndarray.of_floats (Ndarray.dtype a) ns (to_array a)
 
 let small_step dt =
   match Float_format.of_dtype dt with
@@ -1661,8 +1671,13 @@ let rec impl_base prim inputs =
         dimension_numbers;
         feature_group_count;
         batch_group_count;
+        conv_preferred;
         _;
       } ->
+      (match (conv_preferred, inputs) with
+      | Some d, lhs :: _ ->
+          validate_preferred_element_type (Ndarray.dtype lhs) d
+      | _ -> ());
       let conv lhs rhs =
         Convolution.conv_impl dimension_numbers window_strides padding
           lhs_dilation rhs_dilation feature_group_count batch_group_count lhs
@@ -2221,6 +2236,12 @@ let complex_reduce combine identity axes a =
 
 let complex_cumulative combine ~axis ~reverse a =
   let os = Ndarray.shape a in
+  if axis < 0 then
+    Py_exn.value_error "XLA operations do not allow negative axes";
+  if axis >= Array.length os then
+    Py_exn.value_error
+      (Printf.sprintf "axis %d is out of bounds for array of shape %s" axis
+         (Utils.py_tuple os));
   let str = Utils.strides os in
   let src = to_carray a in
   let out = Array.copy src in
@@ -2873,10 +2894,28 @@ let abstract_eval prim avals =
   | Cummax { axis; _ }
   | Cummin { axis; _ }
   | Cumlogsumexp { axis; _ } ->
+      let name =
+        match prim with
+        | Cumsum _ -> "cumsum"
+        | Cumprod _ -> "cumprod"
+        | Cummax _ -> "cummax"
+        | Cummin _ -> "cummin"
+        | _ -> "cumlogsumexp"
+      in
       un_aval
         (fun a ->
-          if axis < 0 || axis >= Array.length a.shape then
-            failwith "lax: cumulative axis out of bounds";
+          if axis < 0 then
+            Py_exn.value_error "XLA operations do not allow negative axes";
+          if axis >= Array.length a.shape then
+            Py_exn.value_error
+              (Printf.sprintf "axis %d is out of bounds for array of shape %s"
+                 axis (Utils.py_tuple a.shape));
+          if a.dtype = Dtype.Bool then
+            Py_exn.type_error
+              (Printf.sprintf
+                 "%s does not accept dtype bool. Accepted dtypes are subtypes \
+                  of number."
+                 name);
           a)
         avals
   | Custom_linear_solve { solve; _ } ->

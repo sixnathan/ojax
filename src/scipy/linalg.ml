@@ -822,7 +822,7 @@ let expm_squaring r n_squarings max_squarings =
               (T.Iota
                  {
                    dtype = dtype n_squarings;
-                   shape = [| max_squarings |];
+                   shape = [| Stdlib.max max_squarings 0 |];
                    dimension = 0;
                  })
               []

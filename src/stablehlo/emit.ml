@@ -957,14 +957,15 @@ let emit_approx_top_k ctx (eqn : eqn) in_ids dparams =
        "    %%%d:2 = stablehlo.custom_call @ApproxTopK(%s, %s, %s, %s) \
         {backend_config = \"\", called_computations = [@%s], \
         mhlo.backend_config = {aggregate_to_topk = %s, is_fallback = true, \
-        recall_target = %.9g : f32, reduction_dim = %d : i64, \
+        recall_target = %s : f32, reduction_dim = %d : i64, \
         reduction_input_size_override = %s : i64, top_k = %s : i64}} : (%s, \
         %s, %s, %s) -> (%s, %s)\n"
        group
        (name (sole in_ids))
        (name iota) (name init) (name arg) symbol
        (String.lowercase_ascii (param "aggregate_to_topk"))
-       recall reduction
+       (Ir.float_literal Dtype.F32 recall)
+       reduction
        (param "reduction_input_size_override")
        (param "k")
        (Ir.tensor_type_of_aval operand)
@@ -2241,21 +2242,56 @@ let emit_sort_multi ctx (eqn : eqn) in_ids ~dimension ~is_stable ~num_keys =
 let emit_sort ctx (eqn : eqn) in_ids ~dimension ~is_stable =
   emit_sort_multi ctx eqn in_ids ~dimension ~is_stable ~num_keys:1
 
-let emit_top_k ctx (eqn : eqn) in_ids k =
+let emit_top_k ctx (eqn : eqn) in_ids k axis =
   let x = sole in_ids in
-  let inty = Ir.tensor_type_of_aval (atom_aval (sole eqn.inputs)) in
+  let in_aval = atom_aval (sole eqn.inputs) in
+  let inty = Ir.tensor_type_of_aval in_aval in
   let vout, iout =
     match eqn.outs with
     | [ v; i ] -> (v, i)
     | _ -> invalid_arg "Stablehlo.Emit: top_k expects two outputs"
   in
-  let r1 = bind_var ctx vout in
-  let r2 = bind_var ctx iout in
-  Buffer.add_string ctx.buf
-    (Printf.sprintf "    %s, %s = chlo.top_k(%s, k = %d) : %s -> (%s, %s)\n"
-       (name r1) (name r2) (name x) k inty
-       (Ir.tensor_type_of_aval vout.vaval)
-       (Ir.tensor_type_of_aval iout.vaval))
+  let ndim = Array.length in_aval.shape in
+  let axis = if axis < 0 then axis + ndim else axis in
+  if axis = ndim - 1 then begin
+    let r1 = bind_var ctx vout in
+    let r2 = bind_var ctx iout in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s, %s = chlo.top_k(%s, k = %d) : %s -> (%s, %s)\n"
+         (name r1) (name r2) (name x) k inty
+         (Ir.tensor_type_of_aval vout.vaval)
+         (Ir.tensor_type_of_aval iout.vaval))
+  end
+  else begin
+    let perm = Array.init ndim Fun.id in
+    perm.(axis) <- ndim - 1;
+    perm.(ndim - 1) <- axis;
+    let permuted (a : aval) =
+      { a with shape = Array.map (fun d -> a.shape.(d)) perm }
+    in
+    let t = fresh ctx in
+    let t_ty = Ir.tensor_type_of_aval (permuted in_aval) in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf
+         "    %s = stablehlo.transpose %s, dims = %s : (%s) -> %s\n" (name t)
+         (name x) (Ir.int_array_attr perm) inty t_ty);
+    let v_ty = Ir.tensor_type_of_aval (permuted vout.vaval) in
+    let i_ty = Ir.tensor_type_of_aval (permuted iout.vaval) in
+    let r1 = fresh ctx in
+    let r2 = fresh ctx in
+    Buffer.add_string ctx.buf
+      (Printf.sprintf "    %s, %s = chlo.top_k(%s, k = %d) : %s -> (%s, %s)\n"
+         (name r1) (name r2) (name t) k t_ty v_ty i_ty);
+    List.iter
+      (fun ((v : var), r, ty) ->
+        let o = bind_var ctx v in
+        Buffer.add_string ctx.buf
+          (Printf.sprintf
+             "    %s = stablehlo.transpose %s, dims = %s : (%s) -> %s\n"
+             (name o) (name r) (Ir.int_array_attr perm) ty
+             (Ir.tensor_type_of_aval v.vaval)))
+      [ (vout, r1, v_ty); (iout, r2, i_ty) ]
+  end
 
 let shape_i64_body dims =
   let n = Array.length dims in
@@ -4051,7 +4087,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       if List.length in_ids = 1 then
         emit_sort ctx eqn in_ids ~dimension ~is_stable
       else emit_sort_multi ctx eqn in_ids ~dimension ~is_stable ~num_keys
-  | Top_k { k; _ } -> emit_top_k ctx eqn in_ids k
+  | Top_k { k; axis } -> emit_top_k ctx eqn in_ids k axis
   | Bessel_i1e -> emit_chlo_unary ctx eqn in_ids "bessel_i1e"
   | Digamma -> emit_chlo_unary ctx eqn in_ids "digamma"
   | Erf -> emit_chlo_unary ctx eqn in_ids "erf"

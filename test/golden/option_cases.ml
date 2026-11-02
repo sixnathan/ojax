@@ -1626,8 +1626,8 @@ let run op positional options arr =
   | "lax.conv_with_general_padding" ->
       [
         Ojax.Lax_api.conv_with_general_padding
-          ?lhs_dilation:(Some (A.int_array positional.(4)))
-          ?rhs_dilation:(Some (A.int_array positional.(5)))
+          ?lhs_dilation:(A.int_array_option positional.(4))
+          ?rhs_dilation:(A.int_array_option positional.(5))
           ?precision:(A.opt options "precision" A.precision)
           ?preferred_element_type:
             (A.opt options "preferred_element_type" A.dtype)

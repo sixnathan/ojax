@@ -62,6 +62,7 @@ compose_00013_float32:jaxpr	0
 compose_00013_float32:jit:both_raise	0
 compose_00013_float32:text	0
 compose_00014_float32:eager:out0	1
+compose_00014_float32:jaxpr	1
 compose_00014_float32:jit:out0	1
 compose_00014_float32:text	1
 compose_00015_float32:eager:out0	1
@@ -173,6 +174,7 @@ compose_00036_float32:jaxpr	1
 compose_00036_float32:jit:out0	1
 compose_00036_float32:text	1
 compose_00037_float32:eager:out0	1
+compose_00037_float32:jaxpr	1
 compose_00037_float32:jit:out0	1
 compose_00037_float32:text	1
 compose_00038_float32:eager:out0	1
@@ -393,6 +395,7 @@ compose_00086_float32:jaxpr	1
 compose_00086_float32:jit:out0	1
 compose_00086_float32:text	1
 compose_00087_float32:eager:out0	1
+compose_00087_float32:jaxpr	1
 compose_00087_float32:jit:out0	1
 compose_00087_float32:text	1
 compose_00088_float32:eager:out0	1
@@ -648,6 +651,7 @@ compose_00143_float32:eager:out1	1
 compose_00143_float32:jit:out0	1
 compose_00143_float32:jit:out1	1
 compose_00144_float32:eager:out0	1
+compose_00144_float32:jaxpr	1
 compose_00144_float32:jit:out0	1
 compose_00144_float32:text	1
 compose_00145_float32:eager:both_raise	0
@@ -667,6 +671,7 @@ compose_00148_float32:jaxpr	0
 compose_00148_float32:jit:both_raise	0
 compose_00148_float32:text	0
 compose_00149_float32:eager:out0	1
+compose_00149_float32:jaxpr	1
 compose_00149_float32:jit:out0	1
 compose_00149_float32:text	1
 compose_00150_float32:eager:out0	1
@@ -691,6 +696,7 @@ compose_00153_float32:jit:out0	1
 compose_00153_float32:text	1
 compose_00154_float32:eager:out0	1
 compose_00154_float32:eager:out1	1
+compose_00154_float32:jaxpr	1
 compose_00154_float32:jit:out0	1
 compose_00154_float32:jit:out1	1
 compose_00154_float32:text	1
@@ -949,6 +955,7 @@ compose_00210_float32:jit:out0	1
 compose_00210_float32:text	1
 compose_00211_float32:eager:out0	1
 compose_00211_float32:eager:out1	1
+compose_00211_float32:jaxpr	1
 compose_00211_float32:jit:out0	1
 compose_00211_float32:jit:out1	1
 compose_00211_float32:text	1
@@ -979,6 +986,7 @@ compose_00216_float32:jaxpr	1
 compose_00216_float32:jit:out0	1
 compose_00216_float32:text	1
 compose_00217_float32:eager:out0	1
+compose_00217_float32:jaxpr	1
 compose_00217_float32:jit:out0	1
 compose_00217_float32:text	1
 compose_00218_float32:eager:out0	1
@@ -990,6 +998,7 @@ compose_00219_float32:jaxpr	1
 compose_00219_float32:jit:out0	1
 compose_00219_float32:text	1
 compose_00221_float32:eager:out0	1
+compose_00221_float32:jaxpr	1
 compose_00221_float32:jit:out0	1
 compose_00221_float32:text	1
 compose_00222_float32:eager:out0	1
@@ -1185,6 +1194,7 @@ compose_00263_float32:jaxpr	0
 compose_00263_float32:jit:both_raise	0
 compose_00263_float32:text	0
 compose_00264_float32:eager:out0	1
+compose_00264_float32:jaxpr	1
 compose_00264_float32:jit:out0	1
 compose_00264_float32:text	1
 compose_00265_float32:eager:both_raise	0
@@ -1348,6 +1358,7 @@ compose_00299_float32:jit:out0	1
 compose_00299_float32:jit:out1	1
 compose_00299_float32:text	1
 compose_00300_float32:eager:out0	1
+compose_00300_float32:jaxpr	1
 compose_00300_float32:jit:out0	1
 compose_00300_float32:text	1
 compose_00301_float32:eager:both_raise	0
@@ -1355,6 +1366,7 @@ compose_00301_float32:jaxpr	0
 compose_00301_float32:jit:both_raise	0
 compose_00301_float32:text	0
 compose_00302_float32:eager:out0	1
+compose_00302_float32:jaxpr	1
 compose_00302_float32:jit:out0	1
 compose_00302_float32:text	1
 compose_00303_float32:eager:both_raise	0
@@ -1422,6 +1434,7 @@ compose_00317_float32:jit:out0	1
 compose_00317_float32:jit:out1	1
 compose_00317_float32:text	1
 compose_00318_float32:eager:out0	1
+compose_00318_float32:jaxpr	1
 compose_00318_float32:jit:out0	1
 compose_00318_float32:text	1
 compose_00319_float32:eager:both_raise	0
@@ -1607,6 +1620,7 @@ compose_00354_float32:text	1
 compose_00355_float32:eager:out0	1
 compose_00355_float32:eager:out1	1
 compose_00355_float32:eager:out2	1
+compose_00355_float32:jaxpr	1
 compose_00355_float32:jit:out0	1
 compose_00355_float32:jit:out1	1
 compose_00355_float32:jit:out2	1
@@ -1643,6 +1657,7 @@ compose_00362_float32:jit:out1	1
 compose_00362_float32:text	1
 compose_00363_float32:eager:out0	1
 compose_00363_float32:eager:out1	1
+compose_00363_float32:jaxpr	1
 compose_00363_float32:jit:out0	1
 compose_00363_float32:jit:out1	1
 compose_00363_float32:text	1
@@ -1657,6 +1672,7 @@ compose_00365_float32:jit:out0	1
 compose_00365_float32:jit:out1	1
 compose_00365_float32:text	1
 compose_00366_float32:eager:out0	1
+compose_00366_float32:jaxpr	1
 compose_00366_float32:jit:out0	1
 compose_00366_float32:text	1
 compose_00367_float32:eager:out0	1
@@ -1945,6 +1961,7 @@ compose_00425_float32:jit:out0	1
 compose_00425_float32:jit:out1	1
 compose_00425_float32:text	1
 compose_00426_float32:eager:out0	1
+compose_00426_float32:jaxpr	1
 compose_00426_float32:jit:out0	1
 compose_00426_float32:text	1
 compose_00427_float32:eager:out0	1
@@ -2072,6 +2089,7 @@ compose_00453_float32:jaxpr	1
 compose_00453_float32:jit:out0	1
 compose_00453_float32:text	1
 compose_00454_float32:eager:out0	1
+compose_00454_float32:jaxpr	1
 compose_00454_float32:jit:out0	1
 compose_00454_float32:text	1
 compose_00455_float32:eager:out0	1
@@ -2126,6 +2144,7 @@ compose_00465_float32:eager:out0	1
 compose_00465_float32:eager:out1	1
 compose_00465_float32:eager:out2	1
 compose_00465_float32:eager:out3	1
+compose_00465_float32:jaxpr	1
 compose_00465_float32:jit:out0	1
 compose_00465_float32:jit:out1	1
 compose_00465_float32:jit:out2	1
@@ -2251,6 +2270,7 @@ compose_00492_float32:text	1
 compose_00493_float32:eager:out0	1
 compose_00493_float32:eager:out1	1
 compose_00493_float32:eager:out2	1
+compose_00493_float32:jaxpr	1
 compose_00493_float32:jit:out0	1
 compose_00493_float32:jit:out1	1
 compose_00493_float32:jit:out2	1
@@ -2485,6 +2505,7 @@ compose_00542_float32:jit:out1	1
 compose_00542_float32:jit:out2	1
 compose_00542_float32:text	1
 compose_00543_float32:eager:out0	1
+compose_00543_float32:jaxpr	1
 compose_00543_float32:jit:out0	1
 compose_00543_float32:text	1
 compose_00544_float32:eager:out0	1
@@ -2518,6 +2539,7 @@ compose_00550_float32:jaxpr	1
 compose_00550_float32:jit:out0	1
 compose_00550_float32:text	1
 compose_00551_float32:eager:out0	1
+compose_00551_float32:jaxpr	1
 compose_00551_float32:jit:out0	1
 compose_00551_float32:text	1
 compose_00552_float32:eager:out0	1
@@ -2648,6 +2670,7 @@ compose_00579_float32:jit:out2	1
 compose_00579_float32:jit:out3	1
 compose_00579_float32:text	1
 compose_00580_float32:eager:out0	1
+compose_00580_float32:jaxpr	1
 compose_00580_float32:jit:out0	1
 compose_00580_float32:text	1
 compose_00581_float32:eager:out0	1
@@ -2659,6 +2682,7 @@ compose_00582_float32:jaxpr	0
 compose_00582_float32:jit:both_raise	0
 compose_00582_float32:text	0
 compose_00583_float32:eager:out0	1
+compose_00583_float32:jaxpr	1
 compose_00583_float32:jit:out0	1
 compose_00583_float32:text	1
 compose_00584_float32:eager:out0	1
@@ -2830,6 +2854,7 @@ compose_00616_float32:jaxpr	1
 compose_00616_float32:jit:out0	1
 compose_00616_float32:text	1
 compose_00617_float32:eager:out0	1
+compose_00617_float32:jaxpr	1
 compose_00617_float32:jit:out0	1
 compose_00617_float32:text	1
 compose_00618_float32:eager:both_raise	0
@@ -2959,6 +2984,7 @@ compose_00643_float32:jaxpr	1
 compose_00643_float32:jit:out0	1
 compose_00643_float32:text	1
 compose_00644_float32:eager:out0	1
+compose_00644_float32:jaxpr	1
 compose_00644_float32:jit:out0	1
 compose_00644_float32:text	1
 compose_00645_float32:eager:out0	1
@@ -3108,6 +3134,7 @@ compose_00675_float32:jit:out1	1
 compose_00675_float32:text	1
 compose_00676_float32:eager:out0	1
 compose_00676_float32:eager:out1	1
+compose_00676_float32:jaxpr	1
 compose_00676_float32:jit:out0	1
 compose_00676_float32:jit:out1	1
 compose_00676_float32:text	1
@@ -3251,6 +3278,7 @@ compose_00707_float32:jit:out0	1
 compose_00707_float32:text	1
 compose_00708_float32:eager:out0	1
 compose_00708_float32:eager:out1	1
+compose_00708_float32:jaxpr	1
 compose_00708_float32:jit:out0	1
 compose_00708_float32:jit:out1	1
 compose_00708_float32:text	1
@@ -3505,6 +3533,7 @@ compose_00763_float32:jit:out1	1
 compose_00763_float32:text	1
 compose_00764_float32:eager:out0	1
 compose_00764_float32:eager:out1	1
+compose_00764_float32:jaxpr	1
 compose_00764_float32:jit:out0	1
 compose_00764_float32:jit:out1	1
 compose_00764_float32:text	1
@@ -3681,6 +3710,7 @@ compose_00801_float32:jaxpr	0
 compose_00801_float32:jit:both_raise	0
 compose_00801_float32:text	0
 compose_00802_float32:eager:out0	1
+compose_00802_float32:jaxpr	1
 compose_00802_float32:jit:out0	1
 compose_00802_float32:text	1
 compose_00803_float32:eager:both_raise	0
@@ -3820,6 +3850,7 @@ compose_00830_float32:jaxpr	0
 compose_00830_float32:jit:both_raise	0
 compose_00830_float32:text	0
 compose_00831_float32:eager:out0	1
+compose_00831_float32:jaxpr	1
 compose_00831_float32:jit:out0	1
 compose_00831_float32:text	1
 compose_00832_float32:eager:out0	1
@@ -4578,6 +4609,7 @@ compose_00992_float32:jaxpr	1
 compose_00992_float32:jit:out0	1
 compose_00992_float32:text	1
 compose_00993_float32:eager:out0	1
+compose_00993_float32:jaxpr	1
 compose_00993_float32:jit:out0	1
 compose_00993_float32:text	1
 compose_00994_float32:eager:out0	1
@@ -5387,6 +5419,7 @@ prng_threefry2x32_000:jit:out4	1
 prng_threefry2x32_000:jit:out5	1
 prng_threefry2x32_000:jit:out6	1
 prng_threefry2x32_000:jit:out7	1
+prng_threefry2x32_000:text	1
 prng_threefry2x32_001:eager:out0	1
 prng_threefry2x32_001:eager:out1	1
 prng_threefry2x32_001:eager:out2	1
@@ -5398,6 +5431,7 @@ prng_threefry2x32_001:jit:out1	1
 prng_threefry2x32_001:jit:out2	1
 prng_threefry2x32_001:jit:out3	1
 prng_threefry2x32_001:jit:out4	1
+prng_threefry2x32_001:text	1
 prng_threefry2x32_002:eager:out0	1
 prng_threefry2x32_002:eager:out1	1
 prng_threefry2x32_002:eager:out2	1
@@ -5413,6 +5447,7 @@ prng_threefry2x32_002:jit:out3	1
 prng_threefry2x32_002:jit:out4	1
 prng_threefry2x32_002:jit:out5	1
 prng_threefry2x32_002:jit:out6	1
+prng_threefry2x32_002:text	1
 prng_threefry2x32_003:eager:out0	1
 prng_threefry2x32_003:eager:out1	1
 prng_threefry2x32_003:eager:out2	1
@@ -5426,6 +5461,7 @@ prng_threefry2x32_003:jit:out2	1
 prng_threefry2x32_003:jit:out3	1
 prng_threefry2x32_003:jit:out4	1
 prng_threefry2x32_003:jit:out5	1
+prng_threefry2x32_003:text	1
 prng_threefry2x32_004:eager:out0	1
 prng_threefry2x32_004:eager:out1	1
 prng_threefry2x32_004:eager:out2	1
@@ -5453,6 +5489,7 @@ prng_threefry2x32_005:jit:out1	1
 prng_threefry2x32_005:jit:out2	1
 prng_threefry2x32_005:jit:out3	1
 prng_threefry2x32_005:jit:out4	1
+prng_threefry2x32_005:text	1
 prng_threefry2x32_006:eager:out0	1
 prng_threefry2x32_006:eager:out1	1
 prng_threefry2x32_006:eager:out2	1
@@ -5470,6 +5507,7 @@ prng_threefry2x32_006:jit:out4	1
 prng_threefry2x32_006:jit:out5	1
 prng_threefry2x32_006:jit:out6	1
 prng_threefry2x32_006:jit:out7	1
+prng_threefry2x32_006:text	1
 prng_threefry2x32_007:eager:out0	1
 prng_threefry2x32_007:eager:out1	1
 prng_threefry2x32_007:eager:out2	1
@@ -5485,6 +5523,7 @@ prng_threefry2x32_007:jit:out3	1
 prng_threefry2x32_007:jit:out4	1
 prng_threefry2x32_007:jit:out5	1
 prng_threefry2x32_007:jit:out6	1
+prng_threefry2x32_007:text	1
 prng_threefry2x32_008:eager:out0	1
 prng_threefry2x32_008:eager:out1	1
 prng_threefry2x32_008:eager:out2	1
@@ -5516,6 +5555,7 @@ prng_threefry2x32_009:jit:out3	1
 prng_threefry2x32_009:jit:out4	1
 prng_threefry2x32_009:jit:out5	1
 prng_threefry2x32_009:jit:out6	1
+prng_threefry2x32_009:text	1
 prng_threefry2x32_010:eager:out0	1
 prng_threefry2x32_010:eager:out1	1
 prng_threefry2x32_010:eager:out2	1
@@ -5535,6 +5575,7 @@ prng_threefry2x32_010:jit:out5	1
 prng_threefry2x32_010:jit:out6	1
 prng_threefry2x32_010:jit:out7	1
 prng_threefry2x32_010:jit:out8	1
+prng_threefry2x32_010:text	1
 prng_threefry2x32_011:eager:out0	1
 prng_threefry2x32_011:eager:out1	1
 prng_threefry2x32_011:eager:out2	1
@@ -5552,6 +5593,7 @@ prng_threefry2x32_011:jit:out4	1
 prng_threefry2x32_011:jit:out5	1
 prng_threefry2x32_011:jit:out6	1
 prng_threefry2x32_011:jit:out7	1
+prng_threefry2x32_011:text	1
 prng_threefry2x32_012:eager:out0	1
 prng_threefry2x32_012:eager:out1	1
 prng_threefry2x32_012:eager:out2	1
@@ -5565,6 +5607,7 @@ prng_threefry2x32_012:jit:out2	1
 prng_threefry2x32_012:jit:out3	1
 prng_threefry2x32_012:jit:out4	1
 prng_threefry2x32_012:jit:out5	1
+prng_threefry2x32_012:text	1
 prng_threefry2x32_013:eager:out0	1
 prng_threefry2x32_013:eager:out1	1
 prng_threefry2x32_013:eager:out2	1
@@ -5576,6 +5619,7 @@ prng_threefry2x32_013:jit:out1	1
 prng_threefry2x32_013:jit:out2	1
 prng_threefry2x32_013:jit:out3	1
 prng_threefry2x32_013:jit:out4	1
+prng_threefry2x32_013:text	1
 prng_threefry2x32_014:eager:out0	1
 prng_threefry2x32_014:eager:out1	1
 prng_threefry2x32_014:eager:out2	1
@@ -5591,6 +5635,7 @@ prng_threefry2x32_014:jit:out3	1
 prng_threefry2x32_014:jit:out4	1
 prng_threefry2x32_014:jit:out5	1
 prng_threefry2x32_014:jit:out6	1
+prng_threefry2x32_014:text	1
 prng_threefry2x32_015:eager:out0	1
 prng_threefry2x32_015:eager:out1	1
 prng_threefry2x32_015:eager:out2	1
@@ -5602,6 +5647,7 @@ prng_threefry2x32_015:jit:out1	1
 prng_threefry2x32_015:jit:out2	1
 prng_threefry2x32_015:jit:out3	1
 prng_threefry2x32_015:jit:out4	1
+prng_threefry2x32_015:text	1
 prng_threefry2x32_016:eager:out0	1
 prng_threefry2x32_016:eager:out1	1
 prng_threefry2x32_016:eager:out2	1
@@ -5617,6 +5663,7 @@ prng_threefry2x32_016:jit:out3	1
 prng_threefry2x32_016:jit:out4	1
 prng_threefry2x32_016:jit:out5	1
 prng_threefry2x32_016:jit:out6	1
+prng_threefry2x32_016:text	1
 prng_threefry2x32_017:eager:out0	1
 prng_threefry2x32_017:eager:out1	1
 prng_threefry2x32_017:eager:out2	1
@@ -5632,6 +5679,7 @@ prng_threefry2x32_017:jit:out3	1
 prng_threefry2x32_017:jit:out4	1
 prng_threefry2x32_017:jit:out5	1
 prng_threefry2x32_017:jit:out6	1
+prng_threefry2x32_017:text	1
 prng_threefry2x32_018:eager:out0	1
 prng_threefry2x32_018:eager:out1	1
 prng_threefry2x32_018:eager:out2	1
@@ -5655,6 +5703,7 @@ prng_threefry2x32_019:jit:out1	1
 prng_threefry2x32_019:jit:out2	1
 prng_threefry2x32_019:jit:out3	1
 prng_threefry2x32_019:jit:out4	1
+prng_threefry2x32_019:text	1
 prng_threefry2x32_020:eager:out0	1
 prng_threefry2x32_020:eager:out1	1
 prng_threefry2x32_020:eager:out2	1
@@ -5716,6 +5765,7 @@ prng_threefry2x32_024:jit:out1	1
 prng_threefry2x32_024:jit:out2	1
 prng_threefry2x32_024:jit:out3	1
 prng_threefry2x32_024:jit:out4	1
+prng_threefry2x32_024:text	1
 prng_threefry2x32_025:eager:out0	1
 prng_threefry2x32_025:eager:out1	1
 prng_threefry2x32_025:eager:out2	1
@@ -5755,6 +5805,7 @@ prng_threefry2x32_026:jit:out6	1
 prng_threefry2x32_026:jit:out7	1
 prng_threefry2x32_026:jit:out8	1
 prng_threefry2x32_026:jit:out9	1
+prng_threefry2x32_026:text	1
 prng_threefry2x32_027:eager:out0	1
 prng_threefry2x32_027:eager:out1	1
 prng_threefry2x32_027:eager:out2	1
@@ -5766,6 +5817,7 @@ prng_threefry2x32_027:jit:out1	1
 prng_threefry2x32_027:jit:out2	1
 prng_threefry2x32_027:jit:out3	1
 prng_threefry2x32_027:jit:out4	1
+prng_threefry2x32_027:text	1
 prng_threefry2x32_028:eager:out0	1
 prng_threefry2x32_028:eager:out1	1
 prng_threefry2x32_028:eager:out2	1
@@ -5781,6 +5833,7 @@ prng_threefry2x32_028:jit:out3	1
 prng_threefry2x32_028:jit:out4	1
 prng_threefry2x32_028:jit:out5	1
 prng_threefry2x32_028:jit:out6	1
+prng_threefry2x32_028:text	1
 prng_threefry2x32_029:eager:out0	1
 prng_threefry2x32_029:eager:out1	1
 prng_threefry2x32_029:eager:out2	1
@@ -5794,6 +5847,7 @@ prng_threefry2x32_029:jit:out2	1
 prng_threefry2x32_029:jit:out3	1
 prng_threefry2x32_029:jit:out4	1
 prng_threefry2x32_029:jit:out5	1
+prng_threefry2x32_029:text	1
 prng_threefry2x32_030:eager:out0	1
 prng_threefry2x32_030:eager:out1	1
 prng_threefry2x32_030:eager:out2	1
@@ -5817,6 +5871,7 @@ prng_threefry2x32_031:jit:out3	1
 prng_threefry2x32_031:jit:out4	1
 prng_threefry2x32_031:jit:out5	1
 prng_threefry2x32_031:jit:out6	1
+prng_threefry2x32_031:text	1
 prng_threefry2x32_032:eager:out0	1
 prng_threefry2x32_032:eager:out1	1
 prng_threefry2x32_032:eager:out2	1
@@ -5832,6 +5887,7 @@ prng_threefry2x32_032:jit:out3	1
 prng_threefry2x32_032:jit:out4	1
 prng_threefry2x32_032:jit:out5	1
 prng_threefry2x32_032:jit:out6	1
+prng_threefry2x32_032:text	1
 prng_threefry2x32_033:eager:out0	1
 prng_threefry2x32_033:eager:out1	1
 prng_threefry2x32_033:eager:out2	1
@@ -5843,6 +5899,7 @@ prng_threefry2x32_033:jit:out1	1
 prng_threefry2x32_033:jit:out2	1
 prng_threefry2x32_033:jit:out3	1
 prng_threefry2x32_033:jit:out4	1
+prng_threefry2x32_033:text	1
 prng_threefry2x32_034:eager:out0	1
 prng_threefry2x32_034:eager:out1	1
 prng_threefry2x32_034:eager:out2	1
@@ -5924,6 +5981,7 @@ prng_threefry2x32_040:jit:out3	1
 prng_threefry2x32_040:jit:out4	1
 prng_threefry2x32_040:jit:out5	1
 prng_threefry2x32_040:jit:out6	1
+prng_threefry2x32_040:text	1
 prng_threefry2x32_041:eager:out0	1
 prng_threefry2x32_041:eager:out1	1
 prng_threefry2x32_041:eager:out2	1
@@ -5939,6 +5997,7 @@ prng_threefry2x32_041:jit:out3	1
 prng_threefry2x32_041:jit:out4	1
 prng_threefry2x32_041:jit:out5	1
 prng_threefry2x32_041:jit:out6	1
+prng_threefry2x32_041:text	1
 prng_threefry2x32_042:eager:out0	1
 prng_threefry2x32_042:eager:out1	1
 prng_threefry2x32_042:eager:out2	1
@@ -5948,6 +6007,7 @@ prng_threefry2x32_042:jit:out0	1
 prng_threefry2x32_042:jit:out1	1
 prng_threefry2x32_042:jit:out2	1
 prng_threefry2x32_042:jit:out3	1
+prng_threefry2x32_042:text	1
 prng_threefry2x32_043:eager:out0	1
 prng_threefry2x32_043:eager:out1	1
 prng_threefry2x32_043:eager:out2	1
@@ -5957,6 +6017,7 @@ prng_threefry2x32_043:jit:out0	1
 prng_threefry2x32_043:jit:out1	1
 prng_threefry2x32_043:jit:out2	1
 prng_threefry2x32_043:jit:out3	1
+prng_threefry2x32_043:text	1
 prng_threefry2x32_044:eager:out0	1
 prng_threefry2x32_044:eager:out1	1
 prng_threefry2x32_044:eager:out2	1
@@ -5990,6 +6051,7 @@ prng_threefry2x32_045:jit:out6	1
 prng_threefry2x32_045:jit:out7	1
 prng_threefry2x32_045:jit:out8	1
 prng_threefry2x32_045:jit:out9	1
+prng_threefry2x32_045:text	1
 prng_threefry2x32_046:eager:out0	1
 prng_threefry2x32_046:eager:out1	1
 prng_threefry2x32_046:eager:out2	1
@@ -6049,6 +6111,7 @@ prng_threefry2x32_049:jit:out4	1
 prng_threefry2x32_049:jit:out5	1
 prng_threefry2x32_049:jit:out6	1
 prng_threefry2x32_049:jit:out7	1
+prng_threefry2x32_049:text	1
 prng_threefry2x32_050:eager:out0	1
 prng_threefry2x32_050:eager:out1	1
 prng_threefry2x32_050:eager:out2	1
@@ -6062,6 +6125,7 @@ prng_threefry2x32_050:jit:out2	1
 prng_threefry2x32_050:jit:out3	1
 prng_threefry2x32_050:jit:out4	1
 prng_threefry2x32_050:jit:out5	1
+prng_threefry2x32_050:text	1
 prng_threefry2x32_051:eager:out0	1
 prng_threefry2x32_051:eager:out1	1
 prng_threefry2x32_051:eager:out2	1
@@ -6093,6 +6157,7 @@ prng_threefry2x32_052:jit:out2	1
 prng_threefry2x32_052:jit:out3	1
 prng_threefry2x32_052:jit:out4	1
 prng_threefry2x32_052:jit:out5	1
+prng_threefry2x32_052:text	1
 prng_threefry2x32_053:eager:out0	1
 prng_threefry2x32_053:eager:out1	1
 prng_threefry2x32_053:eager:out2	1
@@ -6170,6 +6235,7 @@ prng_threefry2x32_057:jit:out6	1
 prng_threefry2x32_057:jit:out7	1
 prng_threefry2x32_057:jit:out8	1
 prng_threefry2x32_057:jit:out9	1
+prng_threefry2x32_057:text	1
 prng_threefry2x32_058:eager:out0	1
 prng_threefry2x32_058:eager:out1	1
 prng_threefry2x32_058:eager:out2	1
@@ -6183,6 +6249,7 @@ prng_threefry2x32_058:jit:out2	1
 prng_threefry2x32_058:jit:out3	1
 prng_threefry2x32_058:jit:out4	1
 prng_threefry2x32_058:jit:out5	1
+prng_threefry2x32_058:text	1
 prng_threefry2x32_059:eager:out0	1
 prng_threefry2x32_059:eager:out1	1
 prng_threefry2x32_059:eager:out2	1
@@ -6192,6 +6259,7 @@ prng_threefry2x32_059:jit:out0	1
 prng_threefry2x32_059:jit:out1	1
 prng_threefry2x32_059:jit:out2	1
 prng_threefry2x32_059:jit:out3	1
+prng_threefry2x32_059:text	1
 prng_unsafe_rbg_000:eager:out0	1
 prng_unsafe_rbg_000:eager:out1	1
 prng_unsafe_rbg_000:eager:out2	1

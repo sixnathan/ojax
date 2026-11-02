@@ -7,10 +7,20 @@ let is_complex v = Dtypes.issubdtype (dtype v) `Complex
 let const_full dt sh x = Core.splat dt sh x
 let where pred x y = bind1 Select_n [ pred; y; x ]
 
+let lax_const x v =
+  let a = Core.get_aval x in
+  if
+    a.weak_type
+    && Array.length a.shape = 0
+    && Dtypes.issubdtype a.dtype `Floating
+    && a.dtype = Dtypes.default_float_dtype ()
+  then Core.py_scalar a.dtype v
+  else Core.splat a.dtype [||] v
+
 let wrap_between x half =
-  let half_v = Core.splat (dtype x) [||] half in
-  let two_half = Core.splat (dtype x) [||] (2.0 *. half) in
-  let zero = Core.splat (dtype x) [||] 0.0 in
+  let half_v = lax_const x half in
+  let two_half = lax_const x (2.0 *. half) in
+  let zero = lax_const x 0.0 in
   let rem = bind1 Rem [ bind1 Add [ x; half_v ]; two_half ] in
   let rem = where (bind1 Lt [ rem; zero ]) (bind1 Add [ rem; two_half ]) rem in
   bind1 Sub [ rem; half_v ]

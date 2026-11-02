@@ -91,6 +91,24 @@ _Static_assert(offsetof(Buffer, dims) + sizeof(void *) == 48,
                "XLA_FFI_Buffer size drift");
 _Static_assert(offsetof(Frame, stage) == 32, "XLA_FFI_CallFrame stage drift");
 
+typedef struct {
+  size_t struct_size;
+  Ext *extension_start;
+  const char *message;
+  int errc;
+} ErrorCreateArgs;
+
+typedef struct {
+  size_t struct_size;
+  Ext *extension_start;
+  Version api_version;
+  void *internal_api;
+  void *(*error_create)(ErrorCreateArgs *);
+} Api;
+
+_Static_assert(offsetof(Api, error_create) == 48, "XLA_FFI_Api layout drift");
+
+#define ERRC_UNKNOWN 2
 #define EXT_METADATA 1
 #define STAGE_EXECUTE 3
 #define DT_F32 11
@@ -110,26 +128,6 @@ static int metadata_query(Frame *f) {
       return 1;
     }
   return 0;
-}
-
-typedef struct {
-  size_t struct_size;
-  Ext *extension_start;
-  const char *message;
-  int errc;
-} ErrorCreateArgs;
-
-typedef struct {
-  size_t struct_size;
-  Ext *extension_start;
-  Version api_version;
-  void *internal_api;
-  void *(*error_create)(ErrorCreateArgs *);
-} Api;
-
-static void *ffi_error(Frame *f, const char *message) {
-  ErrorCreateArgs args = {sizeof(ErrorCreateArgs), NULL, message, 2};
-  return ((const Api *)f->api)->error_create(&args);
 }
 
 #define ENTER(name)                                \
@@ -219,6 +217,13 @@ static void copy_to(Buffer *out, const Buffer *in) {
          (size_t)core_size(in, (int)in->rank) * elt_bytes(in->dtype));
 }
 
+static void *ffi_error(Frame *f, const char *message) {
+  ErrorCreateArgs args = {sizeof args, NULL, message, ERRC_UNKNOWN};
+  return ((const Api *)f->api)->error_create(&args);
+}
+
+static LI lda_of(const Buffer *b) { return rows(b) > 1 ? rows(b) : 1; }
+
 static void set_info(Buffer *info, int64_t batch, int value) {
   ((int32_t *)info->data)[batch] = value;
 }
@@ -249,21 +254,21 @@ ENTER(h_geqrf)
   copy_to(a, ARG(0));
   char prec = prec_of(a->dtype);
   for (int64_t b = 0, n = batches(a, 2); b < n; b++)
-    ojax_lapack_call_geqrf(prec, rows(a), cols(a), at(a, 2, b), rows(a),
+    ojax_lapack_call_geqrf(prec, rows(a), cols(a), at(a, 2, b), lda_of(a),
                            at(tau, 1, b));
   return NULL;
 }
 
 ENTER(h_geqp3)
   Buffer *a = RET(0), *jpvt = RET(1), *tau = RET(2);
-  if (batches(a, 2) > 0 && rows(a) == 0 && cols(a) > 0)
-    return ffi_error(f, "UNKNOWN: XLA FFI call failed: std::bad_alloc");
   copy_to(a, ARG(0));
   copy_to(jpvt, ARG(1));
   char prec = prec_of(a->dtype);
+  if (rows(a) == 0 && cols(a) == 0) return NULL;
   for (int64_t b = 0, n = batches(a, 2); b < n; b++)
-    ojax_lapack_call_geqp3(prec, rows(a), cols(a), at(a, 2, b), rows(a),
-                           at(jpvt, 1, b), at(tau, 1, b));
+    if (ojax_lapack_call_geqp3(prec, rows(a), cols(a), at(a, 2, b), rows(a),
+                               at(jpvt, 1, b), at(tau, 1, b)) < 0)
+      return ffi_error(f, "UNKNOWN: XLA FFI call failed: std::bad_alloc");
   return NULL;
 }
 
@@ -273,7 +278,7 @@ ENTER(h_orgqr)
   char prec = prec_of(a->dtype);
   LI k = (LI)tau->dims[tau->rank - 1];
   for (int64_t b = 0, n = batches(a, 2); b < n; b++)
-    ojax_lapack_call_orgqr(prec, rows(a), cols(a), k, at(a, 2, b), rows(a),
+    ojax_lapack_call_orgqr(prec, rows(a), cols(a), k, at(a, 2, b), lda_of(a),
                            at(tau, 1, b));
   return NULL;
 }
@@ -288,7 +293,7 @@ ENTER(h_ormqr)
   LI k = (LI)tau->dims[tau->rank - 1];
   for (int64_t b = 0, n = batches(c, 2); b < n; b++)
     ojax_lapack_call_ormqr(prec, side, trans, rows(c), cols(c), k, at(a, 2, b),
-                           rows(a), at(tau, 1, b), at(c, 2, b), rows(c));
+                           lda_of(a), at(tau, 1, b), at(c, 2, b), lda_of(c));
   return NULL;
 }
 

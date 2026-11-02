@@ -20,6 +20,7 @@ val lu_pivots_to_permutation : permutation_size:int -> value list -> value list
 val tridiagonal_solve : value list -> value list
 val qr_pivoted : full_matrices:bool -> Types.value -> Types.value list
 val qr_empty : full_matrices:bool -> Types.value -> Types.value list
+val qr_pivoted_empty : full_matrices:bool -> Types.value -> Types.value list
 
 val svd_empty :
   full_matrices:bool -> compute_uv:bool -> Types.value -> Types.value list

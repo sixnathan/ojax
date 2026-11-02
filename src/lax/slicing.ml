@@ -33,6 +33,11 @@ let check_slice start_indices limit_indices strides ishape =
       "slice limit_indices must be less than or equal to operand shape, got \
        limit_indices %s for operand shape %s."
       (t limit_indices) (t ishape);
+  if Array.exists (fun s -> s < 0) start_indices then
+    type_error
+      "slice start_indices must be greater than or equal to zero, got \
+       start_indices of %s."
+      (t start_indices);
   if not (all_ge limit_indices start_indices) then
     type_error
       "slice limit_indices must be greater than or equal to start_indices, got \
@@ -45,7 +50,9 @@ let check_slice start_indices limit_indices strides ishape =
         type_error
           "slice strides must have length equal to the number of dimensions of \
            the operand, got strides %s for operand shape %s."
-          (t s) (t ishape)
+          (t s) (t ishape);
+      if Array.exists (fun x -> x < 0) s then
+        type_error "slice strides must be positive, got %s" (t s)
   | _ -> ()
 
 let check_dynamic_slice slice_sizes ishape start_shapes =

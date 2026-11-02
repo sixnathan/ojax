@@ -353,7 +353,7 @@ let split_results body =
   parts := String.sub body !start (String.length body - !start) :: !parts;
   List.rev_map String.trim !parts
 
-let add_result_info ?result_paths line =
+let add_result_info ?names line =
   let t = String.trim line in
   if not (starts_with "func.func public @main(" t) then line
   else
@@ -378,9 +378,9 @@ let add_result_info ?result_paths line =
             List.mapi
               (fun i ty ->
                 let label =
-                  match result_paths with
-                  | Some paths -> List.nth paths i
-                  | None ->
+                  match names with
+                  | Some names when i < List.length names -> List.nth names i
+                  | _ ->
                       if many then Printf.sprintf "result[%d]" i else "result"
                 in
                 let key = " {" in
@@ -642,7 +642,7 @@ let hoist_constants text =
   done;
   String.concat "\n" (List.rev !out)
 
-let render ?(num_partitions = 1) ?(module_attributes = []) ?result_paths
+let render ?(num_partitions = 1) ?(module_attributes = []) ?result_names
     ~module_name text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let root = snd (build_regions lines) in
@@ -651,7 +651,7 @@ let render ?(num_partitions = 1) ?(module_attributes = []) ?result_paths
   apply lines out root Tbl.empty;
   let out =
     Array.map
-      (fun l -> splat_index_layouts (add_result_info ?result_paths l))
+      (fun l -> splat_index_layouts (add_result_info ?names:result_names l))
       out
   in
   if Array.length out > 0 && String.trim out.(0) = "module {" then

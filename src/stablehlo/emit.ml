@@ -3922,6 +3922,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           in_ids [ a ] [ a; info ]
       in
       emit_traced ctx [ a; info ] ids eqn.outs Native_lowering.lapack_cholesky
+  | Cholesky_update | Symmetric_product _ ->
+      emit_inlined ctx eqn in_ids (!Core.lowered_linalg_hook eqn.prim)
   | Cholesky when lapack_ffi () ->
       let a = atom_aval (sole eqn.inputs) in
       let info =
@@ -4594,19 +4596,19 @@ let emit_closed_jaxpr ?partition cj =
 
 type lowered = { text : string; kept : int list }
 
-let lower ?result_paths ~name cj =
+let lower ?result_names ~name cj =
   let pruned, kept = Dce.prune_unused_inputs cj in
   {
     text =
-      Mlir_names.render ?result_paths ~module_name:name
+      Mlir_names.render ?result_names ~module_name:name
         (emit_closed_jaxpr pruned);
     kept;
   }
 
-let emit_jax_text ?result_paths ~name cj =
-  Mlir_names.renumber_callbacks (lower ?result_paths ~name cj).text
+let emit_jax_text ?result_names ~name cj =
+  Mlir_names.renumber_callbacks (lower ?result_names ~name cj).text
 
-let emit_export_text ?(platforms = []) ?result_paths ~name
+let emit_export_text ?(platforms = []) ?result_names ~name
     ~uses_shape_polymorphism cj =
   let pruned, kept = Dce.prune_unused_inputs cj in
   let saved = !lowering_platforms in
@@ -4627,7 +4629,7 @@ let emit_export_text ?(platforms = []) ?result_paths ~name
       let body = Mlir_names.drop_empty_backend_config body in
       {
         text =
-          Mlir_names.render ?result_paths ~module_name:name
+          Mlir_names.render ?result_names ~module_name:name
             ~module_attributes:
               [
                 Printf.sprintf "jax.uses_shape_polymorphism = %b"

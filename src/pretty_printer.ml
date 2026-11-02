@@ -256,6 +256,8 @@ let prim_name = function
   | Random_unwrap -> "random_unwrap"
   | Random_gamma _ -> "random_gamma"
   | Cholesky -> "cholesky"
+  | Cholesky_update -> "cholesky_update"
+  | Symmetric_product _ -> "symmetric_product"
   | Householder_product -> "householder_product"
   | Lu -> "lu"
   | Lu_pivots_to_permutation _ -> "lu_pivots_to_permutation"
@@ -925,6 +927,11 @@ let jax_params (e : eqn) =
         ("sort_eig_vals", Plain "False");
       ]
   | Tridiagonal { lower } -> [ ("lower", Plain (py_bool lower)) ]
+  | Symmetric_product { alpha; beta } ->
+      [
+        ("alpha", Plain (python_repr_float alpha));
+        ("beta", Plain (python_repr_float beta));
+      ]
   | Tridiagonal_solve { perturb_singular } ->
       [ ("perturb_singular", Plain (py_bool perturb_singular)) ]
   | Lu_pivots_to_permutation n ->

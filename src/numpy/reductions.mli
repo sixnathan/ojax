@@ -178,6 +178,7 @@ val nanstd :
   Types.value
 
 val cumsum : ?dtype:Dtype.t -> ?axis:int -> Types.value -> Types.value
+val cumsum_by_keyword : ?axis:int -> Types.value -> Types.value
 val cumprod : ?dtype:Dtype.t -> ?axis:int -> Types.value -> Types.value
 val nancumsum : ?dtype:Dtype.t -> ?axis:int -> Types.value -> Types.value
 val nancumprod : ?dtype:Dtype.t -> ?axis:int -> Types.value -> Types.value

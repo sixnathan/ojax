@@ -42,7 +42,7 @@ let field name = function
   | `Ok s -> [ (name, `String s) ]
   | `Err e -> [ (name ^ "_error", `String e) ]
 
-let record ?result_paths oc ~set ~case traced =
+let record ?result_names oc ~set ~case traced =
   let lowered = guarded traced in
   let render f =
     match lowered with
@@ -53,7 +53,7 @@ let record ?result_paths oc ~set ~case traced =
     field "jaxpr" (render PP.closed_jaxpr_to_jax_string)
     @ field "structure" (render PP.primitive_structure)
     @ field "text"
-        (render (Ojax.Stablehlo.Emit.emit_jax_text ?result_paths ~name:"f"))
+        (render (Ojax.Stablehlo.Emit.emit_jax_text ?result_names ~name:"f"))
   in
   Yojson.Safe.to_channel oc
     (`Assoc ([ ("set", `String set); ("case", `String case) ] @ fields));
@@ -85,10 +85,9 @@ let parity_case oc ~set case =
     in
     go names args
   in
-  let result_paths =
-    match op with "gp_qr_full" -> Some [ "result.Q"; "result.R" ] | _ -> None
-  in
-  record ?result_paths oc ~set
+  record
+    ?result_names:(Parity_cases.result_names op)
+    oc ~set
     ~case:(U.to_string (U.member "case_id" case))
     (fun () ->
       Ojax.Jaxpr.with_trace_debug

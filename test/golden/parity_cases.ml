@@ -897,7 +897,12 @@ let gap_run op p a b =
             ~axis:(int "axis" p) scaled;
         ]
   | "gp_wofz" ->
-      let z = L.complex (a ()) (b ()) in
+      let z =
+        UF.add (a ())
+          (UF.multiply
+             (Ojax.Numpy.Jnp_util.py_complex { Complex.re = 0.0; im = 1.0 })
+             (b ()))
+      in
       Some [ Ojax.Scipy.Special.wofz z ]
   | "gp_bernoulli" -> Some [ Ojax.Scipy.Special.bernoulli (int "n" p) ]
   | "gp_expm_batched" -> Some [ Ojax.Scipy.Linalg.expm (a ()) ]
@@ -1819,3 +1824,8 @@ let needs_concrete op =
       "np_polydiv";
       "np_roots";
     ]
+
+let result_names = function
+  | "gp_qr_full" ->
+      Some (Ojax.Stages.result_names_of_tree Ojax.Numpy.Linalg.qr_result_def)
+  | _ -> None

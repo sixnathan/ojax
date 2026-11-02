@@ -13,17 +13,17 @@ val emitting : unit -> bool
 type lowered = { text : string; kept : int list }
 
 val lower :
-  ?result_paths:string list -> name:string -> Types.closed_jaxpr -> lowered
+  ?result_names:string list -> name:string -> Types.closed_jaxpr -> lowered
 
 val emit_jax_text :
-  ?result_paths:string list -> name:string -> Types.closed_jaxpr -> string
+  ?result_names:string list -> name:string -> Types.closed_jaxpr -> string
 
 val lower_partitioned :
   name:string -> partition -> Types.closed_jaxpr -> lowered
 
 val emit_export_text :
   ?platforms:string list ->
-  ?result_paths:string list ->
+  ?result_names:string list ->
   name:string ->
   uses_shape_polymorphism:bool ->
   Types.closed_jaxpr ->

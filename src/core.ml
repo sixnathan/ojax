@@ -60,6 +60,7 @@ let interpreter_for trace =
 let eval_trace = { level = 0; kind = KEval; global_data = GNone }
 let trace_stack : trace list ref = ref [ eval_trace ]
 let dynamic_trace : trace option ref = ref None
+let linearize_scope : trace option option ref = ref None
 
 let tracing_dynamically () =
   match !dynamic_trace with Some t -> t.level > 0 | None -> false
@@ -386,6 +387,8 @@ let check_operands prim args =
           | _ -> false)
         "subtypes of complexfloating, float32, float64"
   | Round | Round_nearest_even -> check "round" is_float_dtype floating
+  | Cholesky_update -> check "cholesky_update" is_float_dtype floating
+  | Symmetric_product _ -> check "symmetric_product" is_float_dtype floating
   | Cholesky | Lu | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Eig _ | Eigh _ | Svd _
   | Schur _ | Hessenberg | Triangular_solve _ | Tridiagonal _
   | Tridiagonal_solve _ ->
@@ -725,6 +728,9 @@ let divide_shape_sizes s1 s2 =
 
 let random_gamma_hook : (log_space:bool -> value -> value -> value) ref =
   ref (fun ~log_space:_ _ _ -> failwith "core: random_gamma not installed")
+
+let lowered_linalg_hook : (primitive -> value list -> value list) ref =
+  ref (fun _ _ -> failwith "core: lowered linalg is not installed")
 
 let random_gamma_grad_hook : (log_space:bool -> value -> value -> value) ref =
   ref (fun ~log_space:_ _ _ -> failwith "core: random_gamma not installed")

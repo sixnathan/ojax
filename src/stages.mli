@@ -5,7 +5,7 @@ type lowered = {
   in_avals : aval list;
   out_avals : aval list;
   module_name : string;
-  result_paths : string list option;
+  result_names : string list option;
 }
 
 type compiled
@@ -33,10 +33,11 @@ type wrapped = {
 val arg_info_shape : arg_info -> int array
 val arg_info_dtype : arg_info -> Dtype.t
 val lower : (value list -> value list) -> aval list -> lowered
+val result_names_of_tree : Tree_util.treedef -> string list
 val as_text : lowered -> string
 val raw_text : lowered -> string
 val jaxpr_text : lowered -> string
-val as_jax_text : ?name:string -> ?result_paths:string list -> lowered -> string
+val as_jax_text : ?name:string -> ?result_names:string list -> lowered -> string
 val jax_jaxpr_text : lowered -> string
 val compile : ?compiler_options:compiler_options -> lowered -> compiled
 val call : compiled -> value list -> value list

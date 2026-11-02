@@ -173,7 +173,7 @@ let run oc (name, f, args, paths) =
       ( "text",
         guard (fun () ->
             `String
-              (Ojax.Stages.as_jax_text ~name:"f" ?result_paths:paths
+              (Ojax.Stages.as_jax_text ~name:"f" ?result_names:paths
                  (Lazy.force lowered))) );
       ( "jit",
         guard (fun () ->
@@ -238,7 +238,8 @@ let write_sym oc =
        [
          ("case", `String "sym_call");
          ("text", `String "");
-         ("jit", `List (List.map value_row (Ojax.Export.call_symbolic s [ ones ])));
+         ( "jit",
+           `List (List.map value_row (Ojax.Export.call_symbolic s [ ones ])) );
          ("eager", `List []);
        ]);
   output_char oc '\n'

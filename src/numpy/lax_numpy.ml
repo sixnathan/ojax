@@ -1324,7 +1324,8 @@ let pad_key mode pad_width stat_length end_values reflect_type =
           []))
 
 let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
-    ?(float_literal = false) v pad_width constant_values =
+    ?(float_literal = false) ?(bool_literal = false) v pad_width constant_values
+    =
   let key = pad_key mode pad_width stat_length end_values reflect_type in
   let body v =
     pad_body ~mode ?stat_length ?end_values ~reflect_type v pad_width 0.0
@@ -1332,7 +1333,9 @@ let pad ?(mode = "constant") ?stat_length ?end_values ?(reflect_type = "even")
   if ndim v = 0 then v
   else if mode = "constant" then begin
     let literal =
-      if Float.is_integer constant_values && not float_literal then
+      if bool_literal then
+        T.Concrete (Ndarray.of_floats D.Bool [||] [| constant_values |])
+      else if Float.is_integer constant_values && not float_literal then
         Jnp_util.py_int (int_of_float constant_values)
       else Jnp_util.py_float constant_values
     in

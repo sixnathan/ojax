@@ -75,6 +75,12 @@ let rec host name v =
   | Tracer { payload = JVP { primal; _ }; _ } -> host name primal
   | Tracer _ -> raise (concretization name v)
 
+let rec require_concrete name v =
+  match v with
+  | Tracer { payload = JVP { primal; _ }; _ } -> require_concrete name primal
+  | Tracer _ -> raise (concretization name v)
+  | Concrete _ | Device _ -> ()
+
 let flat_floats nd =
   Array.of_list (List.rev (Ndarray.fold (fun acc x -> x :: acc) [] nd))
 
@@ -1039,6 +1045,7 @@ let intersect1d_indices ?(assume_unique = false) ?size ?fill_value a b =
         (flat b)
 
 let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
+  let ar1 = a in
   let a, b = same_dtype a b in
   let dt = dtype_of a in
   let a = flat a and b = flat b in
@@ -1072,6 +1079,7 @@ let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
       in
       NL.where_ (positions_below n (R.sum mask)) picked (lit_of fill dt)
   | None ->
+      require_concrete "setdiff1d" ar1;
       let source =
         if assume_unique then flat_float_list "setdiff1d" a
         else sorted_unique_floats "setdiff1d" a

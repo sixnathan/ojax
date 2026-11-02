@@ -994,7 +994,7 @@ type sections = Count of int | Indices of int array | Index_array of T.value
 let split_traced op v element_shape =
   raise
     (Errors.concretization_type_error
-       ~context:(Printf.sprintf "in jax.numpy.%s argument 1\n" op)
+       ~context:(Printf.sprintf "in jax.numpy.%s argument 1" op)
        ~error_repr:
          (Printf.sprintf "traced array with shape %s[%s]"
             (D.numpy_name (dtype v))
@@ -1680,7 +1680,10 @@ let binop prim x y =
   let x, y = Jnp_util.promote_ranks (convert x dt) (convert y dt) in
   bind1 prim [ x; y ]
 
-let mul2 = binop T.Mul
+let mul2 x y =
+  let dt = result_type [ x; y ] in
+  binop (if dt = D.Bool then T.And else T.Mul) x y
+
 let sub2 = binop T.Sub
 let add2 = binop T.Add
 let mul_scalar c v = bind1 T.Mul [ v; full (dtype v) (shape v) c ]

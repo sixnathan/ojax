@@ -1489,7 +1489,12 @@ let gumbel_any key ~shape ~dt ~mode =
 let choice_array ?(shape = [||]) ?(replace = true) ?p ?(axis = 0) ?mode k arr =
   let ash = shape_of arr in
   let rank = Array.length ash in
-  let axis = if axis < 0 then axis + max rank 1 else axis in
+  let raw_axis = axis in
+  let axis =
+    if rank > 0 then Validate.canonicalize_axis axis rank
+    else if axis < 0 then axis + 1
+    else axis
+  in
   let n_inputs =
     if rank = 0 then int_of_float (Nd.get_f (concrete arr) [||]) else ash.(axis)
   in
@@ -1526,6 +1531,7 @@ let choice_array ?(shape = [||]) ?(replace = true) ?p ?(axis = 0) ?mode k arr =
           else
             let perm =
               if rank = 0 then
+                let _ = Validate.canonicalize_axis raw_axis 1 in
                 shuffle_axis k
                   (C.bind1
                      (Iota

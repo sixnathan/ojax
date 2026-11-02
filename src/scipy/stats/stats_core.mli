@@ -1,7 +1,7 @@
 val invert_permutation : Types.value -> Types.value
 
 val sem :
-  ?axis:int ->
+  ?axis:int option ->
   ?ddof:int ->
   ?nan_policy:string ->
   ?keepdims:bool ->

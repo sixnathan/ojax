@@ -135,14 +135,6 @@ val gather :
   int array ->
   value
 
-val scatter_indices :
-  Lax_config.gather_scatter_mode option ->
-  value ->
-  value ->
-  value ->
-  scatter_dims ->
-  value
-
 val scatter :
   ?mode:Lax_config.gather_scatter_mode ->
   ?indices_are_sorted:bool ->

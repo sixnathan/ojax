@@ -2013,6 +2013,19 @@ let run op positional options arr =
           ((A.value arr) positional.(2))
           ((A.value arr) positional.(3));
       ]
+  | "nn.scaled_dot_general" ->
+      let lhs = (A.value arr) positional.(0) in
+      let rhs = (A.value arr) positional.(1) in
+      let dimension_numbers =
+        A.unpack_pair (A.unpack_pair A.int_array) positional.(2)
+      in
+      [
+        Ojax.Nn.Functions.scaled_dot_general_dimension_numbers
+          ?preferred_element_type:
+            (A.opt options "preferred_element_type" A.dtype)
+          ?implementation:(A.opt options "implementation" A.string_)
+          ~dimension_numbers lhs rhs;
+      ]
   | "nn.softmax" ->
       [
         Ojax.Nn.Functions.softmax
@@ -2515,6 +2528,14 @@ let run op positional options arr =
       Ojax.Scipy.Linalg.lu
         ?permute_l:(A.opt options "permute_l" A.bool_)
         ((A.value arr) positional.(0))
+  | "sp_linalg.lu_solve" ->
+      let lu_and_piv = A.unpack_pair (A.value arr) positional.(0) in
+      let b = (A.value arr) positional.(1) in
+      [
+        Ojax.Scipy.Linalg.lu_solve
+          ?trans:(A.opt options "trans" A.trans)
+          lu_and_piv b;
+      ]
   | "sp_linalg.polar" ->
       Ojax.Scipy.Linalg.polar
         ?side:(A.opt options "side" A.string_)

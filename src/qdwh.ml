@@ -75,11 +75,17 @@ let mask x dims alternative =
   let m = b1 T.And [ first; second ] in
   where m x alternative
 
+let multiply x y =
+  match (dtype x, dtype y) with
+  | D.Bool, D.Bool -> b1 T.And [ x; y ]
+  | dx, D.Bool -> b1 T.Mul [ x; b1 (T.Convert_element_type dx) [ y ] ]
+  | _ -> b1 T.Mul [ x; y ]
+
 let use_qr u (a_minus_e_by_sqrt_c, sqrt_c, e) =
   let sh = shape u in
   let m = sh.(0) and n = sh.(1) in
   let dt = dtype u in
-  let scaled = b1 T.Mul [ sqrt_c; u ] in
+  let scaled = multiply sqrt_c u in
   let identity = eye dt n in
   let padded =
     b1 (T.Pad [| (0, n, 0); (0, 0, 0) |]) [ scaled; scalar dt 0.0 ]
@@ -109,8 +115,12 @@ let use_cholesky u (a_minus_e, c, e) =
   let n = (shape u).(1) in
   let dt = dtype u in
   let gram = L.dot_typed (hconj u) u in
-  let scaled = b1 T.Mul [ c; gram ] in
-  let x = b1 T.Add [ scaled; eye dt n ] in
+  let scaled = multiply c gram in
+  let x =
+    if dtype scaled = dt then b1 T.Add [ scaled; eye dt n ]
+    else b1 T.Add [ scaled; eye (dtype scaled) n ]
+  in
+  let dt = dtype x in
   let alternative = eye dt n in
   let x = mask x [| n; n |] alternative in
   let y = LL.cholesky ~symmetrize_input:false x in
@@ -127,11 +137,17 @@ let use_cholesky u (a_minus_e, c, e) =
   let left = b1 T.Mul [ e; u ] in
   b1 T.Add [ left; b1 T.Mul [ a_minus_e; z ] ]
 
+let inexact v =
+  match dtype v with
+  | D.F16 | D.Bf16 | D.F32 | D.F64 | D.Complex64 | D.Complex128 -> v
+  | _ -> b1 (T.Convert_element_type (Dtypes.default_float_dtype ())) [ v ]
+
 let matrix_norm name axis v =
   jit1 "norm"
     ~key:(name ^ string_of_int axis)
     (function
       | [ v ] ->
+          let v = inexact v in
           let magnitude = b1 T.Abs [ v ] in
           let summed = b1 (T.Reduce_sum [| axis |]) [ magnitude ] in
           let top = b1 (T.Reduce_max [| 0 |]) [ summed ] in
@@ -251,7 +267,7 @@ let qdwh_body max_iterations eps x =
     if dtype alpha_inverse = dt then alpha_inverse
     else b1 (T.Convert_element_type dt) [ alpha_inverse ]
   in
-  let u0 = b1 T.Mul [ x; scale ] in
+  let u0 = multiply x scale in
   let tol_l = 10.0 *. eps /. 2.0 in
   let tol_norm = b1 T.Cbrt [ scalar (Dtypes.default_float_dtype ()) tol_l ] in
   let qr_coefs = ref [] and chol_coefs = ref [] in
@@ -283,7 +299,11 @@ let qdwh_body max_iterations eps x =
   let start = List.length qr_list + List.length chol_list in
   let final_params =
     let e = 1.0 /. 3.0 in
-    (scalar dt (3.0 -. e), scalar dt 3.0, scalar dt e)
+    let c =
+      if dt = D.Bool then scalar (Dtypes.default_int_dtype ()) 3.0
+      else scalar dt 3.0
+    in
+    (scalar dt (3.0 -. e), c, scalar dt e)
   in
   let final =
     Lax.while_loop

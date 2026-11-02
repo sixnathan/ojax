@@ -1895,7 +1895,10 @@ let delete_array ?axis ?(assume_unique_indices = false) a obj =
         (L.expand_dims shifted [| 1 |])
     in
     let adjust = R.sum ~dtype:dt ~axis:[| 0 |] above in
-    I.take_index ~axis:ax a (U.add base adjust)
+    Getitem.take a
+      (List.init ax (fun _ ->
+           Getitem.Slice { start = None; stop = None; step = None })
+      @ [ Getitem.Arr (U.add base adjust) ])
   end
   else
     let values = flat_floats (host "delete" obj) in

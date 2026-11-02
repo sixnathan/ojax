@@ -709,41 +709,7 @@ let logaddexp x1 x2 =
 
 let logaddexp2 x1 x2 =
   let a, b = p2 (promote_inexact ~name:"logaddexp2" [ x1; x2 ]) in
-  let dt = dtype a and sh = shape a in
-  let amax = bind1 T.Max [ a; b ] in
-  let invln2 = const_full dt sh (1.0 /. Float.log 2.0) in
-  if is_complex a then begin
-    let two = const_full dt sh 2.0 in
-    let delta =
-      bind1 T.Sub [ bind1 T.Add [ a; b ]; bind1 T.Mul [ amax; two ] ]
-    in
-    let out =
-      bind1 T.Add
-        [
-          amax; bind1 T.Mul [ invln2; bind1 T.Log1p [ bind1 T.Exp2 [ delta ] ] ];
-        ]
-    in
-    bind1 T.Complex
-      [
-        bind1 T.Real [ out ];
-        wrap_between (bind1 T.Imag [ out ]) (Float.pi /. Float.log 2.0);
-      ]
-  end
-  else
-    let delta = bind1 T.Sub [ a; b ] in
-    let normal =
-      bind1 T.Add
-        [
-          amax;
-          bind1 T.Mul
-            [
-              invln2;
-              bind1 T.Log1p
-                [ bind1 T.Exp2 [ bind1 T.Neg [ bind1 T.Abs [ delta ] ] ] ];
-            ];
-        ]
-    in
-    where (bind1 T.Ne [ delta; delta ]) (bind1 T.Add [ a; b ]) normal
+  Lax_other.logaddexp2 a b
 
 let rint x =
   match dtype x with

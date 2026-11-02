@@ -80,6 +80,9 @@ let orthogonal ?m key ~n ~shape:sh =
 
 let multivariate_normal ?shape:shape_opt ?(method_ = "cholesky") ?dtype key
     ~mean ~cov =
+  let dtype =
+    Option.map (fun d -> Dtypes.check_and_canonicalize_user_dtype d) dtype
+  in
   if not (List.mem method_ [ "svd"; "eigh"; "cholesky" ]) then
     raise
       (Py_exn.Value_error "method must be one of {'svd', 'eigh', 'cholesky'}");
@@ -163,17 +166,29 @@ let with_dt dtype f =
   | Some d -> C.with_dtypes ~float_dtype:(Dtypes.canonicalize_dtype d) f
 
 let maxwell ?dtype key ~shape =
+  let dtype =
+    Option.map (fun d -> Dtypes.check_and_canonicalize_user_dtype d) dtype
+  in
   C.check_float_dtype "maxwell" dtype;
   with_dt dtype (fun () -> maxwell key ~shape)
 
 let double_sided_maxwell ?dtype key ~loc ~scale ~shape =
+  let dtype =
+    Option.map (fun d -> Dtypes.check_and_canonicalize_user_dtype d) dtype
+  in
   C.check_float_dtype "double_sided_maxwell" dtype;
   with_dt dtype (fun () -> double_sided_maxwell key ~loc ~scale ~shape)
 
 let ball ?dtype ?p key ~d ~shape =
+  let dtype =
+    Option.map (fun d -> Dtypes.check_and_canonicalize_user_dtype d) dtype
+  in
   C.check_float_dtype "gamma" dtype;
   with_dt dtype (fun () -> ball ?p key ~d ~shape)
 
 let orthogonal ?dtype ?m key ~n ~shape =
+  let dtype =
+    Option.map (fun d -> Dtypes.check_and_canonicalize_user_dtype d) dtype
+  in
   C.check_inexact_dtype "normal" dtype;
   with_dt dtype (fun () -> orthogonal ?m key ~n ~shape)

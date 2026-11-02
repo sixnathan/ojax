@@ -273,10 +273,23 @@ let check_scalar_indices sh idx =
         | _ -> ())
       idx
 
+let take_hook : (string option -> T.value -> index list -> T.value) option ref =
+  ref None
+
+let set_hook : (T.value -> index list -> T.value -> T.value) option ref =
+  ref None
+
+let set_stepped_hook :
+    (T.value -> start:int -> step:int -> T.value -> T.value) option ref =
+  ref None
+
 let take_clip x idx =
-  let idx = expand idx (rank x) in
-  check_scalar_indices (shape x) idx;
-  gather_take ~clip:true x idx
+  match !take_hook with
+  | Some f -> f (Some "clip") x idx
+  | None ->
+      let idx = expand idx (rank x) in
+      check_scalar_indices (shape x) idx;
+      gather_take ~clip:true x idx
 
 let static_in_bounds x idx =
   let sh = shape x in
@@ -291,80 +304,90 @@ let static_in_bounds x idx =
        idx)
 
 let take x idx =
-  let idx = expand idx (rank x) in
-  check_scalar_indices (shape x) idx;
-  let is_arr = function Arr _ -> true | _ -> false in
-  if not (List.exists is_arr idx) then
-    if static_in_bounds x idx then static_take x idx else dynamic_take x idx
-  else if List.for_all (function Arr v -> rank v = 0 | _ -> true) idx then
-    dynamic_take x idx
-  else gather_take x idx
+  match !take_hook with
+  | Some f -> f None x idx
+  | None ->
+      let idx = expand idx (rank x) in
+      check_scalar_indices (shape x) idx;
+      let is_arr = function Arr _ -> true | _ -> false in
+      if not (List.exists is_arr idx) then
+        if static_in_bounds x idx then static_take x idx else dynamic_take x idx
+      else if List.for_all (function Arr v -> rank v = 0 | _ -> true) idx then
+        dynamic_take x idx
+      else gather_take x idx
 
 let set x idx y =
-  let idx = expand idx (rank x) in
-  check_scalar_indices (shape x) idx;
-  let x_aval = C.get_aval x in
-  let ix = to_gather x_aval.shape idx in
-  if empty ix.slice_shape then x
-  else
-    let dt, is_weak =
-      Dtypes.result_type
-        [
-          (x_aval.dtype, x_aval.weak_type); (dtype y, (C.get_aval y).T.weak_type);
-        ]
-    in
-    let x' = C.convert_like ~weak:is_weak x dt in
-    let y' = C.convert_like ~weak:is_weak y dt in
-    let y' =
-      if shape y' = ix.slice_shape then y'
+  match !set_hook with
+  | Some f -> f x idx y
+  | None ->
+      let idx = expand idx (rank x) in
+      check_scalar_indices (shape x) idx;
+      let x_aval = C.get_aval x in
+      let ix = to_gather x_aval.shape idx in
+      if empty ix.slice_shape then x
       else
-        let sy = shape y' in
-        let lead = Array.length ix.slice_shape - Array.length sy in
-        L.broadcast_in_dim y' ix.slice_shape
-          (Array.init (Array.length sy) (fun d -> d + lead))
-    in
-    let out =
-      C.bind1
-        (T.Scatter
-           {
-             dimension_numbers =
+        let dt, is_weak =
+          Dtypes.result_type
+            [
+              (x_aval.dtype, x_aval.weak_type);
+              (dtype y, (C.get_aval y).T.weak_type);
+            ]
+        in
+        let x' = C.convert_like ~weak:is_weak x dt in
+        let y' = C.convert_like ~weak:is_weak y dt in
+        let y' =
+          if shape y' = ix.slice_shape then y'
+          else
+            let sy = shape y' in
+            let lead = Array.length ix.slice_shape - Array.length sy in
+            L.broadcast_in_dim y' ix.slice_shape
+              (Array.init (Array.length sy) (fun d -> d + lead))
+        in
+        let out =
+          C.bind1
+            (T.Scatter
                {
-                 update_window_dims = ix.offset_dims;
-                 inserted_window_dims = ix.collapsed_slice_dims;
-                 scatter_dims_to_operand_dims = ix.start_index_map;
-                 s_operand_batching_dims = [||];
-                 s_scatter_indices_batching_dims = [||];
-                 s_sorted_unique = ix.plain;
-                 s_clip = false;
-               };
-             unique_indices = ix.plain;
-           })
-        [ x'; ix.gather_indices; y' ]
-    in
-    C.convert_like ~weak:x_aval.weak_type out x_aval.dtype
+                 dimension_numbers =
+                   {
+                     update_window_dims = ix.offset_dims;
+                     inserted_window_dims = ix.collapsed_slice_dims;
+                     scatter_dims_to_operand_dims = ix.start_index_map;
+                     s_operand_batching_dims = [||];
+                     s_scatter_indices_batching_dims = [||];
+                     s_sorted_unique = ix.plain;
+                     s_clip = false;
+                   };
+                 unique_indices = ix.plain;
+               })
+            [ x'; ix.gather_indices; y' ]
+        in
+        C.convert_like ~weak:x_aval.weak_type out x_aval.dtype
 
 let set_stepped x ~start ~step y =
-  let sh = shape x in
-  let dt = index_dtype sh in
-  if start >= sh.(0) then x
-  else
-    let n = ((sh.(0) - start - 1) / step) + 1 in
-    let positions =
-      UF.add (const dt start) (UF.multiply (const dt step) (L.iota dt n))
-    in
-    C.bind1
-      (T.Scatter
-         {
-           dimension_numbers =
+  match !set_stepped_hook with
+  | Some f -> f x ~start ~step y
+  | None ->
+      let sh = shape x in
+      let dt = index_dtype sh in
+      if start >= sh.(0) then x
+      else
+        let n = ((sh.(0) - start - 1) / step) + 1 in
+        let positions =
+          UF.add (const dt start) (UF.multiply (const dt step) (L.iota dt n))
+        in
+        C.bind1
+          (T.Scatter
              {
-               update_window_dims = [||];
-               inserted_window_dims = [| 0 |];
-               scatter_dims_to_operand_dims = [| 0 |];
-               s_operand_batching_dims = [||];
-               s_scatter_indices_batching_dims = [||];
-               s_sorted_unique = true;
-               s_clip = false;
-             };
-           unique_indices = true;
-         })
-      [ x; L.expand_dims positions [| 1 |]; y ]
+               dimension_numbers =
+                 {
+                   update_window_dims = [||];
+                   inserted_window_dims = [| 0 |];
+                   scatter_dims_to_operand_dims = [| 0 |];
+                   s_operand_batching_dims = [||];
+                   s_scatter_indices_batching_dims = [||];
+                   s_sorted_unique = true;
+                   s_clip = false;
+                 };
+               unique_indices = true;
+             })
+          [ x; L.expand_dims positions [| 1 |]; y ]

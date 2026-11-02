@@ -1,8 +1,15 @@
 open Types
 
+type field = { fname : string; conv : char option; spec : string }
+
 val format_message : string -> value list -> string
 val callback : (value list -> unit) -> value list -> unit
-val print : string -> value list -> unit
+
+val print :
+  ?ordered:bool -> ?kwargs:(string * value) list -> string -> value list -> unit
+
+val print_sink : (string -> unit) ref
+val parse_format : string -> (string * field option) list
 val inspect_array_sharding : value -> callback:(string -> unit) -> unit
 
 val visualize_sharding :

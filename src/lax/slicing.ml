@@ -506,7 +506,7 @@ let gather_fill_lowered prim operand indices =
     else Dtype.I32
   in
   let indices =
-    if (aval indices).dtype = idt then indices
+    if (aval indices).dtype = idt && not (aval indices).weak_type then indices
     else bind1 (Convert_element_type idt) [ indices ]
   in
   let ish = (aval indices).shape in

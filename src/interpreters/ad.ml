@@ -1651,6 +1651,8 @@ let jvp_rule_rest prim (primals : value list) (tangents : value list) :
   | Population_count -> failwith "ad: population_count has no jvp rule"
   | Clz -> failwith "ad: clz has no jvp rule"
   | Nextafter -> failwith "ad: nextafter has no jvp rule"
+  | Scatter _ when Scatter_apply.find prim <> None ->
+      raise (Py_exn.Not_implemented_error "scatter_apply JVP not implemented")
   | Scatter { dimension_numbers; unique_indices } -> (
       match (primals, tangents) with
       | [ op; idx; up ], [ t_op; _; t_up ] ->
@@ -2271,6 +2273,9 @@ let rec jvp_pairs prim primals tangents =
               )
           in
           (po, to_)
+      | Core.Callback_rule { cb_effect = Core.Callback_debug _; _ } ->
+          ignore (Core.bind prim primals);
+          ([], [])
       | Core.Callback_rule { cb_effect = Core.Callback_io _; _ } ->
           invalid_arg "IO callbacks do not support JVP."
       | Core.Callback_rule { result_avals = []; _ } ->

@@ -723,17 +723,22 @@ let scatter_dnums_of = function
   | _ -> failwith "batching: not a scatter primitive"
 
 let rebuild_scatter prim (sd : scatter_dims) =
-  Np_ints.copy_scatter_marks ~from:prim
-    (match prim with
-    | Scatter { unique_indices; _ } ->
-        Scatter { dimension_numbers = sd; unique_indices }
-    | Scatter_add _ -> Scatter_add { dimension_numbers = sd }
-    | Scatter_sub _ -> Scatter_sub { dimension_numbers = sd }
-    | Scatter_mul { unique_indices; _ } ->
-        Scatter_mul { dimension_numbers = sd; unique_indices }
-    | Scatter_min _ -> Scatter_min { dimension_numbers = sd }
-    | Scatter_max _ -> Scatter_max { dimension_numbers = sd }
-    | _ -> failwith "batching: not a scatter primitive")
+  let rebuilt =
+    Np_ints.copy_scatter_marks ~from:prim
+      (match prim with
+      | Scatter { unique_indices; _ } ->
+          Scatter { dimension_numbers = sd; unique_indices }
+      | Scatter_add _ -> Scatter_add { dimension_numbers = sd }
+      | Scatter_sub _ -> Scatter_sub { dimension_numbers = sd }
+      | Scatter_mul { unique_indices; _ } ->
+          Scatter_mul { dimension_numbers = sd; unique_indices }
+      | Scatter_min _ -> Scatter_min { dimension_numbers = sd }
+      | Scatter_max _ -> Scatter_max { dimension_numbers = sd }
+      | _ -> failwith "batching: not a scatter primitive")
+  in
+  match Scatter_apply.find prim with
+  | Some (jaxpr, host) -> Scatter_apply.mark rebuilt jaxpr host
+  | None -> rebuilt
 
 let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =
@@ -2019,27 +2024,62 @@ let unstacks_operands prim (bdims : int option list) =
       any_batched (List.filteri (fun i _ -> i >= n) bdims)
   | _ -> false
 
+let is_debug_callback = function
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule { cb_effect = Core.Callback_debug _; _ } -> true
+      | _ -> false)
+  | _ -> false
+
+let index_in_dim v i dim =
+  let shape = (Core.get_aval v).shape in
+  let rank = Array.length shape in
+  let start_indices = Array.init rank (fun k -> if k = dim then i else 0) in
+  let limit_indices =
+    Array.init rank (fun k -> if k = dim then i + 1 else shape.(k))
+  in
+  let sliced =
+    Core.bind1
+      (Slice
+         { start_indices; limit_indices; strides = Some (Array.make rank 1) })
+      [ v ]
+  in
+  Core.bind1 (Squeeze [| dim |]) [ sliced ]
+
+let debug_batch axis_size prim vals bdims =
+  for i = 0 to axis_size - 1 do
+    ignore
+      (Core.bind prim
+         (List.map2
+            (fun v b -> match b with None -> v | Some d -> index_in_dim v i d)
+            vals bdims))
+  done;
+  []
+
 let unstacked_batch axis_size prim vals bdims =
   check_vmappable_callback prim;
-  let per_element =
-    List.map2
-      (fun v b ->
-        match b with
-        | None -> List.init axis_size (fun _ -> v)
-        | Some d -> Core.bind (Unstack d) [ v ])
-      vals bdims
-  in
-  let results =
-    List.init axis_size (fun i ->
-        Core.bind prim (List.map (fun column -> List.nth column i) per_element))
-  in
-  match results with
-  | [] -> failwith "batching: empty batch"
-  | first :: _ ->
-      List.mapi
-        (fun j _ ->
-          Core.bind1 (Stack 0) (List.map (fun out -> List.nth out j) results))
-        first
+  if is_debug_callback prim then debug_batch axis_size prim vals bdims
+  else
+    let per_element =
+      List.map2
+        (fun v b ->
+          match b with
+          | None -> List.init axis_size (fun _ -> v)
+          | Some d -> Core.bind (Unstack d) [ v ])
+        vals bdims
+    in
+    let results =
+      List.init axis_size (fun i ->
+          Core.bind prim
+            (List.map (fun column -> List.nth column i) per_element))
+    in
+    match results with
+    | [] -> failwith "batching: empty batch"
+    | first :: _ ->
+        List.mapi
+          (fun j _ ->
+            Core.bind1 (Stack 0) (List.map (fun out -> List.nth out j) results))
+          first
 
 let batched_custom_rules : (int * int, int) Hashtbl.t = Hashtbl.create 16
 let all_mapped l = List.map (fun _ -> Some 0) l
@@ -2273,6 +2313,123 @@ let batched_jvp_rule id axis_size vals bdims primal jvp =
       | None -> ());
       let r = (nid, dims) in
       Hashtbl.replace jvp_batch_cache key r;
+      r
+
+let vjp_batch_cache :
+    ( int * int * int option list * aval list * bool,
+      int * int option list )
+    Hashtbl.t =
+  Hashtbl.create 16
+
+let match_axis_sum axis_size src dst v =
+  if Ad_util.is_symbolic_zero v then
+    let av = Core.get_aval v in
+    match (src, dst) with
+    | s, d when s = d -> v
+    | Some s, Some d ->
+        Ad_util.symbolic_zero_of_aval
+          (unmapped_aval axis_size d (mapped_aval s av))
+    | None, Some d ->
+        Ad_util.symbolic_zero_of_aval (unmapped_aval axis_size d av)
+    | Some s, None -> Ad_util.symbolic_zero_of_aval (mapped_aval s av)
+    | None, None -> v
+  else
+    match (src, dst) with
+    | None, None -> v
+    | None, Some d -> broadcast_insert axis_size d v
+    | Some s, Some d -> moveaxis s d v
+    | Some s, None -> b1 (Reduce_sum [| s |]) [ v ]
+
+let batched_vjp_rule id axis_size vals bdims ~primal ~fwd ~bwd ~fwd_perturbed =
+  let avals = List.map Core.get_aval vals in
+  let key = (id, axis_size, bdims, avals, Config.x64_enabled ()) in
+  match Hashtbl.find_opt vjp_batch_cache key with
+  | Some r -> r
+  | None ->
+      let subtrace f dims inner =
+        let out_dims = ref [] in
+        let outs =
+          Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
+              let ins =
+                List.map2
+                  (fun v b ->
+                    match b with
+                    | Some d when Ad_util.is_symbolic_zero v ->
+                        Ad_util.symbolic_zero_of_aval
+                          (mapped_aval d (Core.get_aval v))
+                    | Some _ -> Tracer (new_batch_tracer main v b)
+                    | None -> v)
+                  inner dims
+              in
+              let pairs =
+                List.map
+                  (fun o ->
+                    if Ad_util.is_symbolic_zero o then (o, None)
+                    else to_batch_info main (Core.full_raise main o))
+                  (f ins)
+              in
+              out_dims := List.map snd pairs;
+              List.map fst pairs)
+        in
+        (outs, !out_dims)
+      in
+      let dims = ref [] in
+      ignore
+        (Jaxpr.make_jaxpr avals (fun args ->
+             let outs, d = subtrace primal bdims args in
+             dims := d;
+             outs));
+      let out_dims = !dims in
+      let primal' args = fst (subtrace primal bdims args) in
+      let res_dims = ref [] in
+      let fwd_with run args =
+        let n_out = ref 0 in
+        let outs, d =
+          subtrace
+            (fun a ->
+              let po, res = run a in
+              n_out := List.length po;
+              po @ res)
+            bdims args
+        in
+        let po, res = split_at_n outs !n_out in
+        let po_dims, rdims = split_at_n d !n_out in
+        res_dims := rdims;
+        ( List.map2
+            (fun (v, s) t -> match_axis_sum axis_size s t v)
+            (List.combine po po_dims) out_dims,
+          res )
+      in
+      let bwd' res cts =
+        let outs, d =
+          subtrace
+            (fun all ->
+              let r, c = split_at_n all (List.length res) in
+              bwd r c)
+            (!res_dims @ out_dims) (res @ cts)
+        in
+        List.map2
+          (fun (v, s) t -> match_axis_sum axis_size s t v)
+          (List.combine outs d) bdims
+      in
+      let nid =
+        Core.register_custom_rule
+          (Core.Vjp_rule
+             {
+               primal = primal';
+               fwd = fwd_with fwd;
+               bwd = bwd';
+               fwd_perturbed =
+                 Option.map
+                   (fun rule perturbed -> fwd_with (rule perturbed))
+                   fwd_perturbed;
+             })
+      in
+      (match Core.custom_names_of id with
+      | Some (name, jvp_name) -> Core.register_custom_names nid ~name ~jvp_name
+      | None -> ());
+      let r = (nid, out_dims) in
+      Hashtbl.replace vjp_batch_cache key r;
       r
 
 let custom_call_batch :
@@ -2804,6 +2961,18 @@ let batch_process_primitive (trace : trace) (prim : primitive)
                 (fun o b -> Tracer (new_batch_tracer trace o b))
                 outs dims
           | _ -> failwith "batching: expected a jvp rule"))
+  | Custom_vjp_call id
+    when match Core.custom_rule id with Core.Vjp_rule _ -> true | _ -> false
+    -> (
+      match Core.custom_rule id with
+      | Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed } ->
+          let nid, dims =
+            batched_vjp_rule id axis_size vals bdims ~primal ~fwd ~bwd
+              ~fwd_perturbed
+          in
+          let outs = Core.bind (Custom_vjp_call nid) vals in
+          List.map2 (fun o b -> Tracer (new_batch_tracer trace o b)) outs dims
+      | _ -> failwith "batching: expected a vjp rule")
   | Custom_jvp_call _ | Custom_vjp_call _ | Custom_lin _ ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

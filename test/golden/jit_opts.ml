@@ -498,6 +498,82 @@ let scaled shape offset factor =
        (Array.init n (fun i ->
             f32 (float_of_int ((i mod 5) + 1 + offset) *. factor))))
 
+let user_dtype_thunk name dtype () =
+  let module R = Ojax.Random.Core in
+  let module X = Ojax.Random_extras in
+  let k = R.key (int_seed 1.0) in
+  let s = [| 3 |] in
+  [
+    (match name with
+    | "bits" -> R.bits ~dtype k ~shape:s
+    | "randint" -> R.randint ~dtype k ~shape:s ~minval:0 ~maxval:10
+    | "uniform" -> R.uniform ~dtype k ~shape:s ~minval:0.0 ~maxval:1.0
+    | "normal" -> R.normal ~dtype k ~shape:s
+    | "truncated_normal" ->
+        R.truncated_normal ~dtype k ~lower:(-1.0) ~upper:1.0 ~shape:s
+    | "exponential" -> R.exponential ~dtype k ~shape:s
+    | "cauchy" -> R.cauchy ~dtype k ~shape:s
+    | "laplace" -> R.laplace ~dtype k ~shape:s
+    | "logistic" -> R.logistic ~dtype k ~shape:s
+    | "gumbel" -> R.gumbel ~dtype k ~shape:s
+    | "pareto" -> R.pareto ~dtype k ~shape:s ~b:2.0
+    | "rayleigh" -> R.rayleigh ~dtype k ~shape:s ~scale:1.5
+    | "weibull_min" ->
+        R.weibull_min ~dtype k ~shape:s ~scale:1.5 ~concentration:2.0
+    | "lognormal" -> R.lognormal ~dtype k ~shape:s ~sigma:0.5
+    | "triangular" ->
+        R.triangular ~dtype k ~shape:s ~left:0.0 ~mode:0.5 ~right:1.0
+    | "wald" -> R.wald ~dtype k ~shape:s ~mean:1.5
+    | "geometric" -> R.geometric ~dtype k ~shape:s ~p:0.5
+    | "rademacher" -> R.rademacher ~dtype k ~shape:s
+    | "gamma" -> R.gamma ~dtype k ~shape:s ~a:2.0
+    | "loggamma" -> R.loggamma ~dtype k ~shape:s ~a:2.0
+    | "beta" -> R.beta ~dtype k ~shape:s ~a:2.0 ~b:3.0
+    | "chisquare" -> R.chisquare ~dtype k ~shape:s ~df:3.0
+    | "t" -> R.t ~dtype k ~shape:s ~df:3.0
+    | "f" -> R.f ~dtype k ~shape:s ~dfnum:2.0 ~dfden:3.0
+    | "generalized_normal" -> R.generalized_normal ~dtype k ~shape:s ~p:2.0
+    | "poisson" -> R.poisson ~dtype k ~shape:s ~lam:2.0
+    | "binomial" -> R.binomial ~dtype k ~shape:s ~n:5.0 ~p:0.5
+    | "maxwell" -> X.maxwell ~dtype k ~shape:s
+    | "double_sided_maxwell" ->
+        X.double_sided_maxwell ~dtype k ~loc:0.0 ~scale:1.0 ~shape:s
+    | "ball" -> X.ball ~dtype ~p:2.0 k ~d:2 ~shape:s
+    | "orthogonal" -> X.orthogonal ~dtype k ~n:3 ~shape:[||]
+    | other -> failwith ("jit_opts: unknown user_dtype function " ^ other));
+  ]
+
+let linalg_half_thunk name dtype mode () =
+  let module L = Ojax.Lax.Linalg in
+  let a =
+    T.Concrete
+      (Ojax.Ndarray.of_floats dtype [| 3; 3 |]
+         [| 1.1; 0.1; 0.1; 0.1; 1.1; 0.1; 0.1; 0.1; 1.1 |])
+  in
+  let row i a = Ojax.Lax_api.index_in_dim ~keepdims:false a i in
+  let f a =
+    match name with
+    | "cholesky" -> L.cholesky a
+    | "lu" ->
+        let x, _, _ = L.lu a in
+        x
+    | "qr" -> fst (L.qr a)
+    | "eigh" -> fst (L.eigh a)
+    | "eig" -> List.hd (L.eig a)
+    | "svd" -> List.nth (L.svd a) 1
+    | "schur" -> List.hd (L.schur a)
+    | "hessenberg" -> fst (L.hessenberg a)
+    | "tridiagonal" ->
+        let x, _, _, _ = L.tridiagonal a in
+        x
+    | "tridiagonal_solve" -> L.tridiagonal_solve (row 0 a) (row 1 a) (row 2 a) a
+    | "triangular_solve" -> L.triangular_solve ~left_side:true ~lower:true a a
+    | other -> failwith ("jit_opts: unknown linalg_half function " ^ other)
+  in
+  match mode with
+  | "jit" -> Ojax.Api.jit_flat (fun l -> [ f (List.hd l) ]) [ a ]
+  | _ -> [ f a ]
+
 let strings j = List.map U.to_string (U.to_list j)
 
 let expected_of row =
@@ -602,6 +678,22 @@ let actual_of row =
       Ojax.Config.with_value Ojax.Config.numpy_rank_promotion mode (fun () ->
           run_case (fun () -> [ stats_fn dist fn a b ]))
   | "copts" -> run_case (copts_thunk (U.to_string (U.member "case" row)))
+  | "linalg_half" ->
+      let dtype =
+        Option.get
+          (Ojax.Dtype.of_numpy_name (U.to_string (U.member "dtype" row)))
+      in
+      run_case
+        (linalg_half_thunk
+           (U.to_string (U.member "fn" row))
+           dtype
+           (U.to_string (U.member "mode" row)))
+  | "user_dtype" ->
+      let dtype =
+        Option.get
+          (Ojax.Dtype.of_numpy_name (U.to_string (U.member "dtype" row)))
+      in
+      run_case (user_dtype_thunk (U.to_string (U.member "fn" row)) dtype)
   | "text" ->
       let thunk = text_thunk (U.to_string (U.member "case" row)) in
       let text = ref "" in
@@ -637,35 +729,35 @@ let show r =
     (String.concat "; " (List.map (fun (c, m) -> c ^ ": " ^ m) r.warnings))
     (List.length r.notices)
 
-let check_row ~x64 row () =
+let check_row ?(set = "jit_opts") ~x64 row () =
   let id = U.to_string (U.member "id" row) in
   let expected = expected_of row in
   let actual =
     Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () -> actual_of row)
   in
-  let suite = "jit_opts:" ^ if x64 then "x64_on" else "x64_off" in
+  let suite = set ^ ":" ^ if x64 then "x64_on" else "x64_off" in
   let main = same_main expected actual in
   let notices = expected.notices = actual.notices in
   record suite id main;
-  record ("jit_opts_notices:" ^ if x64 then "x64_on" else "x64_off") id notices;
+  record (set ^ "_notices:" ^ if x64 then "x64_on" else "x64_off") id notices;
   if not main then
     Printf.eprintf "JIT_OPTS DIFFER %s %s\n  jax:  %s\n  ojax: %s\n%!" suite id
       (show expected) (show actual)
 
-let suite_for x64 =
+let suite_for ?(set = "jit_opts") x64 =
   let tag = if x64 then "x64_on" else "x64_off" in
   let path =
-    Filename.concat (Filename.concat goldens_root "jit_opts") (tag ^ ".json")
+    Filename.concat (Filename.concat goldens_root set) (tag ^ ".json")
   in
   let rows =
     if Sys.file_exists path then
       U.to_list (U.member "rows" (Yojson.Safe.from_file path))
     else []
   in
-  ( "jit_opts_" ^ tag,
+  ( set ^ "_" ^ tag,
     List.map
       (fun row ->
         Alcotest.test_case
           (U.to_string (U.member "id" row))
-          `Quick (check_row ~x64 row))
+          `Quick (check_row ~set ~x64 row))
       rows )

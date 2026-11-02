@@ -268,7 +268,7 @@ ENTER(h_geqp3)
   for (int64_t b = 0, n = batches(a, 2); b < n; b++)
     if (ojax_lapack_call_geqp3(prec, rows(a), cols(a), at(a, 2, b), rows(a),
                                at(jpvt, 1, b), at(tau, 1, b)) < 0)
-      return ffi_error(f, "UNKNOWN: XLA FFI call failed: std::bad_alloc");
+      return ffi_error(f, "XLA FFI call failed: std::bad_alloc");
   return NULL;
 }
 

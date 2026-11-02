@@ -797,6 +797,8 @@ lax_linalg.ormqr_73b94bc6_float32:eager:error_text	1
 lax_linalg.ormqr_73b94bc6_float32:jit:error_text	1
 lax_linalg.ormqr_7a7145fd_float32:eager:error_text	1
 lax_linalg.ormqr_7a7145fd_float32:jit:error_text	1
+lax_linalg.qdwh_0884316f_float32:eager:error_text	1
+lax_linalg.qdwh_0884316f_float32:jit:error_text	1
 lax_linalg.qr_8c8e27b1_float32:eager:error_text	1
 lax_linalg.qr_8c8e27b1_float32:jit:error_text	1
 lax_linalg.qr_c5462e16_float32:eager:error_text	1

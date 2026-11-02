@@ -26,6 +26,9 @@ apicov/x64_off	ap_dce_sink_2x3_2b3012de_float32	i
 apicov/x64_off	ap_dce_sink_2x3_3da61329_float32	i
 apicov/x64_off	ap_dce_sink__04031278_float32	i
 apicov/x64_off	ap_dce_sink__f22f122d_float32	i
+apicov/x64_off	ap_delete_4x3_22ce18cd_float32	i
+apicov/x64_off	ap_delete_4x3_f876187e_float32	i
+apicov/x64_off	ap_delete_6_fc5c1584_float32	i
 apicov/x64_off	ap_ds_6x2_90181353_float32	i
 apicov/x64_off	ap_ds_6x2_a1c616fa_float32	i
 apicov/x64_off	ap_ds_6x2_a3171381_float32	i
@@ -255,6 +258,12 @@ apicov/x64_on	ap_dce_sink__04031278_float32	i
 apicov/x64_on	ap_dce_sink__04031278_float64	i
 apicov/x64_on	ap_dce_sink__f22f122d_float32	i
 apicov/x64_on	ap_dce_sink__f22f122d_float64	i
+apicov/x64_on	ap_delete_4x3_22ce18cd_float32	i
+apicov/x64_on	ap_delete_4x3_22ce18cd_float64	i
+apicov/x64_on	ap_delete_4x3_f876187e_float32	i
+apicov/x64_on	ap_delete_4x3_f876187e_float64	i
+apicov/x64_on	ap_delete_6_fc5c1584_float32	i
+apicov/x64_on	ap_delete_6_fc5c1584_float64	i
 apicov/x64_on	ap_ds_6x2_90181353_float32	i
 apicov/x64_on	ap_ds_6x2_90181353_float64	i
 apicov/x64_on	ap_ds_6x2_a1c616fa_float32	i

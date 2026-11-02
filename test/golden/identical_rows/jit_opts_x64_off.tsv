@@ -1,3 +1,4 @@
+copts_bogus	1
 copts_fast_math_on	1
 copts_fast_min_max_off	1
 copts_fast_min_max_on	1
@@ -10,6 +11,7 @@ donate_run_unusable	1
 donate_run_use	1
 random_categorical_high	1
 random_categorical_low	1
+random_gumbel_f64_high	1
 random_gumbel_high	1
 random_gumbel_low	1
 random_jit_key_data_7	1

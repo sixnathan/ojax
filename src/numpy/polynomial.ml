@@ -27,16 +27,20 @@ let is_inexact = function
 
 let to_inexact_dtype = Dtypes.to_inexact_dtype
 
-let result_dtype vs =
-  fst (Dtypes.result_type (List.map (fun v -> (dtype v, weak v)) vs))
+let result_flags vs =
+  Dtypes.result_type (List.map (fun v -> (dtype v, weak v)) vs)
 
 let promote_dtypes vs =
-  let dt = result_dtype vs in
-  List.map (fun v -> convert v dt) vs
+  match vs with
+  | [] | [ _ ] -> vs
+  | _ ->
+      let dt, is_weak = result_flags vs in
+      List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs
 
 let promote_dtypes_inexact vs =
-  let dt = to_inexact_dtype (result_dtype vs) in
-  List.map (fun v -> convert v dt) vs
+  let dt, is_weak = result_flags vs in
+  let dt = to_inexact_dtype dt in
+  List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs
 
 let two = function [ a; b ] -> (a, b) | _ -> assert false
 
@@ -142,11 +146,13 @@ let polysub p0 p1 =
 let polyint ?(m = 1) ?k p =
   if m < 0 then
     Py_exn.value_error "Order of integral must be positive (see polyder)";
-  let k = match k with Some k -> k | None -> scalar D.I32 0.0 in
-  let p =
-    if dtype p = D.Bool then
-      C.convert_like ~weak:true p (Dtypes.default_float_dtype ())
-    else p
+  let k =
+    match k with
+    | Some k -> k
+    | None ->
+        T.Concrete
+          (Nd.as_weak
+             (Nd.of_floats (Dtypes.default_int_dtype ()) [||] [| 0.0 |]))
   in
   let p, k = two (promote_dtypes_inexact [ p; k ]) in
   if m = 0 then p
@@ -173,11 +179,7 @@ let polyint ?(m = 1) ?k p =
       bind1 (T.Rev [| 0 |])
         [ R.prod ~axis:[| 0 |] (UF.maximum (scalar dt 1.0) grid) ]
     in
-    let joined = NL.concatenate [ p; k ] in
-    let joined =
-      if weak p then bind1 (T.Convert_element_type dt) [ joined ] else joined
-    in
-    UF.true_divide joined coeff
+    UF.true_divide (NL.concatenate [ p; k ]) coeff
   end
 
 let polyint ?m ?k p0 =

@@ -142,7 +142,10 @@ let process_custom_jvp trace primal ~jvp args =
 let process_custom_vjp trace primal ~fwd ~bwd args =
   (interpreter_for trace).i_process_custom_vjp trace ~primal ~fwd ~bwd args
 
-type callback_effect = Callback_pure | Callback_io of { ordered : bool }
+type callback_effect =
+  | Callback_pure
+  | Callback_io of { ordered : bool }
+  | Callback_debug of { ordered : bool }
 
 type custom_rule =
   | Jvp_rule of {
@@ -509,9 +512,11 @@ let check_operands prim args =
             | Tracer t -> t.aval.dtype
             | Device b -> Pjrt.Buffer.element_type b
           in
-          match dt with
-          | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> ()
-          | d ->
+          match (dt, prim) with
+          | (Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128), _ ->
+              ()
+          | (Dtype.F16 | Dtype.Bf16), _ -> ()
+          | d, _ ->
               raise
                 (Py_exn.Type_error
                    (Printf.sprintf

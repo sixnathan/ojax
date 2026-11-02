@@ -371,6 +371,7 @@ let barrier_calls : (int, unit) Hashtbl.t = Hashtbl.create 16
 let remat_body : (int -> closed_jaxpr option) ref = ref (fun _ -> None)
 let remat_rebuild : (int -> closed_jaxpr -> int) ref = ref (fun id _ -> id)
 let lowering = ref false
+let opaque_dce_calls : (int, unit) Hashtbl.t = Hashtbl.create 8
 
 let process_primitive trace prim args =
   let builder = builder_of trace in
@@ -715,6 +716,12 @@ let () =
 let has_side_effect = function
   | Ffi_call { ffi_has_side_effect; _ } -> ffi_has_side_effect
   | Dce_sink _ | Create_token | After_all -> true
+  | Custom_vjp_call id -> (
+      match Core.custom_rule id with
+      | Core.Callback_rule
+          { cb_effect = Core.Callback_io _ | Core.Callback_debug _; _ } ->
+          true
+      | _ -> false)
   | _ -> false
 
 let rec eqn_has_effect (e : eqn) =

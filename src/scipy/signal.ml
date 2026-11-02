@@ -183,7 +183,7 @@ let convolve2d ?(mode = "full") ?(boundary = "fill") ?(fillvalue = 0.0)
   check_boundary "convolve2d" boundary fillvalue;
   if rank in1 <> 2 || rank in2 <> 2 then
     Py_exn.value_error "convolve2d() only supports 2-dimensional inputs.";
-  convolve_nd in1 in2 mode
+  convolve_nd ?precision in1 in2 mode
 
 let correlate ?(mode = "full") ?method_ ?precision in1 in2 =
   convolve ~mode ?method_ ?precision in1 (flip_all (conj_if_complex in2))

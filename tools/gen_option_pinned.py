@@ -30,6 +30,12 @@ PINNED = [
     (71204459, "linalg.vecdot_aeb6496a_float64"),
     (66338877, "sp_special.sph_harm_y_a6f05c88_float32"),
     (66338877, "jnp.tensordot_b5814664_float64"),
+    (80917353, "jnp.full_bf38151c_float32"),
+    (80917353, "jnp.nanargmax_33b72a61_float64"),
+    (80917353, "lax_linalg.eigh_f3542e85_float64"),
+    (80917353, "lax.conv_general_dilated_patches_eb394909_float64"),
+    (80917353, "lax.conv_general_dilated_patches_60254602_float64"),
+    (66338877, "lax.conv_general_dilated_patches_c26d4119_float64"),
 ]
 
 

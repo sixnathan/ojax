@@ -112,22 +112,11 @@ let dtype : json -> D.t = function
   | `String s -> Ojax.Numpy.Extras.dtype s
   | _ -> no "type:dtype"
 
-let precision : json -> Ojax.Lax_config.precision =
-  let level = function
-    | `String "default" -> Ojax.Lax_config.Precision_default
-    | `String "high" -> Ojax.Lax_config.Precision_high
-    | `String "highest" -> Ojax.Lax_config.Precision_highest
-    | _ -> no "type:precision"
-  in
-  function
-  | `String s when not (List.mem s [ "default"; "high"; "highest" ]) ->
-      Ojax.Lax_config.precision_of_string s
-  | `String _ as j ->
-      let l = level j in
-      Ojax.Lax_config.Precision (l, l)
+let precision : json -> Ojax.Lax_config.precision = function
+  | `String s -> Ojax.Lax_config.Named s
   | j -> (
       match elements j with
-      | [ a; b ] -> Ojax.Lax_config.Precision (level a, level b)
+      | [ `String a; `String b ] -> Ojax.Lax_config.Named_pair (a, b)
       | _ -> no "type:precision")
 
 let default_float : json -> D.t = function

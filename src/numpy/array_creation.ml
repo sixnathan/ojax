@@ -42,6 +42,20 @@ let zeros ?dtype shape = full_named "zeros" ?dtype shape 0.0
 let ones ?dtype shape = full_named "ones" ?dtype shape 1.0
 let empty ?dtype shape = full_named "empty" ?dtype shape 0.0
 
+let full_v ?dtype shape fill =
+  let dtype =
+    Option.map (Dtypes.check_and_canonicalize_user_dtype ~fun_name:"full") dtype
+  in
+  let a = get_aval fill in
+  if Array.length a.T.shape = 0 then
+    let dt, weak =
+      match dtype with
+      | Some d -> (d, false)
+      | None -> (Dtypes.canonicalize_dtype a.T.dtype, a.T.weak_type)
+    in
+    Lax_api.broadcast (C.convert_like ~weak fill dt) shape
+  else NL.broadcast_to (Array_constructors.asarray ?dtype fill) shape
+
 let full_like_named fun_name ?dtype ?shape a fill =
   let dt =
     match dtype with

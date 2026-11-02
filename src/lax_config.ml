@@ -77,6 +77,8 @@ type precision =
   | Precision of precision_level * precision_level
   | Algorithm of dot_algorithm
   | Preset of dot_algorithm_preset
+  | Named of string
+  | Named_pair of string * string
 
 let precision_of_level level = Precision (level, level)
 
@@ -103,6 +105,20 @@ let precision_of_string s =
       match List.find_opt (fun (_, name) -> name = s) preset_names with
       | Some (preset, _) -> Preset preset
       | None -> invalid_arg (precision_argument_message s))
+
+let canonicalize_precision = function
+  | Named s -> precision_of_string s
+  | Named_pair (a, b) ->
+      let level s =
+        match precision_of_string s with
+        | Precision (l, _) -> l
+        | _ ->
+            invalid_arg
+              (precision_argument_message (Printf.sprintf "('%s', '%s')" a b))
+      in
+      let l = level a in
+      Precision (l, level b)
+  | p -> p
 
 type fft_type = Types.fft_kind =
   | Fft_forward

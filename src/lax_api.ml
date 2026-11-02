@@ -762,6 +762,7 @@ let dot_accumulate prim x y acc =
   else convert_to acc (b1 prim [ x; y ])
 
 let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
+  let precision = Option.map Lax_config.canonicalize_precision precision in
   let level_name = function
     | Lax_config.Precision_default -> "DEFAULT"
     | Lax_config.Precision_high -> "HIGH"
@@ -1012,6 +1013,7 @@ let precision_level_name = function
   | Lax_config.Precision_highest -> "HIGHEST"
 
 let conv_precision_of ?conv_precision ?precision () =
+  let precision = Option.map Lax_config.canonicalize_precision precision in
   match (conv_precision, precision) with
   | (Some _ as given), _ -> given
   | None, Some (Lax_config.Precision (l, r)) ->
@@ -1521,6 +1523,8 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
           | Lax_config.Preset p ->
               "DotAlgorithmPreset." ^ Lax_config.dot_algorithm_preset_name p
           | Lax_config.Algorithm _ -> "DotAlgorithm"
+          | Lax_config.Named s -> Printf.sprintf "'%s'" s
+          | Lax_config.Named_pair (a, b) -> Printf.sprintf "('%s', '%s')" a b
         in
         ( None,
           Some

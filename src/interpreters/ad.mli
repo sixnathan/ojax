@@ -45,6 +45,8 @@ val grad : (value list -> value) -> value list -> value list
 
 type tval = Prim of value | Undef of aval
 
+val tape_dce : (closed_jaxpr -> bool list -> closed_jaxpr) ref
+
 val custom_call_transpose :
   (int -> value list -> tval list -> value option list option) ref
 

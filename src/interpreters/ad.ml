@@ -2294,6 +2294,10 @@ let rec jvp_pairs prim primals tangents =
               | [ r; l ] -> forward r l
               | _ -> arity ())
             (res @ linear) (res_t @ linear_t)
+      | Core.Vjp_rule _ ->
+          raise
+            (Py_exn.Not_implemented_error
+               "Differentiation rule for 'custom_lin' not implemented")
       | _ ->
           let po = Core.bind prim (res @ linear) in
           let to_ = Core.bind prim (res @ List.map instantiate linear_t) in

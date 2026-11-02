@@ -396,7 +396,7 @@ let numpy_run op p a b c =
       let e =
         T.Concrete
           (Ojax.Ndarray.of_floats Ojax.Dtype.I32
-             (shp (a ()))
+             [| Array.length (ints "e" p) |]
              (Array.map float_of_int (ints "e" p)))
       in
       Some [ E.ldexp (a ()) e ]
@@ -855,8 +855,8 @@ let array_random_run op p a b =
       Some (Ojax.Api.jit_flat f [ a () ])
   | "sp_fresnel_grad" ->
       let f args =
-        Ojax.Numpy.Reductions.sum
-          (fst (Ojax.Scipy.Special.fresnel (List.hd args)))
+        let s = fst (Ojax.Scipy.Special.fresnel (List.hd args)) in
+        L.reduce_sum s (Array.init (Array.length (shp s)) Fun.id)
       in
       Some (Ojax.Interpreters.Ad.grad f [ a () ])
   | _ -> None
@@ -1274,8 +1274,19 @@ let tracer_batch_run op params a b =
   | _ -> None
 
 let slice_prefix v stop =
-  let module I = Ojax.Numpy.Nd_index in
-  I.take v [ I.Range { start = None; stop = Some stop } ]
+  let sh = (Ojax.Core.get_aval v).Ojax.Types.shape in
+  let limit = Array.copy sh in
+  limit.(0) <- min stop sh.(0);
+  if limit = sh then v
+  else
+    Ojax.Core.bind1
+      (Ojax.Types.Slice
+         {
+           start_indices = Array.make (Array.length sh) 0;
+           limit_indices = limit;
+           strides = None;
+         })
+      [ v ]
 
 let library_sweep op v =
   let module NF = Ojax.Nn.Functions in
@@ -1510,13 +1521,7 @@ let dtype_sweep_run op a =
           let upper = UF.add (row v 1) (py 3.0) in
           AC.geomspace_v ~num:3 lower upper)
   | "sw_logspace" -> one (fun v -> AC.logspace_v ~num:3 (row v 0) (row v 1))
-  | "sw_polyval" ->
-      one (fun v ->
-          let top =
-            Ojax.Numpy.Nd_index.take v
-              [ Ojax.Numpy.Nd_index.Range { start = None; stop = Some 2 } ]
-          in
-          PO.polyval top (row v 0))
+  | "sw_polyval" -> one (fun v -> PO.polyval (slice_prefix v 2) (row v 0))
   | "sw_polyder" -> one (fun v -> PO.polyder (row v 0))
   | "sw_polyint" -> one (fun v -> PO.polyint (row v 0))
   | "sw_polyadd" -> one (fun v -> PO.polyadd (row v 0) (row v 1))
@@ -1524,7 +1529,7 @@ let dtype_sweep_run op a =
   | "sw_roots" ->
       one (fun v -> S.sort ~axis:(Some 0) (UF.absolute (E.roots (row v 0))))
   | "sw_kron" -> one (fun v -> NL.kron v v)
-  | "sw_dot" -> one (fun v -> TC.dot v (t v))
+  | "sw_dot" -> one (fun v -> TC.dot v (NL.transpose v))
   | "sw_vdot" -> one (fun v -> TC.vdot v v)
   | "sw_inner" -> one (fun v -> TC.inner v v)
   | "sw_outer" -> one (fun v -> TC.outer (row v 0) (row v 1))

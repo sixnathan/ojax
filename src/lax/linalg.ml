@@ -240,6 +240,16 @@ let householder_product_impl inputs =
 
 let qr_pivoted_impl full_matrices inputs =
   match inputs with
+  | [ a ] when Array.exists (fun d -> d = 0) (Ndarray.shape a) ->
+      let dt = Ndarray.dtype a in
+      let m, n = dims2 a in
+      let k = if full_matrices then m else min m n in
+      let q =
+        make dt [| m; k |] (fun f ->
+            if f mod max k 1 = f / max k 1 then Complex.one else Complex.zero)
+      in
+      let r = make dt [| k; n |] (fun _ -> Complex.zero) in
+      [ q; r; Ndarray.of_floats Dtype.I32 [| n |] (Array.make n 0.0) ]
   | [ a ] -> (
       let dt = Ndarray.dtype a in
       let c = is_complex_dtype dt in

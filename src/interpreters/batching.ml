@@ -706,18 +706,17 @@ let scatter_dnums_of = function
   | _ -> failwith "batching: not a scatter primitive"
 
 let rebuild_scatter prim (sd : scatter_dims) =
-  match prim with
-  | Scatter { unique_indices; _ } ->
-      Scatter { dimension_numbers = sd; unique_indices }
-  | Scatter_add _ when Np_ints.scatter_marked prim ->
-      Np_ints.mark_scatter (Scatter_add { dimension_numbers = sd })
-  | Scatter_add _ -> Scatter_add { dimension_numbers = sd }
-  | Scatter_sub _ -> Scatter_sub { dimension_numbers = sd }
-  | Scatter_mul { unique_indices; _ } ->
-      Scatter_mul { dimension_numbers = sd; unique_indices }
-  | Scatter_min _ -> Scatter_min { dimension_numbers = sd }
-  | Scatter_max _ -> Scatter_max { dimension_numbers = sd }
-  | _ -> failwith "batching: not a scatter primitive"
+  Np_ints.copy_scatter_marks ~from:prim
+    (match prim with
+    | Scatter { unique_indices; _ } ->
+        Scatter { dimension_numbers = sd; unique_indices }
+    | Scatter_add _ -> Scatter_add { dimension_numbers = sd }
+    | Scatter_sub _ -> Scatter_sub { dimension_numbers = sd }
+    | Scatter_mul { unique_indices; _ } ->
+        Scatter_mul { dimension_numbers = sd; unique_indices }
+    | Scatter_min _ -> Scatter_min { dimension_numbers = sd }
+    | Scatter_max _ -> Scatter_max { dimension_numbers = sd }
+    | _ -> failwith "batching: not a scatter primitive")
 
 let scatter_batch (axis_size : int) (prim : primitive) (vals : value list)
     (bdims : int option list) : value * int option =

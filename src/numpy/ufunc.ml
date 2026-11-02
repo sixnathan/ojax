@@ -166,9 +166,10 @@ let accumulate ?(axis = 0) u a =
       let a = List.hd vals in
       let axis = canonical_axis axis a in
       let dt = result_dtype u a in
-      let arr = front axis a in
-      if Array.mem 0 (shape a) then Core.splat dt (shape a) 0.0
+      if Array.exists (fun d -> d = 0) (shape a) then
+        Lax_api.full (shape a) 0.0 dt
       else
+        let arr = front axis a in
         let body = function
           | [ i; x ] ->
               let is_first = Core.bind1 T.Eq [ i; weak_int 0.0 ] in

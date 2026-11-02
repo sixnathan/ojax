@@ -18,3 +18,6 @@ val mark_gather_flags : sorted:bool -> unique:bool -> 'a -> 'a
 val gather_flags_of : 'a -> (bool * bool) option
 val mark_scatter_flags : sorted:bool -> unique:bool -> 'a -> 'a
 val scatter_flags_of : 'a -> (bool * bool) option
+val mark_scatter_one_hot : 'a -> 'a
+val scatter_one_hot : 'a -> bool
+val copy_scatter_marks : from:'a -> 'a -> 'a

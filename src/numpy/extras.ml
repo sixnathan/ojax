@@ -262,7 +262,7 @@ let nonzero ?size ?fill_value a =
         int_of_float (Ndarray.get_f (host "nonzero" total) [||])
   in
   let int_dt = default_int () in
-  if size_of a = 0 || k = 0 then
+  if k = 0 || Array.exists (fun d -> d = 0) sh then
     List.map (fun _ -> AC.zeros ~dtype:int_dt [| k |]) (Array.to_list sh)
   else begin
     let running = R.cumsum mask in
@@ -322,7 +322,8 @@ let index_gather a idx =
   let m = rank idx in
   let indices = index_array ~extents:[ sh.(0) ] [ idx ] in
   let slice_shape = Array.append (shape idx) (Array.sub sh 1 (r - 1)) in
-  if Array.mem 0 slice_shape then L.full slice_shape 0.0 (dtype_of a)
+  if Array.exists (fun d -> d = 0) slice_shape then
+    L.full slice_shape 0.0 (dtype_of a)
   else
     Core.bind1
       (Gather
@@ -369,21 +370,27 @@ let fancy_take x indices =
   let start =
     match lifted with [ only ] -> only | _ -> L.concatenate lifted 1
   in
-  Core.bind1
-    (Gather
-       {
-         dimension_numbers =
-           {
-             offset_dims = Array.init (r - d) (fun i -> i + 1);
-             collapsed_slice_dims = Array.init d Fun.id;
-             start_index_map = Array.init d Fun.id;
-             g_operand_batching_dims = [||];
-             g_start_indices_batching_dims = [||];
-             g_sorted_unique = false;
-           };
-         slice_sizes = Array.mapi (fun i e -> if i < d then 1 else e) sh;
-       })
-    [ x; start ]
+  let slice_shape =
+    Array.append (shape (List.hd indices)) (Array.sub sh d (r - d))
+  in
+  if Array.exists (fun e -> e = 0) slice_shape then
+    L.full slice_shape 0.0 (dtype_of x)
+  else
+    Core.bind1
+      (Gather
+         {
+           dimension_numbers =
+             {
+               offset_dims = Array.init (r - d) (fun i -> i + 1);
+               collapsed_slice_dims = Array.init d Fun.id;
+               start_index_map = Array.init d Fun.id;
+               g_operand_batching_dims = [||];
+               g_start_indices_batching_dims = [||];
+               g_sorted_unique = false;
+             };
+           slice_sizes = Array.mapi (fun i e -> if i < d then 1 else e) sh;
+         })
+      [ x; start ]
 
 let leading_slice v start stop =
   let sh = shape v in
@@ -434,14 +441,14 @@ let unique_sorted_mask ar axis equal_nan =
           let row_len =
             Array.fold_left ( * ) 1 (Array.sub sh 1 (Array.length sh - 1))
           in
-          let rows, perm =
-            if row_len = 0 then (1, L.full [| 1 |] 0.0 (default_int ()))
+          let rows = if row_len = 0 then 1 else rows in
+          let perm =
+            if row_len = 0 then L.full [| 1 |] 0.0 (default_int ())
             else
-              ( rows,
-                Sorting.lexsort_array
-                  (L.rev
-                     (NL.transpose (NL.reshape aux [| rows; row_len |]))
-                     [| 0 |]) )
+              Sorting.lexsort_array
+                (L.rev
+                   (NL.transpose (NL.reshape aux [| rows; row_len |]))
+                   [| 0 |])
           in
           let aux = index_gather aux perm in
           if size_of aux = 0 then
@@ -498,9 +505,9 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
     | _ -> assert false
   in
   let mask_size = size_of mask in
-  let filled = size_of aux > 0 in
+  let aux_empty = size_of aux = 0 in
   let ind = List.hd (nonzero ~size mask) in
-  let result = if filled then index_gather aux ind else aux in
+  let result = if aux_empty then aux else index_gather aux ind in
   let result =
     match fill_value with
     | None -> result
@@ -524,26 +531,26 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
   let empty = ints_value idt [| 0 |] [||] in
   let indices =
     if not flags.want_index then empty
-    else if filled then index_gather perm ind
-    else perm
+    else if aux_empty then perm
+    else index_gather perm ind
   in
+  let axis_size = (shape arr).(ax) in
   let inverse =
-    if flags.want_inverse then begin
-      let inv =
-        if filled then
-          let imask = U.subtract (R.cumsum mask) (Jnp_util.py_int 1) in
-          let zeros = L.full (shape mask) 0.0 idt in
-          at_set zeros [ perm ] imask
-        else L.full [| (shape arr).(ax) |] 0.0 idt
-      in
+    if flags.want_inverse && aux_empty then begin
+      let inv = L.full [| axis_size |] 0.0 idt in
+      if reshape_inverse then NL.reshape inv (shape a) else inv
+    end
+    else if flags.want_inverse then begin
+      let imask = U.subtract (R.cumsum mask) (Jnp_util.py_int 1) in
+      let zeros = L.full (shape mask) 0.0 idt in
+      let inv = at_set zeros [ perm ] imask in
       if reshape_inverse then NL.reshape inv (shape a) else inv
     end
     else empty
   in
   let counts =
-    if flags.want_counts && not filled then
-      let n = (shape arr).(ax) in
-      if n <> 0 then L.full [| 1 |] (float_of_int n) idt
+    if flags.want_counts && aux_empty then
+      if axis_size <> 0 then L.full [| 1 |] (float_of_int axis_size) idt
       else L.full [| 0 |] 0.0 idt
     else if flags.want_counts then begin
       let idx = List.hd (nonzero ~size:(size + 1) mask) in
@@ -563,7 +570,17 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
   match size with
   | _ when is_complex_value a && axis = None ->
       unique_complex ?size ?fill_value a
-  | Some size -> traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
+  | Some size ->
+      let axis_size =
+        match axis with
+        | None -> size_of a
+        | Some x -> (shape a).(canon (rank a) x)
+      in
+      if axis_size = 0 && size <> 0 && fill_value = None then
+        invalid_arg
+          "jnp.unique: for zero-sized input with nonzero size argument, \
+           fill_value must be specified";
+      traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
   | _ ->
       let fill_value = Option.value fill_value ~default:0.0 in
       let nd = host "unique" a in
@@ -1423,21 +1440,23 @@ let choose ?(mode = "raise") a choices =
       in
       let extents = n :: Array.to_list sh in
       let indices = index_array ~extents (arr :: grids) in
-      Core.bind1
-        (Gather
-           {
-             dimension_numbers =
-               {
-                 offset_dims = [||];
-                 collapsed_slice_dims = Array.init (r + 1) Fun.id;
-                 start_index_map = Array.init (r + 1) Fun.id;
-                 g_operand_batching_dims = [||];
-                 g_start_indices_batching_dims = [||];
-                 g_sorted_unique = false;
-               };
-             slice_sizes = Array.make (r + 1) 1;
-           })
-        [ stacked; indices ]
+      if Array.exists (fun e -> e = 0) sh then L.full sh 0.0 (dtype_of stacked)
+      else
+        Core.bind1
+          (Gather
+             {
+               dimension_numbers =
+                 {
+                   offset_dims = [||];
+                   collapsed_slice_dims = Array.init (r + 1) Fun.id;
+                   start_index_map = Array.init (r + 1) Fun.id;
+                   g_operand_batching_dims = [||];
+                   g_start_indices_batching_dims = [||];
+                   g_sorted_unique = false;
+                 };
+               slice_sizes = Array.make (r + 1) 1;
+             })
+          [ stacked; indices ]
 
 let compress ?axis ?size ?(fill_value = 0.0) condition a =
   let condition = Jaxpr.stage_constant condition in
@@ -2162,6 +2181,7 @@ let roots_of_coefficients p =
 
 let roots ?(strip_zeros = true) p =
   let p = NL.atleast_1d (as_inexact p) in
+  if rank p <> 1 then invalid_arg "Input must be a rank-1 array.";
   let n = (shape p).(0) in
   let real_dt = dtype_of p in
   let complex_dt =

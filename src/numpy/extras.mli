@@ -22,8 +22,10 @@ val unique :
   ?return_inverse:bool ->
   ?return_counts:bool ->
   ?axis:int ->
+  ?equal_nan:bool ->
   ?size:int ->
   ?fill_value:float ->
+  ?sorted:bool ->
   value ->
   value list
 
@@ -36,6 +38,9 @@ val intersect1d :
   value ->
   value ->
   value
+
+val intersect1d_indices :
+  ?assume_unique:bool -> value -> value -> value * value * value
 
 val setdiff1d :
   ?assume_unique:bool ->
@@ -54,7 +59,8 @@ val setxor1d :
   value
 
 val bincount : ?weights:value -> ?minlength:int -> ?length:int -> value -> value
-val histogram_bin_edges : ?bins:int -> ?range:float * float -> value -> value
+val histogram_bin_edges :
+  ?bins:int -> ?range:float * float -> ?weights:value -> value -> value
 
 val histogram :
   ?bins:int ->
@@ -68,7 +74,12 @@ val histogram_edges :
   ?weights:value -> ?density:bool -> value -> value -> value * value
 
 val ravel_multi_index :
-  ?mode:string -> ?order:string -> value list -> int array -> value
+  ?mode:string ->
+  ?order:string ->
+  ?dtype:Dtype.t ->
+  value list ->
+  int array ->
+  value
 
 val histogramdd :
   ?bins:int array ->
@@ -104,7 +115,8 @@ val compress :
 
 val extract : ?size:int -> ?fill_value:float -> value -> value -> value
 val delete : ?axis:int -> value -> int list -> value
-val delete_array : ?axis:int -> value -> value -> value
+val delete_array :
+  ?axis:int -> ?assume_unique_indices:bool -> value -> value -> value
 val insert : ?axis:int -> value -> int -> value -> value
 val place : value -> value -> value -> value
 val piecewise : value -> value list -> (value -> value) list -> value
@@ -136,6 +148,23 @@ val size : ?axis:int -> value -> int
 val ndim : value -> int
 val polydiv : ?trim_leading_zeros:bool -> value -> value -> value * value
 val polyfit : ?rcond:float -> ?w:value -> value -> value -> int -> value
+
+val polyfit_full :
+  ?rcond:float ->
+  ?w:value ->
+  value ->
+  value ->
+  int ->
+  value * value * value * value * value
+
+val polyfit_cov :
+  ?rcond:float ->
+  ?w:value ->
+  ?unscaled:bool ->
+  value ->
+  value ->
+  int ->
+  value * value
 val roots : ?strip_zeros:bool -> value -> value
 val fromfunction : (value list -> 'a) -> int array -> dtype:Dtype.t -> 'a
 val pi : float
@@ -170,8 +199,11 @@ val with_printoptions :
   'a
 
 val array_str : value -> string
-val array_repr : value -> string
-val array_str_jax : value -> string
+val array_repr :
+  ?max_line_width:int -> ?precision:int -> ?suppress_small:bool -> value -> string
+
+val array_str_jax :
+  ?max_line_width:int -> ?precision:int -> ?suppress_small:bool -> value -> string
 val packbits : ?axis:int -> ?bitorder:string -> value -> value
 val unpackbits : ?axis:int -> ?count:int -> ?bitorder:string -> value -> value
 

@@ -17,6 +17,15 @@ val empty_like :
 val linspace :
   ?num:int -> ?endpoint:bool -> ?dtype:Dtype.t -> float -> float -> Types.value
 
+val linspace_retstep :
+  ?num:int ->
+  ?endpoint:bool ->
+  ?axis:int ->
+  ?dtype:Dtype.t ->
+  Types.value ->
+  Types.value ->
+  Types.value * Types.value
+
 val logspace :
   ?num:int ->
   ?endpoint:bool ->

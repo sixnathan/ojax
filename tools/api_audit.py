@@ -247,10 +247,17 @@ def ocaml_key(name, decls):
     return None
 
 
+CURRIED = {"grad", "value_and_grad", "jacfwd", "jacrev", "jacobian", "hessian", "jit", "vmap", "pmap", "make_jaxpr", "checkpoint", "remat", "custom_jvp", "custom_vjp", "shard_map", "smap"}
+NO_NAMED_ARGUMENTS = {"static_argnames", "nondiff_argnames"}
+VARIANT_LABELS = {"aux": "has_aux", "holomorphic": "holomorphic", "returned": "returned", "retstep": "retstep", "shape": "return_shape", "indices": "return_indices", "full": "full", "cov": "cov", "sign": "return_sign", "sparse": "sparse"}
+ALIASES = {"preferred": "preferred_element_type", "method_": "method"}
+
+
 def signature_gaps(module, name, obj, decls, types):
     params = jax_parameters(obj)
     if params is None:
         return None
+    params = [p for p in params if p[0] not in NO_NAMED_ARGUMENTS]
     key = ocaml_key(name, decls)
     if key is None:
         return None
@@ -259,7 +266,17 @@ def signature_gaps(module, name, obj, decls, types):
     labels = set()
     for lab, _, _ in variants:
         labels |= set(lab)
+    for alias, target in ALIASES.items():
+        if norm(alias) in labels:
+            labels.add(norm(target))
+    for k in decls:
+        if k.startswith(key.rstrip("_") + "_"):
+            suffix = k[len(key.rstrip("_")) + 1 :]
+            if suffix in VARIANT_LABELS:
+                labels.add(norm(VARIANT_LABELS[suffix]))
     positional = max(len(pos) for _, pos, _ in exact)
+    if name in CURRIED:
+        positional = max(0, positional - 1)
     for _, pos, res in exact:
         for arg in pos + [res]:
             if "flag" in arg:
@@ -286,11 +303,16 @@ def signature_gaps(module, name, obj, decls, types):
         else:
             if pname.startswith("_") or pname in NO_RESULT_EFFECT or rejected_by_jax(module, name, obj, pname):
                 continue
-            if positional > 0:
+            if pname == "operand" and any(k == "var" for _, k in params):
+                continue
+            if positional > 0 and pname not in OPTIONS_NOT_POSITIONAL:
                 positional -= 1
                 continue
             gaps.append(pname)
     return gaps
+
+
+OPTIONS_NOT_POSITIONAL = {"argnums", "out_axes", "has_aux", "holomorphic", "allow_int", "axis_name", "axis_size"}
 
 
 def signature_audit(report):

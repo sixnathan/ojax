@@ -142,7 +142,7 @@ let strings name p =
   | `Null -> None
   | v -> Some (List.map U.to_string (U.to_list v))
 
-let run op p get =
+let rec run op p get =
   let a () = get "a" in
   let b () = get "b" in
   match op with
@@ -186,7 +186,8 @@ let run op p get =
         else
           let start =
             T.Concrete
-              (Nd.of_floats D.I32 [||] [| float_of_int (PC.int "start" p) |])
+              (Nd.of_floats (Ojax.Dtypes.default_int_dtype ()) [||]
+                 [| float_of_int (PC.int "start" p) |])
           in
           J.ds ?size:(PC.opt_int "size" p) ?stride:(PC.opt_int "stride" p)
             (Some start)
@@ -418,4 +419,205 @@ let run op p get =
       List.map
         (fun s -> text (J.Memory.to_string s))
         [ J.Memory.Device; J.Memory.Host; J.Memory.Any ]
+  | other -> run_options other p a b
+
+and run_options op p a b =
+  let module A = Ojax.Api in
+  let module R = Ojax.Numpy.Reductions in
+  let module AC = Ojax.Numpy.Array_creation in
+  let leaf_list = function
+    | TR.Leaf v -> [ v ]
+    | t -> TR.tree_leaves t
+  in
+  let two = function
+    | [ TR.Leaf x; TR.Leaf y ] ->
+        TR.Leaf (R.sum (UF.multiply (UF.multiply (UF.sin x) y) y))
+    | _ -> failwith "apicov: two"
+  in
+  let args () = [ TR.Leaf (a ()); TR.Leaf (b ()) ] in
+  let scalar_float v =
+    T.Concrete (Nd.of_floats (Ojax.Dtypes.default_float_dtype ()) [||] [| v |])
+  in
+  let float_list name =
+    let dt =
+      match U.member "input_dtype" p with
+      | `Null -> D.F32
+      | v -> X.dtype (U.to_string v)
+    in
+    let values =
+      Array.of_list
+        (List.map
+           (function
+             | `Float f -> f
+             | `Int i -> float_of_int i
+             | `Null -> Ojax.Float_format.nan
+             | `String "NaN" -> Ojax.Float_format.nan
+             | _ -> failwith "apicov: float list")
+           (U.to_list (U.member name p)))
+    in
+    T.Concrete (Nd.of_floats dt [| Array.length values |] values)
+  in
+  let int_list name =
+    let dt = Ojax.Dtypes.default_int_dtype () in
+    let values =
+      Array.of_list
+        (List.map
+           (fun v -> float_of_int (U.to_int v))
+           (U.to_list (U.member name p)))
+    in
+    T.Concrete (Nd.of_floats dt [| Array.length values |] values)
+  in
+  match op with
+  | "ap_grad_argnums" ->
+      leaf_list (A.grad ~argnums:(PC.int "argnums" p) two (args ()))
+  | "ap_value_and_grad_argnums" ->
+      let v, g =
+        A.value_and_grad ~argnums:(PC.int "argnums" p) two (args ())
+      in
+      leaf_list v @ leaf_list g
+  | "ap_vmap_out_axes" ->
+      leaf_list
+        (A.vmap
+           ~out_axes:(PC.int "out_axes" p)
+           (function
+             | [ TR.Leaf x ] -> TR.Leaf (times x 2.0)
+             | _ -> failwith "apicov: vmap")
+           [ Some 0 ]
+           [ TR.Leaf (a ()) ])
+  | "ap_vmap_axis_name" ->
+      leaf_list
+        (A.vmap ~axis_name:"i"
+           (function
+             | [ TR.Leaf x ] ->
+                 TR.Leaf (UF.subtract x (Ojax.Parallel.psum x ~axis_name:"i"))
+             | _ -> failwith "apicov: vmap")
+           [ Some 0 ]
+           [ TR.Leaf (a ()) ])
+  | "ap_vmap_axis_size" ->
+      leaf_list
+        (A.vmap ~axis_size:(PC.int "size" p)
+           (function
+             | [ TR.Leaf x ] -> TR.Leaf (times x 2.0)
+             | _ -> failwith "apicov: vmap")
+           [ None ]
+           [ TR.Leaf (a ()) ])
+  | "ap_jit_static" ->
+      let f =
+        A.jit ~static_argnums:[ 1 ] (function
+          | [ TR.Leaf x; TR.Leaf n ] ->
+              let scale =
+                match n with
+                | T.Concrete nd -> Nd.get_f nd [||]
+                | _ -> failwith "apicov: static value"
+              in
+              TR.Leaf (UF.multiply x (JU.py_float scale))
+          | _ -> failwith "apicov: static")
+      in
+      leaf_list (f [ TR.Leaf (a ()); TR.Leaf (scalar_float 2.0) ])
+      @ leaf_list (f [ TR.Leaf (a ()); TR.Leaf (scalar_float 3.0) ])
+  | "ap_jacfwd_holo" | "ap_jacrev_holo" ->
+      let f = function
+        | [ TR.Leaf x ] ->
+            TR.Leaf
+              (UF.add (UF.multiply x x)
+                 (UF.multiply (JU.py_complex { Complex.re = 0.0; im = 1.0 }) x))
+        | _ -> failwith "apicov: holo"
+      in
+      leaf_list
+        (if op = "ap_jacfwd_holo" then
+           A.jacfwd ~holomorphic:true f [ TR.Leaf (a ()) ]
+         else A.jacrev ~holomorphic:true f [ TR.Leaf (a ()) ])
+  | "ap_hessian_holo" ->
+      leaf_list
+        (A.hessian ~holomorphic:true
+           (function
+             | [ TR.Leaf x ] -> TR.Leaf (R.sum (UF.multiply (UF.multiply x x) x))
+             | _ -> failwith "apicov: holo")
+           [ TR.Leaf (a ()) ])
+  | "ap_jacobian_argnums" ->
+      leaf_list
+        (A.jacobian ~argnums:1
+           (function
+             | [ TR.Leaf x; TR.Leaf y ] -> TR.Leaf (UF.multiply x y)
+             | _ -> failwith "apicov: jacobian")
+           (args ()))
+  | "ap_make_jaxpr_shape" ->
+      let _, shapes =
+        A.make_jaxpr_shape
+          (function
+            | [ TR.Leaf x ] ->
+                TR.Tuple
+                  [
+                    TR.Leaf (Ojax.Numpy.Lax_numpy.index_at x 0);
+                    TR.Leaf (times x 2.0);
+                  ]
+            | _ -> failwith "apicov: shape")
+          [ TR.Leaf (a ()) ]
+      in
+      let leaves = TR.tree_leaves shapes in
+      List.map
+        (fun (s : T.aval) -> int32s (Array.to_list s.T.shape))
+        leaves
+      @ List.map
+          (fun (s : T.aval) -> text (Ojax.Ref_state.dtype_name s.T.dtype))
+          leaves
+  | "ap_unique" ->
+      X.unique
+        ~equal_nan:(pbool "equal_nan" p)
+        ?return_counts:(PC.opt_bool "counts" p)
+        ~sorted:true (float_list "values")
+  | "ap_intersect_indices" ->
+      let v, i, j =
+        X.intersect1d_indices
+          ?assume_unique:(PC.opt_bool "assume_unique" p)
+          (float_list "x") (float_list "y")
+      in
+      [ v; i; j ]
+  | "ap_delete" ->
+      [
+        X.delete_array ?axis:(PC.opt_int "axis" p)
+          ~assume_unique_indices:(pbool "unique" p)
+          (a ()) (int_list "obj");
+      ]
+  | "ap_bin_edges" ->
+      let x = a () in
+      [ X.histogram_bin_edges ~bins:(PC.int "bins" p) ~weights:x x ]
+  | "ap_polyfit_full" ->
+      let c, r, k, s, rc = X.polyfit_full (a ()) (b ()) (PC.int "deg" p) in
+      [ c; r; k; s; rc ]
+  | "ap_polyfit_cov" ->
+      let unscaled =
+        match U.member "cov" p with `String "unscaled" -> true | _ -> false
+      in
+      let c, v = X.polyfit_cov ~unscaled (a ()) (b ()) (PC.int "deg" p) in
+      [ c; v ]
+  | "ap_linspace_retstep" ->
+      let x = a () in
+      let out, delta =
+        AC.linspace_retstep ~num:(PC.int "num" p)
+          ?endpoint:(PC.opt_bool "endpoint" p)
+          (Ojax.Numpy.Lax_numpy.index_at x 0)
+          (Ojax.Numpy.Lax_numpy.index_at x 1)
+      in
+      [ out; delta ]
+  | "ap_indices_sparse" ->
+      NL.indices_sparse
+        ~dtype:(Ojax.Dtypes.default_int_dtype ())
+        (Array.of_list (List.map U.to_int (U.to_list (U.member "dims" p))))
+  | "ap_array_str" ->
+      let x = a () in
+      let max_line_width = PC.opt_int "width" p in
+      let precision = PC.opt_int "precision" p in
+      let suppress_small = PC.opt_bool "suppress" p in
+      [
+        text (X.array_str_jax ?max_line_width ?precision ?suppress_small x);
+        text (X.array_repr ?max_line_width ?precision ?suppress_small x);
+      ]
+  | "ap_ravel_dtype" ->
+      [
+        X.ravel_multi_index ~mode:"clip"
+          ~dtype:(X.dtype (pstr "dtype" p))
+          [ int_list "i"; int_list "j" ]
+          (Array.of_list (List.map U.to_int (U.to_list (U.member "dims" p))));
+      ]
   | other -> failwith ("apicov: unknown op " ^ other)

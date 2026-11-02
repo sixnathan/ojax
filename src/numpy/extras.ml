@@ -655,7 +655,7 @@ let unique_all ?size ?fill_value a =
   unique_full ~equal_nan:false ?size ?fill_value a
 
 let unique ?(return_index = false) ?(return_inverse = false)
-    ?(return_counts = false) ?axis ?size ?fill_value a =
+    ?(return_counts = false) ?axis ?equal_nan ?size ?fill_value ?sorted:_ a =
   let flags =
     {
       want_index = return_index;
@@ -663,7 +663,7 @@ let unique ?(return_index = false) ?(return_inverse = false)
       want_counts = return_counts;
     }
   in
-  let r = unique_full ~flags ?axis ?size ?fill_value a in
+  let r = unique_full ~flags ?equal_nan ?axis ?size ?fill_value a in
   r.values
   :: List.concat
        [
@@ -818,6 +818,51 @@ let intersect1d ?(assume_unique = false) ?size ?fill_value a b =
           List.filter (fun x -> List.exists (fun y -> x = y) ys) first
       in
       sized_result (dtype_of a) xs ~size ~fill_value
+
+let intersect1d_indices ?(assume_unique = false) a b =
+  let a, b = same_dtype a b in
+  let a = flat a and b = flat b in
+  let dt = dtype_of a in
+  let first = flat_floats (host "intersect1d" a) in
+  let second = flat_floats (host "intersect1d" b) in
+  let first_at arr x =
+    let rec go i = if arr.(i) = x then i else go (i + 1) in
+    go 0
+  in
+  let triples =
+    if assume_unique then
+      let n = Array.length first in
+      let tagged =
+        Array.to_list (Array.mapi (fun i x -> (x, i)) first)
+        @ Array.to_list (Array.mapi (fun i x -> (x, n + i)) second)
+      in
+      let sorted =
+        List.stable_sort (fun (p, _) (q, _) -> compare_with_nan p q) tagged
+      in
+      let rec adjacent = function
+        | (p, i) :: ((q, j) :: _ as rest) ->
+            if p = q then (p, i, j - n) :: adjacent rest else adjacent rest
+        | _ -> []
+      in
+      adjacent sorted
+    else
+      List.filter_map
+        (fun x ->
+          if Array.mem x second then
+            Some (x, first_at first x, first_at second x)
+          else None)
+        (sorted_unique_floats "intersect1d" a)
+  in
+  let idt = default_int () in
+  let count = List.length triples in
+  let of_ints f =
+    ints_value idt [| count |] (Array.of_list (List.map f triples))
+  in
+  ( Concrete
+      (Ndarray.of_floats dt [| count |]
+         (Array.of_list (List.map (fun (x, _, _) -> x) triples))),
+    of_ints (fun (_, i, _) -> i),
+    of_ints (fun (_, _, j) -> j) )
 
 let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in
@@ -1008,7 +1053,7 @@ let plain_slice v start stop =
        })
     [ v ]
 
-let histogram_bin_edges ?(bins = 10) ?range a =
+let histogram_bin_edges ?(bins = 10) ?range ?weights:_ a =
   let a = as_inexact a in
   let dt = dtype_of a in
   let pair =
@@ -1077,17 +1122,26 @@ let histogram_edges ?weights ?(density = false) a edges =
   let a, weights = histogram_weights a weights in
   (histogram_core a edges weights density, edges)
 
-let ravel_multi_index ?(mode = "raise") ?(order = "C") coords dims =
+let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
   let n = Array.length dims in
   let dt =
-    fst
-      (Dtypes.result_type
-         ((default_int (), true)
-         :: List.map
-              (fun c ->
-                let a = Core.get_aval c in
-                (a.dtype, a.weak_type))
-              coords))
+    match dtype with
+    | Some d ->
+        let d = Dtypes.canonicalize_dtype d in
+        if not (Dtypes.issubdtype d `Integer) then
+          invalid_arg
+            (Printf.sprintf "dtype=dtype('%s') is not an integer type."
+               (Dtype.numpy_name d));
+        d
+    | None ->
+        fst
+          (Dtypes.result_type
+             ((default_int (), true)
+             :: List.map
+                  (fun c ->
+                    let a = Core.get_aval c in
+                    (a.dtype, a.weak_type))
+                  coords))
   in
   let check c d =
     let values = flat_floats (host "ravel_multi_index" c) in
@@ -1476,14 +1530,42 @@ let delete ?axis a obj =
   I.take_index ~axis:ax a
     (ints_value (default_int ()) [| List.length kept |] (Array.of_list kept))
 
-let delete_array ?axis a obj =
-  let a, axis =
+let delete_array ?axis ?(assume_unique_indices = false) a obj =
+  let a, ax =
     match axis with
-    | Some x -> (a, Some (canon (rank a) x))
-    | None -> (flat a, Some 0)
+    | Some x -> (a, canon (rank a) x)
+    | None -> (flat a, 0)
   in
-  let values = flat_floats (host "delete" obj) in
-  delete ?axis a (Array.to_list (Array.map int_of_float values))
+  if assume_unique_indices && Dtypes.issubdtype (dtype_of obj) `Integer then begin
+    let extent = (shape a).(ax) in
+    let dt = dtype_of obj in
+    let idx = flat obj in
+    let negative = U.less idx (Jnp_util.py_int 0) in
+    let wrapped = U.add idx (Jnp_util.py_int extent) in
+    let normal = NL.where_ negative wrapped idx in
+    let clipped =
+      NL.clip ~min:0.0 ~max:(float_of_int extent) normal
+    in
+    let sorted = Sorting.sort clipped in
+    let count = size_of sorted in
+    let ramp n =
+      L.broadcast_in_dim
+        (Core.bind1 (Iota { dtype = dt; shape = [| n |]; dimension = 0 }) [])
+        [| n |] [| 0 |]
+    in
+    let shifted = U.subtract sorted (ramp count) in
+    let base = ramp (extent - count) in
+    let above =
+      U.greater_equal
+        (NL.reshape base [| 1; extent - count |])
+        (NL.reshape shifted [| count; 1 |])
+    in
+    let adjust = R.sum ~dtype:dt ~axis:[| 0 |] above in
+    I.take_index ~axis:ax a (U.add base adjust)
+  end
+  else
+    let values = flat_floats (host "delete" obj) in
+    delete ~axis:ax a (Array.to_list (Array.map int_of_float values))
 
 let tile_to_size vals n =
   let m = size_of vals in
@@ -2042,7 +2124,7 @@ let polydiv ?(trim_leading_zeros = false) u v =
     (!q, Concrete (Ndarray.of_floats dt [| Array.length kept |] kept))
   end
 
-let polyfit ?rcond ?w x y deg =
+let polyfit_parts ?rcond ?w x y deg =
   let x = as_inexact x and y = as_inexact y in
   let order = deg + 1 in
   let lhs = NL.vander ~n:order x in
@@ -2070,11 +2152,65 @@ let polyfit ?rcond ?w x y deg =
   in
   let scale = U.sqrt (R.sum ~axis:[| 0 |] (U.multiply lhs lhs)) in
   let scaled = U.divide lhs (L.broadcast_in_dim scale [| 1; order |] [| 1 |]) in
-  let c, _, _, _ = Linalg.lstsq ~rcond scaled y in
-  let scale_c =
-    if rank c = 2 then L.broadcast_in_dim scale (shape c) [| 0 |] else scale
+  let c, resids, rank_, s = Linalg.lstsq ~rcond scaled y in
+  let c =
+    if rank c > 1 then
+      NL.transpose
+        (U.divide (NL.transpose c) (L.expand_dims scale [| 0 |]))
+    else U.divide c scale
   in
-  U.divide c scale_c
+  (c, resids, rank_, s, rcond, scaled, scale)
+
+let polyfit ?rcond ?w x y deg =
+  let c, _, _, _, _, _, _ = polyfit_parts ?rcond ?w x y deg in
+  c
+
+let polyfit_full_body ?rcond ?w x y deg =
+  let c, resids, rank_, s, rcond, _, _ = polyfit_parts ?rcond ?w x y deg in
+  let dt = dtype_of (as_inexact x) in
+  [ c; resids; rank_; s; Concrete (Ndarray.of_floats dt [||] [| rcond |]) ]
+
+let polyfit_full ?rcond ?w a0 a1 a2 =
+  match
+    Eager_jit.many ~jit:"polyfit" ~vals_first:true "numpy.extras.polyfit_full"
+      (rcond, a2) [ w ] [ a0; a1 ] (fun opts vals ->
+        match (opts, vals) with
+        | [ w ], [ a0; a1 ] -> polyfit_full_body ?rcond ?w a0 a1 a2
+        | _ -> assert false)
+  with
+  | [ c; r; k; s; rc ] -> (c, r, k, s, rc)
+  | _ -> assert false
+
+let polyfit_cov_body ?rcond ?w ~unscaled x y deg =
+  let c, resids, _, _, _, lhs, scale = polyfit_parts ?rcond ?w x y deg in
+  let inv = Linalg.inv (Tensor_contractions.dot (NL.transpose lhs) lhs) in
+  let vbase = U.divide inv (Tensor_contractions.outer scale scale) in
+  let n = (shape x).(0) in
+  let order = deg + 1 in
+  let fac =
+    if unscaled then Jnp_util.py_float 1.0
+    else begin
+      if n <= order then
+        invalid_arg
+          "the number of data points must exceed order to scale the covariance \
+           matrix";
+      U.divide resids (Jnp_util.py_int (n - order))
+    end
+  in
+  if rank y = 1 then
+    let fac = NL.atleast_1d fac in
+    (c, U.multiply vbase (L.expand_dims fac [| 0 |]))
+  else
+    let v3 = L.expand_dims vbase [| 2 |] in
+    let fac = NL.atleast_1d fac in
+    (c, U.multiply v3 (L.expand_dims fac [| 0; 1 |]))
+
+let polyfit_cov ?rcond ?w ?(unscaled = false) a0 a1 a2 =
+  Eager_jit.pair ~jit:"polyfit" ~vals_first:true "numpy.extras.polyfit_cov"
+    (rcond, unscaled, a2) [ w ] [ a0; a1 ] (fun opts vals ->
+      match (opts, vals) with
+      | [ w ], [ a0; a1 ] -> polyfit_cov_body ?rcond ?w ~unscaled a0 a1 a2
+      | _ -> assert false)
 
 let polyfit ?rcond ?w a0 a1 a2 =
   Eager_jit.one ~jit:"polyfit" ~vals_first:true "numpy.extras.polyfit"
@@ -2230,11 +2366,24 @@ let print_options () =
     suppress = o.suppress;
   }
 
-let array_repr a =
-  Array_print.array_repr ~options:(print_options ()) (host "array_repr" a)
+let print_options_with ?max_line_width ?precision ?suppress_small () =
+  let o = print_options () in
+  {
+    o with
+    Array_print.linewidth = Option.value max_line_width ~default:o.linewidth;
+    precision = Option.value precision ~default:o.precision;
+    suppress = Option.value suppress_small ~default:o.suppress;
+  }
 
-let array_str_jax a =
-  Array_print.array_str ~options:(print_options ()) (host "array_str" a)
+let array_repr ?max_line_width ?precision ?suppress_small a =
+  Array_print.array_repr
+    ~options:(print_options_with ?max_line_width ?precision ?suppress_small ())
+    (host "array_repr" a)
+
+let array_str_jax ?max_line_width ?precision ?suppress_small a =
+  Array_print.array_str
+    ~options:(print_options_with ?max_line_width ?precision ?suppress_small ())
+    (host "array_str" a)
 
 let bit_positions bitorder =
   let bits =

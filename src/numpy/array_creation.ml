@@ -75,10 +75,13 @@ let dtype_key = function None -> "none" | Some d -> Dtype.short_name d
 let statics_key statics =
   Digest.to_hex (Digest.string (Marshal.to_string statics []))
 
-let linspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
+let linspace_parts ~retstep ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype
+    start stop =
   if num < 0 then invalid_arg "linspace: num must be non-negative";
-  let key = Printf.sprintf "%d %b %d %s" num endpoint axis (dtype_key dtype) in
-  Jnp_util.jit1 "_linspace" ~key
+  let key =
+    Printf.sprintf "%d %b %d %s %b" num endpoint axis (dtype_key dtype) retstep
+  in
+  Jnp_util.jit "_linspace" ~key
     (function
       | [ start; stop ] ->
           let out_dt =
@@ -109,11 +112,12 @@ let linspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
           in
           let bounds_shape = insert 1 in
           let div = if endpoint then num - 1 else num in
+          let delta = ref (scalar comp Float_format.nan) in
           let out =
             if num > 1 then begin
               let difference = UF.subtract stop start in
-              ignore
-                (bind1 T.Div [ difference; scalar comp (float_of_int div) ]);
+              delta :=
+                bind1 T.Div [ difference; scalar comp (float_of_int div) ];
               let rdt =
                 match comp with
                 | D.Complex128 -> D.F64
@@ -154,16 +158,23 @@ let linspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
                 bind1 (T.Concatenate axis) [ body; tail ]
               else body
             end
-            else if num = 1 then reshape_same broadcast_start bounds_shape
+            else if num = 1 then begin
+              if not endpoint then delta := UF.subtract stop start;
+              reshape_same broadcast_start bounds_shape
+            end
             else const_full out_dt (insert 0) 0.0
           in
           let out =
             if is_inexact out_dt || not (is_inexact (dtype_of out)) then out
             else bind1 T.Floor [ out ]
           in
-          convert out out_dt
+          if retstep then [ convert out out_dt; !delta ]
+          else [ convert out out_dt ]
       | _ -> invalid_arg "linspace: arity")
     [ start; stop ]
+
+let linspace_v ?num ?endpoint ?axis ?dtype start stop =
+  List.hd (linspace_parts ~retstep:false ?num ?endpoint ?axis ?dtype start stop)
 
 let logspace_core ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop
     base =
@@ -232,6 +243,13 @@ let float_bound dtype x =
 let linspace ?num ?endpoint ?dtype start stop =
   linspace_v ?num ?endpoint ?dtype (float_bound dtype start)
     (float_bound dtype stop)
+
+let linspace_retstep ?num ?endpoint ?axis ?dtype start stop =
+  match
+    linspace_parts ~retstep:true ?num ?endpoint ?axis ?dtype start stop
+  with
+  | [ out; delta ] -> (out, delta)
+  | _ -> assert false
 
 let logspace ?num ?endpoint ?base ?dtype start stop =
   logspace_v ?num ?endpoint ?base ?dtype (float_bound dtype start)

@@ -1442,6 +1442,20 @@ let eye ?m ?(k = 0) ~dtype n =
 
 let identity ~dtype n = eye ~dtype n
 
+let indices_sparse ~dtype dims =
+  let n = Array.length dims in
+  List.init n (fun i ->
+      let idx =
+        bind1 (T.Iota { dtype; shape = [| dims.(i) |]; dimension = 0 }) []
+      in
+      bind1
+        (T.Broadcast_in_dim
+           {
+             shape = Array.init n (fun k -> if k = i then dims.(i) else 1);
+             dims = [| i |];
+           })
+        [ idx ])
+
 let indices ~dtype dims =
   let n = Array.length dims in
   let outs =

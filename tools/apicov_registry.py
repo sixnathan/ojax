@@ -224,6 +224,64 @@ def _ops():
     ops["ap_partition"] = partition
     ops["ap_config_flags"] = lambda a, p: _ints([jax.auto_pcast.value, jax.remove_size_one_mesh_axis_from_type.value, jax.config.jax_auto_pcast, jax.config.jax_threefry_partitionable, jax.config.read("jax_enable_x64") == jax.config.jax_enable_x64])
     ops["ap_memory"] = lambda a, p: [_text(str(jax.memory.Space.Device)), _text(str(jax.memory.Space.Host)), _text(str(jax.memory.Space.Any))]
+    ops.update(_transform_ops())
+    ops.update(_numpy_ops())
+    return ops
+
+
+def _transform_ops():
+    ops = {}
+    two = lambda x, y: jnp.sum(jnp.sin(x) * y * y)
+    ops["ap_grad_argnums"] = lambda a, b, p: jax.grad(two, argnums=p["argnums"])(a, b)
+    ops["ap_value_and_grad_argnums"] = lambda a, b, p: jax.value_and_grad(two, argnums=p["argnums"])(a, b)
+    ops["ap_vmap_out_axes"] = lambda a, p: jax.vmap(lambda x: x * 2.0, in_axes=(0,), out_axes=p["out_axes"])(a)
+    ops["ap_vmap_axis_name"] = lambda a, p: jax.vmap(lambda x: x - lax.psum(x, "i"), in_axes=(0,), axis_name="i")(a)
+    ops["ap_vmap_axis_size"] = lambda a, p: jax.vmap(lambda x: x * 2.0, in_axes=(None,), axis_size=p["size"])(a)
+
+    def static(a, p):
+        f = jax.jit(lambda x, n: x * n, static_argnums=(1,))
+        return [f(a, 2.0), f(a, 3.0)]
+
+    ops["ap_jit_static"] = static
+    ops["ap_jacfwd_holo"] = lambda a, p: jax.jacfwd(lambda x: x * x + 1j * x, holomorphic=True)(a)
+    ops["ap_jacrev_holo"] = lambda a, p: jax.jacrev(lambda x: x * x + 1j * x, holomorphic=True)(a)
+    ops["ap_hessian_holo"] = lambda a, p: jax.hessian(lambda x: jnp.sum(x * x * x), holomorphic=True)(a)
+    ops["ap_jacobian_argnums"] = lambda a, b, p: jax.jacobian(lambda x, y: x * y, argnums=1)(a, b)
+
+    def return_shape(a, p):
+        _, shape = jax.make_jaxpr(lambda x: (x[0], x * 2.0), return_shape=True)(a)
+        return [_ints(s.shape) for s in shape] + [_text(s.dtype) for s in shape]
+
+    ops["ap_make_jaxpr_shape"] = return_shape
+    return ops
+
+
+def _numpy_ops():
+    ops = {}
+    from_list = lambda p, k: jnp.asarray(p[k], dtype=p.get("input_dtype", "float32"))
+
+    def unique(a, p):
+        out = jnp.unique(from_list(p, "values"), equal_nan=p["equal_nan"], return_counts=p.get("counts", False), sorted=True)
+        return list(out) if isinstance(out, tuple) else out
+
+    ops["ap_unique"] = unique
+
+    def intersect(a, p):
+        return list(jnp.intersect1d(from_list(p, "x"), from_list(p, "y"), assume_unique=p.get("assume_unique", False), return_indices=True))
+
+    ops["ap_intersect_indices"] = intersect
+
+    def delete(a, p):
+        return jnp.delete(a, jnp.asarray(p["obj"]), axis=p.get("axis"), assume_unique_indices=p["unique"])
+
+    ops["ap_delete"] = delete
+    ops["ap_bin_edges"] = lambda a, p: jnp.histogram_bin_edges(a, bins=p["bins"], weights=a)
+    ops["ap_polyfit_full"] = lambda a, b, p: list(jnp.polyfit(a, b, p["deg"], full=True))
+    ops["ap_polyfit_cov"] = lambda a, b, p: list(jnp.polyfit(a, b, p["deg"], cov=p["cov"]))
+    ops["ap_linspace_retstep"] = lambda a, p: list(jnp.linspace(a[0], a[1], p["num"], endpoint=p.get("endpoint", True), retstep=True))
+    ops["ap_indices_sparse"] = lambda a, p: list(jnp.indices(tuple(p["dims"]), sparse=True))
+    ops["ap_array_str"] = lambda a, p: [_text(jnp.array_str(jnp.asarray(a), max_line_width=p.get("width"), precision=p.get("precision"), suppress_small=p.get("suppress"))), _text(jnp.array_repr(jnp.asarray(a), max_line_width=p.get("width"), precision=p.get("precision"), suppress_small=p.get("suppress")))]
+    ops["ap_ravel_dtype"] = lambda a, p: jnp.ravel_multi_index((jnp.asarray(p["i"]), jnp.asarray(p["j"])), tuple(p["dims"]), mode="clip", dtype=p["dtype"])
     return ops
 
 
@@ -282,5 +340,54 @@ def _gap_cases():
     return out
 
 
+def _ab(a, b):
+    return {"a": {"kind": "real", "shape": a}, "b": {"kind": "real", "shape": b}}
+
+
+def _option_cases():
+    one = _r([1])
+    out = []
+    for n in [0, 1]:
+        out.append(("ap_grad_argnums", _ab([3], [3]), {"argnums": n}))
+        out.append(("ap_value_and_grad_argnums", _ab([3], [3]), {"argnums": n}))
+    for axis in [0, 1, -1]:
+        out.append(("ap_vmap_out_axes", _r([2, 3]), {"out_axes": axis}))
+    out.append(("ap_vmap_axis_name", _r([3]), {}))
+    out.append(("ap_vmap_axis_size", _r([2]), {"size": 3}))
+    out.append(("ap_jit_static", _r([3]), {}))
+    cplx = {"a": {"kind": "complex", "shape": [3]}}
+    out.append(("ap_jacfwd_holo", cplx, {}))
+    out.append(("ap_jacrev_holo", cplx, {}))
+    out.append(("ap_hessian_holo", cplx, {}))
+    out.append(("ap_jacobian_argnums", _ab([2], [2]), {}))
+    out.append(("ap_make_jaxpr_shape", _r([2, 3]), {}))
+    nan = float("nan")
+    for equal_nan in [True, False]:
+        for counts in [False, True]:
+            out.append(("ap_unique", one, {"values": [1.0, nan, 2.0, nan, 1.0], "equal_nan": equal_nan, "counts": counts}))
+    out.append(("ap_intersect_indices", one, {"x": [3.0, 1.0, 2.0, 1.0], "y": [2.0, 5.0, 3.0, 2.0]}))
+    out.append(("ap_intersect_indices", one, {"x": [3.0, 1.0, 2.0], "y": [2.0, 5.0, 3.0], "assume_unique": True}))
+    out.append(("ap_intersect_indices", one, {"x": [1.0], "y": [2.0]}))
+    for unique in [False, True]:
+        out.append(("ap_delete", _r([6]), {"obj": [1, 4], "unique": unique}))
+        out.append(("ap_delete", _r([4, 3]), {"obj": [0, 2], "axis": 0, "unique": unique}))
+        out.append(("ap_delete", _r([4, 3]), {"obj": [-1], "axis": 1, "unique": unique}))
+    out.append(("ap_bin_edges", _r([5]), {"bins": 4}))
+    out.append(("ap_polyfit_full", _ab([6], [6]), {"deg": 2}))
+    out.append(("ap_polyfit_cov", _ab([6], [6]), {"deg": 2, "cov": True}))
+    out.append(("ap_polyfit_cov", _ab([6], [6]), {"deg": 2, "cov": "unscaled"}))
+    out.append(("ap_polyfit_cov", _ab([6], [6, 2]), {"deg": 1, "cov": True}))
+    for params in [{"num": 5}, {"num": 5, "endpoint": False}, {"num": 1}, {"num": 1, "endpoint": False}, {"num": 0}]:
+        out.append(("ap_linspace_retstep", _r([2]), params))
+    for dims in [[2, 3], [4], [2, 1, 3]]:
+        out.append(("ap_indices_sparse", one, {"dims": dims}))
+    for params in [{}, {"precision": 2}, {"width": 20}, {"suppress": True}, {"precision": 1, "width": 30, "suppress": True}]:
+        out.append(("ap_array_str", _r([6]), params))
+        out.append(("ap_array_str", _r([2, 3]), params))
+    out.append(("ap_ravel_dtype", one, {"i": [0, 1], "j": [2, 7], "dims": [2, 3], "dtype": "int16"}))
+    out.append(("ap_ravel_dtype", one, {"i": [0, 1], "j": [2, 7], "dims": [2, 3], "dtype": "uint8"}))
+    return out
+
+
 def all_cases():
-    return _gap_cases()
+    return _gap_cases() + _option_cases()

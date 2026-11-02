@@ -8,6 +8,7 @@ val move_batch_axis : int -> int option -> int -> value -> value
 val vmap_flat :
   ?axis_name:string ->
   ?out_axis:int ->
+  ?axis_size:int ->
   (value list -> value list) ->
   int option list ->
   value list ->

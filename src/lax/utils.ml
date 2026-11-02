@@ -18,7 +18,9 @@ let check_conv_window (dn : conv_dims) rhs_shape =
         (Printf.sprintf
            "Cannot lower jaxpr with verifier errors:\n\
             \texpects window to have positive value for %d-th window \
-            dimension, but got %d."
+            dimension, but got %d.\n\
+            \t\tat loc(\"jit(conv_general_dilated)/conv_general_dilated\")\n\
+            Define JAX_DUMP_IR_TO to dump the module."
            i w)
   done
 

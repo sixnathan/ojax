@@ -357,7 +357,9 @@ let reshape_impl ns a =
       (Printf.sprintf
          "Cannot lower jaxpr with verifier errors:\n\
           \tnumber of output elements (%d) doesn't match expected number of \
-          elements (%d)"
+          elements (%d)\n\
+          \t\tat loc(\"jit(reshape)/reshape\")\n\
+          Define JAX_DUMP_IR_TO to dump the module."
          n_out n_in);
   Ndarray.of_floats (Ndarray.dtype a) ns (to_array a)
 

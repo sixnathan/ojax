@@ -529,7 +529,7 @@ let named_like (src : closed_jaxpr) jaxpr consts =
   c
 
 let pe_custom_cache :
-    ( int * bool list * bool list,
+    ( int * bool list * bool list * bool,
       (policy
       * (closed_jaxpr
         * closed_jaxpr
@@ -542,17 +542,17 @@ let pe_custom_cache :
     Hashtbl.t =
   Hashtbl.create 16
 
-let rec pe_custom policy (c : closed_jaxpr) unks_in inst_in =
-  let key = (c.jid, unks_in, inst_in) in
+let rec pe_custom ?(forward = true) policy (c : closed_jaxpr) unks_in inst_in =
+  let key = (c.jid, unks_in, inst_in, forward) in
   let hits = Option.value (Hashtbl.find_opt pe_custom_cache key) ~default:[] in
   match List.find_opt (fun (p, _) -> p == policy) hits with
   | Some (_, r) -> r
   | None ->
-      let r = pe_custom_uncached policy c unks_in inst_in in
+      let r = pe_custom_uncached ~forward policy c unks_in inst_in in
       Hashtbl.replace pe_custom_cache key ((policy, r) :: hits);
       r
 
-and pe_custom_uncached policy (c : closed_jaxpr) unks_in inst_in =
+and pe_custom_uncached ~forward policy (c : closed_jaxpr) unks_in inst_in =
   let jx = c.jaxpr in
   let const_binders, binders =
     match Util.split_list jx.in_binders [ List.length c.consts ] with
@@ -580,20 +580,17 @@ and pe_custom_uncached policy (c : closed_jaxpr) unks_in inst_in =
     (fun (e : eqn) ->
       let flags = List.map read e.inputs in
       let unks = List.map fst flags and insts = List.map snd flags in
-      match e.prim with
-      | Xla_call inner ->
-          let k, s, unks_out, inst_out, new_vars =
-            call_rule policy inner unks insts e
-          in
+      match custom_rule policy unks insts e with
+      | Some (k, s, unks_out, inst_out, new_vars) ->
           known := k :: !known;
           staged := s :: !staged;
           List.iter add_res new_vars;
           List.iter2 write (List.combine unks_out inst_out) e.outs
-      | _ when List.exists Fun.id unks ->
+      | None when List.exists Fun.id unks ->
           List.iter2 ensure insts e.inputs;
           staged := e :: !staged;
           List.iter (write (true, true)) e.outs
-      | _ ->
+      | None ->
           known := e :: !known;
           if
             is_effectful e.prim
@@ -613,11 +610,15 @@ and pe_custom_uncached policy (c : closed_jaxpr) unks_in inst_in =
   let outs_known = select (List.map not unks_out) jx.outs in
   let in_fwd =
     List.map
-      (fun (r : var) -> last_index (fun (b : var) -> b.vid = r.vid) ins_known)
+      (fun (r : var) ->
+        if forward then last_index (fun (b : var) -> b.vid = r.vid) ins_known
+        else None)
       residuals
   in
   let out_fwd =
-    List.map (fun r -> last_index (same_var r) outs_known) residuals
+    List.map
+      (fun r -> if forward then last_index (same_var r) outs_known else None)
+      residuals
   in
   let keep = List.map2 (fun a b -> a = None && b = None) in_fwd out_fwd in
   let known_c =
@@ -639,6 +640,50 @@ and pe_custom_uncached policy (c : closed_jaxpr) unks_in inst_in =
       c.consts
   in
   (known_c, staged_c, unks_out, inst_out, residuals, in_fwd, out_fwd)
+
+and custom_rule policy unks insts (e : eqn) =
+  match e.prim with
+  | Xla_call inner -> Some (call_rule policy inner unks insts e)
+  | Custom_jvp_call id when Hashtbl.mem remats id ->
+      Some (remat_custom_rule policy (Hashtbl.find remats id) unks insts e)
+  | _ -> None
+
+and remat_custom_rule policy (r : remat) unks_in inst_in (e : eqn) =
+  let known_c, staged_c, unks_out, inst_out, residuals, _, _ =
+    pe_custom ~forward:false policy r.body unks_in inst_in
+  in
+  let ins_known = select (List.map not unks_in) e.inputs in
+  let out_binders_known = select (List.map not unks_out) e.outs in
+  let ins_staged = select inst_in e.inputs in
+  let out_binders_staged = select inst_out e.outs in
+  let res_binders =
+    List.map
+      (fun (v : var) -> { vid = Core.fresh_id (); vaval = v.vaval })
+      residuals
+  in
+  let mk prim inputs outs =
+    { prim; inputs; outs; multiple_results = List.length outs > 1 }
+  in
+  let eqn_known =
+    mk
+      (Custom_jvp_call
+         (remat_id ~cfg:r.cfg ~differentiated:r.differentiated known_c))
+      ins_known
+      (out_binders_known @ res_binders)
+  in
+  let eqn_staged =
+    mk
+      (Custom_jvp_call (remat_id ~cfg:r.cfg ~differentiated:true staged_c))
+      (List.map (fun v -> A_var v) res_binders @ ins_staged)
+      out_binders_staged
+  in
+  let new_inst =
+    List.concat
+      (List.map2
+         (fun a inst -> match a with A_var v when not inst -> [ v ] | _ -> [])
+         e.inputs inst_in)
+  in
+  (eqn_known, eqn_staged, unks_out, inst_out, new_inst @ res_binders)
 
 and call_rule policy inner unks_in inst_in (e : eqn) =
   let known_c, staged_c, unks_out, inst_out, residuals, in_fwd, out_fwd =
@@ -694,7 +739,8 @@ and call_rule policy inner unks_in inst_in (e : eqn) =
 
 type split_eqn = Plain of eqn | Split of eqn * eqn * bool list * var list
 
-let split_calls policy (jx : jaxpr) const_binders binders known_flags =
+let split_calls policy (jx : jaxpr) const_binders binders known_flags pe_unknown
+    =
   let env = Hashtbl.create 64 in
   let read = function
     | A_var (v : var) -> (
@@ -710,20 +756,28 @@ let split_calls policy (jx : jaxpr) const_binders binders known_flags =
     (fun (e : eqn) ->
       let flags = List.map read e.inputs in
       let unks = List.map fst flags and insts = List.map snd flags in
-      match e.prim with
-      | Xla_call inner ->
-          let k, s, unks_out, inst_out, new_vars =
-            call_rule policy inner unks insts e
-          in
+      let agrees (_, _, unks_out, _, _) =
+        List.for_all2
+          (fun (v : var) u -> u = Hashtbl.mem pe_unknown v.vid)
+          e.outs unks_out
+      in
+      let found = custom_rule policy unks insts e in
+      let rejected =
+        match found with Some r -> not (agrees r) | None -> false
+      in
+      match if rejected then None else found with
+      | Some (k, s, unks_out, inst_out, new_vars) ->
           List.iter2 write (List.combine unks_out inst_out) e.outs;
           let saved_known =
             List.map not (select (List.map not unks_out) inst_out)
           in
           Split (k, s, saved_known, new_vars)
-      | _ when List.exists Fun.id unks ->
-          List.iter (write (true, true)) e.outs;
+      | None when rejected || List.exists Fun.id unks ->
+          List.iter
+            (fun (v : var) -> write (Hashtbl.mem pe_unknown v.vid, true) v)
+            e.outs;
           Plain e
-      | _ ->
+      | None ->
           if
             is_effectful e.prim
             || remat_case policy e.prim (List.map atom_aval e.inputs)
@@ -796,7 +850,9 @@ let remat_partial_eval trace id (tracers : tracer list) =
                       env jx.eqns jx.outs)
                   pvals);
              []));
-      let split = split_calls policy jx const_binders binders known_flags in
+      let split =
+        split_calls policy jx const_binders binders known_flags pe_unknown
+      in
       let plain (e : eqn) =
         List.iter (fun (v : var) -> Hashtbl.replace var_of v.vid v) e.outs;
         let ins = atom_vars e.inputs in
@@ -933,7 +989,12 @@ let remat_partial_eval trace id (tracers : tracer list) =
             eval_subset env staged_eqns unknown_outs)
       in
       let staged, staged_args =
-        Jaxpr.dce_closed staged (List.map (fun _ -> true) staged.jaxpr.outs)
+        Stablehlo.Dce.dce_closed staged
+          (List.map (fun _ -> true) staged.jaxpr.outs)
+          ~instantiate:
+            (List.init
+               (List.length staged.jaxpr.in_binders - List.length staged.consts)
+               (fun _ -> false))
       in
       let keep xs flags =
         List.concat (List.map2 (fun x k -> if k then [ x ] else []) xs flags)
@@ -948,13 +1009,14 @@ let remat_partial_eval trace id (tracers : tracer list) =
       let known_eqns =
         let outs = known_outs @ res_atoms in
         let pruned, _ =
-          Jaxpr.dce_closed
+          Stablehlo.Dce.dce_closed
             {
               body with
               jid = Core.fresh_id ();
               jaxpr = { jx with outs; eqns = known_list };
             }
             (List.map (fun _ -> true) outs)
+            ~instantiate:(List.map (fun _ -> true) binders)
         in
         pruned.jaxpr.eqns
       in

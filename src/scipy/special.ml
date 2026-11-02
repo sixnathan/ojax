@@ -860,7 +860,7 @@ let is_complex_dtype = function
 let reject_complex name v =
   if is_complex_dtype (dtype v) then
     raise
-      (Py_exn.Type_error (name ^ " does not support complex-valued inputs."))
+      (Py_exn.Value_error (name ^ " does not support complex-valued inputs."))
 
 let real_only name x =
   let x = promote1 x in
@@ -885,7 +885,7 @@ let single_or_double x =
         (Py_exn.Type_error
            (Printf.sprintf
               "x.dtype=%s is not supported, see docstring for supported types."
-              (D.short_name d)))
+              (D.numpy_name d)))
 
 let eps_of v =
   match dtype v with
@@ -1028,7 +1028,7 @@ let constf v = Piece_const (py_float v)
 let const_val v = Piece_const v
 let piece_fn f = Piece_fn (function [ x ] -> f x | _ -> assert false)
 let fresh_key () = string_of_int (C.fresh_id ())
-let gammaln x = bind1 T.Lgamma [ real_only "gammaln" x ]
+let gammaln x = bind1 T.Lgamma [ promote1 x ]
 
 let gammasgn x =
   let x = real_only "gammasgn" x in
@@ -1215,7 +1215,7 @@ let betainc a b x =
   let a, b, x = real_only3 "betainc" a b x in
   bind1 T.Regularized_incomplete_beta [ a; b; x ]
 
-let digamma x = bind1 T.Digamma [ real_only "digamma" x ]
+let digamma x = bind1 T.Digamma [ promote1 x ]
 
 let gammainc a x =
   let a, x = promote2 a x in
@@ -1228,7 +1228,7 @@ let gammaincc a x =
 let lax_igamma a x = bind1 T.Igamma [ a; x ]
 let erf x = bind1 T.Erf [ promote1 x ]
 let erfc x = bind1 T.Erfc [ promote1 x ]
-let erfinv x = bind1 T.Erf_inv [ real_only "erfinv" x ]
+let erfinv x = bind1 T.Erf_inv [ promote1 x ]
 let expit x = bind1 T.Logistic [ promote1 x ]
 
 let rec logit x =
@@ -1623,8 +1623,15 @@ let log_ndtr_lower x series_order =
   in
   log_scale +! L.log (log_ndtr_asymptotic_series x series_order)
 
+let log_ndtr_dtype x =
+  match dtype x with
+  | D.F32 | D.F64 -> ()
+  | d ->
+      Py_exn.type_error
+        (Printf.sprintf "x.dtype=%s is not supported." (D.numpy_name d))
+
 let log_ndtr_primal series_order x =
-  single_or_double x;
+  log_ndtr_dtype x;
   let lower, upper =
     match dtype x with D.F64 -> (-20.0, 8.0) | _ -> (-10.0, 5.0)
   in
@@ -1647,7 +1654,7 @@ let rec log_ndtr ?(series_order = 3) x =
   if series_order < 0 then
     Py_exn.value_error "series_order must be non-negative.";
   if series_order > 30 then Py_exn.value_error "series_order must be <= 30.";
-  single_or_double x;
+  log_ndtr_dtype x;
   List.hd
     (CD.custom_jvp ~name:"log_ndtr" ~jvp_name:"_log_ndtr_jvp"
        (function
@@ -1739,6 +1746,15 @@ let reject_bool x =
     raise (Py_exn.Type_error "sub does not accept dtype bool.")
 
 let softmax ?axis x =
+  Option.iter
+    (function
+      | Numpy.Reductions.Axis ax ->
+          ignore (Validate.canonicalize_axis ax (ndim x))
+      | Numpy.Reductions.Axes axes ->
+          Array.iter
+            (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x)))
+            axes)
+    axis;
   reject_bool x;
   match axis with
   | Some (Numpy.Reductions.Axis ax) -> NN.softmax ~axis:ax x
@@ -1748,6 +1764,15 @@ let softmax ?axis x =
       NL.reshape (NN.softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
 
 let log_softmax ?axis x =
+  Option.iter
+    (function
+      | Numpy.Reductions.Axis ax ->
+          ignore (Validate.canonicalize_axis ax (ndim x))
+      | Numpy.Reductions.Axes axes ->
+          Array.iter
+            (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x)))
+            axes)
+    axis;
   reject_bool x;
   match axis with
   | Some (Numpy.Reductions.Axis ax) -> NN.log_softmax ~axis:ax x
@@ -1757,7 +1782,7 @@ let log_softmax ?axis x =
       NL.reshape (NN.log_softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
 
 let poch_primal z m =
-  let z, m = real_only2 "poch" z m in
+  let z, m = real_only2 "jnp.poch" z m in
   where_ (eq_ m 0.0) (lax_const z 1.0) (gamma (z +! m) /! gamma z)
 
 let rec poch z m =
@@ -1824,7 +1849,7 @@ let spence x =
         (Py_exn.Type_error
            (Printf.sprintf
               "x.dtype=%s is not supported, see docstring for supported types."
-              (D.short_name d))));
+              (D.numpy_name d))));
   spence_body x
 
 let euler_gamma = 0.5772156649015329
@@ -1871,7 +1896,11 @@ let sici_approx x =
   (si, ci)
 
 let sici_primal x =
-  let x = real_only "sici" x in
+  let x = promote1 x in
+  if is_complex_dtype (dtype x) then
+    Py_exn.value_error
+      (Printf.sprintf "Argument `x` to sici must be real-valued. Got dtype %s."
+         (D.numpy_name (dtype x)));
   let x_abs = UF.abs x in
   let si_series, ci_series = sici_series x_abs in
   let si_asymp, ci_asymp = sici_asympt x_abs in
@@ -2875,7 +2904,8 @@ let bessel_jn_one ~v ~n_iter z =
 
 let bessel_jn ?(n_iter = 50) ~v z =
   let z = promote1 z in
-  reject_complex "bessel_jn" z;
+  if is_complex_dtype (dtype z) then
+    Py_exn.value_error "complex input not supported.";
   let rank = ndim z in
   let rec wrap d f =
     if d = 0 then f
@@ -3135,7 +3165,7 @@ let check_lpmn m n z =
       Py_exn.type_error
         (Printf.sprintf
            "z.dtype=%s is not supported, see docstring for supported types."
-           (D.short_name d)));
+           (D.numpy_name d)));
   if Array.length (shape z) <> 1 then Py_exn.value_error "z must be a 1D array.";
   if m <> n then
     raise
@@ -3194,11 +3224,17 @@ let sph_harm_y ?diff_n ?n_max n m theta phi =
         match RED.amax n with
         | T.Concrete nd -> int_of_float (Nd.get_f nd [||])
         | T.Device b -> int_of_float (Nd.get_f (Pjrt.Buffer.to_host b) [||])
-        | T.Tracer _ ->
-            invalid_arg
-              "The `n_max` argument of `jnp.scipy.special.sph_harm` must be \
-               statically specified to use `sph_harm` within JAX \
-               transformations.")
+        | T.Tracer _ as top ->
+            raise
+              (Errors.concretization_type_error
+                 ~context:
+                   "The `n_max` argument of `jnp.scipy.special.sph_harm` must \
+                    be statically specified to use `sph_harm` within JAX \
+                    transformations."
+                 ~error_repr:
+                   (Printf.sprintf "traced array with shape %s[]"
+                      (D.numpy_name (dtype top)))
+                 ~origin_msg:(Jaxpr.origin_msg top) ()))
   in
   Eager_jit.one ~jit:"_sph_harm" "scipy.special._sph_harm" n_max []
     [ n; m; theta; phi ] (fun _ vals -> sph_harm_body n_max vals)

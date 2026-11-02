@@ -230,9 +230,10 @@ let broadcasted_iota dt sh dimension =
 
 let reshape ?dimensions x new_sizes =
   let in_shape = (Core.get_aval x).shape in
+  let rank = Array.length in_shape in
   let dims =
     match dimensions with
-    | Some perm when perm <> Array.init (Array.length perm) Fun.id -> Some perm
+    | Some perm when perm <> Array.init rank Fun.id -> Some perm
     | _ -> None
   in
   match dims with
@@ -320,8 +321,12 @@ let collapse x start stop =
 let concatenate xs dimension =
   match xs with [ x ] -> x | _ -> b1 (Concatenate dimension) xs
 
-let stack xs axis = b1 (Stack axis) xs
-let unstack x axis = Core.bind (Unstack axis) [ x ]
+let stack xs axis =
+  match xs with
+  | [] -> Py_exn.index_error "list index out of range"
+  | first :: _ -> b1 (Stack (canon_axis (ndim first + 1) axis)) xs
+
+let unstack x axis = Core.bind (Unstack (canon_axis (ndim x) axis)) [ x ]
 
 let split x sizes axis =
   let sh = shape x in
@@ -791,7 +796,7 @@ let dot_with ?precision ?preferred_element_type (dn : dot_dims) x y =
         (Printf.sprintf
            "`preferred_element_type` must not be narrower than the original \
             type, got preferred_element_type of %s for result type of %s."
-           (Dtype.short_name p) (Dtype.short_name result))
+           (Dtype.numpy_name p) (Dtype.numpy_name result))
   | _ -> ());
   let out = Option.value preferred_element_type ~default:result in
   match precision with

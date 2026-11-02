@@ -283,6 +283,10 @@ let check prim avals =
       match avals () with a :: _ -> check_top_k a k axis | [] -> ())
   | Broadcast_in_dim { shape; _ } ->
       Validate.check_shapelike ~name:"broadcast_in_dim" ~arg:"shape" shape
+  | Iota { dtype = Dtype.Bool; _ } ->
+      Py_exn.type_error
+        "iota does not accept dtype bool. Accepted dtypes are subtypes of \
+         complexfloating, floating, integer."
   | Conv_general_dilated
       {
         window_strides;
@@ -313,6 +317,23 @@ let check prim avals =
   | Reshape new_sizes when Array.exists (fun d -> d < 0) new_sizes ->
       Py_exn.type_error
         ("reshape new_sizes must all be positive, got " ^ tuple new_sizes ^ ".")
+  | Reshape_perm { new_sizes; _ } when Array.exists (fun d -> d < 0) new_sizes
+    ->
+      Py_exn.type_error
+        ("reshape new_sizes must all be positive, got " ^ tuple new_sizes ^ ".")
+  | Reshape_perm { dimensions; _ } -> (
+      match avals () with
+      | [ operand ] ->
+          let rank = Array.length operand.shape in
+          if
+            List.sort_uniq compare (Array.to_list dimensions)
+            <> List.init rank Fun.id
+          then
+            Py_exn.type_error
+              ("reshape dimensions must be a permutation of operand \
+                dimensions, got dimensions " ^ tuple dimensions ^ " for shape "
+             ^ tuple operand.shape ^ ".")
+      | _ -> ())
   | Concatenate dimension ->
       check_concatenate
         (List.map (fun (a : aval) -> a.shape) (avals ()))

@@ -83,9 +83,9 @@ let unop_rule (prim : primitive) (x : value) (bdim : int option) :
 let bdim_at_front (size : int) (v : value) (bdim : int option) : value =
   match bdim with None -> broadcast_insert size 0 v | Some d -> moveaxis d 0 v
 
-let broadcast_batcher (prim : primitive) (vals : value list)
-    (bdims : int option list) : value * int option =
-  if List.for_all (fun b -> b = None) bdims then (b1 prim vals, None)
+let broadcast_batcher_args (vals : value list) (bdims : int option list) :
+    value list * int option =
+  if List.for_all (fun b -> b = None) bdims then (vals, None)
   else
     let shape_of v = (Core.get_aval v).shape in
     let shape, dim =
@@ -100,7 +100,7 @@ let broadcast_batcher (prim : primitive) (vals : value list)
         (fun v b ->
           Array.length (shape_of v) = 0 || (shape_of v = shape && b = Some dim))
         vals bdims
-    then (b1 prim vals, Some dim)
+    then (vals, Some dim)
     else
       let args =
         List.map2
@@ -128,7 +128,12 @@ let broadcast_batcher (prim : primitive) (vals : value list)
                 [ v ])
           args bdims
       in
-      (b1 prim args, Some 0)
+      (args, Some 0)
+
+let broadcast_batcher (prim : primitive) (vals : value list)
+    (bdims : int option list) : value * int option =
+  let args, dim = broadcast_batcher_args vals bdims in
+  (b1 prim args, dim)
 
 let binop_rule (prim : primitive) (x : value) (x_bdim : int option) (y : value)
     (y_bdim : int option) : value * int option =
@@ -509,10 +514,22 @@ let slice_batch (start_indices : int array) (limit_indices : int array)
   | None -> (b1 (Slice { start_indices; limit_indices; strides }) [ x ], None)
   | Some d ->
       let dim_size = (Core.get_aval x).shape.(d) in
-      let ns = insert_size start_indices d 0 in
-      let nl = insert_size limit_indices d dim_size in
+      let insert arr v =
+        let out = insert_size arr d v in
+        if
+          Array.exists Fun.id
+            (Array.mapi (fun i _ -> Np_ints.is_marked arr i) arr)
+        then
+          Np_ints.mark_where
+            (fun i ->
+              i <> d && Np_ints.is_marked arr (if i < d then i else i - 1))
+            out
+        else out
+      in
+      let ns = insert start_indices 0 in
+      let nl = insert limit_indices dim_size in
       let nst =
-        match strides with None -> None | Some s -> Some (insert_size s d 1)
+        match strides with None -> None | Some s -> Some (insert s 1)
       in
       ( b1
           (Slice { start_indices = ns; limit_indices = nl; strides = nst })
@@ -1986,9 +2003,7 @@ let unstacks_operands prim (bdims : int option list) =
   match (prim, bdims) with
   | Triangular_solve _, _ -> false
   | Custom_linear_solve _, _ -> false
-  | ( ( Reduce_window _ | Select_and_scatter _ | Threefry2x32
-      | Iota_2x32_shape _ | While _ ),
-      _ ) ->
+  | (Reduce_window _ | Select_and_scatter _ | Iota_2x32_shape _ | While _), _ ->
       true
   | Custom_vjp_call id, _ -> (
       match Core.custom_rule id with Core.Callback_rule _ -> true | _ -> false)
@@ -2698,6 +2713,11 @@ let batch_process_primitive (trace : trace) (prim : primitive)
               ]
           | _ -> failwith "batching: rng_bit_generator arity")
       | _ -> failwith "batching: rng_bit_generator arity")
+  | Threefry2x32 ->
+      let args, dim = broadcast_batcher_args vals bdims in
+      List.map
+        (fun o -> Tracer (new_batch_tracer trace o dim))
+        (Core.bind prim args)
   | _ when unstacks_operands prim bdims ->
       List.map
         (fun o -> Tracer (new_batch_tracer trace o (Some 0)))

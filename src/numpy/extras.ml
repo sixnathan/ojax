@@ -45,6 +45,14 @@ let concretization name v =
   | "unique" | "intersect1d" | "setxor1d" -> own unique_context
   | "union1d" -> own "The error arose in union1d()"
   | "setdiff1d" -> own "The error arose in setdiff1d()"
+  | "ravel_multi_index" ->
+      own
+        "The error occurred because ravel_multi_index was jit-compiled with \
+         mode='raise'. Use mode='wrap' or mode='clip' instead."
+  | "choose" ->
+      own
+        "The error occurred because jnp.choose was jit-compiled with \
+         mode='raise'. Use mode='wrap' or mode='clip' instead."
   | "trim_zeros" -> own "Error arose in the `filt` argument of trim_zeros()"
   | "delete" -> own "'obj' array argument of jnp.delete()"
   | "bincount" ->
@@ -1331,6 +1339,12 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
                     (a.dtype, a.weak_type))
                   coords))
   in
+  List.iter
+    (fun c ->
+      if mode = "raise" then ignore (host "ravel_multi_index" c);
+      if not (Dtypes.issubdtype (Core.get_aval c).dtype `Integer) then
+        Py_exn.type_error "only int indices permitted")
+    coords;
   let check c d =
     let values = flat_floats (host "ravel_multi_index" c) in
     if Array.exists (fun v -> v < 0.0 || v >= float_of_int d) values then
@@ -1348,7 +1362,11 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
     | "wrap" ->
         List.mapi (fun i c -> U.remainder c (Jnp_util.py_int dims.(i))) coords
     | "ignore" -> coords
-    | other -> Py_exn.value_error ("invalid mode=" ^ other)
+    | other ->
+        Py_exn.value_error
+          (Printf.sprintf
+             "invalid mode='%s'. Expected 'raise', 'wrap', 'clip', or 'ignore'."
+             other)
   in
   let strides =
     match order with
@@ -1359,7 +1377,9 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
           s.(d) <- s.(d - 1) * dims.(d - 1)
         done;
         s
-    | other -> Py_exn.value_error ("invalid order=" ^ other)
+    | other ->
+        Py_exn.value_error
+          (Printf.sprintf "invalid order='%s'. Expected 'C' or 'F'" other)
   in
   let start = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
   let _, result =
@@ -1385,8 +1405,8 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
     match weights with
     | None -> (as_inexact sample, None)
     | Some w -> (
-        let leading = Array.sub (shape sample) 0 (min 1 (rank sample)) in
-        if shape w <> leading then
+        let sh = shape sample in
+        if shape w <> Array.sub sh 0 (min 1 (Array.length sh)) then
           Py_exn.value_error "should have one weight for each sample.";
         match NL.promote_values [ as_inexact sample; as_inexact w ] with
         | [ s; w ] -> (s, Some w)
@@ -1618,8 +1638,12 @@ let gradient ?spacing ?axis ?(edge_order : int option) a =
         [ a; Jnp_util.py_float spacing ]
 
 let choose ?(mode = "raise") a choices =
-  if not (Dtypes.issubdtype (dtype_of a) `Integer) then
-    Py_exn.value_error "`a` array must be integer typed";
+  (match dtype_of a with
+  | Dtype.I2 | Dtype.I4 | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64
+  | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32
+  | Dtype.Uint64 ->
+      ()
+  | _ -> Py_exn.value_error "`a` array must be integer typed");
   let n = List.length choices in
   let arr =
     match mode with
@@ -1630,7 +1654,11 @@ let choose ?(mode = "raise") a choices =
         a
     | "wrap" -> U.remainder a (Jnp_util.py_int n)
     | "clip" -> NL.clip ~min:0.0 ~max:(float_of_int (n - 1)) a
-    | other -> Py_exn.value_error ("invalid mode=" ^ other)
+    | other ->
+        Py_exn.value_error
+          (Printf.sprintf
+             "mode='%s' not understood. Must be 'raise', 'wrap', or 'clip'"
+             other)
   in
   match NL.broadcast_arrays (arr :: choices) with
   | [] -> invalid_arg "choose: arity"
@@ -2042,6 +2070,7 @@ let mask_indices ?(k = 0) ?size n mask_func =
   | _ -> failwith "mask_indices: arity"
 
 let trim_zeros ?(trim = "fb") ?axis a =
+  ignore (host "trim_zeros" a);
   let lowered = String.lowercase_ascii trim in
   let front = String.contains lowered 'f'
   and back = String.contains lowered 'b' in
@@ -2389,7 +2418,7 @@ let polydiv ?(trim_leading_zeros = false) u v =
   for k = 0 to lu - lv do
     let d = b1 Types.Mul [ scale; NL.index_at !r k ] in
     let at = start k in
-    q := L.scatter !q at d (dims ~window:false);
+    q := L.scatter !q at (Jnp_util.broadcast_to d [||]) (dims ~window:false);
     let delta = b1 Types.Mul [ b1 Types.Neg [ d ]; v ] in
     let at = start k in
     r := L.scatter_add !r at delta (dims ~window:true)
@@ -2708,13 +2737,15 @@ let check_bitorder bitorder =
     Py_exn.value_error "'order' must be either 'little' or 'big'"
 
 let packbits ?axis ?(bitorder = "big") a =
-  check_bitorder bitorder;
   (match dtype_of a with
-  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
-  | Dtype.Complex128 ->
+  | Dtype.Bool | Dtype.I2 | Dtype.I4 | Dtype.I8 | Dtype.I16 | Dtype.I32
+  | Dtype.I64 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 | Dtype.Uint64 ->
+      ()
+  | _ ->
       Py_exn.type_error
-        "Expected an input array of integer or boolean data type"
-  | _ -> ());
+        "Expected an input array of integer or boolean data type");
+  check_bitorder bitorder;
   Jnp_util.jit1 "packbits"
     ~key:
       (Printf.sprintf "%s/%s"

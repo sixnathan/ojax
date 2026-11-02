@@ -114,14 +114,17 @@ let linspace_parts ~retstep ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype
           let broadcast_stop = Jnp_util.broadcast_to stop bounds in
           let rank = Array.length bounds in
           let axis = if axis < 0 then rank + axis + 1 else axis in
+          let at = if axis > rank then rank else axis in
           let insert size =
             Array.init (rank + 1) (fun i ->
-                if i < axis then bounds.(i)
-                else if i = axis then size
+                if i < at then bounds.(i)
+                else if i = at then size
                 else bounds.(i - 1))
           in
           let bounds_shape = insert 1 in
           let div = if endpoint then num - 1 else num in
+          if num > 1 && axis > rank then
+            Py_exn.index_error "list assignment index out of range";
           let delta = ref (scalar comp Float_format.nan) in
           let out =
             if num > 1 then begin
@@ -237,7 +240,7 @@ let geomspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
           in
           let res = UF.multiply sign logs in
           let rank = Array.length (shape_of res) in
-          let axis = if axis < 0 then axis + rank else axis in
+          let axis = Validate.canonicalize_axis axis rank in
           let res =
             if axis = 0 then res
             else

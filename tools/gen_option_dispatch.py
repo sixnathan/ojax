@@ -188,6 +188,8 @@ def arm(spec, parts, module):
             args.append("?" + label + ':(A.opt options "trans" A.trans)')
         elif not optional:
             args.append("~" + label + ":(" + decoder + " " + param_source(target) + ")")
+        elif target.name in required_index and ty == "int array" and target.name in ("lhs_dilation", "rhs_dilation"):
+            args.append("?" + label + ":(A.int_array_option " + param_source(target) + ")")
         elif target.name in required_index:
             args.append("?" + label + ":(Some (" + decoder + " " + param_source(target) + "))")
         elif ty.endswith(" option"):

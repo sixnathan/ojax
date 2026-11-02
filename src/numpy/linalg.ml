@@ -883,8 +883,9 @@ and lstsq_body ~rcond ~numpy_resid a b =
         | T.Device b -> Nd.get_i64 (Pjrt.Buffer.to_host b) [||]
         | T.Tracer _ ->
             raise
-              (Py_exn.Concretization_type_error
-                 "lstsq: numpy_resid needs a concrete rank")
+              (Errors.tracer_bool_conversion_error
+                 ~error_repr:"traced array with shape bool[]"
+                 ~origin_msg:(Jaxpr.origin_msg rank) ())
       in
       if Int64.to_int concrete_rank < n || m <= n then
         T.Concrete (Nd.of_floats (Dtypes.default_float_dtype ()) [| 0 |] [||])

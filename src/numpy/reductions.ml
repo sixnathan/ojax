@@ -389,7 +389,8 @@ let std ?dtype:dt ?axis ?keepdims ?ddof ?ddof_value ?where:mask ?mean:a_mean
   let dt = Option.map Dtypes.canonicalize_dtype dt in
   (match dt with
   | Some d when not (is_inexact d) ->
-      Py_exn.value_error "dtype argument to jnp.std must be inexact"
+      Py_exn.value_error
+        ("dtype argument to jnp.std must be inexact; got " ^ D.numpy_name d)
   | _ -> ());
   Jnp_util.jit1 "_std"
     ~key:
@@ -806,6 +807,10 @@ let reduce_last_or v = bind1 (T.Reduce_or [| ndim v - 1 |]) [ v ]
 
 let quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans =
   let a = to_inexact a in
+  if match dtype a with D.Complex64 | D.Complex128 -> true | _ -> false then
+    Py_exn.value_error
+      "quantile does not support complex input, as the operation is poorly \
+       defined.";
   let cdt = dtype a in
   let nd0 = ndim a in
   let a, ax, keepdim_shape =
@@ -825,6 +830,10 @@ let quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans =
         in
         (a, ax, ks)
   in
+  if ndim q > 1 then
+    Py_exn.value_error
+      (Printf.sprintf "q must be have rank <= 1, got shape %s"
+         (Validate.python_tuple (shape q)));
   let ndc = ndim a in
   let am = move_to_last a ax in
   let amsh = shape am in
@@ -1172,44 +1181,42 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   in
   convert result (dtype a)
 
-let quantile_int_axis ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
-  if method_ = "inverted_cdf" then
-    quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights
-  else begin
-    (match weights with
-    | Some _ ->
-        raise
-          (Failure
-             (method_
-            ^ " doesn't support weights. Only method 'inverted_cdf' supports \
-               weights."))
-    | None -> ());
-    if squash_nans then quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans
-    else quantile_plain a q ~axis ~method_ ~keepdims
-  end
-
-type axis_arg = Axis of int | Axes of int array
-
-let quantile_methods =
-  [ "linear"; "lower"; "higher"; "midpoint"; "nearest"; "inverted_cdf" ]
-
-let quantile_axes ?weights a q ~axes ~method_ ~keepdims ~squash_nans =
-  if not (List.mem method_ quantile_methods) then
+let quantile_prechecks ~method_ weights =
+  if
+    not
+      (List.mem method_
+         [ "linear"; "lower"; "higher"; "midpoint"; "nearest"; "inverted_cdf" ])
+  then
     Py_exn.value_error
       "method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest' \
        or 'inverted_cdf'";
+  match weights with
+  | Some w ->
+      if match dtype w with D.Complex64 | D.Complex128 -> true | _ -> false
+      then Py_exn.value_error "Weights cannot be complex types.";
+      if method_ <> "inverted_cdf" then
+        Py_exn.not_implemented_error
+          (method_
+         ^ " doesn't support weights. Only method 'inverted_cdf' supports \
+            weights.")
+  | None -> ()
+
+let quantile_int_axis ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
+  quantile_prechecks ~method_ weights;
+  if method_ = "inverted_cdf" then
+    quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights
+  else if squash_nans then
+    quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans
+  else quantile_plain a q ~axis ~method_ ~keepdims
+
+type axis_arg = Axis of int | Axes of int array
+
+let quantile_axes ?weights a q ~axes ~method_ ~keepdims ~squash_nans =
+  quantile_prechecks ~method_ weights;
   let a, weights =
     match weights with
     | None -> (to_inexact a, None)
     | Some w ->
-        if is_complex_dtype (dtype w) then
-          Py_exn.value_error "Weights cannot be complex types.";
-        if method_ <> "inverted_cdf" then
-          raise
-            (Failure
-               (method_
-              ^ " doesn't support weights. Only method 'inverted_cdf' supports \
-                 weights."));
         let a = to_inexact a and w = to_inexact w in
         let dt = Dtypes.promote_types (dtype a) (dtype w) in
         let a = convert a dt and w = convert w dt in
@@ -1475,11 +1482,7 @@ let quantile ?axis ?keepdims ?method_ ?weights a0 a1 =
       | _ -> assert false)
 
 let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
-  if ndim a1 > 1 then
-    raise
-      (Py_exn.Value_error
-         ("q must be have rank <= 1, got shape "
-         ^ Validate.python_tuple (shape a1)));
+  quantile_prechecks ~method_:(Option.value method_ ~default:"linear") weights;
   Eager_jit.one "numpy.reductions.nanquantile"
     (axis, keepdims, method_, weights <> None)
     [ weights ] [ a0; a1 ]
@@ -1490,11 +1493,7 @@ let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
       | _ -> assert false)
 
 let nanpercentile ?axis ?keepdims ?method_ ?weights a0 a1 =
-  if ndim a1 > 1 then
-    raise
-      (Py_exn.Value_error
-         ("q must be have rank <= 1, got shape "
-         ^ Validate.python_tuple (shape a1)));
+  quantile_prechecks ~method_:(Option.value method_ ~default:"linear") weights;
   Eager_jit.one "numpy.reductions.nanpercentile"
     (axis, keepdims, method_, weights <> None)
     [ weights ] [ a0; a1 ]

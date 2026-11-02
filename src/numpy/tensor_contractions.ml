@@ -223,7 +223,8 @@ let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
                k
                (Validate.python_tuple (shape a))
                (Validate.python_tuple (shape b)));
-        (Array.init k (fun i -> na - k + i), Array.init k Fun.id)
+        let k' = max 0 k in
+        (Array.init k' (fun i -> na - k + i), Array.init k' Fun.id)
     | Ax_pair (ax1, ax2) ->
         if Array.length ax1 <> Array.length ax2 then
           Py_exn.type_error

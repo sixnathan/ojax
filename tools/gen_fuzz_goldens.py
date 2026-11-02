@@ -276,6 +276,7 @@ def run_case(case, arrays):
         saved.update({"eager_" + k: v for k, v in eager.items()})
     except Exception as error:
         entry["eager_error"] = type(error).__name__
+        entry["eager_error_text"] = str(error)
 
     def call(*values):
         return op(**dict(zip(names, values)), p=params)
@@ -286,6 +287,7 @@ def run_case(case, arrays):
         saved.update({"jit_" + k: v for k, v in jitted.items()})
     except Exception as error:
         entry["jit_error"] = type(error).__name__
+        entry["jit_error_text"] = str(error)
     return entry, saved
 
 

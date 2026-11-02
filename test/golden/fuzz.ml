@@ -211,12 +211,23 @@ let one_line message =
   let text = Error_types.one_line message in
   if String.length text > 120 then String.sub text 0 120 else text
 
-let check_mode ~suite ~case_id ~mode ~string_of_dtype ~concrete ~jax_error b
-    table outputs run =
+let log_message ~suite ~row ~jax e =
+  let ojax = Error_types.message_of e in
+  let same = String.trim jax = String.trim ojax in
+  log_row
+    ~detail:(String.escaped jax ^ "\t" ^ String.escaped ojax)
+    ~suite:("text_" ^ suite) (row ^ ":error_text") 0
+    (if same then 0 else 1)
+    0.0
+    (if same then Compare.raw_identical else "error_text")
+
+let check_mode ?jax_message ~suite ~case_id ~mode ~string_of_dtype ~concrete
+    ~jax_error b table outputs run =
   let prefix = case_id ^ ":" ^ mode in
   let result = run_guarded run in
   match (outputs, result) with
   | None, Error e ->
+      Option.iter (fun jax -> log_message ~suite ~row:prefix ~jax e) jax_message;
       let row = prefix ^ ":both_raise" in
       let detail = Error_types.detail ~jax:jax_error e in
       if Error_types.tier ~jax:jax_error e <> None then
@@ -247,6 +258,31 @@ let output_names case key =
   | `Null -> None
   | l ->
       Some (List.map (fun o -> U.to_string (U.member "name" o)) (U.to_list l))
+
+let message_tables : (string, (string, string) Hashtbl.t) Hashtbl.t =
+  Hashtbl.create 4
+
+let stored_messages set_dir =
+  match Hashtbl.find_opt message_tables set_dir with
+  | Some t -> t
+  | None ->
+      let t = Hashtbl.create 64 in
+      let path = Filename.concat set_dir "messages.json" in
+      (if Sys.file_exists path then
+         match Yojson.Safe.from_file path |> U.member "messages" with
+         | `Assoc l ->
+             List.iter
+               (fun (k, v) ->
+                 match v with `String m -> Hashtbl.replace t k m | _ -> ())
+               l
+         | _ -> ());
+      Hashtbl.replace message_tables set_dir t;
+      t
+
+let jax_message ~set_dir case case_id mode =
+  match U.member (mode ^ "_error_text") case with
+  | `String m -> Some m
+  | _ -> Hashtbl.find_opt (stored_messages set_dir) (case_id ^ ":" ^ mode)
 
 let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
     () =
@@ -282,7 +318,9 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
   let jax_error key =
     match U.member key case with `String name -> name | _ -> "unknown"
   in
-  check_mode ~suite ~case_id ~mode:"eager" ~string_of_dtype ~concrete
+  check_mode
+    ?jax_message:(jax_message ~set_dir case case_id "eager")
+    ~suite ~case_id ~mode:"eager" ~string_of_dtype ~concrete
     ~jax_error:(jax_error "eager_error") b table
     (output_names case "eager")
     direct;
@@ -295,7 +333,9 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
   in
   if Parity_cases.cannot_trace op && output_names case "jit" = None then ()
   else
-    check_mode ~suite ~case_id ~mode:"jit" ~string_of_dtype ~concrete
+    check_mode
+      ?jax_message:(jax_message ~set_dir case case_id "jit")
+      ~suite ~case_id ~mode:"jit" ~string_of_dtype ~concrete
       ~jax_error:(jax_error "jit_error") b table (output_names case "jit") jit
 
 let primary = "fuzz"

@@ -335,7 +335,15 @@ let iota_2x32_shape shape =
     | [ hi; lo ] -> (hi, lo)
     | _ -> failwith "prng: iota_2x32_shape arity"
 
-let random_seed ?(impl = "fry") seed = Core.bind1 (Random_seed impl) [ seed ]
+let random_seed ?(impl = "fry") seed =
+  let seed =
+    match Config.value Config.random_seed_offset with
+    | 0 -> seed
+    | offset ->
+        let dt = (Core.get_aval seed).dtype in
+        Core.bind1 Add [ seed; Core.py_scalar dt (float_of_int offset) ]
+  in
+  Core.bind1 (Random_seed impl) [ seed ]
 
 let is_rbg_key key =
   let a = Core.get_aval key in

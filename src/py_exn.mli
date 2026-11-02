@@ -9,6 +9,7 @@ exception Not_implemented_error of string
 exception Assertion_error of string
 exception Runtime_error of string
 exception Zero_division_error of string
+exception Floating_point_error of string
 exception Jax_type_error of string
 exception Jax_index_error of string
 exception Concretization_type_error of string

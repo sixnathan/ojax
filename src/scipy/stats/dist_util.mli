@@ -7,8 +7,8 @@ val nan : Types.value -> Types.value
 val f32s : float -> Types.value
 val default_float : unit -> Dtype.t
 val promote_dtypes : Types.value list -> Types.value list
-val promote : Types.value list -> Types.value list
-val promote_complex : Types.value list -> Types.value list
+val promote : ?name:string -> Types.value list -> Types.value list
+val promote_complex : ?name:string -> Types.value list -> Types.value list
 val lgamma : Types.value -> Types.value
 val py_float : float -> Types.value
 val where_px : Types.value -> float -> Types.value -> Types.value

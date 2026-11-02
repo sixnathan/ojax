@@ -1,3 +1,6 @@
+val check_rank_promotion :
+  signature:string option -> int array list -> int list -> unit
+
 val vectorize :
   ?excluded:int list ->
   ?signature:string ->

@@ -4,6 +4,7 @@ val render :
   ?num_partitions:int ->
   ?module_attributes:string list ->
   ?result_names:string list ->
+  ?arg_attribute:(int -> string option) ->
   module_name:string ->
   string ->
   string

@@ -60,9 +60,11 @@ let promote_dtypes_any vs =
       | None -> C.convert_like ~weak:all_weak v dt)
     vs
 
-let promote_complex vs = Numpy.Ufuncs.promote_shapes (promote_dtypes_any vs)
+let promote_complex ?name vs =
+  Numpy.Ufuncs.promote_shapes ?name (promote_dtypes_any vs)
+
 let promote_dtypes vs = promote_dtypes_any vs
-let promote vs = Numpy.Ufuncs.promote_shapes (promote_dtypes vs)
+let promote ?name vs = Numpy.Ufuncs.promote_shapes ?name (promote_dtypes vs)
 let lgamma v = C.bind1 T.Lgamma [ v ]
 let py_float = JU.py_float
 let where_px c v y = JU.where_weak ~x_weak:true c (JU.py_float v) y

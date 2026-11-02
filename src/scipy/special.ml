@@ -1623,8 +1623,15 @@ let log_ndtr_lower x series_order =
   in
   log_scale +! L.log (log_ndtr_asymptotic_series x series_order)
 
+let log_ndtr_dtype x =
+  match dtype x with
+  | D.F32 | D.F64 -> ()
+  | d ->
+      Py_exn.type_error
+        (Printf.sprintf "x.dtype=%s is not supported." (D.numpy_name d))
+
 let log_ndtr_primal series_order x =
-  single_or_double x;
+  log_ndtr_dtype x;
   let lower, upper =
     match dtype x with D.F64 -> (-20.0, 8.0) | _ -> (-10.0, 5.0)
   in
@@ -1647,7 +1654,7 @@ let rec log_ndtr ?(series_order = 3) x =
   if series_order < 0 then
     Py_exn.value_error "series_order must be non-negative.";
   if series_order > 30 then Py_exn.value_error "series_order must be <= 30.";
-  single_or_double x;
+  log_ndtr_dtype x;
   List.hd
     (CD.custom_jvp ~name:"log_ndtr" ~jvp_name:"_log_ndtr_jvp"
        (function

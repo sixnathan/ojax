@@ -1461,7 +1461,20 @@ let permutation_array ?(axis = 0) ?(independent = false) k x =
     in
     Numpy.Indexing.take ~axis ~unique_indices:true x ind
 
+let check_float_dtype name dtype =
+  match dtype with
+  | None -> ()
+  | Some d ->
+      let d = Dtypes.canonicalize_dtype d in
+      if not (Dtypes.issubdtype d `Floating) then
+        raise
+          (Py_exn.Value_error
+             (Printf.sprintf
+                "dtype argument to `%s` must be a float dtype, got %s" name
+                (Dtype.numpy_name d)))
+
 let gumbel_any key ~shape ~dt ~mode =
+  check_float_dtype "gumbel" (Some dt);
   match mode with
   | None -> gumbel_dt key ~shape ~dt
   | Some mode -> gumbel_mode key ~shape ~dt ~mode
@@ -1651,18 +1664,6 @@ let with_it dtype f =
       Fun.protect
         ~finally:(fun () -> explicit_int := saved)
         (fun () -> with_dtypes ~int_dtype:d f)
-
-let check_float_dtype name dtype =
-  match dtype with
-  | None -> ()
-  | Some d ->
-      let d = Dtypes.canonicalize_dtype d in
-      if not (Dtypes.issubdtype d `Floating) then
-        raise
-          (Py_exn.Value_error
-             (Printf.sprintf
-                "dtype argument to `%s` must be a float dtype, got %s" name
-                (Dtype.numpy_name d)))
 
 let check_inexact_dtype name dtype =
   match dtype with

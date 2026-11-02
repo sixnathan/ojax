@@ -2871,10 +2871,33 @@ let abstract_eval prim avals =
   | Cummax { axis; _ }
   | Cummin { axis; _ }
   | Cumlogsumexp { axis; _ } ->
+      let name =
+        match prim with
+        | Cumsum _ -> "cumsum"
+        | Cumprod _ -> "cumprod"
+        | Cummax _ -> "cummax"
+        | Cummin _ -> "cummin"
+        | _ -> "cumlogsumexp"
+      in
       un_aval
         (fun a ->
-          if axis < 0 || axis >= Array.length a.shape then
-            failwith "lax: cumulative axis out of bounds";
+          if axis < 0 then
+            Py_exn.value_error "XLA operations do not allow negative axes"
+          else if axis >= Array.length a.shape then
+            Py_exn.value_error
+              (Printf.sprintf "axis %d is out of bounds for array of shape %s"
+                 axis
+                 (Validate.python_tuple a.shape));
+          if
+            not
+              (Dtypes.issubdtype a.dtype `Integer
+              || Dtypes.issubdtype a.dtype `Inexact)
+          then
+            Py_exn.type_error
+              (Printf.sprintf
+                 "%s does not accept dtype %s. Accepted dtypes are subtypes of \
+                  number."
+                 name (Dtype.numpy_name a.dtype));
           a)
         avals
   | Custom_linear_solve { solve; _ } ->
@@ -3012,6 +3035,19 @@ let empty_of (a : aval) =
   else Ndarray.of_floats a.dtype a.shape [||]
 
 let impl prim inputs =
+  (match prim with
+  | Cumsum _ | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ ->
+      ignore
+        (abstract_eval prim
+           (List.map
+              (fun nd ->
+                {
+                  shape = Ndarray.shape nd;
+                  dtype = Ndarray.dtype nd;
+                  weak_type = false;
+                })
+              inputs))
+  | _ -> ());
   let batch =
     match linalg_core_ranks prim with
     | Some ranks -> batch_prefix ranks (List.map Ndarray.shape inputs)

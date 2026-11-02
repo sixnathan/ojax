@@ -934,8 +934,16 @@ let eval_untagged prim args =
         (fun r -> Concrete (Ndarray.canonicalize (Ndarray.dtype r) r))
         results
 
+let check_special_outputs prim outs =
+  if Debug_special.needs_check () then
+    Debug_special.check
+      (Pretty_printer.primitive_name prim)
+      (List.map as_concrete outs)
+
 let eval_process_primitive _trace prim args =
-  retag_urbg prim args (eval_untagged prim args)
+  let outs = eval_untagged prim args in
+  check_special_outputs prim outs;
+  retag_urbg prim args outs
 
 let eval_interpreter =
   {

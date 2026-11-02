@@ -79,6 +79,19 @@ let run_with_refs cj cells args =
         keep_out_weak cj results
     | _ -> failwith "jit: output arity"
 
+let host_values outs =
+  List.filter_map
+    (function
+      | Concrete a -> Some a
+      | Device b -> Some (Pjrt.Buffer.to_host b)
+      | Tracer _ -> None)
+    outs
+
+let check_jit_outputs ~name ~rerun outs =
+  if Debug_special.needs_check () then
+    Debug_special.check_jit ~name ~rerun (host_values outs);
+  outs
+
 let context_key () =
   String.concat ","
     (List.map (fun (k, v) -> k ^ "=" ^ v) (Config.trace_context ()))
@@ -209,8 +222,10 @@ let jit_flat ?(name = "<lambda>") (f : value list -> value list) :
         Key_reuse.call_with_signature signature args (fun () ->
             bind_named_call ~name cj args)
       else
-        Key_reuse.call_with_signature signature args (fun () ->
-            run_with_refs cj cells args)
+        check_jit_outputs ~name
+          ~rerun:(fun () -> ignore (f args))
+          (Key_reuse.call_with_signature signature args (fun () ->
+               run_with_refs cj cells args))
 
 type out_slot = Known of value | Unknown
 
@@ -344,8 +359,10 @@ let jit_plain (f : value Tree.t list -> value Tree.t) :
             entry
       in
       Tree.tree_unflatten out_tree
-        (Key_reuse.call_with_signature signature flat_args (fun () ->
-             run_with_refs cj cells flat_args))
+        (check_jit_outputs ~name:"<lambda>"
+           ~rerun:(fun () -> ignore (f args))
+           (Key_reuse.call_with_signature signature flat_args (fun () ->
+                run_with_refs cj cells flat_args)))
 
 let static_key tree =
   String.concat ","

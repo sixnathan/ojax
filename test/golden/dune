@@ -18,6 +18,7 @@
   option_manual
   option_fuzz
   compose_fuzz
+  jit_opts
   manifest)
  (libraries alcotest yojson ojax unix)
  (preprocess
@@ -25,6 +26,7 @@
    (run %{exe:../../tools/ltr/ltr.exe} %{input-file})))
  (deps
   (source_tree %{project_root}/goldens/dtypes)
+  (source_tree %{project_root}/goldens/jit_opts)
   (source_tree %{project_root}/goldens/lax)
   (source_tree %{project_root}/goldens/lax_smoke)
   (source_tree %{project_root}/goldens/jaxpr)

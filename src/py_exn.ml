@@ -9,6 +9,7 @@ exception Not_implemented_error of string
 exception Assertion_error of string
 exception Runtime_error of string
 exception Zero_division_error of string
+exception Floating_point_error of string
 exception Jax_type_error of string
 exception Jax_index_error of string
 exception Concretization_type_error of string
@@ -41,6 +42,7 @@ let classify = function
   | Assertion_error m -> Some ("AssertionError", m)
   | Runtime_error m -> Some ("RuntimeError", m)
   | Zero_division_error m -> Some ("ZeroDivisionError", m)
+  | Floating_point_error m -> Some ("FloatingPointError", m)
   | Mlir_error m -> Some ("MLIRError", m)
   | Jax_type_error m -> Some ("JAXTypeError", m)
   | Jax_index_error m -> Some ("JAXIndexError", m)
@@ -70,7 +72,8 @@ let parent = function
   | "NameError" | "MLIRError" ->
       Some "Exception"
   | "IndexError" | "KeyError" -> Some "LookupError"
-  | "OverflowError" | "ZeroDivisionError" -> Some "ArithmeticError"
+  | "OverflowError" | "ZeroDivisionError" | "FloatingPointError" ->
+      Some "ArithmeticError"
   | "NotImplementedError" | "JaxRuntimeError" -> Some "RuntimeError"
   | "JAXTypeError" | "JaxprTypeError" -> Some "TypeError"
   | "JAXIndexError" -> Some "IndexError"

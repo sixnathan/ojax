@@ -51,6 +51,13 @@ val remove_size_one_mesh_axis_from_type : bool Config.flag
 val make_user_context : ?default_value:'a -> unit -> 'a Config.user_context
 val config_read : string -> Config.config_value
 val config_update : string -> Config.config_value -> unit
+
+type config_object = {
+  read : string -> Config.config_value;
+  update : string -> Config.config_value -> unit;
+}
+
+val config : config_object
 val ds : ?size:int -> ?stride:int -> value option -> Numpy.Indexing.dslice
 
 val io_callback :

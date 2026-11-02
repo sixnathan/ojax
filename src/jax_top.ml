@@ -82,6 +82,13 @@ let remove_size_one_mesh_axis_from_type =
 let make_user_context = Config.make_user_context
 let config_read = Config.read
 let config_update = Config.update
+
+type config_object = {
+  read : string -> Config.config_value;
+  update : string -> Config.config_value -> unit;
+}
+
+let config = { read = Config.read; update = Config.update }
 let ds = Numpy.Indexing.ds
 let io_callback = Custom_derivatives.io_callback
 

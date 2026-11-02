@@ -221,7 +221,11 @@ let raw_status (expected : Npz.t) (actual : Npz.t) =
   let e = expected.raw and a = actual.raw in
   if e.raw_dtype <> a.raw_dtype then
     Printf.sprintf "dtype:%s!=%s" a.raw_dtype e.raw_dtype
-  else if not (shapes_equal expected.shape actual.shape) then "shape"
+  else if not (shapes_equal expected.shape actual.shape) then
+    let text shape =
+      String.concat "x" (Array.to_list (Array.map string_of_int shape))
+    in
+    Printf.sprintf "shape:%s!=%s" (text actual.shape) (text expected.shape)
   else if String.length e.bytes <> String.length a.bytes then "length"
   else if String.equal e.bytes a.bytes then raw_identical
   else

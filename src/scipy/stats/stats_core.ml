@@ -25,7 +25,11 @@ let sem ?axis ?ddof a =
 
 let lane_mode x =
   let n = Array.fold_left ( * ) 1 (shape x) in
-  let vals, counts = Numpy.Extras.unique_counts ~size:n x in
+  let vals, counts =
+    match Numpy.Extras.unique ~return_counts:true ~size:n x with
+    | [ vals; counts ] -> (vals, counts)
+    | _ -> failwith "scipy.stats.mode: unique arity"
+  in
   (IX.dynamic_at vals (NL.argmax counts), RD.max counts)
 
 let mode ?(axis = Some 0) ?(nan_policy = "propagate") ?(keepdims = false) a =
@@ -138,7 +142,8 @@ let rec rankdata_impl ?(method_ = "average") ?axis ?(nan_policy = "propagate") a
       List.hd
         (L.cond
            (RD.any (UF.isnan flat))
-           (fun args -> [ AC.full_like ~dtype:out_dt (List.hd args) Float.nan ])
+           (fun args ->
+             [ AC.full_like ~dtype:out_dt (List.hd args) Float_format.nan ])
            (fun args -> [ rankdata_body method_ (List.hd args) ])
            [ flat ])
 

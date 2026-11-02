@@ -4928,7 +4928,7 @@ let special_values_row ~suite ~x64 ~jit fields () =
           in
           let run () =
             let lookup args _ = List.hd args in
-            if jit && not (Parity_cases.needs_concrete op) then
+            if jit then
               Ojax.Api.jit_flat
                 (fun args -> Parity_cases.run op `Null (lookup args))
                 [ value ]
@@ -4966,7 +4966,7 @@ let poison_row ~suite ~x64 ~jit fields () =
             go names vs
           in
           let run () =
-            if jit && not (Parity_cases.needs_concrete op) then
+            if jit then
               Ojax.Api.jit_flat
                 (fun vs -> Parity_cases.run op params (lookup vs))
                 values
@@ -5006,6 +5006,76 @@ let table_suites prefix data row =
 let special_values_suites () =
   table_suites "special_values" Special_values.data special_values_row
   @ table_suites "poison_values" Poison_values.data poison_row
+
+let concrete_jit_row ~set_dir ~x64 ~reference ~suite c () =
+  Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+      let inputs =
+        Npz.read
+          (Filename.concat
+             (Filename.concat set_dir "inputs")
+             (c.case_id ^ ".npz"))
+      in
+      let names = List.map (fun (a : arg) -> a.name) c.args in
+      let values =
+        List.map
+          (fun name -> T.Concrete (nd_of_npz_any (find_member inputs name)))
+          names
+      in
+      let lookup args name = List.assoc name (List.combine names args) in
+      let results =
+        table_results (fun () ->
+            Ojax.Api.jit_flat
+              (fun args -> Parity_cases.run c.op c.params (lookup args))
+              values)
+      in
+      let outputs =
+        Npz.read
+          (Filename.concat
+             (Filename.concat reference.jit_set_dir "outputs")
+             (c.case_id ^ ".npz"))
+      in
+      List.iteri
+        (fun k (o : out) ->
+          let golden = find_member outputs o.oname in
+          let compare = Option.value o.ocompare ~default:c.compare in
+          let actual =
+            match Option.map (fun r -> List.nth r k) results with
+            | Some (T.Concrete nd) -> npz_of_nd nd golden.Npz.dtype compare
+            | _ ->
+                {
+                  Npz.dtype = "raises";
+                  shape = [| -1 |];
+                  data = Npz.I [||];
+                  raw = { Npz.raw_dtype = "raises"; bytes = "" };
+                }
+          in
+          Compare.record_exact ~suite (c.case_id ^ ":" ^ o.oname) golden actual)
+        c.outs)
+
+let concrete_jit_suite_for set_name =
+  let set_dir =
+    Filename.concat (Filename.concat goldens_root "parity") set_name
+  in
+  let x64, cases = load_manifest (Filename.concat set_dir "manifest.json") in
+  let reference = jit_reference_for set_name in
+  let suite = "parity_jit_concrete:" ^ set_name in
+  let rows =
+    List.filter
+      (fun c ->
+        Parity_cases.needs_concrete c.op
+        && (not (List.mem_assoc c.case_id (Lazy.force reference.jit_errors)))
+        && Sys.file_exists
+             (Filename.concat
+                (Filename.concat reference.jit_set_dir "outputs")
+                (c.case_id ^ ".npz")))
+      cases
+  in
+  ( suite,
+    List.map
+      (fun c ->
+        Alcotest.test_case c.case_id `Quick
+          (concrete_jit_row ~set_dir ~x64 ~reference ~suite c))
+      rows )
 
 let numpy_product_rows () =
   List.iter
@@ -5170,7 +5240,10 @@ let () =
                numpy_product_rows;
            ] );
        ]
-    @ List.map attributed (special_values_suites ())
+    @ List.map attributed
+        (concrete_jit_suite_for "x64_off"
+        :: concrete_jit_suite_for "x64_on"
+        :: special_values_suites ())
     @ [
         ( "exact_ratchet",
           [

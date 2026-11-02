@@ -97,6 +97,18 @@ def tally(log):
     return counts
 
 
+def float_nan_uses(root):
+    uses = []
+    for directory, _, files in os.walk(os.path.join(root, "src")):
+        for name in files:
+            if name.endswith(".ml"):
+                path = os.path.join(directory, name)
+                with open(path, encoding="utf-8") as f:
+                    if re.search(r"\bFloat\.nan\b", f.read()):
+                        uses.append(os.path.relpath(path, root))
+    return uses
+
+
 def main():
     root = checkout_root()
     parser = argparse.ArgumentParser()
@@ -196,7 +208,10 @@ def main():
     if shadow:
         print(f"parity_jit against the eager goldens: {sum(counts[s] for s in shadow)}/{sum(totals[s] for s in shadow)} bit-identical, {sum(counts['raw:' + s] for s in shadow)} in raw bytes")
     shutil.rmtree(work, ignore_errors=True)
-    sys.exit(1 if failed or fell else 0)
+    nan_uses = float_nan_uses(root)
+    if nan_uses:
+        print("Float.nan is 0x7ff8000000000001, JAX's nan is 0x7ff8000000000000; use Float_format.nan in: " + ", ".join(nan_uses))
+    sys.exit(1 if failed or fell or nan_uses else 0)
 
 
 if __name__ == "__main__":

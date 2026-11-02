@@ -498,10 +498,16 @@ let splat_index_layouts line =
   go 0;
   Buffer.contents b
 
-let renumber_callbacks text =
+let renumber_callbacks ?(order = []) text =
   let key = "mhlo.backend_config = {index = " in
   let k = String.length key in
   let seen = Hashtbl.create 4 in
+  List.iter
+    (fun id ->
+      let id = string_of_int id in
+      if (not (Hashtbl.mem seen id)) && contains (key ^ id ^ " : ui64}") text
+      then Hashtbl.replace seen id (Hashtbl.length seen))
+    order;
   let line_of line =
     if not (contains "@xla_ffi_python_cpu_callback(" line) then line
     else

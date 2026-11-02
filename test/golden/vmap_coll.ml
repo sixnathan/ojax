@@ -122,6 +122,13 @@ let row1 () = Ojax.Numpy.Getitem.take (m ()) [ Ojax.Numpy.Getitem.Int 1 ]
 let sum v = Ojax.Numpy.Reductions.sum v
 let add1 v = F.add v (py_float 1.0)
 
+let nested name f v =
+  match
+    A.jit_flat ~name (function [ b ] -> [ f b ] | _ -> assert false) [ v ]
+  with
+  | [ r ] -> r
+  | _ -> failwith "vmap_coll: nested arity"
+
 let case_fn name =
   let lam f args = ("_lambda", f, args) in
   match name with
@@ -268,6 +275,45 @@ let case_fn name =
           Ojax.Debugging.print ~ordered:true "b {}" [ r ];
           tuple [ r ]),
         [ x () ] )
+  | "io_nested_jit" ->
+      lam
+        (fun a -> tuple [ add1 (nested "inner" (fun v -> io true v) (one a)) ])
+        [ x () ]
+  | "io_nested_twice" ->
+      lam
+        (fun a ->
+          let inner = function
+            | [ b ] -> [ io true b ]
+            | _ -> failwith "vmap_coll: inner arity"
+          in
+          let jitted = A.jit_flat ~name:"inner" inner in
+          let f v =
+            match jitted [ v ] with
+            | [ r ] -> r
+            | _ -> failwith "vmap_coll: inner arity"
+          in
+          tuple [ f (f (one a)) ])
+        [ x () ]
+  | "dprint_nested_jit" ->
+      lam
+        (fun a ->
+          let show v =
+            Ojax.Debugging.print ~ordered:true "in {}" [ v ];
+            F.multiply v (py_float 2.0)
+          in
+          tuple [ add1 (nested "show" show (one a)) ])
+        [ x () ]
+  | "mixed_io_nested" ->
+      lam
+        (fun a ->
+          let both v =
+            Ojax.Debugging.print ~ordered:true "both {}" [ v ];
+            io true v
+          in
+          let v = one a in
+          let r = nested "both" both v in
+          tuple [ r; io true v ])
+        [ x () ]
   | _ -> failwith ("vmap_coll: unknown case " ^ name)
 
 let thunk name mode () =

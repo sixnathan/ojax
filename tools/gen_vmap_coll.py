@@ -12,7 +12,8 @@ CASES = [
     "pmax_unmapped", "psum_vjp", "psum_grad_in1", "pmax_grad", "pmin_jvp",
     "io_ordered", "io_ordered_two", "io_ordered_multi", "io_unordered",
     "dprint_ordered_two", "io_ordered_noout", "dprint_then_io",
-    "io_then_dprint",
+    "io_then_dprint", "io_nested_jit", "io_nested_twice", "dprint_nested_jit",
+    "mixed_io_nested",
 ]
 MODES = ["eager", "jit", "jaxpr", "lowered"]
 
@@ -122,6 +123,26 @@ def case_fn(jax, jnp, name):
             jax.debug.print("b {}", r, ordered=True)
             return (r,)
         return k, (x,)
+    def inner(v):
+        return io(v, True)
+
+    def show(v):
+        jax.debug.print("in {}", v, ordered=True)
+        return v * 2
+
+    def both(v):
+        jax.debug.print("both {}", v, ordered=True)
+        return io(v, True)
+
+    if name == "io_nested_jit":
+        return (lambda a: (jax.jit(inner)(a) + 1,)), (x,)
+    if name == "io_nested_twice":
+        jitted = jax.jit(inner)
+        return (lambda a: (jitted(jitted(a)),)), (x,)
+    if name == "dprint_nested_jit":
+        return (lambda a: (jax.jit(show)(a) + 1,)), (x,)
+    if name == "mixed_io_nested":
+        return (lambda a: (jax.jit(both)(a), io(a, True))), (x,)
     raise KeyError(name)
 
 

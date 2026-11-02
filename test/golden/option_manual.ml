@@ -20,6 +20,7 @@ let flags =
     "cov";
     "return_sign";
     "return_residual";
+    "sparse";
   ]
 
 let without_false_flags options =
@@ -132,6 +133,21 @@ let run op positional options arr =
         (Ojax.Numpy.Lax_numpy.indices_sparse
            ~dtype:(A.default_int (A.get options "dtype" `Null))
            (A.int_array positional.(0)))
+  | "jnp.rollaxis" ->
+      Some
+        [
+          Ojax.Numpy.Lax_numpy.rollaxis
+            ?start:(A.opt options "start" A.int_)
+            (A.int_ positional.(1))
+            (v positional.(0));
+        ]
+  | "sp_linalg.cho_factor" ->
+      let c, lower =
+        Ojax.Scipy.Linalg.cho_factor
+          ?lower:(A.opt options "lower" A.bool_)
+          (v positional.(0))
+      in
+      Some [ c; v (`Bool lower) ]
   | "jnp.size" ->
       let n = X.size ?axis:(A.opt options "axis" A.int_) (v positional.(0)) in
       Some [ Ojax.Numpy.Jnp_util.py_int n ]

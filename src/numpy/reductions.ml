@@ -1374,6 +1374,11 @@ let quantile ?axis ?keepdims ?method_ ?weights a0 a1 =
       | _ -> assert false)
 
 let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
+  if ndim a1 > 1 then
+    raise
+      (Py_exn.Value_error
+         ("q must be have rank <= 1, got shape "
+         ^ Validate.python_tuple (shape a1)));
   Eager_jit.one "numpy.reductions.nanquantile"
     (axis, keepdims, method_, weights <> None)
     [ weights ] [ a0; a1 ]
@@ -1384,6 +1389,11 @@ let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
       | _ -> assert false)
 
 let nanpercentile ?axis ?keepdims ?method_ ?weights a0 a1 =
+  if ndim a1 > 1 then
+    raise
+      (Py_exn.Value_error
+         ("q must be have rank <= 1, got shape "
+         ^ Validate.python_tuple (shape a1)));
   Eager_jit.one "numpy.reductions.nanpercentile"
     (axis, keepdims, method_, weights <> None)
     [ weights ] [ a0; a1 ]

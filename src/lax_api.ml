@@ -968,8 +968,9 @@ let conv_general_dilated ?conv_precision ?precision ?preferred_element_type
        })
     [ lhs; rhs ]
 
-let conv lhs rhs ~window_strides padding =
-  conv_general_dilated lhs rhs ~window_strides padding
+let conv ?precision ?preferred_element_type lhs rhs ~window_strides padding =
+  conv_general_dilated ?precision ?preferred_element_type lhs rhs
+    ~window_strides padding
 
 let conv_with_general_padding ?lhs_dilation ?rhs_dilation ?precision
     ?preferred_element_type lhs rhs ~window_strides padding =

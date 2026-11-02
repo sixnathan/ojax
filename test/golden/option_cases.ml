@@ -1559,9 +1559,11 @@ let run op positional options arr =
           (A.int_ (A.get options "stop_dimension" `Null));
       ]
   | "lax.conv" ->
-      A.refuse options [ "precision"; "preferred_element_type" ];
       [
         Ojax.Lax_api.conv
+          ?precision:(A.opt options "precision" A.precision)
+          ?preferred_element_type:
+            (A.opt options "preferred_element_type" A.dtype)
           ~window_strides:(A.int_array positional.(2))
           ((A.value arr) positional.(0))
           ((A.value arr) positional.(1))

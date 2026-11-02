@@ -1077,6 +1077,12 @@ let sum_at n data ids =
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims
 
 let bincount ?weights ?(minlength = 0) ?length x =
+  if dtype_of x <> Dtype.Bool && not (Dtypes.issubdtype (dtype_of x) `Integer)
+  then
+    raise
+      (Py_exn.Type_error
+         ("x argument to bincount must have an integer type; got "
+         ^ Dtype.short_name (dtype_of x)));
   if rank x <> 1 then Py_exn.value_error "only 1-dimensional input supported.";
   let x =
     if dtype_of x = Dtype.Bool then L.convert_element_type x Dtype.I32 else x

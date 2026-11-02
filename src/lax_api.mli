@@ -297,7 +297,14 @@ val conv_general_dilated :
   padding ->
   value
 
-val conv : value -> value -> window_strides:int array -> padding -> value
+val conv :
+  ?precision:Lax_config.precision ->
+  ?preferred_element_type:Dtype.t ->
+  value ->
+  value ->
+  window_strides:int array ->
+  padding ->
+  value
 
 val conv_with_general_padding :
   ?lhs_dilation:int array ->

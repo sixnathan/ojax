@@ -26,9 +26,6 @@ type memory_stats = {
   peak_memory_in_bytes : int;
 }
 
-external cost_analysis : t -> (string * float) list
-  = "ojax_pjrt_executable_cost_analysis"
-
 external memory_stats : t -> memory_stats = "ojax_pjrt_executable_memory_stats"
 
 external deserialize_ : Client.t -> string -> t
@@ -312,6 +309,13 @@ let output_shardings exec =
             | _ -> None)
           fields
       else [ decode_sharding fields ]
+
+let optimized_module exec =
+  match List.assoc_opt 1 (proto_fields (optimized_ exec)) with
+  | Some (`Bytes b) -> b
+  | _ -> failwith "Pjrt.Executable: optimized program has no module"
+
+let cost_analysis exec = Hlo_cost.of_module (optimized_module exec)
 
 let execute exec args =
   Array.map

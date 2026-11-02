@@ -134,9 +134,7 @@ let dprint_body name x =
       p "{}"
         [
           F.multiply
-            (Ojax.Numpy.Lax_numpy.arange
-               ~dtype:(Ojax.Dtypes.canonicalize_dtype Ojax.Dtype.I64)
-               4.0)
+            (Ojax.Numpy.Lax_numpy.arange ~dtype:Ojax.Dtype.I64 4.0)
             (py_int 1000000.0);
         ]
   | "f16_spec" -> p "{:.4f}" [ astype (div (at x 1) 3.0) Ojax.Dtype.F16 ]

@@ -9,12 +9,18 @@ let where pred x y = bind1 Select_n [ pred; y; x ]
 
 let lax_const x v =
   let a = Core.get_aval x in
-  if
-    a.weak_type
-    && Array.length a.shape = 0
-    && Dtypes.issubdtype a.dtype `Floating
-    && a.dtype = Dtypes.default_float_dtype ()
-  then Core.py_scalar a.dtype v
+  let default_float = Dtypes.default_float_dtype () in
+  let default_complex =
+    if default_float = Dtype.F64 then Dtype.Complex128 else Dtype.Complex64
+  in
+  if a.weak_type && Array.length a.shape = 0 then
+    if Dtypes.issubdtype a.dtype `Floating && a.dtype = default_float then
+      Core.py_scalar a.dtype v
+    else if Dtypes.issubdtype a.dtype `Complex && a.dtype = default_complex then
+      Concrete
+        (Ndarray.as_weak
+           (Ndarray.of_complex a.dtype [||] [| { Complex.re = v; im = 0.0 } |]))
+    else Core.splat a.dtype [||] v
   else Core.splat a.dtype [||] v
 
 let wrap_between x half =
@@ -28,7 +34,7 @@ let wrap_between x half =
 let logaddexp_body a b =
   let amax = bind1 Max [ a; b ] in
   if is_complex a then begin
-    let two = Core.splat (dtype a) [||] 2.0 in
+    let two = lax_const amax 2.0 in
     let sum = bind1 Add [ a; b ] in
     let delta = bind1 Sub [ sum; bind1 Mul [ amax; two ] ] in
     let out = bind1 Add [ amax; bind1 Log1p [ bind1 Exp [ delta ] ] ] in
@@ -48,7 +54,7 @@ let logaddexp_body a b =
 
 let replace_inf x =
   let re_x = if is_complex x then bind1 Real [ x ] else x in
-  let inf = Core.splat (dtype re_x) [||] Float.infinity in
+  let inf = lax_const re_x Float.infinity in
   let pred = bind1 Eq [ re_x; inf ] in
   let zeros = Core.splat (dtype x) (shape x) 0.0 in
   bind1 Select_n [ pred; x; zeros ]

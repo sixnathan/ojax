@@ -1393,7 +1393,13 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
           if List.for_all is_zero tcases then Some (out, List.hd tcases)
           else
             let nz = List.find (fun t -> not (is_zero t)) tcases in
-            let z = full_like nz 0.0 in
+            let z =
+              if
+                !lin_call_depth > 0
+                && Array.length (Core.get_aval nz).shape = 0
+              then instantiate_residual (p2tz nz)
+              else full_like nz 0.0
+            in
             let filled =
               List.map (fun t -> if is_zero t then z else t) tcases
             in

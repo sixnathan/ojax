@@ -528,7 +528,31 @@ let named_like (src : closed_jaxpr) jaxpr consts =
   Core.inherit_inline ~from:src.jid c.jid;
   c
 
+let pe_custom_cache :
+    ( int * bool list * bool list,
+      (policy
+      * (closed_jaxpr
+        * closed_jaxpr
+        * bool list
+        * bool list
+        * var list
+        * int option list
+        * int option list))
+      list )
+    Hashtbl.t =
+  Hashtbl.create 16
+
 let rec pe_custom policy (c : closed_jaxpr) unks_in inst_in =
+  let key = (c.jid, unks_in, inst_in) in
+  let hits = Option.value (Hashtbl.find_opt pe_custom_cache key) ~default:[] in
+  match List.find_opt (fun (p, _) -> p == policy) hits with
+  | Some (_, r) -> r
+  | None ->
+      let r = pe_custom_uncached policy c unks_in inst_in in
+      Hashtbl.replace pe_custom_cache key ((policy, r) :: hits);
+      r
+
+and pe_custom_uncached policy (c : closed_jaxpr) unks_in inst_in =
   let jx = c.jaxpr in
   let const_binders, binders =
     match Util.split_list jx.in_binders [ List.length c.consts ] with

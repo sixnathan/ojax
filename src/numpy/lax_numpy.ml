@@ -1203,6 +1203,9 @@ and repeat_to_total ?axis a repeats total =
       const_full (dtype a) sh 0.0
     end
     else if (shape a).(ax) = 0 then a
+    else if n = 0 then
+      let len = (shape a).(ax) in
+      repeat_scalar ~axis:ax (slice_axis a ax (len - 1) len) total
     else if total <= n then slice_axis full ax 0 total
     else begin
       let last = slice_axis full ax (n - 1) n in

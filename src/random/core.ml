@@ -1905,7 +1905,9 @@ let binomial ?dtype k ~shape ~n:count ~p:prob =
   sampler k (fun () ->
       match dtype with
       | None -> binomial k ~shape ~count ~prob
-      | Some dt -> binomial_v k ~count:(pyf count) ~prob:(pyf prob) ~shape ~dt)
+      | Some dt ->
+          binomial_v k ~count:(pyf count) ~prob:(pyf prob) ~shape
+            ~dt:(Dtypes.canonicalize_dtype dt))
 
 let multinomial k ~p ~n_trials =
   sampler k (fun () -> multinomial k ~p ~n_trials)

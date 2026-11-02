@@ -4,33 +4,103 @@ module Partial_eval = Interpreters.Partial_eval
 
 type policy = primitive -> aval list -> bool
 
-let everything_saveable _ _ = true
-let nothing_saveable _ _ = false
+let policy_names : (policy * string) list ref = ref []
 
-let dots_saveable prim _ =
-  match prim with Dot_general _ | Conv_general_dilated _ -> true | _ -> false
+let named name (p : policy) =
+  policy_names := (p, name) :: !policy_names;
+  p
+
+let function_repr name = "<function " ^ name ^ " at 0xXXXXXXXXXXXX>"
+
+let policy_repr p =
+  match List.assq_opt p !policy_names with
+  | Some s -> s
+  | None -> function_repr "policy"
+
+let frozenset names =
+  match names with
+  | [] -> "frozenset()"
+  | _ ->
+      "frozenset({"
+      ^ String.concat ", " (List.map (fun n -> "'" ^ n ^ "'") names)
+      ^ "})"
+
+let everything_saveable =
+  named (function_repr "everything_saveable") (fun _ _ -> true)
+
+let nothing_saveable =
+  named (function_repr "nothing_saveable") (fun _ _ -> false)
+
+let dots_saveable =
+  named "DotsSaveable(only_if_no_batch_dims=False)" (fun prim _ ->
+      match prim with
+      | Dot_general _ | Conv_general_dilated _ -> true
+      | _ -> false)
 
 let checkpoint_dots = dots_saveable
 
-let dots_with_no_batch_dims_saveable prim _ =
-  match prim with
-  | Dot_general { lhs_batch = [||]; rhs_batch = [||]; _ } -> true
-  | _ -> false
+let dots_with_no_batch_dims_saveable =
+  named "DotsSaveable(only_if_no_batch_dims=True)" (fun prim _ ->
+      match prim with
+      | Dot_general { lhs_batch = [||]; rhs_batch = [||]; _ } -> true
+      | _ -> false)
 
 let checkpoint_dots_with_no_batch_dims = dots_with_no_batch_dims_saveable
-let save_anything_except_these_names _ _ _ = true
 
-let save_any_names_but_these names prim _ =
-  match prim with
-  | Checkpoint_name name -> not (List.mem name names)
-  | _ -> false
+let save_anything_except_these_names _ =
+  named (function_repr "save_anything_except_these_names.<locals>.<lambda>")
+    (fun _ _ -> true)
 
-let save_only_these_names names prim _ =
-  match prim with Checkpoint_name name -> List.mem name names | _ -> false
+let save_any_names_but_these names =
+  named
+    ("SaveAnyNamesButThese(names=" ^ frozenset names ^ ")")
+    (fun prim _ ->
+      match prim with
+      | Checkpoint_name name -> not (List.mem name names)
+      | _ -> false)
 
-let save_from_both_policies first second prim avals =
-  let a = first prim avals and b = second prim avals in
-  a || b
+let save_only_these_names names =
+  named
+    ("SaveOnlyTheseNames(saveable_names=" ^ frozenset names ^ ")")
+    (fun prim _ ->
+      match prim with Checkpoint_name name -> List.mem name names | _ -> false)
+
+let save_from_both_policies first second =
+  named (function_repr "save_from_both_policies.<locals>.policy")
+    (fun prim avals ->
+      let a = first prim avals and b = second prim avals in
+      a || b)
+
+type remat_case = Recompute | Saveable | Offloadable of string * string
+
+let offloads : (policy * (primitive -> aval list -> remat_case)) list ref =
+  ref []
+
+let offload_policy name decide =
+  let p prim avals = decide prim avals <> Recompute in
+  offloads := (p, decide) :: !offloads;
+  named (function_repr (name ^ ".<locals>.policy")) p
+
+let remat_case (p : policy) prim avals =
+  match List.assq_opt p !offloads with
+  | Some decide -> decide prim avals
+  | None -> if p prim avals then Saveable else Recompute
+
+let offload_dot_with_no_batch_dims ~offload_src ~offload_dst =
+  offload_policy "offload_dot_with_no_batch_dims" (fun prim _ ->
+      match prim with
+      | Dot_general { lhs_batch = [||]; rhs_batch = [||]; _ } ->
+          Offloadable (offload_src, offload_dst)
+      | _ -> Recompute)
+
+let save_and_offload_only_these_names ~names_which_can_be_saved
+    ~names_which_can_be_offloaded ~offload_src ~offload_dst =
+  offload_policy "save_and_offload_only_these_names" (fun prim _ ->
+      match prim with
+      | Checkpoint_name n when List.mem n names_which_can_be_saved -> Saveable
+      | Checkpoint_name n when List.mem n names_which_can_be_offloaded ->
+          Offloadable (offload_src, offload_dst)
+      | _ -> Recompute)
 
 let checkpoint_name x name = Core.bind1 (Checkpoint_name name) [ x ]
 

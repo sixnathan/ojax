@@ -598,7 +598,7 @@ and run_options op p a b =
       let suppress_small = PC.opt_bool "suppress" p in
       [
         text (X.array_str_jax ?max_line_width ?precision ?suppress_small x);
-        text (X.array_repr ?max_line_width ?precision ?suppress_small x);
+        text (X.numpy_array_repr ?max_line_width ?precision ?suppress_small x);
       ]
   | "ap_approx_opts" ->
       let f =

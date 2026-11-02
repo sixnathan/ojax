@@ -3,6 +3,7 @@ type options = {
   threshold : int;
   edgeitems : int;
   suppress : bool;
+  widen_elements : bool;
   linewidth : int;
 }
 
@@ -18,3 +19,4 @@ val array2string :
 
 val array_repr : ?options:options -> Ndarray.t -> string
 val array_str : ?options:options -> Ndarray.t -> string
+val numpy_array_repr : ?options:options -> Ndarray.t -> string

@@ -3,6 +3,7 @@ type options = {
   threshold : int;
   edgeitems : int;
   suppress : bool;
+  widen_elements : bool;
   linewidth : int;
 }
 
@@ -12,6 +13,7 @@ let default_options =
     threshold = 1000;
     edgeitems = 3;
     suppress = false;
+    widen_elements = false;
     linewidth = 75;
   }
 
@@ -214,7 +216,8 @@ let float_formatter ~options ~plus ~dtype values =
     fun v ->
       if not (Float.is_finite v) then nonfinite pad_left pad_right v
       else
-        let i, f = positional_parts round precision v in
+        let element_round = if options.widen_elements then Fun.id else round in
+        let i, f = positional_parts element_round precision v in
         pad_to pad_left (signed plus v i) ^ "." ^ pad_right_to pad_right f
 
 let rec leading_trailing edge shape axis prefix acc =
@@ -445,6 +448,34 @@ let array_repr ?(options = default_options) nd =
     else " "
   in
   prefix ^ s ^ "," ^ sep ^ dtype_str ^ ")"
+
+let numpy_array_repr ?(options = default_options) nd =
+  let prefix = "ArrayImpl(" in
+  let dtype = Ndarray.dtype nd in
+  let implied =
+    Ndarray.shape nd <> [| 0 |]
+    &&
+    match dtype with
+    | Dtype.F64 | Dtype.I64 | Dtype.Bool | Dtype.Complex128 -> true
+    | _ -> false
+  in
+  let s =
+    if size nd = 0 then "[], shape=" ^ python_shape (Ndarray.shape nd)
+    else array2string ~options ~prefix ~suffix:"," ~separator:", " nd
+  in
+  if implied then prefix ^ s ^ ")"
+  else
+    let dtype_str = "dtype=" ^ Dtype.numpy_name dtype in
+    let last_newline =
+      match String.rindex_opt s '\n' with Some i -> i | None -> -1
+    in
+    let last_line_len = String.length s - last_newline + 1 in
+    let sep =
+      if last_line_len + String.length dtype_str + 2 > options.linewidth then
+        "\n" ^ String.make (String.length prefix) ' '
+      else " "
+    in
+    prefix ^ s ^ "," ^ sep ^ dtype_str ^ ")"
 
 let scalar_str nd =
   let dt = Ndarray.dtype nd in

@@ -2379,8 +2379,21 @@ let array_repr ?max_line_width ?precision ?suppress_small a =
 
 let array_str_jax ?max_line_width ?precision ?suppress_small a =
   Array_print.array_str
-    ~options:(print_options_with ?max_line_width ?precision ?suppress_small ())
+    ~options:
+      {
+        (print_options_with ?max_line_width ?precision ?suppress_small ()) with
+        widen_elements = true;
+      }
     (host "array_str" a)
+
+let numpy_array_repr ?max_line_width ?precision ?suppress_small a =
+  Array_print.numpy_array_repr
+    ~options:
+      {
+        (print_options_with ?max_line_width ?precision ?suppress_small ()) with
+        widen_elements = true;
+      }
+    (host "array_repr" a)
 
 let bit_positions bitorder =
   let bits =

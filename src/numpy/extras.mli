@@ -211,6 +211,13 @@ val array_repr :
   value ->
   string
 
+val numpy_array_repr :
+  ?max_line_width:int ->
+  ?precision:int ->
+  ?suppress_small:bool ->
+  value ->
+  string
+
 val array_str_jax :
   ?max_line_width:int ->
   ?precision:int ->

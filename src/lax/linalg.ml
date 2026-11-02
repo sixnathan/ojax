@@ -1059,6 +1059,16 @@ let svd ?algorithm ?(full_matrices = true) ?(compute_uv = true) ?subset_by_index
           raise
             (Py_exn.Value_error
                "full_matrices and subset_by_index cannot both be set");
+        (match (Core.get_aval x).dtype with
+        | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> ()
+        | d ->
+            raise
+              (Py_exn.Type_error
+                 (Printf.sprintf
+                    "svd does not accept dtype %s at position 0. Accepted \
+                     dtypes at position 0 are subtypes of complexfloating, \
+                     floating."
+                    (Dtype.numpy_name d))));
         raise
           (Py_exn.Not_implemented_error
              "subset_by_index not implemented for CPU and GPU")

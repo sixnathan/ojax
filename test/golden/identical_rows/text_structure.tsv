@@ -412,6 +412,8 @@ apicov/x64_on	ap_nanpercentile_cdf_3x4_74c6121f_float32	i
 apicov/x64_on	ap_nanpercentile_cdf_3x4_74c6121f_float64	i
 apicov/x64_on	ap_nanpercentile_cdf_5_0bcf1099_float32	i
 apicov/x64_on	ap_nanpercentile_cdf_5_0bcf1099_float64	i
+apicov/x64_on	ap_nanpercentile_cdf_5_90050ed2_float32	i
+apicov/x64_on	ap_nanpercentile_cdf_5_90050ed2_float64	i
 apicov/x64_on	ap_nanpercentile_w_3x4_3x4_1a761ebc_float32	i
 apicov/x64_on	ap_nanpercentile_w_3x4_3x4_1a761ebc_float64	i
 apicov/x64_on	ap_nanpercentile_w_3x4_3x4_1ce32022_float32	i
@@ -426,10 +428,14 @@ apicov/x64_on	ap_nanpercentile_w_3x4_4_4693243a_float32	i
 apicov/x64_on	ap_nanpercentile_w_3x4_4_4693243a_float64	i
 apicov/x64_on	ap_nanpercentile_w_6_6_46571af3_float32	i
 apicov/x64_on	ap_nanpercentile_w_6_6_46571af3_float64	i
+apicov/x64_on	ap_nanpercentile_w_6_6_77bd192c_float32	i
+apicov/x64_on	ap_nanpercentile_w_6_6_77bd192c_float64	i
 apicov/x64_on	ap_nanquantile_cdf_3x4_631511ef_float32	i
 apicov/x64_on	ap_nanquantile_cdf_3x4_631511ef_float64	i
 apicov/x64_on	ap_nanquantile_cdf_3x4_e4761386_float32	i
 apicov/x64_on	ap_nanquantile_cdf_3x4_e4761386_float64	i
+apicov/x64_on	ap_nanquantile_cdf_5_81a10ea2_float32	i
+apicov/x64_on	ap_nanquantile_cdf_5_81a10ea2_float64	i
 apicov/x64_on	ap_nanquantile_cdf_5_ebe71039_float32	i
 apicov/x64_on	ap_nanquantile_cdf_5_ebe71039_float64	i
 apicov/x64_on	ap_nanquantile_w_3x4_3x4_110d1cc5_float32	i
@@ -446,6 +452,8 @@ apicov/x64_on	ap_nanquantile_w_3x4_4_ff6923da_float32	i
 apicov/x64_on	ap_nanquantile_w_3x4_4_ff6923da_float64	i
 apicov/x64_on	ap_nanquantile_w_6_6_11ca1a93_float32	i
 apicov/x64_on	ap_nanquantile_w_6_6_11ca1a93_float64	i
+apicov/x64_on	ap_nanquantile_w_6_6_5eff18fc_float32	i
+apicov/x64_on	ap_nanquantile_w_6_6_5eff18fc_float64	i
 apicov/x64_on	ap_node_2_155c0cfd_float32	i
 apicov/x64_on	ap_node_2_155c0cfd_float64	i
 apicov/x64_on	ap_np_dtype_1_09a511a6_float32	i

@@ -228,3 +228,11 @@ text_fuzz:x64_off	816	822
 text_fuzz:x64_on	831	837
 text_fuzz_s2:x64_off	837	842
 text_fuzz_s2:x64_on	820	826
+raw:text_compose_fuzz:x64_off	924	938
+raw:text_compose_fuzz:x64_on	1256	1286
+raw:text_custom_ad:x64_off	191	203
+raw:text_custom_ad:x64_on	194	206
+text_compose_fuzz:x64_off	924	938
+text_compose_fuzz:x64_on	1256	1286
+text_custom_ad:x64_off	191	203
+text_custom_ad:x64_on	194	206

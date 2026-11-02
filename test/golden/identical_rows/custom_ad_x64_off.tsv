@@ -77,9 +77,11 @@ custom_00016_float32:text	0
 custom_00017_float32:eager:out0	1
 custom_00017_float32:eager:out1	1
 custom_00017_float32:eager:out2	1
+custom_00017_float32:jaxpr	1
 custom_00017_float32:jit:out0	1
 custom_00017_float32:jit:out1	1
 custom_00017_float32:jit:out2	1
+custom_00017_float32:text	1
 custom_00018_float32:eager:out0	1
 custom_00018_float32:eager:out1	1
 custom_00018_float32:eager:out2	1
@@ -467,10 +469,14 @@ custom_00091_float32:eager:out0	1
 custom_00091_float32:eager:out1	1
 custom_00091_float32:eager:out2	1
 custom_00091_float32:eager:out3	1
+custom_00091_float32:eager:out4	1
+custom_00091_float32:jaxpr	1
 custom_00091_float32:jit:out0	1
 custom_00091_float32:jit:out1	1
 custom_00091_float32:jit:out2	1
 custom_00091_float32:jit:out3	1
+custom_00091_float32:jit:out4	1
+custom_00091_float32:text	1
 custom_00092_float32:eager:out0	1
 custom_00092_float32:eager:out1	1
 custom_00092_float32:eager:out2	1
@@ -669,6 +675,7 @@ custom_00131_float32:jaxpr	0
 custom_00131_float32:jit:both_raise	0
 custom_00131_float32:text	0
 custom_00132_float32:eager:out0	1
+custom_00132_float32:jaxpr	1
 custom_00132_float32:jit:out0	1
 custom_00132_float32:text	1
 custom_00133_float32:eager:out0	1

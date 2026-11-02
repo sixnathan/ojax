@@ -683,6 +683,7 @@ let jax_prim_name = function
   | Scatter_mul _ -> "scatter-mul"
   | Scatter_min _ -> "scatter-min"
   | Scatter_max _ -> "scatter-max"
+  | Xla_call c when call_name c.jid = "closed_call" -> "closed_call"
   | Xla_call _ -> "jit"
   | p -> prim_name p
 
@@ -1047,6 +1048,7 @@ let jax_params (e : eqn) =
         ("reverse", Plain (py_bool reverse));
         ("unroll", Plain (string_of_int unroll));
       ]
+  | Xla_call c when call_name c.jid = "closed_call" -> [ ("call_jaxpr", Sub c) ]
   | Xla_call c -> [ ("jaxpr", Sub c) ]
   | Custom_linear_solve
       { matvec; vecmat; solve; transpose_solve; const_lengths } ->
@@ -1334,7 +1336,10 @@ and pp_eqn ctx (e : eqn) =
   let name_param =
     match e.prim with
     | Xla_call c ->
-        if not (Hashtbl.mem ctx.shared c.jid) then begin
+        if
+          (not (Hashtbl.mem ctx.shared c.jid))
+          && call_name c.jid <> "closed_call"
+        then begin
           let args =
             let rec drop k l = if k = 0 then l else drop (k - 1) (List.tl l) in
             drop (List.length c.consts) c.jaxpr.in_binders
@@ -1342,7 +1347,8 @@ and pp_eqn ctx (e : eqn) =
           suggest_names ctx (List.map (fun v -> A_var v) args) e.inputs;
           suggest_names ctx c.jaxpr.outs (List.map (fun v -> A_var v) e.outs)
         end;
-        [ ("name", Plain (xla_call_name c)) ]
+        if call_name c.jid = "closed_call" then []
+        else [ ("name", Plain (xla_call_name c)) ]
     | Custom_vjp_call id when Hashtbl.mem callback_views id ->
         List.map
           (fun (k, v) -> (k, Plain v))

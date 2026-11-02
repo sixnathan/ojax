@@ -20,6 +20,7 @@ from jax._src import core as jax_core
 warnings.filterwarnings("ignore")
 
 MODULE = "apply_transforms"
+DEFAULT_SEED = 20261104
 SETS = (("x64_off", False), ("x64_on", True))
 DTYPES = {"x64_off": ("float32", "int32", "complex64"), "x64_on": ("float64", "int64", "float32")}
 FUNCS = {"negative": jnp.negative, "sin": jnp.sin, "square": lambda v: v * v}
@@ -91,10 +92,10 @@ def program(case):
     raise ValueError(t)
 
 
-def plan():
+def plan(seed=DEFAULT_SEED):
     out = {}
     for set_name, _ in SETS:
-        rng = np.random.default_rng([20261104, gi.digest(set_name)])
+        rng = np.random.default_rng([seed, gi.digest(set_name)])
         cases, stash = [], {}
         n = 0
         for fi, form in enumerate(FORMS):
@@ -183,10 +184,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--root", default=None)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args()
     gg.preflight()
     base = os.path.join(args.root or os.path.join(gg.ROOT, "goldens"), MODULE)
-    cases_by_set = plan()
+    cases_by_set = plan(args.seed)
     os.makedirs(os.path.join(base, "text"), exist_ok=True)
     ctx = multiprocessing.get_context("spawn")
     with open(os.path.join(base, "text", "reference.jsonl"), "w", encoding="utf-8") as sink:

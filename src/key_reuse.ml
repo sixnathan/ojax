@@ -647,12 +647,31 @@ let scan_region ~num_carry body operands run =
                   (signature_repr ~moved r)))
         else finish_loop ~name:"scan" operands r outs
 
+let last_while : (primitive * aval list * aval list) option ref = ref None
+let note_while prim ins outs = last_while := Some (prim, ins, outs)
+
+let while_eqn_suffix () =
+  match !last_while with
+  | None -> ""
+  | Some (prim, ins, outs) ->
+      let var k vaval = { vid = k; vaval } in
+      let n = List.length ins in
+      "\n  eqn="
+      ^ Pretty_printer.eqn_to_jax_string
+          {
+            prim;
+            inputs = List.mapi (fun k a -> A_var (var k a)) ins;
+            outs = List.mapi (fun k a -> var (n + k) a) outs;
+            multiple_results = true;
+          }
+
 let while_regions cond_fun body operands run =
   if idle () then run cond_fun body
   else
     let level = !suspension in
     let kinds = arg_kinds operands in
     let cond_holder = ref None and body_holder = ref None in
+    last_while := None;
     let cond_wrapped = traced_region ~level cond_holder kinds cond_fun in
     let body_wrapped = traced_region ~level body_holder kinds body in
     let outs, slot =
@@ -672,8 +691,8 @@ let while_regions cond_fun body operands run =
               (Errors.key_reuse_error
                  (Printf.sprintf
                     "while_loop %s function leads to key reuse when repeatedly \
-                     executed:   %s_signature=%s"
-                    which which repr))
+                     executed:   %s_signature=%s%s"
+                    which which repr (while_eqn_suffix ())))
           in
           let is_moved i =
             match List.nth_opt moved i with Some m -> m | None -> false
@@ -703,7 +722,7 @@ let while_regions cond_fun body operands run =
                  (Printf.sprintf
                     "while_loop cond and body functions both use the same \
                      key:   cond_signature=%s\n\
-                    \  body_signature=%s"
-                    cond_repr body_repr))
+                    \  body_signature=%s%s"
+                    cond_repr body_repr (while_eqn_suffix ())))
           else finish_loop ~name:"while" operands b outs
     | _ -> outs

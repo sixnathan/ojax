@@ -3187,6 +3187,7 @@ compose_00658_float32:jit:out0	1
 compose_00658_float32:text	1
 compose_00659_float32:eager:out0	1
 compose_00659_float32:eager:out1	1
+compose_00659_float32:jaxpr	1
 compose_00659_float32:jit:out0	1
 compose_00659_float32:jit:out1	1
 compose_00659_float32:text	1

@@ -1,8 +1,9 @@
 exception Value_error of string
-exception Mlir_error of string
 exception Type_error of string
 exception Index_error of string
 exception Key_error of string
+exception Name_error of string
+exception Mlir_error of string
 exception Overflow_error of string
 exception Not_implemented_error of string
 exception Assertion_error of string
@@ -34,6 +35,7 @@ let classify = function
   | Type_error m -> Some ("TypeError", m)
   | Index_error m -> Some ("IndexError", m)
   | Key_error m -> Some ("KeyError", m)
+  | Name_error m -> Some ("NameError", m)
   | Overflow_error m -> Some ("OverflowError", m)
   | Not_implemented_error m -> Some ("NotImplementedError", m)
   | Assertion_error m -> Some ("AssertionError", m)
@@ -65,7 +67,7 @@ let message_of e = Option.map snd (classify e)
 let parent = function
   | "ValueError" | "TypeError" | "LookupError" | "ArithmeticError"
   | "AssertionError" | "RuntimeError" | "InconclusiveDimensionOperation"
-  | "MLIRError" ->
+  | "NameError" | "MLIRError" ->
       Some "Exception"
   | "IndexError" | "KeyError" -> Some "LookupError"
   | "OverflowError" | "ZeroDivisionError" -> Some "ArithmeticError"

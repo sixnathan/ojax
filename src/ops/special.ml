@@ -18,7 +18,7 @@ let promote_inexact v =
   let dt = Dtypes.to_inexact_dtype (dtype v) in
   if dt = dtype v then v else NL.astype v dt
 
-let canon_axis ndim a = if a < 0 then a + ndim else a
+let canon_axis ndim a = Validate.canonicalize_axis a ndim
 
 let reduction_dims ndim axis =
   match axis with

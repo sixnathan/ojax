@@ -68,9 +68,11 @@ let apply_index_fixer mode index size =
   | "mirror" -> mirror_index_fixer index size
   | "reflect" -> reflect_index_fixer index size
   | _ ->
-      failwith
-        (Printf.sprintf
-           "jax.scipy.ndimage.map_coordinates does not yet support mode %s" mode)
+      raise
+        (Py_exn.Not_implemented_error
+           (Printf.sprintf
+              "jax.scipy.ndimage.map_coordinates does not yet support mode %s"
+              mode))
 
 let is_valid_constant index size =
   let idt = dtype index in
@@ -108,7 +110,7 @@ let map_coordinates ?(mode = "constant") ?(cval = 0.0) input coordinates ~order
     =
   let n = ndim input in
   if List.length coordinates <> n then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "coordinates must be a sequence of length input.ndim, but %d != %d"
          (List.length coordinates) n);
@@ -119,7 +121,9 @@ let map_coordinates ?(mode = "constant") ?(cval = 0.0) input coordinates ~order
     | 0 -> nearest_nodes
     | 1 -> linear_nodes
     | _ ->
-        failwith "jax.scipy.ndimage.map_coordinates currently requires order<=1"
+        raise
+          (Py_exn.Not_implemented_error
+             "jax.scipy.ndimage.map_coordinates currently requires order<=1")
   in
   let sizes = Array.to_list (shape input) in
   let per_dim =

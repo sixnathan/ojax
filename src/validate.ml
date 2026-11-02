@@ -117,3 +117,34 @@ let lax_broadcast_shapes ~name shapes =
                      (String.concat ", " (List.map python_tuple shapes))))
 
 let require_same_shape a b message = if a <> b then Py_exn.value_error message
+
+let py_mod a b =
+  if b = 0 then raise (Py_exn.Zero_division_error "integer modulo by zero")
+  else
+    let r = a mod b in
+    if r <> 0 && r < 0 <> (b < 0) then r + b else r
+
+let py_floordiv a b =
+  if b = 0 then
+    raise (Py_exn.Zero_division_error "integer division or modulo by zero")
+  else
+    let q = a / b in
+    if a mod b <> 0 && a < 0 <> (b < 0) then q - 1 else q
+
+let python_list items =
+  "[" ^ String.concat ", " (List.map string_of_int items) ^ "]"
+
+let check_shapelike ~name ~arg shape =
+  if Array.exists (fun d -> d < 0) shape then
+    Py_exn.type_error
+      (Printf.sprintf "%s %s must have every element be nonnegative, got %s."
+         name arg (python_tuple shape))
+
+let aval_short ~dtype_name ~weak shape =
+  (if weak then "~" else "")
+  ^ dtype_name ^ "["
+  ^ String.concat "," (List.map string_of_int (Array.to_list shape))
+  ^ "]"
+
+let assertion ?(message = "") ok =
+  if not ok then raise (Py_exn.Assertion_error message)

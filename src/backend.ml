@@ -387,6 +387,34 @@ let guard_host_to_device ~explicit nd =
   | Some "log_explicit" -> Config.log (host_to_device_text nd)
   | Some _ -> disallow ()
 
+let verifier_diagnostic reason =
+  let line =
+    match String.index_opt reason '\n' with
+    | Some i -> String.sub reason 0 i
+    | None -> reason
+  in
+  let marker = ": error: " in
+  let n = String.length marker in
+  let rec find i =
+    if i + n > String.length line then None
+    else if String.sub line i n = marker then
+      Some (String.sub line (i + n) (String.length line - i - n))
+    else find (i + 1)
+  in
+  if String.starts_with ~prefix:"-:" line then
+    match find 0 with
+    | Some message when not (String.starts_with ~prefix:"expected " message) ->
+        Some message
+    | _ -> None
+  else None
+
+let compile_failure reason =
+  match verifier_diagnostic reason with
+  | Some message ->
+      Py_exn.value_error
+        ("Cannot lower jaxpr with verifier errors:\n\t" ^ message)
+  | None -> runtime_error reason
+
 let guard_implicit_args args =
   List.iter
     (function
@@ -1402,7 +1430,7 @@ let executor ?options (cj : closed_jaxpr) : value list -> value list =
                 incr compiled_on_xla;
                 match Xla.compile_text ?options text with
                 | exec -> Some (exec, kept)
-                | exception Pjrt.Abi.Error reason -> runtime_error reason))
+                | exception Pjrt.Abi.Error reason -> compile_failure reason))
         in
         Hashtbl.replace per_platform platform (emitted, exec);
         (emitted, exec)

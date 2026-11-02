@@ -2,7 +2,10 @@ open Types
 
 let take shape perm = Array.map (fun p -> shape.(p)) perm
 let dilate_dim d f = if d = 0 then 0 else ((d - 1) * f) + 1
-let stride_dim d w s = if d < w then 0 else ((d - w) / s) + 1
+
+let stride_dim d w s =
+  let q = if s = 0 then 0 else Validate.py_floordiv (d - w) s in
+  Stdlib.max (q + 1) 0
 
 let out_spatial l_sp k_sp padding lhs_dilation rhs_dilation window_strides =
   Array.mapi

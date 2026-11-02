@@ -1118,6 +1118,8 @@ let bincount ?weights ?(minlength = 0) ?length x =
       else bincount_length n w (flat x)
 
 let plain_slice v start stop =
+  if start = 0 && stop = (shape v).(0) then v
+  else
   Core.bind1
     (Slice
        {
@@ -2599,10 +2601,10 @@ let unpackbits ?axis ?count ?(bitorder = "big") a =
                 let r = Array.length su in
                 let last = su.(r - 1) in
                 if c > last then
-                  L.pad unpacked
-                    (L.full [||] 0.0 Dtype.Uint8)
+                  NL.pad unpacked
                     (Array.init r (fun d ->
-                         if d = r - 1 then (0, c - last, 0) else (0, 0, 0)))
+                         if d = r - 1 then (0, c - last) else (0, 0)))
+                    0.0
                 else
                   let keep = if c >= 0 then c else max (last + c) 0 in
                   let hi = Array.copy su in

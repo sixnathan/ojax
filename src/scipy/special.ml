@@ -767,6 +767,18 @@ let scalar_of v x =
      else literal)
 
 let lax_const v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |])
+
+let weak_scalar v =
+  let a = C.get_aval v in
+  a.weak_type && Array.length a.shape = 0
+
+let const_of v x =
+  let literal = Nd.of_floats (dtype v) [||] [| x |] in
+  T.Concrete
+    (if weak_scalar v && dtype v = Dts.default_float_dtype () then
+       Nd.with_py_value (Nd.as_weak literal) x
+     else literal)
+
 let coeff_of v a = T.Concrete (Nd.of_floats (dtype v) [| Array.length a |] a)
 let where_ = NL.where_
 let q32 v = Int32.float_of_bits (Int32.bits_of_float v)
@@ -1328,13 +1340,13 @@ let multigammaln a d =
 
 let rel_entr p q =
   let p, q = real_only2 "rel_entr" p q in
-  let zero = lax_const p 0.0 in
+  let zero = const_of p 0.0 in
   let both = L.bitwise_and (L.gt p zero) (L.gt q zero) in
   let one_zero = L.bitwise_and (L.eq p zero) (L.ge q zero) in
   let safe_p = where_ both p (py_int 1) in
   let safe_q = where_ both q (py_int 1) in
   let log_val = L.sub (xlogx safe_p) (xlogy safe_p safe_q) in
-  where_ both log_val (where_py one_zero zero Float.infinity)
+  where_ both log_val (where_ one_zero zero (py_float Float.infinity))
 
 let kl_div p q =
   let p, q = real_only2 "kl_div" p q in
@@ -1920,7 +1932,7 @@ let owens_t_quadrature h a =
 let owens_t_primal h a =
   let h = UF.abs h in
   let abs_a = UF.abs a in
-  let root_2 = lax_const h (sqrt 2.0) in
+  let root_2 = const_of h (sqrt 2.0) in
   let h_normed = h /! root_2 in
   let modified_a = where_ (le_ abs_a 1.0) abs_a (UF.reciprocal abs_a) in
   let modified_h = where_ (le_ abs_a 1.0) h (abs_a *! h) in
@@ -1963,7 +1975,7 @@ let rec owens_t_custom h a =
          match (primals, tangents) with
          | [ h; a ], [ dh; da ] ->
              let result = owens_t_custom h a in
-             let root_2 = lax_const h (sqrt 2.0) in
+             let root_2 = const_of h (sqrt 2.0) in
              let rounded =
                Nd.get_f
                  (Nd.of_floats (dtype h) [||] [| sqrt (2.0 *. Float.pi) |])
@@ -1972,7 +1984,10 @@ let rec owens_t_custom h a =
              let dout_dh =
                neg_ (L.exp (lit_mul (-0.5) (L.square h)))
                *! bind1 T.Erf [ a *! h /! root_2 ]
-               /! lax_const h (2.0 *. rounded)
+               /!
+               if weak_scalar h then
+                 const_of h (2.0 *. sqrt (2.0 *. Float.pi))
+               else lax_const h (2.0 *. rounded)
              in
              let sq_a1 () = add_lit (L.square a) 1.0 in
              let dout_da =

@@ -287,7 +287,13 @@ let collapse_from x start =
 let collapse x start stop =
   let sh = shape x in
   let n = Array.length sh in
-  let stop = if stop < 0 then stop + n else stop in
+  let clamp v = Stdlib.max 0 (Stdlib.min n (if v < 0 then v + n else v)) in
+  let lo = clamp start and hi = clamp stop in
+  if hi < lo then
+    invalid_arg
+      (Printf.sprintf "Invalid dimension range passed to collapse: %s[%d:%d]"
+         (Lax.Utils.py_tuple sh) start stop);
+  let start = lo and stop = hi in
   let size = product (Array.sub sh start (stop - start)) in
   let out =
     Array.concat

@@ -758,14 +758,16 @@ and lstsq_body ~rcond ~numpy_resid a b =
     if ndim s = 1 then
       Core.bind1 (T.Squeeze [| 0 |])
         [
-          Core.bind1
-            (T.Slice
-               {
-                 start_indices = [| 0 |];
-                 limit_indices = [| 1 |];
-                 strides = None;
-               })
-            [ s ];
+          (if (shape s).(0) = 1 then s
+           else
+             Core.bind1
+               (T.Slice
+                  {
+                    start_indices = [| 0 |];
+                    limit_indices = [| 1 |];
+                    strides = None;
+                  })
+               [ s ]);
         ]
     else RED.amax ~axis:[| -1 |] ~keepdims:true s
   in

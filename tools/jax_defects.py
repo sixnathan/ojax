@@ -342,6 +342,10 @@ def build(log, varying_path, frames_path, goldens):
             frames = json.load(fh)
     options = option_cases(goldens)
     from jax._src.lax import linalg as lax_linalg
+    from jax._src.lax import lax as lax_lax
+
+    precision_names = {k for k in lax_lax._precision_strings if isinstance(k, str)} | {p.name for p in lax_lax.DotAlgorithmPreset}
+    precision_line = jax_line(tree, "lax/lax.py", '"Precision argument must be one of:')
 
     enums = {
         "implementation": (
@@ -378,6 +382,13 @@ def build(log, varying_path, frames_path, goldens):
             continue
         theirs, ours = f[6], f[7]
         plain = unescape(theirs)
+        if suite.startswith("text_option_fuzz:") and ours.startswith("Precision argument must be one of:"):
+            set_name = suite.split(":", 1)[1]
+            case = options.get((set_name, row.rsplit(":", 2)[0]))
+            value = case["options"].get("precision") if case else None
+            if isinstance(value, str) and value not in precision_names:
+                out[(suite, row)] = ("d", f"precision={value!r} is a string outside JAX's precision names ({', '.join(sorted(precision_names))}) checked at {precision_line}, so OCaml's precision type cannot hold it and the harness raises before the call; JAX raises '{clean(plain)}'")
+                continue
         if TRACED_AT.search(plain) and same_after(strip_traced, theirs, ours):
             out[(suite, row)] = ("c", f"identical once the Python function, its file and parameter names are removed: {clean(TRACED_AT.search(plain).group(0))}; from {traced} and {origin}")
         elif "of argument " in plain and same_after(strip_signature, theirs, ours):

@@ -7,37 +7,45 @@ import sys
 import gen_goldens as gg
 import jax
 import numpy as np
-import parity_registry as registry
+import apicov_registry
+import coverage_registry
+import parity_registry
+
+REGISTRIES = {"parity": parity_registry, "coverage": coverage_registry, "apicov": apicov_registry}
 
 MODULE = "aot_cost"
 
 
 def selected_cases(x64):
-    path = os.path.join(gg.ROOT, "goldens", "parity", "x64_on" if x64 else "x64_off", "manifest.json")
-    with open(path, encoding="utf-8") as fh:
-        cases = json.load(fh)["cases"]
-    first = {}
-    for c in sorted(cases, key=lambda c: c["case_id"]):
-        first.setdefault(c["op"], c)
-    return [first[op] for op in sorted(first)]
+    out = []
+    for suite in REGISTRIES:
+        path = os.path.join(gg.ROOT, "goldens", suite, "x64_on" if x64 else "x64_off", "manifest.json")
+        with open(path, encoding="utf-8") as fh:
+            cases = json.load(fh)["cases"]
+        first = {}
+        for c in sorted(cases, key=lambda c: c["case_id"]):
+            first.setdefault(c["op"], c)
+        out.extend((suite, first[op]) for op in sorted(first))
+    return out
 
 
 def run_shard(x64, index, count, out):
     jax.config.update("jax_enable_x64", x64)
-    inputs_dir = os.path.join(gg.ROOT, "goldens", "parity", "x64_on" if x64 else "x64_off", "inputs")
     rows = []
-    for position, c in enumerate(selected_cases(x64)):
+    for position, (suite, c) in enumerate(selected_cases(x64)):
         if position % count != index:
             continue
+        registry = REGISTRIES[suite]
+        inputs_dir = os.path.join(gg.ROOT, "goldens", suite, "x64_on" if x64 else "x64_off", "inputs")
         names = [a["name"] for a in c["args"]]
         with np.load(os.path.join(inputs_dir, c["case_id"] + ".npz")) as stored:
             values = [stored[n] for n in names]
         op, params = c["op"], c["params"]
 
-        def call(*vals, op=op, params=params, names=names):
+        def call(*vals, op=op, params=params, names=names, registry=registry):
             return registry.OPS[op](**dict(zip(names, vals)), p=params)
 
-        row = {"case_id": c["case_id"], "op": op, "params": params, "args": c["args"]}
+        row = {"suite": suite, "case_id": c["case_id"], "op": op, "params": params, "args": c["args"]}
         try:
             compiled = jax.jit(call).lower(*values).compile()
             cost = compiled.cost_analysis()
@@ -69,7 +77,7 @@ def gen_set(x64, outdir, jobs):
         with open(part, encoding="utf-8") as fh:
             rows.extend(json.load(fh))
         os.remove(part)
-    rows.sort(key=lambda r: r["case_id"])
+    rows.sort(key=lambda r: (r["suite"], r["case_id"]))
     with open(os.path.join(outdir, tag + ".json"), "w", encoding="utf-8") as fh:
         json.dump({"jax": jax.__version__, "x64": x64, "rows": rows}, fh, indent=1, sort_keys=True)
     return len(rows), sum(1 for r in rows if "error" in r)

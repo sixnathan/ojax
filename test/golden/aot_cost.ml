@@ -42,10 +42,14 @@ let actual_text row =
     in
     go names values
   in
+  let run =
+    match U.to_string (U.member "suite" row) with
+    | "coverage" -> Coverage_cases.run
+    | "apicov" -> Apicov_cases.run
+    | _ -> Parity_cases.run
+  in
   let lowered =
-    Ojax.Stages.lower
-      (fun values -> Parity_cases.run op params (lookup values))
-      avals
+    Ojax.Stages.lower (fun values -> run op params (lookup values)) avals
   in
   let cost = Ojax.Stages.cost_analysis (Ojax.Stages.compile lowered) in
   String.concat "\n"
@@ -66,7 +70,11 @@ let record suite name same =
       with Sys_error _ -> ())
 
 let check_row ~x64 row () =
-  let id = U.to_string (U.member "case_id" row) in
+  let id =
+    U.to_string (U.member "suite" row)
+    ^ "/"
+    ^ U.to_string (U.member "case_id" row)
+  in
   let expected = pairs_text (U.member "cost" row) in
   let actual =
     Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->

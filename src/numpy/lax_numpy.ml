@@ -1048,6 +1048,8 @@ let tile v reps =
 let rec repeat ?axis ?total_repeat_length a repeats =
   match total_repeat_length with
   | Some total -> repeat_to_total ?axis a repeats total
+  | None when ndim a = 0 ->
+      bind1 (T.Broadcast_in_dim { shape = [| repeats |]; dims = [||] }) [ a ]
   | None -> repeat_scalar ?axis a repeats
 
 and repeat_to_total ?axis a repeats total =

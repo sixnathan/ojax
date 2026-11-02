@@ -17,3 +17,4 @@ val subs_list2 :
 val concatenate : 'a list list -> 'a list
 val flatten : 'a list list -> 'a list
 val unflatten : 'a list -> int list -> 'a list list
+val tuple_string : int array -> string

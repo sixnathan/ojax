@@ -2559,6 +2559,10 @@ let abstract_eval prim avals =
       | _ -> failwith "lax: select_n expects a predicate and cases")
   | Convert_element_type dt -> un_aval (fun a -> shaped a.shape dt false) avals
   | Broadcast_in_dim { shape; _ } ->
+      if Array.exists (fun d -> d < 0) shape then
+        invalid_arg
+          ("broadcast_in_dim shape must have every element be nonnegative, got "
+         ^ Util.tuple_string shape ^ ".");
       un_aval (fun a -> shaped shape a.dtype a.weak_type) avals
   | Reshape ns -> un_aval (fun a -> shaped ns a.dtype a.weak_type) avals
   | Reshape_perm { new_sizes; _ } ->
@@ -2675,6 +2679,15 @@ let abstract_eval prim avals =
   | Top_k { k; axis } -> (
       match avals with
       | [ a ] ->
+          if a.shape.(axis) < k then
+            invalid_arg
+              (Printf.sprintf
+                 "k argument to top_k must be no larger than size along axis; \
+                  got k=%d with shape=[%s] and axis=%d"
+                 k
+                 (String.concat ", "
+                    (Array.to_list (Array.map string_of_int a.shape)))
+                 axis);
           let s = Array.mapi (fun i d -> if i = axis then k else d) a.shape in
           [ shaped s a.dtype a.weak_type; shaped s Dtype.I32 a.weak_type ]
       | _ -> failwith "lax: top_k expects 1 operand")
@@ -2691,6 +2704,22 @@ let abstract_eval prim avals =
   | Rng_uniform -> failwith "lax: rng primitives deferred to M3 (PRNG)"
   | To_edtype _ -> failwith "lax: to_edtype (extended dtypes) deferred to M5"
   | Slice { start_indices; limit_indices; strides } ->
+      if Array.exists (fun d -> d < 0) limit_indices then
+        invalid_arg
+          ("slice limit_indices must have every element be nonnegative, got "
+          ^ Util.tuple_string limit_indices
+          ^ ".");
+      if
+        Array.exists Fun.id
+          (Array.map2 (fun lo hi -> hi < lo) start_indices limit_indices)
+      then
+        invalid_arg
+          ("slice limit_indices must be greater than or equal to \
+            start_indices, got start_indices "
+          ^ Util.tuple_string start_indices
+          ^ " and limit_indices "
+          ^ Util.tuple_string limit_indices
+          ^ ".");
       un_aval
         (fun a ->
           shaped
@@ -2699,7 +2728,19 @@ let abstract_eval prim avals =
         avals
   | Dynamic_slice { slice_sizes } -> (
       match avals with
-      | operand :: _ -> [ shaped slice_sizes operand.dtype operand.weak_type ]
+      | operand :: _ ->
+          if
+            Array.exists Fun.id
+              (Array.map2 (fun s d -> s > d) slice_sizes operand.shape)
+          then
+            invalid_arg
+              ("slice slice_sizes must be less than or equal to operand shape, \
+                got slice_sizes "
+              ^ Util.tuple_string slice_sizes
+              ^ " for operand shape "
+              ^ Util.tuple_string operand.shape
+              ^ ".");
+          [ shaped slice_sizes operand.dtype operand.weak_type ]
       | [] -> failwith "lax: dynamic_slice expects an operand")
   | Dynamic_update_slice -> (
       match avals with

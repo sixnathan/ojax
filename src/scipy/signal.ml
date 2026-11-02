@@ -32,6 +32,12 @@ let conj_if_complex v =
 let convolve_nd in1 in2 mode =
   if rank in1 <> rank in2 then
     invalid_arg "in1 and in2 must have the same number of dimensions";
+  if Array.mem 0 (shape in1) || Array.mem 0 (shape in2) then
+    invalid_arg
+      (Printf.sprintf
+         "zero-size arrays not supported in convolutions, got shapes %s and %s."
+         (Util.tuple_string (shape in1))
+         (Util.tuple_string (shape in2)));
   let in1, in2 = promote in1 in2 in
   let s1 = shape in1 and s2 = shape in2 in
   let no_swap = all_pairs ( >= ) s1 s2 and swap = all_pairs ( <= ) s1 s2 in

@@ -197,6 +197,12 @@ let companion a =
 
 let fiedler_companion a =
   let a = inexact (NL.atleast_1d a) in
+  if (shape a).(Array.length (shape a) - 1) = 0 then
+    invalid_arg
+      (Printf.sprintf
+         "fiedler_companion requires the last axis of 'a' to have nonzero \
+          length, but got an array of shape %s."
+         (Util.tuple_string (shape a)));
   require_vector "fiedler_companion" a;
   let n = (shape a).(0) - 1 in
   if n <= 0 then L.full [| 0; 0 |] 0.0 (dtype_of a)
@@ -411,6 +417,10 @@ let hadamard ?dtype:requested n =
 let convolution_matrix ?(mode = "full") a n =
   if n <= 0 then invalid_arg "n must be a positive integer";
   let m = (shape a).(Array.length (shape a) - 1) in
+  if m < 1 then
+    invalid_arg
+      (Printf.sprintf "len(a) must be at least 1; got shape %s."
+         (Util.tuple_string (shape a)));
   jit1 "convolution_matrix"
     ~key:(Printf.sprintf "%d %s" n mode)
     (function

@@ -107,3 +107,11 @@ let unflatten xs ns =
         head :: go tail ns
   in
   go xs ns
+
+let tuple_string dims =
+  match dims with
+  | [| d |] -> Printf.sprintf "(%d,)" d
+  | _ ->
+      "("
+      ^ String.concat ", " (Array.to_list (Array.map string_of_int dims))
+      ^ ")"

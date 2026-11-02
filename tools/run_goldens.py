@@ -141,9 +141,9 @@ def row_classes(log):
                 group = "compose_fuzz_error_text"
             elif suite.startswith("custom_ad:"):
                 group = "custom_ad"
-            elif suite.startswith("index_fuzz:"):
+            elif suite.startswith(("index_fuzz:", "apply_transforms:")):
                 group = "index_fuzz"
-            elif suite.startswith("text_index_fuzz:"):
+            elif suite.startswith(("text_index_fuzz:", "text_apply_transforms:")):
                 group = "index_fuzz_error_text"
             else:
                 group = "fixed"
@@ -371,7 +371,7 @@ def main():
     composed = [s for s in totals if s.startswith("compose_fuzz:")]
     custom = [s for s in totals if s.startswith("custom_ad:")]
     message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:", "text_compose_fuzz:"))]
-    indexed = [s for s in totals if s.startswith(("index_fuzz:", "text_index_fuzz:"))]
+    indexed = [s for s in totals if s.startswith(("index_fuzz:", "text_index_fuzz:", "apply_transforms:", "text_apply_transforms:"))]
     uncounted = (
         set(shadow) | set(second_seed) | set(option_rows) | set(composed) | set(custom) | set(message_rows) | set(indexed) | {"compare", "ratchet_selftest"}
     )

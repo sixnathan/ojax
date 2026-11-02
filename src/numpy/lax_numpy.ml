@@ -1087,8 +1087,16 @@ let all_reduce v =
   if n = 0 then v else bind1 (T.Reduce_and (Array.init n Fun.id)) [ v ]
 
 let promote_values vs =
-  let dt = result_type vs in
-  List.map (fun v -> convert v dt) vs
+  match vs with
+  | [] | [ _ ] -> vs
+  | _ ->
+      let dt, weak =
+        Dtypes.result_type
+          (List.map
+             (fun v -> ((get_aval v).T.dtype, (get_aval v).T.weak_type))
+             vs)
+      in
+      List.map (fun v -> C.convert_like ~weak v dt) vs
 
 let astype v dt =
   match (dtype v, dt) with

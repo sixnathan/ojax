@@ -517,6 +517,30 @@ let tangent_of_float0 primal tangent =
           tangent dtype float0 instead."
          (Dtype.numpy_name pd) (Dtype.numpy_name pd))
 
+let dtype_repr dt =
+  if dt = Dtypes.float0 then "[('float0', 'V')]" else Dtype.numpy_name dt
+
+let check_jvp_pair primal tangent =
+  let p = Core.get_aval primal and t = Core.get_aval tangent in
+  let expected = if is_integral_dtype p.dtype then Dtypes.float0 else p.dtype in
+  if expected <> t.dtype then
+    raise
+      (Py_exn.Type_error
+         (Printf.sprintf
+            "primal and tangent arguments to jax.jvp do not match; dtypes must \
+             be equal, or in case of int/bool primal dtype the tangent dtype \
+             must be float0.Got primal dtype %s and so expected tangent dtype \
+             %s, but got tangent dtype %s instead."
+            (dtype_repr p.dtype) (dtype_repr expected) (dtype_repr t.dtype)));
+  if p.shape <> t.shape then
+    raise
+      (Py_exn.Value_error
+         (Printf.sprintf
+            "jvp called with different primal and tangent shapes;Got primal \
+             shape %s and tangent shape as %s"
+            (Validate.python_tuple p.shape)
+            (Validate.python_tuple t.shape)))
+
 let float0_for_integral primal tangent =
   if is_integral_dtype (Core.get_aval primal).dtype then float0_like primal
   else tangent
@@ -525,6 +549,7 @@ let jvp (f : value Tree.t list -> value Tree.t) (primals : value Tree.t list)
     (tangents : value Tree.t list) : value Tree.t * value Tree.t =
   let pf, in_tree = flatten_args primals in
   let tf, _ = flatten_args tangents in
+  List.iter2 check_jvp_pair pf tf;
   let tf = List.map2 tangent_of_float0 pf tf in
   let flat_fun, out_tree = Api_util.flatten_fun f in_tree in
   let po, to_ = Ad.jvp_instantiated (Linear_util.call_wrapped flat_fun) pf tf in

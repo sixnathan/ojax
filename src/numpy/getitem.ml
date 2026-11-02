@@ -510,12 +510,18 @@ let normalize_item sh p =
       }
   | _ -> p
 
+let stage = function
+  | T.Concrete nd as v when Array.length (Ndarray.shape nd) > 0 ->
+      Jaxpr.stage_constant v
+  | v -> v
+
 let as_jnp = function
   | User (Int i) | Pint i -> py_int i
-  | User (Arr v) | Jarr v -> v
+  | User (Arr v) | Jarr v -> stage v
   | Host nd ->
-      C.convert_like ~weak:false (host_value nd)
-        (Dtypes.canonicalize_dtype (Ndarray.dtype nd))
+      stage
+        (C.convert_like ~weak:false (host_value nd)
+           (Dtypes.canonicalize_dtype (Ndarray.dtype nd)))
   | _ -> invalid_arg "as_jnp"
 
 let is_advanced_int parsed =
@@ -1105,3 +1111,20 @@ let ufunc_subtract_at ?(inplace = true) a idx b =
       check_inplace inplace;
       at_subtract a idx b)
     a idx b
+
+let of_nd_index = function
+  | Nd_index.Int i -> Int i
+  | Nd_index.Range { start; stop } -> Slice { start; stop; step = None }
+  | Nd_index.Arr v -> Arr v
+
+let () =
+  Nd_index.take_hook :=
+    Some (fun mode x idx -> take ?mode x (List.map of_nd_index idx));
+  Nd_index.set_hook :=
+    Some (fun x idx y -> at_set x (List.map of_nd_index idx) y);
+  Nd_index.set_stepped_hook :=
+    Some
+      (fun x ~start ~step y ->
+        at_set x
+          [ Slice { start = Some start; stop = None; step = Some step } ]
+          y)

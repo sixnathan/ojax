@@ -193,9 +193,10 @@ let geqrf_impl a =
         (fun kind ->
           let ca = pack kind c a m n in
           let tau = alloc kind c k in
+          let lda = max m 1 in
           let _ =
-            if c then Lp.zgeqrf ~m ~n ~a:ca ~lda:m ~tau
-            else Lp.geqrf ~m ~n ~a:ca ~lda:m ~tau
+            if c then Lp.zgeqrf ~m ~n ~a:ca ~lda ~tau
+            else Lp.geqrf ~m ~n ~a:ca ~lda ~tau
           in
           [ of_cm dt c ca m n; of_vec dt c tau k ]);
     }
@@ -215,10 +216,15 @@ let geqp3_impl a jpvt_in =
           for i = 0 to n - 1 do
             jpvt.{i} <- Int64.to_int32 (Ndarray.get_i64 jpvt_in [| i |])
           done;
-          let _ =
-            if c then Lp.zgeqp3 ~m ~n ~a:ca ~lda:m ~jpvt ~tau
+          let info =
+            if m = 0 && n = 0 then 0
+            else if c then Lp.zgeqp3 ~m ~n ~a:ca ~lda:m ~jpvt ~tau
             else Lp.geqp3 ~m ~n ~a:ca ~lda:m ~jpvt ~tau
           in
+          if info < 0 then
+            raise
+              (Errors.Jax_runtime_error
+                 "UNKNOWN: XLA FFI call failed: std::bad_alloc");
           [
             of_cm dt c ca m n;
             Ndarray.of_floats Dtype.I32 [| n |]
@@ -243,9 +249,10 @@ let householder_product_impl inputs =
               for i = 0 to k - 1 do
                 put c tau i (cell taus [| i |])
               done;
+              let lda = max m 1 in
               let _ =
-                if c then Lp.zungqr ~m ~n ~k ~a:ca ~lda:m ~tau
-                else Lp.orgqr ~m ~n ~k ~a:ca ~lda:m ~tau
+                if c then Lp.zungqr ~m ~n ~k ~a:ca ~lda ~tau
+                else Lp.orgqr ~m ~n ~k ~a:ca ~lda ~tau
               in
               [ of_cm dt c ca m n ]);
         }
@@ -308,8 +315,11 @@ let ormqr_impl ~left ~transpose a taus c_in =
           let trans = if not transpose then 'N' else if c then 'C' else 'T' in
           let _ =
             if c then
-              Lp.zunmqr ~side ~trans ~m ~n ~k ~a:ca ~lda:am ~tau ~c:cc ~ldc:m
-            else Lp.ormqr ~side ~trans ~m ~n ~k ~a:ca ~lda:am ~tau ~c:cc ~ldc:m
+              Lp.zunmqr ~side ~trans ~m ~n ~k ~a:ca ~lda:(max am 1) ~tau ~c:cc
+                ~ldc:(max m 1)
+            else
+              Lp.ormqr ~side ~trans ~m ~n ~k ~a:ca ~lda:(max am 1) ~tau ~c:cc
+                ~ldc:(max m 1)
           in
           [ of_cm dt c cc m n ]);
     }

@@ -2766,6 +2766,10 @@ let emit_axis_index ctx (eqn : eqn) mesh axis_name =
        (name size_c) size i32 (name div) (name as_int) (name stride_c) i32
        (name n) (name div) (name size_c) i32)
 
+let qr_core_empty (a : aval) =
+  let rank = Array.length a.shape in
+  a.shape.(rank - 2) = 0 || a.shape.(rank - 1) = 0
+
 let rec emit_region_returning ctx (jx : jaxpr) =
   let s =
     capture ctx (fun () ->
@@ -3991,8 +3995,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_traced ctx [ a; pivots; info ] ids eqn.outs
         (Native_lowering.lapack_lu ~permutation_size:m)
   | Qr full_matrices
-    when lapack_ffi ()
-         && Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape ->
+    when lapack_ffi () && qr_core_empty (atom_aval (sole eqn.inputs)) ->
       emit_inlined ctx eqn in_ids (function
         | [ a ] -> Native_lowering.qr_empty ~full_matrices a
         | _ -> invalid_arg "Stablehlo.Emit: qr arity")
@@ -4014,9 +4017,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_traced ctx [ a; taus ] ids eqn.outs
         (Native_lowering.qr_from_factors ~full_matrices)
   | Qr_pivoted full_matrices ->
-      let empty =
-        Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape
-      in
+      let empty = qr_core_empty (atom_aval (sole eqn.inputs)) in
       emit_inlined ctx eqn in_ids (function
         | [ a ] when empty -> Native_lowering.qr_pivoted_empty ~full_matrices a
         | [ a ] -> Native_lowering.qr_pivoted ~full_matrices a
@@ -4335,8 +4336,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         (Native_lowering.lu_pivots_to_permutation ~permutation_size)
   | Geqrf | Geqp3 | Ormqr _ ->
       failwith "Stablehlo.Emit: this LAPACK target needs the scipy library"
-  | Qr full_matrices
-    when Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape ->
+  | Qr full_matrices when qr_core_empty (atom_aval (sole eqn.inputs)) ->
       emit_inlined ctx eqn in_ids (function
         | [ a ] -> Native_lowering.qr_empty ~full_matrices a
         | _ -> invalid_arg "Stablehlo.Emit: qr arity")

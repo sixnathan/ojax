@@ -1099,6 +1099,15 @@ let promote_values vs =
       List.map (fun v -> C.convert_like ~weak v dt) vs
 
 let astype v dt =
+  let dt = Dtypes.check_and_canonicalize_user_dtype ~fun_name:"astype" dt in
+  (match (dtype v, dt) with
+  | (D.Complex64 | D.Complex128), (D.Complex64 | D.Complex128 | D.Bool) -> ()
+  | (D.Complex64 | D.Complex128), _ ->
+      Py_warnings.warn ~category:"DeprecationWarning"
+        "Casting from complex to real dtypes will soon raise a ValueError. \
+         Please first use jnp.real or jnp.imag to take the real/imaginary \
+         component of your input."
+  | _ -> ());
   match (dtype v, dt) with
   | (D.Complex64 | D.Complex128), D.Bool -> bind1 T.Ne [ v; zeros_like v ]
   | _ -> convert v dt
@@ -1570,7 +1579,9 @@ let array_equiv a b =
   | a, b, _, _ -> all_reduce (bind1 T.Eq [ a; b ])
 
 let arange ?(start = 0.0) ?step ~dtype stop =
-  let dtype = Dtypes.canonicalize_dtype dtype in
+  let dtype =
+    Dtypes.check_and_canonicalize_user_dtype ~fun_name:"arange" dtype
+  in
   match step with
   | Some step ->
       let working =

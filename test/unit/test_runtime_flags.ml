@@ -63,6 +63,8 @@ let check_message name expected f =
       Alcotest.(check string) name expected got
   | exception Dtypes.Type_promotion_error got ->
       Alcotest.(check string) name expected got
+  | exception Py_exn.Value_error got ->
+      Alcotest.(check string) name expected got
 
 let key_page =
   "\nSee https://docs.jax.dev/en/latest/errors.html#jax.errors.KeyReuseError"
@@ -91,6 +93,10 @@ let capture_log thunk =
     (fun () ->
       let r = thunk () in
       (r, List.rev !lines))
+
+let capture_warnings thunk =
+  let r, seen = Py_warnings.catch thunk in
+  (r, List.map snd seen)
 
 let setters_restore () =
   let bool_setter name flag setter =
@@ -465,12 +471,12 @@ let legacy_keys () =
       ignore (uniform1 (L.index_in_dim ~keepdims:false ks 0));
       ignore (Api.vmap (tree_fn uniform1) [ Some 0 ] [ Tree.Leaf ks ]));
   let v, logged =
-    capture_log (fun () ->
+    capture_warnings (fun () ->
         Api.legacy_prng_key "warn" (fun () -> uniform1 (raw_key 0)))
   in
   check_floats "warn still samples" [| 0.947667 |] (floats v);
   Alcotest.(check (list string)) "warned" [ legacy_message ] logged;
-  let _, quiet = capture_log (fun () -> uniform1 (raw_key 0)) in
+  let _, quiet = capture_warnings (fun () -> uniform1 (raw_key 0)) in
   Alcotest.(check (list string)) "allow is quiet" [] quiet
 
 let custom_prng () =
@@ -480,7 +486,7 @@ let custom_prng () =
   let raw = Concrete (Ndarray.of_floats Dtype.Uint32 [| 2 |] [| 0.; 0. |]) in
   Alcotest.(check bool) "raw split stays raw" false (R.is_key (R.split raw 2));
   let (), logged =
-    capture_log (fun () ->
+    capture_warnings (fun () ->
         Api.enable_custom_prng (fun () ->
             let k = raw_key 0 in
             Alcotest.(check bool) "PRNGKey typed" true (R.is_key k);

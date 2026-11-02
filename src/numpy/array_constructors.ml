@@ -38,4 +38,9 @@ let array ?dtype ?(ndmin = 0) v =
 
 let asarray ?dtype ?order v =
   NL.check_array_order order;
-  array ?dtype:(Option.map Dtypes.canonicalize_dtype dtype) v
+  array
+    ?dtype:
+      (Option.map
+         (Dtypes.check_and_canonicalize_user_dtype ~fun_name:"asarray")
+         dtype)
+    v

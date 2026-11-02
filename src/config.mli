@@ -30,6 +30,7 @@ val remove_size_one_mesh_axis_from_type : bool flag
 val jax2tf_associative_scan_reductions : bool flag
 val numpy_dtype_promotion : string flag
 val legacy_prng_key : string flag
+val explicit_x64_dtypes : string flag
 val default_matmul_precision : string option flag
 val matmul_level : unit -> string option
 val matmul_preset : unit -> string option

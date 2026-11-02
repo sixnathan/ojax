@@ -1831,6 +1831,8 @@ let needs_concrete op =
       "np_roots";
     ]
 
+let cannot_trace op = needs_concrete op && op <> "np_polydiv"
+
 let result_names = function
   | "gp_qr_full" ->
       Some (Ojax.Stages.result_names_of_tree Ojax.Numpy.Linalg.qr_result_def)

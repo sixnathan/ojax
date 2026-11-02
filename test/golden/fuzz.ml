@@ -278,13 +278,13 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
     (output_names case "eager")
     direct;
   let jit () =
-    if Parity_cases.needs_concrete op then direct ()
+    if Parity_cases.cannot_trace op then direct ()
     else
       Ojax.Api.jit_flat
         (fun args -> Parity_cases.run op params (lookup args))
         values
   in
-  if Parity_cases.needs_concrete op && output_names case "jit" = None then ()
+  if Parity_cases.cannot_trace op && output_names case "jit" = None then ()
   else
     check_mode ~suite ~case_id ~mode:"jit" ~string_of_dtype ~concrete b table
       (output_names case "jit") jit

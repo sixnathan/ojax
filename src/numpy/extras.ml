@@ -412,13 +412,13 @@ let leading_slice v start stop =
     [ v ]
 
 let at_leading_slice_set x start y =
-  let index =
-    L.broadcast_in_dim
-      (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
-      [| 1 |] [||]
-  in
   if size_of y = 0 then x
   else
+    let index =
+      L.broadcast_in_dim
+        (Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int start |]))
+        [| 1 |] [||]
+    in
     let r = rank x in
     L.scatter x index y
       {
@@ -503,7 +503,8 @@ let traced_unique_sized ?(flags = all_unique_flags) ?(equal_nan = true) ?axis
   let reshape_inverse = axis = None in
   let arr = match axis with None -> NL.ravel a | Some _ -> a in
   let ax = match axis with None -> 0 | Some x -> canon (rank a) x in
-  if (shape arr).(ax) = 0 && size <> 0 && fill_value = None then
+  let extent = (shape arr).(ax) in
+  if extent = 0 && size <> 0 && fill_value = None then
     invalid_arg
       "jnp.unique: for zero-sized input with nonzero size argument, fill_value \
        must be specified";
@@ -587,19 +588,11 @@ let rec unique_full ?flags ?equal_nan ?axis ?size ?fill_value a =
           fill_value must be specified"
    | _ -> ());
   match size with
+  | Some size when size_of a = 0 ->
+      traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
   | _ when is_complex_value a && axis = None ->
       unique_complex ?size ?fill_value a
-  | Some size ->
-      let axis_size =
-        match axis with
-        | None -> size_of a
-        | Some x -> (shape a).(canon (rank a) x)
-      in
-      if axis_size = 0 && size <> 0 && fill_value = None then
-        invalid_arg
-          "jnp.unique: for zero-sized input with nonzero size argument, \
-           fill_value must be specified";
-      traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
+  | Some size -> traced_unique ?flags ?equal_nan ?axis ~size ?fill_value a
   | _ ->
       let fill_value = Option.value fill_value ~default:0.0 in
       let nd = host "unique" a in

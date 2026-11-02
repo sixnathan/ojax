@@ -215,8 +215,9 @@ let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
   let num_groups = gs_shape.(gs_rank - 1) in
   if gs_rank <> 1 && gs_shape <> Array.append prefix_shape [| num_groups |] then
     Py_exn.type_error
-      "expected group_sizes to have the shape of the lhs prefix dimensions \
-       followed by the group count.";
+      (Printf.sprintf "expected group_sizes to have shape %s, got %s."
+         (Validate.python_tuple (Array.append prefix_shape [| num_groups |]))
+         (Validate.python_tuple gs_shape));
   let rhs_group = dims.rhs_group_dimensions in
   (match mode with
   | Ragged_contracting | Ragged_batch ->
@@ -240,6 +241,7 @@ let ragged_dot_general ?precision ?preferred_element_type ?group_offset lhs rhs
           (Printf.sprintf "expected rhs group dimension size to be %d, got %d."
              num_groups
              (shape rhs).(group)));
+  ignore (Lax.Utils.dot_general_shape dn (shape lhs) (shape rhs));
   let group_sizes =
     if gs_rank = 1 && Array.length prefix_shape > 0 then
       L.broadcast group_sizes prefix_shape

@@ -609,6 +609,9 @@ let bind prim args =
   check_broadcast prim args;
   Linalg_shape.check prim (fun () -> List.map value_shape args);
   Lax_shape.check prim (fun () -> List.map value_aval args);
+  (match !dynamic_trace with
+  | Some { kind = KJaxpr; _ } -> ()
+  | _ -> Lax_shape.verify prim (fun () -> List.map value_aval args));
   check_operands prim args;
   (match prim with
   | Reduce_sum axes when not (Config.value Config.allow_f16_reductions) ->

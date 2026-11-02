@@ -522,6 +522,40 @@ let dot_product_attention ?bias ?mask ?scale ~query ~key ~value () =
   let bias = Option.map ensure_4d bias in
   let mask = Option.map ensure_4d mask in
   let q_shape = shape query and k_shape = shape key in
+  if Array.length k_shape > 4 then
+    Py_exn.value_error
+      (Printf.sprintf "too many values to unpack (expected 4, got %d)"
+         (Array.length k_shape));
+  let check_rank name v =
+    if Array.length (shape v) <> 4 then
+      Py_exn.value_error
+        (Printf.sprintf "%s ndim should be 4, but got %d" name
+           (Array.length (shape v)))
+  in
+  check_rank "value" value;
+  check_rank "query" query;
+  let list_text l = Validate.python_list (Array.to_list l) in
+  let check_like name v expected =
+    Array.iteri
+      (fun i d ->
+        if d <> -1 && (shape v).(i) <> d then
+          Py_exn.value_error
+            (Printf.sprintf "%s shape should be %s: but got %s" name
+               (list_text expected)
+               (Validate.python_tuple (shape v))))
+      expected
+  in
+  let same_dtype name v =
+    if dtype v <> dtype key then
+      Py_exn.value_error
+        (Printf.sprintf "%s dtype should be %s, but got %s" name
+           (Dtype.numpy_name (dtype key))
+           (Dtype.numpy_name (dtype v)))
+  in
+  same_dtype "value" value;
+  check_like "value" value k_shape;
+  same_dtype "query" query;
+  check_like "query" query [| k_shape.(0); -1; -1; k_shape.(3) |];
   let b, t, n, h = (q_shape.(0), q_shape.(1), q_shape.(2), q_shape.(3)) in
   let k = k_shape.(2) in
   if Validate.py_mod n k <> 0 then

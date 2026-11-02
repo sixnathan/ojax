@@ -153,6 +153,97 @@ let check_conv lhs rhs (dn : conv_dims) ~window_strides ~padding ~lhs_dilation
           (List.map (fmt "np.int64(%d)") (Array.to_list spatial))
       ^ if Array.length spatial = 1 then ",)" else ")")
 
+let verify_conv rhs (dn : conv_dims) ~window_strides ~lhs_dilation ~rhs_dilation
+    =
+  let sdims = Array.length dn.rhs_spec - 2 in
+  let cannot_lower line =
+    Py_exn.value_error ("Cannot lower jaxpr with verifier errors:\n\t" ^ line)
+  in
+  let same_size what given =
+    if Array.length given <> sdims then
+      cannot_lower
+        (Printf.sprintf
+           "expects %s factors to have same dimension-size as size of window \
+            dimensions (%d), but got: %d."
+           what sdims (Array.length given))
+  in
+  same_size "base-dilation" lhs_dilation;
+  same_size "window-dilation" rhs_dilation;
+  for i = 0 to sdims - 1 do
+    let w = rhs.(dn.rhs_spec.(i + 2)) in
+    if w <= 0 then
+      cannot_lower
+        (Printf.sprintf
+           "expects window to have positive value for %d-th window dimension, \
+            but got %d."
+           i w);
+    if window_strides.(i) <= 0 then
+      cannot_lower
+        (Printf.sprintf
+           "expects window to have positive stride for %d-th window dimension, \
+            but got %d."
+           i window_strides.(i))
+  done
+
+let shapes_text shapes = String.concat ", " (List.map tuple shapes)
+
+let check_concatenate shapes dimension =
+  match shapes with
+  | [] -> Py_exn.type_error "concatenate expects at least one operand, got 0."
+  | first :: rest ->
+      if List.exists (fun s -> Array.length s <> Array.length first) rest then
+        Py_exn.type_error
+          ("Cannot concatenate arrays with different numbers of dimensions: \
+            got " ^ shapes_text shapes ^ ".");
+      if dimension < 0 || dimension >= Array.length first then
+        Py_exn.type_error
+          (Printf.sprintf
+             "concatenate dimension out of bounds: dimension %d for shapes %s."
+             dimension (shapes_text shapes));
+      let without s =
+        List.filteri (fun i _ -> i <> dimension) (Array.to_list s)
+      in
+      if List.exists (fun s -> without s <> without first) rest then
+        Py_exn.type_error
+          (Printf.sprintf
+             "Cannot concatenate arrays with shapes that differ in dimensions \
+              other than the one being concatenated: concatenating along \
+              dimension %d for shapes %s."
+             dimension (shapes_text shapes))
+
+let padding_text config =
+  let one (l, h, i) = Printf.sprintf "(%d, %d, %d)" l h i in
+  match Array.to_list config with
+  | [ c ] -> "(" ^ one c ^ ",)"
+  | items -> "(" ^ String.concat ", " (List.map one items) ^ ")"
+
+let check_pad operand value config =
+  if Array.length value <> 0 then
+    Py_exn.value_error
+      ("padding_value must be a scalar; got np.shape(padding_value)="
+     ^ tuple value);
+  if Array.length config <> Array.length operand then
+    Py_exn.value_error
+      (Printf.sprintf
+         "length of padding_config must equal the number of axes of operand, \
+          got padding_config %s for operand shape %s"
+         (padding_text config) (tuple operand));
+  if Array.exists (fun (_, _, i) -> i < 0) config then
+    Py_exn.value_error
+      ("interior padding in padding_config must be nonnegative, got \
+        padding_config " ^ padding_text config);
+  let result =
+    Array.mapi
+      (fun n (l, h, i) -> l + h + dilate_dim operand.(n) (i + 1))
+      config
+  in
+  if Array.exists (fun d -> d < 0) result then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Dimension size after padding is not at least 0, got result shape %s, \
+          for padding_config %s and operand shape %s"
+         (tuple result) (padding_text config) (tuple operand))
+
 let check prim avals =
   match prim with
   | Reduce_sum axes
@@ -183,5 +274,38 @@ let check prim avals =
           check_conv lhs.shape rhs.shape dimension_numbers ~window_strides
             ~padding ~lhs_dilation ~rhs_dilation ~feature_group_count
             ~batch_group_count
+      | _ -> ())
+  | Rng_bit_generator { rbg_shape; _ }
+    when Array.exists (fun d -> d < 0) rbg_shape ->
+      raise
+        (Py_exn.Mlir_error
+           "Invalid type:\nerror: unknown: invalid tensor dimension size")
+  | Concatenate dimension ->
+      check_concatenate
+        (List.map (fun (a : aval) -> a.shape) (avals ()))
+        dimension
+  | Pad config -> (
+      match avals () with
+      | [ operand; value ] -> check_pad operand.shape value.shape config
+      | _ -> ())
+  | Sort _ -> (
+      match avals () with
+      | first :: rest
+        when List.exists (fun (a : aval) -> a.shape <> first.shape) rest ->
+          Py_exn.type_error
+            ("Arguments to sort must have equal shapes, got: "
+            ^ String.concat " "
+                (List.map (fun (a : aval) -> tuple a.shape) (first :: rest)))
+      | _ -> ())
+  | _ -> ()
+
+let verify prim avals =
+  match prim with
+  | Conv_general_dilated
+      { window_strides; lhs_dilation; rhs_dilation; dimension_numbers; _ } -> (
+      match avals () with
+      | [ _; (rhs : aval) ] ->
+          verify_conv rhs.shape dimension_numbers ~window_strides ~lhs_dilation
+            ~rhs_dilation
       | _ -> ())
   | _ -> ()

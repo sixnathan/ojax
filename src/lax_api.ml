@@ -229,8 +229,19 @@ let squeeze x dims =
   else b1 (Squeeze (Array.map (canon_axis n) dims)) [ x ]
 
 let expand_dims x dims =
+  let repeated d =
+    List.length (List.sort_uniq compare (Array.to_list d)) <> Array.length d
+  in
+  let complain d =
+    if repeated d then
+      Py_exn.value_error
+        ("repeated axis in lax.expand_dims: "
+        ^ Validate.python_list (Array.to_list d))
+  in
+  complain dims;
   let n = ndim x + Array.length dims in
   let dims = Array.map (canon_axis n) dims in
+  complain dims;
   let sh = shape x in
   let rest = ref (Array.to_list sh) in
   let out =
@@ -808,8 +819,14 @@ let dot_general ?precision ?preferred_element_type x y ~lhs_contract
 
 let batch_matmul ?precision ?preferred_element_type x y =
   let n = ndim x in
-  if ndim y <> n || n < 2 then
-    Py_exn.type_error "batch_matmul requires equal ranks of at least two";
+  if Stdlib.min n (ndim y) < 2 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Arguments to batch_matmul must be at least 2D, got %d, %d" n (ndim y));
+  if n <> ndim y then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Arguments to batch_matmul must have same ndim, got %d, %d" n (ndim y));
   let batch = Array.init (n - 2) Fun.id in
   dot_general ?precision ?preferred_element_type x y
     ~lhs_contract:[| n - 1 |]
@@ -837,16 +854,20 @@ let padtype_to_pads in_shape window_shape window_strides padding =
           (Printf.sprintf
              "operands could not be broadcast together with shapes (%d,) (%d,) "
              ni ns);
-      Array.mapi
-        (fun i size ->
-          let stride = window_strides.(if ns = 1 then 0 else i) in
-          let out = (size + stride - 1) / stride in
-          let total =
-            Stdlib.max (((out - 1) * stride) + window_shape.(i) - size) 0
-          in
-          let small = total / 2 and large = total - (total / 2) in
-          if padding = Same then (small, large) else (large, small))
-        in_shape
+      if ni <> ns then [||]
+      else
+        Array.mapi
+          (fun i size ->
+            let stride = window_strides.(i) in
+            let out =
+              if stride = 0 then 0 else -(Validate.py_floordiv (-size) stride)
+            in
+            let total =
+              Stdlib.max (((out - 1) * stride) + window_shape.(i) - size) 0
+            in
+            let small = total / 2 and large = total - (total / 2) in
+            if padding = Same then (small, large) else (large, small))
+          in_shape
 
 let python_string_tuple (a, b, c) = Printf.sprintf "('%s', '%s', '%s')" a b c
 
@@ -1335,6 +1356,7 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
   in
   let in_features = (shape lhs).(dn.lhs_spec.(1)) in
   let window = product filter_shape in
+  Validate.check_shapelike ~name:"iota" ~arg:"shape" [| window; window |];
   let eye = Interpreters.Ad.lax_eye (dtype_of lhs) window window in
   let spread =
     b1

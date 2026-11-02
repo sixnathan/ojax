@@ -3,6 +3,7 @@ exception Type_error of string
 exception Index_error of string
 exception Key_error of string
 exception Name_error of string
+exception Mlir_error of string
 exception Overflow_error of string
 exception Not_implemented_error of string
 exception Assertion_error of string

@@ -1515,19 +1515,42 @@ let collective_batch trace axis_size kind axis_name vals bdims =
       in
       let foldaxis axis x =
         let s = shape_of x in
-        b1
-          (Reshape
-             (Array.concat
-                [
-                  Array.sub s 0 axis;
-                  [| s.(axis) * s.(axis + 1) |];
-                  Array.sub s (axis + 2) (Array.length s - axis - 2);
-                ]))
-          [ x ]
+        let at i =
+          let n = Array.length s in
+          if i < -n || i >= n then Py_exn.index_error "tuple index out of range";
+          s.(if i < 0 then i + n else i)
+        in
+        let product = at axis * at (axis + 1) in
+        let n = Array.length s in
+        let clamp v = if v < 0 then Stdlib.max (v + n) 0 else Stdlib.min v n in
+        let start = clamp axis and stop = clamp (axis + 2) in
+        let new_shape =
+          Array.concat
+            [
+              Array.sub s 0 start;
+              [| product |];
+              (let from = Stdlib.max start stop in
+               Array.sub s from (n - from));
+            ]
+        in
+        let size a = Array.fold_left ( * ) 1 a in
+        if size new_shape <> size s then
+          Py_exn.type_error
+            (Printf.sprintf
+               "cannot reshape array of shape %s (size %d) into shape %s (size \
+                %d)"
+               (Validate.python_tuple s) (size s)
+               (Validate.python_list (Array.to_list new_shape))
+               (size new_shape));
+        b1 (Reshape new_shape) [ x ]
       in
       let move src dst x =
         let n = Array.length (shape_of x) in
         let rest = List.filter (fun i -> i <> src) (List.init n Fun.id) in
+        let m = List.length rest in
+        let dst =
+          if dst < 0 then Stdlib.max (dst + m) 0 else Stdlib.min dst m
+        in
         let perm =
           List.filteri (fun i _ -> i < dst) rest
           @ (src :: List.filteri (fun i _ -> i >= dst) rest)
@@ -1548,6 +1571,17 @@ let collective_batch trace axis_size kind axis_name vals bdims =
         let concat = foldaxis concat_axis (move d concat_axis v) in
         (splitaxis split_axis concat, Some split_axis)
   | Reduce_scatter { scatter_dimension; tiled; _ }, [ v ], [ b ] ->
+      (if not tiled then
+         let kept =
+           Array.length (Core.get_aval v).shape
+           - match b with Some _ -> 1 | None -> 0
+         in
+         if scatter_dimension < -kept || scatter_dimension >= kept then
+           Py_exn.index_error "tuple index out of range"
+         else if scatter_dimension < 0 then
+           raise
+             (Py_exn.Assertion_error
+                (Printf.sprintf "(%d, %d)" scatter_dimension kept)));
       let y =
         match b with
         | None ->

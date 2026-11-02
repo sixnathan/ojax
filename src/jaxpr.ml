@@ -368,6 +368,8 @@ let hoist_custom_consts prim (c : closed_jaxpr) args =
   | _ -> (prim, args, c, fun _ -> ())
 
 let barrier_calls : (int, unit) Hashtbl.t = Hashtbl.create 16
+let remat_body : (int -> closed_jaxpr option) ref = ref (fun _ -> None)
+let remat_rebuild : (int -> closed_jaxpr -> int) ref = ref (fun id _ -> id)
 let lowering = ref false
 
 let process_primitive trace prim args =

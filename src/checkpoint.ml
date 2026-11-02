@@ -633,6 +633,12 @@ let remat_vmap id axis_size vals bdims =
       Some (outs, List.map (fun b -> if b then Some 0 else None) out_batched)
 
 let () =
+  (Jaxpr.remat_body :=
+     fun id -> Option.map (fun r -> r.body) (Hashtbl.find_opt remats id));
+  (Jaxpr.remat_rebuild :=
+     fun id body ->
+       let { differentiated; _ } = Hashtbl.find remats id in
+       remat_id ~differentiated body);
   Interpreters.Batching.custom_call_batch := remat_vmap;
   Partial_eval.custom_call_rule := remat_partial_eval;
   Ad.custom_call_transpose := remat_transpose

@@ -577,6 +577,7 @@ jnp.searchsorted_c4ea3f63_float64:eager:error_text	1
 jnp.searchsorted_c4ea3f63_float64:jit:error_text	1
 jnp.searchsorted_ddf9386c_float64:eager:error_text	1
 jnp.searchsorted_ddf9386c_float64:jit:error_text	1
+jnp.setxor1d_488e42c5_float64:jit:error_text	1
 jnp.size_2baf27dc_float64:eager:error_text	1
 jnp.size_2baf27dc_float64:jit:error_text	1
 jnp.sort_212e2b6b_float64:eager:error_text	1

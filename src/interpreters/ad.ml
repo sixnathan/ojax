@@ -2433,7 +2433,7 @@ let lin_process (trace : trace) (b : jaxpr_builder) prim primals tangents =
                   match known_of_pe main p with
                   | `Known c -> c
                   | `Unknown _ ->
-                      failwith
+                      Py_exn.value_error
                         "Linearization failed to produce known values for all \
                          output primals. This is typically caused by \
                          attempting to differentiate a function uses an \
@@ -4767,8 +4767,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           carry_tv carry_out
       @ xs_cts
   | While _ ->
-      failwith
-        "ad: reverse-mode differentiation does not work for lax.while_loop"
+      Py_exn.value_error
+        "Reverse-mode differentiation does not work for lax.while_loop or \
+         lax.fori_loop with dynamic start/stop values. Try using lax.scan, or \
+         using fori_loop with static start/stop."
   | Triangular_solve o -> (
       match primals with
       | [ a; b ] when is_undef b && not (is_undef a) ->

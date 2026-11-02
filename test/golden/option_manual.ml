@@ -46,11 +46,6 @@ let normalize op options =
   | `Assoc fields -> `Assoc (List.filter_map (signal_option op) fields)
   | other -> other
 
-let float_pair j =
-  match A.elements j with
-  | [ a; b ] -> (A.float_ a, A.float_ b)
-  | _ -> A.no "type:pair"
-
 let scalar_dtype : A.json -> Ojax.Dtype.t = function
   | `Bool _ -> Ojax.Dtype.Bool
   | `Int _ -> Ojax.Dtypes.default_int_dtype ()
@@ -106,7 +101,7 @@ let run op positional options arr =
   | "jnp.histogramdd" ->
       let range =
         A.opt options "range" (fun j ->
-            Array.of_list (List.map float_pair (A.elements j)))
+            Array.of_list (List.map A.float_pair (A.elements j)))
       in
       let weights = A.opt options "weights" v in
       let density = A.opt options "density" A.bool_ in

@@ -118,7 +118,7 @@ let run op positional options arr =
       Ojax.Numpy.Lax_numpy.array_split
         ?axis:(A.opt options "axis" A.int_)
         ((A.value arr) positional.(0))
-        (A.sections positional.(1))
+        ((A.sections arr) positional.(1))
   | "jnp.asarray" ->
       [
         Ojax.Numpy.Array_constructors.asarray
@@ -432,6 +432,7 @@ let run op positional options arr =
       let a, b =
         Ojax.Numpy.Extras.histogram
           ?bins:(A.opt options "bins" A.int_)
+          ?range:(A.opt options "range" A.float_pair)
           ?weights:(A.opt options "weights" (A.value arr))
           ?density:(A.opt options "density" A.bool_)
           ((A.value arr) positional.(0))
@@ -451,6 +452,7 @@ let run op positional options arr =
       [
         Ojax.Numpy.Extras.histogram_bin_edges
           ?bins:(A.opt options "bins" A.int_)
+          ?range:(A.opt options "range" A.float_pair)
           ?weights:(A.opt options "weights" (A.value arr))
           ((A.value arr) positional.(0));
       ]
@@ -977,7 +979,7 @@ let run op positional options arr =
       Ojax.Numpy.Lax_numpy.split
         ?axis:(A.opt options "axis" A.int_)
         ((A.value arr) positional.(0))
-        (A.sections positional.(1))
+        ((A.sections arr) positional.(1))
   | "jnp.squeeze" ->
       [
         Ojax.Numpy.Lax_numpy.squeeze
@@ -1602,7 +1604,7 @@ let run op positional options arr =
           ?padding:(Some (A.padding positional.(3)))
           ?lhs_dilation:(A.opt options "lhs_dilation" A.int_array)
           ?rhs_dilation:(A.opt options "rhs_dilation" A.int_array)
-          ?precision:(A.opt options "precision" A.string_pair)
+          ?precision:(A.opt options "precision" A.precision)
           ?preferred_element_type:
             (A.opt options "preferred_element_type" A.dtype)
           ~filter_shape:(A.int_array positional.(1))
@@ -1835,8 +1837,8 @@ let run op positional options arr =
           ((A.value arr) positional.(0));
       ]
   | "lax_linalg.eig" ->
-      A.refuse options [ "implementation" ];
       Ojax.Lax.Linalg.eig
+        ?implementation:(A.opt options "implementation" A.eig_implementation)
         ?compute_left_eigenvectors:
           (A.opt options "compute_left_eigenvectors" A.bool_)
         ?compute_right_eigenvectors:
@@ -1844,9 +1846,9 @@ let run op positional options arr =
         ?enable_eigvec_derivs:(A.opt options "enable_eigvec_derivs" A.bool_)
         ((A.value arr) positional.(0))
   | "lax_linalg.eigh" ->
-      A.refuse options [ "implementation" ];
       let a, b =
         Ojax.Lax.Linalg.eigh
+          ?implementation:(A.opt options "implementation" A.eigh_implementation)
           ?lower:(A.opt options "lower" A.bool_)
           ?symmetrize_input:(A.opt options "symmetrize_input" A.bool_)
           ?sort_eigenvalues:(A.opt options "sort_eigenvalues" A.bool_)
@@ -2463,10 +2465,10 @@ let run op positional options arr =
         ?type_:(A.opt options "type" A.int_)
         ((A.value arr) positional.(0))
   | "sp_linalg.eigh_tridiagonal" ->
-      A.refuse options [ "select_range" ];
       Ojax.Scipy.Linalg.eigh_tridiagonal
         ?eigvals_only:(A.opt options "eigvals_only" A.bool_)
         ?select:(A.opt options "select" A.string_)
+        ?select_range:(A.opt options "select_range" A.float_pair)
         ?tol:(A.opt options "tol" A.float_)
         ?key:(A.opt options "key" (A.value arr))
         ((A.value arr) positional.(0))

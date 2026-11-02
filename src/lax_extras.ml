@@ -517,12 +517,7 @@ let conv_general_dilated_local ?window_strides ?padding ?lhs_dilation
     match precision with
     | None -> None
     | Some (Lax_config.Precision (l, _)) ->
-        let name = function
-          | Lax_config.Precision_default -> "DEFAULT"
-          | Lax_config.Precision_high -> "HIGH"
-          | Lax_config.Precision_highest -> "HIGHEST"
-        in
-        Some (name l, "DEFAULT")
+        Some (Lax_config.Precision (l, Lax_config.Precision_default))
     | Some _ ->
         raise
           (Py_exn.Value_error

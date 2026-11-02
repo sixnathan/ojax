@@ -15,7 +15,10 @@ type dtype_class =
   | Character
   | Object_
 
-type sections = Count of int | Indices of int array
+type sections =
+  | Count of int
+  | Indices of int array
+  | Index_array of Types.value
 
 val transpose : ?axes:int array -> Types.value -> Types.value
 val permute_dims : Types.value -> int array -> Types.value

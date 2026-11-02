@@ -436,7 +436,7 @@ val conv_general_dilated_patches :
   ?lhs_dilation:int array ->
   ?rhs_dilation:int array ->
   ?dimension_numbers:conv_dims ->
-  ?precision:string * string ->
+  ?precision:Lax_config.precision ->
   ?preferred_element_type:Dtype.t ->
   value ->
   filter_shape:int array ->

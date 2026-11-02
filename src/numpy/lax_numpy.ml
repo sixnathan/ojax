@@ -973,14 +973,50 @@ let unwrap ?discont ?axis ?period p0 =
       | _ -> invalid_arg "unwrap: arity")
     [ p0 ]
 
-type sections = Count of int | Indices of int array
+type sections = Count of int | Indices of int array | Index_array of T.value
+
+let split_traced op v element_shape =
+  raise
+    (Errors.concretization_type_error
+       ~context:(Printf.sprintf "in jax.numpy.%s argument 1\n" op)
+       ~error_repr:
+         (Printf.sprintf "traced array with shape %s[%s]"
+            (D.numpy_name (dtype v))
+            (String.concat ","
+               (Array.to_list (Array.map string_of_int element_shape))))
+       ~origin_msg:(Jaxpr.origin_msg v) ())
+
+let split_host = function
+  | T.Concrete nd -> nd
+  | T.Device b -> Pjrt.Buffer.to_host b
+  | T.Tracer _ -> assert false
+
+let split_sections op = function
+  | Index_array arr when ndim arr > 0 ->
+      let sh = shape arr in
+      let element_shape = Array.sub sh 1 (Array.length sh - 1) in
+      (match arr with
+      | T.Tracer _ -> split_traced op arr element_shape
+      | _ -> ());
+      let host = split_host arr in
+      if Array.length element_shape > 0 || not (is_integral (dtype arr)) then
+        Py_exn.type_error
+          "Only integer scalar arrays can be converted to a scalar index.";
+      Indices
+        (Array.init sh.(0) (fun i -> int_of_float (Nd.get_f host [| i |])))
+  | Index_array arr ->
+      (match arr with T.Tracer _ -> split_traced op arr [||] | _ -> ());
+      Count (int_of_float (Nd.get_f (split_host arr) [||]))
+  | s -> s
 
 let do_split ~array_split ?(axis = 0) v s =
   let nd = ndim v in
   let axis = canonicalize_axis axis nd in
   let size = (shape v).(axis) in
+  let s = split_sections (if array_split then "array_split" else "split") s in
   let sizes =
     match s with
+    | Index_array _ -> assert false
     | Indices idx ->
         let bounds = Array.concat [ [| 0 |]; idx; [| size |] ] in
         Array.init

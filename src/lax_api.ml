@@ -1510,8 +1510,8 @@ let conv_general_dilated_patches ?window_strides ?(padding = Valid)
   in
   let strides = Option.value window_strides ~default:(Array.make k 1) in
   conv_general_dilated ?lhs_dilation ?rhs_dilation ~dimension_numbers:dn
-    ?conv_precision:precision ?preferred_element_type
-    ~feature_group_count:in_features lhs kernel ~window_strides:strides padding
+    ?precision ?preferred_element_type ~feature_group_count:in_features lhs
+    kernel ~window_strides:strides padding
 
 let scatter_apply ?(update_shape : int array option) ?indices_are_sorted
     ?unique_indices ?mode x indices func dimension_numbers =

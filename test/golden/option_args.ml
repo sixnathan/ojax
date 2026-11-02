@@ -91,10 +91,6 @@ let rounding_method : json -> Ojax.Lax_config.rounding_method = function
   | `Int 1 -> Ojax.Lax_config.To_nearest_even
   | _ -> no "type:rounding_method"
 
-let sections : json -> Ojax.Numpy.Lax_numpy.sections = function
-  | `Int n -> Ojax.Numpy.Lax_numpy.Count n
-  | j -> Ojax.Numpy.Lax_numpy.Indices (int_array j)
-
 let dtype : json -> D.t = function
   | `String s -> Ojax.Numpy.Extras.dtype s
   | _ -> no "type:dtype"
@@ -190,3 +186,18 @@ let einsum_optimize : json -> Ojax.Numpy.Einsum_paths.optimize = function
 let axis_arg : json -> Ojax.Numpy.Reductions.axis_arg = function
   | `Int n -> Ojax.Numpy.Reductions.Axis n
   | j -> Ojax.Numpy.Reductions.Axes (int_array j)
+
+let eig_implementation : json -> Ojax.Lax_config.eig_implementation = function
+  | _ -> no "type:enum"
+
+let eigh_implementation : json -> Ojax.Lax_config.eigh_implementation = function
+  | _ -> no "type:enum"
+
+let float_pair j =
+  match elements j with [ a; b ] -> (float_ a, float_ b) | _ -> no "type:pair"
+
+let sections arr : json -> Ojax.Numpy.Lax_numpy.sections = function
+  | `Int n -> Ojax.Numpy.Lax_numpy.Count n
+  | `Assoc [ ("$arr", _) ] as j ->
+      Ojax.Numpy.Lax_numpy.Index_array (value arr j)
+  | j -> Ojax.Numpy.Lax_numpy.Indices (int_array j)

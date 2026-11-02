@@ -835,6 +835,8 @@ lax_linalg.ormqr_852e4ce9_float64:eager:error_text	1
 lax_linalg.ormqr_852e4ce9_float64:jit:error_text	1
 lax_linalg.ormqr_8fb644f2_float64:eager:error_text	1
 lax_linalg.ormqr_8fb644f2_float64:jit:error_text	1
+lax_linalg.qdwh_b48f32f5_float64:eager:error_text	1
+lax_linalg.qdwh_b48f32f5_float64:jit:error_text	1
 lax_linalg.qr_bab525b7_float64:eager:error_text	1
 lax_linalg.qr_bab525b7_float64:jit:error_text	1
 lax_linalg.qr_e6002618_float64:eager:error_text	1

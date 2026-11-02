@@ -1,3 +1,4 @@
+copts_bogus	1
 copts_fast_math_on	1
 copts_fast_min_max_off	1
 copts_fast_min_max_on	1

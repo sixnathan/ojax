@@ -78,6 +78,31 @@ let parse_signature (s : string) : int list * int list =
   let rhs = String.sub s (arrow + 2) (String.length s - arrow - 2) in
   (List.map List.length (parse_side lhs), List.map List.length (parse_side rhs))
 
+let check_rank_promotion ~signature shapes core_ndims =
+  match Config.value Config.numpy_rank_promotion with
+  | "allow" -> ()
+  | mode ->
+      let ranks =
+        List.filter_map
+          (fun (sh, nc) ->
+            if Array.length sh = 0 then None else Some (Array.length sh - nc))
+          (List.combine shapes core_ndims)
+      in
+      if List.length (List.sort_uniq compare ranks) > 1 then begin
+        let msg =
+          Printf.sprintf
+            "operands with shapes [%s] require rank promotion for \
+             jnp.vectorize function with signature %s. Set the \
+             jax_numpy_rank_promotion config option to 'allow' to disable this \
+             message; for more information, see \
+             https://docs.jax.dev/en/latest/rank_promotion_warning.html."
+            (String.concat ", " (List.map Validate.python_tuple shapes))
+            (Option.value signature ~default:"None")
+        in
+        if mode = "warn" then Py_warnings.warn msg
+        else if mode = "raise" then Py_exn.value_error msg
+      end
+
 let vectorize_many ?(excluded = []) ?signature pyfunc raw_args =
   let n = List.length raw_args in
   let args_arr = Array.of_list raw_args in
@@ -149,6 +174,9 @@ let vectorize_many ?(excluded = []) ?signature pyfunc raw_args =
          dyn_arr)
   in
   let broadcast_shape = LN.broadcast_shapes_n batch_shapes in
+  check_rank_promotion ~signature
+    (List.map shape_of dynamic)
+    (Array.to_list ncs);
   let nb = Array.length broadcast_shape in
   let pieces =
     Array.to_list

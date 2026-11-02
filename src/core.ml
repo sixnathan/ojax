@@ -611,7 +611,8 @@ let is_elementwise = function
   | Add | Add_any | Sub | Mul | Div | Max | Min | Pow | And | Atan2 | Mulhi
   | Nextafter | Or | Rem | Shift_left | Shift_right_arithmetic
   | Shift_right_logical | Xor | Eq | Lt | Gt | Ge | Le | Eq_to | Le_to | Lt_to
-  | Ne | Complex | Igamma | Igammac | Igamma_grad_a | Polygamma | Zeta ->
+  | Ne | Complex | Igamma | Igammac | Igamma_grad_a | Polygamma | Zeta
+  | Regularized_incomplete_beta ->
       true
   | _ -> false
 

@@ -419,6 +419,27 @@ let copts_thunk name () =
        (unary (fun a -> leaf (Ojax.Numpy.Reductions.max a)))
        [ leaf x ])
 
+let special_fn name a b =
+  let module S = Ojax.Scipy.Special in
+  match name with
+  | "betaln" -> S.betaln a b
+  | "beta" -> S.beta a b
+  | "betainc" -> S.betainc a b (F.multiply a (py_float 0.1))
+  | "gammainc" -> S.gammainc a b
+  | "gammaincc" -> S.gammaincc a b
+  | "xlogy" -> S.xlogy a b
+  | "xlog1py" -> S.xlog1py a b
+  | "boxcox" -> S.boxcox a b
+  | "boxcox1p" -> S.boxcox1p a b
+  | "rel_entr" -> S.rel_entr a b
+  | "kl_div" -> S.kl_div a b
+  | "polygamma" -> S.polygamma a b
+  | "zeta" -> S.zeta ~q:b a
+  | "poch" -> S.poch a b
+  | "owens_t" -> S.owens_t a b
+  | "expn" -> S.expn a b
+  | other -> failwith ("jit_opts: unknown special " ^ other)
+
 let strings j = List.map U.to_string (U.to_list j)
 
 let expected_of row =
@@ -490,6 +511,22 @@ let actual_of row =
             (arg = "high") (fun () -> run_case thunk))
   | "donate_run" ->
       run_case (donate_run_thunk (U.to_string (U.member "case" row)))
+  | "rank_special" ->
+      let fn = U.to_string (U.member "fn" row) in
+      let mode = U.to_string (U.member "mode" row) in
+      let shapes =
+        List.map
+          (fun s -> Array.of_list (List.map U.to_int (U.to_list s)))
+          (U.to_list (U.member "shapes" row))
+      in
+      let a, b =
+        match shapes with
+        | [ sa; sb ] ->
+            (operand sa Ojax.Dtype.F32 0, operand sb Ojax.Dtype.F32 1)
+        | _ -> failwith "jit_opts: shapes"
+      in
+      Ojax.Config.with_value Ojax.Config.numpy_rank_promotion mode (fun () ->
+          run_case (fun () -> [ special_fn fn a b ]))
   | "copts" -> run_case (copts_thunk (U.to_string (U.member "case" row)))
   | "text" ->
       let thunk = text_thunk (U.to_string (U.member "case" row)) in

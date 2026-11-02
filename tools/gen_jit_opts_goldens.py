@@ -44,6 +44,10 @@ DONATE_RUN_CASES = ["run_ok", "run_use", "run_again", "run_unusable",
                     "run_static", "run_keep"]
 COPTS_CASES = ["none", "fast_min_max_on", "fast_min_max_off",
                "fast_math_on", "bogus"]
+SPECIAL_FNS = ["betaln", "beta", "betainc", "gammainc", "gammaincc", "xlogy",
+               "xlog1py", "boxcox", "boxcox1p", "rel_entr", "kl_div",
+               "polygamma", "zeta", "poch", "owens_t", "expn"]
+SPECIAL_SHAPES = [((3,), (2, 3)), ((2, 3), (3,)), ((1, 2), (4, 3, 2))]
 FLAGS = [("nans", True, False), ("infs", False, True), ("both", True, True)]
 
 
@@ -258,6 +262,25 @@ def main():
                 r.update({"id": f"rank_{mode}_{fn}_{i}", "group": "rank",
                           "mode": mode, "fn": fn,
                           "dtype": np.dtype(dtype).name,
+                          "shapes": [list(sa), list(sb)]})
+                rows.append(r)
+    import jax.scipy.special as jsp
+    for mode in ["raise", "warn"]:
+        for fn in SPECIAL_FNS:
+            for i, (sa, sb) in enumerate(SPECIAL_SHAPES):
+                a = jnp.asarray(operand(sa, np.float32, 0))
+                b = jnp.asarray(operand(sb, np.float32, 1))
+                f = getattr(jsp, fn)
+                if fn == "betainc":
+                    def call(f=f, a=a, b=b):
+                        return f(a, b, a * 0.1)
+                else:
+                    def call(f=f, a=a, b=b):
+                        return f(a, b)
+                with jax.numpy_rank_promotion(mode):
+                    r = run_case(call)
+                r.update({"id": f"rank_special_{mode}_{fn}_{i}",
+                          "group": "rank_special", "mode": mode, "fn": fn,
                           "shapes": [list(sa), list(sb)]})
                 rows.append(r)
     x = jnp.asarray(np.array([-1.0, 2.0], np.float32))

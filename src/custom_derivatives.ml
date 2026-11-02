@@ -71,10 +71,10 @@ let defjvps ?name primal rules =
   self := call;
   call
 
-let rec custom_vjp ?(nondiff_argnums = []) primal ~fwd ~bwd =
+let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f") primal ~fwd ~bwd =
   if nondiff_argnums <> [] then fun args ->
     let kept, diff = split_nondiff nondiff_argnums args in
-    custom_vjp
+    custom_vjp ~name
       (fun d -> primal (merge_nondiff nondiff_argnums kept d))
       ~fwd:(fun d -> fwd (merge_nondiff nondiff_argnums kept d))
       ~bwd:(fun res ct -> bwd (kept @ res) ct)
@@ -84,6 +84,7 @@ let rec custom_vjp ?(nondiff_argnums = []) primal ~fwd ~bwd =
       Core.register_custom_rule
         (Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed = None })
     in
+    Core.register_custom_names id ~name ~jvp_name:"fwd";
     fun args -> Core.bind (Custom_vjp_call id) args
 
 type symbolic_zero = { aval : aval }
@@ -230,7 +231,7 @@ let custom_gradient f =
     in
     Jaxpr.eval_closed_jaxpr closed (cts @ res)
   in
-  custom_vjp primal ~fwd ~bwd
+  custom_vjp ~name:"wrapped_fun" primal ~fwd ~bwd
 
 let linear_call ~forward ~transpose =
   let id =

@@ -421,7 +421,7 @@ let custom_num_consts : (eqn -> int option) ref = ref (fun _ -> None)
 
 let custom_call_of (e : eqn) =
   match e.prim with
-  | Custom_jvp_call id ->
+  | Custom_jvp_call id | Custom_vjp_call id ->
       let vid =
         match e.outs with (first : var) :: _ -> Some first.vid | [] -> None
       in
@@ -487,7 +487,7 @@ and structure_of_eqn (e : eqn) =
     | Custom_linear_solve { matvec; vecmat; solve; transpose_solve; _ } ->
         (matvec :: Option.to_list vecmat)
         @ (solve :: Option.to_list transpose_solve)
-    | Custom_jvp_call _ -> (
+    | Custom_jvp_call _ | Custom_vjp_call _ -> (
         match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
     | Scatter_add _ -> update_of Add
     | Scatter_sub _ -> update_of Sub
@@ -1084,7 +1084,7 @@ let insertion_order (e : eqn) =
         (fun (_, p) ->
           match p with Sub c -> [ c ] | Subs cs -> cs | Plain _ -> [])
         (Hashtbl.find custom_view_params id)
-  | Custom_jvp_call _ -> (
+  | Custom_jvp_call _ | Custom_vjp_call _ -> (
       match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
   | _ ->
       List.concat_map
@@ -1346,6 +1346,17 @@ and pp_eqn ctx (e : eqn) =
     | Custom_jvp_call id when Hashtbl.mem custom_view_params id ->
         Hashtbl.find custom_view_params id
     | Checkpoint_name name -> [ ("name", Plain name) ]
+    | Custom_vjp_call _ -> (
+        match custom_call_of e with
+        | Some (name, fwd, c) ->
+            [
+              ("name", Plain name);
+              ("bwd", Plain "bwd");
+              ("call_jaxpr", Sub c);
+              ("fwd", Plain fwd);
+              ("symbolic_zeros", Plain "False");
+            ]
+        | None -> [])
     | Custom_lin { rule; n_res; in_zeros; _ } -> (
         match !custom_lin_vjp rule with
         | true ->

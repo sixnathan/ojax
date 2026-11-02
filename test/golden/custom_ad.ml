@@ -49,7 +49,7 @@ let extend layer f =
   | "custom_vjp" ->
       let fwd a = (flat a, a) in
       let bwd res cts = scale (JU.py_float 1.5) (vjp_of f res cts) in
-      Some (wrap (CD.custom_vjp flat ~fwd ~bwd))
+      Some (wrap (CD.custom_vjp ~name:"g" flat ~fwd ~bwd))
   | "custom_vjp_nondiff" ->
       let primal a = flat (List.tl a) in
       let fwd a = (flat (List.tl a), List.tl a) in
@@ -58,7 +58,9 @@ let extend layer f =
         | k :: res -> scale k (vjp_of f res cts)
         | [] -> failwith "custom_ad: nondiff"
       in
-      let call = CD.custom_vjp ~nondiff_argnums:[ 0 ] primal ~fwd ~bwd in
+      let call =
+        CD.custom_vjp ~nondiff_argnums:[ 0 ] ~name:"<lambda>" primal ~fwd ~bwd
+      in
       Some (wrap (fun a -> call (k () :: a)))
   | "custom_jvp_nondiff" ->
       let primal a = flat (List.tl a) in

@@ -79,10 +79,10 @@ raw:complex:x64_off	20	20
 raw:complex:x64_on	40	40
 raw:compose_fuzz:x64_off	16322	18202
 raw:compose_fuzz:x64_on	22321	24900
-custom_ad:x64_off	1743	1757
-custom_ad:x64_on	1708	1720
-raw:custom_ad:x64_off	1325	1757
-raw:custom_ad:x64_on	1283	1720
+custom_ad:x64_off	1747	1757
+custom_ad:x64_on	1711	1720
+raw:custom_ad:x64_off	1329	1757
+raw:custom_ad:x64_on	1286	1720
 index_fuzz:x64_off	4511	4608
 index_fuzz:x64_on	4608	4608
 raw:index_fuzz:x64_off	3282	4608

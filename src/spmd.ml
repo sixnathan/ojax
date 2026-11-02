@@ -556,8 +556,8 @@ let rec map_axes pairs done_axes remaining in_specs out_spec_of f args =
         Concrete (Ndarray.of_floats Dtype.F32 [| size |] (Array.make size 0.0))
       in
       let stacked =
-        B.vmap_flat ~axis_name:axis inner (in_axes @ [ Some 0 ])
-          (prepared @ [ counter ])
+        B.vmap_flat ~axis_name:axis ~partial_permute:true inner
+          (in_axes @ [ Some 0 ]) (prepared @ [ counter ])
       in
       List.map2
         (fun y placement ->

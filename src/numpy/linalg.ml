@@ -649,27 +649,27 @@ and vector_norm ?(axis = None) ?(keepdims = false) ?(ord = Onum 2.0) x =
             RED.amax ~axis:ax ~keepdims ~initial:(Jnp_util.py_int 0) (UF.abs x)
       else if o = neg_infinity then aminf (UF.abs x)
       else if o = 0.0 then
-        let finfo_dtype =
+        let fdt =
           match dtype x with
           | D.Complex64 -> D.F32
           | D.Complex128 -> D.F64
-          | d when Dtypes.issubdtype d `Floating -> d
+          | d when is_inexact d -> d
           | d ->
               Py_exn.value_error
                 (Printf.sprintf
                    "data type dtype('%s') not compatible with finfo"
                    (D.numpy_name d))
         in
-        sumf (NL.astype (UF.not_equal x (const (dtype x) 0.0)) finfo_dtype)
+        sumf (NL.astype (UF.not_equal x (Jnp_util.py_int 0)) fdt)
       else if o = 1.0 then sumf (UF.abs x)
       else
         let ax = UF.abs x in
         let dt = dtype ax in
-        let ord_nd = Nd.of_floats dt [||] [| o |] in
-        let ord_value = Nd.get_f ord_nd [||] in
-        UF.power
-          (sumf (UF.power ax (T.Concrete ord_nd)))
-          (const dt (1.0 /. ord_value))
+        let ord_arr = const dt o in
+        let ord_inv =
+          const dt (1.0 /. Nd.get_f (Nd.of_floats dt [||] [| o |]) [||])
+        in
+        UF.power (sumf (UF.power ax ord_arr)) ord_inv
 
 and matrix_norm_impl x ord r c keepdims =
   let nd = ndim x in

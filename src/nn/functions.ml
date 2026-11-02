@@ -186,12 +186,18 @@ let leaky_relu ?negative_slope x =
       where3 (UF.greater_equal x (py_int 0)) x (UF.multiply slope x))
     x
 
+let squareplus_body x b =
+  let y = UF.add x (UF.sqrt (UF.add (UF.square x) b)) in
+  UF.divide y (py_int 2)
+
 let squareplus ?b x =
-  jit_scalar "squareplus" ~default:(py_int 4) b
-    (fun x b ->
-      let y = UF.add x (UF.sqrt (UF.add (UF.square x) b)) in
-      UF.divide y (py_int 2))
-    x
+  jit_scalar "squareplus" ~default:(py_int 4) b squareplus_body x
+
+let squareplus_value ~b x =
+  Numpy.Jnp_util.jit1 "squareplus"
+    (function
+      | [ x; b ] -> squareplus_body x b | _ -> invalid_arg "squareplus: arity")
+    [ x; b ]
 
 let log1mexp_primal x =
   let c = UF.log (py_float 2.0) in
@@ -798,6 +804,13 @@ let squareplus ?b a0 =
   Eager_jit.one "nn.functions.squareplus" b [] [ a0 ] (fun opts vals ->
       match (opts, vals) with
       | [], [ a0 ] -> squareplus ?b a0
+      | _ -> assert false)
+
+let squareplus_value ~b a0 =
+  Eager_jit.one "nn.functions.squareplus_value" () [] [ a0; b ]
+    (fun opts vals ->
+      match (opts, vals) with
+      | [], [ a0; b ] -> squareplus_value ~b a0
       | _ -> assert false)
 
 let softplus a0 =

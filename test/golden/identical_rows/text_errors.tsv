@@ -1,3 +1,6 @@
+apicov/x64_off	ap_intersect_indices_1_c2de1da7_float32	i	i	i
+apicov/x64_on	ap_intersect_indices_1_c2de1da7_float32	i	i	i
+apicov/x64_on	ap_intersect_indices_1_c2de1da7_float64	i	i	i
 fuzz/x64_off	bl_cholesky_2x2x3x3_82be0e79_float32_shape_small	i	i	i
 fuzz/x64_off	bl_cholesky_3x3_38660d7d_float32_shape_small	i	i	i
 fuzz/x64_off	bl_det_2x2x3x3_82be0e79_float32_shape_small	i	i	i

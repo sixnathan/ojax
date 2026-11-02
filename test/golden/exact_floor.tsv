@@ -26,6 +26,8 @@ aot_mem:x64_off	1107	1107
 aot_mem:x64_on	1104	1104
 ordered_lowering:x64_off	11	11
 ordered_lowering:x64_on	11	11
+vmap_coll:x64_off	112	112
+vmap_coll:x64_on	112	112
 dtypes:x64_off	7	7
 dtypes:x64_on	9	9
 e2e	36	36
@@ -103,6 +105,8 @@ raw:aot_mem:x64_off	1107	1107
 raw:aot_mem:x64_on	1104	1104
 raw:ordered_lowering:x64_off	11	11
 raw:ordered_lowering:x64_on	11	11
+raw:vmap_coll:x64_off	112	112
+raw:vmap_coll:x64_on	112	112
 raw:index_fuzz:x64_off	3379	4608
 raw:index_fuzz:x64_on	3413	4608
 apply_transforms:x64_off	408	408

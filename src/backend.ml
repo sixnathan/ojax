@@ -1284,6 +1284,7 @@ let build_region name f avals =
     None
   in
   match Jaxpr.make_jaxpr avals f with
+  | exception error when Py_exn.class_name error <> None -> raise error
   | exception error when eager_rejection error ->
       fall_back (Printexc.to_string error)
   | cj -> (
@@ -1381,8 +1382,7 @@ and jitted_eval (name, statics) f args =
         | outs when output_matches outs wanted ->
             incr eager_executions;
             outs
-        | _ -> f args
-        | exception Errors.Jax_runtime_error _ -> f args)
+        | _ -> f args)
 
 let () =
   Jaxpr.eager_jit :=

@@ -733,10 +733,10 @@ let solve_sylvester ?(method_ = "schur") ?(tol = 1e-8) a b q =
          (Validate.python_tuple (shape b))
          (Validate.python_tuple (shape q)));
   let tol = Numpy.Jnp_util.py_float tol in
-  Numpy.Jnp_util.jit1 "solve_sylvester"
+  Numpy.Jnp_util.jit1 "solve_sylvester" ~key:method_
     (function
       | [ a; b; q ] ->
-          Numpy.Jnp_util.jit1 "_solve_sylvester_2d"
+          Numpy.Jnp_util.jit1 "_solve_sylvester_2d" ~key:method_
             (function
               | [ a; b; q; tol ] -> solve_sylvester_2d ~method_ a b q tol
               | _ -> assert false)

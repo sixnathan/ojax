@@ -8,8 +8,8 @@ batching:x64_off	22	22
 batching:x64_on	25	25
 complex:x64_off	20	20
 complex:x64_on	40	40
-compose_fuzz:x64_off	18078	18202
-compose_fuzz:x64_on	24794	24900
+compose_fuzz:x64_off	18186	18202
+compose_fuzz:x64_on	24877	24900
 conditionals:x64_off	19	19
 conditionals:x64_on	23	23
 contractions:x64_off	47	47
@@ -75,8 +75,8 @@ raw:batching:x64_off	22	22
 raw:batching:x64_on	25	25
 raw:complex:x64_off	20	20
 raw:complex:x64_on	40	40
-raw:compose_fuzz:x64_off	16202	18202
-raw:compose_fuzz:x64_on	22222	24900
+raw:compose_fuzz:x64_off	16310	18202
+raw:compose_fuzz:x64_on	22305	24900
 raw:conditionals:x64_off	19	19
 raw:conditionals:x64_on	23	23
 raw:contractions:x64_off	47	47

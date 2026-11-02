@@ -1032,6 +1032,109 @@ let quantile_plain a q ~axis ~method_ ~keepdims =
 let take_along_axis_hook : (axis:int -> T.value -> T.value -> T.value) ref =
   ref (fun ~axis:_ _ _ -> invalid_arg "take_along_axis is not linked")
 
+let getitem_hook : (T.value -> T.value list -> T.value) ref =
+  ref (fun _ _ -> invalid_arg "getitem is not linked")
+
+let quantile_squashed_values a q ~ax ~keepdims =
+  let lit v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |]) in
+  let q_ndim = ndim q in
+  let counts =
+    sum ~axis:[| ax |] ~keepdims ~dtype:(dtype q)
+      (Lax_api.bitwise_not (isnan a))
+  in
+  let after = shape counts in
+  let n_after = Array.length after in
+  let q = Lax_api.expand_dims q (Array.init n_after (fun i -> q_ndim + i)) in
+  let counts = Lax_api.expand_dims counts (Array.init q_ndim Fun.id) in
+  let q = Lax_api.mul q (Lax_api.sub counts (lit q 1.0)) in
+  let low = Lax_api.floor q in
+  let high = Lax_api.ceil q in
+  let high_weight = Lax_api.sub q low in
+  let _low_weight = Lax_api.sub (lit high_weight 1.0) high_weight in
+  let bound v =
+    Lax_api.max (lit v 0.0)
+      (Lax_api.min v (Lax_api.sub counts (lit counts 1.0)))
+  in
+  let low = bound low in
+  let high = bound high in
+  let idt = Dtypes.default_int_dtype () in
+  let low = convert low idt in
+  let high = convert high idt in
+  let out_shape =
+    Array.append (shape q |> fun s -> Array.sub s 0 q_ndim) after
+  in
+  let index =
+    List.init n_after (fun dim ->
+        Lax_api.broadcasted_iota idt out_shape (dim + q_ndim))
+  in
+  let place v =
+    if keepdims then List.mapi (fun i x -> if i = ax then v else x) index
+    else
+      List.filteri (fun i _ -> i < ax) index
+      @ (v :: List.filteri (fun i _ -> i >= ax) index)
+  in
+  let low_value = !getitem_hook a (place low) in
+  let high_value = !getitem_hook a (place high) in
+  ignore (low_value, high_value)
+
+let quantile_plain_values a q ~ax ~keepdims =
+  let q_ndim = ndim q in
+  let a_shape = shape a in
+  let qdt = dtype q in
+  let lit dt v = T.Concrete (Nd.of_floats dt [||] [| v |]) in
+  let n () = lit qdt (float_of_int a_shape.(ax)) in
+  let n_minus_1 () = bind1 T.Sub [ n (); lit qdt 1.0 ] in
+  let q = bind1 T.Mul [ q; n_minus_1 () ] in
+  let low = bind1 T.Floor [ q ] in
+  let high = bind1 T.Ceil [ q ] in
+  let high_weight = bind1 T.Sub [ q; low ] in
+  let low_weight = bind1 T.Sub [ lit qdt 1.0; high_weight ] in
+  let clamped v = bind1 T.Clamp [ lit qdt 0.0; v; n_minus_1 () ] in
+  let low = clamped low in
+  let high = clamped high in
+  let idt = Dtypes.default_int_dtype () in
+  let low = bind1 (T.Convert_element_type idt) [ low ] in
+  let high = bind1 (T.Convert_element_type idt) [ high ] in
+  let slice_sizes = Array.copy a_shape in
+  slice_sizes.(ax) <- 1;
+  let rank = Array.length a_shape in
+  let offset_stop = if keepdims then rank + q_ndim else rank + q_ndim - 1 in
+  let dimension_numbers =
+    {
+      T.offset_dims = Array.init (offset_stop - q_ndim) (fun i -> i + q_ndim);
+      collapsed_slice_dims = (if keepdims then [||] else [| ax |]);
+      start_index_map = [| ax |];
+      g_operand_batching_dims = [||];
+      g_start_indices_batching_dims = [||];
+      g_sorted_unique = false;
+    }
+  in
+  let gather_at idx =
+    let idx_shape = shape idx in
+    let wide =
+      bind1
+        (T.Broadcast_in_dim
+           {
+             shape = Array.append idx_shape [| 1 |];
+             dims = Array.init (Array.length idx_shape) Fun.id;
+           })
+        [ idx ]
+    in
+    bind1 (T.Gather { dimension_numbers; slice_sizes }) [ a; wide ]
+  in
+  let low_value = gather_at low in
+  let high_value = gather_at high in
+  if q_ndim = 1 then begin
+    ignore
+      (bind1
+         (T.Broadcast_in_dim { shape = shape low_value; dims = [| 0 |] })
+         [ low_weight ]);
+    ignore
+      (bind1
+         (T.Broadcast_in_dim { shape = shape high_value; dims = [| 0 |] })
+         [ high_weight ])
+  end
+
 let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   let ints n k = Array.init n (fun i -> k + i) in
   let a, weights =
@@ -1098,6 +1201,8 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
         ( bind1 (T.Sort { dimension = ax; is_stable = true; num_keys = 1 }) [ a ],
           None )
   in
+  if squash_nans then quantile_squashed_values a q ~ax ~keepdims
+  else quantile_plain_values a q ~ax ~keepdims;
   let weights =
     match weights with Some w -> w | None -> Lax_api.full_like a 1.0
   in
@@ -1114,7 +1219,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   let tw_f = Lax_api.expand_dims total (ints q_ndim 0) in
   let q_f =
     let target = Array.append (shape q) (Array.make (ndim total) 1) in
-    if target = shape q then q else reshape q target
+    if shape q <> [||] && target = shape q then q else reshape q target
   in
   let target = Lax_api.mul q_f tw_f in
   let aligned =
@@ -1131,7 +1236,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
     else Lax_api.full_like ~dtype:(dtype q) total (float_of_int extent)
   in
   let const_of v x = T.Concrete (Nd.of_floats (dtype v) [||] [| x |]) in
-  let limit = Lax_api.sub valid_counts (Lax_api.full_like valid_counts 1.0) in
+  let limit = bind1 T.Sub [ valid_counts; const_of valid_counts 1.0 ] in
   let max_idx = convert limit int_dt in
   let max_idx_f = Lax_api.expand_dims max_idx (ints q_ndim 0) in
   let max_idx_f = convert max_idx_f (dtype idx) in
@@ -1334,9 +1439,9 @@ let percentile ?axis ?keepdims ?method_ ?weights p0 p1 =
     (match weights with None -> [ p0; p1 ] | Some w -> [ p0; p1; w ])
 
 let nanpercentile ?axis ?(keepdims = false) ?(method_ = "linear") ?weights a q =
-  let cdt = to_inexact_dtype (dtype a) in
-  let q100 = bind1 T.Div [ convert q cdt; const_full cdt (shape q) 100.0 ] in
-  nanquantile ?axis ~keepdims ~method_ ?weights a q100
+  let q = to_inexact q in
+  let hundred = T.Concrete (Nd.of_floats (dtype q) [||] [| 100.0 |]) in
+  nanquantile ?axis ~keepdims ~method_ ?weights a (bind1 T.Div [ q; hundred ])
 
 let nanpercentile ?axis ?keepdims ?method_ ?weights p0 p1 =
   Jnp_util.jit1 "nanpercentile"

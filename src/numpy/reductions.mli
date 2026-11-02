@@ -240,6 +240,7 @@ val nanpercentile :
 
 val median : ?axis:axis_arg -> ?keepdims:bool -> Types.value -> Types.value
 val nanmedian : ?axis:axis_arg -> ?keepdims:bool -> Types.value -> Types.value
+val getitem_hook : (Types.value -> Types.value list -> Types.value) ref
 
 val take_along_axis_hook :
   (axis:int -> Types.value -> Types.value -> Types.value) ref

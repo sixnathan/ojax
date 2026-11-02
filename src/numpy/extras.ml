@@ -133,8 +133,23 @@ let normalised_indices ~extent indices =
   in
   L.broadcast_in_dim narrow [| size_of indices; 1 |] [| 0 |]
 
+let check_index_extent dt extent =
+  let bound =
+    match dt with
+    | Dtype.I8 -> Some (127, "int8")
+    | Dtype.I16 -> Some (32767, "int16")
+    | Dtype.I32 -> Some (2147483647, "int32")
+    | _ -> None
+  in
+  match bound with
+  | Some (largest, name) when extent > largest ->
+      invalid_arg
+        (Printf.sprintf "Python integer %d out of bounds for %s" extent name)
+  | _ -> ()
+
 let normalize_index idx extent =
   let dt = dtype_of idx in
+  check_index_extent dt extent;
   match dt with
   | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 -> idx
   | _ ->
@@ -217,6 +232,7 @@ let array_of_values vs =
   | parts -> Core.bind1 (Concatenate 0) parts
 
 let bincount_length length weights x =
+  check_index_extent (dtype_of x) length;
   let operand = L.full [| length |] 0.0 (dtype_of weights) in
   at_add operand [ NL.clip ~min:0.0 x ] weights
 

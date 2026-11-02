@@ -65,9 +65,30 @@ let effects_stub () =
     "no_effects equals itself" true
     (E.Effects.equal E.Effects.no_effects E.Effects.no_effects)
 
+let bincount_index_overflow () =
+  let x dtype value =
+    Ojax.Types.Concrete (Ojax.Ndarray.of_floats dtype [| 1 |] [| value |])
+  in
+  Alcotest.check_raises "int8 maximum"
+    (Invalid_argument "Python integer 128 out of bounds for int8") (fun () ->
+      ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I8 127.0)));
+  Alcotest.check_raises "int8 length"
+    (Invalid_argument "Python integer 128 out of bounds for int8") (fun () ->
+      ignore (Ojax.Numpy.Extras.bincount ~length:128 (x Ojax.Dtype.I8 1.0)));
+  Alcotest.check_raises "int16 maximum"
+    (Invalid_argument "Python integer 32768 out of bounds for int16") (fun () ->
+      ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I16 32767.0)));
+  Alcotest.check_raises "int32 maximum"
+    (Invalid_argument "Python integer 2147483648 out of bounds for int32")
+    (fun () ->
+      ignore (Ojax.Numpy.Extras.bincount (x Ojax.Dtype.I32 2147483647.0)))
+
 let () =
   Alcotest.run "errors"
     [
       ("messages", [ Alcotest.test_case "exact jax text" `Quick messages ]);
+      ( "bincount",
+        [ Alcotest.test_case "index overflow" `Quick bincount_index_overflow ]
+      );
       ("effects", [ Alcotest.test_case "no_effects stub" `Quick effects_stub ]);
     ]

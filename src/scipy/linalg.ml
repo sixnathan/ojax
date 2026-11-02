@@ -857,11 +857,11 @@ let rec expm ?(upper_triangular = false) ?(max_squarings = 16) a =
          "Expected A to be a (batched) square matrix, got A.shape=%s."
          (Validate.python_tuple sh));
   if nd > 2 then
-    List.hd
-      (Interpreters.Batching.vmap
-         (fun args ->
-           [ expm_jit ~upper_triangular ~max_squarings (List.hd args) ])
-         [ Some 0 ] [ a ])
+    Numpy.Vectorize.vectorize ~signature:"(n,n)->(n,n)"
+      (function
+        | [ x ] -> expm_jit ~upper_triangular ~max_squarings x
+        | _ -> assert false)
+      [ a ]
   else
     match calc_p_q a with
     | [ p; q; n_squarings ] -> (

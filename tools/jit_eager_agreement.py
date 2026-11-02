@@ -90,11 +90,20 @@ def load_cases(goldens, module, mode):
         return json.load(fh)["cases"]
 
 
+def numpy_sourced_cases(root, mode):
+    with open(os.path.join(root, "test/golden/numpy_products.ml"), encoding="utf-8") as fh:
+        text = fh.read()
+    return {case for case, set_name in re.findall(r'"(sw_\w+)",\s*"(x64_\w+)"', text) if set_name == mode}
+
+
 def compare_mode(root, goldens, mode):
     concrete = needs_concrete_ops(root)
     jit_cases = {c["case_id"]: c for c in load_cases(goldens, "parity_jit", mode)}
     rows = []
+    numpy_sourced = numpy_sourced_cases(root, mode)
     for case in load_cases(goldens, "parity", mode):
+        if case["case_id"] in numpy_sourced:
+            continue
         entry = jit_cases[case["case_id"]]
         eager_path = os.path.join(goldens, "parity", mode, "outputs", case["case_id"] + ".npz")
         jit_path = os.path.join(goldens, "parity_jit", mode, "outputs", case["case_id"] + ".npz")

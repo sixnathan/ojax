@@ -13,7 +13,7 @@ sys.path.insert(0, HERE)
 import run_goldens
 
 SUITES = ("fuzz:x64_off", "fuzz:x64_on")
-CODES = {-1: "ojax_raises", -2: "jax_raises", -3: "dtype", -4: "shape", -5: "arity", -6: "size", -7: "lost"}
+CODES = {-1: "ojax_raises", -2: "jax_raises", -3: "dtype", -4: "shape", -5: "arity", -6: "size", -7: "lost", -8: "both_raise_type"}
 VARIANT = re.compile(r"_(edge|wide|shape_small|shape_other)$")
 OP = re.compile(r"^(.+?)_(?:[0-9x_]*)[0-9a-f]{8}_float(?:32|64)_")
 

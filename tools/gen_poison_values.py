@@ -44,9 +44,6 @@ def outputs(c, arrays, jitted):
         result = fn(**arrays, p=c["params"])
     outs = list(result) if isinstance(result, (tuple, list)) else [result]
     outs = [np.asarray(o, order="C") for o in outs]
-    if registry.compares_at_single_precision(c["op"], arrays):
-        narrow = "float16" if arrays["a"].dtype == np.float16 else "float32"
-        outs = [o.astype(narrow) if o.dtype in (np.float64, np.float32) else o for o in outs]
     return outs
 
 

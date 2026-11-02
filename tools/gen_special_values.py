@@ -45,9 +45,6 @@ def run(op, a, jitted):
     result = jax.jit(lambda x: fn(a=x, p={}))(a) if jitted else fn(a=a, p={})
     outs = list(result) if isinstance(result, (tuple, list)) else [result]
     outs = [np.asarray(o, order="C") for o in outs]
-    if registry.compares_at_single_precision(op, {"a": a}):
-        narrow = "float16" if a.dtype == np.float16 else "float32"
-        outs = [o.astype(narrow) if o.dtype in (np.float64, np.float32) else o for o in outs]
     return outs
 
 

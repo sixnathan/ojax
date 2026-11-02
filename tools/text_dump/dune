@@ -4,12 +4,26 @@
 
 (copy_files# ../../test/golden/npz.ml)
 
-(copy_files# ../../test/golden/numpy_products.ml)
-
 (executable
  (name text_dump)
- (modules npz numpy_products parity_cases coverage_cases text_dump)
+ (modules npz parity_cases coverage_cases text_dump)
  (libraries yojson ojax)
  (preprocess
   (action
    (run %{exe:../ltr/ltr.exe} %{input-file}))))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree %{project_root}/goldens/parity)
+  (source_tree %{project_root}/goldens/coverage)
+  (source_tree %{project_root}/goldens/fuzz)
+  (source_tree %{project_root}/goldens/text)
+  (glob_files %{project_root}/test/golden/identical_rows/text_*.tsv))
+ (action
+  (run
+   ./text_dump.exe
+   %{project_root}/goldens
+   -
+   ratchet
+   %{project_root}/test/golden/identical_rows)))

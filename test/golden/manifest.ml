@@ -4564,6 +4564,12 @@ let spatial_transform_run c inputs =
       [ RT.as_euler seq (SLERP.apply sl (get "query")) ]
   | _ -> failwith ("spatial_transform golden: unknown op " ^ c.op)
 
+let numpy_sourced ~x64 case_id =
+  let set_name = if x64 then "x64_on" else "x64_off" in
+  List.exists
+    (fun (case, set, _, _, _, _) -> case = case_id && set = set_name)
+    Numpy_products.rows
+
 let composed_check_case ?reference ~run ~set_dir ~x64 c () =
   Ojax.Config.set Ojax.Config.enable_x64 x64;
   Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
@@ -4608,6 +4614,12 @@ let composed_check_case ?reference ~run ~set_dir ~x64 c () =
       | None ->
           Compare.check ~name ~compare:ocompare ~atol:oatol ~rtol:ortol
             ~expected:golden ~actual
+      | Some (_, select) when numpy_sourced ~x64 c.case_id ->
+          let expected =
+            find_member (Option.value (select c) ~default:outputs) o.oname
+          in
+          Compare.check ~name ~compare:ocompare ~atol:oatol ~rtol:ortol
+            ~expected ~actual:(aligned expected)
       | Some (eager_suite, select) ->
           let expected =
             find_member (Option.value (select c) ~default:outputs) o.oname
@@ -5112,6 +5124,60 @@ let numpy_product_rows () =
             ~actual:(npz_of_nd nd dtype "allclose")))
     Numpy_products.rows
 
+let row_ratchet_selftest () =
+  let suite = "fuzz:row_selftest" in
+  Compare.note_row suite "swapped_out" ~bit:false ~raw:false;
+  Compare.note_row suite "swapped_in" ~bit:true ~raw:true;
+  Compare.note_row suite "raw_lost" ~bit:true ~raw:false;
+  Compare.bump suite true;
+  let baseline name =
+    if name = suite then
+      [ ("swapped_out", true); ("raw_lost", true); ("never_ran", false) ]
+    else []
+  in
+  let failures ~require_all =
+    List.sort compare (Compare.row_failures ~require_all ~baseline)
+  in
+  let partial = failures ~require_all:false in
+  let complete = failures ~require_all:true in
+  Hashtbl.remove Compare.tallies suite;
+  Hashtbl.remove Compare.row_results (suite, "swapped_out");
+  Hashtbl.remove Compare.row_results (suite, "swapped_in");
+  Hashtbl.remove Compare.row_results (suite, "raw_lost");
+  Alcotest.(check (list string))
+    "a named row falls although the count holds"
+    [
+      "fuzz:row_selftest raw_lost: no longer identical in raw bytes";
+      "fuzz:row_selftest swapped_out: no longer identical";
+    ]
+    partial;
+  Alcotest.(check int) "a listed row that did not run" 3 (List.length complete)
+
+let error_types_selftest () =
+  let module E = Error_types in
+  let tier jax e = Option.value (E.tier ~jax e) ~default:"mismatch" in
+  let check name wanted got = Alcotest.(check string) name wanted got in
+  check "authored value error" "authored"
+    (tier "ValueError" (Invalid_argument "conv: inputs cannot be empty"));
+  check "authored type error" "authored"
+    (tier "TypeError" (Failure "matrix_transpose requires ndim >= 2"));
+  check "bounds check is incidental" "mismatch"
+    (tier "IndexError" (Invalid_argument "index out of bounds"));
+  check "stdlib message is incidental" "mismatch"
+    (tier "ValueError" (Invalid_argument "Array.make"));
+  check "hd is incidental" "mismatch" (tier "TypeError" (Failure "hd"));
+  check "typed" "typed"
+    (tier "ConcretizationTypeError" (Ojax.Errors.Concretization_type_error "x"));
+  check "typed against another class" "mismatch"
+    (tier "ValueError" (Ojax.Errors.Concretization_type_error "x"));
+  check "lowering failure is not a validation" "mismatch"
+    (tier "IndexError" (Ojax.Errors.Jax_runtime_error "x"));
+  check "division" "typed" (tier "ZeroDivisionError" Division_by_zero);
+  check "division against a value error" "mismatch"
+    (tier "ValueError" Division_by_zero);
+  check "assertion needs Assert_failure" "mismatch"
+    (tier "AssertionError" (Invalid_argument "authored"))
+
 let rec attributed_with_coverage suites =
   List.map attributed (coverage_suites @ suites)
 
@@ -5229,8 +5295,12 @@ let () =
          scipy_cluster_vq_suite_for "x64_on";
          scipy_optimize_suite_for "x64_off";
          scipy_optimize_suite_for "x64_on";
-         composed_suite_for ~run:parity_run "parity" "x64_off";
-         composed_suite_for ~run:parity_run "parity" "x64_on";
+         composed_suite_for
+           ~keep:(fun c -> not (numpy_sourced ~x64:false c.case_id))
+           ~run:parity_run "parity" "x64_off";
+         composed_suite_for
+           ~keep:(fun c -> not (numpy_sourced ~x64:true c.case_id))
+           ~run:parity_run "parity" "x64_on";
          parity_jit_suite_for "x64_off";
          parity_jit_suite_for "x64_on";
          composed_suite_for ~run:vectorize_run "vectorize" "x64_off";
@@ -5240,6 +5310,11 @@ let () =
          composed_suite_for ~run:spatial_transform_run "spatial_transform"
            "x64_on";
          ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
+         ( "row_ratchet",
+           [
+             Alcotest.test_case "names a row" `Quick row_ratchet_selftest;
+             Alcotest.test_case "error classes" `Quick error_types_selftest;
+           ] );
          ( "raw_bytes",
            [
              Alcotest.test_case "status" `Quick raw_status_tests;
@@ -5280,7 +5355,15 @@ let () =
                              || String.starts_with ~prefix:"raw:e2e\t" line
                              || (String.starts_with ~prefix:"fuzz:" line
                                 || String.starts_with ~prefix:"raw:fuzz:" line)
-                                && not (Fuzz.available ~goldens_root)))
+                                && not
+                                     (Fuzz.available ~goldens_root
+                                        ~name:Fuzz.primary)
+                             || (String.starts_with ~prefix:"fuzz_s2:" line
+                                || String.starts_with ~prefix:"raw:fuzz_s2:"
+                                     line)
+                                && not
+                                     (Fuzz.available ~goldens_root
+                                        ~name:Fuzz.second_seed)))
                          (String.split_on_char '\n' Exact_floor.data))));
           ] );
       ])

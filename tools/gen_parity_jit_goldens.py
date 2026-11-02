@@ -63,9 +63,6 @@ def run_shard(x64, index, count, outdir):
             entry["jit_error"] = type(error).__name__
             entries.append(entry)
             continue
-        if registry.compares_at_single_precision(c["op"], arrays):
-            narrow = "float16" if arrays["a"].dtype == np.float16 else "float32"
-            outs = [o.astype(narrow) if o.dtype in (np.float64, np.float32) else o for o in outs]
         out_arrays = {"out" + str(i): o for i, o in enumerate(outs)}
         np.savez(os.path.join(outdir, "outputs", c["case_id"] + ".npz"), **out_arrays)
         entry["outputs"] = [

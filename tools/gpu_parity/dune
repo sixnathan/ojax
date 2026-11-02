@@ -2,11 +2,9 @@
 
 (copy_files# ../../test/golden/npz.ml)
 
-(copy_files# ../../test/golden/numpy_products.ml)
-
 (executable
  (name gpu_parity)
- (modules npz numpy_products parity_cases gpu_parity)
+ (modules npz parity_cases gpu_parity)
  (libraries yojson ojax)
  (preprocess
   (action

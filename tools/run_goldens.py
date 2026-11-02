@@ -11,6 +11,8 @@ import sys
 import tempfile
 import time
 
+import row_ratchet
+
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 LISTED = re.compile(r"^(\S+)\s+(\d+)\s")
 
@@ -98,6 +100,50 @@ def tally(log):
     return counts
 
 
+def is_fuzz_suite(group):
+    return group.startswith(("fuzz:", "fuzz_s2:"))
+
+
+def row_classes(log):
+    groups = collections.defaultdict(collections.Counter)
+    with open(log, errors="replace") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 6:
+                continue
+            suite = parts[4]
+            if suite.startswith("parity_jit_eager:") or suite in ("compare", "ratchet_selftest"):
+                continue
+            if suite.startswith("fuzz:"):
+                group = "fuzz"
+            elif suite.startswith("fuzz_s2:"):
+                group = "fuzz_s2"
+            else:
+                group = "fixed"
+            counter = groups[group]
+            counter["rows"] += 1
+            counter["identical"] += parts[2] == "0"
+            counter["raw"] += parts[5] == "same"
+            counter["both_raise"] += parts[5] == "both_raise"
+            counter["both_raise_type"] += parts[5].startswith("both_raise_type:")
+            counter["both_raise_typed"] += parts[5] == "both_raise" and len(parts) > 6 and parts[6] == "typed"
+            counter["both_raise_authored"] += parts[5] == "both_raise" and len(parts) > 6 and parts[6] == "authored"
+            counter["empty"] += parts[1] == "0" and parts[5] == "same"
+    return groups
+
+
+def print_row_classes(log):
+    print("set\trows\tidentical\traw\tboth_raise\t(typed\tauthored)\tboth_raise_type\tempty_arrays")
+    groups = row_classes(log)
+    for name in ("fixed", "fuzz", "fuzz_s2"):
+        c = groups.get(name)
+        if c:
+            print(
+                f"{name}\t{c['rows']}\t{c['identical']}\t{c['raw']}\t{c['both_raise']}\t{c['both_raise_typed']}\t"
+                f"{c['both_raise_authored']}\t{c['both_raise_type']}\t{c['empty']}"
+            )
+
+
 def float_nan_uses(root):
     uses = []
     for directory, _, files in os.walk(os.path.join(root, "src")):
@@ -162,12 +208,12 @@ def main():
                 env=job_env,
                 stdout=out,
                 stderr=subprocess.STDOUT,
-                preexec_fn=bound_fuzz_memory if group.startswith("fuzz:") else None,
+                preexec_fn=bound_fuzz_memory if is_fuzz_suite(group) else None,
             )
             running.append((proc, next_job, out, slot[1], job_log, time.time()))
             next_job += 1
         for item in running[:]:
-            is_fuzz = jobs[item[1]][0].startswith("fuzz:")
+            is_fuzz = is_fuzz_suite(jobs[item[1]][0])
             stall = args.stall_timeout or (60 if is_fuzz else 0)
             if stall and item[0].poll() is None:
                 moved = os.path.getmtime(item[4]) if os.path.exists(item[4]) else item[5]
@@ -227,6 +273,10 @@ def main():
         fell = [(s, counts[s], f) for s, f in sorted(floors.items()) if s in ran and counts[s] < f]
     for suite, got, floor in fell:
         print(f"RATCHET {suite}: {got} bit-identical, floor {floor}")
+    row_fell = 0
+    if not args.no_ratchet and not args.filter:
+        row_fell = row_ratchet.report(row_ratchet.row_failures(root, log))
+        row_fell += row_ratchet.report(row_ratchet.run_text_check(root, env["OJAX_GOLDENS"], min(args.jobs, 8)))
 
     totals = collections.Counter()
     with open(log) as f:
@@ -235,19 +285,23 @@ def main():
             if len(parts) >= 5:
                 totals[parts[4]] += 1
     shadow = [s for s in totals if s.startswith("parity_jit_eager:")]
-    uncounted = set(shadow) | {"compare", "ratchet_selftest"}
+    second_seed = [s for s in totals if s.startswith("fuzz_s2:")]
+    uncounted = set(shadow) | set(second_seed) | {"compare", "ratchet_selftest"}
     identical = sum(n for s, n in counts.items() if s not in uncounted and not s.startswith("raw:"))
     rows = sum(n for s, n in totals.items() if s not in uncounted)
     raw_identical = sum(n for s, n in counts.items() if s.startswith("raw:") and s[4:] not in uncounted)
+    print_row_classes(log)
     print(f"raw npz bytes and dtype: {raw_identical}/{rows} identical")
     print(f"{len(cases)} tests, {len(jobs)} jobs, {time.time() - started:.0f}s, {identical}/{rows} bit-identical")
     if shadow:
         print(f"parity_jit against the eager goldens: {sum(counts[s] for s in shadow)}/{sum(totals[s] for s in shadow)} bit-identical, {sum(counts['raw:' + s] for s in shadow)} in raw bytes")
+    if second_seed:
+        print(f"fuzz_s2, not in the totals above: {sum(counts[s] for s in second_seed)}/{sum(totals[s] for s in second_seed)} bit-identical, {sum(counts['raw:' + s] for s in second_seed)} in raw bytes")
     shutil.rmtree(work, ignore_errors=True)
     nan_uses = float_nan_uses(root)
     if nan_uses:
         print("Float.nan is 0x7ff8000000000001, JAX's nan is 0x7ff8000000000000; use Float_format.nan in: " + ", ".join(nan_uses))
-    sys.exit(1 if failed or fell or nan_uses else 0)
+    sys.exit(1 if failed or fell or row_fell or nan_uses else 0)
 
 
 if __name__ == "__main__":

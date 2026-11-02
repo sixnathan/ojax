@@ -3,6 +3,7 @@
  (modules
   npz
   compare
+  error_types
   exact_floor
   numpy_products
   narrow_dtypes
@@ -58,6 +59,8 @@
   (source_tree %{project_root}/goldens/coverage)
   (source_tree %{project_root}/goldens/parity_jit)
   (source_tree %{project_root}/goldens/fuzz)
+  (source_tree %{project_root}/goldens/fuzz_s2)
+  (glob_files identical_rows/*.tsv)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))
 

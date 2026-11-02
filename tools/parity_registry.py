@@ -1340,13 +1340,6 @@ def _tracer_batch_cases():
     ]
 
 
-def compares_at_single_precision(op, arrays):
-    name = op.split("_", 1)[1] if "_" in op else op
-    if name not in ("sp_owens_t", "st_norm_ppf", "st_norm_isf"):
-        return False
-    return "a" in arrays and arrays["a"].dtype != np.float64
-
-
 def _real_only(op):
     name = op.split("_", 1)[1]
     library = name.startswith(("nn_", "sp_", "st_"))

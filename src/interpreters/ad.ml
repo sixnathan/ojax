@@ -4597,7 +4597,10 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Cumprod _ | Cummax _ | Cummin _ | Cumlogsumexp _ | Threefry2x32
   | Iota_2x32_shape _ | Random_seed | Random_split _ | Random_fold_in
   | Random_bits _ | Random_wrap | Random_unwrap | Random_gamma _ ->
-      failwith "ad: primitive has no transpose rule (deferred, matches jax gap)"
+      Py_exn.not_implemented_error
+        ("Transpose rule (for reverse-mode differentiation) for '"
+        ^ Pretty_printer.primitive_name prim
+        ^ "' not implemented")
   | Scan { length; reverse; num_consts; num_carry; jaxpr; unroll } ->
       let split_at l n =
         match Util.split_list l [ n ] with [ a; b ] -> (a, b) | _ -> arity ()
@@ -4818,11 +4821,18 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       | _ -> failwith "ad: tridiagonal_solve is linear only in its right side")
   | Checkpoint_name _ -> [ Some (ct1 ()) ]
   | Xla_call c -> xla_call_transpose c cts primals
-  | Stop_gradient -> failwith "ad: stop_gradient has no transpose rule"
+  | Stop_gradient ->
+      Py_exn.not_implemented_error
+        ("Transpose rule (for reverse-mode differentiation) for '"
+        ^ Pretty_printer.primitive_name prim
+        ^ "' not implemented")
   | Cholesky | Cholesky_update | Symmetric_product _ | Householder_product | Lu
   | Lu_pivots_to_permutation _ | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Ormqr _
   | Eig _ | Eigh _ | Hessenberg | Schur _ | Svd _ | Tridiagonal _ ->
-      failwith "ad: nonlinear linalg primitive has no transpose rule"
+      Py_exn.not_implemented_error
+        ("Transpose rule (for reverse-mode differentiation) for '"
+        ^ Pretty_printer.primitive_name prim
+        ^ "' not implemented")
   | Decomposable _ -> failwith "ad: decomposed before differentiation"
 
 and xla_call_transpose (c : closed_jaxpr) cts primals =

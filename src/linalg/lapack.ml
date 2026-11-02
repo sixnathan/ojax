@@ -260,4 +260,5 @@ let ffi_targets =
   @ [
       ("tridiagonal_solve_perturbed_ffi", ffi_handler_ "tridiagonal_perturbed");
       ("xla_ffi_python_cpu_callback", ffi_handler_ "host_callback");
+      ("dce_sink", ffi_handler_ "dce_sink");
     ]

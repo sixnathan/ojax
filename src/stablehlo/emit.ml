@@ -4250,6 +4250,7 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
           [ Concrete (Ndarray.of_floats Dtype.F32 [| 0 |] [||]) ])
   | Dce_sink { prevent_mlir_dce = false } -> ()
   | Dce_sink { prevent_mlir_dce = true } ->
+      ignore (lapack_ffi ());
       let in_aval = atom_aval (List.hd eqn.inputs) in
       Buffer.add_string ctx.buf
         (Printf.sprintf

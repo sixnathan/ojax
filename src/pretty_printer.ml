@@ -229,6 +229,11 @@ let prim_name = function
   | Zeta -> "zeta"
   | Platform_index _ -> "platform_index"
   | Xla_call _ -> "xla_call"
+  | Collective { kind = Psum; _ } -> "psum_invariant"
+  | Collective { kind = Pmax; _ } -> "pmax"
+  | Collective { kind = Pmin; _ } -> "pmin"
+  | Collective { kind = Axis_index; _ } -> "axis_index"
+  | Collective { kind = Ppermute _; _ } -> "ppermute"
   | Collective _ -> "collective"
   | Fft _ -> "fft"
   | Custom_jvp_call id when Hashtbl.mem custom_view_names id ->
@@ -754,6 +759,15 @@ let jax_params (e : eqn) =
   | Conj -> [ ("input_dtype", Plain (dn (in_dtype ()))) ]
   | Round -> [ ("rounding_method", Plain "0") ]
   | Round_nearest_even -> [ ("rounding_method", Plain "1") ]
+  | Collective { kind = Psum; axis_name } ->
+      [ ("axes", Plain ("('" ^ axis_name ^ "',)")) ]
+  | Collective { kind = Pmax | Pmin; axis_name } ->
+      [
+        ("axes", Plain ("('" ^ axis_name ^ "',)"));
+        ("axis_index_groups", Plain "None");
+      ]
+  | Collective { kind = Axis_index; axis_name } ->
+      [ ("axis_name", Plain axis_name) ]
   | Fft { fft_type; fft_lengths } ->
       let code =
         match fft_type with

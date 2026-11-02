@@ -3664,7 +3664,22 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | Integer_pow y when y < 0 ->
       emit_inlined ctx eqn in_ids (function
         | [ x ] ->
-            let positive = Core.bind1 (Integer_pow (-y)) [ x ] in
+            let rec power acc base k =
+              if k = 0 then acc
+              else
+                let acc =
+                  if k land 1 = 0 then acc
+                  else
+                    match acc with
+                    | None -> Some base
+                    | Some so_far -> Some (Core.bind1 Mul [ so_far; base ])
+                in
+                let k = k asr 1 in
+                power acc
+                  (if k > 0 then Core.bind1 Mul [ base; base ] else base)
+                  k
+            in
+            let positive = Option.get (power None x (-y)) in
             let a = Core.get_aval x in
             let scalar_one = Core.splat a.dtype [||] 1.0 in
             let one =

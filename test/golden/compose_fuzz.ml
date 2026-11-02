@@ -279,7 +279,18 @@ let promote_program params =
     let right = if is_arg lhs then 1 else 0 in
     leaf (op (operand lhs 0) (operand rhs right))
 
-let getitem k i = Ojax.Lax_api.index_in_dim ~keepdims:false k i
+let getitem k i =
+  let shape = (C.get_aval k).shape in
+  let limit = Array.copy shape in
+  limit.(0) <- i + 1;
+  let start = Array.make (Array.length shape) 0 in
+  start.(0) <- i;
+  Ojax.Lax_api.squeeze
+    (C.bind1
+       (T.Slice { start_indices = start; limit_indices = limit; strides = None })
+       [ k ])
+    [| 0 |]
+
 let ints_of v = Array.of_list (List.map U.to_int (U.to_list v))
 
 let prng_program params =

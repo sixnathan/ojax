@@ -412,12 +412,31 @@ let verifier_diagnostic reason =
     | _ -> None
   else None
 
+let custom_call_diagnostic reason =
+  let line =
+    match String.index_opt reason '\n' with
+    | Some i -> String.sub reason 0 i
+    | None -> reason
+  in
+  let marker = ": error: 'stablehlo.custom_call' op " in
+  let n = String.length marker in
+  let rec find i =
+    if i + n > String.length line then None
+    else if String.sub line i n = marker then
+      Some (String.sub line (i + n) (String.length line - i - n))
+    else find (i + 1)
+  in
+  if String.starts_with ~prefix:"-:" line then find 0 else None
+
 let compile_failure reason =
-  match verifier_diagnostic reason with
-  | Some message ->
+  match (verifier_diagnostic reason, custom_call_diagnostic reason) with
+  | Some message, _ ->
       Py_exn.value_error
-        ("Cannot lower jaxpr with verifier errors:\n\t" ^ message)
-  | None -> runtime_error reason
+        ("Cannot lower jaxpr with verifier errors:\n\t" ^ message
+       ^ "\nDefine JAX_DUMP_IR_TO to dump the module.")
+  | None, Some message ->
+      runtime_error ("UNKNOWN: error: 'stablehlo.custom_call' op " ^ message)
+  | None, None -> runtime_error reason
 
 let guard_implicit_args args =
   List.iter

@@ -1072,18 +1072,14 @@ let emit_stack ctx (eqn : eqn) in_ids axis =
         (n, ty_exp))
       in_ids eqn.inputs
   in
-  match expanded with
-  | [ (only, _) ] -> Hashtbl.replace ctx.ids out.vid only
-  | _ ->
-      let n = bind_var ctx out in
-      let operands =
-        String.concat ", " (List.map (fun (i, _) -> name i) expanded)
-      in
-      let intys = String.concat ", " (List.map snd expanded) in
-      Buffer.add_string ctx.buf
-        (Printf.sprintf
-           "    %s = stablehlo.concatenate %s, dim = %d : (%s) -> %s\n" (name n)
-           operands axis intys outty)
+  let n = bind_var ctx out in
+  let operands =
+    String.concat ", " (List.map (fun (i, _) -> name i) expanded)
+  in
+  let intys = String.concat ", " (List.map snd expanded) in
+  Buffer.add_string ctx.buf
+    (Printf.sprintf "    %s = stablehlo.concatenate %s, dim = %d : (%s) -> %s\n"
+       (name n) operands axis intys outty)
 
 let emit_tile ctx (eqn : eqn) in_ids reps =
   let x = sole in_ids in

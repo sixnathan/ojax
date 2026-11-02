@@ -967,6 +967,9 @@ let take_rows x indices m rest =
       (Broadcast_in_dim { shape = [| m; 1 |]; dims = [| 0 |] })
       [ idx0 ]
   in
+  if m = 0 || rest = 0 then
+    Core.splat (Core.get_aval x).dtype [| m; rest |] 0.0
+  else
   Core.bind1
     (Gather
        {

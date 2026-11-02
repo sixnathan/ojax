@@ -362,6 +362,12 @@ let fancy_take x indices =
   let start =
     match lifted with [ only ] -> only | _ -> L.concatenate lifted 1
   in
+  let slice_shape =
+    Array.append (shape (List.hd indices)) (Array.sub sh d (r - d))
+  in
+  if Array.exists (fun e -> e = 0) slice_shape then
+    L.full slice_shape 0.0 (dtype_of x)
+  else
   Core.bind1
     (Gather
        {
@@ -1413,6 +1419,9 @@ let choose ?(mode = "raise") a choices =
       in
       let extents = n :: Array.to_list sh in
       let indices = index_array ~extents (arr :: grids) in
+      if Array.exists (fun e -> e = 0) sh then
+        L.full sh 0.0 (dtype_of stacked)
+      else
       Core.bind1
         (Gather
            {

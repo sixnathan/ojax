@@ -2130,9 +2130,12 @@ let gather_1d a indices =
       g_sorted_unique = false;
     }
   in
-  bind1
-    (T.Gather { dimension_numbers = dnums; slice_sizes = [| 1 |] })
-    [ a; reshape indices (Array.append sh [| 1 |]) ]
+  let wide = reshape indices (Array.append sh [| 1 |]) in
+  if Array.exists (fun d -> d = 0) sh then const_full (dtype a) sh 0.0
+  else
+    bind1
+      (T.Gather { dimension_numbers = dnums; slice_sizes = [| 1 |] })
+      [ a; wide ]
 
 let canonicalize_for_sort x =
   let dt = dtype x in

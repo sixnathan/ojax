@@ -327,3 +327,10 @@ let prune_unused_inputs (cj : closed_jaxpr) =
       (List.mapi (fun i k -> (i, k)) used_args)
   in
   ({ pruned with consts = keep_where cj.consts used_consts }, kept)
+
+let () =
+  Interpreters.Ad.tape_dce :=
+    fun c used ->
+      fst
+        (dce_closed c used
+           ~instantiate:(List.map (fun _ -> false) c.jaxpr.in_binders))

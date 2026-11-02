@@ -3395,6 +3395,9 @@ let () =
 
 let is_differentiable_dtype dt = Dtypes.issubdtype dt `Inexact
 
+let tape_dce : (closed_jaxpr -> bool list -> closed_jaxpr) ref =
+  ref (fun c _ -> c)
+
 let dce_tape (eqns : eqn list) (outs : atom list) =
   let live : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   let mark = function
@@ -3426,6 +3429,53 @@ let dce_tape (eqns : eqn list) (outs : atom list) =
               multiple_results = List.length outs > 1;
             }
             :: kept
+          end
+      | Scan _ when not (Jaxpr.eqn_has_effect e) ->
+          let used = List.map is_live e.outs in
+          if not (List.exists Fun.id used) then kept
+          else begin
+            let binders =
+              List.map
+                (fun a ->
+                  { vid = Core.fresh_id (); vaval = Pretty_printer.atom_type a })
+                e.inputs
+            in
+            let source = Hashtbl.create 16 in
+            List.iter2
+              (fun (v : var) a -> Hashtbl.replace source v.vid a)
+              binders e.inputs;
+            let wrapped =
+              {
+                jid = Core.fresh_id ();
+                consts = [];
+                jaxpr =
+                  {
+                    in_binders = binders;
+                    eqns =
+                      [
+                        {
+                          e with
+                          inputs = List.map (fun (v : var) -> A_var v) binders;
+                        };
+                      ];
+                    outs = List.map (fun (v : var) -> A_var v) e.outs;
+                  };
+              }
+            in
+            let pruned = !tape_dce wrapped used in
+            match pruned.jaxpr.eqns with
+            | [ e' ] ->
+                let inputs =
+                  List.map
+                    (function
+                      | A_var (v : var) -> Hashtbl.find source v.vid | a -> a)
+                    e'.inputs
+                in
+                List.iter mark inputs;
+                { e' with inputs } :: kept
+            | _ ->
+                List.iter mark e.inputs;
+                e :: kept
           end
       | Custom_jvp_call id
         when match !Jaxpr.remat_body id with

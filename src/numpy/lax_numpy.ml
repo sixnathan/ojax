@@ -86,7 +86,7 @@ let flip ?axis v =
 let fliplr v = rev_dims v [| 1 |]
 let flipud v = rev_dims v [| 0 |]
 
-let newshape v sh =
+let resolve_newshape v sh =
   let total = size v in
   let unknown = Array.fold_left (fun n d -> if d = -1 then n + 1 else n) 0 sh in
   let tuple = Validate.python_tuple in
@@ -113,14 +113,14 @@ let newshape v sh =
   Array.map (fun d -> if d = -1 then total / known else d) sh
 
 let reshape v sh =
-  let resolved = newshape v sh in
+  let resolved = resolve_newshape v sh in
   if Array.length resolved > 0 && resolved = shape v then v
   else bind1 (T.Reshape resolved) [ v ]
 
 let reverse_axes v = Array.init (ndim v) (fun i -> ndim v - 1 - i)
 
 let reshape ?(order = "C") v sh =
-  let sh = newshape v sh in
+  let sh = resolve_newshape v sh in
   match order with
   | "C" -> reshape v sh
   | "F" ->
@@ -128,8 +128,11 @@ let reshape ?(order = "C") v sh =
       let c_order = bind1 (T.Transpose (reverse_axes v)) [ v ] in
       let out = reshape c_order flipped in
       bind1 (T.Transpose (reverse_axes out)) [ out ]
-  | "A" -> Py_exn.not_implemented_error "np.reshape order=A is not implemented."
+  | "A" ->
+      ignore (resolve_newshape v sh);
+      Py_exn.not_implemented_error "np.reshape order=A is not implemented."
   | o ->
+      ignore (resolve_newshape v sh);
       Py_exn.value_error
         (Printf.sprintf "Unexpected value for 'order' argument: %s." o)
 
@@ -931,6 +934,8 @@ let unravel_index indices dims =
       where_ oob_pos smax (where_ oob_neg zero out.(i)))
 
 let unwrap ?discont ?(axis = -1) ?(period = 2.0 *. Float.pi) p =
+  if is_complex_dtype (dtype p) then
+    Py_exn.value_error "jnp.unwrap does not support complex inputs.";
   let nd = ndim p in
   let axis = canonicalize_axis axis nd in
   let dt =
@@ -2410,8 +2415,7 @@ let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
 let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
   if ndim a <> 1 then Py_exn.value_error "a should be 1-dimensional";
   (match sorter with
-  | Some s when not (dtype s = D.Bool || Dtypes.issubdtype (dtype s) `Integer)
-    ->
+  | Some s when not (is_integral (dtype s) || is_bool (dtype s)) ->
       Py_exn.type_error
         ("Indexer must have integer or boolean type, got indexer with type "
         ^ D.numpy_name (dtype s))
@@ -2497,7 +2501,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
   | _ -> ());
   if ndim m > 2 then Py_exn.value_error "m has more than 2 dimensions";
   (match dtype with
-  | Some d when not (Dtypes.issubdtype d `Inexact) ->
+  | Some d when not (is_inexact d) ->
       Py_exn.value_error
         (Printf.sprintf
            "cov: dtype must be a subclass of float or complex; got dtype='%s'"
@@ -2543,6 +2547,7 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
         match ddof with Some d -> d | None -> if bias then 0 else 1
       in
       let check_weights name w =
+        if ndim w = 0 then Py_exn.index_error "tuple index out of range";
         if ndim w > 1 then
           Py_exn.runtime_error
             (Printf.sprintf "cannot handle multidimensional %s" name);
@@ -2550,11 +2555,12 @@ let cov ?y ?(rowvar = true) ?(bias = false) ?ddof ?fweights ?aweights ?dtype m =
           Py_exn.runtime_error
             (Printf.sprintf "incompatible numbers of samples and %s" name)
       in
-      Option.iter (check_weights "fweights") fweights;
-      (match fweights with
-      | Some f when not (is_integral (dtype_of f)) ->
-          raise (Py_exn.Type_error "fweights must be integer.")
-      | _ -> ());
+      Option.iter
+        (fun f ->
+          check_weights "fweights" f;
+          if not (is_integral (dtype_of f)) then
+            raise (Py_exn.Type_error "fweights must be integer."))
+        fweights;
       Option.iter (check_weights "aweights") aweights;
       let magnitude w =
         match dtype_of w with
@@ -2673,7 +2679,7 @@ let cov ?y ?rowvar ?bias ?ddof ?fweights ?aweights ?dtype p0 =
 
 let corrcoef ?y ?(rowvar = true) ?dtype x =
   (match dtype with
-  | Some d when not (Dtypes.issubdtype d `Inexact) ->
+  | Some d when not (is_inexact d) ->
       Py_exn.value_error
         (Printf.sprintf
            "corrcoef: dtype must be a subclass of float or complex; got \

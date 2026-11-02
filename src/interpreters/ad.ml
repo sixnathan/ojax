@@ -556,9 +556,14 @@ let batch_broadcast mask batch =
       [ mask ]
 
 let tri_mask n m k =
-  let i = lax_iota Dtype.I32 [| n; m |] 0 in
-  let plus = ladd i (scalar_i32 k) in
-  let j = lax_iota Dtype.I32 [| n; m |] 1 in
+  let shape_dtype =
+    if n > Int32.to_int Int32.max_int || m > Int32.to_int Int32.max_int then
+      Dtype.I64
+    else Dtypes.default_int_dtype ()
+  in
+  let i = lax_iota shape_dtype [| n; m |] 0 in
+  let plus = ladd i (Core.splat shape_dtype [||] (float_of_int k)) in
+  let j = lax_iota shape_dtype [| n; m |] 1 in
   b1 Ge [ plus; j ]
 
 let ltril ?(k = 0) x =
@@ -3053,24 +3058,23 @@ let lin_process_cond (trace : trace) (b : jaxpr_builder) branches platforms
   let joined =
     List.map2
       (fun (known, n, _, _, _) slot ->
-        Jaxpr.dce_keep_args
-          (Jaxpr.make_jaxpr op_avals (fun inputs ->
-               let outs, res =
-                 split2 (Jaxpr.eval_closed_jaxpr known inputs) n
-               in
-               outs
-               @ List.map2
-                   (fun ((a : aval), _) pos ->
-                     match pos with
-                     | Some i -> List.nth res i
-                     | None ->
-                         let e = b1 (Empty2 a.dtype) [] in
-                         if Array.length a.shape = 0 then e
-                         else
-                           b1
-                             (Broadcast_in_dim { shape = a.shape; dims = [||] })
-                             [ e ])
-                   all_res slot)))
+        let known = Jaxpr.dce_keep_args known in
+        Jaxpr.make_jaxpr op_avals (fun inputs ->
+            let outs, res = split2 (Jaxpr.eval_closed_jaxpr known inputs) n in
+            let empties =
+              List.map
+                (fun ((a : aval), _) ->
+                  let e = b1 (Empty2 a.dtype) [] in
+                  if Array.length a.shape = 0 then e
+                  else
+                    b1 (Broadcast_in_dim { shape = a.shape; dims = [||] }) [ e ])
+                all_res
+            in
+            outs
+            @ List.map2
+                (fun empty pos ->
+                  match pos with Some i -> List.nth res i | None -> empty)
+                empties slot))
       traced slots
   in
   let unknown =

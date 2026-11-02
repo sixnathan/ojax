@@ -1746,6 +1746,7 @@ let reject_bool x =
     raise (Py_exn.Type_error "sub does not accept dtype bool.")
 
 let softmax ?axis x =
+  Option.iter (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x))) axis;
   reject_bool x;
   match axis with
   | Some ax -> NN.softmax ~axis:ax x
@@ -1754,6 +1755,7 @@ let softmax ?axis x =
       NL.reshape (NN.softmax ~axis:0 (NL.reshape x [| numel sh |])) sh
 
 let log_softmax ?axis x =
+  Option.iter (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x))) axis;
   reject_bool x;
   match axis with
   | Some ax -> NN.log_softmax ~axis:ax x
@@ -3204,11 +3206,17 @@ let sph_harm_y ?diff_n ?n_max n m theta phi =
         match RED.amax n with
         | T.Concrete nd -> int_of_float (Nd.get_f nd [||])
         | T.Device b -> int_of_float (Nd.get_f (Pjrt.Buffer.to_host b) [||])
-        | T.Tracer _ ->
-            invalid_arg
-              "The `n_max` argument of `jnp.scipy.special.sph_harm` must be \
-               statically specified to use `sph_harm` within JAX \
-               transformations.")
+        | T.Tracer _ as top ->
+            raise
+              (Errors.concretization_type_error
+                 ~context:
+                   "The `n_max` argument of `jnp.scipy.special.sph_harm` must \
+                    be statically specified to use `sph_harm` within JAX \
+                    transformations."
+                 ~error_repr:
+                   (Printf.sprintf "traced array with shape %s[]"
+                      (D.numpy_name (dtype top)))
+                 ~origin_msg:(Jaxpr.origin_msg top) ()))
   in
   Eager_jit.one ~jit:"_sph_harm" "scipy.special._sph_harm" n_max []
     [ n; m; theta; phi ] (fun _ vals -> sph_harm_body n_max vals)

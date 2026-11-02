@@ -226,20 +226,6 @@ let reshape ?dimensions x new_sizes =
     | Some perm when perm <> Array.init rank Fun.id -> Some perm
     | _ -> None
   in
-  if Array.exists (fun d -> d < 0) new_sizes then
-    Py_exn.type_error
-      (Printf.sprintf "reshape new_sizes must all be positive, got %s."
-         (Validate.python_tuple new_sizes));
-  (match dims with
-  | Some perm
-    when List.sort_uniq compare (Array.to_list perm) <> List.init rank Fun.id ->
-      Py_exn.type_error
-        (Printf.sprintf
-           "reshape dimensions must be a permutation of operand dimensions, \
-            got dimensions %s for shape %s."
-           (Validate.python_tuple perm)
-           (Validate.python_tuple in_shape))
-  | _ -> ());
   match dims with
   | Some perm -> b1 (Reshape_perm { new_sizes; dimensions = perm }) [ x ]
   | None ->
@@ -325,8 +311,12 @@ let collapse x start stop =
 let concatenate xs dimension =
   match xs with [ x ] -> x | _ -> b1 (Concatenate dimension) xs
 
-let stack xs axis = b1 (Stack axis) xs
-let unstack x axis = Core.bind (Unstack axis) [ x ]
+let stack xs axis =
+  match xs with
+  | [] -> Py_exn.index_error "list index out of range"
+  | first :: _ -> b1 (Stack (canon_axis (ndim first + 1) axis)) xs
+
+let unstack x axis = Core.bind (Unstack (canon_axis (ndim x) axis)) [ x ]
 
 let split x sizes axis =
   let sh = shape x in

@@ -1181,7 +1181,7 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   in
   convert result (dtype a)
 
-let quantile_core ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
+let quantile_prechecks ~method_ weights =
   if
     not
       (List.mem method_
@@ -1190,24 +1190,24 @@ let quantile_core ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
     Py_exn.value_error
       "method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest' \
        or 'inverted_cdf'";
-  (match weights with
+  match weights with
   | Some w ->
       if match dtype w with D.Complex64 | D.Complex128 -> true | _ -> false
       then Py_exn.value_error "Weights cannot be complex types.";
       if method_ <> "inverted_cdf" then
-        raise
-          (Py_exn.Not_implemented_error
-             (method_
-            ^ " doesn't support weights. Only method 'inverted_cdf' supports \
-               weights."))
-  | None -> ());
+        Py_exn.not_implemented_error
+          (method_
+         ^ " doesn't support weights. Only method 'inverted_cdf' supports \
+            weights.")
+  | None -> ()
+
+let quantile_core ?weights a q ~axis ~method_ ~keepdims ~squash_nans =
+  quantile_prechecks ~method_ weights;
   if method_ = "inverted_cdf" then
     quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights
-  else
-    begin if squash_nans then
-      quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans
-    else quantile_plain a q ~axis ~method_ ~keepdims
-    end
+  else if squash_nans then
+    quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans
+  else quantile_plain a q ~axis ~method_ ~keepdims
 
 let quantile ?axis ?(keepdims = false) ?(method_ = "linear") ?weights a q =
   quantile_core ?weights a q ~axis ~method_ ~keepdims ~squash_nans:false
@@ -1405,6 +1405,7 @@ let quantile ?axis ?keepdims ?method_ ?weights a0 a1 =
       | _ -> assert false)
 
 let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
+  quantile_prechecks ~method_:(Option.value method_ ~default:"linear") weights;
   Eager_jit.one "numpy.reductions.nanquantile"
     (axis, keepdims, method_, weights <> None)
     [ weights ] [ a0; a1 ]
@@ -1415,6 +1416,7 @@ let nanquantile ?axis ?keepdims ?method_ ?weights a0 a1 =
       | _ -> assert false)
 
 let nanpercentile ?axis ?keepdims ?method_ ?weights a0 a1 =
+  quantile_prechecks ~method_:(Option.value method_ ~default:"linear") weights;
   Eager_jit.one "numpy.reductions.nanpercentile"
     (axis, keepdims, method_, weights <> None)
     [ weights ] [ a0; a1 ]

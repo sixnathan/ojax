@@ -1535,8 +1535,12 @@ let gradient ?spacing ?axis ?(edge_order : int option) a =
         [ a; Jnp_util.py_float spacing ]
 
 let choose ?(mode = "raise") a choices =
-  if not (Dtypes.issubdtype (Core.get_aval a).dtype `Integer) then
-    Py_exn.value_error "`a` array must be integer typed";
+  (match dtype_of a with
+  | Dtype.I2 | Dtype.I4 | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64
+  | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint8 | Dtype.Uint16 | Dtype.Uint32
+  | Dtype.Uint64 ->
+      ()
+  | _ -> Py_exn.value_error "`a` array must be integer typed");
   let n = List.length choices in
   let arr =
     match mode with
@@ -1961,6 +1965,7 @@ let mask_indices ?(k = 0) ?size n mask_func =
   | _ -> failwith "mask_indices: arity"
 
 let trim_zeros ?(trim = "fb") ?axis a =
+  ignore (host "trim_zeros" a);
   let lowered = String.lowercase_ascii trim in
   let front = String.contains lowered 'f'
   and back = String.contains lowered 'b' in
@@ -2301,7 +2306,7 @@ let polydiv ?(trim_leading_zeros = false) u v =
   for k = 0 to lu - lv do
     let d = b1 Types.Mul [ scale; NL.index_at !r k ] in
     let at = start k in
-    q := L.scatter !q at d (dims ~window:false);
+    q := L.scatter !q at (Jnp_util.broadcast_to d [||]) (dims ~window:false);
     let delta = b1 Types.Mul [ b1 Types.Neg [ d ]; v ] in
     let at = start k in
     r := L.scatter_add !r at delta (dims ~window:true)
@@ -2621,11 +2626,13 @@ let check_bitorder bitorder =
 
 let packbits ?axis ?(bitorder = "big") a =
   (match dtype_of a with
-  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
-  | Dtype.Complex128 ->
+  | Dtype.Bool | Dtype.I2 | Dtype.I4 | Dtype.I8 | Dtype.I16 | Dtype.I32
+  | Dtype.I64 | Dtype.Uint2 | Dtype.Uint4 | Dtype.Uint8 | Dtype.Uint16
+  | Dtype.Uint32 | Dtype.Uint64 ->
+      ()
+  | _ ->
       Py_exn.type_error
-        "Expected an input array of integer or boolean data type"
-  | _ -> ());
+        "Expected an input array of integer or boolean data type");
   check_bitorder bitorder;
   Jnp_util.jit1 "packbits"
     ~key:

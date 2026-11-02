@@ -33,7 +33,7 @@ let parse_signature (s : string) : int list * int list =
   let rhs = String.sub s (arrow + 2) (String.length s - arrow - 2) in
   (List.map List.length (parse_side lhs), List.map List.length (parse_side rhs))
 
-let vectorize ?(excluded = []) ?signature pyfunc raw_args =
+let vectorize_many ?(excluded = []) ?signature pyfunc raw_args =
   let n = List.length raw_args in
   let args_arr = Array.of_list raw_args in
   let is_excl i = List.mem i excluded in
@@ -61,8 +61,7 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
   let ncs = Array.of_list input_ncs in
   if Array.length dyn_arr <> Array.length ncs then
     invalid_arg "vectorize: wrong number of positional arguments";
-  if List.length output_ncs <> 1 then
-    failwith "vectorize: only single-output gufuncs supported";
+  ignore output_ncs;
   let batch_shapes =
     Array.to_list
       (Array.mapi
@@ -100,7 +99,7 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
          dyn_arr)
   in
   let filled = List.map fst pieces and squeezed = List.map snd pieces in
-  let func = ref (fun xs -> [ call_full xs ]) and expand = ref [] in
+  let func = ref call_full and expand = ref [] in
   for pos = nb - 1 downto 0 do
     let in_axes =
       List.map (fun s -> if s.(pos) = 1 then None else Some 0) filled
@@ -111,7 +110,16 @@ let vectorize ?(excluded = []) ?signature pyfunc raw_args =
       func := fun xs -> Interpreters.Batching.vmap inner in_axes xs
     end
   done;
-  let result = List.hd (!func squeezed) in
+  let results = !func squeezed in
   match !expand with
-  | [] -> result
-  | dims -> LN.expand_dims result (Array.of_list dims)
+  | [] -> results
+  | dims ->
+      List.map (fun r -> LN.expand_dims r (Array.of_list dims)) results
+
+let vectorize ?excluded ?signature pyfunc raw_args =
+  (match signature with
+  | Some s when List.length (snd (parse_signature s)) <> 1 ->
+      failwith "vectorize: only single-output gufuncs supported"
+  | _ -> ());
+  List.hd
+    (vectorize_many ?excluded ?signature (fun xs -> [ pyfunc xs ]) raw_args)

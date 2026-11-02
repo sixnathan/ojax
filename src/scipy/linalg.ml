@@ -909,27 +909,29 @@ let polar_2d ~side ~method_ ?eps a =
       [ unitary; posdef ]
   | _ -> invalid_arg "polar: method"
 
-let rec polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
+let polar ?(side = "right") ?(method_ = "qdwh") ?eps a =
   let a = to_inexact a in
   if ndim a < 2 then invalid_arg "The input `a` must be at least a 2-D array.";
-  (match side with
-  | "right" | "left" -> ()
-  | _ -> invalid_arg "The argument `side` must be either 'right' or 'left'.");
-  match method_ with
-  | ("qdwh" | "svd") when ndim a > 2 ->
-      Interpreters.Batching.vmap
-        (fun args -> polar ~side ~method_ ?eps (List.hd args))
-        [ Some 0 ] [ a ]
-  | "qdwh" | "svd" ->
-      Numpy.Jnp_util.jit "_polar_2d"
-        ~key:(Printf.sprintf "%s,%s,%b" side method_ (eps <> None))
-        (function
-          | [ a ] -> polar_2d ~side ~method_ ?eps a
-          | _ -> invalid_arg "polar: arity")
-        [ a ]
-  | _ ->
-      invalid_arg
-        (Printf.sprintf "Unknown polar decomposition method %s." method_)
+  let signature =
+    match side with
+    | "right" -> "(m,n)->(m,n),(n,n)"
+    | "left" -> "(m,n)->(m,n),(m,m)"
+    | _ -> invalid_arg "The argument `side` must be either 'right' or 'left'."
+  in
+  Numpy.Vectorize.vectorize_many ~signature
+    (fun args ->
+      match method_ with
+      | "qdwh" | "svd" ->
+          Numpy.Jnp_util.jit "_polar_2d"
+            ~key:(Printf.sprintf "%s,%s,%b" side method_ (eps <> None))
+            (function
+              | [ a ] -> polar_2d ~side ~method_ ?eps a
+              | _ -> invalid_arg "polar: arity")
+            args
+      | _ ->
+          invalid_arg
+            (Printf.sprintf "Unknown polar decomposition method %s." method_))
+    [ a ]
 
 let polar ?side ?method_ ?eps a0 =
   Eager_jit.many ~jit:"polar" "scipy.linalg.polar" (side, method_, eps) []

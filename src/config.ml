@@ -50,6 +50,8 @@ let threefry_partitionable = make "jax_threefry_partitionable" true
 let allow_f16_reductions = make "jax_allow_f16_reductions" true
 let thread_guard = make "jax_thread_guard" false
 let auto_pcast = make "jax_auto_pcast" true
+let random_seed_offset = make "jax_random_seed_offset" 0
+let high_dynamic_range_gumbel = make "jax_high_dynamic_range_gumbel" false
 
 let remove_size_one_mesh_axis_from_type =
   make "jax_remove_size_one_mesh_axis_from_type" false
@@ -182,6 +184,8 @@ let trace_context () =
       (allow_f16_reductions.name, py_bool allow_f16_reductions.value);
       (softmax_custom_jvp.name, py_bool softmax_custom_jvp.value);
       (threefry_partitionable.name, py_bool threefry_partitionable.value);
+      (random_seed_offset.name, string_of_int random_seed_offset.value);
+      (high_dynamic_range_gumbel.name, py_bool high_dynamic_range_gumbel.value);
     ]
 
 let export_calling_convention_version =
@@ -239,6 +243,7 @@ let bool_options =
       jax2tf_associative_scan_reductions;
       auto_pcast;
       remove_size_one_mesh_axis_from_type;
+      high_dynamic_range_gumbel;
     ]
 
 let string_options =
@@ -260,7 +265,7 @@ let optional_options =
 let int_options =
   List.map
     (fun f -> (f.name, f))
-    [ export_calling_convention_version; num_cpu_devices ]
+    [ export_calling_convention_version; num_cpu_devices; random_seed_offset ]
 
 let unrecognized name =
   raise (Invalid_argument ("Unrecognized config option: " ^ name))

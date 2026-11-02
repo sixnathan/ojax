@@ -276,6 +276,43 @@ let text_thunk name =
              [ leaf x3 ])
   | other -> failwith ("jit_opts: unknown text case " ^ other)
 
+let int_seed v =
+  let dt =
+    if Ojax.Config.x64_enabled () then Ojax.Dtype.I64 else Ojax.Dtype.I32
+  in
+  T.Concrete (Ojax.Ndarray.of_floats dt [||] [| v |])
+
+let random_thunk name =
+  let module R = Ojax.Random.Core in
+  match name with
+  | "key_data" -> fun () -> [ R.key_data (R.key (int_seed 11.0)) ]
+  | "prng_key" -> fun () -> [ R.prng_key (int_seed 11.0) ]
+  | "uniform" ->
+      fun () ->
+        [
+          R.uniform
+            (R.key (int_seed 3.0))
+            ~shape:[| 4 |] ~minval:0.0 ~maxval:1.0;
+        ]
+  | "jit_key_data" ->
+      fun () ->
+        jit1
+          (fun s -> leaf (R.key_data (R.key s)))
+          [ T.Concrete (Ojax.Ndarray.of_floats Ojax.Dtype.I32 [||] [| 11.0 |]) ]
+  | "gumbel" -> fun () -> [ R.gumbel (R.key (int_seed 1.0)) ~shape:[| 5 |] ]
+  | "gumbel_f64" ->
+      fun () ->
+        [ R.gumbel ~dtype:Ojax.Dtype.F64 (R.key (int_seed 1.0)) ~shape:[| 5 |] ]
+  | "categorical" ->
+      fun () ->
+        let logits =
+          T.Concrete
+            (Ojax.Ndarray.of_floats Ojax.Dtype.F32 [| 2; 4 |]
+               [| 0.1; -2.0; 3.0; 0.5; 1.0; 1.0; -30.0; 2.0 |])
+        in
+        [ R.categorical_full ~shape:[| 6; 2 |] (R.key (int_seed 2.0)) logits ]
+  | other -> failwith ("jit_opts: unknown random case " ^ other)
+
 let strings j = List.map U.to_string (U.to_list j)
 
 let expected_of row =
@@ -338,6 +375,13 @@ let actual_of row =
       Ojax.Config.with_value Ojax.Config.debug_nans nans (fun () ->
           Ojax.Config.with_value Ojax.Config.debug_infs infs (fun () ->
               run_case thunk))
+  | "random" ->
+      let arg = U.to_string (U.member "arg" row) in
+      let offset = Option.value (int_of_string_opt arg) ~default:0 in
+      let thunk = random_thunk (U.to_string (U.member "case" row)) in
+      Ojax.Config.with_value Ojax.Config.random_seed_offset offset (fun () ->
+          Ojax.Config.with_value Ojax.Config.high_dynamic_range_gumbel
+            (arg = "high") (fun () -> run_case thunk))
   | "text" ->
       let thunk = text_thunk (U.to_string (U.member "case" row)) in
       let text = ref "" in

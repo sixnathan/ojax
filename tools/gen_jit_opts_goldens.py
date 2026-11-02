@@ -32,6 +32,12 @@ TEXT_CASES = [
     "keep_unused_none", "don_none", "inline_lowered", "noinline_lowered",
     "inline_jaxpr", "noinline_jaxpr",
 ]
+RANDOM_CASES = [
+    ("key_data", 0), ("key_data", 7), ("key_data", -3), ("prng_key", 7),
+    ("uniform", 0), ("uniform", 7), ("jit_key_data", 7),
+    ("gumbel", "low"), ("gumbel", "high"), ("categorical", "low"),
+    ("categorical", "high"), ("gumbel_f64", "high"),
+]
 FLAGS = [("nans", True, False), ("infs", False, True), ("both", True, True)]
 
 
@@ -131,6 +137,41 @@ def text_case(jax, jnp, name):
     return lambda: jit(f, **kw).lower(*a).as_text()
 
 
+def random_case(jax, jnp, name, arg):
+    r = jax.random
+    offset = arg if isinstance(arg, int) else 0
+
+    def body():
+        if name == "key_data":
+            return r.key_data(r.key(11))
+        if name == "prng_key":
+            return r.PRNGKey(11)
+        if name == "uniform":
+            return r.uniform(r.key(3), (4,))
+        if name == "jit_key_data":
+            return jax.jit(lambda s: r.key_data(r.key(s)))(
+                jnp.asarray(np.int32(11)))
+        if name == "gumbel":
+            return r.gumbel(r.key(1), (5,))
+        if name == "gumbel_f64":
+            return r.gumbel(r.key(1), (5,), dtype=jnp.float64)
+        if name == "categorical":
+            logits = jnp.asarray(np.array([[0.1, -2.0, 3.0, 0.5],
+                                           [1.0, 1.0, -30.0, 2.0]],
+                                          np.float32))
+            return r.categorical(r.key(2), logits, shape=(6, 2))
+        raise KeyError(name)
+
+    def run():
+        prev = jax.config.jax_random_seed_offset
+        jax.config.update("jax_random_seed_offset", offset)
+        try:
+            return body()
+        finally:
+            jax.config.update("jax_random_seed_offset", prev)
+    return run
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -168,6 +209,16 @@ def main():
             r.update({"id": f"special_{flag}_{name}", "group": "special",
                       "flag": flag, "case": name})
             rows.append(r)
+    for name, arg in RANDOM_CASES:
+        prev = jax.config.jax_high_dynamic_range_gumbel
+        jax.config.update("jax_high_dynamic_range_gumbel", arg == "high")
+        try:
+            r = run_case(random_case(jax, jnp, name, arg))
+        finally:
+            jax.config.update("jax_high_dynamic_range_gumbel", prev)
+        r.update({"id": f"random_{name}_{arg}", "group": "random",
+                  "case": name, "arg": str(arg)})
+        rows.append(r)
     for name in TEXT_CASES:
         thunk = text_case(jax, jnp, name)
         holder = {}

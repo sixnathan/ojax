@@ -1685,6 +1685,44 @@ let emit_scatter ?(unique = false) ctx (eqn : eqn) in_ids dnums combiner =
     let ret =
       match combiner with
       | None -> b
+      | Some (("minimum" | "maximum") as op)
+        when dt = Dtype.Complex64 || dt = Dtype.Complex128 ->
+          let rty =
+            Ir.tensor_type
+              (if dt = Dtype.Complex64 then Dtype.F32 else Dtype.F64)
+              [||]
+          in
+          let dir = if op = "minimum" then "LT" else "GT" in
+          let line fmt = Printf.ksprintf (Buffer.add_string ctx.buf) fmt in
+          let part op_name x =
+            let r = fresh ctx in
+            line "      %s = stablehlo.%s %s : (%s) -> %s\n" (name r) op_name
+              (name x) sty rty;
+            r
+          in
+          let compare direction x y =
+            let r = fresh ctx in
+            line
+              "      %s = stablehlo.compare %s, %s, %s, FLOAT : (%s, %s) -> \
+               tensor<i1>\n"
+              (name r) direction (name x) (name y) rty rty;
+            r
+          in
+          let select p x y ty =
+            let r = fresh ctx in
+            line "      %s = stablehlo.select %s, %s, %s : tensor<i1>, %s\n"
+              (name r) (name p) (name x) (name y) ty;
+            r
+          in
+          let ra = part "real" a in
+          let rb = part "real" b in
+          let eq = compare "EQ" ra rb in
+          let re_cmp = compare dir ra rb in
+          let ia = part "imag" a in
+          let ib = part "imag" b in
+          let im_cmp = compare dir ia ib in
+          let pick = select eq im_cmp re_cmp "tensor<i1>" in
+          select pick a b sty
       | Some op ->
           let c = fresh ctx in
           Buffer.add_string ctx.buf

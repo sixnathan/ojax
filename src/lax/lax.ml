@@ -1953,8 +1953,10 @@ let rec impl_base prim inputs =
           in
           List.map custom_output (forward res linear)
       | Core.Jvp_rule _ | Core.Vjp_rule _ | Core.Callback_rule _ ->
-          failwith
-            "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
+          raise
+            (Py_exn.Type_error
+               "can't apply forward-mode autodiff (jvp) to a custom_vjp \
+                function."))
   | Checkpoint_name _ | Stop_gradient -> inputs
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 

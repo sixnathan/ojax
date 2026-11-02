@@ -11,6 +11,7 @@ val custom_jvp :
 
 val custom_vjp :
   ?nondiff_argnums:int list ->
+  ?name:string ->
   (value list -> value list) ->
   fwd:(value list -> value list * value list) ->
   bwd:(value list -> value list -> value list) ->
@@ -35,6 +36,8 @@ val custom_vjp_primal_tree_values :
   custom_vjp_primal Tree_util.t -> value Tree_util.t
 
 val custom_jvp_symbolic :
+  ?name:string ->
+  ?jvp_name:string ->
   (value list -> value list) ->
   jvp:(value list -> tangent list -> value list * tangent list) ->
   value list ->

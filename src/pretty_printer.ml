@@ -84,6 +84,8 @@ let dot_dims_str (dd : dot_dims) =
   "((" ^ int_tuple dd.lhs_contract ^ "," ^ int_tuple dd.rhs_contract ^ "),("
   ^ int_tuple dd.lhs_batch ^ "," ^ int_tuple dd.rhs_batch ^ "))"
 
+let custom_lin_vjp : (int -> bool) ref = ref (fun _ -> false)
+
 let callback_views : (int, string * (string * string) list) Hashtbl.t =
   Hashtbl.create 8
 
@@ -419,7 +421,7 @@ let custom_num_consts : (eqn -> int option) ref = ref (fun _ -> None)
 
 let custom_call_of (e : eqn) =
   match e.prim with
-  | Custom_jvp_call id ->
+  | Custom_jvp_call id | Custom_vjp_call id ->
       let vid =
         match e.outs with (first : var) :: _ -> Some first.vid | [] -> None
       in
@@ -485,7 +487,7 @@ and structure_of_eqn (e : eqn) =
     | Custom_linear_solve { matvec; vecmat; solve; transpose_solve; _ } ->
         (matvec :: Option.to_list vecmat)
         @ (solve :: Option.to_list transpose_solve)
-    | Custom_jvp_call _ -> (
+    | Custom_jvp_call _ | Custom_vjp_call _ -> (
         match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
     | Scatter _ as p when Scatter_apply.find p <> None -> (
         match Scatter_apply.find p with Some (c, _) -> [ c ] | None -> [])
@@ -1086,7 +1088,7 @@ let insertion_order (e : eqn) =
         (fun (_, p) ->
           match p with Sub c -> [ c ] | Subs cs -> cs | Plain _ -> [])
         (Hashtbl.find custom_view_params id)
-  | Custom_jvp_call _ -> (
+  | Custom_jvp_call _ | Custom_vjp_call _ -> (
       match custom_call_of e with Some (_, _, c) -> [ c ] | None -> [])
   | _ ->
       List.concat_map
@@ -1347,9 +1349,43 @@ and pp_eqn ctx (e : eqn) =
           (snd (Hashtbl.find callback_views id))
     | Custom_jvp_call id when Hashtbl.mem custom_view_params id ->
         Hashtbl.find custom_view_params id
+    | Checkpoint_name name -> [ ("name", Plain name) ]
+    | Custom_vjp_call _ -> (
+        match custom_call_of e with
+        | Some (name, fwd, c) ->
+            [
+              ("name", Plain name);
+              ("bwd", Plain "bwd");
+              ("call_jaxpr", Sub c);
+              ("fwd", Plain fwd);
+              ("symbolic_zeros", Plain "False");
+            ]
+        | None -> [])
+    | Custom_lin { rule; n_res; in_zeros; _ } -> (
+        match !custom_lin_vjp rule with
+        | true ->
+            [
+              ("bwd", Plain "bwd");
+              ( "in_zeros",
+                Plain
+                  ("["
+                  ^ String.concat ", "
+                      (List.map
+                         (fun z -> if z then "True" else "False")
+                         in_zeros)
+                  ^ "]") );
+              ("num_res", Plain (string_of_int n_res));
+              ("symbolic_zeros", Plain "False");
+            ]
+        | false -> [])
     | Custom_jvp_call _ -> (
         match custom_call_of e with
         | Some (name, jvp_name, c) ->
+            let jvp_name, symbolic =
+              match String.index_opt jvp_name '\000' with
+              | Some i -> (String.sub jvp_name 0 i, true)
+              | None -> (jvp_name, false)
+            in
             [
               ("name", Plain name);
               ("call_jaxpr", Sub c);
@@ -1358,7 +1394,9 @@ and pp_eqn ctx (e : eqn) =
             @ (match !custom_num_consts e with
               | Some n -> [ ("num_consts", Plain (string_of_int n)) ]
               | None -> [])
-            @ [ ("symbolic_zeros", Plain "False") ]
+            @ [
+                ("symbolic_zeros", Plain (if symbolic then "True" else "False"));
+              ]
         | None -> [])
     | _ -> []
   in

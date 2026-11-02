@@ -744,6 +744,34 @@ and dce_closed_uncached (c : closed_jaxpr) used_outs =
     List.fold_left
       (fun acc (e : eqn) ->
         match e.prim with
+        | Custom_jvp_call id when e.outs <> [] && List.for_all is_used e.outs ->
+            let first = List.hd e.outs in
+            let body =
+              match Core.find_custom_eqn_jaxpr first.vid with
+              | Some body -> Some body
+              | None ->
+                  custom_call_jaxpr id (List.map Pretty_printer.atom_type e.inputs)
+            in
+            Option.iter
+              (fun (body : closed_jaxpr) ->
+                let pruned, _ =
+                  dce_closed body (List.map (fun _ -> true) body.jaxpr.outs)
+                in
+                let n_consts = List.length body.consts in
+                let consts =
+                  List.filteri (fun i _ -> i < n_consts) pruned.jaxpr.in_binders
+                in
+                let args =
+                  List.filteri (fun i _ -> i >= n_consts) body.jaxpr.in_binders
+                in
+                Core.note_custom_eqn_jaxpr first.vid
+                  {
+                    pruned with
+                    jaxpr = { pruned.jaxpr with in_binders = consts @ args };
+                  })
+              body;
+            List.iter note e.inputs;
+            e :: acc
         | Xla_call inner when not (eqn_has_effect e) ->
             let outs_used = List.map is_used e.outs in
             if not (List.exists Fun.id outs_used) then acc

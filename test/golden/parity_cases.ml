@@ -855,7 +855,8 @@ let array_random_run op p a b =
       Some (Ojax.Api.jit_flat f [ a () ])
   | "sp_fresnel_grad" ->
       let f args =
-        L.reduce_sum (fst (Ojax.Scipy.Special.fresnel (List.hd args))) [| 0 |]
+        Ojax.Numpy.Reductions.sum
+          (fst (Ojax.Scipy.Special.fresnel (List.hd args)))
       in
       Some (Ojax.Interpreters.Ad.grad f [ a () ])
   | _ -> None

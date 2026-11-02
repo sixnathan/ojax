@@ -1044,6 +1044,14 @@ let qr_empty ~full_matrices a =
   let r = L.full (Array.append batch [| k; n |]) 0.0 (dtype a) in
   [ q; r ]
 
+let qr_pivoted_empty ~full_matrices a =
+  let dims = shape a in
+  let rank = Array.length dims in
+  let batch = Array.sub dims 0 (rank - 2) in
+  let n = dims.(rank - 1) in
+  qr_empty ~full_matrices a
+  @ [ L.full (Array.append batch [| n |]) 0.0 Dtype.I32 ]
+
 let svd_empty ~full_matrices ~compute_uv a =
   let dims = shape a in
   let rank = Array.length dims in

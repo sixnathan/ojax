@@ -130,7 +130,10 @@ let hankel ?r c =
   let r =
     match r with Some v -> v | None -> Numpy.Array_creation.zeros_like c
   in
-  hankel_patches c r
+  let m = (shape c).(0) and n = (shape r).(0) in
+  if m = 0 || n = 0 then
+    L.full [| m; n |] 0.0 (Dtypes.promote_types (dtype_of c) (dtype_of r))
+  else hankel_patches c r
 
 let toeplitz ?r c =
   let r = match r with Some r -> r | None -> U.conj c in

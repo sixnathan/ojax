@@ -4014,9 +4014,11 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
       emit_traced ctx [ a; taus ] ids eqn.outs
         (Native_lowering.qr_from_factors ~full_matrices)
   | Qr_pivoted full_matrices ->
-      if Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape then
-        failwith "Stablehlo.Emit: an empty qr runs on the host";
+      let empty =
+        Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape
+      in
       emit_inlined ctx eqn in_ids (function
+        | [ a ] when empty -> Native_lowering.qr_pivoted_empty ~full_matrices a
         | [ a ] -> Native_lowering.qr_pivoted ~full_matrices a
         | _ -> invalid_arg "Stablehlo.Emit: qr arity")
   | Geqrf when lapack_ffi () ->
@@ -4333,11 +4335,14 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         (Native_lowering.lu_pivots_to_permutation ~permutation_size)
   | Geqrf | Geqp3 | Ormqr _ ->
       failwith "Stablehlo.Emit: this LAPACK target needs the scipy library"
+  | Qr full_matrices
+    when Array.exists (fun d -> d = 0) (atom_aval (sole eqn.inputs)).shape ->
+      emit_inlined ctx eqn in_ids (function
+        | [ a ] -> Native_lowering.qr_empty ~full_matrices a
+        | _ -> invalid_arg "Stablehlo.Emit: qr arity")
   | Qr full_matrices ->
       let a = atom_aval (sole eqn.inputs) in
       let rank = Array.length a.shape in
-      if Array.exists (fun d -> d = 0) a.shape then
-        failwith "Stablehlo.Emit: an empty qr runs on the host";
       let taus =
         {
           a with

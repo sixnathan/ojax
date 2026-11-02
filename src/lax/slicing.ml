@@ -2,8 +2,59 @@ open Types
 
 let resolve_strides n = function Some s -> s | None -> Array.make n 1
 
+let python_tuple values =
+  match Array.to_list values with
+  | [ d ] -> Printf.sprintf "(%d,)" d
+  | ds -> "(" ^ String.concat ", " (List.map string_of_int ds) ^ ")"
+
+let array_for_all2 f a b =
+  let n = min (Array.length a) (Array.length b) in
+  let rec go i = i >= n || (f a.(i) b.(i) && go (i + 1)) in
+  go 0
+
 let slice_shape start_indices limit_indices strides ishape =
   let n = Array.length ishape in
+  let fail fmt =
+    Printf.ksprintf (fun m -> raise (Errors.Jax_type_error m)) fmt
+  in
+  if n <> Array.length start_indices then
+    fail
+      "slice start_indices must have length equal to the number of dimensions \
+       of the operand, got indices %s for operand shape %s."
+      (python_tuple start_indices)
+      (python_tuple ishape);
+  if Array.length start_indices <> Array.length limit_indices then
+    fail
+      "slice limit_indices must have the same length as start_indices, got \
+       start_indices %s and limit_indices %s."
+      (python_tuple start_indices)
+      (python_tuple limit_indices);
+  if not (array_for_all2 ( >= ) ishape limit_indices) then
+    fail
+      "slice limit_indices must be less than or equal to operand shape, got \
+       limit_indices %s for operand shape %s."
+      (python_tuple limit_indices)
+      (python_tuple ishape);
+  if not (Array.for_all (fun s -> s >= 0) start_indices) then
+    fail
+      "slice start_indices must be greater than or equal to zero, got \
+       start_indices of %s."
+      (python_tuple start_indices);
+  if not (array_for_all2 ( >= ) limit_indices start_indices) then
+    fail
+      "slice limit_indices must be greater than or equal to start_indices, got \
+       start_indices %s and limit_indices %s."
+      (python_tuple start_indices)
+      (python_tuple limit_indices);
+  (match strides with
+  | Some s when Array.length s <> n ->
+      fail
+        "slice strides must have length equal to the number of dimensions of \
+         the operand, got strides %s for operand shape %s."
+        (python_tuple s) (python_tuple ishape)
+  | Some s when not (Array.for_all (fun x -> x >= 0) s) ->
+      fail "slice strides must be positive, got %s" (python_tuple s)
+  | _ -> ());
   let strides = resolve_strides n strides in
   Array.init n (fun i ->
       let d = limit_indices.(i) - start_indices.(i) in

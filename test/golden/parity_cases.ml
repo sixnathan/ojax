@@ -1276,7 +1276,7 @@ let tracer_batch_run op params a b =
 let slice_prefix v stop =
   let sh = (Ojax.Core.get_aval v).Ojax.Types.shape in
   let limit = Array.copy sh in
-  limit.(0) <- stop;
+  limit.(0) <- min stop sh.(0);
   Ojax.Core.bind1
     (Ojax.Types.Slice
        {
@@ -1529,7 +1529,7 @@ let dtype_sweep_run op a =
                  {
                    start_indices = Array.map (fun _ -> 0) sh;
                    limit_indices =
-                     Array.mapi (fun i d -> if i = 0 then 2 else d) sh;
+                     Array.mapi (fun i d -> if i = 0 then min 2 d else d) sh;
                    strides = None;
                  })
               [ v ]

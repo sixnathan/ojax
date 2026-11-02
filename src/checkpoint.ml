@@ -370,22 +370,29 @@ let staged_rule policy (primal_jaxpr : closed_jaxpr) (avals : aval list) =
 let refs_forbidden =
   "a Ref closed over by a function under checkpoint is not supported"
 
-type remat = { body : closed_jaxpr; differentiated : bool }
+type cfg = { policy : policy option; prevent_cse : bool }
+
+let default_cfg = { policy = None; prevent_cse = true }
+
+type remat = { body : closed_jaxpr; differentiated : bool; cfg : cfg }
 
 let remats : (int, remat) Hashtbl.t = Hashtbl.create 16
 
-let remat_view id ~differentiated traced =
+let remat_view id ~cfg ~differentiated traced =
   Pretty_printer.register_custom_view id "remat2"
     [
       ( "differentiated",
         Pretty_printer.Plain (if differentiated then "True" else "False") );
       ("jaxpr", Pretty_printer.Sub traced);
-      ("policy", Pretty_printer.Plain "None");
-      ("prevent_cse", Pretty_printer.Plain "True");
+      ( "policy",
+        Pretty_printer.Plain
+          (match cfg.policy with None -> "None" | Some p -> policy_repr p) );
+      ( "prevent_cse",
+        Pretty_printer.Plain (if cfg.prevent_cse then "True" else "False") );
     ];
   id
 
-let rec remat_rule ~differentiated (body : closed_jaxpr) =
+let rec remat_rule ~cfg ~differentiated (body : closed_jaxpr) =
   let avals = List.map (fun (v : var) -> v.vaval) body.jaxpr.in_binders in
   let avals = List.filteri (fun i _ -> i >= List.length body.consts) avals in
   let by_nonzero : (bool list, closed_jaxpr * bool list) Hashtbl.t =
@@ -443,7 +450,7 @@ let rec remat_rule ~differentiated (body : closed_jaxpr) =
             List.filter (fun t -> not (Ad_util.is_symbolic_zero t)) tangents
           in
           let outs =
-            remat_call ~differentiated traced (primals @ nz_tangents)
+            remat_call ~cfg ~differentiated traced (primals @ nz_tangents)
           in
           let n_out = List.length out_nz in
           let primal_out, tangent_out =
@@ -464,16 +471,18 @@ let rec remat_rule ~differentiated (body : closed_jaxpr) =
               out_nz primal_out ));
     }
 
-and remat_id ~differentiated body =
-  let id = Core.register_custom_rule (remat_rule ~differentiated body) in
-  Hashtbl.replace remats id { body; differentiated };
-  if differentiated then Hashtbl.replace Jaxpr.barrier_calls id ();
-  remat_view id ~differentiated body
+and remat_id ?(cfg = default_cfg) ~differentiated body =
+  let id = Core.register_custom_rule (remat_rule ~cfg ~differentiated body) in
+  Hashtbl.replace remats id { body; differentiated; cfg };
+  if differentiated && cfg.prevent_cse then
+    Hashtbl.replace Jaxpr.barrier_calls id ();
+  remat_view id ~cfg ~differentiated body
 
-and remat_call ~differentiated body args =
-  Core.bind (Custom_jvp_call (remat_id ~differentiated body)) args
+and remat_call ~cfg ~differentiated body args =
+  Core.bind (Custom_jvp_call (remat_id ~cfg ~differentiated body)) args
 
-let eval_subset (env : (int, value) Hashtbl.t) eqns outs =
+let eval_subset ?(post = fun _ _ x -> x) (env : (int, value) Hashtbl.t) eqns
+    outs =
   let read = function
     | A_var v -> Hashtbl.find env v.vid
     | A_lit nd -> Concrete nd
@@ -483,14 +492,16 @@ let eval_subset (env : (int, value) Hashtbl.t) eqns outs =
     (fun (e : eqn) ->
       let ins = List.map read e.inputs in
       let res = Core.bind e.prim ins in
-      List.iter2 (fun (v : var) r -> Hashtbl.replace env v.vid r) e.outs res)
+      List.iter2
+        (fun (v : var) r -> Hashtbl.replace env v.vid (post e v r))
+        e.outs res)
     eqns;
   List.map read outs
 
 let remat_partial_eval trace id (tracers : tracer list) =
   match Hashtbl.find_opt remats id with
   | None -> None
-  | Some { body; _ } ->
+  | Some { body; cfg; _ } ->
       let jx = body.jaxpr in
       let n_const = List.length body.consts in
       let const_binders, binders =
@@ -506,7 +517,19 @@ let remat_partial_eval trace id (tracers : tracer list) =
             | _ -> None)
           tracers
       in
-      let out_unknown = ref [] in
+      let policy = Option.value cfg.policy ~default:nothing_saveable in
+      let unknown_vars = Hashtbl.create 64 and saved = Hashtbl.create 64 in
+      List.iter2
+        (fun (v : var) k ->
+          if k = None then Hashtbl.replace unknown_vars v.vid ())
+        binders known_flags;
+      let var_of = Hashtbl.create 64 in
+      let order = ref [] in
+      let note vid =
+        if Hashtbl.mem saved vid && not (List.mem vid !order) then
+          order := vid :: !order
+      in
+      let pe_unknown = Hashtbl.create 64 in
       ignore
         (Jaxpr.make_jaxpr
            (List.map (fun (v : var) -> v.vaval) binders)
@@ -519,19 +542,140 @@ let remat_partial_eval trace id (tracers : tracer list) =
                    | None -> Partial_eval.partial_val_unknown (Core.get_aval x))
                  known_flags args
              in
-             let _, _, out_pvals =
-               Partial_eval.partial_eval_flat
-                 (Jaxpr.eval_closed_jaxpr body)
-                 pvals
-             in
-             out_unknown := List.map Partial_eval.is_unknown out_pvals;
+             ignore
+               (Partial_eval.partial_eval_flat
+                  (fun xs ->
+                    let env = Hashtbl.create 64 in
+                    List.iter2
+                      (fun (v : var) nd ->
+                        Hashtbl.replace env v.vid (Concrete nd))
+                      const_binders body.consts;
+                    List.iter2
+                      (fun (v : var) x -> Hashtbl.replace env v.vid x)
+                      binders xs;
+                    eval_subset
+                      ~post:(fun _ v r ->
+                        if Partial_eval.is_unknown_value r then
+                          Hashtbl.replace pe_unknown v.vid ();
+                        r)
+                      env jx.eqns jx.outs)
+                  pvals);
              []));
-      let out_unknown = !out_unknown in
+      let candidates =
+        List.filter
+          (fun (e : eqn) ->
+            List.iter (fun (v : var) -> Hashtbl.replace var_of v.vid v) e.outs;
+            let ins = atom_vars e.inputs in
+            if
+              List.exists (fun (v : var) -> Hashtbl.mem pe_unknown v.vid) e.outs
+            then begin
+              List.iter note ins;
+              List.iter
+                (fun (v : var) ->
+                  if Hashtbl.mem pe_unknown v.vid then
+                    Hashtbl.replace unknown_vars v.vid ())
+                e.outs;
+              true
+            end
+            else if
+              is_effectful e.prim
+              || remat_case policy e.prim (List.map atom_aval e.inputs)
+                 <> Recompute
+            then begin
+              List.iter (fun (v : var) -> Hashtbl.replace saved v.vid ()) e.outs;
+              false
+            end
+            else begin
+              List.iter note ins;
+              true
+            end)
+          jx.eqns
+      in
+      let out_unknown =
+        List.map
+          (function
+            | A_var v -> Hashtbl.mem unknown_vars v.vid
+            | A_lit _ | DropVar _ -> false)
+          jx.outs
+      in
       let pick flag =
         List.filteri (fun i _ -> List.nth out_unknown i = flag) jx.outs
       in
       let known_outs = pick false and unknown_outs = pick true in
-      let known_eqns = live_eqns (atom_vars known_outs) jx.eqns in
+      let staged_eqns = live_eqns (atom_vars unknown_outs) candidates in
+      let used = Hashtbl.create 64 in
+      List.iter
+        (fun vid -> Hashtbl.replace used vid ())
+        (atom_vars unknown_outs);
+      List.iter
+        (fun (e : eqn) ->
+          List.iter
+            (fun vid -> Hashtbl.replace used vid ())
+            (atom_vars e.inputs))
+        staged_eqns;
+      let produced = Hashtbl.create 64 in
+      List.iter (fun (v : var) -> Hashtbl.replace produced v.vid ()) binders;
+      List.iter
+        (fun (e : eqn) ->
+          List.iter (fun (v : var) -> Hashtbl.replace produced v.vid ()) e.outs)
+        staged_eqns;
+      List.iter
+        (fun (e : eqn) -> List.iter note (atom_vars e.inputs))
+        staged_eqns;
+      List.iter
+        (fun vid ->
+          if
+            (not (Hashtbl.mem produced vid))
+            && Hashtbl.mem var_of vid
+            && not (List.mem vid !order)
+          then order := vid :: !order)
+        (atom_vars unknown_outs);
+      let residuals =
+        List.filter_map
+          (fun vid ->
+            if Hashtbl.mem used vid then Some (Hashtbl.find var_of vid)
+            else None)
+          (List.rev !order)
+      in
+      let res_atoms = List.map (fun v -> A_var v) residuals in
+      let known_eqns =
+        live_eqns (atom_vars known_outs @ atom_vars res_atoms) jx.eqns
+      in
+      let known_used = Hashtbl.create 64 in
+      List.iter
+        (fun (e : eqn) ->
+          List.iter
+            (fun vid -> Hashtbl.replace known_used vid ())
+            (atom_vars e.inputs))
+        known_eqns;
+      let precision (a : aval) =
+        match a.dtype with
+        | Dtype.F16 -> Some (5, 10)
+        | Dtype.Bf16 -> Some (8, 7)
+        | Dtype.F32 | Dtype.Complex64 -> Some (8, 23)
+        | Dtype.F64 | Dtype.Complex128 -> Some (11, 52)
+        | d -> (
+            match Float_format.of_dtype d with
+            | Some f -> Some (f.nexp, f.nmant)
+            | None -> None)
+      in
+      let reduced = Hashtbl.create 8 in
+      List.iter
+        (fun (v : var) ->
+          if Hashtbl.mem known_used v.vid then
+            match precision v.vaval with
+            | Some p -> Hashtbl.replace reduced v.vid p
+            | None -> ())
+        residuals;
+      let post (e : eqn) (v : var) r =
+        match (Hashtbl.find_opt reduced v.vid, e.prim) with
+        | None, _ -> r
+        | Some p, Reduce_precision { exponent_bits; mantissa_bits }
+          when p = (exponent_bits, mantissa_bits) ->
+            r
+        | Some (exponent_bits, mantissa_bits), _ ->
+            Core.bind1 (Reduce_precision { exponent_bits; mantissa_bits }) [ r ]
+      in
       let pvals =
         List.map2
           (fun (v : var) k ->
@@ -550,10 +694,10 @@ let remat_partial_eval trace id (tracers : tracer list) =
             List.iter2
               (fun (v : var) x -> Hashtbl.replace env v.vid x)
               binders args;
-            eval_subset env known_eqns known_outs)
+            eval_subset ~post env known_eqns (known_outs @ res_atoms))
           pvals
       in
-      let known_values =
+      let known_all =
         List.map
           (fun (pv : partial_val) ->
             match pv.pv_const with
@@ -561,17 +705,11 @@ let remat_partial_eval trace id (tracers : tracer list) =
             | None -> failwith "checkpoint: known output became unknown")
           known_pvals
       in
-      let staged_eqns = live_eqns (atom_vars unknown_outs) jx.eqns in
-      let used = Hashtbl.create 64 in
-      List.iter
-        (fun vid -> Hashtbl.replace used vid ())
-        (atom_vars unknown_outs);
-      List.iter
-        (fun (e : eqn) ->
-          List.iter
-            (fun vid -> Hashtbl.replace used vid ())
-            (atom_vars e.inputs))
-        staged_eqns;
+      let known_values, res_values =
+        match Util.split_list known_all [ List.length known_outs ] with
+        | [ a; b ] -> (a, b)
+        | _ -> failwith "checkpoint: residual arity"
+      in
       let used_inputs =
         List.filter
           (fun ((v : var), _) -> Hashtbl.mem used v.vid)
@@ -579,21 +717,31 @@ let remat_partial_eval trace id (tracers : tracer list) =
       in
       let staged =
         Jaxpr.make_jaxpr
-          (List.map (fun ((v : var), _) -> v.vaval) used_inputs)
+          (List.map (fun (v : var) -> v.vaval) residuals
+          @ List.map (fun ((v : var), _) -> v.vaval) used_inputs)
           (fun ins ->
             let env = Hashtbl.create 64 in
             List.iter2
               (fun (v : var) nd -> Hashtbl.replace env v.vid (Concrete nd))
               const_binders body.consts;
+            let res_in, rest =
+              match Util.split_list ins [ List.length residuals ] with
+              | [ a; b ] -> (a, b)
+              | _ -> failwith "checkpoint: staged arity"
+            in
+            List.iter2
+              (fun (v : var) x -> Hashtbl.replace env v.vid x)
+              residuals res_in;
             List.iter2
               (fun ((v : var), _) x -> Hashtbl.replace env v.vid x)
-              used_inputs ins;
+              used_inputs rest;
             eval_subset env staged_eqns unknown_outs)
       in
-      let staged_id = remat_id ~differentiated:true staged in
+      let staged_id = remat_id ~cfg ~differentiated:true staged in
       let unknown_values =
         Partial_eval.record_unknown trace (Custom_jvp_call staged_id)
-          (List.map snd used_inputs)
+          (List.map (Partial_eval.known_tracer trace) res_values
+          @ List.map snd used_inputs)
       in
       let k = ref known_values and u = ref unknown_values in
       let take r =
@@ -606,7 +754,7 @@ let remat_partial_eval trace id (tracers : tracer list) =
 let remat_transpose id cts (primals : Ad.tval list) =
   match Hashtbl.find_opt remats id with
   | None -> None
-  | Some { body; _ } ->
+  | Some { body; cfg; _ } ->
       let nonlinear =
         List.filter_map
           (function Ad.Prim v -> Some v | Ad.Undef _ -> None)
@@ -672,7 +820,7 @@ let remat_transpose id cts (primals : Ad.tval list) =
             | _ -> failwith "checkpoint: arity")
       in
       let outs =
-        remat_call ~differentiated:true transposed (nonlinear @ nz_cts)
+        remat_call ~cfg ~differentiated:true transposed (nonlinear @ nz_cts)
       in
       let rest = ref outs and zeros = ref !in_zero in
       Some
@@ -693,13 +841,13 @@ let remat_transpose id cts (primals : Ad.tval list) =
 let remat_vmap id axis_size vals bdims =
   match Hashtbl.find_opt remats id with
   | None -> None
-  | Some { body; differentiated } ->
+  | Some { body; differentiated; cfg } ->
       let batched, out_batched =
         Interpreters.Batching.batch_jaxpr_axes axis_size body
           (List.map Core.get_aval vals)
           bdims
       in
-      let outs = remat_call ~differentiated batched vals in
+      let outs = remat_call ~cfg ~differentiated batched vals in
       Some (outs, List.map (fun b -> if b then Some 0 else None) out_batched)
 
 let () =
@@ -707,13 +855,13 @@ let () =
      fun id -> Option.map (fun r -> r.body) (Hashtbl.find_opt remats id));
   (Jaxpr.remat_rebuild :=
      fun id body ->
-       let { differentiated; _ } = Hashtbl.find remats id in
-       remat_id ~differentiated body);
+       let { differentiated; cfg; _ } = Hashtbl.find remats id in
+       remat_id ~cfg ~differentiated body);
   Interpreters.Batching.custom_call_batch := remat_vmap;
   Partial_eval.custom_call_rule := remat_partial_eval;
   Ad.custom_call_transpose := remat_transpose
 
-let checkpoint ?policy f =
+let checkpoint ?policy ?(prevent_cse = true) f =
   let closed_rules : (aval list, int) Hashtbl.t = Hashtbl.create 4 in
   fun args ->
     let avals = List.map Core.get_aval args in
@@ -724,14 +872,10 @@ let checkpoint ?policy f =
           Jaxpr.make_jaxpr_forbidding_refs ~message:refs_forbidden avals f
         in
         let chosen = Option.value policy ~default:nothing_saveable in
-        match (hoisted, policy) with
-        | [], None ->
-            let id = remat_id ~differentiated:false traced in
-            Hashtbl.replace closed_rules avals id;
-            Core.bind (Custom_jvp_call id) args
-        | [], Some _ ->
+        match hoisted with
+        | [] ->
             let id =
-              Core.register_custom_rule (staged_rule chosen traced avals)
+              remat_id ~cfg:{ policy; prevent_cse } ~differentiated:false traced
             in
             Hashtbl.replace closed_rules avals id;
             Core.bind (Custom_jvp_call id) args

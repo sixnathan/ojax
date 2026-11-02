@@ -31,7 +31,11 @@ val checkpoint_name : value -> string -> value
 val checkpoint_name_tree : value Tree_util.t -> string -> value Tree_util.t
 
 val checkpoint :
-  ?policy:policy -> (value list -> value list) -> value list -> value list
+  ?policy:policy ->
+  ?prevent_cse:bool ->
+  (value list -> value list) ->
+  value list ->
+  value list
 
 val saved_residuals :
   (value list -> value list) -> value list -> (aval * string) list

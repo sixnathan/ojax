@@ -1834,6 +1834,17 @@ let rec impl_base prim inputs =
             Control_flow.Loops.cumred_impl ~axis ~reverse ~combine:Float.min a)
         inputs
   | Cumlogsumexp { axis; reverse } ->
+      List.iter
+        (fun nd ->
+          let dt = Ndarray.dtype nd in
+          let rank = Array.length (Ndarray.shape nd) in
+          if
+            axis >= 0 && axis < rank
+            && (dt = Dtype.Bool || Dtypes.issubdtype dt `Integer)
+          then
+            raise
+              (Py_exn.Overflow_error "cannot convert float infinity to integer"))
+        inputs;
       un
         (Control_flow.Loops.cumred_impl ~axis ~reverse
            ~combine:Control_flow.Loops.logaddexp)

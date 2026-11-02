@@ -191,6 +191,11 @@ let stage2 dtype v =
   let text = apfloat_default_text ~precision v in
   if String.contains text '.' then text else hex_bits dtype v
 
+let double_attr_text v =
+  let short = small_finite_text v in
+  if float_of_string short = v then short
+  else apfloat_default_text ~precision:9 v
+
 let narrow_stage2 dtype v =
   let precision = match dtype with Dtype.F16 -> 5 | _ -> 4 in
   apfloat_default_text ~precision v

@@ -957,14 +957,15 @@ let emit_approx_top_k ctx (eqn : eqn) in_ids dparams =
        "    %%%d:2 = stablehlo.custom_call @ApproxTopK(%s, %s, %s, %s) \
         {backend_config = \"\", called_computations = [@%s], \
         mhlo.backend_config = {aggregate_to_topk = %s, is_fallback = true, \
-        recall_target = %.9g : f32, reduction_dim = %d : i64, \
+        recall_target = %s : f32, reduction_dim = %d : i64, \
         reduction_input_size_override = %s : i64, top_k = %s : i64}} : (%s, \
         %s, %s, %s) -> (%s, %s)\n"
        group
        (name (sole in_ids))
        (name iota) (name init) (name arg) symbol
        (String.lowercase_ascii (param "aggregate_to_topk"))
-       recall reduction
+       (Ir.double_attr_text recall)
+       reduction
        (param "reduction_input_size_override")
        (param "k")
        (Ir.tensor_type_of_aval operand)
@@ -1427,6 +1428,8 @@ let emit_cum_logsumexp ctx (eqn : eqn) in_ids ~axis ~reverse =
   let x = sole in_ids in
   let in_aval = atom_aval (sole eqn.inputs) in
   let dt = in_aval.dtype in
+  if dt = Dtype.Bool || Dtypes.issubdtype dt `Integer then
+    raise (Py_exn.Overflow_error "cannot convert float infinity to integer");
   let ty = Ir.tensor_type_of_aval in_aval in
   let sty = Ir.tensor_type dt [||] in
   let bty = Ir.tensor_type Dtype.Bool [||] in

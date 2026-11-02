@@ -403,7 +403,11 @@ let verifier_diagnostic reason =
   in
   if String.starts_with ~prefix:"-:" line then
     match find 0 with
-    | Some message when not (String.starts_with ~prefix:"expected " message) ->
+    | Some message
+      when not
+             (String.starts_with ~prefix:"expected " message
+             || String.starts_with ~prefix:"'stablehlo.custom_call' op " message
+             ) ->
         Some message
     | _ -> None
   else None

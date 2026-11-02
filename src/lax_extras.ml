@@ -81,6 +81,34 @@ let approx_top_k ~is_max_k ~reduction_dimension ~recall_target
     ~reduction_input_size_override ~aggregate_to_topk operand k =
   if not (Dtypes.issubdtype (aval operand).T.dtype `Floating) then
     raise (Py_exn.Value_error "operand must be a floating type");
+  (match operand with
+  | T.Tracer _ -> ()
+  | _ ->
+      let shape = (aval operand).T.shape in
+      let rank = Array.length shape in
+      let legalization message =
+        raise
+          (Errors.Jax_runtime_error
+             ("UNKNOWN: error: 'stablehlo.custom_call' op " ^ message))
+      in
+      if k > 0 && reduction_dimension >= -rank && reduction_dimension < rank
+      then begin
+        let axis =
+          if reduction_dimension < 0 then rank + reduction_dimension
+          else reduction_dimension
+        in
+        if shape.(axis) >= k then begin
+          let recall =
+            Int32.float_of_bits (Int32.bits_of_float recall_target)
+          in
+          if not (recall > 0.0 && recall <= 1.0) then
+            legalization "recall_target out of range";
+          if
+            reduction_input_size_override >= 0
+            && reduction_input_size_override < shape.(axis)
+          then legalization "reduction_input_size_override out of range"
+        end
+      end);
   Eager_jit.pair "lax.approx_top_k"
     ( is_max_k,
       reduction_dimension,

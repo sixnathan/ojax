@@ -1040,7 +1040,7 @@ let qr_from_factors ~full_matrices = function
           Array.init rank (fun d ->
               if d = rank - 1 then (0, m - n, 0) else (0, 0, 0))
         in
-        [ product (L.pad r (L.full [||] 0.0 (dtype r)) pads); triu r ]
+        [ product (L.pad r (L.full_like ~shape:[||] r 0.0) pads); triu r ]
       else
         let q = product r in
         [ q; triu (cut_to n n r) ]
@@ -1129,7 +1129,7 @@ let qr_pivoted ~full_matrices a =
             Array.init rank (fun d ->
                 if d = rank - 1 then (0, m - n, 0) else (0, 0, 0))
           in
-          let q = product (L.pad r (L.full [||] 0.0 (dtype r)) pads) in
+          let q = product (L.pad r (L.full_like ~shape:[||] r 0.0) pads) in
           [ q; triu r; p ]
         end
         else

@@ -2022,9 +2022,11 @@ let run op positional options arr =
       ]
   | "nn.squareplus" ->
       [
-        Ojax.Nn.Functions.squareplus
-          ?b:(A.opt options "b" A.float_)
-          ((A.value arr) positional.(0));
+        (match A.get options "b" `Null with
+        | `Null -> Ojax.Nn.Functions.squareplus ((A.value arr) positional.(0))
+        | b ->
+            Ojax.Nn.Functions.squareplus_value ~b:(A.value arr b)
+              ((A.value arr) positional.(0)));
       ]
   | "nn.standardize" ->
       [

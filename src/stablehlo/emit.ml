@@ -3745,15 +3745,20 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
         | _ -> invalid_arg "Stablehlo.Emit: gather arity")
   | Gather { dimension_numbers; slice_sizes } ->
       emit_gather ctx eqn in_ids dimension_numbers slice_sizes
-  | Scatter ({ dimension_numbers = { s_clip = true; _ } as d; _ } as o) ->
+  | ( Scatter { dimension_numbers = { s_clip = true; _ } as d; _ }
+    | Scatter_add { dimension_numbers = { s_clip = true; _ } as d }
+    | Scatter_sub { dimension_numbers = { s_clip = true; _ } as d }
+    | Scatter_mul { dimension_numbers = { s_clip = true; _ } as d; _ }
+    | Scatter_min { dimension_numbers = { s_clip = true; _ } as d }
+    | Scatter_max { dimension_numbers = { s_clip = true; _ } as d } ) as p ->
       emit_inlined ctx eqn in_ids (function
         | [ operand; indices; updates ] ->
-            let plain = { d with s_clip = false } in
             let clamped =
-              Lax.Slicing.clamp_scatter_indices operand indices updates plain
+              Lax.Slicing.clamp_scatter_indices operand indices updates
+                { d with s_clip = false }
             in
             Core.bind
-              (Scatter { o with dimension_numbers = plain })
+              (Lax.Slicing.unclip_scatter p)
               [ operand; clamped; updates ]
         | _ -> invalid_arg "Stablehlo.Emit: scatter arity")
   | Scatter { dimension_numbers; unique_indices } ->

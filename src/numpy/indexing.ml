@@ -28,7 +28,11 @@ let broadcast_shapes a b =
       if da = db then da
       else if da = 1 then db
       else if db = 1 then da
-      else invalid_arg "take_along_axis: incompatible shapes")
+      else
+        Py_exn.value_error
+          (Printf.sprintf
+             "operands could not be broadcast together with shapes %s %s"
+             (Validate.python_tuple a) (Validate.python_tuple b)))
 
 let wrap_negative indices axis_size =
   let idt = dtype indices in
@@ -56,9 +60,12 @@ let take ?axis ?mode ?fill_value ?(unique_indices = false)
     | Some "clip" -> indices
     | Some "wrap" ->
         Ufuncs.mod_ indices (full (dtype indices) [||] (float_of_int axis_size))
-    | Some "raise" -> failwith "The 'raise' mode to jnp.take is not supported."
+    | Some "raise" ->
+        Py_exn.not_implemented_error
+          "The 'raise' mode to jnp.take is not supported."
     | None | Some "fill" -> wrap_negative indices axis_size
-    | Some m -> invalid_arg ("take: unsupported mode " ^ m)
+    | Some m ->
+        Py_exn.value_error (Printf.sprintf "Invalid mode '%s' for np.take" m)
   in
   let index_dims = Array.length ish in
   let indices_size = Array.fold_left ( * ) 1 ish in
@@ -126,7 +133,10 @@ let take_along_axis_body ~axis ?mode ?fill_value ?wrap_negative_indices a
     indices =
   let rank = ndim a in
   if rank <> ndim indices then
-    invalid_arg "take_along_axis: arr and indices must have the same ndim";
+    Py_exn.value_error
+      (Printf.sprintf
+         "indices and arr must have the same number of dimensions; %d vs. %d"
+         (ndim indices) rank);
   let axis_int = canonicalize_axis axis rank in
   let ash = shape a in
   let idx_shape = shape indices in
@@ -226,7 +236,7 @@ let take_along_axis_body ~axis ?mode ?fill_value ?wrap_negative_indices a
           (T.Gather
              { dimension_numbers = dnums; slice_sizes = asc !slice_sizes })
           [ a; gather_indices ]
-    | Some m -> invalid_arg ("Unknown gather mode \"" ^ m ^ "\"")
+    | Some m -> Py_exn.value_error ("Unknown gather mode \"" ^ m ^ "\"")
 
 let take_along_axis ?(axis = -1) ?mode ?fill_value ?wrap_negative_indices a
     indices =
@@ -291,13 +301,12 @@ let put ?mode ?(inplace = true) a ind v =
       | Some "wrap" ->
           bind1 T.Rem [ ind; full idt (shape ind) (float_of_int asize) ]
       | Some "raise" ->
-          raise
-            (Py_exn.Not_implemented_error
-               "The 'raise' mode to jnp.put is not supported.")
+          Py_exn.not_implemented_error
+            "The 'raise' mode to jnp.put is not supported."
       | Some m ->
-          raise
-            (Py_exn.Value_error
-               ("mode should be one of 'wrap' or 'clip'; got mode='" ^ m ^ "'"))
+          Py_exn.value_error
+            (Printf.sprintf
+               "mode should be one of 'wrap' or 'clip'; got mode='%s'" m)
     in
     let coords = NL.unravel_index ind ash in
     let r = Array.length ash in
@@ -320,7 +329,11 @@ let put_along_axis ?axis ?mode arr indices values =
   in
   let rank = ndim arr in
   if rank <> ndim indices then
-    invalid_arg "put_along_axis: arr and indices must have the same ndim";
+    Py_exn.value_error
+      (Printf.sprintf
+         "put_along_axis arguments 'arr' and 'indices' must have same ndim. \
+          Got arr.ndim=%d and indices.ndim=%d."
+         rank (ndim indices));
   let ash = shape arr in
   let axis_size = ash.(axis) in
   let indices = wrap_negative indices axis_size in
@@ -342,7 +355,7 @@ let put_along_axis ?axis ?mode arr indices values =
     | Some "clip" ->
         Lax.Slicing.clamp_scatter_indices arr scatter_indices values_b dnums
     | None | Some ("fill" | "drop" | "promise_in_bounds") -> scatter_indices
-    | Some m -> invalid_arg ("Unknown scatter mode \"" ^ m ^ "\"")
+    | Some m -> Py_exn.value_error ("Unknown gather mode \"" ^ m ^ "\"")
   in
   let result =
     bind1
@@ -354,7 +367,7 @@ let put_along_axis ?axis ?mode arr indices values =
 type dslice = Full | Dslice of { start : T.value; size : int; stride : int }
 
 let ds ?size ?(stride = 1) start =
-  if stride < 0 then invalid_arg "`stride` must be >= 0.";
+  if stride < 0 then Py_exn.value_error "`stride` must be >= 0.";
   match (start, size) with
   | None, _ -> Full
   | Some start, Some size -> Dslice { start; size; stride }
@@ -362,7 +375,7 @@ let ds ?size ?(stride = 1) start =
       let size =
         match count with
         | T.Tracer _ ->
-            invalid_arg "ds: a one-argument slice needs a static size"
+            Py_exn.type_error "ds: a one-argument slice needs a static size"
         | T.Concrete nd -> int_of_float (Nd.get_f nd [||])
         | T.Device b -> int_of_float (Nd.get_f (Pjrt.Buffer.to_host b) [||])
       in
@@ -374,7 +387,7 @@ let dslice_index x slices =
   let nd = Array.length sh in
   let given = List.length slices in
   if given > nd then
-    invalid_arg
+    Py_exn.index_error
       (Printf.sprintf
          "Too many indices: %d-dimensional array indexed with %d regular \
           indices."

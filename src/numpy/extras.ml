@@ -299,10 +299,17 @@ let flatnonzero ?size ?fill_value a =
   List.hd (nonzero ?size ?fill_value (flat a))
 
 let argwhere ?size ?fill_value a =
-  let a = if rank a = 0 then NL.reshape a [| 1 |] else a in
+  let scalar = rank a = 0 in
+  let a = if scalar then NL.reshape a [| 1 |] else a in
   match nonzero ?size ?fill_value a with
   | [] -> AC.zeros ~dtype:(default_int ()) [| 0; 0 |]
-  | parts -> NL.stack ~axis:1 parts
+  | parts ->
+      let result = NL.stack ~axis:1 parts in
+      if scalar then
+        NL.reshape
+          (L.slice_in_dim ~axis:0 result 0 0)
+          [| (shape result).(0); 0 |]
+      else result
 
 type unique_result = {
   values : value;
@@ -1077,13 +1084,6 @@ let sum_at n data ids =
   L.scatter_add (AC.zeros ~dtype:(dtype_of data) [| n |]) indices data dims
 
 let bincount ?weights ?(minlength = 0) ?length x =
-  if dtype_of x <> Dtype.Bool && not (Dtypes.issubdtype (dtype_of x) `Integer)
-  then
-    raise
-      (Py_exn.Type_error
-         ("x argument to bincount must have an integer type; got "
-         ^ Dtype.short_name (dtype_of x)));
-  if rank x <> 1 then Py_exn.value_error "only 1-dimensional input supported.";
   let x =
     if dtype_of x = Dtype.Bool then L.convert_element_type x Dtype.I32 else x
   in
@@ -1095,8 +1095,25 @@ let bincount ?weights ?(minlength = 0) ?length x =
       raise
         (Py_exn.Type_error
            ("x argument to bincount must have an integer type; got "
-          ^ Dtype.short_name d)));
+          ^ Dtype.numpy_name d)));
   if rank x <> 1 then Py_exn.value_error "only 1-dimensional input supported.";
+  (match weights with
+  | Some w when shape w <> shape x ->
+      let typeof v =
+        Printf.sprintf "%s[%s]({})"
+          (Dtype.short_name (dtype_of v))
+          (String.concat "," (List.map string_of_int (Array.to_list (shape v))))
+      in
+      Py_exn.value_error
+        (Printf.sprintf
+           "type of weights must match type of x. Got typeof(x)=%s and \
+            typeof(weights)=%s"
+           (typeof x) (typeof w))
+  | Some w when dtype_of w = Dtype.Bool ->
+      Py_exn.type_error
+        "add does not accept dtype bool at position 0. Accepted dtypes at \
+         position 0 are subtypes of complexfloating, floating, integer."
+  | _ -> ());
   let n =
     match length with
     | Some l -> l
@@ -1182,7 +1199,7 @@ let histogram_weights a weights =
       (a, AC.ones_like a)
   | Some w -> (
       if shape a <> shape w then
-        invalid_arg "weights should have the same shape as a.";
+        Py_exn.value_error "weights should have the same shape as a.";
       match NL.promote_values [ as_inexact a; as_inexact w ] with
       | [ a; w ] -> (a, w)
       | _ -> assert false)
@@ -1203,7 +1220,7 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
     | Some d ->
         let d = Dtypes.canonicalize_dtype d in
         if not (Dtypes.issubdtype d `Integer) then
-          invalid_arg
+          Py_exn.value_error
             (Printf.sprintf "dtype=dtype('%s') is not an integer type."
                (Dtype.numpy_name d));
         d
@@ -1220,7 +1237,7 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
   let check c d =
     let values = flat_floats (host "ravel_multi_index" c) in
     if Array.exists (fun v -> v < 0.0 || v >= float_of_int d) values then
-      invalid_arg "invalid entry in coordinates array"
+      Py_exn.value_error "invalid entry in coordinates array"
   in
   let coords =
     match mode with
@@ -1234,7 +1251,7 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
     | "wrap" ->
         List.mapi (fun i c -> U.remainder c (Jnp_util.py_int dims.(i))) coords
     | "ignore" -> coords
-    | other -> invalid_arg ("invalid mode=" ^ other)
+    | other -> Py_exn.value_error ("invalid mode=" ^ other)
   in
   let strides =
     match order with
@@ -1245,7 +1262,7 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
           s.(d) <- s.(d - 1) * dims.(d - 1)
         done;
         s
-    | other -> invalid_arg ("invalid order=" ^ other)
+    | other -> Py_exn.value_error ("invalid order=" ^ other)
   in
   let start = Concrete (Ndarray.of_floats dt [||] [| 0.0 |]) in
   let _, result =
@@ -1257,6 +1274,15 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
   in
   result
 
+let unpack_sample_shape shape =
+  match shape with
+  | [| _; dims |] -> dims
+  | _ when Array.length shape < 2 ->
+      Py_exn.value_error
+        (Printf.sprintf "not enough values to unpack (expected 2, got %d)"
+           (Array.length shape))
+  | _ -> Py_exn.value_error "too many values to unpack (expected 2)"
+
 let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
   let sample, weights =
     match weights with
@@ -1266,7 +1292,7 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
         | [ s; w ] -> (s, Some w)
         | _ -> assert false)
   in
-  let n_dims = (shape sample).(1) in
+  let n_dims = unpack_sample_shape (shape sample) in
   if Array.length bins <> 0 && Array.length bins <> n_dims then
     Py_exn.value_error "should be a bin for each dimension.";
   let bins_for i = if Array.length bins = 0 then 10 else bins.(i) in
@@ -1333,6 +1359,10 @@ let interp_body ?left ?right ?period x xp fp =
     | _ -> assert false
   in
   let fp = as_inexact fp in
+  (match dtype_of x with
+  | Dtype.Complex64 | Dtype.Complex128 ->
+      Py_exn.value_error "jnp.interp: complex x values not supported."
+  | _ -> ());
   let idx = NL.take_trailing in
   let int_lit = Jnp_util.py_int in
   let x, xp, fp =
@@ -1344,12 +1374,12 @@ let interp_body ?left ?right ?period x xp fp =
         let xp = U.remainder xp p in
         let xp, fp = match L.sort_key_val xp fp with k, v -> (k, v) in
         let n = size_of xp in
-        let last = plain_slice xp (n - 1) n in
+        let last = plain_slice xp (Stdlib.max 0 (n - 1)) n in
         let last = U.subtract last p in
-        let first = U.add (plain_slice xp 0 1) p in
+        let first = U.add (plain_slice xp 0 (Stdlib.min 1 n)) p in
         let xp = NL.concatenate [ last; xp; first ] in
-        let fp_last = plain_slice fp (n - 1) n in
-        let fp_first = plain_slice fp 0 1 in
+        let fp_last = plain_slice fp (Stdlib.max 0 (n - 1)) n in
+        let fp_first = plain_slice fp 0 (Stdlib.min 1 n) in
         (x, xp, NL.concatenate [ fp_last; fp; fp_first ])
   in
   let n = size_of xp in
@@ -1440,7 +1470,7 @@ let gradient ?spacing ?axis ?(edge_order : int option) a =
   let n = rank a in
   let axes =
     match axis with
-    | Some ax -> List.map (canon n) ax
+    | Some ax -> List.map (fun i -> canonicalize_axis i n) ax
     | None -> List.init n Fun.id
   in
   if axes <> [] && List.exists (fun ax -> (shape a).(ax) < 2) axes then
@@ -1484,11 +1514,11 @@ let choose ?(mode = "raise") a choices =
     | "raise" ->
         let values = flat_floats (host "choose" a) in
         if Array.exists (fun v -> v < 0.0 || v >= float_of_int n) values then
-          invalid_arg "invalid entry in choice array";
+          Py_exn.value_error "invalid entry in choice array";
         a
     | "wrap" -> U.remainder a (Jnp_util.py_int n)
     | "clip" -> NL.clip ~min:0.0 ~max:(float_of_int (n - 1)) a
-    | other -> invalid_arg ("invalid mode=" ^ other)
+    | other -> Py_exn.value_error ("invalid mode=" ^ other)
   in
   match NL.broadcast_arrays (arr :: choices) with
   | [] -> invalid_arg "choose: arity"
@@ -1535,7 +1565,7 @@ let compress ?axis ?size ?(fill_value = 0.0) condition a =
     if dtype_of condition = Dtype.Bool then condition
     else L.convert_element_type condition Dtype.Bool
   in
-  if rank cond <> 1 then invalid_arg "condition must be a 1D array";
+  if rank cond <> 1 then Py_exn.value_error "condition must be a 1D array";
   let arr, ax =
     match axis with
     | None -> (flat a, 0)
@@ -1581,7 +1611,7 @@ let compress ?axis ?size ?(fill_value = 0.0) condition a =
               (Array.of_list kept)))
   | Some n ->
       if n < 0 || n > (shape arr).(0) then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "size must be positive and not greater than the size of the array \
               axis; got size=%d for a.shape[axis]=%d"
@@ -1605,7 +1635,9 @@ let extract ?size ?fill_value condition a =
 
 let delete ?axis a obj =
   let a, ax =
-    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
+    match axis with
+    | Some x -> (a, canonicalize_axis x (rank a))
+    | None -> (flat a, 0)
   in
   let n = (shape a).(ax) in
   List.iter
@@ -1625,7 +1657,9 @@ let delete ?axis a obj =
 
 let delete_array ?axis ?(assume_unique_indices = false) a obj =
   let a, ax =
-    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
+    match axis with
+    | Some x -> (a, canonicalize_axis x (rank a))
+    | None -> (flat a, 0)
   in
   if assume_unique_indices && Dtypes.issubdtype (dtype_of obj) `Integer then begin
     let extent = (shape a).(ax) in
@@ -1668,7 +1702,9 @@ let tile_to_size vals n =
 
 let insert ?axis a position values =
   let a, ax =
-    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
+    match axis with
+    | Some x -> (a, canonicalize_axis x (rank a))
+    | None -> (flat a, 0)
   in
   let ndim = rank a in
   let dt = dtype_of a in
@@ -1723,8 +1759,9 @@ let place ?(inplace = true) a mask values =
           are immutable. Pass inplace=False to instead return an updated \
           array.");
   if size_of a <> size_of mask then
-    invalid_arg "place: arr and mask must be the same size";
-  if size_of vals = 0 then invalid_arg "Cannot place values from an empty array";
+    Py_exn.value_error "place: arr and mask must be the same size";
+  if size_of vals = 0 then
+    Py_exn.value_error "Cannot place values from an empty array";
   if size_of a = 0 then a
   else begin
     let n = size_of mask in
@@ -1774,7 +1811,10 @@ let piecewise x condlist funclist =
   let n_cond = List.length condlist in
   let n_fun = List.length funclist in
   if n_fun <> n_cond && n_fun <> n_cond + 1 then
-    invalid_arg "with N condition(s), either N or N+1 functions are expected";
+    Py_exn.value_error
+      (Printf.sprintf
+         "with %d condition(s), either %d or %d functions are expected; got %d"
+         n_cond n_cond (n_cond + 1) n_fun);
   let leading, callables =
     if n_fun = n_cond + 1 then
       ( None,
@@ -1838,7 +1878,7 @@ let fill_diagonal ?(wrap = false) ?(inplace = true) a value =
   if Array.length sh < 2 then Py_exn.value_error "array must be at least 2-d";
   let is_2d = Array.length sh = 2 in
   if (not is_2d) && Array.exists (fun d -> d <> sh.(0)) sh then
-    invalid_arg "All dimensions of input must be of equal length";
+    Py_exn.value_error "All dimensions of input must be of equal length";
   let n = Array.fold_left Stdlib.min sh.(0) sh in
   let idx =
     Core.bind1
@@ -1894,7 +1934,9 @@ let trim_zeros ?(trim = "fb") ?axis a =
   let axes =
     match axis with
     | None -> List.init (rank a) Fun.id
-    | Some ax -> List.map (canon (rank a)) ax
+    | Some ax ->
+        Array.to_list
+          (Validate.canonicalize_axis_tuple (Array.of_list ax) (rank a))
   in
   if axes = [] || not (front || back) then a
   else
@@ -2037,12 +2079,22 @@ let frexp x =
   | _ -> invalid_arg "frexp: arity"
 
 let ldexp x1 x2 =
-  reject_complex "ldexp" x1;
-  (match dtype_of x2 with
-  | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
-  | Dtype.Complex128 ->
-      invalid_arg "ldexp not supported for input types"
-  | _ -> ());
+  let is_complex = function
+    | Dtype.Complex64 | Dtype.Complex128 -> true
+    | _ -> false
+  in
+  let is_inexact = function
+    | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
+    | Dtype.Complex128 ->
+        true
+    | _ -> false
+  in
+  if is_complex (dtype_of x1) || is_inexact (dtype_of x2) then
+    Py_exn.value_error
+      (Printf.sprintf
+         "ldexp not supported for input types (dtype('%s'), dtype('%s'))"
+         (Dtype.numpy_name (dtype_of x1))
+         (Dtype.numpy_name (dtype_of x2)));
   let x1 = as_inexact x1 in
   let dt = dtype_of x1 in
   let x2 = L.convert_element_type x2 dt in
@@ -2114,12 +2166,13 @@ let block tree =
             remaining := List.tl !remaining;
             (v, 1)
         | Group [] ->
-            invalid_arg "jax.numpy.block does not allow empty list arguments"
+            Py_exn.value_error
+              "jax.numpy.block does not allow empty list arguments"
         | Group items ->
             let parts = List.map go items in
             let depth = snd (List.hd parts) in
             if List.exists (fun (_, d) -> d <> depth) parts then
-              invalid_arg "Mismatched list depths in jax.numpy.block";
+              Py_exn.value_error "Mismatched list depths in jax.numpy.block";
             let target =
               List.fold_left (fun m (v, _) -> Stdlib.max m (rank v)) depth parts
             in
@@ -2136,7 +2189,7 @@ let promote_types a b = Dtypes.promote_types a b
 let can_cast ?(casting = "safe") a b =
   let kind = function
     | Dtype.Bool -> 0
-    | Dtype.Float0 -> invalid_arg "can_cast does not accept float0"
+    | Dtype.Float0 -> Py_exn.type_error "can_cast does not accept float0"
     | d when Dtypes.issubdtype d `Unsigned -> 1
     | d when Dtypes.issubdtype d `Signed -> 2
     | d when Dtypes.issubdtype d `Floating -> 3
@@ -2167,7 +2220,12 @@ let can_cast ?(casting = "safe") a b =
   | "safe" -> safe ()
   | "same_kind" -> safe () || kind a <= kind b
   | "unsafe" -> true
-  | c -> invalid_arg ("can_cast: unknown casting " ^ c)
+  | c ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "casting must be one of 'no', 'equiv', 'safe', 'same_kind', \
+            'unsafe' (got '%s')"
+           c)
 
 let shape_of = shape
 
@@ -2178,7 +2236,13 @@ let ndim = rank
 
 let polydiv ?(trim_leading_zeros = false) u v =
   let u = as_inexact u and v = as_inexact v in
-  let lu = size_of u and lv = size_of v in
+  let py_len w =
+    match shape w with
+    | [||] -> Py_exn.type_error "len() of unsized object"
+    | dims -> dims.(0)
+  in
+  let lu = py_len u in
+  let lv = py_len v in
   let dt = dtype_of u in
   let b1 = Core.bind1 in
   let scalar x = L.full [||] x dt in
@@ -2227,13 +2291,21 @@ let polydiv ?(trim_leading_zeros = false) u v =
 
 let polyfit_parts ?rcond ?w x y deg =
   let order = deg + 1 in
-  if deg < 0 then invalid_arg "expected deg >= 0";
+  if deg < 0 then Py_exn.value_error "expected deg >= 0";
   let type_error msg = raise (Py_exn.Type_error msg) in
   if rank x <> 1 then type_error "expected 1D vector for x";
   if size_of x = 0 then type_error "expected non-empty vector for x";
   if rank y < 1 || rank y > 2 then type_error "expected 1D or 2D array for y";
   if (shape x).(0) <> (shape y).(0) then
     type_error "expected x and y to have same length";
+  (match (rcond, dtype_of x) with
+  | ( None,
+      (( Dtype.Bool | Dtype.I8 | Dtype.I16 | Dtype.I32 | Dtype.I64 | Dtype.Uint8
+       | Dtype.Uint16 | Dtype.Uint32 | Dtype.Uint64 ) as d) ) ->
+      Py_exn.value_error
+        (Printf.sprintf "data type dtype('%s') not compatible with finfo"
+           (Dtype.numpy_name d))
+  | _ -> ());
   let x = as_inexact x and y = as_inexact y in
   let lhs = NL.vander ~n:order x in
   let lhs, y =
@@ -2297,7 +2369,7 @@ let polyfit_cov_body ?rcond ?w ~unscaled x y deg =
     if unscaled then Jnp_util.py_float 1.0
     else begin
       if n <= order then
-        invalid_arg
+        Py_exn.value_error
           "the number of data points must exceed order to scale the covariance \
            matrix";
       U.divide resids (Jnp_util.py_int (n - order))
@@ -2344,7 +2416,7 @@ let roots_of_coefficients p =
 
 let roots ?(strip_zeros = true) p =
   let p = NL.atleast_1d (as_inexact p) in
-  if rank p <> 1 then invalid_arg "Input must be a rank-1 array.";
+  if rank p <> 1 then Py_exn.value_error "Input must be a rank-1 array.";
   let n = (shape p).(0) in
   let real_dt = dtype_of p in
   let complex_dt =
@@ -2512,14 +2584,15 @@ let bit_positions bitorder =
 
 let check_bitorder bitorder =
   if bitorder <> "little" && bitorder <> "big" then
-    invalid_arg "'order' must be either 'little' or 'big'"
+    Py_exn.value_error "'order' must be either 'little' or 'big'"
 
 let packbits ?axis ?(bitorder = "big") a =
   check_bitorder bitorder;
   (match dtype_of a with
   | Dtype.F16 | Dtype.Bf16 | Dtype.F32 | Dtype.F64 | Dtype.Complex64
   | Dtype.Complex128 ->
-      invalid_arg "Expected an input array of integer or boolean data type"
+      Py_exn.type_error
+        "Expected an input array of integer or boolean data type"
   | _ -> ());
   Jnp_util.jit1 "packbits"
     ~key:
@@ -2537,7 +2610,9 @@ let packbits ?axis ?(bitorder = "big") a =
           let arr, ax =
             match axis with
             | None -> (flat arr, 0)
-            | Some x -> (arr, canon (rank arr) x)
+            | Some x ->
+                ignore (NL.swapaxes x (-1) arr);
+                (arr, canon (rank arr) x)
           in
           let arr = NL.swapaxes ax (-1) arr in
           let last = (shape arr).(rank arr - 1) in
@@ -2567,7 +2642,7 @@ let packbits ?axis ?(bitorder = "big") a =
 
 let unpackbits ?axis ?count ?(bitorder = "big") a =
   if dtype_of a <> Dtype.Uint8 then
-    invalid_arg "Expected an input array of unsigned byte data type";
+    Py_exn.type_error "Expected an input array of unsigned byte data type";
   check_bitorder bitorder;
   Jnp_util.jit1 "unpackbits"
     ~key:
@@ -2653,8 +2728,7 @@ let dtype ?(align : bool option) name =
   | "float64" -> Dtype.F64
   | "complex64" -> Dtype.Complex64
   | "complex128" -> Dtype.Complex128
-  | other ->
-      raise (Invalid_argument ("data type '" ^ other ^ "' not understood"))
+  | other -> Py_exn.type_error ("data type '" ^ other ^ "' not understood")
 
 type ndarray = value
 type ufunc = Ufunc.t

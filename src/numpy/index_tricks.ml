@@ -15,7 +15,7 @@ let consumes = function Int _ | Slice _ -> true | Newaxis | Ellipsis -> false
 let expand_ellipsis rank exprs =
   let used = List.length (List.filter consumes exprs) in
   if used > rank then
-    invalid_arg
+    Py_exn.index_error
       (Printf.sprintf
          "Too many indices: array has ndim of %d, but was indexed with %d \
           non-None/Ellipsis indices."
@@ -24,11 +24,11 @@ let expand_ellipsis rank exprs =
   match List.length (List.filter (( = ) Ellipsis) exprs) with
   | 0 -> exprs @ full
   | 1 -> List.concat_map (fun e -> if e = Ellipsis then full else [ e ]) exprs
-  | _ -> invalid_arg "an index can only have a single ellipsis ('...')"
+  | _ -> Py_exn.index_error "an index can only have a single ellipsis ('...')"
 
 let slice_indices start stop step n =
   let step = Option.value step ~default:1 in
-  if step = 0 then invalid_arg "slice step cannot be zero";
+  if step = 0 then Py_exn.value_error "slice step cannot be zero";
   let lower = if step < 0 then -1 else 0 in
   let upper = if step < 0 then n - 1 else n in
   let clamp_bound v =

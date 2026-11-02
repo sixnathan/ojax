@@ -40,6 +40,15 @@ let matmul ?precision ?preferred a b =
   Eager_jit.one "numpy.tensor_contractions.matmul" (precision, preferred) []
     [ a; b ] (fun _ vals ->
       let a, b = match vals with [ a; b ] -> (a, b) | _ -> assert false in
+      let typeof v =
+        let aval = C.get_aval v in
+        Printf.sprintf "%s%s[%s]"
+          (if aval.T.weak_type then "~" else "")
+          (Dtype.numpy_name aval.T.dtype)
+          (String.concat ","
+             (List.map string_of_int (Array.to_list aval.T.shape)))
+      in
+      let a_type = typeof a and b_type = typeof b in
       let pdt = pref preferred [ a; b ] in
       let a = astype a pdt and b = astype b pdt in
       let na = ndim a and nb = ndim b in
@@ -94,7 +103,10 @@ let matmul ?precision ?preferred a b =
               push b_batch (len idx_batch + len idx_b);
               push idx_batch i
           | Some _, Some _ ->
-              invalid_arg "Incompatible types for matmul arguments")
+              Py_exn.value_error
+                (Printf.sprintf
+                   "Incompatible types for matmul arguments: %s and %s" a_type
+                   b_type))
         (List.combine (pad a_dims) (pad b_dims));
       if a_is_mat then push idx_a num_batch;
       if b_is_mat then push idx_b (num_batch + if a_is_mat then 1 else 0);
@@ -188,8 +200,6 @@ let vecdot ?(axis = -1) ?precision ?preferred x1 x2 =
 
 type td_axes = Ax_int of int | Ax_pair of int array * int array
 
-let canon i n = if i < 0 then i + n else i
-
 let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
   let pdt = pref preferred [ a; b ] in
   let a = astype a pdt and b = astype b pdt in
@@ -208,9 +218,14 @@ let tensordot ?precision ?preferred ?(axes = Ax_int 2) a b =
         (Array.init k (fun i -> na - k + i), Array.init k Fun.id)
     | Ax_pair (ax1, ax2) ->
         if Array.length ax1 <> Array.length ax2 then
-          invalid_arg "tensordot: axes lists must have equal length";
-        ( Array.map (fun i -> canon i na) ax1,
-          Array.map (fun i -> canon i nb) ax2 )
+          Py_exn.type_error
+            (Printf.sprintf
+               "tensordot requires axes lists to have equal length, got %s and \
+                %s."
+               (Validate.python_tuple ax1)
+               (Validate.python_tuple ax2));
+        ( Array.map (fun i -> Validate.canonicalize_axis i na) ax1,
+          Array.map (fun i -> Validate.canonicalize_axis i nb) ax2 )
   in
   dot_general ?precision lc rc [||] [||] a b
 

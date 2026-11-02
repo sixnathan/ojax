@@ -39,7 +39,7 @@ let to_inexact_dtype = function
   | D.Uint4 ->
       D.F32
   | (D.I2 | D.Uint2) as narrow -> narrow
-  | D.Float0 -> invalid_arg "float0 has no inexact dtype"
+  | D.Float0 -> Py_exn.type_error "float0 has no inexact dtype"
   | D.I64 | D.Uint64 -> D.F64
   | (D.Complex64 | D.Complex128) as c -> c
 
@@ -53,7 +53,7 @@ let promote_integer_dtype dt =
   | D.I32 -> if di = D.I64 then D.I64 else D.I32
   | D.I64 -> D.I64
   | D.I8 | D.I16 | D.I2 | D.I4 -> if di = D.I64 then D.I64 else D.I32
-  | D.Float0 -> invalid_arg "float0 has no reduction dtype"
+  | D.Float0 -> Py_exn.type_error "float0 has no reduction dtype"
   | D.Uint8 | D.Uint16 | D.Uint2 | D.Uint4 | D.Uint32 ->
       if di = D.I64 then D.Uint64 else D.Uint32
   | D.Uint64 -> D.Uint64
@@ -115,8 +115,12 @@ let check_where name = function
   | None -> None
   | Some w ->
       if dtype w <> D.Bool then
-        invalid_arg
-          (Printf.sprintf "jnp.%s: where must be None or a boolean array." name);
+        Py_exn.value_error
+          (Printf.sprintf
+             "jnp.%s: where must be None or a boolean array; got \
+              where.dtype=dtype('%s')."
+             name
+             (D.numpy_name (dtype w)));
       Some w
 
 let upcast_f16 = function D.F16 | D.Bf16 -> D.F32 | d -> d
@@ -152,7 +156,7 @@ let reduction ~name ~prim ~bool_prim ~combine ~bool_combine ~init ~has_identity
   let mask = check_where name mask in
   (match (initial, has_identity, mask) with
   | None, false, Some _ ->
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "reduction operation %s does not have an identity, so to use a \
             where mask one has to specify 'initial'"
@@ -189,9 +193,10 @@ let reduction ~name ~prim ~bool_prim ~combine ~bool_combine ~init ~has_identity
     | None -> out
     | Some i ->
         if shape i <> [||] then
-          invalid_arg
+          Py_exn.value_error
             (Printf.sprintf
-               "initial value must be a scalar. Got array of rank %d" (ndim i));
+               "initial value must be a scalar. Got array of shape %s"
+               (Validate.python_tuple (shape i)));
         let i = convert i computation in
         bind1 (if is_bool then bool_combine else combine) [ i; out ]
   in
@@ -293,9 +298,12 @@ let var_promote a_dtype dt =
   match dt with
   | Some d ->
       if is_complex_dtype a_dtype && not (is_complex_dtype d) then
-        invalid_arg
+        Py_exn.value_error
           "jax.numpy.var does not yet support real dtype parameters when \
-           computing the variance of an array of complex values.";
+           computing the variance of an array of complex values. The semantics \
+           of numpy.var seem unclear in this case. Please comment on \
+           https://github.com/jax-ml/jax/issues/2283 if this behavior is \
+           important to you.";
       (upcast_f16 d, d)
   | None ->
       if not (is_inexact a_dtype) then
@@ -314,7 +322,7 @@ let correction_of ?ddof_value ddof correction =
   | Some c, (None | Some 0) ->
       T.Concrete (Nd.of_floats (Dtypes.default_float_dtype ()) [||] [| c |])
   | Some _, Some _ ->
-      invalid_arg "ddof and correction can't be provided simultaneously."
+      Py_exn.value_error "ddof and correction can't be provided simultaneously."
 
 let axis_key = function
   | None -> "none"
@@ -381,7 +389,7 @@ let std ?dtype:dt ?axis ?keepdims ?ddof ?ddof_value ?where:mask ?mean:a_mean
   let dt = Option.map Dtypes.canonicalize_dtype dt in
   (match dt with
   | Some d when not (is_inexact d) ->
-      invalid_arg "dtype argument to jnp.std must be inexact"
+      Py_exn.value_error "dtype argument to jnp.std must be inexact"
   | _ -> ());
   Jnp_util.jit1 "_std"
     ~key:
@@ -432,10 +440,10 @@ let average_with_sum ?axis ?(keepdims = false) ?weights a =
         if shape w2 = shape a2 then w2
         else begin
           if axis = None then
-            invalid_arg
+            Py_exn.value_error
               "Axis must be specified when shapes of a and weights differ.";
           if shape w2 <> Array.map (fun i -> (shape a2).(i)) axes then
-            invalid_arg
+            Py_exn.value_error
               "Shape of weights must be consistent with shape of a along \
                specified axis.";
           let new_shape =
@@ -732,7 +740,7 @@ let nancumprod ?dtype ?axis p0 =
 
 let cum_api_axis kind x axis =
   if ndim x = 0 then
-    invalid_arg
+    Py_exn.value_error
       (Printf.sprintf
          "The input must be non-scalar to take a cumulative %s, however a \
           scalar value or scalar array was given."
@@ -740,7 +748,7 @@ let cum_api_axis kind x axis =
   match axis with
   | None ->
       if ndim x > 1 then
-        invalid_arg
+        Py_exn.value_error
           (Printf.sprintf
              "The input array has rank %d, however axis was not set to an \
               explicit value. The axis argument is only optional for \
@@ -885,7 +893,10 @@ let quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans =
     | "midpoint" ->
         bind1 T.Mul
           [ bind1 T.Add [ low_value; high_value ]; const_full cdt target 0.5 ]
-    | m -> invalid_arg ("jnp.quantile: unsupported method " ^ m)
+    | _ ->
+        Py_exn.value_error
+          "method can only be 'linear', 'lower', 'higher', 'midpoint', \
+           'nearest' or 'inverted_cdf'"
   in
   let result =
     if squash_nans then result
@@ -903,7 +914,7 @@ let quantile_nans a q ~axis ~method_ ~keepdims ~squash_nans =
 let quantile_plain a q ~axis ~method_ ~keepdims =
   let a = to_inexact a in
   if match dtype a with D.Complex64 | D.Complex128 -> true | _ -> false then
-    invalid_arg
+    Py_exn.value_error
       "quantile does not support complex input, as the operation is poorly \
        defined.";
   let q = to_inexact q in
@@ -917,7 +928,9 @@ let quantile_plain a q ~axis ~method_ ~keepdims =
   in
   let q_ndim = ndim q in
   if q_ndim > 1 then
-    invalid_arg (Printf.sprintf "q must be have rank <= 1, got rank %d" q_ndim);
+    Py_exn.value_error
+      (Printf.sprintf "q must be have rank <= 1, got shape %s"
+         (Validate.python_tuple (shape q)));
   let a_shape = shape a in
   let nan_mask = any ~axis:[| ax |] ~keepdims:true (isnan a) in
   let a = where nan_mask (Jnp_util.py_float Float_format.nan) a in
@@ -993,12 +1006,10 @@ let quantile_plain a q ~axis ~method_ ~keepdims =
     | "midpoint" ->
         let total = bind1 T.Add [ low_value; high_value ] in
         bind1 T.Mul [ total; lit (dtype low_value) 0.5 ]
-    | m ->
-        invalid_arg
-          (Printf.sprintf
-             "method can only be 'linear', 'lower', 'higher', 'midpoint', \
-              'nearest' or 'inverted_cdf', got %s"
-             m)
+    | _ ->
+        Py_exn.value_error
+          "method can only be 'linear', 'lower', 'higher', 'midpoint', \
+           'nearest' or 'inverted_cdf'"
   in
   let result =
     if keepdims && Array.length keepdim > 0 then
@@ -1019,30 +1030,29 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
     | None -> (to_inexact a, None)
     | Some w ->
         if match dtype w with D.Complex64 | D.Complex128 -> true | _ -> false
-        then invalid_arg "Weights cannot be complex types.";
+        then Py_exn.value_error "Weights cannot be complex types.";
         let a = to_inexact a and w = to_inexact w in
         let dt = Dtypes.promote_types (dtype a) (dtype w) in
         (convert a dt, Some (convert w dt))
   in
   (match (weights, axis) with
   | Some w, None when shape w <> shape a ->
-      invalid_arg "Weights shape must match 'a' shape when axis is None."
+      Py_exn.value_error "Weights shape must match 'a' shape when axis is None."
   | _ -> ());
   let weights =
     match (weights, axis) with
     | Some w, Some ax when shape w <> shape a ->
         let ax = canonicalize_axis ax (ndim a) in
         if shape w <> [| (shape a).(ax) |] then
-          invalid_arg
-            (Printf.sprintf "Weights shape (%s) must match reduction axes (%d,)"
-               (String.concat ", "
-                  (List.map string_of_int (Array.to_list (shape w))))
+          Py_exn.value_error
+            (Printf.sprintf "Weights shape %s must match reduction axes (%d,)"
+               (Validate.python_tuple (shape w))
                (shape a).(ax));
         Some (Lax_api.broadcast_in_dim w (shape a) [| ax |])
     | w, _ -> w
   in
   if match dtype a with D.Complex64 | D.Complex128 -> true | _ -> false then
-    invalid_arg
+    Py_exn.value_error
       "quantile does not support complex input, as the operation is poorly \
        defined.";
   let q = to_inexact q in
@@ -1058,9 +1068,9 @@ let quantile_inverted_cdf a q ~axis ~keepdims ~squash_nans ~weights =
   in
   let q_ndim = ndim q in
   if q_ndim > 1 then
-    invalid_arg
-      (Printf.sprintf "q must be have rank <= 1, got shape (%s)"
-         (String.concat ", " (List.map string_of_int (Array.to_list (shape q)))));
+    Py_exn.value_error
+      (Printf.sprintf "q must be have rank <= 1, got shape %s"
+         (Validate.python_tuple (shape q)));
   let extent = (shape a).(ax) in
   let a =
     if squash_nans then where (isnan a) (Jnp_util.py_float Float_format.nan) a

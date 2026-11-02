@@ -138,7 +138,8 @@ let to_gather sh idx =
         List.for_all2 ( = ) adv_positions
           (List.mapi (fun i _ -> first + i) adv_positions)
   in
-  if not contiguous then invalid_arg "Nd_index: separated advanced indices";
+  if not contiguous then
+    Py_exn.not_implemented_error "Nd_index: separated advanced indices";
   let dt = index_dtype sh in
   let gather = ref [] in
   let gather_shape = ref [] in

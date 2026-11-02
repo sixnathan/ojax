@@ -76,10 +76,10 @@ let argsort ?axis ?stable ?descending ?dtype p0 =
 
 let lexsort ?(axis = -1) keys =
   match keys with
-  | [] -> invalid_arg "need sequence of keys with len > 0 in lexsort"
+  | [] -> Py_exn.type_error "need sequence of keys with len > 0 in lexsort"
   | k0 :: _ ->
       if List.exists (fun k -> shape k <> shape k0) keys then
-        invalid_arg "all keys need to be the same shape";
+        Py_exn.value_error "all keys need to be the same shape";
       let nd = ndim k0 in
       let idt = Dtypes.default_int_dtype () in
       if nd = 0 then const_full idt [||] 0.0
@@ -100,7 +100,7 @@ let lexsort_impl = lexsort
 
 let lexsort ?axis keys =
   match keys with
-  | [] -> invalid_arg "need sequence of keys with len > 0 in lexsort"
+  | [] -> Py_exn.type_error "need sequence of keys with len > 0 in lexsort"
   | _ ->
       let key =
         "list,"

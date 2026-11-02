@@ -7300,11 +7300,12 @@ let signbit_rejects_small_floats () =
   List.iter
     (fun d ->
       let x = T.Concrete (Nd.of_floats d [| 1 |] [| 1.0 |]) in
-      Alcotest.check_raises (D.numpy_name d) (Failure signbit_message)
-        (fun () -> ignore (U.signbit x));
+      Alcotest.check_raises (D.numpy_name d)
+        (Ojax.Py_exn.Not_implemented_error signbit_message) (fun () ->
+          ignore (U.signbit x));
       Alcotest.check_raises
         (D.numpy_name d ^ " spacing")
-        (Failure signbit_message)
+        (Ojax.Py_exn.Not_implemented_error signbit_message)
         (fun () -> ignore (U.spacing x)))
     [ D.F8_e4m3; D.F4_e2m1fn ]
 

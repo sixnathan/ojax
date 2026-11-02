@@ -187,41 +187,26 @@ let dump_arrays goldens out =
     (cases_of (Filename.concat set_dir "manifest.json"));
   close_out oc
 
-let () =
-  Ojax.Lax.install ();
-  Ojax.Random.Prng.install ();
-  Ojax.Random.Threefry.install ();
-  let goldens = Sys.argv.(1) in
-  let out = Sys.argv.(2) in
-  if Sys.argv.(3) = "arrays" then begin
-    dump_arrays goldens out;
-    exit 0
-  end;
-  let fuzz = Array.length Sys.argv > 5 && Sys.argv.(5) = "fuzz" in
-  let shard = int_of_string Sys.argv.(3) in
-  let shards = int_of_string Sys.argv.(4) in
-  let oc = open_out out in
-  if fuzz then begin
-    List.iter
-      (fun (set, x64) ->
-        Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
-            let manifest =
-              Filename.concat
-                (Filename.concat (Filename.concat goldens "fuzz") set)
-                "manifest.json"
-            in
-            List.iteri
-              (fun i case ->
-                if
-                  in_shard ~shard ~shards i
-                  && String.starts_with ~prefix:"shape"
-                       (U.to_string (U.member "variant" case))
-                then parity_case oc ~set:("fuzz/" ^ set) case)
-              (cases_of manifest)))
-      [ ("x64_off", false); ("x64_on", true) ];
-    close_out oc;
-    exit 0
-  end;
+let dump_fuzz oc ~goldens ~shard ~shards =
+  List.iter
+    (fun (set, x64) ->
+      Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+          let manifest =
+            Filename.concat
+              (Filename.concat (Filename.concat goldens "fuzz") set)
+              "manifest.json"
+          in
+          List.iteri
+            (fun i case ->
+              if
+                in_shard ~shard ~shards i
+                && String.starts_with ~prefix:"shape"
+                     (U.to_string (U.member "variant" case))
+              then parity_case oc ~set:("fuzz/" ^ set) case)
+            (cases_of manifest)))
+    [ ("x64_off", false); ("x64_on", true) ]
+
+let dump_fixed oc ~goldens ~shard ~shards =
   List.iter
     (fun (set, x64) ->
       Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
@@ -265,5 +250,124 @@ let () =
                 record oc ~set:("jaxpr/" ^ set) ~case (fun () ->
                     Ojax.Jaxpr.make_jaxpr avals f))
               jaxpr_builders))
-    [ ("x64_off", false); ("x64_on", true) ];
+    [ ("x64_off", false); ("x64_on", true) ]
+
+let load_rows path =
+  let table = Hashtbl.create 1024 in
+  In_channel.with_open_text path (fun ic ->
+      let rec go () =
+        match In_channel.input_line ic with
+        | None -> ()
+        | Some line ->
+            let row = Yojson.Safe.from_string line in
+            Hashtbl.replace table
+              ( U.to_string (U.member "set" row),
+                U.to_string (U.member "case" row) )
+              row;
+            go ()
+      in
+      go ());
+  table
+
+let verdict reference ours field =
+  match (U.member field reference, Option.map (U.member field) ours) with
+  | _, None -> "-"
+  | `Null, Some `Null -> "b"
+  | a, Some b when a <> `Null && a = b -> "i"
+  | _ -> "-"
+
+let check_text_baseline ~path ~references ~ours =
+  let failures = ref [] in
+  In_channel.with_open_text path (fun ic ->
+      let rec go () =
+        match In_channel.input_line ic with
+        | None -> ()
+        | Some line ->
+            (match String.split_on_char '\t' line with
+            | [ set; case; text; jaxpr ] ->
+                let got = Hashtbl.find_opt ours (set, case) in
+                let check field wanted =
+                  if wanted <> "-" then
+                    let have =
+                      match
+                        List.find_map
+                          (fun table -> Hashtbl.find_opt table (set, case))
+                          references
+                      with
+                      | Some reference -> verdict reference got field
+                      | None -> "-"
+                    in
+                    if have <> wanted then
+                      failures :=
+                        Printf.sprintf "%s %s %s: was %s, now %s" set case field
+                          wanted have
+                        :: !failures
+                in
+                check "text" text;
+                check "jaxpr" jaxpr
+            | _ -> failwith ("text ratchet: bad line in " ^ path));
+            go ()
+      in
+      go ());
+  List.rev !failures
+
+let ratchet goldens baseline_dir =
+  let path name = Filename.concat goldens name in
+  let reference_files =
+    [
+      path "text/reference.jsonl";
+      path "coverage/text_ref.jsonl";
+      path "fuzz/text/reference.jsonl";
+    ]
+  in
+  List.iter
+    (fun file ->
+      if not (Sys.file_exists file) then
+        failwith ("text ratchet: reference " ^ file ^ " is missing"))
+    reference_files;
+  let out = Filename.temp_file "text_ratchet" ".jsonl" in
+  let oc = open_out out in
+  dump_fixed oc ~goldens ~shard:0 ~shards:1;
+  dump_fuzz oc ~goldens ~shard:0 ~shards:1;
+  close_out oc;
+  let ours = load_rows out in
+  Sys.remove out;
+  let references = List.map load_rows reference_files in
+  let failures =
+    List.concat_map
+      (fun name ->
+        let file = Filename.concat baseline_dir (name ^ ".tsv") in
+        if Sys.file_exists file then
+          check_text_baseline ~path:file ~references ~ours
+        else [ "no baseline " ^ file ])
+      [ "text_parity"; "text_coverage"; "text_fuzz" ]
+  in
+  if failures <> [] then begin
+    List.iteri
+      (fun i line -> if i < 40 then prerr_endline ("TEXT RATCHET " ^ line))
+      failures;
+    Printf.eprintf "text ratchet: %d rows fell\n" (List.length failures);
+    exit 1
+  end
+
+let () =
+  Ojax.Lax.install ();
+  Ojax.Random.Prng.install ();
+  Ojax.Random.Threefry.install ();
+  let goldens = Sys.argv.(1) in
+  let out = Sys.argv.(2) in
+  if Sys.argv.(3) = "arrays" then begin
+    dump_arrays goldens out;
+    exit 0
+  end;
+  if Sys.argv.(3) = "ratchet" then begin
+    ratchet goldens Sys.argv.(4);
+    exit 0
+  end;
+  let fuzz = Array.length Sys.argv > 5 && Sys.argv.(5) = "fuzz" in
+  let shard = int_of_string Sys.argv.(3) in
+  let shards = int_of_string Sys.argv.(4) in
+  let oc = open_out out in
+  if fuzz then dump_fuzz oc ~goldens ~shard ~shards
+  else dump_fixed oc ~goldens ~shard ~shards;
   close_out oc

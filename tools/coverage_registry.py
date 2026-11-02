@@ -7,10 +7,6 @@ SINGLE_PRECISION_ONLY = set()
 LOOSE_TOLERANCE = {}
 
 
-def compares_at_single_precision(op, arrays):
-    return False
-
-
 def _k(p):
     return jr.key(p["seed"])
 

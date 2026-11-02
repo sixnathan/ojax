@@ -91,9 +91,6 @@ def gen_set(cases, x64, outdir):
         result = registry.OPS[c["op"]](**arrays, p=c["params"])
         outs = list(result) if isinstance(result, (tuple, list)) else [result]
         outs = [np.asarray(o, order="C") for o in outs]
-        if registry.compares_at_single_precision(c["op"], arrays):
-            narrow = "float16" if arrays["a"].dtype == np.float16 else "float32"
-            outs = [o.astype(narrow) if o.dtype in (np.float64, np.float32) else o for o in outs]
         out_arrays = {"out" + str(i): o for i, o in enumerate(outs)}
         np.savez(os.path.join(outdir, "inputs", c["case_id"] + ".npz"), **arrays)
         np.savez(os.path.join(outdir, "outputs", c["case_id"] + ".npz"), **out_arrays)

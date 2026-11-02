@@ -219,7 +219,20 @@ let gather_output_shape (gd : gather_dims) slice_sizes indices_shape
   done;
   out
 
+let check_gather_slice_sizes slice_sizes indices_shape operand_shape =
+  if not (Array.exists (fun d -> d = 0) indices_shape) then
+    Array.iteri
+      (fun i size ->
+        let input = operand_shape.(i) in
+        if not (size >= 0 && input >= size) then
+          type_error
+            "Slice size at index %d in gather op is out of range, must be \
+             within [0, %d + 1), got %d."
+            i input size)
+      slice_sizes
+
 let gather_shape (gd : gather_dims) slice_sizes indices_shape operand_shape =
+  check_gather_slice_sizes slice_sizes indices_shape operand_shape;
   gather_output_shape gd slice_sizes indices_shape (Array.length operand_shape)
 
 let gather_impl (gd : gather_dims) slice_sizes operand indices =
@@ -229,6 +242,7 @@ let gather_impl (gd : gather_dims) slice_sizes operand indices =
   let op_flat = read_all operand in
   let idx_shape = Ndarray.shape indices in
   let idx_rank = Array.length idx_shape in
+  check_gather_slice_sizes slice_sizes idx_shape op_shape;
   let out_shape = gather_output_shape gd slice_sizes idx_shape op_rank in
   let out_n = Utils.prod out_shape in
   let ood = offset_operand_dims gd op_rank in

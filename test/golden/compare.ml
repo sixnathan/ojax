@@ -236,6 +236,17 @@ let raw_status (expected : Npz.t) (actual : Npz.t) =
       nan_sign nan_payload neg_zero value first
 
 let raw_prefix = "raw:"
+let ratcheted_prefixes = [ "fuzz:"; "fuzz_s2:"; "coverage:" ]
+
+let is_ratcheted suite =
+  List.exists
+    (fun prefix -> String.starts_with ~prefix suite)
+    ratcheted_prefixes
+
+let row_results : (string * string, bool * bool) Hashtbl.t = Hashtbl.create 4096
+
+let note_row suite name ~bit ~raw =
+  if is_ratcheted suite then Hashtbl.replace row_results (suite, name) (bit, raw)
 
 let tally_of suite =
   match Hashtbl.find_opt tallies suite with
@@ -256,6 +267,7 @@ let record_exact ?suite:named name expected actual =
   let status = raw_status expected actual in
   bump suite (differing = 0);
   bump (raw_prefix ^ suite) (status = raw_identical);
+  note_row suite name ~bit:(differing = 0) ~raw:(status = raw_identical);
   match Lazy.force exact_log with
   | None -> ()
   | Some oc -> (
@@ -286,6 +298,60 @@ let ratchet_failures ~floor ~require_all =
       | None -> None)
     floor
 
+let baseline_path suite =
+  Filename.concat "identical_rows"
+    (String.map (fun c -> if c = ':' then '_' else c) suite ^ ".tsv")
+
+let read_lines path =
+  In_channel.with_open_text path In_channel.input_all
+  |> String.split_on_char '\n'
+  |> List.filter (fun line -> line <> "")
+
+let row_failures ~require_all ~baseline =
+  Hashtbl.fold
+    (fun suite _ acc ->
+      if not (is_ratcheted suite) then acc
+      else
+        let listed = baseline suite in
+        List.filter_map
+          (fun (row, raw_listed) ->
+            match Hashtbl.find_opt row_results (suite, row) with
+            | Some (false, _) ->
+                Some (Printf.sprintf "%s %s: no longer identical" suite row)
+            | Some (true, false) when raw_listed ->
+                Some
+                  (Printf.sprintf "%s %s: no longer identical in raw bytes"
+                     suite row)
+            | Some _ -> None
+            | None when require_all ->
+                Some (Printf.sprintf "%s %s: did not run" suite row)
+            | None -> None)
+          listed
+        @ acc)
+    tallies []
+
+let read_baseline suite =
+  let path = baseline_path suite in
+  if not (Sys.file_exists path) then
+    failwith ("row ratchet: no baseline " ^ path);
+  List.map
+    (fun line ->
+      match String.split_on_char '\t' line with
+      | [ row; raw ] -> (row, raw = "1")
+      | _ -> failwith ("row ratchet: bad line in " ^ path ^ ": " ^ line))
+    (read_lines path)
+
+let row_ratchet_text ~require_all =
+  match row_failures ~require_all ~baseline:read_baseline with
+  | [] -> []
+  | failures ->
+      let sorted = List.sort compare failures in
+      let shown = List.filteri (fun i _ -> i < 40) sorted in
+      [
+        Printf.sprintf "row ratchet: %d rows fell: %s" (List.length sorted)
+          (String.concat "; " shown);
+      ]
+
 let matched_setup () =
   Ojax.Pjrt.Discover.is_exact ()
   && String.starts_with ~prefix:"libscipy_openblas"
@@ -298,9 +364,14 @@ let check_ratchet ~floor_text () =
        jax's XLA commit with scipy's OpenBLAS"
   else begin
     let require_all = Array.length Sys.argv <= 2 in
-    match ratchet_failures ~floor:(parse_floor floor_text) ~require_all with
+    let floors =
+      match ratchet_failures ~floor:(parse_floor floor_text) ~require_all with
+      | [] -> []
+      | failures -> [ "exact ratchet fell: " ^ String.concat "; " failures ]
+    in
+    match floors @ row_ratchet_text ~require_all with
     | [] -> ()
-    | failures -> failwith ("exact ratchet fell: " ^ String.concat "; " failures)
+    | failures -> failwith (String.concat "; " failures)
   end
 
 let check_tolerance ~name ~compare ~atol ~rtol ~(expected : Npz.t)
@@ -323,4 +394,5 @@ let check_with_reference ~name ~compare ~atol ~rtol ~eager_suite
     ~(reference_actual : Npz.t) =
   record_exact name reference reference_actual;
   record_exact ~suite:eager_suite name expected actual;
-  check_tolerance ~name ~compare ~atol ~rtol ~expected ~actual
+  check_tolerance ~name ~compare ~atol ~rtol ~expected:reference
+    ~actual:reference_actual

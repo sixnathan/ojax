@@ -132,15 +132,18 @@ let classify ~dtype ~width expected i actual j =
         ((if relative < 1e-3 then "ulps" else "value"), relative)
   | _ -> ("int", 0.0)
 
-let log_row ~suite name count differing largest classes =
+let log_row ?detail ~suite name count differing largest classes =
   Compare.bump suite (differing = 0);
   Compare.bump (Compare.raw_prefix ^ suite) (classes = Compare.raw_identical);
+  Compare.note_row suite name ~bit:(differing = 0)
+    ~raw:(classes = Compare.raw_identical);
   match Lazy.force Compare.exact_log with
   | None -> ()
   | Some oc -> (
+      let tail = match detail with None -> "" | Some d -> "\t" ^ d in
       try
-        Printf.fprintf oc "%s\t%d\t%d\t%g\t%s\t%s\n%!" name count differing
-          largest suite classes
+        Printf.fprintf oc "%s\t%d\t%d\t%g\t%s\t%s%s\n%!" name count differing
+          largest suite classes tail
       with Sys_error _ -> ())
 
 let dump_channel =
@@ -202,28 +205,30 @@ let compare_output ~suite ~name ~string_of_dtype b (m : member) nd =
       (if !differing = 0 then Compare.raw_identical else String.concat "," names)
   end
 
-let run_guarded f =
-  try Ok (f ()) with
-  | Stack_overflow -> Error "Stack_overflow"
-  | Out_of_memory -> Error "Out_of_memory"
-  | e -> Error (Printexc.to_string e)
+let run_guarded f = try Ok (f ()) with e -> Error e
 
-let check_mode ~suite ~case_id ~mode ~string_of_dtype ~concrete b table outputs
-    run =
+let one_line message =
+  let text = Error_types.one_line message in
+  if String.length text > 120 then String.sub text 0 120 else text
+
+let check_mode ~suite ~case_id ~mode ~string_of_dtype ~concrete ~jax_error b
+    table outputs run =
   let prefix = case_id ^ ":" ^ mode in
   let result = run_guarded run in
   match (outputs, result) with
-  | None, Error _ ->
-      log_row ~suite (prefix ^ ":both_raise") 0 0 0.0 "both_raise"
+  | None, Error e ->
+      let row = prefix ^ ":both_raise" in
+      let detail = Error_types.detail ~jax:jax_error e in
+      if Error_types.tier ~jax:jax_error e <> None then
+        log_row ~detail ~suite row 0 0 0.0 Error_types.both_raise
+      else
+        log_row ~detail ~suite row 0 Error_types.mismatch_code 0.0
+          (Error_types.mismatch ~jax:jax_error e)
   | None, Ok _ ->
       log_row ~suite (prefix ^ ":jax_raises") 0 (-2) 0.0 "jax_raises"
-  | Some _, Error message ->
+  | Some _, Error e ->
       log_row ~suite (prefix ^ ":ojax_raises") 0 (-1) 0.0
-        ("ojax_raises:"
-        ^ String.map
-            (fun c -> if c = '\t' || c = '\n' then ' ' else c)
-            (if String.length message > 120 then String.sub message 0 120
-             else message))
+        ("ojax_raises:" ^ one_line (Printexc.to_string e))
   | Some names, Ok values ->
       if List.length names <> List.length values then
         log_row ~suite (prefix ^ ":arity") 0 (-5) 0.0 "arity"
@@ -274,7 +279,11 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
     go names args
   in
   let direct () = Parity_cases.run op params (lookup values) in
-  check_mode ~suite ~case_id ~mode:"eager" ~string_of_dtype ~concrete b table
+  let jax_error key =
+    match U.member key case with `String name -> name | _ -> "unknown"
+  in
+  check_mode ~suite ~case_id ~mode:"eager" ~string_of_dtype ~concrete
+    ~jax_error:(jax_error "eager_error") b table
     (output_names case "eager")
     direct;
   let jit () =
@@ -286,36 +295,42 @@ let check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype ~concrete case
   in
   if Parity_cases.cannot_trace op && output_names case "jit" = None then ()
   else
-    check_mode ~suite ~case_id ~mode:"jit" ~string_of_dtype ~concrete b table
-      (output_names case "jit") jit
+    check_mode ~suite ~case_id ~mode:"jit" ~string_of_dtype ~concrete
+      ~jax_error:(jax_error "jit_error") b table (output_names case "jit") jit
 
-let available ~goldens_root =
+let primary = "fuzz"
+let second_seed = "fuzz_s2"
+
+let available ~goldens_root ~name =
   Sys.file_exists
     (Filename.concat
-       (Filename.concat (Filename.concat goldens_root "fuzz") "x64_off")
+       (Filename.concat (Filename.concat goldens_root name) "x64_off")
        "manifest.json")
 
 let suites ~goldens_root ~nd_of_npz ~string_of_dtype ~concrete =
-  List.filter_map
-    (fun (set_name, x64) ->
-      let set_dir =
-        Filename.concat (Filename.concat goldens_root "fuzz") set_name
-      in
-      let path = Filename.concat set_dir "manifest.json" in
-      if not (Sys.file_exists path) then None
-      else
-        let suite = "fuzz:" ^ set_name in
-        let cases =
-          Yojson.Safe.from_file path |> U.member "cases" |> U.to_list
-        in
-        Some
-          ( suite,
-            List.map
-              (fun case ->
-                Alcotest.test_case
-                  (U.to_string (U.member "case_id" case))
-                  `Quick
-                  (check_case ~suite ~set_dir ~x64 ~nd_of_npz ~string_of_dtype
-                     ~concrete case))
-              cases ))
-    [ ("x64_off", false); ("x64_on", true) ]
+  List.concat_map
+    (fun name ->
+      List.filter_map
+        (fun (set_name, x64) ->
+          let set_dir =
+            Filename.concat (Filename.concat goldens_root name) set_name
+          in
+          let path = Filename.concat set_dir "manifest.json" in
+          if not (Sys.file_exists path) then None
+          else
+            let suite = name ^ ":" ^ set_name in
+            let cases =
+              Yojson.Safe.from_file path |> U.member "cases" |> U.to_list
+            in
+            Some
+              ( suite,
+                List.map
+                  (fun case ->
+                    Alcotest.test_case
+                      (U.to_string (U.member "case_id" case))
+                      `Quick
+                      (check_case ~suite ~set_dir ~x64 ~nd_of_npz
+                         ~string_of_dtype ~concrete case))
+                  cases ))
+        [ ("x64_off", false); ("x64_on", true) ])
+    [ primary; second_seed ]

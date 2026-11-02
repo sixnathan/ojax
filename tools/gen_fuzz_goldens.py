@@ -20,7 +20,7 @@ import parity_registry as registry
 from jax._src import core as jax_core
 
 MODULE = "fuzz"
-SEED = 20261101
+SEED = int(os.environ.get("OJAX_FUZZ_SEED", "20261101"))
 SETS = (("x64_off", False), ("x64_on", True))
 TRANSFORMED = ("swv_", "swg_", "swj_")
 VALUE_VARIANTS = ("edge", "wide")
@@ -104,6 +104,16 @@ def excluded(case_id):
 
 def stored_cases(work):
     path = os.path.join(work, "cases.json")
+    seed_path = os.path.join(work, "seed")
+    if os.path.exists(seed_path):
+        with open(seed_path, encoding="utf-8") as fh:
+            if int(fh.read()) != SEED:
+                raise SystemExit("work directory " + work + " was made with another seed")
+    elif os.path.exists(path):
+        raise SystemExit("work directory " + work + " has no seed record, use a new one")
+    else:
+        with open(seed_path, "w", encoding="utf-8") as fh:
+            fh.write(str(SEED))
     if not os.path.exists(path):
         cases = expand()
         with open(path + ".tmp", "w", encoding="utf-8") as fh:
@@ -239,9 +249,6 @@ def make_inputs(case):
 def to_outputs(case, arrays, result):
     outs = list(result) if isinstance(result, (tuple, list)) else [result]
     outs = [np.asarray(o, order="C") for o in outs]
-    if registry.compares_at_single_precision(case["op"], arrays):
-        narrow = "float16" if arrays["a"].dtype == np.float16 else "float32"
-        outs = [o.astype(narrow) if o.dtype in (np.float64, np.float32) else o for o in outs]
     return {"out" + str(i): o for i, o in enumerate(outs)}
 
 
@@ -471,6 +478,7 @@ def assemble_text(work, outdir):
 
 
 def main():
+    global SEED
     if len(sys.argv) > 1 and sys.argv[1] in ("--worker", "--text-worker"):
         target = worker if sys.argv[1] == "--worker" else text_worker
         args = [sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]]
@@ -483,7 +491,12 @@ def main():
     parser.add_argument("--limit", type=int, default=560)
     parser.add_argument("--text", action="store_true")
     parser.add_argument("--count", action="store_true")
+    parser.add_argument("--seed", type=int, default=None, help="the fuzz seed, defaulting to OJAX_FUZZ_SEED or the original seed")
+    parser.add_argument("--output-name", default=MODULE, help="the directory under goldens, such as fuzz_s2")
     args = parser.parse_args()
+    if args.seed is not None:
+        SEED = args.seed
+    os.environ["OJAX_FUZZ_SEED"] = str(SEED)
     gg.preflight()
     os.makedirs(args.work, exist_ok=True)
     if args.count:
@@ -491,7 +504,7 @@ def main():
             sys.stdout.write(name + " " + str(len(cases)) + "\n")
         return
     stored_cases(args.work)
-    base = os.path.join(args.root or os.path.join(gg.ROOT, "goldens"), MODULE)
+    base = os.path.join(args.root or os.path.join(gg.ROOT, "goldens"), args.output_name)
     started = time.time()
     for set_name, x64 in SETS:
         left = args.limit - (time.time() - started)

@@ -1490,8 +1490,6 @@ let choose ?(mode = "raise") a choices =
   | [] -> invalid_arg "choose: arity"
   | arr :: choices when rank arr = 0 ->
       Nd_index.take (array_of_values choices) [ Nd_index.Arr arr ]
-  | arr :: choices when Array.mem 0 (shape arr) ->
-      L.full (shape arr) 0.0 (dtype_of (List.hd choices))
   | arr :: choices ->
       let sh = shape arr in
       let r = Array.length sh in

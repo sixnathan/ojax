@@ -1420,19 +1420,6 @@ let hex_of_nd nd =
        (fun c -> Printf.sprintf "%02x" (Char.code c))
        (List.of_seq (String.to_seq raw)))
 
-let numpy_product (input : T.value) =
-  match input with
-  | T.Concrete nd when Ojax.Ndarray.shape nd = [| 3; 3 |] ->
-      let dtype = Ojax.Dtype.numpy_name (Ojax.Ndarray.dtype nd) in
-      let hex = hex_of_nd nd in
-      List.find_map
-        (fun (_, _, d, input_hex, product, _) ->
-          if d = dtype && input_hex = hex then
-            Some (T.Concrete (nd_of_hex dtype [| 3; 3 |] product))
-          else None)
-        Numpy_products.rows
-  | _ -> None
-
 let jnp_matmul_self v =
   Ojax.Numpy.Tensor_contractions.matmul v
     (Ojax.Numpy.Lax_numpy.matrix_transpose v)
@@ -1537,16 +1524,8 @@ let dtype_sweep_run op a =
   | "sw_vdot" -> one (fun v -> TC.vdot v v)
   | "sw_inner" -> one (fun v -> TC.inner v v)
   | "sw_outer" -> one (fun v -> TC.outer (row v 0) (row v 1))
-  | "sw_matmul" ->
-      one (fun v ->
-          match numpy_product v with
-          | Some product -> product
-          | None -> TC.matmul v (t v))
-  | "sw_trace" ->
-      one (fun v ->
-          match numpy_product v with
-          | Some product -> NL.trace product
-          | None -> NL.trace (TC.matmul v (t v)))
+  | "sw_matmul" -> one (fun v -> TC.matmul v (t v))
+  | "sw_trace" -> one (fun v -> NL.trace (TC.matmul v (t v)))
   | "sw_cross" -> one (fun v -> NL.cross (row v 0) (row v 1))
   | "sw_tensordot" -> one (fun v -> TC.tensordot ~axes:(TC.Ax_int 1) v (t v))
   | "sw_einsum" -> one (fun v -> Ojax.Numpy.Einsum.einsum "ij,kj->ik" [ v; v ])
@@ -1751,27 +1730,7 @@ let transform_sweep_run op a =
   end
   else None
 
-let compares_at_single_precision op =
-  let name =
-    match String.index_opt op '_' with
-    | Some i -> String.sub op (i + 1) (String.length op - i - 1)
-    | None -> op
-  in
-  List.mem name [ "sp_owens_t"; "st_norm_ppf"; "st_norm_isf" ]
-
-let rec run op params get =
-  if compares_at_single_precision op && dt_of (get "a") <> Ojax.Dtype.F64 then
-    let narrow =
-      if dt_of (get "a") = Ojax.Dtype.F16 then Ojax.Dtype.F16
-      else Ojax.Dtype.F32
-    in
-    List.map
-      (fun v ->
-        match dt_of v with
-        | Ojax.Dtype.F64 | Ojax.Dtype.F32 -> NL.astype v narrow
-        | _ -> v)
-      (run_cases op params get)
-  else run_cases op params get
+let rec run op params get = run_cases op params get
 
 and run_cases op params get =
   let a () = get "a" in

@@ -24,7 +24,8 @@ let broadcast_scalar v sh =
 
 let unify a b =
   if shape a = shape b || ndim a = 0 || ndim a = ndim b then (a, b)
-  else (a, broadcast_scalar b (if ndim b = 0 then shape b else shape a))
+  else if ndim b = 0 then (a, broadcast_scalar b (shape b))
+  else (a, b)
 
 let lift2 prim a b =
   let x, y = unify a b in
@@ -162,11 +163,15 @@ let select pred on_true on_false = b1 Select_n [ pred; on_false; on_true ]
 
 let select_n pred cases =
   let sh =
-    match cases with c :: _ -> shape c | [] -> invalid_arg "select_n"
+    match cases with
+    | c :: _ -> shape c
+    | [] -> Py_exn.value_error "select_n() must have at least one case"
   in
   b1 Select_n (broadcast_scalar pred sh :: cases)
 
-let full sh fill_value dt = filled dt sh fill_value
+let full sh fill_value dt =
+  Validate.check_shapelike ~name:"broadcast_in_dim" ~arg:"shape" sh;
+  filled dt sh fill_value
 
 let rec full_like ?dtype ?shape x fill_value =
   match (dtype, shape) with
@@ -224,8 +229,19 @@ let squeeze x dims =
   else b1 (Squeeze (Array.map (canon_axis n) dims)) [ x ]
 
 let expand_dims x dims =
+  let repeated d =
+    List.length (List.sort_uniq compare (Array.to_list d)) <> Array.length d
+  in
+  let complain d =
+    if repeated d then
+      Py_exn.value_error
+        ("repeated axis in lax.expand_dims: "
+        ^ Validate.python_list (Array.to_list d))
+  in
+  complain dims;
   let n = ndim x + Array.length dims in
   let dims = Array.map (canon_axis n) dims in
+  complain dims;
   let sh = shape x in
   let rest = ref (Array.to_list sh) in
   let out =
@@ -532,10 +548,6 @@ let reducer_jaxpr dt computation =
     | [ x; y ] -> [ computation x y ]
     | _ -> invalid_arg "reduce: computation takes two arguments")
 
-let reduce x init computation dimensions =
-  let jaxpr = reducer_jaxpr (dtype_of x) computation in
-  b1 (Reduce { jaxpr; dimensions }) [ x; init ]
-
 let get_max_identity dt =
   match dt with
   | Dtype.Bool -> 0.0
@@ -561,6 +573,39 @@ let concrete_scalar v =
   | _ when ndim v <> 0 -> None
   | Concrete nd -> read nd
   | Device d -> read (Pjrt.Buffer.to_host d)
+
+let reduce x init computation dimensions =
+  let init_is_scalar = ndim init = 0 in
+  let monoid =
+    if not (init_is_scalar && not (Core.staging ())) then false
+    else
+      match concrete_scalar init with
+      | None -> false
+      | Some v ->
+          let dt = dtype_of init in
+          (computation == add && v = 0.0)
+          || (computation == mul && v = 1.0)
+          || (computation == max && v = get_max_identity dt)
+          || (computation == min && v = get_min_identity dt)
+  in
+  if monoid then Lax_shape.check (Reduce_sum dimensions) (fun () -> [ aval x ])
+  else begin
+    if not init_is_scalar then
+      Py_exn.value_error
+        ("reduce found non-scalar initial value: ["
+        ^ Validate.python_tuple (shape init)
+        ^ "]");
+    let n = ndim x in
+    Array.iter
+      (fun d ->
+        if d < -n || d >= n then
+          Py_exn.index_error
+            (Printf.sprintf "index %d is out of bounds for axis 0 with size %d"
+               d n))
+      dimensions
+  end;
+  let jaxpr = reducer_jaxpr (dtype_of x) computation in
+  b1 (Reduce { jaxpr; dimensions }) [ x; init ]
 
 let reduce_window x init computation ~window_dimensions ~window_strides
     ?base_dilation ?window_dilation padding_config =
@@ -592,7 +637,7 @@ let argmin x ~axis ~index_dtype = b1 (Argmin { axis; index_dtype }) [ x ]
 
 let sort ?(dimension = -1) ?(is_stable = true) ?(num_keys = 1) xs =
   match xs with
-  | [] -> invalid_arg "sort requires at least one operand"
+  | [] -> Py_exn.type_error "Sort requires at least one operand"
   | first :: _ ->
       let dimension = canon_axis (ndim first) dimension in
       Core.bind (Sort { dimension; is_stable; num_keys }) xs
@@ -603,6 +648,9 @@ let sort_key_val ?dimension ?is_stable keys values =
   | _ -> failwith "sort_key_val: arity"
 
 let top_k ?(axis = -1) x k =
+  if k < 0 then
+    Py_exn.value_error
+      (Printf.sprintf "k argument to top_k must be nonnegative, got %d" k);
   let axis = canon_axis (ndim x) axis in
   match Core.bind (Top_k { k; axis }) [ x ] with
   | [ values; indices ] -> (values, indices)
@@ -771,8 +819,14 @@ let dot_general ?precision ?preferred_element_type x y ~lhs_contract
 
 let batch_matmul ?precision ?preferred_element_type x y =
   let n = ndim x in
-  if ndim y <> n || n < 2 then
-    Py_exn.type_error "batch_matmul requires equal ranks of at least two";
+  if Stdlib.min n (ndim y) < 2 then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Arguments to batch_matmul must be at least 2D, got %d, %d" n (ndim y));
+  if n <> ndim y then
+    Py_exn.value_error
+      (Printf.sprintf
+         "Arguments to batch_matmul must have same ndim, got %d, %d" n (ndim y));
   let batch = Array.init (n - 2) Fun.id in
   dot_general ?precision ?preferred_element_type x y
     ~lhs_contract:[| n - 1 |]
@@ -794,37 +848,65 @@ let padtype_to_pads in_shape window_shape window_strides padding =
   | Explicit p -> p
   | Valid -> Array.map (fun _ -> (0, 0)) in_shape
   | Same | Same_lower ->
-      Array.mapi
-        (fun i size ->
-          let stride = window_strides.(i) in
-          let out = (size + stride - 1) / stride in
-          let total =
-            Stdlib.max (((out - 1) * stride) + window_shape.(i) - size) 0
-          in
-          let small = total / 2 and large = total - (total / 2) in
-          if padding = Same then (small, large) else (large, small))
-        in_shape
+      let ni = Array.length in_shape and ns = Array.length window_strides in
+      if ni <> ns && ni <> 1 && ns <> 1 then
+        Py_exn.value_error
+          (Printf.sprintf
+             "operands could not be broadcast together with shapes (%d,) (%d,) "
+             ni ns);
+      if ni <> ns then [||]
+      else
+        Array.mapi
+          (fun i size ->
+            let stride = window_strides.(i) in
+            let out =
+              if stride = 0 then 0 else -(Validate.py_floordiv (-size) stride)
+            in
+            let total =
+              Stdlib.max (((out - 1) * stride) + window_shape.(i) - size) 0
+            in
+            let small = total / 2 and large = total - (total / 2) in
+            if padding = Same then (small, large) else (large, small))
+          in_shape
 
-let index_of s c =
-  match String.index_opt s c with
-  | Some i -> i
-  | None -> invalid_arg ("missing dimension " ^ String.make 1 c ^ " in " ^ s)
+let python_string_tuple (a, b, c) = Printf.sprintf "('%s', '%s', '%s')" a b c
 
-let conv_general_permutations (lhs, rhs, out) =
-  let spatial s a b =
-    String.to_seq s |> List.of_seq |> List.filter (fun c -> c <> a && c <> b)
+let count_char s c =
+  String.fold_left (fun acc d -> if d = c then acc + 1 else acc) 0 s
+
+let char_set s = List.sort_uniq compare (List.of_seq (String.to_seq s))
+
+let conv_general_permutations ((lhs, rhs, out) as specs) =
+  List.iteri
+    (fun i (s, a, b) ->
+      if count_char s a <> 1 || count_char s b <> 1 then
+        Py_exn.type_error
+          (Printf.sprintf
+             "convolution dimension_numbers[%d] must contain the characters \
+              '%c' and '%c' exactly once, got %s."
+             i a b s);
+      if List.length (char_set s) <> String.length s then
+        Py_exn.type_error
+          (Printf.sprintf
+             "convolution dimension_numbers[%d] cannot have duplicate \
+              characters, got %s."
+             i s))
+    [ (lhs, 'N', 'C'); (rhs, 'O', 'I'); (out, 'N', 'C') ];
+  let spatial s a b = List.filter (fun c -> c <> a && c <> b) (char_set s) in
+  let lhs_set = spatial lhs 'N' 'C' in
+  if lhs_set <> spatial rhs 'O' 'I' || lhs_set <> spatial out 'N' 'C' then
+    Py_exn.type_error
+      ("convolution dimension_numbers elements must each have the same set of \
+        spatial characters, got " ^ python_string_tuple specs ^ ".");
+  let rhs_spatial =
+    List.filter
+      (fun c -> c <> 'O' && c <> 'I')
+      (List.of_seq (String.to_seq rhs))
   in
-  let lhs_spatial = spatial lhs 'N' 'C' in
-  let rhs_spatial = spatial rhs 'I' 'O' in
-  let out_spatial = spatial out 'N' 'C' in
-  if
-    List.sort compare lhs_spatial <> List.sort compare rhs_spatial
-    || List.sort compare lhs_spatial <> List.sort compare out_spatial
-  then invalid_arg "conv dimension specs must share spatial characters";
   let spec s a b =
     Array.of_list
-      (index_of s a :: index_of s b
-      :: List.map (fun c -> index_of s c) rhs_spatial)
+      (String.index s a :: String.index s b
+      :: List.map (String.index s) rhs_spatial)
   in
   {
     lhs_spec = spec lhs 'N' 'C';
@@ -838,34 +920,63 @@ let default_conv_dims rank =
   let id = Array.init rank Fun.id in
   { lhs_spec = id; rhs_spec = id; out_spec = id }
 
+let checked_conv_dims lhs_shape rhs_shape dimension_numbers =
+  let rank = Array.length lhs_shape in
+  if rank <> Array.length rhs_shape then
+    Py_exn.type_error
+      (Printf.sprintf
+         "convolution requires lhs and rhs ndim to be equal, got %d and %d."
+         rank (Array.length rhs_shape));
+  match dimension_numbers with
+  | None -> default_conv_dims rank
+  | Some d ->
+      List.iteri
+        (fun i spec ->
+          if Array.length spec <> rank then
+            Py_exn.type_error
+              (Printf.sprintf
+                 "convolution dimension_numbers[%d] must have len equal to the \
+                  ndim of lhs and rhs, got %d for lhs and rhs shapes %s and \
+                  %s."
+                 i (Array.length spec)
+                 (Validate.python_tuple lhs_shape)
+                 (Validate.python_tuple rhs_shape)))
+        [ d.lhs_spec; d.rhs_spec; d.out_spec ];
+      d
+
 let conv_general_dilated ?conv_precision ?lhs_dilation ?rhs_dilation
     ?dimension_numbers ?(feature_group_count = 1) ?(batch_group_count = 1) lhs
     rhs ~window_strides padding =
-  let rank = ndim lhs in
-  if feature_group_count <= 0 then
-    Py_exn.value_error
-      (Printf.sprintf
-         "conv_general_dilated feature_group_count must be a positive integer, \
-          got %d."
-         feature_group_count);
-  let sdims = rank - 2 in
+  let dn = checked_conv_dims (shape lhs) (shape rhs) dimension_numbers in
+  let sdims = Stdlib.max (ndim lhs - 2) 0 in
   let ones = Array.make sdims 1 in
-  let dn =
-    match dimension_numbers with Some d -> d | None -> default_conv_dims rank
-  in
+  let is_string = match padding with Explicit _ -> false | _ -> true in
+  (match lhs_dilation with
+  | Some d when is_string && Array.exists (fun x -> x <> 1) d ->
+      Py_exn.value_error
+        "String padding is not implemented for transposed convolution using \
+         this op. Please either exactly specify the required padding or use \
+         conv_transpose."
+  | _ -> ());
   let lhs_dilation = Option.value lhs_dilation ~default:ones in
   let rhs_dilation = Option.value rhs_dilation ~default:ones in
   let spatial spec sh = Array.init sdims (fun i -> sh.(spec.(i + 2))) in
   let lhs_sp = spatial dn.lhs_spec (shape lhs) in
   let rhs_sp = spatial dn.rhs_spec (shape rhs) in
-  let dilate sh d =
-    Array.mapi (fun i s -> if s = 0 then 0 else 1 + (d.(i) * (s - 1))) sh
+  let effective_rhs =
+    Array.init
+      (Stdlib.min sdims (Array.length rhs_dilation))
+      (fun i ->
+        if rhs_sp.(i) = 0 then 0 else 1 + (rhs_dilation.(i) * (rhs_sp.(i) - 1)))
   in
   let pads =
-    padtype_to_pads
-      (dilate lhs_sp lhs_dilation)
-      (dilate rhs_sp rhs_dilation)
-      window_strides padding
+    if is_string && Array.length effective_rhs <> sdims then
+      Py_exn.value_error
+        (Printf.sprintf
+           "operands could not be broadcast together with shapes (%d,) (%d,) "
+           (Array.length effective_rhs)
+           sdims)
+    else padtype_to_pads lhs_sp effective_rhs window_strides padding
   in
   b1
     (Conv_general_dilated
@@ -900,25 +1011,39 @@ let conv_transpose_pad k s padding =
       let pad_a = k - 1 in
       (pad_a, pad_len - pad_a)
   | Same_lower | Explicit _ ->
-      invalid_arg "conv_transpose padding must be SAME or VALID"
+      Py_exn.value_error "Invalid padding mode: SAME_LOWER"
 
 let conv_transpose ?rhs_dilation ?dimension_numbers ?(transpose_kernel = false)
     lhs rhs ~strides padding =
   let rank = ndim lhs in
+  Validate.assertion (rank = ndim rhs && rank >= 2);
   let sdims = rank - 2 in
-  let dn =
-    match dimension_numbers with Some d -> d | None -> default_conv_dims rank
+  let dimension_numbers =
+    match dimension_numbers with
+    | Some d -> d
+    | None -> (
+        match rank with
+        | 2 -> conv_general_permutations ("NC", "IO", "NC")
+        | 3 -> conv_general_permutations ("NHC", "HIO", "NHC")
+        | 4 -> conv_general_permutations ("NHWC", "HWIO", "NHWC")
+        | 5 -> conv_general_permutations ("NHWDC", "HWDIO", "NHWDC")
+        | _ -> Py_exn.value_error "No 4+ dimensional dimension_number defaults."
+        )
   in
+  let dn = checked_conv_dims (shape lhs) (shape rhs) (Some dimension_numbers) in
   let rhs_shape = shape rhs in
   let dilation = Option.value rhs_dilation ~default:(Array.make sdims 1) in
   let pads =
     match padding with
-    | Explicit p -> p
-    | _ ->
-        Array.init sdims (fun i ->
+    | Same | Valid ->
+        Array.init
+          (Stdlib.min sdims (Array.length strides))
+          (fun i ->
             let k = rhs_shape.(dn.rhs_spec.(i + 2)) in
-            let effective = ((k - 1) * dilation.(i)) + 1 in
+            let effective = if k = 0 then 0 else ((k - 1) * dilation.(i)) + 1 in
             conv_transpose_pad effective strides.(i) padding)
+    | Explicit p -> p
+    | Same_lower -> [||]
   in
   let rhs =
     if transpose_kernel then begin
@@ -932,7 +1057,7 @@ let conv_transpose ?rhs_dilation ?dimension_numbers ?(transpose_kernel = false)
   in
   conv_general_dilated ~lhs_dilation:strides ~rhs_dilation:dilation
     ~dimension_numbers:dn lhs rhs ~window_strides:(Array.make sdims 1)
-    (Explicit pads)
+    (match padding with Same_lower -> Same_lower | _ -> Explicit pads)
 
 let cond = Lax.cond
 let scan = Lax.scan
@@ -949,27 +1074,36 @@ let switch = Lax.switch
 let map ?batch_size f xs =
   match batch_size with
   | None -> map_scan f xs
-  | Some size when size <= 0 -> invalid_arg "map: batch_size must be positive"
+  | Some _ when xs = [] -> map_scan f xs
+  | Some 0 ->
+      ignore (Validate.tuple_index (shape (List.hd xs)) 0);
+      Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) xs
   | Some size ->
-      let total =
-        match xs with
-        | [] -> invalid_arg "map: no input"
-        | x :: _ -> (shape x).(0)
-      in
-      let rec chunks start =
-        if start >= total then []
-        else
-          let stop = Stdlib.min total (start + size) in
-          let slices = List.map (fun x -> slice_in_dim x start stop) xs in
-          Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) slices
-          :: chunks stop
-      in
-      let parts = chunks 0 in
-      List.mapi
-        (fun i _ ->
-          let column = List.map (fun part -> List.nth part i) parts in
-          match column with [ only ] -> only | _ -> concatenate column 0)
-        (List.hd parts)
+      let total = Validate.tuple_index (shape (List.hd xs)) 0 in
+      let num_batches = Validate.py_floordiv total size in
+      if size < 0 && num_batches <> 0 then
+        Py_exn.type_error
+          (Printf.sprintf "reshape new_sizes must all be positive, got %s."
+             (Validate.python_tuple
+                (Array.append [| num_batches; size |]
+                   (Array.sub (shape (List.hd xs)) 1 (ndim (List.hd xs) - 1)))));
+      if num_batches = 0 then
+        Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) xs
+      else
+        let rec chunks start =
+          if start >= total then []
+          else
+            let stop = Stdlib.min total (start + size) in
+            let slices = List.map (fun x -> slice_in_dim x start stop) xs in
+            Interpreters.Batching.vmap f (List.map (fun _ -> Some 0) xs) slices
+            :: chunks stop
+        in
+        let parts = chunks 0 in
+        List.mapi
+          (fun i _ ->
+            let column = List.map (fun part -> List.nth part i) parts in
+            match column with [ only ] -> only | _ -> concatenate column 0)
+          (List.hd parts)
 
 let fori_loop ?unroll lower upper body init =
   match (lower, upper) with
@@ -1057,10 +1191,13 @@ let platform_dependent ?default ?cuda ~cpu () =
   | "cuda", Some branch, _ -> branch ()
   | _, _, Some branch -> branch ()
   | platform, _, None ->
-      invalid_arg
-        (Printf.sprintf
-           "platform_dependent: no branch for platform %s and no default"
-           platform)
+      raise
+        (Py_exn.Not_implemented_error
+           (Printf.sprintf
+              "MLIR translation rule for primitive \
+               'platform_index(platforms=(('cpu',),))' not found for platform \
+               %s"
+              platform))
 
 let platform_dependent_args ?default ?cuda ~cpu args =
   let named =
@@ -1128,7 +1265,7 @@ let fft x ~fft_type ~fft_lengths =
     match fft_type with
     | Lax_config.Fft_real ->
         if is_complex then
-          invalid_arg "only real valued inputs supported for rfft";
+          Py_exn.value_error "only real valued inputs supported for rfft";
         Dtypes.to_inexact_dtype dt
     | _ ->
         if is_complex then dt
@@ -1211,13 +1348,15 @@ let conv_transpose_shape_tuple lhs_shape rhs_shape window_strides padding
 let conv_general_dilated_patches ?window_strides ?(padding = Valid)
     ?lhs_dilation ?rhs_dilation ?dimension_numbers ?precision lhs ~filter_shape
     =
-  let rank = ndim lhs in
   let k = Array.length filter_shape in
   let dn =
-    match dimension_numbers with Some d -> d | None -> default_conv_dims rank
+    checked_conv_dims (shape lhs)
+      (Array.append [| 1; 1 |] filter_shape)
+      dimension_numbers
   in
   let in_features = (shape lhs).(dn.lhs_spec.(1)) in
   let window = product filter_shape in
+  Validate.check_shapelike ~name:"iota" ~arg:"shape" [| window; window |];
   let eye = Interpreters.Ad.lax_eye (dtype_of lhs) window window in
   let spread =
     b1

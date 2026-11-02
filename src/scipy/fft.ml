@@ -6,7 +6,7 @@ let b1 = Core.bind1
 let shape v = (Core.get_aval v).shape
 let dtype_of v = (Core.get_aval v).dtype
 let rank v = Array.length (shape v)
-let canon n a = if a < 0 then a + n else a
+let canon n a = Validate.canonicalize_axis a n
 
 let real_of = function
   | Dtype.Complex128 | Dtype.F64 -> Dtype.F64
@@ -73,11 +73,13 @@ let check_norm name norm =
   match norm with
   | None | Some "backward" | Some "ortho" -> ()
   | Some other ->
-      invalid_arg
-        (Printf.sprintf "jax.scipy.fft.%s: norm=%s is not implemented" name
+      Py_exn.value_error
+        (Printf.sprintf "jax.scipy.fft.%s: norm='%s' is not implemented" name
            other)
 
-let check_type t = if t <> 2 then invalid_arg "Only DCT type 2 is implemented."
+let check_type t =
+  if t <> 2 then
+    raise (Py_exn.Not_implemented_error "Only DCT type 2 is implemented.")
 
 let is_complex v =
   match dtype_of v with

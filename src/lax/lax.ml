@@ -1897,7 +1897,7 @@ let rec impl_base prim inputs =
       Linalg.svd_impl ~gesvd full_matrices compute_uv inputs
   | Tridiagonal { lower } -> Linalg.tridiagonal_impl lower inputs
   | Collective { axis_name; _ } ->
-      invalid_arg ("unbound axis name: " ^ axis_name)
+      raise (Py_exn.Name_error ("unbound axis name: " ^ axis_name))
   | Fft { fft_type; fft_lengths } -> (
       match inputs with
       | [ x ] -> [ Fft.fft_impl fft_type fft_lengths x ]

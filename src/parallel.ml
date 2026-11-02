@@ -8,7 +8,7 @@ let bound_axis_size axis_name =
   | exception Invalid_argument msg -> (
       match List.assoc_opt axis_name !Core.mesh_axes with
       | Some size -> size
-      | None -> invalid_arg msg)
+      | None -> raise (Py_exn.Name_error msg))
 
 let collective kind axis_name v =
   ignore (bound_axis_size axis_name);
@@ -51,7 +51,9 @@ let single_side name axis_name params ~out v =
          dparams = params;
          dimpl =
            Core.register_decomposition (fun _ ->
-               raise (Failure (name ^ " is currently only implemented on GPU")));
+               raise
+                 (Py_exn.Not_implemented_error
+                    (name ^ " is currently only implemented on GPU")));
          davals = [ out ];
        })
     [ v ]
@@ -82,15 +84,28 @@ let axis_index ~axis_name =
 
 let chunk_of v ~axis ~index ~size = L.dynamic_slice_in_dim ~axis v index size
 
-let tiled_all_to_all x ~axis_name ~split_axis ~concat_axis =
-  let n = axis_size ~axis_name in
-  let sh = (Core.get_aval x).shape in
-  if sh.(split_axis) mod n <> 0 then
+let require_divisible_split sh split_axis axis_name n =
+  let size = Validate.tuple_index sh split_axis in
+  if Validate.py_mod size n <> 0 then
     Py_exn.value_error
       (Printf.sprintf
          "The size of all_to_all split_axis (%d) has to be divisible by the \
           size of the named axis %s (%d)"
-         sh.(split_axis) axis_name n);
+         size axis_name n)
+
+let require_full_split sh split_axis n =
+  let size = Validate.tuple_index sh split_axis in
+  if n <> size then
+    Py_exn.value_error
+      (Printf.sprintf
+         "all_to_all requires the size of the mapped axis axis_name to equal \
+          x.shape[split_axis], but they are %d and %d respectively."
+         n size)
+
+let tiled_all_to_all x ~axis_name ~split_axis ~concat_axis =
+  let n = axis_size ~axis_name in
+  let sh = (Core.get_aval x).shape in
+  require_divisible_split sh split_axis axis_name n;
   let size = sh.(split_axis) / n in
   let gathered = all_gather x ~axis_name in
   let me = axis_index ~axis_name in
@@ -118,21 +133,11 @@ let all_to_all ?(tiled = false) x ~axis_name ~split_axis ~concat_axis =
       collective (All_to_all { split_axis; concat_axis; size }) axis_name x
     in
     if tiled then begin
-      if sh.(split_axis) mod size <> 0 then
-        Py_exn.value_error
-          (Printf.sprintf
-             "The size of all_to_all split_axis (%d) has to be divisible by \
-              the size of the named axis %s (%d)"
-             sh.(split_axis) axis_name size);
+      require_divisible_split sh split_axis axis_name size;
       bind x split_axis concat_axis
     end
     else begin
-      if size <> sh.(split_axis) then
-        invalid_arg
-          (Printf.sprintf
-             "all_to_all requires the size of the mapped axis axis_name to \
-              equal x.shape[split_axis], but they are %d and %d respectively."
-             size sh.(split_axis));
+      require_full_split sh split_axis size;
       if split_axis = concat_axis then bind x split_axis concat_axis
       else
         let concat, split =
@@ -146,12 +151,7 @@ let all_to_all ?(tiled = false) x ~axis_name ~split_axis ~concat_axis =
   else begin
     let n = axis_size ~axis_name in
     let sh = (Core.get_aval x).shape in
-    if n <> sh.(split_axis) then
-      invalid_arg
-        (Printf.sprintf
-           "all_to_all requires the size of the mapped axis axis_name to equal \
-            x.shape[split_axis], but they are %d and %d respectively."
-           n sh.(split_axis));
+    require_full_split sh split_axis n;
     if split_axis = concat_axis then
       tiled_all_to_all x ~axis_name ~split_axis ~concat_axis
     else
@@ -172,42 +172,44 @@ let pswapaxes x ~axis_name ~axis =
 let psum_scatter ?(scatter_dimension = 0) ?(tiled = false) x ~axis_name =
   let n = axis_size ~axis_name in
   let sh = (Core.get_aval x).shape in
-  if
-    on_vmap_axis axis_name
-    &&
-    if tiled then sh.(scatter_dimension) mod n = 0
-    else sh.(scatter_dimension) = n
-  then
+  if on_vmap_axis axis_name then
     collective
       (Reduce_scatter { scatter_dimension; size = n; tiled })
       axis_name x
   else
     let summed = psum x ~axis_name in
     let me = axis_index ~axis_name in
+    let input = Validate.tuple_index sh scatter_dimension in
     if tiled then begin
-      if sh.(scatter_dimension) mod n <> 0 then
-        invalid_arg
-          "psum_scatter: scatter_dimension must divide by the axis size";
-      let size = sh.(scatter_dimension) / n in
+      if Validate.py_mod input n <> 0 then
+        Py_exn.value_error
+          (Printf.sprintf
+             "tiled reduce_scatter operand scatter dimension size %d must be \
+              divisible by shard_count %d"
+             input n);
+      let size = input / n in
       let start =
         L.mul me (L.full [||] (float_of_int size) (Core.get_aval me).dtype)
       in
       chunk_of summed ~axis:scatter_dimension ~index:start ~size
     end
     else begin
-      if sh.(scatter_dimension) <> n then
-        invalid_arg
-          "psum_scatter: scatter_dimension must equal the axis size when not \
-           tiled";
+      if input <> n then
+        Py_exn.value_error
+          (Printf.sprintf
+             "reduce_scatter operand scatter dimension size %d must match \
+              shard count %d"
+             input n);
       L.squeeze
         (chunk_of summed ~axis:scatter_dimension ~index:me ~size:1)
         [| scatter_dimension |]
     end
 
 let pshuffle x ~axis_name ~perm =
-  let sorted = List.sort compare perm in
-  if sorted <> List.init (List.length perm) Fun.id then
-    invalid_arg "`perm` does not represent a permutation";
+  let distinct = List.sort_uniq compare perm in
+  if distinct <> List.init (List.length perm) Fun.id then
+    Py_exn.value_error
+      ("`perm` does not represent a permutation: " ^ Validate.python_list perm);
   ppermute x ~axis_name ~perm:(List.mapi (fun i src -> (src, i)) perm)
 
 let ragged_all_to_all operand output input_offsets send_sizes output_offsets
@@ -215,10 +217,10 @@ let ragged_all_to_all operand output input_offsets send_sizes output_offsets
   let check name v =
     let aval = Core.get_aval v in
     if not (Dtypes.issubdtype aval.dtype `Integer) then
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf "ragged_all_to_all %s must be integer type." name);
     if Array.length aval.shape <> 1 || aval.shape.(0) < 1 then
-      invalid_arg
+      Py_exn.value_error
         (Printf.sprintf
            "ragged_all_to_all %s must be rank 1 with positive dimension size"
            name)
@@ -229,9 +231,10 @@ let ragged_all_to_all operand output input_offsets send_sizes output_offsets
   check "recv_sizes" recv_sizes;
   (try ignore (B.find_axis axis_name)
    with Invalid_argument _ ->
-     failwith
-       "ragged_all_to_all must be used within a mapped context like vmap or \
-        shard_map.");
+     raise
+       (Py_exn.Runtime_error
+          "ragged_all_to_all must be used within a mapped context like vmap or \
+           shard_map."));
   let n = axis_size ~axis_name in
   let slots = (Core.get_aval input_offsets).shape.(0) in
   if slots mod n <> 0 then

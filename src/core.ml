@@ -394,12 +394,42 @@ let check_operands prim args =
   | Symmetric_product _ -> check "symmetric_product" is_float_dtype floating
   | Cholesky | Lu | Qr _ | Qr_pivoted _ | Geqrf | Geqp3 | Eig _ | Eigh _ | Svd _
   | Schur _ | Hessenberg | Triangular_solve _ | Tridiagonal _
-  | Tridiagonal_solve _ ->
-      check "linalg"
-        (function
-          | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> true
-          | _ -> false)
-        "float32, float64, complex64, complex128"
+  | Tridiagonal_solve _ -> (
+      let name =
+        match prim with
+        | Cholesky -> "cholesky"
+        | Lu -> "lu"
+        | Qr _ | Qr_pivoted _ -> "qr"
+        | Geqrf -> "geqrf"
+        | Geqp3 -> "geqp3"
+        | Eig _ -> "eig"
+        | Eigh _ -> "eigh"
+        | Svd _ -> "svd"
+        | Schur _ -> "schur"
+        | Hessenberg -> "hessenberg"
+        | Triangular_solve _ -> "triangular_solve"
+        | Tridiagonal _ -> "tridiagonal"
+        | _ -> "tridiagonal_solve"
+      in
+      match args with
+      | first :: _ -> (
+          let dt =
+            match first with
+            | Concrete a -> Ndarray.dtype a
+            | Tracer t -> t.aval.dtype
+            | Device b -> Pjrt.Buffer.element_type b
+          in
+          match dt with
+          | Dtype.F32 | Dtype.F64 | Dtype.Complex64 | Dtype.Complex128 -> ()
+          | d ->
+              raise
+                (Py_exn.Type_error
+                   (Printf.sprintf
+                      "%s does not accept dtype %s at position 0. Accepted \
+                       dtypes at position 0 are subtypes of complexfloating, \
+                       floating."
+                      name (Dtype.numpy_name d))))
+      | [] -> ())
   | Rem -> check "rem" (fun d -> not_bool d && not_complex d) real_numeric
   | Lt -> check "lt" not_complex real
   | Gt -> check "gt" not_complex real
@@ -590,9 +620,28 @@ let check_broadcast prim args =
              (first :: rest))
     | _ -> ()
 
+let value_aval = function
+  | Concrete a ->
+      {
+        shape = Ndarray.shape a;
+        dtype = Ndarray.dtype a;
+        weak_type = Ndarray.weak a;
+      }
+  | Tracer t -> t.aval
+  | Device b ->
+      {
+        shape = Pjrt.Buffer.dimensions b;
+        dtype = Pjrt.Buffer.element_type b;
+        weak_type = false;
+      }
+
 let bind prim args =
   check_broadcast prim args;
   Linalg_shape.check prim (fun () -> List.map value_shape args);
+  Lax_shape.check prim (fun () -> List.map value_aval args);
+  (match !dynamic_trace with
+  | Some { kind = KJaxpr; _ } -> ()
+  | _ -> Lax_shape.verify prim (fun () -> List.map value_aval args));
   check_operands prim args;
   (match prim with
   | Reduce_sum axes when not (Config.value Config.allow_f16_reductions) ->
@@ -653,20 +702,7 @@ let splat dt sh x =
 let py_scalar dt x =
   Concrete (Ndarray.with_py_value (Ndarray.as_weak (splat_host dt [||] 1 x)) x)
 
-let get_aval = function
-  | Concrete a ->
-      {
-        shape = Ndarray.shape a;
-        dtype = Ndarray.dtype a;
-        weak_type = Ndarray.weak a;
-      }
-  | Tracer t -> t.aval
-  | Device b ->
-      {
-        shape = Pjrt.Buffer.dimensions b;
-        dtype = Pjrt.Buffer.element_type b;
-        weak_type = false;
-      }
+let get_aval = value_aval
 
 let as_concrete = function
   | Concrete a -> a

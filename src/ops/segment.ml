@@ -105,7 +105,7 @@ let segment_update prim identity reducer ?num_segments
              (Numpy.Reductions.max segment_ids)
              (Numpy.Jnp_util.py_int 1))
   in
-  if nseg < 0 then invalid_arg "num_segments must be non-negative.";
+  if nseg < 0 then Py_exn.value_error "num_segments must be non-negative.";
   let mode = Option.map Lax_config.gather_scatter_mode_of_string mode in
   let clip = mode = Some Lax_config.Clip in
   let narrow ids =

@@ -1480,7 +1480,6 @@ let arange ?(start = 0.0) ?step ~dtype stop =
       if start = 0.0 then idx else bind1 T.Add [ scalar dtype start; idx ]
 
 let eye ?m ?(k = 0) ~dtype n =
-  let dtype = Dtypes.canonicalize_dtype dtype in
   let m = Option.value m ~default:n in
   let idt = Dtypes.default_int_dtype () in
   let i =

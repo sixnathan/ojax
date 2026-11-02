@@ -178,7 +178,7 @@ let select_n pred cases =
   in
   b1 Select_n (broadcast_scalar pred sh :: cases)
 
-let full sh fill_value dt = filled (Dtypes.canonicalize_dtype dt) sh fill_value
+let full sh fill_value dt = filled dt sh fill_value
 
 let rec full_like ?dtype ?shape x fill_value =
   match (dtype, shape) with

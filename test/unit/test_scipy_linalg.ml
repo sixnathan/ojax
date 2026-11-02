@@ -166,6 +166,30 @@ let raises name f =
 let bounded_raises () =
   raises "funm" (fun () -> SL.funm (a_gen ()) (fun x -> x))
 
+let special_sizes () =
+  let module SS = Ojax.Scipy.Linalg_special in
+  let shape_of x = Ojax.Core.(get_aval x).T.shape in
+  let constructors =
+    [
+      ("hilbert", SS.hilbert, fun n -> [| n; n |]);
+      ("dft", (fun n -> SS.dft n), fun n -> [| n; n |]);
+      ("pascal", (fun n -> SS.pascal n), fun n -> [| n; n |]);
+      ("invpascal", (fun n -> SS.invpascal n), fun n -> [| n; n |]);
+      ("helmert", (fun n -> SS.helmert n), fun n -> [| n - 1; n |]);
+      ("invhilbert", SS.invhilbert, fun n -> [| n; n |]);
+    ]
+  in
+  List.iter
+    (fun (name, f, want) ->
+      List.iter
+        (fun n ->
+          Alcotest.(check (array int))
+            (Printf.sprintf "%s %d" name n)
+            (want n)
+            (shape_of (f n)))
+        [ 2; 3; 2 ])
+    constructors
+
 let () =
   Alcotest.run "scipy_linalg"
     [
@@ -192,5 +216,6 @@ let () =
           Alcotest.test_case "toeplitz" `Quick toeplitz_vals;
           Alcotest.test_case "eigtri_vs_eigh" `Quick eigtri_vs_eigh;
           Alcotest.test_case "bounded_raises" `Quick bounded_raises;
+          Alcotest.test_case "special_sizes" `Quick special_sizes;
         ] );
     ]

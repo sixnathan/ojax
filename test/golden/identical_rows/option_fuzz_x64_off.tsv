@@ -4147,6 +4147,8 @@ sp_linalg.dft_4c4e1a4a_float32:eager:both_raise	0
 sp_linalg.dft_4c4e1a4a_float32:jit:both_raise	0
 sp_linalg.dft_5d7d138d_float32:eager:out0	1
 sp_linalg.dft_5d7d138d_float32:jit:out0	1
+sp_linalg.dft_5d83138f_float32:eager:out0	1
+sp_linalg.dft_5d83138f_float32:jit:out0	1
 sp_linalg.dft_91af1037_float32:eager:out0	1
 sp_linalg.dft_91af1037_float32:jit:out0	1
 sp_linalg.dft_b84e1540_float32:eager:both_raise	0
@@ -4229,6 +4231,8 @@ sp_linalg.hankel_95a52042_float32:eager:out0	1
 sp_linalg.hankel_95a52042_float32:jit:out0	1
 sp_linalg.helmert_81361491_float32:eager:out0	1
 sp_linalg.helmert_81361491_float32:jit:out0	1
+sp_linalg.helmert_81391492_float32:eager:out0	1
+sp_linalg.helmert_81391492_float32:jit:out0	1
 sp_linalg.helmert_91a91035_float32:eager:out0	1
 sp_linalg.helmert_91a91035_float32:jit:out0	1
 sp_linalg.hessenberg_17ab2657_float32:eager:out0	1

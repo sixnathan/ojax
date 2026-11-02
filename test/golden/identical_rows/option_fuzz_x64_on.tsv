@@ -4060,6 +4060,8 @@ sp_linalg.hankel_c0b6230d_float64:eager:out0	1
 sp_linalg.hankel_c0b6230d_float64:jit:out0	1
 sp_linalg.helmert_6dff1447_float64:eager:out0	1
 sp_linalg.helmert_6dff1447_float64:jit:out0	1
+sp_linalg.helmert_6e021448_float64:eager:out0	1
+sp_linalg.helmert_6e021448_float64:jit:out0	1
 sp_linalg.helmert_813c1493_float64:eager:out0	1
 sp_linalg.helmert_813c1493_float64:jit:out0	1
 sp_linalg.hessenberg_3cdf26a2_float64:eager:out0	1

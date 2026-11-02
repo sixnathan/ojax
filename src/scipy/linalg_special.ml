@@ -79,7 +79,7 @@ let comb big_n k =
 
 let hilbert n =
   Lax.Utils.check_shapelike "iota" "shape" [| n; 1 |];
-  jit1 "hilbert"
+  jit1 "hilbert" ~key:(string_of_int n)
     (fun _ ->
       let dt = default_float () in
       let a = b1 (Iota { dtype = dt; shape = [| n; 1 |]; dimension = 0 }) [] in
@@ -344,7 +344,9 @@ let dft ?scale ?dtype:requested n =
   in
   let pi = 3.141592653589793 in
   jit1 "dft"
-    ~key:(Dtype.short_name dt ^ Option.value scale ~default:"none")
+    ~key:
+      (Printf.sprintf "%d %s %s" n (Dtype.short_name dt)
+         (Option.value scale ~default:"none"))
     (fun _ ->
       let a = iota dt n in
       let i = column a in
@@ -377,7 +379,8 @@ let pascal ?(kind = "symmetric") n =
       Py_exn.value_error
         ("Expected kind to be on of: ['symmetric', 'lower', 'upper']; got "
        ^ other));
-  jit1 "pascal" ~key:kind
+  jit1 "pascal"
+    ~key:(Printf.sprintf "%d %s" n kind)
     (fun _ ->
       let a = iota Dtype.F32 n in
       let i = column a in
@@ -398,7 +401,8 @@ let invpascal ?(kind = "symmetric") n =
       Py_exn.value_error
         ("Expected kind to be one of: ['symmetric', 'lower', 'upper']; got "
        ^ other));
-  jit1 "invpascal" ~key:kind
+  jit1 "invpascal"
+    ~key:(Printf.sprintf "%d %s" n kind)
     (fun _ ->
       let dt = default_float () in
       let a = iota dt n in
@@ -420,7 +424,8 @@ let helmert ?(full = false) n =
   if n < 1 then
     Py_exn.value_error
       (Printf.sprintf "n must be a positive integer; got %d." n);
-  jit1 "helmert" ~key:(string_of_bool full)
+  jit1 "helmert"
+    ~key:(Printf.sprintf "%d %b" n full)
     (fun _ ->
       let idt = Dtypes.default_int_dtype () in
       let dt = default_float () in
@@ -525,7 +530,7 @@ let convolution_matrix ?(mode = "full") a n =
     [ a ]
 
 let invhilbert n =
-  jit1 "invhilbert"
+  jit1 "invhilbert" ~key:(string_of_int n)
     (fun _ ->
       let dt = default_float () in
       let a = iota dt n in

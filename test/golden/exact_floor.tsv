@@ -45,8 +45,8 @@ nn:x64_on	77	77
 numpy_linalg:x64_off	84	84
 numpy_linalg:x64_on	176	176
 numpy_product_jax	4	4
-option_fuzz:x64_off	5218	5636
-option_fuzz:x64_on	5010	5430
+option_fuzz:x64_off	5222	5636
+option_fuzz:x64_on	5012	5430
 parity:x64_off	2565	2565
 parity:x64_on	5123	5123
 parity_jit:x64_off	2566	2566
@@ -112,8 +112,8 @@ raw:nn:x64_on	77	77
 raw:numpy_linalg:x64_off	84	84
 raw:numpy_linalg:x64_on	176	176
 raw:numpy_product_jax	4	4
-raw:option_fuzz:x64_off	3867	5636
-raw:option_fuzz:x64_on	3574	5430
+raw:option_fuzz:x64_off	3871	5636
+raw:option_fuzz:x64_on	3576	5430
 raw:parity:x64_off	2565	2565
 raw:parity:x64_on	5123	5123
 raw:parity_jit:x64_off	2566	2566

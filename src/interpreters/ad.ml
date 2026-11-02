@@ -3913,7 +3913,13 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
   | Split { axis; _ } -> (
       match primals with
       | [ x ] ->
-          [ (if is_undef x then Some (b1 (Concatenate axis) cts) else None) ]
+          [
+            (if is_undef x then
+               match cts with
+               | [ only ] -> Some only
+               | _ -> Some (b1 (Concatenate axis) cts)
+             else None);
+          ]
       | _ -> arity ())
   | Unstack axis -> (
       match primals with

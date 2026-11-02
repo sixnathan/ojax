@@ -922,6 +922,13 @@ let tril ?(k = 0) m =
   Core.bind1 Select_n [ mask; zeros; m ]
 
 let cholesky ?(symmetrize_input = true) x =
+  (let shape = (Core.get_aval x).shape in
+   if symmetrize_input && Array.length shape < 2 then
+     Py_exn.type_error
+       (Printf.sprintf
+          "transpose permutation isn't a permutation of operand dimensions, \
+           got permutation (0, -1) for operand shape %s."
+          (Validate.python_tuple shape)));
   let x = if symmetrize_input then symmetrize x else x in
   let c = Core.bind1 Cholesky [ x ] in
   tril c

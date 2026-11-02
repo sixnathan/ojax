@@ -198,12 +198,10 @@ let comparison prim x y =
   match (prim, dtype a) with
   | (T.Lt | T.Gt | T.Le | T.Ge), (D.Complex64 | D.Complex128) ->
       let re v = bind1 T.Real [ v ] and im v = bind1 T.Imag [ v ] in
-      bind1 T.Select_n
-        [
-          bind1 T.Eq [ re a; re b ];
-          bind1 prim [ re a; re b ];
-          bind1 prim [ im a; im b ];
-        ]
+      let pred = bind1 T.Eq [ re a; re b ] in
+      let on_true = bind1 prim [ im a; im b ] in
+      let on_false = bind1 prim [ re a; re b ] in
+      bind1 T.Select_n [ pred; on_false; on_true ]
   | _ -> bind1 prim [ a; b ]
 
 let equal x y = comparison T.Eq x y
@@ -625,15 +623,17 @@ let hypot x1 x2 =
   let a = bind1 T.Abs [ a0 ] and b = bind1 T.Abs [ b0 ] in
   let idx_inf = bind1 T.Or [ isposinf a; isposinf b ] in
   let x1m = bind1 T.Max [ a; b ] and x2m = bind1 T.Min [ a; b ] in
-  let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
-  let x1_is0 = bind1 T.Eq [ x1m; zero ] in
-  let denom = where x1_is0 one x1m in
+  let is_zero () = bind1 T.Eq [ x1m; const_full dt sh 0.0 ] in
+  let outer_zero = is_zero () in
+  let inner_zero = is_zero () in
+  let denom = where inner_zero (Core.splat dt sh 1.0) x1m in
   let ratio = bind1 T.Div [ x2m; denom ] in
+  let squared = bind1 T.Square [ ratio ] in
   let v =
     bind1 T.Mul
-      [ x1m; bind1 T.Sqrt [ bind1 T.Add [ one; bind1 T.Square [ ratio ] ] ] ]
+      [ x1m; bind1 T.Sqrt [ bind1 T.Add [ const_full dt sh 1.0; squared ] ] ]
   in
-  let x = where x1_is0 x1m v in
+  let x = where outer_zero x1m v in
   where idx_inf (const_full dt sh infinity) x
 
 let rec sinc_maclaurin_call k =

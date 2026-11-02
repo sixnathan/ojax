@@ -12,13 +12,13 @@ val resolve_prng_impl : string option -> Prng.prng_impl
 val key_impl : value -> string
 val is_key : value -> bool
 val key_dtype : string option -> Dtype.t
-val key : value -> value
+val key : ?impl:string -> value -> value
 val key_data : value -> value
 val wrap_key_data : value -> value
 val clone : value -> value
 val fold_in : value -> value -> value
 val split : value -> int -> value
-val bits : value -> shape:int array -> value
+val bits : ?dtype:Dtype.t -> value -> shape:int array -> value
 
 val randint :
   ?dtype:Dtype.t ->

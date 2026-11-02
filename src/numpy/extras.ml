@@ -1251,6 +1251,18 @@ let ravel_multi_index ?(mode = "raise") ?(order = "C") ?dtype coords dims =
   in
   result
 
+let unpack_sample_shape shape =
+  match shape with
+  | [| _; dims |] -> dims
+  | _ when Array.length shape < 2 ->
+      Py_exn.value_error
+        (Printf.sprintf "not enough values to unpack (expected 2, got %d)"
+           (Array.length shape))
+  | _ ->
+      Py_exn.value_error
+        (Printf.sprintf "too many values to unpack (expected 2, got %d)"
+           (Array.length shape))
+
 let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
   let sample, weights =
     match weights with
@@ -1260,7 +1272,7 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
         | [ s; w ] -> (s, Some w)
         | _ -> assert false)
   in
-  let n_dims = (shape sample).(1) in
+  let n_dims = unpack_sample_shape (shape sample) in
   if Array.length bins <> 0 && Array.length bins <> n_dims then
     Py_exn.value_error "should be a bin for each dimension.";
   let bins_for i = if Array.length bins = 0 then 10 else bins.(i) in
@@ -1430,7 +1442,7 @@ let gradient ?spacing ?axis a =
   let n = rank a in
   let axes =
     match axis with
-    | Some ax -> List.map (canon n) ax
+    | Some ax -> List.map (fun i -> canonicalize_axis i n) ax
     | None -> List.init n Fun.id
   in
   if axes <> [] && List.exists (fun ax -> (shape a).(ax) < 2) axes then
@@ -1595,7 +1607,9 @@ let extract ?size ?fill_value condition a =
 
 let delete ?axis a obj =
   let a, ax =
-    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
+    match axis with
+    | Some x -> (a, canonicalize_axis x (rank a))
+    | None -> (flat a, 0)
   in
   let n = (shape a).(ax) in
   List.iter
@@ -1615,7 +1629,9 @@ let delete ?axis a obj =
 
 let delete_array ?axis ?(assume_unique_indices = false) a obj =
   let a, ax =
-    match axis with Some x -> (a, canon (rank a) x) | None -> (flat a, 0)
+    match axis with
+    | Some x -> (a, canonicalize_axis x (rank a))
+    | None -> (flat a, 0)
   in
   if assume_unique_indices && Dtypes.issubdtype (dtype_of obj) `Integer then begin
     let extent = (shape a).(ax) in
@@ -1871,7 +1887,9 @@ let trim_zeros ?(trim = "fb") ?axis a =
   let axes =
     match axis with
     | None -> List.init (rank a) Fun.id
-    | Some ax -> List.map (canon (rank a)) ax
+    | Some ax ->
+        Array.to_list
+          (Validate.canonicalize_axis_tuple (Array.of_list ax) (rank a))
   in
   if axes = [] || not (front || back) then a
   else
@@ -2155,7 +2173,13 @@ let ndim = rank
 
 let polydiv ?(trim_leading_zeros = false) u v =
   let u = as_inexact u and v = as_inexact v in
-  let lu = size_of u and lv = size_of v in
+  let py_len w =
+    match shape w with
+    | [||] -> Py_exn.type_error "len() of unsized object"
+    | dims -> dims.(0)
+  in
+  let lu = py_len u in
+  let lv = py_len v in
   let dt = dtype_of u in
   let b1 = Core.bind1 in
   let scalar x = L.full [||] x dt in

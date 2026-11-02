@@ -55,7 +55,10 @@ let neg v = bind1 T.Neg [ v ]
 let polyval ?(unroll = 16) p x =
   let p, x = two (promote_dtypes [ p; x ]) in
   let sh_p = shape p in
-  let tail = Array.sub sh_p 1 (Array.length sh_p - 1) in
+  let tail =
+    if Array.length sh_p = 0 then [||]
+    else Array.sub sh_p 1 (Array.length sh_p - 1)
+  in
   let out_sh = NL.broadcast_shapes_n [ tail; shape x ] in
   let y0 = const_full (dtype x) out_sh 0.0 in
   let body carry =

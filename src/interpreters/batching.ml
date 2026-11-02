@@ -1292,9 +1292,27 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     (f : value list -> value list) (in_axes : int option list)
     (args : value list) : value list =
   let axis_size =
+    let mapped_size x d =
+      let shape = (Core.get_aval x).shape in
+      let rank = Array.length shape in
+      if d >= rank || d < -rank then
+        Py_exn.value_error
+          (Printf.sprintf
+             "vmap was requested to map its argument along axis %d, which \
+              implies that its rank should be at least %d, but is only %d (its \
+              shape is %s)"
+             d
+             (if d >= 0 then d + 1 else -d)
+             rank
+             (Validate.python_tuple shape));
+      shape.(if d < 0 then d + rank else d)
+    in
     let rec find axes vals =
       match (axes, vals) with
-      | Some d :: _, x :: _ -> Some (Core.get_aval x).shape.(d)
+      | Some d :: axes, x :: vals ->
+          let size = mapped_size x d in
+          ignore (find axes vals);
+          Some size
       | None :: axes, _ :: vals -> find axes vals
       | _ -> None
     in

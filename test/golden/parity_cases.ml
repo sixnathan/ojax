@@ -1279,6 +1279,9 @@ let tracer_batch_run op params a b =
 
 let slice_prefix v stop =
   let sh = (Ojax.Core.get_aval v).Ojax.Types.shape in
+  if Array.length sh = 0 then
+    Ojax.Py_exn.index_error
+      "Too many indices: array is 0-dimensional, but 1 were indexed";
   let limit = Array.copy sh in
   limit.(0) <- min stop sh.(0);
   if limit = sh then v

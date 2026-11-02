@@ -385,6 +385,9 @@ let flip1 y =
     [ y ]
 
 let conv1d_body ~mode ~correlating a v =
+  let op = if correlating then "correlate" else "convolve" in
+  if ndim a <> 1 || ndim v <> 1 then
+    Py_exn.value_error (op ^ "() only support 1-dimensional inputs.");
   let flip_kernel = not correlating in
   let dt, _ =
     Dtypes.result_type
@@ -394,7 +397,11 @@ let conv1d_body ~mode ~correlating a v =
   in
   let a = convert a dt and v = convert v dt in
   let la = (shape a).(0) and lv = (shape v).(0) in
-  if la = 0 || lv = 0 then Py_exn.value_error "conv: inputs cannot be empty";
+  if la = 0 || lv = 0 then
+    Py_exn.value_error
+      (Printf.sprintf "%s: inputs cannot be empty, got shapes %s and %s." op
+         (Validate.python_tuple (shape a))
+         (Validate.python_tuple (shape v)));
   let v =
     match dtype v with
     | (D.Complex64 | D.Complex128) when correlating -> bind1 T.Conj [ v ]
@@ -409,7 +416,7 @@ let conv1d_body ~mode ~correlating a v =
     | "valid" -> [| (0, 0) |]
     | "same" -> [| (ly / 2, ly - (ly / 2) - 1) |]
     | "full" -> [| (ly - 1, ly - 1) |]
-    | _ -> invalid_arg "conv: mode must be one of full, same, valid"
+    | _ -> Py_exn.value_error "mode must be one of ['full', 'same', 'valid']"
   in
   let lx = (shape x).(0) in
   let lifted v n =
@@ -996,8 +1003,10 @@ let with_dtype dt arrays =
 
 let concatenate ?(axis = 0) ?dtype:dt arrays =
   match arrays with
-  | [] -> invalid_arg "concatenate: need at least one array"
+  | [] -> Py_exn.value_error "Need at least one array to concatenate."
   | first :: _ ->
+      if ndim first = 0 then
+        Py_exn.value_error "Zero-dimensional arrays cannot be concatenated.";
       let ax = canonicalize_axis axis (ndim first) in
       bind1 (T.Concatenate ax) (with_dtype dt arrays)
 

@@ -41,8 +41,37 @@ let square name s =
 
 let rule ~name ~ranks shapes f = f (trailing ~name ~ranks (shapes ()))
 
+let concatenate_rule dimension shapes =
+  let listed () = String.concat ", " (List.map tuple shapes) in
+  match shapes with
+  | [] -> Py_exn.type_error "concatenate expects at least one operand, got 0."
+  | first :: _ ->
+      let rank = Array.length first in
+      if List.exists (fun s -> Array.length s <> rank) shapes then
+        Py_exn.type_error
+          (Printf.sprintf
+             "Cannot concatenate arrays with different numbers of dimensions: \
+              got %s."
+             (listed ()));
+      if dimension < 0 || dimension >= rank then
+        Py_exn.type_error
+          (Printf.sprintf
+             "concatenate dimension out of bounds: dimension %d for shapes %s."
+             dimension (listed ()));
+      let others s =
+        List.filteri (fun i _ -> i <> dimension) (Array.to_list s)
+      in
+      if List.exists (fun s -> others s <> others first) shapes then
+        Py_exn.type_error
+          (Printf.sprintf
+             "Cannot concatenate arrays with shapes that differ in dimensions \
+              other than the one being concatenated: concatenating along \
+              dimension %d for shapes %s."
+             dimension (listed ()))
+
 let check prim shapes =
   match prim with
+  | Concatenate dimension -> concatenate_rule dimension (shapes ())
   | Cholesky ->
       rule ~name:"cholesky" ~ranks:[ 2 ] shapes (function
         | s :: _ -> square "cholesky" s

@@ -96,4 +96,4 @@ val imag : Types.value -> Types.value
 val real : Types.value -> Types.value
 val conjugate : Types.value -> Types.value
 val conj : Types.value -> Types.value
-val promote_shapes : Types.value list -> Types.value list
+val promote_shapes : ?name:string -> Types.value list -> Types.value list

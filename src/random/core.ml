@@ -1548,7 +1548,10 @@ let check_float_dtype name dtype =
 let gumbel_any key ~shape ~dt ~mode =
   check_float_dtype "gumbel" (Some dt);
   match mode with
-  | None -> gumbel_dt key ~shape ~dt
+  | None ->
+      if Config.value Config.high_dynamic_range_gumbel then
+        gumbel_mode key ~shape ~dt ~mode:"high"
+      else gumbel_dt key ~shape ~dt
   | Some mode -> gumbel_mode key ~shape ~dt ~mode
 
 let choice_array ?(shape = [||]) ?(replace = true) ?p ?(axis = 0) ?mode k arr =

@@ -824,22 +824,25 @@ let to_inexact = function
     d ->
       d
 
-let promote_inexact vs =
+let promote_inexact ?name vs =
   let dt, is_weak =
     Dtypes.result_type
       (List.map (fun v -> (dtype v, (get_aval v).T.weak_type)) vs)
   in
   let dt = to_inexact dt in
-  UF.promote_shapes (List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs)
+  UF.promote_shapes ?name
+    (List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs)
 
 let promote1 x =
   match promote_inexact [ x ] with [ y ] -> y | _ -> assert false
 
-let promote2 a b =
-  match promote_inexact [ a; b ] with [ a; b ] -> (a, b) | _ -> assert false
+let promote2 ?name a b =
+  match promote_inexact ?name [ a; b ] with
+  | [ a; b ] -> (a, b)
+  | _ -> assert false
 
-let promote3 a b c =
-  match promote_inexact [ a; b; c ] with
+let promote3 ?name a b c =
+  match promote_inexact ?name [ a; b; c ] with
   | [ a; b; c ] -> (a, b, c)
   | _ -> assert false
 
@@ -867,13 +870,13 @@ let real_only name x =
   reject_complex name x;
   x
 
-let real_only2 name a b =
-  let a, b = promote2 a b in
+let real_only2 ?fun_name name a b =
+  let a, b = promote2 ~name:(Option.value fun_name ~default:name) a b in
   reject_complex name a;
   (a, b)
 
-let real_only3 name a b c =
-  let a, b, c = promote3 a b c in
+let real_only3 ?fun_name name a b c =
+  let a, b, c = promote3 ?name:fun_name a b c in
   reject_complex name a;
   (a, b, c)
 
@@ -903,6 +906,8 @@ let select_default default condlist choicelist =
 let vectorize_scalar f args =
   let shapes = List.map shape args in
   let broadcast = NL.broadcast_shapes_n shapes in
+  Numpy.Vectorize.check_rank_promotion ~signature:None shapes
+    (List.map (fun _ -> 0) shapes);
   let rank = Array.length broadcast in
   let filled =
     List.map
@@ -1177,7 +1182,7 @@ let algdiv a b =
 let lgamma_prim v = bind1 T.Lgamma [ v ]
 
 let betaln a b =
-  let a, b = promote2 a b in
+  let a, b = promote2 ~name:"betaln" a b in
   let a, b = (UF.minimum a b, UF.maximum a b) in
   let small_b = lgamma_prim a +! (lgamma_prim b -! lgamma_prim (a +! b)) in
   let large_b = lgamma_prim a +! algdiv a b in
@@ -1189,7 +1194,7 @@ let factorial ?(exact = false) n =
   where_ (lt_ n 0.0) (py_int 0) (L.exp (lgamma_prim (add_lit n 1.0)))
 
 let rec comb ?(repetition = false) n_ k_ =
-  let n, k = promote2 n_ k_ in
+  let n, k = promote2 ~name:"comb" n_ k_ in
   if repetition then
     let cond = band (eq_ k 0.0) (ge_ n 0.0) in
     let result = comb ~repetition:false (sub_lit (n +! k) 1.0) k in
@@ -1212,17 +1217,17 @@ let beta a b =
   sign *! L.exp (betaln a b)
 
 let betainc a b x =
-  let a, b, x = real_only3 "betainc" a b x in
+  let a, b, x = real_only3 ~fun_name:"betainc" "betainc" a b x in
   bind1 T.Regularized_incomplete_beta [ a; b; x ]
 
 let digamma x = bind1 T.Digamma [ promote1 x ]
 
 let gammainc a x =
-  let a, x = promote2 a x in
+  let a, x = promote2 ~name:"gammainc" a x in
   bind1 T.Igamma [ a; x ]
 
 let gammaincc a x =
-  let a, x = promote2 a x in
+  let a, x = promote2 ~name:"gammaincc" a x in
   bind1 T.Igammac [ a; x ]
 
 let lax_igamma a x = bind1 T.Igamma [ a; x ]
@@ -1248,7 +1253,7 @@ let rec logit x =
 
 let xlogy_primal = function
   | [ x; y ] ->
-      let x, y = promote2 x y in
+      let x, y = promote2 ~name:"xlogy" x y in
       let x_ok = ne_ x 0.0 in
       [ where_ (bor x_ok (UF.isnan y)) (L.mul x (L.log y)) (AC.zeros_like x) ]
   | _ -> assert false
@@ -1267,7 +1272,7 @@ let rec xlogy x y =
 
 let xlog1py_primal = function
   | [ x; y ] ->
-      let x, y = promote2 x y in
+      let x, y = promote2 ~name:"xlog1py" x y in
       let x_ok = ne_ x 0.0 in
       [ where_ (bor x_ok (UF.isnan y)) (L.mul x (L.log1p y)) (AC.zeros_like x) ]
   | _ -> assert false
@@ -1302,7 +1307,7 @@ let entr x =
     (L.neg (xlogx x))
 
 let boxcox x lmbda =
-  let x, lmbda = promote2 x lmbda in
+  let x, lmbda = promote2 ~name:"boxcox" x lmbda in
   let is_zero = eq_ lmbda 0.0 in
   let safe = where_ is_zero (AC.ones_like lmbda) lmbda in
   let log_x = UF.log x in
@@ -1310,7 +1315,7 @@ let boxcox x lmbda =
   where_ is_zero log_x power
 
 let boxcox1p x lmbda =
-  let x, lmbda = promote2 x lmbda in
+  let x, lmbda = promote2 ~name:"boxcox1p" x lmbda in
   let is_zero = eq_ lmbda 0.0 in
   let safe = where_ is_zero (AC.ones_like lmbda) lmbda in
   let log1p_x = UF.log1p x in
@@ -1669,12 +1674,15 @@ let rec log_ndtr ?(series_order = 3) x =
 
 let polygamma n x =
   if not (is_integer_dtype (dtype n)) then
-    Py_exn.value_error "Argument `n` to polygamma must be of integer type.";
+    Py_exn.value_error
+      (Printf.sprintf
+         "Argument `n` to polygamma must be of integer type. Got dtype %s."
+         (D.numpy_name (dtype n)));
   let n, x = real_only2 "polygamma" n x in
   bind1 T.Polygamma [ n; x ]
 
 let zeta_series x q =
-  let s, a = promote2 x q in
+  let s, a = promote2 ~name:"zeta" x q in
   let is_f32 = dtype a = D.F32 in
   let count = if is_f32 then 8 else 16 in
   let lit v = scalar_of a v in
@@ -1728,7 +1736,7 @@ let zeta ?q x =
   | Some q ->
       let primal = function
         | [ x; q ] ->
-            let x, q = promote2 x q in
+            let x, q = promote2 ~name:"zeta" x q in
             [ bind1 T.Zeta [ x; q ] ]
         | _ -> failwith "zeta: arity"
       in
@@ -1781,7 +1789,7 @@ let log_softmax ?axis x =
   | None -> NN.log_softmax_axes ~axes:(Array.init (ndim x) Fun.id) x
 
 let poch_primal z m =
-  let z, m = real_only2 "jnp.poch" z m in
+  let z, m = real_only2 ~fun_name:"poch" "jnp.poch" z m in
   where_ (eq_ m 0.0) (lax_const z 1.0) (gamma (z +! m) /! gamma z)
 
 let rec poch z m =
@@ -2031,7 +2039,7 @@ let rec owens_t_custom h a =
        [ h; a ])
 
 let owens_t h a =
-  let h, a = promote2 h a in
+  let h, a = promote2 ~name:"owens_t" h a in
   owens_t_custom h a
 
 let bernoulli n =
@@ -2293,7 +2301,7 @@ let expn3 x n =
   (ans +! one) *! UF.exp (neg_ x) /! xk
 
 let expn_core n x =
-  let n, x = promote2 n x in
+  let n, x = promote2 ~name:"expn" n x in
   reject_complex "expn" x;
   let c v = scalar_of x v in
   let cn v = scalar_of n v in

@@ -5413,6 +5413,8 @@ let () =
            "x64_off";
          composed_suite_for ~run:spatial_transform_run "spatial_transform"
            "x64_on";
+         Jit_opts.suite_for false;
+         Jit_opts.suite_for true;
          ("compare", [ Alcotest.test_case "semantics" `Quick compare_tests ]);
          ( "row_ratchet",
            [

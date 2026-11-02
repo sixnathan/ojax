@@ -38,26 +38,28 @@ let broadcast_to = Jnp_util.broadcast_to
 let common_shape vs =
   List.fold_left (fun acc v -> broadcast_shapes acc (shape v)) [||] vs
 
-let check_rank_promotion vs =
-  let mode = Config.value Config.numpy_rank_promotion in
-  if mode <> "allow" then begin
-    let ranks =
-      List.sort_uniq compare
-        (List.filter_map
-           (fun v ->
-             match Array.length (shape v) with 0 -> None | r -> Some r)
-           vs)
-    in
-    if List.length ranks > 1 then begin
-      let text =
-        "Operands could not be broadcast together: implicit rank promotion is \
-         disabled by numpy_rank_promotion"
-      in
-      if mode = "raise" then Py_exn.value_error text else prerr_endline text
-    end
-  end
+let rank_promotion_warning_or_error name shapes =
+  let text = String.concat " " (List.map Validate.python_tuple shapes) in
+  match Config.value Config.numpy_rank_promotion with
+  | "warn" ->
+      Py_warnings.warn
+        (Printf.sprintf
+           "Following NumPy automatic rank promotion for %s on shapes %s. Set \
+            the jax_numpy_rank_promotion config option to 'allow' to disable \
+            this warning; for more information, see \
+            https://docs.jax.dev/en/latest/rank_promotion_warning.html."
+           name text)
+  | "raise" ->
+      Py_exn.value_error
+        (Printf.sprintf
+           "Operands could not be broadcast together for %s on shapes %s and \
+            with the config option jax_numpy_rank_promotion='raise'. For more \
+            information, see \
+            https://docs.jax.dev/en/latest/rank_promotion_warning.html."
+           name text)
+  | _ -> ()
 
-let promote_shapes vs =
+let promote_shapes ?(name = "") vs =
   match vs with
   | [] | [ _ ] -> vs
   | first :: rest ->
@@ -72,6 +74,10 @@ let promote_shapes vs =
         in
         if List.length nonscalar < 2 then vs
         else
+          let () =
+            if Config.value Config.numpy_rank_promotion <> "allow" then
+              rank_promotion_warning_or_error name (List.map shape vs)
+          in
           let _ = Validate.broadcast_shapes (List.map shape vs) in
           let n = List.fold_left (fun acc v -> max acc (rank v)) 0 vs in
           List.map
@@ -92,17 +98,17 @@ let promote_shapes vs =
 let result_flags vs =
   Dtypes.result_type (List.map (fun v -> (dtype v, weak v)) vs)
 
-let promote_with map vs =
-  check_rank_promotion vs;
+let promote_with ?name map vs =
   let dt, is_weak = result_flags vs in
   let dt = map dt in
-  promote_shapes (List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs)
+  promote_shapes ?name
+    (List.map (fun v -> C.convert_like ~weak:is_weak v dt) vs)
 
 let result_dtype vs = fst (result_flags vs)
-let promote_to dt vs = promote_with (fun _ -> dt) vs
-let promote vs = promote_with Fun.id vs
-let promote_inexact vs = promote_with to_inexact_dtype vs
-let promote_numeric vs = promote_with to_numeric_dtype vs
+let promote_to ?name dt vs = promote_with ?name (fun _ -> dt) vs
+let promote ?name vs = promote_with ?name Fun.id vs
+let promote_inexact ?name vs = promote_with ?name to_inexact_dtype vs
+let promote_numeric ?name vs = promote_with ?name to_numeric_dtype vs
 let p1 = function [ a ] -> a | _ -> assert false
 let p2 = function [ a; b ] -> (a, b) | _ -> assert false
 let unary_inexact prim x = bind1 prim [ p1 (promote_inexact [ x ]) ]
@@ -166,35 +172,35 @@ let to_bool v = if dtype v = D.Bool then v else bind1 T.Ne [ v; zeros_like v ]
 let logical_not x = bind1 T.Not [ to_bool (p1 (promote [ x ])) ]
 
 let add x y =
-  let a, b = p2 (promote [ x; y ]) in
+  let a, b = p2 (promote ~name:"add" [ x; y ]) in
   if dtype a = D.Bool then bind1 T.Or [ a; b ] else bind1 T.Add [ a; b ]
 
 let subtract x y =
-  let a, b = p2 (promote [ x; y ]) in
+  let a, b = p2 (promote ~name:"subtract" [ x; y ]) in
   bind1 T.Sub [ a; b ]
 
 let multiply x y =
-  let a, b = p2 (promote [ x; y ]) in
+  let a, b = p2 (promote ~name:"multiply" [ x; y ]) in
   if dtype a = D.Bool then bind1 T.And [ a; b ] else bind1 T.Mul [ a; b ]
 
 let maximum x y =
-  let a, b = p2 (promote [ x; y ]) in
+  let a, b = p2 (promote ~name:"maximum" [ x; y ]) in
   bind1 T.Max [ a; b ]
 
 let minimum x y =
-  let a, b = p2 (promote [ x; y ]) in
+  let a, b = p2 (promote ~name:"minimum" [ x; y ]) in
   bind1 T.Min [ a; b ]
 
-let binary_inexact prim x y =
-  let a, b = p2 (promote_inexact [ x; y ]) in
+let binary_inexact ?name prim x y =
+  let a, b = p2 (promote_inexact ?name [ x; y ]) in
   bind1 prim [ a; b ]
 
-let arctan2 x y = binary_inexact T.Atan2 x y
-let float_power x y = binary_inexact T.Pow x y
-let nextafter x y = binary_inexact T.Nextafter x y
+let arctan2 x y = binary_inexact ~name:"arctan2" T.Atan2 x y
+let float_power x y = binary_inexact ~name:"float_power" T.Pow x y
+let nextafter x y = binary_inexact ~name:"nextafter" T.Nextafter x y
 
-let comparison prim x y =
-  let a, b = p2 (promote [ x; y ]) in
+let comparison ?name prim x y =
+  let a, b = p2 (promote ?name [ x; y ]) in
   match (prim, dtype a) with
   | (T.Lt | T.Gt | T.Le | T.Ge), (D.Complex64 | D.Complex128) ->
       let re v = bind1 T.Real [ v ] and im v = bind1 T.Imag [ v ] in
@@ -204,32 +210,32 @@ let comparison prim x y =
       bind1 T.Select_n [ pred; on_false; on_true ]
   | _ -> bind1 prim [ a; b ]
 
-let equal x y = comparison T.Eq x y
-let not_equal x y = comparison T.Ne x y
-let greater x y = comparison T.Gt x y
-let greater_equal x y = comparison T.Ge x y
+let equal x y = comparison ~name:"equal" T.Eq x y
+let not_equal x y = comparison ~name:"not_equal" T.Ne x y
+let greater x y = comparison ~name:"greater" T.Gt x y
+let greater_equal x y = comparison ~name:"greater_equal" T.Ge x y
 
-let bitwise prim x y =
-  let a, b = p2 (promote [ x; y ]) in
+let bitwise ?name prim x y =
+  let a, b = p2 (promote ?name [ x; y ]) in
   bind1 prim [ a; b ]
 
-let bitwise_and x y = bitwise T.And x y
-let bitwise_or x y = bitwise T.Or x y
-let bitwise_xor x y = bitwise T.Xor x y
+let bitwise_and x y = bitwise ~name:"bitwise_and" T.And x y
+let bitwise_or x y = bitwise ~name:"bitwise_or" T.Or x y
+let bitwise_xor x y = bitwise ~name:"bitwise_xor" T.Xor x y
 
 let left_shift x y =
-  let a, b = p2 (promote_numeric [ x; y ]) in
+  let a, b = p2 (promote_numeric ~name:"left_shift" [ x; y ]) in
   bind1 T.Shift_left [ a; b ]
 
 let bitwise_left_shift = left_shift
 
-let logical prim x y =
-  let a, b = p2 (promote [ x; y ]) in
+let logical ?name prim x y =
+  let a, b = p2 (promote ?name [ x; y ]) in
   bind1 prim [ to_bool a; to_bool b ]
 
-let logical_and x y = logical T.And x y
-let logical_or x y = logical T.Or x y
-let logical_xor x y = logical T.Xor x y
+let logical_and x y = logical ~name:"logical_and" T.And x y
+let logical_or x y = logical ~name:"logical_or" T.Or x y
+let logical_xor x y = logical ~name:"logical_xor" T.Xor x y
 
 let smallest_subnormal = function
   | D.F32 -> Float.ldexp 1.0 (-149)
@@ -336,15 +342,15 @@ let square x =
   bind1 T.Square [ a ]
 
 let true_divide x y =
-  let a, b = p2 (promote_inexact [ x; y ]) in
+  let a, b = p2 (promote_inexact ~name:"true_divide" [ x; y ]) in
   bind1 T.Div [ a; b ]
 
 let divide = true_divide
-let less x y = comparison T.Lt x y
-let less_equal x y = comparison T.Le x y
+let less x y = comparison ~name:"less" T.Lt x y
+let less_equal x y = comparison ~name:"less_equal" T.Le x y
 
 let right_shift x y =
-  let a, b = p2 (promote_numeric [ x; y ]) in
+  let a, b = p2 (promote_numeric ~name:"right_shift" [ x; y ]) in
   match dtype a with
   | D.Uint8 | D.Uint16 | D.Uint32 | D.Uint64 ->
       bind1 T.Shift_right_logical [ a; b ]
@@ -380,9 +386,9 @@ let concrete_integer_exponent x2 =
   | _ -> None
 
 let power_general x1 x2 =
-  let x1, x2 = p2 (promote_shapes [ x1; x2 ]) in
+  let x1, x2 = p2 (promote_shapes ~name:"power" [ x1; x2 ]) in
   let d1 = dtype x1 and d2 = dtype x2 in
-  let a, b = p2 (promote_numeric [ x1; x2 ]) in
+  let a, b = p2 (promote_numeric ~name:"power" [ x1; x2 ]) in
   if is_integer (dtype a) || dtype a = D.Bool then pow_int_int a b
   else if is_inexact d1 && is_integer d2 then bind1 T.Pow [ x1; x2 ]
   else bind1 T.Pow [ a; b ]
@@ -435,7 +441,7 @@ let floor_divide x1 x2 =
   Jnp_util.jit1 "floor_divide"
     (function
       | [ x1; x2 ] ->
-          let a, b = p2 (promote_numeric [ x1; x2 ]) in
+          let a, b = p2 (promote_numeric ~name:"floor_divide" [ x1; x2 ]) in
           let dt = dtype a in
           if is_unsigned dt then bind1 T.Div [ a; b ]
           else if is_integer dt then begin
@@ -461,7 +467,7 @@ let remainder x1 x2 =
   Jnp_util.jit1 "remainder"
     (function
       | [ x1; x2 ] ->
-          let a, b0 = p2 (promote_numeric [ x1; x2 ]) in
+          let a, b0 = p2 (promote_numeric ~name:"remainder" [ x1; x2 ]) in
           let dt = dtype a and sh = shape a in
           let zero = const_full dt sh 0.0 in
           let b =
@@ -494,11 +500,11 @@ let fmod x1 x2 =
         x2
     else x2
   in
-  let a, b = p2 (promote_numeric [ x1; x2 ]) in
+  let a, b = p2 (promote_numeric ~name:"fmod" [ x1; x2 ]) in
   bind1 T.Rem [ a; b ]
 
 let divmod x1 x2 =
-  let a, b = p2 (promote_numeric [ x1; x2 ]) in
+  let a, b = p2 (promote_numeric ~name:"divmod" [ x1; x2 ]) in
   if is_integer (dtype a) then [ floor_divide a b; remainder a b ]
   else
     let d, m = float_divmod a b in
@@ -555,7 +561,7 @@ let signbit x =
     [ x ]
 
 let copysign x1 x2 =
-  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+  let a, b = p2 (promote_inexact ~name:"copysign" [ x1; x2 ]) in
   where (signbit b) (bind1 T.Neg [ bind1 T.Abs [ a ] ]) (bind1 T.Abs [ a ])
 
 let isfinite x =
@@ -608,15 +614,21 @@ let isneginf x =
   | _ -> array_full D.Bool (shape x) 0.0
 
 let heaviside x1 x2 =
-  let a, b = p2 (promote_inexact [ x1; x2 ]) in
-  let dt = dtype a and sh = shape a in
-  let zero = const_full dt sh 0.0 and one = const_full dt sh 1.0 in
-  let inner2 = where (bind1 T.Ne [ a; a ]) a b in
-  let inner1 = where (bind1 T.Gt [ a; zero ]) one inner2 in
-  where (bind1 T.Lt [ a; zero ]) zero inner1
+  let dt, is_weak = result_flags [ x1; x2 ] in
+  let dt = to_inexact_dtype dt in
+  let a = C.convert_like ~weak:is_weak x1 dt in
+  let b = C.convert_like ~weak:is_weak x2 dt in
+  let zero = const_full (dtype a) [||] 0.0 in
+  let lt = bind1 T.Lt [ a; zero ] in
+  let gt = bind1 T.Gt [ a; zero ] in
+  let one = const_full (dtype a) [||] 1.0 in
+  let isnan = bind1 T.Ne [ a; a ] in
+  let inner2 = where isnan a b in
+  let inner1 = where gt one inner2 in
+  where lt zero inner1
 
 let hypot x1 x2 =
-  let a0, b0 = p2 (promote_inexact [ x1; x2 ]) in
+  let a0, b0 = p2 (promote_inexact ~name:"hypot" [ x1; x2 ]) in
   (match dtype a0 with
   | D.Complex64 | D.Complex128 ->
       Py_exn.value_error
@@ -692,11 +704,11 @@ let is_complex v =
   match dtype v with D.Complex64 | D.Complex128 -> true | _ -> false
 
 let logaddexp x1 x2 =
-  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+  let a, b = p2 (promote_inexact ~name:"logaddexp" [ x1; x2 ]) in
   Lax_other.logaddexp a b
 
 let logaddexp2 x1 x2 =
-  let a, b = p2 (promote_inexact [ x1; x2 ]) in
+  let a, b = p2 (promote_inexact ~name:"logaddexp2" [ x1; x2 ]) in
   let dt = dtype a and sh = shape a in
   let amax = bind1 T.Max [ a; b ] in
   let invln2 = const_full dt sh (1.0 /. Float.log 2.0) in

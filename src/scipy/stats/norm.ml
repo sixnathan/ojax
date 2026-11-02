@@ -5,15 +5,15 @@ module SP = Special
 module L = Lax_api
 open DU
 
-let promote3 x loc scale =
-  match promote [ x; loc; scale ] with
+let promote3 ?name x loc scale =
+  match promote ?name [ x; loc; scale ] with
   | [ x; loc; scale ] -> (x, loc, scale)
   | _ -> assert false
 
 let logpdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
   let x, loc, scale =
-    match promote_complex [ x; loc; scale ] with
+    match promote_complex ~name:"norm.logpdf" [ x; loc; scale ] with
     | [ x; loc; scale ] -> (x, loc, scale)
     | _ -> assert false
   in
@@ -28,12 +28,12 @@ let pdf ?loc ?scale x =
 
 let cdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  let x, loc, scale = promote3 x loc scale in
+  let x, loc, scale = promote3 ~name:"norm.cdf" x loc scale in
   SP.ndtr (L.div (L.sub x loc) scale)
 
 let logcdf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  let x, loc, scale = promote3 x loc scale in
+  let x, loc, scale = promote3 ~name:"norm.logcdf" x loc scale in
   SP.log_ndtr (L.div (L.sub x loc) scale)
 
 let scalar_like n v =
@@ -49,13 +49,13 @@ let ppf ?loc ?scale q =
 
 let sf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  let x, loc, scale = promote3 x loc scale in
+  let x, loc, scale = promote3 ~name:"norm.sf" x loc scale in
   let neg_x = UF.negative x in
   cdf ~loc:(UF.negative loc) ~scale neg_x
 
 let logsf ?loc ?scale x =
   let loc, scale = defaults loc scale in
-  let x, loc, scale = promote3 x loc scale in
+  let x, loc, scale = promote3 ~name:"norm.logsf" x loc scale in
   let neg_x = UF.negative x in
   logcdf ~loc:(UF.negative loc) ~scale neg_x
 

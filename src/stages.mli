@@ -6,6 +6,8 @@ type lowered = {
   out_avals : aval list;
   module_name : string;
   result_names : string list option;
+  keep_unused : bool;
+  donated : bool list;
 }
 
 type compiled
@@ -44,4 +46,10 @@ val call : compiled -> value list -> value list
 val cost_analysis : compiled -> (string * float) list
 
 val jit :
-  ?name:string -> (value Tree_util.t list -> value Tree_util.t) -> wrapped
+  ?name:string ->
+  ?donate_argnums:int list ->
+  ?keep_unused:bool ->
+  ?inline:bool ->
+  ?compiler_options:compiler_options ->
+  (value Tree_util.t list -> value Tree_util.t) ->
+  wrapped

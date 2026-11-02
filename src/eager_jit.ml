@@ -137,6 +137,11 @@ let inline_names =
     ];
   table
 
+let short_name name =
+  match String.rindex_opt name '.' with
+  | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+  | None -> name
+
 let many ?jit ?(vals_first = false) name statics opts vals f =
   let present = List.filter_map Fun.id opts in
   let split flat =
@@ -148,6 +153,7 @@ let many ?jit ?(vals_first = false) name statics opts vals f =
     else rebuild opts (List.length vals) flat
   in
   let args = if vals_first then vals @ present else present @ vals in
+  List.iter Core.check_not_deleted args;
   match jit with
   | Some jname when Core.top_is_staging args ->
       Jaxpr.named_jit ~name:jname ~key:(static_key statics opts)
@@ -156,13 +162,27 @@ let many ?jit ?(vals_first = false) name statics opts vals f =
           f opts vals)
         args
   | _ ->
-      Backend.jitted_keyed
-        ~inline:(Hashtbl.mem inline_names name)
-        (name, Obj.repr (statics, List.map Option.is_some opts))
-        (fun flat ->
-          let opts, vals = split flat in
-          f opts vals)
-        args
+      let outs =
+        Backend.jitted_keyed
+          ~inline:(Hashtbl.mem inline_names name)
+          (name, Obj.repr (statics, List.map Option.is_some opts))
+          (fun flat ->
+            let opts, vals = split flat in
+            f opts vals)
+          args
+      in
+      if Debug_special.needs_check () && not (Core.top_is_staging args) then
+        Debug_special.check_jit ~name:(short_name name)
+          ~rerun:(fun () ->
+            let opts, vals = split args in
+            ignore (f opts vals))
+          (List.filter_map
+             (function
+               | Concrete a -> Some a
+               | Device b -> Some (Pjrt.Buffer.to_host b)
+               | Tracer _ -> None)
+             outs);
+      outs
 
 let one ?jit ?vals_first name statics opts vals f =
   match many ?jit ?vals_first name statics opts vals (fun o v -> [ f o v ]) with

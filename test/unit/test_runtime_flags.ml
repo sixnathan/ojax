@@ -288,6 +288,8 @@ let enable_checks_effect () =
       out_avals = [];
       module_name = "_lambda";
       result_names = None;
+      keep_unused = false;
+      donated = [];
     }
   in
   check_message "compile under checks" "Variable 'b' not defined" (fun () ->

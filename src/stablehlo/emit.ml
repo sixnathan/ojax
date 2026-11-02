@@ -5202,18 +5202,69 @@ let emit_closed_jaxpr ?partition cj =
 
 type lowered = { text : string; kept : int list }
 
-let lower ?result_names ~name cj =
-  let pruned, kept = Dce.prune_unused_inputs cj in
+let kept_inputs ~keep_unused cj =
+  if keep_unused then (cj, List.mapi (fun i _ -> i) cj.jaxpr.in_binders)
+  else Dce.prune_unused_inputs cj
+
+let out_aval_of = function
+  | A_var v -> v.vaval
+  | A_lit nd ->
+      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+  | DropVar a -> a
+
+let donation_of ~kept ~donated (pruned : closed_jaxpr) =
+  if not (List.exists Fun.id donated) then None
+  else
+    let avals_in =
+      List.map (fun (v : var) -> v.vaval) pruned.jaxpr.in_binders
+    in
+    let avals_out = List.map out_aval_of pruned.jaxpr.outs in
+    let flags =
+      List.map
+        (fun i ->
+          match List.nth_opt donated i with Some d -> d | None -> false)
+        kept
+    in
+    Some (avals_in, Donation.set_up_aliases avals_in avals_out flags)
+
+let lower ?(keep_unused = false) ?(donated = []) ?result_names ~name cj =
+  let pruned, kept = kept_inputs ~keep_unused cj in
+  let arg_attribute =
+    match donation_of ~kept ~donated pruned with
+    | None -> fun _ -> None
+    | Some (_, d) -> Donation.arg_attribute d
+  in
   {
     text =
-      Mlir_names.render ?result_names ~module_name:name
+      Mlir_names.render ?result_names ~arg_attribute ~module_name:name
         (emit_closed_jaxpr pruned);
     kept;
   }
 
-let emit_jax_text ?result_names ~name cj =
+let warn_unusable_donations ?(keep_unused = false) ~donated cj =
+  let pruned, kept = kept_inputs ~keep_unused cj in
+  match donation_of ~kept ~donated pruned with
+  | None -> ()
+  | Some (avals_in, d) -> Donation.warn_unusable avals_in d
+
+let usable_donations ?(keep_unused = false) ~donated cj =
+  let pruned, kept = kept_inputs ~keep_unused cj in
+  let n = List.length cj.jaxpr.in_binders in
+  let usable = Array.make n false in
+  (match donation_of ~kept ~donated pruned with
+  | None -> ()
+  | Some (_, d) ->
+      List.iteri
+        (fun j i ->
+          if d.Donation.aliases.(j) <> None || d.Donation.buffer_donor.(j) then
+            usable.(i) <- true)
+        kept);
+  (Array.to_list usable, kept)
+
+let emit_jax_text ?keep_unused ?donated ?result_names ~name cj =
   Mlir_names.print_empty_dynamic_slices
-    (Mlir_names.renumber_callbacks (lower ?result_names ~name cj).text)
+    (Mlir_names.renumber_callbacks
+       (lower ?keep_unused ?donated ?result_names ~name cj).text)
 
 let emit_export_text ?(platforms = []) ?result_names ~name
     ~uses_shape_polymorphism cj =

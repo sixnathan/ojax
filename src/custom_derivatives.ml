@@ -71,10 +71,10 @@ let defjvps ?name primal rules =
   self := call;
   call
 
-let rec custom_vjp ?(nondiff_argnums = []) primal ~fwd ~bwd =
+let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f") primal ~fwd ~bwd =
   if nondiff_argnums <> [] then fun args ->
     let kept, diff = split_nondiff nondiff_argnums args in
-    custom_vjp
+    custom_vjp ~name
       (fun d -> primal (merge_nondiff nondiff_argnums kept d))
       ~fwd:(fun d -> fwd (merge_nondiff nondiff_argnums kept d))
       ~bwd:(fun res ct -> bwd (kept @ res) ct)
@@ -84,6 +84,7 @@ let rec custom_vjp ?(nondiff_argnums = []) primal ~fwd ~bwd =
       Core.register_custom_rule
         (Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed = None })
     in
+    Core.register_custom_names id ~name ~jvp_name:"fwd";
     fun args -> Core.bind (Custom_vjp_call id) args
 
 type symbolic_zero = { aval : aval }
@@ -110,9 +111,11 @@ let internal_of_tangent = function
 let aval_str = Ref_state.aval_string
 let same_type (a : aval) (b : aval) = a.shape = b.shape && a.dtype = b.dtype
 
-let custom_jvp_symbolic primal ~jvp =
+let custom_jvp_symbolic ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =
+  let jvp_name = jvp_name ^ "\000symbolic" in
   let register primal ~jvp =
     let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp }) in
+    Core.register_custom_names id ~name ~jvp_name;
     fun args -> Core.bind (Custom_jvp_call id) args
   in
   let rule primals tangents =
@@ -207,27 +210,30 @@ let custom_vjp_symbolic primal ~fwd ~bwd =
     Core.bind (Custom_vjp_call (rule_for (List.map Core.get_aval args))) args
 
 let custom_gradient f =
-  let pullbacks = Hashtbl.create 16 in
-  let handle = ref 0 in
+  let rules = ref [] in
   let primal args = fst (f args) in
   let fwd args =
-    let outs, pullback = f args in
-    let key = !handle in
-    incr handle;
-    Hashtbl.replace pullbacks key pullback;
-    let residual =
-      Concrete (Ndarray.of_floats Dtype.I32 [||] [| float_of_int key |])
-    in
-    (outs, [ residual ])
+    let outs, rule = f args in
+    let avals = List.map Core.get_aval outs in
+    let closed, hoisted = Jaxpr.make_jaxpr_hoisted avals rule in
+    rules := (List.map Core.get_aval hoisted, closed) :: !rules;
+    (outs, hoisted)
   in
   let bwd res cts =
-    match res with
-    | [ Concrete nd ] ->
-        let key = int_of_float (Ndarray.get_f nd [||]) in
-        (Hashtbl.find pullbacks key) cts
-    | _ -> failwith "custom_gradient: residual was transformed"
+    let avals = List.map Core.get_aval res in
+    let strip (a : aval) = (a.shape, a.dtype) in
+    let closed =
+      match
+        List.find_opt
+          (fun (k, _) -> List.map strip k = List.map strip avals)
+          !rules
+      with
+      | Some (_, c) -> c
+      | None -> snd (List.hd !rules)
+    in
+    Jaxpr.eval_closed_jaxpr closed (cts @ res)
   in
-  custom_vjp primal ~fwd ~bwd
+  custom_vjp ~name:"wrapped_fun" primal ~fwd ~bwd
 
 let linear_call ~forward ~transpose =
   let id =
@@ -257,7 +263,8 @@ let linear_call ~forward ~transpose =
         traced.jaxpr.outs
     in
     Core.bind
-      (Custom_lin { rule = id; n_res = List.length res; out_avals })
+      (Custom_lin
+         { rule = id; n_res = List.length res; out_avals; in_zeros = [] })
       (res @ linear)
 
 let rec stop_gradient v =

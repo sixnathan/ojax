@@ -18,6 +18,7 @@
   option_manual
   option_fuzz
   compose_fuzz
+  custom_ad
   keys_arrays
   manifest)
  (libraries alcotest yojson ojax unix)
@@ -71,6 +72,7 @@
   (source_tree %{project_root}/goldens/fuzz_s2)
   (source_tree %{project_root}/goldens/option_fuzz)
   (source_tree %{project_root}/goldens/compose_fuzz)
+  (source_tree %{project_root}/goldens/custom_ad)
   (glob_files identical_rows/*.tsv)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))

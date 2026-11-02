@@ -476,8 +476,12 @@ let rademacher_dt ?p_dt key ~shape ~dt =
   jit_region "_rademacher" (shape, dt) [ key ] (function
     | [ key ] ->
         let b = conv (bernoulli_v key ~p:(npf p_dt 0.5) ~shape) dt in
-        let doubled = npf dt 2.0 *! b in
-        conv (doubled -! npf dt 1.0) dt
+        let lit x =
+          if dt = Dtype.Bool then Numpy.Jnp_util.py_int (int_of_float x)
+          else npf dt x
+        in
+        let doubled = lit 2.0 *! b in
+        conv (doubled -! lit 1.0) dt
     | _ -> assert false)
 
 let float_dtype = fdt

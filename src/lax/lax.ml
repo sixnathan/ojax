@@ -2229,6 +2229,12 @@ let complex_reduce combine identity axes a =
 
 let complex_cumulative combine ~axis ~reverse a =
   let os = Ndarray.shape a in
+  if axis < 0 then
+    Py_exn.value_error "XLA operations do not allow negative axes";
+  if axis >= Array.length os then
+    Py_exn.value_error
+      (Printf.sprintf "axis %d is out of bounds for array of shape %s" axis
+         (Utils.py_tuple os));
   let str = Utils.strides os in
   let src = to_carray a in
   let out = Array.copy src in

@@ -1072,33 +1072,37 @@ let qr_pivoted ~full_matrices a =
   let rank = Array.length dims in
   let batch = Array.sub dims 0 (rank - 2) in
   let m = dims.(rank - 2) and n = dims.(rank - 1) in
-  let jpvt = L.full (Array.append batch [| n |]) 0.0 Dtype.I32 in
-  match Core.bind Geqp3 [ a; jpvt ] with
-  | [ r; p; taus ] ->
-      let p = L.sub p (L.full (shape p) 1.0 Dtype.I32) in
-      let cut_to rows cols v =
-        let starts = Array.make rank 0 in
-        let limits = Array.copy dims in
-        limits.(rank - 2) <- rows;
-        limits.(rank - 1) <- cols;
-        if limits = dims then v else L.slice v starts limits
-      in
-      let product v = Core.bind1 Householder_product [ v; taus ] in
-      if m < n then
-        let q = product (cut_to m m r) in
-        [ q; triu r; p ]
-      else if full_matrices then begin
-        let pads =
-          Array.init rank (fun d ->
-              if d = rank - 1 then (0, m - n, 0) else (0, 0, 0))
+  if m = 0 || n = 0 then
+    let factors = qr_empty ~full_matrices a in
+    factors @ [ L.full (Array.append batch [| n |]) 0.0 Dtype.I32 ]
+  else
+    let jpvt = L.full (Array.append batch [| n |]) 0.0 Dtype.I32 in
+    match Core.bind Geqp3 [ a; jpvt ] with
+    | [ r; p; taus ] ->
+        let p = L.sub p (L.full (shape p) 1.0 Dtype.I32) in
+        let cut_to rows cols v =
+          let starts = Array.make rank 0 in
+          let limits = Array.copy dims in
+          limits.(rank - 2) <- rows;
+          limits.(rank - 1) <- cols;
+          if limits = dims then v else L.slice v starts limits
         in
-        let q = product (L.pad r (L.full [||] 0.0 (dtype r)) pads) in
-        [ q; triu r; p ]
-      end
-      else
-        let q = product r in
-        [ q; triu (cut_to n n r); p ]
-  | _ -> invalid_arg "Native_lowering: geqp3 arity"
+        let product v = Core.bind1 Householder_product [ v; taus ] in
+        if m < n then
+          let q = product (cut_to m m r) in
+          [ q; triu r; p ]
+        else if full_matrices then begin
+          let pads =
+            Array.init rank (fun d ->
+                if d = rank - 1 then (0, m - n, 0) else (0, 0, 0))
+          in
+          let q = product (L.pad r (L.full [||] 0.0 (dtype r)) pads) in
+          [ q; triu r; p ]
+        end
+        else
+          let q = product r in
+          [ q; triu (cut_to n n r); p ]
+    | _ -> invalid_arg "Native_lowering: geqp3 arity"
 
 let adjoint a =
   let rank = Array.length (shape a) in

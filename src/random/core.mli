@@ -11,7 +11,17 @@ val default_prng_impl : unit -> Prng.prng_impl
 val resolve_prng_impl : string option -> Prng.prng_impl
 val key_impl : value -> string
 val is_key : value -> bool
-val key_dtype : string option -> Dtype.t
+
+type key_dtype = { impl_name : string; tag : string; key_shape : int array }
+
+val key_dtype : string option -> key_dtype
+val key_dtype_name : key_dtype -> string
+val key_dtype_itemsize : key_dtype -> int
+val key_dtype_class : key_dtype -> Numpy.Lax_numpy.dtype_class
+val dtype_of_key : value -> key_dtype
+val key_shape : value -> int array
+val key_repr : value -> string
+val key_typeof : value -> string
 val key : ?impl:string -> ?dtype:string -> value -> value
 val key_data : value -> value
 val wrap_key_data : ?impl:string -> ?dtype:string -> value -> value

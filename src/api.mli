@@ -277,6 +277,7 @@ val pure_callback :
   value list
 
 val typeof : value -> aval
+val typeof_text : value -> string
 val effects_barrier : unit -> unit
 val copy_to_host_async : 'a -> 'a
 val default_device : ?new_val:string -> unit -> (unit -> 'a) -> 'a

@@ -431,9 +431,13 @@ let python_shape shape =
   | [ d ] -> Printf.sprintf "(%d,)" d
   | dims -> "(" ^ String.concat ", " (List.map string_of_int dims) ^ ")"
 
-let array_repr ?(options = default_options) nd =
+let array_repr ?(options = default_options) ?(weak_type = false) nd =
   let prefix = "Array(" in
-  let dtype_str = "dtype=" ^ Dtype.numpy_name (Ndarray.dtype nd) in
+  let dtype_str =
+    "dtype="
+    ^ Dtype.numpy_name (Ndarray.dtype nd)
+    ^ if weak_type then ", weak_type=True" else ""
+  in
   let s =
     if size nd = 0 then "[], shape=" ^ python_shape (Ndarray.shape nd)
     else array2string ~options ~prefix ~suffix:"," ~separator:", " nd

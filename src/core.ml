@@ -871,7 +871,11 @@ let splat dt sh x =
       [ Concrete (splat_host dt [||] 1 x) ]
 
 let py_scalar dt x =
-  Concrete (Ndarray.with_py_value (Ndarray.as_weak (splat_host dt [||] 1 x)) x)
+  let nd = splat_host dt [||] 1 x in
+  Concrete
+    (Ndarray.with_py_value
+       (if dt = Dtype.Bool then nd else Ndarray.as_weak nd)
+       x)
 
 let get_aval = value_aval
 
@@ -880,18 +884,15 @@ let as_concrete = function
   | Device b -> Pjrt.Buffer.to_host b
   | Tracer _ -> failwith "eval: expected a concrete value"
 
-let urbg_shaped (a : aval) =
-  let n = Array.length a.shape in
-  a.weak_type && a.dtype = Dtype.Uint32 && n >= 1 && a.shape.(n - 1) = 4
-
-let retag_urbg prim args outs =
+let retag_weak prim args outs =
   let seeded = match prim with Random_seed "urbg" -> true | _ -> false in
-  if seeded || List.exists (fun v -> urbg_shaped (value_aval v)) args then
+  if seeded || List.exists (fun v -> (value_aval v).weak_type) args then
     match rules.abstract_eval prim (List.map value_aval args) with
     | avals when List.compare_lengths avals outs = 0 ->
         List.map2
-          (fun out a ->
-            if urbg_shaped a then Concrete (Ndarray.as_weak (as_concrete out))
+          (fun out (a : aval) ->
+            if a.weak_type && not (value_aval out).weak_type then
+              Concrete (Ndarray.as_weak (as_concrete out))
             else out)
           outs avals
     | _ -> outs
@@ -935,7 +936,7 @@ let eval_untagged prim args =
         results
 
 let eval_process_primitive _trace prim args =
-  retag_urbg prim args (eval_untagged prim args)
+  retag_weak prim args (eval_untagged prim args)
 
 let eval_interpreter =
   {

@@ -86,7 +86,7 @@ let flip ?axis v =
 let fliplr v = rev_dims v [| 1 |]
 let flipud v = rev_dims v [| 0 |]
 
-let reshape v sh =
+let newshape v sh =
   let total = size v in
   let unknown = Array.fold_left (fun n d -> if d = -1 then n + 1 else n) 0 sh in
   let tuple = Validate.python_tuple in
@@ -110,13 +110,17 @@ let reshape v sh =
          "cannot reshape array of shape %s (size %d) into shape %s (size %d)"
          (tuple (shape v))
          total (tuple sh) known);
-  let resolved = Array.map (fun d -> if d = -1 then total / known else d) sh in
+  Array.map (fun d -> if d = -1 then total / known else d) sh
+
+let reshape v sh =
+  let resolved = newshape v sh in
   if Array.length resolved > 0 && resolved = shape v then v
   else bind1 (T.Reshape resolved) [ v ]
 
 let reverse_axes v = Array.init (ndim v) (fun i -> ndim v - 1 - i)
 
 let reshape ?(order = "C") v sh =
+  let sh = newshape v sh in
   match order with
   | "C" -> reshape v sh
   | "F" ->
@@ -2381,11 +2385,18 @@ let rec searchsorted_scan_impl ~side ~dt ~unrolled sorted_arr query =
     [ sorted_arr; query ]
 
 let searchsorted ?(side = "left") ?sorter ?(method_ = "scan") a v =
+  if ndim a <> 1 then Py_exn.value_error "a should be 1-dimensional";
+  (match sorter with
+  | Some s when not (dtype s = D.Bool || Dtypes.issubdtype (dtype s) `Integer)
+    ->
+      Py_exn.type_error
+        ("Indexer must have integer or boolean type, got indexer with type "
+        ^ D.numpy_name (dtype s))
+  | _ -> ());
   if side <> "left" && side <> "right" then
     raise
       (Py_exn.Value_error
          ("invalid argument side='" ^ side ^ "', expected 'left' or 'right'"));
-  if ndim a <> 1 then Py_exn.value_error "a should be 1-dimensional";
   check_search_method method_;
   let args = [ a; v ] @ Option.to_list sorter in
   Jnp_util.jit1 "searchsorted"

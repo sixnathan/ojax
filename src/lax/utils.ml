@@ -210,6 +210,24 @@ let transpose_shape perm in_shape =
   Array.map (fun p -> in_shape.(p)) perm
 
 let squeeze_shape dims in_shape =
+  let tuple d =
+    match Array.to_list d with
+    | [ x ] -> Printf.sprintf "(%d,)" x
+    | l -> "(" ^ String.concat ", " (List.map string_of_int l) ^ ")"
+  in
+  let n = Array.length in_shape in
+  if
+    List.length (List.sort_uniq compare (Array.to_list dims))
+    <> Array.length dims
+  then Py_exn.value_error ("dimensions are not unique: " ^ tuple dims);
+  if Array.exists (fun d -> d < 0 || d >= n) dims then
+    Py_exn.value_error ("dimensions outside range [0, ndim): " ^ tuple dims);
+  if Array.exists (fun d -> in_shape.(d) <> 1) dims then
+    Py_exn.value_error
+      (Printf.sprintf
+         "cannot select an axis to squeeze out which has size not equal to \
+          one, got shape=%s and dimensions=%s"
+         (tuple in_shape) (tuple dims));
   let is_dropped = Array.make (Array.length in_shape) false in
   Array.iter (fun d -> is_dropped.(d) <- true) dims;
   let out = ref [] in

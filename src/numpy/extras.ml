@@ -1312,6 +1312,9 @@ let histogramdd ?(bins = [||]) ?range ?weights ?(density = false) sample =
     match weights with
     | None -> (as_inexact sample, None)
     | Some w -> (
+        let sh = shape sample in
+        if shape w <> Array.sub sh 0 (min 1 (Array.length sh)) then
+          Py_exn.value_error "should have one weight for each sample.";
         match NL.promote_values [ as_inexact sample; as_inexact w ] with
         | [ s; w ] -> (s, Some w)
         | _ -> assert false)

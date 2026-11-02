@@ -1205,8 +1205,8 @@ let jvp_rule_core prim (primals : value list) (tangents : value list) :
       | false, true -> Some (out, maybe_broadcast shape xdot)
       | false, false -> Some (out, b1 prim [ xdot; ydot ]))
   | Add_any | Neg | Real | Imag | Complex | Conj | Squeeze _ | Reshape _
-  | Reshape_perm _ | Rev _ | Transpose _ | Reduce_sum _ | Stack _
-  | Concatenate _ | Pad _ | Copy | Reduce_precision _ | Tile _ ->
+  | Reshape_perm _ | Rev _ | Transpose _ | Reduce_sum _ | Psum_positional _
+  | Stack _ | Concatenate _ | Pad _ | Copy | Reduce_precision _ | Tile _ ->
       linear ()
   | Stop_gradient ->
       let x = arg1 primals in
@@ -4048,6 +4048,16 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
       let ct = ct1 () in
       match primals with
       | [ x ] -> [ Some (reduce_sum_transpose axes (in_aval x).shape ct) ]
+      | _ -> arity ())
+  | Psum_positional axes -> (
+      let ct = ct1 () in
+      match primals with
+      | [ x ] ->
+          let ct =
+            if axes = [||] then ct
+            else reduce_sum_transpose axes (in_aval x).shape ct
+          in
+          [ Some (b1 (Psum_positional [||]) [ ct ]) ]
       | _ -> arity ())
   | Cumsum { axis; reverse } ->
       [ Some (b1 (Cumsum { axis; reverse = not reverse }) [ ct1 () ]) ]

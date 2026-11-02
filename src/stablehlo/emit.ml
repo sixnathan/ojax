@@ -4286,6 +4286,9 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
   | To_edtype _ ->
       failwith "Stablehlo.Emit: To_edtype (extended dtypes) deferred to M5"
   | Reduce_sum axes -> emit_reduce ctx eqn in_ids axes "add" reduce_zero
+  | Psum_positional [||] ->
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
+  | Psum_positional axes -> emit_reduce ctx eqn in_ids axes "add" reduce_zero
   | Reduce_max axes when is_complex_dtype (atom_aval (sole eqn.inputs)).dtype ->
       emit_inlined ctx eqn in_ids
         (Native_lowering.complex_reduce ~is_max:true ~axes)

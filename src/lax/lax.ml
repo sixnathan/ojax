@@ -1368,6 +1368,8 @@ let rec impl_base prim inputs =
         (Core.decomposition dimpl (List.map (fun nd -> Concrete nd) inputs))
   | Reshape_perm { new_sizes; dimensions } ->
       un (fun a -> reshape_impl new_sizes (transpose_impl dimensions a)) inputs
+  | Psum_positional [||] -> inputs
+  | Psum_positional axes -> impl_base (Reduce_sum axes) inputs
   | Reduce_sum axes ->
       un
         (fun a ->
@@ -2640,6 +2642,10 @@ let abstract_eval prim avals =
   | Reduce_sum axes ->
       un_aval
         (fun a -> shaped (Utils.reduce_shape a.shape axes) a.dtype a.weak_type)
+        avals
+  | Psum_positional axes ->
+      un_aval
+        (fun a -> shaped (Utils.reduce_shape a.shape axes) a.dtype false)
         avals
   | Dot_general dd ->
       bin_aval

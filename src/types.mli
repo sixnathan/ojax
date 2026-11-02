@@ -79,6 +79,7 @@ and primitive =
       davals : aval list;
     }
   | Reduce_sum of int array
+  | Psum_positional of int array
   | Dot_general of dot_dims
   | Acos
   | Acosh

@@ -119,6 +119,7 @@ let prim_name = function
   | Reshape _ | Reshape_perm _ -> "reshape"
   | Decomposable { dname; _ } -> dname
   | Reduce_sum _ -> "reduce_sum"
+  | Psum_positional _ -> "psum"
   | Dot_general _ -> "dot_general"
   | Acos -> "acos"
   | Acosh -> "acosh"
@@ -304,7 +305,7 @@ let prim_params = function
   | Reshape_perm { new_sizes; dimensions } ->
       "[new_sizes=" ^ int_tuple new_sizes ^ ",dimensions="
       ^ int_tuple dimensions ^ "]"
-  | Reduce_sum axes -> "[axes=" ^ int_tuple axes ^ "]"
+  | Reduce_sum axes | Psum_positional axes -> "[axes=" ^ int_tuple axes ^ "]"
   | Dot_general dd -> "[dimension_numbers=" ^ dot_dims_str dd ^ "]"
   | Integer_pow y -> "[y=" ^ string_of_int y ^ "]"
   | Cumsum { axis; reverse }
@@ -731,6 +732,8 @@ let jax_params (e : eqn) =
   | Transpose perm -> [ ("permutation", Plain (py_ints perm)) ]
   | Reduce_sum axes ->
       [ ("axes", Plain (py_ints axes)); ("out_sharding", Plain "None") ]
+  | Psum_positional axes ->
+      [ ("axes", Plain (py_ints axes)); ("axis_index_groups", Plain "None") ]
   | Reduce_max axes
   | Reduce_min axes
   | Reduce_prod axes

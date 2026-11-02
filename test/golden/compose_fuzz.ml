@@ -163,6 +163,7 @@ let apply_layer layer f =
         let flat, shape = flat_call f in
         let rule primals tangents =
           let y, dy = A.jvp f (arrays primals) (arrays tangents) in
+          shape := TU.tree_structure y;
           ( leaves y,
             List.map
               (fun v -> UF.multiply v (JU.py_float 1.5))
@@ -396,7 +397,7 @@ let dump_text row field ours =
       flush oc
 
 let text_row ~suite ~row reference field ours =
-  dump_text row field ours;
+  dump_text (suite ^ "/" ^ row) field ours;
   let wanted = U.member field reference in
   let label = row ^ ":" ^ field in
   match (wanted, ours) with

@@ -322,7 +322,28 @@ let check_operands prim args =
   let is_inexact d = is_float_dtype d || is_complex_dtype d in
   let not_bool d = d <> Dtype.Bool in
   let not_complex d = not (is_complex_dtype d) in
+  let check_position name =
+    match args with
+    | [] -> ()
+    | first :: _ ->
+        let dt =
+          match first with
+          | Concrete a -> Ndarray.dtype a
+          | Tracer t -> t.aval.dtype
+          | Device b -> Pjrt.Buffer.element_type b
+        in
+        if not (dt = Dtype.Bool || Dtypes.issubdtype dt `Integer) then
+          raise
+            (Errors.jax_type_error
+               (Printf.sprintf
+                  "%s does not accept dtype %s at position 0. Accepted dtypes \
+                   at position 0 are subtypes of bool, integer."
+                  name (Dtype.short_name dt)))
+  in
   match prim with
+  | And -> check_position "and"
+  | Or -> check_position "or"
+  | Xor -> check_position "xor"
   | Lgamma -> check "lgamma" is_float_dtype floating
   | Digamma -> check "digamma" is_float_dtype floating
   | Erf -> check "erf" is_float_dtype floating

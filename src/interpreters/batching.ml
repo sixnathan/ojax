@@ -1291,24 +1291,45 @@ let () =
 let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
     (f : value list -> value list) (in_axes : int option list)
     (args : value list) : value list =
+  let mapped_size x d =
+    let shape = (Core.get_aval x).shape in
+    let rank = Array.length shape in
+    if d >= rank || d < -rank then
+      invalid_arg
+        (Printf.sprintf
+           "vmap was requested to map its argument along axis %d, which \
+            implies that its rank should be at least %d, but is only %d (its \
+            shape is (%s))"
+           d
+           (if d >= 0 then d + 1 else -d)
+           rank
+           (match shape with
+           | [| only |] -> string_of_int only ^ ","
+           | _ ->
+               String.concat ", "
+                 (Array.to_list (Array.map string_of_int shape))))
+    else if d < 0 then d + rank
+    else d
+  in
+  let in_axes = List.map2 (fun d x -> Option.map (mapped_size x) d) in_axes args in
   let axis_size =
-    let rec find axes vals =
-      match (axes, vals) with
-      | Some d :: _, x :: _ -> Some (Core.get_aval x).shape.(d)
-      | None :: axes, _ :: vals -> find axes vals
-      | _ -> None
+    let sizes =
+      List.concat
+        (List.map2
+           (fun d x ->
+             match d with
+             | Some d -> [ (Core.get_aval x).shape.(d) ]
+             | None -> [])
+           in_axes args)
     in
-    match (find in_axes args, axis_size) with
-    | Some found, Some given when found <> given ->
-        invalid_arg
-          (Printf.sprintf
-             "vmap got inconsistent sizes for array axes to be mapped:\n\
-             \  * axis_size is %d but an array axis has size %d"
-             given found)
-    | Some found, _ -> found
-    | None, Some given -> given
-    | None, None ->
-        invalid_arg "vmap must have at least one non-None value in in_axes"
+    let sizes =
+      List.sort_uniq compare
+        (sizes @ match axis_size with Some given -> [ given ] | None -> [])
+    in
+    match sizes with
+    | [ size ] -> size
+    | [] -> invalid_arg "vmap must have at least one non-None value in in_axes"
+    | _ -> invalid_arg "vmap got inconsistent sizes for array axes to be mapped"
   in
   Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
       let tracers_in =
@@ -1338,13 +1359,15 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
       in
       List.map
         (fun (v, bdim) ->
-          let dest =
-            if out_axis >= 0 then out_axis
-            else
-              out_axis
-              + Array.length (Core.get_aval v).shape
-              + if bdim = None then 1 else 0
+          let rank =
+            Array.length (Core.get_aval v).shape
+            + if bdim = None then 1 else 0
           in
+          if out_axis >= rank || out_axis < -rank then
+            invalid_arg
+              (Printf.sprintf "axis %d is out of bounds for array of dimension %d"
+                 out_axis rank);
+          let dest = if out_axis >= 0 then out_axis else out_axis + rank in
           move_batch_axis axis_size bdim dest v)
         vals_bdims)
 

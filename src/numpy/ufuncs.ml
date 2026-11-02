@@ -208,12 +208,10 @@ let comparison prim x y =
   match (prim, dtype a) with
   | (T.Lt | T.Gt | T.Le | T.Ge), (D.Complex64 | D.Complex128) ->
       let re v = bind1 T.Real [ v ] and im v = bind1 T.Imag [ v ] in
-      bind1 T.Select_n
-        [
-          bind1 T.Eq [ re a; re b ];
-          bind1 prim [ re a; re b ];
-          bind1 prim [ im a; im b ];
-        ]
+      let pred = bind1 T.Eq [ re a; re b ] in
+      let on_true = bind1 prim [ im a; im b ] in
+      let on_false = bind1 prim [ re a; re b ] in
+      bind1 T.Select_n [ pred; on_false; on_true ]
   | _ -> bind1 prim [ a; b ]
 
 let equal x y = comparison T.Eq x y

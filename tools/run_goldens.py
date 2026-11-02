@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 
+import jax_defects
 import row_ratchet
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -359,6 +360,7 @@ def main():
     rows = sum(n for s, n in totals.items() if s not in uncounted)
     raw_identical = sum(n for s, n in counts.items() if s.startswith("raw:") and s[4:] not in uncounted)
     print_row_classes(log)
+    jax_defects.report(root, log)
     if second_seed:
         print(f"fuzz_s2, not in the totals below: {sum(counts[s] for s in second_seed)}/{sum(totals[s] for s in second_seed)} bit-identical, {sum(counts['raw:' + s] for s in second_seed)} in raw bytes")
     for s in sorted(option_rows):

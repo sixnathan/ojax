@@ -415,11 +415,7 @@ let text_row ~suite ~row reference field ours =
   | _, Error e -> (
       Fuzz.log_row ~suite label 0 0 0.0 Error_types.both_raise;
       match U.member (field ^ "_error") reference with
-      | `String w ->
-          let text_suite = "text_" ^ suite in
-          if w = Error_types.message_of e then
-            Fuzz.log_row ~suite:text_suite label 1 0 0.0 "same"
-          else Fuzz.log_row ~suite:text_suite label 1 1 0.0 "text_diff"
+      | `String jax -> Fuzz.log_message ~suite ~row:label ~jax e
       | _ -> ())
 
 let check_text ~suite ~set ~root case avals run =

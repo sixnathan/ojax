@@ -1,4 +1,5 @@
 compose_00000_float32:eager:out0	1
+compose_00000_float32:jaxpr	1
 compose_00000_float32:jit:out0	1
 compose_00000_float32:text	1
 compose_00001_float32:eager:out0	1
@@ -87,6 +88,7 @@ compose_00018_float32:jaxpr	0
 compose_00018_float32:jit:both_raise	0
 compose_00018_float32:text	0
 compose_00019_float32:eager:out0	1
+compose_00019_float32:jaxpr	1
 compose_00019_float32:jit:out0	1
 compose_00019_float32:text	1
 compose_00020_float32:eager:out0	1
@@ -704,6 +706,7 @@ compose_00154_float32:jit:out1	1
 compose_00154_float32:text	1
 compose_00155_float32:eager:out0	1
 compose_00155_float32:eager:out1	1
+compose_00155_float32:jaxpr	1
 compose_00155_float32:jit:out0	1
 compose_00155_float32:jit:out1	1
 compose_00155_float32:text	1
@@ -756,6 +759,7 @@ compose_00167_float32:jaxpr	1
 compose_00167_float32:jit:out0	1
 compose_00167_float32:text	1
 compose_00168_float32:eager:out0	1
+compose_00168_float32:jaxpr	1
 compose_00168_float32:jit:out0	1
 compose_00168_float32:text	1
 compose_00169_float32:eager:both_raise	0
@@ -781,6 +785,7 @@ compose_00172_float32:jit:out0	1
 compose_00172_float32:jit:out1	1
 compose_00172_float32:text	1
 compose_00173_float32:eager:out0	1
+compose_00173_float32:jaxpr	1
 compose_00173_float32:jit:out0	1
 compose_00173_float32:text	1
 compose_00174_float32:eager:out0	1
@@ -1277,6 +1282,7 @@ compose_00278_float32:jit:out1	1
 compose_00278_float32:text	1
 compose_00279_float32:eager:out0	1
 compose_00279_float32:eager:out1	1
+compose_00279_float32:jaxpr	1
 compose_00279_float32:jit:out0	1
 compose_00279_float32:jit:out1	1
 compose_00279_float32:text	1
@@ -1751,6 +1757,7 @@ compose_00378_float32:jit:both_raise	0
 compose_00378_float32:text	0
 compose_00379_float32:eager:out0	1
 compose_00379_float32:eager:out1	1
+compose_00379_float32:jaxpr	1
 compose_00379_float32:jit:out0	1
 compose_00379_float32:jit:out1	1
 compose_00379_float32:text	1
@@ -1919,7 +1926,9 @@ compose_00411_float32:jit:out1	1
 compose_00411_float32:jit:out2	1
 compose_00411_float32:text	1
 compose_00412_float32:eager:out0	1
+compose_00412_float32:jaxpr	1
 compose_00412_float32:jit:out0	1
+compose_00412_float32:text	1
 compose_00413_float32:eager:out0	1
 compose_00413_float32:jaxpr	1
 compose_00413_float32:jit:out0	1
@@ -2182,6 +2191,7 @@ compose_00469_float32:jit:out0	1
 compose_00469_float32:text	1
 compose_00470_float32:eager:out0	1
 compose_00470_float32:eager:out1	1
+compose_00470_float32:jaxpr	1
 compose_00470_float32:jit:out0	1
 compose_00470_float32:jit:out1	1
 compose_00470_float32:text	1
@@ -2229,6 +2239,7 @@ compose_00479_float32:jit:both_raise	0
 compose_00479_float32:text	0
 compose_00480_float32:eager:out0	1
 compose_00480_float32:eager:out1	1
+compose_00480_float32:jaxpr	1
 compose_00480_float32:jit:out0	1
 compose_00480_float32:jit:out1	1
 compose_00480_float32:text	1
@@ -2848,6 +2859,7 @@ compose_00609_float32:jit:out1	1
 compose_00609_float32:jit:out2	1
 compose_00609_float32:text	1
 compose_00610_float32:eager:out0	1
+compose_00610_float32:jaxpr	1
 compose_00610_float32:jit:out0	1
 compose_00610_float32:text	1
 compose_00611_float32:eager:both_raise	0
@@ -2896,6 +2908,7 @@ compose_00618_float32:jit:both_raise	0
 compose_00618_float32:text	0
 compose_00619_float32:eager:out0	1
 compose_00619_float32:eager:out1	1
+compose_00619_float32:jaxpr	1
 compose_00619_float32:jit:out0	1
 compose_00619_float32:jit:out1	1
 compose_00619_float32:text	1
@@ -3278,6 +3291,7 @@ compose_00698_float32:jit:out0	1
 compose_00698_float32:jit:out1	1
 compose_00698_float32:text	1
 compose_00699_float32:eager:out0	1
+compose_00699_float32:jaxpr	1
 compose_00699_float32:jit:out0	1
 compose_00699_float32:text	1
 compose_00700_float32:eager:out0	1
@@ -3932,7 +3946,9 @@ compose_00839_float32:jaxpr	1
 compose_00839_float32:jit:out0	1
 compose_00839_float32:text	1
 compose_00840_float32:eager:out0	1
+compose_00840_float32:eager:out1	1
 compose_00840_float32:jit:out0	1
+compose_00840_float32:jit:out1	1
 compose_00841_float32:eager:out0	1
 compose_00841_float32:jaxpr	1
 compose_00841_float32:jit:out0	1
@@ -4420,6 +4436,7 @@ compose_00944_float32:jit:out0	1
 compose_00944_float32:text	1
 compose_00945_float32:eager:out0	1
 compose_00945_float32:eager:out1	1
+compose_00945_float32:jaxpr	1
 compose_00945_float32:jit:out0	1
 compose_00945_float32:jit:out1	1
 compose_00945_float32:text	1
@@ -12276,6 +12293,7 @@ promote_logaddexp_pybool_pybool:jaxpr	1
 promote_logaddexp_pybool_pybool:jit:out0	1
 promote_logaddexp_pybool_pybool:text	1
 promote_logaddexp_pybool_pycomplex:eager:out0	1
+promote_logaddexp_pybool_pycomplex:jaxpr	1
 promote_logaddexp_pybool_pycomplex:jit:out0	1
 promote_logaddexp_pybool_pycomplex:text	1
 promote_logaddexp_pybool_pyfloat:eager:out0	1
@@ -12303,6 +12321,7 @@ promote_logaddexp_pycomplex_bfloat16s:jaxpr	1
 promote_logaddexp_pycomplex_bfloat16s:jit:out0	1
 promote_logaddexp_pycomplex_bfloat16s:text	1
 promote_logaddexp_pycomplex_bools:eager:out0	1
+promote_logaddexp_pycomplex_bools:jaxpr	1
 promote_logaddexp_pycomplex_bools:jit:out0	1
 promote_logaddexp_pycomplex_bools:text	1
 promote_logaddexp_pycomplex_complex64s:eager:out0	1
@@ -12318,33 +12337,43 @@ promote_logaddexp_pycomplex_float32s:jaxpr	1
 promote_logaddexp_pycomplex_float32s:jit:out0	1
 promote_logaddexp_pycomplex_float32s:text	1
 promote_logaddexp_pycomplex_int16s:eager:out0	1
+promote_logaddexp_pycomplex_int16s:jaxpr	1
 promote_logaddexp_pycomplex_int16s:jit:out0	1
 promote_logaddexp_pycomplex_int16s:text	1
 promote_logaddexp_pycomplex_int32s:eager:out0	1
+promote_logaddexp_pycomplex_int32s:jaxpr	1
 promote_logaddexp_pycomplex_int32s:jit:out0	1
 promote_logaddexp_pycomplex_int32s:text	1
 promote_logaddexp_pycomplex_int8s:eager:out0	1
+promote_logaddexp_pycomplex_int8s:jaxpr	1
 promote_logaddexp_pycomplex_int8s:jit:out0	1
 promote_logaddexp_pycomplex_int8s:text	1
 promote_logaddexp_pycomplex_pybool:eager:out0	1
+promote_logaddexp_pycomplex_pybool:jaxpr	1
 promote_logaddexp_pycomplex_pybool:jit:out0	1
 promote_logaddexp_pycomplex_pybool:text	1
 promote_logaddexp_pycomplex_pycomplex:eager:out0	1
+promote_logaddexp_pycomplex_pycomplex:jaxpr	1
 promote_logaddexp_pycomplex_pycomplex:jit:out0	1
 promote_logaddexp_pycomplex_pycomplex:text	1
 promote_logaddexp_pycomplex_pyfloat:eager:out0	1
+promote_logaddexp_pycomplex_pyfloat:jaxpr	1
 promote_logaddexp_pycomplex_pyfloat:jit:out0	1
 promote_logaddexp_pycomplex_pyfloat:text	1
 promote_logaddexp_pycomplex_pyint:eager:out0	1
+promote_logaddexp_pycomplex_pyint:jaxpr	1
 promote_logaddexp_pycomplex_pyint:jit:out0	1
 promote_logaddexp_pycomplex_pyint:text	1
 promote_logaddexp_pycomplex_uint16s:eager:out0	1
+promote_logaddexp_pycomplex_uint16s:jaxpr	1
 promote_logaddexp_pycomplex_uint16s:jit:out0	1
 promote_logaddexp_pycomplex_uint16s:text	1
 promote_logaddexp_pycomplex_uint32s:eager:out0	1
+promote_logaddexp_pycomplex_uint32s:jaxpr	1
 promote_logaddexp_pycomplex_uint32s:jit:out0	1
 promote_logaddexp_pycomplex_uint32s:text	1
 promote_logaddexp_pycomplex_uint8s:eager:out0	1
+promote_logaddexp_pycomplex_uint8s:jaxpr	1
 promote_logaddexp_pycomplex_uint8s:jit:out0	1
 promote_logaddexp_pycomplex_uint8s:text	1
 promote_logaddexp_pyfloat_bfloat16s:eager:out0	1
@@ -12384,6 +12413,7 @@ promote_logaddexp_pyfloat_pybool:jaxpr	1
 promote_logaddexp_pyfloat_pybool:jit:out0	1
 promote_logaddexp_pyfloat_pybool:text	1
 promote_logaddexp_pyfloat_pycomplex:eager:out0	1
+promote_logaddexp_pyfloat_pycomplex:jaxpr	1
 promote_logaddexp_pyfloat_pycomplex:jit:out0	1
 promote_logaddexp_pyfloat_pycomplex:text	1
 promote_logaddexp_pyfloat_pyfloat:eager:out0	1
@@ -12443,6 +12473,7 @@ promote_logaddexp_pyint_pybool:jaxpr	1
 promote_logaddexp_pyint_pybool:jit:out0	1
 promote_logaddexp_pyint_pybool:text	1
 promote_logaddexp_pyint_pycomplex:eager:out0	1
+promote_logaddexp_pyint_pycomplex:jaxpr	1
 promote_logaddexp_pyint_pycomplex:jit:out0	1
 promote_logaddexp_pyint_pycomplex:text	1
 promote_logaddexp_pyint_pyfloat:eager:out0	1

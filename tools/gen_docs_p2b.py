@@ -27,6 +27,10 @@ X64_FNS = [("zeros", "float64"), ("zeros", "int64"), ("full", "float64"),
            ("asarray", "float64"), ("zeros", "float32")]
 LEGACY_MODES = ["allow", "warn", "error"]
 LEGACY_FNS = ["normal", "split", "typed_normal"]
+REUSE_CASES = ["twice_eager", "twice_jit", "consumed_eager", "consumed_jit",
+               "split_once", "split_twice", "split_twice_jit", "bits_fold_in",
+               "clone", "off_twice", "while_reuse", "cond_branches",
+               "bool_index_jit"]
 
 
 def run_case(jax, thunk):
@@ -200,6 +204,61 @@ def legacy_thunk(jax, jnp, mode, fn):
     return run
 
 
+def reuse_thunk(jax, jnp, name):
+    r = jax.random
+
+    def twice(k):
+        return r.normal(k), r.uniform(k)
+
+    def split_twice(k):
+        return r.split(k), r.split(k)
+
+    def run():
+        if name == "bool_index_jit":
+            x = jnp.arange(3.0)
+            return text_of(jax.jit(lambda a: a[a > 0])(x))
+        flag = name != "off_twice"
+        with jax.debug_key_reuse(flag):
+            if name in ("twice_eager", "off_twice"):
+                out = twice(r.key(1))
+            elif name == "twice_jit":
+                out = jax.jit(twice)(r.key(1))
+            elif name == "consumed_eager":
+                k = r.key(2)
+                r.normal(k)
+                out = (r.normal(k),)
+            elif name == "consumed_jit":
+                k = r.key(3)
+                r.normal(k)
+                out = (jax.jit(r.normal)(k),)
+            elif name == "split_once":
+                out = (r.key_data(r.split(r.key(4))),)
+            elif name == "split_twice":
+                out = split_twice(r.key(5))
+            elif name == "split_twice_jit":
+                out = jax.jit(split_twice)(r.key(5))
+            elif name == "bits_fold_in":
+                k = r.key(6)
+                out = (r.bits(k), r.key_data(r.fold_in(k, 1)))
+            elif name == "clone":
+                k = r.key(7)
+                out = (r.normal(r.clone(k)), r.normal(k))
+            elif name == "while_reuse":
+                def body(c):
+                    i, k, s = c
+                    return i + 1, k, s + r.uniform(k)
+                out = jax.lax.while_loop(lambda c: c[0] < 2, body,
+                                         (0, r.key(8), 0.0))[2:]
+            elif name == "cond_branches":
+                k = r.key(9)
+                out = (jax.lax.cond(True, lambda k: r.normal(k),
+                                    lambda k: r.uniform(k), k),)
+            else:
+                raise KeyError(name)
+        return "\n".join(text_of(o) for o in out)
+    return run
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -244,6 +303,9 @@ def main():
         for fn in LEGACY_FNS:
             add(run_case(jax, legacy_thunk(jax, jnp, mode, fn)),
                 id=f"legacy_{mode}_{fn}", group="legacy", mode=mode, case=fn)
+    for name in REUSE_CASES:
+        add(run_case(jax, reuse_thunk(jax, jnp, name)),
+            id=f"reuse_{name}", group="reuse", case=name)
     with open(args.out, "w") as fh:
         json.dump({"jax": jax.__version__, "x64": args.x64, "rows": rows},
                   fh, indent=1, sort_keys=True)

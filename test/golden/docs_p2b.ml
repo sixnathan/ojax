@@ -155,6 +155,81 @@ let legacy_thunk mode fn () =
             RC.normal (RC.key (Docs_p2.py_int 3.0)) ~shape:[| 2 |]
         | other -> failwith ("docs_p2b: unknown legacy " ^ other)))
 
+let reuse_thunk name () =
+  let key n = RC.key (Docs_p2.py_int n) in
+  let normal k = RC.normal k ~shape:[||] in
+  let uniform k = RC.uniform k ~shape:[||] ~minval:0.0 ~maxval:1.0 in
+  let tup l = Ojax.Tree_util.Tuple (List.map leaf l) in
+  let jit_tuple f k =
+    match
+      Ojax.Api.jit
+        (function [ Ojax.Tree_util.Leaf k ] -> tup (f k) | _ -> assert false)
+        [ leaf k ]
+    with
+    | Ojax.Tree_util.Tuple l ->
+        List.map (function Ojax.Tree_util.Leaf v -> v | _ -> assert false) l
+    | _ -> failwith "docs_p2b: jit tuple"
+  in
+  let twice k = [ normal k; uniform k ] in
+  let split_twice k = [ RC.split k 2; RC.split k 2 ] in
+  let texts l = String.concat "\n" (List.map Docs_p2.text_of l) in
+  Ojax.Api.clear_caches ();
+  if name = "bool_index_jit" then
+    let x = NL.arange ~dtype:(Docs_p2.float_dt ()) 3.0 in
+    Docs_p2.text_of
+      (jit1
+         (fun a ->
+           Ojax.Numpy.Getitem.take a
+             [ Ojax.Numpy.Getitem.Arr (F.greater a (Docs_p2.py_int 0.0)) ])
+         x)
+  else
+    Ojax.Api.debug_key_reuse (name <> "off_twice") (fun () ->
+        texts
+          (match name with
+          | "twice_eager" | "off_twice" -> twice (key 1.0)
+          | "twice_jit" -> jit_tuple twice (key 1.0)
+          | "consumed_eager" ->
+              let k = key 2.0 in
+              ignore (normal k);
+              [ normal k ]
+          | "consumed_jit" ->
+              let k = key 3.0 in
+              ignore (normal k);
+              jit_tuple (fun k -> [ normal k ]) k
+          | "split_once" -> [ RC.key_data (RC.split (key 4.0) 2) ]
+          | "split_twice" -> split_twice (key 5.0)
+          | "split_twice_jit" -> jit_tuple split_twice (key 5.0)
+          | "bits_fold_in" ->
+              let k = key 6.0 in
+              [
+                RC.bits k ~shape:[||];
+                RC.key_data (RC.fold_in k (Docs_p2.py_int 1.0));
+              ]
+          | "clone" ->
+              let k = key 7.0 in
+              [ normal (RC.clone k); normal k ]
+          | "while_reuse" -> (
+              let out =
+                Ojax.Lax_api.while_loop
+                  (function
+                    | i :: _ -> F.less i (Docs_p2.py_int 2.0)
+                    | _ -> assert false)
+                  (function
+                    | [ i; k; s ] ->
+                        [ F.add i (Docs_p2.py_int 1.0); k; F.add s (uniform k) ]
+                    | _ -> assert false)
+                  [ Docs_p2.py_int 0.0; key 8.0; Docs_p2.py_float 0.0 ]
+              in
+              match out with [ _; _; s ] -> [ s ] | _ -> assert false)
+          | "cond_branches" ->
+              Ojax.Lax_api.cond
+                (T.Concrete
+                   (Ojax.Ndarray.of_floats Ojax.Dtype.Bool [||] [| 1.0 |]))
+                (function [ k ] -> [ normal k ] | _ -> assert false)
+                (function [ k ] -> [ uniform k ] | _ -> assert false)
+                [ key 9.0 ]
+          | other -> failwith ("docs_p2b: unknown reuse " ^ other)))
+
 let actual_of row =
   let thunk =
     match str row "group" with
@@ -165,6 +240,7 @@ let actual_of row =
     | "promo" -> promo_thunk (str row "case") (str row "d1") (str row "d2")
     | "x64mode" -> x64_thunk (str row "mode") (str row "case") (str row "dtype")
     | "legacy" -> legacy_thunk (str row "mode") (str row "case")
+    | "reuse" -> reuse_thunk (str row "case")
     | g -> failwith ("docs_p2b: unknown group " ^ g)
   in
   Docs_p2.run_case thunk

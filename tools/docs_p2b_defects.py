@@ -15,6 +15,13 @@ jax.config.update("jax_enable_x64", sys.argv[1] == "1")
 import jax.numpy as jnp
 out = {}
 for row in json.loads(sys.argv[2]):
+    if row["group"] == "one_hot":
+        try:
+            jax.nn.one_hot(jnp.asarray(np.array([0, 2, 1, 1], dtype=np.int32)).astype(row["dtype"]), 3)
+            out[row["id"]] = ""
+        except Exception as e:
+            out[row["id"]] = type(e).__name__ + ": " + str(e)
+        continue
     x = jnp.asarray(np.array([1, 2, 3])).astype(row["d1"])
     y = jnp.asarray(np.array([3, 0, 1])).astype(row["d2"])
     try:
@@ -45,8 +52,8 @@ def main():
     lines = ["suite\trow\tkind\tproof"]
     for tag, flag in (("x64_off", "0"), ("x64_on", "1")):
         with open(os.path.join(args.goldens, "docs_p2b", tag + ".json")) as fh:
-            rows = [r for r in json.load(fh)["rows"] if r["group"] == "promo"]
-        spec = json.dumps([{k: r[k] for k in ("id", "case", "d1", "d2")} for r in rows])
+            rows = [r for r in json.load(fh)["rows"] if r["group"] == "promo" or (r["group"] == "one_hot" and r["kind"] == "raise")]
+        spec = json.dumps([{k: r[k] for k in ("id", "group", "case", "d1", "d2", "dtype") if k in r} for r in rows])
         texts = {}
         for seed in seeds:
             env = dict(os.environ, PYTHONHASHSEED=seed)
@@ -57,8 +64,12 @@ def main():
             variants = texts[r["id"]]
             if len(variants) < 2:
                 continue
-            heads = "; ".join(f"PYTHONHASHSEED {','.join(s)}: {v.split(' have ')[0]}" for v, s in sorted(variants.items()))
-            proof = ("JAX names the dtypes of a failed promotion from a Python set (jax/_src/dtypes.py:845 N = set(nodes)), whose order follows the dtype hashes and so PYTHONHASHSEED; rerun of this row: " + heads)
+            if r["group"] == "one_hot":
+                heads = "; ".join(f"PYTHONHASHSEED {','.join(s)}: {v}" for v, s in sorted(variants.items()))
+                proof = ("JAX lists the accepted dtypes of iota's check from a Python set, whose order follows PYTHONHASHSEED; rerun of this row: " + heads)
+            else:
+                heads = "; ".join(f"PYTHONHASHSEED {','.join(s)}: {v.split(' have ')[0]}" for v, s in sorted(variants.items()))
+                proof = ("JAX names the dtypes of a failed promotion from a Python set (jax/_src/dtypes.py:845 N = set(nodes)), whose order follows the dtype hashes and so PYTHONHASHSEED; rerun of this row: " + heads)
             lines.append(f"docs_p2b:{tag}\t{r['id']}\ta\t{proof}")
     with open(args.out, "w") as fh:
         fh.write("\n".join(lines) + "\n")

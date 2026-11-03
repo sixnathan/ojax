@@ -255,6 +255,7 @@ let prim_name = function
   | Custom_vjp_call _ -> "custom_vjp_call"
   | Custom_lin _ -> "custom_lin"
   | Checkpoint_name _ -> "name"
+  | Pvary _ -> "pvary"
   | Cond _ -> "cond"
   | Scan _ -> "scan"
   | While _ -> "while"
@@ -811,6 +812,8 @@ let jax_params (e : eqn) =
       ]
   | Collective { kind = Axis_index; axis_name } ->
       [ ("axis_name", Plain axis_name) ]
+  | Pvary axes ->
+      [ ("axes", Plain (py_tuple (List.map (fun a -> "'" ^ a ^ "'") axes))) ]
   | Fft { fft_type; fft_lengths } ->
       let code =
         match fft_type with
@@ -1232,7 +1235,8 @@ let pp_binders ctx (vars : var list) =
     in
     let short =
       match Hashtbl.find_opt varying_axes v.vid with
-      | Some (_ :: _ as axes) -> short ^ "{V:" ^ String.concat "," axes ^ "}"
+      | Some [ axis ] -> short ^ "{V:" ^ axis ^ "}"
+      | Some (_ :: _ as axes) -> short ^ "{V:(" ^ String.concat "," axes ^ ")}"
       | _ -> short
     in
     Layout.Text (name ^ ":" ^ short)

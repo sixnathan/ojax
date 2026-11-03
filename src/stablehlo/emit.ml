@@ -5399,7 +5399,8 @@ and emit_eqn_unchecked ctx (eqn : eqn) (in_ids : int list) : unit =
                "can't apply forward-mode autodiff (jvp) to a custom_vjp \
                 function."))
   | Xla_call c -> emit_call ctx eqn in_ids c
-  | Stop_gradient -> Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
+  | Stop_gradient | Pvary _ ->
+      Hashtbl.replace ctx.ids (sole eqn.outs).vid (sole in_ids)
 
 let qualify_nested_calls ~depth text =
   let level = ref depth in

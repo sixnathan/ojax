@@ -902,7 +902,8 @@ let vmap_rule (axis_size : int) (prim : primitive) (vals : value list)
   | Floor | Imag | Integer_pow _ | Is_finite | Log1p | Logistic | Not
   | Population_count | Real | Round | Round_nearest_even | Rsqrt | Sinh | Sqrt
   | Square | Tan | Bitcast_convert_type _ | Reduce_precision _ | Bessel_i0e
-  | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Lgamma | Stop_gradient ->
+  | Bessel_i1e | Digamma | Erf | Erf_inv | Erfc | Lgamma | Stop_gradient
+  | Pvary _ ->
       un ()
   | Igamma | Igamma_grad_a | Igammac | Polygamma | Zeta
   | Regularized_incomplete_beta ->

@@ -101,7 +101,15 @@ def dupdate(x, i):
     return jax.lax.dynamic_update_slice(x, jnp.ones((2,), x.dtype), (i,))
 
 
-IDX_FUNS = {"getidx": getidx, "dslice": dslice, "dupdate": dupdate}
+def gathered(x, i):
+    return x[jnp.stack([i, i - 1, 2])]
+
+
+def gathered2(x, i):
+    return x.reshape(1, 3)[0, jnp.array([1, 0]) + i]
+
+
+IDX_FUNS = {"gathered": gathered, "gathered2": gathered2, "getidx": getidx, "dslice": dslice, "dupdate": dupdate}
 NAN_FUNS = {"logdiv": logdiv, "sqrtsum": sqrtsum}
 INT_FUNS = {"intdiv": intdiv, "intrem": intrem}
 ERRSETS = {

@@ -467,6 +467,40 @@ let rec interpret errors (closed : T.closed_jaxpr) error0 args =
             error := slice_oob "dynamic_slice" !error operand starts slice_sizes;
             outs
         | _ -> outs)
+    | T.Gather { dimension_numbers = dn; slice_sizes } -> (
+        let outs = default () in
+        match in_vals with
+        | [ operand; start_indices ] when List.mem Oob errors ->
+            let shape = (aval operand).T.shape in
+            let sshape = (aval start_indices).T.shape in
+            let nb = Array.length sshape - 1 in
+            let upper =
+              Array.map
+                (fun d -> shape.(d) - slice_sizes.(d))
+                dn.T.start_index_map
+            in
+            let sdt = (aval start_indices).T.dtype in
+            let ub = int_const upper in
+            let ub =
+              if nb = 0 then ub
+              else Lax_api.expand_dims ub (Array.init nb Fun.id)
+            in
+            let low = U.less start_indices (py_int 0) in
+            let ub =
+              if (aval ub).T.dtype = sdt then ub
+              else Numpy.Lax_numpy.astype ub sdt
+            in
+            let oob_mask = U.bitwise_or low (U.greater start_indices ub) in
+            let payload =
+              oob_payload oob_mask start_indices dn.T.start_index_map shape
+            in
+            error :=
+              assert_func ~category:Oob !error
+                (Numpy.Reductions.any oob_mask)
+                (Oob_meta ("gather", shape))
+                [ payload ];
+            outs
+        | _ -> outs)
     | T.Dynamic_update_slice -> (
         let outs = default () in
         match in_vals with

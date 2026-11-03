@@ -97,7 +97,36 @@ let dupdate = function
       ]
   | _ -> failwith "arity"
 
-let idx_funs = [ ("getidx", getidx); ("dslice", dslice); ("dupdate", dupdate) ]
+let gathered = function
+  | [ x; i ] ->
+      let a = UF.subtract i (pi 1) in
+      let idx = Ojax.Numpy.Lax_numpy.stack [ i; a; pi 2 ] in
+      [ G.take x [ G.Arr idx ] ]
+  | _ -> failwith "arity"
+
+let gathered2 = function
+  | [ x; i ] ->
+      let r = Ojax.Numpy.Lax_numpy.reshape x [| 1; 3 |] in
+      let j =
+        UF.add
+          (Ojax.Types.Concrete
+             (Nd.of_floats
+                (Ojax.Dtypes.default_int_dtype ())
+                [| 2 |] [| 1.0; 0.0 |]))
+          i
+      in
+      [ G.take r [ G.Int 0; G.Arr j ] ]
+  | _ -> failwith "arity"
+
+let idx_funs =
+  [
+    ("gathered", gathered);
+    ("gathered2", gathered2);
+    ("getidx", getidx);
+    ("dslice", dslice);
+    ("dupdate", dupdate);
+  ]
+
 let i32 v = Ojax.Types.Concrete (Nd.of_floats D.I32 [||] [| float_of_int v |])
 let nan_funs = [ ("logdiv", logdiv); ("sqrtsum", sqrtsum) ]
 let int_funs = [ ("intdiv", intdiv); ("intrem", intrem) ]

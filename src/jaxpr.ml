@@ -81,6 +81,10 @@ let typecheck_jaxpr (jx : jaxpr) : unit =
 let in_eqn_eval = ref false
 let eval_transparent = ref false
 
+let eqn_override :
+    (eqn -> value list -> (unit -> value list) -> value list) option ref =
+  ref None
+
 let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
   let env : (int, value) Hashtbl.t = Hashtbl.create 16 in
   let read = function
@@ -95,7 +99,7 @@ let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
       let in_vals = List.map read e.inputs in
       let prev = !in_eqn_eval in
       if not !eval_transparent then in_eqn_eval := true;
-      let outs =
+      let default () =
         Fun.protect
           ~finally:(fun () -> in_eqn_eval := prev)
           (fun () ->
@@ -112,6 +116,15 @@ let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
                         | out -> out)
                       (Core.bind e.prim in_vals))
             | _ -> Core.bind e.prim in_vals)
+      in
+      let outs =
+        match !eqn_override with
+        | None -> default ()
+        | Some rule ->
+            eqn_override := None;
+            Fun.protect
+              ~finally:(fun () -> eqn_override := Some rule)
+              (fun () -> rule e in_vals default)
       in
       List.iter2 write e.outs outs)
     jx.eqns;

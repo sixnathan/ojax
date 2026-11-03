@@ -369,4 +369,11 @@ let callback_with_view ~ordered view params host_fun ~result_avals =
   Pretty_printer.register_callback_view id view params;
   fun args -> Core.bind (Custom_vjp_call id) args
 
+let callback_view_id ~ordered view params host_fun ~result_avals =
+  let id =
+    callback_id (Core.Callback_debug { ordered }) host_fun ~result_avals
+  in
+  Pretty_printer.register_callback_view id view params;
+  (id, fun args -> Core.bind (Custom_vjp_call id) args)
+
 let zero_from_primal v = Ad_util.zeros_like_aval (Core.get_aval v)

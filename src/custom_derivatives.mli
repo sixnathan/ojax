@@ -93,4 +93,12 @@ val callback_with_view :
   value list ->
   value list
 
+val callback_view_id :
+  ordered:bool ->
+  string ->
+  (string * string) list ->
+  (value list -> value list) ->
+  result_avals:aval list ->
+  int * (value list -> value list)
+
 val zero_from_primal : value -> value

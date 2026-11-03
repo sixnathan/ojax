@@ -15,3 +15,9 @@ val current_name_stack : unit -> name_stack
 val summarize : t -> string
 val register_exclusion : string -> unit
 val api_boundary : ('a -> 'b) -> 'a -> 'b
+val concat : name_stack -> name_stack -> name_stack
+val with_name_stack : name_stack -> (unit -> 'a) -> 'a
+val transform_name_stack : string -> (unit -> 'a) -> 'a
+val reset_name_stack : (unit -> 'a) -> 'a
+val note_eqn_outs : int list -> unit
+val eqn_name_stack : int list -> name_stack

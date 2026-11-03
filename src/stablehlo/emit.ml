@@ -159,7 +159,7 @@ let capture ctx f =
   s
 
 let loc_marks = ref false
-let loc_scope = ref ""
+let loc_scope = ref Source_info_util.empty_name_stack
 let loc_names : (int, string) Hashtbl.t = Hashtbl.create 64
 let loc_count = ref 0
 
@@ -367,7 +367,22 @@ let mark_lines ?prim buf start name =
     Buffer.add_string buf (mark_text ?prim chunk (named_loc name))
   end
 
-let scoped name = if !loc_scope = "" then name else !loc_scope ^ "/" ^ name
+let scope_str () = Source_info_util.name_stack_str !loc_scope
+
+let eqn_loc_name (eqn : eqn) prim =
+  let stack =
+    Source_info_util.concat !loc_scope
+      (Source_info_util.eqn_name_stack
+         (List.map (fun (v : var) -> v.vid) eqn.outs))
+  in
+  match eqn.prim with
+  | Xla_call c ->
+      Source_info_util.name_stack_str
+        (Source_info_util.extend stack
+           ("jit(" ^ Pretty_printer.call_name c.jid ^ ")"))
+  | _ ->
+      let s = Source_info_util.name_stack_str stack in
+      if s = "" then prim else s ^ "/" ^ prim
 
 let resolve_locs ~arg_loc text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
@@ -4178,7 +4193,7 @@ and emit_private_function ctx fname (c : closed_jaxpr) =
     const_binders c.consts;
   hoist_custom_consts inner c.jaxpr;
   let saved_scope = !loc_scope in
-  loc_scope := "";
+  loc_scope := Source_info_util.empty_name_stack;
   Fun.protect
     ~finally:(fun () -> loc_scope := saved_scope)
     (fun () ->
@@ -4282,11 +4297,7 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   end;
   if !loc_marks && ctx.buf == buf then
     let prim = Pretty_printer.primitive_name eqn.prim in
-    let name =
-      match eqn.prim with
-      | Xla_call c -> scoped ("jit(" ^ Pretty_printer.call_name c.jid ^ ")")
-      | _ -> scoped prim
-    in
+    let name = eqn_loc_name eqn prim in
     mark_lines ~prim buf start name
 
 and emit_cpu_and_default ctx (eqn : eqn) in_ids =
@@ -5868,7 +5879,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
       (Printf.sprintf "    return %s : %s\n"
          (String.concat ", " out_names)
          (String.concat ", " out_types));
-  if !loc_marks && !emission_depth = 1 then mark_lines ctx.buf 0 !loc_scope;
+  if !loc_marks && !emission_depth = 1 then mark_lines ctx.buf 0 (scope_str ());
   let out_attributes =
     match partition with
     | Some { pt_out; _ } when pt_out <> [] ->
@@ -5979,7 +5990,7 @@ let emit_debug_text ?keep_unused ?donated ?result_names ?(arg_names = []) ~name
     cj =
   let saved = (!loc_marks, !loc_scope) in
   loc_marks := true;
-  loc_scope := "jit(" ^ name ^ ")";
+  loc_scope := Source_info_util.new_name_stack ("jit(" ^ name ^ ")");
   Hashtbl.reset loc_names;
   loc_count := 0;
   Fun.protect

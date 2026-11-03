@@ -1473,6 +1473,7 @@ let vmap_flat ?axis_name ?(partial_permute = false) ?(out_axis = 0) ?axis_size
         Py_exn.value_error
           "vmap got inconsistent sizes for array axes to be mapped"
   in
+  Source_info_util.transform_name_stack "vmap" @@ fun () ->
   Core.with_new_main KBatch (GAxisSize axis_size) (fun main ->
       let tracers_in =
         List.map2

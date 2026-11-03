@@ -39,5 +39,30 @@ let current () : t = !context
 let name_stack (si : t) : name_stack = si.name_stack
 let current_name_stack () : name_stack = (current ()).name_stack
 let summarize (_ : t) : string = ""
+
+let concat (a : name_stack) (b : name_stack) : name_stack =
+  { stack = a.stack @ b.stack }
+
+let with_name_stack (ns : name_stack) f =
+  let saved = !context in
+  context := { name_stack = ns };
+  Fun.protect ~finally:(fun () -> context := saved) f
+
+let transform_name_stack name f =
+  with_name_stack (transform (current_name_stack ()) name) f
+
+let reset_name_stack f = with_name_stack empty_name_stack f
+let eqn_stacks : (int, name_stack) Hashtbl.t = Hashtbl.create 1024
+
+let note_eqn_outs (vids : int list) =
+  let ns = current_name_stack () in
+  if ns.stack <> [] then
+    List.iter (fun v -> Hashtbl.replace eqn_stacks v ns) vids
+
+let eqn_name_stack (vids : int list) =
+  match List.find_map (Hashtbl.find_opt eqn_stacks) vids with
+  | Some ns -> ns
+  | None -> empty_name_stack
+
 let register_exclusion (_ : string) : unit = ()
 let api_boundary (f : 'a -> 'b) : 'a -> 'b = f

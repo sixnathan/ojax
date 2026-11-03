@@ -478,6 +478,7 @@ let process_primitive trace prim args =
       (match (custom_jaxpr, outvars) with
       | Some c, (first : var) :: _ -> Core.note_custom_eqn_jaxpr first.vid c
       | _ -> ());
+      Source_info_util.note_eqn_outs (List.map (fun (v : var) -> v.vid) outvars);
       builder.jb_eqns <-
         {
           prim;
@@ -622,6 +623,7 @@ let trace_with_refs mode_of (in_avals : aval list)
       jb_debug = take_debug ();
     }
   in
+  Source_info_util.reset_name_stack @@ fun () ->
   Core.with_new_main KJaxpr (GBuilder builder) (fun main ->
       Core.new_dynamic main (fun () ->
           let in_tracers =

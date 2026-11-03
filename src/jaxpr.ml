@@ -84,6 +84,7 @@ let typecheck_jaxpr (jx : jaxpr) : unit =
          (String.concat "\n\n" [ message; "while checking jaxpr:"; text ]))
 
 let in_eqn_eval = ref false
+let in_eqn_context = ref false
 let eval_transparent = ref false
 
 let eqn_override :
@@ -978,6 +979,7 @@ let clear_call_cache () = Hashtbl.reset call_cache
 let call_key name key (avals : aval list) =
   String.concat "|"
     (name :: key
+     :: string_of_bool !in_eqn_context
      :: List.map (fun (n, v) -> n ^ "=" ^ v) (Config.trace_context ())
     @ List.map
         (fun (a : aval) ->
@@ -1140,7 +1142,7 @@ let named_jit ~name ?(key = "") f args =
           | _ -> None)
     in
     match closed with
-    | Some c when in_linearize_scope args ->
+    | Some c when in_linearize_scope args && not !Core.linearize_parent ->
         let known, in_fwd = known_call c in
         let results = ref (Core.bind (Xla_call known) args) in
         List.map

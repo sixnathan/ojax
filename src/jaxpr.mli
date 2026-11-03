@@ -2,6 +2,7 @@ open Types
 
 val typecheck_jaxpr : jaxpr -> unit
 val in_eqn_eval : bool ref
+val in_eqn_context : bool ref
 val eval_transparent : bool ref
 
 val eqn_override :

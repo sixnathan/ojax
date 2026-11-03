@@ -14,7 +14,7 @@ let bind1 = C.bind1
 let ravel v = NL.reshape v [| size v |]
 let astype v dt = if dtype v = dt then v else NL.astype v dt
 
-let in1d ~invert ar1 ar2 =
+let in1d_body ~invert ar1 ar2 =
   let dt = NL.result_type [ ar1; ar2 ] in
   let arr1 = ravel (astype ar1 dt) in
   let arr2 = ravel (astype ar2 dt) in
@@ -23,11 +23,19 @@ let in1d ~invert ar1 ar2 =
     if invert then AC.ones ~dtype:D.Bool [| n1 |]
     else AC.zeros ~dtype:D.Bool [| n1 |]
   else begin
-    let a = NL.broadcast_to (NL.reshape arr1 [| n1; 1 |]) [| n1; n2 |] in
-    let b = NL.broadcast_to (NL.reshape arr2 [| 1; n2 |]) [| n1; n2 |] in
-    if invert then RED.all ~axis:[| 1 |] (bind1 T.Ne [ a; b ])
-    else RED.any ~axis:[| 1 |] (bind1 T.Eq [ a; b ])
+    let a = NL.expand_dims arr1 [| 1 |] in
+    let b = NL.expand_dims arr2 [| 0 |] in
+    if invert then RED.all ~axis:[| -1 |] (Ufuncs.not_equal a b)
+    else RED.any ~axis:[| -1 |] (Ufuncs.equal a b)
   end
+
+let in1d ~invert ar1 ar2 =
+  Jnp_util.jit1 "_in1d"
+    ~key:(Printf.sprintf "%b,auto,false" invert)
+    (function
+      | [ ar1; ar2 ] -> in1d_body ~invert ar1 ar2
+      | _ -> invalid_arg "in1d: arity")
+    [ ar1; ar2 ]
 
 let isin ?(assume_unique = false) ?(invert = false) ?(method_ = "auto") element
     test_elements =

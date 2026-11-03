@@ -73,7 +73,7 @@ let resolve_axes v = function
       if List.length unique <> Array.length axes then
         raise
           (Py_exn.Value_error
-             ("duplicate value in 'axis': " ^ Validate.python_tuple axes));
+             ("duplicate value in 'axis': " ^ Validate.python_tuple ax));
       axes
 
 let mem_axis axes i = Array.exists (fun a -> a = i) axes

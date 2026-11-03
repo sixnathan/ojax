@@ -43,6 +43,7 @@ PINNED = [
     ("compose", 40618829, "compose_00373_float64"),
     ("compose", 40618829, "compose_00670_float64"),
     ("compose", 40618829, "compose_00915_float64"),
+    ("compose", 40618829, "compose_00346_float64"),
     ("custom", 93518027, "custom_00026_float32"),
     ("custom", 93518027, "custom_00170_float64"),
     ("custom", 93518027, "custom_00232_float64"),

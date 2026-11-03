@@ -1,3 +1,4 @@
+val resolve_axes : Types.value -> int array option -> int array
 val check_where : string -> Types.value option -> Types.value option
 
 val sum :

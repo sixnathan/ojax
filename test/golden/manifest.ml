@@ -5481,6 +5481,7 @@ let () =
         @ Audit_holes.suites ~goldens_root
         @ Mesh_one.suites ~goldens_root
         @ Docs_p1.suites ~goldens_root
+        @ Size_ops.suites ~goldens_root
         @ Vjp_int.suites ~goldens_root
         @ Export_ser.suites ~goldens_root
         @ Shape_poly_exprs.suites ~goldens_root

@@ -1762,9 +1762,7 @@ let softmax ?axis x =
       | Numpy.Reductions.Axis ax ->
           ignore (Validate.canonicalize_axis ax (ndim x))
       | Numpy.Reductions.Axes axes ->
-          Array.iter
-            (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x)))
-            axes)
+          ignore (Numpy.Reductions.resolve_axes x (Some axes)))
     axis;
   reject_bool x;
   match axis with
@@ -1778,9 +1776,7 @@ let log_softmax ?axis x =
       | Numpy.Reductions.Axis ax ->
           ignore (Validate.canonicalize_axis ax (ndim x))
       | Numpy.Reductions.Axes axes ->
-          Array.iter
-            (fun ax -> ignore (Validate.canonicalize_axis ax (ndim x)))
-            axes)
+          ignore (Numpy.Reductions.resolve_axes x (Some axes)))
     axis;
   reject_bool x;
   match axis with

@@ -32,6 +32,7 @@
   audit_holes
   mesh_one
   docs_p1
+  size_ops
   vjp_int
   export_ser
   shape_poly_exprs
@@ -105,6 +106,7 @@
   (source_tree %{project_root}/goldens/fuzz_s2)
   (source_tree %{project_root}/goldens/option_fuzz)
   (source_tree %{project_root}/goldens/option_pinned)
+  (source_tree %{project_root}/goldens/size_ops)
   (source_tree %{project_root}/goldens/put_modes)
   (source_tree %{project_root}/goldens/vmap_coll)
   (source_tree %{project_root}/goldens/compose_fuzz)

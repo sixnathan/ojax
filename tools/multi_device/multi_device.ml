@@ -34,6 +34,12 @@ let vector8 =
 let mesh22 = lazy (S.make_mesh [ 2; 2 ] [ "a"; "b" ])
 let mesh2 = lazy (S.make_mesh [ 2 ] [ "x" ])
 
+let mesh22_auto =
+  lazy
+    (Ojax.Spmd.make_mesh
+       ~axis_types:[ Ojax.Spmd.Auto; Ojax.Spmd.Auto ]
+       [ 2; 2 ] [ "a"; "b" ])
+
 let mesh4 =
   lazy (Ojax.Spmd.make_mesh ~axis_types:[ Ojax.Spmd.Auto ] [ 4 ] [ "i" ])
 
@@ -50,6 +56,47 @@ let f32_aval shape : T.aval = { shape; dtype = D.F32; weak_type = false }
 let two = T.Concrete (Ojax.Ndarray.of_floats D.F32 [||] [| 2.0 |])
 let body x = U.add (U.multiply (U.sin x) two) (R.sum x)
 let unary f = function [ Tr.Leaf a ] -> Tr.Leaf (f a) | _ -> failwith "arity"
+
+let binary f = function
+  | [ Tr.Leaf a; Tr.Leaf b ] -> Tr.Leaf (f a b)
+  | _ -> failwith "arity"
+
+let py = Ojax.Numpy.Jnp_util.py_float
+let psum_i y = Ojax.Parallel.psum y ~axis_name:"i"
+
+let smap ?(out = [ S.Named "i" ]) g x =
+  leaf
+    (S.shard_map ~mesh:(Lazy.force mesh4) ~in_specs:[ [ S.Named "i" ] ]
+       ~out_specs:[ out ] (unary g) [ Tr.Leaf x ])
+
+let smap2 ~out g u v =
+  leaf
+    (S.shard_map ~mesh:(Lazy.force mesh22_auto)
+       ~in_specs:[ [ S.Named "a" ]; [ S.Named "b" ] ]
+       ~out_specs:[ out ] (binary g) [ Tr.Leaf u; Tr.Leaf v ])
+
+let pvary_cases =
+  [
+    ( "lit",
+      `One (smap (fun y -> U.add (U.multiply (U.sin y) (psum_i y)) (py 1.0))) );
+    ("out", `One (smap psum_i));
+    ("rep", `One (smap ~out:[] psum_i));
+    ("sum", `One (smap (fun y -> U.add (psum_i y) (R.sum y))));
+    ( "where",
+      `One
+        (smap (fun y -> NL.where_ (U.greater y (py 2.0)) (psum_i y) (py 0.5)))
+    );
+    ( "2d",
+      `Two
+        (smap2
+           ~out:[ S.Axes [ "a"; "b" ] ]
+           (fun a b -> U.add (U.multiply a b) (py 2.0))) );
+    ( "2d_psum",
+      `Two
+        (smap2 ~out:[ S.Named "a" ] (fun a b ->
+             U.add a (Ojax.Parallel.psum b ~axis_name:"b"))) );
+  ]
+
 let seen : Yojson.Safe.t list list ref = ref []
 
 let cases () =
@@ -57,6 +104,25 @@ let cases () =
   let x_only = on mesh2 [ S.Named "x"; S.Unconstrained ] arange8 in
   let i_only = on mesh4 [ S.Named "i" ] vector8 in
   let tail_only = on mesh_tail [ S.Named "i" ] vector8 in
+  let vector4 k =
+    T.Concrete
+      (Ojax.Ndarray.of_floats D.F32 [| 4 |]
+         (Array.init 4 (fun i -> float_of_int i +. k)))
+  in
+  let a_only = on mesh22_auto [ S.Named "a" ] (vector4 0.0) in
+  let b_only = on mesh22_auto [ S.Named "b" ] (vector4 5.0) in
+  let pvary_rows =
+    List.map
+      (fun (name, fn) ->
+        match fn with
+        | `One g ->
+            ( "shard_" ^ (if name = "rep" then "psum_" else "pvary_") ^ name,
+              unary g,
+              [ i_only ],
+              None )
+        | `Two g -> ("shard_pvary_" ^ name, binary g, [ a_only; b_only ], None))
+      pvary_cases
+  in
   [
     ("sin_sum", unary body, [ ab ], None);
     ( "out_sharded",
@@ -211,6 +277,7 @@ let cases () =
       [ i_only ],
       None );
   ]
+  @ pvary_rows
 
 let staged x =
   let a = U.add (U.multiply (U.sin x) two) two in
@@ -319,6 +386,22 @@ let single_device oc =
                  (unary (fun y ->
                       U.add (U.sin y) (Ojax.Parallel.psum y ~axis_name:"i")))
                  [ Tr.Leaf x ]))));
+  List.iter
+    (fun (name, fn) ->
+      let avals, f =
+        match fn with
+        | `One g ->
+            ( [ f32_aval [| 8 |] ],
+              function [ x ] -> [ g x ] | _ -> failwith "arity" )
+        | `Two g ->
+            ( [ f32_aval [| 4 |]; f32_aval [| 4 |] ],
+              function [ u; v ] -> [ g u v ] | _ -> failwith "arity" )
+      in
+      write
+        ("jaxpr_shard_pvary_" ^ name)
+        (Ojax.Pretty_printer.closed_jaxpr_to_jax_string
+           (Ojax.Jaxpr.make_jaxpr avals f)))
+    pvary_cases;
   write "jaxpr_constraint"
     (jaxpr_of
        (unary (fun x ->

@@ -14,6 +14,7 @@ type compiled = {
   run : value list -> value list;
   source : lowered;
   exec : Pjrt.Executable.t Lazy.t;
+  options : (string * Pjrt.Executable.compiler_option) list;
 }
 
 type compiler_option = Pjrt.Executable.compiler_option
@@ -108,7 +109,14 @@ let compile ?compiler_options lowered =
     run = Backend.executor ?options:compiler_options lowered.closed;
     source = lowered;
     exec = lazy (Backend.Xla.compile lowered.closed);
+    options = Option.value ~default:[] compiler_options;
   }
+
+let compiled_as_text compiled =
+  Pjrt.Executable.optimized_text
+    ~options:(Backend.config_compile_options () @ compiled.options)
+    (Backend.xla_client ())
+    (as_jax_text compiled.source)
 
 let call compiled args =
   let actual = List.map Core.get_aval args in

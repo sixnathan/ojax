@@ -184,12 +184,83 @@ let token_params code =
 
 let wrap client code handle = { handle; client; tokens = token_params code }
 
-let compile ?(options = []) client code =
-  let proto =
-    compile_options_proto
-    ^ String.concat "" (List.map env_override_entry options)
+let build_option_fields =
+  [
+    ("exec_time_optimization_effort", (20, true));
+    ("memory_fitting_effort", (21, true));
+    ("optimization_level", (24, false));
+    ("memory_fitting_level", (25, false));
+  ]
+
+let options_proto options =
+  let on_build, env =
+    List.partition (fun (k, _) -> List.mem_assoc k build_option_fields) options
   in
-  wrap client code (compile_cached client code proto)
+  let b = Stdlib.Buffer.create 32 in
+  Stdlib.Buffer.add_string b executable_build_options_proto;
+  List.iter
+    (fun (k, v) ->
+      let field, is_float = List.assoc k build_option_fields in
+      let number =
+        match v with
+        | Option_float f -> f
+        | Option_int i -> float_of_int i
+        | Option_bool v -> if v then 1.0 else 0.0
+        | Option_string s -> invalid_arg ("compiler option " ^ k ^ ": " ^ s)
+      in
+      if is_float then begin
+        add_tag b field 5;
+        Stdlib.Buffer.add_int32_le b (Int32.bits_of_float number)
+      end
+      else begin
+        add_tag b field 0;
+        add_varint b (int_of_float number)
+      end)
+    on_build;
+  let out = Stdlib.Buffer.create 64 in
+  add_tag out 3 2;
+  add_varint out (Stdlib.Buffer.length b);
+  Stdlib.Buffer.add_buffer out b;
+  Stdlib.Buffer.contents out
+  ^ String.concat "" (List.map env_override_entry env)
+
+let compile ?(options = []) client code =
+  wrap client code (compile_cached client code (options_proto options))
+
+let dumped_text dir suffix =
+  let files = Sys.readdir dir in
+  Array.sort compare files;
+  let pick = Array.find_opt (fun f -> String.ends_with ~suffix f) files in
+  let text =
+    Option.map
+      (fun f ->
+        In_channel.with_open_bin (Filename.concat dir f) In_channel.input_all)
+      pick
+  in
+  Array.iter (fun f -> Sys.remove (Filename.concat dir f)) files;
+  Sys.rmdir dir;
+  match text with
+  | Some t -> t
+  | None -> failwith "Pjrt.Executable: XLA wrote no optimized HLO text"
+
+let hlo_dump ?(options = []) client code suffix =
+  let dir = Filename.temp_dir "ojax_hlo" "" in
+  let dump =
+    [
+      ("xla_dump_to", Option_string dir);
+      ("xla_dump_hlo_as_text", Option_bool true);
+    ]
+  in
+  let proto = options_proto (options @ dump) in
+  let handle = compile_ client code proto in
+  destroy_ handle;
+  dumped_text dir suffix
+
+let optimized_text ?options client code =
+  hlo_dump ?options client code "after_optimizations.txt"
+
+let unoptimized_text ?options client code =
+  hlo_dump ?options client code "before_optimizations.txt"
 
 let device_assignment_proto devices =
   let b = Stdlib.Buffer.create 32 in

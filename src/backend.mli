@@ -20,6 +20,9 @@ val executor :
   Types.value list ->
   Types.value list
 
+val config_compile_options :
+  unit -> (string * Pjrt.Executable.compiler_option) list
+
 val of_host_value : Types.value -> Types.value
 val to_host_value : Types.value -> Types.value
 val run_text : string -> Types.value list -> Types.value list

@@ -25,58 +25,63 @@ let var_names (jx : jaxpr) =
   List.iter bind_atom jx.outs;
   names
 
-let jaxpr_type_error names (v : var) message =
-  let name =
-    Option.value (Hashtbl.find_opt names v.vid) ~default:(string_of_int v.vid)
-  in
-  raise (Errors.Jaxpr_type_error (Printf.sprintf message name))
+exception Check_failure of string * int option
 
-let atom_aval names env = function
-  | A_var v ->
-      if Hashtbl.mem env v.vid then v.vaval
-      else jaxpr_type_error names v "Variable '%s' not defined"
-  | A_lit nd -> aval_of_ndarray nd
-  | DropVar a -> a
-
-let avals_equal (a : aval) (b : aval) =
-  a.shape = b.shape && a.dtype = b.dtype && a.weak_type = b.weak_type
+let typematch (a : aval) (b : aval) = a.shape = b.shape && a.dtype = b.dtype
 
 let typecheck_jaxpr (jx : jaxpr) : unit =
+  let context = lazy (Pretty_printer.check_context jx) in
+  let name v =
+    let name, _, _ = Lazy.force context in
+    name v
+  in
+  let fail message = raise (Check_failure (message, None)) in
   let env : (int, unit) Hashtbl.t = Hashtbl.create 16 in
-  let names = var_names jx in
-  let bind (v : var) =
+  let read = function
+    | A_var (v : var) ->
+        if Hashtbl.mem env v.vid then v.vaval
+        else fail (Printf.sprintf "Variable '%s' not defined" (name v))
+    | A_lit nd -> aval_of_ndarray nd
+    | DropVar a -> a
+  in
+  let write (v : var) (t : aval) =
     if Hashtbl.mem env v.vid then
-      jaxpr_type_error names v "Variable '%s' already bound";
+      fail (Printf.sprintf "Variable '%s' already bound" (name v));
+    if not (typematch v.vaval t) then
+      fail
+        (Printf.sprintf
+           "Value for variable '%s' inconsistently typed as %s for let-binder \
+            of type %s"
+           (name v)
+           (Pretty_printer.aval_short t)
+           (Pretty_printer.aval_short v.vaval));
     Hashtbl.replace env v.vid ()
   in
-  List.iter bind jx.in_binders;
-  List.iter
-    (fun (e : eqn) ->
-      let in_types = List.map (atom_aval names env) e.inputs in
-      let out_types = Core.rules.abstract_eval e.prim in_types in
-      List.iter2
-        (fun (b : var) t ->
-          let same =
-            match e.prim with
-            | Convert_element_type _ ->
-                avals_equal { t with weak_type = b.vaval.weak_type } b.vaval
-            | _ -> avals_equal t b.vaval
-          in
-          if not same then
-            raise
-              (Errors.Jaxpr_type_error
-                 (Printf.sprintf
-                    "Value for variable '%s' inconsistently typed as %s for \
-                     let-binder of type %s"
-                    (Option.value
-                       (Hashtbl.find_opt names b.vid)
-                       ~default:(string_of_int b.vid))
-                    (Pretty_printer.aval_short t)
-                    (Pretty_printer.aval_short b.vaval))))
-        e.outs out_types;
-      List.iter bind e.outs)
-    jx.eqns;
-  List.iter (fun a -> ignore (atom_aval names env a)) jx.outs
+  try
+    List.iter (fun (v : var) -> write v v.vaval) jx.in_binders;
+    List.iteri
+      (fun idx (e : eqn) ->
+        try
+          let in_types = List.map read e.inputs in
+          let out_types = Core.rules.abstract_eval e.prim in_types in
+          List.iter2 write e.outs out_types
+        with Check_failure (message, None) ->
+          let _, eqn, _ = Lazy.force context in
+          raise
+            (Check_failure
+               ( String.concat "\n\n"
+                   [ message; "in equation:"; eqn e; "from source: " ],
+                 Some idx )))
+      jx.eqns;
+    List.iter (fun a -> ignore (read a)) jx.outs
+  with Check_failure (message, idx) ->
+    let _, _, range = Lazy.force context in
+    let text =
+      match idx with Some i -> range (i - 10) (i + 10) | None -> range 0 20
+    in
+    raise
+      (Errors.Jaxpr_type_error
+         (String.concat "\n\n" [ message; "while checking jaxpr:"; text ]))
 
 let in_eqn_eval = ref false
 let eval_transparent = ref false

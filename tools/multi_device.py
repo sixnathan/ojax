@@ -21,6 +21,32 @@ def reference():
     ab = jax.device_put(np.arange(16.0, dtype=np.float32).reshape(4, 4), NamedSharding(mesh22, P("a", "b")))
     x_only = jax.device_put(np.arange(8.0, dtype=np.float32).reshape(4, 2), NamedSharding(mesh2, P("x", None)))
     i_only = jax.device_put(np.arange(8.0, dtype=np.float32), NamedSharding(mesh4, P("i")))
+    a_only = jax.device_put(np.arange(4.0, dtype=np.float32), NamedSharding(mesh22, P("a")))
+    b_only = jax.device_put(np.arange(4.0, dtype=np.float32) + 5.0, NamedSharding(mesh22, P("b")))
+
+    def smap(fn, out_specs=P("i")):
+        return jax.shard_map(fn, mesh=mesh4, in_specs=P("i"), out_specs=out_specs)
+
+    def pvary_lit(x):
+        return smap(lambda y: jnp.sin(y) * jax.lax.psum(y, "i") + 1.0)(x)
+
+    def pvary_out(x):
+        return smap(lambda y: jax.lax.psum(y, "i"))(x)
+
+    def psum_rep(x):
+        return smap(lambda y: jax.lax.psum(y, "i"), P())(x)
+
+    def pvary_sum(x):
+        return smap(lambda y: jax.lax.psum(y, "i") + y.sum())(x)
+
+    def pvary_where(x):
+        return smap(lambda y: jnp.where(y > 2.0, jax.lax.psum(y, "i"), 0.5))(x)
+
+    def pvary_2d(u, v):
+        return jax.shard_map(lambda a, b: a * b + 2.0, mesh=mesh22, in_specs=(P("a"), P("b")), out_specs=P(("a", "b")))(u, v)
+
+    def pvary_2d_psum(u, v):
+        return jax.shard_map(lambda a, b: a + jax.lax.psum(b, "b"), mesh=mesh22, in_specs=(P("a"), P("b")), out_specs=P("a"))(u, v)
 
     def body(x):
         return jnp.sin(x) * 2.0 + x.sum()
@@ -95,6 +121,13 @@ def reference():
         ("constraint", constraint, [ab], {}),
         ("shard_map", shard_map, [i_only], {}),
         ("scan_in_shard_map", scan_in_shard_map, [i_only], {}),
+        ("shard_pvary_lit", pvary_lit, [i_only], {}),
+        ("shard_pvary_out", pvary_out, [i_only], {}),
+        ("shard_psum_rep", psum_rep, [i_only], {}),
+        ("shard_pvary_sum", pvary_sum, [i_only], {}),
+        ("shard_pvary_where", pvary_where, [i_only], {}),
+        ("shard_pvary_2d", pvary_2d, [a_only, b_only], {}),
+        ("shard_pvary_2d_psum", pvary_2d_psum, [a_only, b_only], {}),
     ]
     rows = {}
     for name, fn, args, options in cases:
@@ -168,6 +201,16 @@ def reference():
         "text": str(jax.make_jaxpr(lambda x: jax.shard_map(lambda y: jnp.sin(y) + jax.lax.psum(y, "i"), mesh=mesh4, in_specs=P("i"), out_specs=P("i"))(x))(z8)),
         "values": [],
     }
+    for name, fn, args in (
+        ("lit", pvary_lit, [z8]),
+        ("out", pvary_out, [z8]),
+        ("rep", psum_rep, [z8]),
+        ("sum", pvary_sum, [z8]),
+        ("where", pvary_where, [z8]),
+        ("2d", pvary_2d, [np.zeros(4, np.float32)] * 2),
+        ("2d_psum", pvary_2d_psum, [np.zeros(4, np.float32)] * 2),
+    ):
+        rows["jaxpr_shard_pvary_" + name] = {"text": str(jax.make_jaxpr(fn)(*args)), "values": []}
     rows["jaxpr_constraint"] = {
         "text": str(jax.make_jaxpr(lambda x: jax.lax.with_sharding_constraint(x, NamedSharding(mesh4, P("i"))))(z8)),
         "values": [],

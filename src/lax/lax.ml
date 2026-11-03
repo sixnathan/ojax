@@ -1987,7 +1987,7 @@ let rec impl_base prim inputs =
             (Py_exn.Type_error
                "can't apply forward-mode autodiff (jvp) to a custom_vjp \
                 function."))
-  | Checkpoint_name _ | Stop_gradient -> inputs
+  | Checkpoint_name _ | Stop_gradient | Pvary _ -> inputs
   | Xla_call _ -> failwith "lax: xla_call handled by interpreters"
 
 and complex_parts nd =
@@ -3072,7 +3072,7 @@ let abstract_eval prim avals =
           List.map aval_of_atom traced.jaxpr.outs
       | Core.Linear_rule _ -> failwith "lax: linear rule has no primal call")
   | Custom_lin { out_avals; _ } -> out_avals
-  | Checkpoint_name _ | Stop_gradient -> avals
+  | Checkpoint_name _ | Stop_gradient | Pvary _ -> avals
 
 let () = impl_core_ref := impl_core
 

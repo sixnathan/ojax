@@ -223,6 +223,7 @@ and primitive =
   | Platform_index of string array option array
   | Xla_call of closed_jaxpr
   | Collective of { kind : collective_kind; axis_name : string }
+  | Pvary of string list
   | Fft of { fft_type : fft_kind; fft_lengths : int array }
   | Custom_jvp_call of int
   | Custom_vjp_call of int

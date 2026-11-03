@@ -595,6 +595,105 @@ let check_args pairs specs args =
       Backend.check_divisible ~shape ~mesh:pairs ~spec)
     args specs
 
+let inserts_pvary = function
+  | Add | Add_any | Sub | Mul | Div | Rem | Max | Min | Pow | Atan2 | Complex
+  | Nextafter | And | Or | Xor | Shift_left | Shift_right_arithmetic
+  | Shift_right_logical | Eq | Ne | Ge | Gt | Le | Lt | Mulhi | Clamp
+  | Concatenate _ | Dot_general _ | Ragged_dot_general | Pad _ | Select_n
+  | Reduce _ | Sort _ | Rng_uniform | Optimization_barrier | Igamma
+  | Igamma_grad_a | Igammac | Polygamma | Zeta | Regularized_incomplete_beta ->
+      true
+  | _ -> false
+
+let atom_aval = function
+  | A_var (v : var) -> v.vaval
+  | A_lit nd ->
+      { shape = Ndarray.shape nd; dtype = Ndarray.dtype nd; weak_type = false }
+  | DropVar a -> a
+
+let note_vma env (v : var) axes =
+  Hashtbl.replace env v.vid axes;
+  Pretty_printer.note_varying v.vid axes
+
+let pvary_inserted = ref 0
+
+let rec type_vma manual env (jx : jaxpr) wanted_outs =
+  let set = note_vma env in
+  let vma_of = function
+    | A_var (v : var) -> Option.value ~default:[] (Hashtbl.find_opt env v.vid)
+    | A_lit _ | DropVar _ -> []
+  in
+  let eqns = ref [] in
+  let cast atom wanted =
+    let src = vma_of atom in
+    let rest =
+      List.filter (fun a -> List.mem a wanted && not (List.mem a src)) manual
+    in
+    match atom with
+    | (A_var _ | A_lit _) when rest <> [] ->
+        incr pvary_inserted;
+        let v = { vid = Core.fresh_id (); vaval = atom_aval atom } in
+        eqns :=
+          {
+            prim = Pvary rest;
+            inputs = [ atom ];
+            outs = [ v ];
+            multiple_results = false;
+          }
+          :: !eqns;
+        set v (List.filter (fun a -> List.mem a src || List.mem a rest) manual);
+        A_var v
+    | _ -> atom
+  in
+  List.iter
+    (fun (e : eqn) ->
+      let e =
+        if inserts_pvary e.prim then
+          let wanted = List.concat_map vma_of e.inputs in
+          { e with inputs = List.map (fun x -> cast x wanted) e.inputs }
+        else e
+      in
+      match e.prim with
+      | Xla_call c ->
+          let binders = c.jaxpr.in_binders in
+          let skip = List.length binders - List.length e.inputs in
+          List.iteri
+            (fun i b ->
+              set b
+                (if i < skip then [] else vma_of (List.nth e.inputs (i - skip))))
+            binders;
+          let before = !pvary_inserted in
+          let inner =
+            type_vma manual env c.jaxpr (List.map (fun _ -> []) c.jaxpr.outs)
+          in
+          List.iter2 (fun v a -> set v (vma_of a)) e.outs inner.outs;
+          let c =
+            if !pvary_inserted = before then c
+            else begin
+              let jid = Core.fresh_id () in
+              Core.inherit_inline ~from:c.jid jid;
+              (match Pretty_printer.registered_call_name c.jid with
+              | Some name -> Pretty_printer.register_call_name jid name
+              | None -> ());
+              { c with jid; jaxpr = inner }
+            end
+          in
+          eqns := { e with prim = Xla_call c } :: !eqns
+      | _ ->
+          let ins = List.concat_map vma_of e.inputs in
+          let axes = List.filter (fun a -> List.mem a ins) manual in
+          let axes =
+            match e.prim with
+            | Collective { kind = Psum | Pmax | Pmin; axis_name } ->
+                List.filter (fun a -> a <> axis_name) axes
+            | _ -> axes
+          in
+          List.iter (fun v -> set v axes) e.outs;
+          eqns := e :: !eqns)
+    jx.eqns;
+  let outs = List.map2 cast jx.outs wanted_outs in
+  { jx with eqns = List.rev !eqns; outs }
+
 let shard_map_flat f ~mesh ~manual ~in_specs ~out_specs args =
   let pairs = mesh_pairs mesh in
   let in_arrays =
@@ -674,39 +773,23 @@ let shard_map_flat f ~mesh ~manual ~in_specs ~out_specs args =
             body.jaxpr.outs
         in
         let env = Hashtbl.create 16 in
-        let set (v : var) axes =
-          Hashtbl.replace env v.vid axes;
-          Pretty_printer.note_varying v.vid axes
-        in
         let n_consts = List.length body.consts in
         List.iteri
           (fun i (v : var) ->
             if i >= n_consts then
-              set v
+              note_vma env v
                 (List.filter
                    (fun a ->
                      List.mem a (spec_names (List.nth in_specs (i - n_consts))))
                    manual_ordered))
           body.jaxpr.in_binders;
-        List.iter
-          (fun (e : eqn) ->
-            let ins =
-              List.concat_map
-                (function
-                  | A_var (v : var) ->
-                      Option.value ~default:[] (Hashtbl.find_opt env v.vid)
-                  | A_lit _ | DropVar _ -> [])
-                e.inputs
-            in
-            let axes = List.filter (fun a -> List.mem a ins) manual_ordered in
-            let axes =
-              match e.prim with
-              | Collective { kind = Psum | Pmax | Pmin; axis_name } ->
-                  List.filter (fun a -> a <> axis_name) axes
-              | _ -> axes
-            in
-            List.iter (fun v -> set v axes) e.outs)
-          body.jaxpr.eqns;
+        let jaxpr =
+          type_vma manual_ordered env body.jaxpr
+            (List.mapi
+               (fun k _ -> spec_names (List.nth out_list k))
+               body.jaxpr.outs)
+        in
+        let body = { body with jid = Core.fresh_id (); jaxpr } in
         Pretty_printer.register_custom_view id "shard_map"
           [
             ("check_vma", Plain "True");

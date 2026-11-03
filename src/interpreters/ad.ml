@@ -5055,6 +5055,14 @@ let rec transpose_rule prim (cts : value list) (primals : tval list) :
           ]
       | _ -> failwith "ad: tridiagonal_solve is linear only in its right side")
   | Checkpoint_name _ -> [ Some (ct1 ()) ]
+  | Pvary axes ->
+      [
+        Some
+          (List.fold_left
+             (fun ct axis_name ->
+               b1 (Collective { kind = Psum; axis_name }) [ ct ])
+             (ct1 ()) axes);
+      ]
   | Xla_call c -> xla_call_transpose c cts primals
   | Stop_gradient ->
       Py_exn.not_implemented_error

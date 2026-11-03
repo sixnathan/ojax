@@ -53,6 +53,56 @@ let auto_pcast = make "jax_auto_pcast" true
 let random_seed_offset = make "jax_random_seed_offset" 0
 let high_dynamic_range_gumbel = make "jax_high_dynamic_range_gumbel" false
 let check_static_indices = make "jax_check_static_indices" false
+let disable_most_optimizations = make "jax_disable_most_optimizations" false
+let compiler_enable_remat_pass = make "jax_compiler_enable_remat_pass" true
+let effort_levels = [ "UNKNOWN"; "O0"; "O1"; "O2"; "O3" ]
+
+let enum_value values v =
+  if not (List.mem v values) then
+    Py_exn.value_error
+      (Printf.sprintf
+         "new enum value must be in %s, got %s of type <class 'str'>."
+         (py_list values) v)
+
+let optimization_level =
+  make ~validate:(enum_value effort_levels) "jax_optimization_level" "UNKNOWN"
+
+let memory_fitting_level =
+  make ~validate:(enum_value effort_levels) "jax_memory_fitting_level" "O2"
+
+let exec_time_optimization_effort = make "jax_exec_time_optimization_effort" 0.0
+let memory_fitting_effort = make "jax_memory_fitting_effort" 0.0
+
+let effort_level_value = function
+  | "O0" -> 9
+  | "O1" -> 19
+  | "O2" -> 29
+  | "O3" -> 39
+  | _ -> 0
+
+let compile_build_options () =
+  List.filter
+    (function _, `Float f -> f <> 0.0 | _, `Int i -> i <> 0)
+    [
+      ( "exec_time_optimization_effort",
+        `Float exec_time_optimization_effort.value );
+      ("memory_fitting_effort", `Float memory_fitting_effort.value);
+      ("optimization_level", `Int (effort_level_value optimization_level.value));
+      ( "memory_fitting_level",
+        `Int (effort_level_value memory_fitting_level.value) );
+    ]
+
+let compile_debug_options () =
+  (if disable_most_optimizations.value then
+     [
+       ("xla_backend_optimization_level", `Int 0);
+       ("xla_llvm_disable_expensive_passes", `Bool true);
+       ("xla_test_all_input_layouts", `Bool false);
+     ]
+   else [])
+  @
+  if compiler_enable_remat_pass.value then []
+  else [ ("xla_disable_hlo_passes", `String "rematerialization") ]
 
 let remove_size_one_mesh_axis_from_type =
   make "jax_remove_size_one_mesh_axis_from_type" false
@@ -253,6 +303,8 @@ let bool_options =
       remove_size_one_mesh_axis_from_type;
       high_dynamic_range_gumbel;
       check_static_indices;
+      disable_most_optimizations;
+      compiler_enable_remat_pass;
     ]
 
 let string_options =
@@ -264,6 +316,8 @@ let string_options =
       legacy_prng_key;
       explicit_x64_dtypes;
       platforms;
+      optimization_level;
+      memory_fitting_level;
     ]
 
 let optional_options =

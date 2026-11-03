@@ -26,6 +26,19 @@ val auto_pcast : bool flag
 val random_seed_offset : int flag
 val high_dynamic_range_gumbel : bool flag
 val check_static_indices : bool flag
+val disable_most_optimizations : bool flag
+val compiler_enable_remat_pass : bool flag
+val optimization_level : string flag
+val memory_fitting_level : string flag
+val exec_time_optimization_effort : float flag
+val memory_fitting_effort : float flag
+
+val compile_build_options :
+  unit -> (string * [ `Float of float | `Int of int ]) list
+
+val compile_debug_options :
+  unit -> (string * [ `Int of int | `Bool of bool | `String of string ]) list
+
 val remove_size_one_mesh_axis_from_type : bool flag
 val jax2tf_associative_scan_reductions : bool flag
 val numpy_dtype_promotion : string flag

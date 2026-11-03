@@ -7077,7 +7077,7 @@ let float0_dtype () =
   raises "scalar_type_of" (fun () -> ignore (Dt.scalar_type_of Dt.float0));
   raises "finfo" (fun () -> ignore (Dt.finfo Dt.float0));
   raises "iinfo" (fun () -> ignore (Dt.iinfo Dt.float0));
-  raises "stablehlo" (fun () -> ignore (Ir.element_type Dt.float0))
+  Alcotest.(check string) "stablehlo" "i1" (Ir.element_type Dt.float0)
 
 let leaf_nd = function
   | Tree.Leaf v -> to_nd v

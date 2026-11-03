@@ -2742,6 +2742,15 @@ let linearize_call (c : closed_jaxpr) primal_avals nzs =
       Hashtbl.replace lin_call_cache key r;
       r
 
+let stage_scalar_residual trace v =
+  match (v, !Core.dynamic_trace) with
+  | Concrete nd, Some dyn
+    when dyn.kind = KJaxpr && dyn.level > 0 && dyn.level < trace.level
+         && Array.length (Ndarray.shape nd) = 0
+         && not (is_residual_zero v) ->
+      Core.full_raise dyn v
+  | _ -> v
+
 let lin_process_call (trace : trace) (b : jaxpr_builder) (c : closed_jaxpr)
     primals tangents =
   let nzs = List.map (fun t -> not (is_zero t)) tangents in
@@ -2770,14 +2779,14 @@ let lin_process_call (trace : trace) (b : jaxpr_builder) (c : closed_jaxpr)
   let residuals =
     List.map
       (function
-        | `Input i -> List.nth primals i
+        | `Input i -> stage_scalar_residual trace (List.nth primals i)
         | `Same i -> List.nth kept i
         | `Value v -> v
         | `Output -> (
             match !res_rest with
             | v :: tl ->
                 res_rest := tl;
-                v
+                stage_scalar_residual trace v
             | [] -> arity ()))
       lc.lc_res_in
   in

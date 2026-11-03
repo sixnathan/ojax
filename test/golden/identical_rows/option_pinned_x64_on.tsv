@@ -30,3 +30,5 @@ lax_linalg.schur_8e3527b8_float64:eager:both_raise	0
 lax_linalg.schur_8e3527b8_float64:jit:both_raise	0
 linalg.vecdot_aeb6496a_float64:eager:out0	1
 linalg.vecdot_aeb6496a_float64:jit:out0	1
+sp_special.softmax_2ea927e4_float64:eager:both_raise	0
+sp_special.softmax_2ea927e4_float64:jit:both_raise	0

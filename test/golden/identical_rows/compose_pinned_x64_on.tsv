@@ -1,3 +1,9 @@
+s40618829_compose_00346_float64:eager:out0	1
+s40618829_compose_00346_float64:eager:out1	1
+s40618829_compose_00346_float64:jaxpr	1
+s40618829_compose_00346_float64:jit:out0	1
+s40618829_compose_00346_float64:jit:out1	1
+s40618829_compose_00346_float64:text	1
 s40618829_compose_00373_float64:eager:out0	1
 s40618829_compose_00373_float64:jit:out0	1
 s40618829_compose_00670_float64:eager:out0	1

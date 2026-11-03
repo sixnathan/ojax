@@ -357,7 +357,8 @@ let register_namedtuple_serialization ~serialized_name ~fields node_type =
   in
   register_pytree_node_serialization ~serialized_name
     ~serialize_auxdata:(fun _ -> json_of_strings fields)
-    ~deserialize_auxdata:Fun.id ~from_children node_type
+    ~deserialize_auxdata:Fun.id ~from_children node_type;
+  T.register_namedtuple node_type
 
 let add_field b s =
   Buffer.add_string b (string_of_int (String.length s));

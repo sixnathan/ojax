@@ -95,6 +95,7 @@ type py_tree_def = treedef
 
 val num_nodes : treedef -> int
 val treedef_to_string : treedef -> string
+val register_namedtuple : string -> unit
 
 type registry
 

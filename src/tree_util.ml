@@ -537,6 +537,9 @@ let rec num_nodes = function
       List.fold_left (fun n d -> n + num_nodes d) 1 defs
   | Dict_def kvs -> List.fold_left (fun n (_, d) -> n + num_nodes d) 1 kvs
 
+let namedtuple_types : (string, unit) Hashtbl.t = Hashtbl.create 8
+let register_namedtuple name = Hashtbl.replace namedtuple_types name ()
+
 let rec treedef_body = function
   | Leaf_def -> "*"
   | Null_def -> "None"
@@ -549,6 +552,10 @@ let rec treedef_body = function
       ^ String.concat ", "
           (List.map (fun (k, d) -> "'" ^ k ^ "': " ^ treedef_body d) kvs)
       ^ "}"
+  | Custom_def (name, _, defs) when Hashtbl.mem namedtuple_types name ->
+      "CustomNode(namedtuple[" ^ name ^ "], ["
+      ^ String.concat ", " (List.map treedef_body defs)
+      ^ "])"
   | Custom_def (name, aux, defs) ->
       "CustomNode(" ^ name ^ "[" ^ aux ^ "], ["
       ^ String.concat ", " (List.map treedef_body defs)

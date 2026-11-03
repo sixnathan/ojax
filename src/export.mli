@@ -50,6 +50,11 @@ val register_pytree_node_serialization :
   string ->
   unit
 
+val custom_serialization : string -> (string * (string -> string)) option
+
+val custom_deserialization :
+  string -> (string -> unit Tree_util.t list -> unit Tree_util.t) option
+
 val register_namedtuple_serialization :
   serialized_name:string -> fields:string list -> string -> unit
 

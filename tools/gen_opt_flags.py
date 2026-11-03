@@ -11,7 +11,14 @@ FLAGS = {
     "base": [],
     "disable_most_optimizations": [("jax_disable_most_optimizations", True)],
     "no_remat_pass": [("jax_compiler_enable_remat_pass", False)],
+    "optimization_level_O0": [("jax_optimization_level", "O0")],
+    "optimization_level_O3": [("jax_optimization_level", "O3")],
+    "memory_fitting_level_O0": [("jax_memory_fitting_level", "O0")],
+    "exec_time_effort_high": [("jax_exec_time_optimization_effort", 1.0)],
+    "memory_fitting_effort_low": [("jax_memory_fitting_effort", -1.0)],
 }
+
+BAD = [("jax_optimization_level", "O4"), ("jax_memory_fitting_level", "fast")]
 
 OPS = ["exp", "tanh", "log_abs", "expm1", "log1p_abs", "sin", "cos", "logistic", "gelu", "softmax",
        "logsumexp", "erf", "sum", "mean", "cumsum", "pow", "sqrt_abs", "dot"]
@@ -104,6 +111,15 @@ def main():
             with open(part, encoding="utf-8") as fh:
                 rows.extend(json.load(fh))
             os.remove(part)
+        for name, value in BAD:
+            try:
+                jax.config.update(name, value)
+                row = {"kind": "ok", "text": ""}
+            except Exception as e:
+                row = {"kind": "raise", "class": type(e).__name__, "message": str(e), "text": ""}
+            row.update({"id": f"config_{name}_{value}", "flag": "config", "op": name, "mode": value,
+                        "warnings": []})
+            rows.append(row)
         with open(os.path.join(base, tag + ".json"), "w", encoding="utf-8") as fh:
             json.dump({"jax": jax.__version__, "x64": x64, "rows": rows}, fh, indent=1, sort_keys=True)
         sys.stdout.write(f"opt_flags {tag} {len(rows)} rows\n")

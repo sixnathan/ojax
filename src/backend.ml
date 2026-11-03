@@ -190,9 +190,16 @@ let config_compile_options () =
       ( k,
         match v with
         | `Int i -> Pjrt.Executable.Option_int i
-        | `Bool b -> Pjrt.Executable.Option_bool b
-        | `String s -> Pjrt.Executable.Option_string s ))
-    (Config.compile_debug_options ())
+        | `Float f -> Pjrt.Executable.Option_float f ))
+    (Config.compile_build_options ())
+  @ List.map
+      (fun (k, v) ->
+        ( k,
+          match v with
+          | `Int i -> Pjrt.Executable.Option_int i
+          | `Bool b -> Pjrt.Executable.Option_bool b
+          | `String s -> Pjrt.Executable.Option_string s ))
+      (Config.compile_debug_options ())
 
 module Xla = struct
   type buffer = Pjrt.Buffer.t
@@ -1602,6 +1609,7 @@ let to_host_value = function
   | (Concrete _ | Tracer _) as v -> v
 
 let client () = Xla.client ()
+
 let clear_placed_programs () =
   Hashtbl.reset placed_programs;
   Hashtbl.reset eager_texts

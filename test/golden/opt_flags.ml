@@ -48,21 +48,43 @@ let with_flag flag thunk =
   | "disable_most_optimizations" ->
       C.with_value C.disable_most_optimizations true thunk
   | "no_remat_pass" -> C.with_value C.compiler_enable_remat_pass false thunk
+  | "optimization_level_O0" -> C.with_value C.optimization_level "O0" thunk
+  | "optimization_level_O3" -> C.with_value C.optimization_level "O3" thunk
+  | "memory_fitting_level_O0" -> C.with_value C.memory_fitting_level "O0" thunk
+  | "exec_time_effort_high" ->
+      C.with_value C.exec_time_optimization_effort 1.0 thunk
+  | "memory_fitting_effort_low" ->
+      C.with_value C.memory_fitting_effort (-1.0) thunk
   | other -> failwith ("opt_flags: unknown flag " ^ other)
 
-let actual_of row =
-  let op = str row "op" in
-  let arg = if op = "dot" then matrix () else vector () in
-  let f = op_fn op in
-  let thunk () =
-    with_flag (str row "flag") (fun () ->
-        Ojax.Api.clear_caches ();
-        let out =
-          match str row "mode" with "jit" -> Docs_p2b.jit1 f arg | _ -> f arg
-        in
-        Docs_p2.text_of out)
+let config_row row =
+  let flag =
+    match str row "op" with
+    | "jax_optimization_level" -> Ojax.Config.optimization_level
+    | "jax_memory_fitting_level" -> Ojax.Config.memory_fitting_level
+    | other -> failwith ("opt_flags: unknown config " ^ other)
   in
-  Docs_p2.run_case thunk
+  Docs_p2.run_case (fun () ->
+      Ojax.Config.with_value flag (str row "mode") (fun () -> ());
+      "")
+
+let actual_of row =
+  if str row "flag" = "config" then config_row row
+  else
+    let op = str row "op" in
+    let arg = if op = "dot" then matrix () else vector () in
+    let f = op_fn op in
+    let thunk () =
+      with_flag (str row "flag") (fun () ->
+          Ojax.Api.clear_caches ();
+          let out =
+            match str row "mode" with
+            | "jit" -> Docs_p2b.jit1 f arg
+            | _ -> f arg
+          in
+          Docs_p2.text_of out)
+    in
+    Docs_p2.run_case thunk
 
 let check_row ~x64 row () =
   let id = str row "id" in

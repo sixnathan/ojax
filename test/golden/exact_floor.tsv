@@ -326,3 +326,9 @@ user_dtype:x64_off	292	292
 user_dtype:x64_on	292	292
 user_dtype_notices:x64_off	292	292
 user_dtype_notices:x64_on	292	292
+export_ser:x64_off	113	129
+export_ser:x64_on	126	143
+raw:export_ser:x64_off	113	129
+raw:export_ser:x64_on	126	143
+raw:shape_poly_exprs:x64_off	552	586
+shape_poly_exprs:x64_off	552	586

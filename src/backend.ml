@@ -1029,11 +1029,25 @@ let plan_of_args args =
       let device = (device_list first).(0) in
       if List.exists (fun p -> (device_list p).(0) <> device) placed then
         incompatible ();
+      let named =
+        List.find_map
+          (fun (p : PB.placed) ->
+            match p.layout with PB.Named n -> Some n | _ -> None)
+          placed
+      in
       Some
         {
-          mesh = [];
+          mesh = (match named with Some n -> n.mesh_axes | None -> []);
           devices = [| device |];
-          arg_specs = List.map (fun v -> replicated_spec (rank_of v)) args;
+          arg_specs =
+            List.map
+              (function
+                | Device (PB.Placed { layout = PB.Named n; _ })
+                  when Some n.mesh_axes
+                       = Option.map (fun (m : PB.named) -> m.mesh_axes) named ->
+                    n.spec
+                | v -> replicated_spec (rank_of v))
+              args;
           out_specs = [];
         }
   | _ ->
@@ -1088,8 +1102,7 @@ let plan_for_mesh mesh devices args =
 let placed_text ~name ?(out_specs = []) cj args =
   match plan_of_args args with
   | None -> Stablehlo.Emit.emit_jax_text ~name cj
-  | Some plan when Array.length plan.devices = 1 ->
-      Stablehlo.Emit.emit_jax_text ~name cj
+  | Some plan when plan.mesh = [] -> Stablehlo.Emit.emit_jax_text ~name cj
   | Some plan ->
       Stablehlo.Mlir_names.renumber_callbacks
         (Stablehlo.Emit.lower_partitioned ~name

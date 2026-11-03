@@ -416,3 +416,30 @@ let rec interpret errors (closed : T.closed_jaxpr) error0 args =
 let checkify ?(errors = user_checks) f args =
   let closed, hoisted = Jaxpr.make_jaxpr_hoisted (List.map aval args) f in
   interpret errors closed init_error (args @ hoisted)
+
+let effect_repr eff =
+  let sds (dt, shape) =
+    let dims = Array.to_list (Array.map string_of_int shape) in
+    let shape =
+      match dims with
+      | [ d ] -> "(" ^ d ^ ",)"
+      | l -> "(" ^ String.concat ", " l ^ ")"
+    in
+    "ShapeDtypeStruct(shape=" ^ shape ^ ", dtype=" ^ dt ^ ")"
+  in
+  let tuple =
+    match List.map sds eff.shape_dtypes with
+    | [ one ] -> "(" ^ one ^ ",)"
+    | l -> "(" ^ String.concat ", " l ^ ")"
+  in
+  "ErrorEffect(error_type=" ^ class_string eff.category ^ ", shape_dtypes="
+  ^ tuple ^ ")"
+
+let result_paths error =
+  let key e = "[" ^ effect_repr e.eff ^ "]" in
+  List.map (fun e -> "[0][0]" ^ key e) error.entries
+  @ List.map (fun e -> "[0][1]" ^ key e) error.entries
+  @ List.concat_map
+      (fun e ->
+        List.mapi (fun i _ -> Printf.sprintf "[0][2]%s[%d]" (key e) i) e.payload)
+      error.entries

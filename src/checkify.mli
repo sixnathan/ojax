@@ -29,3 +29,5 @@ val checkify :
   (Types.value list -> Types.value list) ->
   Types.value list ->
   error * Types.value list
+
+val result_paths : error -> string list

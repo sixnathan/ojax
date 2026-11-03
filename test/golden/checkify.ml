@@ -188,6 +188,8 @@ let value_cases id =
   | Some f -> Some f
   | None -> List.assoc_opt id (tag "f64" D.F64)
 
+let last_paths = ref []
+
 let traced_list =
   List.concat_map
     (fun (fname, f) ->
@@ -195,6 +197,7 @@ let traced_list =
         ( "jaxpr_checkify_" ^ fname,
           fun xs ->
             let e, o = CK.checkify f xs in
+            last_paths := CK.result_paths e;
             CK.error_leaves e @ o );
         ("jaxpr_raw_" ^ fname, f);
       ])
@@ -206,6 +209,7 @@ let traced_list =
             ( Printf.sprintf "jaxpr_%s_%s" fname ename,
               fun xs ->
                 let e, o = CK.checkify ~errors:es f xs in
+                last_paths := CK.result_paths e;
                 CK.error_leaves e @ o ))
           errsets)
       (nan_funs @ int_funs)
@@ -325,7 +329,13 @@ let check_row ~suite row () =
           match str_opt row "hlo" with
           | Some h ->
               log ~name:(id ^ ":hlo") h
-                (text (Ojax.Stablehlo.Emit.emit_jax_text ~name:"_lambda"))
+                (text
+                   (Ojax.Stablehlo.Emit.emit_jax_text
+                      ~result_names:
+                        (List.map
+                           (fun p -> "result" ^ p)
+                           (!last_paths @ [ "[1]" ]))
+                      ~name:"_lambda"))
           | None -> ()))
   | _ -> (
       let mode = Option.value (str_opt row "mode") ~default:"get" in

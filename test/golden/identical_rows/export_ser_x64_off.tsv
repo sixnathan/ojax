@@ -38,6 +38,7 @@ matmul:fields	1
 matmul:grad	1
 matmul:ojax_bytes	1
 matmul:ojax_fields	1
+matmul:ojax_text	1
 matmul:reserialize	1
 matmul:reserialize_vjp1	1
 multi_platform:call0	1

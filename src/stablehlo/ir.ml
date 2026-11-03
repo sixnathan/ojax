@@ -31,7 +31,7 @@ let element_type = function
   | Dtype.F8_e5m2 -> "f8E5M2"
   | Dtype.F8_e5m2fnuz -> "f8E5M2FNUZ"
   | Dtype.F8_e8m0fnu -> "f8E8M0FNU"
-  | Dtype.Float0 -> invalid_arg "Ir.element_type: float0 has no stablehlo type"
+  | Dtype.Float0 -> "i1"
 
 let tensor_type dtype shape =
   let elt = element_type dtype in

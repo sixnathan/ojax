@@ -501,8 +501,15 @@ let is_integral_dtype dt = dt = Dtype.Bool || Dtypes.issubdtype dt `Integer
 
 let float0_like v =
   let shape = (Core.get_aval v).shape in
-  let n = Array.fold_left ( * ) 1 shape in
-  Concrete (Ndarray.of_floats Dtypes.float0 shape (Array.make n 0.0))
+  match v with
+  | Tracer _ ->
+      List.hd
+        (Core.bind
+           (Broadcast_in_dim { shape; dims = [||] })
+           [ Concrete (Ndarray.of_floats Dtypes.float0 [||] [| 0.0 |]) ])
+  | _ ->
+      let n = Array.fold_left ( * ) 1 shape in
+      Concrete (Ndarray.of_floats Dtypes.float0 shape (Array.make n 0.0))
 
 let tangent_of_float0 primal tangent =
   let pd = (Core.get_aval primal).dtype in

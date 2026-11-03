@@ -29,6 +29,9 @@
   audit_holes
   odeint
   checkify
+  vjp_int
+  export_ser
+  shape_poly_exprs
   index_fuzz
   apply_transforms
   manifest)
@@ -69,6 +72,8 @@
   (source_tree %{project_root}/goldens/audit_holes)
   (source_tree %{project_root}/goldens/odeint)
   (source_tree %{project_root}/goldens/checkify)
+  (source_tree %{project_root}/goldens/export_ser)
+  (source_tree %{project_root}/goldens/shape_poly_exprs)
   (source_tree %{project_root}/goldens/random_core)
   (source_tree %{project_root}/goldens/nn)
   (source_tree %{project_root}/goldens/initializers)
@@ -98,6 +103,8 @@
   (source_tree %{project_root}/goldens/vmap_coll)
   (source_tree %{project_root}/goldens/compose_fuzz)
   (source_tree %{project_root}/goldens/custom_ad)
+  (source_tree %{project_root}/goldens/compose_pinned)
+  (source_tree %{project_root}/goldens/vjp_int)
   (glob_files identical_rows/*.tsv)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))

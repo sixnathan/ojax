@@ -829,7 +829,8 @@ and dce_closed_uncached (c : closed_jaxpr) used_outs =
               }
               :: acc
             end
-        | Custom_jvp_call id when e.outs <> [] && List.for_all is_used e.outs ->
+        | (Custom_jvp_call id | Custom_vjp_call id)
+          when e.outs <> [] && List.for_all is_used e.outs ->
             let first = List.hd e.outs in
             let body =
               match Core.find_custom_eqn_jaxpr first.vid with

@@ -5470,10 +5470,15 @@ let () =
             ~string_of_dtype ~concrete ()
         @ Custom_ad.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
             ~string_of_dtype ~concrete
+        @ Compose_fuzz.suites ~name:"compose_pinned" ~extend:Custom_ad.extend
+            ~goldens_root ~nd_of_npz:nd_of_npz_any ~string_of_dtype ~concrete ()
         @ Keys_arrays.suites ~goldens_root
         @ Audit_holes.suites ~goldens_root
         @ Odeint.suites ~goldens_root
         @ Checkify.suites ~goldens_root
+        @ Vjp_int.suites ~goldens_root
+        @ Export_ser.suites ~goldens_root
+        @ Shape_poly_exprs.suites ~goldens_root
         @ Index_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
             ~string_of_dtype ~concrete
         @ Apply_transforms.suites ~goldens_root ~nd_of_npz:nd_of_npz_any

@@ -114,6 +114,9 @@ let check_bwd_tangent index (input : aval) v =
              type %s%s"
             index (aval_str got) (aval_str input) (mismatch_extra input got)))
 
+let float0_tangent (input : aval) =
+  input.dtype = Dtype.Bool || Dtypes.issubdtype input.dtype `Integer
+
 let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f") ?(fwd_name = "fwd")
     ?(bwd_name = "bwd") primal ~fwd ~bwd =
   if nondiff_argnums <> [] then fun args ->
@@ -132,10 +135,14 @@ let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f") ?(fwd_name = "fwd")
           let bwd res cts =
             let outs = bwd res cts in
             check_bwd_count outs avals;
-            List.iteri
-              (fun i (out, input) -> check_bwd_tangent i input out)
-              (List.combine outs avals);
-            outs
+            List.mapi
+              (fun i (out, input) ->
+                if float0_tangent input then Ad_util.symbolic_zero_of_aval input
+                else begin
+                  check_bwd_tangent i input out;
+                  out
+                end)
+              (List.combine outs avals)
           in
           let id =
             Core.register_custom_rule
@@ -207,6 +214,7 @@ let custom_jvp_symbolic ?(name = "f") ?(jvp_name = "jvp") primal ~jvp =
 
 let bwd_output index (input : aval) = function
   | None -> Ad_util.symbolic_zero_of_aval input
+  | Some _ when float0_tangent input -> Ad_util.symbolic_zero_of_aval input
   | Some (Symbolic_zero { aval }) ->
       if not (same_type aval input) then
         invalid_arg

@@ -265,31 +265,106 @@ let quote_loc name = "loc(" ^ quote_name name ^ ")"
 let prim_loc prim =
   Printf.sprintf "loc(%s(%s))" (quote_name (prim ^ ":")) (quote_name prim)
 
+let find_sub line sub from =
+  let n = String.length line and m = String.length sub in
+  let rec go i =
+    if i + m > n then None
+    else if String.sub line i m = sub then Some i
+    else go (i + 1)
+  in
+  go from
+
+let split_top_level text =
+  let parts = ref [] and depth = ref 0 and last = ref 0 in
+  String.iteri
+    (fun i c ->
+      match c with
+      | '<' | '(' | '[' | '{' -> incr depth
+      | '>' | ')' | ']' | '}' -> decr depth
+      | ',' when !depth = 0 ->
+          parts := String.sub text !last (i - !last) :: !parts;
+          last := i + 2
+      | _ -> ())
+    text;
+  List.rev (String.sub text !last (String.length text - !last) :: !parts)
+
+let expand_applies ~arg_loc ~loc line =
+  match
+    ( find_sub line " applies stablehlo." 0,
+      find_sub line " across dimensions = " 0,
+      find_sub line " init: " 0 )
+  with
+  | Some a, Some d, Some _ when a < d -> (
+      let body = String.sub line (a + 19) (d - a - 19) in
+      let colon = Option.value (find_sub line " : (" d) ~default:(-1) in
+      let arrow = find_sub line ") -> " (colon + 1) in
+      match (colon, arrow) with
+      | c, Some r when c > 0 -> (
+          let types = split_top_level (String.sub line (c + 4) (r - c - 4)) in
+          match types with
+          | [ _; scalar ] ->
+              let indent =
+                String.sub line 0
+                  (String.length line - String.length (String.trim line))
+              in
+              let k = !loc_count in
+              let a_name = Printf.sprintf "%%lra%d" k
+              and b_name = Printf.sprintf "%%lrb%d" k
+              and c_name = Printf.sprintf "%%lrc%d" k in
+              Some
+                [
+                  String.sub line 0 a
+                  ^ String.sub line d (String.length line - d);
+                  Printf.sprintf "%s reducer(%s: %s %s, %s: %s %s)  {" indent
+                    a_name scalar arg_loc b_name scalar arg_loc;
+                  Printf.sprintf "%s  %s = stablehlo.%s %s, %s : %s%s" indent
+                    c_name body a_name b_name scalar (loc_marker loc);
+                  Printf.sprintf "%s  stablehlo.return %s : %s%s" indent c_name
+                    scalar (loc_marker loc);
+                  Printf.sprintf "%s }%s" indent (loc_marker loc);
+                ]
+          | _ -> None)
+      | _ -> None)
+  | _ -> None
+
+let mark_text ?prim chunk loc =
+  let lines = Array.of_list (String.split_on_char '\n' chunk) in
+  let count = Array.length lines in
+  let marked =
+    Array.mapi
+      (fun i line ->
+        let next = if i + 1 < count then Some lines.(i + 1) else None in
+        let is_args =
+          trimmed_starts "^bb" line
+          || trimmed_starts "reducer(" line
+          || trimmed_starts "func.func" line
+        in
+        let line =
+          match prim with
+          | Some p when is_args && not (has_loc line) ->
+              annotate_args ~loc_of:(fun _ -> prim_loc p) line
+          | _ -> line
+        in
+        if i + 1 = count || not (markable line next) then line
+        else
+          match prim with
+          | Some p -> (
+              match expand_applies ~arg_loc:(prim_loc p) ~loc line with
+              | Some expanded -> String.concat "\n" expanded
+              | None -> line ^ loc_marker loc)
+          | None -> line ^ loc_marker loc)
+      lines
+  in
+  String.concat "\n" (Array.to_list marked)
+
+let named_loc name = if name = "" then "loc(unknown)" else quote_loc name
+
 let mark_lines ?prim buf start name =
   let len = Buffer.length buf in
   if len > start then begin
     let chunk = Buffer.sub buf start (len - start) in
-    let lines = Array.of_list (String.split_on_char '\n' chunk) in
-    let count = Array.length lines in
-    let marked =
-      Array.mapi
-        (fun i line ->
-          let next = if i + 1 < count then Some lines.(i + 1) else None in
-          let is_args =
-            trimmed_starts "^bb" line || trimmed_starts "reducer(" line
-          in
-          let line =
-            match prim with
-            | Some p when is_args && not (has_loc line) ->
-                annotate_args ~loc_of:(fun _ -> prim_loc p) line
-            | _ -> line
-          in
-          if i + 1 = count || not (markable line next) then line
-          else line ^ loc_marker name)
-        lines
-    in
     Buffer.truncate buf start;
-    Buffer.add_string buf (String.concat "\n" (Array.to_list marked))
+    Buffer.add_string buf (mark_text ?prim chunk (named_loc name))
   end
 
 let scoped name = if !loc_scope = "" then name else !loc_scope ^ "/" ^ name
@@ -308,9 +383,7 @@ let resolve_locs ~arg_loc text =
           incr j
         done;
         let id = int_of_string (String.sub line (!i + 3) (!j - !i - 3)) in
-        let name = Hashtbl.find loc_names id in
-        Buffer.add_string out
-          (if name = "" then "loc(unknown)" else quote_loc name);
+        Buffer.add_string out (Hashtbl.find loc_names id);
         i := !j + 2
       end
       else begin
@@ -328,9 +401,10 @@ let resolve_locs ~arg_loc text =
           if trimmed_starts "func.func public @main(" line then
             annotate_args ~loc_of:arg_loc line
           else if
-            trimmed_starts "func.func" line
-            || (trimmed_starts "^bb" line || trimmed_starts "reducer(" line)
-               && not (has_loc line)
+            (trimmed_starts "func.func" line
+            || trimmed_starts "^bb" line
+            || trimmed_starts "reducer(" line)
+            && not (has_loc line)
           then annotate_args ~loc_of:(fun _ -> "loc(unknown)") line
           else line
         in
@@ -4190,9 +4264,22 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   Jaxpr.in_eqn_eval := true;
   let buf = ctx.buf in
   let start = Buffer.length buf in
+  let prelude_before = Buffer.length prelude in
   Fun.protect
     ~finally:(fun () -> Jaxpr.in_eqn_eval := prev)
     (fun () -> emit_eqn_in_context ctx eqn in_ids);
+  if !loc_marks then begin
+    let prim = Pretty_printer.primitive_name eqn.prim in
+    let added = Buffer.length prelude - prelude_before in
+    if added > 0 then begin
+      let text = Buffer.contents prelude in
+      Buffer.clear prelude;
+      Buffer.add_string prelude
+        (mark_text ~prim (String.sub text 0 added) (prim_loc prim));
+      Buffer.add_string prelude
+        (String.sub text added (String.length text - added))
+    end
+  end;
   if !loc_marks && ctx.buf == buf then
     let prim = Pretty_printer.primitive_name eqn.prim in
     let name =

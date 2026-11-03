@@ -5468,6 +5468,8 @@ let () =
             ~nd_of_npz:nd_of_npz_any ~string_of_dtype ~concrete ()
         @ Compose_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
             ~string_of_dtype ~concrete ()
+        @ Compose_fuzz.suites ~name:"compose_pinned" ~goldens_root
+            ~nd_of_npz:nd_of_npz_any ~string_of_dtype ~concrete ()
         @ Custom_ad.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
             ~string_of_dtype ~concrete
         @ Keys_arrays.suites ~goldens_root

@@ -110,7 +110,7 @@ def tally(log):
 
 
 def is_fuzz_suite(group):
-    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "option_pinned:", "put_modes:", "compose_fuzz:", "custom_ad:"))
+    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "option_pinned:", "put_modes:", "compose_fuzz:", "compose_pinned:", "custom_ad:"))
 
 
 def row_classes(log):
@@ -135,9 +135,9 @@ def row_classes(log):
                 group = "fuzz_error_text"
             elif suite.startswith("text_fuzz_s2:"):
                 group = "fuzz_s2_error_text"
-            elif suite.startswith("compose_fuzz:"):
+            elif suite.startswith(("compose_fuzz:", "compose_pinned:")):
                 group = "compose_fuzz"
-            elif suite.startswith("text_compose_fuzz:"):
+            elif suite.startswith(("text_compose_fuzz:", "text_compose_pinned:")):
                 group = "compose_fuzz_error_text"
             elif suite.startswith("custom_ad:"):
                 group = "custom_ad"
@@ -368,9 +368,9 @@ def main():
     shadow = [s for s in totals if s.startswith("parity_jit_eager:")]
     second_seed = [s for s in totals if s.startswith("fuzz_s2:")]
     option_rows = [s for s in totals if s.startswith(("option_fuzz:", "text_option_fuzz:", "option_pinned:", "text_option_pinned:", "put_modes:", "text_put_modes:"))]
-    composed = [s for s in totals if s.startswith("compose_fuzz:")]
+    composed = [s for s in totals if s.startswith(("compose_fuzz:", "compose_pinned:"))]
     custom = [s for s in totals if s.startswith("custom_ad:")]
-    message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:", "text_compose_fuzz:"))]
+    message_rows = [s for s in totals if s.startswith(("text_fuzz:", "text_fuzz_s2:", "text_compose_fuzz:", "text_compose_pinned:"))]
     indexed = [s for s in totals if s.startswith(("index_fuzz:", "text_index_fuzz:", "apply_transforms:", "text_apply_transforms:"))]
     uncounted = (
         set(shadow) | set(second_seed) | set(option_rows) | set(composed) | set(custom) | set(message_rows) | set(indexed) | {"compare", "ratchet_selftest"}

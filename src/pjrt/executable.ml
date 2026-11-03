@@ -192,12 +192,26 @@ let build_option_fields =
     ("memory_fitting_level", (25, false));
   ]
 
-let options_proto options =
+let packed_trues b field count =
+  if count > 0 then begin
+    add_tag b field 2;
+    add_varint b count;
+    for _ = 1 to count do
+      add_varint b 1
+    done
+  end
+
+let options_proto ?propagation options =
   let on_build, env =
     List.partition (fun (k, _) -> List.mem_assoc k build_option_fields) options
   in
   let b = Stdlib.Buffer.create 32 in
   Stdlib.Buffer.add_string b executable_build_options_proto;
+  (match propagation with
+  | Some (params, outputs) ->
+      packed_trues b 18 params;
+      packed_trues b 12 outputs
+  | None -> ());
   List.iter
     (fun (k, v) ->
       let field, is_float = List.assoc k build_option_fields in
@@ -243,7 +257,7 @@ let dumped_text dir suffix =
   | Some t -> t
   | None -> failwith "Pjrt.Executable: XLA wrote no optimized HLO text"
 
-let hlo_dump ?(options = []) client code suffix =
+let hlo_dump ?propagation ?(options = []) client code suffix =
   let dir = Filename.temp_dir "ojax_hlo" "" in
   let dump =
     [
@@ -251,13 +265,13 @@ let hlo_dump ?(options = []) client code suffix =
       ("xla_dump_hlo_as_text", Option_bool true);
     ]
   in
-  let proto = options_proto (options @ dump) in
+  let proto = options_proto ?propagation (options @ dump) in
   let handle = compile_ client code proto in
   destroy_ handle;
   dumped_text dir suffix
 
-let optimized_text ?options client code =
-  hlo_dump ?options client code "after_optimizations.txt"
+let optimized_text ?propagation ?options client code =
+  hlo_dump ?propagation ?options client code "after_optimizations.txt"
 
 let unoptimized_text ?options client code =
   hlo_dump ?options client code "before_optimizations.txt"

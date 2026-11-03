@@ -112,11 +112,16 @@ let compile ?compiler_options lowered =
     options = Option.value ~default:[] compiler_options;
   }
 
-let compiled_as_text compiled =
-  Pjrt.Executable.optimized_text
+let compiled_as_text ?arg_names compiled =
+  let lowered = compiled.source in
+  let text, params, outputs =
+    Stablehlo.Emit.emit_debug_text ~keep_unused:lowered.keep_unused
+      ~donated:lowered.donated ?result_names:lowered.result_names ?arg_names
+      ~name:lowered.module_name lowered.closed
+  in
+  Pjrt.Executable.optimized_text ~propagation:(params, outputs)
     ~options:(Backend.config_compile_options () @ compiled.options)
-    (Backend.xla_client ())
-    (as_jax_text compiled.source)
+    (Backend.xla_client ()) text
 
 let call compiled args =
   let actual = List.map Core.get_aval args in

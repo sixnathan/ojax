@@ -39,6 +39,15 @@ val emit_jax_text :
   Types.closed_jaxpr ->
   string
 
+val emit_debug_text :
+  ?keep_unused:bool ->
+  ?donated:bool list ->
+  ?result_names:string list ->
+  ?arg_names:string list ->
+  name:string ->
+  Types.closed_jaxpr ->
+  string * int * int
+
 val lower_partitioned :
   name:string -> partition -> Types.closed_jaxpr -> lowered
 

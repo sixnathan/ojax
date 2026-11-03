@@ -158,6 +158,192 @@ let capture ctx f =
   ctx.literals <- saved_literals;
   s
 
+let loc_marks = ref false
+let loc_scope = ref ""
+let loc_names : (int, string) Hashtbl.t = Hashtbl.create 64
+let loc_count = ref 0
+
+let loc_marker name =
+  let n = !loc_count in
+  incr loc_count;
+  Hashtbl.replace loc_names n name;
+  Printf.sprintf " @@L%d@@" n
+
+let has_marker line =
+  let n = String.length line in
+  let rec go i = i + 3 <= n && (String.sub line i 3 = "@@L" || go (i + 1)) in
+  go 0
+
+let has_loc line =
+  let n = String.length line in
+  let rec go i = i + 5 <= n && (String.sub line i 5 = " loc(" || go (i + 1)) in
+  go 0
+
+let trimmed_starts prefix line =
+  let t = String.trim line in
+  String.length t >= String.length prefix
+  && String.sub t 0 (String.length prefix) = prefix
+
+let continues line =
+  List.exists
+    (fun p -> trimmed_starts p line)
+    [ "reducer"; "cond {"; "do {"; "applies" ]
+
+let line_ends_with c line =
+  let t = String.trim line in
+  t <> "" && t.[String.length t - 1] = c
+
+let markable line next =
+  String.trim line <> ""
+  && (not (line_ends_with '{' line))
+  && (not (line_ends_with ':' line))
+  && (not (has_marker line))
+  && not (match next with Some l -> continues l | None -> false)
+
+let annotate_args ~loc_of line =
+  let n = String.length line in
+  let out = Buffer.create (n + 32) in
+  let index = ref 0 in
+  let i = ref 0 in
+  while !i < n do
+    let c = line.[!i] in
+    if
+      c = '%'
+      && (!i = 0 || line.[!i - 1] = '(' || line.[!i - 1] = ' ')
+      &&
+      let j = ref (!i + 1) in
+      while
+        !j < n
+        &&
+        let d = line.[!j] in
+        (d >= 'a' && d <= 'z')
+        || (d >= 'A' && d <= 'Z')
+        || (d >= '0' && d <= '9')
+        || d = '_'
+      do
+        incr j
+      done;
+      !j + 1 < n && line.[!j] = ':' && line.[!j + 1] = ' '
+    then begin
+      let depth = ref 0 in
+      let j = ref !i in
+      let stop = ref false in
+      while (not !stop) && !j < n do
+        (match line.[!j] with
+        | '<' | '(' | '[' | '{' -> incr depth
+        | '>' | ']' | '}' -> decr depth
+        | ')' -> if !depth = 0 then stop := true else decr depth
+        | ',' when !depth = 0 -> stop := true
+        | _ -> ());
+        if not !stop then incr j
+      done;
+      Buffer.add_string out (String.sub line !i (!j - !i));
+      Buffer.add_string out (" " ^ loc_of !index);
+      incr index;
+      i := !j
+    end
+    else begin
+      Buffer.add_char out c;
+      incr i
+    end
+  done;
+  Buffer.contents out
+
+let quote_name name =
+  let b = Buffer.create (String.length name + 2) in
+  Buffer.add_char b '"';
+  String.iter
+    (fun c ->
+      if c = '"' || c = '\\' then Buffer.add_char b '\\';
+      Buffer.add_char b c)
+    name;
+  Buffer.add_char b '"';
+  Buffer.contents b
+
+let quote_loc name = "loc(" ^ quote_name name ^ ")"
+
+let prim_loc prim =
+  Printf.sprintf "loc(%s(%s))" (quote_name (prim ^ ":")) (quote_name prim)
+
+let mark_lines ?prim buf start name =
+  let len = Buffer.length buf in
+  if len > start then begin
+    let chunk = Buffer.sub buf start (len - start) in
+    let lines = Array.of_list (String.split_on_char '\n' chunk) in
+    let count = Array.length lines in
+    let marked =
+      Array.mapi
+        (fun i line ->
+          let next = if i + 1 < count then Some lines.(i + 1) else None in
+          let is_args =
+            trimmed_starts "^bb" line || trimmed_starts "reducer(" line
+          in
+          let line =
+            match prim with
+            | Some p when is_args && not (has_loc line) ->
+                annotate_args ~loc_of:(fun _ -> prim_loc p) line
+            | _ -> line
+          in
+          if i + 1 = count || not (markable line next) then line
+          else line ^ loc_marker name)
+        lines
+    in
+    Buffer.truncate buf start;
+    Buffer.add_string buf (String.concat "\n" (Array.to_list marked))
+  end
+
+let scoped name = if !loc_scope = "" then name else !loc_scope ^ "/" ^ name
+
+let resolve_locs ~arg_loc text =
+  let lines = Array.of_list (String.split_on_char '\n' text) in
+  let count = Array.length lines in
+  let replace line =
+    let n = String.length line in
+    let out = Buffer.create (n + 16) in
+    let i = ref 0 in
+    while !i < n do
+      if !i + 3 <= n && String.sub line !i 3 = "@@L" then begin
+        let j = ref (!i + 3) in
+        while !j < n && line.[!j] <> '@' do
+          incr j
+        done;
+        let id = int_of_string (String.sub line (!i + 3) (!j - !i - 3)) in
+        let name = Hashtbl.find loc_names id in
+        Buffer.add_string out
+          (if name = "" then "loc(unknown)" else quote_loc name);
+        i := !j + 2
+      end
+      else begin
+        Buffer.add_char out line.[!i];
+        incr i
+      end
+    done;
+    Buffer.contents out
+  in
+  let resolved =
+    Array.mapi
+      (fun i line ->
+        let next = if i + 1 < count then Some lines.(i + 1) else None in
+        let line =
+          if trimmed_starts "func.func public @main(" line then
+            annotate_args ~loc_of:arg_loc line
+          else if
+            trimmed_starts "func.func" line
+            || (trimmed_starts "^bb" line || trimmed_starts "reducer(" line)
+               && not (has_loc line)
+          then annotate_args ~loc_of:(fun _ -> "loc(unknown)") line
+          else line
+        in
+        let line =
+          if markable line next && not (trimmed_starts "module" line) then
+            line ^ " loc(unknown)"
+          else line
+        in
+        replace line)
+      lines
+  in
+  String.concat "\n" (Array.to_list resolved)
+
 let reindent extra s =
   let pad = String.make extra ' ' in
   String.split_on_char '\n' s
@@ -3917,11 +4103,16 @@ and emit_private_function ctx fname (c : closed_jaxpr) =
     (fun (v : var) nd -> emit_constant_at inner (bind_var inner v) nd)
     const_binders c.consts;
   hoist_custom_consts inner c.jaxpr;
-  in_function fname (fun () ->
-      List.iter
-        (fun (e : eqn) ->
-          emit_eqn inner e (List.map (id_of_atom inner) e.inputs))
-        c.jaxpr.eqns);
+  let saved_scope = !loc_scope in
+  loc_scope := "";
+  Fun.protect
+    ~finally:(fun () -> loc_scope := saved_scope)
+    (fun () ->
+      in_function fname (fun () ->
+          List.iter
+            (fun (e : eqn) ->
+              emit_eqn inner e (List.map (id_of_atom inner) e.inputs))
+            c.jaxpr.eqns));
   let out_names =
     List.filter_map (fun io -> find_token inner.buf io) effects
     @ List.map (ssa_of_atom inner) c.jaxpr.outs
@@ -3997,9 +4188,19 @@ and widen_operands ctx (eqn : eqn) (in_ids : int list) =
 and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   let prev = !Jaxpr.in_eqn_eval in
   Jaxpr.in_eqn_eval := true;
+  let buf = ctx.buf in
+  let start = Buffer.length buf in
   Fun.protect
     ~finally:(fun () -> Jaxpr.in_eqn_eval := prev)
-    (fun () -> emit_eqn_in_context ctx eqn in_ids)
+    (fun () -> emit_eqn_in_context ctx eqn in_ids);
+  if !loc_marks && ctx.buf == buf then
+    let prim = Pretty_printer.primitive_name eqn.prim in
+    let name =
+      match eqn.prim with
+      | Xla_call c -> scoped ("jit(" ^ Pretty_printer.call_name c.jid ^ ")")
+      | _ -> scoped prim
+    in
+    mark_lines ~prim buf start name
 
 and emit_cpu_and_default ctx (eqn : eqn) in_ids =
   let rule_of_platform =
@@ -5580,6 +5781,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
       (Printf.sprintf "    return %s : %s\n"
          (String.concat ", " out_names)
          (String.concat ", " out_types));
+  if !loc_marks && !emission_depth = 1 then mark_lines ctx.buf 0 !loc_scope;
   let out_attributes =
     match partition with
     | Some { pt_out; _ } when pt_out <> [] ->
@@ -5685,6 +5887,37 @@ let emit_jax_text ?(with_tokens = true) ?keep_unused ?donated ?result_names
       let text = (lower ?keep_unused ?donated ?result_names ~name cj).text in
       Mlir_names.print_empty_dynamic_slices
         (Mlir_names.renumber_callbacks ~order:(List.rev !callback_order) text))
+
+let emit_debug_text ?keep_unused ?donated ?result_names ?(arg_names = []) ~name
+    cj =
+  let saved = (!loc_marks, !loc_scope) in
+  loc_marks := true;
+  loc_scope := "jit(" ^ name ^ ")";
+  Hashtbl.reset loc_names;
+  loc_count := 0;
+  Fun.protect
+    ~finally:(fun () ->
+      loc_marks := fst saved;
+      loc_scope := snd saved)
+    (fun () ->
+      let lowered = lower ?keep_unused ?donated ?result_names ~name cj in
+      let text =
+        Mlir_names.print_empty_dynamic_slices
+          (Mlir_names.renumber_callbacks ~order:(List.rev !callback_order)
+             lowered.text)
+      in
+      let kept = Array.of_list lowered.kept in
+      let arg_loc i =
+        match
+          if i < Array.length kept then List.nth_opt arg_names kept.(i)
+          else None
+        with
+        | Some n when n <> "" -> quote_loc n
+        | _ -> "loc(unknown)"
+      in
+      ( resolve_locs ~arg_loc text,
+        List.length lowered.kept,
+        List.length cj.jaxpr.outs ))
 
 let emit_export_text ?(platforms = []) ?result_names ~name
     ~uses_shape_polymorphism cj =

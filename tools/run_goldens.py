@@ -110,7 +110,7 @@ def tally(log):
 
 
 def is_fuzz_suite(group):
-    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "option_pinned:", "put_modes:", "compose_fuzz:", "compose_pinned:", "custom_ad:"))
+    return group.startswith(("fuzz:", "fuzz_s2:", "option_fuzz:", "option_pinned:", "put_modes:", "compose_fuzz:", "custom_ad:", "compose_pinned:"))
 
 
 def row_classes(log):

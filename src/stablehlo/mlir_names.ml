@@ -700,9 +700,7 @@ let split_entries s =
 let all_tokens value s =
   let words =
     String.split_on_char ' '
-      (String.map
-         (fun c -> match c with '[' | ']' | ',' -> ' ' | c -> c)
-         s)
+      (String.map (fun c -> match c with '[' | ']' | ',' -> ' ' | c -> c) s)
   in
   List.for_all (fun w -> w = value) (List.filter (fun w -> w <> "") words)
 
@@ -727,8 +725,7 @@ let filter_group line ~opening keep =
       | Some j ->
           let inner = String.sub line start (j - start) in
           let kept = List.filter keep (split_entries inner) in
-          String.sub line 0 start
-          ^ String.concat ", " kept
+          String.sub line 0 start ^ String.concat ", " kept
           ^ String.sub line j (String.length line - j))
 
 let window_default e =
@@ -749,7 +746,9 @@ let property_default e =
   | _ -> false
 
 let drop_default_attributes text =
-  let drop sub line = Option.value (replace_first ~sub ~by:"" line) ~default:line in
+  let drop sub line =
+    Option.value (replace_first ~sub ~by:"" line) ~default:line
+  in
   let default_precision =
     ", precision_config = [#stablehlo<precision DEFAULT>, #stablehlo<precision \
      DEFAULT>]"
@@ -767,9 +766,7 @@ let drop_default_attributes text =
         || contains "\"stablehlo.select_and_scatter\"" line
         || contains "\"stablehlo.gather\"" line
         || contains "\"stablehlo.scatter\"" line
-      then
-        filter_group line ~opening:"<{" (fun e ->
-            not (property_default e))
+      then filter_group line ~opening:"<{" (fun e -> not (property_default e))
       else line)
   |> String.concat "\n"
 

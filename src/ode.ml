@@ -47,7 +47,12 @@ let rec concat_tree arrs =
 let array_list vs =
   concat_tree (List.map (fun v -> Lax_api.expand_dims v [| 0 |]) vs)
 
-let vec dt xs = T.Concrete (Nd.of_floats dt [| Array.length xs |] xs)
+let staged v =
+  match !Core.dynamic_trace with
+  | Some t when t.T.kind = T.KJaxpr && t.T.level > 0 -> Core.full_raise t v
+  | _ -> v
+
+let vec dt xs = staged (T.Concrete (Nd.of_floats dt [| Array.length xs |] xs))
 
 let promote_dtypes_inexact = function
   | [ a; b ] ->
@@ -140,52 +145,53 @@ let runge_kutta_step func y0 f0 t0 dt =
     vec (dtype_of dt) [| 1. /. 5.; 3. /. 10.; 4. /. 5.; 8. /. 9.; 1.; 1.; 0. |]
   in
   let beta =
-    T.Concrete
-      (Nd.of_floats fdt [| 6; 7 |]
-         [|
-           1. /. 5.;
-           0.;
-           0.;
-           0.;
-           0.;
-           0.;
-           0.;
-           3. /. 40.;
-           9. /. 40.;
-           0.;
-           0.;
-           0.;
-           0.;
-           0.;
-           44. /. 45.;
-           -56. /. 15.;
-           32. /. 9.;
-           0.;
-           0.;
-           0.;
-           0.;
-           19372. /. 6561.;
-           -25360. /. 2187.;
-           64448. /. 6561.;
-           -212. /. 729.;
-           0.;
-           0.;
-           0.;
-           9017. /. 3168.;
-           -355. /. 33.;
-           46732. /. 5247.;
-           49. /. 176.;
-           -5103. /. 18656.;
-           0.;
-           0.;
-           35. /. 384.;
-           0.;
-           500. /. 1113.;
-           125. /. 192.;
-           -2187. /. 6784.;
-           11. /. 84.;
-           0.;
-         |])
+    staged
+    @@ T.Concrete
+         (Nd.of_floats fdt [| 6; 7 |]
+            [|
+              1. /. 5.;
+              0.;
+              0.;
+              0.;
+              0.;
+              0.;
+              0.;
+              3. /. 40.;
+              9. /. 40.;
+              0.;
+              0.;
+              0.;
+              0.;
+              0.;
+              44. /. 45.;
+              -56. /. 15.;
+              32. /. 9.;
+              0.;
+              0.;
+              0.;
+              0.;
+              19372. /. 6561.;
+              -25360. /. 2187.;
+              64448. /. 6561.;
+              -212. /. 729.;
+              0.;
+              0.;
+              0.;
+              9017. /. 3168.;
+              -355. /. 33.;
+              46732. /. 5247.;
+              49. /. 176.;
+              -5103. /. 18656.;
+              0.;
+              0.;
+              35. /. 384.;
+              0.;
+              500. /. 1113.;
+              125. /. 192.;
+              -2187. /. 6784.;
+              11. /. 84.;
+              0.;
+            |])
   in
   let c_sol =
     vec fdt

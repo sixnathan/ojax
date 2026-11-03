@@ -51,6 +51,10 @@ let cases =
     ("place_slice", three (E.place ~inplace:false));
     ("fill_diagonal_tile", two (E.fill_diagonal ~inplace:false));
     ("fill_diagonal_slice", two (E.fill_diagonal ~inplace:false));
+    ("insert_scalar", two (fun a v -> E.insert a 2 v));
+    ("insert_vector", two (fun a v -> E.insert a (-3) v));
+    ("insert_axis1", two (fun a v -> E.insert ~axis:1 a 1 v));
+    ("insert_flat", two (fun a v -> E.insert a 4 v));
   ]
 
 let unhex s =

@@ -67,6 +67,10 @@ CASES = [
     ("place_slice", lambda a, m, v: jnp.place(a, m, v, inplace=False), ["m23", "mask23", "v7"]),
     ("fill_diagonal_tile", lambda a, v: jnp.fill_diagonal(a, v, inplace=False), ["m33", "v2"]),
     ("fill_diagonal_slice", lambda a, v: jnp.fill_diagonal(a, v, inplace=False), ["m33", "v7"]),
+    ("insert_scalar", lambda a, v: jnp.insert(a, 2, v), ["a9", "s0"]),
+    ("insert_vector", lambda a, v: jnp.insert(a, -3, v), ["a9", "v2"]),
+    ("insert_axis1", lambda a, v: jnp.insert(a, 1, v, axis=1), ["m23", "v2"]),
+    ("insert_flat", lambda a, v: jnp.insert(a, 4, v), ["m23", "v7"]),
 ]
 
 

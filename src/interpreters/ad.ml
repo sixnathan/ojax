@@ -1850,9 +1850,13 @@ let as_jvp trace v =
       | _ -> failwith "ad: expected a JVP tracer")
   | _ -> (v, zeros_like_value v)
 
-let jvp (f : value list -> value list) (primals : value list)
+let rec jvp (f : value list -> value list) (primals : value list)
     (tangents : value list) : value list * value list =
-  Source_info_util.transform_name_stack "jvp" @@ fun () ->
+  Source_info_util.transform_name_stack "jvp" (fun () ->
+      jvp_subtrace f primals tangents)
+
+and jvp_subtrace (f : value list -> value list) (primals : value list)
+    (tangents : value list) : value list * value list =
   Core.with_new_main KJVP GNone (fun main ->
       let ins =
         List.map2 (fun x t -> Tracer (new_jvp_tracer main x t)) primals tangents
@@ -1944,7 +1948,9 @@ let jvp_jaxpr (c : closed_jaxpr) primal_avals nzs =
                 primals nzs
             in
             let pos, tos =
-              jvp (fun a -> Jaxpr.eval_closed_jaxpr c a) primals tangents
+              jvp_subtrace
+                (fun a -> Jaxpr.eval_closed_jaxpr c a)
+                primals tangents
             in
             out_nzs := List.map (fun t -> not (is_zero t)) tos;
             pos @ List.filter (fun t -> not (is_zero t)) tos)
@@ -5224,20 +5230,19 @@ and eval_jaxpr_transposed ?(seeds = []) (jx : jaxpr) (args : tval list)
       if List.exists is_undef primals_in then begin
         let cts_in = List.map read_ct e.outs in
         if not (List.for_all Ad_util.is_symbolic_zero cts_in) then
-          let cts_out =
-            Source_info_util.with_name_stack
-              (Source_info_util.concat
-                 (Source_info_util.transform
-                    (Source_info_util.current_name_stack ())
-                    "transpose")
-                 (Source_info_util.eqn_name_stack
-                    (List.map (fun (v : var) -> v.vid) e.outs)))
-              (fun () -> transpose_rule e.prim cts_in primals_in)
-          in
-          List.iter2
-            (fun atom cto ->
-              match cto with Some ct -> write_ct atom ct | None -> ())
-            e.inputs cts_out
+          Source_info_util.with_name_stack
+            (Source_info_util.concat
+               (Source_info_util.transform
+                  (Source_info_util.current_name_stack ())
+                  "transpose")
+               (Source_info_util.eqn_name_stack
+                  (List.map (fun (v : var) -> v.vid) e.outs)))
+            (fun () ->
+              let cts_out = transpose_rule e.prim cts_in primals_in in
+              List.iter2
+                (fun atom cto ->
+                  match cto with Some ct -> write_ct atom ct | None -> ())
+                e.inputs cts_out)
       end)
     (List.rev jx.eqns);
   List.fold_right2

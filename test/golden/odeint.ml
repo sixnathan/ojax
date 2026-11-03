@@ -13,10 +13,47 @@ let arr dt shape xs = Ojax.Types.Concrete (Nd.of_floats dt shape xs)
 let leaf v = TU.Leaf v
 let unleaf = function TU.Leaf v -> v | _ -> failwith "odeint: leaf"
 let leaves t = TU.tree_leaves t
-let y0 dt = arr dt [| 2 |] [| 1.0; 2.0 |]
-let ts dt = AC.linspace ~num:5 ~dtype:dt 0.0 1.0
-let tl dt = AC.linspace ~num:4 ~dtype:dt 0.0 3.0
-let kk dt = arr dt [||] [| 0.5 |]
+
+type inputs = {
+  y0v : float array;
+  kv : float;
+  ts_stop : float;
+  tl_stop : float;
+  y1a : float array;
+  y1b : float array;
+}
+
+let fixed =
+  {
+    y0v = [| 1.0; 2.0 |];
+    kv = 0.5;
+    ts_stop = 1.0;
+    tl_stop = 3.0;
+    y1a = [| 1.0; 0.0 |];
+    y1b = [| 0.0; 1.0 |];
+  }
+
+let inputs_of row =
+  match U.member "inputs" row with
+  | `Null -> fixed
+  | j ->
+      let f k = U.to_number (U.member k j) in
+      let fs k =
+        Array.of_list (List.map U.to_number (U.to_list (U.member k j)))
+      in
+      {
+        y0v = fs "y0";
+        kv = f "k";
+        ts_stop = f "ts_stop";
+        tl_stop = f "tl_stop";
+        y1a = fs "y1a";
+        y1b = fs "y1b";
+      }
+
+let y0 i dt = arr dt [| 2 |] i.y0v
+let ts i dt = AC.linspace ~num:5 ~dtype:dt 0.0 i.ts_stop
+let tl i dt = AC.linspace ~num:4 ~dtype:dt 0.0 i.tl_stop
+let kk i dt = arr dt [||] [| i.kv |]
 let decay y _ _ = TU.Leaf (UF.negative (unleaf y))
 
 let scaled y _ = function
@@ -34,11 +71,8 @@ let osc y _ _ =
   | TU.Tuple [ x; v ] -> TU.Tuple [ v; leaf (UF.negative (unleaf x)) ]
   | _ -> failwith "osc"
 
-let y1 dt =
-  TU.Tuple
-    [
-      leaf (arr dt [| 2 |] [| 1.0; 0.0 |]); leaf (arr dt [| 2 |] [| 0.0; 1.0 |]);
-    ]
+let y1 i dt =
+  TU.Tuple [ leaf (arr dt [| 2 |] i.y1a); leaf (arr dt [| 2 |] i.y1b) ]
 
 let ode ?rtol ?atol ?mxstep ?hmax f y t args =
   Ode.odeint ?rtol ?atol ?mxstep ?hmax f y t args
@@ -47,13 +81,13 @@ let sum_ode f t args = function
   | y :: rest -> R.sum (unleaf (ode f (leaf y) t (args rest)))
   | [] -> failwith "arity"
 
-let value_cases dt =
-  let y0 = y0 dt and ts = ts dt and k = kk dt and tl = tl dt in
+let value_cases i dt =
+  let y0 = y0 i dt and ts = ts i dt and k = kk i dt and tl = tl i dt in
   [
     ("decay", fun () -> leaves (ode decay (leaf y0) ts []));
     ("scaled", fun () -> leaves (ode scaled (leaf y0) ts [ k ]));
     ("forced", fun () -> leaves (ode forced (leaf y0) tl [ k ]));
-    ("osc", fun () -> leaves (ode osc (y1 dt) tl []));
+    ("osc", fun () -> leaves (ode osc (y1 i dt) tl []));
     ( "tol",
       fun () -> leaves (ode ~rtol:1e-3 ~atol:1e-4 forced (leaf y0) tl [ k ]) );
     ( "mxstep",
@@ -98,7 +132,7 @@ let value_cases dt =
                 | TU.Tuple [ x; _ ] -> R.sum (unleaf x)
                 | _ -> failwith "osc")
             | _ -> failwith "arity")
-          (leaves (y1 dt)) );
+          (leaves (y1 i dt)) );
     ( "int_t",
       fun () ->
         leaves
@@ -131,9 +165,9 @@ let traced dt =
   ]
   |> List.map (fun (n, f) -> (n ^ "_" ^ dt, f))
 
-let value_cases =
+let value_cases i =
   let tag dname dt =
-    List.map (fun (n, f) -> (n ^ "_" ^ dname, f)) (value_cases dt)
+    List.map (fun (n, f) -> (n ^ "_" ^ dname, f)) (value_cases i dt)
   in
   fun id ->
     match List.assoc_opt id (tag "f32" D.F32) with
@@ -254,7 +288,7 @@ let check_row ~suite row () =
             (text (Ojax.Stablehlo.Emit.emit_jax_text ~name:"_lambda")))
   | _ -> (
       let got =
-        match value_cases id with
+        match value_cases (inputs_of row) id with
         | None -> Error "no_binding"
         | Some f -> (
             try Ok (List.map out_text (f ())) with e -> Error (error_detail e))

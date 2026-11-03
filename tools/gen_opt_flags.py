@@ -1,4 +1,5 @@
 import argparse
+import seeded_inputs as si
 import json
 import os
 import subprocess
@@ -25,10 +26,16 @@ OPS = ["exp", "tanh", "log_abs", "expm1", "log1p_abs", "sin", "cos", "logistic",
 
 
 def vector():
+    if si.seeded():
+        rng = np.random.default_rng([si.SEED[0], 32])
+        return (rng.integers(-2048, 2049, 4097) / 256.0).astype(np.float32)
     return (np.arange(4097, dtype=np.float64) / 256.0 - 8.0).astype(np.float32)
 
 
 def matrix():
+    if si.seeded():
+        rng = np.random.default_rng([si.SEED[0], 33])
+        return (rng.integers(-8, 9, 4096) / 8.0).astype(np.float32).reshape(64, 64)
     return ((np.arange(4096, dtype=np.float64) % 17) / 8.0 - 1.0).astype(np.float32).reshape(64, 64)
 
 
@@ -93,7 +100,7 @@ def main():
     parser.add_argument("--flag", default=None)
     parser.add_argument("--x64", type=int, default=0)
     parser.add_argument("--out", default=None)
-    args = parser.parse_args()
+    args = si.parse(parser)
     if args.flag:
         run_flag(args.flag, bool(args.x64), args.out)
         return
@@ -107,7 +114,7 @@ def main():
         for flag in FLAGS:
             part = os.path.join(base, f"{tag}.{flag}.part.json")
             subprocess.run([sys.executable, os.path.abspath(__file__), "--flag", flag, "--x64", str(int(x64)),
-                            "--out", part], check=True)
+                            "--out", part, "--seed", str(args.seed)], check=True)
             with open(part, encoding="utf-8") as fh:
                 rows.extend(json.load(fh))
             os.remove(part)
@@ -120,8 +127,11 @@ def main():
             row.update({"id": f"config_{name}_{value}", "flag": "config", "op": name, "mode": value,
                         "warnings": []})
             rows.append(row)
+        doc = {"jax": jax.__version__, "x64": x64, "rows": rows}
+        if si.seeded():
+            doc["inputs"] = {"vector": [float(v) for v in vector()], "matrix": [float(v) for v in matrix().reshape(-1)]}
         with open(os.path.join(base, tag + ".json"), "w", encoding="utf-8") as fh:
-            json.dump({"jax": jax.__version__, "x64": x64, "rows": rows}, fh, indent=1, sort_keys=True)
+            json.dump(doc, fh, indent=1, sort_keys=True)
         sys.stdout.write(f"opt_flags {tag} {len(rows)} rows\n")
 
 

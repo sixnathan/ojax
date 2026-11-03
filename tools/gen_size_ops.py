@@ -22,9 +22,30 @@ PY_VERSION = "3.13.5"
 JAX_VERSION = "0.10.2"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_SEED = 20261103
 
 
-def inputs():
+def redraw(name, a, seed):
+    rng = np.random.default_rng([seed, sum(map(ord, name))])
+    if a.dtype == np.bool_:
+        return rng.random(a.shape) < 0.5
+    if a.dtype.kind == "i":
+        return rng.integers(-3, 8, a.shape).astype(a.dtype)
+    vals = rng.integers(-6, 13, a.shape).astype(np.float32) / np.float32(2)
+    if np.isnan(a).any():
+        vals = np.where(rng.random(a.shape) < 0.25, np.float32(np.nan), vals)
+        vals = np.where(vals == 0, np.float32(-0.0), vals).astype(np.float32)
+    return vals.astype(a.dtype)
+
+
+def inputs(seed=DEFAULT_SEED):
+    table = fixed_inputs()
+    if seed == DEFAULT_SEED:
+        return table
+    return {k: redraw(k, v, seed) for k, v in table.items()}
+
+
+def fixed_inputs():
     a9 = np.array([3.0, 1.0, 2.0, 3.0, 0.0, -1.0, 1.0, 5.0, 0.0], np.float32)
     n9 = np.array([3.0, np.nan, 2.0, 3.0, -0.0, np.nan, 1.0, 0.0, 2.0], np.float32)
     b6 = np.array([1.0, 7.0, 2.0, 9.0, 0.0, 3.0], np.float32)
@@ -84,10 +105,10 @@ def out_row(v):
     return {"dtype": str(h.dtype), "shape": list(h.shape), "hex": h.tobytes().hex()}
 
 
-def run(x64):
+def run(x64, seed=DEFAULT_SEED):
     jax.config.update("jax_enable_x64", x64)
     jax.clear_caches()
-    table = inputs()
+    table = inputs(seed)
     rows = []
     for name, fn, arg_names in CASES:
         args = [table[k] for k in arg_names]
@@ -115,10 +136,11 @@ def run(x64):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=os.path.join(ROOT, "goldens", "size_ops"))
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args()
     if platform.python_version() != PY_VERSION or jax.__version__ != JAX_VERSION:
         raise SystemExit("needs python " + PY_VERSION + " and jax " + JAX_VERSION)
-    rows = run(False) + run(True)
+    rows = run(False, args.seed) + run(True, args.seed)
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "cases.jsonl"), "w", encoding="utf-8") as fh:
         for r in rows:

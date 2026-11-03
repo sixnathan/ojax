@@ -1452,7 +1452,12 @@ let () =
      fun id body ->
        let { differentiated; cfg; _ } = Hashtbl.find remats id in
        remat_id ~cfg ~differentiated body);
-  Interpreters.Batching.custom_call_batch := remat_vmap;
+  (let previous = !Interpreters.Batching.custom_call_batch in
+   Interpreters.Batching.custom_call_batch :=
+     fun id axis_size vals bdims ->
+       match remat_vmap id axis_size vals bdims with
+       | Some r -> Some r
+       | None -> previous id axis_size vals bdims);
   Partial_eval.custom_call_rule := remat_partial_eval;
   Ad.custom_call_transpose := remat_transpose
 

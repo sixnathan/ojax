@@ -2484,6 +2484,17 @@ let batch_jaxpr_axes axis_size (c : closed_jaxpr) (avals : aval list) bdims =
   in
   (batched, !out_batched)
 
+let () =
+  let previous = !custom_call_batch in
+  custom_call_batch :=
+    fun id axis_size vals bdims ->
+      match
+        Remat_opt.batch ~batch_jaxpr:batch_jaxpr_axes ~move:move_batch_axis id
+          axis_size vals bdims
+      with
+      | Some r -> Some r
+      | None -> previous id axis_size vals bdims
+
 let while_batch axis_size ~cond_nconsts ~body_nconsts (cond : closed_jaxpr)
     (body : closed_jaxpr) vals bdims =
   let split l =

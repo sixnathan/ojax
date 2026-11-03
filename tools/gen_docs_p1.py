@@ -247,9 +247,106 @@ def vmap_rows(x64):
     return rows
 
 
+def remat_fns(kind, opt):
+    x, y, m = inputs()
+    c = jnp.asarray(np.array([1.5, -0.5, 2.0]), dtype=fdt())
+    if kind == "sin":
+        def f(a):
+            return jnp.sin(a)
+
+        def fwd(a):
+            return jnp.sin(a), jnp.cos(a)
+
+        def bwd(r, g):
+            return (g * r,)
+    elif kind == "square":
+        def f(a):
+            return a * a
+
+        def fwd(a):
+            return a * a, a
+
+        def bwd(r, g):
+            return (2.0 * r * g,)
+    elif kind == "two":
+        def f(a, b):
+            return jnp.sin(a) * b
+
+        def fwd(a, b):
+            return jnp.sin(a) * b, (jnp.cos(a), jnp.sin(a), b)
+
+        def bwd(r, g):
+            return (g * r[0] * r[2], g * r[1])
+    elif kind == "const":
+        def f(a):
+            return jnp.sin(a) * c
+
+        def fwd(a):
+            return jnp.sin(a) * c, jnp.cos(a) * c
+
+        def bwd(r, g):
+            return (g * r,)
+    else:
+        raise KeyError(kind)
+    h = jax.custom_vjp(f)
+    h.defvjp(fwd, bwd, optimize_remat=opt)
+    return h
+
+
+REMAT_KINDS = ["sin", "square", "two", "const"]
+REMAT_MODES = ["grad_value", "grad_jaxpr", "linearize_jaxpr", "vmap_grad_jaxpr",
+               "vmap_grad_value", "jit_grad_lowered", "vjp_jaxpr", "call_jaxpr"]
+
+
+def remat_thunk(kind, opt, mode):
+    x, y, m = inputs()
+    h = remat_fns(kind, opt)
+    args = [x, y] if kind == "two" else [x]
+    argnums = tuple(range(len(args)))
+
+    def loss(*a):
+        return jnp.sum(h(*a))
+
+    g = jax.grad(loss, argnums=argnums)
+    if mode == "grad_value":
+        return lambda: text_of(g(*args))
+    if mode == "grad_jaxpr":
+        return lambda: str(jax.make_jaxpr(g)(*args))
+    if mode == "linearize_jaxpr":
+        return lambda: str(jax.make_jaxpr(lambda *a: jax.linearize(h, *a)[0])(*args))
+    if mode == "vjp_jaxpr":
+        return lambda: str(jax.make_jaxpr(lambda *a: jax.vjp(h, *a)[0])(*args))
+    if mode == "call_jaxpr":
+        return lambda: str(jax.make_jaxpr(h)(*args))
+    margs = [jnp.stack([a, a * 2.0]) for a in args]
+    if mode == "vmap_grad_jaxpr":
+        return lambda: str(jax.make_jaxpr(jax.vmap(g))(*margs))
+    if mode == "vmap_grad_value":
+        return lambda: text_of(jax.vmap(g)(*margs))
+    if mode == "jit_grad_lowered":
+        return lambda: jax.jit(g).lower(*args).as_text()
+    raise KeyError(mode)
+
+
+def remat_rows(x64):
+    rows = []
+    for kind in REMAT_KINDS:
+        for opt in [False, True]:
+            row = {"id": f"remat_{kind}_{opt}", "x64": x64, "group": "remat",
+                   "case": kind, "opt": opt}
+            row.update(BASE)
+            for mode in REMAT_MODES:
+                try:
+                    row[mode] = remat_thunk(kind, opt, mode)()
+                except Exception as e:
+                    row[mode] = "raise " + type(e).__name__ + ": " + str(e)
+            rows.append(row)
+    return rows
+
+
 def run(x64):
     jax.config.update("jax_enable_x64", x64)
-    return residual_rows(x64) + vmap_rows(x64)
+    return residual_rows(x64) + vmap_rows(x64) + remat_rows(x64)
 
 
 def main():

@@ -256,6 +256,85 @@ let inexpressible_proof =
    argument, so a custom_vmap function with no def_vmap rule cannot be built \
    in OCaml; JAX raises AttributeError only when such a function is called"
 
+module CD = Ojax.Custom_derivatives
+module Ad = Ojax.Interpreters.Ad
+
+let remat_fn kind opt =
+  let c =
+    T.Concrete
+      (Ojax.Ndarray.of_floats (float_dt ()) [| 3 |] [| 1.5; -0.5; 2.0 |])
+  in
+  let primal, fwd, bwd =
+    match kind with
+    | "sin" ->
+        ( one F.sin,
+          (function [ a ] -> ([ F.sin a ], [ F.cos a ]) | _ -> assert false),
+          fun r g -> [ F.multiply (List.hd g) (List.hd r) ] )
+    | "square" ->
+        ( one (fun a -> F.multiply a a),
+          (function [ a ] -> ([ F.multiply a a ], [ a ]) | _ -> assert false),
+          fun r g ->
+            [ F.multiply (F.multiply (pyf 2.0) (List.hd r)) (List.hd g) ] )
+    | "two" ->
+        ( two (fun a b -> F.multiply (F.sin a) b),
+          (function
+          | [ a; b ] -> ([ F.multiply (F.sin a) b ], [ F.cos a; F.sin a; b ])
+          | _ -> assert false),
+          fun r g ->
+            let g = List.hd g in
+            [
+              F.multiply (F.multiply g (arg r 0)) (arg r 2);
+              F.multiply g (arg r 1);
+            ] )
+    | "const" ->
+        ( one (fun a -> F.multiply (F.sin a) c),
+          (function
+          | [ a ] -> ([ F.multiply (F.sin a) c ], [ F.multiply (F.cos a) c ])
+          | _ -> assert false),
+          fun r g -> [ F.multiply (List.hd g) (List.hd r) ] )
+    | k -> failwith ("docs_p1: remat kind " ^ k)
+  in
+  CD.custom_vjp ~name:"f" ~optimize_remat:opt primal ~fwd ~bwd
+
+let remat_mode kind opt mode =
+  let x = x () and y = y () in
+  let h = remat_fn kind opt in
+  let args = if kind = "two" then [ x; y ] else [ x ] in
+  let g xs = Ad.grad (fun a -> Ojax.Numpy.Reductions.sum (List.hd (h a))) xs in
+  let jaxpr f args =
+    Ojax.Pretty_printer.closed_jaxpr_to_jax_string
+      (Ojax.Jaxpr.make_jaxpr (List.map Ojax.Core.get_aval args) f)
+  in
+  let margs = List.map (fun a -> NL.stack [ a; F.multiply a (pyf 2.0) ]) args in
+  let vg = vmapped g (List.map (fun _ -> Some 0) args) in
+  match mode with
+  | "grad_value" -> text_of (g args)
+  | "grad_jaxpr" -> jaxpr g args
+  | "linearize_jaxpr" -> jaxpr (fun a -> fst (Ad.linearize h a)) args
+  | "vjp_jaxpr" -> jaxpr (fun a -> fst (Ad.vjp h a)) args
+  | "call_jaxpr" -> jaxpr h args
+  | "vmap_grad_jaxpr" -> jaxpr vg margs
+  | "vmap_grad_value" -> text_of (vg margs)
+  | "jit_grad_lowered" ->
+      let wrapped =
+        Ojax.Stages.jit ~name:"loss" (fun xs ->
+            TR.Tuple (leaves (g (TR.tree_leaves (TR.Tuple xs)))))
+      in
+      Ojax.Stages.as_text (wrapped.Ojax.Stages.wrapped_lower (leaves args))
+  | m -> failwith ("docs_p1: remat mode " ^ m)
+
+let remat_modes =
+  [
+    "grad_value";
+    "grad_jaxpr";
+    "linearize_jaxpr";
+    "vmap_grad_jaxpr";
+    "vmap_grad_value";
+    "jit_grad_lowered";
+    "vjp_jaxpr";
+    "call_jaxpr";
+  ]
+
 let read_rows path =
   let ic = open_in path in
   let rec loop acc =
@@ -312,6 +391,16 @@ let check_row ~suite row () =
         ~defect:(raw <> ours && strip_frames raw = ours)
         raw ours;
       ignore (frames_proof, inexpressible_proof)
+  | "remat" ->
+      let opt = U.to_bool (U.member "opt" row) in
+      List.iter
+        (fun mode ->
+          Ojax.Api.clear_caches ();
+          log
+            ~name:(id ^ ":" ^ mode)
+            (Option.value (str_opt row mode) ~default:"")
+            (protect (fun () -> remat_mode case opt mode)))
+        remat_modes
   | _ ->
       let field k = Option.value (str_opt row k) ~default:"" in
       let log ?name jax ojax =

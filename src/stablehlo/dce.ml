@@ -156,6 +156,16 @@ and rule used_outs (e : eqn) =
         )
     | Custom_jvp_call id when Core.shard_rule id <> None ->
         shard_map_rule e used_outs id (Option.get (Core.shard_rule id))
+    | Custom_jvp_call id when Remat_opt.is_remat_opt id -> (
+        match
+          Remat_opt.dce
+            ~dce_closed:(fun c used instantiate ->
+              dce_closed c used ~instantiate)
+            id used_outs
+        with
+        | Some (Some (id', used_ins)) ->
+            (used_ins, with_prim (Custom_jvp_call id') used_ins)
+        | _ -> (everything, Some e))
     | Custom_jvp_call id when Hashtbl.mem Jaxpr.opaque_dce_calls id ->
         (everything, Some e)
     | (Custom_jvp_call id | Custom_vjp_call id)

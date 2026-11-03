@@ -347,13 +347,13 @@ let check_nans enabled name error outs =
 
 let discharge enabled error template leaves =
   let new_error = with_leaves template leaves in
-  let discharged =
+  let discharged, _ =
     List.fold_left
-      (fun acc e ->
+      (fun (acc, recharged) e ->
         if List.mem e.eff.category enabled then
-          update_error acc e.pred e.code [] e.payload e.eff
-        else acc)
-      error new_error.entries
+          (update_error acc e.pred e.code [] e.payload e.eff, recharged)
+        else (acc, update_error recharged e.pred e.code [] e.payload e.eff))
+      (error, init_error) new_error.entries
   in
   { discharged with metadata = new_error.metadata @ discharged.metadata }
 

@@ -258,6 +258,106 @@ let tree_broadcast prefix full =
   in
   go prefix full
 
+let prefix_error ~name ~leaf_type prefix full =
+  let type_name = function
+    | Leaf _ -> leaf_type
+    | Null -> "<class 'NoneType'>"
+    | List _ -> "<class 'list'>"
+    | Tuple _ -> "<class 'tuple'>"
+    | Dict _ -> "<class 'dict'>"
+    | Custom (n, _, _) -> "<class '" ^ n ^ "'>"
+  in
+  let at path = "    " ^ name ^ keystr path ^ "\n" in
+  let children = function
+    | List l | Tuple l | Custom (_, _, l) -> l
+    | Dict kvs -> List.map snd (sort_dict kvs)
+    | Leaf _ | Null -> []
+  in
+  let rec go path p f =
+    match p with
+    | Leaf _ -> None
+    | _ when type_name p <> type_name f ->
+        Some
+          ("pytree structure error: different types at key path\n" ^ at path
+         ^ "At that key path, the prefix pytree " ^ name
+         ^ " has a subtree of type\n    " ^ type_name p
+         ^ "\n\
+            but at the same key path the full pytree has a subtree of \
+            different type\n\
+           \    " ^ type_name f ^ ".")
+    | (List a | Tuple a) when List.length a <> List.length (children f) ->
+        let ty = match p with List _ -> "list" | _ -> "tuple" in
+        Some
+          (Printf.sprintf
+             "pytree structure error: different lengths of %s at key path\n\
+              %sAt that key path, the prefix pytree %s has a subtree of type \
+              %s of length %d, but the full pytree has a subtree of the same \
+              type but of length %d."
+             ty (at path) name ty (List.length a)
+             (List.length (children f)))
+    | Dict a ->
+        let b = match f with Dict b -> b | _ -> [] in
+        let ka = List.map fst (sort_dict a)
+        and kb = List.map fst (sort_dict b) in
+        if List.length ka <> List.length kb then
+          let diff =
+            List.filter (fun k -> not (List.mem k kb)) ka
+            @ List.filter (fun k -> not (List.mem k ka)) kb
+          in
+          Some
+            (Printf.sprintf
+               "pytree structure error: different numbers of pytree children \
+                at key path\n\
+                %sAt that key path, the prefix pytree %s has a subtree of type\n\
+               \    <class 'dict'>\n\
+                with %d child keys\n\
+               \    %s\n\
+                but at the same key path the full pytree has a subtree of the \
+                same type but with %d child keys\n\
+               \    %s\n\
+                so the symmetric difference on key sets is\n\
+               \    %s"
+               (at path) name (List.length ka) (String.concat " " ka)
+               (List.length kb) (String.concat " " kb) (String.concat " " diff))
+        else if ka <> kb then
+          let meta l =
+            match l with
+            | [ k ] -> "('" ^ k ^ "',)"
+            | l ->
+                "("
+                ^ String.concat ", " (List.map (fun k -> "'" ^ k ^ "'") l)
+                ^ ")"
+          in
+          Some
+            (Printf.sprintf
+               "pytree structure error: different pytree metadata at key path\n\
+                %sAt that key path, the prefix pytree %s has a subtree of type\n\
+               \    <class 'dict'>\n\
+                with metadata\n\
+               \    %s\n\
+                but at the same key path the full pytree has a subtree of the \
+                same type but with metadata\n\
+               \    %s\n\
+                so the diff in the metadata at these pytree nodes is\n\
+               \    - %s\n\
+               \    + %s"
+               (at path) name (meta ka) (meta kb) (meta ka) (meta kb))
+        else
+          List.find_map
+            (fun ((k, x), (_, y)) -> go (path @ [ Dict_key k ]) x y)
+            (List.combine (sort_dict a) (sort_dict b))
+    | List a | Tuple a ->
+        List.find_map
+          (fun (i, (x, y)) -> go (path @ [ Sequence_key i ]) x y)
+          (List.mapi (fun i xy -> (i, xy)) (List.combine a (children f)))
+    | Custom (_, _, a) when List.length a = List.length (children f) ->
+        List.find_map
+          (fun (i, (x, y)) -> go (path @ [ Sequence_key i ]) x y)
+          (List.mapi (fun i xy -> (i, xy)) (List.combine a (children f)))
+    | Null | Custom _ -> None
+  in
+  go [] prefix full
+
 let rec count_leaves = function
   | Leaf_def -> 1
   | Null_def -> 0
@@ -437,6 +537,9 @@ let rec num_nodes = function
       List.fold_left (fun n d -> n + num_nodes d) 1 defs
   | Dict_def kvs -> List.fold_left (fun n (_, d) -> n + num_nodes d) 1 kvs
 
+let namedtuple_types : (string, unit) Hashtbl.t = Hashtbl.create 8
+let register_namedtuple name = Hashtbl.replace namedtuple_types name ()
+
 let rec treedef_body = function
   | Leaf_def -> "*"
   | Null_def -> "None"
@@ -449,6 +552,10 @@ let rec treedef_body = function
       ^ String.concat ", "
           (List.map (fun (k, d) -> "'" ^ k ^ "': " ^ treedef_body d) kvs)
       ^ "}"
+  | Custom_def (name, _, defs) when Hashtbl.mem namedtuple_types name ->
+      "CustomNode(namedtuple[" ^ name ^ "], ["
+      ^ String.concat ", " (List.map treedef_body defs)
+      ^ "])"
   | Custom_def (name, aux, defs) ->
       "CustomNode(" ^ name ^ "[" ^ aux ^ "], ["
       ^ String.concat ", " (List.map treedef_body defs)

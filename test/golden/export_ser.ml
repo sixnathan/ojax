@@ -232,6 +232,16 @@ let rows_of row =
       ( id ^ ":reserialize",
         to_hex bytes,
         fun () -> guarded (fun () -> to_hex (ES.serialize (Lazy.force e))) );
+      ( id ^ ":deterministic",
+        Printf.sprintf "%b %b"
+          (U.to_bool (U.member "deterministic" row))
+          (U.to_bool (U.member "reserialized_same" row)),
+        fun () ->
+          guarded (fun () ->
+              let s1 = ES.serialize (Lazy.force e) in
+              Printf.sprintf "%b %b"
+                (s1 = ES.serialize (Lazy.force e))
+                (s1 = bytes)) );
     ]
   in
   let vjp =
@@ -244,6 +254,12 @@ let rows_of row =
             fun () ->
               guarded (fun () ->
                   to_hex (ES.serialize ~vjp_order:1 (ES.deserialize b))) );
+          ( id ^ ":reserialize_vjp1_same",
+            string_of_bool (U.to_bool (U.member "reserialized_vjp1_same" row)),
+            fun () ->
+              guarded (fun () ->
+                  string_of_bool
+                    (ES.serialize ~vjp_order:1 (ES.deserialize b) = b)) );
           ( id ^ ":grad",
             expected_call (U.member "grad" row),
             fun () ->

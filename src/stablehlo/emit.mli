@@ -1,7 +1,7 @@
 type partition = {
   pt_mesh : (string * int) list;
   pt_devices : int array;
-  pt_in : string list array list;
+  pt_in : string list array option list;
   pt_out : string list array option list;
 }
 

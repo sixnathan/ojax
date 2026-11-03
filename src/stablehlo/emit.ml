@@ -2810,7 +2810,7 @@ let emit_ffi_call ctx (eqn : eqn) in_ids (c : ffi_call) =
 type partition = {
   pt_mesh : (string * int) list;
   pt_devices : int array;
-  pt_in : string list array list;
+  pt_in : string list array option list;
   pt_out : string list array option list;
 }
 
@@ -5487,7 +5487,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   in
   let in_specs =
     match partition with
-    | Some p -> List.map Option.some p.pt_in
+    | Some p -> p.pt_in
     | None -> List.map (fun _ -> None) arg_binders
   in
   let attribute = function

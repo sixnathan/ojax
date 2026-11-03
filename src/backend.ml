@@ -789,7 +789,7 @@ let compile_plan (cj : closed_jaxpr) plan =
                 {
                   pt_mesh = plan.mesh;
                   pt_devices = plan.devices;
-                  pt_in = plan.arg_specs;
+                  pt_in = List.map Option.some plan.arg_specs;
                   pt_out = plan.out_specs;
                 }
                 cj
@@ -1109,7 +1109,13 @@ let placed_text ~name ?(out_specs = []) cj args =
            {
              pt_mesh = plan.mesh;
              pt_devices = plan.devices;
-             pt_in = plan.arg_specs;
+             pt_in =
+               List.map2
+                 (fun arg spec ->
+                   match arg with
+                   | Device (PB.Placed _) -> Some spec
+                   | _ -> None)
+                 args plan.arg_specs;
              pt_out = out_specs;
            }
            cj)

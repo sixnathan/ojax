@@ -172,20 +172,24 @@ let rec export_internal ~fun_name ~platforms ~disabled_checks ~in_tree ~out_tree
     match platforms with Some p -> p | None -> [ default_export_platform () ]
   in
   let lowered = Stages.lower f avals in
+  let result_names, out_tree =
+    match out_tree with
+    | Some t ->
+        let d = t () in
+        (Some (Stages.result_names_of_tree d), d)
+    | None ->
+        ( None,
+          T.Tuple_def (List.map (fun _ -> T.Leaf_def) lowered.Stages.out_avals)
+        )
+  in
   let { Stablehlo.Emit.text; kept } =
-    Stablehlo.Emit.emit_export_text ~name:fun_name ~platforms
+    Stablehlo.Emit.emit_export_text ~name:fun_name ~platforms ?result_names
       ~uses_shape_polymorphism:(List.length platforms > 1)
       lowered.Stages.closed
   in
   if Stablehlo.Mlir_names.mentions_host_callback text then
     failwith "serialization of host_callbacks is not yet implemented";
   check_module text disabled_checks;
-  let out_tree =
-    match out_tree with
-    | Some t -> t ()
-    | None ->
-        T.Tuple_def (List.map (fun _ -> T.Leaf_def) lowered.Stages.out_avals)
-  in
   let get_vjp (primal : exported) =
     let tangent_avals =
       List.map (fun (a : aval) -> { a with weak_type = false }) primal.out_avals
@@ -277,6 +281,16 @@ let register_pytree_node_serialization ~serialized_name ~serialize_auxdata
   Hashtbl.replace deserialization_registry serialized_name
     (node_type, deserialize_auxdata, from_children)
 
+let custom_serialization node_type =
+  Hashtbl.find_opt serialization_registry node_type
+
+let custom_deserialization serialized_name =
+  match Hashtbl.find_opt deserialization_registry serialized_name with
+  | None -> None
+  | Some (_, deserialize_auxdata, from_children) ->
+      Some
+        (fun aux children -> from_children (deserialize_auxdata aux) children)
+
 let json_quote s =
   let b = Buffer.create (String.length s + 2) in
   Buffer.add_char b '"';
@@ -343,7 +357,8 @@ let register_namedtuple_serialization ~serialized_name ~fields node_type =
   in
   register_pytree_node_serialization ~serialized_name
     ~serialize_auxdata:(fun _ -> json_of_strings fields)
-    ~deserialize_auxdata:Fun.id ~from_children node_type
+    ~deserialize_auxdata:Fun.id ~from_children node_type;
+  T.register_namedtuple node_type
 
 let add_field b s =
   Buffer.add_string b (string_of_int (String.length s));

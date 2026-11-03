@@ -49,6 +49,10 @@ val is_tree_node : 'a t -> bool
 val all_leaves : 'a t list -> bool
 val tree_broadcast : 'a t -> 'b t -> 'a t
 val count_leaves : treedef -> int
+
+val prefix_error :
+  name:string -> leaf_type:string -> 'a t -> 'b t -> string option
+
 val tree_transpose : treedef -> treedef -> 'a t -> 'a t
 val tree_broadcast_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'b t -> 'a t
 val tree_flatten_is_leaf : is_leaf:('a t -> bool) -> 'a t -> 'a t list * treedef
@@ -91,6 +95,7 @@ type py_tree_def = treedef
 
 val num_nodes : treedef -> int
 val treedef_to_string : treedef -> string
+val register_namedtuple : string -> unit
 
 type registry
 

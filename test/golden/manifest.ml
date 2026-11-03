@@ -5475,6 +5475,8 @@ let () =
         @ Keys_arrays.suites ~goldens_root
         @ Audit_holes.suites ~goldens_root
         @ Vjp_int.suites ~goldens_root
+        @ Export_ser.suites ~goldens_root
+        @ Shape_poly_exprs.suites ~goldens_root
         @ Index_fuzz.suites ~goldens_root ~nd_of_npz:nd_of_npz_any
             ~string_of_dtype ~concrete
         @ Apply_transforms.suites ~goldens_root ~nd_of_npz:nd_of_npz_any

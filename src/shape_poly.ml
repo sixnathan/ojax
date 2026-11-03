@@ -51,7 +51,8 @@ and decision = {
 type spec = { shape : dim array; dtype : Dtype.t }
 
 let floordiv a b =
-  if b = 0 then raise Division_by_zero
+  if b = 0 then
+    raise (Py_exn.Zero_division_error "integer division or modulo by zero")
   else
     let q = a / b and r = a mod b in
     if r <> 0 && r < 0 <> (b < 0) then q - 1 else q
@@ -431,8 +432,17 @@ let divmod a b =
   | Sym e, _ -> divmod_expr e b
   | Const _, Sym d -> divmod_expr (ensure_poly a "divmod" d.scope) b
 
-let floordiv_dim a b = fst (divmod a b)
-let mod_dim a b = snd (divmod a b)
+let floordiv_dim a b =
+  match (a, b) with
+  | Const _, Const 0 ->
+      raise (Py_exn.Zero_division_error "integer division or modulo by zero")
+  | _ -> fst (divmod a b)
+
+let mod_dim a b =
+  match (a, b) with
+  | Const _, Const 0 ->
+      raise (Py_exn.Zero_division_error "integer modulo by zero")
+  | _ -> snd (divmod a b)
 
 let new_decision scope =
   { dscope = scope; processed = []; term_bounds = []; expr_constraints = [] }
@@ -875,23 +885,29 @@ let geq_decision e1 e2 cmp_str =
                 "Symbolic dimension comparison %s is inconclusive.%s" cmp_str
                 describe))
 
-let ge a b =
+let ge_py a b =
   geq_decision a b
     (Printf.sprintf "'%s' >= '%s'" (dim_to_string a) (dim_to_string b))
 
-let le a b =
+let le_py a b =
   geq_decision b a
     (Printf.sprintf "'%s' <= '%s'" (dim_to_string a) (dim_to_string b))
 
-let gt a b =
+let gt_py a b =
   not
     (geq_decision b a
        (Printf.sprintf "'%s' > '%s'" (dim_to_string a) (dim_to_string b)))
 
-let lt a b =
+let lt_py a b =
   not
     (geq_decision a b
        (Printf.sprintf "'%s' < '%s'" (dim_to_string a) (dim_to_string b)))
+
+let reflected a b = match (a, b) with Const _, Sym _ -> true | _ -> false
+let ge a b = if reflected a b then le_py b a else ge_py a b
+let le a b = if reflected a b then ge_py b a else le_py a b
+let gt a b = if reflected a b then lt_py b a else gt_py a b
+let lt a b = if reflected a b then gt_py b a else lt_py a b
 
 let equal a b =
   match (a, b) with
@@ -1076,7 +1092,26 @@ let tokenize s =
   in
   go 0 []
 
-let py_repr s = "'" ^ s ^ "'"
+let py_repr s =
+  let quote =
+    if String.contains s '\'' && not (String.contains s '"') then '"' else '\''
+  in
+  let b = Buffer.create (String.length s + 2) in
+  Buffer.add_char b quote;
+  String.iter
+    (fun c ->
+      match c with
+      | '\\' -> Buffer.add_string b "\\\\"
+      | '\n' -> Buffer.add_string b "\\n"
+      | '\t' -> Buffer.add_string b "\\t"
+      | '\r' -> Buffer.add_string b "\\r"
+      | c when c = quote ->
+          Buffer.add_char b '\\';
+          Buffer.add_char b c
+      | c -> Buffer.add_char b c)
+    s;
+  Buffer.add_char b quote;
+  Buffer.contents b
 
 let like_repr like =
   let item = function None -> "None" | Some k -> string_of_int k in
@@ -1416,6 +1451,12 @@ let symbolic_args_specs ?constraints ?scope args shapes_specs =
     | Tree_util.Tuple _, Tree_util.List l -> Tree_util.Tuple l
     | _ -> shapes_specs
   in
+  (match
+     Tree_util.prefix_error ~name:"export.symbolic_args_specs shapes_specs"
+       ~leaf_type:"<class 'jax._src.api.ShapeDtypeStruct'>" shapes_specs args
+   with
+  | Some m -> raise (Py_exn.Value_error m)
+  | None -> ());
   let specs =
     try Tree_util.tree_broadcast shapes_specs args
     with Invalid_argument m | Failure m ->

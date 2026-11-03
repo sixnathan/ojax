@@ -71,6 +71,11 @@ CASES = [
     ("insert_vector", lambda a, v: jnp.insert(a, -3, v), ["a9", "v2"]),
     ("insert_axis1", lambda a, v: jnp.insert(a, 1, v, axis=1), ["m23", "v2"]),
     ("insert_flat", lambda a, v: jnp.insert(a, 4, v), ["m23", "v7"]),
+    ("sum_dup_axis", lambda x: jnp.sum(x, axis=(-1, 1)), ["m23"]),
+    ("max_dup_axis", lambda x: jnp.max(x, axis=(0, -2)), ["m23"]),
+    ("softmax_dup_axis_bool", lambda x: jax.scipy.special.softmax(x, axis=(0, 0)), ["mask23"]),
+    ("log_softmax_dup_axis_bool", lambda x: jax.scipy.special.log_softmax(x, axis=(1, -1)), ["mask23"]),
+    ("softmax_dup_axis", lambda x: jax.scipy.special.softmax(x, axis=(-2, 0)), ["m23"]),
 ]
 
 

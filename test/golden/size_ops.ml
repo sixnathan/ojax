@@ -55,6 +55,20 @@ let cases =
     ("insert_vector", two (fun a v -> E.insert a (-3) v));
     ("insert_axis1", two (fun a v -> E.insert ~axis:1 a 1 v));
     ("insert_flat", two (fun a v -> E.insert a 4 v));
+    ("sum_dup_axis", one (Ojax.Numpy.Reductions.sum ~axis:[| -1; 1 |]));
+    ("max_dup_axis", one (Ojax.Numpy.Reductions.max ~axis:[| 0; -2 |]));
+    ( "softmax_dup_axis_bool",
+      one
+        (Ojax.Scipy.Special.softmax
+           ~axis:(Ojax.Numpy.Reductions.Axes [| 0; 0 |])) );
+    ( "log_softmax_dup_axis_bool",
+      one
+        (Ojax.Scipy.Special.log_softmax
+           ~axis:(Ojax.Numpy.Reductions.Axes [| 1; -1 |])) );
+    ( "softmax_dup_axis",
+      one
+        (Ojax.Scipy.Special.softmax
+           ~axis:(Ojax.Numpy.Reductions.Axes [| -2; 0 |])) );
   ]
 
 let unhex s =

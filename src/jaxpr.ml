@@ -86,6 +86,10 @@ let typecheck_jaxpr (jx : jaxpr) : unit =
 let in_eqn_eval = ref false
 let eval_transparent = ref false
 
+let eqn_override :
+    (eqn -> value list -> (unit -> value list) -> value list) option ref =
+  ref None
+
 let rec eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
   let env : (int, value) Hashtbl.t = Hashtbl.create 16 in
   let read = function
@@ -100,7 +104,7 @@ let rec eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
       let in_vals = List.map read e.inputs in
       let prev = !in_eqn_eval in
       if not !eval_transparent then in_eqn_eval := true;
-      let outs =
+      let default () =
         Fun.protect
           ~finally:(fun () -> in_eqn_eval := prev)
           (fun () ->
@@ -126,6 +130,15 @@ let rec eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
                       (List.map (fun nd -> Concrete nd) c.consts @ in_vals)
                 | _ -> Core.bind e.prim in_vals)
             | _ -> Core.bind e.prim in_vals)
+      in
+      let outs =
+        match !eqn_override with
+        | None -> default ()
+        | Some rule ->
+            eqn_override := None;
+            Fun.protect
+              ~finally:(fun () -> eqn_override := Some rule)
+              (fun () -> rule e in_vals default)
       in
       List.iter2 write e.outs outs)
     jx.eqns;
@@ -386,7 +399,7 @@ let hoist_custom_consts prim (c : closed_jaxpr) args =
       let const_values = List.map (fun nd -> Concrete nd) c.consts in
       let lifted = { c with consts = [] } in
       let drop l = List.filteri (fun i _ -> i >= n) l in
-      let zeros =
+      let zeros () =
         List.map
           (fun nd ->
             Concrete
@@ -399,7 +412,7 @@ let hoist_custom_consts prim (c : closed_jaxpr) args =
           {
             primal = (fun all -> !eval_lifted lifted all);
             fwd = (fun all -> fwd (drop all));
-            bwd = (fun res cts -> zeros @ bwd res cts);
+            bwd = (fun res cts -> zeros () @ bwd res cts);
             fwd_perturbed =
               Option.map
                 (fun fp perturbed all -> fp (drop perturbed) (drop all))
@@ -409,6 +422,9 @@ let hoist_custom_consts prim (c : closed_jaxpr) args =
       let id' = Core.register_custom_rule rule in
       (match Core.custom_names_of id with
       | Some (name, jvp_name) -> Core.register_custom_names id' ~name ~jvp_name
+      | None -> ());
+      (match Hashtbl.find_opt Pretty_printer.custom_bwd_names id with
+      | Some b -> Hashtbl.replace Pretty_printer.custom_bwd_names id' b
       | None -> ());
       Core.note_custom_num_consts id' n;
       ( Custom_vjp_call id',

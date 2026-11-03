@@ -9,30 +9,12 @@ let dtype_of v = (aval v).T.dtype
 let shape_of v = (aval v).T.shape
 let size_of v = Array.fold_left ( * ) 1 (shape_of v)
 
-let cut_points sizes =
-  let rec go acc total = function
-    | [] -> []
-    | [ _ ] -> List.rev acc
-    | s :: rest ->
-        let total = total + s in
-        go (total :: acc) total rest
-  in
-  Array.of_list (go [] 0 sizes)
-
 let unravel_single_dtype sizes shapes flat =
-  let idx = cut_points sizes in
-  let chunks =
-    if Array.length idx = 0 then [ flat ]
-    else LN.split ~axis:0 flat (LN.Indices idx)
-  in
+  let chunks = Lax_api.split flat (Array.of_list sizes) 0 in
   List.map2 (fun chunk shape -> LN.reshape chunk shape) chunks shapes
 
 let unravel_multi sizes shapes from_dtypes flat =
-  let idx = cut_points sizes in
-  let chunks =
-    if Array.length idx = 0 then [ flat ]
-    else LN.split ~axis:0 flat (LN.Indices idx)
-  in
+  let chunks = Lax_api.split flat (Array.of_list sizes) 0 in
   List.map2
     (fun (chunk, shape) dt -> LN.astype (LN.reshape chunk shape) dt)
     (List.combine chunks shapes)
@@ -49,16 +31,18 @@ let ravel_list leaves =
       let all_same = List.for_all (fun d -> d = to_dtype) from_dtypes in
       if all_same then
         let raveled =
-          LN.concatenate ~axis:0
-            (List.map2 (fun e s -> LN.reshape e [| s |]) leaves sizes)
+          Lax_api.concatenate
+            (List.map2 (fun e s -> Lax_api.reshape e [| s |]) leaves sizes)
+            0
         in
         (raveled, unravel_single_dtype sizes shapes)
       else
         let raveled =
-          LN.concatenate ~axis:0
+          Lax_api.concatenate
             (List.map2
                (fun e s -> LN.reshape (LN.astype e to_dtype) [| s |])
                leaves sizes)
+            0
         in
         (raveled, unravel_multi sizes shapes from_dtypes)
 

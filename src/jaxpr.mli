@@ -3,6 +3,10 @@ open Types
 val typecheck_jaxpr : jaxpr -> unit
 val in_eqn_eval : bool ref
 val eval_transparent : bool ref
+
+val eqn_override :
+  (eqn -> value list -> (unit -> value list) -> value list) option ref
+
 val eval_jaxpr : jaxpr -> value list -> value list
 val jaxpr_as_fun : jaxpr -> value list -> value list
 val eval_closed_jaxpr : closed_jaxpr -> value list -> value list

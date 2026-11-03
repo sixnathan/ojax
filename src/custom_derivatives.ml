@@ -117,14 +117,14 @@ let check_bwd_tangent index (input : aval) v =
 let float0_tangent (input : aval) =
   input.dtype = Dtype.Bool || Dtypes.issubdtype input.dtype `Integer
 
-let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f")
-    ?(optimize_remat = false) primal ~fwd ~bwd =
+let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f") ?(fwd_name = "fwd")
+    ?(bwd_name = "bwd") ?(optimize_remat = false) primal ~fwd ~bwd =
   let fwd =
     if optimize_remat then Remat_opt.optimize_remat_fwd primal fwd else fwd
   in
   if nondiff_argnums <> [] then fun args ->
     let kept, diff = split_nondiff nondiff_argnums args in
-    custom_vjp ~name
+    custom_vjp ~name ~fwd_name ~bwd_name
       (fun d -> primal (merge_nondiff nondiff_argnums kept d))
       ~fwd:(fun d -> fwd (merge_nondiff nondiff_argnums kept d))
       ~bwd:(fun res ct -> bwd (kept @ res) ct)
@@ -151,7 +151,9 @@ let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f")
             Core.register_custom_rule
               (Core.Vjp_rule { primal; fwd; bwd; fwd_perturbed = None })
           in
-          Core.register_custom_names id ~name ~jvp_name:"fwd";
+          Core.register_custom_names id ~name ~jvp_name:fwd_name;
+          if bwd_name <> "bwd" then
+            Hashtbl.replace Pretty_printer.custom_bwd_names id bwd_name;
           Hashtbl.replace rules avals id;
           id
     in
@@ -377,5 +379,12 @@ let callback_with_view ~ordered view params host_fun ~result_avals =
   in
   Pretty_printer.register_callback_view id view params;
   fun args -> Core.bind (Custom_vjp_call id) args
+
+let callback_view_id ~ordered view params host_fun ~result_avals =
+  let id =
+    callback_id (Core.Callback_debug { ordered }) host_fun ~result_avals
+  in
+  Pretty_printer.register_callback_view id view params;
+  (id, fun args -> Core.bind (Custom_vjp_call id) args)
 
 let zero_from_primal v = Ad_util.zeros_like_aval (Core.get_aval v)

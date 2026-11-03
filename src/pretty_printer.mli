@@ -17,6 +17,8 @@ val check_context :
 
 val register_call_name : int -> string -> unit
 val custom_num_consts : (eqn -> int option) ref
+val prim_name : primitive -> string
+val custom_bwd_names : (int, string) Hashtbl.t
 
 val custom_call :
   (int -> int option -> aval list -> (string * string * closed_jaxpr) option)

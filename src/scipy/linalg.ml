@@ -1215,7 +1215,10 @@ let tridiagonal_vectors ~key ~base_dtype ~solve_dtype alpha beta eigvals =
       let qt_masked = UF.multiply qt mask_col in
       let big = AC.zeros ~dtype:(dtype ev) [| 2 * k; n |] in
       let start_at = wrapped (2 * k) in
-      let updated = L.dynamic_update_slice big qt_masked [ start_at; zero_i ] in
+      let updated =
+        L.dynamic_update_slice ~allow_negative_indices:false big qt_masked
+          [ start_at; zero_i ]
+      in
       let update_full =
         C.bind1
           (T.Slice

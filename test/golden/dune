@@ -33,6 +33,8 @@
   mesh_one
   docs_p1
   size_ops
+  odeint
+  checkify
   vjp_int
   export_ser
   shape_poly_exprs
@@ -77,6 +79,8 @@
   (source_tree %{project_root}/goldens/prng)
   (source_tree %{project_root}/goldens/keys_arrays)
   (source_tree %{project_root}/goldens/audit_holes)
+  (source_tree %{project_root}/goldens/odeint)
+  (source_tree %{project_root}/goldens/checkify)
   (source_tree %{project_root}/goldens/export_ser)
   (source_tree %{project_root}/goldens/shape_poly_exprs)
   (source_tree %{project_root}/goldens/mesh_one)

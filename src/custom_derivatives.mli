@@ -12,6 +12,8 @@ val custom_jvp :
 val custom_vjp :
   ?nondiff_argnums:int list ->
   ?name:string ->
+  ?fwd_name:string ->
+  ?bwd_name:string ->
   ?optimize_remat:bool ->
   (value list -> value list) ->
   fwd:(value list -> value list * value list) ->
@@ -91,5 +93,13 @@ val callback_with_view :
   result_avals:aval list ->
   value list ->
   value list
+
+val callback_view_id :
+  ordered:bool ->
+  string ->
+  (string * string) list ->
+  (value list -> value list) ->
+  result_avals:aval list ->
+  int * (value list -> value list)
 
 val zero_from_primal : value -> value

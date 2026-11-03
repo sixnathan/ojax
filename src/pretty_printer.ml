@@ -1246,7 +1246,7 @@ let pp_binders ctx (vars : var list) =
       Layout.Group
         (Layout.join (Layout.Group (Layout.Brk " ")) (List.map doc vars)) )
 
-let rec pp_jaxpr ctx (jx : jaxpr) n_consts =
+let pp_jaxpr_skeleton ctx (jx : jaxpr) n_consts eqns_doc =
   let consts, args =
     let rec split k l =
       if k = 0 then ([], l)
@@ -1261,7 +1261,7 @@ let rec pp_jaxpr ctx (jx : jaxpr) n_consts =
   in
   let const_doc = pp_binders ctx consts in
   let arg_doc = pp_binders ctx args in
-  let eqns = Layout.join (Layout.Brk "; ") (List.map (pp_eqn ctx) jx.eqns) in
+  let eqns = eqns_doc () in
   let outs =
     Layout.Concat
       [
@@ -1292,6 +1292,10 @@ let rec pp_jaxpr ctx (jx : jaxpr) n_consts =
              Layout.Text " }";
            ]);
     ]
+
+let rec pp_jaxpr ctx (jx : jaxpr) n_consts =
+  pp_jaxpr_skeleton ctx jx n_consts (fun () ->
+      Layout.join (Layout.Brk "; ") (List.map (pp_eqn ctx) jx.eqns))
 
 and pp_sub ctx (c : closed_jaxpr) =
   match Hashtbl.find_opt ctx.shared c.jid with
@@ -1706,6 +1710,39 @@ let closed_jaxpr_to_jax_string (cj : closed_jaxpr) =
   Layout.render (Layout.Concat (docs @ [ main ]))
 
 let () = closed_to_string := closed_jaxpr_to_jax_string
+
+let check_context (jx : jaxpr) =
+  let ctx =
+    {
+      next_name = 0;
+      var_names = Hashtbl.create 64;
+      shared = Hashtbl.create 1;
+      shared_names = Hashtbl.create 1;
+      keys = Hashtbl.create 8;
+    }
+  in
+  mark_keys ctx.keys jx;
+  dropvars ctx jx;
+  (try ignore (Layout.render (pp_jaxpr ctx jx 0)) with _ -> ());
+  let name (v : var) = name_of_var ctx v in
+  let eqn (e : eqn) = Layout.render (Layout.Nest (2, pp_eqn ctx e)) in
+  let range lo hi =
+    let n = List.length jx.eqns in
+    let lo = max lo 0 in
+    let hi = max lo (min hi n) in
+    let eqns = List.filteri (fun i _ -> i >= lo && i < hi) jx.eqns in
+    let docs () =
+      if eqns = [] && n <> 0 then [ Layout.Text "..." ]
+      else
+        (if lo <> 0 then [ Layout.Text "..." ] else [])
+        @ List.map (pp_eqn ctx) eqns
+        @ if hi <> n then [ Layout.Text "..." ] else []
+    in
+    Layout.render
+      (pp_jaxpr_skeleton ctx jx 0 (fun () ->
+           Layout.join (Layout.Brk "; ") (docs ())))
+  in
+  (name, eqn, range)
 
 let eqn_to_jax_string (e : eqn) =
   let ctx =

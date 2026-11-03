@@ -267,10 +267,26 @@ let sample_jaxpr () =
 let jaxpr_errors () =
   let j = sample_jaxpr () in
   Jaxpr.typecheck_jaxpr j;
-  check_message "unbound" "Variable 'b' not defined" (fun () ->
-      Jaxpr.typecheck_jaxpr { j with in_binders = [] });
+  check_message "unbound"
+    "Variable 'b' not defined\n\n\
+     in equation:\n\n\
+     a:f32[] = sin b\n\n\
+     from source: \n\n\
+     while checking jaxpr:\n\n\
+     { lambda ; . let a:f32[] = sin b; c:f32[] = add a 1.0:f32[] in (c,) }"
+    (fun () -> Jaxpr.typecheck_jaxpr { j with in_binders = [] });
   let first = List.hd j.eqns in
-  check_message "rebind" "Variable 'b' already bound" (fun () ->
+  check_message "rebind"
+    "Variable 'b' already bound\n\n\
+     in equation:\n\n\
+     b:f32[] = sin a\n\n\
+     from source: \n\n\
+     while checking jaxpr:\n\n\
+     { lambda ; a:f32[]. let\n\
+    \    b:f32[] = sin a\n\
+    \    b:f32[] = sin a\n\
+    \    c:f32[] = add b 1.0:f32[]\n\
+    \  in (c,) }" (fun () ->
       Jaxpr.typecheck_jaxpr { j with eqns = first :: j.eqns });
   let wrong =
     {
@@ -279,8 +295,13 @@ let jaxpr_errors () =
     }
   in
   check_message "typed"
-    "Value for variable 'b' inconsistently typed as f32[] for let-binder of \
-     type f32[2]" (fun () ->
+    "Value for variable '_' inconsistently typed as f32[] for let-binder of \
+     type f32[2]\n\n\
+     in equation:\n\n\
+     _:f32[2] = sin a\n\n\
+     from source: \n\n\
+     while checking jaxpr:\n\n\
+     { lambda ; a:f32[]. let _:f32[2] = sin a in (b,) }" (fun () ->
       Jaxpr.typecheck_jaxpr
         { j with eqns = [ { first with outs = [ wrong ] } ] })
 
@@ -298,8 +319,14 @@ let enable_checks_effect () =
       donated = [];
     }
   in
-  check_message "compile under checks" "Variable 'b' not defined" (fun () ->
-      Api.enable_checks true (fun () -> Stages.compile lowered));
+  check_message "compile under checks"
+    "Variable 'b' not defined\n\n\
+     in equation:\n\n\
+     a:f32[] = sin b\n\n\
+     from source: \n\n\
+     while checking jaxpr:\n\n\
+     { lambda ; . let a:f32[] = sin b; c:f32[] = add a 1.0:f32[] in (c,) }"
+    (fun () -> Api.enable_checks true (fun () -> Stages.compile lowered));
   ignore (Stages.compile lowered);
   let r =
     Api.enable_checks true (fun () ->

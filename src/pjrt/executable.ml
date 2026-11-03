@@ -191,6 +191,44 @@ let compile ?(options = []) client code =
   in
   wrap client code (compile_cached client code proto)
 
+let dumped_text dir suffix =
+  let files = Sys.readdir dir in
+  Array.sort compare files;
+  let pick = Array.find_opt (fun f -> String.ends_with ~suffix f) files in
+  let text =
+    Option.map
+      (fun f ->
+        In_channel.with_open_bin (Filename.concat dir f) In_channel.input_all)
+      pick
+  in
+  Array.iter (fun f -> Sys.remove (Filename.concat dir f)) files;
+  Sys.rmdir dir;
+  match text with
+  | Some t -> t
+  | None -> failwith "Pjrt.Executable: XLA wrote no optimized HLO text"
+
+let hlo_dump ?(options = []) client code suffix =
+  let dir = Filename.temp_dir "ojax_hlo" "" in
+  let dump =
+    [
+      ("xla_dump_to", Option_string dir);
+      ("xla_dump_hlo_as_text", Option_bool true);
+    ]
+  in
+  let proto =
+    compile_options_proto
+    ^ String.concat "" (List.map env_override_entry (options @ dump))
+  in
+  let handle = compile_ client code proto in
+  destroy_ handle;
+  dumped_text dir suffix
+
+let optimized_text ?options client code =
+  hlo_dump ?options client code "after_optimizations.txt"
+
+let unoptimized_text ?options client code =
+  hlo_dump ?options client code "before_optimizations.txt"
+
 let device_assignment_proto devices =
   let b = Stdlib.Buffer.create 32 in
   add_tag b 1 0;

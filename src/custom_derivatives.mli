@@ -12,6 +12,8 @@ val custom_jvp :
 val custom_vjp :
   ?nondiff_argnums:int list ->
   ?name:string ->
+  ?fwd_name:string ->
+  ?bwd_name:string ->
   (value list -> value list) ->
   fwd:(value list -> value list * value list) ->
   bwd:(value list -> value list -> value list) ->

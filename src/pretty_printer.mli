@@ -12,6 +12,7 @@ val key_vars : jaxpr -> (int, unit) Hashtbl.t
 val eqn_to_jax_string : eqn -> string
 val register_call_name : int -> string -> unit
 val custom_num_consts : (eqn -> int option) ref
+val custom_bwd_names : (int, string) Hashtbl.t
 
 val custom_call :
   (int -> int option -> aval list -> (string * string * closed_jaxpr) option)

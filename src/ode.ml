@@ -405,8 +405,8 @@ and odeint_custom func rtol atol mxstep hmax y0 ts args =
   in
   ignore n;
   match
-    Custom_derivatives.custom_vjp ~name:"_odeint" primal ~fwd ~bwd
-      (y0 :: ts :: args)
+    Custom_derivatives.custom_vjp ~name:"_odeint" ~fwd_name:"_odeint_fwd"
+      ~bwd_name:"_odeint_rev" primal ~fwd ~bwd (y0 :: ts :: args)
   with
   | [ v ] -> v
   | _ -> assert false

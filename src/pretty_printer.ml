@@ -425,6 +425,12 @@ let atom_type = function
   | DropVar a -> a
 
 let custom_num_consts : (eqn -> int option) ref = ref (fun _ -> None)
+let custom_bwd_names : (int, string) Hashtbl.t = Hashtbl.create 16
+
+let custom_bwd_name (e : eqn) =
+  match e.prim with
+  | Custom_vjp_call id -> Hashtbl.find_opt custom_bwd_names id
+  | _ -> None
 
 let custom_call_of (e : eqn) =
   match e.prim with
@@ -1370,11 +1376,14 @@ and pp_eqn ctx (e : eqn) =
         | Some (name, fwd, c) ->
             [
               ("name", Plain name);
-              ("bwd", Plain "bwd");
+              ("bwd", Plain (Option.value (custom_bwd_name e) ~default:"bwd"));
               ("call_jaxpr", Sub c);
               ("fwd", Plain fwd);
-              ("symbolic_zeros", Plain "False");
             ]
+            @ (match !custom_num_consts e with
+              | Some n -> [ ("num_consts", Plain (string_of_int n)) ]
+              | None -> [])
+            @ [ ("symbolic_zeros", Plain "False") ]
         | None -> [])
     | Custom_lin { rule; n_res; in_zeros; _ } -> (
         match !custom_lin_vjp rule with

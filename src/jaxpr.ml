@@ -365,6 +365,41 @@ let hoist_custom_consts prim (c : closed_jaxpr) args =
         const_values @ args,
         lifted,
         fun avals -> Core.note_custom_call_jaxpr id' avals lifted )
+  | ( Custom_vjp_call id,
+      Some (Core.Vjp_rule { fwd; bwd; fwd_perturbed = None; _ }) )
+    when c.consts <> [] ->
+      let n = List.length c.consts in
+      let const_values = List.map (fun nd -> Concrete nd) c.consts in
+      let lifted = { c with consts = [] } in
+      let drop l = List.filteri (fun i _ -> i >= n) l in
+      let zeros () =
+        List.map
+          (fun nd ->
+            let a = Core.get_aval (Concrete nd) in
+            Core.splat a.dtype a.shape 0.0)
+          c.consts
+      in
+      let rule =
+        Core.Vjp_rule
+          {
+            primal = (fun all -> !eval_lifted lifted all);
+            fwd = (fun all -> fwd (drop all));
+            bwd = (fun res cts -> zeros () @ bwd res cts);
+            fwd_perturbed = None;
+          }
+      in
+      let id' = Core.register_custom_rule rule in
+      (match Core.custom_names_of id with
+      | Some (name, jvp_name) -> Core.register_custom_names id' ~name ~jvp_name
+      | None -> ());
+      (match Hashtbl.find_opt Pretty_printer.custom_bwd_names id with
+      | Some b -> Hashtbl.replace Pretty_printer.custom_bwd_names id' b
+      | None -> ());
+      Core.note_custom_num_consts id' n;
+      ( Custom_vjp_call id',
+        const_values @ args,
+        lifted,
+        fun avals -> Core.note_custom_call_jaxpr id' avals lifted )
   | _ -> (prim, args, c, fun _ -> ())
 
 let barrier_calls : (int, unit) Hashtbl.t = Hashtbl.create 16
@@ -697,7 +732,7 @@ let () =
   Pretty_printer.custom_num_consts :=
     fun (e : eqn) ->
       match e.prim with
-      | Custom_jvp_call id -> Core.custom_num_consts_of id
+      | Custom_jvp_call id | Custom_vjp_call id -> Core.custom_num_consts_of id
       | _ -> None
 
 let () =

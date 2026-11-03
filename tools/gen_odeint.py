@@ -9,6 +9,7 @@ os.environ["XLA_FLAGS"] = (
 )
 
 import argparse
+import seeded_inputs as si
 import json
 import platform
 import warnings
@@ -42,17 +43,33 @@ def osc(y, t):
     return (v, -x)
 
 
+FIXED = {"y0": [1.0, 2.0], "k": 0.5, "ts_stop": 1.0, "tl_stop": 3.0, "y1a": [1.0, 0.0], "y1b": [0.0, 1.0]}
+INPUTS = dict(FIXED)
+
+
+def draw_inputs():
+    rng = np.random.default_rng([si.SEED[0], 21])
+    INPUTS.update({
+        "y0": [float(v) / 4 for v in rng.integers(1, 9, 2)],
+        "k": float(rng.integers(1, 9)) / 8,
+        "ts_stop": float(rng.integers(2, 9)) / 4,
+        "tl_stop": float(rng.integers(4, 17)) / 4,
+        "y1a": [float(v) / 4 for v in rng.integers(-4, 5, 2)],
+        "y1b": [float(v) / 4 for v in rng.integers(-4, 5, 2)],
+    })
+
+
 def inputs(dt):
-    y0 = jnp.array([1.0, 2.0], dt)
-    ts = jnp.linspace(0.0, 1.0, 5, dtype=dt)
-    k = jnp.array(0.5, dt)
+    y0 = jnp.array(INPUTS["y0"], dt)
+    ts = jnp.linspace(0.0, INPUTS["ts_stop"], 5, dtype=dt)
+    k = jnp.array(INPUTS["k"], dt)
     return y0, ts, k
 
 
 def value_cases(dt):
     y0, ts, k = inputs(dt)
-    y1 = (jnp.array([1.0, 0.0], dt), jnp.array([0.0, 1.0], dt))
-    tl = jnp.linspace(0.0, 3.0, 4, dtype=dt)
+    y1 = (jnp.array(INPUTS["y1a"], dt), jnp.array(INPUTS["y1b"], dt))
+    tl = jnp.linspace(0.0, INPUTS["tl_stop"], 4, dtype=dt)
     return {
         "decay": lambda: odeint(decay, y0, ts),
         "scaled": lambda: odeint(scaled, y0, ts, k),
@@ -96,6 +113,8 @@ def run(x64):
             continue
         for name, f in value_cases(dt).items():
             row = {"id": name + "_" + dname, "x64": x64}
+            if si.seeded():
+                row["inputs"] = INPUTS
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -124,7 +143,9 @@ def run(x64):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=os.path.join(ROOT, "goldens", "odeint"))
-    args = parser.parse_args()
+    args = si.parse(parser)
+    if si.seeded():
+        draw_inputs()
     if platform.python_version() != PY_VERSION or jax.__version__ != JAX_VERSION:
         raise SystemExit("needs python " + PY_VERSION + " and jax " + JAX_VERSION)
     rows = run(False) + run(True)

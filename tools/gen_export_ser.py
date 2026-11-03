@@ -69,6 +69,13 @@ def f_nt(p):
     return P(p.y, p.x * p.y)
 
 
+BIG = (np.arange(50000, dtype=np.float32) * np.float32(0.001)).reshape(500, 100)
+
+
+def f_big(x):
+    return x + BIG
+
+
 def f_none(x):
     return (x, None)
 
@@ -119,6 +126,7 @@ def plat(platforms, checks=()):
 DC = export.DisabledSafetyCheck
 CASES += [
     ("multi_platform", f_sin, plat(("cpu", "cuda"))),
+    ("big_const", f_big, lambda: ((sds((500, 100), "float32"),), {})),
     ("namedtuple_in", f_nt, lambda: ((P(sds((2,), "float32"), sds((2,), "float32")),), {})),
     ("cuda_only", f_sin, plat(("cuda",))),
     ("cuda_disabled", f_sin, plat(("cuda",), (DC.platform(), DC.custom_call("foo")))),
@@ -136,6 +144,7 @@ X64_CASES = [
 CALLS = {
     "multi_platform": [[((3,), "float32")]],
     "namedtuple_in": [[((2,), "float32"), ((2,), "float32")]],
+    "big_const": [[((500, 100), "float32")]],
     "cuda_only": [[((3,), "float32")]],
     "cuda_disabled": [[((3,), "float32")], [((4,), "float32")]],
     "sym_2b_b": [[((4, 2), "float32")], [((5, 2), "float32")], [((4, 3), "float32")], [((0, 0), "float32")]],

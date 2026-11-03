@@ -26,6 +26,16 @@ MEM_FIELDS = [
 DEFAULT_SEED = 0
 
 
+SEED = [DEFAULT_SEED]
+
+
+def parse_seeded(parser):
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    args = parser.parse_args()
+    SEED[0] = args.seed
+    return args
+
+
 def selected_cases(x64, seed=DEFAULT_SEED):
     rng = np.random.default_rng([seed, 5])
     out = []

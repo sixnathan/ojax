@@ -18,13 +18,26 @@ let second_dtype = function
 let seconds = [ "i32"; "bool"; "u8" ]
 let kinds = [ "f32"; "f32_shape"; "same"; "scalar" ]
 let lin a b = AC.linspace ~num:3 ~dtype:D.F32 a b
+let stored = ref `Null
+let floats j = Array.of_list (List.map U.to_number (U.to_list j))
 
 let inputs second =
-  [
-    lin 1.0 2.0;
-    Ojax.Types.Concrete
-      (Ojax.Ndarray.of_floats (second_dtype second) [| 3 |] [| 1.0; 0.0; 3.0 |]);
-  ]
+  match !stored with
+  | `Null ->
+      [
+        lin 1.0 2.0;
+        Ojax.Types.Concrete
+          (Ojax.Ndarray.of_floats (second_dtype second) [| 3 |]
+             [| 1.0; 0.0; 3.0 |]);
+      ]
+  | j ->
+      [
+        Ojax.Types.Concrete
+          (Ojax.Ndarray.of_floats D.F32 [| 3 |] (floats (U.member "x" j)));
+        Ojax.Types.Concrete
+          (Ojax.Ndarray.of_floats (second_dtype second) [| 3 |]
+             (floats (U.member second (U.member "n" j))));
+      ]
 
 let primal = function
   | [ x; n ] ->
@@ -203,7 +216,10 @@ let check_row ~suite row () =
   let id = U.to_string (U.member "id" row) in
   let x64 = U.to_bool (U.member "x64" row) in
   Ojax.Config.set Ojax.Config.enable_x64 x64;
-  Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
+  stored := U.member "inputs" row;
+  Fun.protect ~finally:(fun () ->
+      stored := `Null;
+      Ojax.Config.set Ojax.Config.enable_x64 false)
   @@ fun () ->
   let log ?(name = id) jax ojax =
     let same = String.equal jax ojax in

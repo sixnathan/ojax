@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 
-import gen_goldens as gg
+import gen_goldens as gg, seeded_inputs as si
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -175,17 +175,17 @@ CALLS = {
 
 def make_input(shape, dtype, k):
     n = int(np.prod(shape)) if shape else 1
-    if np.dtype(dtype).kind in "iu":
+    if si.seeded():
+        vals = si.draw(n, dtype, [k, n])
+    elif np.dtype(dtype).kind in "iu":
         vals = (np.arange(n) * (k + 2) - 3).astype(dtype)
     else:
         vals = (np.linspace(-1.5, 2.0, n) + 0.25 * k).astype(dtype)
     return vals.reshape(shape)
 
-
 def enc_array(a):
     a = np.asarray(a)
     return {"dtype": str(a.dtype), "shape": list(a.shape), "hex": a.tobytes().hex()}
-
 
 def enc_input(a):
     out = enc_array(a)
@@ -297,7 +297,7 @@ def rows_for(cases):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None)
-    args = ap.parse_args()
+    args = si.parse(ap)
     gg.preflight()
     base = os.path.join(args.root or os.path.join(gg.ROOT, "goldens"), MODULE)
     os.makedirs(base, exist_ok=True)

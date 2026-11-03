@@ -655,6 +655,121 @@ let drop_empty_backend_config text =
          else line)
        (String.split_on_char '\n' text))
 
+let find_sub line sub from =
+  let n = String.length line and m = String.length sub in
+  let rec go i =
+    if i + m > n then None
+    else if String.sub line i m = sub then Some i
+    else go (i + 1)
+  in
+  go from
+
+let closing_of line ~start =
+  let n = String.length line in
+  let rec go i depth =
+    if i >= n then None
+    else
+      match line.[i] with
+      | '[' | '(' | '{' | '<' -> go (i + 1) (depth + 1)
+      | ']' | ')' | '}' | '>' ->
+          if depth = 0 then Some i else go (i + 1) (depth - 1)
+      | _ -> go (i + 1) depth
+  in
+  go start 0
+
+let split_entries s =
+  let n = String.length s in
+  let buf = Buffer.create n in
+  let rec go i depth acc =
+    if i >= n then List.rev (Buffer.contents buf :: acc)
+    else
+      let c = s.[i] in
+      if depth = 0 && c = ',' && i + 1 < n && s.[i + 1] = ' ' then (
+        let e = Buffer.contents buf in
+        Buffer.clear buf;
+        go (i + 2) depth (e :: acc))
+      else (
+        Buffer.add_char buf c;
+        match c with
+        | '[' | '(' | '{' | '<' -> go (i + 1) (depth + 1) acc
+        | ']' | ')' | '}' | '>' -> go (i + 1) (depth - 1) acc
+        | _ -> go (i + 1) depth acc)
+  in
+  if s = "" then [] else go 0 0 []
+
+let all_tokens value s =
+  let words =
+    String.split_on_char ' '
+      (String.map (fun c -> match c with '[' | ']' | ',' -> ' ' | c -> c) s)
+  in
+  List.for_all (fun w -> w = value) (List.filter (fun w -> w <> "") words)
+
+let entry_key e =
+  match find_sub e " = " 0 with
+  | Some i -> (String.sub e 0 i, String.sub e (i + 3) (String.length e - i - 3))
+  | None -> (e, "")
+
+let array_values v =
+  match String.index_opt v ':' with
+  | Some i when starts_with "array<" v ->
+      String.sub v (i + 1) (String.length v - i - 2)
+  | _ -> if v = "array<i64>" then "" else "x"
+
+let filter_group line ~opening keep =
+  match find_sub line opening 0 with
+  | None -> line
+  | Some i -> (
+      let start = i + String.length opening in
+      match closing_of line ~start with
+      | None -> line
+      | Some j ->
+          let inner = String.sub line start (j - start) in
+          let kept = List.filter keep (split_entries inner) in
+          String.sub line 0 start ^ String.concat ", " kept
+          ^ String.sub line j (String.length line - j))
+
+let window_default e =
+  let key, v = entry_key e in
+  match key with
+  | "stride" | "lhs_dilate" | "rhs_dilate" -> all_tokens "1" v
+  | "pad" -> all_tokens "0" v
+  | "reverse" -> all_tokens "false" v
+  | _ -> false
+
+let property_default e =
+  let key, v = entry_key e in
+  match key with
+  | "base_dilations" | "window_dilations" | "window_strides" ->
+      all_tokens "1" (array_values v)
+  | "padding" -> starts_with "dense<0> :" v
+  | "indices_are_sorted" | "unique_indices" -> v = "false"
+  | _ -> false
+
+let drop_default_attributes text =
+  let drop sub line =
+    Option.value (replace_first ~sub ~by:"" line) ~default:line
+  in
+  let default_precision =
+    ", precision_config = [#stablehlo<precision DEFAULT>, #stablehlo<precision \
+     DEFAULT>]"
+  in
+  String.split_on_char '\n' text
+  |> List.map (fun line ->
+      if contains "stablehlo.dot_general" line then
+        drop ", precision = [DEFAULT, DEFAULT]" line
+      else if contains "stablehlo.convolution" line then
+        drop default_precision
+          (filter_group line ~opening:"window = {" (fun e ->
+               not (window_default e)))
+      else if
+        contains "\"stablehlo.reduce_window\"" line
+        || contains "\"stablehlo.select_and_scatter\"" line
+        || contains "\"stablehlo.gather\"" line
+        || contains "\"stablehlo.scatter\"" line
+      then filter_group line ~opening:"<{" (fun e -> not (property_default e))
+      else line)
+  |> String.concat "\n"
+
 let hoist_constants text =
   let lines = Array.of_list (String.split_on_char '\n' text) in
   let n = Array.length lines in

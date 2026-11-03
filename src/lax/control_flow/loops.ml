@@ -211,21 +211,9 @@ let rec while_loop_keyed ?cond_key (cond_fun : value list -> value)
       let arg_part =
         List.filteri (fun i _ -> i >= nc && i < total - nh) binders
       in
-      let first_use : (int, int) Hashtbl.t = Hashtbl.create 16 in
-      let note i = function
-        | A_var (v : var) ->
-            if not (Hashtbl.mem first_use v.vid) then
-              Hashtbl.replace first_use v.vid i
-        | _ -> ()
-      in
-      List.iteri (fun i (e : eqn) -> List.iter (note i) e.inputs) c.jaxpr.eqns;
-      List.iter (note max_int) c.jaxpr.outs;
-      let use_of (v : var) =
-        Option.value (Hashtbl.find_opt first_use v.vid) ~default:max_int
-      in
       let ordered =
         List.stable_sort
-          (fun ((a : var), _) ((b : var), _) -> compare (use_of a) (use_of b))
+          (fun ((a : var), _) ((b : var), _) -> compare a.vid b.vid)
           (List.combine (const_part @ hoist_part)
              (List.map (fun nd -> Concrete nd) c.consts @ hoisted))
       in
@@ -451,7 +439,13 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
     let arg_part =
       List.filteri (fun i _ -> i >= nc && i < total - nh) binders
     in
-    let consts = List.map (fun nd -> Concrete nd) jaxpr.consts @ hoisted in
+    let const_binders, consts =
+      List.split
+        (List.stable_sort
+           (fun ((a : var), _) ((b : var), _) -> compare a.vid b.vid)
+           (List.combine (const_part @ hoist_part)
+              (List.map (fun nd -> Concrete nd) jaxpr.consts @ hoisted)))
+    in
     let outs = jaxpr.jaxpr.outs in
     let carry_binders, x_binders = split_at arg_part num_carry in
     let carry_outs, y_outs = split_at outs num_carry in
@@ -484,7 +478,7 @@ let rec scan ?length ?(reverse = false) ?(unroll = 1)
           {
             jaxpr.jaxpr with
             in_binders =
-              pick_of carry_binders move @ const_part @ hoist_part
+              pick_of carry_binders move @ const_binders
               @ keep_of carry_binders move @ x_binders;
             outs = keep_of carry_outs move @ y_kept;
           };

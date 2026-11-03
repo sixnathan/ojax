@@ -94,6 +94,7 @@
   (source_tree %{project_root}/goldens/vmap_coll)
   (source_tree %{project_root}/goldens/compose_fuzz)
   (source_tree %{project_root}/goldens/custom_ad)
+  (source_tree %{project_root}/goldens/compose_pinned)
   (glob_files identical_rows/*.tsv)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))

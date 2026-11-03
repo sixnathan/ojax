@@ -26,7 +26,7 @@ let element_literal nd idx =
   | Dtype.Bool -> Ir.bool_literal (Ndarray.get_i64 nd idx <> 0L)
   | Dtype.Complex64 | Dtype.Complex128 ->
       Ir.complex_literal (Ndarray.dtype nd) (Ndarray.get_c nd idx)
-  | Dtype.Float0 -> invalid_arg "Stablehlo.Emit: float0 has no stablehlo type"
+  | Dtype.Float0 -> Ir.bool_literal false
 
 let all_literals nd =
   let shape = Ndarray.shape nd in

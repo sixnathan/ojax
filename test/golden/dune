@@ -30,6 +30,7 @@
   custom_ad
   keys_arrays
   audit_holes
+  vjp_int
   index_fuzz
   apply_transforms
   manifest)
@@ -100,6 +101,8 @@
   (source_tree %{project_root}/goldens/vmap_coll)
   (source_tree %{project_root}/goldens/compose_fuzz)
   (source_tree %{project_root}/goldens/custom_ad)
+  (source_tree %{project_root}/goldens/compose_pinned)
+  (source_tree %{project_root}/goldens/vjp_int)
   (glob_files identical_rows/*.tsv)
   (source_tree %{project_root}/goldens/vectorize)
   (source_tree %{project_root}/goldens/spatial_transform)))

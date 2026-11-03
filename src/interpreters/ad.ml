@@ -3328,9 +3328,13 @@ let () =
       let new_shape =
         Array.of_list (n :: List.map (fun d -> shape.(d)) non_axes)
       in
+      let identity = Array.for_all Fun.id (Array.mapi ( = ) permutation) in
       let flat x =
-        let moved = b1 (Transpose permutation) [ x ] in
-        lreshape new_shape moved
+        if identity then lreshape new_shape x
+        else
+          b1
+            (Reshape_perm { new_sizes = new_shape; dimensions = permutation })
+            [ x ]
       in
       let primals = List.map flat primals in
       let tangents = List.map flat (List.map instantiate tangents) in

@@ -545,7 +545,7 @@ let two_sines a =
   let y = sin (sole a) in
   [ sin y ]
 
-let arg0 = "from the argument at flattened index 0"
+let arg0 = "from the argument args[0]"
 
 let policy_sines () =
   let cases =
@@ -553,15 +553,15 @@ let policy_sines () =
       ("nothing", C.nothing_saveable, [ ("float32[]", arg0) ], (1, 2, 2, 0));
       ( "everything",
         C.everything_saveable,
-        [ ("float32[]", "output of cos"); ("float32[]", "output of cos") ],
+        [ ("float32[]", "output of cos from "); ("float32[]", "output of cos from ") ],
         (0, 0, 2, 0) );
       ( "sin only",
         (fun prim _ -> prim = Sin),
-        [ ("float32[]", arg0); ("float32[]", "output of sin") ],
+        [ ("float32[]", arg0); ("float32[]", "output of sin from ") ],
         (0, 2, 2, 0) );
       ( "cos only",
         (fun prim _ -> prim = Cos),
-        [ ("float32[]", "output of cos"); ("float32[]", "output of cos") ],
+        [ ("float32[]", "output of cos from "); ("float32[]", "output of cos from ") ],
         (0, 0, 2, 0) );
     ]
   in
@@ -609,26 +609,26 @@ let policy_dots () =
         (1, 1, 1, 4) );
       ( "dots",
         C.dots_saveable,
-        [ constant; ("float32[2]", "output of dot_general") ],
+        [ constant; ("float32[2]", "output of dot_general from ") ],
         (1, 1, 1, 3) );
       ( "checkpoint_dots",
         C.checkpoint_dots,
-        [ constant; ("float32[2]", "output of dot_general") ],
+        [ constant; ("float32[2]", "output of dot_general from ") ],
         (1, 1, 1, 3) );
       ( "dots no batch",
         C.dots_with_no_batch_dims_saveable,
-        [ constant; ("float32[2]", "output of dot_general") ],
+        [ constant; ("float32[2]", "output of dot_general from ") ],
         (1, 1, 1, 3) );
       ( "checkpoint dots no batch",
         C.checkpoint_dots_with_no_batch_dims,
-        [ constant; ("float32[2]", "output of dot_general") ],
+        [ constant; ("float32[2]", "output of dot_general from ") ],
         (1, 1, 1, 3) );
       ( "everything",
         C.everything_saveable,
         [
           constant;
-          ("float32[2]", "output of sin");
-          ("float32[2]", "output of cos");
+          ("float32[2]", "output of sin from ");
+          ("float32[2]", "output of cos from ");
         ],
         (0, 0, 1, 3) );
     ]
@@ -689,7 +689,7 @@ let policy_batch_dims () =
   let expected = [| 0.5673244; 1.1346488; 5.947217; 7.9296227 |] in
   let dots = C.checkpoint ~policy:C.dots_saveable batched_dot in
   check_residuals "dots"
-    [ ("float32[2,2]", arg0); ("float32[2]", "output of dot_general") ]
+    [ ("float32[2,2]", arg0); ("float32[2]", "output of dot_general from ") ]
     dots [ x ];
   check_arr "dots grad" expected (grad_of dots x);
   let no_batch =
@@ -704,7 +704,7 @@ let named_fn a =
   [ mul (cos z) y ]
 
 let policy_names () =
-  let named n = ("float32[]", Printf.sprintf "named '%s'" n) in
+  let named n = ("float32[]", Printf.sprintf "named '%s' from " n) in
   let argument = ("float32[]", arg0) in
   let cases =
     [
@@ -879,8 +879,8 @@ let policy_partial_arguments () =
       check "both x" 0.41198227 (value a);
       check "both y" (-0.12832005) (value b)
   | _ -> Alcotest.fail "two grads");
-  let cos_out = ("float32[]", "output of cos")
-  and sin_out = ("float32[]", "output of sin") in
+  let cos_out = ("float32[]", "output of cos from ")
+  and sin_out = ("float32[]", "output of sin from ") in
   check_residuals "both perturbed"
     [ sin_out; cos_out; cos_out; sin_out ]
     ck [ x; y ];

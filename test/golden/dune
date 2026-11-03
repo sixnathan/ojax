@@ -27,6 +27,7 @@
   custom_ad
   keys_arrays
   audit_holes
+  docs_p1
   index_fuzz
   apply_transforms
   manifest)
@@ -65,6 +66,7 @@
   (source_tree %{project_root}/goldens/prng)
   (source_tree %{project_root}/goldens/keys_arrays)
   (source_tree %{project_root}/goldens/audit_holes)
+  (source_tree %{project_root}/goldens/docs_p1)
   (source_tree %{project_root}/goldens/random_core)
   (source_tree %{project_root}/goldens/nn)
   (source_tree %{project_root}/goldens/initializers)

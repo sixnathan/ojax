@@ -1,6 +1,7 @@
 open Types
 
 val primitive_name : primitive -> string
+val jax_prim_name : primitive -> string
 val encode_var : int -> string
 val python_repr_float : float -> string
 val aval_short : aval -> string

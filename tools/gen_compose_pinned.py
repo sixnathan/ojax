@@ -52,6 +52,18 @@ PINNED = [
     ("custom", 40618829, "custom_00076_float64"),
     ("custom", 40618829, "custom_00094_float64"),
     ("custom", 40618829, "custom_00111_float64"),
+    ("compose", 52790361, "compose_00085_float32"),
+    ("compose", 52790361, "compose_00592_float32"),
+    ("compose", 52790361, "compose_00817_float32"),
+    ("compose", 52790361, "compose_00251_float64"),
+    ("compose", 52790361, "compose_00355_float64"),
+    ("compose", 52790361, "compose_00512_float64"),
+    ("custom", 52790361, "custom_00008_float32"),
+    ("custom", 52790361, "custom_00094_float32"),
+    ("custom", 52790361, "custom_00205_float64"),
+    ("custom", 52790361, "custom_00208_float64"),
+    ("custom", 52790361, "custom_00236_float64"),
+    ("custom", 52790361, "custom_00288_float64"),
 ]
 
 

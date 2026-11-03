@@ -780,15 +780,28 @@ let lu_unblocked a =
             (like magnitude Float.neg_infinity)
         in
         let i = L.argmax bounded ~axis:0 ~index_dtype:Dtype.I32 in
-        let pivot = L.dynamic_update_slice pivot (L.reshape i [| 1 |]) [ k ] in
+        let pivot =
+          L.dynamic_update_slice ~allow_negative_indices:false pivot
+            (L.reshape i [| 1 |]) [ k ]
+        in
         let row_at r = L.dynamic_slice a [ r; int32 0 ] [| 1; n |] in
         let row_k = row_at k and row_i = row_at i in
-        let a = L.dynamic_update_slice a row_i [ k; int32 0 ] in
-        let a = L.dynamic_update_slice a row_k [ i; int32 0 ] in
+        let a =
+          L.dynamic_update_slice ~allow_negative_indices:false a row_i
+            [ k; int32 0 ]
+        in
+        let a =
+          L.dynamic_update_slice ~allow_negative_indices:false a row_k
+            [ i; int32 0 ]
+        in
         let perm_at r = L.dynamic_slice perm [ r ] [| 1 |] in
         let perm_k = perm_at k and perm_i = perm_at i in
-        let perm = L.dynamic_update_slice perm perm_i [ k ] in
-        let perm = L.dynamic_update_slice perm perm_k [ i ] in
+        let perm =
+          L.dynamic_update_slice ~allow_negative_indices:false perm perm_i [ k ]
+        in
+        let perm =
+          L.dynamic_update_slice ~allow_negative_indices:false perm perm_k [ i ]
+        in
         let column =
           L.reshape (L.dynamic_slice a [ int32 0; k ] [| m; 1 |]) [| m |]
         in
@@ -801,7 +814,7 @@ let lu_unblocked a =
           select scale (column /: L.broadcast_in_dim x [| m |] [||]) column
         in
         let a =
-          L.dynamic_update_slice a
+          L.dynamic_update_slice ~allow_negative_indices:false a
             (L.reshape scaled_col [| m; 1 |])
             [ int32 0; k ]
         in
@@ -947,10 +960,13 @@ let tridiagonal_solve_core = function
       let empty_rows = L.full [| n; nrhs |] 0.0 (dtype b) in
       let empty_c = L.full [| n |] 0.0 (dtype d) in
       let store_cp cps i v =
-        L.dynamic_update_slice cps (L.reshape v [| 1 |]) [ i ]
+        L.dynamic_update_slice ~allow_negative_indices:false cps
+          (L.reshape v [| 1 |]) [ i ]
       in
       let store_dp dps i v =
-        L.dynamic_update_slice dps (L.reshape v [| 1; nrhs |]) [ i; int32 0 ]
+        L.dynamic_update_slice ~allow_negative_indices:false dps
+          (L.reshape v [| 1; nrhs |])
+          [ i; int32 0 ]
       in
       let fwd i = function
         | [ cps; dps; cp; dp ] ->

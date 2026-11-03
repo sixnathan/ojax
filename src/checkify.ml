@@ -407,9 +407,11 @@ let oob_payload oob_mask indices dims_map operand_shape =
   let oob_index = G.take (Numpy.Lax_numpy.ravel indices) [ G.Arr flat_idx ] in
   jnp_array ~dtype:D.I32 [ oob_index; oob_axis; oob_axis_size ]
 
-let slice_oob name error operand starts extent =
+let slice_oob ?dims_dtype name error operand starts extent =
   let starts = jnp_array starts in
-  let sdt = (aval starts).T.dtype in
+  let sdt =
+    match dims_dtype with Some d -> d | None -> (aval starts).T.dtype
+  in
   let shape = (aval operand).T.shape in
   let arr ints =
     T.Concrete
@@ -506,7 +508,9 @@ let rec interpret errors (closed : T.closed_jaxpr) error0 args =
         match in_vals with
         | operand :: update :: starts when List.mem Oob errors ->
             error :=
-              slice_oob "dynamic_update_slice" !error operand starts
+              slice_oob
+                ~dims_dtype:(Dtypes.default_int_dtype ())
+                "dynamic_update_slice" !error operand starts
                 (aval update).T.shape;
             outs
         | _ -> outs)

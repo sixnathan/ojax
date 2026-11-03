@@ -414,7 +414,7 @@ let dynamic_slice ?(allow_negative_indices = true) x starts slice_sizes =
   in
   dynamic_slice_normalized x starts slice_sizes
 
-let dynamic_update_slice ?(allow_negative_indices = false) x update starts =
+let dynamic_update_slice ?(allow_negative_indices = true) x update starts =
   let starts =
     if allow_negative_indices then
       List.mapi (fun i start -> normalized_start start (shape x).(i)) starts
@@ -462,7 +462,7 @@ let dynamic_update_slice_in_dim ?(axis = 0) ?allow_negative_indices x update
     start =
   let n = ndim x in
   let axis = Validate.list_assign_index n axis in
-  dynamic_update_slice x update
+  dynamic_update_slice ~allow_negative_indices:false x update
     (starts_in_dim ?allow_negative_indices x axis start)
 
 let dynamic_update_index_in_dim ?(axis = 0) ?allow_negative_indices x update

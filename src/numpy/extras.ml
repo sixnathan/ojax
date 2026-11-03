@@ -869,7 +869,8 @@ let concat_sorted_keys ~keys ~payload =
     (Sort { dimension = 0; is_stable = true; num_keys = List.length keys })
     (keys @ payload)
 
-let dynamic_set arr piece start = L.dynamic_update_slice arr piece [ start ]
+let dynamic_set arr piece start =
+  L.dynamic_update_slice ~allow_negative_indices:false arr piece [ start ]
 
 let concat_unique arr1 arr2 ~fill_value =
   let u1, n1 =

@@ -101,7 +101,39 @@ CASES += [
     ("sym_constrained", f_sum0, sym_constrained),
 ]
 
+def plat(platforms, checks=()):
+    def make():
+        return ((sds((3,), "float32"),), {"platforms": platforms, "disabled_checks": list(checks)})
+    return make
+
+
+DC = export.DisabledSafetyCheck
+CASES += [
+    ("multi_platform", f_sin, plat(("cpu", "cuda"))),
+    ("cuda_only", f_sin, plat(("cuda",))),
+    ("cuda_disabled", f_sin, plat(("cuda",), (DC.platform(), DC.custom_call("foo")))),
+    ("sym_2b_b", f_sin, lambda: ((sds("2*b, b", "float32"),), {})),
+    ("sym_b_plus1", f_sum0, lambda: ((sds("b + 1, 3", "float32"),), {})),
+    ("sym_bb", f_sin, lambda: ((sds("b, b", "float32"),), {})),
+    ("sym_scalar_mix", f_add_mul, lambda: ((sds((), "float32"), sds("b", "float32")), {})),
+]
+X64_CASES = [
+    ("sin_f64", f_sin, lambda: ((sds((3,), "float64"),), {})),
+    ("add_mul_i64", f_add_mul, lambda: ((sds((2,), "int64"), sds((2,), "int64")), {})),
+    ("sym_sum0_f64", f_sum0, lambda: ((sds("b, 3", "float64"),), {})),
+]
+
 CALLS = {
+    "multi_platform": [[((3,), "float32")]],
+    "cuda_only": [[((3,), "float32")]],
+    "cuda_disabled": [[((3,), "float32")], [((4,), "float32")]],
+    "sym_2b_b": [[((4, 2), "float32")], [((5, 2), "float32")], [((4, 3), "float32")], [((0, 0), "float32")]],
+    "sym_b_plus1": [[((3, 3), "float32")], [((1, 3), "float32")], [((0, 3), "float32")]],
+    "sym_bb": [[((2, 2), "float32")], [((2, 3), "float32")]],
+    "sym_scalar_mix": [[((), "float32"), ((3,), "float32")], [((1,), "float32"), ((3,), "float32")]],
+    "sin_f64": [[((3,), "float64")], [((3,), "float32")]],
+    "add_mul_i64": [[((2,), "int64"), ((2,), "int64")], [((2,), "int64"), ((2,), "int32")]],
+    "sym_sum0_f64": [[((2, 3), "float64")], [((2, 3), "float32")]],
     "sin_f32_3": [[((3,), "float32")]],
     "sin_f32_2x4": [[((2, 4), "float32")], [((2, 3), "float32")], [((4, 2), "float32")], [((8,), "float32")], [((2, 4), "float64")]],
     "add_mul": [[((3,), "float32"), ((3,), "float32")], [((3,), "float32")]],
@@ -188,17 +220,25 @@ def call_row(e, name, leaves):
         return {"kind": "error", "class": type(ex).__name__, "message": str(ex)}
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default=None)
-    args = ap.parse_args()
-    gg.preflight()
-    base = os.path.join(args.root or os.path.join(gg.ROOT, "goldens"), MODULE)
-    os.makedirs(base, exist_ok=True)
+GRADS = {"sin_f32_3", "sin_f32_2x4", "add_mul", "matmul", "unused_arg", "sin_f64"}
+
+
+def grad_row(e, leaves):
+    def loss(*xs):
+        outs = jax.tree_util.tree_leaves(e.call(*xs))
+        return sum(jnp.sum(o) for o in outs)
+    try:
+        gs = jax.grad(loss, argnums=tuple(range(len(leaves))))(*leaves)
+        return {"kind": "ok", "outputs": [enc_array(g) for g in gs]}
+    except Exception as ex:
+        return {"kind": "error", "class": type(ex).__name__, "message": str(ex)}
+
+
+def rows_for(cases):
     rows = []
-    for name, fn, spec in CASES:
+    for name, fn, spec in cases:
         a, kw = spec()
-        e = export.export(jax.jit(fn))(*a, **kw)
+        e = export.export(jax.jit(fn), **kw)(*a)
         ser = bytes(e.serialize())
         ser_again = bytes(e.serialize())
         back = export.deserialize(bytearray(ser))
@@ -213,18 +253,37 @@ def main():
             "text": plain_text(back),
             "calls": [],
         }
-        ser_vjp = bytes(e.serialize(vjp_order=1)) if not name.startswith("sym") and name not in ("add_mul_i32", "int_affine", "none_out") else None
+        ser_vjp = bytes(e.serialize(vjp_order=1)) if name in GRADS else None
         if ser_vjp is not None:
             row["serialized_vjp1"] = ser_vjp.hex()
-            row["reserialized_vjp1_same"] = bytes(export.deserialize(bytearray(ser_vjp)).serialize(vjp_order=1)) == ser_vjp
+            back_vjp = export.deserialize(bytearray(ser_vjp))
+            row["reserialized_vjp1_same"] = bytes(back_vjp.serialize(vjp_order=1)) == ser_vjp
+            sig = CALLS[name][0]
+            leaves = [make_input(shape, dt, 7 + j) for j, (shape, dt) in enumerate(sig)]
+            g = grad_row(back_vjp, leaves)
+            g["inputs"] = [enc_input(x) for x in leaves]
+            row["grad"] = g
         for k, sig in enumerate(CALLS[name]):
             leaves = [make_input(shape, dt, k + j) for j, (shape, dt) in enumerate(sig)]
             r = call_row(back, name, leaves)
             r["inputs"] = [enc_input(x) for x in leaves]
             row["calls"].append(r)
         rows.append(row)
-    with open(os.path.join(base, "cases.json"), "w") as fh:
-        json.dump({"jax": jax.__version__, "rows": rows}, fh, indent=1, sort_keys=True)
+    return rows
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=None)
+    args = ap.parse_args()
+    gg.preflight()
+    base = os.path.join(args.root or os.path.join(gg.ROOT, "goldens"), MODULE)
+    os.makedirs(base, exist_ok=True)
+    for x64 in (False, True):
+        jax.config.update("jax_enable_x64", x64)
+        rows = rows_for(CASES + (X64_CASES if x64 else []))
+        with open(os.path.join(base, ("x64_on" if x64 else "x64_off") + ".json"), "w") as fh:
+            json.dump({"jax": jax.__version__, "x64": x64, "rows": rows}, fh, indent=1, sort_keys=True)
 
 
 if __name__ == "__main__":

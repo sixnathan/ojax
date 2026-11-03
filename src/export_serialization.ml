@@ -563,7 +563,9 @@ let run_module e args =
           | p :: r -> if p = current then i else index (i + 1) r
         in
         Types.Concrete
-          (Ndarray.of_floats Dtype.I32 [||]
+          (Ndarray.of_floats
+             (Dtypes.default_int_dtype ())
+             [||]
              [| float_of_int (index 0 platforms) |])
         :: kept
   in
@@ -576,10 +578,20 @@ let canonical_leaf = function
       else Types.Concrete (Ndarray.canonicalize dt nd)
   | v -> v
 
-let call_checked e args =
-  let leaves, def = T.tree_flatten args in
+let is_tracer = function Types.Tracer _ -> true | _ -> false
+
+let concrete_out_avals e =
+  List.map
+    (fun a ->
+      {
+        Types.shape = Array.of_list (List.map int_of_string a.shape);
+        dtype = aval_dtype a;
+        weak_type = false;
+      })
+    e.out_avals
+
+let rec call_flat e leaves =
   let leaves = List.map canonical_leaf leaves in
-  check_tree e (T.Tuple_def [ def; T.Dict_def [] ]);
   check_platform e;
   let actual = List.map Core.get_aval leaves in
   check_avals e actual;
@@ -592,8 +604,29 @@ let call_checked e args =
       "calling a deserialized shape-polymorphic Exported needs StableHLO shape \
        refinement, which ojax does not implement"
   end;
-  T.tree_unflatten e.out_tree
-    (List.map Backend.to_host_value (run_module e leaves))
+  if List.exists is_tracer leaves then call_traced e leaves
+  else List.map Backend.to_host_value (run_module e leaves)
+
+and call_traced e leaves =
+  let primal xs =
+    if List.exists is_tracer xs then
+      Custom_derivatives.pure_callback
+        (fun concrete -> run_module e (List.map Backend.to_host_value concrete))
+        ~result_avals:(concrete_out_avals e) xs
+    else run_module e xs
+  in
+  match e.vjp with
+  | None -> primal leaves
+  | Some v ->
+      Custom_derivatives.custom_vjp primal
+        ~fwd:(fun xs -> (Core.with_eval_dynamic (fun () -> call_flat e xs), xs))
+        ~bwd:(fun residuals cts -> call_flat v (residuals @ cts))
+        leaves
+
+let call_checked e args =
+  let leaves, def = T.tree_flatten args in
+  check_tree e (T.Tuple_def [ def; T.Dict_def [] ]);
+  T.tree_unflatten e.out_tree (call_flat e leaves)
 
 let call e args =
   try call_checked e args with Invalid_argument m -> Py_exn.value_error m

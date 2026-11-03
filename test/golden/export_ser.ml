@@ -5,7 +5,6 @@ module Nd = Ojax.Ndarray
 module D = Ojax.Dtype
 
 let name = "export_ser"
-let suite = "export_ser:x64_off"
 
 let of_hex h =
   String.init
@@ -81,7 +80,7 @@ let actual_call e id c =
       | Some cls, Some message -> Printf.sprintf "raise %s %s" cls message
       | _ -> "raise " ^ Printexc.to_string e)
 
-let check id expected actual () =
+let check suite id expected actual () =
   let ok = expected = actual in
   Docs_p2.record suite id ok;
   if not ok then
@@ -151,26 +150,54 @@ let ojax_export id =
   | None -> None
 
 let ojax_rows row id =
-  match ojax_export id with
-  | exception e ->
-      let m = "raise " ^ Printexc.to_string e in
-      [
-        (id ^ ":ojax_text", U.to_string (U.member "text" row), fun () -> m);
-        (id ^ ":ojax_fields", U.to_string (U.member "fields" row), fun () -> m);
-      ]
-  | None -> []
-  | Some e ->
-      [
-        ( id ^ ":ojax_text",
-          U.to_string (U.member "text" row),
-          fun () -> e.Ojax.Export.mlir_module );
-        ( id ^ ":ojax_fields",
-          U.to_string (U.member "fields" row),
-          fun () ->
-            guarded (fun () ->
-                ES.describe (ES.deserialize (ES.serialize (ES.of_exported e))))
-        );
-      ]
+  if flat_case id = None && id <> "dict_in" then []
+  else
+    let get () =
+      match ojax_export id with
+      | Some e -> e
+      | None -> failwith "export_ser: no ojax case"
+    in
+    [
+      ( id ^ ":ojax_text",
+        U.to_string (U.member "text" row),
+        fun () -> guarded (fun () -> (get ()).Ojax.Export.mlir_module) );
+      ( id ^ ":ojax_fields",
+        U.to_string (U.member "fields" row),
+        fun () ->
+          guarded (fun () ->
+              ES.describe
+                (ES.deserialize (ES.serialize (ES.of_exported (get ()))))) );
+    ]
+
+let show_outputs vs =
+  "ok "
+  ^ String.concat " | "
+      (List.map
+         (fun v ->
+           match Ojax.Backend.to_host_value v with
+           | Ojax.Types.Concrete nd -> show_nd nd
+           | _ -> "tracer")
+         vs)
+
+let actual_grad e c =
+  let inputs = List.map input_of (U.to_list (U.member "inputs" c)) in
+  let loss xs =
+    match
+      T.tree_leaves (ES.call e (T.Tuple (List.map (fun x -> T.Leaf x) xs)))
+    with
+    | [] -> failwith "export_ser: no outputs"
+    | o :: rest ->
+        List.fold_left
+          (fun acc o -> UF.add acc (Ojax.Numpy.Reductions.sum o))
+          (Ojax.Numpy.Reductions.sum o)
+          rest
+  in
+  match Ojax.Interpreters.Ad.grad loss inputs with
+  | gs -> show_outputs gs
+  | exception e -> (
+      match (Ojax.Py_exn.class_name e, Ojax.Py_exn.message_of e) with
+      | Some cls, Some message -> Printf.sprintf "raise %s %s" cls message
+      | _ -> "raise " ^ Printexc.to_string e)
 
 let rows_of row =
   let id = U.to_string (U.member "id" row) in
@@ -196,6 +223,11 @@ let rows_of row =
             fun () ->
               guarded (fun () ->
                   to_hex (ES.serialize ~vjp_order:1 (ES.deserialize b))) );
+          ( id ^ ":grad",
+            expected_call (U.member "grad" row),
+            fun () ->
+              guarded (fun () ->
+                  actual_grad (ES.deserialize b) (U.member "grad" row)) );
         ]
     | _ -> []
   in
@@ -209,21 +241,27 @@ let rows_of row =
   in
   base @ vjp @ calls @ ojax_rows row id
 
-let suites ~goldens_root =
-  let path = Filename.concat (Filename.concat goldens_root name) "cases.json" in
+let suite_for goldens_root x64 =
+  let tag = if x64 then "x64_on" else "x64_off" in
+  let path =
+    Filename.concat (Filename.concat goldens_root name) (tag ^ ".json")
+  in
   let rows =
     if Sys.file_exists path then
       U.to_list (U.member "rows" (Yojson.Safe.from_file path))
     else []
   in
-  [
-    ( "export_ser_x64_off",
-      List.concat_map
-        (fun row ->
-          List.map
-            (fun (id, expected, actual) ->
-              Alcotest.test_case id `Quick (fun () ->
-                  check id expected (actual ()) ()))
-            (rows_of row))
-        rows );
-  ]
+  let suite = name ^ ":" ^ tag in
+  ( name ^ "_" ^ tag,
+    List.concat_map
+      (fun row ->
+        List.map
+          (fun (id, expected, actual) ->
+            Alcotest.test_case id `Quick (fun () ->
+                Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+                    check suite id expected (actual ()) ())))
+          (rows_of row))
+      rows )
+
+let suites ~goldens_root =
+  [ suite_for goldens_root false; suite_for goldens_root true ]

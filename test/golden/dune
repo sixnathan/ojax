@@ -54,6 +54,7 @@
   (source_tree %{project_root}/goldens/docs_p2b)
   (source_tree %{project_root}/goldens/aot_cost)
   (source_tree %{project_root}/goldens/aot_hlo)
+  (source_tree %{project_root}/goldens/aot_hlo_noframe)
   (source_tree %{project_root}/goldens/opt_flags)
   (source_tree %{project_root}/goldens/jaxpr_check)
   (source_tree %{project_root}/goldens/ordered_lowering)

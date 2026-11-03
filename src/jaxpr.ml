@@ -132,6 +132,19 @@ let rec eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
                 | _ -> Core.bind e.prim in_vals)
             | _ -> Core.bind e.prim in_vals)
       in
+      let default () =
+        let ns =
+          Source_info_util.eqn_name_stack
+            (List.map (fun (v : var) -> v.vid) e.outs)
+        in
+        if ns = Source_info_util.empty_name_stack then default ()
+        else
+          Source_info_util.with_name_stack
+            (Source_info_util.concat
+               (Source_info_util.current_name_stack ())
+               ns)
+            default
+      in
       let outs =
         match !eqn_override with
         | None -> default ()
@@ -479,6 +492,7 @@ let process_primitive trace prim args =
       (match (custom_jaxpr, outvars) with
       | Some c, (first : var) :: _ -> Core.note_custom_eqn_jaxpr first.vid c
       | _ -> ());
+      Source_info_util.note_eqn_outs (List.map (fun (v : var) -> v.vid) outvars);
       builder.jb_eqns <-
         {
           prim;
@@ -623,6 +637,7 @@ let trace_with_refs mode_of (in_avals : aval list)
       jb_debug = take_debug ();
     }
   in
+  Source_info_util.reset_name_stack @@ fun () ->
   Core.with_new_main KJaxpr (GBuilder builder) (fun main ->
       Core.new_dynamic main (fun () ->
           let in_tracers =

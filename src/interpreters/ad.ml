@@ -1850,7 +1850,12 @@ let as_jvp trace v =
       | _ -> failwith "ad: expected a JVP tracer")
   | _ -> (v, zeros_like_value v)
 
-let jvp (f : value list -> value list) (primals : value list)
+let rec jvp (f : value list -> value list) (primals : value list)
+    (tangents : value list) : value list * value list =
+  Source_info_util.transform_name_stack "jvp" (fun () ->
+      jvp_subtrace f primals tangents)
+
+and jvp_subtrace (f : value list -> value list) (primals : value list)
     (tangents : value list) : value list * value list =
   Core.with_new_main KJVP GNone (fun main ->
       let ins =
@@ -1943,7 +1948,9 @@ let jvp_jaxpr (c : closed_jaxpr) primal_avals nzs =
                 primals nzs
             in
             let pos, tos =
-              jvp (fun a -> Jaxpr.eval_closed_jaxpr c a) primals tangents
+              jvp_subtrace
+                (fun a -> Jaxpr.eval_closed_jaxpr c a)
+                primals tangents
             in
             out_nzs := List.map (fun t -> not (is_zero t)) tos;
             pos @ List.filter (fun t -> not (is_zero t)) tos)
@@ -2402,6 +2409,8 @@ let rec tape_eval_slots (b : jaxpr_builder) (jx : jaxpr) slots =
                 fresh)
               e.outs
           in
+          Source_info_util.note_eqn_outs
+            (List.map (fun (v : var) -> v.vid) outs);
           b.jb_eqns <- { e with inputs; outs } :: b.jb_eqns)
     jx.eqns;
   List.map slot jx.outs
@@ -3245,7 +3254,7 @@ let joint_branch_jvp rebuild branches primals tangents =
               else p2tz p)
             ops nzs
         in
-        jvp (fun a -> Jaxpr.eval_closed_jaxpr branch a) ops tangent_ops
+        jvp_subtrace (fun a -> Jaxpr.eval_closed_jaxpr branch a) ops tangent_ops
       in
       let flags_of branch =
         let flags = ref [] in
@@ -3603,6 +3612,7 @@ let trace_linearized_nz (f : value list -> value list) (primals : value list)
   let tangent_trace = tape_trace b in
   let in_vars = ref [] in
   let pos, tos =
+    Source_info_util.transform_name_stack "jvp" @@ fun () ->
     Core.with_new_main KJVP (GBuilder b) (fun main ->
         let ins =
           List.map2
@@ -5249,13 +5259,22 @@ and eval_jaxpr_transposed ?(seeds = []) (jx : jaxpr) (args : tval list)
       if List.exists is_undef primals_in then begin
         let cts_in = List.map read_ct e.outs in
         if not (List.for_all Ad_util.is_symbolic_zero cts_in) then
-          let cts_out =
-            in_eqn_context (fun () -> transpose_rule e.prim cts_in primals_in)
-          in
-          List.iter2
-            (fun atom cto ->
-              match cto with Some ct -> write_ct atom ct | None -> ())
-            e.inputs cts_out
+          Source_info_util.with_name_stack
+            (Source_info_util.concat
+               (Source_info_util.transform
+                  (Source_info_util.current_name_stack ())
+                  "transpose")
+               (Source_info_util.eqn_name_stack
+                  (List.map (fun (v : var) -> v.vid) e.outs)))
+            (fun () ->
+              let cts_out =
+                in_eqn_context (fun () ->
+                    transpose_rule e.prim cts_in primals_in)
+              in
+              List.iter2
+                (fun atom cto ->
+                  match cto with Some ct -> write_ct atom ct | None -> ())
+                e.inputs cts_out)
       end)
     (List.rev jx.eqns);
   List.fold_right2

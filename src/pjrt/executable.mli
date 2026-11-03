@@ -10,7 +10,11 @@ val compile :
   ?options:(string * compiler_option) list -> Client.t -> string -> t
 
 val optimized_text :
-  ?options:(string * compiler_option) list -> Client.t -> string -> string
+  ?propagation:int * int ->
+  ?options:(string * compiler_option) list ->
+  Client.t ->
+  string ->
+  string
 
 val unoptimized_text :
   ?options:(string * compiler_option) list -> Client.t -> string -> string

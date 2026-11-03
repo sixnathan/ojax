@@ -1980,6 +1980,16 @@ let xla_call_jvp (c : closed_jaxpr) primals tangents =
         else p2tz po)
       pos out_nzs )
 
+let in_eqn_context f =
+  let prev = !Jaxpr.in_eqn_context in
+  Jaxpr.in_eqn_context := true;
+  Fun.protect ~finally:(fun () -> Jaxpr.in_eqn_context := prev) f
+
+let in_parent_scope f =
+  let saved = !Core.linearize_parent in
+  Core.linearize_parent := true;
+  Fun.protect ~finally:(fun () -> Core.linearize_parent := saved) f
+
 let rec jvp_pairs prim primals tangents =
   match prim with
   | Xla_call c -> xla_call_jvp c primals tangents
@@ -2259,13 +2269,16 @@ let rec jvp_pairs prim primals tangents =
       | Core.Vjp_rule { fwd; fwd_perturbed; _ } ->
           let primals = List.map Core.full_lower primals in
           let po, res =
-            match fwd_perturbed with
-            | None -> fwd primals
-            | Some rule ->
-                let perturbed =
-                  List.map (fun t -> not (Ad_util.is_symbolic_zero t)) tangents
-                in
-                rule perturbed primals
+            in_parent_scope (fun () ->
+                match fwd_perturbed with
+                | None -> fwd primals
+                | Some rule ->
+                    let perturbed =
+                      List.map
+                        (fun t -> not (Ad_util.is_symbolic_zero t))
+                        tangents
+                    in
+                    rule perturbed primals)
           in
           let out_avals = List.map Core.get_aval po in
           let in_zeros = List.map Ad_util.is_symbolic_zero tangents in
@@ -2470,10 +2483,14 @@ let lin_process (trace : trace) (b : jaxpr_builder) prim primals tangents =
         let tangent_args = List.map fst args in
         let in_tracers = List.filter_map snd args in
         let previous_scope = !Core.linearize_scope in
+        let previous_parent = !Core.linearize_parent in
         Core.linearize_scope := Some !Core.dynamic_trace;
+        Core.linearize_parent := false;
         let pos, tos =
           Fun.protect
-            ~finally:(fun () -> Core.linearize_scope := previous_scope)
+            ~finally:(fun () ->
+              Core.linearize_scope := previous_scope;
+              Core.linearize_parent := previous_parent)
             (fun () -> jvp_pairs prim primals tangent_args)
         in
         let pos =
@@ -5192,7 +5209,10 @@ and eval_jaxpr_transposed ?(seeds = []) (jx : jaxpr) (args : tval list)
     (fun (e : eqn) ->
       let primals_in = List.map read_primal e.inputs in
       if not (List.exists is_undef primals_in) then begin
-        let outs = Core.bind e.prim (List.map prim_val primals_in) in
+        let outs =
+          in_eqn_context (fun () ->
+              Core.bind e.prim (List.map prim_val primals_in))
+        in
         List.iter2 (fun (v : var) o -> write_primal v (Prim o)) e.outs outs
       end)
     jx.eqns;
@@ -5220,7 +5240,9 @@ and eval_jaxpr_transposed ?(seeds = []) (jx : jaxpr) (args : tval list)
       if List.exists is_undef primals_in then begin
         let cts_in = List.map read_ct e.outs in
         if not (List.for_all Ad_util.is_symbolic_zero cts_in) then
-          let cts_out = transpose_rule e.prim cts_in primals_in in
+          let cts_out =
+            in_eqn_context (fun () -> transpose_rule e.prim cts_in primals_in)
+          in
           List.iter2
             (fun atom cto ->
               match cto with Some ct -> write_ct atom ct | None -> ())

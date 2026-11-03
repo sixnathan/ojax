@@ -36,6 +36,7 @@ val new_dynamic : trace -> (unit -> 'a) -> 'a
 val find_top_trace : value list -> trace
 val dynamic_trace : trace option ref
 val linearize_scope : trace option option ref
+val linearize_parent : bool ref
 val full_raise : trace -> value -> value
 val full_lower : value -> value
 val process_primitive : trace -> primitive -> value list -> value list

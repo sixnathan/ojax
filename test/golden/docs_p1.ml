@@ -104,6 +104,20 @@ let residual_case case =
         [ x; NL.arange ~dtype:(int_dt ()) 3.0 ] )
   | "square" -> (one (fun a -> F.power a (JU.py_int 2)), [ x ])
   | "div" -> (two F.true_divide, [ x; F.add y (pyf 3.0) ])
+  | "mean" -> (one (fun a -> Ojax.Numpy.Reductions.mean (F.sin a)), [ x ])
+  | "relu" ->
+      (one (fun a -> F.maximum (F.subtract a (pyf 0.5)) (pyf 0.0)), [ x ])
+  | "where" ->
+      (two (fun a b -> NL.where_ (F.greater a (pyf 0.5)) (F.sin a) b), [ x; y ])
+  | "abs" -> (two (fun _ b -> F.multiply (F.abs b) (pyf 3.0)), [ x; y ])
+  | "two_literals" ->
+      ( two (fun a b ->
+            F.add (F.multiply (F.sin a) (pyf 2.0)) (F.multiply b (pyf 3.0))),
+        [ x; y ] )
+  | "scalar_arg" ->
+      ( two (fun a b -> F.multiply (F.sin a) b),
+        [ x; T.Concrete (Ojax.Ndarray.of_floats (float_dt ()) [||] [| 1.5 |]) ]
+      )
   | p when String.length p > 7 && String.sub p 0 7 = "policy_" ->
       (remat_sin (policy_of (String.sub p 7 (String.length p - 7))), [ x; m ])
   | other -> failwith ("docs_p1: residual case " ^ other)

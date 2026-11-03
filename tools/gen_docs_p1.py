@@ -96,6 +96,12 @@ def residual_cases():
         "integer_arg": (lambda *args: jnp.sin(args[0]) * args[1], [x, jnp.arange(3)]),
         "square": (lambda *args: args[0] ** 2, [x]),
         "div": (lambda *args: args[0] / args[1], [x, y + 3.0]),
+        "mean": (lambda *args: jnp.mean(jnp.sin(args[0])), [x]),
+        "relu": (lambda *args: jnp.maximum(args[0] - 0.5, 0.0), [x]),
+        "where": (lambda *args: jnp.where(args[0] > 0.5, jnp.sin(args[0]), args[1]), [x, y]),
+        "abs": (lambda *args: jnp.abs(args[1]) * 3.0, [x, y]),
+        "two_literals": (lambda *args: jnp.sin(args[0]) * 2.0 + args[1] * 3.0, [x, y]),
+        "scalar_arg": (lambda *args: jnp.sin(args[0]) * args[1], [x, jnp.asarray(1.5, dtype=fdt())]),
     }
     for p in ["nothing_saveable", "everything_saveable", "dots_saveable",
               "dots_with_no_batch_dims_saveable"]:

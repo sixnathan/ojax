@@ -1092,7 +1092,26 @@ let tokenize s =
   in
   go 0 []
 
-let py_repr s = "'" ^ s ^ "'"
+let py_repr s =
+  let quote =
+    if String.contains s '\'' && not (String.contains s '"') then '"' else '\''
+  in
+  let b = Buffer.create (String.length s + 2) in
+  Buffer.add_char b quote;
+  String.iter
+    (fun c ->
+      match c with
+      | '\\' -> Buffer.add_string b "\\\\"
+      | '\n' -> Buffer.add_string b "\\n"
+      | '\t' -> Buffer.add_string b "\\t"
+      | '\r' -> Buffer.add_string b "\\r"
+      | c when c = quote ->
+          Buffer.add_char b '\\';
+          Buffer.add_char b c
+      | c -> Buffer.add_char b c)
+    s;
+  Buffer.add_char b quote;
+  Buffer.contents b
 
 let like_repr like =
   let item = function None -> "None" | Some k -> string_of_int k in
@@ -1432,6 +1451,12 @@ let symbolic_args_specs ?constraints ?scope args shapes_specs =
     | Tree_util.Tuple _, Tree_util.List l -> Tree_util.Tuple l
     | _ -> shapes_specs
   in
+  (match
+     Tree_util.prefix_error ~name:"export.symbolic_args_specs shapes_specs"
+       ~leaf_type:"<class 'jax._src.api.ShapeDtypeStruct'>" shapes_specs args
+   with
+  | Some m -> raise (Py_exn.Value_error m)
+  | None -> ());
   let specs =
     try Tree_util.tree_broadcast shapes_specs args
     with Invalid_argument m | Failure m ->

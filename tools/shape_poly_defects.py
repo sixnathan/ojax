@@ -7,6 +7,12 @@ PROOF = ("JAX prints a SymbolicScope as f\"{id(self)} created at {loc}\" (jax/_s
          "id() is a CPython object address and loc the Python file, line and function that made the scope")
 
 
+NDIFF = "so the diff in the metadata at these pytree nodes is"
+NDIFF_PROOF = ("the lines after 'so the diff in the metadata at these pytree nodes is' are the output of Python's "
+               "difflib.ndiff (jax/_src/tree_util.py:1347 in _prefix_error), a Python standard-library text format "
+               "with intraline '?' hint lines; ojax prints the same message with plain '- ' and '+ ' lines")
+
+
 def load(path):
     with open(path, encoding="utf-8") as fh:
         return {r["id"]: r for r in json.load(fh)["rows"]}
@@ -23,7 +29,11 @@ def main():
     reruns = [(s.split("=", 1)[0], load(s.split("=", 1)[1])) for s in args.rerun]
     lines = ["suite\trow\tkind\tproof"]
     for rid, r in sorted(rows.items()):
-        m = SCOPE.search(r.get("message", ""))
+        msg = r.get("message", "")
+        if NDIFF in msg:
+            lines.append(f"{args.suite}\t{rid}\tc\t{NDIFF_PROOF}; JAX's diff: {msg.split(NDIFF, 1)[1].strip()!r}")
+            continue
+        m = SCOPE.search(msg)
         if not m:
             continue
         ids = [f"PYTHONHASHSEED 0 (golden): {m.group(1)}"]

@@ -1,5 +1,6 @@
 module U = Yojson.Safe.Util
 module SP = Ojax.Shape_poly
+module T = Ojax.Tree_util
 
 let name = "shape_poly_exprs"
 let suite = "shape_poly_exprs:x64_off"
@@ -40,12 +41,59 @@ let expected row =
   | "raise" -> Printf.sprintf "raise %s %s" (s "class") (s "message")
   | kind -> kind ^ " " ^ s "text"
 
+let args_tree desc =
+  let aval j =
+    T.Leaf
+      {
+        Ojax.Types.shape = Array.of_list (List.map U.to_int (U.to_list j));
+        dtype = Ojax.Dtype.F32;
+        weak_type = false;
+      }
+  in
+  match desc with
+  | `Assoc kvs -> T.Dict (List.map (fun (k, v) -> (k, aval v)) kvs)
+  | l -> T.Tuple (List.map aval (U.to_list l))
+
+let rec specs_tree = function
+  | `String s -> T.Leaf (Some s)
+  | `Null -> T.Leaf None
+  | `List l -> T.List (List.map specs_tree l)
+  | `Assoc kvs -> T.Dict (List.map (fun (k, v) -> (k, specs_tree v)) kvs)
+  | _ -> failwith "shape_poly_exprs: specs"
+
+let rec show_specs = function
+  | T.Leaf (spec : SP.spec) -> "'" ^ SP.shape_to_string spec.shape ^ "'"
+  | T.Tuple [ x ] -> "(" ^ show_specs x ^ ",)"
+  | T.Tuple l | T.List l ->
+      "(" ^ String.concat ", " (List.map show_specs l) ^ ")"
+  | T.Dict kvs ->
+      "{"
+      ^ String.concat ", "
+          (List.map (fun (k, v) -> "'" ^ k ^ "': " ^ show_specs v) kvs)
+      ^ "}"
+  | T.Null | T.Custom _ -> "?"
+
+let raised e =
+  match (Ojax.Py_exn.class_name e, Ojax.Py_exn.message_of e) with
+  | Some cls, Some m -> Printf.sprintf "raise %s %s" cls m
+  | _ -> "raise " ^ Printexc.to_string e
+
+let actual_args_specs expr =
+  match
+    SP.symbolic_args_specs
+      (args_tree (List.nth expr 1))
+      (specs_tree (List.nth expr 2))
+  with
+  | r -> "dim " ^ show_specs r
+  | exception e -> raised e
+
 let actual row =
   let constraints =
     List.map U.to_string (U.to_list (U.member "constraints" row))
   in
   let expr = U.to_list (U.member "expr" row) in
-  if U.to_string (List.hd expr) = "parse" then
+  if U.to_string (List.hd expr) = "args_specs" then actual_args_specs expr
+  else if U.to_string (List.hd expr) = "parse" then
     let like =
       match List.nth expr 2 with
       | `Null -> None

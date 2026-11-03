@@ -7,7 +7,7 @@ import sys
 import gen_goldens as gg
 import jax
 import numpy as np
-from gen_aot_cost import selected_cases
+from gen_aot_cost import SEED, parse_seeded, selected_cases
 from gen_aot_hlo import REGISTRIES
 
 MODULE = "aot_hlo_noframe"
@@ -17,7 +17,7 @@ def run_shard(x64, index, count, out):
     jax.config.update("jax_enable_x64", x64)
     jax.config.update("jax_traceback_in_locations_limit", 0)
     rows = []
-    for position, (suite, c) in enumerate(selected_cases(x64)):
+    for position, (suite, c) in enumerate(selected_cases(x64, SEED[0])):
         if position % count != index:
             continue
         registry = REGISTRIES[suite]
@@ -49,7 +49,7 @@ def gen_set(x64, outdir, jobs):
         part = os.path.join(outdir, f"{tag}.shard{index}.json")
         parts.append(part)
         command = [sys.executable, os.path.abspath(__file__), "--shard", str(index), str(jobs),
-                   "--x64", str(int(x64)), "--out", part]
+                   "--x64", str(int(x64)), "--out", part, "--seed", str(SEED[0])]
         workers.append(subprocess.Popen(command))
     if any(w.wait() != 0 for w in workers):
         raise SystemExit("a shard failed for " + tag)
@@ -72,7 +72,7 @@ def main():
     parser.add_argument("--shard", type=int, nargs=2, default=None)
     parser.add_argument("--x64", type=int, default=0)
     parser.add_argument("--out", default=None)
-    args = parser.parse_args()
+    args = parse_seeded(parser)
     gg.preflight()
     if args.shard:
         run_shard(bool(args.x64), args.shard[0], args.shard[1], args.out)

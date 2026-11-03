@@ -6,15 +6,25 @@ module N = Ojax.Nn.Functions
 
 let str row k = U.to_string (U.member k row)
 
-let vector () =
+let stored inputs k =
+  match inputs with
+  | `Null -> None
+  | j -> Some (Array.of_list (List.map U.to_number (U.to_list (U.member k j))))
+
+let vector inputs =
   T.Concrete
     (Ojax.Ndarray.of_floats Ojax.Dtype.F32 [| 4097 |]
-       (Array.init 4097 (fun i -> (float_of_int i /. 256.0) -. 8.0)))
+       (match stored inputs "vector" with
+       | Some a -> a
+       | None -> Array.init 4097 (fun i -> (float_of_int i /. 256.0) -. 8.0)))
 
-let matrix () =
+let matrix inputs =
   T.Concrete
     (Ojax.Ndarray.of_floats Ojax.Dtype.F32 [| 64; 64 |]
-       (Array.init 4096 (fun i -> (float_of_int (i mod 17) /. 8.0) -. 1.0)))
+       (match stored inputs "matrix" with
+       | Some a -> a
+       | None ->
+           Array.init 4096 (fun i -> (float_of_int (i mod 17) /. 8.0) -. 1.0)))
 
 let op_fn = function
   | "exp" -> F.exp
@@ -68,11 +78,11 @@ let config_row row =
       Ojax.Config.with_value flag (str row "mode") (fun () -> ());
       "")
 
-let actual_of row =
+let actual_of ~inputs row =
   if str row "flag" = "config" then config_row row
   else
     let op = str row "op" in
-    let arg = if op = "dot" then matrix () else vector () in
+    let arg = if op = "dot" then matrix inputs else vector inputs in
     let f = op_fn op in
     let thunk () =
       with_flag (str row "flag") (fun () ->
@@ -86,11 +96,12 @@ let actual_of row =
     in
     Docs_p2.run_case thunk
 
-let check_row ~x64 row () =
+let check_row ~x64 ~inputs row () =
   let id = str row "id" in
   let expected = Docs_p2.expected_of row in
   let actual =
-    Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () -> actual_of row)
+    Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+        actual_of ~inputs row)
   in
   let suite = "opt_flags:" ^ if x64 then "x64_on" else "x64_off" in
   let ok = Docs_p2.same expected actual in
@@ -106,12 +117,15 @@ let suite_for x64 =
       (Filename.concat Docs_p2.goldens_root "opt_flags")
       (tag ^ ".json")
   in
-  let rows =
-    if Sys.file_exists path then
-      U.to_list (U.member "rows" (Yojson.Safe.from_file path))
-    else []
+  let doc =
+    if Sys.file_exists path then Yojson.Safe.from_file path else `Null
   in
+  let rows =
+    match doc with `Null -> [] | d -> U.to_list (U.member "rows" d)
+  in
+  let inputs = match doc with `Null -> `Null | d -> U.member "inputs" d in
   ( "opt_flags_" ^ tag,
     List.map
-      (fun row -> Alcotest.test_case (str row "id") `Quick (check_row ~x64 row))
+      (fun row ->
+        Alcotest.test_case (str row "id") `Quick (check_row ~x64 ~inputs row))
       rows )

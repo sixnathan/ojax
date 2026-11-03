@@ -23,6 +23,7 @@
   docs_p2b
   aot_cost
   aot_hlo
+  opt_flags
   ordered_lowering
   vmap_coll
   custom_ad
@@ -43,6 +44,7 @@
   (source_tree %{project_root}/goldens/docs_p2b)
   (source_tree %{project_root}/goldens/aot_cost)
   (source_tree %{project_root}/goldens/aot_hlo)
+  (source_tree %{project_root}/goldens/opt_flags)
   (source_tree %{project_root}/goldens/ordered_lowering)
   (source_tree %{project_root}/goldens/lax)
   (source_tree %{project_root}/goldens/lax_smoke)

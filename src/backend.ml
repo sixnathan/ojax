@@ -184,6 +184,16 @@ let with_platform name thunk =
 
 let () = Config.platform_resolver := current_platform
 
+let config_compile_options () =
+  List.map
+    (fun (k, v) ->
+      ( k,
+        match v with
+        | `Int i -> Pjrt.Executable.Option_int i
+        | `Bool b -> Pjrt.Executable.Option_bool b
+        | `String s -> Pjrt.Executable.Option_string s ))
+    (Config.compile_debug_options ())
+
 module Xla = struct
   type buffer = Pjrt.Buffer.t
   type compiled = Pjrt.Executable.t
@@ -295,9 +305,12 @@ module Xla = struct
   let of_host nd = Pjrt.Buffer.of_host (client ()) nd
   let to_host buf = Pjrt.Buffer.to_host buf
 
-  let compile_text ?options text =
+  let compile_text ?(options = []) text =
     let start = Sys.time () in
-    let exec = Pjrt.Executable.compile ?options (client ()) text in
+    let debug = config_compile_options () in
+    let exec =
+      Pjrt.Executable.compile ~options:(debug @ options) (client ()) text
+    in
     Monitoring.record_event_duration_secs
       ~kwargs:[ ("fun_name", Monitoring.Text "jit") ]
       "/jax/core/compile/backend_compile_duration"
@@ -1589,7 +1602,9 @@ let to_host_value = function
   | (Concrete _ | Tracer _) as v -> v
 
 let client () = Xla.client ()
-let clear_placed_programs () = Hashtbl.reset placed_programs
+let clear_placed_programs () =
+  Hashtbl.reset placed_programs;
+  Hashtbl.reset eager_texts
 
 let clear_region_programs () =
   Region_cache.reset region_programs;

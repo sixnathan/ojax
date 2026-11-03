@@ -113,7 +113,8 @@ let compile ?compiler_options lowered =
   }
 
 let compiled_as_text compiled =
-  Pjrt.Executable.optimized_text ~options:compiled.options
+  Pjrt.Executable.optimized_text
+    ~options:(Backend.config_compile_options () @ compiled.options)
     (Backend.xla_client ())
     (as_jax_text compiled.source)
 

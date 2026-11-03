@@ -5425,6 +5425,8 @@ let () =
          Aot_cost.suite_for true;
          Aot_hlo.suite_for false;
          Aot_hlo.suite_for true;
+         Opt_flags.suite_for false;
+         Opt_flags.suite_for true;
          Ordered_lowering.suite_for false;
          Ordered_lowering.suite_for true;
          Vmap_coll.suite_for false;

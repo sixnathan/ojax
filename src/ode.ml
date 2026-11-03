@@ -47,11 +47,7 @@ let rec concat_tree arrs =
 let array_list vs =
   concat_tree (List.map (fun v -> Lax_api.expand_dims v [| 0 |]) vs)
 
-let staged v =
-  match !Core.dynamic_trace with
-  | Some t when t.T.kind = T.KJaxpr && t.T.level > 0 -> Core.full_raise t v
-  | _ -> v
-
+let staged v = Numpy.Array_constructors.array v
 let vec dt xs = staged (T.Concrete (Nd.of_floats dt [| Array.length xs |] xs))
 
 let promote_dtypes_inexact = function

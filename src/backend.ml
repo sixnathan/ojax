@@ -1531,7 +1531,7 @@ let executor ?options (cj : closed_jaxpr) : value list -> value list =
   | Some _ when use_xla () ->
       ignore (Lazy.force (snd (artifacts_for (current_platform ()))))
   | _ -> ());
-  fun args ->
+  let run args =
     if use_xla () then (
       if Config.value Config.no_execution then
         failwith "compiled execution is disabled by no_execution";
@@ -1561,6 +1561,27 @@ let executor ?options (cj : closed_jaxpr) : value list -> value list =
     else (
       guard_implicit_args args;
       Jaxpr.eval_closed_jaxpr cj args)
+  in
+  let float0_outs =
+    List.map
+      (fun a ->
+        let aval = Pretty_printer.atom_type a in
+        aval.dtype = Dtype.Float0)
+      cj.jaxpr.outs
+  in
+  fun args ->
+    let outs = run args in
+    if not (List.mem true float0_outs) then outs
+    else
+      List.map2
+        (fun is_float0 v ->
+          if not is_float0 then v
+          else
+            let shape = (Core.get_aval v).shape in
+            Concrete
+              (Ndarray.of_floats Dtype.Float0 shape
+                 (Array.make (Array.fold_left ( * ) 1 shape) 0.0)))
+        float0_outs outs
 
 let run_text text args =
   if use_xla () then (

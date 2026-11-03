@@ -110,6 +110,7 @@ custom_00022_float64:jaxpr	1
 custom_00022_float64:jit:out0	1
 custom_00022_float64:text	1
 custom_00023_float64:eager:out0	1
+custom_00023_float64:jaxpr	1
 custom_00023_float64:jit:out0	1
 custom_00023_float64:text	1
 custom_00024_float64:eager:both_raise	0

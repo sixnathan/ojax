@@ -369,6 +369,16 @@ let mark_lines ?prim buf start name =
 
 let scope_str () = Source_info_util.name_stack_str !loc_scope
 
+let with_scopes names f =
+  let saved = !loc_scope in
+  loc_scope := List.fold_left Source_info_util.extend saved names;
+  Fun.protect ~finally:(fun () -> loc_scope := saved) f
+
+let eqn_scope (eqn : eqn) =
+  Source_info_util.concat !loc_scope
+    (Source_info_util.eqn_name_stack
+       (List.map (fun (v : var) -> v.vid) eqn.outs))
+
 let eqn_loc_name (eqn : eqn) prim =
   let stack =
     Source_info_util.concat !loc_scope
@@ -3645,7 +3655,9 @@ and emit_cond ctx (eqn : eqn) in_ids ~platforms branches =
   List.iteri
     (fun i b ->
       if i > 0 then Buffer.add_string ctx.buf "    }, {\n";
-      emit_branch b)
+      with_scopes
+        [ "cond"; Printf.sprintf "branch_%d_fun" i ]
+        (fun () -> emit_branch b))
     branches;
   let out_types =
     List.map (fun _ -> "!stablehlo.token") tokens
@@ -3849,7 +3861,8 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
     List.filteri (fun i _ -> i < cond_nconsts || i >= n_consts) carry_ids
   in
   incr while_depth;
-  enter_region_later ctx cond cond_ids "    cond {\n";
+  with_scopes [ "while"; "cond" ] (fun () ->
+      enter_region_later ctx cond cond_ids "    cond {\n");
   Buffer.add_string ctx.buf "    } do {\n";
   reset_next ctx start;
   let cond_fake =
@@ -3864,12 +3877,14 @@ and emit_while_plain ctx (eqn : eqn) in_ids ~cond_nconsts ~body_nconsts
   let body_consts =
     List.filteri (fun i _ -> i < body_nconsts) body.jaxpr.in_binders
   in
-  emit_region_returning ctx
-    {
-      body.jaxpr with
-      outs =
-        List.map (fun v -> A_var v) (cond_fake @ body_consts) @ body.jaxpr.outs;
-    };
+  with_scopes [ "while"; "body" ] (fun () ->
+      emit_region_returning ctx
+        {
+          body.jaxpr with
+          outs =
+            List.map (fun v -> A_var v) (cond_fake @ body_consts)
+            @ body.jaxpr.outs;
+        });
   decr while_depth;
   Buffer.add_string ctx.buf "    }\n"
 
@@ -4280,8 +4295,12 @@ and emit_eqn ctx (eqn : eqn) (in_ids : int list) : unit =
   let buf = ctx.buf in
   let start = Buffer.length buf in
   let prelude_before = Buffer.length prelude in
+  let saved_scope = !loc_scope in
+  if !loc_marks then loc_scope := eqn_scope eqn;
   Fun.protect
-    ~finally:(fun () -> Jaxpr.in_eqn_eval := prev)
+    ~finally:(fun () ->
+      Jaxpr.in_eqn_eval := prev;
+      loc_scope := saved_scope)
     (fun () -> emit_eqn_in_context ctx eqn in_ids);
   if !loc_marks then begin
     let prim = Pretty_printer.primitive_name eqn.prim in

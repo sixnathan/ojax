@@ -286,14 +286,10 @@ let geomspace_v ?(num = 50) ?(endpoint = true) ?(axis = 0) ?dtype start stop =
       | _ -> invalid_arg "geomspace: arity")
     [ start; stop ]
 
-let float_bound dtype x =
-  match dtype with
-  | Some d when is_inexact d -> scalar (to_inexact d) x
-  | _ -> scalar (default_float ()) x
+let float_bound x = Jnp_util.py_float x
 
 let linspace ?num ?endpoint ?dtype start stop =
-  linspace_v ?num ?endpoint ?dtype (float_bound dtype start)
-    (float_bound dtype stop)
+  linspace_v ?num ?endpoint ?dtype (float_bound start) (float_bound stop)
 
 let linspace_retstep ?num ?endpoint ?axis ?dtype start stop =
   match linspace_parts ~retstep:true ?num ?endpoint ?axis ?dtype start stop with
@@ -301,9 +297,7 @@ let linspace_retstep ?num ?endpoint ?axis ?dtype start stop =
   | _ -> assert false
 
 let logspace ?num ?endpoint ?base ?dtype start stop =
-  logspace_v ?num ?endpoint ?base ?dtype (float_bound dtype start)
-    (float_bound dtype stop)
+  logspace_v ?num ?endpoint ?base ?dtype (float_bound start) (float_bound stop)
 
 let geomspace ?num ?endpoint ?dtype start stop =
-  geomspace_v ?num ?endpoint ?dtype (float_bound dtype start)
-    (float_bound dtype stop)
+  geomspace_v ?num ?endpoint ?dtype (float_bound start) (float_bound stop)

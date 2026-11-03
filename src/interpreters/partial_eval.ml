@@ -696,7 +696,8 @@ let same_value a b =
 type jit_split = {
   js_known : closed_jaxpr;
   js_unknown : closed_jaxpr;
-  js_plan : [ `Literal of Ndarray.t | `Input of int | `Output ] list;
+  js_plan :
+    [ `Literal of Ndarray.t | `Input of int | `Output | `Same of int ] list;
   js_const_binders : var list;
   js_pvals_out : partial_val list;
   js_in_fwd : int option list;
@@ -754,9 +755,26 @@ let jit_split (c : closed_jaxpr) name (tracers : tracer list) known_flags
                (fun v f -> if f = None then [ v ] else [])
                known_outs in_fwd)
         in
+        let last_same v =
+          let rec go i found = function
+            | [] -> found
+            | a :: tl ->
+                go (i + 1) (if same_value a v then Some i else found) tl
+          in
+          go 0 None known_outs
+        in
+        let plan =
+          List.map
+            (function
+              | `Output v as entry -> (
+                  match last_same v with Some i -> `Same i | None -> entry)
+              | entry -> entry)
+            plan
+        in
         let residual_outs =
           List.filter_map
-            (function `Output v -> Some v | `Input _ | `Literal _ -> None)
+            (function
+              | `Output v -> Some v | `Input _ | `Literal _ | `Same _ -> None)
             plan
         in
         let n_binders = List.length plan in
@@ -784,7 +802,7 @@ let jit_split (c : closed_jaxpr) name (tracers : tracer list) known_flags
            | `Literal nd ->
                Hashtbl.replace literal_subst v.vid (A_lit nd);
                []
-           | `Input _ | `Output _ -> [ v ])
+           | `Input _ | `Output _ | `Same _ -> [ v ])
          const_binders plan)
   in
   let subst = function
@@ -817,6 +835,7 @@ let jit_split (c : closed_jaxpr) name (tracers : tracer list) known_flags
         (function
           | `Literal nd -> `Literal nd
           | `Input i -> `Input i
+          | `Same i -> `Same i
           | `Output _ -> `Output)
         plan;
     js_const_binders = const_binders;
@@ -887,6 +906,7 @@ let jit_partial_eval trace (c : closed_jaxpr) (tracers : tracer list) :
            match entry with
            | `Literal _ -> []
            | `Input i -> [ List.nth known_inputs i ]
+           | `Same i -> [ List.nth known_kept i ]
            | `Output -> (
                match !residual_rest with
                | r :: tl ->

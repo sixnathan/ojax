@@ -71,6 +71,35 @@ def inputs(dt):
 FUNS = {"pos": pos, "two": two, "kw": kw, "plain": plain}
 
 
+def logdiv(x):
+    return jnp.log(x) / x[1]
+
+
+def sqrtsum(x):
+    y = jnp.sqrt(x)
+    checkify.check(y[1] > 1, "y[1] small {}", y[1])
+    return y.sum() * x
+
+
+def intdiv(a, b):
+    return a // b
+
+
+def intrem(a, b):
+    return a % b
+
+
+NAN_FUNS = {"logdiv": logdiv, "sqrtsum": sqrtsum}
+INT_FUNS = {"intdiv": intdiv, "intrem": intrem}
+ERRSETS = {
+    "user": checkify.user_checks,
+    "nan": checkify.nan_checks,
+    "div": checkify.div_checks,
+    "float": checkify.float_checks,
+    "all": checkify.all_checks,
+}
+
+
 def value_cases(dt):
     xs = inputs(dt)
     out = {}
@@ -84,6 +113,18 @@ def value_cases(dt):
         out["nan_errors_%s_neg" % fname] = (lambda f=f: checkify.checkify(f, errors=checkify.nan_checks)(xs["neg"]), "get")
         out["all_errors_%s_neg" % fname] = (lambda f=f: checkify.checkify(f, errors=checkify.all_checks)(xs["neg"]), "get")
     out["nonscalar"] = (lambda: checkify.checkify(nonscalar)(xs["ok"]), "get")
+    fx = {"pos": jnp.array([1.0, 4.0, 9.0], dt), "negnan": jnp.array([-1.0, 4.0, 0.0], dt), "zero": jnp.array([1.0, 0.0, 2.0], dt)}
+    for fname, f in NAN_FUNS.items():
+        for xname, x in fx.items():
+            for ename, es in ERRSETS.items():
+                out["%s_%s_%s" % (fname, xname, ename)] = (lambda f=f, x=x, es=es: checkify.checkify(f, errors=es)(x), "get")
+    ia = jnp.array([7, -7, 9], jnp.int32)
+    ib = {"nz": jnp.array([2, 3, -4], jnp.int32), "z": jnp.array([2, 0, 5], jnp.int32)}
+    for fname, f in INT_FUNS.items():
+        for bname, b in ib.items():
+            for ename, es in ERRSETS.items():
+                out["%s_%s_%s" % (fname, bname, ename)] = (lambda f=f, b=b, es=es: checkify.checkify(f, errors=es)(ia, b), "get")
+            out["throw_%s_%s" % (fname, bname)] = (lambda f=f, b=b: checkify.checkify(f, errors=checkify.all_checks)(ia, b), "throw")
     return out
 
 
@@ -93,6 +134,13 @@ def traced_cases(dt):
     for fname, f in FUNS.items():
         out["jaxpr_checkify_%s" % fname] = (lambda x, f=f: checkify.checkify(f)(x), [x], True)
         out["jaxpr_raw_%s" % fname] = (f, [x], False)
+    for fname, f in NAN_FUNS.items():
+        for ename, es in ERRSETS.items():
+            out["jaxpr_%s_%s" % (fname, ename)] = (lambda x, f=f, es=es: checkify.checkify(f, errors=es)(x), [x], True)
+    ia = jnp.array([7, -7, 9], jnp.int32)
+    for fname, f in INT_FUNS.items():
+        for ename, es in ERRSETS.items():
+            out["jaxpr_%s_%s" % (fname, ename)] = (lambda a, b, f=f, es=es: checkify.checkify(f, errors=es)(a, b), [ia, ia], True)
     return out
 
 

@@ -357,14 +357,36 @@ let discharge enabled error template leaves =
   in
   { discharged with metadata = new_error.metadata @ discharged.metadata }
 
-let checkify ?(errors = user_checks) f args =
-  let closed, hoisted = Jaxpr.make_jaxpr_hoisted (List.map aval args) f in
-  let error = ref init_error in
+let rec interpret errors (closed : T.closed_jaxpr) error0 args =
+  let error = ref error0 in
   let rule (e : T.eqn) in_vals default =
     match e.T.prim with
     | T.Custom_vjp_call id when Hashtbl.mem templates id ->
         error := discharge errors !error (Hashtbl.find templates id) in_vals;
         []
+    | T.Xla_call c ->
+        let template = !error in
+        let err_vals = error_leaves template in
+        let n_err = List.length err_vals in
+        let out_template = ref template in
+        let checked =
+          Jaxpr.make_jaxpr
+            (List.map aval (err_vals @ in_vals))
+            (fun vals ->
+              let ev = List.filteri (fun i _ -> i < n_err) vals in
+              let ins = List.filteri (fun i _ -> i >= n_err) vals in
+              let err, outs =
+                interpret errors c (with_leaves template ev) ins
+              in
+              out_template := err;
+              error_leaves err @ outs)
+        in
+        Jaxpr.copy_call_name ~source:c checked;
+        let all = C.bind (T.Xla_call checked) (err_vals @ in_vals) in
+        let n_out = List.length (error_leaves !out_template) in
+        error :=
+          with_leaves !out_template (List.filteri (fun i _ -> i < n_out) all);
+        List.filteri (fun i _ -> i >= n_out) all
     | T.Div ->
         (match in_vals with
         | [ _; y ] when List.mem Division_by_zero errors ->
@@ -387,6 +409,10 @@ let checkify ?(errors = user_checks) f args =
   let outs =
     Fun.protect
       ~finally:(fun () -> Jaxpr.eqn_override := saved)
-      (fun () -> Jaxpr.eval_closed_jaxpr closed (args @ hoisted))
+      (fun () -> Jaxpr.eval_closed_jaxpr closed args)
   in
   (!error, outs)
+
+let checkify ?(errors = user_checks) f args =
+  let closed, hoisted = Jaxpr.make_jaxpr_hoisted (List.map aval args) f in
+  interpret errors closed init_error (args @ hoisted)

@@ -60,6 +60,38 @@ let nonscalar = function
 
 let funs = [ ("pos", pos); ("two", two); ("kw", kw); ("plain", plain) ]
 
+let logdiv = function
+  | [ x ] -> [ UF.true_divide (UF.log x) (at x 1) ]
+  | _ -> failwith "arity"
+
+let sqrtsum = function
+  | [ x ] ->
+      let y = UF.sqrt x in
+      let p = UF.greater (at y 1) (pi 1) in
+      let a = at y 1 in
+      CK.check p "y[1] small {}" [ a ];
+      [ UF.multiply (R.sum y) x ]
+  | _ -> failwith "arity"
+
+let intdiv = function
+  | [ a; b ] -> [ UF.floor_divide a b ]
+  | _ -> failwith "arity"
+
+let intrem = function [ a; b ] -> [ UF.remainder a b ] | _ -> failwith "arity"
+let nan_funs = [ ("logdiv", logdiv); ("sqrtsum", sqrtsum) ]
+let int_funs = [ ("intdiv", intdiv); ("intrem", intrem) ]
+
+let errsets =
+  [
+    ("user", CK.user_checks);
+    ("nan", CK.nan_checks);
+    ("div", CK.div_checks);
+    ("float", CK.float_checks);
+    ("all", CK.all_checks);
+  ]
+
+let ints xs = Ojax.Types.Concrete (Nd.of_floats D.I32 [| 3 |] xs)
+
 let inputs dt =
   [
     ("ok", arr dt [| 1.0; 2.0; 3.0 |]);
@@ -115,6 +147,38 @@ let value_cases dt =
       ( "nonscalar",
         `Err (fun () -> CK.checkify nonscalar [ List.assoc "ok" xs ]) );
     ]
+  @ List.concat_map
+      (fun (fname, f) ->
+        List.concat_map
+          (fun (xname, x) ->
+            List.map
+              (fun (ename, es) ->
+                ( Printf.sprintf "%s_%s_%s" fname xname ename,
+                  `Err (fun () -> CK.checkify ~errors:es f [ x ]) ))
+              errsets)
+          [
+            ("pos", arr dt [| 1.0; 4.0; 9.0 |]);
+            ("negnan", arr dt [| -1.0; 4.0; 0.0 |]);
+            ("zero", arr dt [| 1.0; 0.0; 2.0 |]);
+          ])
+      nan_funs
+  @ List.concat_map
+      (fun (fname, f) ->
+        List.concat_map
+          (fun (bname, b) ->
+            let ia = ints [| 7.0; -7.0; 9.0 |] in
+            List.map
+              (fun (ename, es) ->
+                ( Printf.sprintf "%s_%s_%s" fname bname ename,
+                  `Err (fun () -> CK.checkify ~errors:es f [ ia; b ]) ))
+              errsets
+            @ [
+                ( Printf.sprintf "throw_%s_%s" fname bname,
+                  `Err (fun () -> CK.checkify ~errors:CK.all_checks f [ ia; b ])
+                );
+              ])
+          [ ("nz", ints [| 2.0; 3.0; -4.0 |]); ("z", ints [| 2.0; 0.0; 5.0 |]) ])
+      int_funs
 
 let value_cases id =
   let tag dname dt =
@@ -135,6 +199,16 @@ let traced_list =
         ("jaxpr_raw_" ^ fname, f);
       ])
     funs
+  @ List.concat_map
+      (fun (fname, f) ->
+        List.map
+          (fun (ename, es) ->
+            ( Printf.sprintf "jaxpr_%s_%s" fname ename,
+              fun xs ->
+                let e, o = CK.checkify ~errors:es f xs in
+                CK.error_leaves e @ o ))
+          errsets)
+      (nan_funs @ int_funs)
 
 let traced id =
   let strip s =

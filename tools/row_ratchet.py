@@ -8,7 +8,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-PREFIXES = ("fuzz:", "fuzz_s2:", "compose_fuzz:", "text_compose_fuzz:", "custom_ad:", "compose_pinned:", "text_compose_pinned:", "index_fuzz:", "text_index_fuzz:", "apply_transforms:", "text_apply_transforms:", "keys_arrays:", "jit_opts:", "jit_opts_notices:", "user_dtype:", "user_dtype_notices:", "docs_p2:", "docs_p2b:", "aot_cost:", "aot_mem:", "ordered_lowering:", "vmap_coll:", "audit_holes:", "vjp_int:", "mesh_one:", "docs_p1:", "export_ser:", "shape_poly_exprs:", "option_fuzz:", "text_option_fuzz:", "option_pinned:", "text_option_pinned:", "put_modes:", "text_put_modes:", "text_fuzz:", "text_fuzz_s2:", "coverage:")
+PREFIXES = ("fuzz:", "fuzz_s2:", "compose_fuzz:", "text_compose_fuzz:", "custom_ad:", "compose_pinned:", "text_compose_pinned:", "index_fuzz:", "text_index_fuzz:", "apply_transforms:", "text_apply_transforms:", "keys_arrays:", "jit_opts:", "jit_opts_notices:", "user_dtype:", "user_dtype_notices:", "docs_p2:", "docs_p2b:", "aot_cost:", "aot_mem:", "ordered_lowering:", "vmap_coll:", "audit_holes:", "vjp_int:", "mesh_one:", "docs_p1:", "opt_flags:", "jaxpr_check:", "export_ser:", "shape_poly_exprs:", "option_fuzz:", "text_option_fuzz:", "option_pinned:", "text_option_pinned:", "put_modes:", "text_put_modes:", "text_fuzz:", "text_fuzz_s2:", "coverage:")
 BASELINE_DIR = os.path.join("test", "golden", "identical_rows")
 DROPPED = "dropped.tsv"
 TEXT_GROUPS = {"parity": "text_parity", "jaxpr": "text_parity", "coverage": "text_coverage", "apicov": "text_apicov", "fuzz": "text_fuzz"}

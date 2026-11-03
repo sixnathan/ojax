@@ -11,10 +11,13 @@ out_sharded:hlo	1
 out_sharded:jaxpr	1
 out_sharded:out0	1
 shard_map_pmax:hlo	1
+shard_map_pmax:jaxpr	1
 shard_map_pmax:out0	1
 shard_map_pmin:hlo	1
+shard_map_pmin:jaxpr	1
 shard_map_pmin:out0	1
 shard_map_psum:hlo	1
+shard_map_psum:jaxpr	1
 shard_map_psum:out0	1
 sin_sum:hlo	1
 sin_sum:jaxpr	1

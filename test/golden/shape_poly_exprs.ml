@@ -44,20 +44,40 @@ let actual row =
   let constraints =
     List.map U.to_string (U.to_list (U.member "constraints" row))
   in
-  match
-    let dims =
-      SP.symbolic_shape ~constraints (Some (U.to_string (U.member "spec" row)))
+  let expr = U.to_list (U.member "expr" row) in
+  if U.to_string (List.hd expr) = "parse" then
+    let like =
+      match List.nth expr 2 with
+      | `Null -> None
+      | l ->
+          Some
+            (Array.of_list
+               (List.map
+                  (function `Null -> None | v -> Some (U.to_int v))
+                  (U.to_list l)))
     in
-    ev dims (U.member "expr" row)
-  with
-  | Dim d -> "dim " ^ SP.dim_to_string d
-  | Bool b -> "bool " ^ if b then "True" else "False"
-  | exception SP.Inconclusive_dimension_operation m ->
-      "raise InconclusiveDimensionOperation " ^ m
-  | exception e -> (
-      match (Ojax.Py_exn.class_name e, Ojax.Py_exn.message_of e) with
-      | Some cls, Some m -> Printf.sprintf "raise %s %s" cls m
-      | _ -> "raise " ^ Printexc.to_string e)
+    match SP.symbolic_shape ?like (Some (U.to_string (List.nth expr 1))) with
+    | dims -> "dim " ^ SP.shape_to_string dims
+    | exception e -> (
+        match (Ojax.Py_exn.class_name e, Ojax.Py_exn.message_of e) with
+        | Some cls, Some m -> Printf.sprintf "raise %s %s" cls m
+        | _ -> "raise " ^ Printexc.to_string e)
+  else
+    match
+      let dims =
+        SP.symbolic_shape ~constraints
+          (Some (U.to_string (U.member "spec" row)))
+      in
+      ev dims (U.member "expr" row)
+    with
+    | Dim d -> "dim " ^ SP.dim_to_string d
+    | Bool b -> "bool " ^ if b then "True" else "False"
+    | exception SP.Inconclusive_dimension_operation m ->
+        "raise InconclusiveDimensionOperation " ^ m
+    | exception e -> (
+        match (Ojax.Py_exn.class_name e, Ojax.Py_exn.message_of e) with
+        | Some cls, Some m -> Printf.sprintf "raise %s %s" cls m
+        | _ -> "raise " ^ Printexc.to_string e)
 
 let check row () =
   let id = U.to_string (U.member "id" row) in

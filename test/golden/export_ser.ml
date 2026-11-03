@@ -167,6 +167,21 @@ let ojax_rows row id =
           guarded (fun () ->
               ES.describe
                 (ES.deserialize (ES.serialize (ES.of_exported (get ()))))) );
+      ( id ^ ":ojax_bytes",
+        U.to_string (U.member "serialized" row),
+        fun () ->
+          guarded (fun () ->
+              let jax_module =
+                (ES.deserialize
+                   (of_hex (U.to_string (U.member "serialized" row))))
+                  .ES.mlir_module_serialized
+              in
+              to_hex
+                (ES.serialize
+                   {
+                     (ES.of_exported (get ())) with
+                     ES.mlir_module_serialized = jax_module;
+                   })) );
     ]
 
 let show_outputs vs =

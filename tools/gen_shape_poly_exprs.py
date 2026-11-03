@@ -97,6 +97,33 @@ def outcome(fn):
         return {"kind": "raise", "class": type(ex).__name__, "message": str(ex)}
 
 
+SPECS = [
+    ("a, b", None), ("a, ...", (None, 3, 4)), ("...", (2, 3)), ("_, a", (5, None)),
+    ("a + b, a - b", None), ("2 * a", None), ("a*b*c", None), ("3*a^2", None),
+    ("mod(a, 2)", None), ("floordiv(a, b)", None), ("max(a, b, c)", None), ("min(a)", None),
+    ("non_negative(a - 3)", None), ("b - 1", None), ("a, _", (None, 4)), ("a, 3", (None, 4)),
+    ("_", None), ("a, ...", None), ("...", None), ("", None), ("a,", None), ("(a, b)", None),
+    ("a b", None), ("1a", None), ("a_1, b2", None), ("-a", None), ("a * -2", None),
+    ("a, a", (3, 4)), ("a, 2*a", (None, None)), ("max(a, 0)", None), ("4", (4,)), ("4", (5,)),
+    ("a, b", (2,)), ("a ^ 2", None), ("a**2", None), ("floordiv(a)", None), ("mod(a, b, c)", None),
+    ("a + ", None), ("a, , b", None), ("a .. b", None),
+]
+
+
+def spec_rows(rng, rows):
+    for i, (spec, like) in enumerate(SPECS):
+        r = outcome(lambda: str(export.symbolic_shape(spec, like=like)))
+        r.update({"id": f"spec_{i:03d}", "spec": spec, "constraints": [], "expr": ["parse", spec, like]})
+        rows.append(r)
+    for r0 in list(rows):
+        if r0["kind"] == "dim" and not r0["id"].startswith("spec") and rng.random() < 0.5:
+            names = r0["spec"]
+            text = names + ", " + r0["text"]
+            r = outcome(lambda: str(export.symbolic_shape(text)))
+            r.update({"id": "reparse_" + r0["id"], "spec": text, "constraints": [], "expr": ["parse", text, None]})
+            rows.append(r)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None)
@@ -117,6 +144,7 @@ def main():
             r = outcome(lambda: ev(e, export.symbolic_shape(spec, constraints=tuple(constraints))))
             r.update({"id": f"s{si}_{k:03d}", "spec": spec, "constraints": constraints, "expr": e})
             rows.append(r)
+    spec_rows(rng, rows)
     with open(os.path.join(base, "rows.json"), "w") as fh:
         json.dump({"jax": jax.__version__, "seed": args.seed, "rows": rows}, fh, indent=1, sort_keys=True)
 

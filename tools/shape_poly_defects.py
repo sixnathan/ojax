@@ -26,7 +26,7 @@ def main():
         m = SCOPE.search(r.get("message", ""))
         if not m:
             continue
-        ids = [f"golden run: {m.group(1)}"]
+        ids = [f"PYTHONHASHSEED 0 (golden): {m.group(1)}"]
         for seed, other in reruns:
             m2 = SCOPE.search(other[rid].get("message", ""))
             if m2 is None or SCOPE.sub("", other[rid]["message"]) != SCOPE.sub("", r["message"]):

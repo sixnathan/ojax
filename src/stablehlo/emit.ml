@@ -6054,7 +6054,10 @@ let emit_export_text ?(platforms = []) ?result_names ~name
           Mlir_names.add_platform_index_arg ~arg:platform_index_arg body
         else body
       in
-      let body = Mlir_names.drop_empty_backend_config body in
+      let body =
+        Mlir_names.drop_default_attributes
+          (Mlir_names.drop_empty_backend_config body)
+      in
       {
         text =
           Mlir_names.render ?result_names ~module_name:name

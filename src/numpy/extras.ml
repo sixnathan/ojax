@@ -315,17 +315,16 @@ let flatnonzero ?size ?fill_value a =
   List.hd (nonzero ?size ?fill_value (flat a))
 
 let argwhere ?size ?fill_value a =
-  let scalar = rank a = 0 in
-  let a = if scalar then NL.reshape a [| 1 |] else a in
-  match nonzero ?size ?fill_value a with
-  | [] -> AC.zeros ~dtype:(default_int ()) [| 0; 0 |]
-  | parts ->
-      let result = NL.stack ~axis:1 parts in
-      if scalar then
-        NL.reshape
-          (L.slice_in_dim ~axis:0 result 0 0)
-          [| (shape result).(0); 0 |]
-      else result
+  let result =
+    NL.transpose (NL.vstack (nonzero ?size ?fill_value (NL.atleast_1d a)))
+  in
+  let rows = (shape result).(0) in
+  if rank a = 0 then
+    NL.reshape
+      (Getitem.take result
+         [ Getitem.Slice { start = None; stop = Some 0; step = None } ])
+      [| rows; 0 |]
+  else NL.reshape result [| rows; rank a |]
 
 type unique_result = {
   values : value;
@@ -785,7 +784,7 @@ let sorted_unique_floats name v =
   List.sort_uniq compare_with_nan (Array.to_list data)
 
 let unique_values_full ?size ?fill_value a =
-  (unique_full ?size ?fill_value a).values
+  (unique_full ~flags:no_unique_flags ?size ?fill_value a).values
 
 let of_float_list dt xs =
   let arr = Array.of_list xs in
@@ -869,7 +868,8 @@ let concat_sorted_keys ~keys ~payload =
     (Sort { dimension = 0; is_stable = true; num_keys = List.length keys })
     (keys @ payload)
 
-let dynamic_set arr piece start = L.dynamic_update_slice arr piece [ start ]
+let dynamic_set arr piece start =
+  L.dynamic_update_slice ~allow_negative_indices:true arr piece [ start ]
 
 let concat_unique arr1 arr2 ~fill_value =
   let u1, n1 =
@@ -891,29 +891,66 @@ let concat_unique arr1 arr2 ~fill_value =
 let take_fill aux indices =
   I.take ~mode:"fill" ~fill_value:0.0 ~axis:0 aux indices
 
-let intersect1d_sized ~assume_unique ~size ~fill_value a b =
+let static_value_key = function
+  | None -> "None"
+  | Some (Concrete nd) ->
+      Printf.sprintf "%s/%b/%s"
+        (Dtype.numpy_name (Ndarray.dtype nd))
+        (Ndarray.weak nd)
+        (String.concat ","
+           (Array.to_list (Array.map (Printf.sprintf "%h") (flat_floats nd))))
+  | Some _ -> "traced" ^ string_of_int (Core.fresh_id ())
+
+let at_get_fill v indices fill =
+  Getitem.take ~mode:"fill" ~fill_value:(Jnp_util.py_int fill) v
+    [ Getitem.Arr indices ]
+
+let intersect1d_size_body ~assume_unique ~size ~fill_value ~return_indices a b =
   let idt = default_int () in
-  let aux, mask =
+  let m1 = size_of a and m2 = size_of b in
+  let ind1, ind2, num_unique1, aux, mask, aux_sort_indices =
     if assume_unique then begin
+      let ind1 = NL.arange ~dtype:idt (float_of_int m1) in
+      let num_unique1 = Jnp_util.py_int m1 in
+      let ind2 = NL.arange ~dtype:idt (float_of_int m2) in
       let arr = NL.concatenate [ a; b ] in
       let n = size_of arr in
       match
         concat_sorted_keys ~keys:[ arr ]
           ~payload:[ NL.arange ~dtype:idt (float_of_int n) ]
       with
-      | aux :: _ -> (aux, AC.ones ~dtype:Dtype.Bool [| n |])
-      | [] -> invalid_arg "intersect1d: arity"
+      | [ aux; sorted ] ->
+          ( ind1,
+            ind2,
+            num_unique1,
+            aux,
+            AC.ones ~dtype:Dtype.Bool [| n |],
+            sorted )
+      | _ -> invalid_arg "intersect1d: arity"
     end
     else begin
-      let arr, total = concat_unique a b ~fill_value:(Some 0.0) in
+      let flags = { no_unique_flags with want_index = true } in
+      let u1, n1 =
+        traced_unique_sized ~flags ~axis:0 ~size:m1 ~fill_value:0.0 a
+      in
+      let n1 = n1 () in
+      let u2, n2 =
+        traced_unique_sized ~flags ~axis:0 ~size:m2 ~fill_value:0.0 b
+      in
+      let n2 = n2 () in
+      let dt = dtype_of u1.values in
+      let arr = L.full [| m1 + m2 |] 0.0 dt in
+      let arr = dynamic_set arr u1.values (lit_of 0.0 idt) in
+      let arr = dynamic_set arr u2.values n1 in
       let n = size_of arr in
-      let mask = positions_below n total in
+      let iota = NL.arange ~dtype:idt (float_of_int n) in
+      let mask = U.less iota (U.add n1 n2) in
       match
         concat_sorted_keys
           ~keys:[ U.logical_not mask; arr ]
           ~payload:[ NL.arange ~dtype:idt (float_of_int n) ]
       with
-      | [ _; aux; _ ] -> (aux, mask)
+      | [ _; aux; sorted ] -> (u1.indices, u2.indices, n1, aux, mask, sorted)
       | _ -> invalid_arg "intersect1d: arity"
     end
   in
@@ -924,19 +961,61 @@ let intersect1d_sized ~assume_unique ~size ~fill_value a b =
     U.logical_and (Core.bind1 Eq [ tail aux; head aux ]) (tail mask)
   in
   let num_results = R.sum aux_mask in
-  let vals =
+  let val_indices, vals =
     if n > 0 then
-      take_fill aux
-        (List.hd (nonzero ~size ~fill_value:(Jnp_util.py_int n) aux_mask))
-    else L.full [| size |] 0.0 (dtype_of aux)
+      let val_indices =
+        List.hd (nonzero ~size ~fill_value:(Jnp_util.py_int n) aux_mask)
+      in
+      (val_indices, at_get_fill aux val_indices 0)
+    else (NL.arange ~dtype:idt 0.0, L.full [| size |] 0.0 (dtype_of aux))
   in
-  fill_or_extremes ~fill_value vals num_results
+  let vals = fill_or_extremes ~fill_value vals num_results in
+  if not return_indices then [ vals ]
+  else
+    let below v = positions_below (size_of v) num_results in
+    let arr1_indices = at_get_fill aux_sort_indices val_indices m1 in
+    let arr1_indices =
+      NL.where_ (below arr1_indices) arr1_indices (Jnp_util.py_int m1)
+    in
+    let arr2_indices =
+      U.subtract
+        (at_get_fill aux_sort_indices
+           (U.add val_indices (Jnp_util.py_int 1))
+           m2)
+        num_unique1
+    in
+    let arr2_indices =
+      NL.where_ (below arr2_indices) arr2_indices (Jnp_util.py_int m2)
+    in
+    if assume_unique then [ vals; arr1_indices; arr2_indices ]
+    else
+      [
+        vals;
+        at_get_fill ind1 arr1_indices (size_of ind1);
+        at_get_fill ind2 arr2_indices (size_of ind2);
+      ]
+
+let intersect1d_size ~assume_unique ~size ~fill_value ~return_indices a b =
+  Jnp_util.jit "_intersect1d_size"
+    ~key:
+      (Printf.sprintf "%s|%b|%d|%b"
+         (static_value_key fill_value)
+         assume_unique size return_indices)
+    (function
+      | [ a; b ] ->
+          intersect1d_size_body ~assume_unique ~size ~fill_value ~return_indices
+            a b
+      | _ -> invalid_arg "intersect1d: arity")
+    [ a; b ]
 
 let intersect1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in
   let a = flat a and b = flat b in
   match size with
-  | Some n -> intersect1d_sized ~assume_unique ~size:n ~fill_value a b
+  | Some n ->
+      List.hd
+        (intersect1d_size ~assume_unique ~size:n ~fill_value
+           ~return_indices:false a b)
   | None ->
       let xs =
         if assume_unique then
@@ -1006,96 +1085,18 @@ let intersect1d_indices ?(assume_unique = false) a b =
     of_ints (fun (_, i, _) -> i),
     of_ints (fun (_, _, j) -> j) )
 
-let intersect1d_sized_indices ~assume_unique ~size ~fill_value a b =
-  let idt = default_int () in
-  let m1 = size_of a and m2 = size_of b in
-  let ind1, ind2, num_unique1, aux, mask, aux_sort_indices =
-    if assume_unique then begin
-      let arr = NL.concatenate [ a; b ] in
-      let n = size_of arr in
-      match
-        concat_sorted_keys ~keys:[ arr ]
-          ~payload:[ NL.arange ~dtype:idt (float_of_int n) ]
-      with
-      | [ aux; sorted ] ->
-          ( NL.arange ~dtype:idt (float_of_int m1),
-            NL.arange ~dtype:idt (float_of_int m2),
-            Jnp_util.py_int m1,
-            aux,
-            AC.ones ~dtype:Dtype.Bool [| n |],
-            sorted )
-      | _ -> invalid_arg "intersect1d: arity"
-    end
-    else begin
-      let flags = { no_unique_flags with want_index = true } in
-      let u1, n1 =
-        traced_unique_sized ~flags ~axis:0 ~size:m1 ~fill_value:0.0 a
-      in
-      let n1 = n1 () in
-      let u2, n2 =
-        traced_unique_sized ~flags ~axis:0 ~size:m2 ~fill_value:0.0 b
-      in
-      let n2 = n2 () in
-      let dt = dtype_of u1.values in
-      let arr = L.full [| m1 + m2 |] 0.0 dt in
-      let arr = dynamic_set arr u1.values (lit_of 0.0 idt) in
-      let arr = dynamic_set arr u2.values n1 in
-      let n = size_of arr in
-      let mask = positions_below n (U.add n1 n2) in
-      match
-        concat_sorted_keys
-          ~keys:[ U.logical_not mask; arr ]
-          ~payload:[ NL.arange ~dtype:idt (float_of_int n) ]
-      with
-      | [ _; aux; sorted ] -> (u1.indices, u2.indices, n1, aux, mask, sorted)
-      | _ -> invalid_arg "intersect1d: arity"
-    end
-  in
-  let n = size_of aux in
-  let tail v = L.slice v [| 1 |] [| n |]
-  and head v = L.slice v [| 0 |] [| n - 1 |] in
-  let aux_mask =
-    U.logical_and (Core.bind1 Eq [ tail aux; head aux ]) (tail mask)
-  in
-  let num_results = R.sum aux_mask in
-  let val_indices, vals =
-    if n > 0 then
-      let val_indices =
-        List.hd (nonzero ~size ~fill_value:(Jnp_util.py_int n) aux_mask)
-      in
-      (val_indices, take_fill aux val_indices)
-    else (NL.arange ~dtype:idt 0.0, L.full [| size |] 0.0 (dtype_of aux))
-  in
-  let vals = fill_or_extremes ~fill_value vals num_results in
-  let gather_fill v indices fill =
-    I.take ~mode:"fill" ~fill_value:(float_of_int fill) ~axis:0 v indices
-  in
-  let below v = positions_below (size_of v) num_results in
-  let arr1_indices = gather_fill aux_sort_indices val_indices m1 in
-  let arr1_indices =
-    NL.where_ (below arr1_indices) arr1_indices (Jnp_util.py_int m1)
-  in
-  let arr2_indices =
-    U.subtract
-      (gather_fill aux_sort_indices (U.add val_indices (Jnp_util.py_int 1)) m2)
-      num_unique1
-  in
-  let arr2_indices =
-    NL.where_ (below arr2_indices) arr2_indices (Jnp_util.py_int m2)
-  in
-  if assume_unique then (vals, arr1_indices, arr2_indices)
-  else
-    ( vals,
-      gather_fill ind1 arr1_indices (size_of ind1),
-      gather_fill ind2 arr2_indices (size_of ind2) )
-
 let intersect1d_indices ?(assume_unique = false) ?size ?fill_value a b =
   match size with
   | None -> intersect1d_indices ~assume_unique a b
   | Some n ->
       let a, b = same_dtype a b in
-      intersect1d_sized_indices ~assume_unique ~size:n ~fill_value (flat a)
-        (flat b)
+      begin match
+        intersect1d_size ~assume_unique ~size:n ~fill_value ~return_indices:true
+          (flat a) (flat b)
+      with
+      | [ vals; i1; i2 ] -> (vals, i1, i2)
+      | _ -> invalid_arg "intersect1d: arity"
+      end
 
 let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
   let ar1 = a in
@@ -1107,6 +1108,7 @@ let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
   | Some n when size_of a = 0 -> L.full [| n |] fill dt
   | Some n ->
       let m = size_of a in
+      let fill = lit_of fill dt in
       let arr =
         if assume_unique then a
         else unique_values_full ~size:(if n = 0 then 0 else m) a
@@ -1115,22 +1117,18 @@ let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
       let mask =
         if assume_unique then mask
         else
-          let first = L.slice arr [| 0 |] [| 1 |] in
-          let same =
-            R.sum (Core.bind1 Eq [ arr; NL.broadcast_to first [| m |] ])
-          in
-          let n_unique =
-            U.subtract (lit_of (float_of_int (m + 1)) (default_int ())) same
-          in
+          let same = R.sum (U.equal arr (Getitem.take arr [ Getitem.Int 0 ])) in
+          let n_unique = U.subtract (Jnp_util.py_int (m + 1)) same in
           NL.where_
             (positions_below m n_unique)
             mask
             (Concrete (Ndarray.of_floats Dtype.Bool [||] [| 0.0 |]))
       in
-      let picked =
-        I.take ~mode:"clip" ~axis:0 arr (List.hd (nonzero ~size:n mask))
-      in
-      NL.where_ (positions_below n (R.sum mask)) picked (lit_of fill dt)
+      let iota = NL.arange ~dtype:(default_int ()) (float_of_int n) in
+      let below = U.less iota (R.sum mask) in
+      NL.where_ below
+        (Getitem.take arr [ Getitem.Arr (List.hd (nonzero ~size:n mask)) ])
+        fill
   | None ->
       require_concrete "setdiff1d" ar1;
       if size_of a = 0 then L.full [| 0 |] fill dt
@@ -1138,28 +1136,34 @@ let setdiff1d ?(assume_unique = false) ?size ?fill_value a b =
         let arr = if assume_unique then a else unique_values_full a in
         mask_take arr (Setops.in1d ~invert:true arr b)
 
-let setxor1d_sized ~assume_unique ~size ~fill_value a b =
-  let bool_lit v = Concrete (Ndarray.of_floats Dtype.Bool [| 1 |] [| v |]) in
+let setxor1d_size_body ~assume_unique ~size ~fill_value a b =
+  let scalar_bool v =
+    NL.ravel (Concrete (Ndarray.of_floats Dtype.Bool [||] [| v |]))
+  in
+  let neighbours_differ aux =
+    let n = size_of aux in
+    Core.bind1 Ne
+      [ L.slice aux [| 1 |] [| n |]; L.slice aux [| 0 |] [| n - 1 |] ]
+  in
   let aux, flag =
     if assume_unique then begin
-      let arr = NL.concatenate [ a; b ] in
-      let aux = Sorting.sort ~axis:(Some 0) arr in
-      let n = size_of aux in
-      let tail = L.slice aux [| 1 |] [| n |]
-      and head = L.slice aux [| 0 |] [| n - 1 |] in
+      ignore (NL.concatenate [ a; b ]);
+      let aux = Sorting.sort ~axis:(Some 0) (NL.concatenate [ a; b ]) in
+      let differ = neighbours_differ aux in
       ( aux,
         NL.concatenate
           [
-            bool_lit (if n > 0 then 1.0 else 0.0);
-            Core.bind1 Ne [ tail; head ];
-            bool_lit 1.0;
+            scalar_bool (if size_of aux > 0 then 1.0 else 0.0);
+            differ;
+            scalar_bool 1.0;
           ] )
     end
     else begin
       let arr, num_unique = concat_unique a b ~fill_value:None in
       let n = size_of arr in
       let idt = default_int () in
-      let mask = positions_below (n + 1) (U.add num_unique (lit_of 1.0 idt)) in
+      let iota = NL.arange ~dtype:idt (float_of_int (n + 1)) in
+      let mask = U.less iota (U.add num_unique (Jnp_util.py_int 1)) in
       let aux =
         match
           concat_sorted_keys
@@ -1169,26 +1173,25 @@ let setxor1d_sized ~assume_unique ~size ~fill_value a b =
         | [ _; aux ] -> aux
         | _ -> invalid_arg "setxor1d: arity"
       in
-      let tail = L.slice aux [| 1 |] [| n |]
-      and head = L.slice aux [| 0 |] [| n - 1 |] in
+      let differ = neighbours_differ aux in
       let body =
         NL.concatenate
           [
-            bool_lit (if n > 0 then 1.0 else 0.0);
-            Core.bind1 Ne [ tail; head ];
-            bool_lit 0.0;
+            scalar_bool (if size_of aux > 0 then 1.0 else 0.0);
+            differ;
+            scalar_bool 0.0;
           ]
       in
-      let at_end =
-        Core.bind1 Eq
-          [ NL.arange ~dtype:idt (float_of_int (n + 1)); num_unique ]
+      let body =
+        Getitem.at_set body [ Getitem.Arr num_unique ]
+          (Concrete (Ndarray.of_floats Dtype.Bool [||] [| 1.0 |]))
       in
-      (aux, U.logical_and mask (U.logical_or body at_end))
+      (aux, U.bitwise_and mask body)
     end
   in
   let m = size_of flag in
   let aux_mask =
-    U.logical_and
+    U.bitwise_and
       (L.slice flag [| 1 |] [| m |])
       (L.slice flag [| 0 |] [| m - 1 |])
   in
@@ -1196,11 +1199,24 @@ let setxor1d_sized ~assume_unique ~size ~fill_value a b =
   let n = size_of aux in
   let vals =
     if n > 0 then
-      take_fill aux
+      at_get_fill aux
         (List.hd (nonzero ~size ~fill_value:(Jnp_util.py_int n) aux_mask))
-    else L.full [| size |] 0.0 (dtype_of aux)
+        0
+    else AC.zeros ~dtype:(dtype_of aux) [| size |]
   in
   fill_or_extremes ~fill_value vals num_results
+
+let setxor1d_sized ~assume_unique ~size ~fill_value a b =
+  Jnp_util.jit1 "_setxor1d_size"
+    ~key:
+      (Printf.sprintf "%b|%d|%s" assume_unique size
+         (match fill_value with None -> "None" | Some _ -> "value"))
+    (function
+      | [ a; b ] -> setxor1d_size_body ~assume_unique ~size ~fill_value:None a b
+      | [ a; b; f ] ->
+          setxor1d_size_body ~assume_unique ~size ~fill_value:(Some f) a b
+      | _ -> invalid_arg "setxor1d: arity")
+    ([ a; b ] @ Option.to_list fill_value)
 
 let setxor1d ?(assume_unique = false) ?size ?fill_value a b =
   let a, b = same_dtype a b in

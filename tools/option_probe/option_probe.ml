@@ -71,9 +71,9 @@ let cases =
       [ m23 ] );
     ("flatnonzero_size", one (fun x -> [ E.flatnonzero ~size:3 x ]), [ x9 ]);
     ("argwhere_size", one (fun x -> [ E.argwhere ~size:4 x ]), [ m23 ]);
-    ("unique_size", one (fun x -> [ E.unique_values ~size:4 x ]), [ x9 ]);
+    ("unique_size", one (fun x -> E.unique ~size:4 x), [ x9 ]);
     ( "unique_size_fill",
-      one (fun x -> [ E.unique_values ~size:8 ~fill_value:(-9.) x ]),
+      one (fun x -> E.unique ~size:8 ~fill_value:(-9.) x),
       [ x9 ] );
     ( "unique_counts_size",
       one (fun x ->
@@ -101,7 +101,7 @@ let cases =
       two (fun x y ->
           [
             E.intersect1d ~size:6
-              ~fill_value:(Ojax.Numpy.Jnp_util.py_int (-1))
+              ~fill_value:(Ojax.Numpy.Jnp_util.py_float (-1.))
               x y;
           ]),
       [ x9; y6 ] );
@@ -113,7 +113,9 @@ let cases =
     ( "setxor1d_size_fill",
       two (fun x y ->
           [
-            E.setxor1d ~size:9 ~fill_value:(Ojax.Numpy.Jnp_util.py_int (-1)) x y;
+            E.setxor1d ~size:9
+              ~fill_value:(Ojax.Numpy.Jnp_util.py_float (-1.))
+              x y;
           ]),
       [ x9; y6 ] );
     ( "compress_size",

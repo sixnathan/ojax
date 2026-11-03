@@ -1165,11 +1165,13 @@ let with_dtype dt arrays =
 let concatenate ?(axis = 0) ?dtype:dt arrays =
   match arrays with
   | [] -> Py_exn.value_error "Need at least one array to concatenate."
-  | first :: _ ->
+  | first :: _ -> (
       if ndim first = 0 then
         Py_exn.value_error "Zero-dimensional arrays cannot be concatenated.";
       let ax = canonicalize_axis axis (ndim first) in
-      bind1 (T.Concatenate ax) (with_dtype dt arrays)
+      match with_dtype dt arrays with
+      | [ only ] -> only
+      | parts -> bind1 (T.Concatenate ax) parts)
 
 let concat ?(axis = 0) arrays = concatenate ~axis arrays
 

@@ -11,6 +11,13 @@ let maxpool x =
     L.max ~window_dimensions:[| 2; 2 |] ~window_strides:[| 1; 1 |]
     [| (0, 0); (0, 0) |]
 
+let index02 () =
+  Ojax.Numpy.Array_constructors.array
+  @@ Ojax.Types.Concrete
+       (Ojax.Ndarray.of_floats
+          (Ojax.Dtypes.default_int_dtype ())
+          [| 2 |] [| 0.; 2. |])
+
 let one f = function [ x ] -> f x | _ -> failwith "export_text: arity"
 let two f = function [ x; y ] -> f x y | _ -> failwith "export_text: arity"
 
@@ -57,6 +64,28 @@ let fn = function
               ~precision:
                 (Ojax.Lax_config.precision_of_level
                    Ojax.Lax_config.Precision_highest)))
+  | "gather_take" ->
+      Some
+        (one (fun x ->
+             Ojax.Numpy.Getitem.take x [ Ojax.Numpy.Getitem.Arr (index02 ()) ]))
+  | "scatter_add" ->
+      Some
+        (one (fun x ->
+             Ojax.Numpy.Getitem.at_add x
+               [ Ojax.Numpy.Getitem.Arr (index02 ()) ]
+               (JU.py_float 1.0)))
+  | "fori_double" ->
+      Some
+        (one (fun x ->
+             match
+               L.fori_loop (JU.py_int 0) (JU.py_int 3)
+                 (fun _ -> function
+                   | [ c ] -> [ Ojax.Numpy.Ufuncs.multiply c (JU.py_float 2.0) ]
+                   | _ -> failwith "export_text: arity")
+                 [ x ]
+             with
+             | [ r ] -> r
+             | _ -> failwith "export_text: fori arity"))
   | _ -> None
 
 let actual row =

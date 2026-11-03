@@ -57,6 +57,18 @@ def dot_highest(a, b):
     return jnp.dot(a, b, precision=lax.Precision.HIGHEST)
 
 
+def gather_take(x):
+    return x[jnp.array([0, 2])]
+
+
+def scatter_add(x):
+    return x.at[jnp.array([0, 2])].add(1.0)
+
+
+def fori_double(x):
+    return lax.fori_loop(0, 3, lambda i, c: c * 2.0, x)
+
+
 CASES = [
     ("conv_same", conv_same, [(1, 1, 5, 5), (1, 1, 3, 3)]),
     ("conv_valid_stride", conv_valid_stride, [(1, 1, 5, 5), (1, 1, 3, 3)]),
@@ -69,6 +81,9 @@ CASES = [
     ("batch_dot", batch_dot, [(2, 2, 3), (2, 3, 2)]),
     ("matmul", matmul, [(2, 3), (3, 4)]),
     ("dot_highest", dot_highest, [(2, 3), (3, 4)]),
+    ("gather_take", gather_take, [(4, 3)]),
+    ("scatter_add", scatter_add, [(4, 3)]),
+    ("fori_double", fori_double, [(3,)]),
 ]
 
 

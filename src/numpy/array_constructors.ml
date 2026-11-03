@@ -29,8 +29,15 @@ let check_python_int v dt =
       | None -> ())
   | _ -> ()
 
+let staged v =
+  match (v, !C.dynamic_trace) with
+  | T.Concrete _, Some t when t.T.kind = T.KJaxpr && t.T.level > 0 ->
+      C.full_raise t v
+  | _ -> v
+
 let array ?dtype ?(ndmin = 0) v =
   Option.iter (check_python_int v) dtype;
+  let v = staged v in
   let v = match dtype with Some d -> convert v d | None -> v in
   let n = ndim v in
   if ndmin > n then NL.expand_dims v (Array.init (ndmin - n) (fun i -> i))

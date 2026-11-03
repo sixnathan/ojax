@@ -37,6 +37,7 @@
   checkify
   vjp_int
   export_ser
+  export_text
   shape_poly_exprs
   index_fuzz
   apply_transforms
@@ -82,6 +83,7 @@
   (source_tree %{project_root}/goldens/odeint)
   (source_tree %{project_root}/goldens/checkify)
   (source_tree %{project_root}/goldens/export_ser)
+  (source_tree %{project_root}/goldens/export_text)
   (source_tree %{project_root}/goldens/shape_poly_exprs)
   (source_tree %{project_root}/goldens/mesh_one)
   (source_tree %{project_root}/goldens/docs_p1)

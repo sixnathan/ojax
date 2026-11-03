@@ -57,8 +57,14 @@ let expected_call c =
         (U.to_string (U.member "class" c))
         (U.to_string (U.member "message" c))
 
+let () =
+  Ojax.Export.register_namedtuple_serialization ~serialized_name:"test.P"
+    ~fields:[ "x"; "y" ] "P"
+
 let args_of id inputs =
   match (id, inputs) with
+  | "namedtuple_in", [ a; b ] ->
+      T.Tuple [ T.Custom ("P", "", [ T.Leaf a; T.Leaf b ]) ]
   | "dict_in", [ a; b ] ->
       T.Tuple [ T.Dict [ ("a", T.Leaf a); ("b", T.Leaf b) ] ]
   | _ -> T.Tuple (List.map (fun x -> T.Leaf x) inputs)

@@ -1,4 +1,5 @@
 import argparse
+import collections
 import hashlib
 import json
 import os
@@ -60,6 +61,14 @@ def f_cumsum(x):
     return jnp.cumsum(x, axis=1)
 
 
+P = collections.namedtuple("P", ["x", "y"])
+export.register_namedtuple_serialization(P, serialized_name="test.P")
+
+
+def f_nt(p):
+    return P(p.y, p.x * p.y)
+
+
 def f_none(x):
     return (x, None)
 
@@ -110,6 +119,7 @@ def plat(platforms, checks=()):
 DC = export.DisabledSafetyCheck
 CASES += [
     ("multi_platform", f_sin, plat(("cpu", "cuda"))),
+    ("namedtuple_in", f_nt, lambda: ((P(sds((2,), "float32"), sds((2,), "float32")),), {})),
     ("cuda_only", f_sin, plat(("cuda",))),
     ("cuda_disabled", f_sin, plat(("cuda",), (DC.platform(), DC.custom_call("foo")))),
     ("sym_2b_b", f_sin, lambda: ((sds("2*b, b", "float32"),), {})),
@@ -125,6 +135,7 @@ X64_CASES = [
 
 CALLS = {
     "multi_platform": [[((3,), "float32")]],
+    "namedtuple_in": [[((2,), "float32"), ((2,), "float32")]],
     "cuda_only": [[((3,), "float32")]],
     "cuda_disabled": [[((3,), "float32")], [((4,), "float32")]],
     "sym_2b_b": [[((4, 2), "float32")], [((5, 2), "float32")], [((4, 3), "float32")], [((0, 0), "float32")]],
@@ -208,6 +219,8 @@ def plain_text(e):
 def leaves_to_args(name, leaves):
     if name == "dict_in":
         return ({"a": leaves[0], "b": leaves[1]},)
+    if name == "namedtuple_in":
+        return (P(leaves[0], leaves[1]),)
     return tuple(leaves)
 
 

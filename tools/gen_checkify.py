@@ -89,6 +89,19 @@ def intrem(a, b):
     return a % b
 
 
+def getidx(x, i):
+    return x[i]
+
+
+def dslice(x, i):
+    return jax.lax.dynamic_slice(x, (i,), (2,))
+
+
+def dupdate(x, i):
+    return jax.lax.dynamic_update_slice(x, jnp.ones((2,), x.dtype), (i,))
+
+
+IDX_FUNS = {"getidx": getidx, "dslice": dslice, "dupdate": dupdate}
 NAN_FUNS = {"logdiv": logdiv, "sqrtsum": sqrtsum}
 INT_FUNS = {"intdiv": intdiv, "intrem": intrem}
 ERRSETS = {
@@ -125,6 +138,13 @@ def value_cases(dt):
             for ename, es in ERRSETS.items():
                 out["%s_%s_%s" % (fname, bname, ename)] = (lambda f=f, b=b, es=es: checkify.checkify(f, errors=es)(ia, b), "get")
             out["throw_%s_%s" % (fname, bname)] = (lambda f=f, b=b: checkify.checkify(f, errors=checkify.all_checks)(ia, b), "throw")
+    xi = jnp.array([1.0, 2.0, 3.0], dt)
+    for fname, f in IDX_FUNS.items():
+        for iv in (1, 2, 5, -1, -5):
+            for ename in ("user", "all"):
+                es = ERRSETS[ename]
+                out["%s_%d_%s" % (fname, iv, ename)] = (lambda f=f, iv=iv, es=es: checkify.checkify(f, errors=es)(xi, jnp.int32(iv)), "get")
+            out["%s_%d_index" % (fname, iv)] = (lambda f=f, iv=iv: checkify.checkify(f, errors=checkify.index_checks)(xi, jnp.int32(iv)), "get")
     return out
 
 
@@ -137,6 +157,8 @@ def traced_cases(dt):
     for fname, f in NAN_FUNS.items():
         for ename, es in ERRSETS.items():
             out["jaxpr_%s_%s" % (fname, ename)] = (lambda x, f=f, es=es: checkify.checkify(f, errors=es)(x), [x], True)
+    for fname, f in IDX_FUNS.items():
+        out["jaxpr_%s_index" % fname] = (lambda x, i, f=f: checkify.checkify(f, errors=checkify.index_checks)(x, i), [x, jnp.int32(1)], True)
     ia = jnp.array([7, -7, 9], jnp.int32)
     for fname, f in INT_FUNS.items():
         for ename, es in ERRSETS.items():

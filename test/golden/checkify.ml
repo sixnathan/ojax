@@ -78,6 +78,27 @@ let intdiv = function
   | _ -> failwith "arity"
 
 let intrem = function [ a; b ] -> [ UF.remainder a b ] | _ -> failwith "arity"
+
+let getidx = function
+  | [ x; i ] -> [ G.take x [ G.Arr i ] ]
+  | _ -> failwith "arity"
+
+let dslice = function
+  | [ x; i ] -> [ Ojax.Lax_api.dynamic_slice x [ i ] [| 2 |] ]
+  | _ -> failwith "arity"
+
+let dupdate = function
+  | [ x; i ] ->
+      [
+        Ojax.Lax_api.dynamic_update_slice x
+          (Ojax.Numpy.Array_creation.ones
+             ~dtype:(Ojax.Core.get_aval x).Ojax.Types.dtype [| 2 |])
+          [ i ];
+      ]
+  | _ -> failwith "arity"
+
+let idx_funs = [ ("getidx", getidx); ("dslice", dslice); ("dupdate", dupdate) ]
+let i32 v = Ojax.Types.Concrete (Nd.of_floats D.I32 [||] [| float_of_int v |])
 let nan_funs = [ ("logdiv", logdiv); ("sqrtsum", sqrtsum) ]
 let int_funs = [ ("intdiv", intdiv); ("intrem", intrem) ]
 
@@ -179,6 +200,22 @@ let value_cases dt =
               ])
           [ ("nz", ints [| 2.0; 3.0; -4.0 |]); ("z", ints [| 2.0; 0.0; 5.0 |]) ])
       int_funs
+  @ List.concat_map
+      (fun (fname, f) ->
+        let xi = arr dt [| 1.0; 2.0; 3.0 |] in
+        List.concat_map
+          (fun iv ->
+            List.map
+              (fun (ename, es) ->
+                ( Printf.sprintf "%s_%d_%s" fname iv ename,
+                  `Err (fun () -> CK.checkify ~errors:es f [ xi; i32 iv ]) ))
+              [
+                ("user", CK.user_checks);
+                ("all", CK.all_checks);
+                ("index", CK.index_checks);
+              ])
+          [ 1; 2; 5; -1; -5 ])
+      idx_funs
 
 let value_cases id =
   let tag dname dt =
@@ -213,6 +250,14 @@ let traced_list =
                 CK.error_leaves e @ o ))
           errsets)
       (nan_funs @ int_funs)
+  @ List.map
+      (fun (fname, f) ->
+        ( "jaxpr_" ^ fname ^ "_index",
+          fun xs ->
+            let e, o = CK.checkify ~errors:CK.index_checks f xs in
+            last_paths := CK.result_paths e;
+            CK.error_leaves e @ o ))
+      idx_funs
 
 let traced id =
   let strip s =

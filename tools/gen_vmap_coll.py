@@ -16,6 +16,18 @@ CASES = [
     "mixed_io_nested", "io_cond", "dprint_cond", "io_cond_after",
 ]
 MODES = ["eager", "jit", "jaxpr", "lowered"]
+DEFAULT_SEED = 0
+BASE = {}
+
+
+def set_base(seed):
+    BASE.clear()
+    if seed != DEFAULT_SEED:
+        rng = np.random.default_rng([seed, 3])
+        BASE["x"] = [float(v) / 4 for v in rng.integers(-12, 17, 3)]
+        BASE["m"] = [[float(v) / 4 for v in r]
+                     for r in rng.integers(-12, 17, (2, 3))]
+        BASE["xi"] = [int(v) for v in rng.integers(-9, 10, 4)]
 
 
 def run_case(jax, thunk):
@@ -59,8 +71,12 @@ def case_fn(jax, jnp, name):
         return io_callback(double, jax.ShapeDtypeStruct(v.shape, v.dtype), v,
                            ordered=ordered)
 
-    x = jnp.arange(3.0)
-    m = jnp.arange(6.0).reshape(2, 3)
+    fdt = jnp.arange(3.0).dtype
+    x = jnp.asarray(BASE["x"], dtype=fdt) if "x" in BASE else jnp.arange(3.0)
+    m = (jnp.asarray(BASE["m"], dtype=fdt) if "m" in BASE
+         else jnp.arange(6.0).reshape(2, 3))
+    xi = (jnp.asarray(BASE["xi"], dtype=jnp.arange(4).dtype) if "xi" in BASE
+          else jnp.arange(4))
     if name == "psum_sub":
         return (lambda a: (vmap(sub, axis_name="i")(a),)), (x,)
     if name == "psum_in1":
@@ -72,7 +88,7 @@ def case_fn(jax, jnp, name):
     if name == "pmin_in1":
         return (lambda a: (vmap(lambda v: lax.pmin(v, "i"), in_axes=1, axis_name="i")(a),)), (m,)
     if name == "psum_int":
-        return (lambda a: (vmap(lambda v: lax.psum(v, "i"), axis_name="i")(a),)), (jnp.arange(4),)
+        return (lambda a: (vmap(lambda v: lax.psum(v, "i"), axis_name="i")(a),)), (xi,)
     if name == "psum_grad":
         return (lambda a: (jax.grad(lambda b: vmap(sub, axis_name="i")(b).sum())(a),)), (x,)
     if name == "psum_jvp":
@@ -172,7 +188,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--x64", action="store_true")
+    ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = ap.parse_args()
+    set_base(args.seed)
     import jax
     jax.config.update("jax_enable_x64", args.x64)
     import jax.numpy as jnp
@@ -183,6 +201,7 @@ def main():
                 continue
             r = run_case(jax, thunk(jax, jnp, name, mode))
             r.update({"id": f"{name}_{mode}", "case": name, "mode": mode})
+            r.update(BASE)
             rows.append(r)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump({"rows": rows}, fh, indent=1, sort_keys=True)

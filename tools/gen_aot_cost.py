@@ -23,23 +23,30 @@ MEM_FIELDS = [
 ]
 
 
-def selected_cases(x64):
+DEFAULT_SEED = 0
+
+
+def selected_cases(x64, seed=DEFAULT_SEED):
+    rng = np.random.default_rng([seed, 5])
     out = []
     for suite in REGISTRIES:
         path = os.path.join(gg.ROOT, "goldens", suite, "x64_on" if x64 else "x64_off", "manifest.json")
         with open(path, encoding="utf-8") as fh:
             cases = json.load(fh)["cases"]
-        first = {}
+        by_op = {}
         for c in sorted(cases, key=lambda c: c["case_id"]):
-            first.setdefault(c["op"], c)
-        out.extend((suite, first[op]) for op in sorted(first))
+            by_op.setdefault(c["op"], []).append(c)
+        for op in sorted(by_op):
+            group = by_op[op]
+            pick = 0 if seed == DEFAULT_SEED else int(rng.integers(len(group)))
+            out.append((suite, group[pick]))
     return out
 
 
-def run_shard(x64, index, count, out):
+def run_shard(x64, index, count, out, seed):
     jax.config.update("jax_enable_x64", x64)
     rows = []
-    for position, (suite, c) in enumerate(selected_cases(x64)):
+    for position, (suite, c) in enumerate(selected_cases(x64, seed)):
         if position % count != index:
             continue
         registry = REGISTRIES[suite]
@@ -68,7 +75,7 @@ def run_shard(x64, index, count, out):
         json.dump(rows, fh)
 
 
-def gen_set(x64, outdir, jobs):
+def gen_set(x64, outdir, jobs, seed):
     os.makedirs(outdir, exist_ok=True)
     tag = "x64_on" if x64 else "x64_off"
     workers = []
@@ -77,7 +84,7 @@ def gen_set(x64, outdir, jobs):
         part = os.path.join(outdir, f"{tag}.shard{index}.json")
         parts.append(part)
         command = [sys.executable, os.path.abspath(__file__), "--shard", str(index), str(jobs),
-                   "--x64", str(int(x64)), "--out", part]
+                   "--x64", str(int(x64)), "--out", part, "--seed", str(seed)]
         workers.append(subprocess.Popen(command))
     if any(w.wait() != 0 for w in workers):
         raise SystemExit("a shard failed for " + tag)
@@ -99,14 +106,15 @@ def main():
     parser.add_argument("--shard", type=int, nargs=2, default=None)
     parser.add_argument("--x64", type=int, default=0)
     parser.add_argument("--out", default=None)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args()
     gg.preflight()
     if args.shard:
-        run_shard(bool(args.x64), args.shard[0], args.shard[1], args.out)
+        run_shard(bool(args.x64), args.shard[0], args.shard[1], args.out, args.seed)
         return
     base = os.path.join(args.root or os.path.join(gg.ROOT, "goldens"), MODULE)
-    n_off, e_off = gen_set(False, base, args.jobs)
-    n_on, e_on = gen_set(True, base, args.jobs)
+    n_off, e_off = gen_set(False, base, args.jobs, args.seed)
+    n_on, e_on = gen_set(True, base, args.jobs, args.seed)
     sys.stdout.write(f"{MODULE} x64_off {n_off} ({e_off} errors) x64_on {n_on} ({e_on} errors)\n")
 
 

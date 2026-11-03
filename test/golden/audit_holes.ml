@@ -11,8 +11,17 @@ module D = Ojax.Dtype
 let name = "audit_holes"
 let mul = UF.multiply
 let ones dt n = AC.ones ~dtype:dt n
-let x3 () = Ojax.Numpy.Lax_numpy.arange ~dtype:D.F32 3.0
-let y3 () = AC.linspace ~num:3 ~dtype:D.F32 1.0 2.0
+let base_row = ref `Null
+
+let base key default =
+  match U.member key !base_row with
+  | `Null -> default ()
+  | v ->
+      let vals = Array.of_list (List.map U.to_number (U.to_list v)) in
+      Ojax.Types.Concrete (Nd.of_floats D.F32 [| Array.length vals |] vals)
+
+let x3 () = base "x3" (fun () -> Ojax.Numpy.Lax_numpy.arange ~dtype:D.F32 3.0)
+let y3 () = base "y3" (fun () -> AC.linspace ~num:3 ~dtype:D.F32 1.0 2.0)
 
 let bwd_of kind res g =
   match (res, g) with
@@ -71,8 +80,12 @@ let defjvps () =
     ]
 
 let lin a b = AC.linspace ~num:4 ~dtype:D.F32 a b
-let primals () = [ lin 0.1 1.3; lin 2.0 (-1.0) ]
-let tangents () = [ lin 0.5 1.5; lin (-1.0) 3.0 ]
+
+let primals () =
+  [ base "px" (fun () -> lin 0.1 1.3); base "py" (fun () -> lin 2.0 (-1.0)) ]
+
+let tangents () =
+  [ base "tx" (fun () -> lin 0.5 1.5); base "ty" (fun () -> lin (-1.0) 3.0) ]
 
 let defjvps_jvp () =
   let o, t = Ad.jvp (defjvps ()) (primals ()) (tangents ()) in
@@ -200,7 +213,10 @@ let check_row ~suite row () =
   let id = U.to_string (U.member "id" row) in
   let x64 = U.to_bool (U.member "x64" row) in
   Ojax.Config.set Ojax.Config.enable_x64 x64;
-  Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
+  base_row := row;
+  Fun.protect ~finally:(fun () ->
+      base_row := `Null;
+      Ojax.Config.set Ojax.Config.enable_x64 false)
   @@ fun () ->
   let log ?(name = id) jax ojax =
     let same = String.equal jax ojax in

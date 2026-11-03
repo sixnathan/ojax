@@ -25,10 +25,19 @@ let jit2 f a b =
   | _ -> failwith "docs_p2b: jit result"
 
 let jit1 f a = jit2 (fun a _ -> f a) a a
+let base_row = ref `Null
+
+let base key default =
+  match U.member key !base_row with
+  | `Null -> default
+  | v -> Array.of_list (List.map U.to_number (U.to_list v))
 
 let rank_thunk op mode () =
-  let x = f32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  let m = f32 [| 2; 3 |] (Array.init 6 (fun k -> float_of_int k /. 2.0)) in
+  let x = f32 [| 3 |] (base "rank_x" [| 1.0; 2.0; 3.0 |]) in
+  let m =
+    f32 [| 2; 3 |]
+      (base "rank_m" (Array.init 6 (fun k -> float_of_int k /. 2.0)))
+  in
   let gt v = F.greater v (Docs_p2.py_int 1.0) in
   let f a b =
     match op with
@@ -88,9 +97,13 @@ let solve_thunk fn kind () =
       (Array.append a
          (Array.mapi (fun k v -> if k mod 4 = 0 then v +. 1.0 else v) a))
   in
-  let b2 = f32 [| 2; 3 |] (Array.init 6 (fun k -> float_of_int (k + 1))) in
-  let b1 = f32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  let bm = f32 [| 3; 2 |] (Array.init 6 (fun k -> float_of_int (k + 1))) in
+  let b2 =
+    f32 [| 2; 3 |] (base "b2" (Array.init 6 (fun k -> float_of_int (k + 1))))
+  in
+  let b1 = f32 [| 3 |] (base "b1" [| 1.0; 2.0; 3.0 |]) in
+  let bm =
+    f32 [| 3; 2 |] (base "bm" (Array.init 6 (fun k -> float_of_int (k + 1))))
+  in
   let call a b =
     match fn with
     | "cho_solve" -> SL.cho_solve (SL.cho_factor ~lower:true a) b
@@ -355,8 +368,12 @@ let device_thunk name () =
            (Docs_p2.py_float 1.0)))
 
 let sdg_thunk impl () =
-  let a = f32 [| 2; 3 |] (Array.init 6 (fun k -> float_of_int k /. 4.0))
-  and b = f32 [| 3; 2 |] (Array.init 6 (fun k -> float_of_int (k - 2))) in
+  let a =
+    f32 [| 2; 3 |]
+      (base "sdg_a" (Array.init 6 (fun k -> float_of_int k /. 4.0)))
+  and b =
+    f32 [| 3; 2 |] (base "sdg_b" (Array.init 6 (fun k -> float_of_int (k - 2))))
+  in
   Docs_p2.text_of
     (Ojax.Nn.Functions.scaled_dot_general
        ?implementation:(if impl = "none" then None else Some impl)
@@ -394,7 +411,12 @@ let check_row ~x64 row () =
   let id = str row "id" in
   let expected = Docs_p2.expected_of row in
   let actual =
-    Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () -> actual_of row)
+    Fun.protect
+      ~finally:(fun () -> base_row := `Null)
+      (fun () ->
+        base_row := row;
+        Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+            actual_of row))
   in
   let suite = "docs_p2b:" ^ if x64 then "x64_on" else "x64_off" in
   let ok = Docs_p2.same expected actual in

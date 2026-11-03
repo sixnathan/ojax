@@ -23,13 +23,20 @@ JAX_VERSION = "0.10.2"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+DEFAULT_SEED = 0
+KEY_SHIFT = [DEFAULT_SEED]
+
+
+def key_at(n, **kw):
+    return random.key(n + KEY_SHIFT[0], **kw)
+
 
 def f32_2x3():
     return jnp.arange(6, dtype=jnp.float32).reshape(2, 3)
 
 
 def text_cases():
-    k = random.key
+    k = key_at
     kd = random.key_dtype
     sub = jnp.issubdtype
     return {
@@ -251,7 +258,7 @@ def array_cases():
         "wrap_bits_urbg": lambda: random.bits(random.wrap_key_data(jnp.arange(4, dtype=jnp.uint32), impl="unsafe_rbg"), (3,)),
         "wrap_key_data_rbg": lambda: random.key_data(random.wrap_key_data(jnp.arange(4, dtype=jnp.uint32), impl="rbg")),
         "wrap_uniform_urbg": lambda: random.uniform(random.wrap_key_data(jnp.arange(4, dtype=jnp.uint32) + 9, impl="unsafe_rbg"), (4,)),
-        "key_data_split3": lambda: random.key_data(random.split(random.key(0), 3)),
+        "key_data_split3": lambda: random.key_data(random.split(key_at(0), 3)),
     }
 
 
@@ -309,6 +316,12 @@ def run_traced(x64):
     return rows
 
 
+def with_seed(row):
+    if KEY_SHIFT[0] != DEFAULT_SEED:
+        row["seed"] = KEY_SHIFT[0]
+    return row
+
+
 def run(x64):
     jax.config.update("jax_enable_x64", x64)
     rows = []
@@ -333,13 +346,15 @@ def run(x64):
             row["error_class"] = type(e).__name__
             row["message"] = str(e)
         rows.append(row)
-    return rows + run_traced(x64)
+    return [with_seed(r) for r in rows] + run_traced(x64)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=os.path.join(ROOT, "goldens", "keys_arrays"))
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args()
+    KEY_SHIFT[0] = args.seed
     if platform.python_version() != PY_VERSION or jax.__version__ != JAX_VERSION:
         raise SystemExit("needs python " + PY_VERSION + " and jax " + JAX_VERSION)
     rows = run(False) + run(True)

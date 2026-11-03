@@ -32,7 +32,9 @@ def lowered_text(name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None)
+    ap.add_argument("--seed", type=int, default=gd.DEFAULT_SEED)
     args = ap.parse_args()
+    gd.set_base(args.seed)
     gg.preflight()
     base = os.path.join(args.root or os.path.join(gg.ROOT, "goldens"), MODULE)
     os.makedirs(base, exist_ok=True)
@@ -42,7 +44,7 @@ def main():
         for name in CASES:
             r = lowered_text(name)
             r.update({"id": f"lowered_{name}", "case": name})
-            rows.append(r)
+            rows.append(gd.with_base(r))
         with open(os.path.join(base, ("x64_on" if x64 else "x64_off") + ".json"), "w") as fh:
             json.dump({"jax": jax.__version__, "x64": x64, "rows": rows}, fh, indent=1, sort_keys=True)
 

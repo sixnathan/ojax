@@ -116,8 +116,31 @@ let io ordered v =
   | [ r ] -> r
   | _ -> failwith "vmap_coll: io_callback arity"
 
-let x () = NL.arange ~dtype:(float_dt ()) 3.0
-let m () = NL.reshape (NL.arange ~dtype:(float_dt ()) 6.0) [| 2; 3 |]
+let base_row = ref `Null
+
+let base_of key dt shape default =
+  match U.member key !base_row with
+  | `Null -> default ()
+  | v ->
+      let vals =
+        List.concat_map
+          (function
+            | `List r -> List.map U.to_number r | j -> [ U.to_number j ])
+          (U.to_list v)
+      in
+      T.Concrete (Ojax.Ndarray.of_floats dt shape (Array.of_list vals))
+
+let x () =
+  base_of "x" (float_dt ()) [| 3 |] (fun () ->
+      NL.arange ~dtype:(float_dt ()) 3.0)
+
+let m () =
+  base_of "m" (float_dt ()) [| 2; 3 |] (fun () ->
+      NL.reshape (NL.arange ~dtype:(float_dt ()) 6.0) [| 2; 3 |])
+
+let xi () =
+  base_of "xi" (int_dt ()) [| 4 |] (fun () -> NL.arange ~dtype:(int_dt ()) 4.0)
+
 let row1 () = Ojax.Numpy.Getitem.take (m ()) [ Ojax.Numpy.Getitem.Int 1 ]
 let sum v = Ojax.Numpy.Reductions.sum v
 let add1 v = F.add v (py_float 1.0)
@@ -154,7 +177,7 @@ let case_fn name =
   | "psum_int" ->
       lam
         (fun a -> tuple [ mapped (fun v -> P.psum v ~axis_name:"i") a ])
-        [ NL.arange ~dtype:(int_dt ()) 4.0 ]
+        [ xi () ]
   | "psum_grad" ->
       lam
         (fun a ->
@@ -408,12 +431,16 @@ let show r =
 let check_row ~x64 row () =
   let id = U.to_string (U.member "id" row) in
   let expected = expected_of row in
+  base_row := row;
   let actual =
-    Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
-        run_case
-          (thunk
-             (U.to_string (U.member "case" row))
-             (U.to_string (U.member "mode" row))))
+    Fun.protect
+      ~finally:(fun () -> base_row := `Null)
+      (fun () ->
+        Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
+            run_case
+              (thunk
+                 (U.to_string (U.member "case" row))
+                 (U.to_string (U.member "mode" row)))))
   in
   let suite = "vmap_coll:" ^ if x64 then "x64_on" else "x64_off" in
   let ok = same expected actual in

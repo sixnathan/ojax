@@ -70,9 +70,29 @@ def text_of(out):
     return f"{a.dtype} {list(a.shape)} {a.tobytes().hex()}"
 
 
+DEFAULT_SEED = 0
+BASE = {}
+BASE_SIZES = (("rank_x", 3), ("rank_m", 6), ("b2", 6), ("b1", 3), ("bm", 6),
+              ("sdg_a", 6), ("sdg_b", 6))
+
+
+def set_base(seed):
+    BASE.clear()
+    if seed != DEFAULT_SEED:
+        rng = np.random.default_rng([seed, 6])
+        for key, n in BASE_SIZES:
+            BASE[key] = [float(v) / 4 for v in rng.integers(-12, 17, n)]
+
+
+def base(key, default, shape):
+    if key in BASE:
+        return np.array(BASE[key], dtype=np.float32).reshape(shape)
+    return default
+
+
 def rank_thunk(jax, jnp, op, mode):
-    x = jnp.asarray(np.arange(3, dtype=np.float32) + 1)
-    m = jnp.asarray(np.arange(6, dtype=np.float32).reshape(2, 3) / 2)
+    x = jnp.asarray(base("rank_x", np.arange(3, dtype=np.float32) + 1, (3,)))
+    m = jnp.asarray(base("rank_m", np.arange(6, dtype=np.float32).reshape(2, 3) / 2, (2, 3)))
 
     def f(a, b):
         if op == "add":
@@ -135,9 +155,9 @@ def solve_thunk(jax, jnp, fn, kind):
     a = np.array([[4.0, 1.0, 0.5], [1.0, 3.0, 0.25], [0.5, 0.25, 2.0]],
                  dtype=np.float32)
     a2 = jnp.asarray(np.stack([a, a + np.eye(3, dtype=np.float32)]))
-    b2 = jnp.asarray(np.arange(6, dtype=np.float32).reshape(2, 3) + 1)
-    b1 = jnp.asarray(np.arange(3, dtype=np.float32) + 1)
-    bm = jnp.asarray(np.arange(6, dtype=np.float32).reshape(3, 2) + 1)
+    b2 = jnp.asarray(base("b2", np.arange(6, dtype=np.float32).reshape(2, 3) + 1, (2, 3)))
+    b1 = jnp.asarray(base("b1", np.arange(3, dtype=np.float32) + 1, (3,)))
+    bm = jnp.asarray(base("bm", np.arange(6, dtype=np.float32).reshape(3, 2) + 1, (3, 2)))
     sl = jax.scipy.linalg
 
     def call(a, b):
@@ -365,8 +385,8 @@ def device_thunk(jax, jnp, name):
 
 
 def sdg_thunk(jax, jnp, impl):
-    a = jnp.asarray((np.arange(6, dtype=np.float32) / 4).reshape(2, 3))
-    b = jnp.asarray((np.arange(6, dtype=np.float32) - 2).reshape(3, 2))
+    a = jnp.asarray(base("sdg_a", (np.arange(6, dtype=np.float32) / 4).reshape(2, 3), (2, 3)))
+    b = jnp.asarray(base("sdg_b", (np.arange(6, dtype=np.float32) - 2).reshape(3, 2), (3, 2)))
 
     def run():
         kw = {"implementation": impl} if impl != "none" else {}
@@ -378,7 +398,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--x64", action="store_true")
+    ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = ap.parse_args()
+    set_base(args.seed)
     import jax
     jax.config.update("jax_enable_x64", args.x64)
     import jax.numpy as jnp
@@ -386,6 +408,8 @@ def main():
 
     def add(r, **kw):
         r.update(kw)
+        if kw.get("group") in ("rank", "solve", "sdg"):
+            r.update(BASE)
         rows.append(r)
 
     for op in RANK_OPS:

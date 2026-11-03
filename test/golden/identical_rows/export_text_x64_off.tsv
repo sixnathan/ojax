@@ -1,0 +1,14 @@
+batch_dot_float32	1
+conv_same_float32	1
+conv_valid_float32	1
+conv_valid_stride_float32	1
+cumsum1_float32	1
+dot_highest_float32	1
+fori_double_float32	1
+gather_take_float32	1
+matmul_float32	1
+maxpool_float32	1
+maxpool_grad_float32	1
+scatter_add_float32	1
+sumpool_pad_float32	1
+sumpool_stride_float32	1

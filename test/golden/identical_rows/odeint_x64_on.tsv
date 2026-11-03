@@ -26,6 +26,14 @@ hmax_f32:out0	1
 hmax_f64:out0	1
 int_t_f32	1
 int_t_f64	1
+jaxpr_decay_f32:hlo	1
+jaxpr_decay_f32:jaxpr	1
+jaxpr_decay_f64:hlo	1
+jaxpr_decay_f64:jaxpr	1
+jaxpr_scaled_f32:hlo	1
+jaxpr_scaled_f32:jaxpr	1
+jaxpr_scaled_f64:hlo	1
+jaxpr_scaled_f64:jaxpr	1
 jit_scaled_f32:out0	1
 jit_scaled_f64:out0	1
 mxstep_f32:out0	1

@@ -62,6 +62,7 @@ remat_two_True:linearize_jaxpr	1
 remat_two_True:vjp_jaxpr	1
 remat_two_True:vmap_grad_jaxpr	1
 remat_two_True:vmap_grad_value	1
+residuals_abs	1
 residuals_constant	1
 residuals_div	1
 residuals_dot	1
@@ -69,6 +70,7 @@ residuals_dot:raw	1
 residuals_exp_log	1
 residuals_integer_arg	1
 residuals_jit_inner	1
+residuals_literal	1
 residuals_mean	1
 residuals_mul_args	1
 residuals_mul_args:raw	1
@@ -82,11 +84,14 @@ residuals_policy_nothing_saveable:raw	1
 residuals_relu	1
 residuals_remat_sin_sin	1
 residuals_remat_sin_sin:raw	1
+residuals_remat_unused	1
+residuals_remat_unused:raw	1
 residuals_scalar_arg	1
 residuals_sin_mul	1
 residuals_sin_sin	1
 residuals_square	1
 residuals_tanh_sum	1
+residuals_two_literals	1
 residuals_where	1
 vmap_bad_spec_vmap:jaxpr	1
 vmap_bad_spec_vmap:lowered	1

@@ -17,12 +17,14 @@ let base f = T.Concrete (Nd.of_floats D.F32 [| 4; 4 |] (Array.init 16 f))
 let leaf = function Tr.Leaf v -> v | _ -> failwith "mesh_one: expected a leaf"
 let placed spec v = leaf (S.device_put (Tr.Leaf v) (sharding spec))
 
-let arg = function
-  | "row" -> placed row_spec (base float_of_int)
+let arg values =
+  let v i = match values with Some a -> a.(i) | None -> float_of_int i in
+  function
+  | "row" -> placed row_spec (base v)
   | "col" ->
       placed col_spec
-        (base (fun i -> float_of_int (((3 - (i / 4)) * 4) + (i mod 4)) *. 0.5))
-  | "host" -> base (fun i -> float_of_int i +. 3.0)
+        (base (fun i -> v (((3 - (i / 4)) * 4) + (i mod 4)) *. 0.5))
+  | "host" -> base (fun i -> v i +. 3.0)
   | k -> failwith ("mesh_one: arg " ^ k)
 
 let body x = UF.add (UF.multiply (UF.sin x) (scalar 2.0)) (R.sum x)
@@ -104,9 +106,14 @@ let check_row ~suite row () =
   match List.assoc_opt id cases with
   | None -> log id "binding" "no_binding"
   | Some (f, out_shardings) ->
+      let values =
+        match U.member "base" row with
+        | `Null -> None
+        | j -> Some (Array.of_list (List.map U.to_number (U.to_list j)))
+      in
       let args =
         List.map
-          (fun k -> arg (U.to_string k))
+          (fun k -> arg values (U.to_string k))
           (U.to_list (U.member "args" row))
       in
       let trees = List.map (fun v -> Tr.Leaf v) args in

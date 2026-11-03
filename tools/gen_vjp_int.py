@@ -9,6 +9,7 @@ os.environ["XLA_FLAGS"] = (
 )
 
 import argparse
+import seeded_inputs as si
 import json
 import platform
 import warnings
@@ -49,7 +50,19 @@ def make(kind, symbolic):
     return f
 
 
+INPUTS = {}
+
+
+def draw_inputs():
+    rng = np.random.default_rng([si.SEED[0], 51])
+    INPUTS["x"] = [float(v) / 4 for v in rng.integers(-8, 13, 3)]
+    INPUTS["n"] = {"i32": [int(v) for v in rng.integers(-3, 6, 3)], "bool": [int(v) for v in rng.integers(0, 2, 3)],
+                   "u8": [int(v) for v in rng.integers(0, 6, 3)]}
+
+
 def inputs(second):
+    if INPUTS:
+        return jnp.asarray(INPUTS["x"], jnp.float32), jnp.asarray(INPUTS["n"][second], dtype=SECOND[second])
     x = jnp.linspace(1.0, 2.0, 3, dtype=jnp.float32)
     n = jnp.asarray([1, 0, 3], dtype=SECOND[second])
     return x, n
@@ -124,6 +137,8 @@ def run(x64):
     rows = []
     for name, f in value_cases().items():
         row = {"id": name, "x64": x64}
+        if INPUTS:
+            row["inputs"] = INPUTS
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -155,7 +170,9 @@ def run(x64):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=os.path.join(ROOT, "goldens", "vjp_int"))
-    args = parser.parse_args()
+    args = si.parse(parser)
+    if si.seeded():
+        draw_inputs()
     if platform.python_version() != PY_VERSION or jax.__version__ != JAX_VERSION:
         raise SystemExit("needs python " + PY_VERSION + " and jax " + JAX_VERSION)
     rows = run(False) + run(True)

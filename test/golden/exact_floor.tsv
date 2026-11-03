@@ -354,3 +354,11 @@ size_ops:x64_off	144	144
 size_ops:x64_on	144	144
 raw:size_ops:x64_off	144	144
 raw:size_ops:x64_on	144	144
+odeint:x64_off	20	26
+odeint:x64_on	40	52
+raw:odeint:x64_off	20	26
+raw:odeint:x64_on	40	52
+checkify:x64_off	985	985
+checkify:x64_on	1970	1970
+raw:checkify:x64_off	985	985
+raw:checkify:x64_on	1970	1970

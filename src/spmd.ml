@@ -330,7 +330,7 @@ let py_frozenset names =
   | l -> "frozenset({" ^ String.concat ", " (List.map quote l) ^ "})"
 
 let constrained v m spec =
-  if mesh_size m <= 1 then v
+  if mesh_size m < 1 then v
   else begin
     let spec_list = spec in
     let rank = Array.length (Core.get_aval v).shape in
@@ -620,7 +620,7 @@ let shard_map_flat f ~mesh ~manual ~in_specs ~out_specs args =
       thunk
   in
   let fallback xs = manual_context (fun () -> fallback xs) in
-  if mesh_size mesh <= 1 then fallback args
+  if mesh_size mesh < 1 then fallback args
   else
     let avals = List.map Core.get_aval args in
     let local_avals =

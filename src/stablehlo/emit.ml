@@ -2810,7 +2810,7 @@ let emit_ffi_call ctx (eqn : eqn) in_ids (c : ffi_call) =
 type partition = {
   pt_mesh : (string * int) list;
   pt_devices : int array;
-  pt_in : string list array list;
+  pt_in : string list array option list;
   pt_out : string list array option list;
 }
 
@@ -2870,12 +2870,16 @@ let collective_groups mesh axis =
 let dense_i64_matrix rows =
   let n = List.length rows in
   let m = match rows with r :: _ -> List.length r | [] -> 0 in
-  Printf.sprintf "dense<[%s]> : tensor<%dx%dxi64>"
-    (String.concat ", "
-       (List.map
-          (fun r -> "[" ^ String.concat ", " (List.map string_of_int r) ^ "]")
-          rows))
-    n m
+  match rows with
+  | [ [ v ] ] -> Printf.sprintf "dense<%d> : tensor<1x1xi64>" v
+  | _ ->
+      Printf.sprintf "dense<[%s]> : tensor<%dx%dxi64>"
+        (String.concat ", "
+           (List.map
+              (fun r ->
+                "[" ^ String.concat ", " (List.map string_of_int r) ^ "]")
+              rows))
+        n m
 
 let callback_seen = ref false
 let callback_order : int list ref = ref []
@@ -3707,6 +3711,26 @@ and placed_call ctx (eqn : eqn) in_ids id =
   | _ -> false
 
 and emit_manual_computation ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
+  let manual_size =
+    List.fold_left
+      (fun acc a -> acc * List.assoc a rule.sr_mesh)
+      1 rule.sr_manual
+  in
+  if manual_size = 1 then emit_manual_inline ctx eqn in_ids rule
+  else emit_manual_region ctx eqn in_ids rule
+
+and emit_manual_inline ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
+  let saved = !manual_axes in
+  manual_axes := rule.sr_manual;
+  Fun.protect
+    ~finally:(fun () -> manual_axes := saved)
+    (fun () ->
+      let outs = emit_closed_inline ctx rule.sr_body in_ids in
+      List.iter2
+        (fun (v : var) id -> Hashtbl.replace ctx.ids v.vid id)
+        eqn.outs outs)
+
+and emit_manual_region ctx (eqn : eqn) in_ids (rule : Core.shard_rule) =
   let body = rule.sr_body in
   let n_consts = List.length body.consts in
   let arg_binders =
@@ -5463,7 +5487,7 @@ let emit_closed_jaxpr_body ?partition (cj : closed_jaxpr) : string =
   in
   let in_specs =
     match partition with
-    | Some p -> List.map Option.some p.pt_in
+    | Some p -> p.pt_in
     | None -> List.map (fun _ -> None) arg_binders
   in
   let attribute = function

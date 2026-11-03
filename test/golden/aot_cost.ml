@@ -105,12 +105,20 @@ let check_row ~x64 ~mem row () =
     ^ "/"
     ^ U.to_string (U.member "case_id" row)
   in
+  let error = U.member "error" row in
   let expected =
-    pairs_text ~mem (U.member (if mem then "mem" else "cost") row)
+    match error with
+    | `String cls -> "raise " ^ cls
+    | _ -> pairs_text ~mem (U.member (if mem then "mem" else "cost") row)
   in
   let actual =
     Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
-        try actual_text ~mem row with e -> "raise " ^ Printexc.to_string e)
+        try actual_text ~mem row with
+        | e when error <> `Null ->
+            "raise "
+            ^ Option.value ~default:(Error_types.ojax_class e)
+                (Ojax.Py_exn.class_name e)
+        | e -> "raise " ^ Printexc.to_string e)
   in
   let suite =
     (if mem then "aot_mem:" else "aot_cost:")
@@ -130,7 +138,6 @@ let suite_for x64 =
   let rows =
     if Sys.file_exists path then
       U.to_list (U.member "rows" (Yojson.Safe.from_file path))
-      |> List.filter (fun r -> U.member "error" r = `Null)
     else []
   in
   ( "aot_cost_" ^ tag,

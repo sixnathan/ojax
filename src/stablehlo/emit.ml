@@ -386,7 +386,7 @@ let eqn_loc_name (eqn : eqn) prim =
          (List.map (fun (v : var) -> v.vid) eqn.outs))
   in
   match eqn.prim with
-  | Xla_call c ->
+  | Xla_call c when Pretty_printer.call_name c.jid <> "closed_call" ->
       Source_info_util.name_stack_str
         (Source_info_util.extend stack
            ("jit(" ^ Pretty_printer.call_name c.jid ^ ")"))

@@ -3228,7 +3228,7 @@ let joint_branch_jvp rebuild branches primals tangents =
               else p2tz p)
             ops nzs
         in
-        jvp (fun a -> Jaxpr.eval_closed_jaxpr branch a) ops tangent_ops
+        jvp_subtrace (fun a -> Jaxpr.eval_closed_jaxpr branch a) ops tangent_ops
       in
       let flags_of branch =
         let flags = ref [] in

@@ -283,22 +283,27 @@ def main():
             name, _, rest = line.partition(" ")
             ours[name] = rest
     rows = reference()
-    verdict = text = 0
+    verdict = text = full = 0
     for name, ref in rows.items():
         if name not in ours:
             continue
         mine = ours[name]
         ref_cut = norm(ref.split("eqn=")[0])
         same_verdict = mine[:2] == ref[:2]
-        mine_cut = mine.split(" See https")[0] if "eqn=" in ref else mine
+        mine_cut = mine.split("eqn=")[0] if "eqn=" in ref else mine
         same_text = norm(mine_cut) == ref_cut
+        full += norm(mine) == norm(ref)
+        if norm(mine) != norm(ref) and same_text:
+            a, b = norm(mine), norm(ref)
+            i = next((j for j in range(min(len(a), len(b))) if a[j] != b[j]), min(len(a), len(b)))
+            print(name, "full text differs at", i, "JAX", repr(b[max(0, i - 60):i + 80]), "OJAX", repr(a[max(0, i - 60):i + 80]))
         verdict += same_verdict
         text += same_text
         if not (same_verdict and same_text):
             print(name)
             print(" JAX ", ref_cut[:200])
             print(" OJAX", norm(mine)[:200])
-    print("verdict", verdict, "text up to the eqn dump", text, "of", sum(1 for n in rows if n in ours))
+    print("verdict", verdict, "text up to the eqn dump", text, "full text", full, "of", sum(1 for n in rows if n in ours))
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ os.environ["XLA_FLAGS"] = (
 )
 
 import argparse
+import seeded_inputs as si
 import json
 import platform
 
@@ -67,6 +68,8 @@ def run(x64):
     jax.config.update("jax_enable_x64", x64)
     mesh = Mesh(np.array(jax.devices()[:1]), ("x",))
     base = np.arange(16.0, dtype=np.float32).reshape(4, 4)
+    if si.seeded():
+        base = si.draw(16, np.float32, [41]).reshape(4, 4)
     args = {
         "row": jax.device_put(base, NamedSharding(mesh, P("x", None))),
         "col": jax.device_put(base[::-1] * 0.5, NamedSharding(mesh, P(None, "x"))),
@@ -80,6 +83,8 @@ def run(x64):
         f.__name__ = "f"
         xs = [args[k] for k in kinds]
         row = {"id": name, "x64": x64, "args": kinds}
+        if si.seeded():
+            row["base"] = [float(v) for v in base.reshape(-1)]
         try:
             jitted = jax.jit(f, **options)
             row["hlo"] = jitted.lower(*xs).as_text()
@@ -95,7 +100,7 @@ def run(x64):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=os.path.join(ROOT, "goldens", "mesh_one"))
-    args = parser.parse_args()
+    args = si.parse(parser)
     if platform.python_version() != PY_VERSION or jax.__version__ != JAX_VERSION:
         raise SystemExit("needs python " + PY_VERSION + " and jax " + JAX_VERSION)
     rows = run(False) + run(True)

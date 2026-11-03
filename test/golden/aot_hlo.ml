@@ -63,17 +63,27 @@ let check_row ~x64 row () =
     ^ "/"
     ^ U.to_string (U.member "case_id" row)
   in
-  let expected = U.to_string (U.member "hlo" row) in
+  let error = U.member "error" row in
+  let expected =
+    match error with
+    | `String cls -> "raise " ^ cls
+    | _ -> U.to_string (U.member "hlo" row)
+  in
   let actual =
     Ojax.Config.with_value Ojax.Config.enable_x64 x64 (fun () ->
-        try actual_text row with e -> "raise " ^ Printexc.to_string e)
+        try actual_text row with
+        | e when error <> `Null ->
+            "raise "
+            ^ Option.value ~default:(Error_types.ojax_class e)
+                (Ojax.Py_exn.class_name e)
+        | e -> "raise " ^ Printexc.to_string e)
   in
   let suite = "aot_hlo:" ^ if x64 then "x64_on" else "x64_off" in
   let ok = expected = actual in
   record suite id ok;
   if not ok then
     Printf.eprintf "AOT_HLO DIFFER %s %s tb0=%b\n%!" suite id
-      (U.to_string (U.member "hlo_tb0" row) = actual)
+      (match U.member "hlo_tb0" row with `String t -> t = actual | _ -> false)
 
 let suite_for x64 =
   let tag = if x64 then "x64_on" else "x64_off" in
@@ -83,7 +93,6 @@ let suite_for x64 =
   let rows =
     if Sys.file_exists path then
       U.to_list (U.member "rows" (Yojson.Safe.from_file path))
-      |> List.filter (fun r -> U.member "error" r = `Null)
     else []
   in
   ( "aot_hlo_" ^ tag,

@@ -117,7 +117,11 @@ let check_bwd_tangent index (input : aval) v =
 let float0_tangent (input : aval) =
   input.dtype = Dtype.Bool || Dtypes.issubdtype input.dtype `Integer
 
-let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f") primal ~fwd ~bwd =
+let rec custom_vjp ?(nondiff_argnums = []) ?(name = "f")
+    ?(optimize_remat = false) primal ~fwd ~bwd =
+  let fwd =
+    if optimize_remat then Remat_opt.optimize_remat_fwd primal fwd else fwd
+  in
   if nondiff_argnums <> [] then fun args ->
     let kept, diff = split_nondiff nondiff_argnums args in
     custom_vjp ~name

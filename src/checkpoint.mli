@@ -39,3 +39,6 @@ val checkpoint :
 
 val saved_residuals :
   (value list -> value list) -> value list -> (aval * string) list
+
+val saved_residuals_text : (value list -> value list) -> value list -> string
+val print_saved_residuals : (value list -> value list) -> value list -> unit

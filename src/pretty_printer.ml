@@ -1373,8 +1373,11 @@ and pp_eqn ctx (e : eqn) =
               ("bwd", Plain "bwd");
               ("call_jaxpr", Sub c);
               ("fwd", Plain fwd);
-              ("symbolic_zeros", Plain "False");
             ]
+            @ (match !custom_num_consts e with
+              | Some n -> [ ("num_consts", Plain (string_of_int n)) ]
+              | None -> [])
+            @ [ ("symbolic_zeros", Plain "False") ]
         | None -> [])
     | Custom_lin { rule; n_res; in_zeros; _ } -> (
         match !custom_lin_vjp rule with

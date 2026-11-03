@@ -23,6 +23,23 @@ JAX_VERSION = "0.10.2"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+DEFAULT_SEED = 0
+BASE = {}
+
+
+def set_base(seed):
+    BASE.clear()
+    if seed != DEFAULT_SEED:
+        rng = np.random.default_rng([seed, 4])
+        for key, n in (("x3", 3), ("y3", 3), ("px", 4), ("py", 4), ("tx", 4), ("ty", 4)):
+            BASE[key] = [float(v) / 4 for v in rng.integers(-12, 17, n)]
+
+
+def base(key, default):
+    if key in BASE:
+        return jnp.asarray(BASE[key], dtype=jnp.float32)
+    return default()
+
 BWD = {
     "ok": lambda r, g: (g * r[1], g * r[0]),
     "shape": lambda r, g: (jnp.ones(2, jnp.float32), r[0]),
@@ -46,18 +63,18 @@ def vjp_case(kind, symbolic):
         def fwd(x, y):
             return x * y, (x, y)
     f.defvjp(fwd, bwd, symbolic_zeros=symbolic)
-    x = jnp.arange(3, dtype=jnp.float32)
-    y = jnp.linspace(1, 2, 3, dtype=jnp.float32)
+    x = base("x3", lambda: jnp.arange(3, dtype=jnp.float32))
+    y = base("y3", lambda: jnp.linspace(1, 2, 3, dtype=jnp.float32))
     return lambda: jax.grad(lambda x, y: f(x, y).sum(), argnums=(0, 1))(x, y)
 
 
 def defjvps_case(which):
     f = jax.custom_jvp(lambda x, y: jnp.sin(x) * y)
     f.defjvps(lambda g, ans, x, y: g * jnp.cos(x) * y, lambda g, ans, x, y: g * jnp.sin(x))
-    x = jnp.linspace(0.1, 1.3, 4, dtype=jnp.float32)
-    y = jnp.linspace(2.0, -1.0, 4, dtype=jnp.float32)
-    tx = jnp.linspace(0.5, 1.5, 4, dtype=jnp.float32)
-    ty = jnp.linspace(-1.0, 3.0, 4, dtype=jnp.float32)
+    x = base("px", lambda: jnp.linspace(0.1, 1.3, 4, dtype=jnp.float32))
+    y = base("py", lambda: jnp.linspace(2.0, -1.0, 4, dtype=jnp.float32))
+    tx = base("tx", lambda: jnp.linspace(0.5, 1.5, 4, dtype=jnp.float32))
+    ty = base("ty", lambda: jnp.linspace(-1.0, 3.0, 4, dtype=jnp.float32))
     if which == "jvp":
         return lambda: jax.jvp(f, (x, y), (tx, ty))
     if which == "grad":
@@ -115,6 +132,7 @@ def run(x64):
     rows = []
     for name, f in value_cases().items():
         row = {"id": name, "x64": x64}
+        row.update(BASE)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -146,7 +164,9 @@ def run(x64):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=os.path.join(ROOT, "goldens", "audit_holes"))
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args()
+    set_base(args.seed)
     if platform.python_version() != PY_VERSION or jax.__version__ != JAX_VERSION:
         raise SystemExit("needs python " + PY_VERSION + " and jax " + JAX_VERSION)
     rows = run(False) + run(True)

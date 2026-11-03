@@ -2,7 +2,7 @@ open Types
 
 type rule = int -> bool list -> value list -> value list * bool list
 
-let rules : (int, rule) Hashtbl.t = Hashtbl.create 16
+let rules : (int, rule * string * int) Hashtbl.t = Hashtbl.create 16
 
 let tree_text = function
   | [ _ ] -> "*"
@@ -22,7 +22,7 @@ let custom_vmap ?(rule_name = "rule") f ~(rule : rule) args =
          "Differentiation rule for 'custom_vmap_call' not implemented")
   in
   let id = Core.register_custom_rule (Core.Jvp_rule { primal; jvp }) in
-  Hashtbl.replace rules id rule;
+  Hashtbl.replace rules id (rule, rule_name, List.length call.jaxpr.outs);
   Hashtbl.replace Jaxpr.opaque_dce_calls id ();
   Pretty_printer.register_custom_view id "custom_vmap_call"
     [
@@ -36,10 +36,35 @@ let custom_vmap ?(rule_name = "rule") f ~(rule : rule) args =
     ];
   Core.bind (Custom_jvp_call id) args
 
+let short_name qualname =
+  match String.rindex_opt qualname '.' with
+  | Some i -> String.sub qualname (i + 1) (String.length qualname - i - 1)
+  | None -> qualname
+
+let out_tree_text items = "PyTreeDef(" ^ tree_text items ^ ")"
+
+let check_vmap_rule_trees rule_name n_out outs batched =
+  let name = short_name rule_name in
+  if List.compare_lengths outs batched <> 0 then
+    raise
+      (Py_exn.Value_error
+         ("structure of output value and output batching specification \
+           returned by custom vmap rule (" ^ name
+        ^ ") do not match.\nOutput values: " ^ out_tree_text outs
+        ^ "\nBatching spec: " ^ out_tree_text batched));
+  if List.length outs <> n_out then
+    raise
+      (Py_exn.Value_error
+         ("structure of output returned by custom vmap rule (" ^ name
+        ^ ") does not match that of original custom-vmapped function.\n\
+           Original output: "
+         ^ out_tree_text (List.init n_out Fun.id)
+         ^ "\nRule output: " ^ out_tree_text outs))
+
 let batch id axis_size vals bdims =
   match Hashtbl.find_opt rules id with
   | None -> None
-  | Some rule ->
+  | Some (rule, rule_name, n_out) ->
       let front =
         List.map2
           (fun v d ->
@@ -51,6 +76,7 @@ let batch id axis_size vals bdims =
       let outs, batched =
         rule axis_size (List.map Option.is_some bdims) front
       in
+      check_vmap_rule_trees rule_name n_out outs batched;
       Some (outs, List.map (fun b -> if b then Some 0 else None) batched)
 
 let () =

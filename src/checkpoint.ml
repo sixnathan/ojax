@@ -1452,7 +1452,12 @@ let () =
      fun id body ->
        let { differentiated; cfg; _ } = Hashtbl.find remats id in
        remat_id ~cfg ~differentiated body);
-  Interpreters.Batching.custom_call_batch := remat_vmap;
+  (let previous = !Interpreters.Batching.custom_call_batch in
+   Interpreters.Batching.custom_call_batch :=
+     fun id axis_size vals bdims ->
+       match remat_vmap id axis_size vals bdims with
+       | Some r -> Some r
+       | None -> previous id axis_size vals bdims);
   Partial_eval.custom_call_rule := remat_partial_eval;
   Ad.custom_call_transpose := remat_transpose
 
@@ -1538,8 +1543,7 @@ let saved_residuals f args =
            else
              [
                ( v.vaval,
-                 Printf.sprintf "from the argument at flattened index %d"
-                   (i - n_const) );
+                 Printf.sprintf "from the argument args[%d]" (i - n_const) );
              ])
          jx.in_binders)
   in
@@ -1552,10 +1556,26 @@ let saved_residuals f args =
               Some
                 ( v.vaval,
                   match e.prim with
-                  | Checkpoint_name name -> Printf.sprintf "named '%s'" name
-                  | prim -> "output of " ^ Pretty_printer.primitive_name prim )
+                  | Checkpoint_name name ->
+                      Printf.sprintf "named '%s' from " name
+                  | Xla_call c when Pretty_printer.jax_prim_name e.prim = "jit"
+                    ->
+                      Printf.sprintf "output of jitted function '%s' from "
+                        (Pretty_printer.call_name c.jid)
+                  | prim ->
+                      "output of "
+                      ^ Pretty_printer.jax_prim_name prim
+                      ^ " from " )
             else None)
           e.outs)
       jx.eqns
   in
   literals @ from_binders @ from_eqns
+
+let saved_residuals_text f args =
+  String.concat ""
+    (List.map
+       (fun (a, src) -> Pretty_printer.aval_short a ^ " " ^ src ^ "\n")
+       (saved_residuals f args))
+
+let print_saved_residuals f args = print_string (saved_residuals_text f args)

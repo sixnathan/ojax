@@ -26,7 +26,8 @@ let carr dt xs =
 let u32 n = NL.arange ~dtype:D.Uint32 (float_of_int n)
 let f32_2x3 () = NL.reshape (NL.arange ~dtype:D.F32 6.0) [| 2; 3 |]
 let seed n = JU.py_int n
-let key ?impl n = RC.key ?impl (seed n)
+let key_shift = ref 0
+let key ?impl n = RC.key ?impl (seed (n + !key_shift))
 let kd = RC.key_dtype
 let kname = RC.key_dtype_name
 let bool b = Text (if b then "True" else "False")
@@ -606,7 +607,10 @@ let check_row ~suite row () =
   let id = U.to_string (U.member "id" row) in
   let x64 = U.to_bool (U.member "x64" row) in
   Ojax.Config.set Ojax.Config.enable_x64 x64;
-  Fun.protect ~finally:(fun () -> Ojax.Config.set Ojax.Config.enable_x64 false)
+  (key_shift := match U.member "seed" row with `Int n -> n | _ -> 0);
+  Fun.protect ~finally:(fun () ->
+      key_shift := 0;
+      Ojax.Config.set Ojax.Config.enable_x64 false)
   @@ fun () ->
   let log ?(name = id) jax ojax =
     let same = String.equal jax ojax in

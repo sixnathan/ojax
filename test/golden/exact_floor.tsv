@@ -10,6 +10,8 @@ complex:x64_off	20	20
 complex:x64_on	40	40
 compose_fuzz:x64_off	18201	18202
 compose_fuzz:x64_on	24896	24900
+compose_pinned:x64_off	60	74
+compose_pinned:x64_on	63	76
 conditionals:x64_off	19	19
 conditionals:x64_on	23	23
 contractions:x64_off	47	47
@@ -32,6 +34,8 @@ vmap_coll:x64_off	112	112
 vmap_coll:x64_on	112	112
 audit_holes:x64_off	62	62
 audit_holes:x64_on	62	62
+vjp_int:x64_off	148	148
+vjp_int:x64_on	148	148
 dtypes:x64_off	7	7
 dtypes:x64_on	9	9
 e2e	36	36
@@ -95,6 +99,8 @@ raw:complex:x64_off	20	20
 raw:complex:x64_on	40	40
 raw:compose_fuzz:x64_off	16325	18202
 raw:compose_fuzz:x64_on	22324	24900
+raw:compose_pinned:x64_off	60	74
+raw:compose_pinned:x64_on	60	76
 custom_ad:x64_off	1754	1757
 custom_ad:x64_on	1717	1720
 raw:custom_ad:x64_off	1336	1757
@@ -115,6 +121,8 @@ raw:vmap_coll:x64_off	112	112
 raw:vmap_coll:x64_on	112	112
 raw:audit_holes:x64_off	62	62
 raw:audit_holes:x64_on	62	62
+raw:vjp_int:x64_off	148	148
+raw:vjp_int:x64_on	148	148
 raw:index_fuzz:x64_off	3379	4608
 raw:index_fuzz:x64_on	3413	4608
 apply_transforms:x64_off	408	408
@@ -294,10 +302,12 @@ text_fuzz_s2:x64_off	837	842
 text_fuzz_s2:x64_on	820	826
 raw:text_compose_fuzz:x64_off	924	938
 raw:text_compose_fuzz:x64_on	1256	1286
+raw:text_compose_pinned:x64_on	1	1
 raw:text_custom_ad:x64_off	191	203
 raw:text_custom_ad:x64_on	194	206
 text_compose_fuzz:x64_off	924	938
 text_compose_fuzz:x64_on	1256	1286
+text_compose_pinned:x64_on	1	1
 text_custom_ad:x64_off	191	203
 text_custom_ad:x64_on	194	206
 raw:text_index_fuzz:x64_off	782	1229

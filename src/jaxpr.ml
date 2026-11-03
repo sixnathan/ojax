@@ -81,7 +81,7 @@ let typecheck_jaxpr (jx : jaxpr) : unit =
 let in_eqn_eval = ref false
 let eval_transparent = ref false
 
-let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
+let rec eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
   let env : (int, value) Hashtbl.t = Hashtbl.create 16 in
   let read = function
     | A_var v -> Hashtbl.find env v.vid
@@ -111,6 +111,15 @@ let eval_jaxpr_body (jx : jaxpr) (args : value list) : value list =
                         | Concrete nd -> Concrete (Ndarray.as_weak nd)
                         | out -> out)
                       (Core.bind e.prim in_vals))
+            | (Custom_jvp_call _ | Custom_vjp_call _), first :: _
+              when (Core.find_top_trace in_vals).kind = KEval -> (
+                match Core.find_custom_eqn_jaxpr first.vid with
+                | Some c
+                  when List.length c.jaxpr.in_binders
+                       = List.length c.consts + List.length in_vals ->
+                    eval_jaxpr_body c.jaxpr
+                      (List.map (fun nd -> Concrete nd) c.consts @ in_vals)
+                | _ -> Core.bind e.prim in_vals)
             | _ -> Core.bind e.prim in_vals)
       in
       List.iter2 write e.outs outs)

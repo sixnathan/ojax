@@ -553,7 +553,10 @@ let policy_sines () =
       ("nothing", C.nothing_saveable, [ ("float32[]", arg0) ], (1, 2, 2, 0));
       ( "everything",
         C.everything_saveable,
-        [ ("float32[]", "output of cos from "); ("float32[]", "output of cos from ") ],
+        [
+          ("float32[]", "output of cos from ");
+          ("float32[]", "output of cos from ");
+        ],
         (0, 0, 2, 0) );
       ( "sin only",
         (fun prim _ -> prim = Sin),
@@ -561,7 +564,10 @@ let policy_sines () =
         (0, 2, 2, 0) );
       ( "cos only",
         (fun prim _ -> prim = Cos),
-        [ ("float32[]", "output of cos from "); ("float32[]", "output of cos from ") ],
+        [
+          ("float32[]", "output of cos from ");
+          ("float32[]", "output of cos from ");
+        ],
         (0, 0, 2, 0) );
     ]
   in

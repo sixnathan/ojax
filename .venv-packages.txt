@@ -1,0 +1,8 @@
+# ojax .venv was deleted during desktop cleanup (2026-10-10). Recreate with:
+# uv venv --python 3.13.5 .venv && uv pip install -r .venv-packages.txt
+jax==0.10.2
+jaxlib==0.10.2
+ml_dtypes==0.5.4
+numpy==2.5.1
+opt_einsum==3.4.0
+scipy==1.18.0
